@@ -1,0 +1,13 @@
+{
+  "name": "rd",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Rada Rodziców Szkoły Polskiej im. Joachima Lelewela",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply rd --local",
+    "db:migrate:remote": "wrangler d1 migrations apply rd --remote"
+  }
+}
