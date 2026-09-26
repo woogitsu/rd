@@ -1,6 +1,6 @@
 # Import uczniów — etap podglądu (#2)
 
-`npm install`, `npm run dev:import` — lokalna makieta importu. Plik jest parsowany lokalnie w przeglądarce. `npm run build:import` tworzy statyczne `dist/import/`. `npm test` uruchamia testy rdzenia CSV i walidacji.
+`npm ci`, `npm run dev:import` — lokalna makieta importu. Plik jest parsowany lokalnie w przeglądarce. `npm run build:import` tworzy statyczne `dist/import/`. `npm test` uruchamia testy CSV, syntetycznego XLSX i walidacji. GitHub Actions wykonuje testy i build po otwarciu PR.
 
 Obsługiwane CSV (UTF-8 z opcjonalnym BOM, średnik/przecinek) i XLSX (pierwszy arkusz). Limit 5 MB, 5000 wierszy i 60 kolumn. Wybór pliku, mapowanie nagłówków, walidacja, możliwe duplikaty i podgląd 100 pierwszych wierszy. W repo jest fikcyjny `template.csv`.
 
