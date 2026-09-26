@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { readSheet } from 'read-excel-file/node';
 import { parseCsv, guessMapping, validateRows } from '../import/core.js';
 const head = ['Imię ucznia','Nazwisko ucznia','Klasa','Opiekun 1','E-mail opiekuna 1','ID ucznia'];
 const preview = rows => validateRows([head,...rows], guessMapping(head));
@@ -38,4 +40,12 @@ test('formula-like values remain inert strings', () => {
 test('1000 rows are accepted without truncation', () => {
   const rows = Array.from({length:1000},(_,i)=>['Ala','Nowak',`1A`,'','','ID'+i]);
   assert.equal(preview(rows).validCount,1000);
+});
+test('XLSX first sheet with synthetic pupils feeds the preview', async () => {
+  const fixture = new URL('./fixtures-students.xlsx.base64', import.meta.url);
+  const sheet = await readSheet(Buffer.from(readFileSync(fixture, 'utf8').trim(), 'base64'));
+  const result = validateRows(sheet, guessMapping(sheet[0]));
+  assert.equal(result.validCount, 2);
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.records[1].email1, 'jan@example.org');
 });
