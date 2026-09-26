@@ -10,7 +10,7 @@
 ## 1. Konta i baza (MVP)
 - Konta zapraszane przez admina; uwierzytelnianie wieloskładnikowe dla osób z dostępem finansowym.
 - Role, przypisanie klasy, cofnięcie dostępu, automatyczne wygaszenie uprawnień po kadencji.
-- Rodziny, uczniowie, opiekunowie, klasy, rok szkolny, import CSV z walidacją i podglądem zmian.
+- Rodziny, uczniowie, opiekunowie, klasy, rok szkolny, import CSV/XLSX z walidacją i podglądem zmian.
 - Dziennik dostępu, eksport danych, kopie zapasowe i sprawdzona próba odtworzenia.
 **Kryterium wyjścia:** brak odczytu cudzej klasy w testach serwera.
 

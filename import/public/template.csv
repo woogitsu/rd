@@ -1,0 +1,3 @@
+ID ucznia;Imię ucznia;Nazwisko ucznia;Klasa;ID rodziny;Opiekun 1;E-mail opiekuna 1;Opiekun 2;E-mail opiekuna 2
+TEST-001;Alicja;Przykładowa;1A;ROD-001;Anna Przykładowa;anna@example.org;Jan Przykładowy;jan@example.org
+TEST-002;Marek;Przykładowy;2B;ROD-001;Anna Przykładowa;anna@example.org;Jan Przykładowy;jan@example.org
