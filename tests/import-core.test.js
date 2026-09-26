@@ -8,6 +8,9 @@ test('CSV: BOM, semicolon, CRLF, embedded newline and escaped quote', () => {
   assert.deepEqual(rows,[['Imię','Nazwisko','Klasa'],['Ala\nMaria','Ko"t','1A']]);
 });
 test('CSV rejects malformed quote', () => assert.throws(() => parseCsv('a;b\n"bad;b'),/cudzysłowu/));
+test('CSV detects separator outside quoted header cells', () => {
+  assert.deepEqual(parseCsv('"Nazwisko, imię";Klasa\n"Nowak, Ala";1A'), [['Nazwisko, imię','Klasa'],['Nowak, Ala','1A']]);
+});
 test('valid preview has no side effects and preserves two guardians', () => {
   const r = preview([['Ala','Nowak','1A','Anna Nowak','anna@example.org','A1']]);
   assert.equal(r.validCount,1); assert.equal(r.records[0].guardian1,'Anna Nowak');
@@ -24,6 +27,9 @@ test('unknown class is rejected when a class list is supplied', () => {
 test('required columns and duplicate mappings are rejected', () => {
   assert.throws(() => validateRows([head,['Ala','Nowak','1A']], {firstName:0,lastName:0,className:2}),/Jedna kolumna/);
   assert.throws(() => validateRows([head,['Ala','Nowak','1A']], {firstName:0,lastName:1}),/Brakuje mapowania/);
+});
+test('mapping cannot point outside the sheet', () => {
+  assert.throws(() => validateRows([head,['Ala','Nowak','1A']], {firstName:0,lastName:1,className:2,email1:30}),/nieprawidłową kolumnę/);
 });
 test('formula-like values remain inert strings', () => {
   const r = preview([['=HYPERLINK("evil")','Nowak','1A','','','A1']]);
