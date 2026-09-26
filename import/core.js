@@ -81,7 +81,7 @@ export function validateRows(matrix, mapping, options = {}) {
   for (const required of ['firstName', 'lastName', 'className']) {
     if (!Number.isInteger(Number(mapping[required])) || mapping[required] === '' || Number(mapping[required]) < 0 || Number(mapping[required]) >= headers.length) throw new Error(`Brakuje mapowania: ${required}.`);
   }
-  const seenId = new Map(), seenName = new Map(), records = [], errors = [], warnings = [];
+  const seenId = new Map(), seenName = new Map(), seenHousehold = new Map(), records = [], errors = [], warnings = [];
   const value = (row, key) => mapping[key] === undefined || mapping[key] === '' ? '' : String(row[Number(mapping[key])] ?? '').trim().replace(/\s+/g, ' ');
   for (let i = 1; i < matrix.length; i++) {
     const row = matrix[i];
@@ -103,6 +103,13 @@ export function validateRows(matrix, mapping, options = {}) {
     const nameKey = [record.firstName, record.lastName, record.className].map(normalize).join('|');
     if (idKey && seenId.has(idKey)) issues.push(`Powtórzone ID ucznia z wiersza ${seenId.get(idKey)}.`);
     if (nameKey && seenName.has(nameKey)) warnings.push({ row: number, message: `Możliwy duplikat imienia, nazwiska i klasy (wiersz ${seenName.get(nameKey)}). Sprawdź ręcznie.` });
+    const householdKey = normalize(record.householdId);
+    const contacts = [[record.guardian1, record.email1], [record.guardian2, record.email2]]
+      .map(pair => pair.map(normalize).join('|')).sort().join(';');
+    if (householdKey && seenHousehold.has(householdKey)) {
+      const first = seenHousehold.get(householdKey);
+      if (first.contacts !== contacts) warnings.push({ row: number, message: `ID rodziny ma inne dane opiekunów niż wiersz ${first.row}. Sprawdź ręcznie.` });
+    } else if (householdKey) seenHousehold.set(householdKey, { row: number, contacts });
     if (idKey && !seenId.has(idKey)) seenId.set(idKey, number);
     if (nameKey && !seenName.has(nameKey)) seenName.set(nameKey, number);
     if (issues.length) errors.push(...issues.map(message => ({ row: number, message })));
