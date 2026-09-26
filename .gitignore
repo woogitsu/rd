@@ -1,0 +1,14 @@
+node_modules/
+.wrangler/
+dist/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+.DS_Store
+coverage/
+*.log
+# Never commit student/parent exports or private documents.
+private-data/
+exports/
