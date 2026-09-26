@@ -35,7 +35,7 @@ To wybór wstępny. Nie dodawać konta ani poświadczeń dostawcy do repo. Możn
 
 Regulamin Rady Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli i Program Wychowawczo-Profilaktyczny 2026/2027 przekazane przez użytkownika. Nie umieszczać tych dokumentów w repo bez decyzji o zasadach dostępu i aktualności wersji.
 
-## Start implementacji
+## Uruchomienie szkieletu\n\nPo utworzeniu bazy D1 wpisz jej identyfikator w `wrangler.jsonc`. Zainstaluj lokalnie `wrangler` (`npm install --save-dev wrangler`) i uruchom `npm run db:migrate:local` oraz `npm run dev`. Obecnie Worker udostępnia tylko `/health`; interfejs z Sites nie jest jeszcze częścią repo, a produkcyjna autoryzacja i API są zadaniami z planu. Nie wykonuj migracji produkcyjnej bez przeglądu schematu.\n\n## Start implementacji
 
 1. Uzgodnić zakres i przepływ danych ze szkołą.
 2. Spisać decyzję o koncie bankowym, sugerowanej składce, zasadach korekt i zatwierdzania wydatków.
