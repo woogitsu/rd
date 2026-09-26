@@ -28,8 +28,20 @@ export function guessMapping(headers) {
 export function parseCsv(text) {
   if (typeof text !== 'string' || !text.trim()) throw new Error('Plik CSV jest pusty.');
   const input = text.replace(/^\uFEFF/, '');
-  const firstLine = input.split(/\r\n|\n|\r/, 1)[0];
-  const delimiter = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length ? ';' : ',';
+  // Count only separators outside quoted cells in the header.
+  let commas = 0, semicolons = 0, inHeaderQuote = false;
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+    if (char === '"') {
+      if (inHeaderQuote && input[i + 1] === '"') i++;
+      else inHeaderQuote = !inHeaderQuote;
+    } else if (!inHeaderQuote) {
+      if (char === '\n' || char === '\r') break;
+      if (char === ',') commas++;
+      if (char === ';') semicolons++;
+    }
+  }
+  const delimiter = semicolons > commas ? ';' : ',';
   const rows = []; let row = [], cell = '', quoted = false, afterQuote = false;
   for (let i = 0; i < input.length; i++) {
     const char = input[i];
@@ -64,6 +76,7 @@ export function validateRows(matrix, mapping, options = {}) {
   if (!Array.isArray(matrix[0]) || matrix[0].length > 60) throw new Error('Nieprawidłowy nagłówek lub więcej niż 60 kolumn.');
   const headers = matrix[0].map(v => String(v ?? '').trim());
   const indexes = Object.values(mapping).filter(v => v !== '' && v !== undefined).map(Number);
+  if (indexes.some(index => !Number.isInteger(index) || index < 0 || index >= headers.length)) throw new Error('Mapowanie zawiera nieprawidłową kolumnę.');
   if (new Set(indexes).size !== indexes.length) throw new Error('Jedna kolumna nie może być przypisana do dwóch pól.');
   for (const required of ['firstName', 'lastName', 'className']) {
     if (!Number.isInteger(Number(mapping[required])) || mapping[required] === '' || Number(mapping[required]) < 0 || Number(mapping[required]) >= headers.length) throw new Error(`Brakuje mapowania: ${required}.`);
