@@ -56,7 +56,7 @@ document.querySelector('#preview').addEventListener('click', () => {
     const body = document.querySelector('#preview-body'); body.replaceChildren();
     result.records.slice(0,100).forEach(record => {
       const tr = document.createElement('tr'); if (!record.valid) tr.className = 'bad';
-      for (const text of [record.row,`${record.firstName} ${record.lastName}`,record.className,record.guardian1,record.email1,record.valid?'Poprawny':'Błąd']) {
+      for (const text of [record.row,`${record.firstName} ${record.lastName}`,record.className,record.guardian1,record.email1,record.guardian2,record.email2,record.valid?'Poprawny':'Błąd']) {
         const td = document.createElement('td'); td.textContent = text; tr.append(td);
       } body.append(tr);
     });
