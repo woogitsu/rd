@@ -4,6 +4,12 @@
 
 Obsługiwane CSV (kodowanie i separator wykrywane w `import/csv.js`, patrz niżej) i XLSX (pierwszy arkusz). Limit 5 MB, 5000 wierszy i 60 kolumn. Wybór pliku, mapowanie nagłówków, walidacja, możliwe duplikaty, ostrzeżenia o niespójnych danych opiekunów przy tym samym ID rodziny i podgląd 100 pierwszych wierszy. Tabela pokazuje oboje opiekunów, gdy są wpisani. W repo jest fikcyjny `template.csv`.
 
+### Zgodność z CSP serwera Node (#188, #223)
+
+- Style są w `import/styles.css` (podpięte `<link rel="stylesheet">`), bez bloku `<style>` i atrybutów `style=`. Serwer wysyła `style-src 'self'` i `script-src 'self'` (`src/node-app.js`); polityki nie luzujemy.
+- XLSX jest czytany przez `import/xlsx.js`: plik rozpakowuje `unzipSync` z `fflate` w głównym wątku i przepakowuje bez kompresji, dopiero potem czyta go `read-excel-file`. Bez tego `fflate` oddaje pozycje większe niż 512 KiB (duży `sheet1.xml` lub `sharedStrings.xml`) do `Worker` z adresu `blob:`, który CSP blokuje, a strona zostaje na „Odczyt pliku…”. Przy 5 MB rozpakowanie może na chwilę zablokować kartę — przy jednorazowym imporcie to akceptowalne.
+- `tests/csp-static.test.js` sprawdza źródłowe `*/index.html` i zbudowane `dist/**/*.html` (w CI po buildzie z `REQUIRE_DIST=1`): brak `<style>`, `style=`, skryptów inline, `on*=` i `javascript:`.
+
 ### Kodowanie i separator CSV (#77)
 
 - Kodowanie: BOM UTF-8 lub UTF-16 LE/BE → odpowiedni dekoder; bez BOM próba UTF-8 w trybie ścisłym, a przy niepoprawnych bajtach Windows-1250 (eksport „CSV (rozdzielany średnikami)” z polskiego Excela). Pole „Kodowanie CSV” pozwala wymusić UTF-8, Windows-1250 lub Windows-1252 (Excel BE/FR).

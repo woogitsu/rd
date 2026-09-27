@@ -16,6 +16,7 @@ monitoringu z #16. Kontekst: [plan migracji](RAILWAY_MIGRATION.md),
 | Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`), trzy panele, nagłówki, `404` |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
 | Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
+| Pierwszy administrator | `npm run auth:bootstrap-admin` (`scripts/bootstrap-admin.js`, `src/pg/bootstrap-admin.js`) | jednorazowe zaproszenie do roli `admin` na pustej bazie (sekcja „Pierwszy administrator (bootstrap)”) |
 | CI | `.github/workflows/ci.yml` | testy, buildy, smoke, lokalne migracje D1 (stara ścieżka pozostaje) |
 
 `railway.json` nie zawiera zmiennych ani nadpisań środowisk; zmienne ustawia
@@ -235,6 +236,49 @@ spełnia dopiero pomiar na stagingu.
 | do wykonania | staging | | 50 / 60 s | nie | | | | | | | | |
 | do wykonania | staging | | 50 / 60 s | tak (`--allow-writes`) | | | | | | | | |
 
+## Pierwszy administrator (bootstrap, #187)
+
+Nowa baza PostgreSQL (staging lub produkcja) nie ma żadnego konta, a
+zaproszenia i resety haseł wydaje wyłącznie administrator z MFA. D1 nie ma
+danych do przeniesienia (#227), więc krok ten wykonuje się przy każdym
+pierwszym uruchomieniu, także na stagingu. Nie wpisywać kont ręcznym SQL-em.
+
+Krok startowy stagingu (po `npm run db:migrate:postgres`, przed pierwszym
+logowaniem):
+
+```sh
+DATABASE_URL=<referencja z Railway> APP_ENV=staging \
+  npm run auth:bootstrap-admin -- <adres-pierwszego-administratora> [--ttl-hours=24]
+```
+
+- Skrypt działa tylko, gdy **nie ma aktywnego administratora** (przydział
+  `admin` niecofnięty, niewygasły, konto niewyłączone) i **nie czeka ważne
+  zaproszenie** do roli `admin`. W przeciwnym razie kończy się czytelną
+  odmową (kod 2) bez zmian w bazie. Dwa równoległe uruchomienia dają
+  najwyżej jedno ważne zaproszenie (blokada tabel w transakcji).
+- Zakłada konto z podanym adresem (albo używa istniejącego, niewyłączonego
+  konta z tym adresem) i wydaje jednorazowe zaproszenie do roli `admin`
+  (domyślnie ważne 24 h, najwyżej 72 h — założenie do potwierdzenia, D-08/D-10).
+  Rolę nadaje dopiero przyjęcie zaproszenia.
+- Token jest wypisany **jeden raz** na stdout (linia `token: …`). Nie jest
+  zapisany w bazie (tylko SHA-256), w logach ani w audycie. Nie kopiować go
+  do zgłoszeń, czatów ani protokołu. Kanał przekazania tokenu pierwszemu
+  administratorowi (osobiście/telefonicznie) ustala zarząd.
+- Dziennik: `user.created` (gdy konto powstało), `invitation.created`
+  i `auth.bootstrap_issued` z aktorem technicznym `system:bootstrap`
+  (`actor_id = NULL`), identyfikatorem konta i zaproszenia — bez e-maila
+  i tokenu.
+- `APP_ENV=production` wymaga jawnego `--allow-production` i wolno go użyć
+  tylko w ramach zatwierdzonego cutover (D-20).
+- Przyjęcie zaproszenia: `/login/#invite=<token>` (`POST /api/invitations/accept`)
+  ustawia hasło i nadaje rolę; potem administrator włącza MFA i dalsze konta
+  (zarząd, skarbnik, przedstawiciele) zaprasza przez panel. Logowanie hasłem
+  i ta trasa są na gałęzi logowania (issue #3) — do jej scalenia zaproszenie
+  można przyjąć wyłącznie funkcją `acceptInvitation` w testach.
+- Jeśli token zaginął, poczekać do wygaśnięcia zaproszenia i uruchomić
+  skrypt ponownie (poprzedniego zaproszenia bez administratora nie da się
+  cofnąć przez API).
+
 ## Backup PostgreSQL
 
 1. Włączyć w usłudze PostgreSQL harmonogram backupów wolumenu
@@ -315,11 +359,14 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
    [D1_POSTGRES_MIGRATION.md](D1_POSTGRES_MIGRATION.md).
 5. Porównać raport zgodności (liczności, sumy wpłat, przychody/wydatki);
    podpis dwóch osób (np. skarbnik + członek zarządu).
-6. Wykonać ręczny deploy produkcji na Railway, sprawdzić `/health`, logowanie,
+6. Wydać zaproszenie pierwszemu administratorowi (`npm run auth:bootstrap-admin
+   -- <adres> --allow-production`, sekcja „Pierwszy administrator”); administrator
+   ustawia hasło i MFA, potem zaprasza pozostałe konta.
+7. Wykonać ręczny deploy produkcji na Railway, sprawdzić `/health`, logowanie,
    panel wpłat i księgi na koncie testowym.
-7. Przełączyć domenę/DNS na Railway; stary Worker pozostaje zatrzymany do
+8. Przełączyć domenę/DNS na Railway; stary Worker pozostaje zatrzymany do
    zapisu, ale nie usunięty (#42).
-8. Obserwacja 72 h: błędy, logowania, koszty.
+9. Obserwacja 72 h: błędy, logowania, koszty.
 
 ## Plan rollback
 
