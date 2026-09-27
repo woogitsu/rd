@@ -10,6 +10,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply rd --remote",
     "dev:import": "vite import",
     "build:import": "vite build import --outDir ../dist/import --base ./ --emptyOutDir",
+    "dev:panel": "vite panel",
+    "build:panel": "vite build panel --outDir ../dist/panel --base ./ --emptyOutDir",
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {
