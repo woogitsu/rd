@@ -1,16 +1,14 @@
 // API wpłat na PostgreSQL (issue #37). Wyłącznie dane syntetyczne.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
 import { hashSecret } from '../src/auth.js';
 import { handlePgRequest, ROUTES } from '../src/pg/app.js';
 import * as paymentsRoutes from '../src/pg/routes/payments.js';
 import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createLegacyDb, createNormalizer, d1Adapter } from './helpers/parity.js';
 
 const BASE = 'https://rd.example';
-const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 const DEBT_WORDS = /debt|due|owed|owing|outstanding|arrear|balance|receivable|d[lł]u[zż]n|zaleg|nale[zż]/i;
 
 // --- Budowanie żądań ------------------------------------------------------
@@ -60,42 +58,9 @@ async function pgBackend({ role = 'treasurer', mfa = true, schoolYearId = 'y2026
 
 const legacyToken = 'P'.repeat(43);
 
-function d1Adapter(db) {
-  function bound(sql, values) {
-    const run = () => {
-      const result = db.prepare(sql).run(...values);
-      return { success: true, meta: { changes: Number(result.changes) } };
-    };
-    return {
-      first: async () => { const row = db.prepare(sql).get(...values); return row ? { ...row } : null; },
-      all: async () => ({ results: db.prepare(sql).all(...values).map((row) => ({ ...row })) }),
-      run: async () => run(),
-      _run: run,
-    };
-  }
-  return {
-    prepare: (sql) => ({ bind: (...values) => bound(sql, values) }),
-    async batch(statements) {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const results = statements.map((statement) => statement._run());
-        db.exec('COMMIT');
-        return results;
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
-    },
-  };
-}
-
 async function legacyBackend() {
-  const db = new DatabaseSync(':memory:');
-  db.exec('PRAGMA foreign_keys = ON');
-  for (const name of ['0001_initial', '0002_auth_sessions', '0003_student_guardians',
-    '0004_enrollment_school_year', '0005_payment_corrections', '0006_payment_assignments']) {
-    db.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), 'utf8'));
-  }
+  const db = createLegacyDb(['0001_initial', '0002_auth_sessions', '0003_student_guardians',
+    '0004_enrollment_school_year', '0005_payment_corrections', '0006_payment_assignments']);
   db.exec(`
     INSERT INTO school_years (id, label, starts_on, ends_on) VALUES
       ('y2025', 'test y2025', '2025-09-01', '2026-08-31'),
@@ -117,30 +82,8 @@ async function legacyBackend() {
 
 // --- Scenariusz zgodności ---------------------------------------------------
 
-// Zamienia losowe identyfikatory na etykiety w kolejności pojawienia się,
-// a kursor dekoduje, by porównać jego treść bez losowego id.
-function normalizer() {
-  const ids = new Map();
-  const label = (id) => {
-    if (!ids.has(id)) ids.set(id, `<id${ids.size + 1}>`);
-    return ids.get(id);
-  };
-  const visit = (value, key) => {
-    if (typeof value === 'string') {
-      if (key === 'nextCursor') {
-        const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
-        return visit(JSON.parse(atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4))));
-      }
-      return value.replace(UUID, label);
-    }
-    if (Array.isArray(value)) return value.map((item) => visit(item));
-    if (value && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, visit(v, k)]));
-    }
-    return value;
-  };
-  return visit;
-}
+// Losowe identyfikatory -> etykiety, kursor dekodowany (tests/helpers/parity.js).
+const normalizer = () => createNormalizer({ cursorKeys: ['nextCursor'] });
 
 const paymentInput = {
   householdId: 'h1', schoolYearId: 'y2026', amountCents: 7500,
