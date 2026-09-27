@@ -1,3 +1,5 @@
+/* Atrybut hidden zawsze ukrywa element, także gdy reguła autora ustawia display (#192). */
+[hidden] { display: none !important; }
 /* Panel dokumentów: białe tło, oszczędny czerwony akcent, płaskie tabele (docs/DESIGN.md). */
 :root {
   --text: #282c2f;

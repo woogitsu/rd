@@ -50,6 +50,27 @@ export function buildPaymentsUrl({ schoolYearId, status = "", cursor = "", limit
   return `/api/payments?${params.toString()}`;
 }
 
+// Zapytanie listy zapamiętywane przy wczytaniu pierwszej strony (#192).
+// „Wczytaj następne” używa wyłącznie tego zapytania i kursora z serwera,
+// nigdy bieżących, niezatwierdzonych pól formularza.
+export function paymentsQuery({ schoolYearId, status = "" }) {
+  buildPaymentsUrl({ schoolYearId, status });
+  return Object.freeze({ schoolYearId: String(schoolYearId).trim(), status: String(status ?? "") });
+}
+
+// Adres następnej strony albo null, gdy nie ma czego dociągać (brak kursora lub zapytania).
+export function buildNextPaymentsUrl(query, cursor) {
+  if (!query || typeof cursor !== "string" || cursor === "") return null;
+  return buildPaymentsUrl({ ...query, cursor });
+}
+
+// true, gdy pola formularza różnią się od zapytania, które dało wyświetloną listę.
+export function paymentsFilterChanged(query, current) {
+  if (!query) return false;
+  return String(current?.schoolYearId ?? "").trim() !== query.schoolYearId
+    || String(current?.status ?? "") !== query.status;
+}
+
 export function makeIdempotencyKey(prefix, randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto)) {
   if (typeof randomUUID !== "function") throw new Error("Ta przeglądarka nie obsługuje bezpiecznych identyfikatorów operacji.");
   return `${prefix}-${randomUUID()}`;
