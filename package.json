@@ -30,7 +30,8 @@
     "dev:events": "vite events",
     "build:events": "vite build events --outDir ../dist/events --base ./ --emptyOutDir",
     "dev:documents": "vite documents",
-    "build:documents": "vite build documents --outDir ../dist/documents --base ./ --emptyOutDir"
+    "build:documents": "vite build documents --outDir ../dist/documents --base ./ --emptyOutDir",
+    "email:worker": "node scripts/email-worker.js"
   },
   "dependencies": {
     "read-excel-file": "9.3.10",
