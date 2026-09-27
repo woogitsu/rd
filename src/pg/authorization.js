@@ -38,10 +38,24 @@ export async function loadAuthorizationContext(request, env) {
 //   access.context.session.user.id …
 // Zwraca 401 `unauthenticated` bez ważnej sesji i 403 `forbidden` przy braku
 // roli, zakresu klasy/roku lub MFA (taki sam kontrakt jak stare trasy Workera).
+//
+// Bezpieczny domyślny zakres: gdy trasa nie podaje classId, przydział
+// ograniczony do klasy NIE jest brany pod uwagę (isAuthorized sam w sobie
+// traktowałby go wtedy jak przydział szkolny). Trasa klasowa musi podać classId.
+export function schoolWideContext(context) {
+  if (!context || !Array.isArray(context.grants)) return context;
+  return { ...context, grants: context.grants.filter((grant) => !grant.classId) };
+}
+
+export function isAuthorizedScoped(context, requirement) {
+  const scoped = requirement?.classId ? context : schoolWideContext(context);
+  return isAuthorized(scoped, requirement);
+}
+
 export async function requireAccess(request, env, requirement, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return { response: json({ error: 'unauthenticated' }, 401) };
-  if (!isAuthorized(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
+  if (!isAuthorizedScoped(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
   return { context };
 }
 
