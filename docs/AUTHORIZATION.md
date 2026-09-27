@@ -32,6 +32,8 @@ Dla każdego przypadku test sprawdza: status; brak jakichkolwiek syntetycznych z
 
 Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, konto wyłączone) każda chroniona trasa zwraca `401 unauthenticated`. Przydział wygasły lub cofnięty działa jak brak przydziału. Rola `principal` nie ma dziś dostępu do żadnej trasy chronionej; `audit` — wyłącznie do odczytu zebrań, wyszukiwania uchwał i raportu dla Komisji Rewizyjnej.
 
+Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md)): sesja bez potwierdzonego MFA konta z aktywną rolą z `MFA_REQUIRED_ROLES` (domyślnie admin, zarząd, skarbnik) i bez zapisanego czynnika dostaje `403 mfa_enrollment_required` na każdej trasie poza zwolnionymi (sesja, przydziały, wylogowanie, logowanie, MFA, trasy publiczne); konto z zapisanym czynnikiem i sesją bez MFA — `403 mfa_required`. Dlatego w macierzy admin, zarząd i skarbnik z „MFA wył.” dostają 403 także na trasach z kolumną MFA = „nie” (`mfaGateBlocks` w `tests/helpers/route-matrix.js`). Kolumna MFA niżej opisuje wymóg samej trasy (`requireMfa`).
+
 | Trasa | Dozwolone role i zakres | MFA | Odmowa dla zalogowanego | Uwagi |
 |---|---|---|---|---|
 | `GET /api/session` | każdy zalogowany | nie | — | zwraca wyłącznie własną sesję |
@@ -153,7 +155,9 @@ Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, 
 | `GET /api/year-close/:schoolYearId/handover` | zarząd, skarbnik — jak wyżej | tak | 403 | |
 | `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak | 403 | osobna baza testowa; wygasza przydziały roku |
 
-Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają dziś MFA, także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
+Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady i nie mają jeszcze wpisów w macierzy; testuje je `tests/pg-login.test.js`: `POST /api/login`, `POST /api/invitations/accept`, `POST /api/password/reset` (bez sesji, zgodny `Origin`), `GET /api/auth/state` (zalogowany), `POST /api/password/change` (zalogowany, po bramce MFA). Trasy administratora `POST /api/admin/users/{id}/password-reset` i `/mfa-reset` wymagają roli admin z MFA jak cały moduł `admin` (`tests/pg-admin.test.js`, `tests/pg-login.test.js`).
+
+Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają na poziomie trasy MFA (dla admina, zarządu i skarbnika wymusza je bramka MFA routera), także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
 
 ## Znane luki (przypadki `todo` w macierzy)
 
