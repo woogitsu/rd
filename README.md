@@ -72,6 +72,10 @@ Lokalny moduł wydruku: `npm run dev:print`. Operator wczytuje plik CSV/JSON w p
 
 Chroniony panel dokumentów: `npm run dev:documents` (API przez `npm run dev` lub serwer Node). Lista dokumentów dostępnych według roli, metadane, pobranie przez serwer i przesłanie PDF/PNG/JPEG z kluczem idempotencji. Prototyp — nie do pracy na prawdziwych dokumentach przed decyzjami D-04, D-05, D-08 i D-09. [Instrukcja panelu](documents/README.md), [zasady](docs/DOCUMENTS.md).
 
+## Strona publiczna
+
+Prototyp strony tylko do odczytu pod `/site/`: `npm run dev:site`. Pokazuje wyłącznie opublikowane wydarzenia (#12), protokoły udostępnione publicznie (#13) i opcjonalnie aktualności. Bez logowania i plików cookie. [Opis strony](site/README.md).
+
 ## Start implementacji
 
 1. Uzgodnić zakres i przepływ danych ze szkołą.

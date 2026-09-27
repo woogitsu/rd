@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="Wydarzenia i zatwierdzone protokoły Rady Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli." />
+    <title>Rada Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <p class="site-name">Rada Rodziców Szkoły Polskiej im.&nbsp;Joachima Lelewela w&nbsp;Brukseli</p>
+      <nav aria-label="Sekcje strony">
+        <ul>
+          <li id="news-nav" hidden><a href="#aktualnosci">Aktualności</a></li>
+          <li><a href="#wydarzenia">Wydarzenia</a></li>
+          <li><a href="#protokoly">Protokoły</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <h1>Rada Rodziców</h1>
+      <p class="lead">
+        Strona pokazuje wyłącznie informacje zatwierdzone i opublikowane przez Radę Rodziców.
+        Godziny podano w czasie brukselskim.
+      </p>
+
+      <section id="aktualnosci" aria-labelledby="news-title" hidden>
+        <h2 id="news-title">Aktualności</h2>
+        <p class="status" id="news-status" role="status"></p>
+        <div id="news-list"></div>
+      </section>
+
+      <section id="wydarzenia" aria-labelledby="events-title" aria-busy="true">
+        <h2 id="events-title">Najbliższe wydarzenia</h2>
+        <p class="status" id="events-status" role="status">Wczytywanie…</p>
+        <div id="events-list"></div>
+      </section>
+
+      <section id="protokoly" aria-labelledby="minutes-title" aria-busy="true">
+        <h2 id="minutes-title">Protokoły zebrań</h2>
+        <p class="section-note" id="minutes-year"></p>
+        <p class="status" id="minutes-status" role="status">Wczytywanie…</p>
+        <div id="minutes-list"></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Rada Rodziców Szkoły Polskiej im.&nbsp;Joachima Lelewela w&nbsp;Brukseli</p>
+      <p>Strona nie używa plików cookie i nie wymaga logowania.</p>
+    </footer>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

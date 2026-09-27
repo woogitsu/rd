@@ -1,0 +1,98 @@
+:root {
+  --text: #282c2f;
+  --muted: #5c6166;
+  --line: #e2e2e0;
+  --soft: #f5f5f4;
+  --red: #b3262d;
+  --red-dark: #8e2026;
+  color: var(--text);
+  background: #fff;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: #fff; overflow-wrap: anywhere; }
+h1, h2, h3, h4, p, ol, ul, dl, dd { margin-top: 0; }
+
+a { color: var(--red); }
+a:hover { color: var(--red-dark); }
+:focus-visible { outline: 3px solid var(--red-dark); outline-offset: 2px; }
+
+.skip-link { position: absolute; left: 1rem; top: -3rem; padding: .5rem .75rem; background: #fff; color: var(--red-dark); border: 1px solid var(--red-dark); }
+.skip-link:focus { top: 1rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem 2rem;
+  padding: 1rem max(16px, calc((100% - 960px) / 2));
+  border-top: 3px solid var(--red);
+  border-bottom: 1px solid var(--line);
+}
+.site-name { margin: 0; font-weight: 700; max-width: 36rem; }
+nav ul { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; margin: 0; padding: 0; list-style: none; }
+nav a { display: inline-block; padding: .35rem 0; color: var(--text); text-decoration: none; }
+nav a:hover { color: var(--red); text-decoration: underline; }
+
+main { max-width: 960px; margin: 0 auto; padding: 2.5rem 16px 3rem; }
+main:focus { outline: none; }
+h1 { margin-bottom: .75rem; font-family: Georgia, "Times New Roman", serif; font-size: clamp(1.8rem, 5vw, 2.6rem); font-weight: 400; }
+.lead { max-width: 42rem; color: var(--muted); }
+
+main > section { margin-top: 2.75rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+h2 { margin-bottom: 1rem; font-size: 1.35rem; }
+.section-note, .status { color: var(--muted); }
+.status[hidden] { display: none; }
+
+.month { margin-bottom: 2rem; }
+.month-title { margin-bottom: .5rem; padding-bottom: .35rem; color: var(--red); font-size: 1rem; border-bottom: 1px solid var(--red); }
+
+.event-list, .minutes-list, .news-list { margin: 0; padding: 0; list-style: none; }
+.event, .minutes, .news { padding: 1rem 0; border-bottom: 1px solid var(--line); }
+.event:last-child, .minutes:last-child, .news:last-child { border-bottom: 0; }
+.event-time { margin-bottom: .25rem; color: var(--red); font-weight: 600; }
+.event-title, .minutes-title, .news-title { margin-bottom: .5rem; font-size: 1.1rem; }
+.event-description, .news-body { margin-bottom: 0; white-space: pre-line; max-width: 42rem; }
+
+.event.cancelled .event-time { color: var(--muted); text-decoration: line-through; }
+.event.cancelled .event-title span:last-child { color: var(--muted); }
+.badge { display: inline-block; padding: 0 .4rem; color: var(--red-dark); border: 1px solid var(--red-dark); font-size: .8rem; font-weight: 700; vertical-align: .1em; }
+
+.event-details, .minutes-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: .15rem 1rem;
+  margin-bottom: .5rem;
+  font-size: .95rem;
+}
+.event-details dt, .minutes-meta dt { color: var(--muted); }
+.event-details dd, .minutes-meta dd { margin: 0; }
+
+.minutes-body summary { cursor: pointer; color: var(--red); padding: .25rem 0; }
+.minutes-text { margin-top: .5rem; padding: 1rem; background: var(--soft); white-space: pre-wrap; max-width: 48rem; }
+.news-date { display: block; margin-bottom: .25rem; color: var(--muted); font-size: .9rem; }
+
+.site-footer { padding: 1.5rem 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; text-align: center; }
+.site-footer p { margin: .25rem 0; }
+
+@media (max-width: 480px) {
+  .event-details, .minutes-meta { grid-template-columns: 1fr; }
+  .event-details dd, .minutes-meta dd { margin-bottom: .35rem; }
+}
+
+@media print {
+  :root { font-size: 11pt; }
+  .skip-link, nav, .site-footer p:last-child { display: none; }
+  .site-header { padding: 0 0 .5rem; border-top: 0; }
+  main { max-width: none; padding: 1rem 0; }
+  a { color: inherit; text-decoration: none; }
+  .month-title, .event-time { color: #000; border-color: #000; }
+  .event, .minutes, .news { break-inside: avoid; }
+  .minutes-text { padding: 0; background: none; }
+  /* main.js opens every <details> on beforeprint. */
+  .minutes-body summary { display: none; }
+}
