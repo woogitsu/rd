@@ -1,6 +1,17 @@
 # Handover — praca nad issues RD (sesja 2026-09-27)
 
-Dokument dla modelu/osoby przejmującej pracę. Stan na 2026-09-27 ~17:30 UTC.
+Dokument dla modelu/osoby przejmującej pracę. Stan na 2026-09-27 ~18:10 UTC. Wszystko wypchnięte na GitHub; żadna praca nie jest w toku.
+
+## 0. Gałęzie na GitHubie
+| Gałąź | HEAD | Zawartość |
+|---|---|---|
+| `main` | `f7dde12` | scalone PR #50–#71 |
+| `claude/determined-noether-95gpi9` | ten commit | = `main` + ten handover (gałąź robocza do kolejnych PR) |
+| `claude/determined-noether-95gpi9-queue` | `d3b7e2a` | kolejka 7 niescalonych zakresów (sekcja 3); pełny zestaw 528/528 lokalnie |
+| `claude/determined-noether-95gpi9-login` | `76f4bea` | logowanie e-mail + hasło + TOTP (sekcja 4), na `c600b26` |
+| `claude/determined-noether-95gpi9-login-snapshot` | `75ea89b` | nieaktualna migawka — do usunięcia |
+
+Następny krok: scalić sekcję 3 (pozycje 1–7) po jednym PR, potem sekcję 4. Po zakończeniu usunąć gałęzie `-queue`, `-login`, `-login-snapshot` i ten plik (albo przenieść go do historii).
 
 ## 1. Zasady (przeczytaj najpierw)
 - `AGENTS.md` jest wiążący: polski, EUR w centach, dane wyłącznie syntetyczne, autoryzacja po stronie serwera, trwały audyt bez PII, brak statusu „dłużnik”, brak wysyłki bez zatwierdzenia, **brak produkcyjnego deployu bez decyzji szkoły/IOD**, jeden PR = jeden spójny zakres, migracja + opis skutków dla każdej zmiany schematu.
@@ -54,15 +65,23 @@ Każdy krok: cherry-pick na gałąź roboczą (zsynchronizowaną z main), `node 
 
 Konflikty były rozwiązywane jako sumy: `src/pg/app.js` (importy + ROUTES), `src/node-app.js` STATIC_PREFIXES, `package.json` scripts/`build`, `ci.yml` kroki build, README, `postgres/README.md`, `src/server.js` obiekt env. Pozycje kolejki zostały już zrebazowane na siebie, więc przy zachowaniu kolejności cherry-picki powinny wchodzić czysto.
 
-## 4. W TOKU w chwili przekazania
-**Logowanie e-mail + hasło + 2FA TOTP (Google/Microsoft Authenticator)** — wskazanie użytkownika z 2026-09-27 (zapisać w D-10 jako wskazanie do formalnego potwierdzenia przez zarząd/IOD). Agent pracował na gałęzi lokalnej `login` od `c600b26`; poproszony o wypchnięcie na `claude/determined-noether-95gpi9-login` (sprawdź, czy istnieje: `git ls-remote origin 'refs/heads/claude/*'`). Jeśli nie ma — zaimplementuj od zera wg specyfikacji:
-- migracja `0020_password_login.sql`: `user_passwords` (scrypt z parametrami w stringu), limity prób (tylko SHA-256 e-maila/IP), jednorazowe tokeny resetu wydawane przez admina;
-- `src/pg/password.js` (scrypt, `timingSafeEqual`, polityka NIST 800-63B: min 12 znaków, lista popularnych haseł, weryfikacja na dummy hash dla nieznanego e-maila);
-- `src/pg/routes/login.js`: `POST /api/login` (ogólny błąd `invalid_credentials`, 429 z Retry-After, audyt bez e-maila), `POST /api/invitations/accept`, `POST /api/password/change` (cofa inne sesje), `POST /api/password/reset`; w admin API `password-reset` i `mfa-reset`;
-- polityka: `MFA_REQUIRED_ROLES` (domyślnie admin, board, treasurer) — bez potwierdzonego czynnika 403 `mfa_enrollment_required`; weryfikacja kodu przez istniejące `/api/mfa/verify` (rotuje sesję);
-- UI `login/` (QR otpauth — np. pakiet `qrcode` z przypiętą wersją, bez CDN; `autocomplete` username/current-password/one-time-code; bez CAPTCHA; token zaproszenia we fragmencie URL), `/` → 308 na `/login/`;
-- testy `tests/pg-login.test.js`, `tests/login-core.test.js`; dokumentacja AUTH/ACCOUNTS/DECISIONS.
-Zależy od pozycji 5 i 7 kolejki (MFA, admin, autoryzacja) — scal ją najpierw.
+## 4. Logowanie e-mail + hasło + 2FA TOTP — GOTOWE, NIESCALONE
+Wskazanie użytkownika z 2026-09-27 (w D-10 zapisane jako wskazanie do formalnego potwierdzenia przez zarząd/IOD, nie decyzja).
+
+- **Gałąź:** `claude/determined-noether-95gpi9-login`, HEAD `76f4bea`, zbudowana na `c600b26` (środek kolejki). Commity: `5b78a61` (backend, tytuł jeszcze „WIP” — przy PR można nadać nowy tytuł), `07cf7f3` (aplikacja `login/`, testy, dostosowanie testów do bramki MFA), `c56c302` (dokumentacja), `76f4bea` (limit prób przy przyjmowaniu zaproszenia na istniejące konto).
+- Gałąź `claude/determined-noether-95gpi9-login-snapshot` to pośrednia migawka — **nieaktualna, można usunąć**.
+- **Kolejność scalenia:** dopiero PO pozycji 7 kolejki (autoryzacja + pełna macierz). Cherry-pick 4 commitów na gałąź roboczą po scaleniu pozycji 7. Spodziewane konflikty: `tests/helpers/route-matrix.js` (login dodaje `mfaGateBlocks`; gałąź `combined` przerobiła macierz), testy `pg-documents`, `pg-export`, `pg-families`, `pg-ledger-api`, `pg-payments-api`, `pg-print`, `security-pg-review`, oraz sumy w `src/pg/app.js`, `src/node-app.js`, `package.json`, `ci.yml`, `README.md`, `postgres/README.md`, `.env.example`.
+- **Do dokończenia przy scalaniu:** dopisać trasy logowania (`/api/login`, `/api/auth/state`, `/api/invitations/accept`, `/api/password/change`, `/api/password/reset`, `/api/admin/users/{id}/password-reset`, `/api/admin/users/{id}/mfa-reset`) do macierzy w `tests/helpers/route-matrix.js` i tabeli w `docs/AUTHORIZATION.md` — meta-test macierzy tego wymaga. Na gałęzi `login` pełny zestaw: 459/461, a 2 porażki to właśnie te meta-testy (nie pokrywają też modułów z przed pozycji 7).
+- **Zawartość:**
+  - migracja `0020_password_login.sql`: `user_passwords` (`scrypt$N$r$p$salt$key`), `login_rate_limits` (tylko SHA-256 e-maila/IP), `password_reset_tokens` (SHA-256, jednorazowe), nowe powody cofnięcia sesji;
+  - `src/pg/password.js`: scrypt N=2^17, r=8, p=1 (`SCRYPT_COST_LOG2`), przeliczanie starych parametrów po logowaniu, `timingSafeEqual`, zastępczy skrót dla nieznanego e-maila, maks. 2 równoległe obliczenia, polityka NIST (12–128 znaków po NFKC, lista popularnych haseł, bez hasła zawierającego e-mail);
+  - trasy: `POST /api/login` (ogólny `invalid_credentials`, 5 prób/15 min na e-mail i 20 na IP → 429), `GET /api/auth/state`, `POST /api/invitations/accept` (istniejące konto z hasłem wymaga obecnego hasła), `POST /api/password/change` (cofa inne sesje, rotuje bieżącą), `POST /api/password/reset`; admin + MFA: `password-reset` (token jednorazowy 2 h) i `mfa-reset` (`{confirm:"<id>"}`, nie dla własnego konta);
+  - **bramka MFA** w routerze (`src/pg/mfa-policy.js`): konto z potwierdzonym czynnikiem bez zweryfikowanej sesji → `403 mfa_required`; rola z `MFA_REQUIRED_ROLES` (domyślnie admin, board, treasurer) bez czynnika → `403 mfa_enrollment_required`; wyjątki: sesja, dostęp, stan logowania, wylogowanie, `/api/mfa/*`, logowanie, zaproszenia, reset hasła, `/api/public/*`, publiczne protokoły, webhook Brevo;
+  - serwer: `/` → 308 na `/login/`; nagłówek `x-rd-client-ip` zawsze nadpisywany (ostatni wpis `X-Forwarded-For` tylko przy `TRUST_PROXY=1`);
+  - UI `login/`: logowanie, kod TOTP lub kod odzyskiwania, rejestracja 2FA (QR po stronie klienta + klucz ręczny, 10 kodów odzyskiwania raz), zaproszenie `#invite=`, reset `#reset=`, zmiana hasła, strona startowa z panelami; bez CAPTCHA, wklejanie i menedżery haseł działają;
+  - nowa zależność: `qrcode-generator` 1.4.4 (MIT, bez zależności, tylko w przeglądarce), przypięta w `package.json` i `package-lock.json`;
+  - testy: `tests/pg-login.test.js` (14), `tests/login-core.test.js` (8), nowy test w `tests/node-app.test.js`.
+- **Ryzyka:** bramka MFA zmienia zachowanie (admin/zarząd/skarbnik bez zweryfikowanej sesji dostają 403 wszędzie); limit na IP działa tylko z `TRUST_PROXY=1` za proxy Railway; skróty e-mail/IP to pseudonimizacja (czyszczone po dobie — założenie do D-04); w `admin/` brak przycisków resetu hasła/MFA (tylko API); UI niesprawdzone w przeglądarce ani czytnikiem ekranu; brak powiadomień e-mail (D-16/D-17) i procedury potwierdzania tożsamości przed resetem.
 
 ## 5. Znane otwarte kwestie techniczne
 - **SR-05 (ważne przed produkcją):** blokady niezmienności to triggery — właściciel tabel może je obejść (`TRUNCATE`, `DISABLE TRIGGER`, `session_replication_role`). Aplikacja musi łączyć się osobną rolą bez własności tabel; migracje i restore — rolą właściciela. Dopisać instrukcję SQL do `docs/RAILWAY_OPERATIONS.md`.
@@ -78,7 +97,7 @@ Zależy od pozycji 5 i 7 kolejki (MFA, admin, autoryzacja) — scal ją najpierw
 
 ## 6. Czego NIE robić bez decyzji
 - Produkcyjny deploy Railway (D-20), import prawdziwych danych (D-01…D-07), wysyłka e-maili do rodziców (D-16/D-17, domena Brevo), usunięcie Workera/D1 (#42 — dopiero po odbiorze stagingu i próbie odtworzenia).
-- Staging na danych syntetycznych jest dozwolony technicznie; użytkownik pytał o uruchomienie na Railway — zaproponowano staging po scaleniu kolejki i logowania (Railway MCP dostępny). Czekało na odpowiedź użytkownika.
+- Staging na danych syntetycznych jest dozwolony technicznie; użytkownik pytał o uruchomienie na Railway — zaproponowano staging po scaleniu kolejki i logowania (Railway MCP dostępny). Użytkownik nie odpowiedział — **nie uruchamiaj stagingu bez jego zgody**.
 
 ## 7. Plan na staging (po scaleniu kolejki + logowania)
 1. Projekt Railway w UE (Amsterdam): usługa Node, prywatny PostgreSQL, prywatny Storage Bucket.
