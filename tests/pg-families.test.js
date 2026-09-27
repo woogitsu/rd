@@ -350,7 +350,7 @@ describe('karta gospodarstwa: zakres klasowy i zgody relacji (#95)', () => {
     };
     const rep1a = await seedUserSession(db, { userId: 'u-rep-1a', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y1 }] });
     const rep3c = await seedUserSession(db, { userId: 'u-rep-3c', roles: [{ role: 'representative', classId: 'c-3c', schoolYearId: Y1 }] });
-    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }] });
+    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
     const guardianView = (body) => body.guardians.map((g) => [g.id, g.contactAllowed, g.email]);
 
     // Lista klasy 1A: tylko gospodarstwa kontaktowe (h-q: opiekun bez zgody relacji).
@@ -453,8 +453,8 @@ describe('zmiana kontaktu opiekuna: zakres klasowy przez relację z uczniem (#20
       const response = await handlePgRequest(request(path, { method: 'PATCH', cookie, body }), env);
       return { status: response.status, body: await response.json() };
     };
-    const boardA = await seedUserSession(db, { userId: 'u-board-1a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }] });
-    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }] });
+    const boardA = await seedUserSession(db, { userId: 'u-board-1a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }], mfa: true });
+    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
     const body = { email: 'przejete@example.invalid', contactAllowed: false, reason: 'test zakresu' };
     const snapshot = async () => (await db.query('SELECT id, email, contact_allowed FROM guardians ORDER BY id')).rows;
     const counts = async () => ({
