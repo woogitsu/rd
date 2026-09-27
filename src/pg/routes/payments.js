@@ -259,6 +259,9 @@ function mapDatabaseError(error) {
   }
   // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze) — stan, nie awaria.
   if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
+  // Data spoza [starts_on, ends_on] roku (0027, trigger po zamrożeniu roku): jedna
+  // reguła w bazie, więc bezpośredni INSERT i API odrzucają to samo.
+  if (message.includes('date_outside_school_year')) throw new RequestError('date_outside_school_year', 422);
   if (error?.code === '23503') throw new RequestError('invalid_reference');
   throw error;
 }

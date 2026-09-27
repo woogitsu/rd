@@ -195,9 +195,9 @@ async function makePayment(db, target, stage) {
   await db.query(
     `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
        reference, status, created_by, idempotency_key)
-     VALUES ($1, $2, $3, 100000, '2026-10-01', 'bank', $4, $5, $6, $7)`,
+     VALUES ($1, $2, $3, 100000, $8, 'bank', $4, $5, $6, $7)`,
     [id, unmatched ? null : 'hh-1', target.schoolYearId, `Wpłata ${marker(target.key)}`,
-      unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`],
+      unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`, yearDate(target, '10-01')],
   );
   return { paymentId: id };
 }
