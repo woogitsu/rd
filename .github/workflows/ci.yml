@@ -1,4 +1,4 @@
-name: Import preview checks
+name: Project checks
 on:
   pull_request:
   push:
@@ -18,3 +18,4 @@ jobs:
       - run: npm test
       - run: npm run build:import
       - run: test -f dist/import/template.csv
+      - run: npm run db:migrate:local
