@@ -1,4 +1,4 @@
-import { readSheet } from 'read-excel-file/browser';
+import { readXlsxRows } from './xlsx.js';
 import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 const fileInput = document.querySelector('#file');
@@ -34,7 +34,7 @@ async function readSelectedFile() {
       const decoded = decodeCsvBytes(await file.arrayBuffer(), { encoding: encodingSelect.value });
       source = describeSource(decoded, detectDelimiter(decoded.text)); warnings = decoded.warnings;
       matrix = parseCsv(decoded.text);
-    } else matrix = await readSheet(file);
+    } else matrix = await readXlsxRows(await file.arrayBuffer());
     if (matrix.length < 2 || matrix.length > 5001) throw new Error('Plik musi zawierać od 1 do 5000 wierszy danych.');
     if (!Array.isArray(matrix[0]) || matrix[0].length > 60) throw new Error('Nagłówek ma więcej niż 60 kolumn.');
     const headers = matrix[0].map(v => String(v ?? '').trim());

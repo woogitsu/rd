@@ -46,6 +46,7 @@
     "build:login": "vite build login --outDir ../dist/login --base ./ --emptyOutDir"
   },
   "dependencies": {
+    "fflate": "0.8.3",
     "pg": "8.23.0",
     "qrcode-generator": "1.4.4",
     "read-excel-file": "9.3.10",

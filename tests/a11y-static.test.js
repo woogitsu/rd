@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 const APPS = ['import', 'panel', 'ledger', 'print'];
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const html = Object.fromEntries(APPS.map((app) => [app, read(`${app}/index.html`)]));
-const css = Object.fromEntries(APPS.map((app) => [app, app === 'import' ? html.import : read(`${app}/styles.css`)]));
+const css = Object.fromEntries(APPS.map((app) => [app, read(`${app}/styles.css`)]));
 
 function tags(source) {
   const body = source.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<script[\s\S]*?<\/script>/gi, '');
