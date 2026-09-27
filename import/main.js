@@ -1,6 +1,7 @@
 import { readSheet } from 'read-excel-file/browser';
 import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
+import { api as apiRequest, errorMessage } from '../shared/api.js';
 const fileInput = document.querySelector('#file');
 const encodingSelect = document.querySelector('#encoding');
 const status = document.querySelector('#file-status');
@@ -107,7 +108,7 @@ const ERRORS = {
 const ACTIONS = { add: 'Nowy', update: 'Aktualizacja', unchanged: 'Bez zmian', conflict: 'Konflikt', skipped: 'Pominięty' };
 function serverMessage(status, data) {
   const code = data?.error;
-  const base = ERRORS[code] ?? `Błąd serwera (${status}).`;
+  const base = errorMessage(code, status, ERRORS);
   return data?.message ? `${base} ${data.message}` : base;
 }
 function setServerStatus(text, error = false) { serverStatus.className = error ? 'status error' : 'status muted'; serverStatus.textContent = text; }
@@ -120,13 +121,14 @@ function resetServer() {
   serverReport.replaceChildren(); setServerStatus('');
   updateButtons();
 }
+// Wspólny klient (#99): 401/403 MFA → /login/ z powrotem. Błąd sieci rzuca wyjątek jak dotąd.
 async function api(path, { method = 'GET', body, headers = {} } = {}) {
-  const init = { method, credentials: 'same-origin', headers: { ...headers } };
-  if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
-  const response = await fetch(path, init);
-  let data = null;
-  try { data = await response.json(); } catch { data = null; }
-  return { status: response.status, ok: response.ok, data };
+  try {
+    return { status: 200, ok: true, data: await apiRequest(path, { method, body, headers }) };
+  } catch (error) {
+    if (error.network) throw error;
+    return { status: error.status, ok: false, data: error.data };
+  }
 }
 function reportBoxes(entries) {
   const report = document.createElement('div'); report.className = 'report wide';

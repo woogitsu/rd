@@ -1,4 +1,5 @@
 // Czyste funkcje widoku rodzin (bez DOM), aby dało się je testować w Node.
+import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -17,7 +18,7 @@ export const ERROR_MESSAGES = {
 };
 
 export function errorMessage(code, status) {
-  return ERROR_MESSAGES[code] ?? `Błąd serwera (${status}).`;
+  return ERROR_MESSAGES[code] ?? sharedErrorMessage(code, status);
 }
 
 export function isValidId(value) {

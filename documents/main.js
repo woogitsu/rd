@@ -1,5 +1,6 @@
 import {
   DEFAULT_MAX_BYTES,
+  ERROR_MESSAGES,
   KIND_HINTS,
   KIND_LABELS,
   LIST_LIMIT,
@@ -21,6 +22,17 @@ import {
   typeLabel,
   validateUploadMeta,
 } from "./core.js";
+import { MESSAGES, api, errorMessage as sharedErrorMessage, handleAuthFailure } from "../shared/api.js";
+
+// Tekst błędu (#99): słownik dokumentów, potem wspólny (np. mfa_required), potem
+// komunikaty dokumentów według statusu; pozostałe statusy — wspólny tekst.
+const DOCUMENT_STATUS_TEXTS = new Set([0, 400, 401, 403, 404, 409, 413, 415, 503]);
+function apiErrorText(status, body) {
+  const code = typeof body?.error === "string" ? body.error : "";
+  if (Object.hasOwn(ERROR_MESSAGES, code)) return errorMessage(status, body);
+  if (Object.hasOwn(MESSAGES, code) || !DOCUMENT_STATUS_TEXTS.has(status)) return sharedErrorMessage(code, status);
+  return errorMessage(status, body);
+}
 
 const byId = (id) => document.getElementById(id);
 const state = { documents: [], query: null, offset: 0, pending: null, uploading: false };
@@ -47,21 +59,18 @@ const uploadStatus = byId("upload-status");
 
 class ApiError extends Error {
   constructor(status, body) {
-    super(errorMessage(status, body));
+    super(apiErrorText(status, body));
     this.status = status;
   }
 }
 
+// Wspólny klient (#99): 401/403 MFA → /login/ z powrotem.
 async function getJson(url) {
-  let response;
   try {
-    response = await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } });
-  } catch {
-    throw new ApiError(0, null);
+    return await api(url);
+  } catch (error) {
+    throw new ApiError(error.status ?? 0, error.data ?? null);
   }
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(response.status, body);
-  return body ?? {};
 }
 
 function setMessage(element, text, kind = "") {
@@ -254,6 +263,8 @@ function sendUpload(request, file) {
     xhr.addEventListener("load", () => {
       let body = null;
       try { body = JSON.parse(xhr.responseText); } catch { body = null; }
+      // 401 / 403 MFA: ten sam powrót przez /login/ co w kliencie API (#99).
+      if (xhr.status === 401 || xhr.status === 403) handleAuthFailure(xhr.status, body?.error);
       resolve({ status: xhr.status, body });
     });
     xhr.addEventListener("error", () => resolve({ status: 0, body: null }));
@@ -326,7 +337,7 @@ uploadForm.addEventListener("submit", async (event) => {
     if (state.query && state.query.schoolYearId === doc.schoolYearId) loadList();
     return;
   }
-  const text = errorMessage(status, body);
+  const text = apiErrorText(status, body);
   if (isRetryable(status)) {
     setMessage(uploadStatus, `${text} Kliknij „Prześlij dokument”, aby ponowić tę samą operację.`, "error");
   } else {

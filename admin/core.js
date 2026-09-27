@@ -1,4 +1,5 @@
 // Czyste funkcje panelu administracji kont (bez DOM i sieci) — testowane w tests/admin-core.test.js.
+import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -38,7 +39,7 @@ export const ACTION_LABELS = Object.freeze({
   "session.revoked": "Wycofanie sesji",
 });
 
-const ERROR_MESSAGES = Object.freeze({
+export const ERROR_MESSAGES = Object.freeze({
   unauthenticated: "Sesja wygasła. Zaloguj się ponownie.",
   forbidden: "Brak uprawnień. Panel wymaga roli administratora i potwierdzonego MFA.",
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony.",
@@ -63,8 +64,7 @@ const ERROR_MESSAGES = Object.freeze({
 
 export function errorMessage(code, status) {
   if (code && Object.hasOwn(ERROR_MESSAGES, code)) return ERROR_MESSAGES[code];
-  if (status >= 500) return "Usługa chwilowo niedostępna. Spróbuj ponownie.";
-  return code ? `Operacja odrzucona (${code}).` : `Błąd serwera (${status ?? "?"}).`;
+  return sharedErrorMessage(code, status);
 }
 
 export function isValidId(value) {

@@ -7,6 +7,7 @@ import {
   isRecoveryFormat,
   isTotpFormat,
   logoutOutcome,
+  nextFromFragment,
   nextView,
   normalizeEmailInput,
   normalizeRecoveryCode,
@@ -31,6 +32,8 @@ const TITLES = {
 const byId = (id) => document.getElementById(id);
 const globalMessage = byId("global-message");
 let lastState = null;
+// Ścieżka panelu, z którego przyszło przekierowanie (#99); tylko w pamięci strony.
+let returnTo = nextFromFragment(window.location.hash);
 
 class ApiError extends Error {
   constructor(code, status) { super(errorMessage(code, status)); this.code = code; this.status = status; }
@@ -84,11 +87,17 @@ async function submitting(form, work) {
   try { await work(); } finally { button.disabled = false; }
 }
 
-async function goNext(state) {
+// `initial`: stan odczytany przy wejściu na stronę. Wtedy nie przekierowujemy od razu,
+// żeby rozjazd stanu sesji z odpowiedzią panelu nie dał pętli przekierowań.
+async function goNext(state, { initial = false } = {}) {
   lastState = state;
   const view = nextView(state);
   // Przejście do kolejnego etapu: pola haseł puste, „Pokaż hasło” wyłączone (#197).
   clearSensitiveViews(document);
+  if (view === "start" && returnTo && !initial) {
+    window.location.replace(returnTo);
+    return;
+  }
   if (view === "start") renderStart();
   if (view === "enroll") resetEnrollment();
   showView(view);
@@ -381,7 +390,8 @@ byId("open-change").addEventListener("click", () => showView("change"));
 
 function renderStart() {
   const list = byId("panel-list");
-  list.replaceChildren(...PANELS.map((panel) => {
+  const back = returnTo ? [{ href: returnTo, label: "Powrót do poprzedniej strony", hint: returnTo }] : [];
+  list.replaceChildren(...[...back, ...PANELS].map((panel) => {
     const item = document.createElement("li");
     const link = document.createElement("a");
     link.href = panel.href;
@@ -403,6 +413,7 @@ for (const button of document.querySelectorAll(".logout")) {
     say(outcome.message);
     if (outcome.loggedOut) {
       lastState = null;
+      returnTo = null;
       resetEnrollment();
       showView("login");
     }
@@ -422,6 +433,7 @@ byId("logout-all").addEventListener("click", async () => {
     if (!outcome.loggedOut) return;
   }
   lastState = null;
+  returnTo = null;
   showView("login");
 });
 
@@ -429,6 +441,7 @@ byId("logout-all").addEventListener("click", async () => {
 
 async function route() {
   const fragment = parseFragment(window.location.hash);
+  returnTo = nextFromFragment(window.location.hash);
   if (fragment.view === "invite" || fragment.view === "reset") {
     // Token z części „#…” przenosimy do pola i usuwamy z paska adresu i historii.
     if (fragment.token) byId(`${fragment.view}-token`).value = fragment.token;
@@ -443,7 +456,7 @@ async function route() {
       showView("change");
       return;
     }
-    await goNext(state);
+    await goNext(state, { initial: true });
   } catch (error) {
     say(error.message);
     showView("login");
