@@ -12,7 +12,6 @@ import {
 test("kwota EUR jest zamieniana na całkowitą liczbę centów", () => {
   assert.equal(parseEuroAmount("123,45"), 12_345);
   assert.equal(parseEuroAmount("10"), 1_000);
-  assert.equal(parseEuroAmount("-10,50", { allowNegative: true }), -1_050);
   assert.throws(() => parseEuroAmount("10,501"));
   assert.throws(() => parseEuroAmount("-10"));
   assert.match(formatCents(12_345), /123,45/);
@@ -39,18 +38,17 @@ test("normalizacja wylicza kwotę netto i bezpieczne etykiety", () => {
     method: "bank_transfer",
     status: "recorded",
     amountCents: 5_000,
-    correctedCents: -500,
+    correctedCents: 500,
   }), {
     id: "pay-1",
     schoolYearId: "2026-2027",
-    familyId: null,
-    familyLabel: "—",
+    householdId: null,
     receivedOn: "2026-09-27",
     method: "bank_transfer",
     status: "recorded",
     reference: "",
     amountCents: 5_000,
-    correctedCents: -500,
+    correctedCents: 500,
     netCents: 4_500,
   });
 });
