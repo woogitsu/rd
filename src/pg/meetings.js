@@ -43,6 +43,8 @@ const DATABASE_CONFLICTS = new Set([
   'resolution_final_immutable', 'resolution_identity_immutable', 'resolution_correction_mismatch',
   'resolution_amends_requires_adopted', 'resolution_requires_held_meeting',
   'resolution_quorum_check_required', 'resolution_votes_exceed_present_voters',
+  // 0021_meetings_integrity.sql (#81)
+  'minutes_open_resolutions', 'resolution_quorum_check_stale',
 ]);
 
 export class MeetingError extends Error {
@@ -355,6 +357,11 @@ function attendeeFromRow(row) {
   };
 }
 
+const QUORUM_CHECK_SELECT = `SELECT c.*,
+    c.attendance_revision IS NOT NULL AND c.attendance_revision = COALESCE(s.revision, 0) AS is_current
+  FROM meeting_quorum_checks c
+  LEFT JOIN meeting_attendance_state s ON s.meeting_id = c.meeting_id`;
+
 function quorumCheckFromRow(row) {
   return {
     id: row.id,
@@ -369,6 +376,9 @@ function quorumCheckFromRow(row) {
     requiredCount: row.required_count,
     met: row.met,
     determinedAt: iso(row.determined_at),
+    // false: attendance changed since this check (or unknown for checks older
+    // than 0021); such a check cannot be the basis of a new decision (#81).
+    current: row.is_current === true,
   };
 }
 
@@ -467,7 +477,7 @@ export async function getMeeting(db, actor, input = {}) {
   const [agenda, attendees, checks, minutes, resolutions] = await Promise.all([
     db.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]),
     db.query('SELECT * FROM meeting_attendees WHERE meeting_id = $1 ORDER BY recorded_at, id', [meeting.id]),
-    db.query('SELECT * FROM meeting_quorum_checks WHERE meeting_id = $1 ORDER BY seq', [meeting.id]),
+    db.query(`${QUORUM_CHECK_SELECT} WHERE c.meeting_id = $1 ORDER BY c.seq`, [meeting.id]),
     db.query(
       `SELECT m.*, v.visibility FROM meeting_minutes m
          JOIN meeting_minutes_visibility v ON v.minutes_id = m.id
@@ -634,7 +644,7 @@ export async function determineQuorum(db, actor, input = {}) {
       });
       return { entityType: 'meeting_quorum_check', entityId: id };
     });
-  const row = await one(db, 'SELECT * FROM meeting_quorum_checks WHERE id = $1', [result.entityId]);
+  const row = await one(db, `${QUORUM_CHECK_SELECT} WHERE c.id = $1`, [result.entityId]);
   return { quorumCheck: quorumCheckFromRow(row), replayed: result.replayed };
 }
 
