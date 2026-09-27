@@ -224,3 +224,18 @@ dodaje blokadę wiersza ucznia/opiekuna w sprawdzaniu nakładania zakresów. Nie
 zmienia żadnego wiersza. Kampanie, worker, kartki i import czytają odtąd
 główne gospodarstwo z `student_households`, nie `students.household_id`.
 Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
+
+`0013_mfa.sql` (issue #3) dodaje tabele `user_mfa_factors` (sekret TOTP
+wyłącznie jako szyfrogram AES-256-GCM z IV i tagiem; `confirmed_at`,
+`disabled_at`, `last_used_step`), `mfa_recovery_codes` (tylko SHA-256 kodu,
+jednorazowe `used_at`, `invalidated_at`) i `mfa_rate_limits` (liczniki błędów
+i blokady osobno dla konta i sesji). Indeksy częściowe dopuszczają najwyżej
+jeden aktywny czynnik potwierdzony i jeden oczekujący na konto. Triggery
+blokują usunięcie czynnika lub kodu, zmianę szyfrogramu, cofnięcie
+`last_used_step` oraz przywrócenie wyłączonego czynnika lub użytego kodu.
+Ograniczenie `sessions.revoked_reason` zostaje poszerzone o
+`user_revoke_all`. Skutki dla danych: migracja nie zmienia ani nie przenosi
+istniejących wierszy; istniejące wartości `revoked_reason` nadal spełniają
+nowe ograniczenie. Utrata klucza `MFA_ENCRYPTION_KEY` oznacza konieczność
+ponownego zapisu wszystkich czynników. Metoda MFA (TOTP) jest propozycją do
+decyzji D-10. Opis: [`docs/AUTH.md`](../docs/AUTH.md).
