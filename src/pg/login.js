@@ -264,6 +264,8 @@ export async function acceptInvitationWithPassword(env, { token, password, displ
 
   let newHash = null;
   if (existing?.hash) {
+    // Sprawdzenie hasła istniejącego konta podlega temu samemu limitowi co logowanie.
+    await ensureNotLocked(database(env), loginScopes({ email, ip: clientIp }));
     const ok = await verifyPasswordOrDummy(password, existing.hash, env);
     if (!ok) {
       throw await failAttempt(env, {
