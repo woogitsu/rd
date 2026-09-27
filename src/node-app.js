@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 
 const MAX_BODY_BYTES = 1024 * 1024;
-const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents']);
+const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site']);
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.csv', 'text/csv; charset=utf-8'],
