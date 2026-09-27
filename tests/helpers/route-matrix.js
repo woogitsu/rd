@@ -383,7 +383,7 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
     build: ({ target, key }) => ({
       path: '/api/payments', headers: withKey(key),
-      body: { schoolYearId: target.schoolYearId, householdId: 'hh-1', amountCents: 1000, receivedOn: '2026-10-01',
+      body: { schoolYearId: target.schoolYearId, householdId: 'hh-1', amountCents: 1000, receivedOn: yearDate(target, '10-01'),
         method: 'bank', reference: `Nowa ${marker(target.key)}` },
     }),
   },
@@ -811,6 +811,14 @@ export const ROUTE_MATRIX = Object.freeze([
     id: 'families.guardianContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/contact',
     targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({ path: `/api/guardians/${obj.guardianId}/contact`, body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' } }),
+  },
+  {
+    id: 'families.relationContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/students/:studentId',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/students/${obj.studentId}`,
+      body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' },
+    }),
   },
   {
     id: 'families.enrollment', module: 'families', method: 'POST', path: '/api/students/:studentId/enrollments',

@@ -4,59 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Import uczniów · RD</title>
-<style>
-:root{font:16px/1.5 system-ui,Arial,sans-serif;color:#282c2f;background:#fff;--red:#b3262d;--red-dark:#8e2026;--muted:#5d6266;--line:#e2e2e0;--field:#767676}
-*{box-sizing:border-box}
-body{margin:0;min-width:320px;background:#fff}
-.skip-link{position:absolute;left:-999px;top:0;padding:.6rem 1rem;background:#fff;color:var(--red-dark)}
-.skip-link:focus{left:1rem;z-index:10}
-:focus-visible{outline:3px solid var(--red-dark);outline-offset:2px}
-header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.5rem 1.5rem;background:#fff;border-top:4px solid var(--red);border-bottom:1px solid var(--line);padding:12px max(16px,calc((100vw - 1150px)/2))}
-.brand{color:inherit;text-decoration:none}
-.brand strong{display:block;font:24px Georgia,serif}
-.brand small{display:block;color:var(--muted)}
-nav{display:flex;flex-wrap:wrap;gap:.25rem}
-nav a{padding:.55rem .75rem;color:#3e4347;text-decoration:none}
-nav a:hover{color:var(--red-dark);text-decoration:underline}
-nav a[aria-current="page"]{color:var(--red);box-shadow:inset 0 -2px 0 var(--red)}
-main{max-width:1150px;padding:28px 16px 65px;margin:auto}
-h1{font:32px Georgia,serif;margin:0 0 8px}
-h2{font:22px Georgia,serif;margin:0 0 12px}
-h3{margin:14px 0 6px;font-size:18px}
-p{margin:0 0 14px}
-section{background:#fff;border-top:1px solid var(--line);padding:22px 0;margin:18px 0}
-.muted{color:var(--muted)}
-.warning{border-left:3px solid var(--red);background:#fafafa;padding:12px 16px}
-.controls{display:flex;align-items:end;gap:14px;flex-wrap:wrap}
-label{display:block;font-weight:600;font-size:14px}
-input,select,button{font:inherit}
-input[type=file],select{display:block;width:100%;max-width:440px;min-height:44px;margin-top:6px;border:1px solid var(--field);padding:9px;background:#fff;border-radius:0}
-button{min-height:44px;border:1px solid var(--red);background:var(--red);color:#fff;border-radius:0;padding:10px 16px;cursor:pointer;font-weight:600}
-button:hover{background:var(--red-dark)}
-button:disabled{background:#e3e5e6;border-color:#c5c9cb;color:#565d61;cursor:not-allowed}
-.mapping{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-.mapping label select{max-width:none}
-.status{margin-top:12px;font-size:14px}
-.error{color:#9b1a23}
-.tablewrap{overflow:auto}
-table{width:100%;border-collapse:collapse;min-width:1000px}
-caption{text-align:left;font-weight:600;padding:0 0 8px}
-th,td{text-align:left;border-bottom:1px solid var(--line);padding:10px 12px;font-size:14px}
-th{background:#fafafa}
-.bad{background:#fff5f4}
-.report{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0}
-.report div{border-top:2px solid var(--red);padding-top:9px}
-.report strong{display:block;font-size:24px}
-ul{margin:8px 0;padding-left:24px}
-li{margin:5px 0}
-code{background:#f0f1f1;padding:2px 4px}
-.checks{margin:14px 0}
-.checks label{font-weight:400;margin:6px 0}
-.checks input{margin-right:8px}
-.report.wide{grid-template-columns:repeat(5,1fr)}
-@media(max-width:780px){.mapping,.report,.report.wide{grid-template-columns:1fr}h1{font-size:26px}}
-@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
-</style>
+<link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <a class="skip-link" href="#main">Przejdź do treści</a>
@@ -92,7 +40,7 @@ code{background:#f0f1f1;padding:2px 4px}
     <h2 id="mapping-title">2. Dopasuj kolumny</h2>
     <p class="muted" id="mapping-hint">Gwiazdka oznacza pole wymagane. Nie łączymy rodzeństwa ani rodzin na podstawie samego nazwiska.</p>
     <div id="mapping" class="mapping" role="group" aria-labelledby="mapping-title" aria-describedby="mapping-hint"></div>
-    <div style="margin-top:16px"><button id="preview" type="button">Sprawdź dane</button></div>
+    <div class="actions-row"><button id="preview" type="button">Sprawdź dane</button></div>
   </section>
 
   <section id="result-section" aria-labelledby="result-title" hidden>

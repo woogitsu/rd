@@ -150,6 +150,21 @@ migracji po wygaśnięciu dzierżawy trafia jak dotąd do `delivery_unknown`.
 Wycofanie: przywrócenie funkcji z `0007_email.sql` i usunięcie kolumn —
 bezpieczne tylko, gdy żaden wiersz nie jest w stanie `sending`.
 
+`0027_entry_date_within_school_year.sql` (#169) dodaje funkcję
+`school_year_contains(rok, dzień)`, triggery `b0_date_within_school_year`
+(BEFORE INSERT) na `ledger_entries.occurred_on` i `payment_entries.received_on`
+— data spoza `[starts_on, ends_on]` roku kończy się wyjątkiem
+`date_outside_school_year` (API: `422`) — oraz widok tylko do odczytu
+`school_year_date_deviations`. Skutki dla danych: żaden wiersz nie jest
+zmieniany ani usuwany; istniejące wpisy i wpłaty spoza zakresu zostają w
+sumach i są raportowane (widok, raport KR). Trigger działa tylko przy INSERT,
+więc przypisanie i korekta starych wpłat działają jak dotąd. Odtworzenie
+istniejących danych (`src/d1-postgres-migration.js`) ustawia w swojej
+transakcji `SET LOCAL rd.restore = 'on'` i przenosi historyczne wiersze bez
+zmian. Założenie zachowawcze: bez okna wpłat z wyprzedzeniem (decyzja
+skarbnika/zarządu). Wycofanie: usunięcie widoku, triggerów i funkcji; dane
+nie wymagają cofania.
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.
@@ -224,6 +239,18 @@ dodaje blokadę wiersza ucznia/opiekuna w sprawdzaniu nakładania zakresów. Nie
 zmienia żadnego wiersza. Kampanie, worker, kartki i import czytają odtąd
 główne gospodarstwo z `student_households`, nie `students.household_id`.
 Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
+
+`0026_student_guardian_history.sql` (issue #190) dodaje strażnika relacji
+opiekun–dziecko (`student_guardians`: bez DELETE, `student_id`/`guardian_id`/
+`created_at` niezmienne, `ends_on` ustawiane raz) i tabelę
+`student_guardian_changes` (historia zgody na kontakt, kontaktu głównego i dat
+relacji; aktor i powód z ustawień transakcji, `source = 'direct'` dla
+bezpośredniego SQL; tylko do dopisywania). Klucze obce relacji do `students`
+i `guardians` zmieniają się z `ON DELETE CASCADE` na `NO ACTION`: usunięcie
+ucznia lub opiekuna z relacją kończy się błędem zamiast cichego usunięcia
+relacji. Skutki dla danych: istniejące wiersze bez zmian, nowa tabela pusta;
+import, odtworzenie snapshotu D1 i eksportu (same INSERT-y) działają bez
+zmian. Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
 
 `0013_mfa.sql` (issue #3) dodaje tabele `user_mfa_factors` (sekret TOTP
 wyłącznie jako szyfrogram AES-256-GCM z IV i tagiem; `confirmed_at`,

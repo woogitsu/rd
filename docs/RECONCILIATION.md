@@ -60,7 +60,19 @@ Ogólny CSV: pierwszy wiersz to nagłówek z kolumnami `date`/`data`, `amount`/`
 
 ## Raport dla Komisji Rewizyjnej
 
-`format=json` (domyślnie) albo `format=html`. Zawiera: bilans otwarcia (z korektami), przychody, wydatki i bilans zamknięcia z `ledger_year_summary`; przychody i wydatki według kategorii (kwota pierwotna, korekty, netto) z kontrolą zgodności sum z bilansem; wydatki o kwocie pierwotnej powyżej 3000 EUR (dokładnie 3000 EUR nie jest wykazywane) z referencją uchwały i oznaczeniem braku zgodnej przyjętej uchwały; listę korekt wpisów i bilansu otwarcia (autor jako identyfikator konta); uzgodnienia rachunku z różnicą, liczbą niedopasowanych pozycji i wyjaśnieniem.
+`format=json` (domyślnie) albo `format=html`. Zawiera: bilans otwarcia (z korektami), przychody, wydatki i bilans zamknięcia z `ledger_year_summary`; przychody i wydatki według kategorii (kwota pierwotna, korekty, netto); wydatki o kwocie pierwotnej powyżej 3000 EUR (dokładnie 3000 EUR nie jest wykazywane) z referencją uchwały i oznaczeniem braku zgodnej przyjętej uchwały; listę korekt wpisów i bilansu otwarcia (autor jako identyfikator konta); uzgodnienia rachunku z różnicą, liczbą niedopasowanych pozycji i wyjaśnieniem.
+
+Kontrole krzyżowe (`report.checks.items`, #169) porównują niezależnie liczone źródła i podają liczby; wynik `ok` to wskaźnik do sprawdzenia (`null` = nie liczono), nic nie blokują:
+
+| `id` | Co porównuje |
+|---|---|
+| `year_end_balance` | `ledger_balance_at(rok, ends_on)` (wpisy datowane do ostatniego dnia roku, jak w uzgodnieniu) z bilansem zamknięcia z `ledger_year_summary` (wszystkie wpisy roku). Różnica = wpisy z datą po końcu roku. |
+| `dates_within_school_year` | Liczba wpisów księgi i wpłat z datą spoza `[starts_on, ends_on]` (widok `school_year_date_deviations`, 0027) i do 50 pierwszych identyfikatorów. |
+| `payments_in_ledger` | Suma netto wpłat `recorded` (moduł wpłat) z sumą netto wpisów księgi z `payment_entry_id`; liczba wpłat bez wpisu księgi (#138). |
+| `reconciliation_matches` | Liczba aktywnych powiązań niezgodnych kwotowo (#165) i podwójnych ujęć (#162) we wszystkich uzgodnieniach roku. |
+| `latest_confirmed_reconciliation` | Data i utrwalona różnica ostatniego zatwierdzonego uzgodnienia oraz liczba wpisów `bank` z datą po dacie wyciągu. |
+
+Raport nie pisze już „Sumy kategorii są zgodne z bilansem roku” — tamta kontrola porównywała widok sam ze sobą i zawsze wychodziła zgodna. Pola `checks.categoryIncomeMatchesSummary` i `checks.categoryExpenseMatchesSummary` zostały usunięte.
 
 Wersja HTML jest przeznaczona do druku (A4, `@page`); PDF powstaje przez „Drukuj → Zapisz jako PDF” w przeglądarce. Strona nie zawiera skryptów, a wszystkie teksty z bazy są escapowane. Odpowiedź ma `Content-Security-Policy: default-src 'none'` z wyjątkiem wbudowanego arkusza stylów dopuszczonego skrótem SHA-256, `Cache-Control: no-store`, `X-Frame-Options: DENY`. Każde wygenerowanie raportu zapisuje zdarzenie `report.audit.generated` (bez treści raportu).
 
