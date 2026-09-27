@@ -204,3 +204,12 @@ istniejący wiersz nie jest zmieniany ani usuwany. Od tej migracji nie da się
 usunąć przypisania do klasy ani zmienić jego ucznia lub roku, a uczniów i
 opiekunów z historią nie da się usunąć. Szczegóły:
 [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
+
+`0023_student_primary_household.sql` (issue #194) dodaje `rd_today()` (data
+w strefie Europe/Brussels), `student_primary_household_on(dzień)` i widok
+`student_primary_household_current`; odtwarza widoki `*_households_current` i
+triggery synchronizacji z 0014 z `rd_today()` zamiast `CURRENT_DATE` oraz
+dodaje blokadę wiersza ucznia/opiekuna w sprawdzaniu nakładania zakresów. Nie
+zmienia żadnego wiersza. Kampanie, worker, kartki i import czytają odtąd
+główne gospodarstwo z `student_households`, nie `students.household_id`.
+Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).

@@ -19,6 +19,7 @@
 import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal } from './brevo.js';
 import { contentHash, renderMessage } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
+import { brusselsDay } from '../pg/today.js';
 
 const QUOTA_LOCK_ID = 732481707;
 export const LEASE_MINUTES = 15;
@@ -76,18 +77,21 @@ async function recheckRow(tx, campaign, row, config) {
   }
   const suppressed = await tx.query('SELECT 1 FROM email_suppressions WHERE email_hash = $1', [row.email_hash]);
   if (suppressed.rows[0]) return { state: 'suppressed', error: 'address_suppressed' };
+  // Gospodarstwo dziecka = główne członkostwo obowiązujące dziś w Brukseli
+  // (#194), jak w migawce; nie kolumna students.household_id. Dzień limitu
+  // Brevo (row.day) pozostaje w UTC.
   const consent = await tx.query(
     `SELECT 1
        FROM guardians g
        JOIN student_guardians sg ON sg.guardian_id = g.id
-       JOIN students s ON s.id = sg.student_id
-      WHERE g.id = $1 AND s.household_id = $2
+       JOIN student_primary_household_on($4::date) p ON p.student_id = sg.student_id
+      WHERE g.id = $1 AND p.household_id = $2
         AND g.contact_allowed AND sg.contact_allowed
         AND lower(btrim(g.email)) = $3
         AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
         AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date)
       LIMIT 1`,
-    [row.guardian_id, row.household_id, row.email, row.day],
+    [row.guardian_id, row.household_id, row.email, row.memberDay],
   );
   if (!consent.rows[0]) return { state: 'suppressed', error: 'consent_or_address_changed' };
   const refusal = recipientRefusal(config, row.email);
@@ -164,6 +168,7 @@ async function claim(db, { config, now, day, dryRun, run }) {
       for (const row of rows) {
         if (remaining <= 0 || capLeft <= 0 || batchLeft <= 0) break;
         row.day = day;
+        row.memberDay = brusselsDay(now);
         const verdict = await recheckRow(tx, campaign, row, config);
         if (verdict) {
           run[verdict.state === 'skipped' ? 'skipped' : verdict.state === 'suppressed' ? 'suppressed' : 'failed'] += 1;
