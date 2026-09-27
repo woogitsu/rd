@@ -446,7 +446,7 @@ const WRITE_TABLES = [
   'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments', 'role_grants',
   'users', 'sessions', 'invitations', 'user_mfa_factors', 'mfa_recovery_codes',
   'import_batches', 'households', 'guardians', 'students', 'enrollments', 'student_guardians',
-  'guardian_contact_changes', 'enrollment_history', 'documents',
+  'guardian_contact_changes', 'student_guardian_changes', 'enrollment_history', 'documents',
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
   'email_webhook_events', 'email_suppressions',

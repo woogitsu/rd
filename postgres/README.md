@@ -225,6 +225,18 @@ zmienia żadnego wiersza. Kampanie, worker, kartki i import czytają odtąd
 główne gospodarstwo z `student_households`, nie `students.household_id`.
 Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
 
+`0026_student_guardian_history.sql` (issue #190) dodaje strażnika relacji
+opiekun–dziecko (`student_guardians`: bez DELETE, `student_id`/`guardian_id`/
+`created_at` niezmienne, `ends_on` ustawiane raz) i tabelę
+`student_guardian_changes` (historia zgody na kontakt, kontaktu głównego i dat
+relacji; aktor i powód z ustawień transakcji, `source = 'direct'` dla
+bezpośredniego SQL; tylko do dopisywania). Klucze obce relacji do `students`
+i `guardians` zmieniają się z `ON DELETE CASCADE` na `NO ACTION`: usunięcie
+ucznia lub opiekuna z relacją kończy się błędem zamiast cichego usunięcia
+relacji. Skutki dla danych: istniejące wiersze bez zmian, nowa tabela pusta;
+import, odtworzenie snapshotu D1 i eksportu (same INSERT-y) działają bez
+zmian. Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
+
 `0013_mfa.sql` (issue #3) dodaje tabele `user_mfa_factors` (sekret TOTP
 wyłącznie jako szyfrogram AES-256-GCM z IV i tagiem; `confirmed_at`,
 `disabled_at`, `last_used_step`), `mfa_recovery_codes` (tylko SHA-256 kodu,
