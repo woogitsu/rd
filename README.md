@@ -38,6 +38,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Zebrania, protokoły i uchwały](docs/MEETINGS.md)
 - [Prywatne dokumenty w Storage Bucket](docs/DOCUMENTS.md)
 - [Aktualności i galeria po weryfikacji praw](docs/NEWS.md)
+- [Konta, zaproszenia i przydziały ról](docs/ACCOUNTS.md)
 - [Rejestr decyzji zarządu i szkoły](docs/DECISIONS.md)
 - [Zasady pracy agentów](AGENTS.md)
 
@@ -80,6 +81,10 @@ Prototyp strony tylko do odczytu pod `/site/`: `npm run dev:site`. Pokazuje wył
 ## Zebrania Rady
 
 Chroniony panel zebrań (#13): `npm run build:meetings`, a następnie serwer Node z `DATABASE_URL` (`PORT=3000 npm start`, ścieżka `/meetings/`); podczas pracy nad interfejsem `npm run dev:meetings`. Porządek obrad, lista obecności z jawnym prawem głosu, ustalenie quorum z ręcznie wpisanej reguły, wersje protokołu z zatwierdzeniem i widocznością oraz uchwały z liczbami głosów wpisanymi przez sekretarza — bez głosowania elektronicznego. Prototyp, bez danych demonstracyjnych ani obejścia logowania. [Instrukcja panelu](meetings/README.md).
+
+## Panel kont i ról
+
+Interfejs administratora (`npm run dev:admin`, API na PostgreSQL): konta, zaproszenia z jednorazowym tokenem, przydziały ról z zakresem roku/klasy, wygaszenie kadencji i dziennik zmian. Wymaga roli administratora z MFA. [Instrukcja panelu](admin/README.md), [zasady](docs/ACCOUNTS.md). Prototyp — przyjmowanie zaproszeń czeka na decyzję D-10.
 
 ## Start implementacji
 
