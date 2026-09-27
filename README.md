@@ -44,6 +44,10 @@ Po utworzeniu bazy D1 wpisz jej identyfikator w `wrangler.jsonc`. Uruchom `npm c
 
 Pierwszy etap działa lokalnie: `npm ci`, `npm run dev:import` i `npm test`. [Instrukcja importu](import/README.md). Plik jest odczytywany w przeglądarce, pokazuje mapowanie i raport; nie zapisuje danych w D1.
 
+## Panel wpłat
+
+Chroniony interfejs ewidencji można uruchomić poleceniem `npm run dev:panel`; API działa równolegle przez `npm run dev`. Panel obsługuje listę, rejestrację, korekty i jednokrotne przypisanie wpłaty do rodziny. [Instrukcja panelu](panel/README.md). Nie zawiera danych demonstracyjnych ani obejścia logowania.
+
 ## Start implementacji
 
 1. Uzgodnić zakres i przepływ danych ze szkołą.
