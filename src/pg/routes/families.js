@@ -112,6 +112,21 @@ const scopeParams = (scope) => [scope.allYears, scope.years, scope.classIds, sco
 const CLASS_IN_SCOPE = (alias) => `($1::boolean OR ${alias}.school_year_id = ANY($2::text[])
   OR EXISTS (SELECT 1 FROM unnest($3::text[], $4::text[]) AS g(class_id, school_year_id)
               WHERE g.class_id = ${alias}.id AND (g.school_year_id IS NULL OR g.school_year_id = ${alias}.school_year_id)))`;
+// Aktywna relacja opiekun–uczeń w przedziale [starts_on, ends_on).
+const RELATION_ACTIVE = (alias) => `(${alias}.starts_on IS NULL OR ${alias}.starts_on <= CURRENT_DATE)
+  AND (${alias}.ends_on IS NULL OR ${alias}.ends_on > CURRENT_DATE)`;
+// Gospodarstwo kontaktowe ucznia (#95, założenie do D-08/D-11): należy do niego
+// opiekun z aktywną relacją do tego ucznia i obiema zgodami na kontakt (relacji
+// i opiekuna) — ta sama reguła co e-mail w liście klasy (buildClassRoster).
+// Tylko takie gospodarstwa widzi przedstawiciel; pełny obraz ma zarząd.
+const CONTACT_HOUSEHOLD = (householdExpr, studentExpr) => `EXISTS (
+  SELECT 1 FROM guardian_households_current ch
+    JOIN guardians cg ON cg.id = ch.guardian_id
+    JOIN student_guardians csg ON csg.guardian_id = cg.id
+   WHERE ch.household_id = ${householdExpr} AND csg.student_id = ${studentExpr}
+     AND csg.contact_allowed AND cg.contact_allowed AND ${RELATION_ACTIVE('csg')})`;
+// Zakres wyłącznie klasowy (przedstawiciel, także zarząd z przydziałem klasy).
+const isClassScoped = (scope) => !(scope.allYears || scope.years.length > 0);
 const STUDENT_IN_SCOPE = (studentExpr) => `($1::boolean OR EXISTS (
   SELECT 1 FROM enrollments se JOIN classes sc ON sc.id = se.class_id
    WHERE se.student_id = ${studentExpr} AND ${CLASS_IN_SCOPE('sc')}))`;
@@ -162,13 +177,16 @@ async function listClassStudents(request, env, classId, json) {
   const { scope } = await requireReadContext(request, env);
   const klass = await loadVisibleClass(env.db, scope, classId);
   if (!klass) throw notFound();
+  // Zakres klasowy: tylko gospodarstwa kontaktowe, bez oznaczenia głównego.
+  const households = isClassScoped(scope)
+    ? `SELECT json_agg(json_build_object('householdId', m.household_id) ORDER BY m.household_id)
+         FROM student_households_current m WHERE m.student_id = s.id AND ${CONTACT_HOUSEHOLD('m.household_id', 's.id')}`
+    : `SELECT json_agg(json_build_object('householdId', m.household_id, 'isPrimary', m.is_primary)
+                       ORDER BY m.is_primary DESC, m.household_id)
+         FROM student_households_current m WHERE m.student_id = s.id`;
   const { rows } = await env.db.query(
     `SELECT s.id, s.first_name, s.last_name,
-            COALESCE((
-              SELECT json_agg(json_build_object('householdId', m.household_id, 'isPrimary', m.is_primary)
-                              ORDER BY m.is_primary DESC, m.household_id)
-                FROM student_households_current m WHERE m.student_id = s.id
-            ), '[]'::json) AS households
+            COALESCE((${households}), '[]'::json) AS households
        FROM enrollments e JOIN students s ON s.id = e.student_id
       WHERE e.class_id = $1
       ORDER BY s.last_name, s.first_name, s.id`,
@@ -190,7 +208,17 @@ function financialYears(context) {
 
 async function getHousehold(request, env, householdId, json) {
   const { context, scope } = await requireReadContext(request, env);
+  const classScoped = isClassScoped(scope);
   const params = [...scopeParams(scope), householdId];
+  // Zakres klasowy: uczeń tylko wtedy, gdy to gospodarstwo jest dla niego
+  // kontaktowe; inne gospodarstwa ucznia tak samo, bez oznaczenia głównego.
+  const otherHouseholds = classScoped
+    ? `SELECT json_agg(json_build_object('householdId', o.household_id) ORDER BY o.household_id)
+         FROM student_households_current o
+        WHERE o.student_id = s.id AND o.household_id <> $5 AND ${CONTACT_HOUSEHOLD('o.household_id', 's.id')}`
+    : `SELECT json_agg(json_build_object('householdId', o.household_id, 'isPrimary', o.is_primary)
+                       ORDER BY o.is_primary DESC, o.household_id)
+         FROM student_households_current o WHERE o.student_id = s.id AND o.household_id <> $5`;
   // Uczniowie gospodarstwa widoczni w zakresie (rodzeństwo poza zakresem jest pomijane).
   const students = await env.db.query(
     `SELECT s.id, s.first_name, s.last_name, m.is_primary,
@@ -200,13 +228,10 @@ async function getHousehold(request, env, householdId, json) {
                 FROM enrollments e JOIN classes c ON c.id = e.class_id JOIN school_years y ON y.id = c.school_year_id
                WHERE e.student_id = s.id AND ${CLASS_IN_SCOPE('c')}
             ), '[]'::json) AS classes,
-            COALESCE((
-              SELECT json_agg(json_build_object('householdId', o.household_id, 'isPrimary', o.is_primary)
-                              ORDER BY o.is_primary DESC, o.household_id)
-                FROM student_households_current o WHERE o.student_id = s.id AND o.household_id <> $5
-            ), '[]'::json) AS other_households
+            COALESCE((${otherHouseholds}), '[]'::json) AS other_households
        FROM student_households_current m JOIN students s ON s.id = m.student_id
       WHERE m.household_id = $5 AND ${STUDENT_IN_SCOPE('s.id')}
+        ${classScoped ? `AND ${CONTACT_HOUSEHOLD('m.household_id', 's.id')}` : ''}
       ORDER BY s.last_name, s.first_name, s.id`,
     params,
   );
@@ -214,18 +239,28 @@ async function getHousehold(request, env, householdId, json) {
   const visibleStudentIds = students.rows.map((row) => row.id);
 
   const household = await env.db.query('SELECT id, archived_at FROM households WHERE id = $1', [householdId]);
-  const wide = scope.allYears || scope.years.length > 0;
+  // Zakres klasowy: tylko opiekunowie z aktywną relacją do widocznego ucznia;
+  // e-mail tylko przy zgodzie opiekuna i zgodzie relacji do widocznego ucznia.
   const guardians = await env.db.query(
     `SELECT g.id, g.first_name, g.last_name, g.email, g.contact_allowed,
+            EXISTS (
+              SELECT 1 FROM student_guardians sg
+               WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
+                 AND sg.contact_allowed AND ${RELATION_ACTIVE('sg')}
+            ) AS relation_contact_allowed,
             COALESCE((
               SELECT json_agg(json_build_object('studentId', sg.student_id, 'contactAllowed', sg.contact_allowed,
                                                 'isPrimaryContact', sg.is_primary_contact) ORDER BY sg.student_id)
                 FROM student_guardians sg
                WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
                  AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
+                 ${classScoped ? 'AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)' : ''}
             ), '[]'::json) AS relations
        FROM guardian_households_current gh JOIN guardians g ON g.id = gh.guardian_id
       WHERE gh.household_id = $1
+        ${classScoped ? `AND EXISTS (SELECT 1 FROM student_guardians sg
+                                     WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
+                                       AND ${RELATION_ACTIVE('sg')})` : ''}
       ORDER BY g.last_name, g.first_name, g.id`,
     [householdId, visibleStudentIds],
   );
@@ -236,19 +271,23 @@ async function getHousehold(request, env, householdId, json) {
       id: row.id,
       firstName: row.first_name,
       lastName: row.last_name,
-      isPrimaryHousehold: row.is_primary,
+      ...(classScoped ? {} : { isPrimaryHousehold: row.is_primary }),
       classes: row.classes,
       otherHouseholds: row.other_households,
     })),
-    guardians: guardians.rows.map((row) => ({
-      id: row.id,
-      firstName: row.first_name,
-      lastName: row.last_name,
-      // Założenie (D-08): przedstawiciel widzi e-mail tylko przy zgodzie na kontakt.
-      email: wide || row.contact_allowed ? row.email ?? null : null,
-      contactAllowed: row.contact_allowed,
-      relations: row.relations,
-    })),
+    guardians: guardians.rows.map((row) => {
+      // Założenie (D-08): zakres klasowy widzi e-mail tylko przy obu zgodach;
+      // role szerokie widzą e-mail zawsze (bez zmian, do decyzji D-08).
+      const contactAllowed = classScoped ? row.contact_allowed && row.relation_contact_allowed : row.contact_allowed;
+      return {
+        id: row.id,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        email: !classScoped || contactAllowed ? row.email ?? null : null,
+        contactAllowed,
+        relations: row.relations,
+      };
+    }),
   };
 
   const finance = financialYears(context);

@@ -148,7 +148,7 @@ async function renderHousehold(householdId) {
     row.append(
       cell(fullName(student)),
       cell(classes),
-      cell(student.isPrimaryHousehold ? "główne" : "dodatkowe"),
+      cell(student.isPrimaryHousehold === undefined ? "—" : student.isPrimaryHousehold ? "główne" : "dodatkowe"),
       cell(student.otherHouseholds.length ? householdLinks(student.otherHouseholds) : "—"),
     );
     return row;
