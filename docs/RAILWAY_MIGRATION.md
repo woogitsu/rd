@@ -2,6 +2,17 @@
 
 Status: decyzja techniczna użytkownika z 27.09.2026; wdrożenie produkcyjne **niezatwierdzone**.
 
+## Stan wyjściowy (fakt, nie decyzja)
+
+Według autora projektu (27.09.2026) portal na Cloudflare Worker/D1 **nigdy nie był wdrożony**: istniał wyłącznie kod, bez builda, bez działającej instancji i bez danych szkoły w D1. Wynikają z tego skutki techniczne:
+
+- Nie ma danych do przeniesienia z D1. Pierwsza baza PostgreSQL startuje pusta; ścieżka `db:snapshot:d1` / `db:restore:postgres` pozostaje narzędziem testowym, nie etapem cutover.
+- Testy równoważności Worker ↔ PostgreSQL chronią kontrakt API i logikę, ale nie są warunkiem przeniesienia danych.
+- Pierwszy administrator na pustej bazie wymaga osobnej, udokumentowanej procedury (#187).
+- Usunięcie starego Workera i D1 (#42) nadal odbywa się osobnym PR i zgodnie z [AGENTS.md](../AGENTS.md); ten wpis nie zmienia tej zasady.
+
+Zarząd Rady nie podjął jeszcze żadnej decyzji z [DECISIONS.md](DECISIONS.md); prototyp działa wyłącznie na danych syntetycznych.
+
 ## Cel i zakres
 
 Docelowy stos to jedna usługa Node.js na Railway, prywatny PostgreSQL oraz prywatny Railway Storage Bucket. Aplikacja serwuje API i zbudowane panele z tego samego origin. Brevo pozostaje zewnętrznym dostawcą wiadomości e-mail. Nie używamy produkcyjnie Cloudflare Workers, D1 ani R2 po zakończeniu migracji.
@@ -23,7 +34,7 @@ Ta decyzja nie oznacza zgody szkoły na import danych, wysyłkę wiadomości ani
 
 Pełny rozkład i kryteria odbioru są w [issue #31](https://github.com/woogitsu/rd/issues/31) oraz #32–#42. Najpierw portujemy schemat i warstwę danych, potem serwer, sesje, import i operacje finansowe. Dokumenty i pocztę uruchamiamy dopiero po testach kontroli dostępu. Stare pliki Cloudflare usuwamy w ostatnim PR, gdy nowy stos przejdzie testy równoważności.
 
-Nie uruchamiać równoległych produkcyjnych baz D1 i PostgreSQL. Dotychczasowe migracje D1 pozostają wyłącznie źródłem wymagań historycznych; nie są planem migracji danych szkoły. Jeśli kiedykolwiek pojawią się dane w D1, potrzebna będzie odrębna, sprawdzona procedura eksportu, uzgodnienia liczności/sum i cutover z możliwością rollbacku.
+Nie uruchamiać równoległych produkcyjnych baz D1 i PostgreSQL (D1 nigdy nie działała produkcyjnie — zob. „Stan wyjściowy”). Dotychczasowe migracje D1 pozostają wyłącznie źródłem wymagań historycznych; nie są planem migracji danych szkoły. Jeśli kiedykolwiek pojawią się dane w D1, potrzebna będzie odrębna, sprawdzona procedura eksportu, uzgodnienia liczności/sum i cutover z możliwością rollbacku.
 
 ## Konfiguracja docelowa
 

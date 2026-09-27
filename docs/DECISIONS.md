@@ -4,6 +4,8 @@ Ten dokument zbiera decyzje organizacyjne i prawne, których zespół techniczny
 
 Do czasu zamknięcia decyzji D-01–D-06 nie importujemy danych rodzin. Prace na danych syntetycznych mogą trwać równolegle (#1).
 
+Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są otwarte. Portal jest prototypem przygotowywanym przez jednego rodzica do przedstawienia zarządowi. Poprzednia wersja (Cloudflare Worker/D1) nigdy nie była wdrożona ani nie zawierała danych szkoły — zob. [RAILWAY_MIGRATION.md](RAILWAY_MIGRATION.md#stan-wyjściowy-fakt-nie-decyzja). Założenia przyjęte w kodzie do czasu decyzji są opisane w PR i issues jako warianty tymczasowe, nie jako decyzje.
+
 ## Jak wypełniać
 
 - Status: `otwarta` → `przyjęta` albo `odrzucona`. Zmiana przyjętej decyzji to nowy wpis z odwołaniem do poprzedniego, bez usuwania starego.
