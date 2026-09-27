@@ -49,9 +49,14 @@ Pierwszy etap działa lokalnie: `npm ci`, `npm run dev:import` i `npm test`. [In
 
 Chroniony interfejs ewidencji można uruchomić poleceniem `npm run dev:panel`; API działa równolegle przez `npm run dev`. Panel obsługuje listę, rejestrację, korekty i jednokrotne przypisanie wpłaty do rodziny. [Instrukcja panelu](panel/README.md). Nie zawiera danych demonstracyjnych ani obejścia logowania.
 
+## Panel księgi
+
+Chroniony interfejs księgi można uruchomić poleceniem `npm run dev:ledger`; API działa równolegle przez `npm run dev`. Panel pokazuje bilans, preliminarz i wpisy oraz pozwala dodawać wpisy i audytowalne korekty. [Instrukcja panelu](ledger/README.md). Nie zawiera danych demonstracyjnych ani obejścia logowania.
+
 ## Start implementacji
 
 1. Uzgodnić zakres i przepływ danych ze szkołą.
 2. Spisać decyzję o koncie bankowym, sugerowanej składce, zasadach korekt i zatwierdzania wydatków.
 3. Zrealizować fazę 1 z [planu](docs/ROADMAP.md), używając sztucznych danych.
 4. Po przeglądzie dostępu i testach uruchomić środowisko produkcyjne i import.
+

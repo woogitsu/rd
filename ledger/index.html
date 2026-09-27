@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Księga — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../"><span class="brand-mark" aria-hidden="true">RR</span><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
+      <nav aria-label="Panel"><a href="../panel/">Wpłaty</a><a class="active" href="./" aria-current="page">Księga</a><a href="../import/">Import uczniów</a></nav>
+    </header>
+
+    <main>
+      <section class="page-heading">
+        <div><p class="eyebrow">Finanse Rady</p><h1>Księga przychodów i wydatków</h1><p>Zapisy są niezmienne, a każda korekta pozostaje w historii.</p></div>
+        <button class="primary" id="open-entry" type="button">Dodaj wpis</button>
+      </section>
+
+      <section class="card filters" aria-labelledby="filters-title">
+        <h2 id="filters-title">Widok roku</h2>
+        <form id="filters-form">
+          <label>Rok szkolny <input id="school-year-id" name="schoolYearId" required autocomplete="off" placeholder="np. 2026-2027" /></label>
+          <label>Rodzaj <select id="direction-filter" name="direction"><option value="">Wszystkie</option><option value="income">Przychody</option><option value="expense">Wydatki</option></select></label>
+          <button type="submit">Pokaż</button>
+        </form>
+      </section>
+
+      <div class="message" id="message" role="status"></div>
+      <section id="overview" hidden>
+        <div class="summary-grid" aria-label="Podsumowanie roku">
+          <article><span>Bilans otwarcia</span><strong id="opening-balance">—</strong></article>
+          <article><span>Przychody</span><strong class="income" id="income-total">—</strong></article>
+          <article><span>Wydatki</span><strong class="expense" id="expense-total">—</strong></article>
+          <article class="closing"><span>Bilans zamknięcia</span><strong id="closing-balance">—</strong></article>
+        </div>
+
+        <section class="card" aria-labelledby="budget-title">
+          <div class="section-heading"><div><p class="eyebrow">Plan finansowy</p><h2 id="budget-title">Aktualny preliminarz</h2></div><span id="budget-count"></span></div>
+          <div class="table-wrap"><table><thead><tr><th>Kategoria</th><th>Rodzaj</th><th>Notatka</th><th class="amount">Plan</th></tr></thead><tbody id="budget-body"></tbody></table></div>
+          <p class="empty" id="budget-empty" hidden>Brak linii preliminarza dla tego roku.</p>
+        </section>
+
+        <section class="card" aria-labelledby="entries-title">
+          <div class="section-heading"><div><p class="eyebrow">Ewidencja</p><h2 id="entries-title">Zapisy księgi</h2></div><span id="result-summary"></span></div>
+          <div class="table-wrap" id="entries-table"><table><thead><tr><th>Data</th><th>Opis</th><th>Kategoria</th><th>Metoda</th><th>Rodzaj</th><th class="amount">Netto</th><th><span class="sr-only">Akcje</span></th></tr></thead><tbody id="entries-body"></tbody></table></div>
+          <p class="empty" id="entries-empty" hidden>Brak wpisów dla wybranych filtrów.</p>
+          <button class="load-more" id="load-more" type="button" hidden>Wczytaj następne</button>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="entry-dialog"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Nowy zapis</p><h2>Dodaj wpis</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <input type="hidden" name="schoolYearId" />
+      <div class="field-row"><label>Rodzaj <select name="direction"><option value="income">Przychód</option><option value="expense">Wydatek</option></select></label><label>Kategoria <select name="categoryId" required></select></label></div>
+      <div class="field-row"><label>Kwota EUR <input name="amount" inputmode="decimal" required placeholder="150,00" /></label><label>Data <input name="occurredOn" type="date" required /></label></div>
+      <label>Opis <input name="description" minlength="3" maxlength="500" required /></label>
+      <div class="field-row"><label>Metoda <select name="method"><option value="bank">Przelew</option><option value="cash">Gotówka</option><option value="card">Karta</option><option value="other">Inna</option></select></label><label>Źródło <input name="source" maxlength="200" placeholder="Opcjonalnie" /></label></div>
+      <label>ID dokumentu źródłowego <input name="sourceDocumentId" autocomplete="off" placeholder="Opcjonalnie — dokument musi już istnieć" /></label>
+      <label id="resolution-field" hidden>Referencja uchwały <input name="resolutionReference" maxlength="200" /><small>Wymagana dla wydatku powyżej 3000 EUR.</small></label>
+      <div class="form-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz wpis</button></div>
+    </form></dialog>
+
+    <dialog id="correction-dialog"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Historia zmian</p><h2>Dodaj korektę</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <input type="hidden" name="entryId" /><p class="context"></p>
+      <label>Kwota pomniejszenia EUR <input name="amount" inputmode="decimal" required /></label>
+      <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <div class="form-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Dodaj korektę</button></div>
+    </form></dialog>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
