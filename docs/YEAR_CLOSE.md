@@ -35,7 +35,7 @@ Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawien
 2. sprawdza komplet listy kontrolnej i zasadę czterech oczu (zamyka inna osoba niż rozpoczynająca; także `CHECK` w bazie),
 3. liczy bilans z widoku `ledger_year_summary` (bilans otwarcia + poprawki + przychody netto − wydatki netto),
 4. tworzy `ledger_opening_balances` następnego roku z dokładnie tą kwotą (klucz idempotencji `year-close:{id zamknięcia}`); poprawka późniejsza tylko przez `ledger_opening_balance_adjustments`,
-5. ustawia `expires_at = now()` na aktywnych przydziałach ról zawężonych do zamykanego roku (jedyna zmiana dozwolona przez trigger z 0004; wiersze zostają) i zapisuje zdarzenie `role_grant.expired` dla każdego,
+5. ustawia `expires_at = now()` na aktywnych przydziałach ról należących do zamykanego roku — `school_year_id` tego roku albo klasa tego roku (funkcja `role_grant_in_school_year` z 0022, ta sama reguła co `expire-grants`; jedyna zmiana dozwolona przez trigger z 0004; wiersze zostają) i zapisuje zdarzenie `role_grant.expired` dla każdego,
 6. utrwala w wierszu zamknięcia bilans otwarcia, przychody, wydatki, bilans zamknięcia, identyfikator przeniesionego bilansu i liczbę wygaszonych ról,
 7. zapisuje zdarzenia `ledger_opening_balance.carried_forward` i `year_close.closed`.
 
@@ -49,7 +49,7 @@ Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe 
 - wpisy i korekty księgi, kategorie, preliminarz, bilans otwarcia i jego poprawki,
 - wydarzenia (również zmiana stanu i odwołanie),
 - zebrania, porządek, obecność, sprawdzenia quorum, protokoły, publikacje protokołów, uchwały,
-- nowe przydziały ról w tym roku (wygaszenie i cofnięcie istniejących pozostaje możliwe).
+- nowe przydziały ról w tym roku, także przydziały klasy tego roku wstawiane bez `school_year_id` (0022; API administratora zwraca `409 school_year_closed`); wygaszenie i cofnięcie istniejących pozostaje możliwe.
 
 Odczyt, eksport i dziennik audytu działają bez zmian. **Korekta po zamknięciu nie ma ścieżki w aplikacji.** Pomyłkę wykrytą po zamknięciu ujmuje się w otwartym roku następnym (np. poprawka bilansu otwarcia z uzasadnieniem odwołującym się do uchwały) — sposób musi zatwierdzić Rada. Ponowne otwarcie roku wymagałoby osobnej migracji i decyzji.
 
@@ -75,7 +75,7 @@ Po zamknięciu osoby, których jedyny przydział był zawężony do starego roku
 
 - Zasada czterech oczu przy zamknięciu (inna osoba niż rozpoczynająca) — założenie, nie przepis regulaminu (D-21).
 - Rozpoczyna i zamyka zarząd; skarbnik tylko potwierdza punkty listy. Komisja Rewizyjna, dyrekcja i admin techniczny nie mają dostępu do czasu D-08/D-09.
-- Wygaszane są tylko przydziały z `school_year_id` zamykanego roku. Przydziały bez zakresu roku (np. admin techniczny) nie wygasają automatycznie — obsługuje je zarządzanie rolami (0012).
+- Wygaszane są przydziały z `school_year_id` zamykanego roku oraz przydziały klas tego roku (#201). Przydziały bez zakresu roku (np. admin techniczny) nie wygasają automatycznie — obsługuje je zarządzanie rolami (0012).
 - Następny rok musi zaczynać się później niż zamykany i nie może mieć rozpoczętego zamknięcia.
 - Bilans liczony jest z księgi, nie z wpłat; wpłata wpływa na bilans dopiero przez wpis przychodu.
 

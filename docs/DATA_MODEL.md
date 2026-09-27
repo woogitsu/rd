@@ -43,6 +43,17 @@ Zasady historii: członkostwa nie są usuwane ani zmieniane — można je raz za
 - Bezpośrednia zmiana `students.household_id` kończy bieżące główne członkostwo i otwiera nowe od dziś. Dodanie nowego, już obowiązującego głównego członkostwa aktualizuje `students.household_id`. Zakończenie głównego członkostwa bez dodania nowego zostawia w kolumnie poprzednią wartość.
 - `guardians.household_id` oznacza gospodarstwo z chwili utworzenia lub ostatniej bezpośredniej zmiany tej kolumny; pełny obraz daje `guardian_households`.
 
+### Bieżące główne gospodarstwo (0023, issue #194)
+
+`students.household_id` jest **wyłącznie kolumną zgodności** (import nowych uczniów, snapshot D1) i nie służy żadnym decyzjom. Może być nieaktualna: członkostwo z datą przyszłą nie aktualizuje jej, gdy data nadejdzie, a zakończenie głównego członkostwa bez następcy zostawia w niej stare gospodarstwo.
+
+- „Dziś” = data kalendarzowa w strefie Europe/Brussels: `rd_today()` w SQL i `brusselsDay()` w `src/pg/today.js`, niezależnie od `TimeZone` sesji PostgreSQL. Z tej definicji korzystają widoki `student_households_current`, `guardian_households_current` i triggery synchronizacji z 0014 (wcześniej `CURRENT_DATE`).
+- `student_primary_household_on(dzień)` zwraca główne gospodarstwo obowiązujące w danym dniu (najwyżej jedno na ucznia), a widok `student_primary_household_current` — na dziś. Czytają je: migawka kampanii (`computeSnapshot`), worker e-mail przed wysyłką, kartki (`/api/print/cards`) i dopasowanie istniejącego ucznia w imporcie.
+- Uczeń bez obowiązującego głównego członkostwa nie trafia do kampanii ani na kartki, a import zgłasza konflikt do ręcznego powiązania.
+- Opieka naprzemienna (dwa obowiązujące członkostwa, jedno główne): kampania i kartka tylko dla głównego gospodarstwa; karta gospodarstwa pokazuje oba. To założenie do D-11/D-17.
+- Sprawdzanie nakładania zakresów blokuje wiersz ucznia (opiekuna) `FOR NO KEY UPDATE`, więc równoległe zmiany członkostw jednego ucznia wykonują się po kolei (poziom izolacji READ COMMITTED).
+- Wpłaty nie są przepisywane: wpłata zapisana przed zmianą zostaje przy starym gospodarstwie.
+
 ### Klasa w roku
 
 `enrollments` zachowuje ograniczenia z `0001_core.sql` (jeden wiersz na ucznia i rok) i opisuje stan bieżący. Zmiana klasy w tym samym roku aktualizuje `class_id` i dopisuje wpis `class_changed`; nowy rok szkolny to nowy wiersz `enrollments`. Ponowienie tej samej zmiany (podwójne kliknięcie) niczego nie zapisuje.
@@ -66,5 +77,10 @@ Model nie rozstrzyga, czy składkę ewidencjonujemy na rodzinę czy na dziecko. 
 - Przydział z `class_id` zawęża do tej klasy; admin/board/treasurer bez `class_id` widzą wszystkie klasy (lub klasy roku z `school_year_id`).
 - `audit` i `principal` dostają `403` do czasu decyzji D-09.
 - Obiekt nieistniejący i obiekt poza zakresem dają ten sam `404 not_found`.
-- Przedstawiciel widzi e-mail opiekuna tylko przy zgodzie na kontakt (założenie, D-08).
+- Zakres wyłącznie klasowy (przedstawiciel, także zarząd z przydziałem klasy) — założenie do D-08/D-11, wariant zachowawczy (#95):
+  - widzi tylko opiekunów z aktywną relacją `student_guardians` (`[starts_on, ends_on)`) do ucznia swojej klasy; opiekun związany wyłącznie z rodzeństwem spoza klasy jest pomijany (także imię i nazwisko);
+  - e-mail i `contactAllowed = true` tylko przy obu zgodach: opiekuna (`guardians.contact_allowed`) i relacji do widocznego ucznia (`student_guardians.contact_allowed`) — ta sama reguła co lista klasy w eksporcie;
+  - gospodarstwa ucznia (lista klasy `households[]`, `otherHouseholds`, dostęp do karty) tylko „kontaktowe”: należy do nich opiekun z aktywną relacją do tego ucznia i obiema zgodami. Pozostałe gospodarstwa dają `404` jak nieistniejące. Bez `isPrimary`/`isPrimaryHousehold` — fakt opieki dzielonej i gospodarstwo główne nie są potrzebne do pracy przedstawiciela.
+- Role szerokie (admin, board, treasurer bez `class_id`) widzą wszystkich opiekunów gospodarstwa, wszystkie gospodarstwa ucznia i e-mail niezależnie od zgody (bez zmian; założenie do decyzji D-08). Zgoda na kontakt ogranicza wysyłkę, nie wgląd zarządu.
+- `PATCH /api/guardians/{id}/contact` przy zakresie wyłącznie klasowym (zarząd z przydziałem klasy, #200): opiekun tylko z aktywną relacją `student_guardians` (`[starts_on, ends_on)`) do ucznia z przypisanej klasy. Samo wspólne gospodarstwo (rodzeństwo z innej klasy, drugie gospodarstwo przy opiece dzielonej) nie wystarcza; odmowa to `404` jak nieistniejący, bez zapisu. Zarząd/admin bez przydziału klasy bez zmian. Otwarte (D-08): czy zakres klasowy może zmieniać globalny e-mail/zgodę opiekuna, który ma też dziecko w klasie spoza zakresu — obecnie może.
 - Karta gospodarstwa nie zawiera pól należności ani zadłużenia. Sumy wpłat netto (widok `household_payment_totals`) widzą wyłącznie role finansowe z MFA, w zakresie lat z przydziału.

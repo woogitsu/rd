@@ -123,6 +123,22 @@ Skutki dla danych: migracja tylko dodaje obiekty, nie zmienia istniejących
 tabel ani wierszy. Wycofanie na bazie z danymi — tylko po kopii zapasowej i
 decyzji o retencji (D-04). Szczegóły: [`docs/NEWS.md`](../docs/NEWS.md).
 
+`0022_role_grant_class_year.sql` (#201) wprowadza jedną regułę „przydział
+należy do roku”: `school_year_id` tego roku albo klasa tego roku (funkcja
+`role_grant_in_school_year`, używana przez zamknięcie roku i `expire-grants`).
+Trigger zamrożenia z 0017 uzupełnia brakujący rok przydziału klasy rokiem
+klasy, odrzuca rok inny niż rok klasy i blokuje przydział klasy zamkniętego
+roku także bez `school_year_id`. Skutki dla danych: istniejące przydziały z
+klasą i bez roku (aktywne, wygasłe i cofnięte) dostają rok klasy w miejscu —
+zakres faktyczny się nie zmienia, nic nie jest usuwane, `expires_at` i
+`revoked_at` zostają; każdy taki wiersz ma zdarzenie
+`role_grant.school_year_backfilled` (bez aktora i danych osobowych). Trigger
+z 0004 jest wyłączony tylko na czas tej jednej instrukcji w transakcji
+migracji. Następnie ograniczenie `role_grant_class_requires_year` (klasa
+wymaga roku). Wpisy z rokiem różnym od roku klasy nie są przepisywane.
+Wycofanie: usunięcie ograniczenia i funkcji oraz przywrócenie funkcji
+triggera z 0017; uzupełnionego roku nie cofać (historia w `audit_events`).
+
 `0025_email_send_confirmation.sql` (issues #210, #177) dodaje do `email_outbox`
 kolumny `claim_token` (uuid przebiegu, który przejął wiersz) i
 `send_started_at` (chwila przekazania wiadomości dostawcy) oraz zastępuje
@@ -163,6 +179,22 @@ jest zapisywany — tylko solony skrót SHA-256. Skutki dla danych: migracja
 wyłącznie dodaje obiekty; istniejące wiersze nie są zmieniane. Szczegóły:
 [`docs/RECONCILIATION.md`](../docs/RECONCILIATION.md).
 
+`0021_meetings_integrity.sql` (#81) dodaje tabelę `meeting_attendance_state`
+(licznik zmian listy obecności zebrania, podbijany triggerem przy każdym
+INSERT/UPDATE `meeting_attendees`), kolumnę
+`meeting_quorum_checks.attendance_revision` oraz triggery: zatwierdzenie
+protokołu przy projekcie uchwały daje `minutes_open_resolutions`, a przyjęcie
+lub odrzucenie uchwały na ustaleniu quorum sprzed zmiany obecności —
+`resolution_quorum_check_stale`. Skutki dla danych: istniejące ustalenia
+dostają `attendance_revision = NULL` (stan nieznany, traktowany jako
+nieaktualny — nowe rozstrzygnięcie na już odbytym zebraniu wymaga ponownego
+ustalenia quorum); żaden istniejący wiersz uchwał, obecności ani protokołów nie
+jest zmieniany. Zebrania zatwierdzone wcześniej z projektem uchwały pozostają
+zablokowane bez zmian. Numer 0021 wybrano jako pierwszy wolny po 0018 (main),
+0013/0017 (kolejka) i 0020 (logowanie hasłem). Wycofanie na pustej bazie:
+usunięcie triggerów, funkcji, kolumny i tabeli; na bazie z danymi — po kopii.
+Szczegóły: [`docs/MEETINGS.md`](../docs/MEETINGS.md).
+
 `0016_exports.sql` dodaje tabelę `export_runs` — rejestr eksportów rocznych
 i list klas (rodzaj, rok, klasa, wersja formatu, kto i kiedy, SHA-256
 manifestu, liczności wierszy per tabela). Skutki dla danych: migracja tylko
@@ -183,3 +215,12 @@ istniejący wiersz nie jest zmieniany ani usuwany. Od tej migracji nie da się
 usunąć przypisania do klasy ani zmienić jego ucznia lub roku, a uczniów i
 opiekunów z historią nie da się usunąć. Szczegóły:
 [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
+
+`0023_student_primary_household.sql` (issue #194) dodaje `rd_today()` (data
+w strefie Europe/Brussels), `student_primary_household_on(dzień)` i widok
+`student_primary_household_current`; odtwarza widoki `*_households_current` i
+triggery synchronizacji z 0014 z `rd_today()` zamiast `CURRENT_DATE` oraz
+dodaje blokadę wiersza ucznia/opiekuna w sprawdzaniu nakładania zakresów. Nie
+zmienia żadnego wiersza. Kampanie, worker, kartki i import czytają odtąd
+główne gospodarstwo z `student_households`, nie `students.household_id`.
+Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).

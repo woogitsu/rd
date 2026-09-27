@@ -126,6 +126,17 @@ test("wynik quorum pokazuje liczby i zastrzeżenie o ręcznych danych", () => {
   assert.equal(describeQuorumCheck(null), null);
 });
 
+test("nieaktualne ustalenie quorum jest opisane, a odmowy serwera mają komunikat (#81)", () => {
+  const stale = describeQuorumCheck({ mode: "minimum_count", minCount: 2, presentEligible: 3, requiredCount: 2, met: true, current: false });
+  assert.equal(stale.stale, true);
+  assert.match(stale.detail, /zmieniła się po tym ustaleniu/);
+  const fresh = describeQuorumCheck({ mode: "minimum_count", minCount: 2, presentEligible: 3, requiredCount: 2, met: true, current: true });
+  assert.equal(fresh.stale, false);
+  assert.doesNotMatch(fresh.detail, /zmieniła się/);
+  assert.match(errorMessage("minutes_open_resolutions", 409), /projekty uchwał/);
+  assert.match(errorMessage("resolution_quorum_check_stale", 409), /Ustal quorum ponownie/);
+});
+
 test("wpis obecności wymaga jawnego prawa głosu i obecności", () => {
   const base = { personType: "guardian", personId: "g-1", capacity: "representative", present: "true" };
   assert.throws(() => buildAttendancePayload(base), /Prawo głosu/);

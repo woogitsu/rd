@@ -22,6 +22,7 @@
 import { loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
+import { effectiveDay } from '../today.js';
 
 export const name = 'print';
 
@@ -51,33 +52,39 @@ export function printScope(context, { schoolYearId, classId }) {
   return { full, paymentInfo };
 }
 
-async function loadRows(db, { schoolYearId, classId, full, paymentInfo }) {
-  const values = [schoolYearId];
+// Rodzina ucznia = główne gospodarstwo obowiązujące w dniu `on` (domyślnie
+// rd_today(), Bruksela), a nie kolumna students.household_id (#194). Przy
+// opiece naprzemiennej kartka powstaje tylko dla głównego gospodarstwa
+// (założenie do D-11); uczeń bez obowiązującego głównego członkostwa nie ma kartki.
+async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = null }) {
+  const values = [schoolYearId, on];
+  const primary = 'student_primary_household_on(COALESCE($2::date, rd_today()))';
   const conditions = ['e.school_year_id = $1', 'h.archived_at IS NULL'];
   if (classId) {
     values.push(classId);
     if (full) {
-      conditions.push(`s.household_id IN (
-        SELECT s2.household_id FROM enrollments e2 JOIN students s2 ON s2.id = e2.student_id
-         WHERE e2.school_year_id = $1 AND e2.class_id = $2)`);
+      conditions.push(`p.household_id IN (
+        SELECT p2.household_id FROM enrollments e2 JOIN ${primary} p2 ON p2.student_id = e2.student_id
+         WHERE e2.school_year_id = $1 AND e2.class_id = $3)`);
     } else {
-      conditions.push('e.class_id = $2');
+      conditions.push('e.class_id = $3');
     }
   }
   values.push(MAX_PRINT_ROWS + 1);
   const paymentColumn = paymentInfo ? ', COALESCE(t.net_amount_cents, 0) AS net_amount_cents' : '';
   const paymentJoin = paymentInfo
-    ? 'LEFT JOIN household_payment_totals t ON t.household_id = s.household_id AND t.school_year_id = $1'
+    ? 'LEFT JOIN household_payment_totals t ON t.household_id = p.household_id AND t.school_year_id = $1'
     : '';
   const { rows } = await db.query(
-    `SELECT s.household_id, s.first_name, s.last_name, c.name AS class_name${paymentColumn}
+    `SELECT p.household_id, s.first_name, s.last_name, c.name AS class_name${paymentColumn}
        FROM enrollments e
        JOIN students s ON s.id = e.student_id
-       JOIN households h ON h.id = s.household_id
+       JOIN ${primary} p ON p.student_id = e.student_id
+       JOIN households h ON h.id = p.household_id
        JOIN classes c ON c.id = e.class_id
        ${paymentJoin}
       WHERE ${conditions.join(' AND ')}
-      ORDER BY c.name, s.household_id, s.last_name, s.first_name, s.id
+      ORDER BY c.name, p.household_id, s.last_name, s.first_name, s.id
       LIMIT $${values.length}`,
     values,
   );
@@ -119,7 +126,7 @@ export async function handle(request, env, url, json) {
     if (!rows.length) return json({ error: 'school_year_not_found' }, 404);
   }
 
-  const rows = await loadRows(env.db, { schoolYearId, classId, ...scope });
+  const rows = await loadRows(env.db, { schoolYearId, classId, ...scope, on: effectiveDay(env) });
   if (rows.length > MAX_PRINT_ROWS) return json({ error: 'too_many_rows' }, 413);
 
   const households = new Set(rows.map((row) => row.household_id));

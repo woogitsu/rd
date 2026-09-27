@@ -345,10 +345,11 @@ async function closeYear(request, env, schoolYearId, json) {
       metadata: { fromSchoolYearId: schoolYearId, schoolYearId: closure.next_school_year_id, closureId: closure.id },
     });
 
-    // Wygaszenie ról starej kadencji: tylko przydziały zawężone do zamykanego roku.
+    // Wygaszenie ról starej kadencji: przydziały należące do zamykanego roku
+    // (school_year_id albo klasa tego roku) — ta sama reguła co expire-grants (0022).
     const { rows: expired } = await tx.query(
       `UPDATE role_grants SET expires_at = now()
-        WHERE school_year_id = $1 AND revoked_at IS NULL
+        WHERE role_grant_in_school_year(class_id, school_year_id, $1) AND revoked_at IS NULL
           AND (expires_at IS NULL OR expires_at > now())
         RETURNING id, role, class_id`,
       [schoolYearId],
