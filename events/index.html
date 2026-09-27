@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Wydarzenia — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../">Rada Rodziców<small>Szkoła Polska w Brukseli</small></a>
+      <nav aria-label="Panel">
+        <a href="../panel/">Wpłaty</a>
+        <a href="../ledger/">Księga</a>
+        <a class="active" href="./" aria-current="page">Wydarzenia</a>
+        <a href="../import/">Import uczniów</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="page-heading">
+        <div>
+          <h1>Wydarzenia</h1>
+          <p>Szkic, zgłoszenie, zatwierdzenie i publikacja. Czas podawany jest według strefy Europe/Brussels.</p>
+        </div>
+        <button class="primary" id="open-create" type="button" hidden>Nowy szkic</button>
+      </section>
+
+      <div class="message" id="global-message" role="status" aria-live="polite"></div>
+
+      <section id="login-required" class="notice" hidden aria-labelledby="login-title" tabindex="-1">
+        <h2 id="login-title">Wymagane logowanie</h2>
+        <p>Panel wydarzeń jest dostępny tylko dla zalogowanych członków Rady z przydzieloną rolą. Zaloguj się, a następnie odśwież tę stronę.</p>
+      </section>
+
+      <div id="app" hidden>
+        <section class="block filters" aria-labelledby="filters-title">
+          <h2 id="filters-title">Widok wydarzeń</h2>
+          <form id="filters-form">
+            <label>
+              Rok szkolny
+              <input id="school-year-id" name="schoolYearId" list="school-years" autocomplete="off" required placeholder="np. 2026-2027" />
+            </label>
+            <label>
+              Status
+              <select id="status-filter" name="status">
+                <option value="">Wszystkie</option>
+                <option value="draft">Szkic</option>
+                <option value="submitted">Zgłoszone</option>
+                <option value="approved">Zatwierdzone</option>
+                <option value="published">Opublikowane</option>
+                <option value="cancelled">Odwołane</option>
+              </select>
+            </label>
+            <button type="submit">Pokaż</button>
+          </form>
+          <datalist id="school-years"></datalist>
+          <datalist id="class-ids"></datalist>
+        </section>
+
+        <section class="block" aria-labelledby="list-title">
+          <div class="section-heading">
+            <h2 id="list-title">Lista</h2>
+            <p id="list-summary" aria-live="polite">Wybierz rok szkolny, aby pobrać wydarzenia.</p>
+          </div>
+          <div class="message" id="list-message" role="status" aria-live="polite"></div>
+          <div class="table-wrap" id="table-wrap" hidden>
+            <table>
+              <caption class="sr-only">Wydarzenia w wybranym roku szkolnym</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Termin</th>
+                  <th scope="col">Tytuł</th>
+                  <th scope="col">Klasa</th>
+                  <th scope="col">Odbiorcy</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Wersja</th>
+                </tr>
+              </thead>
+              <tbody id="events-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="block" id="detail" hidden aria-labelledby="detail-title">
+          <div class="section-heading">
+            <div>
+              <h2 id="detail-title" tabindex="-1">Wydarzenie</h2>
+              <p id="detail-meta"></p>
+            </div>
+            <button type="button" id="close-detail">Zamknij szczegóły</button>
+          </div>
+
+          <div class="message" id="detail-message" role="status" aria-live="polite"></div>
+          <div class="conflict" id="conflict" role="alert" hidden>
+            <p>Ktoś zmienił wydarzenie w międzyczasie. Twoja operacja nie została wykonana. Odśwież, aby zobaczyć aktualną wersję.</p>
+            <button type="button" id="conflict-refresh">Odśwież wydarzenie</button>
+          </div>
+
+          <dl class="facts" id="detail-facts"></dl>
+          <div class="actions" id="detail-actions"></div>
+
+          <h3>Historia wersji</h3>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Historia wersji wydarzenia, od najnowszej</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Wersja</th>
+                  <th scope="col">Zapisano</th>
+                  <th scope="col">Autor</th>
+                  <th scope="col">Treść</th>
+                  <th scope="col">Zmiany</th>
+                </tr>
+              </thead>
+              <tbody id="revisions-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <dialog id="event-dialog" aria-labelledby="event-dialog-title">
+      <form id="event-form" novalidate>
+        <div class="dialog-heading">
+          <h2 id="event-dialog-title">Nowy szkic</h2>
+          <button type="button" class="close" data-close aria-label="Zamknij formularz">Zamknij</button>
+        </div>
+        <p class="context" id="event-context" hidden></p>
+
+        <div class="field-row" id="scope-fields">
+          <div class="field"><label>Rok szkolny
+            <input name="schoolYearId" list="school-years" autocomplete="off" required aria-describedby="err-schoolYearId" />
+          </label>
+            <span class="field-error" id="err-schoolYearId"></span></div>
+          <div class="field"><label>Klasa (opcjonalnie)
+            <input name="classId" list="class-ids" autocomplete="off" aria-describedby="hint-classId err-classId" />
+          </label>
+            <span class="hint" id="hint-classId">Puste pole oznacza wydarzenie ogólnoszkolne.</span>
+            <span class="field-error" id="err-classId"></span></div>
+        </div>
+
+        <div class="field"><label>Tytuł
+          <input name="title" required minlength="3" maxlength="200" aria-describedby="err-title" />
+          </label>
+          <span class="field-error" id="err-title"></span></div>
+
+        <fieldset class="time-field">
+          <legend>Początek (czas w Brukseli)</legend>
+          <input name="startsAt" type="datetime-local" required aria-label="Data i godzina początku" aria-describedby="err-startsAt" />
+          <div class="offset-choice" id="offset-startsAt" role="radiogroup" aria-label="Które wystąpienie godziny początku" hidden></div>
+          <span class="field-error" id="err-startsAt"></span>
+        </fieldset>
+
+        <fieldset class="time-field">
+          <legend>Koniec (opcjonalnie, czas w Brukseli)</legend>
+          <input name="endsAt" type="datetime-local" aria-label="Data i godzina końca" aria-describedby="err-endsAt" />
+          <div class="offset-choice" id="offset-endsAt" role="radiogroup" aria-label="Które wystąpienie godziny końca" hidden></div>
+          <span class="field-error" id="err-endsAt"></span>
+        </fieldset>
+
+        <div class="field-row">
+          <div class="field"><label>Miejsce
+            <input name="location" maxlength="200" aria-describedby="err-location" />
+          </label>
+            <span class="field-error" id="err-location"></span></div>
+          <div class="field"><label>Organizator
+            <input name="organizer" maxlength="200" aria-describedby="err-organizer" />
+          </label>
+            <span class="field-error" id="err-organizer"></span></div>
+        </div>
+
+        <div class="field"><label>Odbiorcy
+          <select name="audience" aria-describedby="hint-audience err-audience">
+            <option value="internal">Wewnętrzne — tylko panel</option>
+            <option value="public">Publiczne — może trafić na stronę po zatwierdzeniu</option>
+          </select>
+          </label>
+          <span class="hint" id="hint-audience">Na stronę publiczną trafia wyłącznie zatwierdzona i opublikowana wersja.</span>
+          <span class="field-error" id="err-audience"></span></div>
+
+        <div class="field"><label>Opis
+          <textarea name="description" rows="4" maxlength="4000" aria-describedby="err-description"></textarea>
+          </label>
+          <span class="field-error" id="err-description"></span></div>
+
+        <p class="hint" id="edit-note" hidden>Zapisanie zmian tworzy nową wersję i cofa wydarzenie do szkicu. Wymaga ponownego zgłoszenia i zatwierdzenia.</p>
+        <div class="form-error" id="event-form-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" data-close>Anuluj</button>
+          <button type="submit" class="primary" id="event-submit">Zapisz szkic</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="cancel-dialog" aria-labelledby="cancel-dialog-title">
+      <form id="cancel-form" novalidate>
+        <div class="dialog-heading">
+          <h2 id="cancel-dialog-title">Odwołaj wydarzenie</h2>
+          <button type="button" class="close" data-close aria-label="Zamknij formularz">Zamknij</button>
+        </div>
+        <p class="context" id="cancel-context"></p>
+        <p class="hint">Odwołanie jest ostateczne. Powód jest widoczny tylko w panelu, nie na stronie publicznej.</p>
+        <div class="field"><label>Powód odwołania
+          <textarea name="reason" rows="3" minlength="3" maxlength="500" required aria-describedby="err-reason"></textarea>
+          </label>
+          <span class="field-error" id="err-reason"></span></div>
+        <div class="form-error" id="cancel-form-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" data-close>Anuluj</button>
+          <button type="submit" class="danger" id="cancel-submit">Odwołaj wydarzenie</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
