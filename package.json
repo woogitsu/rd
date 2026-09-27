@@ -15,11 +15,14 @@
     "test": "node --test tests/*.test.js",
     "dev:ledger": "vite ledger",
     "build:ledger": "vite build ledger --outDir ../dist/ledger --base ./ --emptyOutDir",
-    "db:migrate:postgres": "node scripts/migrate-postgres.js"
+    "db:migrate:postgres": "node scripts/migrate-postgres.js",
+    "db:snapshot:d1": "node scripts/create-d1-snapshot.js",
+    "db:restore:postgres": "node scripts/restore-postgres-snapshot.js"
   },
   "dependencies": {
     "read-excel-file": "9.3.10",
-    "pg": "8.23.0"
+    "pg": "8.23.0",
+    "sql.js": "1.14.2"
   },
   "devDependencies": {
     "vite": "^7.1.0",
