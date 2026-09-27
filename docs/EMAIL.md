@@ -8,7 +8,7 @@ Brevo Free: do 300 wysłanych wiadomości dziennie, limit wspólny dla konta. Pr
 2. Serwer buduje listę uprawnionych rodzin, deduplikuje opiekunów i sprawdza aktualne wpłaty.
 3. Użytkownik widzi liczebność, próbkę, wykluczenia, podgląd spersonalizowanej treści i plan wysyłki na dni.
 4. Uprawniona osoba zatwierdza dokładną wersję treści i odbiorców; każda późniejsza zmiana wymaga ponownej akceptacji.
-5. Worker kolejki wysyła indywidualnie, ogranicza ruch poniżej limitu, używa klucza idempotencji kampania+rodzina+odbiorca.
+5. Zadanie Railway z kolejką PostgreSQL wysyła indywidualnie, ogranicza ruch poniżej limitu, używa klucza idempotencji kampania+rodzina+odbiorca.
 6. Webhook zapisuje wynik; bounce wyłącza błędny adres i zgłasza potrzebę poprawy.
 7. Raport pokazuje wysłane, oczekujące, błędy i pominięte po wpłacie. Wznowienie nie duplikuje wiadomości.
 

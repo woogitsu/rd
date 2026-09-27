@@ -12,21 +12,20 @@ Jedno miejsce do obsługi rodzin, dobrowolnych składek, wpływów i wydatków, 
 
 To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyrekcją i IOD dotyczące administratora danych, upoważnień, obowiązku informacyjnego, retencji i dostawców. Przed uruchomieniem poczty trzeba skonfigurować domenę nadawcy i konto Brevo.
 
-## Proponowana technologia
+## Docelowa technologia
 
-- Cloudflare Workers: logika serwera i API.
-- D1 (SQLite): rodziny, członkostwa klasowe, wpłaty, księga, wydarzenia, uchwały, dziennik zmian.
-- R2: prywatne dokumenty źródłowe i protokoły; dostęp tylko przez API z kontrolą ról.
-- Brevo API: pojedyncze wiadomości do rodziców, kolejka do 300 wiadomości dziennie w planie Free.
+- Railway: jedna usługa Node.js dla API i paneli, prywatny PostgreSQL oraz prywatny Storage Bucket.
+- Brevo API: pojedyncze wiadomości do rodziców po zatwierdzeniu kampanii.
 - Frontend dostępny na telefonie i komputerze; WCAG 2.2 AA jako cel projektowy.
 
-To wybór wstępny. Nie dodawać konta ani poświadczeń dostawcy do repo. Można zamienić stos po udokumentowaniu przyczyn w decyzji architektonicznej.
+[Decyzja i etapy migracji](docs/RAILWAY_MIGRATION.md) są zapisane osobno. Obecny kod serwera i migracje nadal korzystają z Cloudflare Workers/D1; **nie jest to gotowy deployment Railway**. Nie dodawać poświadczeń dostawców do repo.
 
 ## Dokumentacja
 
 - [Plan rozwoju](docs/ROADMAP.md)
 - [Model funkcjonalny i uprawnienia](docs/PRODUCT.md)
 - [Architektura i dane](docs/ARCHITECTURE.md)
+- [Migracja na Railway](docs/RAILWAY_MIGRATION.md)
 - [Przypomnienia e-mail](docs/EMAIL.md)
 - [Prywatność i bezpieczeństwo](docs/SECURITY.md)\n- [Uwierzytelnianie i sesje](docs/AUTH.md)\n- [Autoryzacja i zakres ról](docs/AUTHORIZATION.md)\n- [Model rodzin i opiekunów](docs/DATA_MODEL.md)
 - [Dobrowolne wpłaty i korekty](docs/PAYMENTS.md)
@@ -37,13 +36,13 @@ To wybór wstępny. Nie dodawać konta ani poświadczeń dostawcy do repo. Możn
 
 Regulamin Rady Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli i Program Wychowawczo-Profilaktyczny 2026/2027 przekazane przez użytkownika. Nie umieszczać tych dokumentów w repo bez decyzji o zasadach dostępu i aktualności wersji.
 
-## Uruchomienie szkieletu
+## Uruchomienie obecnego prototypu lokalnie
 
-Po utworzeniu bazy D1 wpisz jej identyfikator w `wrangler.jsonc`. Uruchom `npm ci`, a następnie `npm run db:migrate:local` oraz `npm run dev`. Obecnie Worker udostępnia tylko `/health`; interfejs z Sites nie jest jeszcze częścią repo, a produkcyjna autoryzacja i API są zadaniami z planu. Nie wykonuj migracji produkcyjnej bez przeglądu schematu.
+Do czasu zakończenia migracji lokalne testy starego API używają `npm ci`, `npm run db:migrate:local` i `npm run dev` z emulatorem Workera. To nie jest instrukcja deploymentu. Nie uruchamiać migracji produkcyjnej; nowy serwer i PostgreSQL będą dostarczane w osobnych PR-ach.
 
 ## Import CSV/XLSX
 
-Pierwszy etap działa lokalnie: `npm ci`, `npm run dev:import` i `npm test`. [Instrukcja importu](import/README.md). Plik jest odczytywany w przeglądarce, pokazuje mapowanie i raport; nie zapisuje danych w D1.
+Pierwszy etap działa lokalnie: `npm ci`, `npm run dev:import` i `npm test`. [Instrukcja importu](import/README.md). Plik jest odczytywany w przeglądarce, pokazuje mapowanie i raport; nie zapisuje danych w bazie.
 
 ## Panel wpłat
 
