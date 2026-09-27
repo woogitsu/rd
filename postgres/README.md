@@ -142,3 +142,12 @@ Na środowisku z `APP_ENV=production` trzeba dodatkowo przekazać argument
 planu przywracania i decyzji administratora szkoły. Nie wpisywać URL bazy ani
 jej zawartości do repozytorium, logów czy zgłoszeń. Najpierw testować na
 pustej bazie z danymi syntetycznymi.
+
+`0015_reconciliation.sql` (issue #7) dodaje uzgodnienia rachunku
+(`bank_reconciliations`), paczki i pozycje wyciągu oraz ręcznie zatwierdzane
+powiązania pozycji z wpisami księgi lub wpłatami. Saldo księgi na dzień
+wyciągu wylicza baza (`ledger_balance_at`); zatwierdzenie wymaga drugiej osoby
+i zamraża uzgodnienie, a różnica ≠ 0 wymaga wyjaśnienia. Tytuł przelewu nie
+jest zapisywany — tylko solony skrót SHA-256. Skutki dla danych: migracja
+wyłącznie dodaje obiekty; istniejące wiersze nie są zmieniane. Szczegóły:
+[`docs/RECONCILIATION.md`](../docs/RECONCILIATION.md).

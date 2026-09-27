@@ -34,6 +34,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Model rodzin i opiekunów](docs/DATA_MODEL.md)
 - [Dobrowolne wpłaty i korekty](docs/PAYMENTS.md)
 - [Księga i preliminarz](docs/LEDGER.md)
+- [Uzgodnienie rachunku i raport dla Komisji Rewizyjnej](docs/RECONCILIATION.md)
 - [Wydarzenia i publiczny kalendarz](docs/EVENTS.md)
 - [Zebrania, protokoły i uchwały](docs/MEETINGS.md)
 - [Prywatne dokumenty w Storage Bucket](docs/DOCUMENTS.md)
