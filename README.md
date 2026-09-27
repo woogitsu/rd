@@ -27,9 +27,13 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Architektura i dane](docs/ARCHITECTURE.md)
 - [Migracja na Railway](docs/RAILWAY_MIGRATION.md)
 - [Przypomnienia e-mail](docs/EMAIL.md)
-- [Prywatność i bezpieczeństwo](docs/SECURITY.md)\n- [Uwierzytelnianie i sesje](docs/AUTH.md)\n- [Autoryzacja i zakres ról](docs/AUTHORIZATION.md)\n- [Model rodzin i opiekunów](docs/DATA_MODEL.md)
+- [Prywatność i bezpieczeństwo](docs/SECURITY.md)
+- [Uwierzytelnianie i sesje](docs/AUTH.md)
+- [Autoryzacja i zakres ról](docs/AUTHORIZATION.md)
+- [Model rodzin i opiekunów](docs/DATA_MODEL.md)
 - [Dobrowolne wpłaty i korekty](docs/PAYMENTS.md)
 - [Księga i preliminarz](docs/LEDGER.md)
+- [Rejestr decyzji zarządu i szkoły](docs/DECISIONS.md)
 - [Zasady pracy agentów](AGENTS.md)
 
 ## Źródła wymagań
