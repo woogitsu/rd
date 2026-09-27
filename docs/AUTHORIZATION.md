@@ -72,7 +72,7 @@ Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, 
 | `POST /api/documents?kind=financial&schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | inny rok: 403 |
 | `POST /api/documents?kind=board&schoolYearId=:year` | admin, zarząd — przydział bez klasy, rok 1 | nie | 403 | skarbnik, przedstawiciel: 403 |
 | `POST /api/documents?kind=class&schoolYearId=:year&classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | |
-| `GET /api/documents?schoolYearId=:year` | admin, zarząd — rok 1 (finansowe tylko z MFA); skarbnik — finansowe, z MFA; przedstawiciel i zarząd z przydziałem klasy — dokumenty własnej klasy | skarbnik: tak | 403 | przydział klasowy roku 1 i rok 2: 200 z pustą listą zamiast 403 (luka DOC-01, `todo`) |
+| `GET /api/documents?schoolYearId=:year` | admin, zarząd — rok 1 (finansowe tylko z MFA); skarbnik — finansowe, z MFA; przedstawiciel i zarząd z przydziałem klasy — dokumenty własnej klasy | skarbnik: tak | 403 | przydział klasowy roku 1 i rok 2: 403, nie pusta lista (DOC-01, naprawione) |
 | `GET /api/documents/:financialDocumentId` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | brak uprawnień lub MFA nieodróżnialny od braku dokumentu |
 | `GET /api/documents/:boardDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | |
 | `GET /api/documents/:classDocumentId` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | |
@@ -157,8 +157,10 @@ Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagaj�
 
 ## Znane luki (przypadki `todo` w macierzy)
 
-- **SR-01 (naprawione)** — przydział zarządu ograniczony do klasy nie działa już jak ogólnoszkolny na trasach roku bez klasy (księga, kampanie e-mail, uzgodnienia, raport dla Komisji Rewizyjnej, pełny eksport roczny): 403 i brak zapisu; przypadki są zwykłymi asercjami macierzy.
-- **DOC-01 — lista dokumentów innego roku dla przydziału klasowego.** `GET /api/documents?schoolYearId=<inny rok>` dla przedstawiciela (lub zarządu z przydziałem klasy) roku 1 zwraca 200 z pustą listą zamiast 403, bo `ownClasses` pomija `school_year_id` przydziału. Brak wycieku danych (wiersze filtruje `canAccessDocument`); niska waga.
-- **SR-07 (naprawione)** — PATCH/submit/cancel cudzego wydarzenia oraz `GET /api/meetings/:meetingId` poza zakresem odpowiadają 404 jak brak obiektu (test regresji w tym samym pliku).
+Obecnie brak — macierz nie ma przypadków `todo`. Naprawione wcześniej luki pozostają jako zwykłe asercje:
+
+- **SR-01** — przydział zarządu ograniczony do klasy nie działa już jak ogólnoszkolny na trasach roku bez klasy (księga, kampanie e-mail, uzgodnienia, raport dla Komisji Rewizyjnej, pełny eksport roczny): 403 i brak zapisu.
+- **DOC-01** — `GET /api/documents?schoolYearId=<inny rok>` dla przydziału klasowego roku 1 zwraca 403 zamiast pustej listy; `ownClasses` uwzględnia rok (i MFA) przydziału. Regresja także w `tests/pg-documents.test.js`.
+- **SR-07** — PATCH/submit/cancel cudzego wydarzenia oraz `GET /api/meetings/:meetingId` poza zakresem odpowiadają 404 jak brak obiektu (test regresji w tym samym pliku).
 
 Dodając moduł do `ROUTES` lub ścieżkę do istniejącego modułu: dopisz wpis w `tests/helpers/route-matrix.js` (role, MFA, zakres, przykładowa treść, fixture), pliki źródłowe modułu w `MODULE_SOURCES` w `tests/pg-authz-matrix.test.js` i wiersz w tej tabeli. Rozbieżność kodu z zamierzoną polityką oznacz `todo` w wpisie (z opisem luki), zamiast zmieniać oczekiwany status na stan kodu.

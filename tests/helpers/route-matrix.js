@@ -560,10 +560,6 @@ export const ROUTE_MATRIX = Object.freeze([
     needs: [['document', 'financial', YEAR_TARGETS], ['document', 'board', YEAR_TARGETS], ['document', 'class', ['A', 'B', 'Y2']]],
     build: ({ target }) => ({ path: `/api/documents?schoolYearId=${target.schoolYearId}` }),
     check: ({ actor, mfa, json }) => documentKindsCheck(actor, mfa, json),
-    todo: (actor, _mfa, targetKey) => (targetKey === 'Y2' && ['repA', 'repB', 'boardA'].includes(actor.key)
-      ? 'DOC-01: lista dokumentów innego roku dla przydziału klasowego roku 1 zwraca 200 (pustą listę) zamiast 403 — '
-        + 'src/pg/routes/documents.js list(): ownClasses pomija school_year_id przydziału; bez wycieku danych'
-      : undefined),
   },
   documentRead('documents.getFinancial', '/api/documents/:financialDocumentId', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, ''),
   documentRead('documents.getBoard', '/api/documents/:boardDocumentId', 'board', YEAR_TARGETS, DOC_BOARD, false, ''),
