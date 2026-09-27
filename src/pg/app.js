@@ -26,6 +26,7 @@ import * as newsRoutes from './routes/news.js';
 import * as adminRoutes from './routes/admin.js';
 import * as reconciliationRoutes from './routes/reconciliation.js';
 import * as exportsRoutes from './routes/exports.js';
+import * as familiesRoutes from './routes/families.js';
 
 export const ROUTES = [
   sessionRoutes,
@@ -40,6 +41,7 @@ export const ROUTES = [
   adminRoutes,
   reconciliationRoutes,
   exportsRoutes,
+  familiesRoutes,
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 
