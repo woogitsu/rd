@@ -24,32 +24,11 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    # Baza dla testów na prawdziwym PostgreSQL, dziś pomijanych bez zmiennej
-    # (tests/pg-reconciliation-race.test.js, współbieżność w
-    # pg-primary-household.test.js, #208). Zakłada, że runner self-hosted
-    # uruchamia joby w kontenerze Dockera (wymóg `services:` w Actions). Jeśli
-    # runnery self-hosted NIE mają Dockera, ten `services:` blok trzeba
-    # zastąpić krokiem instalującym PostgreSQL 16 jako proces (np. z pakietu
-    # dostępnego offline na runnerze) i uruchamiającym go przed testami —
-    # opisane w PR, do potwierdzenia przez osobę utrzymującą runnery.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      # Testy tworzą i usuwają własną bazę na tym serwerze (prawo CREATE DATABASE).
-      RD_TEST_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
-      RD_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    # Testy wyścigów na prawdziwym PostgreSQL (tests/pg-reconciliation-race.test.js,
+    # współbieżność w pg-primary-household.test.js, #208) są pomijane bez
+    # RD_TEST_PG_URL / RD_TEST_DATABASE_URL. Runnery self-hosted nie mają Dockera
+    # (`services:` kończył się na „Initialize containers”), więc serwer PostgreSQL
+    # trzeba zainstalować na runnerach i ustawić te zmienne osobno.
     steps:
       - uses: actions/checkout@v4
         with:
