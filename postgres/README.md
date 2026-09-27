@@ -139,6 +139,17 @@ wymaga roku). Wpisy z rokiem różnym od roku klasy nie są przepisywane.
 Wycofanie: usunięcie ograniczenia i funkcji oraz przywrócenie funkcji
 triggera z 0017; uzupełnionego roku nie cofać (historia w `audit_events`).
 
+`0025_email_send_confirmation.sql` (issues #210, #177) dodaje do `email_outbox`
+kolumny `claim_token` (uuid przebiegu, który przejął wiersz) i
+`send_started_at` (chwila przekazania wiadomości dostawcy) oraz zastępuje
+funkcję `email_outbox_guard`: przejścia `sending → cancelled | skipped |
+suppressed` są dozwolone tylko przed rozpoczęciem wysyłki, a raz ustawionego
+`send_started_at` nie można wyczyścić w stanie `sending`. Skutki dla danych:
+istniejące wiersze bez zmian (nowe kolumny puste); wiersz `sending` sprzed
+migracji po wygaśnięciu dzierżawy trafia jak dotąd do `delivery_unknown`.
+Wycofanie: przywrócenie funkcji z `0007_email.sql` i usunięcie kolumn —
+bezpieczne tylko, gdy żaden wiersz nie jest w stanie `sending`.
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.

@@ -589,6 +589,216 @@ test('cancel stops queued messages', async () => {
   } finally { await t.close(); }
 });
 
+// --- Potwierdzenie przed każdą wysyłką (#210) i token dzierżawy (#177) -------
+// PGlite szereguje zapytania, więc przeplot wymuszamy w atrapie transportu:
+// akcja „z drugiego okna” wykonuje się w trakcie pierwszego wywołania send.
+// Kolejność przejęcia zależy od losowych id wierszy, więc akcja dotyczy
+// gospodarstwa innego niż to, którego wiadomość właśnie wychodzi.
+
+const householdOf = (message) => message.idempotencyKey.split(':household:')[1];
+const otherThan = (message, candidates) => candidates.find((id) => id !== householdOf(message));
+
+function interleavingTransport(onFirstSend) {
+  const transport = fakeTransport();
+  const send = transport.send.bind(transport);
+  let fired = false;
+  transport.send = async (message) => {
+    const result = await send(message);
+    if (!fired) { fired = true; await onFirstSend(message); }
+    return result;
+  };
+  return transport;
+}
+
+async function auditFor(t, outboxId) {
+  const { rows } = await t.db.query(
+    "SELECT action, metadata_json->>'reason' AS reason FROM audit_events WHERE entity_type = 'email_outbox' AND entity_id = $1 ORDER BY occurred_at, id",
+    [outboxId],
+  );
+  return rows;
+}
+
+async function outboxIds(t, campaignId) {
+  const { rows } = await t.db.query('SELECT household_id, id FROM email_outbox WHERE campaign_id = $1', [campaignId]);
+  return Object.fromEntries(rows.map((row) => [row.household_id, row.id]));
+}
+
+test('cancel during a batch: no further message is sent; double click and job retry send nothing', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3', 'h4', 'h5']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const responses = [];
+    const transport = interleavingTransport(async () => {
+      responses.push(await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' }));
+      responses.push(await t.call(t.board, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' }));
+    });
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.deepEqual(responses.map((r) => r.status), [200, 200]);
+    assert.equal(transport.calls.length, 1, 'only the message already in transport.send went out');
+    assert.equal(run.sent, 1);
+    assert.equal(run.skipped, 4);
+    assert.equal(run.stoppedReason, 'campaign_cancelled');
+    const states = await outboxStates(t, campaign.id);
+    assert.equal(states.filter((r) => r.state === 'sent').length, 1);
+    assert.equal(states.filter((r) => r.state === 'cancelled' && r.last_error === 'campaign_cancelled').length, 4);
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.campaign.cancelled'"), 1);
+    assert.equal(await t.count(
+      "SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.cancelled' AND metadata_json->>'stage' = 'before_send'",
+    ), 4);
+    // Ponowienie zadania po anulowaniu: nic do przejęcia, 0 wysyłek.
+    const retry = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60_000) });
+    assert.equal(retry.planned, 0);
+    assert.equal(transport.calls.length, 1);
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}`)).body.campaign.status, 'cancelled');
+  } finally { await t.close(); }
+});
+
+test('consent withdrawn during a batch: message suppressed, no switch to the second guardian', async () => {
+  const t = await setup();
+  try {
+    // Dwoje opiekunów jednego dziecka; adresatem z migawki jest kontakt główny.
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id, { guardians: [{ primary: true }, {}] });
+    const campaign = await readyCampaign(t);
+    const ids = await outboxIds(t, campaign.id);
+    let target;
+    const transport = interleavingTransport(async (message) => {
+      target = otherThan(message, ['h1', 'h2']);
+      await t.db.query('UPDATE guardians SET contact_allowed = false WHERE id = $1', [`${target}-g1`]);
+    });
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 2);
+    assert.equal(run.suppressed, 1);
+    assert.equal(transport.calls.length, 2);
+    assert.ok(transport.calls.every((m) => householdOf(m) !== target && m.to.endsWith('-g1@example.invalid')),
+      'no message to the withdrawn guardian and no switch to the second guardian');
+    assert.deepEqual((await outboxStates(t, campaign.id)).find((r) => r.household_id === target),
+      { household_id: target, state: 'suppressed', last_error: 'consent_or_address_changed' });
+    assert.deepEqual(await auditFor(t, ids[target]), [{ action: 'email.suppressed', reason: 'consent_or_address_changed' }]);
+  } finally { await t.close(); }
+});
+
+test('partial payment recorded during a no_payment_record batch skips only that household (siblings elsewhere still get it)', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id, { students: 2 });   // rodzeństwo w każdym gospodarstwie
+    const campaign = await readyCampaign(t, { audience: 'no_payment_record' });
+    let target;
+    const transport = interleavingTransport(async (message) => {
+      target = otherThan(message, ['h1', 'h2']);
+      // Wpłata częściowa 5 EUR (500 centów) tylko dla jednego gospodarstwa.
+      await t.db.query(
+        `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+         VALUES ('p-mid', $2, $1, 500, '2026-10-05', 'bank', 'recorded', 'u-tr', 'payment-key-mid')`,
+        [YEAR, target],
+      );
+    });
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 2);
+    assert.equal(run.skipped, 1);
+    assert.equal(transport.calls.filter((m) => householdOf(m) === target).length, 0);
+    for (const row of await outboxStates(t, campaign.id)) {
+      assert.deepEqual(row, row.household_id === target
+        ? { household_id: target, state: 'skipped', last_error: 'payment_recorded' }
+        : { household_id: row.household_id, state: 'sent', last_error: null });
+    }
+  } finally { await t.close(); }
+});
+
+test('address suppressed during a batch is not sent', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    let target;
+    const transport = interleavingTransport(async (message) => {
+      target = otherThan(message, ['h1', 'h2']);
+      await t.db.query("INSERT INTO email_suppressions (email_hash, reason) VALUES ($1, 'hard_bounce')", [emailHash(`${target}-g1@example.invalid`)]);
+    });
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 1);
+    assert.equal(run.suppressed, 1);
+    assert.deepEqual((await outboxStates(t, campaign.id)).find((r) => r.household_id === target),
+      { household_id: target, state: 'suppressed', last_error: 'address_suppressed' });
+  } finally { await t.close(); }
+});
+
+test('run longer than the lease: a second run takes over, every message is sent at most once, audit matches states', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const ids = await outboxIds(t, campaign.id);
+    const runs = {};
+    const transport = interleavingTransport(async () => {
+      runs.second = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 16 * 60_000) });
+    });
+    runs.first = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    const keys = transport.calls.map((m) => m.idempotencyKey);
+    assert.equal(keys.length, 3);
+    assert.equal(new Set(keys).size, 3, 'no message sent twice');
+    // Pierwszy przebieg wysłał jedną wiadomość i utracił dzierżawę; dwie pozostałe wysłał drugi.
+    const lost = householdOf(transport.calls[0]);
+    const rest = ['h1', 'h2', 'h3'].filter((id) => id !== lost);
+    assert.equal(runs.first.sent, 0);
+    assert.equal(runs.first.stoppedReason, 'lease_lost');
+    assert.equal(runs.second.sent, 2);
+    for (const row of await outboxStates(t, campaign.id)) {
+      assert.deepEqual(row, row.household_id === lost
+        ? { household_id: lost, state: 'failed', last_error: 'delivery_unknown' }
+        : { household_id: row.household_id, state: 'sent', last_error: null });
+    }
+    const sentRows = await t.count("SELECT count(*)::int AS n FROM email_outbox WHERE state = 'sent'");
+    assert.equal(runs.first.sent + runs.second.sent, sentRows);
+    assert.deepEqual((await auditFor(t, ids[lost])).map((e) => e.action), ['email.delivery_unknown', 'email.sent_after_lease_lost']);
+    for (const household of rest) {
+      assert.deepEqual((await auditFor(t, ids[household])).map((e) => e.action),
+        ['email.lease_expired_requeued', 'email.sent', 'email.send_aborted']);
+    }
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.sent'"), sentRows);
+  } finally { await t.close(); }
+});
+
+test('job retried while the first run is still sending (lease valid): nothing is claimed twice', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const runs = {};
+    const transport = interleavingTransport(async () => {
+      runs.second = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60_000) });
+    });
+    runs.first = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(runs.first.sent, 3);
+    assert.equal(runs.second.planned, 0);
+    assert.equal(new Set(transport.calls.map((m) => m.idempotencyKey)).size, 3);
+    assert.equal(transport.calls.length, 3);
+    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'sent'));
+  } finally { await t.close(); }
+});
+
+test('database refuses to cancel or un-start a message whose send has started', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    await t.db.query(
+      "UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2, claim_token = $3, send_started_at = $2 WHERE campaign_id = $1",
+      [campaign.id, DAY1.toISOString(), crypto.randomUUID()],
+    );
+    for (const state of ['cancelled', 'skipped', 'suppressed']) {
+      await assert.rejects(t.db.query('UPDATE email_outbox SET state = $2 WHERE campaign_id = $1', [campaign.id, state]), /email_outbox_invalid_transition/);
+    }
+    await assert.rejects(t.db.query('UPDATE email_outbox SET send_started_at = NULL WHERE campaign_id = $1', [campaign.id]), /email_outbox_send_started_immutable/);
+    // Ponowienie po wygaśnięciu dzierżawy: rozpoczęta wysyłka → delivery_unknown, bez ponownej wysyłki.
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    assert.equal(transport.calls.length, 0);
+    assert.deepEqual((await outboxStates(t, campaign.id))[0], { household_id: 'h1', state: 'failed', last_error: 'delivery_unknown' });
+  } finally { await t.close(); }
+});
+
 // --- Webhook ----------------------------------------------------------------
 
 function webhookRequest(body, authorization) {
