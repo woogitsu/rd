@@ -6,6 +6,10 @@ import { createPgDatabase } from './db.js';
 import { handlePgRequest } from './pg/app.js';
 import { bodyLimitFor, maxUploadBytes } from './documents.js';
 import { storageFromEnv } from './storage.js';
+import { checkReadiness } from './health.js';
+import { createRequestMetrics, describeError, log, startMetricsReporter } from './log.js';
+
+export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 // Wybór warstwy API. Z DATABASE_URL: nowe API na PostgreSQL (env.db).
 // Bez niej: dotychczasowy router Workera (bez D1 chronione trasy zwracają 503).
@@ -50,9 +54,12 @@ export async function startServer({
   env = {},
   fetchHandler = worker.fetch.bind(worker),
   bodyLimit,
+  logger,
+  metrics,
+  readiness,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');
-  const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit });
+  const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit, logger, metrics, readiness });
   const server = createServer(handler);
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -61,14 +68,66 @@ export async function startServer({
   return server;
 }
 
+// Łagodne zamknięcie (SIGTERM z Railway przy redeployu): przestaje przyjmować
+// połączenia, czeka na trwające żądania, zamyka pulę bazy. Po timeoutMs zamyka
+// siłą pozostałe połączenia i kończy proces kodem 1. Wywołanie wielokrotne
+// (drugi sygnał) nie uruchamia zamykania ponownie.
+export function createShutdown({
+  server, close = async () => {}, logger = log, timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS, exit = (code) => process.exit(code),
+  onStart = () => {},
+}) {
+  let pending = null;
+  return function shutdown(signal = 'manual') {
+    if (pending) return pending;
+    onStart();
+    logger.info('server_shutdown_started', { signal: String(signal), timeout_ms: timeoutMs });
+    pending = new Promise((resolve) => {
+      // Połączenia keep-alive, które skończyły żądanie już po server.close(),
+      // stają się bezczynne — zamykamy je cyklicznie, by close() mógł się zakończyć.
+      const sweep = setInterval(() => server.closeIdleConnections?.(), 100);
+      sweep.unref?.();
+      const finish = (code) => { clearInterval(sweep); clearTimeout(timer); resolve(code); };
+      const timer = setTimeout(() => {
+        logger.error('server_shutdown_timeout', { timeout_ms: timeoutMs });
+        server.closeAllConnections?.();
+        finish(1);
+      }, timeoutMs);
+      timer.unref?.();
+      server.close(() => {
+        clearInterval(sweep);
+        Promise.resolve().then(close).then(
+          () => { logger.info('server_shutdown_completed'); finish(0); },
+          (error) => { logger.error('server_shutdown_close_error', describeError(error)); finish(1); },
+        );
+      });
+      server.closeIdleConnections?.();
+    }).then((code) => { exit(code); return code; });
+    return pending;
+  };
+}
+
+function positiveMs(value, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const runtime = resolveRuntime();
-  const server = await startServer({ env: runtime.env, fetchHandler: runtime.fetchHandler, bodyLimit: runtime.bodyLimit });
+  const metrics = createRequestMetrics();
+  let draining = false;
+  const readiness = async (env) => (draining
+    ? { ready: false, body: { status: 'not_ready', checks: { server: 'shutting_down' } } }
+    : checkReadiness(env));
+  const server = await startServer({ env: runtime.env, fetchHandler: runtime.fetchHandler, bodyLimit: runtime.bodyLimit, metrics, readiness });
   const address = server.address();
-  console.log(`RD Node server (${runtime.mode}) listening on ${typeof address === 'object' ? address.port : address}`);
-  const shutdown = () => server.close(() => {
-    runtime.close().catch(() => {}).finally(() => process.exit(0));
+  log.info('server_started', { mode: runtime.mode, port: typeof address === 'object' ? address.port : null });
+  const stopMetrics = startMetricsReporter({ metrics, intervalMs: positiveMs(process.env.METRICS_LOG_INTERVAL_MS, 5 * 60 * 1000) });
+  const shutdown = createShutdown({
+    server,
+    close: () => runtime.close(),
+    timeoutMs: positiveMs(process.env.SHUTDOWN_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS),
+    onStart: () => { draining = true; stopMetrics(); },
   });
-  process.once('SIGTERM', shutdown);
-  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 }
