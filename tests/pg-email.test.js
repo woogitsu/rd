@@ -852,6 +852,162 @@ test('webhook: missing or wrong secret is rejected; bounce suppresses the addres
   } finally { await t.close(); }
 });
 
+// --- Zmiana stanu i audyt w jednej transakcji (#178) ----------------------
+
+// Opakowanie bazy, które odrzuca wybrane INSERT do audit_events (symulacja
+// zerwanego połączenia w chwili zapisu zdarzenia). Reszta bez zmian.
+function auditFaultDb(db, shouldFail) {
+  const guard = (sql, params) => {
+    if (/INSERT INTO audit_events/.test(sql) && shouldFail(params?.[2])) throw new Error('simulated_connection_drop');
+  };
+  const wrap = (executor) => ({
+    query: async (sql, params) => { guard(sql, params); return executor.query(sql, params); },
+  });
+  return {
+    query: (sql, params) => wrap(db).query(sql, params),
+    transaction: (fn) => db.transaction((tx) => fn(wrap(tx))),
+  };
+}
+
+const failOnce = (action, { skip = 0 } = {}) => {
+  let seen = 0;
+  let failed = false;
+  return (candidate) => {
+    if (failed || candidate !== action) return false;
+    seen += 1;
+    if (seen <= skip) return false;
+    failed = true;
+    return true;
+  };
+};
+
+async function auditCount(t, action, entityId = null) {
+  return t.count(
+    'SELECT count(*)::int AS n FROM audit_events WHERE action = $1 AND ($2::text IS NULL OR entity_id = $2)',
+    [action, entityId],
+  );
+}
+
+test('recoverStale: audit failure leaves rows in sending; the next run marks delivery_unknown and logs each once', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    await t.db.query("UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2 WHERE campaign_id = $1", [campaign.id, DAY1.toISOString()]);
+    const transport = fakeTransport();
+    const later = new Date(DAY1.getTime() + 30 * 60_000);
+    // Awaria przy trzecim zdarzeniu — dwa pierwsze też muszą zostać wycofane.
+    const faulty = { ...t.env, db: auditFaultDb(t.db, failOnce('email.delivery_unknown', { skip: 2 })) };
+    await assert.rejects(runEmailBatch(faulty, { transport, dryRun: false, now: later }), /simulated_connection_drop/);
+    assert.ok((await outboxStates(t, campaign.id)).every((row) => row.state === 'sending'));
+    assert.equal(await auditCount(t, 'email.delivery_unknown'), 0);
+    assert.equal(await auditCount(t, 'email.campaign.done'), 0);
+
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(later.getTime() + 60_000) });
+    assert.deepEqual((await outboxStates(t, campaign.id)).map((row) => [row.state, row.last_error]),
+      Array(3).fill(['failed', 'delivery_unknown']));
+    for (const id of Object.values(await outboxIds(t, campaign.id))) {
+      assert.equal(await auditCount(t, 'email.delivery_unknown', id), 1);
+    }
+    assert.equal(await auditCount(t, 'email.campaign.done', campaign.id), 1);
+    // Ponowienie zadania nie dubluje zdarzeń.
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(later.getTime() + 120_000) });
+    assert.equal(await auditCount(t, 'email.delivery_unknown'), 3);
+    assert.equal(transport.calls.length, 0);
+  } finally { await t.close(); }
+});
+
+test('recoverStale: two concurrent runs (double click) record each row once', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    await t.db.query("UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2 WHERE campaign_id = $1", [campaign.id, DAY1.toISOString()]);
+    const transport = fakeTransport();
+    const later = new Date(DAY1.getTime() + 30 * 60_000);
+    await Promise.all([
+      runEmailBatch(t.env, { transport, dryRun: false, now: later }),
+      runEmailBatch(t.env, { transport, dryRun: false, now: later }),
+    ]);
+    for (const id of Object.values(await outboxIds(t, campaign.id))) {
+      assert.equal(await auditCount(t, 'email.delivery_unknown', id), 1);
+    }
+    assert.equal(await auditCount(t, 'email.campaign.done', campaign.id), 1);
+    assert.equal(transport.calls.length, 0);
+  } finally { await t.close(); }
+});
+
+test('completeCampaigns: audit failure keeps the campaign sending; the next run marks done and logs once', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport();
+    const faulty = { ...t.env, db: auditFaultDb(t.db, failOnce('email.campaign.done')) };
+    await assert.rejects(runEmailBatch(faulty, { transport, dryRun: false, now: DAY1 }), /simulated_connection_drop/);
+    assert.equal(transport.calls.length, 1);
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}`)).body.campaign.status, 'sending');
+    assert.equal(await auditCount(t, 'email.campaign.done'), 0);
+
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60_000) });
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}`)).body.campaign.status, 'done');
+    assert.equal(await auditCount(t, 'email.campaign.done', campaign.id), 1);
+    assert.equal(transport.calls.length, 1, 'no resend');
+  } finally { await t.close(); }
+});
+
+test('approval_mismatch: content changed in the database after approval → no send, exactly one integrity event', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    // Zmiana z pominięciem API i triggera (np. ręczna edycja w konsoli bazy).
+    await t.db.exec('ALTER TABLE email_campaigns DISABLE TRIGGER email_campaigns_guard');
+    await t.db.query("UPDATE email_campaigns SET body_text = body_text || ' Zmienione.' WHERE id = $1", [campaign.id]);
+    await t.db.exec('ALTER TABLE email_campaigns ENABLE TRIGGER email_campaigns_guard');
+    const transport = fakeTransport();
+    const runs = [];
+    for (let i = 0; i < 3; i += 1) {
+      runs.push(await runEmailBatch(t.env, { transport, dryRun: i === 1 ? true : false, now: new Date(DAY1.getTime() + i * 60_000) }));
+    }
+    assert.ok(runs.every((run) => run.stoppedReason === 'approval_mismatch' && run.planned === 0));
+    assert.equal(transport.calls.length, 0);
+    assert.ok((await outboxStates(t, campaign.id)).every((row) => row.state === 'queued'));
+    assert.equal(await auditCount(t, 'email.campaign.integrity_mismatch', campaign.id), 1);
+    const { rows: [event] } = await t.db.query(
+      "SELECT metadata_json AS m FROM audit_events WHERE action = 'email.campaign.integrity_mismatch'",
+    );
+    assert.equal(event.m.reason, 'approval_mismatch');
+    assert.match(event.m.observedContentHash, /^[0-9a-f]{64}$/);
+    assert.notEqual(event.m.observedContentHash, event.m.approvedContentHash);
+    assert.ok(!JSON.stringify(event.m).includes('Zmienione'), 'no content in audit metadata');
+    assert.ok(!JSON.stringify(event.m).includes('@'));
+  } finally { await t.close(); }
+});
+
+test('bounce webhook: audit failure rolls back the suppression (same transaction)', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    const { rows: [row] } = await t.db.query('SELECT provider_message_id FROM email_outbox WHERE campaign_id = $1', [campaign.id]);
+    const event = { event: 'hard_bounce', email: 'h1-g1@example.invalid', 'message-id': row.provider_message_id, ts_event: 1791187200, id: 7 };
+    const faulty = { ...t.env, db: auditFaultDb(t.db, failOnce('email.address_suppressed')) };
+    const failed = await handlePgRequest(webhookRequest(event, `Bearer ${WEBHOOK_SECRET}`), faulty).catch((error) => error);
+    assert.ok(failed instanceof Error || failed.status >= 500);
+    assert.equal(await t.count('SELECT count(*)::int AS n FROM email_suppressions'), 0);
+    assert.equal((await outboxStates(t, campaign.id))[0].state, 'sent');
+    const ok = await handlePgRequest(webhookRequest(event, `Bearer ${WEBHOOK_SECRET}`), t.env);
+    assert.equal(ok.status, 200);
+    assert.equal(await t.count('SELECT count(*)::int AS n FROM email_suppressions'), 1);
+    assert.equal(await auditCount(t, 'email.address_suppressed'), 1);
+    assert.equal((await outboxStates(t, campaign.id))[0].state, 'bounced');
+  } finally { await t.close(); }
+});
+
 test('no test in this file touched the network', () => {
   assert.equal(networkCalls, 0);
 });
