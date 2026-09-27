@@ -102,7 +102,8 @@ test('edits after publication keep the published revision public until re-approv
     let pub = (await listPublic(db)).events;
     assert.equal(pub[0].title, 'Kiermasz pierwotny');
     assert.equal(pub[0].startsAt, '2026-11-12T18:30:00+01:00');
-    assert.equal(pub[0].changedAfterPublication, false);
+    // docs/EVENTS.md: while the edit awaits approval the public entry is flagged.
+    assert.equal(pub[0].changedAfterPublication, true);
 
     await submit(db, board1, { eventId: event.id, revision: 2 });
     await approve(db, board2, { eventId: event.id, revision: 2 });
@@ -178,16 +179,17 @@ test('representative cannot read or touch another class and cannot create school
     await assert.rejects(createDraft(db, rep1A, draftInput({ classId: 'c1b' })), { code: 'forbidden' });
     await assert.rejects(createDraft(db, rep1A, draftInput()), { code: 'forbidden' });
     await assert.rejects(createDraft(db, rep1A, draftInput({ classId: 'c1a', schoolYearId: 'other' })), { code: 'forbidden' });
-    await assert.rejects(updateDraft(db, rep1A, { eventId: other.id, revision: 1, title: 'Przejęte' }), { code: 'forbidden' });
-    await assert.rejects(submit(db, rep1A, { eventId: other.id, revision: 1 }), { code: 'forbidden' });
-    await assert.rejects(cancel(db, rep1A, { eventId: other.id, revision: 1, reason: 'Nie moje' }), { code: 'forbidden' });
+    // SR-07: another class's event answers like a missing one.
+    await assert.rejects(updateDraft(db, rep1A, { eventId: other.id, revision: 1, title: 'Przejęte' }), { code: 'event_not_found' });
+    await assert.rejects(submit(db, rep1A, { eventId: other.id, revision: 1 }), { code: 'event_not_found' });
+    await assert.rejects(cancel(db, rep1A, { eventId: other.id, revision: 1, reason: 'Nie moje' }), { code: 'event_not_found' });
     await assert.rejects(getInternal(db, rep1A, { eventId: other.id }), { code: 'event_not_found' });
     const list = await listInternal(db, rep1A, { schoolYearId: 'year' });
     assert.deepEqual(list.events.map((e) => e.id), [own.id]);
 
     await submit(db, rep1A, { eventId: own.id, revision: 1 });
     await assert.rejects(approve(db, rep1A, { eventId: own.id, revision: 1 }), { code: 'forbidden' });
-    await assert.rejects(approve(db, rep1B, { eventId: own.id, revision: 1 }), { code: 'forbidden' });
+    await assert.rejects(approve(db, rep1B, { eventId: own.id, revision: 1 }), { code: 'event_not_found' });
     await assert.rejects(listInternal(db, treasurer, { schoolYearId: 'year' }), { code: 'forbidden' });
     await assert.rejects(createDraft(db, treasurer, draftInput()), { code: 'forbidden' });
     // Assumption pending D-08: technical admin drafts but does not approve/publish.
@@ -367,5 +369,25 @@ test('legacy D1 rows restore as published (no approval record) or draft', async 
     ]);
     assert.deepEqual((await listPublic(db)).events.map((e) => e.id), ['legacy-pub']);
     await assert.rejects(db.query(`INSERT INTO events (id,school_year_id,title,begins_at,status,created_by) VALUES ('x','year','X',now(),'approved','board1')`), /event_must_start_as_draft/);
+  } finally { await db.close(); }
+});
+
+test('stale revision is a conflict before content validation; double submit still replays', async () => {
+  const db = await eventsDb();
+  try {
+    const { event } = await createDraft(db, board1, draftInput({ startsAt: '2026-11-12T18:30', endsAt: '2026-11-12T20:00' }));
+    // board2 moves the start after the old end; board1 still sees revision 1.
+    await updateDraft(db, board2, { eventId: event.id, revision: 1, startsAt: '2026-11-12T21:00', endsAt: '2026-11-12T22:00' });
+    // board1's stale edit (only endsAt) would fail validation against the new start — it is still a conflict.
+    await assert.rejects(updateDraft(db, board1, { eventId: event.id, revision: 1, endsAt: '2026-11-12T20:30' }),
+      { code: 'revision_conflict', status: 409 });
+    await assert.rejects(updateDraft(db, board1, { eventId: event.id, revision: 1, title: 'x' }),
+      { code: 'revision_conflict', status: 409 });
+    // Double submit by the author of revision 2 returns it without a new revision.
+    const again = await updateDraft(db, board2, { eventId: event.id, revision: 1, startsAt: '2026-11-12T21:00', endsAt: '2026-11-12T22:00' });
+    assert.equal(again.replayed, true);
+    assert.equal(again.event.revision, 2);
+    // Invalid content on the current revision is still a validation error.
+    await assert.rejects(updateDraft(db, board1, { eventId: event.id, revision: 2, title: 'x' }), { code: 'invalid_title' });
   } finally { await db.close(); }
 });

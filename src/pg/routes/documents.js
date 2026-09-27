@@ -176,8 +176,13 @@ async function list(request, env, url, json) {
     { ...context, grants: context.grants.filter((grant) => !grant.classId) },
     { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId },
   );
+  // DOC-01: przydział klasowy liczy się tylko w swoim roku (i z MFA, jeśli rodzaj go wymaga) —
+  // przydział z innego roku nie może zamienić odmowy (403) w pustą listę.
   const ownClasses = [...new Set(context.grants
-    .filter((grant) => grant.classId && classPolicy.roles.includes(grant.role))
+    .filter((grant) => grant.classId && isAuthorized(
+      { ...context, grants: [grant] },
+      { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId, classId: grant.classId },
+    ))
     .map((grant) => grant.classId))];
   if (!unscopedKinds.length && !allClasses && !ownClasses.length) return json({ error: 'forbidden' }, 403);
 

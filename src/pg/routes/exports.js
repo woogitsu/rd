@@ -11,7 +11,7 @@
 // oraz zdarzenie audytu `export.created` w tej samej transakcji.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorized, isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import {
   buildClassRoster, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
@@ -69,7 +69,8 @@ function attachment(body, filename, headers = {}) {
 async function authorize(request, env, requirement, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return { response: json({ error: 'unauthenticated' }, 401) };
-  if (!isAuthorized(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
+  // Eksport roczny (bez classId) wymaga przydziału bez class_id; lista klasy — przydziału tej klasy.
+  if (!isAuthorizedScoped(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
   return { context };
 }
 
