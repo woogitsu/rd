@@ -4,6 +4,7 @@
 //   GET   /api/classes/{id}/students               uczniowie klasy z gospodarstwami
 //   GET   /api/households/{id}                     karta gospodarstwa
 //   PATCH /api/guardians/{id}/contact              zmiana e-maila / zgody na kontakt (admin, zarząd)
+//   PATCH /api/guardians/{id}/students/{studentId} zgoda na kontakt w relacji z dzieckiem (admin, zarząd; #190)
 //   POST  /api/students/{id}/enrollments           przypisanie lub zmiana klasy w roku (admin, zarząd)
 //
 // Zakres (założenie do decyzji D-08/D-09, opisane w docs/DATA_MODEL.md):
@@ -383,6 +384,56 @@ async function updateGuardianContact(request, env, guardianId, json) {
   });
 }
 
+// Zgoda na kontakt w relacji opiekun–dziecko (#190). Tę flagę (razem ze zgodą
+// opiekuna) sprawdza dobór adresatów kampanii i lista klasy. Role jak przy
+// zmianie kontaktu opiekuna; zakres klasowy — tylko aktywna relacja z uczniem
+// z zakresu. Relacja poza zakresem i nieistniejąca: 404. Historia zmian:
+// student_guardian_changes (trigger z 0026, aktor i powód z setChangeContext).
+function parseRelationInput(data) {
+  if (typeof data.contactAllowed !== 'boolean') throw new RequestError('invalid_request');
+  return { contactAllowed: data.contactAllowed, reason: readReason(data.reason) };
+}
+
+async function updateRelationContact(request, env, guardianId, studentId, json) {
+  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const input = parseRelationInput(await readJson(request));
+  const actorId = context.session.user.id;
+  const result = await env.db.transaction(async (tx) => {
+    // Blokada wiersza relacji serializuje podwójne kliknięcie i ponowienie.
+    const { rows } = await tx.query(
+      `SELECT sg.contact_allowed, g.contact_allowed AS guardian_contact_allowed,
+              (sg.ends_on IS NOT NULL AND sg.ends_on <= CURRENT_DATE) AS ended
+         FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
+        WHERE sg.guardian_id = $5 AND sg.student_id = $6 AND ${STUDENT_IN_SCOPE('sg.student_id')}
+          ${isClassScoped(scope) ? `AND ${RELATION_ACTIVE('sg')}` : ''}
+        FOR UPDATE OF sg`,
+      [...scopeParams(scope), guardianId, studentId],
+    );
+    const current = rows[0];
+    if (!current) throw notFound();
+    const guardianContactAllowed = current.guardian_contact_allowed;
+    if (current.contact_allowed === input.contactAllowed) return { changed: false, guardianContactAllowed };
+    if (current.ended) throw new RequestError('relation_ended', 409);
+    await setChangeContext(tx, { actorId, reason: input.reason });
+    await tx.query(
+      'UPDATE student_guardians SET contact_allowed = $3 WHERE guardian_id = $1 AND student_id = $2',
+      [guardianId, studentId, input.contactAllowed],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'student_guardian.contact.updated', entityType: 'student_guardian',
+      entityId: `${studentId}:${guardianId}`,
+      metadata: { studentId, guardianId, contactAllowed: input.contactAllowed },
+    });
+    return { changed: true, guardianContactAllowed };
+  });
+  return json({
+    relation: { guardianId, studentId, contactAllowed: input.contactAllowed },
+    // Kampania wymaga obu zgód; bez zgody opiekuna relacja nadal nie daje adresata.
+    guardianContactAllowed: result.guardianContactAllowed,
+    changed: result.changed,
+  });
+}
+
 function parseEnrollmentInput(data) {
   if (!ID_PATTERN.test(String(data.schoolYearId ?? '')) || !ID_PATTERN.test(String(data.classId ?? ''))) {
     throw new RequestError('invalid_request');
@@ -445,6 +496,7 @@ export async function handle(request, env, url, json) {
   const studentsMatch = path.match(/^\/api\/classes\/([^/]+)\/students$/);
   const householdMatch = path.match(/^\/api\/households\/([^/]+)$/);
   const contactMatch = path.match(/^\/api\/guardians\/([^/]+)\/contact$/);
+  const relationMatch = path.match(/^\/api\/guardians\/([^/]+)\/students\/([^/]+)$/);
   const enrollmentMatch = path.match(/^\/api\/students\/([^/]+)\/enrollments$/);
   const method = request.method;
   let action = null;
@@ -452,6 +504,9 @@ export async function handle(request, env, url, json) {
   else if (method === 'GET' && studentsMatch) action = () => listClassStudents(request, env, decodeId(studentsMatch[1]), json);
   else if (method === 'GET' && householdMatch) action = () => getHousehold(request, env, decodeId(householdMatch[1]), json);
   else if (method === 'PATCH' && contactMatch) action = () => updateGuardianContact(request, env, decodeId(contactMatch[1]), json);
+  else if (method === 'PATCH' && relationMatch) {
+    action = () => updateRelationContact(request, env, decodeId(relationMatch[1]), decodeId(relationMatch[2]), json);
+  }
   else if (method === 'POST' && enrollmentMatch) action = () => changeEnrollment(request, env, decodeId(enrollmentMatch[1]), json);
   if (!action) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.

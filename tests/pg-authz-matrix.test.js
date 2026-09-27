@@ -195,9 +195,9 @@ async function makePayment(db, target, stage) {
   await db.query(
     `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
        reference, status, created_by, idempotency_key)
-     VALUES ($1, $2, $3, 100000, '2026-10-01', 'bank', $4, $5, $6, $7)`,
+     VALUES ($1, $2, $3, 100000, $8, 'bank', $4, $5, $6, $7)`,
     [id, unmatched ? null : 'hh-1', target.schoolYearId, `Wpłata ${marker(target.key)}`,
-      unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`],
+      unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`, yearDate(target, '10-01')],
   );
   return { paymentId: id };
 }
@@ -446,7 +446,7 @@ const WRITE_TABLES = [
   'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments', 'role_grants',
   'users', 'sessions', 'invitations', 'user_mfa_factors', 'mfa_recovery_codes',
   'import_batches', 'households', 'guardians', 'students', 'enrollments', 'student_guardians',
-  'guardian_contact_changes', 'enrollment_history', 'documents',
+  'guardian_contact_changes', 'student_guardian_changes', 'enrollment_history', 'documents',
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
   'email_webhook_events', 'email_suppressions',
