@@ -479,3 +479,126 @@ test('suggestions include unbooked payments and flag a matching reference hash',
     await db.close();
   }
 });
+
+// Regresja #115: wpłata gotówkowa nie może być proponowana ani powiązana z pozycją wyciągu bankowego.
+async function seedPayments(db, rows) {
+  await db.query("INSERT INTO households (id) VALUES ('h-1'), ('h-2') ON CONFLICT DO NOTHING");
+  for (const [id, household, cents, date, method] of rows) {
+    await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
+      reference, status, created_by, idempotency_key)
+      VALUES ($1, $2, $3, $4, $5, $6, NULL, 'recorded', 'u-treasurer', $7)`,
+    [id, household, YEAR, cents, date, method, `pay-key-${id}`]);
+  }
+}
+
+async function importLines(call, cookie, reconciliationId, lines) {
+  const response = await call(`/api/reconciliations/${reconciliationId}/lines`, {
+    method: 'POST', cookie, headers: { 'Idempotency-Key': key('imp') }, body: { lines },
+  });
+  assert.equal(response.status, 201);
+}
+
+async function paymentSuggestions(call, cookie, reconciliationId) {
+  const { suggestions } = await (await call(`/api/reconciliations/${reconciliationId}/suggestions`, { cookie })).json();
+  return Object.fromEntries(suggestions.map((s) => [s.amountCents, s]));
+}
+
+test('suggestions offer only bank payments; a cash payment of the same amount and date is not proposed', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await seedPayments(db, [
+      ['p-cash', 'h-1', 2500, '2026-09-14', 'cash'],
+      ['p-other', 'h-2', 2500, '2026-09-14', 'other'],
+      ['p-bank', 'h-2', 2500, '2026-09-14', 'bank'],
+    ]);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await importLines(call, cookies.treasurer, reconciliation.id, [{ bookedOn: '2026-09-14', amountCents: 2500 }]);
+    const byAmount = await paymentSuggestions(call, cookies.treasurer, reconciliation.id);
+    assert.deepEqual(byAmount[2500].candidates.map((c) => [c.type, c.id, c.method]), [
+      ['payment_entry', 'p-bank', 'bank'],
+    ]);
+
+    // Ręczne powiązanie z wpłatą gotówkową jest odrzucane na serwerze, także przy ponowieniu tym samym kluczem.
+    const lineId = byAmount[2500].statementLineId;
+    const cashKey = key('m');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const refused = await call(`/api/reconciliations/${reconciliation.id}/matches`, {
+        method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': cashKey },
+        body: { statementLineId: lineId, paymentEntryId: 'p-cash' },
+      });
+      assert.equal(refused.status, 409);
+      assert.equal((await refused.json()).error, 'match_method_mismatch');
+    }
+    const other = await call(`/api/reconciliations/${reconciliation.id}/matches`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('m') },
+      body: { statementLineId: lineId, paymentEntryId: 'p-other' },
+    });
+    assert.equal(other.status, 409);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM bank_reconciliation_matches')).rows[0].n, 0);
+    assert.equal((await db.query(
+      "SELECT count(*)::int AS n FROM audit_events WHERE action = 'reconciliation.match.confirmed'",
+    )).rows[0].n, 0);
+
+    const matched = await call(`/api/reconciliations/${reconciliation.id}/matches`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': cashKey.replace('m-', 'm2-') },
+      body: { statementLineId: lineId, paymentEntryId: 'p-bank' },
+    });
+    assert.equal(matched.status, 201);
+  } finally {
+    await db.close();
+  }
+});
+
+test('partial payments by two guardians are proposed separately and cash partials are skipped', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    // Jedno gospodarstwo (rodzeństwo), dwoje opiekunów wpłaca częściami: 10 EUR przelewem, 15 EUR przelewem,
+    // a 10 EUR gotówką w tym samym dniu co pierwszy przelew.
+    await seedPayments(db, [
+      ['p-part-1', 'h-1', 1000, '2026-09-10', 'bank'],
+      ['p-part-cash', 'h-1', 1000, '2026-09-10', 'cash'],
+      ['p-part-2', 'h-1', 1500, '2026-09-18', 'bank'],
+    ]);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await importLines(call, cookies.treasurer, reconciliation.id, [
+      { bookedOn: '2026-09-10', amountCents: 1000 },
+      { bookedOn: '2026-09-18', amountCents: 1500 },
+    ]);
+    const byAmount = await paymentSuggestions(call, cookies.treasurer, reconciliation.id);
+    assert.deepEqual(byAmount[1000].candidates.map((c) => [c.id, c.method, c.amountCents]), [['p-part-1', 'bank', 1000]]);
+    assert.deepEqual(byAmount[1500].candidates.map((c) => [c.id, c.method, c.amountCents]), [['p-part-2', 'bank', 1500]]);
+  } finally {
+    await db.close();
+  }
+});
+
+test('corrected payments are proposed by net amount only when the payment is a bank transfer', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await seedPayments(db, [
+      ['p-corr-bank', 'h-1', 3000, '2026-09-15', 'bank'],
+      ['p-corr-cash', 'h-2', 3000, '2026-09-15', 'cash'],
+    ]);
+    await db.query(`INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
+      VALUES ('pc-1', 'p-corr-bank', 500, 'Błędna kwota — syntetyczne', 'u-treasurer', 'pc-key-0001'),
+             ('pc-2', 'p-corr-cash', 500, 'Błędna kwota — syntetyczne', 'u-treasurer', 'pc-key-0002')`);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await importLines(call, cookies.treasurer, reconciliation.id, [
+      { bookedOn: '2026-09-15', amountCents: 2500 },
+      { bookedOn: '2026-09-16', amountCents: 3000 },
+    ]);
+    const byAmount = await paymentSuggestions(call, cookies.treasurer, reconciliation.id);
+    assert.deepEqual(byAmount[2500].candidates.map((c) => [c.id, c.method, c.amountCents]), [['p-corr-bank', 'bank', 2500]]);
+    // Kwota sprzed korekty nie jest już proponowana jako wpłata.
+    assert.deepEqual(byAmount[3000].candidates.filter((c) => c.type === 'payment_entry'), []);
+
+    const refused = await call(`/api/reconciliations/${reconciliation.id}/matches`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('m') },
+      body: { statementLineId: byAmount[2500].statementLineId, paymentEntryId: 'p-corr-cash' },
+    });
+    assert.equal(refused.status, 409);
+    assert.equal((await refused.json()).error, 'match_method_mismatch');
+  } finally {
+    await db.close();
+  }
+});

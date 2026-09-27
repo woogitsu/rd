@@ -573,10 +573,11 @@ async function suggestMatches(request, env, id, url, json) {
     // Wpłaty nieujęte jeszcze w księdze (wpłata ujęta w księdze jest proponowana jako wpis księgi).
     env.db.query(
       `SELECT l.id AS line_id, p.id, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.reference,
-              p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
+              p.method, p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
               abs(p.received_on - l.booked_on) AS day_distance
          FROM bank_statement_lines l
          JOIN payment_entries p ON p.school_year_id = $2 AND p.status IN ('recorded', 'unmatched')
+          AND p.method = 'bank'
           AND abs(p.received_on - l.booked_on) <= $3
          LEFT JOIN (SELECT payment_entry_id, sum(amount_cents) AS corrected
                       FROM payment_corrections GROUP BY payment_entry_id) c ON c.payment_entry_id = p.id
@@ -606,7 +607,7 @@ async function suggestMatches(request, env, id, url, json) {
       referenceMatch = (await hashReference(row.reference_salt, payment.reference)) === slot.line.reference_hash;
     }
     slot.candidates.push({
-      type: 'payment_entry', id: payment.id, date: payment.received_on, method: 'bank',
+      type: 'payment_entry', id: payment.id, date: payment.received_on, method: payment.method,
       amountCents: toSafeInteger(payment.net_amount_cents), dayDistance: toSafeInteger(payment.day_distance),
       referenceMatch,
     });
@@ -663,6 +664,11 @@ async function confirmMatch(request, env, id, json) {
         [data.statementLineId, id, ledgerEntryId, paymentEntryId],
       );
       if (taken.rows.length) throw new RequestError('already_matched', 409);
+      if (paymentEntryId !== null) {
+        // Pozycja wyciągu to przelew: wpłaty gotówkowej ani „innej” nie wolno z nią powiązać (#115).
+        const payment = await tx.query('SELECT method FROM payment_entries WHERE id = $1', [paymentEntryId]);
+        if (payment.rows[0] && payment.rows[0].method !== 'bank') throw new RequestError('match_method_mismatch', 409);
+      }
       const matchId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id, ledger_entry_id,
