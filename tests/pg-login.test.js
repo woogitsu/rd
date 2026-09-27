@@ -638,3 +638,73 @@ test('hasło i e-mail nie trafiają do audytu, logów konsoli ani tabel pomocnic
   }
   assert.ok(!audit.includes('@'), 'audyt bez adresów e-mail');
 });
+
+// --- #189: sesja po samym haśle nie działa przeciw właścicielowi ------------------------------
+
+test('#189: sesja bez TOTP nie wylogowuje właściciela, nie blokuje mu MFA i nie widzi ról', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-189', roles: [{ role: 'treasurer', schoolYearId: 'y-test' }] });
+  const { secret, cookie: enrolled, recoveryCodes } = await enrollAndConfirm(cookieFrom(await login(account)));
+  // Właściciel: nowa sesja po haśle i drugim składniku (kod odzyskiwania — krok TOTP zostaje na później).
+  const ownerLogin = cookieFrom(await login(account));
+  const ownerVerify = await post('/api/mfa/recovery', { code: recoveryCodes[0] }, { cookie: ownerLogin });
+  assert.equal(ownerVerify.status, 200);
+  const owner = cookieFrom(ownerVerify);
+  assert.equal((await get('/api/payments', owner)).status !== 403, true);
+
+  // Napastnik zna hasło, nie ma telefonu.
+  const attacker = cookieFrom(await login(account));
+  assert.equal((await get('/api/payments', attacker)).status, 403);
+  const access = await get('/api/access', attacker);
+  assert.equal(access.status, 200);
+  const accessBody = await access.json();
+  assert.deepEqual(accessBody.grants, [], 'przydziały ukryte do potwierdzenia MFA');
+  assert.equal(accessBody.mfaRequired, true);
+  assert.ok(!JSON.stringify(accessBody).includes('treasurer'));
+
+  const statuses = [];
+  for (let i = 0; i < 6; i += 1) statuses.push((await post('/api/mfa/verify', { code: '000000' }, { cookie: attacker })).status);
+  assert.equal(statuses.at(-1), 429, 'sesja napastnika zablokowana');
+
+  const revoke = await post('/api/sessions/revoke-all', undefined, { cookie: attacker });
+  assert.equal(revoke.status, 200);
+  const revokeBody = await revoke.json();
+  assert.equal(revokeBody.revoked, 1);
+  assert.equal(revokeBody.scope, 'current');
+  assert.equal((await get('/api/session', attacker)).status, 401, 'bieżąca sesja wylogowana');
+  assert.equal((await get('/api/session', owner)).status, 200, 'sesja właściciela po MFA działa');
+  assert.equal((await get('/api/session', enrolled)).status, 200);
+
+  // Właściciel loguje się ponownie i podaje poprawny kod — blokada sesji napastnika go nie dotyczy.
+  const again = cookieFrom(await login(account));
+  assert.equal((await post('/api/mfa/verify', { code: codeAt(secret, 1) }, { cookie: again })).status, 200);
+
+  // Z sesji po MFA „Wyloguj wszędzie” wycofuje wszystkie; podwójne kliknięcie → 401.
+  const all = await post('/api/sessions/revoke-all', undefined, { cookie: owner });
+  assert.equal(all.status, 200);
+  const allBody = await all.json();
+  assert.equal(allBody.scope, 'all');
+  assert.ok(allBody.revoked >= 2);
+  assert.equal((await get('/api/session', enrolled)).status, 401);
+  assert.equal((await post('/api/sessions/revoke-all', undefined, { cookie: owner })).status, 401);
+});
+
+test('#189: konto bez czynnika — revoke-all jak dotąd; rola wymagająca MFA bez czynnika nie widzi przydziałów', async () => {
+  const rep = await seedPasswordUser({ userId: 'u-login-189rep', roles: [{ role: 'representative', classId: 'c-login-189', schoolYearId: 'y-test' }] });
+  const a = cookieFrom(await login(rep));
+  const b = cookieFrom(await login(rep));
+  const repAccess = await (await get('/api/access', a)).json();
+  assert.equal(repAccess.grants.length, 1, 'przedstawiciel bez wymogu MFA widzi własny przydział');
+  const revoke = await post('/api/sessions/revoke-all', undefined, { cookie: a });
+  assert.equal((await revoke.json()).revoked, 2);
+  assert.equal((await get('/api/session', b)).status, 401);
+
+  const board = await seedPasswordUser({ userId: 'u-login-189brd', roles: [{ role: 'board', schoolYearId: 'y-test' }] });
+  const boardCookie = cookieFrom(await login(board));
+  const boardAccess = await (await get('/api/access', boardCookie)).json();
+  assert.deepEqual(boardAccess.grants, []);
+  assert.equal(boardAccess.mfaRequired, true);
+  // Ekran logowania korzysta z /api/auth/state — ten działa bez MFA.
+  const state = await (await get('/api/auth/state', boardCookie)).json();
+  assert.equal(state.mfaRequired, true);
+  assert.equal(state.mfaEnrolled, false);
+});

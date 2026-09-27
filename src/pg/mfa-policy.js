@@ -27,15 +27,17 @@ export function mfaRequiredRoles(env) {
   return String(raw).split(',').map((role) => role.trim()).filter((role) => ROLES.includes(role));
 }
 
-const EXEMPT_EXACT = new Set([
+export const MFA_GATE_EXEMPT_EXACT = Object.freeze([
   '/api/session', '/api/access', '/api/logout', '/api/sessions/revoke-all',
   '/api/login', '/api/auth/state', '/api/invitations/accept', '/api/password/reset',
   // Trasy publiczne i webhook: działają bez sesji, więc cookie niczego tu nie zmienia.
   '/api/meetings/public-minutes', '/api/email/webhooks/brevo',
 ]);
+export const MFA_GATE_EXEMPT_PREFIXES = Object.freeze(['/api/mfa/', '/api/public/']);
+const EXEMPT_EXACT = new Set(MFA_GATE_EXEMPT_EXACT);
 
 export function isMfaGateExempt(pathname) {
-  return EXEMPT_EXACT.has(pathname) || pathname.startsWith('/api/mfa/') || pathname.startsWith('/api/public/');
+  return EXEMPT_EXACT.has(pathname) || MFA_GATE_EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 // Stan MFA konta: czy ma potwierdzony czynnik i czy jego role wymagają MFA.

@@ -37,7 +37,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | Trasa | Dozwolone role i zakres | MFA | Odmowa dla zalogowanego | Uwagi |
 |---|---|---|---|---|
 | `GET /api/session` | każdy zalogowany | nie | — | zwraca wyłącznie własną sesję |
-| `GET /api/access` | każdy zalogowany | nie | — | wyłącznie własne aktywne przydziały; wygasłe i cofnięte pominięte |
+| `GET /api/access` | każdy zalogowany | nie | — | wyłącznie własne aktywne przydziały; wygasłe i cofnięte pominięte; sesja czekająca na MFA (bramka by ją zatrzymała): pusta lista i `mfaRequired` (#189) |
 | `POST /api/logout` | każdy (także bez sesji) | nie | — | zawsze 204; po wylogowaniu sesja zwraca 401 |
 | `GET /api/payments?schoolYearId=:year` | admin, zarząd, skarbnik — rok 1 | tak | 403 | inny rok: 403 |
 | `POST /api/payments` | admin, zarząd, skarbnik — rok 1 | tak | 403 | walidacja klucza i treści przed sprawdzeniem sesji |
@@ -150,7 +150,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/mfa/confirm` | każdy zalogowany | nie | — | rotuje sesję |
 | `POST /api/mfa/verify` | każdy zalogowany z potwierdzonym czynnikiem | nie | — | |
 | `POST /api/mfa/recovery` | jak wyżej | nie | — | kod odzyskiwania jednorazowy |
-| `POST /api/sessions/revoke-all` | każdy zalogowany (własne sesje) | nie | — | |
+| `POST /api/sessions/revoke-all` | każdy zalogowany (własne sesje) | nie | — | konto z czynnikiem, sesja bez potwierdzonego MFA: wyłącznie bieżąca sesja (#189) |
 | `POST /api/login` | publiczna (bez sesji; uwierzytelnia e-mail i hasło) | nie | — | cookie żądania ignorowane; zgodny `Origin`; zwolniona z bramki MFA; sesja bez MFA |
 | `GET /api/auth/state` | każdy zalogowany (stan własnej sesji) | nie | — | zwolniona z bramki MFA |
 | `POST /api/invitations/accept` | publiczna (uwierzytelnia jednorazowy token zaproszenia) | nie | — | zgodny `Origin`; zwolniona z bramki MFA; istniejące konto z hasłem: wymagane jego obecne hasło |

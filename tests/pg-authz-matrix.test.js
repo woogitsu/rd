@@ -29,13 +29,14 @@ import {
   approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
 } from '../src/pg/news.js';
 import { hashSecret } from '../src/auth.js';
+import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
-  ACTOR_KEYS, ACTORS, MARKERS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
-  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, pdfBytes, photoBody,
+  ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
+  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
   statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
@@ -557,7 +558,9 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
 
   if (route.id === 'session.access' && response.status === 200) {
     const { grants } = JSON.parse(text);
-    const expectedGrants = ['noGrant', 'expiredGrant', 'revokedGrant'].includes(actor.key) ? 0 : actor.grants.length;
+    // #189: sesja czekająca na MFA (rola z wymogiem MFA, bez MFA) nie poznaje przydziałów.
+    const hidden = ['noGrant', 'expiredGrant', 'revokedGrant'].includes(actor.key) || mfaPending(actor, mfa);
+    const expectedGrants = hidden ? 0 : actor.grants.length;
     if (grants.length !== expectedGrants) problems.push(`/api/access zwraca ${grants.length} przydziałów zamiast ${expectedGrants}`);
   }
   if (route.id === 'session.logout' && cookie) {
@@ -748,6 +751,16 @@ test('meta: każda ścieżka widoczna w kodzie modułu tras jest pokryta macierz
       }
     }
     assert.ok(found > 0, `${route.name}: nie znaleziono żadnej ścieżki w kodzie — zaktualizuj pathSegmentsInSource`);
+  }
+});
+
+test('meta: każde zwolnienie z bramki MFA ma uzasadnienie i wpis w macierzy (#189)', () => {
+  const exempt = [...MFA_GATE_EXEMPT_EXACT, ...MFA_GATE_EXEMPT_PREFIXES];
+  assert.deepEqual([...exempt].sort(), Object.keys(MFA_GATE_EXEMPT_REASONS).sort(),
+    'Nowe zwolnienie w src/pg/mfa-policy.js wymaga uzasadnienia w MFA_GATE_EXEMPT_REASONS (tests/helpers/route-matrix.js)');
+  for (const path of exempt) {
+    assert.ok(ROUTE_MATRIX.some((route) => (path.endsWith('/') ? route.path.startsWith(path) : route.path.split('?')[0] === path)),
+      `zwolnienie ${path} bez wpisu w macierzy`);
   }
 });
 

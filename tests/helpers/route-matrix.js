@@ -360,6 +360,7 @@ export const ROUTE_MATRIX = Object.freeze([
     build: () => ({ path: '/api/session' }),
   },
   {
+    // Zwolniona z bramki MFA, ale sesja czekająca na MFA dostaje pustą listę (#189; test w pg-authz-matrix).
     id: 'session.access', module: 'session', method: 'GET', path: '/api/access', targets: ['-'],
     allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: null,
     build: () => ({ path: '/api/access' }),
@@ -903,10 +904,32 @@ export function denyStatus(route, actor, targetKey, mfa) {
 // czynnika i bez sesji z MFA dostaje 403 mfa_enrollment_required na każdej
 // trasie poza zwolnionymi. Aktorzy macierzy nie mają zapisanych czynników.
 const MFA_REQUIRED_ROLES = new Set(['admin', 'board', 'treasurer']);
-export function mfaGateBlocks(route, actor, mfa) {
-  if (mfa || actor.unauthenticated || isMfaGateExempt(route.path.split('?')[0])) return false;
+// Czy bramka zatrzymałaby tę sesję na trasie chronionej (niezależnie od zwolnień trasy).
+export function mfaPending(actor, mfa) {
+  if (mfa || actor.unauthenticated) return false;
   return actor.grants.some((grant) => MFA_REQUIRED_ROLES.has(grant.role) && !grant.revoked && !grant.expiresAt);
 }
+export function mfaGateBlocks(route, actor, mfa) {
+  if (isMfaGateExempt(route.path.split('?')[0])) return false;
+  return mfaPending(actor, mfa);
+}
+
+// Każde zwolnienie z bramki MFA (src/pg/mfa-policy.js) ma uzasadnienie; zasada (#189): trasa
+// zwolniona zmienia wyłącznie stan bieżącej sesji albo działa bez sesji i nie ujawnia ról.
+export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
+  '/api/session': 'własna sesja (id, e-mail, stan MFA) — ekran MFA musi wiedzieć, kto jest zalogowany',
+  '/api/access': 'bez potwierdzonego MFA zwraca pustą listę przydziałów i mfaRequired (#189)',
+  '/api/logout': 'wylogowuje wyłącznie bieżącą sesję',
+  '/api/sessions/revoke-all': 'konto z czynnikiem bez potwierdzonego MFA wycofuje wyłącznie bieżącą sesję (#189)',
+  '/api/login': 'działa bez sesji; tworzy nową sesję bez MFA',
+  '/api/auth/state': 'stan własnej sesji dla ekranu logowania (bez ról)',
+  '/api/invitations/accept': 'działa bez sesji; uwierzytelnia token zaproszenia',
+  '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
+  '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
+  '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
+  '/api/mfa/': 'zapis i potwierdzenie MFA; limity błędów per sesja, wyższy sufit per konto (#189)',
+  '/api/public/': 'publiczne dane zatwierdzone',
+});
 
 // Oczekiwany status dla (trasa, aktor, MFA, zakres) — zamierzona polityka, nie stan kodu.
 export function expectedStatus(route, actor, mfa, targetKey) {

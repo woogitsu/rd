@@ -244,17 +244,16 @@ test('wrong codes are counted per user and session and lock after the limit', as
   assert.equal(locking.status, 429);
   assert.equal(locking.headers.get('Retry-After'), String(MFA_POLICY.lockSeconds));
   assert.equal((await auditActions(db, 'mfa.failed', 'u-lock')).length, MFA_POLICY.maxFailures);
+  // #189: blokada po 5 błędach dotyczy sesji; konto ma wyższy sufit (userMaxFailures).
   const locks = await auditActions(db, 'mfa.locked', 'u-lock');
-  assert.deepEqual(locks.map((l) => l.entity_type).sort(), ['session', 'user']);
+  assert.deepEqual(locks.map((l) => l.entity_type).sort(), ['session']);
 
-  // Poprawny kod w czasie blokady nie jest sprawdzany ani zużywany; blokada obejmuje też inne sesje konta.
+  // Poprawny kod w czasie blokady nie jest sprawdzany ani zużywany.
   const good = codeAt(secret, 1);
   const blocked = await handlePgRequest(post('/api/mfa/verify', session, { code: good }), env);
   assert.equal(blocked.status, 429);
   assert.ok(Number(blocked.headers.get('Retry-After')) > 0);
-  const otherSession = await seedUserSession(db, { userId: 'u-lock' });
-  assert.equal((await handlePgRequest(post('/api/mfa/verify', otherSession, { code: good }), env)).status, 429);
-  assert.equal((await handlePgRequest(post('/api/mfa/recovery', otherSession, { code: 'AAAA-AAAA-AAAA-AAAA' }), env)).status, 429);
+  assert.equal((await handlePgRequest(post('/api/mfa/recovery', session, { code: 'AAAA-AAAA-AAAA-AAAA' }), env)).status, 429);
   const { rows: [factor] } = await db.query('SELECT last_used_step FROM user_mfa_factors WHERE id = $1', [factorId]);
   const stepBefore = Number(factor.last_used_step);
   assert.equal((await auditActions(db, 'mfa.failed', 'u-lock')).length, MFA_POLICY.maxFailures, 'locked attempts are not evaluated');
@@ -269,15 +268,27 @@ test('wrong codes are counted per user and session and lock after the limit', as
   assert.equal(remaining.length, 0);
 }));
 
-test('user-scope counter locks across many sessions', async () => withDb(async (db, env) => {
+test('user-scope counter locks across many sessions at the higher account ceiling (#189)', async () => withDb(async (db, env) => {
   const { secret } = await enrollAndConfirm(db, env, 'u-spread');
   const bad = wrongCode(secret);
-  for (let i = 1; i < MFA_POLICY.maxFailures; i += 1) {
+  for (let i = 1; i < MFA_POLICY.userMaxFailures; i += 1) {
     const session = await seedUserSession(db, { userId: 'u-spread' });
     assert.equal((await handlePgRequest(post('/api/mfa/verify', session, { code: bad }), env)).status, 400);
   }
   const last = await seedUserSession(db, { userId: 'u-spread' });
   assert.equal((await handlePgRequest(post('/api/mfa/verify', last, { code: bad }), env)).status, 429);
+  const fresh = await seedUserSession(db, { userId: 'u-spread' });
+  assert.equal((await handlePgRequest(post('/api/mfa/verify', fresh, { code: codeAt(secret, 1) }), env)).status, 429, 'sufit konta obejmuje każdą sesję');
+}));
+
+test('#189: 5 wrong codes in session A do not block a correct code in new session B', async () => withDb(async (db, env) => {
+  const { secret } = await enrollAndConfirm(db, env, 'u-split');
+  const bad = wrongCode(secret);
+  const a = await seedUserSession(db, { userId: 'u-split' });
+  for (let i = 0; i < MFA_POLICY.maxFailures; i += 1) await handlePgRequest(post('/api/mfa/verify', a, { code: bad }), env);
+  assert.equal((await handlePgRequest(post('/api/mfa/verify', a, { code: codeAt(secret, 1) }), env)).status, 429);
+  const b = await seedUserSession(db, { userId: 'u-split' });
+  assert.equal((await handlePgRequest(post('/api/mfa/verify', b, { code: codeAt(secret, 1) }), env)).status, 200);
 }));
 
 test('recovery codes are single use and verify only the calling session', async () => withDb(async (db, env) => {
@@ -323,7 +334,7 @@ test('revoke-all revokes only the caller\'s sessions, with audit', async () => w
 
   const response = await handlePgRequest(post('/api/sessions/revoke-all', a1), env);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { revoked: 3 });
+  assert.deepEqual(await response.json(), { revoked: 3, scope: 'all' });
   assert.match(response.headers.get('Set-Cookie'), /Max-Age=0/);
   for (const cookie of [a1, a2, a3]) assert.equal((await sessionState(env, cookie)).status, 401);
   assert.equal((await sessionState(env, b1)).mfaVerified, false);

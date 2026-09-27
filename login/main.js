@@ -390,7 +390,9 @@ for (const button of document.querySelectorAll(".logout")) {
 byId("logout-all").addEventListener("click", async () => {
   try {
     const result = await api("/api/sessions/revoke-all", { method: "POST" });
-    say(`Wylogowano ze wszystkich urządzeń (sesje: ${result.revoked}).`);
+    say(result.scope === "current"
+      ? "Wylogowano to urządzenie. Inne urządzenia można wylogować po potwierdzeniu kodu z aplikacji."
+      : `Wylogowano ze wszystkich urządzeń (sesje: ${result.revoked}).`);
   } catch (error) {
     say(error.message);
   }
