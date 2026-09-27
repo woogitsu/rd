@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Zebrania — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../">Rada Rodziców <small>Szkoła Polska w Brukseli</small></a>
+      <nav aria-label="Panel">
+        <a href="../panel/">Wpłaty</a>
+        <a href="../ledger/">Księga</a>
+        <a class="active" href="./" aria-current="page">Zebrania</a>
+        <a href="../import/">Import uczniów</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="page-heading">
+        <div>
+          <h1>Zebrania Rady</h1>
+          <p>Porządek obrad, lista obecności, quorum, protokoły i uchwały. Czas zebrań podawany jest według strefy Europe/Brussels.</p>
+        </div>
+        <button class="primary" id="open-meeting" type="button">Nowe zebranie</button>
+      </section>
+
+      <p class="notice" role="note">
+        Panel nie prowadzi głosowania elektronicznego. Sekretarz wpisuje wyniki głosowań przeprowadzonych na zebraniu.
+        Reguła quorum, skład uprawniony i prawo głosu są wpisywane ręcznie — aplikacja nie zna regulaminu Rady.
+      </p>
+
+      <section class="block" aria-labelledby="filters-title">
+        <h2 id="filters-title">Rok szkolny</h2>
+        <form id="filters-form" class="inline-form">
+          <label>Identyfikator roku szkolnego
+            <input id="school-year-id" name="schoolYearId" autocomplete="off" required placeholder="np. 2026-2027" />
+          </label>
+          <button type="submit">Pokaż zebrania</button>
+        </form>
+      </section>
+
+      <section class="block" aria-labelledby="list-title">
+        <div class="section-heading">
+          <h2 id="list-title">Zebrania</h2>
+          <span class="loading" id="list-loading" hidden>Wczytywanie…</span>
+        </div>
+        <p class="message" id="list-message" role="status">Wybierz rok szkolny, aby pobrać zebrania.</p>
+        <div class="table-wrap" id="list-wrap" hidden>
+          <table>
+            <caption class="sr-only">Zebrania w wybranym roku szkolnym</caption>
+            <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Tytuł</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="list-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="block detail" id="detail" aria-labelledby="detail-title" hidden tabindex="-1">
+        <div class="section-heading">
+          <div>
+            <h2 id="detail-title" class="detail-title"></h2>
+            <p id="detail-meta" class="muted"></p>
+          </div>
+          <button type="button" id="reload-detail">Odśwież</button>
+        </div>
+        <p class="message" id="detail-message" role="status"></p>
+        <p class="notice" id="locked-note" role="note" hidden>
+          Zebranie jest zablokowane: protokół został zatwierdzony lub zebranie zarchiwizowano. Lista obecności, porządek obrad, quorum, uchwały i dane zebrania nie mogą się już zmienić. Poprawkę opisuje nowa wersja protokołu.
+        </p>
+
+        <section class="sub" aria-labelledby="data-title">
+          <h3 id="data-title">Dane zebrania</h3>
+          <form id="meeting-edit-form" class="stack" novalidate>
+            <div class="field-row">
+              <label>Tytuł <input name="title" minlength="3" maxlength="200" required /></label>
+              <label>Data i godzina (Bruksela) <input name="scheduledAt" type="datetime-local" required /></label>
+            </div>
+            <label>Miejsce <input name="location" maxlength="200" /></label>
+            <fieldset class="quorum-fields" data-quorum-fields>
+              <legend>Reguła quorum</legend>
+            </fieldset>
+            <p class="form-error" role="alert"></p>
+            <div><button class="primary" type="submit">Zapisz dane zebrania</button></div>
+          </form>
+          <form id="status-form" class="inline-form">
+            <label>Zmiana statusu
+              <select name="status" required></select>
+            </label>
+            <button type="submit">Zmień status</button>
+            <p class="form-error" role="alert"></p>
+          </form>
+        </section>
+
+        <section class="sub" aria-labelledby="agenda-title">
+          <h3 id="agenda-title">Porządek obrad</h3>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Punkty porządku obrad</caption>
+              <thead><tr><th scope="col">Nr</th><th scope="col">Punkt</th><th scope="col">Opis</th></tr></thead>
+              <tbody id="agenda-body"></tbody>
+            </table>
+          </div>
+          <form id="agenda-form" class="stack" novalidate>
+            <div class="field-row">
+              <label>Punkt <input name="title" minlength="3" maxlength="300" required /></label>
+              <label>Pozycja (opcjonalnie) <input name="position" inputmode="numeric" pattern="[0-9]*" maxlength="3" /></label>
+            </div>
+            <label>Opis (opcjonalnie) <textarea name="description" rows="2" maxlength="2000"></textarea></label>
+            <p class="form-error" role="alert"></p>
+            <div><button type="submit">Dodaj punkt</button></div>
+          </form>
+        </section>
+
+        <section class="sub" aria-labelledby="attendance-title">
+          <h3 id="attendance-title">Lista obecności</h3>
+          <p class="muted">Lista przechowuje wyłącznie identyfikator konta lub opiekuna i funkcję — bez imion i adresów. Prawo głosu zaznacza się jawnie dla każdej osoby.</p>
+          <p id="attendance-summary" class="summary"></p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Lista obecności</caption>
+              <thead><tr><th scope="col">Osoba</th><th scope="col">Funkcja</th><th scope="col">Obecność</th><th scope="col">Prawo głosu</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <tbody id="attendance-body"></tbody>
+            </table>
+          </div>
+          <form id="attendance-form" class="stack" novalidate>
+            <div class="field-row">
+              <label>Rodzaj identyfikatora
+                <select name="personType" required>
+                  <option value="">Wybierz</option>
+                  <option value="user">Konto użytkownika</option>
+                  <option value="guardian">Opiekun (katalog rodzin)</option>
+                </select>
+              </label>
+              <label>Identyfikator <input name="personId" autocomplete="off" maxlength="128" required /></label>
+            </div>
+            <label>Funkcja na zebraniu <select name="capacity" required data-capacity></select></label>
+            <div class="field-row">
+              <fieldset class="choice">
+                <legend>Obecność</legend>
+                <label class="inline"><input type="radio" name="present" value="true" required /> obecna</label>
+                <label class="inline"><input type="radio" name="present" value="false" /> nieobecna</label>
+              </fieldset>
+              <fieldset class="choice">
+                <legend>Prawo głosu</legend>
+                <label class="inline"><input type="radio" name="votingEligible" value="true" required /> tak</label>
+                <label class="inline"><input type="radio" name="votingEligible" value="false" /> nie</label>
+              </fieldset>
+            </div>
+            <p class="form-error" role="alert"></p>
+            <div class="actions"><button type="submit">Zapisz wpis obecności</button><button type="reset">Wyczyść</button></div>
+          </form>
+        </section>
+
+        <section class="sub" aria-labelledby="quorum-title">
+          <h3 id="quorum-title">Quorum</h3>
+          <p id="quorum-rule" class="summary"></p>
+          <div id="quorum-result" class="result" role="status" aria-live="polite" hidden></div>
+          <p><button type="button" id="determine-quorum">Ustal quorum</button></p>
+          <p class="form-error" id="quorum-error" role="alert"></p>
+          <div class="table-wrap" id="quorum-history-wrap" hidden>
+            <table>
+              <caption>Historia ustaleń quorum</caption>
+              <thead><tr><th scope="col">Czas</th><th scope="col" class="num">Obecni uprawnieni</th><th scope="col" class="num">Wymagane</th><th scope="col">Wynik</th></tr></thead>
+              <tbody id="quorum-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="sub" aria-labelledby="minutes-title">
+          <h3 id="minutes-title">Protokół</h3>
+          <p class="muted">Każdy zapis tworzy nową, niezmienną wersję. Zatwierdzić można tylko najnowszą wersję. Udostępniana jest wyłącznie najnowsza zatwierdzona wersja; przed udostępnieniem sprawdź, czy treść nie zawiera danych osobowych dzieci ani opiekunów.</p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Wersje protokołu</caption>
+              <thead><tr><th scope="col">Wersja</th><th scope="col">Status</th><th scope="col">Zatwierdzono</th><th scope="col">Widoczność</th><th scope="col">Opis zmiany</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <tbody id="minutes-body"></tbody>
+            </table>
+          </div>
+          <form id="minutes-form" class="stack" novalidate>
+            <label>Treść protokołu (nowa wersja)
+              <textarea name="body" rows="14" minlength="10" maxlength="200000" required></textarea>
+            </label>
+            <label>Opis zmiany (opcjonalnie) <input name="changeNote" maxlength="500" /></label>
+            <p class="form-error" role="alert"></p>
+            <div><button type="submit">Zapisz nową wersję</button></div>
+          </form>
+        </section>
+
+        <section class="sub" aria-labelledby="resolutions-title">
+          <div class="section-heading">
+            <h3 id="resolutions-title">Uchwały</h3>
+            <button type="button" id="open-resolution">Dodaj uchwałę</button>
+          </div>
+          <p class="muted">To nie jest głosowanie elektroniczne. Liczby głosów i status uchwały wpisuje sekretarz na podstawie głosowania przeprowadzonego na zebraniu; panel nie ocenia, czy uchwała przeszła.</p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Uchwały zebrania</caption>
+              <thead><tr><th scope="col">Numer</th><th scope="col">Tytuł</th><th scope="col">Status</th><th scope="col" class="num">Za / przeciw / wstrzymało się</th><th scope="col">Quorum</th><th scope="col">Rewizja</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <tbody id="resolutions-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="meeting-dialog" aria-labelledby="meeting-dialog-title">
+      <form class="stack" novalidate>
+        <h2 id="meeting-dialog-title">Nowe zebranie</h2>
+        <label>Rok szkolny <input name="schoolYearId" autocomplete="off" required /></label>
+        <div class="field-row">
+          <label>Rodzaj
+            <select name="kind" required>
+              <option value="">Wybierz</option>
+              <option value="plenary">Zebranie ogólne</option>
+              <option value="board">Zebranie zarządu</option>
+              <option value="class">Zebranie klasowe</option>
+            </select>
+          </label>
+          <label>Klasa (tylko zebranie klasowe) <input name="classId" autocomplete="off" maxlength="128" /></label>
+        </div>
+        <label>Tytuł <input name="title" minlength="3" maxlength="200" required /></label>
+        <div class="field-row">
+          <label>Data i godzina (Bruksela) <input name="scheduledAt" type="datetime-local" required /></label>
+          <label>Status początkowy
+            <select name="status"><option value="draft">Szkic</option><option value="scheduled">Zaplanowane</option></select>
+          </label>
+        </div>
+        <label>Miejsce (opcjonalnie) <input name="location" maxlength="200" /></label>
+        <fieldset class="quorum-fields" data-quorum-fields>
+          <legend>Reguła quorum</legend>
+        </fieldset>
+        <p class="muted">Status „zaplanowane” niczego nie wysyła. Zawiadomienia przejdą przez moduł wiadomości z osobnym zatwierdzeniem.</p>
+        <p class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Utwórz zebranie</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="resolution-dialog" aria-labelledby="resolution-dialog-title">
+      <form class="stack" novalidate>
+        <h2 id="resolution-dialog-title">Uchwała</h2>
+        <input type="hidden" name="resolutionId" />
+        <p class="context" hidden></p>
+        <div class="field-row">
+          <label>Numer (nadaje sekretarz) <input name="number" maxlength="64" autocomplete="off" /></label>
+          <label>Status
+            <select name="status" required>
+              <option value="draft">Projekt</option>
+              <option value="adopted">Przyjęta</option>
+              <option value="rejected">Odrzucona</option>
+              <option value="withdrawn">Wycofana</option>
+            </select>
+          </label>
+        </div>
+        <label>Tytuł <input name="title" minlength="3" maxlength="300" required /></label>
+        <label>Treść <textarea name="body" rows="6" minlength="3" maxlength="20000" required></textarea></label>
+        <fieldset>
+          <legend>Wynik głosowania na zebraniu (wpisuje sekretarz)</legend>
+          <div class="votes">
+            <label>Za <input name="votesFor" inputmode="numeric" pattern="[0-9]*" maxlength="5" /></label>
+            <label>Przeciw <input name="votesAgainst" inputmode="numeric" pattern="[0-9]*" maxlength="5" /></label>
+            <label>Wstrzymało się <input name="votesAbstain" inputmode="numeric" pattern="[0-9]*" maxlength="5" /></label>
+          </div>
+          <label>Ustalenie quorum <select name="quorumCheckId" data-quorum-checks></select></label>
+          <p class="muted" data-vote-limit></p>
+        </fieldset>
+        <label data-amends>Zmienia uchwałę nr (opcjonalnie, ten sam rok szkolny) <input name="amendsNumber" maxlength="64" autocomplete="off" /></label>
+        <label data-reason hidden>Powód poprawki zapisu <textarea name="reason" rows="2" minlength="3" maxlength="500"></textarea></label>
+        <p class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zapisz uchwałę</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="approve-dialog" aria-labelledby="approve-dialog-title">
+      <form class="stack" novalidate>
+        <h2 id="approve-dialog-title">Zatwierdź protokół</h2>
+        <input type="hidden" name="minutesId" />
+        <p class="context"></p>
+        <p>Pierwsze zatwierdzenie blokuje zebranie: listę obecności, porządek obrad, quorum, uchwały i dane zebrania. Zatwierdzonej wersji nie można zmienić.</p>
+        <label>Uwaga o trybie przyjęcia (opcjonalnie) <input name="approvalNote" maxlength="500" /></label>
+        <p class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zatwierdź</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="visibility-dialog" aria-labelledby="visibility-dialog-title">
+      <form class="stack" novalidate>
+        <h2 id="visibility-dialog-title">Widoczność protokołu</h2>
+        <input type="hidden" name="minutesId" />
+        <p class="context"></p>
+        <label>Widoczność
+          <select name="visibility" required>
+            <option value="internal">Wewnętrzny</option>
+            <option value="parents">Rodzice</option>
+            <option value="public">Publiczny</option>
+          </select>
+        </label>
+        <label>Powód (opcjonalnie) <input name="reason" maxlength="500" /></label>
+        <p class="muted">„Publiczny” oznacza dostęp bez logowania. Upewnij się, że treść nie zawiera danych osobowych.</p>
+        <p class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zapisz widoczność</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="minutes-view-dialog" aria-labelledby="minutes-view-title">
+      <div class="stack">
+        <h2 id="minutes-view-title">Protokół</h2>
+        <pre class="minutes-text" id="minutes-view-body"></pre>
+        <div class="actions"><button type="button" data-close>Zamknij</button></div>
+      </div>
+    </dialog>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
