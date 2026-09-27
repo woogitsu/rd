@@ -53,7 +53,8 @@ async function setup() {
   };
   const cookies = {
     repA: await seedUserSession(db, { userId: 'u-rep-a', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y1 }] }),
-    board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }] }),
+    // Zarząd z sesją MFA: bramka MFA routera wymaga jej od ról z MFA_REQUIRED_ROLES.
+    board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true }),
     treasurer: await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: Y1 }], mfa: true }),
     treasurerNoMfa: await seedUserSession(db, { userId: 'u-treasurer2', roles: [{ role: 'treasurer', schoolYearId: Y1 }] }),
     audit: await seedUserSession(db, { userId: 'u-audit', roles: [{ role: 'audit' }], mfa: true }),
@@ -132,7 +133,8 @@ describe('katalog rodzin na wspólnej bazie', () => {
       ['s-1', ['c-1a']], ['s-2', ['c-2b']],
     ]);
     assert.equal(household.body.guardians[0].email, 'opiekun1@example.invalid');
-    assert.equal(household.body.paymentTotals, undefined, 'bez MFA brak danych o wpłatach');
+    // Brak danych o wpłatach bez MFA: sesja zarządu bez MFA nie przechodzi już bramki
+    // MFA routera (sprawdzane niżej dla skarbnika); przedstawiciel nie widzi ich nigdy.
 
     // Skarbnik roku Y1 widzi klasy tylko tego roku.
     const treasurerClasses = await call('/api/classes', { cookie: cookies.treasurer });
@@ -157,9 +159,9 @@ describe('katalog rodzin na wspólnej bazie', () => {
     JSON.stringify(withMfa.body, (key, value) => { keys.push(key); return value; });
     assert.doesNotMatch(keys.join(' '), /debt|due|outstanding|arrears|balance|dłużn|zaleg/i);
 
+    // Skarbnik bez sesji z MFA zatrzymuje się na bramce MFA routera (przed trasą).
     const withoutMfa = await call('/api/households/h-1', { cookie: cookies.treasurerNoMfa });
-    assert.equal(withoutMfa.status, 200);
-    assert.equal(withoutMfa.body.paymentTotals, undefined);
+    assert.deepEqual(withoutMfa, { status: 403, body: { error: 'mfa_enrollment_required' } });
     const rep = await call('/api/households/h-1', { cookie: cookies.repA });
     assert.equal(rep.body.paymentTotals, undefined);
   });
@@ -218,7 +220,7 @@ describe('katalog rodzin na wspólnej bazie', () => {
     await db.query(`UPDATE student_guardians SET contact_allowed = false WHERE student_id = 's-1' AND guardian_id = 'g-2'`);
 
     // Zarząd ograniczony do klasy nie zmieni opiekuna spoza niej (404, nie 403).
-    const boardA = await seedUserSession(db, { userId: 'u-board-a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }] });
+    const boardA = await seedUserSession(db, { userId: 'u-board-a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }], mfa: true });
     assert.equal((await call('/api/guardians/g-3/contact', { method: 'PATCH', cookie: boardA, body })).status, 404);
   });
 
@@ -348,7 +350,7 @@ describe('karta gospodarstwa: zakres klasowy i zgody relacji (#95)', () => {
     };
     const rep1a = await seedUserSession(db, { userId: 'u-rep-1a', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y1 }] });
     const rep3c = await seedUserSession(db, { userId: 'u-rep-3c', roles: [{ role: 'representative', classId: 'c-3c', schoolYearId: Y1 }] });
-    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }] });
+    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
     const guardianView = (body) => body.guardians.map((g) => [g.id, g.contactAllowed, g.email]);
 
     // Lista klasy 1A: tylko gospodarstwa kontaktowe (h-q: opiekun bez zgody relacji).
@@ -451,8 +453,8 @@ describe('zmiana kontaktu opiekuna: zakres klasowy przez relację z uczniem (#20
       const response = await handlePgRequest(request(path, { method: 'PATCH', cookie, body }), env);
       return { status: response.status, body: await response.json() };
     };
-    const boardA = await seedUserSession(db, { userId: 'u-board-1a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }] });
-    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }] });
+    const boardA = await seedUserSession(db, { userId: 'u-board-1a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }], mfa: true });
+    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
     const body = { email: 'przejete@example.invalid', contactAllowed: false, reason: 'test zakresu' };
     const snapshot = async () => (await db.query('SELECT id, email, contact_allowed FROM guardians ORDER BY id')).rows;
     const counts = async () => ({
