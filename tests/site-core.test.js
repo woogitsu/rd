@@ -120,6 +120,17 @@ test("protokoły: tylko publiczne, od najnowszego zebrania", () => {
   assert.equal(list[1].kind, "Zebranie ogólne");
 });
 
+test("aktualności: kanoniczne posts, sortowanie od najnowszej, pusta lista (#237)", () => {
+  const items = newsItems({ posts: [
+    { id: "p1", title: "Starsza", body: "Treść 1", publishedAt: "2026-09-01T10:00:00Z", photos: [] },
+    { id: "p2", title: "Nowsza", body: "Treść 2", publishedAt: "2026-09-20T10:00:00Z", photos: [] },
+  ] });
+  assert.deepEqual(items.map((n) => n.id), ["p2", "p1"]);
+  assert.deepEqual(newsItems({ posts: [] }), []);
+  assert.deepEqual(newsItems({}), []);
+  assert.deepEqual(newsItems(null), []);
+});
+
 test("aktualności akceptują news lub items i pomijają wpisy bez treści", () => {
   assert.deepEqual(newsItems({ news: [{ title: "A", body: "B", publishedAt: "2026-09-01T10:00:00Z" }] }).map((n) => n.title), ["A"]);
   assert.deepEqual(newsItems({ items: [{ title: "A", summary: "S" }, { title: "Bez treści" }] }).map((n) => n.body), ["S"]);
