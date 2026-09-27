@@ -2,9 +2,17 @@
 
 `0001_core.sql` tworzy nowy schemat dla lat i klas, rodzin, uczniów i opiekunów,
 kont użytkowników, zakresów ról, zaproszeń, sesji, metadanych dokumentów,
-wydarzeń i audytu. To **nie** jest migracja istniejących rekordów D1 i nie
-oznacza gotowości produkcyjnej. Tabele składek, księgi i przypomnień powstaną
-w kolejnych etapach.
+wydarzeń i audytu. `0002_payments.sql` dodaje fakty dobrowolnych wpłat,
+niezmienne korekty i jednokrotne przypisanie wpłaty nierozpoznanej. Blokada
+wiersza wpłaty serializuje korekty; samo dodanie zdarzenia przypisania
+atomowo zmienia status wpłaty. Widok sumuje tylko zarejestrowane wpłaty
+pomniejszone o korekty, bez wyliczania długu. Agregaty PostgreSQL typu BIGINT
+mogą wracać z `pg` jako tekst; API musi je bezpiecznie przeliczyć przed
+wysłaniem JSON. Tabele księgi i przypomnień powstaną w kolejnych etapach.
+
+To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
+produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
+audytu do transakcji nowego API jest osobnym zakresem.
 
 Migrator uruchamia się **wyłącznie ręcznie**: `DATABASE_URL=... npm run
 db:migrate:postgres`. Nie startuje wraz z aplikacją. Każdy plik SQL jest
