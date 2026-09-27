@@ -13,3 +13,9 @@ Każda chroniona trasa najpierw ładuje aktywną sesję, a następnie aktywne wp
 Przedstawiciel klasy ma w schemacie obowiązkowy class_id, dlatego nie może przejść kontroli dla innej klasy. Zakresy poszczególnych funkcji nadal wymagają zatwierdzenia szkoły; ten moduł nie przypisuje rolom domyślnych zdolności.
 
 GET /api/access zwraca zalogowanemu użytkownikowi wyłącznie jego własne aktywne przydziały. Nie zwraca danych innych użytkowników.
+
+## PostgreSQL (issue #35) — prototyp
+
+`src/pg/authorization.js` ładuje przydziały z PostgreSQL i używa tej samej funkcji `isAuthorized`. Pomija przydziały wygasłe oraz cofnięte (`revoked_at`). Cofnięcie (`revokeRoleGrant`) nie usuwa wiersza: zapisuje `revoked_at`, `revoked_by` i zdarzenie `role_grant.revoked` w jednej transakcji; działa od następnego żądania. Przydziału nie da się usunąć ani zmienić jego zakresu — nowy zakres to nowy wiersz (trigger z migracji 0004).
+
+Moduły tras używają `requireAccess(request, env, { roles, classId, schoolYearId, requireMfa }, json)`: `401 unauthenticated` bez sesji, `403 forbidden` bez roli, zakresu lub MFA. Trasa dotycząca klasy lub roku **musi** podać `classId` i `schoolYearId` — bez nich przydział ograniczony do klasy nie jest zawężany. Operacje finansowe podają `requireMfa: true`. Role `principal` i `audit` nie mają domyślnych uprawnień; trasa dopuszcza je tylko jawnie, po decyzji szkoły.

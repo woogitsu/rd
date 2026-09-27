@@ -16,6 +16,19 @@ Wydatek powyżej 3000 EUR wymaga referencji uchwały; dokładny proces
 zatwierdzania wymaga nadal decyzji Rady. Tabele przypomnień powstaną w
 kolejnych etapach.
 
+`0004_auth_access.sql` (issue #35) dodaje tylko kolumny z wartością `NULL` lub
+domyślną oraz ograniczenia; istniejące wiersze nie są przepisywane ani usuwane.
+`role_grants` dostaje `granted_by`, `granted_at` (dla istniejących wierszy
+czas wykonania migracji), `revoked_at`, `revoked_by` i `source_invitation_id`
+(unikalne — jedno zaproszenie daje najwyżej jeden przydział). Trigger blokuje
+usunięcie przydziału, zmianę jego zakresu i przywrócenie cofniętego.
+`invitations` dostaje `accepted_by` i `revoked_by`; zaproszenie przyjęte lub
+wycofane jest ostateczne i nie da się go usunąć. `sessions` dostaje
+`revoked_reason` i `rotated_from`. `audit_events` staje się tabelą tylko do
+dopisywania (UPDATE i DELETE zwracają błąd) — korekta to nowe zdarzenie.
+Przywracanie snapshotu D1 (same INSERT-y) działa bez zmian. Wycofanie
+migracji wymaga osobnego skryptu i przeglądu; nie cofać jej na bazie z danymi.
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.
