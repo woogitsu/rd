@@ -229,3 +229,50 @@ test('unmatched payments stay outside household totals until assigned', () => {
   );
   db.close();
 });
+
+test('payment assignment requires an immutable assignment event', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  for (const name of [
+    '0001_initial',
+    '0002_auth_sessions',
+    '0003_student_guardians',
+    '0004_enrollment_school_year',
+    '0005_payment_corrections',
+    '0006_payment_assignments',
+  ]) db.exec(migration(name));
+  db.exec(`
+    INSERT INTO school_years (id, label, starts_on, ends_on)
+      VALUES ('y2026', '2026/2027', '2026-09-01', '2027-06-30');
+    INSERT INTO households (id) VALUES ('h1'), ('h2');
+    INSERT INTO users (id, email, display_name)
+      VALUES ('u1', 'skarbnik@example.org', 'Osoba Testowa');
+    INSERT INTO payment_entries (
+      id, household_id, school_year_id, amount_cents, received_on,
+      method, status, created_by, idempotency_key
+    ) VALUES (
+      'p1', NULL, 'y2026', 3000, '2026-09-20',
+      'bank', 'unmatched', 'u1', 'payment-key-0003'
+    );
+  `);
+
+  assert.throws(
+    () => db.prepare("UPDATE payment_entries SET household_id = 'h1', status = 'recorded' WHERE id = 'p1'").run(),
+    /payment_assignment_event_required/,
+  );
+  db.exec(`
+    INSERT INTO payment_assignments (
+      id, payment_entry_id, household_id, created_by, idempotency_key
+    ) VALUES ('pa1', 'p1', 'h1', 'u1', 'assignment-key-0001');
+    UPDATE payment_entries SET household_id = 'h1', status = 'recorded' WHERE id = 'p1';
+  `);
+  assert.throws(
+    () => db.prepare("UPDATE payment_entries SET household_id = 'h2' WHERE id = 'p1'").run(),
+    /payment_assignment_event_required/,
+  );
+  assert.throws(
+    () => db.prepare("DELETE FROM payment_assignments WHERE id = 'pa1'").run(),
+    /payment_assignments_cannot_be_deleted/,
+  );
+  db.close();
+});
