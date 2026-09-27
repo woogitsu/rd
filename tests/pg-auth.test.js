@@ -252,12 +252,14 @@ test('invitation is one-time, expires, can be revoked and must match the account
   const invite = await createInvitation(env, { actorId: 'admin', email: 'rep.synthetic@example.invalid', role: 'representative', classId: 'c-1a', schoolYearId: 'y-2026' });
   assert.deepEqual(await acceptInvitation(env, { token: invite.secret, userId: 'intruder' }), { ok: false, error: 'invalid_invitation', reason: 'email_mismatch' });
   assert.deepEqual(await acceptInvitation(env, { token: 'bad', userId: 'rep' }), { ok: false, error: 'invalid_invitation', reason: 'malformed' });
-  const [accepted, doubleClick] = await Promise.all([
+  // Podwójne kliknięcie: FOR UPDATE szereguje oba wywołania, ale kolejność
+  // nie jest gwarantowana — wygrywa dokładnie jedno, drugie widzi already_used.
+  const doubleClick = await Promise.all([
     acceptInvitation(env, { token: invite.secret, userId: 'rep' }),
     acceptInvitation(env, { token: invite.secret, userId: 'rep' }),
   ]);
-  assert.equal(accepted.ok, true);
-  assert.equal(doubleClick.reason, 'already_used');
+  assert.equal(doubleClick.filter((result) => result.ok === true).length, 1);
+  assert.deepEqual(doubleClick.filter((result) => !result.ok).map((result) => result.reason), ['already_used']);
   const { rows: grants } = await db.query("SELECT role, class_id, school_year_id, granted_by FROM role_grants WHERE user_id = 'rep'");
   assert.deepEqual(grants, [{ role: 'representative', class_id: 'c-1a', school_year_id: 'y-2026', granted_by: 'admin' }]);
 
