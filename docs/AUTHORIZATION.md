@@ -24,13 +24,13 @@ Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i 
 
 ## Macierz tras API (issue #4) — testy negatywne
 
-Tabela opisuje stan kodu routera PostgreSQL (`src/pg/app.js`, `ROUTES`), a nie zatwierdzoną politykę. Zakresy ról zarządu, przedstawiciela, dyrekcji i Komisji Rewizyjnej to nadal założenia do decyzji D-08/D-09 (docs/DECISIONS.md). Źródłem prawdy dla testów jest `tests/helpers/route-matrix.js`; `tests/pg-authz-matrix.test.js` wykonuje każdą trasę dla wszystkich aktorów, MFA wł./wył. i każdego zakresu, a meta-test nie przepuści modułu z `ROUTES` ani ścieżki z kodu modułu bez wpisu w macierzy i wiersza w tej tabeli.
+Tabela opisuje **zamierzoną** politykę tras routera PostgreSQL (`src/pg/app.js`, `ROUTES`) wynikającą z dokumentacji modułów, a nie zatwierdzone przez szkołę kompetencje. Zakresy ról zarządu, przedstawiciela, dyrekcji i Komisji Rewizyjnej to nadal założenia do decyzji D-08/D-09 (docs/DECISIONS.md). Źródłem prawdy dla testów jest `tests/helpers/route-matrix.js`; `tests/pg-authz-matrix.test.js` wykonuje każdą trasę dla wszystkich aktorów, MFA wł./wył. i każdego zakresu, a meta-test nie przepuści modułu z `ROUTES` ani ścieżki z kodu modułu bez wpisu w macierzy i wiersza w tej tabeli. Gdzie kod odbiega od zamierzonej polityki, przypadki są oznaczone w macierzy jako `todo`: nadal się wykonują, ale ich rozbieżność trafia do osobnego testu „znana luka”, więc CI jest zielone, a luka pozostaje widoczna (sekcja „Znane luki” niżej).
 
-Aktorzy testu: admin, zarząd, skarbnik, przedstawiciel 1A, przedstawiciel 1B, Komisja Rewizyjna (`audit`), dyrekcja (`principal`) — wszyscy z przydziałem na rok 1 — oraz zalogowany bez przydziału, przydział wygasły, przydział cofnięty, konto wyłączone, sesja wygasła, sesja cofnięta i brak sesji. Zakresy: **1A** (własna klasa przedstawiciela A), **1B** (inna klasa), **R1** (dane ogólnoszkolne roku 1, bez klasy), **R2** (klasa w innym roku). „Rok 1” = 1A, 1B i R1.
+Aktorzy testu: admin, zarząd, skarbnik, przedstawiciel 1A, przedstawiciel 1B, **zarząd z przydziałem ograniczonym do klasy 1A**, Komisja Rewizyjna (`audit`), dyrekcja (`principal`) — wszyscy z przydziałem na rok 1 — oraz zalogowany bez przydziału, przydział wygasły, przydział cofnięty, konto wyłączone, sesja wygasła, sesja cofnięta i brak sesji. Zakresy: **1A** (własna klasa przedstawiciela A), **1B** (inna klasa), **R1** (dane ogólnoszkolne roku 1, bez klasy), **R2** (klasa albo dane innego roku). „Rok 1” = 1A, 1B i R1. Zarząd z przydziałem klasy 1A ma — zgodnie z semantyką `class_id` — co najwyżej uprawnienia zarządu w klasie 1A (tam, gdzie moduł dopuszcza zarząd w zakresie klasy) i nigdy do danych ogólnoszkolnych: finansów, kampanii e-mail, eksportu rocznego, importu, uzgodnień, raportu i zamknięcia roku.
 
-Dla każdego przypadku test sprawdza: status; brak jakichkolwiek syntetycznych znaczników danych w odpowiedzi odmownej; brak w odpowiedzi 2xx znaczników zakresu, do którego aktor nie ma przydziału (np. dane 1B u przedstawiciela 1A, dane roku 2 u zarządu roku 1); brak zapisu w tabelach i dzienniku zdarzeń po odmowie żądania zmieniającego stan.
+Dla każdego przypadku test sprawdza: status; brak jakichkolwiek syntetycznych znaczników danych w odpowiedzi odmownej; brak w odpowiedzi 2xx znaczników zakresu, do którego aktor nie ma przydziału (np. dane 1B u przedstawiciela 1A, dane roku 2 u zarządu roku 1); brak zapisu w tabelach i dzienniku zdarzeń po odmowie żądania zmieniającego stan (liczniki ok. 50 tabel, w tym `audit_events`). Wybrane trasy mają dodatkowe asercje: rodzaje dokumentów na liście, lista klas, kwoty na kartkach tylko przy MFA. Dane są syntetyczne; dokumenty trafiają do magazynu w pamięci, żadna trasa nie wysyła poczty (kampanie trafiają najwyżej do kolejki), a trasy zamknięcia roku mają osobną bazę, bo zamknięcie wygasza przydziały roku 1.
 
-Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, konto wyłączone) każda chroniona trasa zwraca `401 unauthenticated`. Przydział wygasły lub cofnięty działa jak brak przydziału. Rola `principal` nie ma dziś dostępu do żadnej trasy chronionej.
+Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, konto wyłączone) każda chroniona trasa zwraca `401 unauthenticated`. Przydział wygasły lub cofnięty działa jak brak przydziału. Rola `principal` nie ma dziś dostępu do żadnej trasy chronionej; `audit` — wyłącznie do odczytu zebrań, wyszukiwania uchwał i raportu dla Komisji Rewizyjnej.
 
 | Trasa | Dozwolone role i zakres | MFA | Odmowa dla zalogowanego | Uwagi |
 |---|---|---|---|---|
@@ -50,23 +50,115 @@ Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, 
 | `POST /api/events/:eventId/approve` | zarząd — rok 1 | nie | 403 | zasada czterech oczu w bazie |
 | `POST /api/events/:eventId/publish` | zarząd — rok 1 | nie | 403 | |
 | `POST /api/events/:eventId/cancel` | szkic: admin, zarząd — rok 1; przedstawiciel — własna klasa; opublikowane: tylko zarząd | nie | 403 | macierz testuje szkic |
-| `GET /api/meetings?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1 | nie | 403 | przedstawiciel: 403 |
-| `POST /api/meetings` | admin, zarząd — rok 1 | nie | 403 | |
+| `GET /api/meetings?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — rok 1, tylko zebrania tej klasy | nie | 403 | przedstawiciel: 403 |
+| `POST /api/meetings` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
 | `GET /api/meetings/shared-minutes?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; przedstawiciel — rok 1 | nie | 403 | przedstawiciel widzi protokoły ogólne i własnej klasy, nigdy innej klasy |
 | `GET /api/meetings/public-minutes?schoolYearId=:year` | publiczna | nie | — | tylko protokoły o widoczności `public` |
 | `GET /api/meetings/resolutions/lookup?schoolYearId=:year&number=:number` | admin, zarząd, Komisja Rewizyjna, skarbnik — rok 1 | nie | 403 | inny rok: 403 |
-| `GET /api/meetings/:meetingId` | admin, zarząd, Komisja Rewizyjna — rok 1 | nie | 403 | przedstawiciel: 403 także dla zebrania własnej klasy |
-| `PATCH /api/meetings/:meetingId` | admin, zarząd — rok 1 | nie | 403 | |
-| `POST /api/meetings/:meetingId/agenda-items` | admin, zarząd — rok 1 | nie | 403 | |
-| `POST /api/meetings/:meetingId/attendance` | admin, zarząd — rok 1 | nie | 403 | |
-| `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1 | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1 | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1 | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1 | nie | 403 | |
-| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1 | nie | 403 | |
-| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1 | nie | 403 | |
-| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1 | nie | 403 | |
+| `GET /api/meetings/:meetingId` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | przedstawiciel: 403 także dla zebrania własnej klasy |
+| `PATCH /api/meetings/:meetingId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/agenda-items` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/attendance` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `GET /api/import/options` | admin, zarząd — przydział bez klasy | tak | 403 | tylko lata z przydziału; zarząd z przydziałem klasy: 403 |
+| `POST /api/import/preview` | admin, zarząd — przydział bez klasy obejmujący rok importu | tak | 403 | nic nie zapisuje; inny rok: 403 |
+| `POST /api/import/commit` | jak wyżej | tak | 403 | wymaga podglądu (fingerprint, planDigest) i Idempotency-Key |
+| `POST /api/documents?kind=financial&schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | inny rok: 403 |
+| `POST /api/documents?kind=board&schoolYearId=:year` | admin, zarząd — przydział bez klasy, rok 1 | nie | 403 | skarbnik, przedstawiciel: 403 |
+| `POST /api/documents?kind=class&schoolYearId=:year&classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | |
+| `GET /api/documents?schoolYearId=:year` | admin, zarząd — rok 1 (finansowe tylko z MFA); skarbnik — finansowe, z MFA; przedstawiciel i zarząd z przydziałem klasy — dokumenty własnej klasy | skarbnik: tak | 403 | przydział klasowy roku 1 i rok 2: 200 z pustą listą zamiast 403 (luka DOC-01, `todo`) |
+| `GET /api/documents/:financialDocumentId` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | brak uprawnień lub MFA nieodróżnialny od braku dokumentu |
+| `GET /api/documents/:boardDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | |
+| `GET /api/documents/:classDocumentId` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | |
+| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded` |
+| `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
+| `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |
+| `GET /api/ledger?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | zarząd z przydziałem klasy: 403 (luka SR-01, `todo`) |
+| `GET /api/ledger/categories?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/ledger/summary?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/ledger/budget?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
+| `GET /api/email/campaigns?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin techniczny: 403; SR-01 |
+| `POST /api/email/campaigns` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/email/campaigns/:campaignId` | jak wyżej, rok kampanii | tak | 403 | SR-01 |
+| `PUT /api/email/campaigns/:campaignId` | jak wyżej | tak | 403 | zmiana cofa zatwierdzenie; SR-01 |
+| `POST /api/email/campaigns/:campaignId/snapshot` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/email/campaigns/:campaignId/preview` | jak wyżej | tak | 403 | bez wysyłki; SR-01 |
+| `GET /api/email/campaigns/:campaignId/recipients` | jak wyżej | tak | 403 | odczyt w dzienniku; SR-01 |
+| `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak | 403 | skarbnik: 403; SR-01 |
+| `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
+| `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
+| `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
+| `GET /api/news?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wpisy własnej klasy | nie | 403 | |
+| `POST /api/news` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | zarząd z przydziałem klasy: 403 (szkice klasy tylko przedstawiciel) |
+| `GET /api/news/:postId` | jak wyżej | nie | 404 | |
+| `PATCH /api/news/:postId` | jak wyżej | nie | 404 | brak uprawnień nieodróżnialny od braku wpisu |
+| `POST /api/news/:postId/submit` | jak wyżej | nie | 404 | |
+| `POST /api/news/:postId/approve` | zarząd — rok 1 | nie | 403 / 404 | 403 dla osoby, która może edytować wpis; 404 dla pozostałych |
+| `POST /api/news/:postId/publish` | zarząd — rok 1 | nie | 403 / 404 | jak wyżej |
+| `POST /api/news/:postId/withdraw` | nieopublikowany: jak edycja; opublikowany: tylko zarząd | nie | 404 | macierz testuje szkic |
+| `GET /api/news-photos` | admin, zarząd — przydział bez klasy | nie | 403 | |
+| `POST /api/news-photos` | admin, zarząd — przydział bez klasy | nie | 403 | metadane praw i zgód |
+| `GET /api/news-photos/:photoId` | admin, zarząd — przydział bez klasy | nie | 403 | |
+| `POST /api/news-photos/:photoId/consents` | admin, zarząd — przydział bez klasy | nie | 403 | |
+| `POST /api/news-photos/:photoId/verify` | zarząd — przydział bez klasy; inna osoba niż rejestrująca | nie | 403 | |
+| `POST /api/news-photos/:photoId/revoke` | zarząd — przydział bez klasy | nie | 403 | |
+| `GET /api/admin/users` | wyłącznie admin | tak | 403 | moduł obejmuje konta całej szkoły |
+| `POST /api/admin/users/:userId/disable` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/users/:userId/enable` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/users/:userId/revoke-sessions` | wyłącznie admin | tak | 403 | |
+| `GET /api/admin/grants` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/grants` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/school-years/:schoolYearId/expire-grants` | wyłącznie admin | tak | 403 | macierz: zakończony rok syntetyczny |
+| `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail |
+| `POST /api/admin/invitations/:invitationId/revoke` | wyłącznie admin | tak | 403 | |
+| `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |
+| `GET /api/admin/audit` | wyłącznie admin | tak | 403 | |
+| `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
+| `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/reconciliations/:reconciliationId` | jak wyżej, rok uzgodnienia | tak | 403 | nieistniejące: 404; SR-01 |
+| `POST /api/reconciliations/:reconciliationId/lines` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/reconciliations/:reconciliationId/suggestions` | jak wyżej | tak | 403 | tylko propozycje; SR-01 |
+| `POST /api/reconciliations/:reconciliationId/matches` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/reconciliations/:reconciliationId/confirm` | jak wyżej; inna osoba niż autor | tak | 403 | SR-01 |
+| `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01 |
+| `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak | 403 | skarbnik: 403; SR-01 |
+| `GET /api/exports/class-roster?classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | tak | 403 | |
+| `GET /api/classes` | admin, zarząd, skarbnik — klasy roku przydziału; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | Komisja Rewizyjna, dyrekcja: 403 |
+| `GET /api/classes/:classId/students` | jak wyżej | nie | 403 / 404 | rola bez dostępu do rodzin: 403; klasa poza zakresem: 404 |
+| `GET /api/households/:householdId` | jak wyżej (dzieci spoza zakresu pominięte) | nie | 403 / 404 | rodzeństwo w 1A i 1B: przedstawiciel widzi tylko swoje dziecko (test uzupełniający) |
+| `PATCH /api/guardians/:guardianId/contact` | admin, zarząd — klasy roku 1; zarząd z przydziałem klasy — własna klasa | nie | 403 / 404 | rola bez prawa edycji: 403; opiekun poza zakresem: 404 |
+| `POST /api/students/:studentId/enrollments` | jak wyżej | nie | 403 / 404 | macierz: przypisanie do tej samej klasy (200) |
+| `GET /api/print/cards?schoolYearId=:year&classId=:class` | admin, zarząd, skarbnik — rok 1 (z klasą lub bez); przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 400 / 403 | przydział klasowy bez classId: 400; kwoty wpłat tylko rola finansowa z MFA |
+| `POST /api/mfa/enroll` | każdy zalogowany (własny czynnik) | nie | — | |
+| `POST /api/mfa/confirm` | każdy zalogowany | nie | — | rotuje sesję |
+| `POST /api/mfa/verify` | każdy zalogowany z potwierdzonym czynnikiem | nie | — | |
+| `POST /api/mfa/recovery` | jak wyżej | nie | — | kod odzyskiwania jednorazowy |
+| `POST /api/sessions/revoke-all` | każdy zalogowany (własne sesje) | nie | — | |
+| `GET /api/year-close/:schoolYearId` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin, Komisja Rewizyjna: 403 |
+| `POST /api/year-close/:schoolYearId/start` | zarząd — przydział bez klasy, rok 1 | tak | 403 | macierz: zamknięcie rozpoczęte wcześniej, powtórzenie 200 |
+| `POST /api/year-close/:schoolYearId/checklist/:item` | zarząd, skarbnik — jak wyżej | tak | 403 | |
+| `GET /api/year-close/:schoolYearId/handover` | zarząd, skarbnik — jak wyżej | tak | 403 | |
+| `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak | 403 | osobna baza testowa; wygasza przydziały roku |
 
 Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają dziś MFA, także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
 
-Dodając moduł do `ROUTES` lub ścieżkę do istniejącego modułu: dopisz wpis w `tests/helpers/route-matrix.js` (role, MFA, zakres, przykładowa treść) i wiersz w tej tabeli.
+## Znane luki (przypadki `todo` w macierzy)
+
+- **SR-01 — przydział zarządu ograniczony do klasy działa jak ogólnoszkolny.** Zarząd z przydziałem `class_id = 1A` (z MFA) dostaje 2xx na trasach roku bez klasy: księga (`/api/ledger*`), kampanie e-mail (`/api/email/campaigns*`), uzgodnienia i raport dla Komisji Rewizyjnej (`/api/reconciliations*`, `/api/reports/audit`) oraz pełny eksport roczny (`POST /api/exports`). Przyczyna: trasy wołają `isAuthorized` bez `classId`, a ta funkcja przepuszcza wtedy przydział klasowy; brakuje filtra jak `schoolWideContext` w `requireAccess` (użytego np. w płatnościach, imporcie, dokumentach i zamknięciu roku). Zamierzona odpowiedź: 403 i brak zapisu.
+- **DOC-01 — lista dokumentów innego roku dla przydziału klasowego.** `GET /api/documents?schoolYearId=<inny rok>` dla przedstawiciela (lub zarządu z przydziałem klasy) roku 1 zwraca 200 z pustą listą zamiast 403, bo `ownClasses` pomija `school_year_id` przydziału. Brak wycieku danych (wiersze filtruje `canAccessDocument`); niska waga.
+- Poza macierzą (test `todo` w tym samym pliku): zmiana cudzego szkicu wydarzenia zwraca 403 zamiast 404 (wyrocznia istnienia).
+
+Dodając moduł do `ROUTES` lub ścieżkę do istniejącego modułu: dopisz wpis w `tests/helpers/route-matrix.js` (role, MFA, zakres, przykładowa treść, fixture), pliki źródłowe modułu w `MODULE_SOURCES` w `tests/pg-authz-matrix.test.js` i wiersz w tej tabeli. Rozbieżność kodu z zamierzoną polityką oznacz `todo` w wpisie (z opisem luki), zamiast zmieniać oczekiwany status na stan kodu.
