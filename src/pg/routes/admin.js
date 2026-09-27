@@ -286,12 +286,20 @@ async function createGrant(env, actorId, request, json) {
     if (duplicate[0]) return { grant: grantFromRow(duplicate[0]), created: false };
 
     const grantId = crypto.randomUUID();
-    const { rows } = await tx.query(
-      `INSERT INTO role_grants AS g (id, user_id, role, class_id, school_year_id, expires_at, granted_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING ${GRANT_COLUMNS}`,
-      [grantId, data.userId, role, scope.classId, scope.schoolYearId, expiresAt, actorId],
-    );
+    let rows;
+    try {
+      ({ rows } = await tx.query(
+        `INSERT INTO role_grants AS g (id, user_id, role, class_id, school_year_id, expires_at, granted_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING ${GRANT_COLUMNS}`,
+        [grantId, data.userId, role, scope.classId, scope.schoolYearId, expiresAt, actorId],
+      ));
+    } catch (error) {
+      // Trigger zamrożenia (0017/0022): rok zamknięty to konflikt, nie awaria.
+      if (error?.message === 'school_year_closed') throw new Abort('school_year_closed', 409);
+      if (error?.message === 'class_not_in_school_year') throw new Abort('class_not_in_school_year', 422);
+      throw error;
+    }
     await insertAuditEvent(tx, {
       actorId, action: 'role_grant.created', entityType: 'role_grant', entityId: grantId,
       metadata: grantAuditMetadata(rows[0], { expiresAt }),
@@ -341,8 +349,7 @@ async function expireSchoolYear(env, actorId, schoolYearId, request, json) {
       `UPDATE role_grants AS g SET expires_at = now()
         WHERE g.revoked_at IS NULL
           AND (g.expires_at IS NULL OR g.expires_at > now())
-          AND (g.school_year_id = $1
-               OR g.class_id IN (SELECT id FROM classes WHERE school_year_id = $1))
+          AND role_grant_in_school_year(g.class_id, g.school_year_id, $1)
         RETURNING g.id, g.user_id, g.role, g.class_id, g.school_year_id`,
       [schoolYearId],
     );
@@ -466,7 +473,8 @@ async function listSchoolYears(env, json) {
 }
 
 const AUDIT_ACTIONS = [
-  'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'school_year.grants_expired',
+  'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
+  'school_year.grants_expired',
   'invitation.created', 'invitation.revoked', 'invitation.accepted',
   'user.disabled', 'user.enabled', 'session.revoked',
 ];

@@ -123,6 +123,22 @@ Skutki dla danych: migracja tylko dodaje obiekty, nie zmienia istniejących
 tabel ani wierszy. Wycofanie na bazie z danymi — tylko po kopii zapasowej i
 decyzji o retencji (D-04). Szczegóły: [`docs/NEWS.md`](../docs/NEWS.md).
 
+`0022_role_grant_class_year.sql` (#201) wprowadza jedną regułę „przydział
+należy do roku”: `school_year_id` tego roku albo klasa tego roku (funkcja
+`role_grant_in_school_year`, używana przez zamknięcie roku i `expire-grants`).
+Trigger zamrożenia z 0017 uzupełnia brakujący rok przydziału klasy rokiem
+klasy, odrzuca rok inny niż rok klasy i blokuje przydział klasy zamkniętego
+roku także bez `school_year_id`. Skutki dla danych: istniejące przydziały z
+klasą i bez roku (aktywne, wygasłe i cofnięte) dostają rok klasy w miejscu —
+zakres faktyczny się nie zmienia, nic nie jest usuwane, `expires_at` i
+`revoked_at` zostają; każdy taki wiersz ma zdarzenie
+`role_grant.school_year_backfilled` (bez aktora i danych osobowych). Trigger
+z 0004 jest wyłączony tylko na czas tej jednej instrukcji w transakcji
+migracji. Następnie ograniczenie `role_grant_class_requires_year` (klasa
+wymaga roku). Wpisy z rokiem różnym od roku klasy nie są przepisywane.
+Wycofanie: usunięcie ograniczenia i funkcji oraz przywrócenie funkcji
+triggera z 0017; uzupełnionego roku nie cofać (historia w `audit_events`).
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.
