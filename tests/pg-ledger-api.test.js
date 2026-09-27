@@ -298,12 +298,22 @@ async function runContractScenario(backend) {
   return steps;
 }
 
+async function withSequentialUuids(fn) {
+  const original = crypto.randomUUID;
+  let counter = 0;
+  crypto.randomUUID = () => `00000000-0000-4000-8000-${String(++counter).padStart(12, '0')}`;
+  try { return await fn(); } finally { crypto.randomUUID = original; }
+}
+
 test('PostgreSQL ledger API matches the legacy Worker contract step by step', async () => {
   const legacy = await legacyBackend();
   const pg = await pgBackend();
   try {
-    const expected = await runContractScenario(legacy);
-    const actual = await runContractScenario(pg);
+    // Oba backendy generują losowe UUID; przy wpisach z tą samą datą kolejność
+    // (occurred_on, id) zależałaby od losowania. Rosnące, deterministyczne UUID
+    // w obu przebiegach dają tę samą kolejność remisów.
+    const expected = await withSequentialUuids(() => runContractScenario(legacy));
+    const actual = await withSequentialUuids(() => runContractScenario(pg));
     assert.equal(actual.length, expected.length);
     for (let index = 0; index < expected.length; index += 1) {
       assert.deepEqual(actual[index], expected[index], `step: ${expected[index].label}`);
