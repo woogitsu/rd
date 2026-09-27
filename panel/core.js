@@ -1,7 +1,7 @@
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 export const METHOD_LABELS = Object.freeze({
-  bank_transfer: "Przelew",
+  bank: "Przelew",
   cash: "Gotówka",
   other: "Inna",
 });
