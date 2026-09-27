@@ -345,7 +345,13 @@ test('audit report totals match the ledger and flag large expenses without an ad
     const net = (direction) => report.categories.filter((c) => c.direction === direction).reduce((s, c) => s + c.netCents, 0);
     assert.equal(net('income'), report.balance.incomeCents);
     assert.equal(net('expense'), report.balance.expenseCents);
-    assert.equal(report.checks.categoryIncomeMatchesSummary, true);
+    // Kontrole krzyżowe (#169): niezależne źródła, a nie widok sam ze sobą.
+    const checks = Object.fromEntries(report.checks.items.map((item) => [item.id, item]));
+    assert.equal(checks.year_end_balance.ok, true);
+    assert.equal(checks.year_end_balance.balanceAtYearEndCents, report.balance.closingBalanceCents);
+    assert.equal(checks.dates_within_school_year.ok, true);
+    assert.equal(checks.latest_confirmed_reconciliation.differenceCents, -3000);
+    assert.equal(checks.latest_confirmed_reconciliation.ok, false);
     const dues = report.categories.find((c) => c.id === 'cat-dues');
     assert.deepEqual([dues.grossCents, dues.correctedCents, dues.netCents, dues.entryCount], [60000, 5000, 55000, 3]);
 

@@ -320,7 +320,7 @@ test('board and admin with MFA may record payments; a year-scoped grant cannot t
     const result = await createPayment(backend, { schoolYearId: 'y2025', receivedOn: '2025-10-01' }, `role-${role}-0001`, cookie);
     assert.equal(result.status, 201, role);
   }
-  const old = (await createPayment(backend, { householdId: null, schoolYearId: 'y2025' }, 'old-year-0001',
+  const old = (await createPayment(backend, { householdId: null, schoolYearId: 'y2025', receivedOn: '2025-10-01' }, 'old-year-0001',
     await backend.as('u-admin2', { mfa: true, roles: [{ role: 'admin' }] }))).body.payment;
   // u1 ma rolę skarbnika tylko w y2026.
   for (const req of [
