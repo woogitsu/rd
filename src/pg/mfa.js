@@ -22,7 +22,11 @@ import { insertAuditEvent } from './audit.js';
 import { rotateSession } from './auth.js';
 
 // Założenia do potwierdzenia (D-10): 5 błędów w 15 min → blokada 15 min, 10 kodów odzyskiwania.
-export const MFA_POLICY = Object.freeze({ maxFailures: 5, windowSeconds: 15 * 60, lockSeconds: 15 * 60, recoveryCodeCount: 10 });
+// maxFailures dotyczy sesji; userMaxFailures to wyższy sufit dla konta (#189): błędne kody
+// z jednej sesji po samym haśle nie blokują właściciela w nowej sesji. Założenie D-10.
+export const MFA_POLICY = Object.freeze({
+  maxFailures: 5, userMaxFailures: 20, windowSeconds: 15 * 60, lockSeconds: 15 * 60, recoveryCodeCount: 10,
+});
 export const MFA_ISSUER = 'RD';
 const KEY_VERSION = 1;
 
@@ -229,7 +233,7 @@ async function recordFailure(tx, session, metadata) {
        RETURNING failure_count`,
       [scopeType, scopeId, MFA_POLICY.windowSeconds],
     );
-    if (rows[0].failure_count >= MFA_POLICY.maxFailures) {
+    if (rows[0].failure_count >= (scopeType === 'user' ? MFA_POLICY.userMaxFailures : MFA_POLICY.maxFailures)) {
       await tx.query(
         `UPDATE mfa_rate_limits SET locked_until = now() + make_interval(secs => $3), updated_at = now()
           WHERE scope_type = $1 AND scope_id = $2`,
@@ -406,20 +410,26 @@ export async function attemptFactor(env, session, { kind, code, nowMs = Date.now
 }
 
 // Wycofuje wszystkie aktywne sesje konta (także bieżącą) z wpisem audytu dla każdej.
+// Konto z potwierdzonym czynnikiem: sesja bez potwierdzonego MFA (samo hasło) wycofuje
+// wyłącznie siebie (#189) — inaczej znajomość hasła wystarczałaby do wylogowania właściciela.
+// Zwraca { revoked, scope: 'all' | 'current' }.
 export async function revokeAllOwnSessions(env, session) {
   return database(env).transaction(async (tx) => {
+    await lockUser(tx, session.user.id);
+    const factors = await activeFactors(tx, session.user.id);
+    const scope = factors.confirmed && !session.mfaVerified ? 'current' : 'all';
     const { rows } = await tx.query(
       `UPDATE sessions SET revoked_at = now(), revoked_reason = 'user_revoke_all'
-        WHERE user_id = $1 AND revoked_at IS NULL
+        WHERE user_id = $1 AND revoked_at IS NULL AND ($2::text IS NULL OR id = $2)
         RETURNING id`,
-      [session.user.id],
+      [session.user.id, scope === 'current' ? session.sessionId : null],
     );
     for (const row of rows) {
       await insertAuditEvent(tx, {
         actorId: session.user.id, action: 'session.revoked', entityType: 'session', entityId: row.id,
-        metadata: { reason: 'user_revoke_all', initiatedBySession: session.sessionId },
+        metadata: { reason: 'user_revoke_all', initiatedBySession: session.sessionId, scope },
       });
     }
-    return rows.length;
+    return { revoked: rows.length, scope };
   });
 }

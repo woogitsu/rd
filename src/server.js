@@ -37,6 +37,9 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         EMAIL_CAMPAIGN_MIN_DAILY: processEnv.EMAIL_CAMPAIGN_MIN_DAILY,
         // MFA (#3): klucz szyfrowania sekretów TOTP, wyłącznie jako sekret usługi Railway.
         MFA_ENCRYPTION_KEY: processEnv.MFA_ENCRYPTION_KEY,
+        // Logowanie hasłem (#3): role z obowiązkowym MFA i koszt scrypt (log2 N).
+        MFA_REQUIRED_ROLES: processEnv.MFA_REQUIRED_ROLES,
+        SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
       },
       fetchHandler: handlePgRequest,
       bodyLimit: bodyLimitFor(documentMaxBytes),
@@ -57,9 +60,10 @@ export async function startServer({
   logger,
   metrics,
   readiness,
+  trustProxy = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');
-  const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit, logger, metrics, readiness });
+  const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit, logger, metrics, readiness, trustProxy });
   const server = createServer(handler);
   await new Promise((resolve, reject) => {
     server.once('error', reject);

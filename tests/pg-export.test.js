@@ -85,7 +85,7 @@ async function seedData(db) {
   const board = { userId: 'u-seed', grants: [{ role: 'board', classId: null, schoolYearId: YEAR, expiresAt: null }], mfaVerified: true };
   const { meeting } = await createMeeting(db, board, {
     idempotencyKey: 'meeting-key-0001', schoolYearId: YEAR, kind: 'plenary', title: 'Zebranie testowe',
-    scheduledAt: '2026-10-01T17:00:00Z', status: 'scheduled', quorumMode: 'minimum_count', quorumMinCount: 1,
+    scheduledAt: '2026-10-01T17:00:00Z', status: 'scheduled', quorumMode: 'minimum_count', quorumMinCount: 1, quorumRuleSource: 'Założenie testowe',
   });
   await updateMeeting(db, board, { meetingId: meeting.id, status: 'held' });
   await recordAttendance(db, board, { meetingId: meeting.id, userId: 'u-voter', capacity: 'representative', votingEligible: true, present: true });
@@ -309,7 +309,8 @@ test('yearly export requires admin or board with MFA in the year scope', async (
   const noMfa = await seedUserSession(db, { userId: 'u-admin-nomfa', roles: [{ role: 'admin' }], mfa: false });
   const noMfaResponse = await exportRequest(db, noMfa);
   assert.equal(noMfaResponse.status, 403);
-  assert.deepEqual(await noMfaResponse.json(), { error: 'forbidden' });
+  // Bramka MFA routera: admin bez czynnika i bez sesji z MFA musi najpierw zapisać MFA.
+  assert.deepEqual(await noMfaResponse.json(), { error: 'mfa_enrollment_required' });
 
   for (const [userId, grant] of [
     ['u-treasurer', { role: 'treasurer', schoolYearId: YEAR }],

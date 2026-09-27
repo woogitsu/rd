@@ -123,7 +123,7 @@ Wyłączone przyciski (`disabled`) są zwolnione z wymogu kontrastu. Status nie 
 | 2.5.7 Ruchy przeciągania | nie dotyczy | brak przeciągania |
 | 3.2.6 Spójna pomoc | nie dotyczy | żadna aplikacja nie ma jeszcze mechanizmu pomocy (kontaktu, instrukcji). Adres kontaktowy i nadawca to decyzja zarządu. Po decyzji umieścić ten sam link w tym samym miejscu (np. stopka) we wszystkich aplikacjach |
 | 3.3.7 Zbędne ponowne wpisywanie | spełnione | panel przenosi rok szkolny z filtra do okna „Dodaj wpłatę”, księga — ukrytym polem; data domyślnie dzisiejsza. Po błędzie serwera formularz zachowuje wpisane dane |
-| 3.3.8 Dostępne uwierzytelnianie | nie dotyczy (wymaganie na przyszłość) | Przy wdrażaniu logowania (docs/AUTH.md): nie blokować wklejania ani menedżerów haseł; `autocomplete="username"`, `"current-password"`, `"one-time-code"`; bez CAPTCHA z rozpoznawaniem obrazków lub przepisywaniem znaków; kod MFA do wklejenia lub link e-mail; komunikaty błędów logowania powiązane z polami i ogłaszane |
+| 3.3.8 Dostępne uwierzytelnianie | do sprawdzenia z czytnikiem ekranu | Ekran `login/`: wklejanie i menedżery haseł dozwolone, `autocomplete="username"`, `"current-password"`, `"new-password"`, `"one-time-code"` (pole kodu `inputmode="numeric"`), przycisk „Pokaż hasło” z `aria-pressed`, bez CAPTCHA; błędy w `role="alert"` powiązane z polami (`aria-describedby`, `aria-invalid`). Kod QR ma obok klucz do wpisania ręcznie. Test statyczny: `tests/login-core.test.js`; ocena z NVDA/VoiceOver — do wykonania |
 | 1.4.4 / 1.4.12 Powiększenie tekstu, odstępy | spełnione | jednostki względne; brak stałych wysokości kontenerów z tekstem (poza wydrukiem A5) |
 | 1.4.13 Treść pod kursorem | nie dotyczy | brak tooltipów; `title` na przycisku importu zastąpiony widocznym tekstem |
 
@@ -143,6 +143,6 @@ Wykonać przed pracą na danych rodzin, na danych syntetycznych, w konfiguracjac
 
 ## Poza zakresem przeglądu
 
-- Przyszła strona publiczna i ekran logowania — jeszcze nie istnieją jako aplikacje Vite; przy ich budowie stosować tę samą listę kontrolną i `tests/a11y-static.test.js`.
+- Ekran logowania (`login/`) — sprawdzany statycznie w `tests/login-core.test.js` (język, skip link, jedna `h1`, etykiety, odwołania ARIA, role live błędów, fokus, 44 px, ograniczony ruch); nie ma nawigacji paneli, więc nie jest w `tests/a11y-static.test.js`. Przegląd z czytnikiem ekranu i przy 320 px — do wykonania.
 - Plakietki statusu mają zaokrąglone rogi (`border-radius: 999px`) — kwestia stylu, nie dostępności; zostawione.
 - Kolejność Tab w długich tabelach (przycisk w każdym wierszu) — przy dużej liczbie wierszy rozważyć paginację lub jedną akcję na zaznaczenie; wymaga decyzji projektowej.

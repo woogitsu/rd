@@ -114,12 +114,16 @@ test('guessing another document id gives the same 404 as an unknown id', async (
     await seedUserSession(db, { userId: 'u-board-class', mfa: true, roles: [{ role: 'board', classId: 'c-1a', schoolYearId: YEAR }] }),
   ];
   const unknown = crypto.randomUUID();
+  // Skarbnik bez sesji z MFA zatrzymuje się na bramce MFA routera (403
+  // mfa_enrollment_required) — przed trasą, więc tak samo dla znanego i nieznanego id.
+  const noMfa = intruders[4];
   for (const cookie of intruders) {
     for (const path of [`/api/documents/${id}`, `/api/documents/${id}/content`]) {
       const denied = await get(env, path, cookie);
       const missing = await get(env, path.replace(id, unknown), cookie);
-      assert.equal(denied.status, 404, path);
-      assert.equal(missing.status, 404);
+      const expected = cookie === noMfa ? 403 : 404;
+      assert.equal(denied.status, expected, path);
+      assert.equal(missing.status, expected);
       assert.deepEqual(await denied.json(), await missing.json());
     }
   }
@@ -128,8 +132,9 @@ test('guessing another document id gives the same 404 as an unknown id', async (
   }
   assert.equal((await get(env, `/api/documents/${id}/content`)).status, 401);
   // Odmowa dla istniejącego dokumentu trafia do dziennika (bez treści i PII).
+  // (Sesja zatrzymana na bramce MFA nie dociera do trasy dokumentów.)
   const denied = await auditRows(db, 'document.access_denied');
-  assert.equal(denied.length, intruders.length);
+  assert.equal(denied.length, intruders.length - 1);
   denied.forEach((event) => assertNoPii(event.metadata_json));
   assert.equal((await auditRows(db, 'document.downloaded')).length, 0);
 }));
@@ -173,6 +178,22 @@ test('list is scoped: financial documents hidden from class roles, board sees al
   assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}`, await seedUserSession(db, { userId: 'u-none' }))).status, 403);
   assert.equal((await get(env, '/api/documents', board)).status, 400);
   assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}&kind=secret`, board)).status, 400);
+}));
+
+test('DOC-01: class grant of one school year gives 403 (not an empty list) for another year', async () => withEnv(async (db, env) => {
+  const cookieA = await repA(db);
+  assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}`, cookieA)).status, 200);
+  const other = await get(env, '/api/documents?schoolYearId=y-2027', cookieA);
+  assert.equal(other.status, 403);
+  assert.deepEqual(await other.json(), { error: 'forbidden' });
+  // Zarząd z przydziałem klasy roku 1 — tak samo.
+  const boardA = await seedUserSession(db, { userId: 'u-board-a', mfa: true, roles: [{ role: 'board', classId: 'c-1a', schoolYearId: YEAR }] });
+  assert.equal((await get(env, '/api/documents?schoolYearId=y-2027', boardA)).status, 403);
+  // Przydział klasowy bez roku dostaje rok klasy (trigger z 0022, #201),
+  // więc nie obejmuje już innych lat.
+  const anyYear = await seedUserSession(db, { userId: 'u-rep-any', roles: [{ role: 'representative', classId: 'c-1a' }] });
+  assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}`, anyYear)).status, 200);
+  assert.equal((await get(env, '/api/documents?schoolYearId=y-2027', anyYear)).status, 403);
 }));
 
 test('wrong declared type or wrong magic bytes are refused with 415 and nothing is stored', async () => withEnv(async (db, env, storage) => {

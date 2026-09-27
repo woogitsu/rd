@@ -5,6 +5,8 @@
 //   POST /api/admin/users/{id}/disable          wyłącza konto i wycofuje wszystkie sesje
 //   POST /api/admin/users/{id}/enable
 //   POST /api/admin/users/{id}/revoke-sessions
+//   POST /api/admin/users/{id}/password-reset   { ttlHours? } — jednorazowy token resetu hasła (zwracany raz)
+//   POST /api/admin/users/{id}/mfa-reset        { confirm: "<id konta>" } — wyłącza MFA i kody odzyskiwania
 //   GET  /api/admin/grants?userId=&role=&schoolYearId=&classId=&status=
 //   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? }
 //   POST /api/admin/grants/{id}/revoke
@@ -17,8 +19,8 @@
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
 // Założenie do decyzji D-08/D-09: zarząd nie ma tu nawet odczytu, dopóki
-// szkoła nie zatwierdzi macierzy kompetencji. Akceptacja zaproszenia przez
-// HTTP pozostaje poza zakresem (dostawca logowania — decyzja D-10).
+// szkoła nie zatwierdzi macierzy kompetencji. Przyjęcie zaproszenia z hasłem:
+// POST /api/invitations/accept (src/pg/routes/login.js).
 //
 // Każda zmiana i jej zdarzenie audytu powstają w jednej transakcji. Metadane
 // audytu zawierają wyłącznie identyfikatory (bez e-maili i nazw). Zmiany
@@ -28,6 +30,9 @@
 import { createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions, ROLES } from '../auth.js';
 import { requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import {
+  adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
+} from '../login.js';
 
 export const name = 'admin';
 
@@ -211,6 +216,8 @@ async function setUserDisabled(env, actorId, userId, disabled, json) {
     await insertAuditEvent(tx, {
       actorId, action: disabled ? 'user.disabled' : 'user.enabled', entityType: 'user', entityId: userId,
     });
+    // Po ponownym włączeniu konta stary token resetu nie może znów zadziałać (#193).
+    if (disabled) await revokePasswordResetTokens(tx, { userId, actorId, reason: 'user_disabled' });
     return true;
   });
   // loadSession odrzuca konto z disabled_at, więc sesje przestają działać już
@@ -227,6 +234,39 @@ async function revokeSessionsOf(env, actorId, userId, json) {
   if (!rows[0]) throw new RequestError('user_not_found', 404);
   const revokedSessions = await revokeUserSessions(env, { userId, actorId, reason: 'admin' });
   return json({ userId, revokedSessions });
+}
+
+// Token resetu hasła: zwracany wyłącznie tutaj, jeden raz (baza ma tylko skrót).
+// Operator przekazuje go osobnym, zaufanym kanałem — moduł nie wysyła e-maili
+// (szablon i nadawca to decyzje D-16/D-17). Nowy token unieważnia poprzedni.
+async function passwordResetRoute(env, actorId, userId, request, json) {
+  const data = await readJson(request);
+  let ttlSeconds;
+  if (data.ttlHours !== undefined && data.ttlHours !== null && data.ttlHours !== '') {
+    if (!Number.isInteger(data.ttlHours) || data.ttlHours < 1 || data.ttlHours * 3600 > PASSWORD_RESET_MAX_TTL_SECONDS) {
+      throw new RequestError('invalid_ttl');
+    }
+    ttlSeconds = data.ttlHours * 3600;
+  }
+  try {
+    const reset = await issuePasswordReset(env, { actorId, userId, ttlSeconds });
+    return json({ reset: { id: reset.resetId, userId, expiresAt: reset.expiresAt }, token: reset.secret }, 201);
+  } catch (error) {
+    if (error instanceof LoginError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
+}
+
+// Utrata telefonu i kodów odzyskiwania. Wymaga wpisania identyfikatora konta.
+async function mfaResetRoute(env, actorId, userId, request, json) {
+  const data = await readJson(request);
+  if (data.confirm !== userId) throw new RequestError('confirmation_required');
+  try {
+    return json(await adminResetMfa(env, { actorId, userId }));
+  } catch (error) {
+    if (error instanceof LoginError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
 }
 
 // --- Przydziały ról --------------------------------------------------------
@@ -476,7 +516,9 @@ const AUDIT_ACTIONS = [
   'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
   'school_year.grants_expired',
   'invitation.created', 'invitation.revoked', 'invitation.accepted',
-  'user.disabled', 'user.enabled', 'session.revoked',
+  'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
+  'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
+  'auth.password_changed', 'mfa.reset',
 ];
 
 async function listAudit(env, url, json) {
@@ -515,6 +557,8 @@ async function route(request, env, url, json, actorId) {
       if (action === 'disable') return setUserDisabled(env, actorId, userId, true, json);
       if (action === 'enable') return setUserDisabled(env, actorId, userId, false, json);
       if (action === 'revoke-sessions') return revokeSessionsOf(env, actorId, userId, json);
+      if (action === 'password-reset') return passwordResetRoute(env, actorId, userId, request, json);
+      if (action === 'mfa-reset') return mfaResetRoute(env, actorId, userId, request, json);
     }
   }
   if (section === 'grants') {

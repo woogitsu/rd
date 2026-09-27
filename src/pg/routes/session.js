@@ -3,6 +3,7 @@
 import { clearSessionCookie } from '../../auth.js';
 import { loadSession, revokeSession } from '../auth.js';
 import { loadAuthorizationContext } from '../authorization.js';
+import { mfaGate } from '../mfa-policy.js';
 
 export const name = 'session';
 
@@ -15,6 +16,9 @@ export async function handle(request, env, url, json) {
   if (url.pathname === '/api/access' && request.method === 'GET') {
     const context = await loadAuthorizationContext(request, env);
     if (!context) return json({ error: 'unauthenticated' }, 401);
+    // Trasa jest zwolniona z bramki MFA, ale sesja, którą bramka by zatrzymała (samo
+    // hasło), nie poznaje ról konta (#189). Ekran logowania korzysta z /api/auth/state.
+    if (await mfaGate(request, env)) return json({ grants: [], mfaRequired: true });
     return json({ grants: context.grants });
   }
   if (url.pathname === '/api/logout' && request.method === 'POST') {

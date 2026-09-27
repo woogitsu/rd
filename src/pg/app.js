@@ -10,6 +10,11 @@
 // Przed modułami handlePgRequest odrzuca każde żądanie POST/PUT/PATCH/DELETE
 // pod /api/ bez zgodnego nagłówka Origin (403 invalid_origin). Moduł sam
 // sprawdza sesję i uprawnienia (requireAccess z ./authorization.js).
+//
+// Następnie bramka MFA (./mfa-policy.js): sesja bez potwierdzonego MFA konta
+// z czynnikiem MFA dostaje 403 mfa_required, a konta z rolą z MFA_REQUIRED_ROLES
+// bez czynnika — 403 mfa_enrollment_required, na każdej trasie poza
+// zwolnionymi (sesja, logowanie, MFA, wylogowanie, trasy publiczne).
 // env.db ma kontrakt z src/db.js (w testach: PGlite).
 
 import { isSameOrigin } from '../auth.js';
@@ -30,6 +35,8 @@ import * as familiesRoutes from './routes/families.js';
 import * as printRoutes from './routes/print.js';
 import * as yearCloseRoutes from './routes/year-close.js';
 import * as mfaRoutes from './routes/mfa.js';
+import * as loginRoutes from './routes/login.js';
+import { isMfaGateExempt, mfaGate } from './mfa-policy.js';
 
 export const ROUTES = [
   sessionRoutes,
@@ -48,6 +55,7 @@ export const ROUTES = [
   printRoutes,
   yearCloseRoutes,
   mfaRoutes,
+  loginRoutes, // #3: logowanie hasłem, zaproszenia, zmiana i reset hasła
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 
@@ -59,6 +67,17 @@ export function createPgHandler(routes = ROUTES) {
     if (url.pathname.startsWith('/api/') && UNSAFE_METHODS.has(request.method) && !isSameOrigin(request)) {
       const exempt = routes.some((route) => typeof route.allowsCrossOrigin === 'function' && route.allowsCrossOrigin(request, url));
       if (!exempt) return json({ error: 'invalid_origin' }, 403);
+    }
+
+    if (url.pathname.startsWith('/api/') && !isMfaGateExempt(url.pathname)) {
+      let gate;
+      try {
+        gate = await mfaGate(request, env);
+      } catch (error) {
+        logRouteError('mfa-gate', error);
+        return json({ error: 'service_unavailable' }, 503);
+      }
+      if (gate) return json({ error: gate }, 403);
     }
 
     for (const route of routes) {

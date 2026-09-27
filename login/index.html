@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Logowanie — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="/site/">
+        <span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span>
+      </a>
+      <p class="header-note">Panel dla osób z zaproszeniem</p>
+    </header>
+
+    <main id="main">
+      <h1 id="page-title" tabindex="-1">Logowanie</h1>
+      <p class="message" id="global-message" role="status" aria-live="polite"></p>
+
+      <!-- 1. E-mail i hasło -->
+      <section class="card" id="view-login" aria-labelledby="login-title" hidden>
+        <h2 id="login-title">Zaloguj się</h2>
+        <p class="hint">Konto powstaje wyłącznie z zaproszenia administratora. Po haśle potrzebny będzie kod z aplikacji uwierzytelniającej.</p>
+        <form id="login-form" novalidate>
+          <label for="login-email">Adres e-mail</label>
+          <input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" spellcheck="false" required aria-describedby="login-error" />
+          <label for="login-password">Hasło</label>
+          <div class="password-row">
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-error" />
+            <button type="button" class="toggle-password" data-target="login-password" aria-pressed="false" aria-controls="login-password">Pokaż hasło</button>
+          </div>
+          <p class="form-error" id="login-error" role="alert"></p>
+          <button class="primary" type="submit">Zaloguj się</button>
+        </form>
+        <p class="hint">Nie pamiętasz hasła? Poproś administratora Rady o jednorazowy kod resetu, a potem <a href="#reset">ustaw nowe hasło</a>.</p>
+      </section>
+
+      <!-- 2. Kod z aplikacji -->
+      <section class="card" id="view-mfa" aria-labelledby="mfa-title" hidden>
+        <h2 id="mfa-title">Weryfikacja dwuetapowa</h2>
+        <form id="totp-form" novalidate>
+          <label for="totp-code">Kod z aplikacji uwierzytelniającej</label>
+          <p class="hint" id="totp-hint">Otwórz Google Authenticator, Microsoft Authenticator lub inną aplikację TOTP i wpisz 6-cyfrowy kod dla „RD”.</p>
+          <input id="totp-code" name="code" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="9" required aria-describedby="totp-hint totp-error" />
+          <p class="form-error" id="totp-error" role="alert"></p>
+          <button class="primary" type="submit">Potwierdź</button>
+        </form>
+        <p><button type="button" class="link-button" id="show-recovery" aria-expanded="false" aria-controls="recovery-form">Nie mam dostępu do telefonu — użyj kodu odzyskiwania</button></p>
+        <form id="recovery-form" novalidate hidden>
+          <label for="recovery-code">Kod odzyskiwania</label>
+          <p class="hint" id="recovery-hint">Jeden z 10 kodów zapisanych przy konfiguracji, np. ABCD-EFGH-IJKL-MNOP. Każdy kod działa tylko raz.</p>
+          <input id="recovery-code" name="code" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters" required aria-describedby="recovery-hint recovery-error" />
+          <p class="form-error" id="recovery-error" role="alert"></p>
+          <button type="submit">Użyj kodu odzyskiwania</button>
+        </form>
+        <p class="hint">Straciłeś telefon i kody? Administrator może wyłączyć weryfikację dwuetapową konta; potem skonfigurujesz ją ponownie.</p>
+        <p><button type="button" class="logout">Wyloguj</button></p>
+      </section>
+
+      <!-- 3. Konfiguracja aplikacji uwierzytelniającej -->
+      <section class="card" id="view-enroll" aria-labelledby="enroll-title" hidden>
+        <h2 id="enroll-title">Skonfiguruj weryfikację dwuetapową</h2>
+        <div id="enroll-intro">
+          <p>Twoja rola wymaga drugiego składnika logowania. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP).</p>
+          <button class="primary" type="button" id="enroll-start">Rozpocznij konfigurację</button>
+          <p class="form-error" id="enroll-start-error" role="alert"></p>
+        </div>
+        <div id="enroll-scan" hidden>
+          <ol class="steps">
+            <li>W aplikacji wybierz „Dodaj konto” i zeskanuj kod QR.</li>
+            <li>Jeśli nie możesz zeskanować, wybierz wpisanie klucza ręcznie: typ „oparty na czasie”, konto „RD”.</li>
+            <li>Wpisz 6-cyfrowy kod, który pokaże aplikacja.</li>
+          </ol>
+          <figure class="qr">
+            <div id="qr-code"></div>
+            <figcaption>Kod QR do zeskanowania aplikacją uwierzytelniającą. Klucz do wpisania ręcznie znajduje się niżej.</figcaption>
+          </figure>
+          <p class="manual-key-label" id="manual-key-label">Klucz do wpisania ręcznie</p>
+          <p><code id="manual-key" aria-labelledby="manual-key-label"></code></p>
+          <form id="enroll-confirm-form" novalidate>
+            <label for="enroll-code">Kod z aplikacji</label>
+            <input id="enroll-code" name="code" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="9" required aria-describedby="enroll-error" />
+            <p class="form-error" id="enroll-error" role="alert"></p>
+            <button class="primary" type="submit">Potwierdź i włącz</button>
+          </form>
+        </div>
+        <div id="enroll-codes" hidden>
+          <h3 id="codes-title" tabindex="-1">Kody odzyskiwania</h3>
+          <p class="warning"><strong>Kody są widoczne tylko teraz.</strong> Zapisz je (wydruk, menedżer haseł) i przechowuj osobno od telefonu. Każdy kod działa raz, gdy nie masz dostępu do aplikacji.</p>
+          <ol class="codes" id="recovery-codes" aria-labelledby="codes-title"></ol>
+          <p><button type="button" id="copy-codes">Kopiuj kody</button></p>
+          <label class="checkbox" for="codes-saved"><input id="codes-saved" type="checkbox" /> Zapisałem kody w bezpiecznym miejscu</label>
+          <button class="primary" type="button" id="codes-done" disabled aria-describedby="codes-done-hint">Dalej</button>
+          <p class="hint" id="codes-done-hint">Przycisk będzie aktywny po zaznaczeniu pola powyżej.</p>
+        </div>
+        <p><button type="button" class="logout">Wyloguj</button></p>
+      </section>
+
+      <!-- 4. Przyjęcie zaproszenia -->
+      <section class="card" id="view-invite" aria-labelledby="invite-title" hidden>
+        <h2 id="invite-title">Przyjmij zaproszenie</h2>
+        <p class="hint">Adres e-mail konta pochodzi z zaproszenia. Jeśli masz już konto w panelu, wpisz swoje obecne hasło — nowa rola zostanie do niego dodana.</p>
+        <form id="invite-form" novalidate>
+          <label for="invite-token">Kod zaproszenia</label>
+          <input id="invite-token" name="token" type="text" autocomplete="off" spellcheck="false" required aria-describedby="invite-token-hint invite-error" />
+          <p class="hint" id="invite-token-hint">Wypełnione automatycznie, jeśli otworzyłeś link z zaproszenia.</p>
+          <label for="invite-name">Imię i nazwisko lub nazwa wyświetlana (opcjonalnie)</label>
+          <input id="invite-name" name="displayName" type="text" autocomplete="name" maxlength="100" />
+          <label for="invite-password">Hasło</label>
+          <p class="hint" id="invite-password-hint">Co najmniej 12 znaków. Najłatwiej zapamiętać kilka niezwiązanych słów. Menedżer haseł i wklejanie są dozwolone.</p>
+          <div class="password-row">
+            <input id="invite-password" name="password" type="password" autocomplete="new-password" required aria-describedby="invite-password-hint invite-error" />
+            <button type="button" class="toggle-password" data-target="invite-password" aria-pressed="false" aria-controls="invite-password">Pokaż hasło</button>
+          </div>
+          <label for="invite-repeat">Powtórz hasło (nowe konto)</label>
+          <input id="invite-repeat" name="repeat" type="password" autocomplete="new-password" aria-describedby="invite-error" />
+          <p class="form-error" id="invite-error" role="alert"></p>
+          <button class="primary" type="submit">Przyjmij zaproszenie</button>
+        </form>
+        <p><button type="button" class="link-button back-to-login">Wróć do logowania</button></p>
+      </section>
+
+      <!-- 5. Reset hasła kodem od administratora -->
+      <section class="card" id="view-reset" aria-labelledby="reset-title" hidden>
+        <h2 id="reset-title">Ustaw nowe hasło</h2>
+        <p class="hint">Kod resetu wydaje wyłącznie administrator Rady (osobnym kanałem, np. telefonicznie). Panel nie wysyła e-maili z linkiem resetu.</p>
+        <form id="reset-form" novalidate>
+          <label for="reset-token">Kod resetu</label>
+          <input id="reset-token" name="token" type="text" autocomplete="off" spellcheck="false" required aria-describedby="reset-error" />
+          <label for="reset-password">Nowe hasło</label>
+          <p class="hint" id="reset-password-hint">Co najmniej 12 znaków. Po zmianie wszystkie sesje konta zostaną zakończone.</p>
+          <div class="password-row">
+            <input id="reset-password" name="password" type="password" autocomplete="new-password" required aria-describedby="reset-password-hint reset-error" />
+            <button type="button" class="toggle-password" data-target="reset-password" aria-pressed="false" aria-controls="reset-password">Pokaż hasło</button>
+          </div>
+          <label for="reset-repeat">Powtórz nowe hasło</label>
+          <input id="reset-repeat" name="repeat" type="password" autocomplete="new-password" required aria-describedby="reset-error" />
+          <p class="form-error" id="reset-error" role="alert"></p>
+          <button class="primary" type="submit">Ustaw hasło</button>
+        </form>
+        <p><button type="button" class="link-button back-to-login">Wróć do logowania</button></p>
+      </section>
+
+      <!-- 6. Zmiana hasła -->
+      <section class="card" id="view-change" aria-labelledby="change-title" hidden>
+        <h2 id="change-title">Zmień hasło</h2>
+        <form id="change-form" novalidate>
+          <label for="change-current">Obecne hasło</label>
+          <input id="change-current" name="current" type="password" autocomplete="current-password" required aria-describedby="change-error" />
+          <label for="change-password">Nowe hasło</label>
+          <p class="hint" id="change-password-hint">Co najmniej 12 znaków. Pozostałe urządzenia zostaną wylogowane.</p>
+          <div class="password-row">
+            <input id="change-password" name="password" type="password" autocomplete="new-password" required aria-describedby="change-password-hint change-error" />
+            <button type="button" class="toggle-password" data-target="change-password" aria-pressed="false" aria-controls="change-password">Pokaż hasło</button>
+          </div>
+          <label for="change-repeat">Powtórz nowe hasło</label>
+          <input id="change-repeat" name="repeat" type="password" autocomplete="new-password" required aria-describedby="change-error" />
+          <p class="form-error" id="change-error" role="alert"></p>
+          <button class="primary" type="submit">Zmień hasło</button>
+        </form>
+        <p><button type="button" id="change-cancel">Wróć</button></p>
+      </section>
+
+      <!-- 7. Po zalogowaniu -->
+      <section class="card" id="view-start" aria-labelledby="start-title" hidden>
+        <h2 id="start-title">Panele Rady</h2>
+        <p class="hint">Dostęp do każdego panelu zależy od Twojej roli i jest sprawdzany przez serwer.</p>
+        <ul class="panel-list" id="panel-list"></ul>
+        <div class="account-actions">
+          <button type="button" id="open-change">Zmień hasło</button>
+          <button type="button" class="logout">Wyloguj</button>
+          <button type="button" id="logout-all">Wyloguj ze wszystkich urządzeń</button>
+        </div>
+      </section>
+
+      <p class="notice" role="note">Prototyp na danych syntetycznych. Sposób logowania (hasło i aplikacja uwierzytelniająca) wskazał użytkownik; czeka na formalne potwierdzenie przez zarząd i IOD.</p>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

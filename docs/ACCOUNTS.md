@@ -25,6 +25,8 @@ Wszystkie trasy `/api/admin/*` — także odczyt — wymagają aktywnego przydzi
 | `POST /api/admin/users/{id}/disable` | wyłączenie konta i wycofanie wszystkich sesji | `user.disabled`, `session.revoked` × n |
 | `POST /api/admin/users/{id}/enable` | ponowne włączenie; sesje nie wracają, przydziały bez zmian | `user.enabled` |
 | `POST /api/admin/users/{id}/revoke-sessions` | wylogowanie ze wszystkich urządzeń | `session.revoked` × n |
+| `POST /api/admin/users/{id}/password-reset` | `{ ttlHours? }` (1–24, domyślnie 2), zwraca jednorazowy token resetu hasła **jeden raz**; nowy token unieważnia poprzedni; konto wyłączone: `409 user_disabled` | `auth.password_reset_issued`, `auth.password_reset_revoked` |
+| `POST /api/admin/users/{id}/mfa-reset` | `{ confirm: "<id>" }`; wyłącza czynniki MFA i niewykorzystane kody odzyskiwania, zeruje limity MFA, wylogowuje konto; nie dla własnego konta (`409 cannot_reset_own_mfa`); ponowienie: `changed: false` | `mfa.reset`, `session.revoked` × n |
 | `GET /api/admin/grants` | filtry `userId`, `role`, `schoolYearId`, `classId`, `status` (`active` domyślnie, `expired`, `revoked`, `all`) | — |
 | `POST /api/admin/grants` | nadanie roli `{ userId, role, classId?, schoolYearId?, expiresAt? }` | `role_grant.created` |
 | `POST /api/admin/grants/{id}/revoke` | wycofanie przydziału (wiersz zostaje) | `role_grant.revoked` |
@@ -43,13 +45,14 @@ Wszystkie trasy `/api/admin/*` — także odczyt — wymagają aktywnego przydzi
 - **Ochrona przed zablokowaniem.** Administrator nie może wycofać ani wygasić (także przez wygaszenie kadencji) swojego ostatniego aktywnego przydziału `admin` — transakcja jest wycofywana, `409 last_admin_grant`, bez wpisu audytu. Nie może też wyłączyć własnego konta (`409 cannot_disable_self`). Zmiany przydziałów są serializowane blokadą doradczą PostgreSQL, aby dwóch administratorów nie odebrało sobie nawzajem dostępu w tym samym momencie.
 - **Wygaszenie kadencji.** Tylko dla roku, którego `ends_on` minął (`409 school_year_not_finished`), po wpisaniu identyfikatora roku. Obejmuje aktywne przydziały z `school_year_id` tego roku oraz przydziały klas tego roku — ta sama reguła (`role_grant_in_school_year`, 0022) co zamknięcie roku. Od 0022 przydział klasy zawsze ma rok klasy: trigger uzupełnia brakujący rok, odrzuca rok inny niż rok klasy, a ograniczenie `role_grant_class_requires_year` nie dopuszcza klasy bez roku. Ustawia `expires_at = now()`; wiersze zostają. Ponowienie niczego nie zmienia (0 przydziałów, jedno zdarzenie podsumowujące). Przydziały bez roku (np. zarząd „bezterminowo”) nie są objęte — wymagają ręcznego wycofania albo daty wygaśnięcia.
 - **Wyłączenie konta.** `users.disabled_at` ustawiane w transakcji ze zdarzeniem `user.disabled`; od tej chwili `loadSession` odrzuca wszystkie sesje konta. Następnie `revokeUserSessions` (osobna transakcja) trwale wycofuje sesje z powodem `user_disabled` i zdarzeniem na każdą sesję. Przydziały ról nie są zmieniane.
-- **Konta nie powstają w tym module.** Konto tworzy dopiero przyjęcie zaproszenia przez przyszłego dostawcę logowania.
+- **Konta nie powstają w tym module.** Konto tworzy przyjęcie zaproszenia: `POST /api/invitations/accept` (src/pg/routes/login.js, ekran `/login/#invite=<token>`) z adresem e-mail z zaproszenia i hasłem ustawionym przez zapraszaną osobę. Gdy konto o tym adresie już istnieje, trzeba podać jego obecne hasło — zaproszenie tylko dopisuje rolę (token zaproszenia nie może przejąć istniejącego konta).
+- **Reset hasła i MFA.** Tylko administrator z MFA; token resetu przekazuje osobnym, zaufanym kanałem (moduł nie wysyła e-maili, D-16/D-17). Reset hasła wylogowuje wszystkie sesje konta, ale nie zmienia MFA. Reset MFA to procedura na utratę telefonu i wszystkich kodów odzyskiwania — sposób potwierdzenia tożsamości osoby przed resetem wymaga decyzji (D-10). Panel `admin/` nie ma jeszcze przycisków dla tych dwóch operacji — dostępne przez API.
 
 ## Zaproszenia i token
 
 `createInvitation` (src/pg/auth.js) zapisuje wyłącznie SHA-256 tokenu. API zwraca surowy token jednorazowo w odpowiedzi `201` (`Cache-Control: no-store`); lista zaproszeń go nie zawiera. Moduł **nie wysyła e-maili** — operator przekazuje token osobnym, zaufanym kanałem. Utracony token: wycofać zaproszenie i utworzyć nowe. Ważność domyślnie 72 h, najwyżej 14 dni (założenie z AUTH.md).
 
-**Przyjęcie zaproszenia przez HTTP jest poza zakresem.** Funkcja `acceptInvitation` istnieje, ale nie ma trasy: sposób logowania, tworzenia konta i MFA zależy od decyzji D-10 (dostawca logowania). Do tego czasu nie ma drogi utworzenia sesji z publicznego API.
+**Przyjęcie zaproszenia przez HTTP:** `POST /api/invitations/accept` `{ token, password, displayName? }` — jednorazowe (blokada wiersza zaproszenia), sprawdza wygaśnięcie i wycofanie, tworzy konto (jeśli brak), zapisuje skrót hasła, nadaje rolę z zaproszenia i tworzy sesję bez MFA. Odmowa zawsze jako `400 invalid_invitation`. Metoda logowania (e-mail + hasło + TOTP) to wskazanie użytkownika do formalnego potwierdzenia (D-10); szczegóły w [AUTH.md](AUTH.md). Link dla zapraszanej osoby: `/login/#invite=<token>` (token w części po `#`, nie trafia do logów serwera).
 
 ## Audyt i dane osobowe
 
@@ -60,8 +63,8 @@ Adres e-mail i nazwa wyświetlana konta są pokazywane wyłącznie administrator
 ## Ryzyka i otwarte decyzje
 
 - D-08/D-09: kto poza administratorem może przeglądać lub zmieniać przydziały.
-- D-10: przyjmowanie zaproszeń i dostawca logowania; do tego czasu panel jest używalny tylko z sesjami utworzonymi poza publicznym API (testy, skrypty operatorskie).
+- D-10: metoda logowania (e-mail + hasło + TOTP) jest wskazaniem użytkownika, nie decyzją zarządu; do potwierdzenia wraz z procedurą resetu hasła i MFA oraz listą ról z obowiązkowym MFA (`MFA_REQUIRED_ROLES`, domyślnie admin, zarząd, skarbnik).
 - D-04: okres przechowywania wyłączonych kont, wygasłych przydziałów i dziennika.
 - Sprawdzenie „oczekującego zaproszenia” nie jest w jednej transakcji z `createInvitation`; dwa równoczesne żądania mogą utworzyć dwa zaproszenia (oba ważne, oba w audycie). Ryzyko niskie; można je usunąć indeksem częściowym w osobnej migracji.
 - Lista kont i przydziałów ma limit 500 wierszy bez stronicowania — wystarcza dla Rady, do przeglądu przy większej skali.
-- Brak limitów prób i alertów na wielokrotne zmiany ról (zależne od dostawcy logowania i monitoringu Railway).
+- Limity prób logowania istnieją (AUTH.md); brak alertów na wielokrotne zmiany ról i nieudane logowania (zależne od monitoringu Railway).

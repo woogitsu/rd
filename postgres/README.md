@@ -239,3 +239,25 @@ istniejących wierszy; istniejące wartości `revoked_reason` nadal spełniają
 nowe ograniczenie. Utrata klucza `MFA_ENCRYPTION_KEY` oznacza konieczność
 ponownego zapisu wszystkich czynników. Metoda MFA (TOTP) jest propozycją do
 decyzji D-10. Opis: [`docs/AUTH.md`](../docs/AUTH.md).
+
+`0020_password_login.sql` (issue #3, D-10) dodaje logowanie hasłem.
+`user_passwords` przechowuje na konto jeden skrót hasła w formacie
+`scrypt$N$r$p$<sól>$<klucz>` (parametry w ciągu, sól 16 bajtów na hasło),
+datę i powód ustawienia (`invitation`, `change`, `reset`, `rehash`) oraz
+flagę `must_change`; hasła w postaci jawnej nie ma nigdzie. `login_rate_limits`
+liczy błędne logowania osobno dla SHA-256 znormalizowanego adresu e-mail i
+adresu IP (z separacją dziedziny) — bez adresów w postaci jawnej; to
+pseudonimizacja, więc aplikacja usuwa wiersze starsze niż doba.
+`password_reset_tokens` przechowuje wyłącznie SHA-256 jednorazowego tokenu
+wydanego przez administratora, z autorem, czasem wygaśnięcia i zamknięciem
+(`used_at` albo `revoked_at`); trigger blokuje usunięcie i ponowne otwarcie
+tokenu. Ograniczenie `sessions.revoked_reason` zostaje poszerzone o
+`password_changed`, `password_reset` i `mfa_reset`. Skutki dla danych:
+migracja tylko dodaje obiekty; istniejące konta nie dostają hasła (logowanie
+wymaga przyjęcia zaproszenia albo tokenu resetu od administratora), a
+istniejące wartości `revoked_reason` nadal spełniają nowe ograniczenie.
+Wycofanie na pustej bazie: usunięcie trzech tabel, funkcji
+`password_reset_token_guard` i przywrócenie poprzedniego ograniczenia; na
+bazie z kontami — tylko po kopii zapasowej (wszyscy stracą hasła). Okres
+przechowywania skrótów haseł wyłączonych kont i tokenów zależy od D-04.
+Opis: [`docs/AUTH.md`](../docs/AUTH.md).
