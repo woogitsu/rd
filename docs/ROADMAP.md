@@ -7,6 +7,11 @@
 - Przegląd makiety A na telefonie z reprezentantem klasy, skarbnikiem, sekretarzem i dyrekcją.
 **Kryterium wyjścia:** spisane decyzje, bez importu danych.
 
+## 0.5. Migracja infrastruktury na Railway
+- Zrealizować [plan migracji](RAILWAY_MIGRATION.md) według [issue #31](https://github.com/woogitsu/rd/issues/31) i zadań #32–#42.
+- PostgreSQL, serwer Node, prywatny Storage Bucket, staging i próbne odtworzenie; bez produkcyjnych danych.
+**Kryterium wyjścia:** testy równoważności API i bezpieczeństwa oraz zatwierdzony plan cutover; brak automatycznego deploymentu produkcyjnego.
+
 ## 1. Konta i baza (MVP)
 - Konta zapraszane przez admina; uwierzytelnianie wieloskładnikowe dla osób z dostępem finansowym.
 - Role, przypisanie klasy, cofnięcie dostępu, automatyczne wygaszenie uprawnień po kadencji.
@@ -39,4 +44,4 @@
 - Raport roczny i przekazanie dokumentacji zgodnie z regulaminem.
 
 ### Kolejność
-Fazy 0–3 przed pełnym wdrożeniem; faza 4 może rozwijać publiczny kalendarz wcześniej, jeśli szkoła zatwierdzi treść. Zadania dzielić na małe issues z mierzalnym wynikiem.
+Fazy 0, 0.5 oraz 1–3 przed pełnym wdrożeniem; faza 4 może rozwijać publiczny kalendarz wcześniej, jeśli szkoła zatwierdzi treść. Zadania dzielić na małe issues z mierzalnym wynikiem.

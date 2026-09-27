@@ -1,6 +1,8 @@
-# Architektura wstępna
+# Architektura docelowa
 
-Frontend (publiczny i chroniony) → Worker/API → D1. Prywatne pliki → R2 za autoryzowanym API. Zadania pocztowe → kolejka i Brevo API; zdarzenia dostarczenia → podpisany webhook → historia. Granica publiczna nigdy nie wykonuje zapytań do list rodzin.
+Frontend (publiczny i chroniony) → serwer Node.js na Railway → prywatny PostgreSQL. Prywatne pliki → Railway Storage Bucket za autoryzowanym API. Zadania pocztowe → kolejka PostgreSQL, Railway cron/worker i Brevo API; zdarzenia dostarczenia → weryfikowany webhook → historia. Granica publiczna nigdy nie wykonuje zapytań do list rodzin.
+
+To stan docelowy, nie opis gotowego wdrożenia. Aktualny Worker/D1 działa wyłącznie jako prototyp do czasu ukończenia [migracji](RAILWAY_MIGRATION.md).
 
 ## Główne encje
 - users, role_grants (zakres klasy, rok, data końca), sessions
@@ -22,4 +24,4 @@ Kwoty przechowywać w centach EUR jako liczby całkowite. Każdy zapis pienięż
 - Sekrety tylko w menedżerze środowiska. Osobne test i produkcja. Sztuczne dane w testach.
 - API wiadomości nie przyjmuje dowolnej listy e-mail z przeglądarki: odbiorcy są ponownie wyliczani i sprawdzani na serwerze.
 
-Decyzje o dostawcy hostingu, lokalizacji danych i okresie retencji zapisać po rozmowie z dyrekcją i IOD.
+Użytkownik wybrał Railway jako docelowy hosting. Lokalizację usług planujemy w UE; zakres przetwarzania, umowy dostawców i retencję musi zatwierdzić szkoła oraz IOD przed produkcją.
