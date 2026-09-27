@@ -184,9 +184,11 @@ test('DOC-01: class grant of one school year gives 403 (not an empty list) for a
   // Zarząd z przydziałem klasy roku 1 — tak samo.
   const boardA = await seedUserSession(db, { userId: 'u-board-a', mfa: true, roles: [{ role: 'board', classId: 'c-1a', schoolYearId: YEAR }] });
   assert.equal((await get(env, '/api/documents?schoolYearId=y-2027', boardA)).status, 403);
-  // Przydział klasowy bez roku nadal obejmuje każdy rok (zachowanie isAuthorized).
+  // Przydział klasowy bez roku dostaje rok klasy (trigger z 0022, #201),
+  // więc nie obejmuje już innych lat.
   const anyYear = await seedUserSession(db, { userId: 'u-rep-any', roles: [{ role: 'representative', classId: 'c-1a' }] });
-  assert.equal((await get(env, '/api/documents?schoolYearId=y-2027', anyYear)).status, 200);
+  assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}`, anyYear)).status, 200);
+  assert.equal((await get(env, '/api/documents?schoolYearId=y-2027', anyYear)).status, 403);
 }));
 
 test('wrong declared type or wrong magic bytes are refused with 415 and nothing is stored', async () => withEnv(async (db, env, storage) => {
