@@ -25,17 +25,15 @@ export function formatCents(value) {
   }).format(cents / 100);
 }
 
-export function parseEuroAmount(value, { allowNegative = false } = {}) {
+export function parseEuroAmount(value) {
   const normalized = String(value ?? "").trim().replace(",", ".");
-  const pattern = allowNegative ? /^-?\d+(?:\.\d{1,2})?$/ : /^\d+(?:\.\d{1,2})?$/;
-  if (!pattern.test(normalized)) {
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
     throw new Error("Podaj kwotę z maksymalnie dwoma miejscami po przecinku.");
   }
 
   const cents = Math.round(Number(normalized) * 100);
-  const magnitude = Math.abs(cents);
-  if (!Number.isSafeInteger(cents) || magnitude < 1 || magnitude > 100_000_000) {
-    throw new Error("Wartość bezwzględna kwoty musi mieścić się między 0,01 EUR a 1 000 000 EUR.");
+  if (!Number.isSafeInteger(cents) || cents < 1 || cents > 100_000_000) {
+    throw new Error("Kwota musi mieścić się między 0,01 EUR a 1 000 000 EUR.");
   }
 
   return cents;
@@ -64,16 +62,17 @@ export function normalizePayment(payment) {
   return {
     id: String(payment?.id ?? ""),
     schoolYearId: String(payment?.schoolYearId ?? ""),
-    familyId: payment?.familyId ? String(payment.familyId) : null,
-    familyLabel: payment?.familyLabel ? String(payment.familyLabel) : "—",
+    householdId: payment?.householdId ? String(payment.householdId) : null,
     receivedOn: String(payment?.receivedOn ?? ""),
     method: Object.hasOwn(METHOD_LABELS, payment?.method) ? payment.method : "other",
     status: Object.hasOwn(STATUS_LABELS, payment?.status) ? payment.status : "unmatched",
     reference: String(payment?.reference ?? ""),
     amountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
     correctedCents: Number.isSafeInteger(correctedCents) ? correctedCents : 0,
-    netCents: Number.isSafeInteger(amountCents) && Number.isSafeInteger(correctedCents)
-      ? amountCents + correctedCents
-      : 0,
+    netCents: Number.isSafeInteger(Number(payment?.netAmountCents))
+      ? Number(payment.netAmountCents)
+      : Number.isSafeInteger(amountCents) && Number.isSafeInteger(correctedCents)
+        ? amountCents - correctedCents
+        : 0,
   };
 }
