@@ -133,8 +133,8 @@ Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, 
 | `POST /api/reconciliations/:reconciliationId/matches` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/confirm` | jak wyżej; inna osoba niż autor | tak | 403 | SR-01 |
-| `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01 |
-| `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak | 403 | skarbnik: 403; SR-01 |
+| `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md) |
+| `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195) |
 | `GET /api/exports/class-roster?classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | tak | 403 | |
 | `GET /api/classes` | admin, zarząd, skarbnik — klasy roku przydziału; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | Komisja Rewizyjna, dyrekcja: 403 |
 | `GET /api/classes/:classId/students` | jak wyżej | nie | 403 / 404 | rola bez dostępu do rodzin: 403; klasa poza zakresem: 404 |
@@ -150,7 +150,7 @@ Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, 
 | `GET /api/year-close/:schoolYearId` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin, Komisja Rewizyjna: 403 |
 | `POST /api/year-close/:schoolYearId/start` | zarząd — przydział bez klasy, rok 1 | tak | 403 | macierz: zamknięcie rozpoczęte wcześniej, powtórzenie 200 |
 | `POST /api/year-close/:schoolYearId/checklist/:item` | zarząd, skarbnik — jak wyżej | tak | 403 | |
-| `GET /api/year-close/:schoolYearId/handover` | zarząd, skarbnik — jak wyżej | tak | 403 | |
+| `GET /api/year-close/:schoolYearId/handover` | zarząd, skarbnik — jak wyżej | tak | 403 | Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195) |
 | `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak | 403 | osobna baza testowa; wygasza przydziały roku |
 
 Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają dziś MFA, także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.

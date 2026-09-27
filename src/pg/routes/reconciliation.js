@@ -22,11 +22,14 @@ import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.j
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
+import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 
 export const name = 'reconciliation';
 
 const WRITE_ROLES = ['admin', 'board', 'treasurer'];
 const REPORT_ROLES = ['audit', 'board', 'treasurer'];
+// Raport zamkniętego roku (#195, tylko odczyt): zarząd/skarbnik roku następnego i admin.
+const ARCHIVE_REPORT_ROLES = ['board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const MAX_BODY_BYTES = 16 * 1024;
@@ -970,7 +973,15 @@ async function auditReport(request, env, url, json) {
   const schoolYearId = url.searchParams.get('schoolYearId');
   const format = url.searchParams.get('format') ?? 'json';
   if (!validId(schoolYearId) || !['json', 'html'].includes(format)) throw new RequestError('invalid_request');
-  const context = await requireContext(request, env, REPORT_ROLES, schoolYearId);
+  const context = await loadAuthorizationContext(request, env);
+  if (!context) throw new RequestError('unauthenticated', 401);
+  if (!isAuthorizedScoped(context, { roles: REPORT_ROLES, schoolYearId, requireMfa: true })) {
+    const via = await archiveReadVia(env.db, context, schoolYearId, ARCHIVE_REPORT_ROLES);
+    if (!via) throw new RequestError('forbidden', 403);
+    await recordArchiveRead(env.db, {
+      actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route: 'reports.audit',
+    });
+  }
   const report = await buildAuditReport(env.db, schoolYearId);
   if (!report) throw new RequestError('school_year_not_found', 404);
   await insertAuditEvent(env.db, {

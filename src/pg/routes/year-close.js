@@ -10,12 +10,15 @@
 // Uprawnienia sprawdzane po stronie serwera. Każda trasa wymaga MFA i przydziału
 // bez zawężenia do klasy, w zakresie zamykanego roku (albo bez zakresu roku).
 // Komisja Rewizyjna, dyrekcja i admin techniczny nie mają dostępu do czasu D-08/D-09.
+// Wyjątek (#195, tylko odczyt): zestawienie przekazania zamkniętego roku czyta
+// też zarząd/skarbnik roku następnego i admin (src/pg/archive-access.js).
 // Zapis i jego zdarzenie audytu powstają w jednej transakcji. Powtórzenie
 // zakończonej operacji zwraca stan bez nowego zapisu (replayed: true).
 
 import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
+import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 
 export const name = 'year-close';
 
@@ -92,6 +95,18 @@ async function authorize(request, env, schoolYearId, roles) {
     throw new RequestError('forbidden', 403);
   }
   return context.session.user.id;
+}
+
+// Odczyt zestawienia przekazania: jak authorize, a po zamknięciu roku także
+// nowa Rada (przydział roku następnego) i admin — tylko odczyt (#195).
+async function authorizeArchiveRead(request, env, schoolYearId, roles, route) {
+  const context = await loadAuthorizationContext(request, env);
+  if (!context) throw new RequestError('unauthenticated', 401);
+  const yearWide = { ...context, grants: context.grants.filter((grant) => !grant.classId) };
+  if (isAuthorized(yearWide, { roles, schoolYearId, requireMfa: true })) return;
+  const via = await archiveReadVia(env.db, context, schoolYearId, roles);
+  if (!via) throw new RequestError('forbidden', 403);
+  await recordArchiveRead(env.db, { actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route });
 }
 
 function mapDatabaseError(error) {
@@ -388,7 +403,7 @@ function countsBy(rows, key = 'status') {
 }
 
 async function handover(request, env, schoolYearId, json) {
-  await authorize(request, env, schoolYearId, READ_ROLES);
+  await authorizeArchiveRead(request, env, schoolYearId, READ_ROLES, 'year_close.handover');
   const db = env.db;
   const year = await requireYear(db, schoolYearId);
   const status = await statusView(db, schoolYearId);
