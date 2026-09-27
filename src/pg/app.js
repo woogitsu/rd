@@ -16,10 +16,12 @@ import { isSameOrigin } from '../auth.js';
 import { json, logRouteError, UNSAFE_METHODS } from './http.js';
 import * as sessionRoutes from './routes/session.js';
 import * as paymentsRoutes from './routes/payments.js';
+import * as eventsRoutes from './routes/events.js';
 
 export const ROUTES = [
   sessionRoutes,
   paymentsRoutes,
+  eventsRoutes,
   // Kolejne moduły (#36+) dopisują tu po jednej linii, np.:
   // ledgerRoutes,
 ];
