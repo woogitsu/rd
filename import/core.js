@@ -119,3 +119,16 @@ export function validateRows(matrix, mapping, options = {}) {
   if (!records.length) throw new Error('Brak wierszy uczniów.');
   return { headers, records, errors, warnings, validCount: records.filter(x => x.valid).length };
 }
+export const FIELD_KEYS = FIELDS.map(([key]) => key);
+// Dane wysyłane do POST /api/import/preview i /commit: znormalizowane wiersze,
+// bez pliku źródłowego. Numery wierszy służą tylko do raportu.
+export function toServerPayload(result, schoolYearId, { allowNewHouseholds = false, skipConflicts = false } = {}) {
+  return {
+    version: 1,
+    schoolYearId,
+    columns: FIELD_KEYS,
+    rows: result.records.map(record => FIELD_KEYS.map(key => record[key])),
+    rowNumbers: result.records.map(record => record.row),
+    options: { allowNewHouseholds: Boolean(allowNewHouseholds), skipConflicts: Boolean(skipConflicts) },
+  };
+}

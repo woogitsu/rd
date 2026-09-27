@@ -49,7 +49,7 @@ Do czasu zakończenia migracji lokalne testy starego API używają `npm ci`, `np
 
 ## Import CSV/XLSX
 
-Pierwszy etap działa lokalnie: `npm ci`, `npm run dev:import` i `npm test`. [Instrukcja importu](import/README.md). Plik jest odczytywany w przeglądarce, pokazuje mapowanie i raport; nie zapisuje danych w bazie.
+Pierwszy etap działa lokalnie: `npm ci`, `npm run dev:import` i `npm test`. [Instrukcja importu](import/README.md). Plik jest odczytywany w przeglądarce, pokazuje mapowanie i raport; nie zapisuje danych w bazie. Prototyp zapisu w PostgreSQL (#36) przyjmuje z przeglądarki wyłącznie znormalizowane wiersze, pokazuje serwerowy raport konfliktów i zatwierdza import w jednej transakcji; wymaga roli z MFA i nie jest przeznaczony do danych rodzin przed decyzjami D-01–D-06.
 
 ## Panel wpłat
 

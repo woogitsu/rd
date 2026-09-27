@@ -64,6 +64,20 @@ pustej bazie wymaga usunięcia tych obiektów; na bazie z danymi — tylko po
 kopii zapasowej i decyzji o retencji (D-04). Szczegóły:
 [`docs/MEETINGS.md`](../docs/MEETINGS.md).
 
+`0005_import.sql` (issue #36) dodaje tabelę `import_batches` — dziennik
+zatwierdzonych importów z aktorem, rokiem, licznikami, skrótem SHA-256
+znormalizowanych wierszy (`fingerprint`, unikalny — te same dane zapisują się
+najwyżej raz), skrótem planu i kluczem idempotencji. Tabela nie przechowuje
+imion, e-maili ani treści pliku i jest tylko do dopisywania (trigger).
+`households` i `students` dostają kolumny `source_ref` (stabilny
+identyfikator ze źródła szkoły, do 80 znaków, unikalny bez rozróżniania
+wielkości liter; jedna szkoła na bazę) oraz `import_batch_id`; `guardians`
+dostaje `import_batch_id`. Wszystkie nowe kolumny są `NULL` dla istniejących
+wierszy, więc stare rekordy nie są przepisywane, a przywracanie snapshotu D1
+działa bez zmian. Rekordy bez `source_ref` nie są dopasowywane przez import —
+import tworzy nowe albo zgłasza konflikt. Utworzenie unikalnych indeksów
+nie może się nie powieść na istniejących danych, bo kolumny są nowe i puste.
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.

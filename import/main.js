@@ -1,14 +1,25 @@
 import { readSheet } from 'read-excel-file/browser';
-import { FIELDS, guessMapping, parseCsv, validateRows } from './core.js';
+import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
 const fileInput = document.querySelector('#file');
 const status = document.querySelector('#file-status');
 const mappingSection = document.querySelector('#mapping-section');
 const resultSection = document.querySelector('#result-section');
 const mapArea = document.querySelector('#mapping');
+const serverSection = document.querySelector('#server-section');
+const serverYear = document.querySelector('#server-year');
+const serverStatus = document.querySelector('#server-status');
+const serverReport = document.querySelector('#server-report');
+const previewButton = document.querySelector('#server-preview');
+const commitButton = document.querySelector('#server-commit');
+const allowHouseholds = document.querySelector('#allow-households');
+const skipConflicts = document.querySelector('#skip-conflicts');
+// Stan kroku 4. Klucz idempotencji jest nowy dla każdego podglądu i ten sam przy ponowieniu zatwierdzenia.
+let serverPreview = null, serverPayload = null, idempotencyKey = null, busy = false;
 let matrix = null;
+let lastResult = null;
 function showError(message) { status.className = 'status error'; status.textContent = message; }
 fileInput.addEventListener('change', async () => {
-  matrix = null; mapArea.replaceChildren(); mappingSection.hidden = true; resultSection.hidden = true;
+  matrix = null; lastResult = null; resetServer(); mapArea.replaceChildren(); mappingSection.hidden = true; resultSection.hidden = true; serverSection.hidden = true;
   const file = fileInput.files?.[0]; if (!file) return;
   if (file.size > 5 * 1024 * 1024) return showError('Plik przekracza 5 MB.');
   if (!/\.(csv|xlsx)$/i.test(file.name)) return showError('Wybierz plik .csv lub .xlsx.');
@@ -38,6 +49,7 @@ document.querySelector('#preview').addEventListener('click', () => {
   const mapping = Object.fromEntries(Array.from(mapArea.querySelectorAll('select')).map(el => [el.dataset.field, el.value]));
   try {
     const result = validateRows(matrix, mapping);
+    lastResult = result; resetServer(); serverSection.hidden = false;
     const summary = document.querySelector('#summary'); summary.replaceChildren();
     const report = document.createElement('div'); report.className = 'report';
     for (const [title, amount] of [['Poprawne wiersze', result.validCount],['Błędy', result.errors.length],['Uwagi do sprawdzenia', result.warnings.length]]) {
@@ -61,5 +73,124 @@ document.querySelector('#preview').addEventListener('click', () => {
       } body.append(tr);
     });
     resultSection.hidden = false; resultSection.scrollIntoView({behavior:'smooth'});
-  } catch (error) { resultSection.hidden = true; showError(error.message); }
+  } catch (error) { lastResult = null; resetServer(); resultSection.hidden = true; serverSection.hidden = true; showError(error.message); }
+});
+
+// --- Krok 4: podgląd i zapis na serwerze (issue #36) -------------------------
+// Wysyłamy wyłącznie znormalizowane wiersze (toServerPayload), nie plik.
+// Serwer powtarza walidację i sam sprawdza sesję, rolę i MFA.
+const ERRORS = {
+  unauthenticated: 'Zaloguj się w panelu, a następnie spróbuj ponownie.',
+  forbidden: 'Brak uprawnień: wymagana rola administratora lub zarządu z MFA i przydziałem dla wszystkich klas tego roku.',
+  invalid_origin: 'Żądanie odrzucone: niezgodne pochodzenie strony.',
+  import_disabled: 'Import jest wyłączony na tym środowisku.',
+  request_too_large: 'Za dużo danych w jednym żądaniu. Podziel plik, np. na klasy.',
+  too_many_rows: 'Za dużo wierszy w jednym żądaniu.',
+  unknown_school_year: 'Nie znaleziono roku szkolnego.',
+  no_classes_in_school_year: 'Rok szkolny nie ma zdefiniowanych klas.',
+  preview_stale: 'Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie.',
+  fingerprint_mismatch: 'Dane różnią się od podglądu. Wyślij podgląd ponownie.',
+  import_has_conflicts: 'Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy.',
+  idempotency_key_reused: 'Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie.',
+  service_unavailable: 'Serwer jest chwilowo niedostępny. Nic nie zostało zapisane; można ponowić.',
+};
+const ACTIONS = { add: 'Nowy', update: 'Aktualizacja', unchanged: 'Bez zmian', conflict: 'Konflikt', skipped: 'Pominięty' };
+function serverMessage(status, data) {
+  const code = data?.error;
+  const base = ERRORS[code] ?? `Błąd serwera (${status}).`;
+  return data?.message ? `${base} ${data.message}` : base;
+}
+function setServerStatus(text, error = false) { serverStatus.className = error ? 'status error' : 'status muted'; serverStatus.textContent = text; }
+function updateButtons() {
+  previewButton.disabled = busy || !lastResult || !serverYear.value;
+  commitButton.disabled = busy || !serverPreview || (!serverPreview.commitAllowed && !skipConflicts.checked);
+}
+function resetServer() {
+  serverPreview = null; serverPayload = null; idempotencyKey = null;
+  serverReport.replaceChildren(); setServerStatus('');
+  updateButtons();
+}
+async function api(path, { method = 'GET', body, headers = {} } = {}) {
+  const init = { method, credentials: 'same-origin', headers: { ...headers } };
+  if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+  const response = await fetch(path, init);
+  let data = null;
+  try { data = await response.json(); } catch { data = null; }
+  return { status: response.status, ok: response.ok, data };
+}
+function reportBoxes(entries) {
+  const report = document.createElement('div'); report.className = 'report wide';
+  for (const [title, amount] of entries) {
+    const box = document.createElement('div'); const value = document.createElement('strong'); value.textContent = amount;
+    box.append(value, document.createTextNode(title)); report.append(box);
+  }
+  return report;
+}
+function messageList(title, entries) {
+  const nodes = [];
+  if (!entries.length) return nodes;
+  const heading = document.createElement('h3'); heading.textContent = title;
+  const list = document.createElement('ul');
+  entries.slice(0, 40).forEach(([row, text]) => { const li = document.createElement('li'); li.textContent = `Wiersz ${row}: ${text}`; list.append(li); });
+  nodes.push(heading, list);
+  if (entries.length > 40) { const p = document.createElement('p'); p.textContent = `Pokazano 40 z ${entries.length} komunikatów.`; nodes.push(p); }
+  return nodes;
+}
+function renderServerPreview(data) {
+  const c = data.counts;
+  const info = document.createElement('p'); info.className = 'muted';
+  info.textContent = `Do utworzenia: rodziny ${c.householdsCreated}, opiekunowie ${c.guardiansCreated}, uczniowie ${c.studentsCreated}, zapisy do klas ${c.enrollmentsCreated}, powiązania uczeń–opiekun ${c.linksCreated}. Zgoda na kontakt nie jest ustawiana przez import.`;
+  const problems = data.rows.filter(row => row.action === 'conflict' || row.action === 'skipped')
+    .map(row => [row.row, `${ACTIONS[row.action]} — ${(row.messages ?? []).join(' ')}`]);
+  serverReport.replaceChildren(
+    reportBoxes([['Nowe', c.rowsAdded], ['Aktualizacje', c.rowsUpdated], ['Bez zmian', c.rowsUnchanged], ['Konflikty', c.rowsConflict], ['Pominięte (błędy)', c.rowsSkipped]]),
+    info,
+    ...messageList('Wymaga ręcznej decyzji', problems),
+    ...messageList('Uwagi serwera', data.warnings.map(w => [w.row, w.message])),
+  );
+}
+document.querySelector('#server-connect').addEventListener('click', async () => {
+  busy = true; updateButtons(); setServerStatus('Pobieranie lat szkolnych…');
+  try {
+    const { ok, status, data } = await api('/api/import/options');
+    if (!ok) return setServerStatus(serverMessage(status, data), true);
+    serverYear.replaceChildren(new Option('— wybierz rok —', ''));
+    for (const year of data.schoolYears) serverYear.add(new Option(`${year.label} (klasy: ${year.classes.join(', ') || 'brak'})`, year.id));
+    serverYear.disabled = false;
+    setServerStatus(data.schoolYears.length ? 'Wybierz rok szkolny.' : 'Brak dostępnych lat szkolnych.');
+  } catch { setServerStatus('Nie udało się połączyć z serwerem.', true); }
+  finally { busy = false; updateButtons(); }
+});
+serverYear.addEventListener('change', resetServer);
+allowHouseholds.addEventListener('change', resetServer);
+skipConflicts.addEventListener('change', updateButtons);
+previewButton.addEventListener('click', async () => {
+  if (!lastResult || !serverYear.value) return;
+  resetServer(); busy = true; updateButtons(); setServerStatus('Serwer sprawdza dane…');
+  const payload = toServerPayload(lastResult, serverYear.value, { allowNewHouseholds: allowHouseholds.checked });
+  try {
+    const { ok, status, data } = await api('/api/import/preview', { method: 'POST', body: payload });
+    if (!ok) return setServerStatus(serverMessage(status, data), true);
+    serverPreview = data; serverPayload = payload; idempotencyKey = crypto.randomUUID();
+    renderServerPreview(data);
+    setServerStatus(data.commitAllowed ? 'Podgląd serwera gotowy. Nic nie zostało zapisane.' : 'Podgląd serwera zawiera konflikty lub błędy. Nic nie zostało zapisane.');
+  } catch { setServerStatus('Nie udało się połączyć z serwerem. Nic nie zostało zapisane.', true); }
+  finally { busy = false; updateButtons(); }
+});
+commitButton.addEventListener('click', async () => {
+  if (!serverPreview || busy) return;
+  const c = serverPreview.counts;
+  if (!window.confirm(`Zapisać w bazie: nowe ${c.rowsAdded}, aktualizacje ${c.rowsUpdated}? Pominięte wiersze: ${c.rowsConflict + c.rowsSkipped}.`)) return;
+  busy = true; updateButtons(); setServerStatus('Zapisywanie w jednej transakcji…');
+  const body = { ...serverPayload, fingerprint: serverPreview.fingerprint, planDigest: serverPreview.planDigest,
+    options: { ...serverPayload.options, skipConflicts: skipConflicts.checked } };
+  try {
+    const { ok, status, data } = await api('/api/import/commit', { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } });
+    if (!ok) return setServerStatus(serverMessage(status, data), true);
+    serverPreview = null; serverPayload = null;
+    setServerStatus(data.replayed
+      ? `Ten import był już zapisany wcześniej (partia ${data.batchId}). Nic nie zostało zdublowane.`
+      : `Zapisano partię ${data.batchId}: nowe ${data.counts.rowsAdded}, aktualizacje ${data.counts.rowsUpdated}, pominięte ${data.counts.rowsConflict + data.counts.rowsSkipped}.`);
+  } catch { setServerStatus('Brak odpowiedzi serwera. Ponowne kliknięcie użyje tego samego klucza i nie zdubluje danych.', true); }
+  finally { busy = false; updateButtons(); }
 });

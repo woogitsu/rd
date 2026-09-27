@@ -13,7 +13,7 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
     const db = createDatabase({ connectionString: processEnv.DATABASE_URL });
     return {
       mode: 'postgres',
-      env: { db, APP_ENV: processEnv.APP_ENV },
+      env: { db, APP_ENV: processEnv.APP_ENV, IMPORT_ENABLED: processEnv.IMPORT_ENABLED },
       fetchHandler: handlePgRequest,
       close: () => db.close(),
     };
