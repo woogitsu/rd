@@ -28,12 +28,15 @@ import {
 import {
   approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
 } from '../src/pg/news.js';
+import { hashSecret } from '../src/auth.js';
+import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
+import { hashPassword } from '../src/pg/password.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
-  ACTOR_KEYS, ACTORS, MARKERS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
-  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, pdfBytes, photoBody,
+  ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
+  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
   statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
@@ -51,6 +54,9 @@ const FX_ACCOUNTS = {
 const WEBHOOK_SECRET = `syntetyczny-sekret-webhooka-${randomBytes(12).toString('hex')}`;
 const CHECKLIST_PREFILLED = ['financial_report', 'audit_commission_report', 'minutes_approved', 'resolutions_archived'];
 const CHECKLIST_OPEN = ['reconciliation_confirmed', 'documents_handed_over'];
+// Najniższy dozwolony koszt scrypt (N = 2^15) — szybsze testy tras logowania.
+const FAST_SCRYPT = { SCRYPT_COST_LOG2: '15' };
+const syntheticPassword = () => `Syntetyczne haslo ${randomBytes(6).toString('hex')}`;
 
 let seq = 0;
 const nextKey = (prefix) => `${prefix}-${String(++seq).padStart(5, '0')}`;
@@ -189,9 +195,9 @@ async function makePayment(db, target, stage) {
   await db.query(
     `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
        reference, status, created_by, idempotency_key)
-     VALUES ($1, $2, $3, 100000, '2026-10-01', 'bank', $4, $5, $6, $7)`,
+     VALUES ($1, $2, $3, 100000, $8, 'bank', $4, $5, $6, $7)`,
     [id, unmatched ? null : 'hh-1', target.schoolYearId, `Wpłata ${marker(target.key)}`,
-      unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`],
+      unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`, yearDate(target, '10-01')],
   );
   return { paymentId: id };
 }
@@ -269,6 +275,12 @@ async function makeAdminTarget(ctx, stage) {
     await ctx.db.query("INSERT INTO role_grants (id, user_id, role, school_year_id) VALUES ($1, $2, 'board', $3)", [randomUUID(), userId, schoolYearId]);
     return { schoolYearId };
   }
+  if (stage === 'withFactor') {
+    // Konto z potwierdzonym czynnikiem MFA (reset MFA przez administratora).
+    const cookie = await seedUserSession(ctx.db, { userId });
+    await makeMfaFactor(ctx, 'confirmed', { cookie });
+    return { userId };
+  }
   if (stage === 'invitation') {
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations',
       { email: `${userId}@example.invalid`, role: 'board', schoolYearId: YEAR_1 });
@@ -286,6 +298,50 @@ async function makeMfaFactor(ctx, stage, { cookie, route }) {
   const rotated = confirm.response.headers.get('Set-Cookie').split(';', 1)[0];
   // Weryfikacja: kolejny krok TOTP (poprzedni został zużyty przy potwierdzeniu).
   return { cookie: rotated, code: route === 'mfa.recovery' ? confirm.json.recoveryCodes[0] : code(1) };
+}
+
+// ---------- trasy logowania (#3) ----------
+
+async function setPassword(db, userId, password) {
+  await db.query(
+    `INSERT INTO user_passwords (user_id, hash, set_reason) VALUES ($1, $2, 'invitation')
+     ON CONFLICT (user_id) DO UPDATE SET hash = EXCLUDED.hash`,
+    [userId, await hashPassword(password, { env: FAST_SCRYPT })],
+  );
+}
+
+// Konto z hasłem (bez przydziałów) do logowania; wspólne dla wszystkich przypadków.
+async function makeLoginAccount(ctx) {
+  const userId = nextKey('fx-login');
+  await seedUser(ctx.db, { userId });
+  const password = syntheticPassword();
+  await setPassword(ctx.db, userId, password);
+  return { email: `${userId}@example.invalid`, password };
+}
+
+// Świeże zaproszenie (token zwracany raz przez administratora) dla nowego adresu.
+async function makeInvitationToken(ctx) {
+  const email = `${nextKey('fx-zapr').toLowerCase()}@example.invalid`;
+  const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations', { email, role: 'board', schoolYearId: YEAR_1 });
+  return { token: json.token, password: syntheticPassword() };
+}
+
+// Świeży token resetu hasła wydany przez administratora dla nowego konta.
+async function makePasswordResetToken(ctx) {
+  const userId = nextKey('fx-reset');
+  await seedUser(ctx.db, { userId });
+  const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/users/${userId}/password-reset`, {});
+  return { token: json.token, newPassword: syntheticPassword() };
+}
+
+// Hasło świeżego użytkownika przypadku (caseInfo.cookie) — zmiana własnego hasła.
+async function makeOwnPassword(ctx, { cookie }) {
+  const tokenHash = await hashSecret(cookie.slice(cookie.indexOf('=') + 1));
+  const { rows } = await ctx.db.query('SELECT user_id FROM sessions WHERE token_hash = $1', [tokenHash]);
+  if (!rows[0]) throw new Error('fixture ownPassword: brak sesji przypadku');
+  const password = syntheticPassword();
+  await setPassword(ctx.db, rows[0].user_id, password);
+  return { password, newPassword: syntheticPassword() };
 }
 
 const MAKERS = {
@@ -321,6 +377,10 @@ const MAKERS = {
     return { payload, fingerprint: json.fingerprint, planDigest: json.planDigest };
   },
   mfaFactor: (ctx, _target, stage, caseInfo) => makeMfaFactor(ctx, stage, caseInfo),
+  loginAccount: (ctx) => makeLoginAccount(ctx),
+  invitationToken: (ctx) => makeInvitationToken(ctx),
+  passwordResetToken: (ctx) => makePasswordResetToken(ctx),
+  ownPassword: (ctx, _target, _stage, caseInfo) => makeOwnPassword(ctx, caseInfo),
   // Kolejna niepotwierdzona pozycja listy kontrolnej (rok 1); odmowy używają dowolnej pozycji.
   checklistItem: async (ctx, target, _stage, { success }) => ({
     item: (target.key === 'W1' && success ? ctx.checklistOpen.shift() : null) ?? CHECKLIST_PREFILLED[0],
@@ -386,13 +446,14 @@ const WRITE_TABLES = [
   'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments', 'role_grants',
   'users', 'sessions', 'invitations', 'user_mfa_factors', 'mfa_recovery_codes',
   'import_batches', 'households', 'guardians', 'students', 'enrollments', 'student_guardians',
-  'guardian_contact_changes', 'enrollment_history', 'documents',
+  'guardian_contact_changes', 'student_guardian_changes', 'enrollment_history', 'documents',
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
   'email_webhook_events', 'email_suppressions',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
+  'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
 
 async function writeFingerprint(db) {
@@ -411,7 +472,7 @@ async function matrixContext(group = 'main') {
       const db = await createTestDb();
       const env = {
         db, storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
-        BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET,
+        BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, ...FAST_SCRYPT,
       };
       await seedBase(db);
       const ctx = { db, env, cache: new Map(), fxCookies: await seedFixtureSessions(db), checklistOpen: [...CHECKLIST_OPEN] };
@@ -497,7 +558,9 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
 
   if (route.id === 'session.access' && response.status === 200) {
     const { grants } = JSON.parse(text);
-    const expectedGrants = ['noGrant', 'expiredGrant', 'revokedGrant'].includes(actor.key) ? 0 : actor.grants.length;
+    // #189: sesja czekająca na MFA (rola z wymogiem MFA, bez MFA) nie poznaje przydziałów.
+    const hidden = ['noGrant', 'expiredGrant', 'revokedGrant'].includes(actor.key) || mfaPending(actor, mfa);
+    const expectedGrants = hidden ? 0 : actor.grants.length;
     if (grants.length !== expectedGrants) problems.push(`/api/access zwraca ${grants.length} przydziałów zamiast ${expectedGrants}`);
   }
   if (route.id === 'session.logout' && cookie) {
@@ -565,14 +628,15 @@ test('email: webhook Brevo bez sekretu albo ze złym sekretem — 401 i brak zap
 
 test('families: rodzeństwo w 1A i 1B — przedstawiciel widzi wyłącznie dziecko własnej klasy', async () => {
   const ctx = await matrixContext();
-  for (const [actorKey, own, other] of [['repA', 'A', 'B'], ['repB', 'B', 'A'], ['boardA', 'A', 'B']]) {
-    const response = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions[actorKey][false] }), ctx.env);
+  // Zarząd (także z przydziałem klasy) i skarbnik przechodzą bramkę MFA routera tylko z sesją z MFA.
+  for (const [actorKey, own, other, mfa] of [['repA', 'A', 'B', false], ['repB', 'B', 'A', false], ['boardA', 'A', 'B', true]]) {
+    const response = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions[actorKey][mfa] }), ctx.env);
     const text = await response.text();
     assert.equal(response.status, 200, `${actorKey}: ${text}`);
     assert.ok(text.includes(marker(own)), `${actorKey}: brak dziecka własnej klasy`);
     assert.ok(!text.includes(marker(other)), `${actorKey}: widzi rodzeństwo z innej klasy`);
   }
-  const wide = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions.treasurer[false] }), ctx.env);
+  const wide = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions.treasurer[true] }), ctx.env);
   const text = await wide.text();
   assert.ok(text.includes(marker('A')) && text.includes(marker('B')), 'skarbnik widzi całą rodzinę roku');
 });
@@ -646,6 +710,7 @@ const MODULE_SOURCES = {
   print: ['../src/pg/routes/print.js'],
   'year-close': ['../src/pg/routes/year-close.js'],
   mfa: ['../src/pg/routes/mfa.js'],
+  login: ['../src/pg/routes/login.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń
@@ -686,6 +751,16 @@ test('meta: każda ścieżka widoczna w kodzie modułu tras jest pokryta macierz
       }
     }
     assert.ok(found > 0, `${route.name}: nie znaleziono żadnej ścieżki w kodzie — zaktualizuj pathSegmentsInSource`);
+  }
+});
+
+test('meta: każde zwolnienie z bramki MFA ma uzasadnienie i wpis w macierzy (#189)', () => {
+  const exempt = [...MFA_GATE_EXEMPT_EXACT, ...MFA_GATE_EXEMPT_PREFIXES];
+  assert.deepEqual([...exempt].sort(), Object.keys(MFA_GATE_EXEMPT_REASONS).sort(),
+    'Nowe zwolnienie w src/pg/mfa-policy.js wymaga uzasadnienia w MFA_GATE_EXEMPT_REASONS (tests/helpers/route-matrix.js)');
+  for (const path of exempt) {
+    assert.ok(ROUTE_MATRIX.some((route) => (path.endsWith('/') ? route.path.startsWith(path) : route.path.split('?')[0] === path)),
+      `zwolnienie ${path} bez wpisu w macierzy`);
   }
 });
 

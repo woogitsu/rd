@@ -45,8 +45,8 @@ export async function handle(request, env, url, json) {
 
   try {
     if (isRevokeAll) {
-      const revoked = await revokeAllOwnSessions(env, session);
-      return json({ revoked }, 200, { 'Set-Cookie': clearSessionCookie() });
+      const { revoked, scope } = await revokeAllOwnSessions(env, session);
+      return json({ revoked, scope }, 200, { 'Set-Cookie': clearSessionCookie() });
     }
     if (isEnroll) {
       return json(await enrollFactor(env, session), 201);

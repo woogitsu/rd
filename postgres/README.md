@@ -150,6 +150,21 @@ migracji po wygaśnięciu dzierżawy trafia jak dotąd do `delivery_unknown`.
 Wycofanie: przywrócenie funkcji z `0007_email.sql` i usunięcie kolumn —
 bezpieczne tylko, gdy żaden wiersz nie jest w stanie `sending`.
 
+`0027_entry_date_within_school_year.sql` (#169) dodaje funkcję
+`school_year_contains(rok, dzień)`, triggery `b0_date_within_school_year`
+(BEFORE INSERT) na `ledger_entries.occurred_on` i `payment_entries.received_on`
+— data spoza `[starts_on, ends_on]` roku kończy się wyjątkiem
+`date_outside_school_year` (API: `422`) — oraz widok tylko do odczytu
+`school_year_date_deviations`. Skutki dla danych: żaden wiersz nie jest
+zmieniany ani usuwany; istniejące wpisy i wpłaty spoza zakresu zostają w
+sumach i są raportowane (widok, raport KR). Trigger działa tylko przy INSERT,
+więc przypisanie i korekta starych wpłat działają jak dotąd. Odtworzenie
+istniejących danych (`src/d1-postgres-migration.js`) ustawia w swojej
+transakcji `SET LOCAL rd.restore = 'on'` i przenosi historyczne wiersze bez
+zmian. Założenie zachowawcze: bez okna wpłat z wyprzedzeniem (decyzja
+skarbnika/zarządu). Wycofanie: usunięcie widoku, triggerów i funkcji; dane
+nie wymagają cofania.
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.
@@ -225,6 +240,18 @@ zmienia żadnego wiersza. Kampanie, worker, kartki i import czytają odtąd
 główne gospodarstwo z `student_households`, nie `students.household_id`.
 Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
 
+`0026_student_guardian_history.sql` (issue #190) dodaje strażnika relacji
+opiekun–dziecko (`student_guardians`: bez DELETE, `student_id`/`guardian_id`/
+`created_at` niezmienne, `ends_on` ustawiane raz) i tabelę
+`student_guardian_changes` (historia zgody na kontakt, kontaktu głównego i dat
+relacji; aktor i powód z ustawień transakcji, `source = 'direct'` dla
+bezpośredniego SQL; tylko do dopisywania). Klucze obce relacji do `students`
+i `guardians` zmieniają się z `ON DELETE CASCADE` na `NO ACTION`: usunięcie
+ucznia lub opiekuna z relacją kończy się błędem zamiast cichego usunięcia
+relacji. Skutki dla danych: istniejące wiersze bez zmian, nowa tabela pusta;
+import, odtworzenie snapshotu D1 i eksportu (same INSERT-y) działają bez
+zmian. Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
+
 `0013_mfa.sql` (issue #3) dodaje tabele `user_mfa_factors` (sekret TOTP
 wyłącznie jako szyfrogram AES-256-GCM z IV i tagiem; `confirmed_at`,
 `disabled_at`, `last_used_step`), `mfa_recovery_codes` (tylko SHA-256 kodu,
@@ -239,3 +266,25 @@ istniejących wierszy; istniejące wartości `revoked_reason` nadal spełniają
 nowe ograniczenie. Utrata klucza `MFA_ENCRYPTION_KEY` oznacza konieczność
 ponownego zapisu wszystkich czynników. Metoda MFA (TOTP) jest propozycją do
 decyzji D-10. Opis: [`docs/AUTH.md`](../docs/AUTH.md).
+
+`0020_password_login.sql` (issue #3, D-10) dodaje logowanie hasłem.
+`user_passwords` przechowuje na konto jeden skrót hasła w formacie
+`scrypt$N$r$p$<sól>$<klucz>` (parametry w ciągu, sól 16 bajtów na hasło),
+datę i powód ustawienia (`invitation`, `change`, `reset`, `rehash`) oraz
+flagę `must_change`; hasła w postaci jawnej nie ma nigdzie. `login_rate_limits`
+liczy błędne logowania osobno dla SHA-256 znormalizowanego adresu e-mail i
+adresu IP (z separacją dziedziny) — bez adresów w postaci jawnej; to
+pseudonimizacja, więc aplikacja usuwa wiersze starsze niż doba.
+`password_reset_tokens` przechowuje wyłącznie SHA-256 jednorazowego tokenu
+wydanego przez administratora, z autorem, czasem wygaśnięcia i zamknięciem
+(`used_at` albo `revoked_at`); trigger blokuje usunięcie i ponowne otwarcie
+tokenu. Ograniczenie `sessions.revoked_reason` zostaje poszerzone o
+`password_changed`, `password_reset` i `mfa_reset`. Skutki dla danych:
+migracja tylko dodaje obiekty; istniejące konta nie dostają hasła (logowanie
+wymaga przyjęcia zaproszenia albo tokenu resetu od administratora), a
+istniejące wartości `revoked_reason` nadal spełniają nowe ograniczenie.
+Wycofanie na pustej bazie: usunięcie trzech tabel, funkcji
+`password_reset_token_guard` i przywrócenie poprzedniego ograniczenia; na
+bazie z kontami — tylko po kopii zapasowej (wszyscy stracą hasła). Okres
+przechowywania skrótów haseł wyłączonych kont i tokenów zależy od D-04.
+Opis: [`docs/AUTH.md`](../docs/AUTH.md).

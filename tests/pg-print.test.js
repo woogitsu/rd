@@ -110,9 +110,10 @@ test('przedstawiciel widzi tylko swoją klasę i bez informacji o wpłatach (tak
 test('kwoty netto tylko dla roli finansowej z MFA; bez MFA pole jest pominięte', async () => {
   const { db, sessions, get } = await setup();
   try {
+    // Skarbnik bez sesji z MFA zatrzymuje się na bramce MFA routera (przed trasą).
     const noMfa = await get(`schoolYearId=${YEAR}`, sessions.treasurerNoMfa);
-    assert.equal(noMfa.status, 200);
-    assert.equal(noMfa.body.paymentInfoIncluded, false);
+    assert.equal(noMfa.status, 403);
+    assert.equal(noMfa.body.error, 'mfa_enrollment_required');
     assert.doesNotMatch(noMfa.text, /recordedNetCents/);
 
     const mfa = await get(`schoolYearId=${YEAR}`, sessions.treasurerMfa);

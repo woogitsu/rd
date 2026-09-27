@@ -1,6 +1,6 @@
-# Uwierzytelnianie — fundament sesji
+# Uwierzytelnianie — sesje, hasło i MFA
 
-Ten etap dodaje wyłącznie serwerową obsługę już utworzonej sesji. Nie udostępnia publicznej rejestracji, formularza logowania, akceptowania zaproszeń ani sposobu nadawania ról.
+Logowanie: adres e-mail i hasło, a następnie kod z aplikacji uwierzytelniającej (TOTP). Tę metodę wskazał użytkownik 2026-09-27; czeka na formalne potwierdzenie przez zarząd i IOD (D-10). Nie ma publicznej rejestracji — konto powstaje wyłącznie z zaproszenia administratora. Opis przepływu: sekcja „Logowanie hasłem i TOTP” niżej.
 
 ## Zasady
 
@@ -13,7 +13,7 @@ Ten etap dodaje wyłącznie serwerową obsługę już utworzonej sesji. Nie udos
 
 ## Dalszy zakres issue #3
 
-Do wdrożenia pozostaje wybór i konfiguracja dostawcy logowania, publiczne trasy zaproszeń oraz interfejs zarządzania kontami. Do tego czasu nie ma drogi utworzenia sesji z publicznego API. Przepływ MFA, limity prób i cofanie wszystkich sesji opisuje sekcja „MFA i cofanie sesji” niżej (prototyp na PostgreSQL).
+Logowanie hasłem, przyjmowanie zaproszeń, zmiana i reset hasła działają w prototypie na PostgreSQL (sekcja „Logowanie hasłem i TOTP”). Stary Worker/D1 nadal nie ma drogi utworzenia sesji. Przepływ MFA, limity prób i cofanie wszystkich sesji opisuje sekcja „MFA i cofanie sesji”.
 
 ## Warstwa PostgreSQL (issue #35) — prototyp
 
@@ -21,17 +21,17 @@ Status: prototyp na danych syntetycznych, **nie** jest gotowy do pracy na danych
 
 - `src/pg/auth.js` przenosi sesje na PostgreSQL (`env.db`, kontrakt z `src/db.js`): `loadSession`, `revokeSession` (wycofanie i zdarzenie audytu w jednej transakcji, ponowne wylogowanie nie dubluje wpisu), `rotateSession` (stara sesja `revoked_reason='rotated'`, nowa wskazuje ją w `rotated_from`), `revokeUserSessions` i `createSession`.
 - Zaproszenia: `createInvitation`, `acceptInvitation`, `revokeInvitation`. Zaproszenie jest jednorazowe (blokada wiersza i `UNIQUE role_grants.source_invitation_id`), wygasa, może zostać wycofane, a adres konta musi odpowiadać adresowi zaproszenia. Odpowiedź HTTP powinna zwracać wyłącznie `invalid_invitation`; pole `reason` służy testom i diagnostyce.
-- Te funkcje nie mają jeszcze publicznej trasy HTTP. Kto może zapraszać i do jakich ról, sprawdza wywołujący (`requireAccess`).
+- Przyjęcie zaproszenia przez HTTP: `POST /api/invitations/accept` (sekcja niżej). Kto może zapraszać i do jakich ról, sprawdza wywołujący (`requireAccess`; dziś wyłącznie administrator z MFA).
 - Trasy `/api/session`, `/api/access`, `/api/logout` mają ten sam JSON, kody i cookie co Worker. Każde żądanie POST/PUT/PATCH/DELETE pod `/api/` bez zgodnego nagłówka `Origin` kończy się `403 invalid_origin`.
 - Dziennik audytu zapisuje identyfikatory, nie adresy e-mail ani imiona (`assertNoPii`). Logi techniczne zawierają tylko nazwę modułu i kod błędu.
 
 Założenia do potwierdzenia: ważność zaproszenia 72 h (najwyżej 14 dni), sesja najwyżej 24 h, MFA potwierdzane raz na sesję (bez wymogu ponownego potwierdzenia przed operacją finansową).
 
-Otwarte decyzje szkoły/zarządu: dostawca logowania i metoda MFA (od nich zależą limity prób i blokady), kto może zapraszać do których ról, zakres dyrekcji i Komisji Rewizyjnej.
+Otwarte decyzje szkoły/zarządu: formalne potwierdzenie metody logowania i MFA (D-10, wskazanie użytkownika: e-mail + hasło + TOTP) wraz z limitami prób i blokadami, kto może zapraszać do których ról, zakres dyrekcji i Komisji Rewizyjnej.
 
 ## MFA i cofanie sesji (issue #3) — prototyp, metoda do zatwierdzenia
 
-Status: prototyp na danych syntetycznych, **nie** jest wdrożony. Metoda MFA jest otwartą decyzją (D-10). TOTP opisany niżej to **proponowana** metoda domyślna, zaimplementowana za interfejsem `MFA_METHODS` w `src/pg/mfa.js`; inną metodę (np. klucze sprzętowe) można dodać jako kolejny wpis bez zmiany tras. Parametry limitów i liczba kodów odzyskiwania też czekają na zatwierdzenie.
+Status: prototyp na danych syntetycznych, **nie** jest wdrożony. Metodę MFA wskazał użytkownik (TOTP z Google/Microsoft Authenticator, D-10, do formalnego potwierdzenia). TOTP opisany niżej jest metodą domyślną, zaimplementowana za interfejsem `MFA_METHODS` w `src/pg/mfa.js`; inną metodę (np. klucze sprzętowe) można dodać jako kolejny wpis bez zmiany tras. Parametry limitów i liczba kodów odzyskiwania też czekają na zatwierdzenie.
 
 Proponowane parametry: TOTP według RFC 6238 — HMAC-SHA-1, 6 cyfr, krok 30 s, tolerancja ±1 krok (zegar telefonu może się spieszyć lub spóźniać do 30 s). Sekret ma 160 bitów.
 
@@ -41,18 +41,109 @@ Trasy (wszystkie POST, wymagają aktywnej sesji i zgodnego nagłówka `Origin`; 
 - `POST /api/mfa/confirm` z `{ "code": "123456" }` — potwierdza czynnik pierwszym kodem, wyłącza poprzedni potwierdzony czynnik (i unieważnia jego kody odzyskiwania), generuje 10 kodów odzyskiwania i zwraca je **jeden raz**. Sesja zostaje oznaczona jako potwierdzona MFA i zrotowana.
 - `POST /api/mfa/verify` z `{ "code": "123456" }` — ustawia `sessions.mfa_verified_at` wyłącznie dla **bieżącej** sesji, po czym od razu ją rotuje (`rotateSession`): stara sesja dostaje `revoked_reason='rotated'`, nowy sekret trafia tylko do cookie (ochrona przed utrwaleniem sesji). Inne sesje tego samego konta pozostają bez MFA.
 - `POST /api/mfa/recovery` z `{ "code": "XXXX-XXXX-XXXX-XXXX" }` — zamiast kodu TOTP; kod odzyskiwania jest jednorazowy. Wielkość liter, spacje i myślniki nie mają znaczenia.
-- `POST /api/sessions/revoke-all` — wycofuje wszystkie aktywne sesje **własnego** konta, także bieżącą (`revoked_reason='user_revoke_all'`), czyści cookie i zwraca `{ "revoked": n }`. Nie dotyka sesji innych kont.
+- `POST /api/sessions/revoke-all` — wycofuje wszystkie aktywne sesje **własnego** konta, także bieżącą (`revoked_reason='user_revoke_all'`), czyści cookie i zwraca `{ "revoked": n, "scope": "all" }`. Nie dotyka sesji innych kont. Konto z potwierdzonym czynnikiem: sesja bez potwierdzonego MFA (samo hasło) wycofuje wyłącznie siebie (`"scope": "current"`, #189) — sama znajomość hasła nie wystarcza, by wylogować właściciela.
 
 Ochrona:
 
 - Sekret czynnika jest przechowywany wyłącznie jako szyfrogram AES-256-GCM (`secret_ciphertext`, `secret_iv`, `secret_tag`). Klucz pochodzi ze zmiennej `MFA_ENCRYPTION_KEY` (32 bajty: 64 znaki hex albo base64), ustawianej tylko jako sekret usługi Railway, nigdy w repozytorium. Dane uwierzytelniające szyfrowania (AAD) wiążą szyfrogram z identyfikatorem czynnika i konta, więc przeniesienie go do innego wiersza nie zadziała. Zmiana klucza wymaga ponownego zapisu czynników (kolumna `key_version` jest przygotowana; procedury rotacji klucza jeszcze nie ma).
 - Kody są porównywane w czasie stałym (`timingSafeEqual`) dla każdego kroku okna, bez wczesnego wyjścia.
 - Powtórzenie: zapamiętywany jest ostatni przyjęty krok (`last_used_step`); kod z tego samego lub starszego kroku jest odrzucany także w innej sesji. Trigger nie pozwala cofnąć tej wartości.
-- Limity: błędne kody (także powtórzone i źle sformatowane) liczą się osobno dla konta i dla sesji. Proponowane: 5 błędów w 15 minut → blokada na 15 minut (`429 mfa_locked` z nagłówkiem `Retry-After`). W czasie blokady kod nie jest sprawdzany ani zużywany. Poprawny kod zeruje liczniki konta i bieżącej sesji. Licznik i wpis audytu są zapisywane w tej samej transakcji; próby jednego konta są serializowane blokadą wiersza.
+- Limity: błędne kody (także powtórzone i źle sformatowane) liczą się osobno dla konta i dla sesji. Proponowane: 5 błędów w 15 minut w sesji, 20 w 15 minut na konto (wyższy sufit, #189: błędy z sesji po samym haśle nie blokują właściciela w nowej sesji; nowa sesja wymaga ponownego hasła i podlega limitowi logowania) → blokada na 15 minut (`429 mfa_locked` z nagłówkiem `Retry-After`). W czasie blokady kod nie jest sprawdzany ani zużywany. Poprawny kod zeruje liczniki konta i bieżącej sesji. Licznik i wpis audytu są zapisywane w tej samej transakcji; próby jednego konta są serializowane blokadą wiersza.
 - Kody odzyskiwania mają 80 bitów losowości; w bazie jest tylko SHA-256. Użycie zapisuje czas i sesję; ponowne użycie jest odrzucane i liczone jako błąd.
 - Czynników ani kodów nie da się usunąć ani przepisać (triggery); wyłączenie to `disabled_at`, unieważnienie kodów to `invalidated_at`.
 - Dziennik audytu: `mfa.enrollment_started`, `mfa.enrolled`, `mfa.verified`, `mfa.failed` (z powodem `invalid_code`/`replay`), `mfa.locked` (zakres `user` lub `session`), `mfa.recovery_used` (z liczbą pozostałych kodów) oraz `session.revoked` dla każdej sesji. Metadane zawierają tylko identyfikatory i kody powodów — nigdy sekretu, kodu, adresu e-mail ani imienia.
 
 Migracja: `postgres/migrations/0013_mfa.sql` (opis skutków w `postgres/README.md`).
 
-Założenia do potwierdzenia (D-10): metoda TOTP i jej parametry, progi blokady, 10 kodów odzyskiwania, etykieta `RD` w aplikacji uwierzytelniającej, brak wymogu MFA dla cofnięcia wszystkich własnych sesji (to działanie ochronne), procedura odzyskania dostępu po utracie telefonu i wszystkich kodów (dziś tylko ręcznie przez administratora — trasy administracyjnej nie ma).
+Założenia do potwierdzenia (D-10): metoda TOTP i jej parametry, progi blokady, 10 kodów odzyskiwania, etykieta `RD` w aplikacji uwierzytelniającej, brak wymogu MFA dla cofnięcia wszystkich własnych sesji (to działanie ochronne), procedura odzyskania dostępu po utracie telefonu i wszystkich kodów (`POST /api/admin/users/{id}/mfa-reset` — kto i jak potwierdza tożsamość osoby, wymaga decyzji).
+
+## Logowanie hasłem i TOTP (issue #3) — prototyp
+
+Status: prototyp na danych syntetycznych, **nie** jest wdrożony i **nie** jest gotowy do pracy na danych rodzin. Metoda: wskazanie użytkownika 2026-09-27 — e-mail + hasło + TOTP (Google Authenticator / Microsoft Authenticator, RFC 6238); do formalnego potwierdzenia przez zarząd/IOD (D-10). Wszystkie liczby niżej to założenia do tej decyzji.
+
+Pliki: `src/pg/password.js` (hasła), `src/pg/login.js` i `src/pg/routes/login.js` (trasy), `src/pg/mfa-policy.js` (bramka MFA), `src/pg/mfa.js` (TOTP, bez zmian), `login/` (ekran), migracja `postgres/migrations/0020_password_login.sql`, testy `tests/pg-login.test.js`, `tests/login-core.test.js`.
+
+### Przepływ
+
+```
+/  ──308──▶  /login/
+                │
+   (a) zaproszenie: /login/#invite=<token>   (token w części „#”, nie trafia do serwera ani logów)
+       POST /api/invitations/accept {token, password, displayName?}
+         ├─ nowe konto: adres z zaproszenia, hasło wg polityki, rola z zaproszenia
+         └─ konto istnieje: „password” = obecne hasło; rola dopisana, hasło bez zmian
+                │   (sesja bez MFA, dalej jak po logowaniu)
+   (b) POST /api/login {email, password}
+         ├─ zły adres / złe hasło / konto wyłączone / brak hasła ─▶ 401 invalid_credentials
+         ├─ limit przekroczony ─▶ 429 too_many_attempts + Retry-After
+         └─ OK ─▶ cookie sesji (mfa_verified_at = NULL) + {mfaRequired, mfaEnrolled, mfaRequiredByRole}
+                │
+                ├─ mfaEnrolled = true ─▶ POST /api/mfa/verify {code}  (albo /api/mfa/recovery)
+                │                          └─ sesja potwierdzona i zrotowana ─▶ panele
+                ├─ mfaEnrolled = false i rola z MFA_REQUIRED_ROLES
+                │     ─▶ POST /api/mfa/enroll ─▶ kod QR + klucz ręczny
+                │     ─▶ POST /api/mfa/confirm {code} ─▶ 10 kodów odzyskiwania (raz) ─▶ panele
+                └─ pozostali (np. przedstawiciel bez czynnika) ─▶ panele
+   (c) zmiana hasła: POST /api/password/change {currentPassword, newPassword}
+         └─ inne sesje wycofane (password_changed), bieżąca zrotowana
+   (d) reset: administrator ─▶ POST /api/admin/users/{id}/password-reset ─▶ token (raz)
+         ─▶ przekazanie osobnym kanałem ─▶ /login/#reset=<token>
+         ─▶ POST /api/password/reset {token, newPassword} ─▶ wszystkie sesje wycofane ─▶ (b)
+   (e) utrata telefonu i kodów: administrator ─▶ POST /api/admin/users/{id}/mfa-reset {confirm}
+         ─▶ czynnik i kody wyłączone, sesje wycofane ─▶ (b), a potem ponowny zapis MFA
+```
+
+### Hasła
+
+- scrypt z `node:crypto`, sól 16 bajtów na hasło, klucz 32 bajty. Zapis: `scrypt$N$r$p$<sól>$<klucz>` (base64url). Domyślnie N = 2^17, r = 8, p = 1 (OWASP Password Storage Cheat Sheet); `SCRYPT_COST_LOG2` (15–20) zmienia N. Po udanym logowaniu hash ze starszymi parametrami jest przeliczany (`set_reason = 'rehash'`). Najwyżej 2 obliczenia scrypt naraz (ok. 128 MiB każde przy 2^17) — pozostałe czekają, co chroni pamięć serwera przy zalewie prób.
+- Porównanie `timingSafeEqual`. Nieznany adres, konto bez hasła i zły format adresu są sprawdzane względem fikcyjnego hasha o tych samych parametrach — ta sama odpowiedź i podobny czas.
+- Polityka NIST SP 800-63B: 12–128 znaków po normalizacji NFKC (liczone znaki, nie bajty), bez reguł składu (bez wymogu cyfr i znaków specjalnych), wklejanie i menedżery haseł dozwolone. Odrzucane: hasła z osadzonej listy popularnych, powtórzenia i ciągi (np. `aaaaaaaaaaaa`, `abcdefghijkl`), typowy rdzeń + cyfry (`haslo1234567`), adres e-mail lub jego część lokalna. Mała lista nie zastępuje sprawdzenia w bazie wycieków (np. Have I Been Pwned z k-anonimowością) — to osobna decyzja, bo oznacza zewnętrzne zapytania.
+- Hasło nie trafia do logów, audytu ani odpowiedzi (test `tests/pg-login.test.js`); w bazie jest tylko hash w `user_passwords`.
+
+### Limity prób
+
+- 5 błędów w 15 min na adres e-mail i 20 na adres IP → blokada 15 min (`429 too_many_attempts`, `Retry-After`). W czasie blokady hasło nie jest sprawdzane. Poprawne hasło zeruje licznik adresu (nie IP). Limit działa tak samo dla adresów nieistniejących.
+- W `login_rate_limits` jest wyłącznie SHA-256 znormalizowanego adresu lub IP z separacją dziedziny (`rd-login:email:` / `rd-login:ip:`). To pseudonimizacja (adres da się sprawdzić słownikowo), dlatego wiersze starsze niż doba są usuwane przy kolejnej próbie.
+- Atomowość (#186): próba jest rezerwowana **przed** sprawdzeniem hasła lub tokenu, w jednej transakcji z blokadą wierszy limitu (`SELECT … FOR UPDATE`): sprawdzenie blokady, zajętości okna i zwiększenie licznika. Gdy okno jest wypełnione próbami w toku, kolejne żądanie dostaje 429 bez liczenia scrypt. Błąd tylko zakłada blokadę po osiągnięciu progu; nie zeruje licznika ani nie skraca trwającej blokady. Licznik zaczyna się od 1 dopiero po wygaśnięciu blokady lub okna. Sukces albo odrzucenie z innego powodu (np. słabe nowe hasło) zwalnia rezerwację (w adresie e-mail sukces kasuje licznik). Transakcja nie obejmuje scrypt. Skutek uboczny: przerwane żądanie (zerwane połączenie w trakcie scrypt) liczy się jako próba.
+- Ograniczenie testów: PGlite ma jedno połączenie, więc testy odtwarzają przeplot żądań w czasie scrypt (`Promise.all`), a nie rywalizację dwóch połączeń PostgreSQL o ten sam wiersz; tę zapewnia `FOR UPDATE`, co test sprawdza na poziomie zapytań (odczyt z blokadą i zapis licznika w tej samej transakcji, przed wyszukaniem konta).
+- Adres klienta ustawia serwer Node w nagłówku `x-rd-client-ip` (wartość od klienta jest nadpisywana). Za proxy Railway ustaw `TRUST_PROXY=1` — wtedy liczy się ostatni wpis `X-Forwarded-For`; bez tego adres gniazda (za proxy byłby to adres proxy, czyli wspólny licznik dla wszystkich).
+- Te same limity obejmują przyjęcie zaproszenia i reset hasła (błędne tokeny liczą się na IP) oraz zmianę hasła (błędne obecne hasło liczy się na adres i IP). Limity kodów TOTP — sekcja „MFA i cofanie sesji”.
+- Odrzucenia z powodu blokady nie są zapisywane w dzienniku audytu (ochrona dziennika przed zalewem); licznik zostaje w `login_rate_limits`.
+
+### Bramka MFA (`MFA_REQUIRED_ROLES`)
+
+Router (`src/pg/app.js`) przed modułami tras sprawdza bieżącą sesję (`src/pg/mfa-policy.js`):
+
+1. konto z potwierdzonym czynnikiem, sesja bez MFA → `403 mfa_required` (inaczej samo hasło omijałoby MFA),
+2. konto z aktywnym przydziałem roli z `MFA_REQUIRED_ROLES` bez czynnika → `403 mfa_enrollment_required`,
+3. poza tym przepuszcza; wymóg MFA na poziomie trasy (`requireAccess` z `requireMfa`, np. finanse) działa niezależnie.
+
+Zwolnione (uzasadnienia: `MFA_GATE_EXEMPT_REASONS` w `tests/helpers/route-matrix.js`, meta-test wymusza wpis dla każdego nowego zwolnienia): `/api/session`, `/api/access` (sesja czekająca na MFA dostaje `{ "grants": [], "mfaRequired": true }`, #189), `/api/auth/state`, `/api/logout`, `/api/sessions/revoke-all`, `/api/mfa/*`, `/api/login`, `/api/invitations/accept`, `/api/password/reset`, `/api/public/*`, `/api/meetings/public-minutes`, webhook Brevo. `/api/password/change` **nie** jest zwolnione — zmiana hasła wymaga wcześniej MFA. Domyślnie `MFA_REQUIRED_ROLES=admin,board,treasurer`; pusty ciąg wyłącza regułę 2 (reguła 1 działa zawsze). Wartość domyślna jest założeniem do D-10.
+
+### Trasy
+
+| Trasa | Kto | Wynik | Audyt |
+| --- | --- | --- | --- |
+| `POST /api/login` | każdy (zgodny `Origin`) | cookie sesji bez MFA, `{mfaRequired, mfaEnrolled, mfaRequiredByRole, mustChangePassword, expiresAt}` | `auth.login_succeeded` (aktor = konto), `auth.login_failed` (aktor pusty; obiekt = konto, gdy znane, inaczej losowy identyfikator próby; powód) |
+| `GET /api/auth/state` | zalogowany | stan MFA i hasła bieżącej sesji | — |
+| `POST /api/invitations/accept` | posiadacz tokenu | `201`, cookie sesji, `created` | `user.created`, `auth.password_set`, `invitation.accepted`, `role_grant.created`, `auth.login_succeeded`; błędy `auth.invitation_accept_failed` |
+| `POST /api/password/change` | zalogowany, po bramce MFA | nowe cookie, `revokedSessions` | `auth.password_changed`, `session.revoked` × n; błędy `auth.password_change_failed` |
+| `POST /api/password/reset` | posiadacz tokenu | `{ok: true}`, bez sesji | `auth.password_reset_completed`, `session.revoked` × n; błędy `auth.password_reset_failed` |
+| `POST /api/admin/users/{id}/password-reset` | admin + MFA | `201`, token **raz**, ważny 2 h (`ttlHours` 1–24) | `auth.password_reset_issued`, `auth.password_reset_revoked` (poprzedni token) |
+| `POST /api/admin/users/{id}/mfa-reset` | admin + MFA, `{confirm: "<id>"}`, nie dla siebie | wyłączone czynniki i kody, wylogowanie | `mfa.reset`, `session.revoked` × n |
+
+Wszystkie POST wymagają zgodnego nagłówka `Origin` (także logowanie bez sesji — ochrona przed CSRF logowania), `Content-Type: application/json` i najwyżej 4 KiB treści. Metadane audytu zawierają wyłącznie identyfikatory i kody powodów — bez adresów e-mail, haseł i tokenów.
+
+### Reset hasła bez e-maila
+
+Samodzielny reset linkiem e-mail **nie** istnieje: szablon wiadomości i adres nadawcy to decyzje D-16/D-17, a wysyłka wymaga zatwierdzenia treści i odbiorców (AGENTS.md). Token wydaje administrator; baza ma tylko jego SHA-256; token jest jednorazowy, wygasa, a nowy unieważnia poprzedni. Administrator przekazuje go osobnym, zaufanym kanałem (np. telefonicznie po potwierdzeniu tożsamości — procedura do decyzji). Reset nie zmienia MFA i nie tworzy sesji — po nim trzeba zalogować się hasłem i kodem.
+
+Otwarte tokeny konta są unieważniane (`revoked_at`, zdarzenie `auth.password_reset_revoked` z powodem, #193) w transakcji operacji, która je dezaktualizuje: zmiana hasła (`password_changed`), udane logowanie hasłem (`login_succeeded` — osoba zna hasło, token nie jest potrzebny), udany reset (`password_reset_completed`, pozostałe tokeny), wyłączenie konta (`user_disabled` — po ponownym włączeniu stary token nie działa) i reset MFA przez administratora (`mfa_reset`). Wiersze tokenów zostają jako historia. Skutek dla użytkownika: kto zaloguje się starym hasłem, a potem chce użyć tokenu, potrzebuje nowego tokenu od administratora (ekran `login/` zwraca wtedy „token nieprawidłowy”).
+
+### Ryzyka i ograniczenia
+
+- Prototyp nie przeszedł niezależnego przeglądu bezpieczeństwa ani testu z czytnikiem ekranu (ekran `login/`).
+- Limit na IP za proxy działa tylko z `TRUST_PROXY=1`; bez tego wszyscy dzielą licznik IP proxy (limit na adres e-mail działa zawsze).
+- Skrót e-maila w `login_rate_limits` jest pseudonimizacją; czas przechowywania (doba) to założenie do D-04.
+- Brak powiadomienia osoby o logowaniu z nowego urządzenia, zmianie hasła lub resecie MFA (wymaga D-16/D-17).
+- Ekran logowania korzysta z zależności `qrcode-generator` (MIT, bez zależności przechodnich) wyłącznie w przeglądarce; kod QR powstaje lokalnie, sekret nie trafia do zewnętrznych usług.

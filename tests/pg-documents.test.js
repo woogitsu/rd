@@ -114,12 +114,16 @@ test('guessing another document id gives the same 404 as an unknown id', async (
     await seedUserSession(db, { userId: 'u-board-class', mfa: true, roles: [{ role: 'board', classId: 'c-1a', schoolYearId: YEAR }] }),
   ];
   const unknown = crypto.randomUUID();
+  // Skarbnik bez sesji z MFA zatrzymuje się na bramce MFA routera (403
+  // mfa_enrollment_required) — przed trasą, więc tak samo dla znanego i nieznanego id.
+  const noMfa = intruders[4];
   for (const cookie of intruders) {
     for (const path of [`/api/documents/${id}`, `/api/documents/${id}/content`]) {
       const denied = await get(env, path, cookie);
       const missing = await get(env, path.replace(id, unknown), cookie);
-      assert.equal(denied.status, 404, path);
-      assert.equal(missing.status, 404);
+      const expected = cookie === noMfa ? 403 : 404;
+      assert.equal(denied.status, expected, path);
+      assert.equal(missing.status, expected);
       assert.deepEqual(await denied.json(), await missing.json());
     }
   }
@@ -128,8 +132,9 @@ test('guessing another document id gives the same 404 as an unknown id', async (
   }
   assert.equal((await get(env, `/api/documents/${id}/content`)).status, 401);
   // Odmowa dla istniejącego dokumentu trafia do dziennika (bez treści i PII).
+  // (Sesja zatrzymana na bramce MFA nie dociera do trasy dokumentów.)
   const denied = await auditRows(db, 'document.access_denied');
-  assert.equal(denied.length, intruders.length);
+  assert.equal(denied.length, intruders.length - 1);
   denied.forEach((event) => assertNoPii(event.metadata_json));
   assert.equal((await auditRows(db, 'document.downloaded')).length, 0);
 }));
