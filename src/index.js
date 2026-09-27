@@ -1,5 +1,6 @@
 import { clearSessionCookie, isSameOrigin, loadSession, revokeSession } from './auth.js';
 import { loadAuthorizationContext } from './authorization.js';
+import { handlePaymentRequest } from './payments.js';
 
 const JSON_HEADERS = {
   'Cache-Control': 'no-store',
@@ -31,6 +32,14 @@ export default {
         const context = await loadAuthorizationContext(request, env);
         if (!context) return json({ error: 'unauthenticated' }, 401);
         return json({ grants: context.grants });
+      } catch {
+        return json({ error: 'service_unavailable' }, 503);
+      }
+    }
+    if (request.method === 'POST' && url.pathname.startsWith('/api/payments')) {
+      try {
+        const response = await handlePaymentRequest(request, env, url, json);
+        if (response) return response;
       } catch {
         return json({ error: 'service_unavailable' }, 503);
       }
