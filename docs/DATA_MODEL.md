@@ -66,5 +66,9 @@ Model nie rozstrzyga, czy składkę ewidencjonujemy na rodzinę czy na dziecko. 
 - Przydział z `class_id` zawęża do tej klasy; admin/board/treasurer bez `class_id` widzą wszystkie klasy (lub klasy roku z `school_year_id`).
 - `audit` i `principal` dostają `403` do czasu decyzji D-09.
 - Obiekt nieistniejący i obiekt poza zakresem dają ten sam `404 not_found`.
-- Przedstawiciel widzi e-mail opiekuna tylko przy zgodzie na kontakt (założenie, D-08).
+- Zakres wyłącznie klasowy (przedstawiciel, także zarząd z przydziałem klasy) — założenie do D-08/D-11, wariant zachowawczy (#95):
+  - widzi tylko opiekunów z aktywną relacją `student_guardians` (`[starts_on, ends_on)`) do ucznia swojej klasy; opiekun związany wyłącznie z rodzeństwem spoza klasy jest pomijany (także imię i nazwisko);
+  - e-mail i `contactAllowed = true` tylko przy obu zgodach: opiekuna (`guardians.contact_allowed`) i relacji do widocznego ucznia (`student_guardians.contact_allowed`) — ta sama reguła co lista klasy w eksporcie;
+  - gospodarstwa ucznia (lista klasy `households[]`, `otherHouseholds`, dostęp do karty) tylko „kontaktowe”: należy do nich opiekun z aktywną relacją do tego ucznia i obiema zgodami. Pozostałe gospodarstwa dają `404` jak nieistniejące. Bez `isPrimary`/`isPrimaryHousehold` — fakt opieki dzielonej i gospodarstwo główne nie są potrzebne do pracy przedstawiciela.
+- Role szerokie (admin, board, treasurer bez `class_id`) widzą wszystkich opiekunów gospodarstwa, wszystkie gospodarstwa ucznia i e-mail niezależnie od zgody (bez zmian; założenie do decyzji D-08). Zgoda na kontakt ogranicza wysyłkę, nie wgląd zarządu.
 - Karta gospodarstwa nie zawiera pól należności ani zadłużenia. Sumy wpłat netto (widok `household_payment_totals`) widzą wyłącznie role finansowe z MFA, w zakresie lat z przydziału.
