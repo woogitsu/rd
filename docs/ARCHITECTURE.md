@@ -4,7 +4,7 @@ Frontend (publiczny i chroniony) → Worker/API → D1. Prywatne pliki → R2 za
 
 ## Główne encje
 - users, role_grants (zakres klasy, rok, data końca), sessions
-- households, guardians, students, guardian_student, class_enrollments
+- households, guardians, students, student_guardians, class_enrollments\n\nRelacja `student_guardians` przechowuje opiekunów konkretnego dziecka niezależnie od gospodarstwa; `household_id` ucznia pozostaje głównym przypisaniem organizacyjnym do czasu zatwierdzenia zasad składek.
 - contributions, payment_entries, payment_allocations, payment_corrections
 - ledger_entries, accounts, budgets, expense_approvals, document_objects
 - events, meetings, attendance, resolutions
