@@ -10,7 +10,7 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24;
 export const INVITATION_DEFAULT_TTL_SECONDS = 60 * 60 * 72;
 export const INVITATION_MAX_TTL_SECONDS = 60 * 60 * 24 * 14;
 export const ROLES = Object.freeze(['admin', 'board', 'treasurer', 'representative', 'audit', 'principal']);
-const REVOKE_REASONS = new Set(['logout', 'rotated', 'admin', 'user_disabled']);
+const REVOKE_REASONS = new Set(['logout', 'rotated', 'admin', 'user_disabled', 'password_changed', 'password_reset', 'mfa_reset']);
 
 export function isoTimestamp(value) {
   if (value === null || value === undefined) return null;
@@ -51,8 +51,8 @@ export async function loadSession(request, env) {
 
 // Tworzy sesję w przekazanym wykonawcy (db lub tx). Zwraca surowy sekret
 // wyłącznie po to, by ustawić cookie; w bazie zostaje tylko SHA-256.
-// Uwaga: dostawca logowania nie jest wybrany (decyzja szkoły) — ta funkcja
-// nie jest wystawiona przez publiczne API.
+// Wywoływana po poprawnym haśle (POST /api/login) lub przyjęciu zaproszenia
+// (POST /api/invitations/accept) — src/pg/routes/login.js.
 export async function createSession(executor, { userId, mfaVerified = false, ttlSeconds = SESSION_TTL_SECONDS, rotatedFrom = null }) {
   if (!userId) throw new Error('user_required');
   const ttl = Math.max(60, Math.min(Number(ttlSeconds) || SESSION_TTL_SECONDS, SESSION_TTL_SECONDS));
@@ -108,27 +108,31 @@ export async function rotateSession(env, session, { mfaVerified = session.mfaVer
 
 // Wycofanie wszystkich aktywnych sesji użytkownika (np. po wyłączeniu konta).
 export async function revokeUserSessions(env, { userId, actorId, reason = 'admin' }) {
+  return database(env).transaction(async (tx) => revokeUserSessionsWith(tx, { userId, actorId, reason }));
+}
+
+// Wersja w transakcji wywołującego; exceptSessionId pozostawia jedną sesję
+// (np. bieżącą przy zmianie hasła). Zdarzenie audytu dla każdej sesji.
+export async function revokeUserSessionsWith(tx, { userId, actorId, reason = 'admin', exceptSessionId = null }) {
   if (!REVOKE_REASONS.has(reason)) throw new Error('invalid_revoke_reason');
-  return database(env).transaction(async (tx) => {
-    const { rows } = await tx.query(
-      `UPDATE sessions SET revoked_at = now(), revoked_reason = $2
-        WHERE user_id = $1 AND revoked_at IS NULL
-        RETURNING id`,
-      [userId, reason],
-    );
-    for (const row of rows) {
-      await insertAuditEvent(tx, { actorId, action: 'session.revoked', entityType: 'session', entityId: row.id, metadata: { reason } });
-    }
-    return rows.length;
-  });
+  const { rows } = await tx.query(
+    `UPDATE sessions SET revoked_at = now(), revoked_reason = $2
+      WHERE user_id = $1 AND revoked_at IS NULL AND ($3::text IS NULL OR id <> $3)
+      RETURNING id`,
+    [userId, reason, exceptSessionId],
+  );
+  for (const row of rows) {
+    await insertAuditEvent(tx, { actorId, action: 'session.revoked', entityType: 'session', entityId: row.id, metadata: { reason } });
+  }
+  return rows.length;
 }
 
 // --- Zaproszenia -----------------------------------------------------------
-// Funkcje danych bez trasy HTTP. Kto może zapraszać (i do jakich ról),
+// Kto może zapraszać (i do jakich ról),
 // sprawdza wywołujący przez requireAccess — zakres uprawnień zarządu,
 // dyrekcji i Komisji Rewizyjnej wymaga decyzji szkoły.
 
-function normalizeEmail(email) {
+export function normalizeEmail(email) {
   const value = String(email ?? '').trim().toLowerCase();
   if (value.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw new Error('invalid_email');
   return value;
@@ -161,54 +165,74 @@ export async function createInvitation(env, { actorId, email, role, classId = nu
   });
 }
 
-// Akceptacja przez już uwierzytelnionego użytkownika (userId ustala przyszły
-// dostawca logowania). Adres konta musi odpowiadać zaproszeniu. Zaproszenie
-// jest jednorazowe; odmowa zwraca `reason` tylko do użytku wewnętrznego —
-// odpowiedź HTTP powinna podawać wyłącznie `invalid_invitation`.
+// Blokuje wiersz zaproszenia (FOR UPDATE) i sprawdza jego stan. Zwraca
+// { invitation } albo { deny } z `reason` wyłącznie do użytku wewnętrznego.
+export async function lockInvitation(tx, tokenHash) {
+  const { rows } = await tx.query(
+    `SELECT id, email, role, class_id, school_year_id, created_by, expires_at <= now() AS expired,
+            accepted_at, revoked_at
+       FROM invitations WHERE token_hash = $1
+       FOR UPDATE`,
+    [tokenHash],
+  );
+  const invitation = rows[0];
+  const deny = (reason) => ({ deny: { ok: false, error: 'invalid_invitation', reason } });
+  if (!invitation) return deny('not_found');
+  if (invitation.revoked_at) return deny('revoked');
+  if (invitation.accepted_at) return deny('already_used');
+  if (invitation.expired) return deny('expired');
+  return { invitation };
+}
+
+// Nadaje rolę z zaproszenia i zamyka je (w transakcji wywołującego).
+// Wywołujący musi wcześniej zablokować zaproszenie (lockInvitation)
+// i sprawdzić, że adres konta odpowiada adresowi zaproszenia.
+export async function grantInvitation(tx, invitation, userId) {
+  const grantId = crypto.randomUUID();
+  await tx.query(
+    `INSERT INTO role_grants (id, user_id, role, class_id, school_year_id, granted_by, source_invitation_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [grantId, userId, invitation.role, invitation.class_id, invitation.school_year_id, invitation.created_by, invitation.id],
+  );
+  await tx.query(
+    'UPDATE invitations SET accepted_at = now(), accepted_by = $2 WHERE id = $1',
+    [invitation.id, userId],
+  );
+  await insertAuditEvent(tx, {
+    actorId: userId, action: 'invitation.accepted', entityType: 'invitation', entityId: invitation.id,
+    metadata: { grantId },
+  });
+  await insertAuditEvent(tx, {
+    actorId: userId, action: 'role_grant.created', entityType: 'role_grant', entityId: grantId,
+    metadata: { role: invitation.role, classId: invitation.class_id, schoolYearId: invitation.school_year_id, invitationId: invitation.id },
+  });
+  return grantId;
+}
+
+export const INVITATION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+// Akceptacja przez już uwierzytelnionego użytkownika. Adres konta musi
+// odpowiadać zaproszeniu. Zaproszenie jest jednorazowe; odmowa zwraca
+// `reason` tylko do użytku wewnętrznego — odpowiedź HTTP podaje wyłącznie
+// `invalid_invitation`. Trasa HTTP z tworzeniem konta i hasłem:
+// POST /api/invitations/accept (src/pg/routes/login.js).
 export async function acceptInvitation(env, { token, userId }) {
-  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token) || !userId) {
+  if (typeof token !== 'string' || !INVITATION_TOKEN_PATTERN.test(token) || !userId) {
     return { ok: false, error: 'invalid_invitation', reason: 'malformed' };
   }
   const tokenHash = await hashSecret(token);
   return database(env).transaction(async (tx) => {
-    const { rows } = await tx.query(
-      `SELECT id, email, role, class_id, school_year_id, created_by, expires_at <= now() AS expired,
-              accepted_at, revoked_at
-         FROM invitations WHERE token_hash = $1
-         FOR UPDATE`,
-      [tokenHash],
-    );
-    const invitation = rows[0];
+    const locked = await lockInvitation(tx, tokenHash);
+    if (locked.deny) return locked.deny;
+    const { invitation } = locked;
     const deny = (reason) => ({ ok: false, error: 'invalid_invitation', reason });
-    if (!invitation) return deny('not_found');
-    if (invitation.revoked_at) return deny('revoked');
-    if (invitation.accepted_at) return deny('already_used');
-    if (invitation.expired) return deny('expired');
     const user = (await tx.query(
       'SELECT id, lower(email) AS email, disabled_at FROM users WHERE id = $1',
       [userId],
     )).rows[0];
     if (!user || user.disabled_at) return deny('user_unavailable');
     if (user.email !== String(invitation.email).toLowerCase()) return deny('email_mismatch');
-
-    const grantId = crypto.randomUUID();
-    await tx.query(
-      `INSERT INTO role_grants (id, user_id, role, class_id, school_year_id, granted_by, source_invitation_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [grantId, userId, invitation.role, invitation.class_id, invitation.school_year_id, invitation.created_by, invitation.id],
-    );
-    await tx.query(
-      'UPDATE invitations SET accepted_at = now(), accepted_by = $2 WHERE id = $1',
-      [invitation.id, userId],
-    );
-    await insertAuditEvent(tx, {
-      actorId: userId, action: 'invitation.accepted', entityType: 'invitation', entityId: invitation.id,
-      metadata: { grantId },
-    });
-    await insertAuditEvent(tx, {
-      actorId: userId, action: 'role_grant.created', entityType: 'role_grant', entityId: grantId,
-      metadata: { role: invitation.role, classId: invitation.class_id, schoolYearId: invitation.school_year_id, invitationId: invitation.id },
-    });
+    const grantId = await grantInvitation(tx, invitation, userId);
     return { ok: true, grantId };
   });
 }

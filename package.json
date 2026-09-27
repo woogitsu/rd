@@ -44,13 +44,14 @@
     "build:families": "vite build families --outDir ../dist/families --base ./ --emptyOutDir"
   },
   "dependencies": {
-    "read-excel-file": "9.3.10",
     "pg": "8.23.0",
+    "qrcode-generator": "1.4.4",
+    "read-excel-file": "9.3.10",
     "sql.js": "1.14.2"
   },
   "devDependencies": {
-    "vite": "^7.1.0",
     "@electric-sql/pglite": "0.5.8",
+    "vite": "^7.1.0",
     "wrangler": "^4.40.0"
   }
 }

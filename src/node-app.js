@@ -5,7 +5,10 @@ import { checkReadiness } from './health.js';
 import { describeError, log, sanitizePath } from './log.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
-const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families']);
+const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login']);
+// Nagłówek z adresem klienta dla limitów logowania (src/pg/login.js). Zawsze
+// nadpisywany przez serwer — wartość wysłana przez klienta jest ignorowana.
+export const CLIENT_IP_HEADER = 'x-rd-client-ip';
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.csv', 'text/csv; charset=utf-8'],
@@ -47,6 +50,18 @@ function publicUrl(request, publicBaseUrl) {
   url.search = target.search;
   url.hash = '';
   return url;
+}
+
+// Adres klienta. Za zaufanym proxy (Railway: TRUST_PROXY=1) — ostatni wpis
+// X-Forwarded-For, czyli adres widziany przez proxy; wcześniejsze wpisy może
+// podrobić klient. Bez proxy — adres gniazda.
+export function clientAddress(request, trustProxy = false) {
+  if (trustProxy) {
+    const header = request.headers?.['x-forwarded-for'];
+    const parts = String(Array.isArray(header) ? header.join(',') : header ?? '').split(',').map((part) => part.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1].slice(0, 64);
+  }
+  return String(request.socket?.remoteAddress ?? '').slice(0, 64);
 }
 
 function staticTarget(pathname, distRoot) {
@@ -140,6 +155,7 @@ async function serveReadiness(response, env, readiness) {
 // wskazanych tras (np. POST /api/documents). Domyślnie 1 MiB dla wszystkich.
 export function createNodeHandler({
   distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit, logger = log, metrics = null, readiness = checkReadiness,
+  trustProxy = false,
 } = {}) {
   if (!distRoot) throw new Error('distRoot is required');
   if (typeof fetchHandler !== 'function') throw new Error('fetchHandler is required');
@@ -156,10 +172,22 @@ export function createNodeHandler({
         await serveReadiness(response, env, readiness);
         return;
       }
+      // Strona startowa: osoby bez sesji trafiają na logowanie; strona publiczna jest pod /site/.
+      if (url.pathname === '/' && ['GET', 'HEAD'].includes(request.method)) {
+        response.writeHead(308, { Location: '/login/', 'Cache-Control': 'no-store' });
+        response.end();
+        return;
+      }
       if (await serveStatic(request, response, url, distRoot)) return;
       const method = request.method || 'GET';
       const body = ['GET', 'HEAD'].includes(method) ? undefined : await requestBody(request, limitFor(url, method));
-      const webRequest = new Request(url, { method, headers: request.headers, body });
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(request.headers)) {
+        if (value === undefined || name.toLowerCase() === CLIENT_IP_HEADER) continue;
+        headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+      }
+      headers.set(CLIENT_IP_HEADER, clientAddress(request, trustProxy));
+      const webRequest = new Request(url, { method, headers, body });
       const webResponse = await fetchHandler(webRequest, env);
       await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'));
     } catch (error) {
