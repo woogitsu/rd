@@ -28,6 +28,7 @@ import * as reconciliationRoutes from './routes/reconciliation.js';
 import * as exportsRoutes from './routes/exports.js';
 import * as familiesRoutes from './routes/families.js';
 import * as printRoutes from './routes/print.js';
+import * as yearCloseRoutes from './routes/year-close.js';
 
 export const ROUTES = [
   sessionRoutes,
@@ -44,6 +45,7 @@ export const ROUTES = [
   exportsRoutes,
   familiesRoutes,
   printRoutes,
+  yearCloseRoutes,
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 
