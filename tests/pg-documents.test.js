@@ -65,7 +65,10 @@ test('treasurer uploads a synthetic PDF: opaque key, metadata in PostgreSQL, aud
   assert.match(row.object_key, /^docs\/[0-9a-f-]{36}$/);
   assert.notEqual(row.object_key, `docs/${doc.id}`, 'object key is independent of the public document id');
   assert.deepEqual(storage.keys(), [row.object_key]);
-  assert.doesNotMatch(row.object_key, /kowalski|jan|1a|pdf|y-2026|treasurer/i);
+  // Klucz to wyłącznie docs/<uuid> (sprawdzone wyżej); losowy hex może zawierać np. „1a”,
+  // więc identyfikator klasy sprawdzamy jako osobny segment, nie podciąg.
+  assert.doesNotMatch(row.object_key, /kowalski|jan|pdf|y-2026|treasurer/i);
+  assert.doesNotMatch(row.object_key, /(^|[/_.])1a([/_.]|$)/i);
 
   const [event] = await auditRows(db, 'document.uploaded');
   assert.equal(event.actor_id, 'u-treasurer');
