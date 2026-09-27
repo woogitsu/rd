@@ -18,7 +18,20 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
     const db = createDatabase({ connectionString: processEnv.DATABASE_URL });
     return {
       mode: 'postgres',
-      env: { db, storage, documentMaxBytes, APP_ENV: processEnv.APP_ENV, IMPORT_ENABLED: processEnv.IMPORT_ENABLED },
+      env: {
+        db,
+        storage,
+        documentMaxBytes,
+        APP_ENV: processEnv.APP_ENV,
+        IMPORT_ENABLED: processEnv.IMPORT_ENABLED,
+        // Webhook i plan kampanii e-mail (#40). Klucz API Brevo NIE trafia do serwera HTTP —
+        // używa go wyłącznie zadanie scripts/email-worker.js.
+        BREVO_WEBHOOK_SECRET: processEnv.BREVO_WEBHOOK_SECRET,
+        EMAIL_DAILY_LIMIT: processEnv.EMAIL_DAILY_LIMIT,
+        EMAIL_DAILY_RESERVED: processEnv.EMAIL_DAILY_RESERVED,
+        EMAIL_CAMPAIGN_MIN_DAYS: processEnv.EMAIL_CAMPAIGN_MIN_DAYS,
+        EMAIL_CAMPAIGN_MIN_DAILY: processEnv.EMAIL_CAMPAIGN_MIN_DAILY,
+      },
       fetchHandler: handlePgRequest,
       bodyLimit: bodyLimitFor(documentMaxBytes),
       close: () => db.close(),
