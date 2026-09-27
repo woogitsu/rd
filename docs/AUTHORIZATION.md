@@ -118,6 +118,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/users/:userId/disable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/enable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/revoke-sessions` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/users/:userId/password-reset` | wyłącznie admin | tak | 403 | jednorazowy token resetu hasła, zwracany raz; nowy unieważnia poprzedni |
+| `POST /api/admin/users/:userId/mfa-reset` | wyłącznie admin (nie własne konto) | tak | 403 | wymaga `confirm` = id konta; wyłącza czynniki i kody odzyskiwania, wylogowuje konto |
 | `GET /api/admin/grants` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/grants` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |
@@ -149,13 +151,18 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/mfa/verify` | każdy zalogowany z potwierdzonym czynnikiem | nie | — | |
 | `POST /api/mfa/recovery` | jak wyżej | nie | — | kod odzyskiwania jednorazowy |
 | `POST /api/sessions/revoke-all` | każdy zalogowany (własne sesje) | nie | — | |
+| `POST /api/login` | publiczna (bez sesji; uwierzytelnia e-mail i hasło) | nie | — | cookie żądania ignorowane; zgodny `Origin`; zwolniona z bramki MFA; sesja bez MFA |
+| `GET /api/auth/state` | każdy zalogowany (stan własnej sesji) | nie | — | zwolniona z bramki MFA |
+| `POST /api/invitations/accept` | publiczna (uwierzytelnia jednorazowy token zaproszenia) | nie | — | zgodny `Origin`; zwolniona z bramki MFA; istniejące konto z hasłem: wymagane jego obecne hasło |
+| `POST /api/password/reset` | publiczna (uwierzytelnia jednorazowy token od administratora) | nie | — | zgodny `Origin`; zwolniona z bramki MFA; wylogowuje wszystkie sesje konta |
+| `POST /api/password/change` | każdy zalogowany (własne hasło) | nie | — | **nie** jest zwolniona z bramki MFA: admin, zarząd, skarbnik bez MFA — 403; wylogowuje inne sesje konta |
 | `GET /api/year-close/:schoolYearId` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin, Komisja Rewizyjna: 403 |
 | `POST /api/year-close/:schoolYearId/start` | zarząd — przydział bez klasy, rok 1 | tak | 403 | macierz: zamknięcie rozpoczęte wcześniej, powtórzenie 200 |
 | `POST /api/year-close/:schoolYearId/checklist/:item` | zarząd, skarbnik — jak wyżej | tak | 403 | |
 | `GET /api/year-close/:schoolYearId/handover` | zarząd, skarbnik — jak wyżej | tak | 403 | |
 | `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak | 403 | osobna baza testowa; wygasza przydziały roku |
 
-Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady i nie mają jeszcze wpisów w macierzy; testuje je `tests/pg-login.test.js`: `POST /api/login`, `POST /api/invitations/accept`, `POST /api/password/reset` (bez sesji, zgodny `Origin`), `GET /api/auth/state` (zalogowany), `POST /api/password/change` (zalogowany, po bramce MFA). Trasy administratora `POST /api/admin/users/{id}/password-reset` i `/mfa-reset` wymagają roli admin z MFA jak cały moduł `admin` (`tests/pg-admin.test.js`, `tests/pg-login.test.js`).
+Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady. W macierzy trasy publiczne dostają poprawne dane uwierzytelniające (konto z hasłem, świeży token zaproszenia albo resetu) niezależnie od cookie aktora — odpowiedź zależy wyłącznie od hasła lub tokenu; błędne dane, limity prób i CSRF logowania sprawdza `tests/pg-login.test.js`. Trasy administratora `password-reset` i `mfa-reset` są częścią modułu `admin` (wyłącznie admin z MFA).
 
 Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają na poziomie trasy MFA (dla admina, zarządu i skarbnika wymusza je bramka MFA routera), także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
 

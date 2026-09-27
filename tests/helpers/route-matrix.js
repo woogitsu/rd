@@ -701,6 +701,13 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.userRevokeSessions', 'POST', '/api/admin/users/:userId/revoke-sessions', {
     object: 'active', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/revoke-sessions`, body: {} }),
   }),
+  // Token resetu hasła i reset MFA innego konta (#3): jak cały moduł — wyłącznie admin z MFA.
+  adminRoute('admin.userPasswordReset', 'POST', '/api/admin/users/:userId/password-reset', {
+    ok: 201, object: 'active', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/password-reset`, body: {} }),
+  }),
+  adminRoute('admin.userMfaReset', 'POST', '/api/admin/users/:userId/mfa-reset', {
+    object: 'withFactor', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/mfa-reset`, body: { confirm: obj.userId } }),
+  }),
   adminRoute('admin.grants', 'GET', '/api/admin/grants', {}),
   adminRoute('admin.grantCreate', 'POST', '/api/admin/grants', {
     ok: 201, object: 'active',
@@ -830,6 +837,41 @@ export const ROUTE_MATRIX = Object.freeze([
   mfaRoute('mfa.verify', '/api/mfa/verify', 200, 'confirmed'),
   mfaRoute('mfa.recovery', '/api/mfa/recovery', 200, 'confirmed'),
   mfaRoute('mfa.revokeAll', '/api/sessions/revoke-all', 200, null),
+
+  // ---------- login (#3, D-10) ----------
+  // Logowanie, przyjęcie zaproszenia i reset hasła działają bez sesji (cookie jest ignorowane) —
+  // uwierzytelnia je hasło albo jednorazowy token; zwolnione z bramki MFA. Zgodny Origin sprawdza router.
+  {
+    id: 'login.password', module: 'login', method: 'POST', path: '/api/login', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static', object: { kind: 'loginAccount' },
+    build: ({ obj }) => ({ path: '/api/login', body: { email: obj.email, password: obj.password } }),
+  },
+  {
+    // Stan własnej sesji dla ekranu logowania; zwolniony z bramki MFA (ekran musi wiedzieć, że trzeba zapisać MFA).
+    id: 'login.state', module: 'login', method: 'GET', path: '/api/auth/state', targets: ['-'],
+    allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/auth/state' }),
+  },
+  {
+    id: 'login.invitationAccept', module: 'login', method: 'POST', path: '/api/invitations/accept', targets: ['-'],
+    allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'invitationToken' },
+    build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password } }),
+  },
+  {
+    id: 'login.passwordReset', module: 'login', method: 'POST', path: '/api/password/reset', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'passwordResetToken' },
+    build: ({ obj }) => ({ path: '/api/password/reset', body: { token: obj.token, newPassword: obj.newPassword } }),
+  },
+  {
+    // Każdy zalogowany zmienia własne hasło; trasa NIE jest zwolniona z bramki MFA, więc admin/zarząd/skarbnik
+    // bez MFA dostają 403 (mfaGateBlocks). Nowy użytkownik na przypadek — zmiana wylogowuje inne sesje konta.
+    id: 'login.passwordChange', module: 'login', method: 'POST', path: '/api/password/change', targets: ['-'],
+    allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'ownPassword' }, freshUser: true,
+    build: ({ obj }) => ({
+      path: '/api/password/change',
+      body: { currentPassword: obj?.password ?? 'Nieznane haslo syntetyczne', newPassword: obj?.newPassword ?? 'Nowe haslo syntetyczne 1' },
+    }),
+  },
 
   // ---------- year-close (#15) ----------
   // Zarząd i skarbnik (odczyt, lista kontrolna), zamknięcie: wyłącznie zarząd; MFA, przydział bez klasy.
