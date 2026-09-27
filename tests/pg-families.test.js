@@ -224,6 +224,45 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.equal((await call('/api/guardians/g-3/contact', { method: 'PATCH', cookie: boardA, body })).status, 404);
   });
 
+  // #211: dwie osoby z zarządu edytują ten sam kontakt jednocześnie, obie
+  // z nieaktualnego widoku (przeczytały kontakt przed jakąkolwiek zmianą).
+  // `PATCH .../contact` nie ma klucza wersji ani idempotencji per-treść
+  // (families.js:305-335) — SELECT ... FOR UPDATE OF g serializuje zapisy,
+  // więc druga transakcja czeka i widzi już zatwierdzoną zmianę pierwszej, ale
+  // mimo to nadpisuje ją swoją wartością, bez ostrzeżenia. Założenie (docs/
+  // FAMILIES.md nie istnieje, brak decyzji zarządu): „ostatni zapis wygrywa”,
+  // obie zmiany zostają w historii — nic nie ginie bezpowrotnie, tylko
+  // bieżąca wartość gospodarstwa. Test dokumentuje dzisiejsze zachowanie.
+  test('zmiana kontaktu: dwie osoby edytują ten sam kontakt jednocześnie — ostatni zapis wygrywa, obie zmiany w historii (#211, brak decyzji zarządu)', async () => {
+    const { db, call, cookies } = await setup();
+    const path = '/api/guardians/g-2/contact';
+    // Druga osoba z zarządu (inne konto, ten sam poziom uprawnień) edytuje
+    // ten sam kontakt równolegle — nie ma potrzeby konta z rolą 'admin'.
+    const boardB = await seedUserSession(db, { userId: 'u-board-2', roles: [{ role: 'board' }], mfa: true });
+    const [a, b] = await Promise.all([
+      call(path, { method: 'PATCH', cookie: cookies.board, body: { email: 'wersja-a@example.invalid', reason: 'Zapis A' } }),
+      call(path, { method: 'PATCH', cookie: boardB, body: { email: 'wersja-b@example.invalid', reason: 'Zapis B' } }),
+    ]);
+    assert.deepEqual([a.status, b.status], [200, 200]);
+    assert.equal(a.body.changed, true);
+    assert.equal(b.body.changed, true, 'druga transakcja czeka na blokadę i nadal widzi zmianę do wprowadzenia');
+    const { rows: [current] } = await db.query('SELECT email FROM guardians WHERE id = $1', ['g-2']);
+    // Ostatni zatwierdzony zapis wygrywa — który to jest, zależy od kolejności
+    // transakcji na serwerze, nie od kolejności wysłania żądań przez klienta.
+    assert.ok(
+      current.email === a.body.guardian.email || current.email === b.body.guardian.email,
+      'bieżąca wartość to jedna z dwóch wersji, nigdy mieszanka ani coś innego',
+    );
+
+    const history = await db.query(
+      "SELECT new_email, changed_by, reason FROM guardian_contact_changes WHERE guardian_id = 'g-2' ORDER BY changed_at",
+    );
+    assert.equal(history.rows.length, 2, 'obie zmiany zostają w historii — nic nie ginie bezpowrotnie');
+    assert.deepEqual(history.rows.map((r) => r.new_email).sort(), ['wersja-a@example.invalid', 'wersja-b@example.invalid']);
+    const audit = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'guardian.contact.updated' AND entity_id = 'g-2'");
+    assert.equal(audit.rows[0].n, 2);
+  });
+
   test('zmiana klasy w roku zachowuje historię; nowy rok to nowe przypisanie', async () => {
     const { db, call, cookies } = await setup();
     const path = '/api/students/s-1/enrollments';

@@ -604,6 +604,29 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
   assert.ok(errors.every((line) => !line.includes('Syntetyczny') && !line.includes('@')));
   assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 0);
   assert.equal(await backend.count('ledger_corrections'), 1);
+
+  // #211: ponowienie tym samym kluczem po usunięciu awarii — dokładnie ten krok
+  // wykona przeglądarka skarbnika po 503 (macierz scenariuszy AGENTS.md, księga).
+  await backend.db.exec('DROP TRIGGER fail_ledger_audit ON audit_events; DROP FUNCTION fail_ledger_audit();');
+  const retried = await createEntry(backend, {}, 'audit-fail-0001');
+  assert.equal(retried.status, 201);
+  assert.equal(retried.replayed, 'false');
+  assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 1);
+  assert.equal(await backend.count('audit_events', `action = 'ledger.entry.created' AND entity_id = '${retried.body.entry.id}'`), 1);
+  const thirdTry = await createEntry(backend, {}, 'audit-fail-0001');
+  assert.equal(thirdTry.status, 200);
+  assert.equal(thirdTry.replayed, 'true');
+  assert.equal(thirdTry.body.entry.id, retried.body.entry.id);
+  assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 1);
+
+  const correctionRetry = await correct(backend, entry.id, { amountCents: 1, reason: 'Bez audytu' }, 'audit-fail-0002');
+  assert.equal(correctionRetry.status, 201);
+  assert.equal(correctionRetry.replayed, 'false');
+  assert.equal(await backend.count('ledger_corrections'), 2);
+  const correctionThird = await correct(backend, entry.id, { amountCents: 1, reason: 'Bez audytu' }, 'audit-fail-0002');
+  assert.equal(correctionThird.status, 200);
+  assert.equal(correctionThird.replayed, 'true');
+  assert.equal(await backend.count('ledger_corrections'), 2);
 }));
 
 test('CSV export of a school year is financial-only, injection-safe and audited', async () => withPg({}, async (backend) => {

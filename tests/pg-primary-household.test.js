@@ -260,6 +260,42 @@ test('opieka naprzemienna: dwa obowiązujące gospodarstwa, kampania i kartka ty
   }
 });
 
+// #211: wpłaty (issue: „Wpłaty… używają students.household_id”, #194 dotyczy
+// tylko kartek/kampanii). payment_entries.household_id jest ustawiane wprost
+// przez skarbnika przy zapisie wpłaty, nie wyprowadzane ze studenta — więc
+// nie ma tu wyścigu „która kolumna”: wpłata drugiego gospodarstwa naprzemiennej
+// opieki jest tylko wpłatą TEGO gospodarstwa, niezależną od tego, które z nich
+// jest dziś główne. Test dokumentuje tę (zamierzoną) niespójność: suma wpłat
+// drugiego gospodarstwa (h-b) jest poprawna i widoczna w /api/payments, ale
+// karta rodzinna (kartka składki) pozostaje wyłącznie dla głównego
+// gospodarstwa (D-11) — więc wpłata h-b nie trafia na kartkę s-2@h-a.
+test('opieka naprzemienna: wpłata drugiego gospodarstwa liczy się poprawnie do jego salda, ale nie trafia na kartkę głównego (#211, D-11)', async () => {
+  const t = await setup();
+  try {
+    await household(t.db, 'h-a', ['g-a']);
+    await household(t.db, 'h-b', ['g-b']);
+    await student(t.db, 's-2', 'h-a', 'c1', ['g-a', 'g-b']);
+    await t.db.query(
+      `INSERT INTO student_households (id, student_id, household_id, is_primary, source)
+       VALUES ('sh-s2-b', 's-2', 'h-b', false, 'direct')`,
+    );
+    await payment(t.db, 'p-hb', 'h-b', 6000);
+
+    const totals = await t.db.query(
+      "SELECT household_id, net_amount_cents FROM household_payment_totals WHERE school_year_id = $1 ORDER BY household_id",
+      [YEAR],
+    );
+    assert.deepEqual(totals.rows, [{ household_id: 'h-b', net_amount_cents: 6000 }]);
+    const list = await t.call(ON_D, t.treasurer, `/api/payments?schoolYearId=${YEAR}`);
+    assert.deepEqual(list.body.payments.map((p) => [p.householdId, p.netAmountCents]), [['h-b', 6000]]);
+    // Kartka drugiego gospodarstwa (D-11): h-b nie jest głównym gospodarstwem
+    // żadnego ucznia w tej klasie, więc nie dostaje wiersza z tą kwotą.
+    assert.deepEqual(await t.cards(ON_D), ['s-2@h-a:0']);
+  } finally {
+    await t.db.close();
+  }
+});
+
 test('rodzeństwo: jedno dziecko przechodzi do innego gospodarstwa, drugie zostaje, sumy wpłat się nie mieszają', async () => {
   const t = await setup();
   try {
