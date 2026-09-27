@@ -83,7 +83,7 @@ dialog form { display: grid; gap: 1rem; padding: 1.5rem; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .35rem; }
 .context { margin-bottom: 0; padding: .75rem; background: #fafafa; color: #3e4347; }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 760px) {
   .site-header { flex-direction: column; gap: .5rem; padding: .8rem 4vw; align-items: flex-start; }
