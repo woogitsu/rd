@@ -7,9 +7,11 @@ const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url
 
 test('railway.json builds the panels and starts the Node server', () => {
   assert.equal(config.build.buildCommand, 'npm ci && npm run build');
-  assert.equal(config.deploy.startCommand, 'npm start');
-  assert.equal(pkg.scripts.start, 'node src/server.js');
+  // Node uruchamiany bezpośrednio (nie przez npm), aby SIGTERM trafił do procesu serwera.
+  assert.equal(config.deploy.startCommand, 'node src/server.js');
+  assert.equal(pkg.scripts.start, config.deploy.startCommand);
   assert.equal(config.deploy.healthcheckPath, '/health');
+  assert.ok(config.deploy.drainingSeconds * 1000 > 10_000, 'draining time exceeds the default shutdown timeout');
   assert.equal(config.deploy.restartPolicyType, 'ON_FAILURE');
   assert.ok(config.deploy.restartPolicyMaxRetries >= 1);
 });

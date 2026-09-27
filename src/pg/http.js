@@ -1,3 +1,5 @@
+import { log } from '../log.js';
+
 // Wspólne odpowiedzi HTTP dla API na PostgreSQL.
 
 export const JSON_HEADERS = Object.freeze({
@@ -18,5 +20,5 @@ export const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export function logRouteError(routeName, error) {
   const code = typeof error?.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(error.code) ? error.code : null;
   const kind = typeof error?.name === 'string' && /^[A-Za-z]{1,40}$/.test(error.name) ? error.name : 'Error';
-  console.error(`[api] route=${routeName} error=${code ?? kind}`);
+  log.error('api_route_error', { module: String(routeName), code: code ?? kind });
 }

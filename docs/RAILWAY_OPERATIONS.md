@@ -11,9 +11,9 @@ monitoringu z #16. Kontekst: [plan migracji](RAILWAY_MIGRATION.md),
 
 | Element | Plik | Znaczenie |
 |---|---|---|
-| Konfiguracja usługi | `railway.json` | build `npm ci && npm run build`, start `npm start`, healthcheck `/health`, restart `ON_FAILURE` (maks. 5 prób), region `europe-west4-drams3a` (Amsterdam), bez usypiania |
+| Konfiguracja usługi | `railway.json` | build `npm ci && npm run build`, start `node src/server.js` (bezpośrednio, aby SIGTERM trafił do serwera), healthcheck `/health` (liveness), `drainingSeconds: 15`, restart `ON_FAILURE` (maks. 5 prób), region `europe-west4-drams3a` (Amsterdam), bez usypiania |
 | Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE |
-| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), serwer na losowym porcie `127.0.0.1`, `/health`, trzy panele, nagłówki, `404` |
+| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`), trzy panele, nagłówki, `404` |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
 | Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
 | CI | `.github/workflows/ci.yml` | testy, buildy, smoke, lokalne migracje D1 (stara ścieżka pozostaje) |
@@ -85,8 +85,9 @@ Sesje i MFA mogą wymagać dodatkowych sekretów — ich nazwy dopisuje PR #35.
 
 | Obszar | Sygnał | Źródło | Reakcja |
 |---|---|---|---|
-| Dostępność | healthcheck `/health` przy deployu, zewnętrzny monitor co 5 min | Railway, monitor zewnętrzny | restart, rollback wersji |
-| Błędy | odsetek odpowiedzi 5xx, awarie deployu, restart pętli | Railway Observability / logi | analiza logów bez danych osobowych |
+| Dostępność | healthcheck `/health` przy deployu (liveness); zewnętrzny monitor `/health/ready` co 5 min | Railway, monitor zewnętrzny | restart, rollback wersji |
+| Baza i schemat | `/health/ready` = `503` (`database: error/timeout`, `migrations: pending`) | monitor zewnętrzny, zdarzenia `readiness_*` w logu | sprawdzić usługę PostgreSQL; brakujące migracje nałożyć ręcznie po backupie |
+| Błędy | odsetek odpowiedzi 5xx (`http_metrics.status_5xx`, `http_request` na poziomie `error`, `api_route_error`), awarie deployu, restart pętli | Railway Observability / logi JSON | analiza logów bez danych osobowych |
 | PostgreSQL | CPU, pamięć, zajętość wolumenu, liczba połączeń | metryki usługi PostgreSQL | alert przy 80% wolumenu |
 | Storage Bucket | rozmiar, liczba obiektów, odrzucone uploady | metryki bucketu, audyt aplikacji | przegląd retencji |
 | Brevo | dzienny limit planu, odbicia, błędne adresy, błędy API | panel Brevo, stan kolejki (#40) | wstrzymanie kampanii, korekta adresów |
@@ -94,9 +95,36 @@ Sesje i MFA mogą wymagać dodatkowych sekretów — ich nazwy dopisuje PR #35.
 | Backup | brak nowego backupu > 26 h, nieudana próba odtworzenia | Railway Backups, protokół | ręczny backup, eskalacja |
 | Koszty | alerty Usage | Railway | patrz wyżej |
 
-Uwaga: `/health` potwierdza tylko działanie procesu, nie połączenie z bazą.
-Rozszerzenie o sprawdzenie bazy (bez ujawniania szczegółów) należy do #35.
+**Liveness a readiness.** `/health` potwierdza tylko działanie procesu i
+pozostaje healthcheckiem Railway: gdyby healthcheck zależał od bazy, awaria
+PostgreSQL albo nienałożona migracja blokowałaby deploy poprawnej wersji lub
+wywoływała pętlę restartów, która nie naprawia bazy. Stan bazy sprawdza
+`/health/ready` (`SELECT 1` z limitem 2 s i porównanie `schema_migrations` z
+`postgres/migrations`); `503` oznacza brak bazy, błąd lub timeout, brakujące
+migracje albo zamykanie procesu. Odpowiedź zawiera tylko stan techniczny oraz
+liczbę i nazwy brakujących plików migracji. Po każdym deployu i każdej
+migracji sprawdzić ręcznie `/health/ready`; to także warunek listy odbioru.
+Szczegóły: [serwer Node](NODE_SERVER.md#monitoring-logi-i-zamykanie-16-41).
+
+**Logi.** Serwer zapisuje jedną linię JSON na zdarzenie (`level`, `event`,
+`method`, ścieżka bez query stringu z `:id` zamiast identyfikatorów, `status`,
+`duration_ms`, `module`, `code`); Railway odczytuje z nich `level` i `message`.
+Warstwa redakcji usuwa pola z e-mailami, imionami, cookies, tokenami, IBAN i
+treściami oraz maskuje takie wartości w tekście. Co 5 min (`METRICS_LOG_INTERVAL_MS`)
+proces zapisuje zdarzenie `http_metrics` z licznikami żądań wg klasy statusu i
+czasami — metryki nie są wystawiane przez HTTP. W widoku logów Railway
+filtrować wpisy o poziomie `error` oraz zdarzenia `http_metrics` z
+`status_5xx > 0`; jeśli plan nie obsługuje alertów z logów — przegląd dzienny.
 Logi nie mogą zawierać danych rodzin, tokenów ani treści wiadomości.
+Czas przechowywania logów w Railway zależy od planu — do potwierdzenia przy
+decyzji o retencji.
+
+**Redeploy i zamykanie.** Railway wysyła SIGTERM do poprzedniej wersji i po
+`drainingSeconds` (15 s w `railway.json`; domyślnie 0) SIGKILL. Serwer kończy
+trwające żądania, zamyka pulę bazy i najpóźniej po `SHUTDOWN_TIMEOUT_MS`
+(10 s) kończy proces. Zdarzenie `server_shutdown_timeout` w logu oznacza
+przerwane żądania — sprawdzić, czy nie dotyczyły zapisów (idempotencja
+wpłat chroni przed dublowaniem przy ponowieniu).
 Konkretne narzędzie monitora zewnętrznego i adresaci alertów — do decyzji
 zarządu.
 
@@ -323,6 +351,7 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
 | Backup PostgreSQL i próbne odtworzenie | tabela wyżej | do wykonania |
 | Backup i próbne odtworzenie dokumentów | tabela wyżej | do wykonania |
 | Limity kosztów i alerty | ustawienia Usage, protokół | do wykonania |
+| Readiness, logi JSON z redakcją, łagodne zamykanie | `/health/ready`, `src/log.js`, `tests/health-ready.test.js`, `tests/log.test.js`, `tests/server-shutdown.test.js` | w repo; sprawdzić na stagingu |
 | Monitoring i adresaci alertów | tabela monitoringu | do wykonania, adresaci do decyzji |
 | Plan cutover i rollback | ten dokument | spisany, niezatwierdzony |
 | Zgoda na produkcję | [D-20](DECISIONS.md) | otwarta |

@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { log } from './log.js';
 
 // Warstwa dostępu do PostgreSQL dla nowego API (Railway).
 //
@@ -50,7 +51,7 @@ export function createPgDatabase(poolOrConfig = {}) {
   // Błąd bezczynnego połączenia nie może zatrzymać procesu. Nie logujemy treści
   // błędu ani adresu bazy; wyłącznie kod techniczny.
   pool.on?.('error', (error) => {
-    console.error(`[db] idle client error ${error?.code ?? 'unknown'}`);
+    log.error('db_idle_client_error', { code: typeof error?.code === 'string' ? error.code : 'unknown' });
   });
 
   return {
