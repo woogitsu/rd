@@ -359,7 +359,7 @@ test('summary balances opening, adjustments, income, expenses and corrections in
   await correct(backend, expense.id, { amountCents: 345, reason: 'Zwrot części' });
   // Rok obok nie wpływa na bilans (admin bez zakresu roku).
   const admin = await backend.as('u-admin', { mfa: true, roles: [{ role: 'admin' }] });
-  assert.equal((await createEntry(backend, { schoolYearId: 'y2025', categoryId: 'expense-2025', sourceDocumentId: null }, 'other-year-0001', admin)).status, 201);
+  assert.equal((await createEntry(backend, { schoolYearId: 'y2025', categoryId: 'expense-2025', sourceDocumentId: null, occurredOn: '2025-10-01' }, 'other-year-0001', admin)).status, 201);
 
   const result = await summary(backend);
   const income = 5000 + 2500 + 99;
@@ -520,15 +520,16 @@ test('missing MFA, expired grant, no session and cross-origin writes are refused
   const admin = await backend.as('u-admin', { mfa: true, roles: [{ role: 'admin' }] });
   const entry = (await createEntry(backend, {}, 'setup-key-0001', admin)).body.entry;
   const expired = await backend.as('u-expired', { mfa: true, roles: [{ role: 'treasurer', expiresAt: new Date(Date.now() - 1000) }] });
+  // Skarbnik bez sesji z MFA: bramka MFA routera (mfa_enrollment_required) przed trasą księgi.
   for (const path of LEDGER_GETS) {
-    for (const [cookie, status, error] of [[backend.cookie, 403, 'forbidden'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
+    for (const [cookie, status, error] of [[backend.cookie, 403, 'mfa_enrollment_required'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
       const result = await read(await backend.fetch(call(cookie, path)));
       assert.deepEqual([result.status, result.body], [status, { error }], path);
     }
   }
   const targets = [['/api/ledger', entryInput], [`/api/ledger/${entry.id}/corrections`, { amountCents: 1, reason: 'Bez MFA' }]];
   for (const [path, body] of targets) {
-    for (const [cookie, status, error] of [[backend.cookie, 403, 'forbidden'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
+    for (const [cookie, status, error] of [[backend.cookie, 403, 'mfa_enrollment_required'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
       const result = await read(await backend.fetch(call(cookie, path, { body, key: 'mfa-key-0001' })));
       assert.deepEqual([result.status, result.body], [status, { error }], path);
     }
@@ -547,7 +548,7 @@ test('missing MFA, expired grant, no session and cross-origin writes are refused
 
 test('a year-scoped grant cannot read or write another school year', async () => withPg({}, async (backend) => {
   const admin = await backend.as('u-admin', { mfa: true, roles: [{ role: 'admin' }] });
-  const old = (await createEntry(backend, { schoolYearId: 'y2025', categoryId: 'expense-2025', sourceDocumentId: null }, 'old-year-0001', admin)).body.entry;
+  const old = (await createEntry(backend, { schoolYearId: 'y2025', categoryId: 'expense-2025', sourceDocumentId: null, occurredOn: '2025-10-01' }, 'old-year-0001', admin)).body.entry;
   assert.ok(old?.id);
   for (const req of [
     ...LEDGER_GETS.map((path) => call(backend.cookie, path.replace('y2026', 'y2025'))),

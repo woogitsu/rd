@@ -169,7 +169,7 @@ test('correction is audited, idempotent and cannot exceed the remaining amount',
   assert.deepEqual(await excessive.json(), { error: 'correction_exceeds_remaining_amount' });
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM payment_corrections').get().count, 1);
   assert.deepEqual(
-    db.prepare('SELECT action FROM audit_events ORDER BY occurred_at, action').all().map(row => row.action),
+    db.prepare('SELECT action FROM audit_events ORDER BY action').all().map(row => row.action),
     ['payment.correction.created', 'payment.created'],
   );
 });

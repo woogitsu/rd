@@ -18,15 +18,18 @@
 
 import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
+import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 
 export const name = 'reconciliation';
 
 const WRITE_ROLES = ['admin', 'board', 'treasurer'];
 const REPORT_ROLES = ['audit', 'board', 'treasurer'];
+// Raport zamkniętego roku (#195, tylko odczyt): zarząd/skarbnik roku następnego i admin.
+const ARCHIVE_REPORT_ROLES = ['board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const MAX_BODY_BYTES = 16 * 1024;
@@ -292,15 +295,16 @@ async function loadReconciliation(executor, id, { lock = false } = {}) {
 
 // --- dostęp ----------------------------------------------------------------
 
+// Uzgodnienie wyciągu dotyczy wpłat całego roku: przydział z class_id nie daje dostępu.
 async function requireContext(request, env, roles, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorized(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
   return context;
 }
 
 function requireYear(context, roles, schoolYearId) {
-  if (!isAuthorized(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
 }
 
 function mapDatabaseError(error) {
@@ -831,6 +835,107 @@ async function confirmReconciliation(request, env, id, json) {
 
 // --- raport dla Komisji Rewizyjnej -----------------------------------------
 
+const MAX_DATE_DEVIATIONS = 50;
+
+// Kontrole krzyżowe raportu KR (#169). Każda porównuje dwa niezależnie liczone
+// źródła (inne tabele albo inny filtr), a nie widok sam ze sobą. Wynik to
+// wskaźnik z liczbami: ok = true/false, albo null, gdy kontroli nie dało się
+// policzyć (np. brak zatwierdzonego uzgodnienia). Nic tu nie blokuje zapisu.
+async function buildCrossChecks(executor, year, balance, latestConfirmed) {
+  const yearId = year.id;
+  // 1. Saldo z wpisów datowanych do ends_on (jak w uzgodnieniu) vs bilans zamknięcia
+  //    z ledger_year_summary (wszystkie wpisy roku bez względu na datę).
+  const atEnd = (await executor.query(
+    'SELECT ledger_balance_at($1, $2::date) AS cents', [yearId, year.ends_on],
+  )).rows[0];
+  const balanceAtEndCents = toSafeInteger(atEnd?.cents);
+
+  // 2. Daty spoza [starts_on, ends_on] (widok z 0027) — wiersze sprzed walidacji.
+  const deviations = (await executor.query(
+    `SELECT kind, id, to_char(entry_date, 'YYYY-MM-DD') AS entry_date
+       FROM school_year_date_deviations WHERE school_year_id = $1
+      ORDER BY entry_date, kind, id`,
+    [yearId],
+  )).rows;
+  const deviationCount = (kind) => deviations.filter((row) => row.kind === kind).length;
+
+  // 3. Wpłaty (moduł wpłat) vs ujęcie wpłat w księdze (#138): dwie różne tabele.
+  const payments = (await executor.query(
+    `SELECT
+       (SELECT COALESCE(sum(p.net_amount_cents), 0) FROM payment_entry_net p
+         WHERE p.school_year_id = $1 AND p.status = 'recorded') AS payments_net_cents,
+       (SELECT COALESCE(sum(e.net_amount_cents), 0) FROM ledger_entry_net e
+         WHERE e.school_year_id = $1 AND e.payment_entry_id IS NOT NULL) AS ledger_linked_net_cents,
+       (SELECT count(*) FROM payment_entries p
+         WHERE p.school_year_id = $1 AND p.status = 'recorded'
+           AND NOT EXISTS (SELECT 1 FROM ledger_entries e WHERE e.payment_entry_id = p.id)) AS payments_without_entry`,
+    [yearId],
+  )).rows[0];
+  const paymentsNetCents = toSafeInteger(payments.payments_net_cents);
+  const ledgerLinkedNetCents = toSafeInteger(payments.ledger_linked_net_cents);
+
+  // 4. Powiązania pozycji wyciągu niezgodne kwotowo (#165) albo podwójne (#162).
+  const matches = (await executor.query(
+    `SELECT count(*) FILTER (WHERE NOT c.amount_matches) AS amount_mismatch,
+            count(*) FILTER (WHERE c.double_counted) AS double_counted
+       FROM bank_match_consistency c
+       JOIN bank_reconciliations r ON r.id = c.reconciliation_id
+      WHERE r.school_year_id = $1`,
+    [yearId],
+  )).rows[0];
+  const amountMismatch = toSafeInteger(matches.amount_mismatch);
+  const doubleCounted = toSafeInteger(matches.double_counted);
+
+  // 5. Ostatnie zatwierdzone uzgodnienie: różnica (utrwalona) i przelewy księgi po jego dacie.
+  let latest = { ok: null, statementDate: null, differenceCents: null, bankEntriesAfterStatement: null };
+  if (latestConfirmed) {
+    const after = (await executor.query(
+      `SELECT count(*) AS n FROM ledger_entries
+        WHERE school_year_id = $1 AND method = 'bank' AND occurred_on > $2::date`,
+      [yearId, latestConfirmed.statementDate],
+    )).rows[0];
+    latest = {
+      ok: latestConfirmed.differenceCents === 0,
+      statementDate: latestConfirmed.statementDate,
+      differenceCents: latestConfirmed.differenceCents,
+      bankEntriesAfterStatement: toSafeInteger(after.n),
+    };
+  }
+
+  return [
+    {
+      id: 'year_end_balance',
+      ok: balanceAtEndCents === balance.closingBalanceCents,
+      closingBalanceCents: balance.closingBalanceCents,
+      balanceAtYearEndCents: balanceAtEndCents,
+      differenceCents: balance.closingBalanceCents - balanceAtEndCents,
+    },
+    {
+      id: 'dates_within_school_year',
+      ok: deviations.length === 0,
+      ledgerEntryCount: deviationCount('ledger_entry'),
+      paymentCount: deviationCount('payment_entry'),
+      items: deviations.slice(0, MAX_DATE_DEVIATIONS)
+        .map((row) => ({ kind: row.kind, id: row.id, date: row.entry_date })),
+    },
+    {
+      id: 'payments_in_ledger',
+      ok: paymentsNetCents === ledgerLinkedNetCents,
+      paymentsNetCents,
+      ledgerLinkedNetCents,
+      differenceCents: paymentsNetCents - ledgerLinkedNetCents,
+      paymentsWithoutLedgerEntry: toSafeInteger(payments.payments_without_entry),
+    },
+    {
+      id: 'reconciliation_matches',
+      ok: amountMismatch === 0 && doubleCounted === 0,
+      amountMismatchCount: amountMismatch,
+      doubleCountedCount: doubleCounted,
+    },
+    { id: 'latest_confirmed_reconciliation', ...latest },
+  ];
+}
+
 export async function buildAuditReport(executor, schoolYearId) {
   const year = (await executor.query(
     `SELECT id, label, to_char(starts_on, 'YYYY-MM-DD') AS starts_on, to_char(ends_on, 'YYYY-MM-DD') AS ends_on
@@ -940,7 +1045,7 @@ export async function buildAuditReport(executor, schoolYearId) {
     expenseCents: toSafeInteger(summary?.expense_cents),
     closingBalanceCents: toSafeInteger(summary?.closing_balance_cents),
   };
-  const sumNet = (direction) => categories.filter((c) => c.direction === direction).reduce((s, c) => s + c.netCents, 0);
+  const checks = await buildCrossChecks(executor, year, balance, confirmed.at(-1) ?? null);
 
   return {
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },
@@ -958,8 +1063,7 @@ export async function buildAuditReport(executor, schoolYearId) {
       latestConfirmed: confirmed.at(-1) ?? null,
     },
     checks: {
-      categoryIncomeMatchesSummary: sumNet('income') === balance.incomeCents,
-      categoryExpenseMatchesSummary: sumNet('expense') === balance.expenseCents,
+      items: checks,
       largeExpensesWithoutAdoptedResolution: largeExpenses.filter((item) => item.flagged).length,
     },
   };
@@ -969,7 +1073,15 @@ async function auditReport(request, env, url, json) {
   const schoolYearId = url.searchParams.get('schoolYearId');
   const format = url.searchParams.get('format') ?? 'json';
   if (!validId(schoolYearId) || !['json', 'html'].includes(format)) throw new RequestError('invalid_request');
-  const context = await requireContext(request, env, REPORT_ROLES, schoolYearId);
+  const context = await loadAuthorizationContext(request, env);
+  if (!context) throw new RequestError('unauthenticated', 401);
+  if (!isAuthorizedScoped(context, { roles: REPORT_ROLES, schoolYearId, requireMfa: true })) {
+    const via = await archiveReadVia(env.db, context, schoolYearId, ARCHIVE_REPORT_ROLES);
+    if (!via) throw new RequestError('forbidden', 403);
+    await recordArchiveRead(env.db, {
+      actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route: 'reports.audit',
+    });
+  }
   const report = await buildAuditReport(env.db, schoolYearId);
   if (!report) throw new RequestError('school_year_not_found', 404);
   await insertAuditEvent(env.db, {

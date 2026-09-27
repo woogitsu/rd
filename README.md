@@ -87,7 +87,11 @@ Chroniony panel zebrań (#13): `npm run build:meetings`, a następnie serwer Nod
 
 ## Panel kont i ról
 
-Interfejs administratora (`npm run dev:admin`, API na PostgreSQL): konta, zaproszenia z jednorazowym tokenem, przydziały ról z zakresem roku/klasy, wygaszenie kadencji i dziennik zmian. Wymaga roli administratora z MFA. [Instrukcja panelu](admin/README.md), [zasady](docs/ACCOUNTS.md). Prototyp — przyjmowanie zaproszeń czeka na decyzję D-10.
+Interfejs administratora (`npm run dev:admin`, API na PostgreSQL): konta, zaproszenia z jednorazowym tokenem, przydziały ról z zakresem roku/klasy, wygaszenie kadencji i dziennik zmian. Wymaga roli administratora z MFA. [Instrukcja panelu](admin/README.md), [zasady](docs/ACCOUNTS.md). Tokeny resetu hasła i reset MFA są na razie dostępne przez API (`/api/admin/users/{id}/password-reset`, `/mfa-reset`).
+
+## Logowanie
+
+Ekran `/login/` (`npm run dev:login`; `/` przekierowuje tutaj, strona publiczna jest pod `/site/`): e-mail i hasło, potem kod z aplikacji uwierzytelniającej (Google Authenticator, Microsoft Authenticator lub inna zgodna z TOTP RFC 6238). Konto powstaje wyłącznie z zaproszenia (`/login/#invite=<token>`); reset hasła tylko tokenem od administratora (`/login/#reset=<token>`), bez wiadomości e-mail. Role `admin`, `board` i `treasurer` muszą skonfigurować aplikację przed użyciem paneli (`MFA_REQUIRED_ROLES`). Metodę wskazał użytkownik 2026-09-27; wymaga formalnego potwierdzenia przez zarząd i IOD (D-10). Prototyp na danych syntetycznych, niewdrożony. [Instrukcja ekranu](login/README.md), [przepływ i parametry](docs/AUTH.md).
 
 ## Start implementacji
 

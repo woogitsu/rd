@@ -16,7 +16,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
       - run: npm ci
       - run: npm test
       - run: npm run build:import
@@ -29,7 +28,10 @@ jobs:
       - run: npm run build:meetings
       - run: npm run build:admin
       - run: npm run build:families
+      - run: npm run build:login
       - run: test -f dist/import/template.csv
+      # #188/#223: zbudowane strony bez inline <style>, style=, skryptów inline (CSP z src/node-app.js).
+      - run: REQUIRE_DIST=1 node --test tests/csp-static.test.js
       - run: test -f railway.json
       # PostgreSQL migrations on in-memory PGlite + Node server on 127.0.0.1
       # (ephemeral port): /health and built panels. No Docker, no network

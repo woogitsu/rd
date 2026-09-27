@@ -11,8 +11,9 @@
 // oraz zdarzenie audytu `export.created` w tej samej transakcji.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorized, isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import {
   buildClassRoster, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
 } from '../export.js';
@@ -22,6 +23,8 @@ export const name = 'exports';
 // Założenie do czasu decyzji D-08/D-09: pełny eksport roczny (dane rodzin i
 // finanse) tylko admin i zarząd; skarbnik, Komisja Rewizyjna i dyrekcja nie.
 export const YEARLY_EXPORT_ROLES = Object.freeze(['admin', 'board']);
+// Eksport zamkniętego roku (#195): także zarząd roku następnego (admin ma go i tak).
+export const ARCHIVE_EXPORT_ROLES = Object.freeze(['board']);
 export const ROSTER_ROLES = Object.freeze(['representative', 'board', 'admin']);
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -69,7 +72,8 @@ function attachment(body, filename, headers = {}) {
 async function authorize(request, env, requirement, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return { response: json({ error: 'unauthenticated' }, 401) };
-  if (!isAuthorized(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
+  // Eksport roczny (bez classId) wymaga przydziału bez class_id; lista klasy — przydziału tej klasy.
+  if (!isAuthorizedScoped(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
   return { context };
 }
 
@@ -95,9 +99,14 @@ async function createYearlyExport(request, env, json) {
   const schoolYearId = data.schoolYearId;
   if (typeof schoolYearId !== 'string' || !ID_PATTERN.test(schoolYearId)) throw new RequestError('invalid_school_year');
 
-  const access = await authorize(request, env, { roles: [...YEARLY_EXPORT_ROLES], requireMfa: true, schoolYearId }, json);
-  if (access.response) return access.response;
-  const actorId = access.context.session.user.id;
+  const context = await loadAuthorizationContext(request, env);
+  if (!context) return json({ error: 'unauthenticated' }, 401);
+  const actorId = context.session.user.id;
+  let archiveVia = null;
+  if (!isAuthorizedScoped(context, { roles: [...YEARLY_EXPORT_ROLES], requireMfa: true, schoolYearId })) {
+    archiveVia = await archiveReadVia(env.db, context, schoolYearId, ARCHIVE_EXPORT_ROLES);
+    if (!archiveVia) return json({ error: 'forbidden' }, 403);
+  }
 
   let result;
   try {
@@ -108,6 +117,9 @@ async function createYearlyExport(request, env, json) {
         kind: 'yearly', schoolYearId, formatVersion: EXPORT_FORMAT_VERSION, actorId,
         sha256: built.manifestSha256, rowCounts: built.rowCounts,
       });
+      if (archiveVia) {
+        await recordArchiveRead(tx, { actorId, schoolYearId, viaSchoolYearId: archiveVia, route: 'exports.yearly' });
+      }
       return { ...built, runId };
     });
   } catch (error) {
