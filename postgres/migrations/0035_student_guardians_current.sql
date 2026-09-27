@@ -34,3 +34,18 @@ SELECT * FROM student_guardians_current_on(rd_today());
 COMMENT ON VIEW student_guardians_current IS
   'Jedyne zrodlo prawdy dla "aktualnej" relacji opiekun-uczen (issue #157). '
   'Uzywaj zamiast wlasnych warunkow na student_guardians.starts_on/ends_on.';
+
+-- Osobna, wazka funkcja: czy relacja JUZ SIE ZAKONCZYLA (ends_on w przeszlosci),
+-- w odroznieniu od "jeszcze nieaktywnej" (starts_on w przyszlosci) -- families.js
+-- rozroznia te dwa przypadki (komunikat relation_ended vs. brak wiersza w
+-- zakresie). Nie zastepuje widoku powyzej; pozwala nie powtarzac warunku na
+-- ends_on w kodzie aplikacji.
+CREATE FUNCTION student_guardian_relation_ended(p_guardian_id TEXT, p_student_id TEXT, as_of DATE DEFAULT rd_today())
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM student_guardians
+     WHERE guardian_id = p_guardian_id AND student_id = p_student_id
+       AND ends_on IS NOT NULL AND ends_on <= as_of
+  );
+$$;

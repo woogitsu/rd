@@ -400,10 +400,12 @@ async function updateRelationContact(request, env, guardianId, studentId, json) 
     // Blokada wiersza relacji serializuje podwójne kliknięcie i ponowienie.
     const { rows } = await tx.query(
       `SELECT sg.contact_allowed, g.contact_allowed AS guardian_contact_allowed,
-              (sg.ends_on IS NOT NULL AND sg.ends_on <= CURRENT_DATE) AS ended
+              student_guardian_relation_ended(sg.guardian_id, sg.student_id) AS ended
          FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
         WHERE sg.guardian_id = $5 AND sg.student_id = $6 AND ${STUDENT_IN_SCOPE('sg.student_id')}
-          ${isClassScoped(scope) ? `AND ${RELATION_ACTIVE('sg')}` : ''}
+          ${isClassScoped(scope) ? `AND EXISTS (
+              SELECT 1 FROM student_guardians_current sgc
+               WHERE sgc.guardian_id = sg.guardian_id AND sgc.student_id = sg.student_id)` : ''}
         FOR UPDATE OF sg`,
       [...scopeParams(scope), guardianId, studentId],
     );
