@@ -239,6 +239,11 @@ Najpierw na stagingu z danymi syntetycznymi, potem przed cutover.
 6. Zmierzyć czas odtworzenia (RTO) i wiek backupu (RPO).
 7. Usunąć bazę/usługę tymczasową. Wpisać wynik do tabeli.
 
+Uzupełnieniem backupu jest wersjonowany eksport roczny z manifestem SHA-256
+i testem odtworzenia do pustej bazy (`scripts/verify-export.js`), opisany w
+[EXPORT.md](EXPORT.md). Wynik takiej próby także wpisać do tabeli poniżej
+(wariant C — eksport roczny).
+
 | Data | Środowisko | Kto | Backup (id/czas) | Wariant | Czas odtworzenia | Zgodność raportu | Wynik / uwagi |
 |---|---|---|---|---|---|---|---|
 | do wykonania | staging | | | | | | |

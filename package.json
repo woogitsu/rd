@@ -38,7 +38,8 @@
     "dev:meetings": "vite meetings",
     "build:meetings": "vite build meetings --outDir ../dist/meetings --base ./ --emptyOutDir",
     "dev:admin": "vite admin",
-    "build:admin": "vite build admin --outDir ../dist/admin --base ./ --emptyOutDir"
+    "build:admin": "vite build admin --outDir ../dist/admin --base ./ --emptyOutDir",
+    "db:verify-export": "node scripts/verify-export.js"
   },
   "dependencies": {
     "read-excel-file": "9.3.10",
