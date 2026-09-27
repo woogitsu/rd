@@ -239,6 +239,7 @@ describe('katalog rodzin na wspólnej bazie', () => {
     // Druga osoba z zarządu (inne konto, ten sam poziom uprawnień) edytuje
     // ten sam kontakt równolegle — nie ma potrzeby konta z rolą 'admin'.
     const boardB = await seedUserSession(db, { userId: 'u-board-2', roles: [{ role: 'board' }], mfa: true });
+    const before = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'guardian.contact.updated' AND entity_id = 'g-2'");
     const [a, b] = await Promise.all([
       call(path, { method: 'PATCH', cookie: cookies.board, body: { email: 'wersja-a@example.invalid', reason: 'Zapis A' } }),
       call(path, { method: 'PATCH', cookie: boardB, body: { email: 'wersja-b@example.invalid', reason: 'Zapis B' } }),
@@ -254,13 +255,16 @@ describe('katalog rodzin na wspólnej bazie', () => {
       'bieżąca wartość to jedna z dwóch wersji, nigdy mieszanka ani coś innego',
     );
 
+    // Zakres po tej samej wartości e-maila (nie po samym guardian_id): ten sam
+    // kontakt mógł już mieć wcześniejszą historię z poprzednich testów w tej
+    // samej współdzielonej bazie (opisanej w komentarzu describe() wyżej).
     const history = await db.query(
-      "SELECT new_email, changed_by, reason FROM guardian_contact_changes WHERE guardian_id = 'g-2' ORDER BY changed_at",
+      "SELECT new_email, changed_by, reason FROM guardian_contact_changes WHERE guardian_id = 'g-2' AND new_email IN ('wersja-a@example.invalid', 'wersja-b@example.invalid') ORDER BY changed_at",
     );
     assert.equal(history.rows.length, 2, 'obie zmiany zostają w historii — nic nie ginie bezpowrotnie');
     assert.deepEqual(history.rows.map((r) => r.new_email).sort(), ['wersja-a@example.invalid', 'wersja-b@example.invalid']);
-    const audit = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'guardian.contact.updated' AND entity_id = 'g-2'");
-    assert.equal(audit.rows[0].n, 2);
+    const after = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'guardian.contact.updated' AND entity_id = 'g-2'");
+    assert.equal(after.rows[0].n - before.rows[0].n, 2, 'dwa nowe zdarzenia audytu, jedno na zapis');
   });
 
   test('zmiana klasy w roku zachowuje historię; nowy rok to nowe przypisanie', async () => {
