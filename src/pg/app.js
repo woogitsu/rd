@@ -29,6 +29,7 @@ import * as exportsRoutes from './routes/exports.js';
 import * as familiesRoutes from './routes/families.js';
 import * as printRoutes from './routes/print.js';
 import * as yearCloseRoutes from './routes/year-close.js';
+import * as mfaRoutes from './routes/mfa.js';
 
 export const ROUTES = [
   sessionRoutes,
@@ -46,6 +47,7 @@ export const ROUTES = [
   familiesRoutes,
   printRoutes,
   yearCloseRoutes,
+  mfaRoutes,
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 
