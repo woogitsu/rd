@@ -98,7 +98,7 @@
           <select name="method"><option value="bank_transfer">Przelew</option><option value="cash">Gotówka</option><option value="other">Inna</option></select>
         </label>
         <label>Opis / referencja <input name="reference" maxlength="200" required placeholder="np. składka roczna" /></label>
-        <label>Identyfikator rodziny <input name="familyId" autocomplete="off" placeholder="Zostaw puste, jeśli wpłata wymaga przypisania" /></label>
+        <label>Identyfikator rodziny <input name="householdId" autocomplete="off" placeholder="Zostaw puste, jeśli wpłata wymaga przypisania" /></label>
         <div class="form-error" role="alert"></div>
         <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz wpłatę</button></div>
       </form>
@@ -109,7 +109,7 @@
         <div class="dialog-heading"><div><p class="eyebrow">Historia zmian</p><h2>Dodaj korektę</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
         <input type="hidden" name="paymentId" />
         <p class="context"></p>
-        <label>Kwota korekty EUR <input name="amount" inputmode="decimal" required placeholder="-10,00 lub 10,00" /></label>
+        <label>Kwota pomniejszenia EUR <input name="amount" inputmode="decimal" required placeholder="10,00" /></label>
         <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="300" required></textarea></label>
         <div class="form-error" role="alert"></div>
         <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Dodaj korektę</button></div>
@@ -121,7 +121,7 @@
         <div class="dialog-heading"><div><p class="eyebrow">Wpłata nierozpoznana</p><h2>Przypisz rodzinę</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
         <input type="hidden" name="paymentId" />
         <p class="context"></p>
-        <label>Identyfikator rodziny <input name="familyId" autocomplete="off" required /></label>
+        <label>Identyfikator rodziny <input name="householdId" autocomplete="off" required /></label>
         <div class="form-error" role="alert"></div>
         <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Przypisz</button></div>
       </form>
