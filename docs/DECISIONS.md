@@ -115,6 +115,7 @@ Do czasu zamknięcia decyzji D-01–D-06 nie importujemy danych rodzin. Prace na
 - Pytanie: czy szkoła zatwierdza macierz dostępu z PRODUCT.md (zarząd, skarbnik, przedstawiciel klasy, Komisja Rewizyjna, dyrekcja, admin techniczny) i w jakim zakresie danych rodzin każda rola pracuje?
 - Dlaczego: kod nie przypisuje rolom domyślnych zdolności (AUTHORIZATION.md). Blokuje zamknięcie #4 i pełny zakres #35.
 - Warianty w dokumentacji: projekt macierzy w PRODUCT.md, oznaczony „do zatwierdzenia”. Stałe założenie AGENTS.md: przedstawiciel klasy wyłącznie dla przypisanych klas.
+- Założenie techniczne do czasu decyzji (#12, EVENTS.md): wydarzenia tworzą admin i zarząd oraz przedstawiciel klasy dla własnej klasy; zatwierdza i publikuje wyłącznie zarząd, z zasadą czterech oczu. Nie jest to decyzja.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:

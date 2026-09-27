@@ -29,6 +29,24 @@ dopisywania (UPDATE i DELETE zwracają błąd) — korekta to nowe zdarzenie.
 Przywracanie snapshotu D1 (same INSERT-y) działa bez zmian. Wycofanie
 migracji wymaga osobnego skryptu i przeglądu; nie cofać jej na bazie z danymi.
 
+`0008_events.sql` rozszerza istniejącą tabelę `events` o miejsce,
+organizatora, koniec wydarzenia, stałą strefę `Europe/Brussels`, opcjonalną
+klasę (z tego samego roku), odbiorców (`internal`/`public`), status
+(`draft`/`submitted`/`approved`/`published`/`cancelled`), dane zgłoszenia,
+zatwierdzenia, publikacji i odwołania oraz klucz idempotencji. Nowa tabela
+`event_revisions` przechowuje każdą wersję treści; trigger dopisuje wersję
+przy każdej zmianie treści i cofa status do `draft`, a wersji nie można
+zmienić ani usunąć. Wydarzeń nie można usuwać; odwołanie wymaga powodu i jest
+stanem końcowym. Trigger pilnuje kolejności przejść i zasady czterech oczu
+(zatwierdzający ≠ autor wydarzenia i ≠ autor zatwierdzanej wersji). Widok
+`public_events` pokazuje wyłącznie opublikowaną wersję, bez autorów i bez
+powodu odwołania. Skutki dla danych: istniejące wiersze dostają wersję 1;
+wiersze z `visibility='published'` (także odtwarzane ze snapshotu D1) stają
+się opublikowane bez zapisu zatwierdzenia (`source='legacy_d1'`), pozostałe
+stają się szkicami. Kolumna `visibility` jest odtąd wyliczana przez trigger.
+Opis:
+[`docs/EVENTS.md`](../docs/EVENTS.md).
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.
