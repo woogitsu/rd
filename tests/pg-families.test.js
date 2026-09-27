@@ -52,7 +52,8 @@ async function setup() {
   };
   const cookies = {
     repA: await seedUserSession(db, { userId: 'u-rep-a', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y1 }] }),
-    board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }] }),
+    // Zarząd z sesją MFA: bramka MFA routera wymaga jej od ról z MFA_REQUIRED_ROLES.
+    board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true }),
     treasurer: await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: Y1 }], mfa: true }),
     treasurerNoMfa: await seedUserSession(db, { userId: 'u-treasurer2', roles: [{ role: 'treasurer', schoolYearId: Y1 }] }),
     audit: await seedUserSession(db, { userId: 'u-audit', roles: [{ role: 'audit' }], mfa: true }),
@@ -156,9 +157,9 @@ describe('katalog rodzin na wspólnej bazie', () => {
     JSON.stringify(withMfa.body, (key, value) => { keys.push(key); return value; });
     assert.doesNotMatch(keys.join(' '), /debt|due|outstanding|arrears|balance|dłużn|zaleg/i);
 
+    // Skarbnik bez sesji z MFA zatrzymuje się na bramce MFA routera (przed trasą).
     const withoutMfa = await call('/api/households/h-1', { cookie: cookies.treasurerNoMfa });
-    assert.equal(withoutMfa.status, 200);
-    assert.equal(withoutMfa.body.paymentTotals, undefined);
+    assert.deepEqual(withoutMfa, { status: 403, body: { error: 'mfa_enrollment_required' } });
     const rep = await call('/api/households/h-1', { cookie: cookies.repA });
     assert.equal(rep.body.paymentTotals, undefined);
   });
@@ -207,7 +208,7 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.equal(card.body.guardians[0].email, 'nowy.opiekun2@example.invalid');
 
     // Zarząd ograniczony do klasy nie zmieni opiekuna spoza niej (404, nie 403).
-    const boardA = await seedUserSession(db, { userId: 'u-board-a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }] });
+    const boardA = await seedUserSession(db, { userId: 'u-board-a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }], mfa: true });
     assert.equal((await call('/api/guardians/g-3/contact', { method: 'PATCH', cookie: boardA, body })).status, 404);
   });
 

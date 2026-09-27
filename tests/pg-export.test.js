@@ -309,7 +309,8 @@ test('yearly export requires admin or board with MFA in the year scope', async (
   const noMfa = await seedUserSession(db, { userId: 'u-admin-nomfa', roles: [{ role: 'admin' }], mfa: false });
   const noMfaResponse = await exportRequest(db, noMfa);
   assert.equal(noMfaResponse.status, 403);
-  assert.deepEqual(await noMfaResponse.json(), { error: 'forbidden' });
+  // Bramka MFA routera: admin bez czynnika i bez sesji z MFA musi najpierw zapisać MFA.
+  assert.deepEqual(await noMfaResponse.json(), { error: 'mfa_enrollment_required' });
 
   for (const [userId, grant] of [
     ['u-treasurer', { role: 'treasurer', schoolYearId: YEAR }],

@@ -25,6 +25,8 @@
 // Wszystkie dane są syntetyczne. Znaczniki zakresów wstawiamy do tytułów,
 // treści protokołów i opisów wpłat; odpowiedź odmowna nie może zawierać żadnego.
 
+import { isMfaGateExempt } from '../../src/pg/mfa-policy.js';
+
 export const YEAR_1 = 'y-1';
 export const YEAR_2 = 'y-2';
 
@@ -288,10 +290,21 @@ export const ROUTE_MATRIX = Object.freeze([
     }),
 ].map((route) => Object.freeze(route)));
 
+// Bramka MFA routera (src/pg/mfa-policy.js): konto z aktywną rolą z
+// MFA_REQUIRED_ROLES (domyślnie admin, board, treasurer) bez potwierdzonego
+// czynnika i bez sesji z MFA dostaje 403 mfa_enrollment_required na każdej
+// trasie poza zwolnionymi. Aktorzy macierzy nie mają zapisanych czynników.
+const MFA_REQUIRED_ROLES = new Set(['admin', 'board', 'treasurer']);
+export function mfaGateBlocks(route, actor, mfa) {
+  if (mfa || actor.unauthenticated || isMfaGateExempt(route.path.split('?')[0])) return false;
+  return actor.grants.some((grant) => MFA_REQUIRED_ROLES.has(grant.role) && !grant.revoked && !grant.expiresAt);
+}
+
 // Oczekiwany status dla (trasa, aktor, MFA, zakres).
 export function expectedStatus(route, actor, mfa, targetKey) {
   if (route.allow === 'public') return route.ok;
   if (actor.unauthenticated) return 401;
+  if (mfaGateBlocks(route, actor, mfa)) return 403;
   if (route.allow === 'authenticated') return route.ok;
   const scopes = route.allow[actor.key] ?? [];
   if (!scopes.includes(targetKey)) return typeof route.deny === 'function' ? route.deny(actor, targetKey) : route.deny;
