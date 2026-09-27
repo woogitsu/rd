@@ -1,0 +1,28 @@
+# Panel dokumentów
+
+Interfejs do chronionego API prywatnych dokumentów (`/api/documents`, issue #39, #8). Status: prototyp. Nie zawiera danych demonstracyjnych ani obejścia uwierzytelniania i nie jest zatwierdzony do pracy na dokumentach rodzin (decyzje D-04, D-05, D-08, D-09 w [docs/DECISIONS.md](../docs/DECISIONS.md)).
+
+## Uruchomienie
+
+```bash
+npm run dev            # API
+npm run dev:documents  # interfejs (Vite)
+npm run build:documents
+```
+
+Po zbudowaniu serwer Node udostępnia panel pod `/documents/` z tego samego originu co API; żądania używają ciasteczka sesji.
+
+## Zakres
+
+- lista dokumentów widocznych dla użytkownika w danym roku szkolnym, z filtrami rodzaju i klasy — zakres widoczności wylicza serwer z ról i przydziałów,
+- widok metadanych (rodzaj, rok, klasa, typ, rozmiar, SHA-256, powiązanie, autor, czas),
+- pobranie przez link do `/api/documents/{id}/content` (załącznik z nazwą techniczną, zdarzenie w dzienniku),
+- przesłanie pliku PDF, PNG lub JPEG z metadanymi: rodzaj, rok szkolny, klasa (tylko materiały klasy), powiązanie z wpisem księgi lub wpłatą (tylko dowody finansowe).
+
+## Zasady
+
+- Kontrola typu (sygnatura pliku) i rozmiaru w przeglądarce służy tylko wygodzie. Serwer ponownie sprawdza typ, rozmiar i uprawnienia i jest rozstrzygający. Przeglądarka zna jedynie domyślny limit 10 MiB; inny `DOCUMENT_MAX_BYTES` ujawni się dopiero odpowiedzią 413.
+- Każde przesłanie ma `Idempotency-Key`. Ponowienie po błędzie sieci lub 5xx z tym samym plikiem i danymi używa tego samego klucza, więc podwójne kliknięcie ani ponowienie nie tworzą duplikatu. Zmiana pliku lub metadanych tworzy nową operację.
+- Stan przesyłania i błędy są ogłaszane przez `aria-live`. Komunikaty błędów API (401, 403, 404, 409, 413, 415, 503) są po polsku.
+- Nazwa pliku nie jest wysyłana ani zapisywana. Nie przesyłaj dokumentów z danymi dzieci bez potrzeby ani zdjęć z wizerunkiem dzieci.
+- Czysta logika: `core.js`, testy: `tests/documents-core.test.js`.

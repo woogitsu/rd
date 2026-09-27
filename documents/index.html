@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Dokumenty — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../">Rada Rodziców<small>Szkoła Polska w Brukseli</small></a>
+      <nav aria-label="Panel">
+        <a href="../panel/">Wpłaty</a>
+        <a href="../ledger/">Księga</a>
+        <a class="active" href="./" aria-current="page">Dokumenty</a>
+        <a href="../import/">Import uczniów</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <div class="page-heading">
+        <p class="eyebrow">Dokumenty prywatne</p>
+        <h1>Dokumenty Rady</h1>
+        <p>Lista pokazuje wyłącznie dokumenty, do których masz dostęp według roli i przypisanych klas. Pliki są przechowywane prywatnie i pobierane przez serwer po sprawdzeniu uprawnień.</p>
+      </div>
+
+      <section class="section filters" aria-labelledby="filters-title">
+        <h2 id="filters-title">Widok dokumentów</h2>
+        <form id="filters-form" novalidate>
+          <label>Rok szkolny
+            <input id="filter-year" name="schoolYearId" autocomplete="off" required placeholder="np. 2026-2027" />
+          </label>
+          <label>Rodzaj
+            <select id="filter-kind" name="kind">
+              <option value="">Wszystkie dostępne</option>
+              <option value="financial">Dowód finansowy</option>
+              <option value="board">Dokument zarządu</option>
+              <option value="class">Materiał klasy</option>
+            </select>
+          </label>
+          <label>Klasa
+            <input id="filter-class" name="classId" autocomplete="off" placeholder="opcjonalnie" />
+          </label>
+          <button type="submit">Pokaż</button>
+        </form>
+      </section>
+
+      <section class="section" aria-labelledby="list-title">
+        <div class="section-heading">
+          <h2 id="list-title">Lista</h2>
+          <p id="list-summary">Wybierz rok szkolny, aby pobrać listę.</p>
+        </div>
+        <p class="message" id="list-message" role="status" aria-live="polite"></p>
+        <div class="table-wrap" id="table-wrap" hidden>
+          <table>
+            <caption class="sr-only">Dokumenty dostępne dla zalogowanego użytkownika</caption>
+            <thead>
+              <tr>
+                <th scope="col">Dodano</th>
+                <th scope="col">Rodzaj</th>
+                <th scope="col">Klasa</th>
+                <th scope="col">Typ</th>
+                <th scope="col" class="num">Rozmiar</th>
+                <th scope="col">Powiązanie</th>
+                <th scope="col"><span class="sr-only">Akcje</span></th>
+              </tr>
+            </thead>
+            <tbody id="documents-body"></tbody>
+          </table>
+        </div>
+        <button id="load-more" type="button" hidden>Wczytaj następne</button>
+      </section>
+
+      <section class="section" id="details" aria-labelledby="details-title" hidden tabindex="-1">
+        <div class="section-heading">
+          <h2 id="details-title">Metadane dokumentu</h2>
+          <button id="close-details" type="button">Zamknij</button>
+        </div>
+        <dl id="details-list" class="details"></dl>
+        <p><a id="details-download" class="button-link" href="#" rel="noopener">Pobierz plik</a></p>
+        <p class="hint">Plik zostanie zapisany jako załącznik z nazwą techniczną. Pobranie jest zapisywane w dzienniku zdarzeń.</p>
+      </section>
+
+      <section class="section" aria-labelledby="upload-title">
+        <h2 id="upload-title">Przesłanie dokumentu</h2>
+        <div class="notice" role="note">
+          <p><strong>Nie przesyłaj dokumentów z danymi dzieci bez potrzeby.</strong> Zanim dodasz plik, usuń lub zasłoń dane, które nie są konieczne (nazwiska, adresy, numery rachunków osób prywatnych).</p>
+          <p>Nie przesyłaj zdjęć ani wizerunku dzieci, list rodzin ani plików CSV — import rodzin ma osobny przepływ. Nazwa pliku nie jest zapisywana.</p>
+          <p>Dopuszczalne typy: PDF, PNG, JPEG. Limit rozmiaru ustala serwer (domyślnie 10 MiB). Skan antywirusowy nie jest jeszcze dostępny.</p>
+        </div>
+        <form id="upload-form" novalidate>
+          <label>Plik
+            <input id="upload-file" name="file" type="file" required accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg" aria-describedby="file-check" />
+          </label>
+          <p class="hint" id="file-check" aria-live="polite"></p>
+          <div class="field-row">
+            <label>Rodzaj
+              <select name="kind" id="upload-kind" required aria-describedby="kind-hint">
+                <option value="">Wybierz…</option>
+                <option value="financial">Dowód finansowy</option>
+                <option value="board">Dokument zarządu</option>
+                <option value="class">Materiał klasy</option>
+              </select>
+            </label>
+            <label>Rok szkolny
+              <input name="schoolYearId" id="upload-year" autocomplete="off" required placeholder="np. 2026-2027" />
+            </label>
+          </div>
+          <p class="hint" id="kind-hint"></p>
+          <label id="class-field" hidden>Klasa
+            <input name="classId" id="upload-class" autocomplete="off" placeholder="identyfikator klasy" />
+          </label>
+          <fieldset id="link-field" hidden>
+            <legend>Powiązanie (opcjonalne)</legend>
+            <div class="field-row">
+              <label>Rodzaj powiązania
+                <select name="linkedEntityType" id="upload-link-type">
+                  <option value="">Brak</option>
+                  <option value="ledger_entry">Wpis księgi</option>
+                  <option value="payment_entry">Wpłata</option>
+                </select>
+              </label>
+              <label>Identyfikator wpisu lub wpłaty
+                <input name="linkedEntityId" id="upload-link-id" autocomplete="off" />
+              </label>
+            </div>
+          </fieldset>
+          <div class="actions">
+            <button class="primary" id="upload-submit" type="submit">Prześlij dokument</button>
+          </div>
+          <progress id="upload-progress" max="100" value="0" hidden aria-label="Postęp przesyłania"></progress>
+          <p class="message" id="upload-status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

@@ -24,6 +24,7 @@ jobs:
       - run: npm run build:ledger
       - run: npm run build:print
       - run: npm run build:events
+      - run: npm run build:documents
       - run: test -f dist/import/template.csv
       - run: test -f railway.json
       # PostgreSQL migrations on in-memory PGlite + Node server on 127.0.0.1
