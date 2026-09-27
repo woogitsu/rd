@@ -40,6 +40,7 @@
     "dev:admin": "vite admin",
     "build:admin": "vite build admin --outDir ../dist/admin --base ./ --emptyOutDir",
     "db:verify-export": "node scripts/verify-export.js",
+    "auth:bootstrap-admin": "node scripts/bootstrap-admin.js",
     "dev:families": "vite families",
     "build:families": "vite build families --outDir ../dist/families --base ./ --emptyOutDir",
     "dev:login": "vite login",
