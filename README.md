@@ -40,6 +40,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Prywatne dokumenty w Storage Bucket](docs/DOCUMENTS.md)
 - [Aktualności i galeria po weryfikacji praw](docs/NEWS.md)
 - [Konta, zaproszenia i przydziały ról](docs/ACCOUNTS.md)
+- [Eksport roczny, kopie i test odtworzenia](docs/EXPORT.md)
 - [Rejestr decyzji zarządu i szkoły](docs/DECISIONS.md)
 - [Zasady pracy agentów](AGENTS.md)
 
