@@ -299,7 +299,9 @@ test('database failure returns the same 503 contract and logs no token or e-mail
   }
   assert.ok(logged.length >= 3, 'PostgreSQL router logs technical errors');
   for (const line of logged) {
-    assert.match(line, /^\[api\] route=session error=57P01$/);
+    // Logi strukturalne (src/log.js): jedna linia JSON z modułem i kodem technicznym.
+    const entry = JSON.parse(line);
+    assert.deepEqual([entry.event, entry.module, entry.code], ['api_route_error', 'session', '57P01']);
     assert.ok(!line.includes(token('B')) && !line.includes('@'), 'no secrets or e-mail in logs');
   }
 });
