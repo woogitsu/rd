@@ -577,7 +577,8 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
   assert.equal(events[0].entity_id, entry.id);
   assert.deepEqual(events[0].metadata_json, {});
   assert.deepEqual(events[1].metadata_json, { ledgerEntryId: entry.id });
-  const metadata = JSON.stringify(events.map((e) => e.metadata_json));
+  // Identyfikator wpisu (losowy UUID) usuwamy przed szukaniem ciągów — w zapisie szesnastkowym może zawierać np. „d1” lub „321”.
+  const metadata = JSON.stringify(events.map((e) => e.metadata_json)).replaceAll(entry.id, '<entry-id>');
   for (const secret of ['4321', '321', 'XYZ', 'UCHWALA', 'Powód', 'd1']) assert.ok(!metadata.includes(secret), secret);
 
   // Gdy zapis audytu zawiedzie, wpis nie powstaje (jedna transakcja).
