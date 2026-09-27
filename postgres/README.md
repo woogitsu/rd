@@ -139,6 +139,17 @@ wymaga roku). Wpisy z rokiem różnym od roku klasy nie są przepisywane.
 Wycofanie: usunięcie ograniczenia i funkcji oraz przywrócenie funkcji
 triggera z 0017; uzupełnionego roku nie cofać (historia w `audit_events`).
 
+`0025_email_send_confirmation.sql` (issues #210, #177) dodaje do `email_outbox`
+kolumny `claim_token` (uuid przebiegu, który przejął wiersz) i
+`send_started_at` (chwila przekazania wiadomości dostawcy) oraz zastępuje
+funkcję `email_outbox_guard`: przejścia `sending → cancelled | skipped |
+suppressed` są dozwolone tylko przed rozpoczęciem wysyłki, a raz ustawionego
+`send_started_at` nie można wyczyścić w stanie `sending`. Skutki dla danych:
+istniejące wiersze bez zmian (nowe kolumny puste); wiersz `sending` sprzed
+migracji po wygaśnięciu dzierżawy trafia jak dotąd do `delivery_unknown`.
+Wycofanie: przywrócenie funkcji z `0007_email.sql` i usunięcie kolumn —
+bezpieczne tylko, gdy żaden wiersz nie jest w stanie `sending`.
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.
@@ -204,6 +215,15 @@ istniejący wiersz nie jest zmieniany ani usuwany. Od tej migracji nie da się
 usunąć przypisania do klasy ani zmienić jego ucznia lub roku, a uczniów i
 opiekunów z historią nie da się usunąć. Szczegóły:
 [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
+
+`0023_student_primary_household.sql` (issue #194) dodaje `rd_today()` (data
+w strefie Europe/Brussels), `student_primary_household_on(dzień)` i widok
+`student_primary_household_current`; odtwarza widoki `*_households_current` i
+triggery synchronizacji z 0014 z `rd_today()` zamiast `CURRENT_DATE` oraz
+dodaje blokadę wiersza ucznia/opiekuna w sprawdzaniu nakładania zakresów. Nie
+zmienia żadnego wiersza. Kampanie, worker, kartki i import czytają odtąd
+główne gospodarstwo z `student_households`, nie `students.household_id`.
+Szczegóły: [`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
 
 `0013_mfa.sql` (issue #3) dodaje tabele `user_mfa_factors` (sekret TOTP
 wyłącznie jako szyfrogram AES-256-GCM z IV i tagiem; `confirmed_at`,

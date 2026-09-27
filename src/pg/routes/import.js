@@ -43,6 +43,7 @@ export const MESSAGES = Object.freeze({
   householdMismatch: 'Uczeń jest w bazie przypisany do innej rodziny — wymaga ręcznego powiązania.',
   classMismatch: 'Uczeń ma w tym roku inną klasę w bazie — zmiana wymaga ręcznej decyzji.',
   emailElsewhere: 'Ten sam adres e-mail opiekuna występuje w innej rodzinie — rodzin nie łączymy automatycznie.',
+  noCurrentHousehold: 'Uczeń nie ma w bazie bieżącego głównego gospodarstwa — wymaga ręcznego powiązania.',
   noHouseholdLink: 'Wiersz bez ID rodziny: utworzono osobną rodzinę; rodzeństwo nie zostanie powiązane.',
 });
 
@@ -174,9 +175,12 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
   const existingStudents = new Map();
   if (studentRefs.length) {
     const { rows } = await executor.query(
-      `SELECT s.id, lower(s.source_ref) AS ref, s.first_name, s.last_name, s.household_id,
+      // Rodzina = bieżące główne gospodarstwo (#194), nie kolumna students.household_id.
+      `SELECT s.id, lower(s.source_ref) AS ref, s.first_name, s.last_name, p.household_id,
               lower(h.source_ref) AS household_ref
-         FROM students s JOIN households h ON h.id = s.household_id
+         FROM students s
+         LEFT JOIN student_primary_household_current p ON p.student_id = s.id
+         LEFT JOIN households h ON h.id = p.household_id
         WHERE lower(s.source_ref) = ANY($1::text[])`,
       [studentRefs],
     );
@@ -191,7 +195,7 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     for (const row of rows) existingHouseholds.set(row.ref, row.id);
   }
   const studentIds = [...existingStudents.values()].map((s) => s.id);
-  const householdIds = [...new Set([...existingStudents.values()].map((s) => s.household_id).concat([...existingHouseholds.values()]))];
+  const householdIds = [...new Set([...existingStudents.values()].map((s) => s.household_id).filter(Boolean).concat([...existingHouseholds.values()]))];
 
   const enrollments = new Map();
   const links = new Set();
@@ -258,6 +262,7 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
 
     if (existing) {
       if (norm(existing.first_name) !== norm(record.firstName) || norm(existing.last_name) !== norm(record.lastName)) { conflict(MESSAGES.nameMismatch); continue; }
+      if (!existing.household_id) { conflict(MESSAGES.noCurrentHousehold); continue; }
       if (householdRef && (existing.household_ref ?? '') !== householdRef) { conflict(MESSAGES.householdMismatch); continue; }
       const enrolledClass = enrollments.get(existing.id);
       if (enrolledClass && enrolledClass !== classId) { conflict(MESSAGES.classMismatch); continue; }
