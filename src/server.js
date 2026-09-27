@@ -31,6 +31,8 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         EMAIL_DAILY_RESERVED: processEnv.EMAIL_DAILY_RESERVED,
         EMAIL_CAMPAIGN_MIN_DAYS: processEnv.EMAIL_CAMPAIGN_MIN_DAYS,
         EMAIL_CAMPAIGN_MIN_DAILY: processEnv.EMAIL_CAMPAIGN_MIN_DAILY,
+        // MFA (#3): klucz szyfrowania sekretów TOTP, wyłącznie jako sekret usługi Railway.
+        MFA_ENCRYPTION_KEY: processEnv.MFA_ENCRYPTION_KEY,
       },
       fetchHandler: handlePgRequest,
       bodyLimit: bodyLimitFor(documentMaxBytes),
