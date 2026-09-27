@@ -36,6 +36,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Księga i preliminarz](docs/LEDGER.md)
 - [Wydarzenia i publiczny kalendarz](docs/EVENTS.md)
 - [Zebrania, protokoły i uchwały](docs/MEETINGS.md)
+- [Prywatne dokumenty w Storage Bucket](docs/DOCUMENTS.md)
 - [Rejestr decyzji zarządu i szkoły](docs/DECISIONS.md)
 - [Zasady pracy agentów](AGENTS.md)
 

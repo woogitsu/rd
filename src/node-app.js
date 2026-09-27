@@ -22,14 +22,14 @@ const STATIC_SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
 };
 
-async function requestBody(request) {
+async function requestBody(request, limit = MAX_BODY_BYTES) {
   const length = Number(request.headers['content-length'] ?? 0);
-  if (Number.isFinite(length) && length > MAX_BODY_BYTES) throw new RangeError('request_too_large');
+  if (Number.isFinite(length) && length > limit) throw new RangeError('request_too_large');
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new RangeError('request_too_large');
+    if (size > limit) throw new RangeError('request_too_large');
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
@@ -100,15 +100,21 @@ async function writeFetchResponse(nodeResponse, webResponse, apiRequest) {
   nodeResponse.end(data);
 }
 
-export function createNodeHandler({ distRoot, env = {}, fetchHandler, publicBaseUrl } = {}) {
+// bodyLimit(url, method) -> bajty; pozwala podnieść limit wyłącznie dla
+// wskazanych tras (np. POST /api/documents). Domyślnie 1 MiB dla wszystkich.
+export function createNodeHandler({ distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit } = {}) {
   if (!distRoot) throw new Error('distRoot is required');
   if (typeof fetchHandler !== 'function') throw new Error('fetchHandler is required');
+  const limitFor = (url, method) => {
+    const value = typeof bodyLimit === 'function' ? Number(bodyLimit(url, method)) : MAX_BODY_BYTES;
+    return Number.isInteger(value) && value > 0 ? value : MAX_BODY_BYTES;
+  };
   return async (request, response) => {
     try {
       const url = publicUrl(request, publicBaseUrl);
       if (await serveStatic(request, response, url, distRoot)) return;
       const method = request.method || 'GET';
-      const body = ['GET', 'HEAD'].includes(method) ? undefined : await requestBody(request);
+      const body = ['GET', 'HEAD'].includes(method) ? undefined : await requestBody(request, limitFor(url, method));
       const webRequest = new Request(url, { method, headers: request.headers, body });
       const webResponse = await fetchHandler(webRequest, env);
       await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'));
