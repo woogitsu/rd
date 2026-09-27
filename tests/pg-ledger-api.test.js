@@ -667,6 +667,21 @@ test('CSV helpers neutralise formulas and quote separators', () => {
   assert.throws(() => ledgerRoutes.formatEuro('9007199254740993'), /unsafe_integer/);
 });
 
+test('ledger CSV line exports negative amounts as numbers and neutralises text (#121)', () => {
+  const line = ledgerRoutes.ledgerCsvLine({
+    id: 'le-syn-1', occurred_on: '2026-09-12', direction: 'income', category_name: '=Kategoria',
+    description: '-korekta; "opis"', method: 'bank', source: '@konto', resolution_reference: '+U/1',
+    payment_entry_id: null, source_document_id: null,
+    amount_cents: 1000, corrected_cents: -1250, net_amount_cents: '2250',
+  });
+  assert.equal(line, [
+    'le-syn-1', '2026-09-12', 'Przychód', "'=Kategoria", `"'-korekta; ""opis"""`, 'Przelew', "'@konto", "'+U/1",
+    '', '', '10,00', '-12,50', '22,50',
+  ].join(';'));
+  assert.equal(ledgerRoutes.LEDGER_CSV_COLUMNS.filter((column) => column.type === 'amount').map((column) => column.header),
+    ['kwota_eur', 'korekty_eur', 'netto_eur']);
+});
+
 test('ledger route is registered once, after payments', () => {
   assert.equal(ROUTES.filter((route) => route.name === 'ledger').length, 1);
   assert.ok(ROUTES.findIndex((route) => route.name === 'ledger') > ROUTES.findIndex((route) => route.name === 'payments'));

@@ -20,6 +20,7 @@ import { isSameOrigin } from '../../auth.js';
 import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
+import { csvCell, csvHeader, csvRow, formatEuro } from '../csv.js';
 
 export const name = 'ledger';
 
@@ -554,26 +555,22 @@ async function createCorrection(request, env, ledgerEntryId, json) {
 
 const DIRECTION_LABELS = { income: 'Przychód', expense: 'Wydatek' };
 const METHOD_LABELS = { bank: 'Przelew', cash: 'Gotówka', card: 'Karta', other: 'Inna' };
-const CSV_HEADER = [
-  'id_wpisu', 'data', 'rodzaj', 'kategoria', 'opis', 'metoda', 'zrodlo',
-  'referencja_uchwaly', 'id_wplaty', 'id_dokumentu', 'kwota_eur', 'korekty_eur', 'netto_eur',
-];
+// Typ kolumny: 'text' przechodzi przez neutralizację formuł, 'amount' (centy)
+// jest formatowany jako liczba „-12,50” bez apostrofu (issue #121).
+export const LEDGER_CSV_COLUMNS = [
+  ['id_wpisu', 'text'], ['data', 'text'], ['rodzaj', 'text'], ['kategoria', 'text'], ['opis', 'text'],
+  ['metoda', 'text'], ['zrodlo', 'text'], ['referencja_uchwaly', 'text'], ['id_wplaty', 'text'],
+  ['id_dokumentu', 'text'], ['kwota_eur', 'amount'], ['korekty_eur', 'amount'], ['netto_eur', 'amount'],
+].map(([header, type]) => ({ header, type }));
 
-// Komórka zaczynająca się od = + - @ (albo tabulatora / CR) mogłaby zostać
-// potraktowana przez arkusz jako formuła — dostaje prefiks apostrofu.
-export function csvCell(value) {
-  let text = value === null || value === undefined ? '' : String(value);
-  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
-  if (/[";\r\n]/.test(text) || text !== text.trim()) text = `"${text.replaceAll('"', '""')}"`;
-  return text;
-}
+export { csvCell, formatEuro };
 
-// Centy EUR -> „1234,56” (przecinek dziesiętny); tylko nieujemne kwoty z bazy.
-export function formatEuro(cents) {
-  const value = toSafeInteger(cents);
-  const sign = value < 0 ? '-' : '';
-  const abs = Math.abs(value);
-  return `${sign}${Math.trunc(abs / 100)},${String(abs % 100).padStart(2, '0')}`;
+export function ledgerCsvLine(row) {
+  return csvRow(LEDGER_CSV_COLUMNS, [
+    row.id, row.occurred_on, DIRECTION_LABELS[row.direction], row.category_name, row.description,
+    METHOD_LABELS[row.method], row.source, row.resolution_reference, row.payment_entry_id,
+    row.source_document_id, row.amount_cents, row.corrected_cents, row.net_amount_cents,
+  ]);
 }
 
 async function exportCsv(request, env, url) {
@@ -603,15 +600,7 @@ async function exportCsv(request, env, url) {
     });
     return result.rows;
   });
-  const lines = [CSV_HEADER.join(';')];
-  for (const row of rows) {
-    lines.push([
-      row.id, row.occurred_on, DIRECTION_LABELS[row.direction], row.category_name, row.description,
-      METHOD_LABELS[row.method], row.source, row.resolution_reference, row.payment_entry_id,
-      row.source_document_id, formatEuro(row.amount_cents), formatEuro(row.corrected_cents),
-      formatEuro(row.net_amount_cents),
-    ].map(csvCell).join(';'));
-  }
+  const lines = [csvHeader(LEDGER_CSV_COLUMNS), ...rows.map(ledgerCsvLine)];
   // BOM UTF-8, żeby arkusz poprawnie odczytał polskie znaki.
   return new Response(`﻿${lines.join('\r\n')}\r\n`, {
     status: 200,
