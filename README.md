@@ -56,6 +56,10 @@ Chroniony interfejs ewidencji można uruchomić poleceniem `npm run dev:panel`; 
 
 Chroniony interfejs księgi można uruchomić poleceniem `npm run dev:ledger`; API działa równolegle przez `npm run dev`. Panel pokazuje bilans, preliminarz i wpisy oraz pozwala dodawać wpisy i audytowalne korekty. [Instrukcja panelu](ledger/README.md). Nie zawiera danych demonstracyjnych ani obejścia logowania.
 
+## Kartki o dobrowolnej składce
+
+Lokalny moduł wydruku: `npm run dev:print`. Operator wczytuje plik CSV/JSON w przeglądarce, ręcznie wybiera rodziny, sprawdza podgląd i drukuje jedną dyskretną kartkę na rodzinę (PDF przez „Drukuj → Zapisz jako PDF”). Kwota sugerowana i dane rachunku czekają na decyzje D-13, D-14 i D-16. [Instrukcja wydruku](print/README.md).
+
 ## Start implementacji
 
 1. Uzgodnić zakres i przepływ danych ze szkołą.

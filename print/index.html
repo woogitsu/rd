@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Kartki o składce — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../">Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></a>
+      <nav aria-label="Panel">
+        <a href="../panel/">Wpłaty</a>
+        <a href="../ledger/">Księga</a>
+        <a href="../import/">Import uczniów</a>
+        <a class="active" href="./" aria-current="page">Kartki</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="page-heading">
+        <p class="eyebrow">Korespondencja</p>
+        <h1>Kartki o dobrowolnej składce</h1>
+        <p>Jedna kartka na rodzinę, bez danych innych rodzin. Plik jest odczytywany wyłącznie w tej przeglądarce i nigdzie nie jest wysyłany.</p>
+      </section>
+
+      <aside class="notice" role="note">
+        Składka Rady Rodziców jest dobrowolna. Informacja „brak wpisu wpłaty” pochodzi z pliku i może być nieaktualna — wpłata mogła wpłynąć później lub nie zostać jeszcze przypisana. Wybierz rodziny świadomie; lista nie jest wykazem zaległości.
+      </aside>
+
+      <section class="block" aria-labelledby="config-title">
+        <h2 id="config-title">1. Treść kartki</h2>
+        <p class="hint">Kwota sugerowana (decyzja D-14), dane rachunku (D-13) i szablon (D-16) czekają na decyzję zarządu. Puste pole kwoty lub rachunku pomija odpowiednie zdanie.</p>
+        <form id="config-form" novalidate>
+          <div class="grid">
+            <label>Nazwa Rady *
+              <input name="councilName" required maxlength="200" value="Rada Rodziców" />
+            </label>
+            <label>Szkoła
+              <input name="schoolName" maxlength="200" value="Szkoła Polska im. Joachima Lelewela w Brukseli" />
+            </label>
+            <label>Rok szkolny *
+              <input name="schoolYear" required pattern="\d{4}/\d{4}" placeholder="2026/2027" />
+            </label>
+            <label>Sugerowana kwota EUR (D-14)
+              <input name="suggestedAmount" inputmode="decimal" placeholder="puste = bez kwoty" aria-describedby="amount-hint" />
+              <small id="amount-hint">Kwota jest wyłącznie sugestią; zostaw puste do czasu decyzji.</small>
+            </label>
+            <label>Rachunek IBAN (D-13)
+              <input name="bankAccount" autocomplete="off" placeholder="puste = bez danych do wpłaty" />
+            </label>
+            <label>Odbiorca przelewu
+              <input name="bankRecipient" maxlength="200" />
+            </label>
+            <label>Tytuł przelewu
+              <input name="referenceTemplate" maxlength="200" placeholder="np. Składka RR {rok} {rodzina}" aria-describedby="ref-hint" />
+              <small id="ref-hint">{rodzina} zastępuje identyfikator rodziny, {rok} rok szkolny.</small>
+            </label>
+            <label>Kontakt *
+              <input name="contact" required maxlength="200" placeholder="adres e-mail Rady lub dyżur" />
+            </label>
+            <label>Układ wydruku
+              <select name="layout">
+                <option value="a4">Jedna kartka na stronę A4</option>
+                <option value="a5x2">Dwie kartki na stronę A4 z linią cięcia</option>
+              </select>
+            </label>
+          </div>
+          <label class="check">
+            <input type="checkbox" name="templateApproved" />
+            Treść kartki została zatwierdzona przez Radę (bez tego wydruk ma oznaczenie „WZÓR”)
+          </label>
+          <div class="form-error" id="config-error" role="alert"></div>
+        </form>
+      </section>
+
+      <section class="block" aria-labelledby="file-title">
+        <h2 id="file-title">2. Lista rodzin</h2>
+        <p class="hint">Plik CSV lub JSON z kolumnami: ID rodziny, Imię ucznia, Nazwisko ucznia, Klasa oraz opcjonalnie Wpłaty netto EUR. Maksymalnie 2 MB i 5000 wierszy.</p>
+        <label>Plik z danymi
+          <input id="file-input" type="file" accept=".csv,.json,text/csv,application/json" />
+        </label>
+        <div class="message" id="file-message" role="status"></div>
+        <ul class="errors" id="file-errors" hidden></ul>
+      </section>
+
+      <section class="block" aria-labelledby="select-title" id="select-section" hidden>
+        <h2 id="select-title">3. Wybór rodzin</h2>
+        <div class="toolbar">
+          <label>Klasa
+            <select id="class-filter"><option value="">Wszystkie</option></select>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="hide-recorded" />
+            Ukryj rodziny z wpisem wpłaty
+          </label>
+          <div class="buttons">
+            <button type="button" id="select-visible">Zaznacz widoczne</button>
+            <button type="button" id="select-none">Odznacz wszystkie</button>
+          </div>
+        </div>
+        <p id="selection-count" role="status" aria-live="polite">Wybrano 0 rodzin.</p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Rodziny do wydruku</caption>
+            <thead>
+              <tr>
+                <th scope="col"><span class="sr-only">Wybór</span></th>
+                <th scope="col">Rodzina</th>
+                <th scope="col">Uczniowie</th>
+                <th scope="col">Wpis wpłaty w pliku</th>
+              </tr>
+            </thead>
+            <tbody id="households-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="block" aria-labelledby="preview-title" id="preview-section" hidden>
+        <h2 id="preview-title">4. Podgląd i druk</h2>
+        <p class="hint">Wydruk: „Drukuj”, a w oknie przeglądarki wybierz drukarkę albo „Zapisz jako PDF”, format A4, skala 100%, bez nagłówków i stopek przeglądarki.</p>
+        <div class="message" id="preview-message" role="status"></div>
+        <label class="check">
+          <input type="checkbox" id="confirm-selection" />
+          <span id="confirm-label">Sprawdziłem/am wybór rodzin i podgląd kartek.</span>
+        </label>
+        <button type="button" class="primary" id="print-button" disabled>Drukuj</button>
+        <div class="preview" id="preview" aria-label="Podgląd kartek"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

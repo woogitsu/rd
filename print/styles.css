@@ -1,0 +1,114 @@
+:root {
+  color: #282c2f;
+  background: #fff;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  --red: #b3262d;
+  --red-dark: #8e2026;
+  --line: #e2e2e0;
+  --muted: #5d6266;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #fff; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+h1, h2, p { margin-top: 0; }
+
+.skip-link { position: absolute; left: -999px; top: 0; padding: .6rem 1rem; background: #fff; color: var(--red-dark); }
+.skip-link:focus { left: 1rem; z-index: 10; }
+
+.site-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
+  min-height: 72px; padding: .6rem 5vw; background: #fff;
+  border-top: 4px solid var(--red); border-bottom: 1px solid var(--line);
+}
+.brand { color: inherit; text-decoration: none; font-weight: 700; line-height: 1.2; }
+.brand small { color: var(--muted); font-weight: 500; }
+nav { display: flex; flex-wrap: wrap; gap: .25rem; }
+nav a { padding: .55rem .75rem; color: #3e4347; text-decoration: none; }
+nav a:hover { color: var(--red-dark); text-decoration: underline; }
+nav a.active { color: var(--red); box-shadow: inset 0 -2px 0 var(--red); }
+
+main { width: min(1100px, 100% - 32px); margin: 0 auto; padding: 2.5rem 0 4rem; }
+h1 { margin-bottom: .6rem; font-family: Georgia, serif; font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 500; }
+h2 { margin-bottom: .5rem; font-size: 1.1rem; }
+.eyebrow { margin-bottom: .4rem; color: var(--red); font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.page-heading p:not(.eyebrow), .hint { color: var(--muted); }
+
+.notice { margin: 0 0 2rem; padding: .9rem 1rem; border-left: 3px solid var(--red); background: #fafafa; }
+.block { padding: 1.5rem 0; border-top: 1px solid var(--line); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+label { display: grid; gap: .35rem; font-size: .9rem; font-weight: 600; }
+label small { color: var(--muted); font-weight: 400; }
+label.check { display: flex; align-items: flex-start; gap: .55rem; margin: .75rem 0; font-weight: 500; }
+label.check input { width: 1.15rem; height: 1.15rem; margin: .1rem 0 0; flex: none; }
+input, select { width: 100%; padding: .65rem .75rem; color: inherit; background: #fff; border: 1px solid #8d9296; border-radius: 0; }
+input[type="checkbox"] { width: 1.15rem; height: 1.15rem; accent-color: var(--red); }
+input[type="file"] { padding: .5rem; }
+:focus-visible { outline: 3px solid var(--red-dark); outline-offset: 2px; }
+
+button { min-height: 44px; padding: .6rem 1rem; color: #282c2f; background: #fff; border: 1px solid #8d9296; border-radius: 0; font-weight: 600; }
+button:hover { border-color: #282c2f; }
+button.primary { color: #fff; background: var(--red); border-color: var(--red); }
+button.primary:hover { background: var(--red-dark); }
+button:disabled { cursor: not-allowed; opacity: .5; }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; margin-bottom: 1rem; }
+.toolbar > label:first-child { min-width: 180px; }
+.toolbar label.check { margin: 0 0 .7rem; }
+.buttons { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th, td { padding: .7rem .75rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-size: .75rem; letter-spacing: .04em; text-transform: uppercase; }
+td:first-child, th:first-child { width: 3rem; }
+
+.message { margin: .75rem 0; }
+.form-error { min-height: 1.3em; color: var(--red-dark); font-size: .9rem; }
+.errors { color: var(--red-dark); font-size: .9rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Podgląd kartek na ekranie */
+.preview { display: grid; gap: 1.5rem; margin-top: 1.5rem; }
+.print-card { max-width: 170mm; padding: 14mm 16mm; background: #fff; border: 1px solid var(--line); font-size: 11pt; line-height: 1.5; color: #1f2326; }
+.card-header { padding-bottom: 4mm; margin-bottom: 6mm; border-bottom: 1px solid #bbb; }
+.card-header p { margin: 0; }
+.card-council { font-family: Georgia, serif; font-size: 15pt; }
+.card-school, .card-year { color: #444; font-size: 10pt; }
+.card-title { margin-bottom: 4mm; font-family: Georgia, serif; font-size: 14pt; font-weight: 500; }
+.card-to { margin-bottom: 1mm; }
+.card-students { margin: 0 0 5mm; padding-left: 5mm; }
+.card-payment { display: grid; grid-template-columns: max-content 1fr; gap: 1mm 5mm; margin: 0 0 4mm; }
+.card-payment dt { color: #444; }
+.card-payment dd { margin: 0; font-variant-numeric: tabular-nums; }
+.card-contact { margin-top: 6mm; }
+.card-ref { margin: 8mm 0 0; color: #666; font-size: 8.5pt; }
+.card-draft { margin: 0 0 4mm; padding: 1.5mm 3mm; border: 1px solid var(--red); color: var(--red-dark); font-size: 9pt; font-weight: 700; letter-spacing: .06em; }
+
+@media (max-width: 640px) {
+  .site-header { flex-direction: column; align-items: flex-start; }
+  nav a { padding: .45rem .5rem; }
+  .print-card { padding: 1.2rem; font-size: 10.5pt; }
+  .buttons, .buttons button, #print-button { width: 100%; }
+}
+
+/* Druk: tylko kartki, jedna na stronę A4 (lub dwie z linią cięcia). */
+@page { size: A4; margin: 15mm; }
+
+@media print {
+  body > *:not(main), main > *:not(#preview-section), #preview-section > *:not(.preview) { display: none !important; }
+  main { width: auto; padding: 0; margin: 0; }
+  #preview-section { padding: 0; border: 0; }
+  .preview { display: block; margin: 0; }
+  .print-card { max-width: none; padding: 0; border: 0; break-inside: avoid; page-break-inside: avoid; break-after: page; page-break-after: always; }
+  .print-card:last-child { break-after: auto; page-break-after: auto; }
+  .card-draft { border-color: #000; color: #000; }
+
+  body[data-layout="a5x2"] .print-card { height: 128mm; overflow: hidden; break-after: auto; page-break-after: auto; font-size: 10pt; }
+  body[data-layout="a5x2"] .print-card:nth-child(odd) { margin-bottom: 6mm; padding-bottom: 6mm; border-bottom: 1px dashed #000; height: 131mm; }
+  body[data-layout="a5x2"] .print-card:nth-child(even) { break-after: page; page-break-after: always; }
+  body[data-layout="a5x2"] .print-card:last-child { break-after: auto; page-break-after: auto; }
+}
