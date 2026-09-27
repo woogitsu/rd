@@ -166,6 +166,19 @@ Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na dan
 
 Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają na poziomie trasy MFA (dla admina, zarządu i skarbnika wymusza je bramka MFA routera), także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
 
+## Akcje w panelach (issue #225)
+
+Panele ukrywają akcje, których rola nie może wykonać. Robią to na podstawie `GET /api/access`; sesja przed MFA dostaje tam `grants: []`, więc nie widzi żadnych akcji. To wyłącznie skrót dla użytkownika, a każdą operację nadal autoryzuje serwer.
+
+| Panel | Akcja | Kto ją widzi |
+|---|---|---|
+| Wpłaty, Księga | formularze i „Dodaj wpłatę”/„Dodaj wpis” | role z `FINANCIAL_ROLES` z przydziałem bez klasy; pozostali widzą jeden komunikat o braku dostępu |
+| Dokumenty | rodzaj w formularzu przesyłania | według `DOCUMENT_POLICIES`; przedstawiciel widzi tylko „Materiał klasy” z podpowiedzią własnych klas |
+| Zebrania | „Nowe zebranie” | `MANAGE_ROLES` |
+| Wydarzenia | „Nowy szkic”, „Zgłoś”, „Zatwierdź”, „Opublikuj”, „Odwołaj” | według `EVENT_POLICY`; „Zatwierdź” nie jest pokazywane autorowi wydarzenia ani autorowi bieżącej wersji, który zamiast tego widzi wyjaśnienie zasady czterech oczu |
+
+Listy ról w panelach (`*/core.js`) porównuje ze stałymi serwera test `tests/role-policy-parity.test.js`. Odpowiedź 403 panele Wpłat i Księgi opisują jako brak uprawnień, a nie jako „Błąd serwera”.
+
 ## Znane luki (przypadki `todo` w macierzy)
 
 Obecnie brak — macierz nie ma przypadków `todo`. Naprawione wcześniej luki pozostają jako zwykłe asercje:

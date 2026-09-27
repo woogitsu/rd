@@ -1,3 +1,4 @@
+import { describeApiError, hasFinancialAccess } from "./core.js";
 import {
   DIRECTION_LABELS,
   METHOD_LABELS,
@@ -35,7 +36,9 @@ async function api(url, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = typeof data.error === "string" ? data.error : data.error?.message || data.message;
+    const code = typeof data.error === "string" ? data.error : null;
+    const error = describeApiError(response.status, code)
+      || (typeof data.error === "string" ? data.error : data.error?.message || data.message);
     throw new Error(error || `Błąd serwera (${response.status}).`);
   }
   return data;
@@ -160,6 +163,28 @@ loadMore.addEventListener("click", async () => {
   catch (error) { message.className = "message error"; message.textContent = error.message; }
   finally { setBusy(false); }
 });
+
+// #225: Księgę prowadzą role finansowe. Inne konta widzą jeden komunikat zamiast
+// formularzy. Sesja przed MFA dostaje z /api/access puste grants (brak akcji).
+async function applyAccess() {
+  let access;
+  try {
+    access = await api("/api/access");
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+    return;
+  }
+  const grants = Array.isArray(access.grants) ? access.grants : [];
+  if (hasFinancialAccess(grants)) return;
+  byId("open-entry").hidden = true;
+  byId("open-entry-hint").hidden = true;
+  filtersForm.closest("section").hidden = true;
+  const notice = byId("access-notice");
+  if (access.mfaRequired === true) notice.textContent = describeApiError(403, "mfa_required");
+  notice.hidden = false;
+}
+applyAccess();
 
 // Po zapisie tabela jest renderowana od nowa; gdy przycisk otwierający okno zniknie,
 // fokus trafia na nagłówek listy zapisów zamiast na <body> (WCAG 2.4.3).
