@@ -2,7 +2,14 @@
 
 `npm ci`, `npm run dev:import` — lokalna makieta importu. Plik jest parsowany lokalnie w przeglądarce. `npm run build:import` tworzy statyczne `dist/import/`. `npm test` uruchamia testy CSV, syntetycznego XLSX, walidacji oraz API importu na PGlite (`tests/pg-import.test.js`). GitHub Actions wykonuje testy i build po otwarciu PR.
 
-Obsługiwane CSV (UTF-8 z opcjonalnym BOM, średnik/przecinek) i XLSX (pierwszy arkusz). Limit 5 MB, 5000 wierszy i 60 kolumn. Wybór pliku, mapowanie nagłówków, walidacja, możliwe duplikaty, ostrzeżenia o niespójnych danych opiekunów przy tym samym ID rodziny i podgląd 100 pierwszych wierszy. Tabela pokazuje oboje opiekunów, gdy są wpisani. W repo jest fikcyjny `template.csv`.
+Obsługiwane CSV (kodowanie i separator wykrywane w `import/csv.js`, patrz niżej) i XLSX (pierwszy arkusz). Limit 5 MB, 5000 wierszy i 60 kolumn. Wybór pliku, mapowanie nagłówków, walidacja, możliwe duplikaty, ostrzeżenia o niespójnych danych opiekunów przy tym samym ID rodziny i podgląd 100 pierwszych wierszy. Tabela pokazuje oboje opiekunów, gdy są wpisani. W repo jest fikcyjny `template.csv`.
+
+### Kodowanie i separator CSV (#77)
+
+- Kodowanie: BOM UTF-8 lub UTF-16 LE/BE → odpowiedni dekoder; bez BOM próba UTF-8 w trybie ścisłym, a przy niepoprawnych bajtach Windows-1250 (eksport „CSV (rozdzielany średnikami)” z polskiego Excela). Pole „Kodowanie CSV” pozwala wymusić UTF-8, Windows-1250 lub Windows-1252 (Excel BE/FR).
+- Status pliku podaje użyte kodowanie i separator, np. „Windows-1250 (Excel PL), średnik”. Znaki typowe dla ISO-8859-2 lub Windows-1252 odczytanych jako Windows-1250 dają ostrzeżenie — sprawdź nazwiska i w razie potrzeby wybierz kodowanie ręcznie.
+- Znak zastępczy `�`, NUL (UTF-16 bez BOM) lub bajt nieopisany przez kodowanie → błąd „Plik ma nieznane kodowanie…”; plik nie przechodzi do mapowania.
+- Separator `;`, `,` albo tabulator liczony w pierwszej niepustej linii poza cudzysłowami; remis jest sygnalizowany w statusie.
 
 Kroki 1–3 (plik, mapowanie, sprawdzenie) nadal działają wyłącznie lokalnie i niczego nie wysyłają.
 

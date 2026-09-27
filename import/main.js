@@ -1,6 +1,8 @@
 import { readSheet } from 'read-excel-file/browser';
 import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
+import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 const fileInput = document.querySelector('#file');
+const encodingSelect = document.querySelector('#encoding');
 const status = document.querySelector('#file-status');
 const mappingSection = document.querySelector('#mapping-section');
 const resultSection = document.querySelector('#result-section');
@@ -19,16 +21,19 @@ let matrix = null;
 let lastResult = null;
 function showError(message) { status.className = 'status error'; status.textContent = message; fileInput.setAttribute('aria-invalid', 'true'); }
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-fileInput.addEventListener('change', async () => {
+async function readSelectedFile() {
   matrix = null; lastResult = null; resetServer(); mapArea.replaceChildren(); mappingSection.hidden = true; resultSection.hidden = true; serverSection.hidden = true;
   const file = fileInput.files?.[0]; if (!file) return;
   if (file.size > 5 * 1024 * 1024) return showError('Plik przekracza 5 MB.');
   if (!/\.(csv|xlsx)$/i.test(file.name)) return showError('Wybierz plik .csv lub .xlsx.');
   status.className = 'status muted'; status.textContent = 'Odczyt pliku…'; fileInput.removeAttribute('aria-invalid');
+  let source = '', warnings = [];
   try {
     if (/\.csv$/i.test(file.name)) {
-      const bytes = await file.arrayBuffer();
-      matrix = parseCsv(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+      // #77: wykrycie kodowania (UTF-8/BOM, Windows-1250) i separatora; ręczny wybór nadpisuje wykrycie.
+      const decoded = decodeCsvBytes(await file.arrayBuffer(), { encoding: encodingSelect.value });
+      source = describeSource(decoded, detectDelimiter(decoded.text)); warnings = decoded.warnings;
+      matrix = parseCsv(decoded.text);
     } else matrix = await readSheet(file);
     if (matrix.length < 2 || matrix.length > 5001) throw new Error('Plik musi zawierać od 1 do 5000 wierszy danych.');
     if (!Array.isArray(matrix[0]) || matrix[0].length > 60) throw new Error('Nagłówek ma więcej niż 60 kolumn.');
@@ -42,9 +47,12 @@ fileInput.addEventListener('change', async () => {
       if (suggested[field] !== undefined) select.value = String(suggested[field]);
       wrapper.append(select); mapArea.append(wrapper);
     }
-    mappingSection.hidden = false; status.textContent = `Odczytano ${matrix.length - 1} wierszy z pliku ${file.name}.`;
+    mappingSection.hidden = false;
+    status.textContent = `Odczytano ${matrix.length - 1} wierszy z pliku ${file.name}${source ? ` (${source})` : ''}.${warnings.length ? ` Uwaga: ${warnings.join(' ')}` : ''}`;
   } catch (error) { matrix = null; showError(`Nie udało się odczytać pliku: ${error.message}`); }
-});
+}
+fileInput.addEventListener('change', readSelectedFile);
+encodingSelect.addEventListener('change', readSelectedFile);
 document.querySelector('#preview').addEventListener('click', () => {
   if (!matrix) return;
   const mapping = Object.fromEntries(Array.from(mapArea.querySelectorAll('select')).map(el => [el.dataset.field, el.value]));

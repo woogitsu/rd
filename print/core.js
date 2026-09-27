@@ -1,6 +1,7 @@
 // Czyste funkcje modułu wydruku kartek o dobrowolnej składce (#11).
 // Brak dostępu do DOM i sieci — wszystko testowane w tests/print-core.test.js.
 import { parseCsv } from "../import/core.js";
+import { decodeCsvBytes, detectDelimiter } from "../import/csv.js";
 import { formatCents, isValidId, parseEuroAmount } from "../panel/core.js";
 
 export const MAX_ROWS = 5000;
@@ -133,6 +134,19 @@ export function parseInputText(text, fileName) {
   }
   if (/\.csv$/i.test(fileName)) return parseInputRows(parseCsv(text));
   throw new Error("Wybierz plik .csv lub .json.");
+}
+
+// Odczyt bajtów pliku (#77): CSV z wykryciem kodowania (UTF-8/BOM, UTF-16 z BOM, Windows-1250)
+// albo z kodowaniem wybranym ręcznie; JSON wyłącznie w UTF-8. Nierozpoznane bajty = błąd, brak wierszy.
+// Zwraca wynik parseInputText oraz source: { encoding, label, bom, warnings, delimiter }.
+export function parseInputBytes(bytes, fileName, options = {}) {
+  const isCsv = /\.csv$/i.test(fileName);
+  if (!isCsv && !/\.json$/i.test(fileName)) throw new Error("Wybierz plik .csv lub .json.");
+  const decoded = decodeCsvBytes(bytes, { encoding: isCsv ? options.encoding ?? "auto" : "utf-8" });
+  const parsed = parseInputText(decoded.text, fileName);
+  const { text, ...source } = decoded;
+  if (isCsv) source.delimiter = detectDelimiter(text);
+  return { ...parsed, source };
 }
 
 // Grupowanie: jedna pozycja na rodzinę; każda rodzina zawiera wyłącznie uczniów

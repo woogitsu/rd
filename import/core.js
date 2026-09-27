@@ -1,3 +1,4 @@
+import { detectDelimiter } from './csv.js';
 export const FIELDS = [
   ['studentId', 'ID ucznia (jeśli jest)'], ['firstName', 'Imię ucznia *'],
   ['lastName', 'Nazwisko ucznia *'], ['className', 'Klasa *'],
@@ -28,20 +29,8 @@ export function guessMapping(headers) {
 export function parseCsv(text) {
   if (typeof text !== 'string' || !text.trim()) throw new Error('Plik CSV jest pusty.');
   const input = text.replace(/^\uFEFF/, '');
-  // Count only separators outside quoted cells in the header.
-  let commas = 0, semicolons = 0, inHeaderQuote = false;
-  for (let i = 0; i < input.length; i++) {
-    const char = input[i];
-    if (char === '"') {
-      if (inHeaderQuote && input[i + 1] === '"') i++;
-      else inHeaderQuote = !inHeaderQuote;
-    } else if (!inHeaderQuote) {
-      if (char === '\n' || char === '\r') break;
-      if (char === ',') commas++;
-      if (char === ';') semicolons++;
-    }
-  }
-  const delimiter = semicolons > commas ? ';' : ',';
+  // Separator liczony w nagłówku poza cudzysłowami: ; , albo tabulator (import/csv.js).
+  const { delimiter } = detectDelimiter(input);
   const rows = []; let row = [], cell = '', quoted = false, afterQuote = false;
   for (let i = 0; i < input.length; i++) {
     const char = input[i];

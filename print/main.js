@@ -5,10 +5,11 @@ import {
   classNames,
   filterHouseholds,
   normalizeConfig,
+  parseInputBytes,
   parseInputRows,
-  parseInputText,
   renderCardsHtml,
 } from "./core.js";
+import { describeSource } from "../import/csv.js";
 
 // Stan wyłącznie w pamięci karty przeglądarki: nic nie jest zapisywane ani wysyłane.
 // Jedyne żądanie sieciowe to odczyt GET /api/print/cards po kliknięciu „Wczytaj z serwera”.
@@ -17,6 +18,7 @@ const byId = (id) => document.getElementById(id);
 const configForm = byId("config-form");
 const configError = byId("config-error");
 const fileInput = byId("file-input");
+const fileEncoding = byId("file-encoding");
 const fileMessage = byId("file-message");
 const fileErrors = byId("file-errors");
 const selectSection = byId("select-section");
@@ -252,16 +254,26 @@ async function handleFile(file) {
     renderTable();
     return;
   }
-  let text;
+  let bytes;
   try {
-    text = await file.text();
+    // #77: bajty zamiast file.text(), które po cichu zamienia znaki Windows-1250 na „�”.
+    bytes = await file.arrayBuffer();
   } catch {
     fileMessage.textContent = "Nie udało się odczytać pliku.";
     fileInput.setAttribute("aria-invalid", "true");
     renderTable();
     return;
   }
-  loadParsed(() => parseInputText(text, file.name), "Plik", fileInput);
+  let source = null;
+  loadParsed(() => {
+    const parsed = parseInputBytes(bytes, file.name, { encoding: fileEncoding.value });
+    source = parsed.source;
+    return parsed;
+  }, "Plik", fileInput);
+  if (source) {
+    const described = describeSource(source, source.delimiter);
+    fileMessage.textContent += ` Odczytano: ${described}.${source.warnings.length ? ` Uwaga: ${source.warnings.join(" ")}` : ""}`;
+  }
 }
 
 const api = createApiControls();
@@ -297,6 +309,9 @@ async function handleApiLoad() {
 
 api.button.addEventListener("click", handleApiLoad);
 fileInput.addEventListener("change", () => handleFile(fileInput.files?.[0]));
+fileEncoding.addEventListener("change", () => {
+  if (fileInput.files?.[0]) handleFile(fileInput.files[0]);
+});
 configForm.addEventListener("input", updateSummary);
 configForm.addEventListener("submit", (event) => event.preventDefault());
 classFilter.addEventListener("change", renderTable);
