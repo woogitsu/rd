@@ -20,6 +20,9 @@ To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.
 
+Kontrolowany eksport, snapshot, transakcyjny import do pustej bazy i rollback
+opisuje [`docs/D1_POSTGRES_MIGRATION.md`](../docs/D1_POSTGRES_MIGRATION.md).
+
 Migrator uruchamia się **wyłącznie ręcznie**: `DATABASE_URL=... npm run
 db:migrate:postgres`. Nie startuje wraz z aplikacją. Każdy plik SQL jest
 zatwierdzany w osobnej transakcji, pod blokadą advisory lock. Ponowne
