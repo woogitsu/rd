@@ -288,3 +288,73 @@ test('ledger list rejects missing scope, invalid cursor and unauthorized access'
     scoped.db.close();
   }
 });
+
+test('ledger overview returns active categories, yearly balance and current budget revision', async t => {
+  const { db, env } = await setup();
+  t.after(() => db.close());
+  db.exec(`
+    UPDATE ledger_categories SET active = 0 WHERE id = 'income-other';
+    INSERT INTO ledger_opening_balances (
+      id, school_year_id, amount_cents, note, created_by, idempotency_key
+    ) VALUES ('ob1', 'y2026', 1000, 'Bilans syntetyczny', 'u1', 'overview-opening-0001');
+    INSERT INTO ledger_budget_lines (
+      id, school_year_id, category_id, planned_cents, note, created_by, idempotency_key
+    ) VALUES ('bl1', 'y2026', 'expense-events', 20000, 'Plan początkowy', 'u1', 'overview-budget-0001');
+    INSERT INTO ledger_budget_lines (
+      id, school_year_id, category_id, planned_cents, note, supersedes_id, created_by, idempotency_key
+    ) VALUES (
+      'bl2', 'y2026', 'expense-events', 18000, 'Plan poprawiony', 'bl1', 'u1', 'overview-budget-0002'
+    );
+  `);
+  assert.equal((await worker.fetch(post('/api/ledger', entryInput, 'overview-entry-0001'), env)).status, 201);
+
+  const categoriesResponse = await worker.fetch(get('/api/ledger/categories?schoolYearId=y2026'), env);
+  assert.equal(categoriesResponse.status, 200);
+  assert.deepEqual(await categoriesResponse.json(), {
+    categories: [{ id: 'expense-events', direction: 'expense', name: 'Wydarzenia' }],
+  });
+  const filtered = await worker.fetch(get(
+    '/api/ledger/categories?schoolYearId=y2026&direction=income',
+  ), env);
+  assert.deepEqual(await filtered.json(), { categories: [] });
+
+  const summaryResponse = await worker.fetch(get('/api/ledger/summary?schoolYearId=y2026'), env);
+  assert.equal(summaryResponse.status, 200);
+  assert.deepEqual(await summaryResponse.json(), { summary: {
+    schoolYearId: 'y2026',
+    openingBalanceCents: 1000,
+    incomeCents: 0,
+    expenseCents: 12500,
+    closingBalanceCents: -11500,
+  } });
+
+  const budgetResponse = await worker.fetch(get('/api/ledger/budget?schoolYearId=y2026'), env);
+  assert.equal(budgetResponse.status, 200);
+  assert.deepEqual(await budgetResponse.json(), { budget: [{
+    id: 'bl2',
+    categoryId: 'expense-events',
+    categoryName: 'Wydarzenia',
+    direction: 'expense',
+    plannedCents: 18000,
+    note: 'Plan poprawiony',
+    supersedesId: 'bl1',
+  }] });
+});
+
+test('ledger overview endpoints enforce MFA, role and school-year scope', async () => {
+  const paths = [
+    '/api/ledger/categories?schoolYearId=y2026',
+    '/api/ledger/summary?schoolYearId=y2026',
+    '/api/ledger/budget?schoolYearId=y2026',
+  ];
+  for (const options of [{ mfa: false }, { role: 'representative' }]) {
+    const { db, env } = await setup(options);
+    for (const path of paths) assert.equal((await worker.fetch(get(path), env)).status, 403);
+    db.close();
+  }
+  const { db, env } = await setup();
+  for (const suffix of ['categories', 'summary', 'budget']) {
+    assert.equal((await worker.fetch(get(`/api/ledger/${suffix}?schoolYearId=y2025`), env)).status, 403);
+  }
+  db.close();
+});
