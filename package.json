@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "build": "npm run build:import && npm run build:panel && npm run build:ledger && npm run build:print && npm run build:events && npm run build:documents && npm run build:site && npm run build:meetings",
+    "build": "npm run build:import && npm run build:panel && npm run build:ledger && npm run build:print && npm run build:events && npm run build:documents && npm run build:site && npm run build:meetings && npm run build:admin",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply rd --local",
@@ -36,7 +36,9 @@
     "dev:site": "vite site",
     "build:site": "vite build site --outDir ../dist/site --base ./ --emptyOutDir",
     "dev:meetings": "vite meetings",
-    "build:meetings": "vite build meetings --outDir ../dist/meetings --base ./ --emptyOutDir"
+    "build:meetings": "vite build meetings --outDir ../dist/meetings --base ./ --emptyOutDir",
+    "dev:admin": "vite admin",
+    "build:admin": "vite build admin --outDir ../dist/admin --base ./ --emptyOutDir"
   },
   "dependencies": {
     "read-excel-file": "9.3.10",

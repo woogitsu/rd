@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Konta i role — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../">
+        <span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span>
+      </a>
+      <nav aria-label="Panel">
+        <a href="../panel/">Wpłaty</a>
+        <a href="../ledger/">Księga</a>
+        <a class="active" href="./" aria-current="page">Konta i role</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">Administracja</p>
+          <h1>Konta i przydziały ról</h1>
+          <p>Zaproszenia, role z zakresem roku i klasy, wygaszanie kadencji. Każda zmiana trafia do dziennika.</p>
+        </div>
+      </section>
+
+      <aside class="notice" role="note">
+        Prototyp na danych syntetycznych. Panel wymaga roli administratora z potwierdzonym MFA; serwer sprawdza uprawnienia przy każdym żądaniu.
+        Macierz kompetencji ról (D-08) i sposób przyjmowania zaproszeń (D-10) czekają na decyzję szkoły.
+      </aside>
+
+      <div class="message" id="global-message" role="status"></div>
+
+      <section class="card" aria-labelledby="users-title">
+        <div class="section-heading">
+          <div><h2 id="users-title">Konta</h2><p id="users-summary">Wczytywanie…</p></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>E-mail</th><th>Nazwa</th><th>Identyfikator</th><th>Status</th><th class="num">Role</th><th class="num">Sesje</th><th><span class="sr-only">Akcje</span></th></tr>
+            </thead>
+            <tbody id="users-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="grants-title">
+        <div class="section-heading">
+          <div><h2 id="grants-title">Przydziały ról</h2><p id="grants-summary"></p></div>
+        </div>
+        <form id="grant-filters" class="filters">
+          <label>Konto <select name="userId"><option value="">Wszystkie</option></select></label>
+          <label>Rola <select name="role" data-roles="all"></select></label>
+          <label>Rok szkolny <select name="schoolYearId" data-years="all"></select></label>
+          <label>Klasa <select name="classId" data-classes="all"></select></label>
+          <label>Status
+            <select name="status">
+              <option value="active">Aktywne</option>
+              <option value="expired">Wygasłe</option>
+              <option value="revoked">Wycofane</option>
+              <option value="all">Wszystkie</option>
+            </select>
+          </label>
+          <button type="submit">Pokaż</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Konto</th><th>Rola</th><th>Zakres</th><th>Nadano</th><th>Wygasa</th><th>Status</th><th><span class="sr-only">Akcje</span></th></tr>
+            </thead>
+            <tbody id="grants-body"></tbody>
+          </table>
+        </div>
+
+        <h3>Nadaj rolę</h3>
+        <form id="grant-form" class="grid-form">
+          <label>Konto <select name="userId" required></select></label>
+          <label>Rola <select name="role" data-roles="pick" required></select></label>
+          <label>Rok szkolny <select name="schoolYearId" data-years="none"></select></label>
+          <label>Klasa <select name="classId" data-classes="none"></select></label>
+          <label>Ważny do (opcjonalnie) <input name="expiresOn" type="date" /></label>
+          <button class="primary" type="submit">Nadaj</button>
+          <p class="form-error" role="alert"></p>
+        </form>
+        <p class="hint">Przedstawiciel klasy wymaga klasy; rok zostanie przejęty z klasy. Nowy zakres to nowy przydział — istniejącego nie da się zmienić.</p>
+      </section>
+
+      <section class="card" aria-labelledby="invitations-title">
+        <div class="section-heading">
+          <div><h2 id="invitations-title">Zaproszenia</h2><p>Konto powstaje wyłącznie z zaproszenia. Panel nie wysyła e-maili.</p></div>
+        </div>
+        <form id="invitation-form" class="grid-form">
+          <label>E-mail <input name="email" type="email" autocomplete="off" required /></label>
+          <label>Rola <select name="role" data-roles="pick" required></select></label>
+          <label>Rok szkolny <select name="schoolYearId" data-years="none"></select></label>
+          <label>Klasa <select name="classId" data-classes="none"></select></label>
+          <label>Ważność (godziny) <input name="ttlHours" inputmode="numeric" placeholder="72" /></label>
+          <button class="primary" type="submit">Utwórz zaproszenie</button>
+          <p class="form-error" role="alert"></p>
+        </form>
+
+        <div class="token-box" id="token-box" hidden>
+          <p class="token-warning"><strong>Token jest widoczny tylko teraz.</strong> Przekaż go osobie zapraszanej osobnym, zaufanym kanałem. Nie wklejaj go do zgłoszeń ani czatów grupowych. Po zamknięciu tej ramki nie da się go odzyskać — w razie utraty wycofaj zaproszenie i utwórz nowe.</p>
+          <div class="token-row">
+            <code id="token-value"></code>
+            <button type="button" id="copy-token">Kopiuj</button>
+            <button type="button" id="hide-token">Zamknij</button>
+          </div>
+          <p class="hint" id="token-meta"></p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>E-mail</th><th>Rola</th><th>Zakres</th><th>Utworzono</th><th>Wygasa</th><th>Status</th><th><span class="sr-only">Akcje</span></th></tr>
+            </thead>
+            <tbody id="invitations-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="term-title">
+        <h2 id="term-title">Wygaszenie kadencji</h2>
+        <p class="hint">Wszystkie aktywne przydziały zakończonego roku szkolnego (w tym przydziały jego klas) otrzymają datę wygaśnięcia „teraz”. Historia zostaje. Aby potwierdzić, wpisz identyfikator roku.</p>
+        <form id="term-form" class="grid-form">
+          <label>Zakończony rok <select name="schoolYearId" data-years="finished" required></select></label>
+          <label>Potwierdź identyfikator <input name="confirm" autocomplete="off" required /></label>
+          <button class="danger" type="submit">Wygaś przydziały</button>
+          <p class="form-error" role="alert"></p>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="audit-title">
+        <div class="section-heading">
+          <div><h2 id="audit-title">Dziennik zmian kont i ról</h2><p>Ostatnie 100 zdarzeń. Dziennik zawiera identyfikatory, bez adresów e-mail.</p></div>
+          <button type="button" id="reload-audit">Odśwież</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Czas</th><th>Zdarzenie</th><th>Obiekt</th><th>Szczegóły</th><th>Wykonał</th></tr></thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
