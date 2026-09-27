@@ -112,9 +112,10 @@ const scopeParams = (scope) => [scope.allYears, scope.years, scope.classIds, sco
 const CLASS_IN_SCOPE = (alias) => `($1::boolean OR ${alias}.school_year_id = ANY($2::text[])
   OR EXISTS (SELECT 1 FROM unnest($3::text[], $4::text[]) AS g(class_id, school_year_id)
               WHERE g.class_id = ${alias}.id AND (g.school_year_id IS NULL OR g.school_year_id = ${alias}.school_year_id)))`;
-// Aktywna relacja opiekun–uczeń w przedziale [starts_on, ends_on).
-const RELATION_ACTIVE = (alias) => `(${alias}.starts_on IS NULL OR ${alias}.starts_on <= CURRENT_DATE)
-  AND (${alias}.ends_on IS NULL OR ${alias}.ends_on > CURRENT_DATE)`;
+// Aktywna relacja opiekun–uczeń: jedyne źródło prawdy to widok
+// student_guardians_current (#157) — dlatego wszystkie odwołania do
+// `student_guardians` poniżej, które mają liczyć się jako "aktualne",
+// czytają z tego widoku zamiast powtarzać warunek starts_on/ends_on.
 // Gospodarstwo kontaktowe ucznia (#95, założenie do D-08/D-11): należy do niego
 // opiekun z aktywną relacją do tego ucznia i obiema zgodami na kontakt (relacji
 // i opiekuna) — ta sama reguła co e-mail w liście klasy (buildClassRoster).
@@ -122,9 +123,9 @@ const RELATION_ACTIVE = (alias) => `(${alias}.starts_on IS NULL OR ${alias}.star
 const CONTACT_HOUSEHOLD = (householdExpr, studentExpr) => `EXISTS (
   SELECT 1 FROM guardian_households_current ch
     JOIN guardians cg ON cg.id = ch.guardian_id
-    JOIN student_guardians csg ON csg.guardian_id = cg.id
+    JOIN student_guardians_current csg ON csg.guardian_id = cg.id
    WHERE ch.household_id = ${householdExpr} AND csg.student_id = ${studentExpr}
-     AND csg.contact_allowed AND cg.contact_allowed AND ${RELATION_ACTIVE('csg')})`;
+     AND csg.contact_allowed AND cg.contact_allowed)`;
 // Zakres wyłącznie klasowy (przedstawiciel, także zarząd z przydziałem klasy).
 const isClassScoped = (scope) => !(scope.allYears || scope.years.length > 0);
 const STUDENT_IN_SCOPE = (studentExpr) => `($1::boolean OR EXISTS (
@@ -244,23 +245,20 @@ async function getHousehold(request, env, householdId, json) {
   const guardians = await env.db.query(
     `SELECT g.id, g.first_name, g.last_name, g.email, g.contact_allowed,
             EXISTS (
-              SELECT 1 FROM student_guardians sg
+              SELECT 1 FROM student_guardians_current sg
                WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
-                 AND sg.contact_allowed AND ${RELATION_ACTIVE('sg')}
+                 AND sg.contact_allowed
             ) AS relation_contact_allowed,
             COALESCE((
               SELECT json_agg(json_build_object('studentId', sg.student_id, 'contactAllowed', sg.contact_allowed,
                                                 'isPrimaryContact', sg.is_primary_contact) ORDER BY sg.student_id)
-                FROM student_guardians sg
+                FROM student_guardians_current sg
                WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
-                 AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
-                 ${classScoped ? 'AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)' : ''}
             ), '[]'::json) AS relations
        FROM guardian_households_current gh JOIN guardians g ON g.id = gh.guardian_id
       WHERE gh.household_id = $1
-        ${classScoped ? `AND EXISTS (SELECT 1 FROM student_guardians sg
-                                     WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
-                                       AND ${RELATION_ACTIVE('sg')})` : ''}
+        ${classScoped ? `AND EXISTS (SELECT 1 FROM student_guardians_current sg
+                                     WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[]))` : ''}
       ORDER BY g.last_name, g.first_name, g.id`,
     [householdId, visibleStudentIds],
   );
@@ -312,14 +310,14 @@ const GUARDIAN_IN_SCOPE = `($1::boolean OR EXISTS (
     SELECT 1 FROM guardian_households_current gh JOIN student_households_current sh ON sh.household_id = gh.household_id
      WHERE gh.guardian_id = g.id AND ${STUDENT_IN_SCOPE('sh.student_id')})
   OR EXISTS (
-    SELECT 1 FROM student_guardians sg
-     WHERE sg.guardian_id = g.id AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
+    SELECT 1 FROM student_guardians_current sg
+     WHERE sg.guardian_id = g.id
        AND ${STUDENT_IN_SCOPE('sg.student_id')}))`;
 // Zakres klasowy (#200): opiekun tylko przez aktywną relację z uczniem z zakresu,
 // nie przez wspólne gospodarstwo — ta sama reguła co karta gospodarstwa (#95).
 const GUARDIAN_RELATED_IN_SCOPE = `EXISTS (
-    SELECT 1 FROM student_guardians sg
-     WHERE sg.guardian_id = g.id AND ${RELATION_ACTIVE('sg')}
+    SELECT 1 FROM student_guardians_current sg
+     WHERE sg.guardian_id = g.id
        AND ${STUDENT_IN_SCOPE('sg.student_id')})`;
 
 function parseContactInput(data) {

@@ -276,15 +276,13 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     `WITH d AS (SELECT COALESCE($2::date, rd_today()) AS on_date)
      SELECT p.household_id, g.id AS guardian_id, g.email,
             COALESCE(g.contact_allowed, false) AS guardian_allowed,
-            COALESCE(bool_or(sg.contact_allowed
-              AND (sg.starts_on IS NULL OR sg.starts_on <= d.on_date)
-              AND (sg.ends_on IS NULL OR sg.ends_on >= d.on_date)), false) AS relation_allowed,
+            COALESCE(bool_or(sg.contact_allowed), false) AS relation_allowed,
             COALESCE(bool_or(sg.is_primary_contact), false) AS is_primary
        FROM d
        CROSS JOIN enrollments e
        JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = e.student_id
        JOIN households h ON h.id = p.household_id AND h.archived_at IS NULL
-       LEFT JOIN student_guardians sg ON sg.student_id = e.student_id
+       LEFT JOIN student_guardians_current_on((SELECT on_date FROM d)) sg ON sg.student_id = e.student_id
        LEFT JOIN guardians g ON g.id = sg.guardian_id
       WHERE e.school_year_id = $1
       GROUP BY p.household_id, g.id, g.email, g.contact_allowed

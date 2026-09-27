@@ -10,6 +10,25 @@ Migracja 0003 oddziela relację dziecko–opiekun od przynależności do jednego
 
 Pole household_id przy uczniu pozostaje na razie głównym przypisaniem organizacyjnym. Nie wolno na jego podstawie automatycznie ustalać obowiązku, wysokości ani adresata dobrowolnej składki. Zasady wpłat dla opieki dzielonej wymagają decyzji Rady i szkoły.
 
+## Relacja "aktualna" (issue #157)
+
+Jedyna definicja tego, czy relacja `student_guardians` obowiązuje w danym dniu, to
+widok `student_guardians_current` i funkcja `student_guardians_current_on(as_of)`
+(`postgres/migrations/0035_student_guardians_current.sql`). Semantyka przedziału to
+`[starts_on, ends_on)`: `starts_on` włącznie (`NULL` = od początku ewidencji),
+`ends_on` **wyłącznie** (`NULL` = relacja nadal trwa; w dniu `ends_on` relacja
+uznawana jest już za zakończoną). Dzień odniesienia to `rd_today()` (Europe/Brussels,
+migracja 0023), nie `CURRENT_DATE` serwera bazy.
+
+`src/pg/routes/families.js` (karta gospodarstwa), `src/pg/routes/email.js`
+(migawka adresatów kampanii) i `src/pg/export.js` (lista klasy dla przedstawiciela)
+czytają wyłącznie z tego widoku/funkcji — żaden z nich nie powtarza warunku
+`starts_on`/`ends_on` samodzielnie (pilnuje tego test statyczny w
+`tests/pg-routes-wiring.test.js`). Wcześniej te trzy moduły liczyły "aktualność"
+inaczej (patrz issue #157); ta zmiana ujednolica zachowanie, kosztem przesunięcia
+o jeden dzień widoczności relacji z `ends_on = dziś` w migawce kampanii i na
+liście klasy (poprzednio liczonych tam do `ends_on` włącznie).
+
 Migracja zachowuje stare dane deweloperskie, tworząc relacje pomiędzy uczniami i opiekunami z tego samego gospodarstwa. Przed migracją jakichkolwiek danych produkcyjnych taki podgląd musi zostać ręcznie sprawdzony — wspólny household_id nie dowodzi uprawnienia do kontaktu w sprawie każdego dziecka.
 
 ## Klasa i rok szkolny
