@@ -20,6 +20,7 @@ import * as eventsRoutes from './routes/events.js';
 import * as meetingsRoutes from './routes/meetings.js';
 import * as importRoutes from './routes/import.js';
 import * as documentRoutes from './routes/documents.js';
+import * as ledgerRoutes from './routes/ledger.js';
 
 export const ROUTES = [
   sessionRoutes,
@@ -28,8 +29,8 @@ export const ROUTES = [
   meetingsRoutes,
   importRoutes,
   documentRoutes,
-  // Kolejne moduły (#36+) dopisują tu po jednej linii, np.:
-  // ledgerRoutes,
+  ledgerRoutes,
+  // Kolejne moduły dopisują tu po jednej linii.
 ];
 
 export function createPgHandler(routes = ROUTES) {
