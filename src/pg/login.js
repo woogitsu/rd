@@ -10,7 +10,8 @@
 // - nieznany e-mail, złe hasło i konto wyłączone dają ten sam błąd
 //   `invalid_credentials` i ten sam koszt (fikcyjny hash),
 // - limity: 5 błędów / 15 min na skrót e-maila, 20 / 15 min na skrót IP
-//   → blokada 15 min (429 + Retry-After); w bazie tylko SHA-256, nigdy e-mail ani IP,
+//   → blokada 15 min (429 + Retry-After); w bazie tylko SHA-256, nigdy e-mail ani IP;
+//   próba jest rezerwowana atomowo przed sprawdzeniem hasła lub tokenu (#186),
 // - sesja po haśle ma mfa_verified_at = NULL; MFA potwierdza /api/mfa/verify,
 // - reset hasła wyłącznie tokenem wydanym przez administratora (brak resetu
 //   e-mailem: szablon i nadawca to decyzje D-16/D-17),
@@ -74,47 +75,108 @@ function loginScopes({ email, ip }) {
   return scopes;
 }
 
-async function activeLoginLock(executor, scopes) {
-  if (!scopes.length) return null;
-  const { rows } = await executor.query(
-    `SELECT CEIL(EXTRACT(EPOCH FROM (max(locked_until) - now())))::int AS retry_after
-       FROM login_rate_limits
-      WHERE (scope_type, scope_hash) IN (SELECT * FROM unnest($1::text[], $2::text[]))
-        AND locked_until > now()`,
-    [scopes.map((scope) => scope.type), scopes.map((scope) => scope.hash)],
-  );
-  const retry = rows[0]?.retry_after;
-  return retry ? Math.max(1, Number(retry)) : null;
+// Limit prób (#186). Próba jest REZERWOWANA przed kosztownym sprawdzeniem
+// (scrypt, token) w jednej transakcji: wiersze limitu są blokowane
+// (SELECT … FOR UPDATE), sprawdzana jest blokada i zajętość okna, a licznik
+// rośnie od razu. Równoległe żądania nie przejdą więc wspólnie jednego
+// sprawdzenia, a spóźniony błąd nie może zdjąć trwającej blokady — jedynym
+// zapisem zerującym licznik jest rezerwacja po WYGAŚNIĘCIU blokady lub okna.
+// Transakcja nie obejmuje scrypt. Próba zakończona sukcesem albo odrzucona
+// z innego powodu (np. słabe nowe hasło) zwalnia rezerwację.
+async function reserveAttempt(env, scopes) {
+  if (!scopes.length) return [];
+  return database(env).transaction(async (tx) => {
+    await tx.query('DELETE FROM login_rate_limits WHERE updated_at < now() - make_interval(secs => $1)', [LOGIN_POLICY.retentionSeconds]);
+    for (const scope of scopes) {
+      await tx.query(
+        `INSERT INTO login_rate_limits (scope_type, scope_hash, failure_count, window_started_at, updated_at)
+         VALUES ($1, $2, 0, now(), now()) ON CONFLICT (scope_type, scope_hash) DO NOTHING`,
+        [scope.type, scope.hash],
+      );
+    }
+    const { rows } = await tx.query(
+      `SELECT scope_type, scope_hash, failure_count,
+              locked_until IS NOT NULL AND locked_until > now() AS locked,
+              locked_until IS NOT NULL OR window_started_at <= now() - make_interval(secs => $3) AS expired,
+              CEIL(EXTRACT(EPOCH FROM (locked_until - now())))::int AS lock_retry,
+              CEIL(EXTRACT(EPOCH FROM (window_started_at + make_interval(secs => $3) - now())))::int AS window_retry
+         FROM login_rate_limits
+        WHERE (scope_type, scope_hash) IN (SELECT * FROM unnest($1::text[], $2::text[]))
+        ORDER BY scope_type, scope_hash
+        FOR UPDATE`,
+      [scopes.map((scope) => scope.type), scopes.map((scope) => scope.hash), LOGIN_POLICY.windowSeconds],
+    );
+    const byKey = new Map(rows.map((row) => [`${row.scope_type}:${row.scope_hash}`, row]));
+    let retryAfter = 0;
+    for (const scope of scopes) {
+      const row = byKey.get(`${scope.type}:${scope.hash}`);
+      if (row.locked) retryAfter = Math.max(retryAfter, Number(row.lock_retry));
+      // Okno wypełnione rezerwacjami prób w toku: odmowa bez liczenia hasła (bez nowej blokady).
+      else if (!row.expired && Number(row.failure_count) >= scope.max) retryAfter = Math.max(retryAfter, Number(row.window_retry));
+    }
+    if (retryAfter) throw new LoginError('too_many_attempts', 429, { retryAfter: Math.max(1, retryAfter) });
+    const reserved = [];
+    for (const scope of scopes) {
+      const { rows: updated } = await tx.query(
+        `UPDATE login_rate_limits SET
+           failure_count = CASE WHEN locked_until IS NOT NULL OR window_started_at <= now() - make_interval(secs => $3)
+                                THEN 1 ELSE failure_count + 1 END,
+           window_started_at = CASE WHEN locked_until IS NOT NULL OR window_started_at <= now() - make_interval(secs => $3)
+                                    THEN now() ELSE window_started_at END,
+           locked_until = CASE WHEN locked_until > now() THEN locked_until ELSE NULL END,
+           updated_at = now()
+         WHERE scope_type = $1 AND scope_hash = $2
+         RETURNING window_started_at`,
+        [scope.type, scope.hash, LOGIN_POLICY.windowSeconds],
+      );
+      reserved.push({ ...scope, windowStartedAt: updated[0].window_started_at });
+    }
+    return reserved;
+  });
 }
 
-// Zapisuje błąd we wszystkich zakresach; zwraca true, jeśli któryś właśnie się zablokował.
-async function recordLoginFailure(tx, scopes) {
-  await tx.query('DELETE FROM login_rate_limits WHERE updated_at < now() - make_interval(secs => $1)', [LOGIN_POLICY.retentionSeconds]);
+// Zwolnienie rezerwacji (sukces albo odrzucenie niebędące zgadywaniem). Tylko w tym
+// samym oknie i bez trwającej blokady — nigdy nie zdejmuje blokady.
+async function releaseAttempt(env, reserved) {
+  for (const scope of reserved) {
+    await database(env).query(
+      `UPDATE login_rate_limits SET failure_count = GREATEST(failure_count - 1, 0), updated_at = now()
+        WHERE scope_type = $1 AND scope_hash = $2 AND window_started_at = $3 AND locked_until IS NULL`,
+      [scope.type, scope.hash, scope.windowStartedAt],
+    );
+  }
+}
+
+// Wykonuje sprawdzenie w ramach zarezerwowanej próby. Błąd policzony (z failAttempt)
+// zostaje w liczniku; każdy inny wynik zwalnia rezerwację.
+async function withAttempt(env, scopes, fn) {
+  const reserved = await reserveAttempt(env, scopes);
+  let counted = false;
+  try {
+    return await fn();
+  } catch (error) {
+    counted = error instanceof LoginError && Boolean(error.extra?.counted);
+    throw error;
+  } finally {
+    if (!counted) await releaseAttempt(env, reserved);
+  }
+}
+
+// Zakłada blokadę zakresów, których licznik (z rezerwacją) osiągnął próg; trwającej
+// blokady nie zmienia. Zwraca true, gdy któryś zakres jest zablokowany.
+async function lockExhaustedScopes(tx, scopes) {
   let locked = false;
   for (const scope of scopes) {
     const { rows } = await tx.query(
-      `INSERT INTO login_rate_limits (scope_type, scope_hash, failure_count, window_started_at, updated_at)
-       VALUES ($1, $2, 1, now(), now())
-       ON CONFLICT (scope_type, scope_hash) DO UPDATE SET
-         failure_count = CASE WHEN login_rate_limits.locked_until IS NOT NULL
-                                OR login_rate_limits.window_started_at <= now() - make_interval(secs => $3)
-                              THEN 1 ELSE login_rate_limits.failure_count + 1 END,
-         window_started_at = CASE WHEN login_rate_limits.locked_until IS NOT NULL
-                                    OR login_rate_limits.window_started_at <= now() - make_interval(secs => $3)
-                                  THEN now() ELSE login_rate_limits.window_started_at END,
-         locked_until = NULL,
+      `UPDATE login_rate_limits SET
+         locked_until = CASE WHEN locked_until > now() THEN locked_until ELSE now() + make_interval(secs => $4) END,
          updated_at = now()
-       RETURNING failure_count`,
-      [scope.type, scope.hash, LOGIN_POLICY.windowSeconds],
+       WHERE scope_type = $1 AND scope_hash = $2
+         AND (locked_until > now() OR (failure_count >= $3 AND (locked_until IS NULL OR locked_until <= now())))
+       RETURNING scope_type`,
+      [scope.type, scope.hash, scope.max, LOGIN_POLICY.lockSeconds],
     );
-    if (rows[0].failure_count >= scope.max) {
-      await tx.query(
-        `UPDATE login_rate_limits SET locked_until = now() + make_interval(secs => $3), updated_at = now()
-          WHERE scope_type = $1 AND scope_hash = $2`,
-        [scope.type, scope.hash, LOGIN_POLICY.lockSeconds],
-      );
-      locked = true;
-    }
+    if (rows[0]) locked = true;
   }
   return locked;
 }
@@ -123,15 +185,11 @@ async function clearLoginFailures(tx, scope) {
   await tx.query('DELETE FROM login_rate_limits WHERE scope_type = $1 AND scope_hash = $2', [scope.type, scope.hash]);
 }
 
-async function ensureNotLocked(executor, scopes) {
-  const retryAfter = await activeLoginLock(executor, scopes);
-  if (retryAfter) throw new LoginError('too_many_attempts', 429, { retryAfter });
-}
-
-// Zapis błędu + audyt w jednej transakcji. Zwraca błąd do rzucenia.
+// Błąd zarezerwowanej próby + audyt w jednej transakcji. Zwraca błąd do rzucenia
+// (oznaczony jako policzony — withAttempt nie zwalnia rezerwacji).
 async function failAttempt(env, { scopes, action, userId = null, reason, code = 'invalid_credentials', status = 401 }) {
   const locked = await database(env).transaction(async (tx) => {
-    const isLocked = await recordLoginFailure(tx, scopes);
+    const isLocked = await lockExhaustedScopes(tx, scopes);
     await insertAuditEvent(tx, {
       actorId: null, action,
       entityType: userId ? 'user' : 'login_attempt', entityId: userId ?? crypto.randomUUID(),
@@ -140,8 +198,8 @@ async function failAttempt(env, { scopes, action, userId = null, reason, code = 
     return isLocked;
   });
   return locked
-    ? new LoginError('too_many_attempts', 429, { retryAfter: LOGIN_POLICY.lockSeconds })
-    : new LoginError(code, status);
+    ? new LoginError('too_many_attempts', 429, { retryAfter: LOGIN_POLICY.lockSeconds, counted: true })
+    : new LoginError(code, status, { counted: true });
 }
 
 async function findAccountByEmail(executor, normalizedEmail) {
@@ -185,19 +243,19 @@ function sessionPayload(session, status, extra = {}) {
 export async function passwordLogin(env, { email, password, clientIp }) {
   const normalized = normalizeLoginEmail(email);
   const scopes = loginScopes({ email: normalized, ip: clientIp });
-  await ensureNotLocked(database(env), scopes);
-
-  const wellFormed = normalized.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
-  const account = wellFormed ? await findAccountByEmail(database(env), normalized) : null;
-  const passwordOk = await verifyPasswordOrDummy(password, account?.hash ?? null, env);
-
-  if (!account || !account.hash || !passwordOk || account.disabled_at) {
-    let reason = 'unknown_account';
-    if (account && !account.hash) reason = 'no_password';
-    else if (account && !passwordOk) reason = 'invalid_password';
-    else if (account?.disabled_at) reason = 'user_disabled';
-    throw await failAttempt(env, { scopes, action: 'auth.login_failed', userId: account?.id ?? null, reason });
-  }
+  const account = await withAttempt(env, scopes, async () => {
+    const wellFormed = normalized.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+    const found = wellFormed ? await findAccountByEmail(database(env), normalized) : null;
+    const passwordOk = await verifyPasswordOrDummy(password, found?.hash ?? null, env);
+    if (!found || !found.hash || !passwordOk || found.disabled_at) {
+      let reason = 'unknown_account';
+      if (found && !found.hash) reason = 'no_password';
+      else if (found && !passwordOk) reason = 'invalid_password';
+      else if (found?.disabled_at) reason = 'user_disabled';
+      throw await failAttempt(env, { scopes, action: 'auth.login_failed', userId: found?.id ?? null, reason });
+    }
+    return found;
+  });
 
   const result = await database(env).transaction(async (tx) => {
     await clearLoginFailures(tx, scopes[0]);
@@ -244,34 +302,36 @@ function cleanDisplayName(value, email) {
 // `password` musi być jego obecnym hasłem (zaproszenie nie może przejąć konta).
 export async function acceptInvitationWithPassword(env, { token, password, displayName, clientIp }) {
   const ipScopes = loginScopes({ ip: clientIp });
-  await ensureNotLocked(database(env), ipScopes);
   const invalid = (reason) => failAttempt(env, {
     scopes: ipScopes, action: 'auth.invitation_accept_failed', reason, code: 'invalid_invitation', status: 400,
   });
-  if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) throw await invalid('malformed');
-  if (typeof password !== 'string') throw new LoginError('password_required', 400);
-  const tokenHash = await hashSecret(token);
-
-  const { rows: preview } = await database(env).query(
-    `SELECT lower(email) AS email FROM invitations
-      WHERE token_hash = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,
-    [tokenHash],
-  );
-  if (!preview[0]) throw await invalid('not_available');
-  const email = preview[0].email;
-  const existing = await findAccountByEmail(database(env), email);
-  if (existing?.disabled_at) throw await invalid('user_unavailable');
+  const { tokenHash, email, existing } = await withAttempt(env, ipScopes, async () => {
+    if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) throw await invalid('malformed');
+    if (typeof password !== 'string') throw new LoginError('password_required', 400);
+    const hash = await hashSecret(token);
+    const { rows: preview } = await database(env).query(
+      `SELECT lower(email) AS email FROM invitations
+        WHERE token_hash = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,
+      [hash],
+    );
+    if (!preview[0]) throw await invalid('not_available');
+    const account = await findAccountByEmail(database(env), preview[0].email);
+    if (account?.disabled_at) throw await invalid('user_unavailable');
+    return { tokenHash: hash, email: preview[0].email, existing: account };
+  });
 
   let newHash = null;
   if (existing?.hash) {
     // Sprawdzenie hasła istniejącego konta podlega temu samemu limitowi co logowanie.
-    await ensureNotLocked(database(env), loginScopes({ email, ip: clientIp }));
-    const ok = await verifyPasswordOrDummy(password, existing.hash, env);
-    if (!ok) {
-      throw await failAttempt(env, {
-        scopes: loginScopes({ email, ip: clientIp }), action: 'auth.invitation_accept_failed', userId: existing.id, reason: 'invalid_password',
-      });
-    }
+    const scopes = loginScopes({ email, ip: clientIp });
+    await withAttempt(env, scopes, async () => {
+      const ok = await verifyPasswordOrDummy(password, existing.hash, env);
+      if (!ok) {
+        throw await failAttempt(env, {
+          scopes, action: 'auth.invitation_accept_failed', userId: existing.id, reason: 'invalid_password',
+        });
+      }
+    });
   } else {
     const policyError = checkPasswordPolicy(password, { email });
     if (policyError) throw new LoginError(policyError, 400);
@@ -336,16 +396,18 @@ export async function acceptInvitationWithPassword(env, { token, password, displ
 
 export async function changePassword(env, session, { currentPassword, newPassword, clientIp }) {
   const scopes = loginScopes({ email: session.user.email ?? session.user.id, ip: clientIp });
-  await ensureNotLocked(database(env), scopes);
-  const { rows } = await database(env).query('SELECT hash FROM user_passwords WHERE user_id = $1', [session.user.id]);
-  const oldHash = rows[0]?.hash ?? null;
-  const ok = await verifyPasswordOrDummy(currentPassword, oldHash, env);
-  if (!ok || !oldHash) {
-    throw await failAttempt(env, {
-      scopes, action: 'auth.password_change_failed', userId: session.user.id,
-      reason: oldHash ? 'invalid_password' : 'no_password', code: 'invalid_current_password', status: 400,
-    });
-  }
+  const oldHash = await withAttempt(env, scopes, async () => {
+    const { rows } = await database(env).query('SELECT hash FROM user_passwords WHERE user_id = $1', [session.user.id]);
+    const hash = rows[0]?.hash ?? null;
+    const ok = await verifyPasswordOrDummy(currentPassword, hash, env);
+    if (!ok || !hash) {
+      throw await failAttempt(env, {
+        scopes, action: 'auth.password_change_failed', userId: session.user.id,
+        reason: hash ? 'invalid_password' : 'no_password', code: 'invalid_current_password', status: 400,
+      });
+    }
+    return hash;
+  });
   const policyError = checkPasswordPolicy(newPassword, { email: session.user.email });
   if (policyError) throw new LoginError(policyError, 400);
   if (currentPassword.normalize('NFKC') === newPassword.normalize('NFKC')) throw new LoginError('password_unchanged', 400);
@@ -376,18 +438,20 @@ export async function changePassword(env, session, { currentPassword, newPasswor
 
 export async function resetPasswordWithToken(env, { token, newPassword, clientIp }) {
   const ipScopes = loginScopes({ ip: clientIp });
-  await ensureNotLocked(database(env), ipScopes);
   const invalid = (reason) => failAttempt(env, {
     scopes: ipScopes, action: 'auth.password_reset_failed', reason, code: 'invalid_token', status: 400,
   });
-  if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) throw await invalid('malformed');
-  const tokenHash = await hashSecret(token);
   const lookup = `SELECT t.id, t.user_id, lower(u.email) AS email
                     FROM password_reset_tokens t JOIN users u ON u.id = t.user_id
                    WHERE t.token_hash = $1 AND t.used_at IS NULL AND t.revoked_at IS NULL
                      AND t.expires_at > now() AND u.disabled_at IS NULL`;
-  const { rows } = await database(env).query(lookup, [tokenHash]);
-  if (!rows[0]) throw await invalid('not_available');
+  const { tokenHash, rows } = await withAttempt(env, ipScopes, async () => {
+    if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) throw await invalid('malformed');
+    const hash = await hashSecret(token);
+    const found = await database(env).query(lookup, [hash]);
+    if (!found.rows[0]) throw await invalid('not_available');
+    return { tokenHash: hash, rows: found.rows };
+  });
   const policyError = checkPasswordPolicy(newPassword, { email: rows[0].email });
   if (policyError) throw new LoginError(policyError, 400);
   const newHash = await hashPassword(newPassword, { env });
