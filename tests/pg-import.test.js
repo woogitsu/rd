@@ -1,0 +1,346 @@
+// Import CSV/XLSX do PostgreSQL (issue #36). Wyłącznie dane syntetyczne,
+// domeny .invalid; nie są to dane uczniów ani rodzin.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPgHandler, handlePgRequest, ROUTES } from '../src/pg/app.js';
+import { assertNoPii } from '../src/pg/audit.js';
+import { guessMapping, parseCsv, toServerPayload, validateRows } from '../import/core.js';
+import { MESSAGES } from '../src/pg/routes/import.js';
+import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+
+const YEAR = 'y-2026';
+const HEADER = 'ID ucznia;Imię ucznia;Nazwisko ucznia;Klasa;ID rodziny;Opiekun 1;E-mail opiekuna 1;Opiekun 2;E-mail opiekuna 2';
+
+async function withDb(fn) {
+  const db = await createTestDb();
+  try {
+    await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
+    await seedClass(db, { id: 'c-2b', schoolYearId: YEAR, name: '2B' });
+    const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
+    return await fn(db, { db }, admin);
+  } finally { await db.close(); }
+}
+
+// To samo, co robi przeglądarka: parseCsv → guessMapping → validateRows → toServerPayload.
+function payloadFromCsv(csv, options = {}, schoolYearId = YEAR) {
+  const matrix = parseCsv(csv);
+  const result = validateRows(matrix, guessMapping(matrix[0]));
+  return toServerPayload(result, schoolYearId, options);
+}
+const csvOf = (...lines) => `${HEADER}\n${lines.join('\n')}\n`;
+
+function post(path, cookie, body, { key, origin, headers = {} } = {}) {
+  return request(path, { method: 'POST', cookie, body, origin, headers: key ? { ...headers, 'Idempotency-Key': key } : headers });
+}
+
+async function preview(env, cookie, payload) {
+  const response = await handlePgRequest(post('/api/import/preview', cookie, payload), env);
+  return { status: response.status, body: await response.json() };
+}
+
+async function commitWith(handler, env, cookie, payload, previewBody, key = 'key-00000001', extra = {}) {
+  const body = { ...payload, fingerprint: previewBody.fingerprint, planDigest: previewBody.planDigest, ...extra };
+  const response = await handler(post('/api/import/commit', cookie, body, { key }), env);
+  return { status: response.status, body: await response.json() };
+}
+const commit = (env, cookie, payload, previewBody, key, extra) => commitWith(handlePgRequest, env, cookie, payload, previewBody, key, extra);
+
+async function previewAndCommit(env, cookie, payload, key) {
+  const p = await preview(env, cookie, payload);
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  return { ...(await commit(env, cookie, payload, p.body, key)), preview: p.body };
+}
+
+async function tableCounts(db) {
+  const { rows } = await db.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name");
+  const counts = {};
+  for (const { table_name: table } of rows) {
+    counts[table] = (await db.query(`SELECT count(*)::int AS n FROM "${table}"`)).rows[0].n;
+  }
+  return counts;
+}
+
+const count = async (db, table) => (await db.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n;
+
+const BASIC = csvOf(
+  'S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan@example.invalid',
+  'S2;Ola;Testowa;2B;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan@example.invalid',
+  'S3;Piotr;Próbny;1A;R2;Ewa Próbna;ewa@example.invalid;;',
+);
+
+test('preview validates, reports a plan and writes nothing to any table', async () => withDb(async (db, env, admin) => {
+  const before = await tableCounts(db);
+  const { status, body } = await preview(env, admin, payloadFromCsv(BASIC));
+  assert.equal(status, 200);
+  assert.equal(body.written, false);
+  assert.equal(body.commitAllowed, true);
+  assert.match(body.fingerprint, /^[0-9a-f]{64}$/);
+  assert.deepEqual(body.counts, {
+    rowsTotal: 3, rowsAdded: 3, rowsUpdated: 0, rowsUnchanged: 0, rowsConflict: 0, rowsSkipped: 0,
+    householdsCreated: 2, guardiansCreated: 3, studentsCreated: 3, enrollmentsCreated: 3, linksCreated: 5,
+  });
+  assert.deepEqual(await tableCounts(db), before);
+  // Raport nie zwraca imion, nazwisk ani adresów.
+  const text = JSON.stringify(body);
+  for (const fragment of ['Ala', 'Testowa', 'anna@', 'S1', 'R1']) assert.equal(text.includes(fragment), false, fragment);
+}));
+
+test('commit is atomic, siblings share guardians and a repeated commit does not duplicate', async () => withDb(async (db, env, admin) => {
+  const payload = payloadFromCsv(BASIC);
+  const first = await previewAndCommit(env, admin, payload, 'key-00000001');
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  assert.equal(first.body.replayed, false);
+  assert.equal(await count(db, 'students'), 3);
+  assert.equal(await count(db, 'households'), 2);
+  assert.equal(await count(db, 'guardians'), 3);
+  assert.equal(await count(db, 'student_guardians'), 5);
+  assert.equal(await count(db, 'enrollments'), 3);
+  const siblings = await db.query("SELECT count(DISTINCT household_id)::int AS n FROM students WHERE source_ref IN ('S1','S2')");
+  assert.equal(siblings.rows[0].n, 1);
+  const contact = await db.query('SELECT bool_or(contact_allowed) AS any FROM student_guardians');
+  assert.equal(contact.rows[0].any, false);
+
+  const snapshot = await tableCounts(db);
+  // Podwójne kliknięcie (ten sam klucz) i ponowny import tego samego pliku (nowy klucz, stary podgląd).
+  const again = await commit(env, admin, payload, first.preview, 'key-00000001');
+  assert.equal(again.status, 200);
+  assert.equal(again.body.replayed, true);
+  assert.equal(again.body.batchId, first.body.batchId);
+  assert.deepEqual(again.body.counts, first.body.counts);
+  const secondPreview = await preview(env, admin, payload);
+  assert.equal(secondPreview.body.counts.rowsUnchanged, 3);
+  const otherKey = await commit(env, admin, payload, secondPreview.body, 'key-00000002');
+  assert.equal(otherKey.status, 200);
+  assert.equal(otherKey.body.batchId, first.body.batchId);
+  assert.deepEqual(await tableCounts(db), snapshot);
+}));
+
+test('failure in the middle of a commit rolls back everything', async () => withDb(async (db, env, admin) => {
+  const payload = payloadFromCsv(BASIC);
+  const p = await preview(env, admin, payload);
+  const before = await tableCounts(db);
+  // Wstrzyknięty błąd po zapisaniu partii, rodzin, opiekunów, uczniów i zapisów do klas.
+  const failingDb = {
+    query: (...args) => db.query(...args),
+    transaction: (fn) => db.transaction((tx) => fn({
+      query(sql, params) {
+        if (/^\s*INSERT INTO student_guardians/.test(sql)) throw new Error('injected_failure');
+        return tx.query(sql, params);
+      },
+    })),
+  };
+  const response = await handlePgRequest(post('/api/import/commit', admin, { ...payload, fingerprint: p.body.fingerprint, planDigest: p.body.planDigest }, { key: 'key-00000003' }), { db: failingDb });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await tableCounts(db), before);
+  // Po usunięciu awarii ten sam klucz działa normalnie.
+  const retry = await commit(env, admin, payload, p.body, 'key-00000003');
+  assert.equal(retry.status, 201);
+}));
+
+test('1200 synthetic rows from a BOM CSV: siblings, two guardians, correct totals', async () => withDb(async (db, env, admin) => {
+  const lines = [];
+  for (let family = 0; family < 600; family++) {
+    for (const child of [0, 1]) {
+      lines.push([`S${family}-${child}`, `Dziecko${child}`, `Rodzina${family}`, child ? '2B' : '1A', `R${family}`,
+        `Mama Rodzina${family}`, `m${family}@example.invalid`, `Tata Rodzina${family}`, `t${family}@example.invalid`].join(';'));
+    }
+  }
+  const csv = `﻿${HEADER}\r\n${lines.join('\r\n')}\r\n`;
+  const payload = payloadFromCsv(csv);
+  assert.equal(payload.rows.length, 1200);
+  assert.ok(Buffer.byteLength(JSON.stringify(payload)) < 1024 * 1024);
+  const result = await previewAndCommit(env, admin, payload, 'key-bulk-0001');
+  assert.equal(result.status, 201, JSON.stringify(result.body));
+  assert.equal(result.body.counts.rowsAdded, 1200);
+  assert.equal(await count(db, 'students'), 1200);
+  assert.equal(await count(db, 'households'), 600);
+  assert.equal(await count(db, 'guardians'), 1200);
+  assert.equal(await count(db, 'student_guardians'), 2400);
+  const header = await db.query("SELECT count(*)::int AS n FROM students WHERE source_ref LIKE '﻿%'");
+  assert.equal(header.rows[0].n, 0);
+}));
+
+test('same surname in different classes is not merged; rows without household ID need explicit consent', async () => withDb(async (db, env, admin) => {
+  const csv = csvOf(
+    'S10;Adam;Wspólny;1A;;Maria Wspólna;wspolny@example.invalid;;',
+    'S11;Beata;Wspólny;2B;;Maria Wspólna;wspolny@example.invalid;;',
+  );
+  const strict = await preview(env, admin, payloadFromCsv(csv));
+  assert.equal(strict.body.counts.rowsConflict, 2);
+  assert.equal(strict.body.commitAllowed, false);
+  assert.ok(strict.body.rows.every((row) => row.messages[0] === MESSAGES.missingHouseholdId));
+  const refused = await commit(env, admin, payloadFromCsv(csv), strict.body, 'key-strict-01');
+  assert.equal(refused.status, 422);
+  assert.equal(refused.body.error, 'import_has_conflicts');
+  assert.equal(await count(db, 'import_batches'), 0);
+
+  const payload = payloadFromCsv(csv, { allowNewHouseholds: true });
+  const p = await preview(env, admin, payload);
+  assert.equal(p.body.counts.rowsAdded, 2);
+  assert.ok(p.body.warnings.some((w) => w.row === 3 && w.message === MESSAGES.emailElsewhere));
+  const done = await commit(env, admin, payload, p.body, 'key-allow-01');
+  assert.equal(done.status, 201);
+  assert.equal(await count(db, 'households'), 2);
+  assert.equal(await count(db, 'guardians'), 2);
+  const distinct = await db.query("SELECT count(DISTINCT household_id)::int AS n FROM students WHERE last_name = 'Wspólny'");
+  assert.equal(distinct.rows[0].n, 2);
+}));
+
+test('rows without student ID are conflicts requiring manual linking', async () => withDb(async (db, env, admin) => {
+  const p = await preview(env, admin, payloadFromCsv(csvOf(';Ala;Bezid;1A;R9;;;;')));
+  assert.equal(p.body.counts.rowsConflict, 1);
+  assert.equal(p.body.rows[0].messages[0], MESSAGES.missingStudentId);
+}));
+
+test('existing students: new guardian is an update, changed household, class or name is a conflict', async () => withDb(async (db, env, admin) => {
+  assert.equal((await previewAndCommit(env, admin, payloadFromCsv(BASIC), 'key-base-0001')).status, 201);
+  const csv = csvOf(
+    'S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;Nowy Opiekun;nowy@example.invalid',
+    'S2;Ola;Testowa;2B;R7;Anna Testowa;anna@example.invalid;;',
+    'S3;Piotr;Próbny;2B;R2;Ewa Próbna;ewa@example.invalid;;',
+    'S4;Zosia;Testowa;1A;R1;Anna Testowa;anna@example.invalid;;',
+    'S1;Ala;Inna;1A;R1;;;;',
+  );
+  const p = await preview(env, admin, payloadFromCsv(csv));
+  const byRow = Object.fromEntries(p.body.rows.map((row) => [row.row, row]));
+  assert.equal(byRow[2].action, 'update');
+  assert.deepEqual(byRow[2].changes, ['guardian', 'link']);
+  assert.equal(byRow[3].messages[0], MESSAGES.householdMismatch);
+  assert.equal(byRow[4].messages[0], MESSAGES.classMismatch);
+  assert.equal(byRow[5].action, 'add'); // nowe rodzeństwo w istniejącej rodzinie R1
+  assert.equal(byRow[6].action, 'skipped'); // powtórzone ID ucznia w pliku
+  const done = await commit(env, admin, payloadFromCsv(csv, { skipConflicts: true }), p.body, 'key-upd-00001');
+  assert.equal(done.status, 201, JSON.stringify(done.body));
+  const r1 = await db.query("SELECT count(*)::int AS n FROM students s JOIN households h ON h.id = s.household_id WHERE h.source_ref = 'R1'");
+  assert.equal(r1.rows[0].n, 3);
+  const anna = await db.query("SELECT count(*)::int AS n FROM guardians WHERE email = 'anna@example.invalid'");
+  assert.equal(anna.rows[0].n, 1);
+  const s3 = await db.query("SELECT c.name FROM enrollments e JOIN classes c ON c.id = e.class_id JOIN students s ON s.id = e.student_id WHERE s.source_ref = 'S3'");
+  assert.equal(s3.rows[0].name, '1A');
+}));
+
+test('new school year enrolment for an existing student is an update', async () => withDb(async (db, env, admin) => {
+  await seedClass(db, { id: 'c-2a-27', schoolYearId: 'y-2027', name: '2A' });
+  assert.equal((await previewAndCommit(env, admin, payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;;;;')), 'key-y1-00001')).status, 201);
+  const payload = payloadFromCsv(csvOf('S1;Ala;Testowa;2A;R1;;;;'), {}, 'y-2027');
+  const p = await preview(env, admin, payload);
+  assert.equal(p.body.rows[0].action, 'update');
+  assert.deepEqual(p.body.rows[0].changes, ['enrollment']);
+  assert.equal((await commit(env, admin, payload, p.body, 'key-y2-00001')).status, 201);
+  assert.equal(await count(db, 'students'), 1);
+  assert.equal(await count(db, 'enrollments'), 2);
+}));
+
+test('invalid class, unknown year and invalid e-mail are rejected by the server', async () => withDb(async (db, env, admin) => {
+  const csv = csvOf('S1;Ala;Testowa;9Z;R1;;;;', 'S2;Ola;Testowa;1A;R1;Anna Testowa;zly-adres;;');
+  const p = await preview(env, admin, payloadFromCsv(csv));
+  assert.equal(p.body.counts.rowsSkipped, 2);
+  assert.match(p.body.rows[0].messages.join(' '), /Nieznana klasa/);
+  assert.match(p.body.rows[1].messages.join(' '), /Niepoprawny adres/);
+  const unknownYear = await preview(env, admin, payloadFromCsv(BASIC, {}, 'y-1999'));
+  assert.equal(unknownYear.status, 422);
+  assert.equal(unknownYear.body.error, 'unknown_school_year');
+  // Klient nie może pominąć walidacji serwera, podsyłając poprawiony wynik.
+  const tampered = payloadFromCsv(BASIC);
+  tampered.rows[0][3] = '9Z';
+  const t = await preview(env, admin, tampered);
+  assert.equal(t.body.counts.rowsSkipped, 1);
+  for (const bad of [{ ...tampered, columns: ['x'] }, { ...tampered, version: 2 }, { ...tampered, rows: [[{}, 1, 2, 3, 4, 5, 6, 7, 8]] }]) {
+    assert.equal((await preview(env, admin, bad)).status, 400);
+  }
+  assert.equal(await count(db, 'students'), 0);
+}));
+
+test('formula-like text is stored verbatim as inert text', async () => withDb(async (db, env, admin) => {
+  const csv = csvOf('S1;"=HYPERLINK(""http://x.invalid"")";Testowa;1A;R1;@SUM(A1) Test;;;');
+  assert.equal((await previewAndCommit(env, admin, payloadFromCsv(csv), 'key-formula1')).status, 201);
+  const { rows } = await db.query('SELECT first_name FROM students');
+  assert.equal(rows[0].first_name, '=HYPERLINK("http://x.invalid")');
+  const g = await db.query('SELECT first_name, last_name FROM guardians');
+  assert.deepEqual(g.rows[0], { first_name: '@SUM(A1)', last_name: 'Test' });
+}));
+
+test('stale preview, tampered rows and reused idempotency key are refused', async () => withDb(async (db, env, admin) => {
+  const payload = payloadFromCsv(BASIC);
+  const p = await preview(env, admin, payload);
+  // Ktoś inny w międzyczasie importuje ucznia S3.
+  assert.equal((await previewAndCommit(env, admin, payloadFromCsv(csvOf('S3;Piotr;Próbny;1A;R2;;;;')), 'key-other-01')).status, 201);
+  const stale = await commit(env, admin, payload, p.body, 'key-stale-01');
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error, 'preview_stale');
+
+  const tampered = payloadFromCsv(BASIC);
+  tampered.rows[0][1] = 'Zmieniona';
+  const mismatch = await commit(env, admin, tampered, p.body, 'key-tamper-1');
+  assert.equal(mismatch.body.error, 'fingerprint_mismatch');
+
+  const reused = await commit(env, admin, payload, (await preview(env, admin, payload)).body, 'key-other-01');
+  assert.equal(reused.status, 409);
+  assert.equal(reused.body.error, 'idempotency_key_reused');
+
+  const noKey = await handlePgRequest(post('/api/import/commit', admin, { ...payload, fingerprint: p.body.fingerprint, planDigest: p.body.planDigest }), env);
+  assert.equal(noKey.status, 400);
+  assert.equal((await noKey.json()).error, 'idempotency_key_required');
+  const noPreview = await handlePgRequest(post('/api/import/commit', admin, payload, { key: 'key-nopreview' }), env);
+  assert.equal((await noPreview.json()).error, 'preview_required');
+}));
+
+test('role, scope, MFA and origin checks happen on the server', async () => withDb(async (db, env, admin) => {
+  const payload = payloadFromCsv(BASIC);
+  const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: true });
+  const boardClass = await seedUserSession(db, { userId: 'u-board-class', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: YEAR }], mfa: true });
+  const boardOtherYear = await seedUserSession(db, { userId: 'u-board-y', roles: [{ role: 'board', schoolYearId: 'y-2030' }], mfa: true });
+  const treasurer = await seedUserSession(db, { userId: 'u-tr', roles: [{ role: 'treasurer' }], mfa: true });
+  const noMfa = await seedUserSession(db, { userId: 'u-admin-nomfa', roles: [{ role: 'admin' }], mfa: false });
+  const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board', schoolYearId: YEAR }], mfa: true });
+
+  for (const cookie of [rep, boardClass, boardOtherYear, treasurer, noMfa]) {
+    const response = await handlePgRequest(post('/api/import/preview', cookie, payload), env);
+    assert.equal(response.status, 403);
+    const c = await handlePgRequest(post('/api/import/commit', cookie, { ...payload, fingerprint: '0'.repeat(64), planDigest: '0'.repeat(64) }, { key: 'key-denied-01' }), env);
+    assert.equal(c.status, 403);
+  }
+  assert.equal((await handlePgRequest(post('/api/import/preview', null, payload), env)).status, 401);
+  const cross = await handlePgRequest(post('/api/import/preview', admin, payload, { origin: 'https://evil.invalid' }), env);
+  assert.equal(cross.status, 403);
+  assert.equal((await cross.json()).error, 'invalid_origin');
+  assert.equal((await handlePgRequest(post('/api/import/preview', admin, payload, { origin: false }), env)).status, 403);
+  assert.equal((await handlePgRequest(post('/api/import/preview', admin, 'x=1', { headers: { 'Content-Type': 'text/plain' } }), env)).status, 415);
+  assert.equal((await preview(env, board, payload)).status, 200);
+
+  const options = await handlePgRequest(request('/api/import/options', { cookie: board }), env);
+  assert.deepEqual((await options.json()).schoolYears, [{ id: YEAR, label: `test ${YEAR}`, classes: ['1A', '2B'] }]);
+  assert.equal((await handlePgRequest(request('/api/import/options', { cookie: rep }), env)).status, 403);
+  assert.equal(await count(db, 'import_batches'), 0);
+}));
+
+test('production requires an explicit IMPORT_ENABLED switch', async () => withDb(async (db, env, admin) => {
+  const payload = payloadFromCsv(BASIC);
+  const off = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, APP_ENV: 'production' });
+  assert.equal(off.status, 403);
+  assert.equal((await off.json()).error, 'import_disabled');
+  const on = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, APP_ENV: 'production', IMPORT_ENABLED: 'true' });
+  assert.equal(on.status, 200);
+}));
+
+test('audit event records actor and counts only, without PII', async () => withDb(async (db, env, admin) => {
+  const done = await previewAndCommit(env, admin, payloadFromCsv(BASIC), 'key-audit-01');
+  const { rows } = await db.query("SELECT actor_id, entity_type, entity_id, metadata_json FROM audit_events WHERE action = 'import.committed'");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].actor_id, 'u-admin');
+  assert.equal(rows[0].entity_type, 'import_batch');
+  assert.equal(rows[0].entity_id, done.body.batchId);
+  assert.doesNotThrow(() => assertNoPii(rows[0].metadata_json));
+  const text = JSON.stringify(rows[0].metadata_json);
+  for (const fragment of ['Ala', 'Testowa', 'example.invalid', 'S1', 'R1']) assert.equal(text.includes(fragment), false, fragment);
+  assert.equal(rows[0].metadata_json.counts.studentsCreated, 3);
+  const batch = (await db.query('SELECT * FROM import_batches')).rows[0];
+  assert.equal(batch.actor_id, 'u-admin');
+  await assert.rejects(db.query('DELETE FROM import_batches'), /append_only/);
+}));
+
+test('unknown import subpaths fall through and wrong methods are rejected', async () => withDb(async (db, env, admin) => {
+  const handler = createPgHandler(ROUTES);
+  assert.equal((await handler(request('/api/import/nope', { cookie: admin }), env)).status, 404);
+  assert.equal((await handler(request('/api/import/preview', { cookie: admin }), env)).status, 405);
+}));
