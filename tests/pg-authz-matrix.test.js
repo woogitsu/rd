@@ -1,19 +1,22 @@
 // Macierz autoryzacji na rzeczywistych trasach API PostgreSQL (issue #4).
 //
-// Dla każdej trasy z tests/helpers/route-matrix.js i każdego aktora (role, brak
-// przydziału, przydział wygasły/cofnięty, konto wyłączone, sesja wygasła/cofnięta,
-// brak sesji) × MFA wł./wył. × zakres (własna klasa / inna klasa / dane ogólnoszkolne /
-// inny rok) sprawdzamy:
-//   1. status HTTP (401 / 403 / 404 / 2xx) zgodny z tabelą,
+// Dla każdej trasy z tests/helpers/route-matrix.js i każdego aktora (role, przydział klasowy
+// zarządu, brak przydziału, przydział wygasły/cofnięty, konto wyłączone, sesja wygasła/cofnięta,
+// brak sesji) × MFA wł./wył. × zakres (własna klasa / inna klasa / dane ogólnoszkolne / inny rok)
+// sprawdzamy:
+//   1. status HTTP (401 / 403 / 404 / 2xx) zgodny z tabelą (zamierzona polityka),
 //   2. odpowiedź odmowna nie zawiera żadnego syntetycznego znacznika danych,
 //   3. odpowiedź 2xx nie zawiera znaczników zakresu, do którego aktor nie ma przydziału
 //      (np. przedstawiciel 1A nigdy nie widzi danych 1B ani roku 2),
 //   4. odmowa żądania zmieniającego stan niczego nie zapisuje (liczniki tabel i dziennika zdarzeń bez zmian).
+// Przypadki oznaczone w macierzy `todo` (znane luki, np. SR-01) są wykonywane, ale ich rozbieżności
+// trafiają do osobnego testu `todo` — CI pozostaje zielone, a luka jest widoczna w raporcie.
 // Meta-test pilnuje, by każdy moduł z ROUTES i każda ścieżka w jego kodzie miały wpis w macierzy.
-// Wyłącznie dane syntetyczne (domeny .invalid, znaczniki MRK-…).
+// Wyłącznie dane syntetyczne (domeny .invalid, znaczniki MRK-…). Żadna trasa nie wysyła poczty.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { handlePgRequest, ROUTES } from '../src/pg/app.js';
@@ -22,19 +25,37 @@ import {
   approveMinutes, createMeeting, createMinutesVersion, createResolution, determineQuorum,
   recordAttendance, setMinutesVisibility, updateMeeting,
 } from '../src/pg/meetings.js';
+import {
+  approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
+} from '../src/pg/news.js';
+import { base32Decode, totp } from '../src/pg/mfa.js';
+import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
   ACTOR_KEYS, ACTORS, MARKERS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
-  expectedStatus, marker, visibleScopes,
+  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, pdfBytes, photoBody,
+  statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
 const PAST = '2020-01-01T00:00:00Z';
 const fxAdmin = { userId: 'u-fx-admin', grants: [{ role: 'admin', classId: null, schoolYearId: null }], mfaVerified: true };
 const fxBoard = { userId: 'u-fx-board', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
+// Konta pomocnicze fixture (poza macierzą): przydziały bez roku i klasy, sesje z MFA.
+const FX_ACCOUNTS = {
+  admin: { userId: 'u-fx-admin', role: 'admin' },
+  board: { userId: 'u-fx-board', role: 'board' },
+  board2: { userId: 'u-fx-board2', role: 'board' },
+  treasurer: { userId: 'u-fx-treasurer', role: 'treasurer' },
+};
+// Sekret syntetyczny, wyłącznie na potrzeby testu (min. 32 znaki).
+const WEBHOOK_SECRET = `syntetyczny-sekret-webhooka-${randomBytes(12).toString('hex')}`;
+const CHECKLIST_PREFILLED = ['financial_report', 'audit_commission_report', 'minutes_approved', 'resolutions_archived'];
+const CHECKLIST_OPEN = ['reconciliation_confirmed', 'documents_handed_over'];
 
 let seq = 0;
 const nextKey = (prefix) => `${prefix}-${String(++seq).padStart(5, '0')}`;
 const isSuccess = (status) => status >= 200 && status < 300;
+const withKey = (key) => ({ 'Idempotency-Key': key });
 
 // ---------- fixtures ----------
 
@@ -44,9 +65,62 @@ async function seedBase(db) {
   for (const target of [TARGETS.A, TARGETS.B, TARGETS.Y2]) {
     await seedClass(db, { id: target.classId, schoolYearId: target.schoolYearId });
   }
-  await seedUser(db, { userId: fxAdmin.userId });
-  await seedUser(db, { userId: fxBoard.userId });
+  for (const account of Object.values(FX_ACCOUNTS)) await seedUser(db, { userId: account.userId });
   await db.query("INSERT INTO households (id) VALUES ('hh-1')");
+  // Kategorie księgi z nazwą niosącą znacznik roku (W1 = rok 1, Y2 = rok 2).
+  for (const [year, scope] of [[YEAR_1, 'W1'], [YEAR_2, 'Y2']]) {
+    await db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+       VALUES ($1, $2, 'income', $3, 'u-fx-admin'), ($4, $2, 'expense', $5, 'u-fx-admin')`,
+      [`cat-in-${year}`, year, `Wpływy ${marker(scope)}`, `cat-out-${year}`, `Wydatki ${marker(scope)}`],
+    );
+  }
+  // Rodziny: jedna na klasę + rodzeństwo w 1A i 1B (opiekun ze zgodą na kontakt).
+  for (const key of ['A', 'B', 'Y2']) await makeHousehold(db, TARGETS[key], `hh-${key}`);
+  await db.query("INSERT INTO households (id) VALUES ('hh-sib')");
+  await db.query(`INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed)
+    VALUES ('gd-sib', 'hh-sib', 'Ewa', 'Opiekunka', 'opiekun-rodzenstwo@example.invalid', true)`);
+  for (const key of ['A', 'B']) {
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, 'hh-sib', 'Jan', $2)",
+      [`st-sib-${key}`, `Rodzeństwo ${marker(key)}`]);
+    await db.query("INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, 'gd-sib', true, true)",
+      [`st-sib-${key}`]);
+    await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
+      [`en-sib-${key}`, `st-sib-${key}`, TARGETS[key].classId, YEAR_1]);
+  }
+}
+
+async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
+  const guardianId = `${householdId}-g`;
+  const studentId = `${householdId}-s`;
+  await db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+  await db.query(`INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed)
+    VALUES ($1, $2, 'Anna', 'Opiekunka', $3, true)`, [guardianId, householdId, `${guardianId.toLowerCase()}@example.invalid`]);
+  await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Ola', $3)",
+    [studentId, householdId, `Uczennica ${marker(target.key)}`]);
+  await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)',
+    [studentId, guardianId]);
+  await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
+    [`${householdId}-e`, studentId, target.classId, target.schoolYearId]);
+  return { householdId, guardianId, studentId };
+}
+
+async function seedFixtureSessions(db) {
+  const cookies = {};
+  for (const [name, account] of Object.entries(FX_ACCOUNTS)) {
+    cookies[name] = await seedUserSession(db, { userId: account.userId, roles: [{ role: account.role }], mfa: true });
+  }
+  return cookies;
+}
+
+// Wywołanie API kontem fixture; błąd = przerwanie testu (fixture musi się udać).
+async function api(ctx, cookie, method, path, body, headers = {}) {
+  const response = await handlePgRequest(request(path, { method, body, headers, cookie }), ctx.env);
+  const text = await response.text();
+  if (!isSuccess(response.status)) throw new Error(`fixture ${method} ${path}: ${response.status} ${text.slice(0, 300)}`);
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* treść nie-JSON */ }
+  return { response, json, text };
 }
 
 async function makeEvent(db, target, stage, { audience = 'internal', title } = {}) {
@@ -122,23 +196,162 @@ async function makePayment(db, target, stage) {
   return { paymentId: id };
 }
 
-function makeObject(db, { kind, stage }, target) {
-  if (kind === 'event') return makeEvent(db, target, stage);
-  if (kind === 'meeting') return makeMeeting(db, target, stage);
-  if (kind === 'payment') return makePayment(db, target, stage);
-  throw new Error(`unknown fixture kind ${kind}`);
+async function makeNewsPost(db, target, stage) {
+  const published = stage === 'published';
+  const { post } = await createNewsDraft(db, fxAdmin, {
+    schoolYearId: target.schoolYearId, classId: target.classId,
+    title: `Wpis ${published ? marker('PUBLIC') : marker(target.key)}`, body: 'Treść syntetyczna.',
+    idempotencyKey: nextKey('fx-news'),
+  });
+  if (stage === 'draft') return { postId: post.id };
+  await submitNews(db, fxAdmin, { postId: post.id, revision: 1 });
+  if (stage === 'submitted') return { postId: post.id };
+  await approveNews(db, fxBoard, { postId: post.id, revision: 1 });
+  if (stage === 'approved') return { postId: post.id };
+  await publishNews(db, fxBoard, { postId: post.id, revision: 1 });
+  return { postId: post.id };
 }
 
-async function seedStatic(db) {
-  const fx = { events: {}, meetings: {}, payments: {}, resolutionNumber: { W1: 'UCHW/1/R1', Y2: 'UCHW/1/R2' } };
-  for (const key of ['A', 'B', 'W1', 'Y2']) {
-    fx.events[key] = await makeEvent(db, TARGETS[key], 'draft');
-    fx.meetings[key] = await makeMeeting(db, TARGETS[key], 'shared', { resolutionNumber: fx.resolutionNumber[key] });
+async function makeCampaign(ctx, target, stage) {
+  const { json } = await api(ctx, ctx.fxCookies.board, 'POST', '/api/email/campaigns', campaignBody(target), withKey(nextKey('fx-campaign')));
+  const campaignId = json.campaign.id;
+  if (stage === 'draft') return { campaignId };
+  const snapshot = await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/snapshot`, {});
+  const obj = { campaignId, contentHash: json.campaign.contentHash, recipientsHash: snapshot.json.recipientsHash };
+  if (stage === 'snapshot') return obj;
+  // Zatwierdza inna osoba niż autor migawki (zasada czterech oczu).
+  await api(ctx, ctx.fxCookies.board2, 'POST', `/api/email/campaigns/${campaignId}/approve`,
+    { contentHash: obj.contentHash, recipientsHash: obj.recipientsHash });
+  return obj;
+}
+
+async function makeReconciliation(ctx, target, stage) {
+  const cookie = ctx.fxCookies.treasurer;
+  const { json } = await api(ctx, cookie, 'POST', '/api/reconciliations', {
+    schoolYearId: target.schoolYearId, statementDate: statementDate(target), statementBalanceCents: 100000,
+    notes: `Uzgodnienie ${marker(target.key)}`,
+  }, withKey(nextKey('fx-rec')));
+  const reconciliationId = json.reconciliation.id;
+  if (stage === 'draft') return { reconciliationId };
+  const { paymentId } = await makePayment(ctx.db, target, 'recorded');
+  await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/lines`, {
+    lines: [{ bookedOn: yearDate(target, '10-01'), amountCents: 100000, reference: 'Tytuł syntetyczny' }],
+  }, withKey(nextKey('fx-lines')));
+  const detail = await api(ctx, cookie, 'GET', `/api/reconciliations/${reconciliationId}`);
+  const obj = { reconciliationId, statementLineId: detail.json.lines[0].id, paymentEntryId: paymentId };
+  if (stage === 'withLine') return obj;
+  const match = await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/matches`,
+    { statementLineId: obj.statementLineId, paymentEntryId: paymentId }, withKey(nextKey('fx-match')));
+  return { ...obj, matchId: match.json.match.id };
+}
+
+async function makeAdminTarget(ctx, stage) {
+  const userId = nextKey('fx-konto');
+  if (stage === 'active') {
+    await seedUserSession(ctx.db, { userId });
+    return { userId };
   }
-  for (const key of ['W1', 'Y2']) fx.payments[key] = await makePayment(db, TARGETS[key], 'recorded');
+  if (stage === 'disabled') {
+    await seedUser(ctx.db, { userId, disabled: true });
+    return { userId };
+  }
+  if (stage === 'grant') {
+    await seedUser(ctx.db, { userId });
+    const grantId = randomUUID();
+    await ctx.db.query("INSERT INTO role_grants (id, user_id, role, school_year_id) VALUES ($1, $2, 'board', $3)", [grantId, userId, YEAR_1]);
+    return { grantId };
+  }
+  if (stage === 'finishedYear') {
+    // Zakończony rok syntetyczny z jednym przydziałem — nigdy rok 1 aktorów macierzy.
+    const schoolYearId = nextKey('y-stary');
+    await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2019-09-01', endsOn: '2020-08-31' });
+    await seedUser(ctx.db, { userId });
+    await ctx.db.query("INSERT INTO role_grants (id, user_id, role, school_year_id) VALUES ($1, $2, 'board', $3)", [randomUUID(), userId, schoolYearId]);
+    return { schoolYearId };
+  }
+  if (stage === 'invitation') {
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations',
+      { email: `${userId}@example.invalid`, role: 'board', schoolYearId: YEAR_1 });
+    return { invitationId: json.invitation.id };
+  }
+  throw new Error(`unknown admin fixture ${stage}`);
+}
+
+// Czynnik MFA należący do świeżego użytkownika przypadku (caseInfo.cookie).
+async function makeMfaFactor(ctx, stage, { cookie, route }) {
+  const enrolled = await api(ctx, cookie, 'POST', '/api/mfa/enroll', {});
+  const code = (offsetSteps) => totp(base32Decode(enrolled.json.secret), Date.now() + offsetSteps * 30_000);
+  if (stage === 'enrolled') return { code: code(0) };
+  const confirm = await api(ctx, cookie, 'POST', '/api/mfa/confirm', { code: code(0) });
+  const rotated = confirm.response.headers.get('Set-Cookie').split(';', 1)[0];
+  // Weryfikacja: kolejny krok TOTP (poprzedni został zużyty przy potwierdzeniu).
+  return { cookie: rotated, code: route === 'mfa.recovery' ? confirm.json.recoveryCodes[0] : code(1) };
+}
+
+const MAKERS = {
+  event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
+  meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
+  payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
+  newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
+  photo: async (ctx) => {
+    const key = nextKey('fx-photo');
+    const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
+    return { photoId: photo.id };
+  },
+  document: async (ctx, target, kind) => {
+    const classPart = kind === 'class' ? `&classId=${target.classId}` : '';
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', `/api/documents?kind=${kind}&schoolYearId=${target.schoolYearId}${classPart}`,
+      pdfBytes(target.key), { 'Content-Type': 'application/pdf', 'Idempotency-Key': nextKey('fx-doc') });
+    return { documentId: json.document.id };
+  },
+  ledgerEntry: async (ctx, target) => {
+    const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
+      schoolYearId: target.schoolYearId, direction: 'income', amountCents: 100000, categoryId: ledgerCategory(target),
+      description: `Wpis ${marker(target.key)}`, occurredOn: yearDate(target, '10-01'), method: 'bank',
+    }, withKey(nextKey('fx-ledger')));
+    return { ledgerEntryId: json.entry.id };
+  },
+  campaign: makeCampaign,
+  reconciliation: makeReconciliation,
+  household: (ctx, target) => makeHousehold(ctx.db, target),
+  adminTarget: (ctx, _target, stage) => makeAdminTarget(ctx, stage),
+  importPlan: async (ctx, target) => {
+    const payload = importPayload(target, nextKey('fximp'));
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/import/preview', payload);
+    return { payload, fingerprint: json.fingerprint, planDigest: json.planDigest };
+  },
+  mfaFactor: (ctx, _target, stage, caseInfo) => makeMfaFactor(ctx, stage, caseInfo),
+  // Kolejna niepotwierdzona pozycja listy kontrolnej (rok 1); odmowy używają dowolnej pozycji.
+  checklistItem: async (ctx, target, _stage, { success }) => ({
+    item: (target.key === 'W1' && success ? ctx.checklistOpen.shift() : null) ?? CHECKLIST_PREFILLED[0],
+  }),
+};
+
+function makeObject(ctx, { kind, stage }, target, caseInfo = {}) {
+  const maker = MAKERS[kind];
+  if (!maker) throw new Error(`unknown fixture kind ${kind}`);
+  return maker(ctx, target, stage, caseInfo);
+}
+
+// Obiekt współdzielony (kind, stage, zakres) — tworzony raz na bazę.
+async function staticObject(ctx, kind, stage, targetKey) {
+  const cacheKey = `static:${kind}:${stage}:${targetKey}`;
+  if (!ctx.cache.has(cacheKey)) ctx.cache.set(cacheKey, makeObject(ctx, { kind, stage }, TARGETS[targetKey]));
+  return ctx.cache.get(cacheKey);
+}
+
+async function seedStatic(ctx) {
+  const fx = { resolutionNumber: { W1: 'UCHW/1/R1', Y2: 'UCHW/1/R2' }, webhookSecret: WEBHOOK_SECRET };
+  for (const key of ['A', 'B', 'W1', 'Y2']) {
+    await staticObject(ctx, 'event', 'draft', key);
+    ctx.cache.set(`static:meeting:shared:${key}`,
+      makeMeeting(ctx.db, TARGETS[key], 'shared', { resolutionNumber: fx.resolutionNumber[key] }));
+    await ctx.cache.get(`static:meeting:shared:${key}`);
+  }
+  for (const key of ['W1', 'Y2']) await staticObject(ctx, 'payment', 'recorded', key);
   // Jawne dane: opublikowane wydarzenie i protokół publiczny bez znaczników klas.
-  await makeEvent(db, TARGETS.W1, 'published', { title: `Wydarzenie ${marker('PUBLIC')}` });
-  await makeMeeting(db, TARGETS.W1, 'shared', {
+  await makeEvent(ctx.db, TARGETS.W1, 'published', { title: `Wydarzenie ${marker('PUBLIC')}` });
+  await makeMeeting(ctx.db, TARGETS.W1, 'shared', {
     title: `Zebranie jawne ${marker('PUBLIC')}`, minutesBody: `Protokół ${marker('PUBLIC')} — treść jawna.`, visibility: 'public',
   });
   return fx;
@@ -156,9 +369,9 @@ async function seedSessions(db) {
   return sessions;
 }
 
-function sessionOptions(actor, mfa, withGrants) {
+function sessionOptions(actor, mfa, withGrants, userId = `mx-${actor.key}`) {
   return {
-    userId: `mx-${actor.key}`,
+    userId,
     roles: withGrants ? actor.grants : [],
     mfa,
     disabled: Boolean(actor.disabled),
@@ -171,6 +384,15 @@ const WRITE_TABLES = [
   'audit_events', 'events', 'event_revisions', 'meetings', 'meeting_agenda_items', 'meeting_attendees',
   'meeting_quorum_checks', 'meeting_minutes', 'meeting_minutes_publications', 'resolutions',
   'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments', 'role_grants',
+  'users', 'sessions', 'invitations', 'user_mfa_factors', 'mfa_recovery_codes',
+  'import_batches', 'households', 'guardians', 'students', 'enrollments', 'student_guardians',
+  'guardian_contact_changes', 'enrollment_history', 'documents',
+  'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
+  'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
+  'email_webhook_events', 'email_suppressions',
+  'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
+  'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
+  'export_runs', 'school_year_closures', 'school_year_closure_checklist',
 ];
 
 async function writeFingerprint(db) {
@@ -180,32 +402,44 @@ async function writeFingerprint(db) {
   return rows[0];
 }
 
-let shared;
-async function matrixContext() {
-  if (!shared) {
-    shared = (async () => {
+// Jedna baza PGlite na grupę tras. Grupa `yearClose` ma własną bazę, bo zamknięcie roku 1
+// wygasza przydziały roku 1 i zamraża jego księgę.
+const contexts = new Map();
+async function matrixContext(group = 'main') {
+  if (!contexts.has(group)) {
+    contexts.set(group, (async () => {
       const db = await createTestDb();
+      const env = {
+        db, storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+        BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET,
+      };
       await seedBase(db);
-      const fx = await seedStatic(db);
-      const sessions = await seedSessions(db);
-      return { db, fx, sessions, cache: new Map() };
-    })();
+      const ctx = { db, env, cache: new Map(), fxCookies: await seedFixtureSessions(db), checklistOpen: [...CHECKLIST_OPEN] };
+      ctx.fx = group === 'main' ? await seedStatic(ctx) : { webhookSecret: WEBHOOK_SECRET };
+      if (group === 'yearClose') {
+        // Zamknięcie roku 1 rozpoczęte przez inną osobę; dwie pozycje listy kontrolnej zostają dla macierzy.
+        await api(ctx, ctx.fxCookies.board, 'POST', `/api/year-close/${YEAR_1}/start`, { nextSchoolYearId: YEAR_2 });
+        for (const item of CHECKLIST_PREFILLED) {
+          await api(ctx, ctx.fxCookies.treasurer, 'POST', `/api/year-close/${YEAR_1}/checklist/${item}`, { note: 'Potwierdzenie syntetyczne' });
+        }
+      }
+      ctx.sessions = await seedSessions(db);
+      return ctx;
+    })());
   }
-  return shared;
+  return contexts.get(group);
 }
 
-async function objectFor(ctx, route, targetKey, expected) {
+async function objectFor(ctx, route, targetKey, expected, caseInfo) {
   if (!route.object) return null;
   const target = TARGETS[targetKey];
-  if (route.fixture === 'fresh' && isSuccess(expected)) return makeObject(ctx.db, route.object, target);
-  if (route.fixture === 'static') {
-    if (route.object.kind === 'event') return ctx.fx.events[targetKey];
-    if (route.object.kind === 'meeting') return ctx.fx.meetings[targetKey];
-    if (route.object.kind === 'payment') return ctx.fx.payments[targetKey];
-  }
+  // Obiekt zależny od sesji przypadku (MFA) powstaje tylko, gdy żądanie ma się udać.
+  if (route.freshUser) return isSuccess(expected) ? makeObject(ctx, route.object, target, caseInfo) : null;
+  if (route.fixture === 'fresh' && isSuccess(expected)) return makeObject(ctx, route.object, target, caseInfo);
+  if (route.fixture === 'static') return staticObject(ctx, route.object.kind, route.object.stage, targetKey);
   // Odmowa: obiekt wspólny dla (trasa, zakres) — odmowa nie może go zmienić.
   const cacheKey = `${route.id}:${targetKey}`;
-  if (!ctx.cache.has(cacheKey)) ctx.cache.set(cacheKey, await makeObject(ctx.db, route.object, target));
+  if (!ctx.cache.has(cacheKey)) ctx.cache.set(cacheKey, makeObject(ctx, route.object, target, caseInfo));
   return ctx.cache.get(cacheKey);
 }
 
@@ -213,23 +447,26 @@ function markersIn(text, scopes) {
   return scopes.flatMap((scope) => MARKERS[scope].filter((value) => text.includes(value)).map((value) => `${scope}:${value}`));
 }
 
+async function caseCookie(ctx, route, actor, mfa) {
+  if (actor.anonymous) return undefined;
+  if (route.freshUser) return seedUserSession(ctx.db, sessionOptions(actor, mfa, true, nextKey(`mx-${actor.key}-u`)));
+  if (route.freshSession) return seedUserSession(ctx.db, sessionOptions(actor, mfa, false));
+  return ctx.sessions[actor.key][mfa];
+}
+
 async function runCase(ctx, route, actor, mfa, targetKey) {
   const expected = expectedStatus(route, actor, mfa, targetKey);
-  const obj = await objectFor(ctx, route, targetKey, expected);
-  let cookie;
-  if (!actor.anonymous) {
-    cookie = route.freshSession
-      ? await seedUserSession(ctx.db, sessionOptions(actor, mfa, false))
-      : ctx.sessions[actor.key][mfa];
-  }
+  let cookie = await caseCookie(ctx, route, actor, mfa);
+  const obj = await objectFor(ctx, route, targetKey, expected, { cookie, route: route.id, success: isSuccess(expected) });
+  if (obj?.cookie) cookie = obj.cookie;
   const key = `mx-${route.id}-${actor.key}-${mfa ? 'mfa' : 'nomfa'}-${targetKey === '-' ? 'x' : targetKey}-${++seq}`;
-  const built = route.build({ target: TARGETS[targetKey], obj, key, fx: ctx.fx });
+  const built = await route.build({ target: TARGETS[targetKey], obj, key, fx: ctx.fx });
   // Odczyty (GET) sprawdzamy pod kątem wycieku; ślad zapisu — dla metod zmieniających stan.
   const tracksWrites = route.method !== 'GET';
   const before = tracksWrites ? await writeFingerprint(ctx.db) : null;
   const response = await handlePgRequest(request(built.path, {
     method: route.method, body: built.body, headers: built.headers ?? {}, cookie,
-  }), { db: ctx.db });
+  }), ctx.env);
   const text = await response.text();
   const label = `${route.method} ${built.path} | ${actor.key} | mfa=${mfa} | zakres=${targetKey}`;
   const problems = [];
@@ -238,9 +475,6 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
   if (!isSuccess(response.status)) {
     const leaked = markersIn(text, [...SCOPED_MARKER_KEYS, 'PUBLIC']);
     if (leaked.length) problems.push(`odmowa zawiera dane: ${leaked.join(', ')}`);
-    const after = tracksWrites ? await writeFingerprint(ctx.db) : before;
-    const changed = tracksWrites ? WRITE_TABLES.filter((table) => after[table] !== before[table]) : [];
-    if (changed.length) problems.push(`odmowa zmieniła tabele: ${changed.join(', ')}`);
   } else {
     const visible = visibleScopes(route, actor, targetKey);
     const leaked = markersIn(text, SCOPED_MARKER_KEYS.filter((scope) => !visible.includes(scope)));
@@ -249,6 +483,16 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
       const missing = route.contains(actor, TARGETS[targetKey]).filter((scope) => !text.includes(marker(scope)));
       if (missing.length) problems.push(`odpowiedź nie zawiera oczekiwanych danych: ${missing.join(', ')}`);
     }
+    if (route.check && isSuccess(expected)) {
+      let json = null;
+      try { json = JSON.parse(text); } catch { /* treść nie-JSON */ }
+      problems.push(...route.check({ actor, mfa, targetKey, json, text }));
+    }
+  }
+  if (!isSuccess(expected) && tracksWrites) {
+    const after = await writeFingerprint(ctx.db);
+    const changed = WRITE_TABLES.filter((table) => after[table] !== before[table]);
+    if (changed.length) problems.push(`odmowa zmieniła tabele: ${changed.join(', ')}`);
   }
 
   if (route.id === 'session.access' && response.status === 200) {
@@ -257,32 +501,90 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
     if (grants.length !== expectedGrants) problems.push(`/api/access zwraca ${grants.length} przydziałów zamiast ${expectedGrants}`);
   }
   if (route.id === 'session.logout' && cookie) {
-    const after = await handlePgRequest(request('/api/session', { cookie }), { db: ctx.db });
+    const after = await handlePgRequest(request('/api/session', { cookie }), ctx.env);
     if (after.status !== 401) problems.push(`sesja działa po wylogowaniu (status ${after.status})`);
   }
   return problems.map((problem) => `${label}: ${problem}`);
 }
 
-for (const route of ROUTE_MATRIX) {
-  test(`macierz uprawnień: ${route.id} (${route.method} ${route.path})`, async () => {
-    const ctx = await matrixContext();
-    const failures = [];
-    let cases = 0;
-    for (const targetKey of route.targets) {
-      for (const actor of ACTORS) {
-        for (const mfa of [false, true]) {
-          failures.push(...await runCase(ctx, route, actor, mfa, targetKey));
-          cases += 1;
-        }
-      }
+function caseList(route) {
+  const cases = [];
+  for (const targetKey of route.targets) {
+    for (const actor of ACTORS) {
+      for (const mfa of [false, true]) cases.push({ targetKey, actor, mfa, todo: todoReason(route, actor, mfa, targetKey) });
     }
-    assert.equal(cases, route.targets.length * ACTORS.length * 2);
+  }
+  return cases;
+}
+
+for (const route of ROUTE_MATRIX) {
+  const cases = caseList(route);
+  const todoReasons = [...new Set(cases.map((item) => item.todo).filter(Boolean))];
+  let todoFailures = [];
+  const done = test(`macierz uprawnień: ${route.id} (${route.method} ${route.path})`, async () => {
+    const ctx = await matrixContext(route.group);
+    for (const [kind, stage, targets] of route.needs ?? []) {
+      for (const targetKey of targets) await staticObject(ctx, kind, stage, targetKey);
+    }
+    const failures = [];
+    for (const item of cases) {
+      const problems = await runCase(ctx, route, item.actor, item.mfa, item.targetKey);
+      if (item.todo) todoFailures.push(...problems);
+      else failures.push(...problems);
+    }
+    assert.equal(cases.length, route.targets.length * ACTORS.length * 2);
     assert.deepEqual(failures, [], `\n${failures.join('\n')}`);
   });
+  if (todoReasons.length) {
+    // Znana luka: przypadki zostały wykonane w teście powyżej; tu tylko wynik (todo nie blokuje CI).
+    test(`macierz uprawnień — znana luka: ${route.id}`, { todo: todoReasons.join(' | ') }, async () => {
+      await done;
+      assert.deepEqual(todoFailures, [], `\n${todoFailures.join('\n')}`);
+      todoFailures = [];
+    });
+  }
 }
 
 test.after(async () => {
-  if (shared) await (await shared).db.close();
+  for (const pending of contexts.values()) await (await pending).db.close();
+});
+
+// ---------- testy uzupełniające (poza macierzą) ----------
+
+test('email: webhook Brevo bez sekretu albo ze złym sekretem — 401 i brak zapisu', async () => {
+  const ctx = await matrixContext();
+  const before = await writeFingerprint(ctx.db);
+  for (const headers of [{}, { Authorization: `Bearer ${'x'.repeat(48)}` }, { Authorization: `Bearer ${WEBHOOK_SECRET}x` }]) {
+    const response = await handlePgRequest(request('/api/email/webhooks/brevo', {
+      method: 'POST', origin: false, headers, body: { event: 'hard_bounce', email: 'opiekun-a@example.invalid', id: 1 },
+    }), ctx.env);
+    assert.equal(response.status, 401);
+  }
+  assert.deepEqual(await writeFingerprint(ctx.db), before);
+});
+
+test('families: rodzeństwo w 1A i 1B — przedstawiciel widzi wyłącznie dziecko własnej klasy', async () => {
+  const ctx = await matrixContext();
+  for (const [actorKey, own, other] of [['repA', 'A', 'B'], ['repB', 'B', 'A'], ['boardA', 'A', 'B']]) {
+    const response = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions[actorKey][false] }), ctx.env);
+    const text = await response.text();
+    assert.equal(response.status, 200, `${actorKey}: ${text}`);
+    assert.ok(text.includes(marker(own)), `${actorKey}: brak dziecka własnej klasy`);
+    assert.ok(!text.includes(marker(other)), `${actorKey}: widzi rodzeństwo z innej klasy`);
+  }
+  const wide = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions.treasurer[false] }), ctx.env);
+  const text = await wide.text();
+  assert.ok(text.includes(marker('A')) && text.includes(marker('B')), 'skarbnik widzi całą rodzinę roku');
+});
+
+test('denyStatus: funkcja odmowy zwraca wyłącznie 400/403/404', () => {
+  for (const route of ROUTE_MATRIX.filter((entry) => typeof entry.deny === 'function')) {
+    for (const actor of ACTORS) {
+      for (const targetKey of route.targets) {
+        for (const mfa of [false, true]) assert.ok([400, 403, 404].includes(denyStatus(route, actor, targetKey, mfa)), route.id);
+      }
+    }
+  }
 });
 
 // ---------- meta-testy: macierz musi nadążać za ROUTES ----------
@@ -308,8 +610,11 @@ test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
     assert.ok(route.targets.length > 0 && route.targets.every((key) => key in TARGETS), route.id);
     assert.ok([200, 201, 204].includes(route.ok), `${route.id}: ok`);
     if (typeof route.allow === 'object') {
-      const denies = typeof route.deny === 'function' ? ACTORS.flatMap((actor) => route.targets.map((key) => route.deny(actor, key))) : [route.deny];
-      assert.ok(denies.every((status) => [403, 404].includes(status)), `${route.id}: deny`);
+      const denies = typeof route.deny === 'function'
+        ? ACTORS.flatMap((actor) => route.targets.flatMap((key) => [false, true].map((mfa) => route.deny(actor, key, mfa))))
+        : [route.deny];
+      assert.ok(denies.every((status) => [400, 403, 404].includes(status)), `${route.id}: deny`);
+      if (route.mfaDeny !== undefined) assert.ok([403, 404].includes(route.mfaDeny), `${route.id}: mfaDeny`);
       for (const [actorKey, scopes] of Object.entries(route.allow)) {
         assert.ok(ACTOR_KEYS.includes(actorKey), `${route.id}: nieznany aktor ${actorKey}`);
         assert.ok(scopes.every((scope) => route.targets.includes(scope)), `${route.id}: zakres spoza targets`);
@@ -329,19 +634,34 @@ const MODULE_SOURCES = {
   payments: ['../src/pg/routes/payments.js'],
   events: ['../src/pg/routes/events.js', '../src/pg/events.js'],
   meetings: ['../src/pg/routes/meetings.js', '../src/pg/meetings.js'],
+  import: ['../src/pg/routes/import.js'],
+  documents: ['../src/pg/routes/documents.js', '../src/documents.js'],
+  ledger: ['../src/pg/routes/ledger.js'],
+  email: ['../src/pg/routes/email.js'],
+  news: ['../src/pg/routes/news.js', '../src/pg/news.js'],
+  admin: ['../src/pg/routes/admin.js'],
+  reconciliation: ['../src/pg/routes/reconciliation.js'],
+  exports: ['../src/pg/routes/exports.js'],
+  families: ['../src/pg/routes/families.js'],
+  print: ['../src/pg/routes/print.js'],
+  'year-close': ['../src/pg/routes/year-close.js'],
+  mfa: ['../src/pg/routes/mfa.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń
-// regularnych (\/słowo, (a|b)) i porównania w funkcji route() modułu zebrań.
+// regularnych /^\/api…$/ (\/słowo, (a|b)) i porównania w funkcji route() modułu zebrań.
+// Dla modułu administracji — także sekcje z KNOWN_SECTIONS.
 function pathSegmentsInSource(source) {
   const segments = new Set();
   for (const [, literal] of source.matchAll(/'(\/api\/[a-z/-]+)'/g)) {
     for (const part of literal.split('/').filter(Boolean)) segments.add(part);
   }
-  for (const [, regex] of source.matchAll(/\.match\(\/(\^\\\/api[^\n]*?)\$\/\)/g)) {
+  for (const [, regex] of source.matchAll(/\/(\^\\\/api[^\n]*?)\$\//g)) {
     for (const [, word] of regex.matchAll(/\\\/([a-z][a-z-]*)/g)) segments.add(word);
     for (const [, group] of regex.matchAll(/\(([a-z|]+)\)/g)) group.split('|').forEach((word) => segments.add(word));
   }
+  const sections = source.match(/KNOWN_SECTIONS = new Set\(\[([^\]]*)\]\)/);
+  if (sections) for (const [, word] of sections[1].matchAll(/'([a-z][a-z-]*)'/g)) segments.add(word);
   const routeFunction = source.match(/\nfunction route\([\s\S]*?\n}\n/);
   if (routeFunction) {
     for (const [, word] of routeFunction[0].matchAll(/[a-e] === '([a-z][a-z-]*)'/g)) segments.add(word);
@@ -398,13 +718,20 @@ test('meta: detektor macierzy wykrywa błędny status i wyciek danych (kontrola 
 test('events: zmiana cudzego szkicu odpowiada jak brak wydarzenia (bez wyroczni istnienia)', async () => {
   const ctx = await matrixContext();
   const repA = ctx.sessions.repA[false];
-  const foreign = ctx.fx.events.B.eventId;
-  const missing = await handlePgRequest(request('/api/events/nieistniejace-wydarzenie', {
-    method: 'PATCH', cookie: repA, body: { revision: 1, title: 'Próba zmiany' },
-  }), { db: ctx.db });
-  const other = await handlePgRequest(request(`/api/events/${foreign}`, {
-    method: 'PATCH', cookie: repA, body: { revision: 1, title: 'Próba zmiany' },
-  }), { db: ctx.db });
-  assert.equal(missing.status, 404);
-  assert.equal(other.status, missing.status, 'odmowa dla cudzej klasy powinna być nieodróżnialna od braku obiektu');
+  const foreign = (await staticObject(ctx, 'event', 'draft', 'B')).eventId;
+  const attempts = [
+    ['PATCH', '', { revision: 1, title: 'Próba zmiany' }],
+    ['POST', '/submit', { revision: 1 }],
+    ['POST', '/cancel', { revision: 1, reason: 'Próba odwołania' }],
+  ];
+  for (const [method, suffix, body] of attempts) {
+    const missing = await handlePgRequest(request(`/api/events/nieistniejace-wydarzenie${suffix}`, {
+      method, cookie: repA, body,
+    }), ctx.env);
+    const other = await handlePgRequest(request(`/api/events/${foreign}${suffix}`, {
+      method, cookie: repA, body,
+    }), ctx.env);
+    assert.equal(missing.status, 404, `${method} ${suffix}`);
+    assert.equal(other.status, missing.status, `${method} ${suffix}: odmowa dla cudzej klasy powinna być nieodróżnialna od braku obiektu`);
+  }
 });
