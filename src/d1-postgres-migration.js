@@ -101,6 +101,13 @@ export function normalizeSnapshot(snapshot) {
     row.is_primary_contact = bool(row.is_primary_contact);
   });
   tables.ledger_categories.forEach((row) => { row.active = bool(row.active); });
+  // PostgreSQL 0008: nieopublikowane wydarzenie musi zaczynać jako szkic bez daty publikacji.
+  // Nie zgadujemy, czy było kiedyś publiczne — przerywamy z czytelnym błędem zamiast event_must_start_as_draft.
+  tables.events.forEach((row) => {
+    if (row.visibility !== 'published' && row.published_at != null) {
+      throw new Error(`Unpublished event has published_at: ${row.id}`);
+    }
+  });
   tables.ledger_entries.forEach((row) => {
     row.category_id ??= row.category;
     row.method ||= 'other';
@@ -150,6 +157,9 @@ export async function restoreSnapshot(client, snapshot) {
   const expected = sourceReconciliation(tables);
   await client.query('BEGIN');
   try {
+    // D1 zapisuje CURRENT_TIMESTAMP jako tekst UTC bez strefy ('YYYY-MM-DD HH:MM:SS').
+    // Bez tego PostgreSQL odczytałby go w strefie sesji serwera (np. Europe/Brussels).
+    await client.query("SET LOCAL TIME ZONE 'UTC'");
     await ensureEmpty(client);
     for (const [table, columns] of specs) {
       for (const row of tables[table]) {

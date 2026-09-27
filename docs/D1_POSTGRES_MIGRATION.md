@@ -60,6 +60,14 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
   Brak odpowiadającej kategorii, niewłaściwy rok/kierunek, uszkodzony łańcuch
   preliminarza lub niespójne przypisanie przerywa całą transakcję. Narzędzie
   nie zgaduje kategorii ani gospodarstwa.
+- Czas zapisany w D1 bez strefy (`YYYY-MM-DD HH:MM:SS`, `CURRENT_TIMESTAMP`)
+  jest odczytywany jako UTC niezależnie od strefy sesji serwera
+  (`SET LOCAL TIME ZONE 'UTC'` w transakcji importu).
+- Wydarzenie `published` staje się opublikowaną rewizją 1 ze źródłem
+  `legacy_d1` (migracja 0008). Nieopublikowane wydarzenie z ustawionym
+  `published_at` przerywa import — narzędzie nie zgaduje, czy było publiczne.
+- Zgodność z migracjami 0004, 0008 i 0009 oraz wyniki porównania API opisuje
+  [EQUIVALENCE.md](EQUIVALENCE.md).
 - Metadane dokumentów mogą zostać przeniesione dopiero razem z uzgodnionym
   transferem obiektów. Sam snapshot nie kopiuje plików.
 
