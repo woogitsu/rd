@@ -8,7 +8,7 @@ Według autora projektu (27.09.2026) portal na Cloudflare Worker/D1 **nigdy nie 
 
 - Nie ma danych do przeniesienia z D1. Pierwsza baza PostgreSQL startuje pusta; ścieżka `db:snapshot:d1` / `db:restore:postgres` pozostaje narzędziem testowym, nie etapem cutover.
 - Testy równoważności Worker ↔ PostgreSQL chronią kontrakt API i logikę, ale nie są warunkiem przeniesienia danych.
-- Pierwszy administrator na pustej bazie wymaga osobnej, udokumentowanej procedury (#187).
+- Pierwszy administrator na pustej bazie: `npm run auth:bootstrap-admin` (#187, procedura w [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md)).
 - Usunięcie starego Workera i D1 (#42) nadal odbywa się osobnym PR i zgodnie z [AGENTS.md](../AGENTS.md); ten wpis nie zmienia tej zasady.
 
 Zarząd Rady nie podjął jeszcze żadnej decyzji z [DECISIONS.md](DECISIONS.md); prototyp działa wyłącznie na danych syntetycznych.
