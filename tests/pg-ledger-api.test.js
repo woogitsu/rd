@@ -678,7 +678,7 @@ test('ledger CSV line exports negative amounts as numbers and neutralises text (
     'le-syn-1', '2026-09-12', 'Przychód', "'=Kategoria", `"'-korekta; ""opis"""`, 'Przelew', "'@konto", "'+U/1",
     '', '', '10,00', '-12,50', '22,50',
   ].join(';'));
-  assert.equal(ledgerRoutes.LEDGER_CSV_COLUMNS.filter((column) => column.type === 'amount').map((column) => column.header),
+  assert.deepEqual(ledgerRoutes.LEDGER_CSV_COLUMNS.filter((column) => column.type === 'amount').map((column) => column.header),
     ['kwota_eur', 'korekty_eur', 'netto_eur']);
 });
 
