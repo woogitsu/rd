@@ -47,6 +47,23 @@ stają się szkicami. Kolumna `visibility` jest odtąd wyliczana przez trigger.
 Opis:
 [`docs/EVENTS.md`](../docs/EVENTS.md).
 
+`0009_meetings.sql` dodaje zebrania (rok, rodzaj, klasa dla zebrania
+klasowego, status i konfigurowalną regułę quorum), porządek obrad, listę
+obecności, niezmienne ustalenia quorum, wersjonowane protokoły z
+zatwierdzeniem i historią widoczności, uchwały z rewizjami oraz klucze
+idempotencji. Skutki dla danych: migracja tylko dodaje tabele, funkcje,
+triggery i widoki; nie zmienia ani nie przenosi istniejących wierszy, a
+reguła księgi dla wydatków powyżej 3000 EUR pozostaje bez zmian (widok
+`ledger_resolution_links` jedynie łączy referencję z uchwałą). Lista obecności
+przechowuje wyłącznie identyfikator konta lub opiekuna, funkcję, prawo głosu i
+obecność — bez imion i adresów. Nie da się usunąć zebrania, wpisu obecności,
+protokołu, uchwały ani ustalenia quorum; zatwierdzony protokół i uchwała
+przyjęta lub odrzucona są niezmienne, a poprawka to nowa wersja lub rewizja.
+Pierwsze zatwierdzenie protokołu blokuje dane zebrania. Wycofanie migracji na
+pustej bazie wymaga usunięcia tych obiektów; na bazie z danymi — tylko po
+kopii zapasowej i decyzji o retencji (D-04). Szczegóły:
+[`docs/MEETINGS.md`](../docs/MEETINGS.md).
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.
