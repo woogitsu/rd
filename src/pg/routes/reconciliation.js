@@ -1,0 +1,968 @@
+// Uzgodnienie rachunku bankowego z księgą i raport dla Komisji Rewizyjnej
+// (issue #7, przygotowanie #15). Prototyp — nie jest wdrożony.
+//
+//   GET  /api/reconciliations?schoolYearId=…
+//   POST /api/reconciliations                                 (Idempotency-Key)
+//   GET  /api/reconciliations/{id}
+//   POST /api/reconciliations/{id}/lines                      (Idempotency-Key) JSON lines albo CSV
+//   GET  /api/reconciliations/{id}/suggestions?windowDays=…   tylko propozycje, nigdy zatwierdzenie
+//   POST /api/reconciliations/{id}/matches                    (Idempotency-Key)
+//   POST /api/reconciliations/{id}/matches/{matchId}/revocation
+//   POST /api/reconciliations/{id}/confirm                    zasada czterech oczu
+//   GET  /api/reports/audit?schoolYearId=…&format=json|html
+//
+// Uzgodnienia: admin, board, treasurer z MFA w zakresie roku. Raport: audit,
+// board, treasurer z MFA. Saldo księgi wylicza baza (0015_reconciliation.sql);
+// klient podaje wyłącznie saldo z wyciągu. Treść tytułu przelewu nie jest
+// zapisywana — tylko solony skrót SHA-256 (docs/RECONCILIATION.md).
+
+import { isSameOrigin } from '../../auth.js';
+import { isoTimestamp } from '../auth.js';
+import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { insertAuditEvent } from '../audit.js';
+import { toSafeInteger } from './payments.js';
+import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
+
+export const name = 'reconciliation';
+
+const WRITE_ROLES = ['admin', 'board', 'treasurer'];
+const REPORT_ROLES = ['audit', 'board', 'treasurer'];
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
+const MAX_BODY_BYTES = 16 * 1024;
+const MAX_IMPORT_BYTES = 256 * 1024;
+const MAX_LINES = 500;
+const MAX_LINE_CENTS = 100_000_000;
+const MAX_BALANCE_CENTS = 10_000_000_000;
+const MAX_REFERENCE_LENGTH = 300;
+const LARGE_EXPENSE_CENTS = 300_000;
+const MAX_CANDIDATES = 5;
+
+class RequestError extends Error {
+  constructor(code, status = 400, extra = {}) {
+    super(code);
+    this.code = code;
+    this.status = status;
+    this.extra = extra;
+  }
+}
+
+const REPLAYED = { 'Idempotency-Replayed': 'true' };
+const CREATED = { 'Idempotency-Replayed': 'false' };
+
+// --- walidacja -------------------------------------------------------------
+
+function validId(value) {
+  return typeof value === 'string' && ID_PATTERN.test(value);
+}
+
+function decodeId(value) {
+  try {
+    const decoded = decodeURIComponent(value);
+    if (!validId(decoded)) throw new Error();
+    return decoded;
+  } catch {
+    throw new RequestError('invalid_id');
+  }
+}
+
+function validDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+function optionalText(value, min, max, code = 'invalid_request') {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') throw new RequestError(code);
+  const text = value.trim();
+  if (text.length < min || text.length > max) throw new RequestError(code);
+  return text;
+}
+
+async function readJson(request, maxBytes = MAX_BODY_BYTES) {
+  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
+  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
+  const declared = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declared) && declared > maxBytes) throw new RequestError('request_too_large', 413);
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > maxBytes) throw new RequestError('request_too_large', 413);
+  try {
+    const data = JSON.parse(text);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
+    return data;
+  } catch {
+    throw new RequestError('invalid_json');
+  }
+}
+
+function readIdempotencyKey(request) {
+  const key = request.headers.get('Idempotency-Key')?.trim();
+  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
+  return key;
+}
+
+function isUniqueError(error) {
+  return error?.code === '23505';
+}
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function randomHex(bytes) {
+  return [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Normalizacja tytułu przelewu przed skrótem: NFKC, małe litery, jedna spacja.
+export function normalizeReference(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw new RequestError('invalid_reference_text');
+  const text = value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  if (text.length > MAX_REFERENCE_LENGTH) throw new RequestError('invalid_reference_text');
+  return text;
+}
+
+export async function hashReference(salt, value) {
+  const normalized = normalizeReference(value);
+  return normalized ? sha256Hex(`${salt}:${normalized}`) : null;
+}
+
+// --- import wyciągu (ogólny CSV: data, kwota, tytuł) -----------------------
+
+const HEADER_ALIASES = new Map([
+  ['date', 'date'], ['data', 'date'], ['booking_date', 'date'], ['data_operacji', 'date'],
+  ['amount', 'amount'], ['kwota', 'amount'],
+  ['reference', 'reference'], ['tytul', 'reference'], ['tytuł', 'reference'], ['opis', 'reference'],
+  ['description', 'reference'], ['communication', 'reference'],
+]);
+
+function parseCsvRows(text) {
+  const source = text.replace(/^﻿/, '');
+  const firstLine = source.split(/\r?\n/, 1)[0] ?? '';
+  const delimiter = (firstLine.match(/;/g)?.length ?? 0) > (firstLine.match(/,/g)?.length ?? 0) ? ';' : ',';
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quoted) {
+      if (char === '"' && source[index + 1] === '"') { field += '"'; index += 1; }
+      else if (char === '"') quoted = false;
+      else field += char;
+    } else if (char === '"' && field === '') quoted = true;
+    else if (char === delimiter) { row.push(field); field = ''; }
+    else if (char === '\n' || char === '\r') {
+      if (char === '\r' && source[index + 1] === '\n') index += 1;
+      row.push(field); rows.push(row); row = []; field = '';
+    } else field += char;
+  }
+  if (quoted) throw new RequestError('invalid_csv');
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((cells) => cells.some((cell) => cell.trim() !== ''));
+}
+
+function parseCsvDate(value) {
+  const text = value.trim();
+  if (validDate(text)) return text;
+  const match = text.match(/^(\d{2})[./-](\d{2})[./-](\d{4})$/);
+  if (match) {
+    const iso = `${match[3]}-${match[2]}-${match[1]}`;
+    if (validDate(iso)) return iso;
+  }
+  return null;
+}
+
+function parseCsvAmount(value) {
+  const text = value.replace(/[\s ]/g, '').replace(/EUR$/i, '');
+  const match = text.match(/^([+-]?)(\d{1,7})(?:[.,](\d{1,2}))?$/);
+  if (!match) return null;
+  const cents = Number(match[2]) * 100 + Number((match[3] ?? '0').padEnd(2, '0'));
+  return match[1] === '-' ? -cents : cents;
+}
+
+export function parseStatementCsv(text) {
+  if (typeof text !== 'string' || !text.trim()) throw new RequestError('invalid_csv');
+  const rows = parseCsvRows(text);
+  const header = (rows.shift() ?? []).map((cell) => HEADER_ALIASES.get(cell.trim().toLowerCase()) ?? null);
+  const column = (key) => header.indexOf(key);
+  if (column('date') < 0 || column('amount') < 0) throw new RequestError('invalid_csv_header');
+  return rows.map((cells, index) => {
+    const bookedOn = parseCsvDate(cells[column('date')] ?? '');
+    const amountCents = parseCsvAmount(cells[column('amount')] ?? '');
+    if (!bookedOn || amountCents === null) {
+      throw new RequestError('invalid_statement_line', 400, { line: index + 1 });
+    }
+    return { bookedOn, amountCents, reference: column('reference') >= 0 ? cells[column('reference')] ?? null : null };
+  });
+}
+
+function parseStatementLines(data) {
+  const hasLines = data.lines !== undefined;
+  const hasCsv = data.csv !== undefined;
+  if (hasLines === hasCsv) throw new RequestError('invalid_request');
+  let source;
+  let lines;
+  if (hasCsv) {
+    source = 'csv';
+    lines = parseStatementCsv(data.csv);
+  } else {
+    if (!Array.isArray(data.lines)) throw new RequestError('invalid_request');
+    source = 'manual';
+    lines = data.lines;
+  }
+  if (!lines.length || lines.length > MAX_LINES) throw new RequestError('invalid_line_count');
+  return {
+    source,
+    lines: lines.map((line, index) => {
+      if (!line || typeof line !== 'object' || !validDate(line.bookedOn)
+          || !Number.isSafeInteger(line.amountCents) || line.amountCents === 0
+          || Math.abs(line.amountCents) > MAX_LINE_CENTS) {
+        throw new RequestError('invalid_statement_line', 400, { line: index + 1 });
+      }
+      try {
+        return { bookedOn: line.bookedOn, amountCents: line.amountCents, reference: normalizeReference(line.reference) };
+      } catch {
+        throw new RequestError('invalid_statement_line', 400, { line: index + 1 });
+      }
+    }),
+  };
+}
+
+// --- mapowanie wierszy -------------------------------------------------------
+
+const RECONCILIATION_COLUMNS = `r.id, r.school_year_id, to_char(r.statement_date, 'YYYY-MM-DD') AS statement_date,
+  r.statement_balance_cents,
+  CASE WHEN r.status = 'draft' THEN ledger_balance_at(r.school_year_id, r.statement_date)
+       ELSE r.ledger_balance_cents END AS ledger_balance_cents,
+  CASE WHEN r.status = 'draft' THEN ledger_non_bank_net_at(r.school_year_id, r.statement_date)
+       ELSE r.ledger_non_bank_cents END AS ledger_non_bank_cents,
+  r.status, r.notes, r.reference_salt, r.created_by, r.created_at, r.confirmed_by, r.confirmed_at,
+  r.confirmation_note`;
+
+function reconciliationFromRow(row) {
+  const statementBalanceCents = toSafeInteger(row.statement_balance_cents);
+  const ledgerBalanceCents = toSafeInteger(row.ledger_balance_cents);
+  return {
+    id: row.id,
+    schoolYearId: row.school_year_id,
+    statementDate: row.statement_date,
+    statementBalanceCents,
+    ledgerBalanceCents,
+    ledgerNonBankCents: toSafeInteger(row.ledger_non_bank_cents),
+    differenceCents: statementBalanceCents - ledgerBalanceCents,
+    status: row.status,
+    notes: row.notes ?? null,
+    createdBy: row.created_by,
+    createdAt: isoTimestamp(row.created_at),
+    confirmedBy: row.confirmed_by ?? null,
+    confirmedAt: isoTimestamp(row.confirmed_at),
+    confirmationNote: row.confirmation_note ?? null,
+  };
+}
+
+function matchFromRow(row) {
+  return {
+    id: row.id,
+    reconciliationId: row.reconciliation_id,
+    statementLineId: row.statement_line_id,
+    ledgerEntryId: row.ledger_entry_id ?? null,
+    paymentEntryId: row.payment_entry_id ?? null,
+    createdBy: row.created_by,
+    createdAt: isoTimestamp(row.created_at),
+    revokedAt: isoTimestamp(row.revoked_at),
+    revokedBy: row.revoked_by ?? null,
+    revokeReason: row.revoke_reason ?? null,
+  };
+}
+
+async function loadReconciliation(executor, id, { lock = false } = {}) {
+  if (lock) {
+    // Najpierw blokada samego wiersza, potem odczyt z wyliczonym saldem.
+    await executor.query('SELECT id FROM bank_reconciliations WHERE id = $1 FOR UPDATE', [id]);
+  }
+  const { rows } = await executor.query(
+    `SELECT ${RECONCILIATION_COLUMNS}, r.idempotency_key FROM bank_reconciliations r WHERE r.id = $1`, [id],
+  );
+  return rows[0] ?? null;
+}
+
+// --- dostęp ----------------------------------------------------------------
+
+async function requireContext(request, env, roles, schoolYearId) {
+  const context = await loadAuthorizationContext(request, env);
+  if (!context) throw new RequestError('unauthenticated', 401);
+  if (!isAuthorized(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  return context;
+}
+
+function requireYear(context, roles, schoolYearId) {
+  if (!isAuthorized(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+}
+
+function mapDatabaseError(error) {
+  if (error instanceof RequestError) throw error;
+  const message = String(error?.message ?? '');
+  if (message.includes('bank_reconciliation_confirmed_immutable')) throw new RequestError('reconciliation_confirmed', 409);
+  if (message.includes('bank_reconciliation_date_outside_year')) throw new RequestError('statement_date_outside_school_year');
+  if (message.includes('bank_statement_line_after_statement_date')) throw new RequestError('statement_line_after_statement_date');
+  if (message.includes('bank_match_amount_mismatch')) throw new RequestError('match_amount_mismatch', 409);
+  if (message.includes('bank_match_target_mismatch')) throw new RequestError('invalid_match_target');
+  if (message.includes('bank_match_line_mismatch')) throw new RequestError('invalid_statement_line');
+  if (message.includes('bank_reconciliation_four_eyes')) throw new RequestError('four_eyes_required', 403);
+  if (error?.code === '23503') throw new RequestError('invalid_reference');
+  throw error;
+}
+
+// --- uzgodnienia -----------------------------------------------------------
+
+async function listReconciliations(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  await requireContext(request, env, WRITE_ROLES, schoolYearId);
+  const { rows } = await env.db.query(
+    `SELECT ${RECONCILIATION_COLUMNS} FROM bank_reconciliations r
+      WHERE r.school_year_id = $1 ORDER BY r.statement_date DESC, r.created_at DESC, r.id`,
+    [schoolYearId],
+  );
+  return json({ reconciliations: rows.map(reconciliationFromRow) });
+}
+
+async function createReconciliation(request, env, json) {
+  const idempotencyKey = readIdempotencyKey(request);
+  const data = await readJson(request);
+  if (!validId(data.schoolYearId) || !validDate(data.statementDate)
+      || !Number.isSafeInteger(data.statementBalanceCents)
+      || Math.abs(data.statementBalanceCents) > MAX_BALANCE_CENTS) {
+    throw new RequestError('invalid_request');
+  }
+  const input = {
+    schoolYearId: data.schoolYearId,
+    statementDate: data.statementDate,
+    statementBalanceCents: data.statementBalanceCents,
+    notes: optionalText(data.notes, 3, 1000, 'invalid_notes'),
+  };
+  const context = await requireContext(request, env, WRITE_ROLES, input.schoolYearId);
+  const actorId = context.session.user.id;
+
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    const same = row.created_by === actorId && row.school_year_id === input.schoolYearId
+      && row.statement_date === input.statementDate
+      && toSafeInteger(row.statement_balance_cents) === input.statementBalanceCents
+      && (row.notes ?? null) === input.notes;
+    if (!same) throw new RequestError('idempotency_conflict', 409);
+    return json({ reconciliation: reconciliationFromRow(row) }, 200, REPLAYED);
+  };
+  const byKey = async (executor) => (await executor.query(
+    `SELECT ${RECONCILIATION_COLUMNS} FROM bank_reconciliations r WHERE r.idempotency_key = $1`, [idempotencyKey],
+  )).rows[0] ?? null;
+
+  try {
+    const response = await env.db.transaction(async (tx) => {
+      const replay = replayOrConflict(await byKey(tx));
+      if (replay) return replay;
+      const id = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO bank_reconciliations (id, school_year_id, statement_date, statement_balance_cents,
+           ledger_balance_cents, ledger_non_bank_cents, notes, reference_salt, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, 0, 0, $5, $6, $7, $8)`,
+        [id, input.schoolYearId, input.statementDate, input.statementBalanceCents, input.notes, randomHex(16),
+          actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.created', entityType: 'bank_reconciliation', entityId: id,
+        metadata: { schoolYearId: input.schoolYearId },
+      });
+      const row = await loadReconciliation(tx, id);
+      return json({ reconciliation: reconciliationFromRow(row) }, 201, CREATED);
+    });
+    return response;
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await byKey(env.db));
+      if (replay) return replay;
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+}
+
+async function loadAuthorizedReconciliation(request, env, id, executor = env.db, lock = false) {
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const row = await loadReconciliation(executor, id, { lock });
+  if (!row) throw new RequestError('reconciliation_not_found', 404);
+  requireYear(context, WRITE_ROLES, row.school_year_id);
+  return { context, row };
+}
+
+async function getReconciliation(request, env, id, json) {
+  const { row } = await loadAuthorizedReconciliation(request, env, id);
+  const reconciliation = reconciliationFromRow(row);
+  const [lines, matches, entries] = await Promise.all([
+    env.db.query(
+      `SELECT l.id, l.import_id, i.source, l.line_no, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on,
+              l.amount_cents, l.reference_hash IS NOT NULL AS has_reference,
+              m.id AS match_id, m.ledger_entry_id, m.payment_entry_id
+         FROM bank_statement_lines l
+         JOIN bank_statement_imports i ON i.id = l.import_id
+         LEFT JOIN bank_reconciliation_matches m ON m.statement_line_id = l.id AND m.revoked_at IS NULL
+        WHERE l.reconciliation_id = $1
+        ORDER BY l.booked_on, i.created_at, l.line_no`,
+      [id],
+    ),
+    env.db.query(
+      `SELECT * FROM bank_reconciliation_matches WHERE reconciliation_id = $1 ORDER BY created_at, id`, [id],
+    ),
+    // Wpisy bankowe księgi do daty wyciągu, których nie powiązano z żadną pozycją.
+    env.db.query(
+      `SELECT e.id, e.direction, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
+              e.category_id, e.description
+         FROM ledger_entry_net e
+        WHERE e.school_year_id = $1 AND e.occurred_on <= $2::date AND e.method = 'bank'
+          AND e.net_amount_cents > 0
+          AND NOT EXISTS (
+            SELECT 1 FROM bank_reconciliation_matches m
+             WHERE m.reconciliation_id = $3 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
+        ORDER BY e.occurred_on, e.id
+        LIMIT 1000`,
+      [row.school_year_id, row.statement_date, id],
+    ),
+  ]);
+  const lineItems = lines.rows.map((line) => ({
+    id: line.id,
+    importId: line.import_id,
+    source: line.source,
+    lineNo: line.line_no,
+    bookedOn: line.booked_on,
+    amountCents: toSafeInteger(line.amount_cents),
+    hasReference: Boolean(line.has_reference),
+    match: line.match_id
+      ? { id: line.match_id, ledgerEntryId: line.ledger_entry_id ?? null, paymentEntryId: line.payment_entry_id ?? null }
+      : null,
+  }));
+  const unmatchedLines = lineItems.filter((line) => !line.match);
+  return json({
+    reconciliation,
+    lines: lineItems,
+    matches: matches.rows.map(matchFromRow),
+    summary: {
+      lineCount: lineItems.length,
+      matchedLineCount: lineItems.length - unmatchedLines.length,
+      unmatchedLineCount: unmatchedLines.length,
+      unmatchedLineTotalCents: unmatchedLines.reduce((sum, line) => sum + line.amountCents, 0),
+    },
+    unmatchedLines,
+    unmatchedLedgerEntries: entries.rows.map((entry) => ({
+      id: entry.id,
+      direction: entry.direction,
+      occurredOn: entry.occurred_on,
+      netAmountCents: toSafeInteger(entry.net_amount_cents),
+      categoryId: entry.category_id,
+      description: entry.description,
+    })),
+  });
+}
+
+async function importLines(request, env, id, json) {
+  const idempotencyKey = readIdempotencyKey(request);
+  const input = parseStatementLines(await readJson(request, MAX_IMPORT_BYTES));
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+
+  const byKey = async (executor) => (await executor.query(
+    'SELECT id, reconciliation_id, source, line_count, request_hash, created_by FROM bank_statement_imports WHERE idempotency_key = $1',
+    [idempotencyKey],
+  )).rows[0] ?? null;
+
+  let requestHash;
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    if (row.created_by !== actorId || row.reconciliation_id !== id || row.request_hash !== requestHash) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return json({ import: { id: row.id, reconciliationId: id, source: row.source, lineCount: row.line_count } }, 200, REPLAYED);
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      const hashed = await Promise.all(input.lines.map(async (line) => ({
+        ...line, referenceHash: line.reference ? await sha256Hex(`${row.reference_salt}:${line.reference}`) : null,
+      })));
+      requestHash = await sha256Hex(JSON.stringify([input.source,
+        hashed.map((line) => [line.bookedOn, line.amountCents, line.referenceHash])]));
+      const replay = replayOrConflict(await byKey(tx));
+      if (replay) return replay;
+      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+
+      const importId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO bank_statement_imports (id, reconciliation_id, source, line_count, request_hash, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [importId, id, input.source, hashed.length, requestHash, actorId, idempotencyKey],
+      );
+      for (const [index, line] of hashed.entries()) {
+        await tx.query(
+          `INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents, reference_hash, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [crypto.randomUUID(), id, importId, index + 1, line.bookedOn, line.amountCents, line.referenceHash, actorId],
+        );
+      }
+      // Możliwe duplikaty z wcześniejszych importów (ta sama data, kwota i skrót tytułu).
+      const duplicates = await tx.query(
+        `SELECT count(*) AS n FROM bank_statement_lines l
+          WHERE l.import_id = $1 AND EXISTS (
+            SELECT 1 FROM bank_statement_lines o
+             WHERE o.reconciliation_id = l.reconciliation_id AND o.import_id <> l.import_id
+               AND o.booked_on = l.booked_on AND o.amount_cents = l.amount_cents
+               AND o.reference_hash IS NOT DISTINCT FROM l.reference_hash)`,
+        [importId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.lines.imported', entityType: 'bank_statement_import', entityId: importId,
+        metadata: { reconciliationId: id, source: input.source, lineCount: hashed.length },
+      });
+      return json({
+        import: { id: importId, reconciliationId: id, source: input.source, lineCount: hashed.length },
+        possibleDuplicateCount: toSafeInteger(duplicates.rows[0].n),
+      }, 201, CREATED);
+    });
+  } catch (error) {
+    if (isUniqueError(error) && requestHash) {
+      const replay = replayOrConflict(await byKey(env.db));
+      if (replay) return replay;
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+}
+
+async function suggestMatches(request, env, id, url, json) {
+  const windowText = url.searchParams.get('windowDays') ?? '7';
+  if (!/^\d{1,2}$/.test(windowText) || Number(windowText) > 31) throw new RequestError('invalid_window');
+  const windowDays = Number(windowText);
+  const { row } = await loadAuthorizedReconciliation(request, env, id);
+
+  const openLine = `l.reconciliation_id = $1 AND NOT EXISTS (
+      SELECT 1 FROM bank_reconciliation_matches m WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)`;
+  const [lines, ledger, payments] = await Promise.all([
+    env.db.query(
+      `SELECT l.id, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on, l.amount_cents, l.reference_hash
+         FROM bank_statement_lines l WHERE ${openLine} ORDER BY l.booked_on, l.id`,
+      [id],
+    ),
+    env.db.query(
+      `SELECT l.id AS line_id, e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
+              e.method, abs(e.occurred_on - l.booked_on) AS day_distance
+         FROM bank_statement_lines l
+         JOIN ledger_entry_net e ON e.school_year_id = $2
+          AND (CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END) = l.amount_cents
+          AND abs(e.occurred_on - l.booked_on) <= $3
+        WHERE ${openLine}
+          AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                           WHERE m.reconciliation_id = $1 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
+        ORDER BY l.id, day_distance, e.id`,
+      [id, row.school_year_id, windowDays],
+    ),
+    // Wpłaty nieujęte jeszcze w księdze (wpłata ujęta w księdze jest proponowana jako wpis księgi).
+    env.db.query(
+      `SELECT l.id AS line_id, p.id, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.reference,
+              p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
+              abs(p.received_on - l.booked_on) AS day_distance
+         FROM bank_statement_lines l
+         JOIN payment_entries p ON p.school_year_id = $2 AND p.status IN ('recorded', 'unmatched')
+          AND abs(p.received_on - l.booked_on) <= $3
+         LEFT JOIN (SELECT payment_entry_id, sum(amount_cents) AS corrected
+                      FROM payment_corrections GROUP BY payment_entry_id) c ON c.payment_entry_id = p.id
+        WHERE ${openLine} AND l.amount_cents > 0
+          AND p.amount_cents - COALESCE(c.corrected, 0) = l.amount_cents
+          AND NOT EXISTS (SELECT 1 FROM ledger_entries le WHERE le.payment_entry_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                           WHERE m.reconciliation_id = $1 AND m.payment_entry_id = p.id AND m.revoked_at IS NULL)
+        ORDER BY l.id, day_distance, p.id`,
+      [id, row.school_year_id, windowDays],
+    ),
+  ]);
+
+  const byLine = new Map(lines.rows.map((line) => [line.id, { line, candidates: [] }]));
+  for (const entry of ledger.rows) {
+    byLine.get(entry.line_id)?.candidates.push({
+      type: 'ledger_entry', id: entry.id, date: entry.occurred_on, method: entry.method,
+      amountCents: toSafeInteger(entry.net_amount_cents), dayDistance: toSafeInteger(entry.day_distance),
+      referenceMatch: false,
+    });
+  }
+  for (const payment of payments.rows) {
+    const slot = byLine.get(payment.line_id);
+    if (!slot) continue;
+    let referenceMatch = false;
+    if (slot.line.reference_hash && payment.reference) {
+      referenceMatch = (await hashReference(row.reference_salt, payment.reference)) === slot.line.reference_hash;
+    }
+    slot.candidates.push({
+      type: 'payment_entry', id: payment.id, date: payment.received_on, method: 'bank',
+      amountCents: toSafeInteger(payment.net_amount_cents), dayDistance: toSafeInteger(payment.day_distance),
+      referenceMatch,
+    });
+  }
+  const suggestions = [...byLine.values()].map(({ line, candidates }) => ({
+    statementLineId: line.id,
+    bookedOn: line.booked_on,
+    amountCents: toSafeInteger(line.amount_cents),
+    candidates: candidates
+      .sort((a, b) => Number(b.referenceMatch) - Number(a.referenceMatch) || a.dayDistance - b.dayDistance
+        || (a.type === b.type ? a.id.localeCompare(b.id) : a.type === 'ledger_entry' ? -1 : 1))
+      .slice(0, MAX_CANDIDATES),
+  }));
+  // Wyłącznie propozycje: zatwierdzenie wymaga osobnego POST …/matches.
+  return json({ reconciliationId: id, windowDays, suggestions });
+}
+
+async function confirmMatch(request, env, id, json) {
+  const idempotencyKey = readIdempotencyKey(request);
+  const data = await readJson(request);
+  const ledgerEntryId = data.ledgerEntryId ?? null;
+  const paymentEntryId = data.paymentEntryId ?? null;
+  if (!validId(data.statementLineId) || (ledgerEntryId === null) === (paymentEntryId === null)
+      || (ledgerEntryId !== null && !validId(ledgerEntryId)) || (paymentEntryId !== null && !validId(paymentEntryId))) {
+    throw new RequestError('invalid_request');
+  }
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+
+  const byKey = async (executor) => (await executor.query(
+    'SELECT * FROM bank_reconciliation_matches WHERE idempotency_key = $1', [idempotencyKey],
+  )).rows[0] ?? null;
+  const replayOrConflict = (match) => {
+    if (!match) return null;
+    if (match.created_by !== actorId || match.reconciliation_id !== id || match.statement_line_id !== data.statementLineId
+        || (match.ledger_entry_id ?? null) !== ledgerEntryId || (match.payment_entry_id ?? null) !== paymentEntryId) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return json({ match: matchFromRow(match) }, 200, REPLAYED);
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      const replay = replayOrConflict(await byKey(tx));
+      if (replay) return replay;
+      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      const taken = await tx.query(
+        `SELECT 1 FROM bank_reconciliation_matches
+          WHERE revoked_at IS NULL AND (statement_line_id = $1
+             OR (reconciliation_id = $2 AND (ledger_entry_id = $3 OR payment_entry_id = $4)))`,
+        [data.statementLineId, id, ledgerEntryId, paymentEntryId],
+      );
+      if (taken.rows.length) throw new RequestError('already_matched', 409);
+      const matchId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id, ledger_entry_id,
+           payment_entry_id, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [matchId, id, data.statementLineId, ledgerEntryId, paymentEntryId, actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.match.confirmed', entityType: 'bank_reconciliation_match', entityId: matchId,
+        metadata: { reconciliationId: id, statementLineId: data.statementLineId, ledgerEntryId, paymentEntryId },
+      });
+      const { rows } = await tx.query('SELECT * FROM bank_reconciliation_matches WHERE id = $1', [matchId]);
+      return json({ match: matchFromRow(rows[0]) }, 201, CREATED);
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await byKey(env.db));
+      if (replay) return replay;
+      throw new RequestError('already_matched', 409);
+    }
+    mapDatabaseError(error);
+  }
+}
+
+async function revokeMatch(request, env, id, matchId, json) {
+  const data = await readJson(request);
+  const reason = optionalText(data.reason, 3, 500, 'invalid_reason');
+  if (!reason) throw new RequestError('invalid_reason');
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      const { rows } = await tx.query(
+        'SELECT * FROM bank_reconciliation_matches WHERE id = $1 AND reconciliation_id = $2 FOR UPDATE', [matchId, id],
+      );
+      const match = rows[0];
+      if (!match) throw new RequestError('match_not_found', 404);
+      if (match.revoked_at) {
+        if (match.revoked_by === actorId && match.revoke_reason === reason) {
+          return json({ match: matchFromRow(match) }, 200, REPLAYED);
+        }
+        throw new RequestError('match_already_revoked', 409);
+      }
+      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      const updated = await tx.query(
+        `UPDATE bank_reconciliation_matches SET revoked_at = now(), revoked_by = $2, revoke_reason = $3
+          WHERE id = $1 RETURNING *`,
+        [matchId, actorId, reason],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.match.revoked', entityType: 'bank_reconciliation_match', entityId: matchId,
+        metadata: { reconciliationId: id },
+      });
+      return json({ match: matchFromRow(updated.rows[0]) }, 200, CREATED);
+    });
+  } catch (error) {
+    mapDatabaseError(error);
+  }
+}
+
+async function confirmReconciliation(request, env, id, json) {
+  const data = await readJson(request);
+  const note = optionalText(data.confirmationNote, 3, 1000, 'invalid_confirmation_note');
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      if (row.status === 'confirmed') {
+        if (row.confirmed_by === actorId) return json({ reconciliation: reconciliationFromRow(row) }, 200, REPLAYED);
+        throw new RequestError('reconciliation_confirmed', 409);
+      }
+      // Zasada czterech oczu: zatwierdza inna osoba niż autor uzgodnienia.
+      if (row.created_by === actorId) throw new RequestError('four_eyes_required', 403);
+      const current = reconciliationFromRow(row);
+      if (current.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
+      await tx.query(
+        `UPDATE bank_reconciliations
+            SET status = 'confirmed', confirmed_by = $2, confirmed_at = now(), confirmation_note = $3
+          WHERE id = $1`,
+        [id, actorId, note],
+      );
+      const confirmed = await loadReconciliation(tx, id);
+      const result = reconciliationFromRow(confirmed);
+      // Saldo mogło się zmienić od odczytu; baza przelicza je przy zatwierdzeniu.
+      if (result.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.confirmed', entityType: 'bank_reconciliation', entityId: id,
+        metadata: { schoolYearId: row.school_year_id, balanced: result.differenceCents === 0 },
+      });
+      return json({ reconciliation: result }, 200, CREATED);
+    });
+  } catch (error) {
+    if (String(error?.message ?? '').includes('bank_reconciliation_difference_explained')) {
+      throw new RequestError('difference_requires_note');
+    }
+    mapDatabaseError(error);
+  }
+}
+
+// --- raport dla Komisji Rewizyjnej -----------------------------------------
+
+export async function buildAuditReport(executor, schoolYearId) {
+  const year = (await executor.query(
+    `SELECT id, label, to_char(starts_on, 'YYYY-MM-DD') AS starts_on, to_char(ends_on, 'YYYY-MM-DD') AS ends_on
+       FROM school_years WHERE id = $1`, [schoolYearId],
+  )).rows[0];
+  if (!year) return null;
+
+  const summary = (await executor.query(
+    `SELECT opening_balance_cents, income_cents, expense_cents, closing_balance_cents
+       FROM ledger_year_summary WHERE school_year_id = $1`, [schoolYearId],
+  )).rows[0];
+
+  const categories = (await executor.query(
+    `SELECT c.id, c.direction, c.name, count(e.id) AS entry_count,
+            COALESCE(sum(e.amount_cents), 0) AS gross_cents,
+            COALESCE(sum(e.corrected_cents), 0) AS corrected_cents,
+            COALESCE(sum(e.net_amount_cents), 0) AS net_cents
+       FROM ledger_categories c
+       LEFT JOIN ledger_entry_net e ON e.category_id = c.id AND e.school_year_id = c.school_year_id
+      WHERE c.school_year_id = $1
+      GROUP BY c.id, c.direction, c.name, c.active
+     HAVING count(e.id) > 0 OR c.active
+      ORDER BY CASE c.direction WHEN 'income' THEN 0 ELSE 1 END, c.name, c.id`,
+    [schoolYearId],
+  )).rows.map((row) => ({
+    id: row.id, direction: row.direction, name: row.name, entryCount: toSafeInteger(row.entry_count),
+    grossCents: toSafeInteger(row.gross_cents), correctedCents: toSafeInteger(row.corrected_cents),
+    netCents: toSafeInteger(row.net_cents),
+  }));
+
+  // Widok z 0009_meetings.sql; bez niego zgodność z uchwałą pozostaje niesprawdzona.
+  const linksView = (await executor.query("SELECT to_regclass('ledger_resolution_links') IS NOT NULL AS present")).rows[0];
+  const hasLinks = Boolean(linksView?.present);
+  const largeExpenses = (await executor.query(
+    `SELECT e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.amount_cents, e.net_amount_cents,
+            e.description, c.name AS category, e.resolution_reference,
+            ${hasLinks ? 'link.resolution_id' : 'NULL::text AS resolution_id'}
+       FROM ledger_entry_net e
+       JOIN ledger_categories c ON c.id = e.category_id
+       ${hasLinks ? 'LEFT JOIN ledger_resolution_links link ON link.ledger_entry_id = e.id' : ''}
+      WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.amount_cents > $2
+      ORDER BY e.occurred_on, e.id`,
+    [schoolYearId, LARGE_EXPENSE_CENTS],
+  )).rows.map((row) => ({
+    id: row.id,
+    occurredOn: row.occurred_on,
+    amountCents: toSafeInteger(row.amount_cents),
+    netAmountCents: toSafeInteger(row.net_amount_cents),
+    description: row.description,
+    category: row.category,
+    resolutionReference: row.resolution_reference ?? null,
+    resolutionId: row.resolution_id ?? null,
+    matchesAdoptedResolution: hasLinks ? Boolean(row.resolution_id) : null,
+    flagged: !row.resolution_id,
+  }));
+
+  const corrections = (await executor.query(
+    `SELECT k.id, k.ledger_entry_id, to_char(e.occurred_on, 'YYYY-MM-DD') AS entry_occurred_on, e.direction,
+            k.amount_cents, k.reason, k.created_by, k.created_at
+       FROM ledger_corrections k JOIN ledger_entries e ON e.id = k.ledger_entry_id
+      WHERE e.school_year_id = $1 ORDER BY k.created_at, k.id`,
+    [schoolYearId],
+  )).rows.map((row) => ({
+    id: row.id, ledgerEntryId: row.ledger_entry_id, entryOccurredOn: row.entry_occurred_on,
+    direction: row.direction, amountCents: toSafeInteger(row.amount_cents), reason: row.reason,
+    createdBy: row.created_by, createdAt: isoTimestamp(row.created_at),
+  }));
+
+  const openingAdjustments = (await executor.query(
+    `SELECT a.id, a.amount_cents, a.reason, a.created_by, a.created_at
+       FROM ledger_opening_balance_adjustments a
+       JOIN ledger_opening_balances o ON o.id = a.opening_balance_id
+      WHERE o.school_year_id = $1 ORDER BY a.created_at, a.id`,
+    [schoolYearId],
+  )).rows.map((row) => ({
+    id: row.id, amountCents: toSafeInteger(row.amount_cents), reason: row.reason,
+    createdBy: row.created_by, createdAt: isoTimestamp(row.created_at),
+  }));
+
+  const reconciliationRows = (await executor.query(
+    `SELECT ${RECONCILIATION_COLUMNS},
+            (SELECT count(*) FROM bank_statement_lines l
+              WHERE l.reconciliation_id = r.id AND NOT EXISTS (
+                SELECT 1 FROM bank_reconciliation_matches m
+                 WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)) AS unmatched_line_count
+       FROM bank_reconciliations r
+      WHERE r.school_year_id = $1
+      ORDER BY r.statement_date, r.created_at, r.id`,
+    [schoolYearId],
+  )).rows;
+  const items = reconciliationRows.map((row) => {
+    const item = reconciliationFromRow(row);
+    return {
+      id: item.id, statementDate: item.statementDate, status: item.status,
+      statementBalanceCents: item.statementBalanceCents, ledgerBalanceCents: item.ledgerBalanceCents,
+      ledgerNonBankCents: item.ledgerNonBankCents, differenceCents: item.differenceCents,
+      unmatchedLineCount: toSafeInteger(row.unmatched_line_count),
+      createdBy: item.createdBy, confirmedBy: item.confirmedBy, confirmedAt: item.confirmedAt,
+      confirmationNote: item.confirmationNote,
+    };
+  });
+  const confirmed = items.filter((item) => item.status === 'confirmed');
+
+  const balance = {
+    openingBalanceCents: toSafeInteger(summary?.opening_balance_cents),
+    incomeCents: toSafeInteger(summary?.income_cents),
+    expenseCents: toSafeInteger(summary?.expense_cents),
+    closingBalanceCents: toSafeInteger(summary?.closing_balance_cents),
+  };
+  const sumNet = (direction) => categories.filter((c) => c.direction === direction).reduce((s, c) => s + c.netCents, 0);
+
+  return {
+    schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },
+    generatedAt: new Date().toISOString(),
+    balance,
+    categories,
+    largeExpenseThresholdCents: LARGE_EXPENSE_CENTS,
+    largeExpenses,
+    corrections,
+    openingAdjustments,
+    reconciliations: {
+      items,
+      confirmedCount: confirmed.length,
+      draftCount: items.length - confirmed.length,
+      latestConfirmed: confirmed.at(-1) ?? null,
+    },
+    checks: {
+      categoryIncomeMatchesSummary: sumNet('income') === balance.incomeCents,
+      categoryExpenseMatchesSummary: sumNet('expense') === balance.expenseCents,
+      largeExpensesWithoutAdoptedResolution: largeExpenses.filter((item) => item.flagged).length,
+    },
+  };
+}
+
+async function auditReport(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  const format = url.searchParams.get('format') ?? 'json';
+  if (!validId(schoolYearId) || !['json', 'html'].includes(format)) throw new RequestError('invalid_request');
+  const context = await requireContext(request, env, REPORT_ROLES, schoolYearId);
+  const report = await buildAuditReport(env.db, schoolYearId);
+  if (!report) throw new RequestError('school_year_not_found', 404);
+  await insertAuditEvent(env.db, {
+    actorId: context.session.user.id, action: 'report.audit.generated', entityType: 'school_year',
+    entityId: schoolYearId, metadata: { format },
+  });
+  if (format === 'json') return json({ report });
+  return new Response(renderAuditReportHtml(report), {
+    status: 200,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': await reportContentSecurityPolicy(),
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+    },
+  });
+}
+
+// --- router ----------------------------------------------------------------
+
+export async function handle(request, env, url, json) {
+  const path = url.pathname;
+  const isReport = path === '/api/reports/audit';
+  if (!isReport && path !== '/api/reconciliations' && !path.startsWith('/api/reconciliations/')) return null;
+  const method = request.method;
+  if (method === 'POST' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
+
+  try {
+    if (isReport) {
+      if (method !== 'GET') throw new RequestError('method_not_allowed', 405);
+      return await auditReport(request, env, url, json);
+    }
+    if (path === '/api/reconciliations') {
+      if (method === 'GET') return await listReconciliations(request, env, url, json);
+      if (method === 'POST') return await createReconciliation(request, env, json);
+      throw new RequestError('method_not_allowed', 405);
+    }
+    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|confirm))?(?:\/([^/]+)\/(revocation))?$/);
+    if (!match) return null;
+    const id = decodeId(match[1]);
+    const action = match[2] ?? null;
+    if (match[3] && action !== 'matches') return null;
+    if (!action && method === 'GET') return await getReconciliation(request, env, id, json);
+    if (action === 'suggestions' && method === 'GET') return await suggestMatches(request, env, id, url, json);
+    if (method !== 'POST') throw new RequestError('method_not_allowed', 405);
+    if (action === 'lines') return await importLines(request, env, id, json);
+    if (action === 'matches' && match[3]) return await revokeMatch(request, env, id, decodeId(match[3]), json);
+    if (action === 'matches') return await confirmMatch(request, env, id, json);
+    if (action === 'confirm') return await confirmReconciliation(request, env, id, json);
+    throw new RequestError('method_not_allowed', 405);
+  } catch (error) {
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    throw error;
+  }
+}
