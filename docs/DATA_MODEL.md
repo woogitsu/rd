@@ -53,6 +53,15 @@ Migracja `postgres/migrations/0014_households.sql` dodaje:
 
 Zasady historii: członkostwa nie są usuwane ani zmieniane — można je raz zakończyć (`ends_on`, `ended_at`, `ended_by`); korekta to nowy wiersz. Wpisy `guardian_contact_changes` i `enrollment_history` są tylko do dopisywania. Przypisania do klasy nie da się usunąć ani przenieść na inny rok/ucznia. Aktor, powód i data zmiany pochodzą z ustawień transakcji (`set_config('rd.actor_id' …, true)`), które ustawia API; zmiana wykonana bezpośrednio w SQL też trafia do historii, z `source = 'direct'` i bez aktora.
 
+### Relacja opiekun–dziecko i zgoda na kontakt (0026, #190)
+
+Zgoda używana przez kampanię (`computeSnapshot`, worker przed wysyłką) i przez e-mail na liście klasy to **obie** flagi: `guardians.contact_allowed` (konto opiekuna, `PATCH /api/guardians/{id}/contact`) i `student_guardians.contact_allowed` (relacja z konkretnym dzieckiem, `PATCH /api/guardians/{id}/students/{studentId}`). Import tworzy relacje z `contact_allowed = false` (D-03), więc bez ustawienia zgody relacji kampania nie ma odbiorców.
+
+- `PATCH /api/guardians/{guardianId}/students/{studentId}` `{ contactAllowed, reason }` — role jak przy zmianie kontaktu opiekuna (admin, zarząd). Zakres klasowy (zarząd z przydziałem klasy): tylko aktywna relacja (`[starts_on, ends_on)`) z uczniem przypisanej klasy; inaczej `404` jak nieistniejąca. Relacja zakończona dla zakresu szerokiego: `409 relation_ended`. Ta sama wartość: `200` z `changed: false`, bez historii i audytu (podwójne kliknięcie, ponowienie). Odpowiedź podaje `guardianContactAllowed`, bo bez zgody opiekuna relacja nadal nie daje adresata.
+- `student_guardian_changes` — historia zmian `contact_allowed`, `is_primary_contact`, `starts_on`, `ends_on` relacji (poprzednia i nowa wartość, powód, aktor, czas, `source` `api`/`direct`). Tylko do dopisywania. Tabela zawiera identyfikatory i flagi, bez e-maili; retencja jak pozostała historia rodzin (D-04). Do `audit_events` trafia `student_guardian.contact.updated` z identyfikatorami ucznia i opiekuna oraz nową wartością, bez powodu i danych osobowych.
+- Relacji nie da się usunąć (także kaskadą — klucze obce bez `CASCADE`) ani przenieść na innego ucznia/opiekuna. Kończy się ją raz, ustawiając `ends_on`.
+- Zmiana `is_primary_contact` i dat relacji nie ma jeszcze trasy API (poza zakresem #190); bezpośredni SQL zostawia wpis `source = 'direct'`.
+
 ### Kolumny zgodności
 
 `students.household_id` i `guardians.household_id` z `0001_core.sql` pozostają `NOT NULL` i nie są usuwane — korzysta z nich import, odtwarzanie snapshotu D1 i starszy kod.
