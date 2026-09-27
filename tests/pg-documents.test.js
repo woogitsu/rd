@@ -175,6 +175,20 @@ test('list is scoped: financial documents hidden from class roles, board sees al
   assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}&kind=secret`, board)).status, 400);
 }));
 
+test('DOC-01: class grant of one school year gives 403 (not an empty list) for another year', async () => withEnv(async (db, env) => {
+  const cookieA = await repA(db);
+  assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}`, cookieA)).status, 200);
+  const other = await get(env, '/api/documents?schoolYearId=y-2027', cookieA);
+  assert.equal(other.status, 403);
+  assert.deepEqual(await other.json(), { error: 'forbidden' });
+  // Zarząd z przydziałem klasy roku 1 — tak samo.
+  const boardA = await seedUserSession(db, { userId: 'u-board-a', mfa: true, roles: [{ role: 'board', classId: 'c-1a', schoolYearId: YEAR }] });
+  assert.equal((await get(env, '/api/documents?schoolYearId=y-2027', boardA)).status, 403);
+  // Przydział klasowy bez roku nadal obejmuje każdy rok (zachowanie isAuthorized).
+  const anyYear = await seedUserSession(db, { userId: 'u-rep-any', roles: [{ role: 'representative', classId: 'c-1a' }] });
+  assert.equal((await get(env, '/api/documents?schoolYearId=y-2027', anyYear)).status, 200);
+}));
+
 test('wrong declared type or wrong magic bytes are refused with 415 and nothing is stored', async () => withEnv(async (db, env, storage) => {
   const cookie = await treasurer(db);
   const cases = [
