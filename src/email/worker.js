@@ -23,6 +23,9 @@
 //      zatrzymuje więc wszystko poza wiadomością, której wysyłka już trwa (#210);
 //   4. wynik zapisuje tylko, jeśli wiersz nadal należy do przebiegu; inaczej
 //      zdarzenie email.sent_after_lease_lost zamiast email.sent (#177).
+// Każda zmiana stanu kolejki lub kampanii i jej zdarzenie audytu powstają w tej
+// samej transakcji (#178). Niezgodność treści z zatwierdzonym skrótem daje
+// jedno zdarzenie email.campaign.integrity_mismatch na kampanię i stan skrótów.
 // Dry-run wykonuje te same sprawdzenia i renderuje treść, ale nie zmienia stanu
 // kolejki ani dziennika limitu i nie woła transportu — zapisuje tylko przebieg.
 // Ponowne uruchomienie nie dubluje wiadomości: unikalny klucz kampania+rodzina,
@@ -173,6 +176,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
       if (hash !== campaign.content_hash || hash !== campaign.approved_content_hash
           || campaign.recipients_hash !== campaign.approved_recipients_hash) {
         run.stoppedReason = 'approval_mismatch';
+        await recordIntegrityMismatch(tx, campaign, hash);
         continue;
       }
       let capLeft = campaign.daily_cap - campaign.sent_today;
@@ -370,17 +374,48 @@ async function deliver(db, item, { transport, config, now, runToken }) {
   }
 }
 
+// Zmiana stanu i zdarzenie w jednej transakcji (#178): przerwanie po UPDATE nie
+// może zostawić kampanii „done” bez śladu w dzienniku.
 async function completeCampaigns(db, now) {
-  const { rows } = await db.query(
-    `UPDATE email_campaigns c SET status = 'done', completed_at = $1
-      WHERE c.status = 'sending'
-        AND NOT EXISTS (SELECT 1 FROM email_outbox o WHERE o.campaign_id = c.id AND o.state IN ('queued', 'sending'))
-      RETURNING id`,
-    [now.toISOString()],
+  return db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `UPDATE email_campaigns c SET status = 'done', completed_at = $1
+        WHERE c.status = 'sending'
+          AND NOT EXISTS (SELECT 1 FROM email_outbox o WHERE o.campaign_id = c.id AND o.state IN ('queued', 'sending'))
+        RETURNING id`,
+      [now.toISOString()],
+    );
+    for (const row of rows) {
+      await insertAuditEvent(tx, { action: 'email.campaign.done', entityType: 'email_campaign', entityId: row.id });
+    }
+    return rows.length;
+  });
+}
+
+// Niezgodność treści/listy z zatwierdzonym skrótem (#178): zdarzenie na
+// kampanii raz dla danego stanu skrótów, nie przy każdym przebiegu. Kampania
+// pozostaje w „sending” i nie jest wysyłana (stan docelowy — wstrzymana czy
+// anulowana — do decyzji zarządu przy #130). Metadane: wyłącznie skróty.
+async function recordIntegrityMismatch(tx, campaign, observedContentHash) {
+  const metadata = {
+    observedContentHash,
+    contentHash: campaign.content_hash,
+    approvedContentHash: campaign.approved_content_hash,
+    recipientsHash: campaign.recipients_hash,
+    approvedRecipientsHash: campaign.approved_recipients_hash,
+  };
+  const { rows } = await tx.query(
+    `SELECT 1 FROM audit_events
+      WHERE entity_type = 'email_campaign' AND entity_id = $1 AND action = 'email.campaign.integrity_mismatch'
+        AND metadata_json @> $2::jsonb
+      LIMIT 1`,
+    [campaign.id, JSON.stringify(metadata)],
   );
-  for (const row of rows) {
-    await insertAuditEvent(db, { action: 'email.campaign.done', entityType: 'email_campaign', entityId: row.id });
-  }
+  if (rows[0]) return;
+  await insertAuditEvent(tx, {
+    action: 'email.campaign.integrity_mismatch', entityType: 'email_campaign', entityId: campaign.id,
+    metadata: { ...metadata, reason: 'approval_mismatch' },
+  });
 }
 
 export async function runEmailBatch(env, { transport = null, dryRun = true, now = new Date(), config = emailConfig(env) } = {}) {
