@@ -711,7 +711,8 @@ const SHARED_MINUTES_SQL = `
     JOIN meetings m ON m.id = e.meeting_id
    WHERE m.school_year_id = $1 AND e.visibility = ANY($2::text[])
      AND (m.class_id IS NULL OR $3::boolean OR m.class_id = ANY($4::text[]))
-   ORDER BY m.scheduled_at DESC, m.id`;
+   ORDER BY m.scheduled_at DESC, m.id
+   LIMIT 200`;
 
 function sharedFromRow(row) {
   return {

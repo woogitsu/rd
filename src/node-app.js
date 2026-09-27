@@ -36,9 +36,15 @@ async function requestBody(request, limit = MAX_BODY_BYTES) {
 }
 
 function publicUrl(request, publicBaseUrl) {
-  if (publicBaseUrl) return new URL(request.url, publicBaseUrl);
-  const host = request.headers.host || '127.0.0.1';
-  return new URL(request.url, `http://${host}`);
+  // Tylko ścieżka i zapytanie z linii żądania. Forma absolutna
+  // („POST http://inny.host/api/…”) albo „//inny.host/…” nie może podmienić
+  // originu ustalonego przez PUBLIC_BASE_URL (od niego zależy kontrola Origin).
+  const target = new URL(request.url || '/', 'http://request.invalid');
+  const url = publicBaseUrl ? new URL(publicBaseUrl) : new URL(`http://${request.headers.host || '127.0.0.1'}`);
+  url.pathname = target.pathname;
+  url.search = target.search;
+  url.hash = '';
+  return url;
 }
 
 function staticTarget(pathname, distRoot) {
