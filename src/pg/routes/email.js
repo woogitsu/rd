@@ -141,6 +141,9 @@ function mapContentError(error) {
 function mapDatabaseError(error) {
   if (error instanceof RequestError) throw error;
   const message = String(error?.message ?? '');
+  // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze, rozszerzony
+  // w #80 na nowe kampanie) — stan, nie awaria bazy (#156).
+  if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   if (message.includes('email_campaign_closed') || message.includes('email_campaign_content_locked')
       || message.includes('email_snapshot_locked') || message.includes('email_campaign_invalid_transition')) {
     throw new RequestError('campaign_locked', 409);

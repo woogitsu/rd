@@ -299,6 +299,11 @@ async function upload(request, env, url, json) {
       const again = await findReplay(env.db, idempotencyKey, { actorId, sha256, ...target, linkedEntityType, linkedEntityId: linkedEntityId.value });
       if (again) return again.conflict ? json({ error: 'idempotency_conflict' }, 409) : json({ document: again.doc, replayed: true }, 200);
     }
+    // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze, rozszerzony
+    // w #80 na documents) — stan, nie awaria bazy (#156).
+    if (String(error?.message ?? '').includes('school_year_closed')) {
+      return json({ error: 'school_year_closed' }, 409);
+    }
     throw error;
   }
 }

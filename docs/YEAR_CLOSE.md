@@ -50,10 +50,19 @@ Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe 
 - wydarzenia (również zmiana stanu i odwołanie),
 - zebrania, porządek, obecność, sprawdzenia quorum, protokoły, publikacje protokołów, uchwały,
 - nowe przydziały ról w tym roku, także przydziały klasy tego roku wstawiane bez `school_year_id` (0022; API administratora zwraca `409 school_year_closed`); wygaszenie i cofnięcie istniejących pozostaje możliwe.
+- (#80, 0036) uzgodnienia rachunku: nowe uzgodnienie i każda jego zmiana (m.in. zatwierdzenie), import wyciągu, wiersze wyciągu, dopasowania oraz cofnięcie dopasowania,
+- (#80, 0036) nowy dokument (`documents`, każdy rodzaj: `financial`, `board`, `class`) przypisany do zamkniętego roku — dokumenty bez `school_year_id` (np. przywrócone z D1) nie są objęte,
+- (#80, 0036) nowa kampania e-mail (`email_campaigns`) przypisana do zamkniętego roku. Zmiana stanu **istniejącej** kampanii (np. wysyłka rozpoczęta przed zamknięciem) NIE jest blokowana — decyzja, czy taką kampanię dokończyć czy wstrzymać, wymaga ustalenia Rady (D-13/D-21); wymuszenie blokady w złym miejscu kolejki mogłoby zdublować albo urwać wysyłkę w połowie.
+
+Świadome wyjątki (tabele z `school_year_id`, bez triggera zamrożenia):
+- `export_runs` (0016): eksport archiwum zamkniętego roku ma działać także po zamknięciu.
+- `audit_events`: dziennik zdarzeń nie ma `school_year_id` i musi przyjmować zapisy zawsze, także dotyczące odczytu zamkniętego roku.
 
 Odczyt i dziennik audytu nie są blokowane przez triggery, ale po zamknięciu **dostęp** do odczytu zależy od przydziałów (sekcja „Odczyt archiwum”). **Korekta po zamknięciu nie ma ścieżki w aplikacji.** Pomyłkę wykrytą po zamknięciu ujmuje się w otwartym roku następnym (np. poprawka bilansu otwarcia z uzasadnieniem odwołującym się do uchwały) — sposób musi zatwierdzić Rada. Ponowne otwarcie roku wymagałoby osobnej migracji i decyzji.
 
-API wpłat, księgi, wydarzeń i zebrań tłumaczy odmowę triggera na `409 school_year_closed` (SR-14 w docs/SECURITY_REVIEW.md). Pozostałe moduły (uzgodnienia, kampanie e-mail, aktualności, dokumenty) mogą jeszcze zwracać ogólne 503 — do sprawdzenia osobno.
+API wpłat, księgi, wydarzeń, zebrań, uzgodnień rachunku, kampanii e-mail i dokumentów tłumaczy odmowę triggera na `409 school_year_closed` (SR-14 w docs/SECURITY_REVIEW.md). Aktualności nie mają `school_year_id` i triggera zamrożenia nie dotyczą.
+
+Data wpisu poza rokiem szkolnym (`occurred_on`/`received_on` księgi i wpłat) jest osobno pokryta triggerem `b0_date_within_school_year` (#169, 0027) — patrz `docs/DATA_MODEL.md`.
 
 ## API
 
