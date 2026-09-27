@@ -311,6 +311,10 @@ function mapDatabaseError(error) {
   if (message.includes('bank_reconciliation_date_outside_year')) throw new RequestError('statement_date_outside_school_year');
   if (message.includes('bank_statement_line_after_statement_date')) throw new RequestError('statement_line_after_statement_date');
   if (message.includes('bank_match_amount_mismatch')) throw new RequestError('match_amount_mismatch', 409);
+  // Wpłata i wpis księgi, który ją ujmuje, to te same pieniądze (#162, 0024).
+  if (message.includes('bank_match_already_matched_via_ledger')) throw new RequestError('already_matched_via_ledger', 409);
+  if (message.includes('bank_match_already_matched_via_payment')) throw new RequestError('already_matched_via_payment', 409);
+  if (message.includes('bank_match_method_mismatch')) throw new RequestError('match_method_mismatch', 409);
   if (message.includes('bank_match_target_mismatch')) throw new RequestError('invalid_match_target');
   if (message.includes('bank_match_line_mismatch')) throw new RequestError('invalid_statement_line');
   if (message.includes('bank_reconciliation_four_eyes')) throw new RequestError('four_eyes_required', 403);
@@ -392,6 +396,27 @@ async function createReconciliation(request, env, json) {
   }
 }
 
+// Aktywne powiązania o kwocie różnej od dzisiejszego netto celu albo liczące tę samą wpłatę dwa razy.
+async function inconsistentMatches(executor, id) {
+  const { rows } = await executor.query(
+    `SELECT match_id, statement_line_id, ledger_entry_id, payment_entry_id, line_amount_cents, target_net_cents,
+            amount_matches, double_counted
+       FROM bank_match_consistency
+      WHERE reconciliation_id = $1 AND (NOT amount_matches OR double_counted)
+      ORDER BY statement_line_id, match_id`,
+    [id],
+  );
+  return rows.map((row) => ({
+    matchId: row.match_id,
+    statementLineId: row.statement_line_id,
+    ledgerEntryId: row.ledger_entry_id ?? null,
+    paymentEntryId: row.payment_entry_id ?? null,
+    lineAmountCents: toSafeInteger(row.line_amount_cents),
+    targetNetCents: row.target_net_cents === null ? null : toSafeInteger(row.target_net_cents),
+    reasons: [...(row.amount_matches ? [] : ['amount_mismatch']), ...(row.double_counted ? ['double_counted'] : [])],
+  }));
+}
+
 async function loadAuthorizedReconciliation(request, env, id, executor = env.db, lock = false) {
   const context = await requireContext(request, env, WRITE_ROLES);
   const row = await loadReconciliation(executor, id, { lock });
@@ -403,7 +428,7 @@ async function loadAuthorizedReconciliation(request, env, id, executor = env.db,
 async function getReconciliation(request, env, id, json) {
   const { row } = await loadAuthorizedReconciliation(request, env, id);
   const reconciliation = reconciliationFromRow(row);
-  const [lines, matches, entries] = await Promise.all([
+  const [lines, matches, entries, inconsistent] = await Promise.all([
     env.db.query(
       `SELECT l.id, l.import_id, i.source, l.line_no, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on,
               l.amount_cents, l.reference_hash IS NOT NULL AS has_reference,
@@ -428,10 +453,16 @@ async function getReconciliation(request, env, id, json) {
           AND NOT EXISTS (
             SELECT 1 FROM bank_reconciliation_matches m
              WHERE m.reconciliation_id = $3 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
+          -- Wpis, którego wpłata jest już powiązana, jest wyjaśniony przez tę wpłatę (#162).
+          AND NOT EXISTS (
+            SELECT 1 FROM bank_reconciliation_matches m
+             WHERE m.reconciliation_id = $3 AND e.payment_entry_id IS NOT NULL
+               AND m.payment_entry_id = e.payment_entry_id AND m.revoked_at IS NULL)
         ORDER BY e.occurred_on, e.id
         LIMIT 1000`,
       [row.school_year_id, row.statement_date, id],
     ),
+    inconsistentMatches(env.db, id),
   ]);
   const lineItems = lines.rows.map((line) => ({
     id: line.id,
@@ -455,8 +486,10 @@ async function getReconciliation(request, env, id, json) {
       matchedLineCount: lineItems.length - unmatchedLines.length,
       unmatchedLineCount: unmatchedLines.length,
       unmatchedLineTotalCents: unmatchedLines.reduce((sum, line) => sum + line.amountCents, 0),
+      inconsistentMatchCount: inconsistent.length,
     },
     unmatchedLines,
+    inconsistentMatches: inconsistent,
     unmatchedLedgerEntries: entries.rows.map((entry) => ({
       id: entry.id,
       direction: entry.direction,
@@ -670,6 +703,21 @@ async function confirmMatch(request, env, id, json) {
         const payment = await tx.query('SELECT method FROM payment_entries WHERE id = $1', [paymentEntryId]);
         if (payment.rows[0] && payment.rows[0].method !== 'bank') throw new RequestError('match_method_mismatch', 409);
       }
+      // Podwójne ujęcie (#162): wpłata i wpis księgi z tą wpłatą wykluczają się w jednym uzgodnieniu.
+      // Trigger bank_match_guard (0024) sprawdza to samo pod blokadą.
+      const counted = await tx.query(
+        `SELECT m.ledger_entry_id IS NOT NULL AS via_ledger
+           FROM bank_reconciliation_matches m
+           LEFT JOIN ledger_entries matched ON matched.id = m.ledger_entry_id
+          WHERE m.reconciliation_id = $1 AND m.revoked_at IS NULL
+            AND (($2::text IS NOT NULL AND matched.payment_entry_id = $2)
+              OR ($3::text IS NOT NULL AND m.payment_entry_id = (SELECT payment_entry_id FROM ledger_entries WHERE id = $3)))
+          LIMIT 1`,
+        [id, paymentEntryId, ledgerEntryId],
+      );
+      if (counted.rows.length) {
+        throw new RequestError(counted.rows[0].via_ledger ? 'already_matched_via_ledger' : 'already_matched_via_payment', 409);
+      }
       const matchId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id, ledger_entry_id,
@@ -749,6 +797,9 @@ async function confirmReconciliation(request, env, id, json) {
       }
       // Zasada czterech oczu: zatwierdza inna osoba niż autor uzgodnienia.
       if (row.created_by === actorId) throw new RequestError('four_eyes_required', 403);
+      // Kwoty powiązań sprawdzane ponownie (#165): korekta po powiązaniu albo podwójne ujęcie (#162).
+      const inconsistent = await inconsistentMatches(tx, id);
+      if (inconsistent.length) throw new RequestError('inconsistent_matches', 409, { matches: inconsistent });
       const current = reconciliationFromRow(row);
       if (current.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
       await tx.query(
@@ -770,6 +821,10 @@ async function confirmReconciliation(request, env, id, json) {
   } catch (error) {
     if (String(error?.message ?? '').includes('bank_reconciliation_difference_explained')) {
       throw new RequestError('difference_requires_note');
+    }
+    // Trigger (0024) wykrył niezgodność powstałą równolegle z odczytem w trasie.
+    if (String(error?.message ?? '').includes('bank_reconciliation_inconsistent_matches')) {
+      throw new RequestError('inconsistent_matches', 409, { matches: await inconsistentMatches(env.db, id) });
     }
     mapDatabaseError(error);
   }

@@ -20,6 +20,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { effectiveDay } from '../today.js';
 import { emailConfig } from '../../email/brevo.js';
 import {
   ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
@@ -266,23 +267,29 @@ async function updateCampaign(request, env, id, json) {
 // z dzieckiem z tej rodziny (student_guardians.contact_allowed); najpierw kontakt
 // główny, potem najmniejszy identyfikator. Adres użyty już dla innej rodziny
 // w tej kampanii nie jest powtarzany (rodzeństwo w różnych gospodarstwach).
-export async function computeSnapshot(executor, campaign) {
+// Rodzina ucznia to jego główne gospodarstwo obowiązujące w dniu `on`
+// (student_primary_household_on, #194), a nie kolumna students.household_id.
+// Przy opiece naprzemiennej drugie gospodarstwo nie dostaje osobnej wiadomości
+// (założenie do D-11/D-17). `on` ('YYYY-MM-DD') domyślnie = rd_today() (Bruksela).
+export async function computeSnapshot(executor, campaign, { on = null } = {}) {
   const { rows: candidates } = await executor.query(
-    `SELECT s.household_id, g.id AS guardian_id, g.email,
+    `WITH d AS (SELECT COALESCE($2::date, rd_today()) AS on_date)
+     SELECT p.household_id, g.id AS guardian_id, g.email,
             COALESCE(g.contact_allowed, false) AS guardian_allowed,
             COALESCE(bool_or(sg.contact_allowed
-              AND (sg.starts_on IS NULL OR sg.starts_on <= current_date)
-              AND (sg.ends_on IS NULL OR sg.ends_on >= current_date)), false) AS relation_allowed,
+              AND (sg.starts_on IS NULL OR sg.starts_on <= d.on_date)
+              AND (sg.ends_on IS NULL OR sg.ends_on >= d.on_date)), false) AS relation_allowed,
             COALESCE(bool_or(sg.is_primary_contact), false) AS is_primary
-       FROM enrollments e
-       JOIN students s ON s.id = e.student_id
-       JOIN households h ON h.id = s.household_id AND h.archived_at IS NULL
-       LEFT JOIN student_guardians sg ON sg.student_id = s.id
+       FROM d
+       CROSS JOIN enrollments e
+       JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = e.student_id
+       JOIN households h ON h.id = p.household_id AND h.archived_at IS NULL
+       LEFT JOIN student_guardians sg ON sg.student_id = e.student_id
        LEFT JOIN guardians g ON g.id = sg.guardian_id
       WHERE e.school_year_id = $1
-      GROUP BY s.household_id, g.id, g.email, g.contact_allowed
-      ORDER BY s.household_id, g.id`,
-    [campaign.school_year_id],
+      GROUP BY p.household_id, g.id, g.email, g.contact_allowed
+      ORDER BY p.household_id, g.id`,
+    [campaign.school_year_id, on],
   );
   const paid = new Set();
   if (campaign.audience === 'no_payment_record') {
@@ -348,7 +355,7 @@ async function buildSnapshot(request, env, id, json) {
       );
       await tx.query('DELETE FROM email_campaign_recipients WHERE campaign_id = $1', [id]);
       await tx.query('DELETE FROM email_campaign_exclusions WHERE campaign_id = $1', [id]);
-      const snapshot = await computeSnapshot(tx, campaign);
+      const snapshot = await computeSnapshot(tx, campaign, { on: effectiveDay(env) });
       if (snapshot.recipients.length) {
         await tx.query(
           `INSERT INTO email_campaign_recipients (id, campaign_id, household_id, guardian_id, email, email_hash)
