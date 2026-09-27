@@ -23,7 +23,7 @@ Do czasu zamknięcia decyzji D-01–D-06 nie importujemy danych rodzin. Prace na
 | D-07 | Procedura incydentowa, sprostowanie i usuwanie danych | #1, #41 | otwarta |
 | D-08 | Role i macierz kompetencji | #4, #35 | otwarta |
 | D-09 | Uprawnienia dyrekcji i Komisji Rewizyjnej | #4, #6, #7, #35 | otwarta |
-| D-10 | Dostawca logowania i przyjmowanie zaproszeń | #3, #35 | otwarta |
+| D-10 | Dostawca logowania i przyjmowanie zaproszeń | #3, #35 | otwarta — wskazanie użytkownika 2026-09-27: e-mail + hasło + TOTP; do formalnego potwierdzenia |
 | D-11 | Jednostka ewidencji składki i opieka dzielona | #5, #6, #10, #11 | otwarta |
 | D-12 | Zasady korekt wpłat i ich zatwierdzania | #6, #37 | otwarta |
 | D-13 | Rachunek bankowy, gotówka i uzgadnianie | #6, #7, #10 | otwarta |
@@ -136,7 +136,10 @@ Do czasu zamknięcia decyzji D-01–D-06 nie importujemy danych rodzin. Prace na
 - Pytanie: jakim sposobem użytkownicy logują się i przyjmują zaproszenia; kto może zapraszać; czy dostawca logowania jest kolejnym podmiotem przetwarzającym (D-05)?
 - Dlaczego: bez tego nie ma drogi utworzenia sesji (AUTH.md). Blokuje #3 i częściowo #35.
 - Warianty w dokumentacji: tylko wymagania — konta na zaproszenie, bez publicznej rejestracji, MFA dla dostępu finansowego. Dostawca niewskazany.
-- Status: otwarta
+- Status: wskazanie użytkownika 2026-09-27: e-mail + hasło + TOTP (Google/Microsoft Authenticator); do formalnego potwierdzenia przez zarząd/IOD. To **nie** jest decyzja zarządu — prototyp (docs/AUTH.md) realizuje wskazany wariant, aby można go było ocenić na danych syntetycznych.
+- Zakres wskazania: logowanie adresem e-mail i hasłem we własnym systemie (bez zewnętrznego dostawcy tożsamości, więc bez nowego podmiotu przetwarzającego z D-05), drugi składnik z aplikacji uwierzytelniającej zgodnej z TOTP (RFC 6238), konta wyłącznie z zaproszenia, reset hasła tylko przez administratora.
+- Do potwierdzenia razem z metodą (założenia prototypu): polityka haseł (12–128 znaków, lista popularnych haseł, bez reguł składu), limity prób (5 na adres i 20 na IP w 15 min, blokada 15 min), role z obowiązkowym MFA (`MFA_REQUIRED_ROLES`, domyślnie admin, zarząd, skarbnik), ważność tokenu resetu (2 h, najwyżej 24 h), procedura odzyskania dostępu po utracie telefonu i kodów (reset MFA przez administratora — kto i na jakiej podstawie potwierdza tożsamość), kto może zapraszać do których ról, retencja skrótów haseł i dziennika logowań (D-04).
+- Poza zakresem do czasu D-16/D-17: reset hasła i zaproszenia wysyłane e-mailem.
 - Data decyzji:
 - Kto zatwierdził:
 - Uchwała/dokument:
