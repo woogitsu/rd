@@ -144,15 +144,6 @@ const YEAR_CLOSE_READ = { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 };
 const YEAR_CLOSE_BOARD = { board: SCHOOL_Y1 };
 const FINANCIAL_ROLE_KEYS = ['admin', 'board', 'treasurer'];
 
-// SR-01: przydział zarządu zawężony do klasy nie może działać jak przydział ogólnoszkolny.
-// Oczekiwana (zamierzona) odpowiedź to 403; przypadki, w których kod jeszcze przepuszcza, są `todo`.
-function sr01(what) {
-  return (actor, mfa, targetKey) => (actor.key === 'boardA' && mfa && targetKey === 'W1'
-    ? `SR-01: przydział zarządu ograniczony do klasy 1A otwiera ${what} całego roku — `
-      + 'isAuthorized bez classId przepuszcza przydział klasowy (brak filtra jak schoolWideContext)'
-    : undefined);
-}
-
 export const safeKey = (key) => key.replace(/[^A-Za-z0-9_-]/g, '-').slice(-100);
 
 // Data w roku szkolnym zakresu: miesiące 09–12 w pierwszym roku kalendarzowym, 01–08 w drugim.
@@ -219,7 +210,7 @@ function documentRead(id, path, kind, targets, allow, mfa, suffix) {
 function ledgerRead(id, path, suffix, contains) {
   return {
     id, module: 'ledger', method: 'GET', path, targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403,
-    fixture: null, todo: sr01('księgę'), needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/ledger${suffix}?schoolYearId=${target.schoolYearId}` }),
     contains: () => contains,
   };
@@ -228,7 +219,7 @@ function ledgerRead(id, path, suffix, contains) {
 function emailRoute(id, method, suffix, stage, { fixture = 'fresh', allow = EMAIL_EDIT, body, contains }) {
   return {
     id, module: 'email', method, path: `/api/email/campaigns/:campaignId${suffix}`, targets: YEAR_TARGETS,
-    allow, mfa: true, ok: 200, deny: 403, fixture, object: { kind: 'campaign', stage }, todo: sr01('kampanie e-mail'),
+    allow, mfa: true, ok: 200, deny: 403, fixture, object: { kind: 'campaign', stage },
     build: ({ obj, target }) => ({
       path: `/api/email/campaigns/${obj.campaignId}${suffix}`,
       body: method === 'GET' ? undefined : (body ? body(target, obj) : {}),
@@ -270,7 +261,7 @@ function adminRoute(id, method, path, { ok = 200, object, build }) {
 function reconciliationRoute(id, method, template, stage, { fixture = 'fresh', ok = 200, withKey: keyed = false, body, suffix, contains }) {
   return {
     id, module: 'reconciliation', method, path: `/api/reconciliations/:reconciliationId${template}`, targets: YEAR_TARGETS,
-    allow: FINANCIAL, mfa: true, ok, deny: 403, fixture, object: { kind: 'reconciliation', stage }, todo: sr01('uzgodnienia bankowe'),
+    allow: FINANCIAL, mfa: true, ok, deny: 403, fixture, object: { kind: 'reconciliation', stage },
     build: ({ obj, target, key }) => ({
       path: `/api/reconciliations/${obj.reconciliationId}${suffix ? suffix(obj) : template}`,
       headers: keyed ? withKey(key) : {},
@@ -590,7 +581,7 @@ export const ROUTE_MATRIX = Object.freeze([
   ledgerRead('ledger.exportCsv', '/api/ledger/export.csv?schoolYearId=:year', '/export.csv', ['W1']),
   {
     id: 'ledger.create', module: 'ledger', method: 'POST', path: '/api/ledger', targets: YEAR_TARGETS,
-    allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null, todo: sr01('księgę'),
+    allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
     build: ({ target, key }) => ({
       path: '/api/ledger', headers: withKey(key),
       body: { schoolYearId: target.schoolYearId, direction: 'income', amountCents: 500, categoryId: ledgerCategory(target),
@@ -600,7 +591,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'ledger.correction', module: 'ledger', method: 'POST', path: '/api/ledger/:ledgerEntryId/corrections',
     targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'static',
-    object: { kind: 'ledgerEntry' }, todo: sr01('księgę'),
+    object: { kind: 'ledgerEntry' },
     build: ({ obj, key }) => ({
       path: `/api/ledger/${obj.ledgerEntryId}/corrections`, headers: withKey(key), body: { amountCents: 1, reason: 'Korekta syntetyczna' },
     }),
@@ -611,14 +602,14 @@ export const ROUTE_MATRIX = Object.freeze([
   // Admin techniczny nie ma dostępu. Przydział klasowy nie otwiera kampanii całego roku.
   {
     id: 'email.list', module: 'email', method: 'GET', path: '/api/email/campaigns?schoolYearId=:year', targets: YEAR_TARGETS,
-    allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null, todo: sr01('kampanie e-mail'),
+    allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
     needs: [['campaign', 'snapshot', YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/email/campaigns?schoolYearId=${target.schoolYearId}` }),
     contains: () => ['W1'],
   },
   {
     id: 'email.create', module: 'email', method: 'POST', path: '/api/email/campaigns', targets: YEAR_TARGETS,
-    allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: null, todo: sr01('kampanie e-mail'),
+    allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: null,
     build: ({ target, key }) => ({ path: '/api/email/campaigns', headers: withKey(key), body: campaignBody(target) }),
   },
   emailRoute('email.status', 'GET', '', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
@@ -739,14 +730,14 @@ export const ROUTE_MATRIX = Object.freeze([
   // Uzgodnienia: admin/zarząd/skarbnik z MFA w roku uzgodnienia; raport: Komisja Rewizyjna/zarząd/skarbnik z MFA.
   {
     id: 'reconciliation.list', module: 'reconciliation', method: 'GET', path: '/api/reconciliations?schoolYearId=:year',
-    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null, todo: sr01('uzgodnienia bankowe'),
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
     needs: [['reconciliation', 'withLine', YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reconciliations?schoolYearId=${target.schoolYearId}` }),
     contains: () => ['W1'],
   },
   {
     id: 'reconciliation.create', module: 'reconciliation', method: 'POST', path: '/api/reconciliations',
-    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null, todo: sr01('uzgodnienia bankowe'),
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
     build: ({ target, key }) => ({
       path: '/api/reconciliations', headers: withKey(key),
       body: { schoolYearId: target.schoolYearId, statementDate: statementDate(target), statementBalanceCents: 100000, notes: `Uzgodnienie ${marker(target.key)}` },
@@ -770,7 +761,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'reconciliation.auditReport', module: 'reconciliation', method: 'GET', path: '/api/reports/audit?schoolYearId=:year&format=json',
     targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
-    fixture: null, todo: sr01('raport dla Komisji Rewizyjnej'), needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=json` }),
   },
 
@@ -778,7 +769,6 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'exports.yearly', module: 'exports', method: 'POST', path: '/api/exports', targets: YEAR_TARGETS,
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403, fixture: null,
-    todo: sr01('pełny eksport roczny danych rodzin'),
     build: ({ target }) => ({ path: '/api/exports', body: { schoolYearId: target.schoolYearId } }),
     contains: () => ['A', 'B'],
   },

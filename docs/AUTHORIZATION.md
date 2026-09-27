@@ -79,7 +79,7 @@ Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, 
 | `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded` |
 | `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
 | `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |
-| `GET /api/ledger?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | zarząd z przydziałem klasy: 403 (luka SR-01, `todo`) |
+| `GET /api/ledger?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | zarząd z przydziałem klasy: 403 (SR-01) |
 | `GET /api/ledger/categories?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/summary?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/budget?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
@@ -157,7 +157,7 @@ Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagaj�
 
 ## Znane luki (przypadki `todo` w macierzy)
 
-- **SR-01 — przydział zarządu ograniczony do klasy działa jak ogólnoszkolny.** Zarząd z przydziałem `class_id = 1A` (z MFA) dostaje 2xx na trasach roku bez klasy: księga (`/api/ledger*`), kampanie e-mail (`/api/email/campaigns*`), uzgodnienia i raport dla Komisji Rewizyjnej (`/api/reconciliations*`, `/api/reports/audit`) oraz pełny eksport roczny (`POST /api/exports`). Przyczyna: trasy wołają `isAuthorized` bez `classId`, a ta funkcja przepuszcza wtedy przydział klasowy; brakuje filtra jak `schoolWideContext` w `requireAccess` (użytego np. w płatnościach, imporcie, dokumentach i zamknięciu roku). Zamierzona odpowiedź: 403 i brak zapisu.
+- **SR-01 (naprawione)** — przydział zarządu ograniczony do klasy nie działa już jak ogólnoszkolny na trasach roku bez klasy (księga, kampanie e-mail, uzgodnienia, raport dla Komisji Rewizyjnej, pełny eksport roczny): 403 i brak zapisu; przypadki są zwykłymi asercjami macierzy.
 - **DOC-01 — lista dokumentów innego roku dla przydziału klasowego.** `GET /api/documents?schoolYearId=<inny rok>` dla przedstawiciela (lub zarządu z przydziałem klasy) roku 1 zwraca 200 z pustą listą zamiast 403, bo `ownClasses` pomija `school_year_id` przydziału. Brak wycieku danych (wiersze filtruje `canAccessDocument`); niska waga.
 - **SR-07 (naprawione)** — PATCH/submit/cancel cudzego wydarzenia oraz `GET /api/meetings/:meetingId` poza zakresem odpowiadają 404 jak brak obiektu (test regresji w tym samym pliku).
 
