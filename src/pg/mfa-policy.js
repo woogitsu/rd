@@ -30,6 +30,8 @@ export function mfaRequiredRoles(env) {
 const EXEMPT_EXACT = new Set([
   '/api/session', '/api/access', '/api/logout', '/api/sessions/revoke-all',
   '/api/login', '/api/auth/state', '/api/invitations/accept', '/api/password/reset',
+  // Trasy publiczne i webhook: działają bez sesji, więc cookie niczego tu nie zmienia.
+  '/api/meetings/public-minutes', '/api/email/webhooks/brevo',
 ]);
 
 export function isMfaGateExempt(pathname) {

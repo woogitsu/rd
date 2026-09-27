@@ -565,14 +565,15 @@ test('email: webhook Brevo bez sekretu albo ze złym sekretem — 401 i brak zap
 
 test('families: rodzeństwo w 1A i 1B — przedstawiciel widzi wyłącznie dziecko własnej klasy', async () => {
   const ctx = await matrixContext();
-  for (const [actorKey, own, other] of [['repA', 'A', 'B'], ['repB', 'B', 'A'], ['boardA', 'A', 'B']]) {
-    const response = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions[actorKey][false] }), ctx.env);
+  // Zarząd (także z przydziałem klasy) i skarbnik przechodzą bramkę MFA routera tylko z sesją z MFA.
+  for (const [actorKey, own, other, mfa] of [['repA', 'A', 'B', false], ['repB', 'B', 'A', false], ['boardA', 'A', 'B', true]]) {
+    const response = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions[actorKey][mfa] }), ctx.env);
     const text = await response.text();
     assert.equal(response.status, 200, `${actorKey}: ${text}`);
     assert.ok(text.includes(marker(own)), `${actorKey}: brak dziecka własnej klasy`);
     assert.ok(!text.includes(marker(other)), `${actorKey}: widzi rodzeństwo z innej klasy`);
   }
-  const wide = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions.treasurer[false] }), ctx.env);
+  const wide = await handlePgRequest(request('/api/households/hh-sib', { cookie: ctx.sessions.treasurer[true] }), ctx.env);
   const text = await wide.text();
   assert.ok(text.includes(marker('A')) && text.includes(marker('B')), 'skarbnik widzi całą rodzinę roku');
 });

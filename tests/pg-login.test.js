@@ -1,0 +1,497 @@
+// Logowanie e-mailem i hasłem + TOTP (issue #3, D-10). Wyłącznie dane syntetyczne
+// (domeny .invalid), hasła wygenerowane w teście.
+import test, { after, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { createSessionSecret } from '../src/auth.js';
+import { handlePgRequest } from '../src/pg/app.js';
+import { createInvitation } from '../src/pg/auth.js';
+import { base32Decode, totp } from '../src/pg/mfa.js';
+import {
+  checkPasswordPolicy, hashPassword, needsRehash, parseHash, verifyPassword, verifyPasswordOrDummy,
+} from '../src/pg/password.js';
+import { LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+
+const KEY = randomBytes(32).toString('base64');
+// Najniższy dozwolony koszt scrypt (N = 2^15) — szybsze testy; domyślnie 2^17.
+const FAST = { SCRYPT_COST_LOG2: '15' };
+
+let db;
+let env;
+before(async () => {
+  db = await createTestDb();
+  env = { db, MFA_ENCRYPTION_KEY: KEY, ...FAST };
+  await seedSchoolYear(db, 'y-test');
+});
+after(async () => { await db?.close(); });
+
+let ipSeq = 0;
+const nextIp = () => `198.51.100.${++ipSeq}`;
+const newPassword = () => `Syntetyczne haslo ${randomBytes(6).toString('hex')}`;
+
+function cookieFrom(response) {
+  const header = response.headers.get('Set-Cookie');
+  assert.ok(header, 'Set-Cookie expected');
+  return header.split(';', 1)[0];
+}
+
+function post(path, body, { cookie, ip = '203.0.113.250', origin, headers = {}, useEnv = env } = {}) {
+  return handlePgRequest(request(path, { method: 'POST', body, cookie, origin, headers: { 'x-rd-client-ip': ip, ...headers } }), useEnv);
+}
+const get = (path, cookie, useEnv = env) => handlePgRequest(request(path, { cookie }), useEnv);
+
+async function seedPasswordUser({ userId, roles = [], password = newPassword(), disabled = false } = {}) {
+  await seedUser(db, { userId, disabled });
+  for (const grant of roles) {
+    if (grant.classId) await seedClass(db, { id: grant.classId, schoolYearId: grant.schoolYearId ?? 'y-test' });
+    await db.query(
+      'INSERT INTO role_grants (id, user_id, role, class_id, school_year_id) VALUES ($1, $2, $3, $4, $5)',
+      [crypto.randomUUID(), userId, grant.role, grant.classId ?? null, grant.schoolYearId ?? null],
+    );
+  }
+  await db.query(
+    "INSERT INTO user_passwords (user_id, hash, set_reason) VALUES ($1, $2, 'invitation')",
+    [userId, await hashPassword(password, { env: FAST })],
+  );
+  return { userId, email: `${userId}@example.invalid`, password };
+}
+
+async function login(account, { ip = nextIp(), password = account.password } = {}) {
+  return post('/api/login', { email: account.email, password }, { ip });
+}
+
+const codeAt = (secretB32, offsetSteps = 0) => totp(base32Decode(secretB32), Date.now() + offsetSteps * 30_000);
+
+async function enrollAndConfirm(cookie) {
+  const enrolled = await post('/api/mfa/enroll', undefined, { cookie });
+  assert.equal(enrolled.status, 201);
+  const { secret } = await enrolled.json();
+  const confirmed = await post('/api/mfa/confirm', { code: codeAt(secret) }, { cookie });
+  assert.equal(confirmed.status, 200);
+  const data = await confirmed.json();
+  assert.equal(data.recoveryCodes.length, 10);
+  return { secret, cookie: cookieFrom(confirmed), recoveryCodes: data.recoveryCodes };
+}
+
+async function auditRows(action) {
+  const { rows } = await db.query('SELECT * FROM audit_events WHERE action = $1 ORDER BY occurred_at, id', [action]);
+  return rows;
+}
+
+// --- password.js ---------------------------------------------------------------
+
+test('hash scrypt: format z parametrami, poprawne i błędne hasło, unikalna sól', async () => {
+  const password = 'poprawna bateria konia zszywka';
+  const hash = await hashPassword(password, { env: FAST });
+  assert.match(hash, /^scrypt\$32768\$8\$1\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{43}$/);
+  assert.equal(await verifyPassword(password, hash), true);
+  assert.equal(await verifyPassword(`${password} `, hash), false);
+  assert.equal(await verifyPassword('Poprawna bateria konia zszywka', hash), false);
+  assert.notEqual(await hashPassword(password, { env: FAST }), hash, 'sól musi być losowa');
+  // NFKC: znak złożony i rozłożony dają ten sam wynik.
+  const composed = await hashPassword('zażółć gęślą jaźń 12', { env: FAST });
+  assert.equal(await verifyPassword('zażółć gęślą jaźń 12', composed), true);
+  assert.equal(needsRehash(hash, FAST), false);
+  assert.equal(needsRehash(hash, {}), true, 'domyślny koszt 2^17 wymaga przeliczenia');
+  assert.equal(parseHash('scrypt$1024$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), null, 'zbyt słaby koszt odrzucony');
+  assert.equal(parseHash('md5$abc'), null);
+  assert.equal(await verifyPasswordOrDummy('cokolwiek dluzszego', null, FAST), false);
+});
+
+test('polityka haseł NIST: długość, popularne hasła, adres e-mail, bez reguł składu', () => {
+  assert.equal(checkPasswordPolicy('krotkie1!'), 'password_too_short');
+  assert.equal(checkPasswordPolicy('x'.repeat(129)), 'password_too_long');
+  assert.equal(checkPasswordPolicy('ą'.repeat(11)), 'password_too_short', 'liczone znaki, nie bajty');
+  for (const common of ['password1234', 'Qwerty123456', 'haslo1234567', 'aaaaaaaaaaaa', 'abcabcabcabc', 'abcdefghijklmn', 'RadaRodzicow2026', 'haslohaslo12']) {
+    assert.equal(checkPasswordPolicy(common), 'password_common', common);
+  }
+  assert.equal(checkPasswordPolicy('jan.kowalski2026', { email: 'jan.kowalski@example.invalid' }), 'password_contains_email');
+  assert.equal(checkPasswordPolicy('tylko male litery i spacje'), null, 'bez wymogu cyfr i znaków specjalnych');
+  assert.equal(checkPasswordPolicy('x'.repeat(10) + 'yz'), null);
+});
+
+// --- POST /api/login -----------------------------------------------------------
+
+test('logowanie tworzy sesję bez MFA; ten sam błąd dla nieznanego e-maila i złego hasła', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-rep', roles: [{ role: 'representative', classId: 'c-login-1a', schoolYearId: 'y-test' }] });
+  const ok = await login(account);
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.equal(body.mfaRequired, false);
+  assert.equal(body.mfaEnrolled, false);
+  assert.equal(body.mfaVerified, false);
+  const cookie = cookieFrom(ok);
+  assert.match(ok.headers.get('Set-Cookie'), /HttpOnly; Secure; SameSite=Lax/);
+  const session = await (await get('/api/session', cookie)).json();
+  assert.equal(session.user.id, account.userId);
+  assert.equal(session.mfaVerified, false);
+  const { rows } = await db.query('SELECT mfa_verified_at FROM sessions WHERE id = $1', [session.sessionId]);
+  assert.equal(rows[0].mfa_verified_at, null);
+
+  // Wielkość liter i spacje w adresie nie mają znaczenia.
+  const upper = await post('/api/login', { email: `  ${account.email.toUpperCase()} `, password: account.password }, { ip: nextIp() });
+  assert.equal(upper.status, 200);
+
+  const time = async (body) => {
+    const started = process.hrtime.bigint();
+    const response = await post('/api/login', body, { ip: nextIp() });
+    return { response, ms: Number(process.hrtime.bigint() - started) / 1e6 };
+  };
+  const wrong = await time({ email: account.email, password: 'zle haslo ale dlugie' });
+  const unknown = await time({ email: 'nieznany-login@example.invalid', password: 'zle haslo ale dlugie' });
+  const malformed = await time({ email: 'to-nie-jest-adres', password: 'zle haslo ale dlugie' });
+  for (const { response } of [wrong, unknown, malformed]) {
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: 'invalid_credentials' });
+    assert.equal(response.headers.get('Set-Cookie'), null);
+  }
+  // Nieznany adres też liczy scrypt (fikcyjny hash): czas tego samego rzędu.
+  assert.ok(unknown.ms > wrong.ms * 0.4, `nieznany e-mail ${unknown.ms.toFixed(1)} ms vs złe hasło ${wrong.ms.toFixed(1)} ms`);
+  assert.ok(malformed.ms > wrong.ms * 0.4, `zły format ${malformed.ms.toFixed(1)} ms vs złe hasło ${wrong.ms.toFixed(1)} ms`);
+
+  const succeeded = (await auditRows('auth.login_succeeded')).filter((row) => row.actor_id === account.userId);
+  assert.ok(succeeded.length >= 2);
+  const failed = await auditRows('auth.login_failed');
+  assert.ok(failed.some((row) => row.entity_id === account.userId && row.metadata_json.reason === 'invalid_password' && row.actor_id === null));
+  assert.ok(failed.some((row) => row.entity_type === 'login_attempt' && row.metadata_json.reason === 'unknown_account'));
+});
+
+test('limit prób: 5 błędów na e-mail i 20 na IP → 429 z Retry-After; poprawne hasło też czeka', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-limit' });
+  const statuses = [];
+  for (let attempt = 0; attempt < LOGIN_POLICY.emailMaxFailures; attempt += 1) {
+    statuses.push((await login(account, { password: `zle haslo numer ${attempt}` })).status);
+  }
+  assert.deepEqual(statuses, [401, 401, 401, 401, 429]);
+  const blocked = await login(account);
+  assert.equal(blocked.status, 429);
+  assert.deepEqual(await blocked.json(), { error: 'too_many_attempts' });
+  assert.ok(Number(blocked.headers.get('Retry-After')) > 0);
+  // Blokada dotyczy adresu, nie konta w bazie: nieznany adres zachowuje się tak samo.
+  const ghost = { email: 'ghost-limit@example.invalid', password: 'x'.repeat(12) };
+  const ghostStatuses = [];
+  for (let attempt = 0; attempt < 6; attempt += 1) ghostStatuses.push((await post('/api/login', ghost, { ip: nextIp() })).status);
+  assert.deepEqual(ghostStatuses, [401, 401, 401, 401, 429, 429]);
+  // Po upływie blokady (symulacja) poprawne hasło działa i zeruje licznik e-maila.
+  await db.query("UPDATE login_rate_limits SET locked_until = now() - interval '1 second' WHERE scope_hash = $1", [scopeHash('email', account.email)]);
+  assert.equal((await login(account)).status, 200);
+  const { rows } = await db.query('SELECT 1 FROM login_rate_limits WHERE scope_hash = $1', [scopeHash('email', account.email)]);
+  assert.equal(rows.length, 0);
+
+  // IP: 20 błędów z różnych adresów e-mail.
+  const ip = '192.0.2.77';
+  const ipStatuses = [];
+  for (let attempt = 0; attempt < LOGIN_POLICY.ipMaxFailures; attempt += 1) {
+    ipStatuses.push((await post('/api/login', { email: `ip-${attempt}@example.invalid`, password: 'y'.repeat(12) }, { ip })).status);
+  }
+  assert.equal(ipStatuses.at(-1), 429);
+  assert.ok(ipStatuses.slice(0, -1).every((status) => status === 401));
+  const fromIp = await login(account, { ip });
+  assert.equal(fromIp.status, 429);
+  assert.equal((await login(account, { ip: nextIp() })).status, 200, 'inny adres IP nie jest blokowany');
+
+  // W tabeli limitów są tylko skróty — bez e-maili i adresów IP.
+  const all = await db.query('SELECT scope_type, scope_hash FROM login_rate_limits');
+  const dump = JSON.stringify(all.rows);
+  assert.ok(!dump.includes('@') && !dump.includes(ip));
+  assert.ok(all.rows.every((row) => /^[0-9a-f]{64}$/.test(row.scope_hash)));
+});
+
+test('konto wyłączone i konto bez hasła: ten sam błąd invalid_credentials', async () => {
+  const disabled = await seedPasswordUser({ userId: 'u-login-disabled', disabled: true });
+  const response = await login(disabled);
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: 'invalid_credentials' });
+  await seedUser(db, { userId: 'u-login-nopass' });
+  const nopass = await post('/api/login', { email: 'u-login-nopass@example.invalid', password: 'jakies dlugie haslo' }, { ip: nextIp() });
+  assert.equal(nopass.status, 401);
+  const reasons = (await auditRows('auth.login_failed')).filter((row) => ['u-login-disabled', 'u-login-nopass'].includes(row.entity_id)).map((row) => row.metadata_json.reason);
+  assert.deepEqual(reasons.sort(), ['no_password', 'user_disabled']);
+});
+
+test('logowanie z obcej domeny lub bez nagłówka Origin jest odrzucane; walidacja wejścia', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-csrf' });
+  const evil = await post('/api/login', { email: account.email, password: account.password }, { origin: 'https://evil.example' });
+  assert.equal(evil.status, 403);
+  assert.deepEqual(await evil.json(), { error: 'invalid_origin' });
+  const none = await post('/api/login', { email: account.email, password: account.password }, { origin: false });
+  assert.equal(none.status, 403);
+  const text = await handlePgRequest(request('/api/login', {
+    method: 'POST', body: 'email=a&password=b', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  }), env);
+  assert.equal(text.status, 415);
+  assert.equal((await post('/api/login', { email: account.email })).status, 400);
+  assert.equal((await post('/api/login', { email: account.email, password: 'x'.repeat(2000) })).status, 400);
+  assert.equal((await get('/api/login')).status, 405);
+  const { rows } = await db.query("SELECT 1 FROM sessions WHERE user_id = 'u-login-csrf'");
+  assert.equal(rows.length, 0);
+});
+
+// --- MFA po haśle ----------------------------------------------------------------
+
+test('trasa finansowa: 403 po samym haśle, 200 po /api/mfa/verify (rotacja sesji)', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-treasurer', roles: [{ role: 'treasurer', schoolYearId: 'y-test' }] });
+  const first = await login(account);
+  assert.deepEqual(await first.json().then(({ mfaRequired, mfaEnrolled }) => ({ mfaRequired, mfaEnrolled })), { mfaRequired: true, mfaEnrolled: false });
+  const firstCookie = cookieFrom(first);
+  const beforeEnroll = await get('/api/payments?schoolYearId=y-test', firstCookie);
+  assert.equal(beforeEnroll.status, 403);
+  assert.deepEqual(await beforeEnroll.json(), { error: 'mfa_enrollment_required' });
+  const { secret } = await enrollAndConfirm(firstCookie);
+
+  const second = await login(account);
+  const state = await second.json();
+  assert.equal(state.mfaRequired, true);
+  assert.equal(state.mfaEnrolled, true);
+  const cookie = cookieFrom(second);
+  const denied = await get('/api/payments?schoolYearId=y-test', cookie);
+  assert.equal(denied.status, 403);
+  assert.deepEqual(await denied.json(), { error: 'mfa_required' });
+  const auth = await (await get('/api/auth/state', cookie)).json();
+  assert.equal(auth.mfaVerified, false);
+  assert.equal(auth.mfaEnrolled, true);
+
+  const verified = await post('/api/mfa/verify', { code: codeAt(secret, 1) }, { cookie });
+  assert.equal(verified.status, 200);
+  const verifiedCookie = cookieFrom(verified);
+  assert.equal((await get('/api/session', cookie)).status, 401, 'stara sesja wycofana (rotacja)');
+  assert.equal((await get('/api/payments?schoolYearId=y-test', verifiedCookie)).status, 200);
+});
+
+test('wymóg zapisu MFA dla zarządu bez czynnika; konfigurowalny MFA_REQUIRED_ROLES', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-board', roles: [{ role: 'board', schoolYearId: 'y-test' }] });
+  const response = await login(account);
+  const body = await response.json();
+  assert.equal(body.mfaRequired, true);
+  assert.equal(body.mfaEnrolled, false);
+  assert.equal(body.mfaRequiredByRole, true);
+  const cookie = cookieFrom(response);
+  const events = await get('/api/events?schoolYearId=y-test', cookie);
+  assert.equal(events.status, 403);
+  assert.deepEqual(await events.json(), { error: 'mfa_enrollment_required' });
+  // Zwolnione: sesja, stan, przydziały, zapis MFA.
+  assert.equal((await get('/api/session', cookie)).status, 200);
+  assert.equal((await get('/api/access', cookie)).status, 200);
+  assert.equal((await get('/api/auth/state', cookie)).status, 200);
+  // Zmiana hasła przed zapisem MFA też jest zablokowana.
+  const change = await post('/api/password/change', { currentPassword: account.password, newPassword: newPassword() }, { cookie });
+  assert.equal(change.status, 403);
+
+  // Bez wymogu dla zarządu (MFA_REQUIRED_ROLES=admin) ta sama sesja przechodzi.
+  const relaxed = { ...env, MFA_REQUIRED_ROLES: 'admin' };
+  assert.equal((await get('/api/events?schoolYearId=y-test', cookie, relaxed)).status, 200);
+
+  const { cookie: mfaCookie } = await enrollAndConfirm(cookie);
+  assert.equal((await get('/api/events?schoolYearId=y-test', mfaCookie)).status, 200);
+
+  // Przedstawiciel bez czynnika nie musi zapisywać MFA (rola spoza listy).
+  const rep = await seedPasswordUser({ userId: 'u-login-rep2', roles: [{ role: 'representative', classId: 'c-login-1b', schoolYearId: 'y-test' }] });
+  const repLogin = await login(rep);
+  assert.equal((await repLogin.json()).mfaRequired, false);
+  assert.equal((await get('/api/events?schoolYearId=y-test&classId=c-login-1b', cookieFrom(repLogin))).status, 200);
+});
+
+// --- Zaproszenia ---------------------------------------------------------------------
+
+async function invite(email, role = 'board', extra = {}) {
+  await seedUser(db, { userId: 'u-login-inviter' });
+  return createInvitation(env, { actorId: 'u-login-inviter', email, role, schoolYearId: 'y-test', ...extra });
+}
+
+test('przyjęcie zaproszenia: nowe konto z adresem z zaproszenia, rola, sesja; jednorazowe', async () => {
+  const email = 'nowa.osoba@example.invalid';
+  const { secret, invitationId } = await invite(email);
+  const weak = await post('/api/invitations/accept', { token: secret, password: 'krotkie' });
+  assert.equal(weak.status, 400);
+  assert.deepEqual(await weak.json(), { error: 'password_too_short' });
+
+  const password = newPassword();
+  const accepted = await post('/api/invitations/accept', { token: secret, password, displayName: 'Nowa Osoba' });
+  assert.equal(accepted.status, 201);
+  const body = await accepted.json();
+  assert.equal(body.created, true);
+  assert.equal(body.mfaRequired, true, 'zarząd musi zapisać MFA');
+  assert.equal(body.mfaEnrolled, false);
+  const session = await (await get('/api/session', cookieFrom(accepted))).json();
+  assert.equal(session.user.email, email);
+  assert.equal(session.mfaVerified, false);
+  const grants = await db.query('SELECT role, school_year_id, source_invitation_id FROM role_grants WHERE user_id = $1', [session.user.id]);
+  assert.deepEqual(grants.rows, [{ role: 'board', school_year_id: 'y-test', source_invitation_id: invitationId }]);
+
+  const again = await post('/api/invitations/accept', { token: secret, password: newPassword() });
+  assert.equal(again.status, 400);
+  assert.deepEqual(await again.json(), { error: 'invalid_invitation' });
+  assert.equal((await post('/api/login', { email, password }, { ip: nextIp() })).status, 200);
+  assert.equal((await post('/api/invitations/accept', { token: 'x'.repeat(43), password })).status, 400);
+});
+
+test('przyjęcie zaproszenia: wygasłe odrzucone; istniejące konto wymaga obecnego hasła', async () => {
+  await seedUser(db, { userId: 'u-login-inviter' });
+  const { secret, tokenHash } = await createSessionSecret();
+  await db.query(
+    `INSERT INTO invitations (id, email, token_hash, role, school_year_id, created_by, created_at, expires_at)
+     VALUES ($1, 'wygasle@example.invalid', $2, 'board', 'y-test', 'u-login-inviter', now() - interval '4 days', now() - interval '1 day')`,
+    [crypto.randomUUID(), tokenHash],
+  );
+  const expired = await post('/api/invitations/accept', { token: secret, password: newPassword() });
+  assert.equal(expired.status, 400);
+  assert.deepEqual(await expired.json(), { error: 'invalid_invitation' });
+  const { rows } = await db.query("SELECT 1 FROM users WHERE email = 'wygasle@example.invalid'");
+  assert.equal(rows.length, 0, 'wygasłe zaproszenie nie tworzy konta');
+
+  const existing = await seedPasswordUser({ userId: 'u-login-existing' });
+  const second = await invite(existing.email, 'representative', { classId: 'c-login-1a' });
+  const wrong = await post('/api/invitations/accept', { token: second.secret, password: 'inne haslo niz obecne' });
+  assert.equal(wrong.status, 401);
+  const right = await post('/api/invitations/accept', { token: second.secret, password: existing.password });
+  assert.equal(right.status, 201);
+  assert.equal((await right.json()).created, false);
+  const grants = await db.query("SELECT role FROM role_grants WHERE user_id = 'u-login-existing'");
+  assert.deepEqual(grants.rows.map((row) => row.role), ['representative']);
+});
+
+// --- Zmiana i reset hasła ---------------------------------------------------------------
+
+test('zmiana hasła wymaga obecnego hasła, wycofuje inne sesje i rotuje bieżącą', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-change' });
+  const cookieA = cookieFrom(await login(account));
+  const cookieB = cookieFrom(await login(account));
+  const next = newPassword();
+  const wrong = await post('/api/password/change', { currentPassword: 'to nie jest haslo', newPassword: next }, { cookie: cookieA });
+  assert.equal(wrong.status, 400);
+  assert.deepEqual(await wrong.json(), { error: 'invalid_current_password' });
+  const weak = await post('/api/password/change', { currentPassword: account.password, newPassword: 'password1234' }, { cookie: cookieA });
+  assert.deepEqual(await weak.json(), { error: 'password_common' });
+  assert.equal((await post('/api/password/change', { currentPassword: account.password, newPassword: next })).status, 401);
+
+  const changed = await post('/api/password/change', { currentPassword: account.password, newPassword: next }, { cookie: cookieA });
+  assert.equal(changed.status, 200);
+  assert.equal((await changed.json()).revokedSessions, 1);
+  const cookieA2 = cookieFrom(changed);
+  assert.equal((await get('/api/session', cookieB)).status, 401, 'inna sesja wycofana');
+  assert.equal((await get('/api/session', cookieA)).status, 401, 'bieżąca sesja zrotowana');
+  assert.equal((await get('/api/session', cookieA2)).status, 200);
+  assert.equal((await login(account)).status, 401, 'stare hasło nie działa');
+  assert.equal((await login(account, { password: next })).status, 200);
+  const reasons = await db.query("SELECT revoked_reason FROM sessions WHERE user_id = 'u-login-change' AND revoked_at IS NOT NULL ORDER BY revoked_reason");
+  assert.deepEqual(reasons.rows.map((row) => row.revoked_reason), ['password_changed', 'rotated']);
+  assert.equal((await auditRows('auth.password_changed')).filter((row) => row.actor_id === 'u-login-change').length, 1);
+});
+
+test('reset hasła: token tylko od administratora (admin + MFA), jednorazowy, nowy unieważnia stary', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-reset' });
+  const userCookie = cookieFrom(await login(account));
+  const admin = await seedUserSession(db, { userId: 'u-login-admin', roles: [{ role: 'admin' }], mfa: true });
+  const adminNoMfa = await seedUserSession(db, { userId: 'u-login-admin2', roles: [{ role: 'admin' }], mfa: false });
+  const board = await seedUserSession(db, { userId: 'u-login-board2', roles: [{ role: 'board' }], mfa: true });
+  const path = `/api/admin/users/${account.userId}/password-reset`;
+  assert.equal((await post(path, {}, { cookie: board })).status, 403);
+  assert.equal((await post(path, {}, { cookie: adminNoMfa })).status, 403);
+  assert.equal((await post(path, {})).status, 401);
+
+  const first = await post(path, {}, { cookie: admin });
+  assert.equal(first.status, 201);
+  const firstBody = await first.json();
+  assert.match(firstBody.token, /^[A-Za-z0-9_-]{43}$/);
+  const second = await post(path, { ttlHours: 1 }, { cookie: admin });
+  const { token } = await second.json();
+  assert.equal((await post(path, { ttlHours: 48 }, { cookie: admin })).status, 400);
+  // Trzecie wywołanie (błędne) niczego nie zmienia; drugi token jest ważny, pierwszy nie.
+  const stale = await post('/api/password/reset', { token: firstBody.token, newPassword: newPassword() });
+  assert.equal(stale.status, 400);
+  assert.deepEqual(await stale.json(), { error: 'invalid_token' });
+  const weak = await post('/api/password/reset', { token, newPassword: 'qwerty123456' });
+  assert.deepEqual(await weak.json(), { error: 'password_common' });
+
+  const fresh = newPassword();
+  const done = await post('/api/password/reset', { token, newPassword: fresh });
+  assert.equal(done.status, 200);
+  assert.equal(done.headers.get('Set-Cookie'), null, 'reset nie loguje — potem hasło i MFA');
+  assert.equal((await post('/api/password/reset', { token, newPassword: newPassword() })).status, 400, 'token jednorazowy');
+  assert.equal((await get('/api/session', userCookie)).status, 401, 'reset wylogowuje wszystkie sesje');
+  assert.equal((await login(account)).status, 401);
+  assert.equal((await login(account, { password: fresh })).status, 200);
+
+  // Token wygasły.
+  const third = await (await post(path, {}, { cookie: admin })).json();
+  assert.ok(third.reset.id);
+  const { secret: expiredToken, tokenHash } = await createSessionSecret();
+  await db.query(
+    `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_by, created_at, expires_at)
+     VALUES ($1, $2, $3, 'u-login-admin', now() - interval '3 hours', now() - interval '1 hour')`,
+    [crypto.randomUUID(), account.userId, tokenHash],
+  );
+  assert.equal((await post('/api/password/reset', { token: expiredToken, newPassword: newPassword() })).status, 400);
+  // Tokenów nie da się usunąć ani użyć ponownie w SQL.
+  await assert.rejects(db.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [account.userId]), /password_reset_token_immutable/);
+  const issued = await auditRows('auth.password_reset_issued');
+  assert.ok(issued.filter((row) => row.actor_id === 'u-login-admin').length >= 3);
+  assert.equal((await auditRows('auth.password_reset_revoked')).filter((row) => row.metadata_json.userId === account.userId).length >= 1, true);
+});
+
+test('reset MFA przez administratora: wyłącza czynnik i kody, wylogowuje; potwierdzenie i ochrona przed samym sobą', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-lostphone', roles: [{ role: 'board', schoolYearId: 'y-test' }] });
+  const { cookie: mfaCookie } = await enrollAndConfirm(cookieFrom(await login(account)));
+  const admin = await seedUserSession(db, { userId: 'u-login-admin3', roles: [{ role: 'admin' }], mfa: true });
+  const path = `/api/admin/users/${account.userId}/mfa-reset`;
+  assert.equal((await post(path, {}, { cookie: admin })).status, 400, 'wymaga confirm');
+  assert.equal((await post(path, { confirm: account.userId }, { cookie: mfaCookie })).status, 403, 'zarząd nie resetuje MFA');
+  const selfReset = await post('/api/admin/users/u-login-admin3/mfa-reset', { confirm: 'u-login-admin3' }, { cookie: admin });
+  assert.equal(selfReset.status, 409);
+
+  const reset = await post(path, { confirm: account.userId }, { cookie: admin });
+  assert.equal(reset.status, 200);
+  const body = await reset.json();
+  assert.equal(body.changed, true);
+  assert.equal(body.disabledFactors, 1);
+  assert.equal(body.invalidatedRecoveryCodes, 10);
+  assert.ok(body.revokedSessions >= 1);
+  assert.equal((await get('/api/session', mfaCookie)).status, 401);
+  const again = await (await post(path, { confirm: account.userId }, { cookie: admin })).json();
+  assert.equal(again.changed, false);
+
+  const relogin = await (await login(account)).json();
+  assert.equal(relogin.mfaEnrolled, false);
+  assert.equal(relogin.mfaRequired, true, 'zarząd musi zapisać nowy czynnik');
+  const events = await auditRows('mfa.reset');
+  assert.equal(events.filter((row) => row.entity_id === account.userId).length, 1);
+  assert.equal(events[0].actor_id, 'u-login-admin3');
+});
+
+// --- Brak danych jawnych w audycie i logach ---------------------------------------------
+
+test('hasło i e-mail nie trafiają do audytu, logów konsoli ani tabel pomocniczych', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-privacy' });
+  const captured = [];
+  const originals = { out: process.stdout.write, err: process.stderr.write, log: console.log, error: console.error, warn: console.warn, info: console.info };
+  const capture = (chunk) => { captured.push(String(chunk)); return true; };
+  process.stdout.write = capture; process.stderr.write = capture;
+  console.log = console.error = console.warn = console.info = (...args) => captured.push(args.map(String).join(' '));
+  let next;
+  try {
+    await login(account, { password: 'zle haslo prywatne 123' });
+    await post('/api/login', { email: 'prywatny-nieznany@example.invalid', password: 'zle haslo prywatne 123' });
+    const cookie = cookieFrom(await login(account));
+    next = newPassword();
+    await post('/api/password/change', { currentPassword: account.password, newPassword: next }, { cookie });
+    const { secret } = await invite('prywatne.zaproszenie@example.invalid', 'representative', { classId: 'c-login-1a' });
+    await post('/api/invitations/accept', { token: secret, password: 'prywatne haslo zaproszenia' });
+  } finally {
+    process.stdout.write = originals.out; process.stderr.write = originals.err;
+    Object.assign(console, { log: originals.log, error: originals.error, warn: originals.warn, info: originals.info });
+  }
+  const secrets = [account.password, next, 'zle haslo prywatne 123', 'prywatne haslo zaproszenia', account.email,
+    'prywatny-nieznany@example.invalid', 'prywatne.zaproszenie@example.invalid'];
+  const logs = captured.join('\n');
+  const audit = JSON.stringify((await db.query('SELECT * FROM audit_events')).rows);
+  const helpers = JSON.stringify((await db.query('SELECT * FROM login_rate_limits')).rows)
+    + JSON.stringify((await db.query('SELECT * FROM user_passwords')).rows)
+    + JSON.stringify((await db.query('SELECT * FROM password_reset_tokens')).rows);
+  for (const value of secrets) {
+    assert.ok(!logs.includes(value), `log zawiera: ${value}`);
+    assert.ok(!audit.includes(value), `audyt zawiera: ${value}`);
+    assert.ok(!helpers.includes(value), `tabele pomocnicze zawierają: ${value}`);
+  }
+  assert.ok(!audit.includes('@'), 'audyt bez adresów e-mail');
+});

@@ -1,0 +1,26 @@
+# Ekran logowania
+
+Lekki interfejs Vite do tras `POST /api/login`, `/api/mfa/*`, `/api/invitations/accept`, `/api/password/*` (src/pg/routes/login.js, src/pg/routes/mfa.js). Prototyp na danych syntetycznych; bez danych demonstracyjnych i bez obejścia logowania.
+
+## Uruchomienie
+
+```bash
+npm run dev:login      # Vite, sam interfejs
+npm run build:login    # dist/login, serwowane przez src/node-app.js pod /login/
+```
+
+`/` przekierowuje (308) na `/login/`; strona publiczna jest pod `/site/`. Interfejs i API muszą działać pod tym samym originem — cookie sesji jest `HttpOnly; Secure; SameSite=Lax`, a router odrzuca POST bez zgodnego nagłówka `Origin`.
+
+## Widoki
+
+1. **Logowanie** — e-mail (`autocomplete="username"`) i hasło (`autocomplete="current-password"`), przycisk „Pokaż hasło”, wklejanie i menedżery haseł dozwolone, bez CAPTCHA (WCAG 3.3.8). Ten sam komunikat dla nieznanego adresu i złego hasła.
+2. **Kod z aplikacji** — pole `inputmode="numeric"`, `autocomplete="one-time-code"`; link do kodu odzyskiwania.
+3. **Konfiguracja MFA** — kod QR generowany w przeglądarce (`qrcode-generator`, bez zewnętrznych usług i CDN), klucz do wpisania ręcznie, potwierdzenie pierwszym kodem, 10 kodów odzyskiwania pokazanych raz i pole „Zapisałem kody w bezpiecznym miejscu” przed przejściem dalej. Po potwierdzeniu klucz i kod QR znikają z ekranu.
+4. **Zaproszenie** — `/login/#invite=<token>`: token w części po `#` nie trafia do serwera ani jego logów; skrypt przenosi go do pola i usuwa z paska adresu (`history.replaceState`). Nowe konto ustawia hasło; istniejące konto podaje obecne hasło.
+5. **Reset hasła** — `/login/#reset=<token>`; kod wydaje wyłącznie administrator (`POST /api/admin/users/{id}/password-reset`). Panel nie wysyła e-maili.
+6. **Zmiana hasła** — obecne i nowe hasło; pozostałe sesje zostają wylogowane.
+7. **Start** — lista paneli (dostęp sprawdza serwer), wylogowanie i wylogowanie ze wszystkich urządzeń.
+
+Kolejność widoków po zalogowaniu wybiera `nextView` (core.js) na podstawie `GET /api/auth/state`. Walidacja w przeglądarce (długość hasła, format kodu) jest tylko podpowiedzią — reguły egzekwuje serwer.
+
+Testy czystych funkcji i statycznych wymagań HTML/CSS: `tests/login-core.test.js`. Szczegóły przepływu i otwarte decyzje: [docs/AUTH.md](../docs/AUTH.md).
