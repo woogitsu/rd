@@ -160,6 +160,9 @@ export async function restoreSnapshot(client, snapshot) {
     // D1 zapisuje CURRENT_TIMESTAMP jako tekst UTC bez strefy ('YYYY-MM-DD HH:MM:SS').
     // Bez tego PostgreSQL odczytałby go w strefie sesji serwera (np. Europe/Brussels).
     await client.query("SET LOCAL TIME ZONE 'UTC'");
+    // Historyczne wpisy i wpłaty z datą spoza roku szkolnego przechodzą bez zmian
+    // (0027: trigger daty pomija odtworzenie); raport KR pokazuje je jako odchylenia.
+    await client.query("SET LOCAL rd.restore = 'on'");
     await ensureEmpty(client);
     for (const [table, columns] of specs) {
       for (const row of tables[table]) {

@@ -380,7 +380,7 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
     build: ({ target, key }) => ({
       path: '/api/payments', headers: withKey(key),
-      body: { schoolYearId: target.schoolYearId, householdId: 'hh-1', amountCents: 1000, receivedOn: '2026-10-01',
+      body: { schoolYearId: target.schoolYearId, householdId: 'hh-1', amountCents: 1000, receivedOn: yearDate(target, '10-01'),
         method: 'bank', reference: `Nowa ${marker(target.key)}` },
     }),
   },
