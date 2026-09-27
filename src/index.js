@@ -36,7 +36,7 @@ export default {
         return json({ error: 'service_unavailable' }, 503);
       }
     }
-    if (request.method === 'POST' && url.pathname.startsWith('/api/payments')) {
+    if (url.pathname.startsWith('/api/payments')) {
       try {
         const response = await handlePaymentRequest(request, env, url, json);
         if (response) return response;

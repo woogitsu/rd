@@ -20,4 +20,10 @@ Przed udostępnieniem funkcji produkcyjnej trzeba uzgodnić z Radą zasady korek
 
 `POST /api/payments` tworzy wpłatę, a `POST /api/payments/{id}/corrections` tworzy korektę. Obie trasy wymagają aktywnej sesji, potwierdzonego MFA, roli `admin`, `board` albo `treasurer`, zgodnego roku szkolnego, nagłówka `Idempotency-Key` i żądania z tej samej domeny. Identyczne ponowienie zwraca istniejący rekord; ponowne użycie klucza z inną treścią kończy się konfliktem.
 
-Wpłata i odpowiadający jej wpis `payment.created` są zapisywane atomowo. Tak samo korekta oraz `payment.correction.created`. Dziennik nie kopiuje kwoty, referencji bankowej ani danych rodziny. API nie udostępnia jeszcze listowania, edycji ani przypisywania nierozpoznanych wpłat.
+Wpłata i odpowiadający jej wpis `payment.created` są zapisywane atomowo. Tak samo korekta oraz `payment.correction.created`. Dziennik nie kopiuje kwoty, referencji bankowej ani danych rodziny.
+
+## Odczyt i przypisanie
+
+`GET /api/payments` wymaga roku szkolnego, aktywnej sesji, MFA oraz jednej z zatwierdzonych obecnie ról finansowych: `admin`, `board` albo `treasurer`. Wynik jest stronicowany, może być filtrowany do statusu `recorded` lub `unmatched` i pokazuje kwotę pierwotną, sumę korekt oraz kwotę netto. Nie wylicza należności ani brakującej składki. Dostęp dla `audit` i `principal` pozostaje wyłączony do zatwierdzenia macierzy kompetencji przez szkołę.
+
+`POST /api/payments/{id}/assignment` przypisuje wyłącznie wpłatę ze statusem `unmatched` do istniejącego gospodarstwa. Migracja `0006_payment_assignments.sql` wymaga wcześniejszego, niezmiennego zdarzenia przypisania i uniemożliwia późniejszą zmianę gospodarstwa. Operacja wymaga MFA, właściwej roli i roku, ochrony same-origin oraz klucza idempotencji. Zdarzenie i wpis `payment.assigned` powstają atomowo; dziennik nie kopiuje identyfikatora gospodarstwa.
