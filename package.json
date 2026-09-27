@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "build": "npm run build:import && npm run build:panel && npm run build:ledger && npm run build:print && npm run build:events",
+    "build": "npm run build:import && npm run build:panel && npm run build:ledger && npm run build:print && npm run build:events && npm run build:documents",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply rd --local",
@@ -28,7 +28,9 @@
     "db:restore:postgres": "node scripts/restore-postgres-snapshot.js",
     "storage:smoke": "node scripts/storage-smoke.js",
     "dev:events": "vite events",
-    "build:events": "vite build events --outDir ../dist/events --base ./ --emptyOutDir"
+    "build:events": "vite build events --outDir ../dist/events --base ./ --emptyOutDir",
+    "dev:documents": "vite documents",
+    "build:documents": "vite build documents --outDir ../dist/documents --base ./ --emptyOutDir"
   },
   "dependencies": {
     "read-excel-file": "9.3.10",

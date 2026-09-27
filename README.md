@@ -68,6 +68,10 @@ Wewnętrzny interfejs wydarzeń (#12) buduje polecenie `npm run build:events`; s
 
 Lokalny moduł wydruku: `npm run dev:print`. Operator wczytuje plik CSV/JSON w przeglądarce, ręcznie wybiera rodziny, sprawdza podgląd i drukuje jedną dyskretną kartkę na rodzinę (PDF przez „Drukuj → Zapisz jako PDF”). Kwota sugerowana i dane rachunku czekają na decyzje D-13, D-14 i D-16. [Instrukcja wydruku](print/README.md).
 
+## Dokumenty prywatne
+
+Chroniony panel dokumentów: `npm run dev:documents` (API przez `npm run dev` lub serwer Node). Lista dokumentów dostępnych według roli, metadane, pobranie przez serwer i przesłanie PDF/PNG/JPEG z kluczem idempotencji. Prototyp — nie do pracy na prawdziwych dokumentach przed decyzjami D-04, D-05, D-08 i D-09. [Instrukcja panelu](documents/README.md), [zasady](docs/DOCUMENTS.md).
+
 ## Start implementacji
 
 1. Uzgodnić zakres i przepływ danych ze szkołą.
