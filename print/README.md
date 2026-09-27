@@ -11,7 +11,7 @@ npm run dev:print     # lokalnie
 npm run build:print   # wynik w dist/print
 ```
 
-Serwer Node (`src/node-app.js`) jeszcze nie serwuje `dist/print` — wymaga to dopisania `print` do statycznych ścieżek w osobnym PR.
+Serwer Node (`src/node-app.js`) serwuje zbudowany moduł spod `/print/`; tylko wtedy przycisk „Wczytaj z serwera” działa (to samo pochodzenie co API).
 
 ## Dane wejściowe
 
@@ -30,12 +30,28 @@ JSON: tablica obiektów albo `{ "rows": [...] }` z polami `householdId`, `firstN
 
 Uczeń przypisany do dwóch rodzin (np. rodzice mieszkający osobno) pojawi się na dwóch osobnych kartkach; każda kartka zawiera tylko uczniów z wierszy swojej rodziny. Plik z błędami (brak ID, klasy, niespójne kwoty w jednej rodzinie) nie jest wczytywany.
 
-Docelowo dane będą pobierane z chronionego API (`/api/print/cards`, oznaczone `TODO` w `main.js`). Endpoint nie istnieje; musi sprawdzać sesję, MFA, rolę i przypisanie klas po stronie serwera.
+## Wczytanie z serwera (API PostgreSQL)
+
+Przycisk „Wczytaj z serwera” pobiera `GET /api/print/cards?schoolYearId=…&classId=…` (to samo pochodzenie, `credentials: "include"`) i przekazuje wynik do tego samego podglądu i wyboru co plik. Tryb pliku lokalnego pozostaje bez zmian. Trasa: `src/pg/routes/print.js` (router PostgreSQL, prototyp — niewdrożony).
+
+Odpowiedź (`Cache-Control: no-store`) ma kształt wejścia JSON: `{ schoolYearId, classId, paymentInfoIncluded, rows: [{ householdId, firstName, lastName, className, recordedNetCents? }] }` — jeden wiersz na ucznia zapisanego w danym roku, bez rodzin zarchiwizowanych. Nie zawiera żadnych danych opiekunów (e-maili, imion, zgód).
+
+| Rola | Zakres | Kwota netto wpisów wpłat |
+| --- | --- | --- |
+| `admin`, `board`, `treasurer` (przydział bez klasy) | wszystkie klasy roku; `classId` opcjonalny — wtedy rodziny z uczniem w tej klasie, razem z rodzeństwem z innych klas | tylko przy potwierdzonym MFA |
+| `representative` | wyłącznie `classId` z własnych przydziałów (wymagany, inaczej `400 class_required`, cudza klasa `403`); tylko uczniowie tej klasy, rodzeństwo z innych klas pominięte | nigdy |
+| `audit`, `principal` | `403` do decyzji D-09 | — |
+
+Założenie (D-08, macierz kompetencji — otwarta): przedstawiciel klasy może drukować kartki wyłącznie dla swojej klasy i bez informacji o wpłatach. Dostęp bez MFA do samych imion i klas jest dopuszczony tak jak w innych trasach przedstawiciela; jeśli szkoła zdecyduje inaczej, wystarczy wymusić MFA w `printScope`.
+
+Bez `recordedNetCents` kolumna pomocnicza pokazuje „nie podano”. Kwota netto to suma wpisów wpłat pomniejszona o korekty (`household_payment_totals`); „brak wpisu wpłaty” może być nieaktualny i nie jest statusem rodziny.
+
+Każde udane żądanie zapisuje w `audit_events` zdarzenie `print.cards_requested` (aktor, rok szkolny jako obiekt, metadane: `classId`, liczba rodzin, liczba uczniów, czy dołączono kwoty) — bez identyfikatorów rodzin, imion ani kwot. Limit 5000 wierszy (`413 too_many_rows`).
 
 ## Przepływ
 
 1. Uzupełnij treść: nazwa Rady, rok szkolny, kontakt. Kwota sugerowana i rachunek są opcjonalne — puste pole pomija zdanie. Bez zaznaczenia „Treść zatwierdzona przez Radę” każda kartka ma oznaczenie „WZÓR”.
-2. Wczytaj plik. Po wczytaniu **żadna rodzina nie jest zaznaczona**.
+2. Wczytaj plik albo dane z serwera. Po wczytaniu **żadna rodzina nie jest zaznaczona**.
 3. Wybierz rodziny ręcznie (pojedynczo, filtr klasy, „Zaznacz widoczne”). Filtr „Ukryj rodziny z wpisem wpłaty” jest opcjonalny i domyślnie wyłączony. „Brak wpisu wpłaty” może być nieaktualny i nie jest statusem rodziny; nie trafia na kartkę.
 4. Sprawdź podgląd, zaznacz potwierdzenie wyboru i dopiero wtedy użyj „Drukuj”. Każda zmiana wyboru lub treści wymaga ponownego potwierdzenia.
 
@@ -59,3 +75,5 @@ Kontrola słownictwa odrzuca konfigurację i kartki ze słowami „zaległość�
 ## Testy
 
 `tests/print-core.test.js`: kartki tylko dla wybranych rodzin, brak cudzych uczniów na kartce, rodzeństwo razem, brak słów o zadłużeniu, escapowanie HTML, pominięcie zdania bez kwoty, walidacja wejścia.
+
+`tests/pg-print.test.js`: przedstawiciel i cudza klasa (403), brak kwot bez MFA lub dla roli niefinansowej, rodzeństwo, dwoje opiekunów jednego dziecka, brak e-maili w odpowiedzi, audyt bez danych osobowych, zgodność odpowiedzi z `print/core.js`.
