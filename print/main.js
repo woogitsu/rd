@@ -5,11 +5,13 @@ import {
   classNames,
   filterHouseholds,
   normalizeConfig,
+  parseInputRows,
   parseInputText,
   renderCardsHtml,
 } from "./core.js";
 
 // Stan wyłącznie w pamięci karty przeglądarki: nic nie jest zapisywane ani wysyłane.
+// Jedyne żądanie sieciowe to odczyt GET /api/print/cards po kliknięciu „Wczytaj z serwera”.
 const state = { households: [], selected: new Set() };
 const byId = (id) => document.getElementById(id);
 const configForm = byId("config-form");
@@ -29,10 +31,62 @@ const confirmBox = byId("confirm-selection");
 const confirmLabel = byId("confirm-label");
 const printButton = byId("print-button");
 
-// TODO(#11): po wdrożeniu autoryzacji PostgreSQL wczytywać dane z chronionego API,
-// np. fetch('/api/print/cards?schoolYearId=…', { credentials: 'same-origin' }).
-// Endpoint nie istnieje; serwer musi sprawdzić sesję, MFA, rolę i przypisanie klas.
-// async function loadFromApi(schoolYearId) { throw new Error("Nie zaimplementowano."); }
+// Wczytanie z chronionego API (/api/print/cards, src/pg/routes/print.js).
+// Serwer sprawdza sesję, rolę i przypisanie klas; kwoty netto zwraca wyłącznie
+// roli finansowej z MFA. Dane trafiają tylko do pamięci tej karty.
+const API_ERRORS = {
+  unauthenticated: "Brak aktywnej sesji. Zaloguj się w panelu i spróbuj ponownie.",
+  forbidden: "Brak uprawnień do tej klasy lub roku szkolnego.",
+  class_required: "Podaj identyfikator swojej klasy.",
+  class_not_found: "Nie znaleziono klasy w tym roku szkolnym.",
+  school_year_not_found: "Nie znaleziono roku szkolnego.",
+  invalid_request: "Niepoprawny identyfikator roku szkolnego lub klasy.",
+  too_many_rows: "Za dużo wierszy — wybierz klasę.",
+};
+
+function createApiControls() {
+  const anchor = fileMessage;
+  const wrapper = document.createElement("div");
+  wrapper.className = "toolbar";
+  const field = (labelText, name, placeholder) => {
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.name = name;
+    input.placeholder = placeholder;
+    input.autocomplete = "off";
+    label.append(input);
+    return { label, input };
+  };
+  const year = field("Rok szkolny (ID)", "apiSchoolYearId", "np. 2026-2027");
+  const klass = field("Klasa (ID, opcjonalnie dla zarządu)", "apiClassId", "np. 1a");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Wczytaj z serwera";
+  wrapper.append(year.label, klass.label, button);
+  anchor.before(wrapper);
+  return { yearInput: year.input, classInput: klass.input, button };
+}
+
+async function loadFromApi(schoolYearId, classId) {
+  const params = new URLSearchParams({ schoolYearId });
+  if (classId) params.set("classId", classId);
+  const response = await fetch(`/api/print/cards?${params}`, {
+    credentials: "include",
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    // Odpowiedź bez JSON — komunikat ogólny poniżej.
+  }
+  if (!response.ok) throw new Error(API_ERRORS[data?.error] ?? `Serwer odrzucił żądanie (${response.status}).`);
+  if (!data || !Array.isArray(data.rows)) throw new Error("Niepoprawna odpowiedź serwera.");
+  return data;
+}
 
 function readConfig() {
   const data = new FormData(configForm);
@@ -150,27 +204,25 @@ function renderPreview() {
   }
 }
 
-async function handleFile(file) {
+function resetData() {
   state.households = [];
   state.selected.clear();
   fileErrors.hidden = true;
   fileErrors.replaceChildren();
   selectSection.hidden = true;
   fileInput.removeAttribute("aria-invalid");
-  if (!file) return;
-  if (file.size > MAX_FILE_BYTES) {
-    fileMessage.textContent = "Plik jest większy niż 2 MB.";
-    fileInput.setAttribute("aria-invalid", "true");
-    renderTable();
-    return;
-  }
+}
+
+// Wspólny przepływ dla pliku i API: parsowanie → grupowanie → wybór bez zaznaczeń.
+// invalidField: pole oznaczane aria-invalid przy błędzie (plik) albo null (API).
+function loadParsed(parse, sourceLabel, invalidField = null) {
   try {
-    const parsed = parseInputText(await file.text(), file.name);
+    const parsed = parse();
     const grouped = buildHouseholds(parsed.rows);
     const errors = [...parsed.errors, ...grouped.errors];
     if (errors.length) {
-      fileMessage.textContent = `Plik zawiera ${errors.length} błędów. Popraw plik i wczytaj go ponownie.`;
-      fileInput.setAttribute("aria-invalid", "true");
+      fileMessage.textContent = `${sourceLabel} zawiera ${errors.length} błędów. Popraw dane i wczytaj je ponownie.`;
+      invalidField?.setAttribute("aria-invalid", "true");
       fileErrors.replaceChildren(...errors.slice(0, 50).map(({ row, message }) => {
         const item = document.createElement("li");
         item.textContent = `Wiersz ${row}: ${message}`;
@@ -186,11 +238,64 @@ async function handleFile(file) {
     selectSection.hidden = false;
   } catch (error) {
     fileMessage.textContent = error.message;
-    fileInput.setAttribute("aria-invalid", "true");
+    invalidField?.setAttribute("aria-invalid", "true");
   }
   renderTable();
 }
 
+async function handleFile(file) {
+  resetData();
+  if (!file) return;
+  if (file.size > MAX_FILE_BYTES) {
+    fileMessage.textContent = "Plik jest większy niż 2 MB.";
+    fileInput.setAttribute("aria-invalid", "true");
+    renderTable();
+    return;
+  }
+  let text;
+  try {
+    text = await file.text();
+  } catch {
+    fileMessage.textContent = "Nie udało się odczytać pliku.";
+    fileInput.setAttribute("aria-invalid", "true");
+    renderTable();
+    return;
+  }
+  loadParsed(() => parseInputText(text, file.name), "Plik", fileInput);
+}
+
+const api = createApiControls();
+let apiLoading = false;
+
+async function handleApiLoad() {
+  if (apiLoading) return;
+  const schoolYearId = api.yearInput.value.trim();
+  const classId = api.classInput.value.trim();
+  if (!schoolYearId) {
+    fileMessage.textContent = "Podaj identyfikator roku szkolnego.";
+    return;
+  }
+  apiLoading = true;
+  api.button.disabled = true;
+  resetData();
+  fileInput.value = "";
+  fileMessage.textContent = "Wczytywanie z serwera…";
+  try {
+    const data = await loadFromApi(schoolYearId, classId);
+    loadParsed(() => parseInputRows(data), "Odpowiedź serwera");
+    if (state.households.length && !data.paymentInfoIncluded) {
+      fileMessage.textContent += " Informacja o wpisach wpłat nie jest dostępna dla tej roli lub sesji.";
+    }
+  } catch (error) {
+    fileMessage.textContent = error.message;
+    renderTable();
+  } finally {
+    apiLoading = false;
+    api.button.disabled = false;
+  }
+}
+
+api.button.addEventListener("click", handleApiLoad);
 fileInput.addEventListener("change", () => handleFile(fileInput.files?.[0]));
 configForm.addEventListener("input", updateSummary);
 configForm.addEventListener("submit", (event) => event.preventDefault());
