@@ -1,6 +1,8 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
+import { checkReadiness } from './health.js';
+import { describeError, log, sanitizePath } from './log.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families']);
@@ -106,9 +108,39 @@ async function writeFetchResponse(nodeResponse, webResponse, apiRequest) {
   nodeResponse.end(data);
 }
 
+const LOGGED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
+
+// Log żądania: metoda, ścieżka bez query stringu z identyfikatorami zastąpionymi
+// `:id`, status i czas. Bez nagłówków, cookies i ciał. Sondy /health na poziomie debug.
+function logRequest(logger, metrics, request, response, started) {
+  // 0 = klient przerwał połączenie przed końcem odpowiedzi.
+  const status = response.writableFinished ? response.statusCode : 0;
+  const durationMs = Math.round(Number(process.hrtime.bigint() - started) / 1e6);
+  metrics?.record(status, durationMs);
+  const path = sanitizePath(request.url);
+  const method = LOGGED_METHODS.has(request.method) ? request.method : 'OTHER';
+  const fields = { method, path, status, duration_ms: durationMs };
+  if (path === '/health' || path === '/health/ready') logger.debug('http_request', fields);
+  else if (status >= 500) logger.error('http_request', fields);
+  else if (status === 0) logger.warn('http_request', fields);
+  else logger.info('http_request', fields);
+}
+
+async function serveReadiness(response, env, readiness) {
+  const { ready, body } = await readiness(env);
+  response.writeHead(ready ? 200 : 503, {
+    'Cache-Control': 'no-store',
+    'Content-Type': 'application/json; charset=utf-8',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  response.end(JSON.stringify(body));
+}
+
 // bodyLimit(url, method) -> bajty; pozwala podnieść limit wyłącznie dla
 // wskazanych tras (np. POST /api/documents). Domyślnie 1 MiB dla wszystkich.
-export function createNodeHandler({ distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit } = {}) {
+export function createNodeHandler({
+  distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit, logger = log, metrics = null, readiness = checkReadiness,
+} = {}) {
   if (!distRoot) throw new Error('distRoot is required');
   if (typeof fetchHandler !== 'function') throw new Error('fetchHandler is required');
   const limitFor = (url, method) => {
@@ -116,8 +148,14 @@ export function createNodeHandler({ distRoot, env = {}, fetchHandler, publicBase
     return Number.isInteger(value) && value > 0 ? value : MAX_BODY_BYTES;
   };
   return async (request, response) => {
+    const started = process.hrtime.bigint();
+    response.once('close', () => logRequest(logger, metrics, request, response, started));
     try {
       const url = publicUrl(request, publicBaseUrl);
+      if (url.pathname === '/health/ready' && ['GET', 'HEAD'].includes(request.method)) {
+        await serveReadiness(response, env, readiness);
+        return;
+      }
       if (await serveStatic(request, response, url, distRoot)) return;
       const method = request.method || 'GET';
       const body = ['GET', 'HEAD'].includes(method) ? undefined : await requestBody(request, limitFor(url, method));
@@ -126,6 +164,7 @@ export function createNodeHandler({ distRoot, env = {}, fetchHandler, publicBase
       await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'));
     } catch (error) {
       const tooLarge = error instanceof RangeError && error.message === 'request_too_large';
+      if (!tooLarge) logger.error('http_handler_error', describeError(error));
       response.writeHead(tooLarge ? 413 : 500, {
         'Cache-Control': 'no-store',
         'Content-Type': 'application/json; charset=utf-8',

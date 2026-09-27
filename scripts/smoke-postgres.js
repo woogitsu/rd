@@ -9,6 +9,7 @@ import { access } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
+import { checkReadiness } from '../src/health.js';
 import { startServer } from '../src/server.js';
 
 const migrationsDir = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
@@ -47,6 +48,8 @@ export async function smokePostgres() {
       await db.query(`SELECT * FROM ${view} LIMIT 1`);
       check(true, `view ${view} is queryable`);
     }
+    const readiness = await checkReadiness({ db });
+    check(readiness.ready && readiness.body.migrations.applied === migrations.length, 'readiness reports every migration applied');
   } finally {
     await db.close();
   }
@@ -69,6 +72,8 @@ export async function smokeServer() {
     const body = await health.json();
     check(JSON.stringify(body) === '{"status":"ok"}', '/health returns only the technical status');
     check(health.headers.get('cache-control') === 'no-store', '/health is not cached');
+    const ready = await fetch(`${base}/health/ready`);
+    check(ready.status === 503 && (await ready.json()).checks.database === 'not_configured', '/health/ready returns 503 without a database');
     for (const app of ['import', 'panel', 'ledger']) {
       const redirect = await fetch(`${base}/${app}`, { redirect: 'manual' });
       check(redirect.status === 308 && redirect.headers.get('location') === `/${app}/`, `/${app} redirects to /${app}/`);
