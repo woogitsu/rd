@@ -78,6 +78,19 @@ działa bez zmian. Rekordy bez `source_ref` nie są dopasowywane przez import �
 import tworzy nowe albo zgłasza konflikt. Utworzenie unikalnych indeksów
 nie może się nie powieść na istniejących danych, bo kolumny są nowe i puste.
 
+`0006_documents.sql` (issue #39) rozszerza `documents` o rok szkolny, klasę
+(zgodną z rokiem), powiązanie z wpisem księgi lub wpłatą, SHA-256, klucz
+idempotencji (unikalny) oraz pola retencji `retention_policy`/`retain_until`
+(czekają na D-04; `NULL` = nie usuwać). Nowe kolumny są puste dla istniejących
+wierszy; żaden wiersz nie jest przepisywany ani usuwany. Ograniczenie
+`documents_api_row` obowiązuje tylko wiersze z rokiem szkolnym: rodzaj
+`financial`/`board`/`class`, klasa wyłącznie dla `class`, dozwolony typ MIME,
+losowy klucz `docs/<uuid>` bez nazwy pliku. Wiersze bez roku (np. z
+odtworzonego D1) są dla API niewidoczne do czasu osobnej migracji
+klasyfikującej. Trigger blokuje `UPDATE` i `DELETE` na `documents` — usuwanie
+po okresie retencji będzie osobnym, audytowanym mechanizmem. Opis API i
+bucketu: [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.

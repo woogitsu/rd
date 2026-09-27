@@ -15,7 +15,7 @@ Ta decyzja nie oznacza zgody szkoły na import danych, wysyłkę wiadomości ani
 | Worker `src/index.js` | serwer Node.js na Railway, `0.0.0.0:$PORT` | te same odpowiedzi HTTP, ochrona origin, testy tras |
 | D1 i `migrations/*.sql` | PostgreSQL i wersjonowane migracje | integralność, niezmienność, audyt, test odtworzenia |
 | trzy osobne buildy Vite | statyczne zasoby pod tym samym origin co API | brak publicznego serwowania plików prywatnych |
-| planowany R2 | prywatny Railway Storage Bucket (S3) | autoryzacja przed pobraniem, limity, audyt |
+| planowany R2 | prywatny Railway Storage Bucket (S3), prototyp w [DOCUMENTS.md](DOCUMENTS.md) | autoryzacja przed pobraniem, limity, audyt |
 | planowany Worker cron | Railway cron/worker i kolejka PostgreSQL | idempotencja, dry-run, limit Brevo |
 | Brevo API | Brevo API bez zmiany dostawcy | zatwierdzony nadawca i odbiorcy |
 

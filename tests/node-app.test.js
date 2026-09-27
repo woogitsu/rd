@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeHandler } from '../src/node-app.js';
+import { bodyLimitFor } from '../src/documents.js';
 
 async function listen(handler) {
   const server = createServer(handler);
@@ -88,6 +89,31 @@ test('Node server serves built applications and delegates API requests safely', 
     assert.equal(tooLarge.status, 413);
     assert.deepEqual(await tooLarge.json(), { error: 'request_too_large' });
     assert.equal(delegated, beforeLargeRequest);
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Node server raises the body limit only for the document upload route', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
+  const received = [];
+  const fetchHandler = async (request) => {
+    received.push((await request.arrayBuffer()).byteLength);
+    return Response.json({ ok: true });
+  };
+  const bodyLimit = bodyLimitFor(2 * 1024 * 1024);
+  const { server, baseUrl } = await listen(createNodeHandler({ distRoot: root, fetchHandler, bodyLimit }));
+  try {
+    const body = 'x'.repeat(1024 * 1024 + 1);
+    const upload = await fetch(`${baseUrl}/api/documents`, { method: 'POST', body });
+    assert.equal(upload.status, 200);
+    assert.deepEqual(received, [body.length]);
+    const other = await fetch(`${baseUrl}/api/logout`, { method: 'POST', body });
+    assert.equal(other.status, 413);
+    const tooLarge = await fetch(`${baseUrl}/api/documents`, { method: 'POST', body: 'x'.repeat(2 * 1024 * 1024 + 1) });
+    assert.equal(tooLarge.status, 413);
+    assert.equal(received.length, 1);
   } finally {
     await close(server);
     await rm(root, { recursive: true, force: true });

@@ -19,6 +19,7 @@ import * as paymentsRoutes from './routes/payments.js';
 import * as eventsRoutes from './routes/events.js';
 import * as meetingsRoutes from './routes/meetings.js';
 import * as importRoutes from './routes/import.js';
+import * as documentRoutes from './routes/documents.js';
 
 export const ROUTES = [
   sessionRoutes,
@@ -26,6 +27,7 @@ export const ROUTES = [
   eventsRoutes,
   meetingsRoutes,
   importRoutes,
+  documentRoutes,
   // Kolejne moduły (#36+) dopisują tu po jednej linii, np.:
   // ledgerRoutes,
 ];
