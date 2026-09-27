@@ -1,4 +1,5 @@
 import { clearSessionCookie, isSameOrigin, loadSession, revokeSession } from './auth.js';
+import { loadAuthorizationContext } from './authorization.js';
 
 const JSON_HEADERS = {
   'Cache-Control': 'no-store',
@@ -21,6 +22,15 @@ export default {
         const session = await loadSession(request, env);
         if (!session) return json({ error: 'unauthenticated' }, 401);
         return json(session);
+      } catch {
+        return json({ error: 'service_unavailable' }, 503);
+      }
+    }
+    if (url.pathname === '/api/access' && request.method === 'GET') {
+      try {
+        const context = await loadAuthorizationContext(request, env);
+        if (!context) return json({ error: 'unauthenticated' }, 401);
+        return json({ grants: context.grants });
       } catch {
         return json({ error: 'service_unavailable' }, 503);
       }
