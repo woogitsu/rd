@@ -15,6 +15,7 @@ monitoringu z #16. Kontekst: [plan migracji](RAILWAY_MIGRATION.md),
 | Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE |
 | Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), serwer na losowym porcie `127.0.0.1`, `/health`, trzy panele, nagłówki, `404` |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
+| Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
 | CI | `.github/workflows/ci.yml` | testy, buildy, smoke, lokalne migracje D1 (stara ścieżka pozostaje) |
 
 `railway.json` nie zawiera zmiennych ani nadpisań środowisk; zmienne ustawia
@@ -98,6 +99,113 @@ Rozszerzenie o sprawdzenie bazy (bez ujawniania szczegółów) należy do #35.
 Logi nie mogą zawierać danych rodzin, tokenów ani treści wiadomości.
 Konkretne narzędzie monitora zewnętrznego i adresaci alertów — do decyzji
 zarządu.
+
+## Test wydajności (#16, #41)
+
+Kryterium: API działa dla 1000 uczniów, 2000 kontaktów opiekunów i 50
+użytkowników pracujących równocześnie. Skrypt `scripts/load-test.js`
+(`npm run load:test`) uruchamia 50 wirtualnych użytkowników przez N sekund
+i zwraca JSON: p50/p95/p99/max opóźnienia, odsetek błędów, przepustowość
+(żądania/s), liczby statusów i podział na operacje. Kod wyjścia `1` przy
+przekroczeniu progu, `2` przy odmowie lub błędzie użycia.
+
+Mieszanka operacji (losowana z wagami, według roli użytkownika):
+
+| Operacja | Role | Oczekiwany status |
+|---|---|---|
+| `GET /api/session`, `GET /api/access` | wszyscy | 200 |
+| `GET /api/public/events` (bez sesji) | wszyscy | 200 |
+| `GET /api/events?schoolYearId=…` | admin, zarząd, przedstawiciel (tylko swoje klasy) | 200 |
+| `GET /api/meetings?schoolYearId=…` | admin, zarząd | 200 |
+| `GET /api/payments?schoolYearId=…&limit=50` | admin, zarząd, skarbnik (MFA) | 200 |
+| `GET /api/payments`, `GET /api/meetings` | przedstawiciel | 403 (granica ról) |
+| `POST /api/payments` z nowym `Idempotency-Key` | admin, zarząd, skarbnik | 201 |
+| `POST /api/payments` ×2 równolegle z tym samym kluczem (podwójne kliknięcie) | admin, zarząd, skarbnik | dokładnie jedno 201, drugie 200 |
+| `POST /api/events` (szkic wewnętrzny) | admin, zarząd | 201 |
+
+Błąd = status inny niż oczekiwany, przekroczony czas (`--timeout-ms`,
+domyślnie 10 s) lub błąd sieci. Oczekiwane 403 nie są błędem.
+
+### Tryb lokalny
+
+```sh
+npm run load:test                                  # 50 użytkowników, 30 s
+npm run load:test -- --users 50 --duration 60 --out wynik.json
+```
+
+Serwer Node startuje w tym samym procesie na `127.0.0.1` (losowy port) z
+PGlite w pamięci, wszystkimi migracjami `postgres/migrations` i danymi
+syntetycznymi z `scripts/lib/synthetic-seed.js` (ten sam zestaw co
+`tests/postgres-volume.test.js`: 20 klas, 800 rodzin, rodzeństwo, dwoje
+opiekunów przy dziecku, wpłaty częściowe z korektami; 2 admin, 6 zarząd,
+2 skarbników, 40 przedstawicieli). Każdy z 50 użytkowników ma sesję z MFA;
+dodatkowo 15 opublikowanych wydarzeń, 5 szkiców i 10 zebrań. Zapisy są
+włączone. Nic nie opuszcza procesu.
+
+`tests/load-smoke.test.js` (część `npm test`) uruchamia wariant 5
+użytkowników / 3 s z luźnymi progami i sprawdza brak błędów, pokrycie
+wszystkich ról i kompletność raportu oraz bezpieczniki trybu zdalnego.
+
+### Tryb zdalny (wyłącznie staging, dane syntetyczne)
+
+```sh
+LOAD_TEST_ALLOWED_HOSTS=<host stagingu> APP_ENV=staging \
+LOAD_TEST_SCHOOL_YEAR_ID=<id roku> \
+LOAD_TEST_SESSION_BOARD=… LOAD_TEST_SESSION_TREASURER=… LOAD_TEST_SESSION_REPRESENTATIVE=… \
+npm run load:test -- --target https://<host stagingu> --i-confirm-staging [--allow-writes]
+```
+
+Skrypt odmawia (kod `2`, zanim wyśle obciążenie), gdy:
+
+- brak flagi `--i-confirm-staging`;
+- `APP_ENV` w środowisku uruchomienia to `production`;
+- adres nie jest `https://`, zawiera dane logowania albo jego host nie jest
+  **dokładnie** jedną z pozycji `LOAD_TEST_ALLOWED_HOSTS` (lista po przecinku;
+  pusta lista = odmowa);
+- brak `LOAD_TEST_SCHOOL_YEAR_ID` lub żadnej sesji;
+- którakolwiek sesja jest nieważna lub należy do konta z adresem spoza domen
+  syntetycznych (`.invalid`, `.test`, `.example`) — sprawdzane przez
+  `GET /api/session` przed startem.
+
+Zmienne z sesjami (tylko nazwy; wartość = wartość cookie `rd_session`
+syntetycznego konta stagingowego, z prefiksem `rd_session=` lub bez):
+`LOAD_TEST_SESSION_ADMIN`, `LOAD_TEST_SESSION_BOARD`,
+`LOAD_TEST_SESSION_TREASURER`, `LOAD_TEST_SESSION_REPRESENTATIVE`.
+Wirtualni użytkownicy dzielą te sesje rotacyjnie. Wartości ustawiać wyłącznie
+w powłoce operatora, nie w repo, CI ani protokole; po teście wycofać sesje.
+Zdalnie domyślnie wykonywane są tylko odczyty; `--allow-writes` dodaje wpłaty
+bez przypisania rodziny (`unmatched`, opis „LOAD-TEST syntetyczny”) i szkice
+wydarzeń — dopuszczalne tylko na stagingu, który potem się czyści lub
+odtwarza. Skrypt nie wysyła e-maili i nie dotyka tras wysyłek.
+
+### Progi
+
+| Flaga | Domyślnie | Znaczenie |
+|---|---|---|
+| `--p95-ms` | 1000 | maks. p95 opóźnienia (ms) |
+| `--p99-ms` | 2000 | maks. p99 opóźnienia (ms) |
+| `--max-error-rate` | 0.01 | maks. odsetek błędów (0–1) |
+| `--min-rps` | 0 | min. przepustowość (żądania/s) |
+| `--users`, `--duration`, `--think-ms`, `--timeout-ms` | 50, 30, 0, 10000 | liczba użytkowników, czas (s), pauza między żądaniami, limit czasu żądania |
+
+Progi domyślne są założeniem technicznym, nie wymaganiem szkoły. Wartości
+docelowe dla stagingu ustalić po pierwszym pomiarze i zapisać w tabeli.
+`--think-ms 0` to obciążenie ciągłe — znacznie ostrzejsze niż 50 osób
+klikających w panelu.
+
+### Wyniki
+
+Wynik lokalny to **PGlite (WASM, jeden proces, jedno połączenie, zapytania
+szeregowane) — niereprezentatywny** dla PostgreSQL na Railway. Pokazuje
+jedynie, że mieszanka działa bez błędów przy 50 równoczesnych użytkownikach
+i że żadna trasa nie ma rażąco złego planu zapytań. Kryterium odbioru
+spełnia dopiero pomiar na stagingu.
+
+| Data | Środowisko | Kto | Użytkownicy / czas | Zapisy | Żądania | Przepustowość | p50 | p95 | p99 | Błędy | Progi | Wynik / uwagi |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 27.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny) | agent (Claude) | 50 / 30 s, bez pauz | tak | 4560 | 151,7 req/s | 300 ms | 537 ms | 1315 ms | 0 (0%) | domyślne | zaliczony; max 3230 ms; kontener 4 vCPU współdzielony z innymi procesami (load average ~60), przygotowanie danych 16 s |
+| do wykonania | staging | | 50 / 60 s | nie | | | | | | | | |
+| do wykonania | staging | | 50 / 60 s | tak (`--allow-writes`) | | | | | | | | |
 
 ## Backup PostgreSQL
 
@@ -206,7 +314,7 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
 | Testy bezpieczeństwa: role, MFA, zakres przedstawiciela, ochrona plików | #35, #39 | do wykonania |
 | Równoważność starego i nowego API (te same żądania, porównanie statusów i JSON na danych syntetycznych) | #35–#38 | do wykonania |
 | Staging Railway na danych syntetycznych | protokół | do wykonania |
-| Test 50 równoczesnych użytkowników na stagingu | protokół | do wykonania |
+| Test 50 równoczesnych użytkowników na stagingu | `npm run load:test -- --target … --i-confirm-staging`, tabela „Wyniki” | skrypt w repo, pomiar lokalny (PGlite, niereprezentatywny); staging do wykonania |
 | Backup PostgreSQL i próbne odtworzenie | tabela wyżej | do wykonania |
 | Backup i próbne odtworzenie dokumentów | tabela wyżej | do wykonania |
 | Limity kosztów i alerty | ustawienia Usage, protokół | do wykonania |

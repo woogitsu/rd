@@ -19,6 +19,7 @@
     "build:panel": "vite build panel --outDir ../dist/panel --base ./ --emptyOutDir",
     "test": "node --test tests/*.test.js",
     "smoke": "node scripts/smoke-postgres.js",
+    "load:test": "node scripts/load-test.js",
     "dev:ledger": "vite ledger",
     "build:ledger": "vite build ledger --outDir ../dist/ledger --base ./ --emptyOutDir",
     "dev:print": "vite print",
