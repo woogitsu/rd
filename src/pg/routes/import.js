@@ -169,7 +169,7 @@ export function splitGuardianName(fullName) {
   if (parts.length < 2) return { firstName: parts[0] ?? '', lastName: '' };
   let cut = parts.length - 1;
   while (cut > 0 && NAME_PARTICLES.has(parts[cut - 1].toLocaleLowerCase('pl-PL'))) cut--;
-  if (cut === 0) cut = parts.length - 1; // co najmniej jeden wyraz zostaje w imieniu
+  if (cut === 0) cut = 1; // co najmniej jeden wyraz zostaje w imieniu, reszta (przedrostki) w nazwisku
   return { firstName: parts.slice(0, cut).join(' '), lastName: parts.slice(cut).join(' ') };
 }
 
