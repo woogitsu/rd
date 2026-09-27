@@ -50,6 +50,28 @@ function readConfig() {
   };
 }
 
+// Regiony aria-live ogłaszają każdą zmianę tekstu; nie podmieniamy identycznej treści,
+// żeby czytnik ekranu nie powtarzał komunikatu przy każdym naciśnięciu klawisza.
+function setText(element, text) {
+  if (element.textContent !== text) element.textContent = text;
+}
+
+// Oznacza pola, których dotyczą błędy z normalizeConfig (aria-invalid, WCAG 3.3.1).
+const ERROR_FIELDS = [
+  ["councilName", "Podaj nazwę Rady"],
+  ["schoolYear", "Podaj rok szkolny"],
+  ["contact", "Podaj kontakt"],
+  ["suggestedAmount", "Sugerowana kwota"],
+  ["bankAccount", "Numer rachunku"],
+];
+function markInvalid(errors) {
+  for (const [name, prefix] of ERROR_FIELDS) {
+    const field = configForm.elements[name];
+    if (errors.some((error) => error.startsWith(prefix))) field.setAttribute("aria-invalid", "true");
+    else field.removeAttribute("aria-invalid");
+  }
+}
+
 function resetConfirmation() {
   confirmBox.checked = false;
   printButton.disabled = true;
@@ -90,8 +112,8 @@ function renderTable() {
 function updateSummary() {
   const selected = state.selected.size;
   const hidden = [...state.selected].filter((id) => !visibleHouseholds().some((h) => h.householdId === id)).length;
-  count.textContent = `Wybrano ${selected} z ${state.households.length} rodzin.` + (hidden ? ` ${hidden} wybranych jest ukrytych przez filtr.` : "");
-  confirmLabel.textContent = `Sprawdziłem/am wybór ${selected} rodzin i podgląd kartek.`;
+  setText(count, `Wybrano ${selected} z ${state.households.length} rodzin.` + (hidden ? ` ${hidden} wybranych jest ukrytych przez filtr.` : ""));
+  setText(confirmLabel, `Sprawdziłem/am wybór ${selected} rodzin i podgląd kartek.`);
   resetConfirmation();
   renderPreview();
 }
@@ -99,16 +121,17 @@ function updateSummary() {
 function renderPreview() {
   previewSection.hidden = state.households.length === 0;
   const { errors } = normalizeConfig(readConfig());
-  configError.textContent = errors.join(" ");
+  setText(configError, errors.join(" "));
+  markInvalid(errors);
   if (errors.length) {
     preview.replaceChildren();
-    previewMessage.textContent = "Uzupełnij treść kartki, aby zobaczyć podgląd.";
+    setText(previewMessage, "Uzupełnij treść kartki, aby zobaczyć podgląd.");
     confirmBox.disabled = true;
     return;
   }
   if (!state.selected.size) {
     preview.replaceChildren();
-    previewMessage.textContent = "Nie wybrano żadnej rodziny.";
+    setText(previewMessage, "Nie wybrano żadnej rodziny.");
     confirmBox.disabled = true;
     return;
   }
@@ -118,11 +141,11 @@ function renderPreview() {
     preview.innerHTML = result.html;
     preview.dataset.layout = result.layout;
     document.body.dataset.layout = result.layout;
-    previewMessage.textContent = `Podgląd: ${result.count} kartek.`;
+    setText(previewMessage, `Podgląd: ${result.count} kartek.`);
     confirmBox.disabled = false;
   } catch (error) {
     preview.replaceChildren();
-    previewMessage.textContent = error.message;
+    setText(previewMessage, error.message);
     confirmBox.disabled = true;
   }
 }
@@ -133,9 +156,11 @@ async function handleFile(file) {
   fileErrors.hidden = true;
   fileErrors.replaceChildren();
   selectSection.hidden = true;
+  fileInput.removeAttribute("aria-invalid");
   if (!file) return;
   if (file.size > MAX_FILE_BYTES) {
     fileMessage.textContent = "Plik jest większy niż 2 MB.";
+    fileInput.setAttribute("aria-invalid", "true");
     renderTable();
     return;
   }
@@ -145,6 +170,7 @@ async function handleFile(file) {
     const errors = [...parsed.errors, ...grouped.errors];
     if (errors.length) {
       fileMessage.textContent = `Plik zawiera ${errors.length} błędów. Popraw plik i wczytaj go ponownie.`;
+      fileInput.setAttribute("aria-invalid", "true");
       fileErrors.replaceChildren(...errors.slice(0, 50).map(({ row, message }) => {
         const item = document.createElement("li");
         item.textContent = `Wiersz ${row}: ${message}`;
@@ -160,6 +186,7 @@ async function handleFile(file) {
     selectSection.hidden = false;
   } catch (error) {
     fileMessage.textContent = error.message;
+    fileInput.setAttribute("aria-invalid", "true");
   }
   renderTable();
 }
