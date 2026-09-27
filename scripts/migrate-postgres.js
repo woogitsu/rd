@@ -1,0 +1,24 @@
+import { fileURLToPath } from 'node:url';
+import { Client } from 'pg';
+import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
+
+if (!process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is required. No migration was run.');
+  process.exitCode = 1;
+} else if (process.env.APP_ENV === 'production' && !process.argv.includes('--allow-production')) {
+  console.error('Production migration requires explicit --allow-production. No migration was run.');
+  process.exitCode = 1;
+} else {
+  const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  try {
+    await client.connect();
+    const completed = await applyMigrations(client, await loadMigrations(directory));
+    console.log(completed.length ? `Applied migrations: ${completed.join(', ')}` : 'No pending migrations.');
+  } catch (error) {
+    console.error(`Migration failed: ${error.message}`);
+    process.exitCode = 1;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
