@@ -22,5 +22,6 @@ jobs:
       - run: npm run build:import
       - run: npm run build:panel
       - run: npm run build:ledger
+      - run: npm run build:print
       - run: test -f dist/import/template.csv
       - run: npm run db:migrate:local

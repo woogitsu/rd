@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "build": "npm run build:import && npm run build:panel && npm run build:ledger",
+    "build": "npm run build:import && npm run build:panel && npm run build:ledger && npm run build:print",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply rd --local",
@@ -17,6 +17,8 @@
     "test": "node --test tests/*.test.js",
     "dev:ledger": "vite ledger",
     "build:ledger": "vite build ledger --outDir ../dist/ledger --base ./ --emptyOutDir",
+    "dev:print": "vite print",
+    "build:print": "vite build print --outDir ../dist/print --base ./ --emptyOutDir",
     "db:migrate:postgres": "node scripts/migrate-postgres.js",
     "db:snapshot:d1": "node scripts/create-d1-snapshot.js",
     "db:restore:postgres": "node scripts/restore-postgres-snapshot.js"
