@@ -601,6 +601,8 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
   } finally {
     console.error = original;
   }
+  // #214: kontrola pozytywna — bez niej test przechodzi także wtedy, gdy logger przestaje pisać na console.error.
+  assert.ok(errors.length > 0, 'awarie triggera audytu muszą zostać zalogowane przez console.error');
   assert.ok(errors.every((line) => !line.includes('Syntetyczny') && !line.includes('@')));
   assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 0);
   assert.equal(await backend.count('ledger_corrections'), 1);

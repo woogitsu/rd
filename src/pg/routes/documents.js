@@ -130,7 +130,22 @@ async function download(request, env, id, json) {
   if (!found) return json({ error: 'not_found' }, 404);
   const { doc, objectKey } = found;
 
-  const object = await env.storage.getObject(objectKey);
+  let object;
+  try {
+    object = await env.storage.getObject(objectKey);
+  } catch (error) {
+    // Wiersz documents istnieje, ale obiektu nie ma w buckecie (#168): to
+    // rozstrzygnięty, trwały stan („brak treści”), nie awaria bucketu —
+    // odróżniamy go od storage_unreachable (503 z Retry-After, niżej bez zmian).
+    if (error?.code === 'storage_object_not_found') {
+      await insertAuditEvent(env.db, {
+        actorId: context.session.user.id, action: 'document.content_missing', entityType: 'document', entityId: doc.id,
+        metadata: { kind: doc.kind, schoolYearId: doc.schoolYearId, classId: doc.classId, sessionId: context.session.sessionId },
+      });
+      return json({ error: 'document_content_missing' }, 409);
+    }
+    throw error;
+  }
   // Integralność: obiekt musi odpowiadać zapisanemu rozmiarowi i skrótowi.
   if (object.body.length !== doc.byteSize || (doc.sha256 && sha256Hex(object.body) !== doc.sha256)) {
     const error = new Error('document_integrity_mismatch');
@@ -249,8 +264,11 @@ async function upload(request, env, url, json) {
   const sha256 = sha256Hex(bytes);
   const actorId = context.session.user.id;
 
-  const replay = await findReplay(env.db, idempotencyKey, { actorId, sha256, ...target, linkedEntityType, linkedEntityId: linkedEntityId.value });
-  if (replay) return replay.conflict ? json({ error: 'idempotency_conflict' }, 409) : json({ document: replay.doc, replayed: true }, 200);
+  const replay = await findReplay(env.db, idempotencyKey, { actorId, sha256, ...target, linkedEntityType, linkedEntityId: linkedEntityId.value }, env.storage);
+  if (replay) {
+    if (replay.contentMissing) return json({ error: 'document_content_missing' }, 409);
+    return replay.conflict ? json({ error: 'idempotency_conflict' }, 409) : json({ document: replay.doc, replayed: true }, 200);
+  }
 
   // Rok, klasa i powiązany wpis muszą istnieć i należeć do tego samego roku.
   const year = await env.db.query('SELECT 1 FROM school_years WHERE id = $1', [schoolYearId]);
@@ -269,6 +287,16 @@ async function upload(request, env, url, json) {
 
   const id = crypto.randomUUID();
   const objectKey = newObjectKey();
+  const uploadId = crypto.randomUUID();
+  // Zamiar uploadu zapisany PRZED wysłaniem obiektu do bucketu (#168): każdy
+  // obiekt, który trafi do bucketu, ma od razu wpis z aktorem i czasem, więc
+  // nic nie zostaje osierocone bez śladu (zadanie porządkowe: scripts/
+  // document-uploads-cleanup.js).
+  await env.db.query(
+    `INSERT INTO document_uploads (id, object_key, idempotency_key, sha256, byte_size, mime_type, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [uploadId, objectKey, idempotencyKey, sha256, bytes.length, detected, actorId],
+  );
   await env.storage.putObject(objectKey, bytes, detected);
   try {
     const row = await env.db.transaction(async (tx) => {
@@ -281,6 +309,11 @@ async function upload(request, env, url, json) {
         [id, objectKey, detected, bytes.length, kind, actorId, schoolYearId, classId.value,
           linkedEntityType, linkedEntityId.value, sha256, idempotencyKey],
       );
+      await tx.query(
+        `UPDATE document_uploads SET state = 'committed', resolved_at = now(), resolution = 'committed'
+           WHERE id = $1 AND state = 'pending'`,
+        [uploadId],
+      );
       await insertAuditEvent(tx, {
         actorId, action: 'document.uploaded', entityType: 'document', entityId: id,
         metadata: {
@@ -292,23 +325,60 @@ async function upload(request, env, url, json) {
     });
     return json({ document: toDocument(row) }, 201);
   } catch (error) {
-    // Obiekt bez wpisu w bazie nie jest dokumentem — sprzątamy go (best effort).
-    await env.storage.deleteObject?.(objectKey).catch(() => {});
     if (error?.code === '23505') {
       // Równoległe podwójne kliknięcie: drugi zapis przegrał wyścig o klucz.
-      const again = await findReplay(env.db, idempotencyKey, { actorId, sha256, ...target, linkedEntityType, linkedEntityId: linkedEntityId.value });
-      if (again) return again.conflict ? json({ error: 'idempotency_conflict' }, 409) : json({ document: again.doc, replayed: true }, 200);
+      // Wiersz documents istnieje (z drugiego żądania) — nie usuwamy naszego
+      // obiektu na ślepo, tylko sprawdzamy stan poniżej jak przy każdym błędzie.
+      const again = await findReplay(env.db, idempotencyKey, { actorId, sha256, ...target, linkedEntityType, linkedEntityId: linkedEntityId.value }, env.storage);
+      if (again) {
+        await env.storage.deleteObject?.(objectKey).catch(() => {});
+        await env.db.query(
+          `UPDATE document_uploads SET state = 'abandoned', resolved_at = now(), resolution = 'duplicate_idempotency_key'
+             WHERE id = $1 AND state = 'pending'`,
+          [uploadId],
+        ).catch(() => {});
+        if (again.contentMissing) return json({ error: 'document_content_missing' }, 409);
+        return again.conflict ? json({ error: 'idempotency_conflict' }, 409) : json({ document: again.doc, replayed: true }, 200);
+      }
     }
+    // Utracone potwierdzenie COMMIT (#168): błąd z transakcji nie znaczy, że
+    // się wycofała — połączenie mogło zerwać się PO zatwierdzeniu. Zanim
+    // usuniemy obiekt, świeżym zapytaniem sprawdzamy, czy wiersz jednak
+    // powstał:
+    //  - jest -> transakcja się zatwierdziła; nic nie usuwamy, zwracamy sukces.
+    //  - zapytanie się udało i wiersza nie ma -> naprawdę się wycofała; obiekt
+    //    można bezpiecznie usunąć i oznaczyć upload jako porzucony.
+    //  - zapytania nie da się wykonać (baza nadal nie odpowiada) -> nie
+    //    wiadomo; zostawiamy obiekt i wpis „pending” zadaniu porządkowemu.
+    let confirmed;
+    try {
+      confirmed = await env.db.query(`${SELECT_DOCUMENT} WHERE id = $1`, [id]);
+    } catch {
+      throw error;
+    }
+    const confirmedRow = confirmed.rows[0];
+    if (confirmedRow) return json({ document: toDocument(confirmedRow) }, 201);
+    await env.storage.deleteObject?.(objectKey).catch(() => {});
+    await env.db.query(
+      `UPDATE document_uploads SET state = 'abandoned', resolved_at = now(), resolution = 'insert_rolled_back'
+         WHERE id = $1 AND state = 'pending'`,
+      [uploadId],
+    ).catch(() => {});
     throw error;
   }
 }
 
-async function findReplay(db, idempotencyKey, expected) {
+async function findReplay(db, idempotencyKey, expected, storage) {
   const row = (await db.query(`${SELECT_DOCUMENT} WHERE idempotency_key = $1`, [idempotencyKey])).rows[0];
   if (!row) return null;
   const doc = toDocument(row);
   const same = row.created_by === expected.actorId && doc.sha256 === expected.sha256 && doc.kind === expected.kind
     && doc.schoolYearId === expected.schoolYearId && doc.classId === expected.classId
     && doc.linkedEntityType === expected.linkedEntityType && doc.linkedEntityId === expected.linkedEntityId;
-  return same ? { doc } : { conflict: true };
+  if (!same) return { conflict: true };
+  // Ponowienie nie może zwrócić „sukces”, jeśli obiektu nie ma w buckecie
+  // (#168) — inaczej panel pokazuje sukces dla dokumentu, którego nie da się
+  // pobrać.
+  if (storage && !(await storage.headObject(row.object_key))) return { contentMissing: true };
+  return { doc };
 }
