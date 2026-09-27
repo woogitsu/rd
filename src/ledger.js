@@ -274,6 +274,80 @@ async function listEntries(request, env, url, json) {
   return json({ entries: visibleRows.map(entryFromRow), nextCursor });
 }
 
+function readOverviewFilters(url, { allowDirection = false } = {}) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  const direction = url.searchParams.get('direction');
+  if (!validId(schoolYearId) || (!allowDirection && direction)
+    || (direction && !DIRECTIONS.has(direction))) {
+    throw new RequestError('invalid_request');
+  }
+  return { schoolYearId, direction };
+}
+
+async function listCategories(request, env, url, json) {
+  const { schoolYearId, direction } = readOverviewFilters(url, { allowDirection: true });
+  await requireFinancialAccess(request, env, schoolYearId);
+  const conditions = ['school_year_id = ?', 'active = 1'];
+  const values = [schoolYearId];
+  if (direction) {
+    conditions.push('direction = ?');
+    values.push(direction);
+  }
+  const result = await env.DB.prepare(
+    `SELECT id, direction, name
+       FROM ledger_categories
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY direction, name, id`,
+  ).bind(...values).all();
+  return json({ categories: (result.results ?? []).map(row => ({
+    id: row.id,
+    direction: row.direction,
+    name: row.name,
+  })) });
+}
+
+async function readSummary(request, env, url, json) {
+  const { schoolYearId } = readOverviewFilters(url);
+  await requireFinancialAccess(request, env, schoolYearId);
+  const row = await env.DB.prepare(
+    `SELECT school_year_id, opening_balance_cents, income_cents,
+            expense_cents, closing_balance_cents
+       FROM ledger_year_summary
+      WHERE school_year_id = ?
+      LIMIT 1`,
+  ).bind(schoolYearId).first();
+  if (!row) throw new RequestError('school_year_not_found', 404);
+  return json({ summary: {
+    schoolYearId: row.school_year_id,
+    openingBalanceCents: Number(row.opening_balance_cents),
+    incomeCents: Number(row.income_cents),
+    expenseCents: Number(row.expense_cents),
+    closingBalanceCents: Number(row.closing_balance_cents),
+  } });
+}
+
+async function listBudget(request, env, url, json) {
+  const { schoolYearId } = readOverviewFilters(url);
+  await requireFinancialAccess(request, env, schoolYearId);
+  const result = await env.DB.prepare(
+    `SELECT line.id, line.category_id, category.direction, category.name AS category_name,
+            line.planned_cents, line.note, line.supersedes_id
+       FROM ledger_current_budget line
+       JOIN ledger_categories category ON category.id = line.category_id
+      WHERE line.school_year_id = ?
+      ORDER BY category.direction, category.name, line.id`,
+  ).bind(schoolYearId).all();
+  return json({ budget: (result.results ?? []).map(row => ({
+    id: row.id,
+    categoryId: row.category_id,
+    categoryName: row.category_name,
+    direction: row.direction,
+    plannedCents: Number(row.planned_cents),
+    note: row.note ?? null,
+    supersedesId: row.supersedes_id ?? null,
+  })) });
+}
+
 async function createEntry(request, env, json) {
   const idempotencyKey = readIdempotencyKey(request);
   const input = parseEntryInput(await readJson(request), idempotencyKey);
@@ -383,12 +457,18 @@ export async function handleLedgerRequest(request, env, url, json) {
   const correctionMatch = url.pathname.match(/^\/api\/ledger\/([^/]+)\/corrections$/);
   const isEntryRoute = url.pathname === '/api/ledger';
   const isList = request.method === 'GET' && isEntryRoute;
+  const isCategories = request.method === 'GET' && url.pathname === '/api/ledger/categories';
+  const isSummary = request.method === 'GET' && url.pathname === '/api/ledger/summary';
+  const isBudget = request.method === 'GET' && url.pathname === '/api/ledger/budget';
   const isMutation = request.method === 'POST' && (isEntryRoute || correctionMatch);
-  if (!isList && !isMutation) return null;
+  if (!isList && !isCategories && !isSummary && !isBudget && !isMutation) return null;
   if (isMutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
 
   try {
     if (isList) return await listEntries(request, env, url, json);
+    if (isCategories) return await listCategories(request, env, url, json);
+    if (isSummary) return await readSummary(request, env, url, json);
+    if (isBudget) return await listBudget(request, env, url, json);
     if (isEntryRoute) return await createEntry(request, env, json);
     return await createCorrection(request, env, decodeId(correctionMatch[1]), json);
   } catch (error) {
