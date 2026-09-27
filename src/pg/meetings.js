@@ -45,6 +45,11 @@ const DATABASE_CONFLICTS = new Set([
   'resolution_quorum_check_required', 'resolution_votes_exceed_present_voters',
   // 0021_meetings_integrity.sql (#81)
   'minutes_open_resolutions', 'resolution_quorum_check_stale',
+  // Zwykle nieosiągalne z API (moduł wstawia projekt i nie usuwa zebrań), ale to
+  // odmowa reguły danych, nie awaria — 409 zamiast 503.
+  'minutes_must_start_as_draft', 'meetings_cannot_be_deleted',
+  // Rok zamknięty (0017_year_close.sql, triggery a0_year_freeze).
+  'school_year_closed',
 ]);
 
 export class MeetingError extends Error {
@@ -124,6 +129,11 @@ function parseQuorumRule(input) {
     votingBodySize: integer(input.votingBodySize, 1, 10000, { optional: true }),
     quorumRuleSource: text(input.quorumRuleSource, 3, 200, { optional: true }),
   };
+  // Skonfigurowana reguła musi wskazywać swoje źródło (np. paragraf regulaminu, D-21);
+  // ten sam wymóg ma formularz (meetings/core.js, buildQuorumRule).
+  if (mode !== 'not_configured' && rule.quorumRuleSource === null) {
+    throw new MeetingError('quorum_rule_source_required');
+  }
   try {
     if (mode === 'fraction') {
       rule.quorumNumerator = integer(input.quorumNumerator, 1, 1000);
@@ -147,6 +157,19 @@ const QUORUM_FIELDS = [
   'quorumMode', 'quorumNumerator', 'quorumDenominator', 'quorumInclusive',
   'quorumMinCount', 'votingBodySize', 'quorumRuleSource',
 ];
+
+// Reguła zapisana w wierszu zebrania w postaci pól wejściowych API.
+function storedQuorumInput(row) {
+  return {
+    quorumMode: row.quorum_mode,
+    quorumNumerator: row.quorum_numerator ?? null,
+    quorumDenominator: row.quorum_denominator ?? null,
+    quorumInclusive: row.quorum_inclusive ?? null,
+    quorumMinCount: row.quorum_min_count ?? null,
+    votingBodySize: row.voting_body_size ?? null,
+    quorumRuleSource: row.quorum_rule_source ?? null,
+  };
+}
 
 function parseVotes(input) {
   return {
@@ -473,7 +496,13 @@ export async function listMeetings(db, actor, input = {}) {
 
 export async function getMeeting(db, actor, input = {}) {
   const meeting = await loadMeeting(db, input.meetingId);
-  authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
+  try {
+    authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
+  } catch (error) {
+    // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
+    if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
+    throw error;
+  }
   const [agenda, attendees, checks, minutes, resolutions] = await Promise.all([
     db.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]),
     db.query('SELECT * FROM meeting_attendees WHERE meeting_id = $1 ORDER BY recorded_at, id', [meeting.id]),
@@ -540,7 +569,13 @@ export async function updateMeeting(db, actor, input = {}) {
     changes.status = input.status;
   }
   if (QUORUM_FIELDS.some(field => input[field] !== undefined)) {
-    const rule = parseQuorumRule(input);
+    // PATCH: pola reguły nieobecne w żądaniu zostają z zapisanej reguły;
+    // jawne null czyści pole. Pola nieużywane przez nowy tryb są zerowane.
+    const merged = storedQuorumInput(meeting);
+    for (const field of QUORUM_FIELDS) {
+      if (input[field] !== undefined) merged[field] = input[field];
+    }
+    const rule = parseQuorumRule(merged);
     Object.assign(changes, {
       quorum_mode: rule.quorumMode,
       quorum_numerator: rule.quorumNumerator,

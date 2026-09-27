@@ -31,7 +31,9 @@ Reguła jest konfigurowana dla każdego zebrania:
 - `minimum_count`: minimalna liczba obecnych osób uprawnionych;
 - `not_configured`: brak reguły — ustalenie quorum jest wtedy niemożliwe.
 
-Pole `quorumRuleSource` zapisuje, skąd pochodzi reguła (np. paragraf regulaminu). **Założenie:** liczebność składu uprawnionego jest wpisywana ręcznie, bo regulamin i lista członków Rady nie są w systemie.
+Pole `quorumRuleSource` zapisuje, skąd pochodzi reguła (np. paragraf regulaminu). Dla reguły `fraction` i `minimum_count` jest obowiązkowe także po stronie serwera (`400 quorum_rule_source_required`), tak jak w formularzu.
+
+`PATCH /api/meetings/:id` łączy przesłane pola reguły z regułą zapisaną: pole pominięte zostaje bez zmian, jawne `null` czyści pole. Zmiana samego `votingBodySize` nie zeruje więc trybu ani źródła. Przy zmianie trybu pola nieużywane przez nowy tryb (np. licznik i mianownik przy `minimum_count`) są zerowane. **Założenie:** liczebność składu uprawnionego jest wpisywana ręcznie, bo regulamin i lista członków Rady nie są w systemie.
 
 Ustalenie quorum (`determineQuorum`) oblicza baza danych z reguły i listy obecności. Liczone są tylko osoby obecne z prawem głosu. Wynik jest niezmienną migawką (reguła, liczba obecnych uprawnionych, wymagana liczba, wynik); ponowne ustalenie tworzy nowy wpis, historia zostaje. Liczba obecnych uprawnionych większa niż skład uprawniony jest błędem danych.
 
@@ -78,14 +80,14 @@ Przydział z `classId` działa tylko dla zebrań tej klasy; nigdy dla zebrań og
 
 ## API
 
-Wszystkie mutacje wymagają nagłówka `Origin` zgodnego z serwerem. Tworzenie wymaga `Idempotency-Key` (8–128 znaków); powtórzenie tego samego żądania zwraca pierwotny obiekt z `Idempotency-Replayed: true`, a inne dane z tym samym kluczem dają `409 idempotency_conflict`.
+Wszystkie mutacje wymagają nagłówka `Origin` zgodnego z serwerem. Odmowy reguł bazy (np. zablokowane zebranie, `minutes_must_start_as_draft`, `meetings_cannot_be_deleted`, zapis w zamkniętym roku — `school_year_closed`) dają `409` z kodem reguły, nie `503`. Trasy zarządzania zebraniem nadal odpowiadają `403` dla zebrania spoza zakresu (SR-07 w docs/SECURITY_REVIEW.md). Tworzenie wymaga `Idempotency-Key` (8–128 znaków); powtórzenie tego samego żądania zwraca pierwotny obiekt z `Idempotency-Replayed: true`, a inne dane z tym samym kluczem dają `409 idempotency_conflict`.
 
 | Metoda i ścieżka | Funkcja |
 |---|---|
 | `GET /api/meetings?schoolYearId=` | `listMeetings` |
 | `POST /api/meetings` | `createMeeting` |
-| `GET /api/meetings/:id` | `getMeeting` |
-| `PATCH /api/meetings/:id` | `updateMeeting` (dane, status, reguła quorum) |
+| `GET /api/meetings/:id` | `getMeeting` (brak uprawnień = `404 meeting_not_found`, jak brak zebrania) |
+| `PATCH /api/meetings/:id` | `updateMeeting` (dane, status, reguła quorum — scalana z zapisaną) |
 | `POST /api/meetings/:id/agenda-items` | `addAgendaItem` |
 | `POST /api/meetings/:id/attendance` | `recordAttendance` (wpis lub poprawka) |
 | `POST /api/meetings/:id/quorum-checks` | `determineQuorum` |

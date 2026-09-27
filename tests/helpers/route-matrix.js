@@ -14,7 +14,8 @@
 //   allow     { kluczAktora: [zakresy dozwolone] } lub 'authenticated' / 'public'
 //   mfa       true = wymagane potwierdzone MFA
 //   ok        oczekiwany status sukcesu
-//   deny      status odmowy dla zalogowanego bez uprawnień (403 lub 404)
+//   deny      status odmowy dla zalogowanego bez uprawnień (403 lub 404) albo
+//             (actor, targetKey) => 403 | 404, gdy zależy od widoczności obiektu (SR-07)
 //   fixture   'static' (wspólne obiekty) | 'fresh' (nowy obiekt dla przypadku dozwolonego) | null
 //   object    rodzaj obiektu: { kind, stage } — tworzy go test (ctx.object)
 //   build     (ctx) => { path, body?, headers? } — ctx: { target, obj, key, fx }
@@ -100,10 +101,14 @@ function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft',
   };
 }
 
+// SR-07: wydarzenie spoza zakresu podglądu (EVENT_EDIT) daje 404 jak brak obiektu;
+// widoczne, ale bez prawa do kroku (np. zatwierdzenie przez przedstawiciela) — 403.
+const eventDeny = (actor, targetKey) => ((EVENT_EDIT[actor.key] ?? []).includes(targetKey) ? 403 : 404);
+
 function eventAction(id, action, stage, allow, body = {}) {
   return {
     id, module: 'events', method: 'POST', path: `/api/events/:eventId/${action}`, targets: CLASS_TARGETS,
-    allow, mfa: false, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'event', stage },
+    allow, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage },
     build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/${action}`, body: { revision: 1, ...body } }),
   };
 }
@@ -191,7 +196,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'events.update', module: 'events', method: 'PATCH', path: '/api/events/:eventId', targets: CLASS_TARGETS,
-    allow: EVENT_EDIT, mfa: false, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'event', stage: 'draft' },
+    allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage: 'draft' },
     build: ({ obj, target }) => ({ path: `/api/events/${obj.eventId}`, body: { revision: 1, title: `Zmiana ${marker(target.key)}` } }),
   },
   eventAction('events.submit', 'submit', 'draft', EVENT_EDIT),
@@ -244,7 +249,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'meetings.get', module: 'meetings', method: 'GET', path: '/api/meetings/:meetingId', targets: CLASS_TARGETS,
-    allow: MEETING_READ, mfa: false, ok: 200, deny: 403, fixture: 'static', object: { kind: 'meeting', stage: 'shared' },
+    allow: MEETING_READ, mfa: false, ok: 200, deny: 404, fixture: 'static', object: { kind: 'meeting', stage: 'shared' },
     build: ({ obj }) => ({ path: `/api/meetings/${obj.meetingId}` }),
     contains: (_actor, target) => [target.key],
   },
@@ -289,7 +294,7 @@ export function expectedStatus(route, actor, mfa, targetKey) {
   if (actor.unauthenticated) return 401;
   if (route.allow === 'authenticated') return route.ok;
   const scopes = route.allow[actor.key] ?? [];
-  if (!scopes.includes(targetKey)) return route.deny;
+  if (!scopes.includes(targetKey)) return typeof route.deny === 'function' ? route.deny(actor, targetKey) : route.deny;
   if (route.mfa && !mfa) return 403;
   return route.ok;
 }

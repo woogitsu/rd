@@ -257,6 +257,8 @@ function mapDatabaseError(error) {
   if (message.includes('payment_not_unmatched')) {
     throw new RequestError('payment_already_assigned', 409);
   }
+  // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze) — stan, nie awaria.
+  if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   if (error?.code === '23503') throw new RequestError('invalid_reference');
   throw error;
 }

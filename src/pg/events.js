@@ -267,8 +267,10 @@ function publicEvent(row) {
     endsAt: formatBrusselsLocal(row.ends_at),
     endsAtUtc: iso(row.ends_at),
     status: row.public_status,
-    changedAfterPublication: Boolean(row.first_published_at && row.published_at
-      && iso(row.published_at) !== iso(row.first_published_at)),
+    // True after a re-publication and while a newer revision awaits approval
+    // (the public page still shows the last published revision).
+    changedAfterPublication: Boolean(row.pending_change || (row.first_published_at && row.published_at
+      && iso(row.published_at) !== iso(row.first_published_at))),
   };
 }
 
@@ -297,6 +299,8 @@ function mapDatabaseError(error) {
   if (message.includes('event_four_eyes_required')) throw new EventError('four_eyes_required', 409);
   if (message.includes('event_cancelled_is_final')) throw new EventError('event_cancelled', 409);
   if (/event_invalid_|event_content_and_workflow_change/.test(message)) throw new EventError('invalid_transition', 409);
+  // Rok zamknięty (0017_year_close.sql): stan danych, nie awaria usługi.
+  if (message.includes('school_year_closed')) throw new EventError('school_year_closed', 409);
   if (error?.code === '23503') throw new EventError('invalid_reference');
   if (error?.code === '23514') throw new EventError('invalid_request');
   throw error;
@@ -371,26 +375,34 @@ export async function createDraft(db, actor, input) {
   }
 }
 
+// Class and school year are fixed at creation (trigger event_identity_immutable);
+// updateDraft changes content only — `classId`/`schoolYearId` in the input are ignored.
 export async function updateDraft(db, actor, input) {
   requireActor(actor);
   const expected = readRevision(input);
   return run(db, async (tx) => {
     const row = await lockEvent(tx, input.eventId);
-    if (!canEdit(actor, row)) throw new EventError('forbidden', 403);
+    // Same answer as a missing id: do not reveal other classes' events (SR-07).
+    if (!canEdit(actor, row)) throw new EventError('event_not_found', 404);
     if (row.status === 'cancelled') throw new EventError('event_cancelled', 409);
     const base = {
       title: row.title, description: row.description, location: row.location,
       organizer: row.organizer, audience: row.audience,
       startsAt: new Date(row.begins_at), endsAt: row.ends_at ? new Date(row.ends_at) : null,
     };
-    const content = parseContent(input, base);
+    // A stale revision is a conflict even when the stale edit would not validate
+    // against the current content; only a double submit of the same edit is replayed.
     if (row.revision_no !== expected) {
-      // Double submit of the same edit: the next revision already holds it.
-      if (row.revision_no === expected + 1 && row.updated_by === actor.userId && sameContent(row, content)) {
-        return { event: internalEvent(row), replayed: true };
+      if (row.revision_no === expected + 1 && row.updated_by === actor.userId) {
+        let repeated = null;
+        try { repeated = parseContent(input, base); } catch (error) {
+          if (!(error instanceof EventError)) throw error;
+        }
+        if (repeated && sameContent(row, repeated)) return { event: internalEvent(row), replayed: true };
       }
       throw new EventError('revision_conflict', 409);
     }
+    const content = parseContent(input, base);
     if (sameContent(row, content)) return { event: internalEvent(row), replayed: true };
     const { rows } = await tx.query(
       `UPDATE events SET title = $2, description = $3, begins_at = $4, ends_at = $5,
@@ -409,6 +421,8 @@ async function transition(db, actor, input, spec) {
   const expected = readRevision(input);
   return run(db, async (tx) => {
     const row = await lockEvent(tx, input.eventId);
+    // Out of scope looks like a missing id (SR-07); visible but not allowed is 403.
+    if (!canEdit(actor, row)) throw new EventError('event_not_found', 404);
     if (!spec.allowed(actor, row)) throw new EventError('forbidden', 403);
     if (spec.alreadyDone(row, expected)) return { event: internalEvent(row), replayed: true };
     if (row.status === 'cancelled') throw new EventError('event_cancelled', 409);
@@ -540,7 +554,9 @@ export async function listPublic(db, input = {}) {
   params.push(limit);
   const { rows } = await db.query(
     `SELECT id, title, description, begins_at, ends_at, location, organizer, timezone,
-            public_status, published_at, first_published_at
+            public_status, published_at, first_published_at,
+            (SELECT e.status <> 'cancelled' AND e.revision_no <> e.published_revision_no
+               FROM events e WHERE e.id = public_events.id) AS pending_change
        FROM public_events
       ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
       ORDER BY begins_at, id LIMIT $${params.length}`,

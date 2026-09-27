@@ -18,7 +18,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { emailConfig } from '../../email/brevo.js';
 import {
@@ -78,15 +78,17 @@ async function readJson(request) {
   }
 }
 
+// Kampanie dotyczą całej szkoły (odbiorcy z wszystkich klas), więc przydział
+// z class_id nie daje dostępu — isAuthorizedScoped bez classId go pomija.
 async function requireContext(request, env, roles) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorized(context, { roles, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, requireMfa: true })) throw new RequestError('forbidden', 403);
   return context;
 }
 
 function requireYear(context, roles, schoolYearId) {
-  if (!isAuthorized(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
 }
 
 const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.subject, c.body_text, c.content_hash,
