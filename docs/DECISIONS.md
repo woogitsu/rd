@@ -1,0 +1,279 @@
+# Rejestr decyzji zarządu i szkoły
+
+Ten dokument zbiera decyzje organizacyjne i prawne, których zespół techniczny nie podejmuje. Wypełniają go zarząd Rady, dyrekcja szkoły i IOD. Opisane warianty pochodzą wyłącznie z istniejącej dokumentacji i issues; nie są rekomendacją prawną. Brak wpisu oznacza, że decyzja nie zapadła.
+
+Do czasu zamknięcia decyzji D-01–D-06 nie importujemy danych rodzin. Prace na danych syntetycznych mogą trwać równolegle (#1).
+
+## Jak wypełniać
+
+- Status: `otwarta` → `przyjęta` albo `odrzucona`. Zmiana przyjętej decyzji to nowy wpis z odwołaniem do poprzedniego, bez usuwania starego.
+- Kto zatwierdził: funkcja i organ (np. zarząd, dyrekcja, IOD), bez danych kontaktowych.
+- Uchwała/dokument: numer uchwały, protokołu lub pisma. Nie dołączać do repozytorium dokumentów z danymi osobowymi.
+
+## Podsumowanie
+
+| ID | Decyzja | Blokuje | Status |
+|---|---|---|---|
+| D-01 | Administrator danych | #1, #2, #36, #41 | otwarta |
+| D-02 | Podstawa i cele przetwarzania | #1, #2, #36 | otwarta |
+| D-03 | Zakres importu i lista pól | #1, #2, #36 | otwarta |
+| D-04 | Okresy retencji i usuwanie | #1, #2, #8, #9, #36, #39 | otwarta |
+| D-05 | Dostawcy, umowy powierzenia, lokalizacja | #1, #31, #40, #41 | otwarta |
+| D-06 | Obowiązek informacyjny wobec rodziców | #1, #2, #10 | otwarta |
+| D-07 | Procedura incydentowa, sprostowanie i usuwanie danych | #1, #41 | otwarta |
+| D-08 | Role i macierz kompetencji | #4, #35 | otwarta |
+| D-09 | Uprawnienia dyrekcji i Komisji Rewizyjnej | #4, #6, #7, #35 | otwarta |
+| D-10 | Dostawca logowania i przyjmowanie zaproszeń | #3, #35 | otwarta |
+| D-11 | Jednostka ewidencji składki i opieka dzielona | #5, #6, #10, #11 | otwarta |
+| D-12 | Zasady korekt wpłat i ich zatwierdzania | #6, #37 | otwarta |
+| D-13 | Rachunek bankowy, gotówka i uzgadnianie | #6, #7, #10 | otwarta |
+| D-14 | Sugerowana składka na rok | #6, #10, #11 | otwarta |
+| D-15 | Zatwierdzanie wydatków powyżej 3000 EUR | #7, #38 | otwarta |
+| D-16 | Szablon wiadomości i kartki | #10, #11, #40 | otwarta |
+| D-17 | Adres nadawcy i adresaci wysyłki | #10, #40 | otwarta |
+| D-18 | Zasady publikacji zdjęć | #14 | otwarta |
+| D-19 | Głosowanie elektroniczne | #13 | otwarta |
+| D-20 | Zgoda na produkcję na Railway | #31, #41, #42 | otwarta |
+| D-21 | Aktualny regulamin i dostęp do dokumentów źródłowych | #13, #15 | otwarta |
+
+## Dane osobowe
+
+### D-01. Administrator danych
+
+- Pytanie: kto jest administratorem danych uczniów i opiekunów przetwarzanych w panelu i kto w jego imieniu upoważnia osoby z Rady do dostępu?
+- Dlaczego: od tego zależą upoważnienia, umowy z dostawcami, obowiązek informacyjny i odpowiedzialność za incydenty. Blokuje import (#2, #36) i produkcję (#41).
+- Warianty w dokumentacji: nie wskazano. SECURITY.md i README wymagają ustalenia z dyrekcją i IOD. Polski status szkoły nie wyłącza RODO.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-02. Podstawa i cele przetwarzania
+
+- Pytanie: w jakich celach panel przetwarza dane (ewidencja dobrowolnych wpłat, kontakt z opiekunami, organizacja klas) i na jakiej podstawie; jaki zakres danych szkoła udostępnia Radzie?
+- Dlaczego: cel wyznacza dopuszczalne pola (D-03), retencję (D-04) i treść informacji dla rodziców (D-06). Blokuje #2, #36.
+- Warianty w dokumentacji: nie wskazano. Cele produktu opisuje PRODUCT.md; nie rozstrzyga podstawy prawnej.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-03. Zakres importu i lista pól
+
+- Pytanie: które pola i z jakiego źródła wolno importować? Czy import obejmuje wszystkie klasy od razu?
+- Dlaczego: kryterium #1; parser z #2 i zapis z #36 przyjmą tylko zatwierdzone pola.
+- Warianty w dokumentacji: projekt listy w sekcji „Proponowana lista pól” poniżej.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-04. Okresy retencji i usuwanie
+
+- Pytanie: jak długo przechowujemy: dane ucznia i opiekuna po zakończeniu nauki, historię wpłat i księgę, dokumenty źródłowe, dziennik audytu, kampanie e-mail, kopie zapasowe oraz przesłany plik importu?
+- Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania.
+- Warianty w dokumentacji: nie wskazano okresów. Dokumenty Rady archiwizować zgodnie z regulaminem i decyzją szkoły (SECURITY.md).
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-05. Dostawcy, umowy powierzenia i lokalizacja
+
+- Pytanie: czy administrator akceptuje Railway (aplikacja, PostgreSQL, Storage Bucket) i Brevo (e-mail) jako podmioty przetwarzające; kto zawiera i przechowuje umowy powierzenia; czy wymagany region UE jest wystarczający?
+- Dlaczego: warunek produkcji (#31, #41) i wysyłki (#40). Ustawienie regionu nie zastępuje oceny prawnej ani umowy.
+- Warianty w dokumentacji: RAILWAY_MIGRATION.md zakłada region UE (Amsterdam), weryfikowany osobno dla aplikacji, bazy i bucketu. EMAIL.md: przed produkcją sprawdzić regulamin Brevo i warunki przetwarzania danych.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-06. Obowiązek informacyjny wobec rodziców
+
+- Pytanie: kto, kiedy i jaką treścią informuje opiekunów o przetwarzaniu ich danych i danych dzieci w panelu?
+- Dlaczego: wymagane przed importem (#2) i przed pierwszą wiadomością (#10).
+- Warianty w dokumentacji: nie wskazano.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-07. Procedura incydentowa, sprostowanie i usuwanie danych
+
+- Pytanie: kto przyjmuje zgłoszenie incydentu lub żądanie sprostowania/usunięcia, w jakim czasie i jak jest ono dokumentowane?
+- Dlaczego: SECURITY.md wymaga procedury przed importem; odbiór produkcji (#41).
+- Warianty w dokumentacji: nie wskazano.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+## Dostęp i konta
+
+### D-08. Role i macierz kompetencji
+
+- Pytanie: czy szkoła zatwierdza macierz dostępu z PRODUCT.md (zarząd, skarbnik, przedstawiciel klasy, Komisja Rewizyjna, dyrekcja, admin techniczny) i w jakim zakresie danych rodzin każda rola pracuje?
+- Dlaczego: kod nie przypisuje rolom domyślnych zdolności (AUTHORIZATION.md). Blokuje zamknięcie #4 i pełny zakres #35.
+- Warianty w dokumentacji: projekt macierzy w PRODUCT.md, oznaczony „do zatwierdzenia”. Stałe założenie AGENTS.md: przedstawiciel klasy wyłącznie dla przypisanych klas.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-09. Uprawnienia dyrekcji i Komisji Rewizyjnej
+
+- Pytanie: czy i w jakim zakresie dyrekcja oraz Komisja Rewizyjna mają dostęp do wpłat, księgi, dokumentów i eksportu?
+- Dlaczego: dostęp ról `principal` i `audit` do wpłat i księgi jest wyłączony do czasu decyzji (PAYMENTS.md, LEDGER.md). Dotyczy #4, #6, #7, #35.
+- Warianty w dokumentacji: PRODUCT.md — Komisja Rewizyjna: odczyt wpłat, odczyt i eksport księgi, minimum danych rodzin; dyrekcja: domyślnie brak dostępu do wpłat, raport zbiorczy księgi.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-10. Dostawca logowania i przyjmowanie zaproszeń
+
+- Pytanie: jakim sposobem użytkownicy logują się i przyjmują zaproszenia; kto może zapraszać; czy dostawca logowania jest kolejnym podmiotem przetwarzającym (D-05)?
+- Dlaczego: bez tego nie ma drogi utworzenia sesji (AUTH.md). Blokuje #3 i częściowo #35.
+- Warianty w dokumentacji: tylko wymagania — konta na zaproszenie, bez publicznej rejestracji, MFA dla dostępu finansowego. Dostawca niewskazany.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+## Składki i finanse
+
+### D-11. Jednostka ewidencji składki i opieka dzielona
+
+- Pytanie: czy dobrowolną składkę ewidencjonujemy na rodzinę (gospodarstwo), czy na dziecko? Jak traktujemy rodzeństwo i dziecko, którego opiekunowie mieszkają w różnych gospodarstwach?
+- Dlaczego: `household_id` ucznia nie może samoczynnie wyznaczać adresata ani wysokości składki (DATA_MODEL.md). Blokuje #5, #6 oraz dobór adresatów w #10 i #11.
+- Warianty w dokumentacji: rodzina albo dziecko (ROADMAP.md). Model danych obsługuje kilku opiekunów, rodzeństwo i opiekunów z różnych gospodarstw.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-12. Zasady korekt wpłat i ich zatwierdzania
+
+- Pytanie: kto może zapisać korektę wpłaty, czy wymaga ona drugiej osoby i jakie powody są dopuszczalne?
+- Dlaczego: warunek produkcyjnego użycia ewidencji (PAYMENTS.md, #6, #37).
+- Warianty w dokumentacji: obecnie technicznie role `admin`, `board`, `treasurer` z MFA; korekta jest osobnym zapisem. Zasad zatwierdzania nie ustalono.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-13. Rachunek bankowy, gotówka i uzgadnianie
+
+- Pytanie: na jaki rachunek przyjmowane są wpłaty w danym roku, kto go prowadzi, jak rejestrujemy gotówkę i kto oraz jak często uzgadnia księgę z wyciągiem?
+- Dlaczego: dane do wpłaty w wiadomościach pochodzą z konfiguracji zatwierdzonej na rok (EMAIL.md). Blokuje uzgadnianie w #7 i treść w #10.
+- Warianty w dokumentacji: przelew i gotówka jako metody (ROADMAP.md, #6). Sposób uzgadniania niewskazany.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-14. Sugerowana składka na rok
+
+- Pytanie: jaka kwota sugerowana obowiązuje w danym roku szkolnym i czy istnieją wyjątki?
+- Dlaczego: pojawia się w treści wiadomości i kartek (#10, #11). Nie tworzy należności ani statusu „dłużnik”.
+- Warianty w dokumentacji: ustawiana na rok, nie nadpisuje kwot faktycznych (PRODUCT.md). Wysokość niewskazana.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-15. Zatwierdzanie wydatków powyżej 3000 EUR
+
+- Pytanie: jaki jest format referencji uchwały i proces zatwierdzenia wydatku powyżej 3000 EUR?
+- Dlaczego: model wymaga tekstowej referencji, ale nie rozstrzyga jej formatu ani procesu (LEDGER.md, #7, #38).
+- Warianty w dokumentacji: próg według dostarczonego regulaminu; wydatek dokładnie 3000 EUR nie wymaga referencji.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+## Korespondencja
+
+### D-16. Szablon wiadomości i kartki
+
+- Pytanie: jaką treść przypomnienia e-mail i kartki do zeszytu zatwierdza Rada i kto zatwierdza każdą kampanię?
+- Dlaczego: bez zatwierdzonego szablonu nie ma wysyłki ani wydruku (#10, #11, #40).
+- Warianty w dokumentacji: EMAIL.md — treść neutralna, bez słowa „dług”, bez nazwiska dziecka w temacie, zatwierdzone dane do wpłaty, kontakt i zdanie o pominięciu wiadomości po wpłacie.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-17. Adres nadawcy i adresaci wysyłki
+
+- Pytanie: z jakiej domeny i adresu wysyłamy; kto zarządza kontem Brevo; czy wiadomość trafia do jednego, czy do wszystkich opiekunów dziecka?
+- Dlaczego: konfiguracja SPF/DKIM/DMARC i liczba adresatów zależą od tej decyzji (EMAIL.md, #10, #40).
+- Warianty w dokumentacji: jeden lub obaj opiekunowie (EMAIL.md). Osobny adres nadawcy na zweryfikowanej domenie. Limit Brevo Free 300 wiadomości na dobę dla całego konta.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+## Publikacja i zebrania
+
+### D-18. Zasady publikacji zdjęć
+
+- Pytanie: które zdjęcia wolno publikować na stronie Rady, kto sprawdza prawa autorskie i zgody na wizerunek dzieci oraz gdzie są zapisywane?
+- Dlaczego: blokuje galerię i sekcję archiwalną (#14).
+- Warianty w dokumentacji: SECURITY.md i DESIGN.md — dla każdego zdjęcia autor, źródło, data i prawo do publikacji; publiczna dostępność na stronie szkoły nie daje prawa do kopiowania; bez zbliżeń rozpoznawalnych dzieci bez potwierdzenia zgód.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-19. Głosowanie elektroniczne
+
+- Pytanie: czy regulamin Rady dopuszcza głosowanie elektroniczne, a jeśli tak, w jakich sprawach i z jakim sposobem ustalania quorum?
+- Dlaczego: #13 zabrania implementacji bez osobnej analizy zgodności z regulaminem.
+- Warianty w dokumentacji: nie wskazano.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+## Uruchomienie i dokumenty źródłowe
+
+### D-20. Zgoda na produkcję na Railway
+
+- Pytanie: kto i na podstawie jakiego odbioru zgadza się na produkcyjne uruchomienie panelu, import danych rodzin i usunięcie starego stosu?
+- Dlaczego: kryterium końcowe #31; #41 nie przewiduje deployu bez decyzji szkoły/IOD; #42 zależy od odbioru. Wybór Railway z 27.09.2026 jest decyzją techniczną, nie zgodą na produkcję.
+- Warianty w dokumentacji: warunki odbioru w RAILWAY_MIGRATION.md (CI, testy ról i MFA, backup i próbne odtworzenie, plan cutover i rollbacku, limity kosztów, monitoring). Wymaga wcześniejszego zamknięcia D-01–D-07.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-21. Aktualny regulamin i dostęp do dokumentów źródłowych
+
+- Pytanie: która wersja regulaminu Rady i programu jest obowiązująca oraz kto może mieć do nich dostęp w panelu lub repozytorium?
+- Dlaczego: README zabrania umieszczania tych dokumentów w repo bez decyzji. Dotyczy #13 i #15.
+- Warianty w dokumentacji: nie wskazano.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+## Proponowana lista pól dopuszczonych do importu (projekt do zatwierdzenia)
+
+**Projekt, nie decyzja.** Lista powtarza wyłącznie pola nazwane w #2, DATA_MODEL.md i SECURITY.md. Obowiązuje dopiero po przyjęciu D-03 wraz z D-02. Szkoła może ją zawęzić.
+
+| Pole | Uwagi z dokumentacji | Decyzja |
+|---|---|---|
+| Uczeń — imię | wymagane do identyfikacji w klasie | do zatwierdzenia |
+| Uczeń — nazwisko | nie służy do automatycznego łączenia rodzin | do zatwierdzenia |
+| Klasa | jedna klasa na ucznia w danym roku | do zatwierdzenia |
+| Rok szkolny | przypisanie klasy z historią lat | do zatwierdzenia |
+| Identyfikator źródłowy ucznia | jeśli dostępny w systemie szkoły | do zatwierdzenia |
+| Opiekun — imię | kilku opiekunów na dziecko | do zatwierdzenia |
+| Opiekun — nazwisko | | do zatwierdzenia |
+| Opiekun — e-mail | tylko niezbędny kontakt; nie jest identyfikatorem ucznia ani rodziny | do zatwierdzenia |
+| Powiązanie rodzeństwa | opcjonalne | do zatwierdzenia |
+
+Wyłączone z importu według #2 i SECURITY.md: PESEL, dane o zdrowiu, oceny, adresy zamieszkania i inne adresy niepotrzebne do celu. Kolumny spoza zatwierdzonej listy importer powinien pomijać i wykazywać w raporcie.
+
+Do rozstrzygnięcia w D-03: czy import obejmuje zgodę na kontakt i wskazanie kontaktu głównego (pola relacji uczeń–opiekun w DATA_MODEL.md), czy są one ustalane później przez uprawnioną osobę.
