@@ -33,10 +33,10 @@ Sekrety i `DATABASE_URL` nie są potrzebne do testu samego serwera. Serwer **nie
 
 ## API na PostgreSQL (issue #35)
 
-`src/db.js` (`createPgDatabase`) opakowuje ograniczoną pulę `pg.Pool` (limity połączeń, bezczynności i czasu zapytania) i udostępnia `query(sql, params)`, `transaction(async tx => …)` i `close()` — ten sam kształt co PGlite w testach. `src/pg/app.js` zawiera rejestr modułów tras (`ROUTES`); każdy moduł eksportuje `name` i `handle(request, env, url, json)` zwracające `Response` albo `null`. Router sprawdza zgodność `Origin` dla metod zmieniających stan, a błędy loguje bez danych osobowych i zwraca `503 service_unavailable`. Na razie zawiera `/health`, `/api/session`, `/api/access` i `/api/logout`; wpłaty i księga pozostają w starym routerze do czasu #37/#38.
+`src/db.js` (`createPgDatabase`) opakowuje ograniczoną pulę `pg.Pool` (limity połączeń, bezczynności i czasu zapytania) i udostępnia `query(sql, params)`, `transaction(async tx => …)` i `close()` — ten sam kształt co PGlite w testach. `src/pg/app.js` zawiera rejestr modułów tras (`ROUTES`); każdy moduł eksportuje `name` i `handle(request, env, url, json)` zwracające `Response` albo `null`. Router sprawdza zgodność `Origin` dla metod zmieniających stan, a błędy loguje bez danych osobowych i zwraca `503 service_unavailable`. Zawiera `/health`, `/api/session`, `/api/access`, `/api/logout` oraz trasy wpłat `/api/payments…` (issue #37, opis w [PAYMENTS.md](PAYMENTS.md)); księga pozostaje w starym routerze do czasu #38.
 
 ## Granice tego etapu
 
-Serwer statyczny i punkt `/health` są gotowe do testów. Bez `DATABASE_URL` chronione API korzysta z adaptera Worker/D1. Z `DATABASE_URL` działa prototyp routera PostgreSQL z sesjami i rolami (issue #35), bez tras finansowych; nie jest wdrożony ani zatwierdzony do pracy na danych rodzin. Z tego powodu ten etap nie uruchamia wdrożenia produkcyjnego ani nie konfiguruje publicznej domeny.
+Serwer statyczny i punkt `/health` są gotowe do testów. Bez `DATABASE_URL` chronione API korzysta z adaptera Worker/D1. Z `DATABASE_URL` działa prototyp routera PostgreSQL z sesjami i rolami (issue #35) oraz trasami wpłat (issue #37), bez księgi; nie jest wdrożony ani zatwierdzony do pracy na danych rodzin. Z tego powodu ten etap nie uruchamia wdrożenia produkcyjnego ani nie konfiguruje publicznej domeny.
 
 Testy HTTP sprawdzają przekierowania, pliki statyczne, nagłówki bezpieczeństwa, brak publikacji map źródłowych, odpowiedzi `404`, brak cache API oraz limit ciała żądania 1 MiB.
