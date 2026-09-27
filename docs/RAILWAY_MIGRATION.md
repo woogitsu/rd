@@ -39,6 +39,8 @@ Staging nie może samoczynnie publikować panelu produkcyjnego ani wysyłać wia
 
 Przed produkcją: pełne CI, testy ról i MFA, testy importu 1000+ syntetycznych uczniów, równoległych korekt, zgodności bilansu, ochrona plików, test 50 użytkowników, backup PostgreSQL oraz próbne odtworzenie bazy i dokumentów. Ustalić limity kosztów i monitoring. Spisać procedurę wycofania wersji aplikacji i odtworzenia bazy. Decyzję o produkcyjnym uruchomieniu dokumentuje szkoła/Rada po przeglądzie IOD.
 
+Konfiguracja `railway.json`, smoke test, test wolumenu, środowiska, zmienne, limity kosztów, monitoring, procedury backupu i próbnego odtworzenia (bazy i dokumentów), plan cutover i rollback oraz lista odbioru są w [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md). Próby i deploy mają status „do wykonania”.
+
 Źródła techniczne sprawdzone 27.09.2026:
 
 - [Railway: port i adres nasłuchiwania](https://docs.railway.com/networking/troubleshooting/application-failed-to-respond)

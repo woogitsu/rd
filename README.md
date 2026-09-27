@@ -18,7 +18,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - Brevo API: pojedyncze wiadomości do rodziców po zatwierdzeniu kampanii.
 - Frontend dostępny na telefonie i komputerze; WCAG 2.2 AA jako cel projektowy.
 
-[Decyzja i etapy migracji](docs/RAILWAY_MIGRATION.md) są zapisane osobno. Obecny kod serwera i migracje nadal korzystają z Cloudflare Workers/D1; **nie jest to gotowy deployment Railway**. Nie dodawać poświadczeń dostawców do repo.
+[Decyzja i etapy migracji](docs/RAILWAY_MIGRATION.md) są zapisane osobno, a [procedury środowisk, backupu, monitoringu i odbioru](docs/RAILWAY_OPERATIONS.md) — w osobnym dokumencie; `railway.json` zawiera wyłącznie konfigurację buildu i startu, bez sekretów. Obecny kod serwera i migracje nadal korzystają z Cloudflare Workers/D1; **nie jest to gotowy deployment Railway**. Nie dodawać poświadczeń dostawców do repo.
 
 ## Dokumentacja
 
@@ -26,6 +26,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Model funkcjonalny i uprawnienia](docs/PRODUCT.md)
 - [Architektura i dane](docs/ARCHITECTURE.md)
 - [Migracja na Railway](docs/RAILWAY_MIGRATION.md)
+- [Railway: środowiska, backup, monitoring i odbiór](docs/RAILWAY_OPERATIONS.md)
 - [Przypomnienia e-mail](docs/EMAIL.md)
 - [Prywatność i bezpieczeństwo](docs/SECURITY.md)
 - [Uwierzytelnianie i sesje](docs/AUTH.md)

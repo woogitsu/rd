@@ -24,4 +24,9 @@ jobs:
       - run: npm run build:ledger
       - run: npm run build:print
       - run: test -f dist/import/template.csv
+      - run: test -f railway.json
+      # PostgreSQL migrations on in-memory PGlite + Node server on 127.0.0.1
+      # (ephemeral port): /health and built panels. No Docker, no network
+      # services, no secrets and no Railway access.
+      - run: npm run smoke
       - run: npm run db:migrate:local
