@@ -33,6 +33,11 @@ Dostęp dla dyrekcji i Komisji Rewizyjnej pozostaje wyłączony do zatwierdzenia
 - uzgadnianie księgi z wyciągiem,
 - eksport CSV/PDF,
 - prywatne dokumenty źródłowe w R2 po autoryzacji,
-- interfejs księgi oraz preliminarza.
+Interfejs w `ledger/` pokazuje podsumowanie roku, bieżący preliminarz i filtrowane wpisy. Pozwala tworzyć przychody lub wydatki i dopisywać korekty, korzystając wyłącznie z chronionego API. Formularz wymusza referencję uchwały dla wydatku powyżej 3000 EUR i zachowuje klucz idempotencji przy ponowieniu tego samego żądania.
+
+- interfejs uzgadniania rachunku,
+- edycja preliminarza,
+- formularz przesyłania prywatnego dokumentu po wdrożeniu bezpiecznego R2.
 
 Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowania, korekt, uchwał i dostępu przez Radę oraz szkołę.
+
