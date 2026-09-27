@@ -51,7 +51,7 @@ Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe 
 - zebrania, porządek, obecność, sprawdzenia quorum, protokoły, publikacje protokołów, uchwały,
 - nowe przydziały ról w tym roku, także przydziały klasy tego roku wstawiane bez `school_year_id` (0022; API administratora zwraca `409 school_year_closed`); wygaszenie i cofnięcie istniejących pozostaje możliwe.
 
-Odczyt, eksport i dziennik audytu działają bez zmian. **Korekta po zamknięciu nie ma ścieżki w aplikacji.** Pomyłkę wykrytą po zamknięciu ujmuje się w otwartym roku następnym (np. poprawka bilansu otwarcia z uzasadnieniem odwołującym się do uchwały) — sposób musi zatwierdzić Rada. Ponowne otwarcie roku wymagałoby osobnej migracji i decyzji.
+Odczyt i dziennik audytu nie są blokowane przez triggery, ale po zamknięciu **dostęp** do odczytu zależy od przydziałów (sekcja „Odczyt archiwum”). **Korekta po zamknięciu nie ma ścieżki w aplikacji.** Pomyłkę wykrytą po zamknięciu ujmuje się w otwartym roku następnym (np. poprawka bilansu otwarcia z uzasadnieniem odwołującym się do uchwały) — sposób musi zatwierdzić Rada. Ponowne otwarcie roku wymagałoby osobnej migracji i decyzji.
 
 API wpłat, księgi, wydarzeń i zebrań tłumaczy odmowę triggera na `409 school_year_closed` (SR-14 w docs/SECURITY_REVIEW.md). Pozostałe moduły (uzgodnienia, kampanie e-mail, aktualności, dokumenty) mogą jeszcze zwracać ogólne 503 — do sprawdzenia osobno.
 
@@ -65,16 +65,34 @@ Wszystkie trasy: aktywna sesja, MFA, przydział bez zawężenia do klasy, w zakr
 | `POST /api/year-close/{rok}/start` `{ nextSchoolYearId }` | zarząd | 201; 200 przy powtórzeniu; 409 gdy rok następny nie jest późniejszy albo nie jest otwarty |
 | `POST /api/year-close/{rok}/checklist/{punkt}` `{ note?, documentId? }` | zarząd, skarbnik | 201; 200 przy powtórzeniu; 409 poza stanem `closing` |
 | `POST /api/year-close/{rok}/close` | zarząd | 200; 409 `checklist_incomplete` (z listą braków), `four_eyes_required`, `next_year_opening_balance_exists` |
-| `GET /api/year-close/{rok}/handover` | zarząd, skarbnik | zestawienie przekazania (JSON) |
+| `GET /api/year-close/{rok}/handover` | zarząd, skarbnik; po zamknięciu także zarząd/skarbnik roku następnego i admin (tylko odczyt) | zestawienie przekazania (JSON) |
 
 Zestawienie przekazania zawiera wyłącznie liczby, sumy w centach EUR i identyfikatory: bilans, liczby wpisów i korekt księgi, sumy wpłat zapisanych i niewyjaśnionych (bez rodzin), zebrania według stanu i liczbę odbytych bez zatwierdzonego protokołu, uchwały według stanu (bieżące wersje), wydarzenia według stanu, listę kontrolną z identyfikatorami osób, liczbę wygaszonych ról i aktywne role nowego roku. Nie zawiera imion, adresów e-mail ani danych dzieci. Suma wpłat nie jest listą „dłużników” — składki są dobrowolne. Eksport PDF/CSV (0016) powstaje osobno.
 
-Po zamknięciu osoby, których jedyny przydział był zawężony do starego roku, tracą dostęp — także do tego zestawienia. Odczyt archiwum zapewnia przydział nowego roku albo przydział bez zakresu roku.
+Po zamknięciu osoby, których jedyny przydział był zawężony do starego roku, tracą dostęp — także do tego zestawienia (zamknięcie wygasza przydziały roku, również `audit` i `treasurer`).
+
+## Odczyt archiwum (#195)
+
+Wariant zachowawczy do czasu decyzji D-08/D-09 (zarząd jeszcze nie zdecydował): **tylko odczyt, tylko trzy trasy**. Reguła w `src/pg/archive-access.js`.
+
+| Trasa | Kto czyta zamknięty rok N |
+|---|---|
+| `GET /api/year-close/{N}/handover` | zarząd lub skarbnik z przydziałem roku N+1; admin |
+| `GET /api/reports/audit?schoolYearId={N}` (JSON i HTML) | zarząd lub skarbnik z przydziałem roku N+1; admin |
+| `POST /api/exports { schoolYearId: N }` | zarząd z przydziałem roku N+1; admin (jak dotąd) — skarbnik nie ma eksportu także w bieżącym roku |
+
+- N+1 to wyłącznie `school_year_closures.next_school_year_id` zamkniętego roku N, a N musi mieć stan `closed`. Jeden rok wstecz, bez łańcucha: przydział roku N+2 nie otwiera roku N. Przed zamknięciem przydział N+1 nie daje żadnego dostępu do N.
+- Wymagane: MFA i przydział bez zawężenia do klasy. Przedstawiciel klasy, dyrekcja i Komisja Rewizyjna (także nowego roku) dostają `403`. Admin — przydział bez roku albo roku N+1.
+- Przydział bez zakresu roku działa jak dotąd (otwiera wszystkie lata, także bieżący).
+- Każdy odczyt przez tę regułę zapisuje zdarzenie `year_close.archive_read` (aktor, rok N w `entity_id`, `metadata.route`, `metadata.viaSchoolYearId`) bez danych osobowych; raport i eksport zapisują też swoje zwykłe zdarzenia.
+- Pozostałe trasy roku N (stan zamknięcia, księga, wpłaty, uzgodnienia) nadal wymagają przydziału roku N albo bez zakresu roku. Zapis w roku N kończy się `403` (brak roli w roku N) albo `409 school_year_closed` (trigger zamrożenia).
+- Nie ma przydziału „tylko do odczytu” w zamkniętym roku: `POST /api/admin/grants` z `schoolYearId` zamkniętego roku kończy się `409 school_year_closed` (nie `503`), bez zapisu.
+- Komisja Rewizyjna traci odczyt w chwili zamknięcia (D-09: czy i jak długo KR ma dostęp po zamknięciu). Jeśli Rada zdecyduje inaczej, regułę trzeba rozszerzyć osobną zmianą.
 
 ## Założenia
 
 - Zasada czterech oczu przy zamknięciu (inna osoba niż rozpoczynająca) — założenie, nie przepis regulaminu (D-21).
-- Rozpoczyna i zamyka zarząd; skarbnik tylko potwierdza punkty listy. Komisja Rewizyjna, dyrekcja i admin techniczny nie mają dostępu do czasu D-08/D-09.
+- Rozpoczyna i zamyka zarząd; skarbnik tylko potwierdza punkty listy. Komisja Rewizyjna, dyrekcja i admin techniczny nie mają dostępu do czasu D-08/D-09 — z wyjątkiem odczytu archiwum zamkniętego roku przez admina (#195).
 - Wygaszane są przydziały z `school_year_id` zamykanego roku oraz przydziały klas tego roku (#201). Przydziały bez zakresu roku (np. admin techniczny) nie wygasają automatycznie — obsługuje je zarządzanie rolami (0012).
 - Następny rok musi zaczynać się później niż zamykany i nie może mieć rozpoczętego zamknięcia.
 - Bilans liczony jest z księgi, nie z wpłat; wpłata wpływa na bilans dopiero przez wpis przychodu.

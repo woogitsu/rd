@@ -5,6 +5,36 @@
 // zawiera skryptów; CSP dopuszcza wyłącznie wbudowany arkusz stylów o znanym
 // skrócie SHA-256.
 
+const CHECK_LABEL = {
+  year_end_balance: 'Saldo księgi na ostatni dzień roku (wpisy do tej daty) a bilans zamknięcia',
+  dates_within_school_year: 'Daty wpisów i wpłat w granicach roku szkolnego',
+  payments_in_ledger: 'Wpłaty (netto) a wpłaty ujęte w księdze (netto)',
+  reconciliation_matches: 'Powiązania pozycji wyciągu: zgodność kwot i brak podwójnego ujęcia',
+  latest_confirmed_reconciliation: 'Ostatnie zatwierdzone uzgodnienie rachunku',
+};
+
+function checkDetails(check) {
+  const m = (cents) => escapeHtml(formatEur(cents));
+  switch (check.id) {
+    case 'year_end_balance':
+      return `bilans zamknięcia ${m(check.closingBalanceCents)}; saldo na koniec roku ${m(check.balanceAtYearEndCents)}; różnica ${m(check.differenceCents)}`;
+    case 'dates_within_school_year': {
+      const listed = (check.items ?? []).map((item) => `${escapeHtml(item.kind === 'payment_entry' ? 'wpłata' : 'wpis')} ${escapeHtml(item.id)} (${escapeHtml(item.date)})`);
+      return `wpisy księgi poza rokiem: ${escapeHtml(check.ledgerEntryCount)}; wpłaty poza rokiem: ${escapeHtml(check.paymentCount)}${listed.length ? `<br>${listed.join('<br>')}` : ''}`;
+    }
+    case 'payments_in_ledger':
+      return `wpłaty ${m(check.paymentsNetCents)}; ujęte w księdze ${m(check.ledgerLinkedNetCents)}; różnica ${m(check.differenceCents)}; wpłaty bez wpisu księgi: ${escapeHtml(check.paymentsWithoutLedgerEntry)}`;
+    case 'reconciliation_matches':
+      return `niezgodne kwotowo: ${escapeHtml(check.amountMismatchCount)}; podwójne ujęcie: ${escapeHtml(check.doubleCountedCount)}`;
+    case 'latest_confirmed_reconciliation':
+      return check.statementDate
+        ? `wyciąg z ${escapeHtml(check.statementDate)}; różnica ${m(check.differenceCents)}; przelewy w księdze po dacie wyciągu: ${escapeHtml(check.bankEntriesAfterStatement)}`
+        : 'brak zatwierdzonego uzgodnienia w tym roku';
+    default:
+      return '';
+  }
+}
+
 export const REPORT_CSS = `
 @page { size: A4; margin: 15mm 14mm; }
 * { box-sizing: border-box; }
@@ -121,10 +151,11 @@ export function renderAuditReportHtml(report) {
     [e(item.confirmedBy ?? '—')], [e(item.confirmationNote ?? '')],
   ]));
 
-  const checks = report.checks;
-  const checkText = checks.categoryIncomeMatchesSummary && checks.categoryExpenseMatchesSummary
-    ? 'Sumy kategorii są zgodne z bilansem roku.'
-    : 'Uwaga: sumy kategorii nie są zgodne z bilansem roku.';
+  const checkRows = (report.checks.items ?? []).map((check) => row([
+    [e(CHECK_LABEL[check.id] ?? check.id)],
+    [check.ok === null ? 'nie liczono' : check.ok ? 'zgodne' : '<span class="flag">niezgodne</span>'],
+    [checkDetails(check)],
+  ]));
 
   return `<!doctype html>
 <html lang="pl">
@@ -150,7 +181,8 @@ export function renderAuditReportHtml(report) {
 <tr><th>Wydatki netto</th><td class="num">${money(balance.expenseCents)}</td></tr>
 <tr><th>Bilans zamknięcia</th><td class="num">${money(balance.closingBalanceCents)}</td></tr>
 </tbody></table>
-<p class="meta">${e(checkText)}</p>
+<p class="meta">Kontrole krzyżowe poniżej porównują niezależnie liczone źródła; wynik jest wskaźnikiem do sprawdzenia, nie oceną.</p>
+${table([['Kontrola'], ['Wynik'], ['Wartości']], checkRows, 'Brak kontroli.')}
 
 <h2>2. Przychody i wydatki według kategorii</h2>
 ${table([['Rodzaj'], ['Kategoria'], ['Wpisy', 'num'], ['Kwota pierwotna', 'num'], ['Korekty', 'num'], ['Netto', 'num']],
