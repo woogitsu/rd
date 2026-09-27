@@ -76,6 +76,10 @@ Chroniony panel dokumentów: `npm run dev:documents` (API przez `npm run dev` lu
 
 Prototyp strony tylko do odczytu pod `/site/`: `npm run dev:site`. Pokazuje wyłącznie opublikowane wydarzenia (#12), protokoły udostępnione publicznie (#13) i opcjonalnie aktualności. Bez logowania i plików cookie. [Opis strony](site/README.md).
 
+## Zebrania Rady
+
+Chroniony panel zebrań (#13): `npm run build:meetings`, a następnie serwer Node z `DATABASE_URL` (`PORT=3000 npm start`, ścieżka `/meetings/`); podczas pracy nad interfejsem `npm run dev:meetings`. Porządek obrad, lista obecności z jawnym prawem głosu, ustalenie quorum z ręcznie wpisanej reguły, wersje protokołu z zatwierdzeniem i widocznością oraz uchwały z liczbami głosów wpisanymi przez sekretarza — bez głosowania elektronicznego. Prototyp, bez danych demonstracyjnych ani obejścia logowania. [Instrukcja panelu](meetings/README.md).
+
 ## Start implementacji
 
 1. Uzgodnić zakres i przepływ danych ze szkołą.
