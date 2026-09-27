@@ -119,3 +119,34 @@ test('Node server raises the body limit only for the document upload route', asy
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('Node server: / przekierowuje na /login/, adres klienta nadpisuje nagłówek od klienta', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-login-'));
+  await mkdir(join(root, 'login'), { recursive: true });
+  await writeFile(join(root, 'login', 'index.html'), '<!doctype html><title>Logowanie RD</title>');
+  const seen = [];
+  const fetchHandler = async (request) => {
+    seen.push(request.headers.get('x-rd-client-ip'));
+    return Response.json({ ok: true });
+  };
+  const direct = await listen(createNodeHandler({ distRoot: root, fetchHandler }));
+  const proxied = await listen(createNodeHandler({ distRoot: root, fetchHandler, trustProxy: true }));
+  try {
+    const home = await fetch(`${direct.baseUrl}/`, { redirect: 'manual' });
+    assert.equal(home.status, 308);
+    assert.equal(home.headers.get('location'), '/login/');
+    const page = await fetch(`${direct.baseUrl}/login/`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Logowanie RD/);
+
+    const forged = { 'x-rd-client-ip': '203.0.113.9', 'x-forwarded-for': '198.51.100.1, 192.0.2.44' };
+    await fetch(`${direct.baseUrl}/api/login`, { headers: forged });
+    await fetch(`${proxied.baseUrl}/api/login`, { headers: forged });
+    assert.equal(seen[0], '127.0.0.1', 'bez zaufanego proxy: adres gniazda, nie nagłówki klienta');
+    assert.equal(seen[1], '192.0.2.44', 'za proxy: ostatni wpis X-Forwarded-For');
+  } finally {
+    await close(direct.server);
+    await close(proxied.server);
+    await rm(root, { recursive: true, force: true });
+  }
+});

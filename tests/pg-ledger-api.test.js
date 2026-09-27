@@ -520,15 +520,16 @@ test('missing MFA, expired grant, no session and cross-origin writes are refused
   const admin = await backend.as('u-admin', { mfa: true, roles: [{ role: 'admin' }] });
   const entry = (await createEntry(backend, {}, 'setup-key-0001', admin)).body.entry;
   const expired = await backend.as('u-expired', { mfa: true, roles: [{ role: 'treasurer', expiresAt: new Date(Date.now() - 1000) }] });
+  // Skarbnik bez sesji z MFA: bramka MFA routera (mfa_enrollment_required) przed trasą księgi.
   for (const path of LEDGER_GETS) {
-    for (const [cookie, status, error] of [[backend.cookie, 403, 'forbidden'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
+    for (const [cookie, status, error] of [[backend.cookie, 403, 'mfa_enrollment_required'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
       const result = await read(await backend.fetch(call(cookie, path)));
       assert.deepEqual([result.status, result.body], [status, { error }], path);
     }
   }
   const targets = [['/api/ledger', entryInput], [`/api/ledger/${entry.id}/corrections`, { amountCents: 1, reason: 'Bez MFA' }]];
   for (const [path, body] of targets) {
-    for (const [cookie, status, error] of [[backend.cookie, 403, 'forbidden'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
+    for (const [cookie, status, error] of [[backend.cookie, 403, 'mfa_enrollment_required'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
       const result = await read(await backend.fetch(call(cookie, path, { body, key: 'mfa-key-0001' })));
       assert.deepEqual([result.status, result.body], [status, { error }], path);
     }
