@@ -238,6 +238,25 @@ function sessionPayload(session, status, extra = {}) {
   };
 }
 
+// Unieważnia otwarte tokeny resetu konta (#193) w transakcji operacji, która je
+// dezaktualizuje: zmiana hasła, udane logowanie, udany reset, wyłączenie konta,
+// reset MFA. Wiersze zostają (trigger pozwala tylko zamknąć token); każde
+// unieważnienie ma zdarzenie audytu z powodem, bez tokenu i e-maila.
+export async function revokePasswordResetTokens(tx, { userId, actorId, reason }) {
+  const { rows } = await tx.query(
+    `UPDATE password_reset_tokens SET revoked_at = now()
+      WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL RETURNING id`,
+    [userId],
+  );
+  for (const row of rows) {
+    await insertAuditEvent(tx, {
+      actorId, action: 'auth.password_reset_revoked', entityType: 'password_reset', entityId: row.id,
+      metadata: { userId, reason },
+    });
+  }
+  return rows.length;
+}
+
 // --- Logowanie ----------------------------------------------------------------
 
 export async function passwordLogin(env, { email, password, clientIp }) {
@@ -259,6 +278,7 @@ export async function passwordLogin(env, { email, password, clientIp }) {
 
   const result = await database(env).transaction(async (tx) => {
     await clearLoginFailures(tx, scopes[0]);
+    await revokePasswordResetTokens(tx, { userId: account.id, actorId: account.id, reason: 'login_succeeded' });
     const session = await createSession(tx, { userId: account.id, mfaVerified: false });
     const status = await mfaStatus(tx, account.id, env);
     await insertAuditEvent(tx, {
@@ -423,6 +443,7 @@ export async function changePassword(env, session, { currentPassword, newPasswor
     const revokedSessions = await revokeUserSessionsWith(tx, {
       userId: session.user.id, actorId: session.user.id, reason: 'password_changed', exceptSessionId: session.sessionId,
     });
+    await revokePasswordResetTokens(tx, { userId: session.user.id, actorId: session.user.id, reason: 'password_changed' });
     await clearLoginFailures(tx, scopes[0]);
     await insertAuditEvent(tx, {
       actorId: session.user.id, action: 'auth.password_changed', entityType: 'user', entityId: session.user.id,
@@ -460,6 +481,7 @@ export async function resetPasswordWithToken(env, { token, newPassword, clientIp
     const locked = (await tx.query(`${lookup} FOR UPDATE OF t`, [tokenHash])).rows[0];
     if (!locked) throw new LoginError('invalid_token', 400);
     await tx.query('UPDATE password_reset_tokens SET used_at = now() WHERE id = $1', [locked.id]);
+    await revokePasswordResetTokens(tx, { userId: locked.user_id, actorId: locked.user_id, reason: 'password_reset_completed' });
     await tx.query(
       `INSERT INTO user_passwords (user_id, hash, set_at, set_reason, must_change)
        VALUES ($1, $2, now(), 'reset', false)
@@ -531,6 +553,8 @@ export async function adminResetMfa(env, { actorId, userId }) {
         WHERE user_id = $1 AND used_at IS NULL AND invalidated_at IS NULL RETURNING id`,
       [userId],
     );
+    // Token resetu wydany przed utratą telefonu przestaje działać (#193); nowy wydaje administrator.
+    await revokePasswordResetTokens(tx, { userId, actorId, reason: 'mfa_reset' });
     if (!factors.rows.length && !codes.rows.length) {
       return { userId, changed: false, disabledFactors: 0, invalidatedRecoveryCodes: 0, revokedSessions: 0 };
     }

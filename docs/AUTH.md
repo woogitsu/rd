@@ -138,6 +138,8 @@ Wszystkie POST wymagają zgodnego nagłówka `Origin` (także logowanie bez sesj
 
 Samodzielny reset linkiem e-mail **nie** istnieje: szablon wiadomości i adres nadawcy to decyzje D-16/D-17, a wysyłka wymaga zatwierdzenia treści i odbiorców (AGENTS.md). Token wydaje administrator; baza ma tylko jego SHA-256; token jest jednorazowy, wygasa, a nowy unieważnia poprzedni. Administrator przekazuje go osobnym, zaufanym kanałem (np. telefonicznie po potwierdzeniu tożsamości — procedura do decyzji). Reset nie zmienia MFA i nie tworzy sesji — po nim trzeba zalogować się hasłem i kodem.
 
+Otwarte tokeny konta są unieważniane (`revoked_at`, zdarzenie `auth.password_reset_revoked` z powodem, #193) w transakcji operacji, która je dezaktualizuje: zmiana hasła (`password_changed`), udane logowanie hasłem (`login_succeeded` — osoba zna hasło, token nie jest potrzebny), udany reset (`password_reset_completed`, pozostałe tokeny), wyłączenie konta (`user_disabled` — po ponownym włączeniu stary token nie działa) i reset MFA przez administratora (`mfa_reset`). Wiersze tokenów zostają jako historia. Skutek dla użytkownika: kto zaloguje się starym hasłem, a potem chce użyć tokenu, potrzebuje nowego tokenu od administratora (ekran `login/` zwraca wtedy „token nieprawidłowy”).
+
 ### Ryzyka i ograniczenia
 
 - Prototyp nie przeszedł niezależnego przeglądu bezpieczeństwa ani testu z czytnikiem ekranu (ekran `login/`).

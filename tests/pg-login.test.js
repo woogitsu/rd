@@ -708,3 +708,84 @@ test('#189: konto bez czynnika — revoke-all jak dotąd; rola wymagająca MFA b
   assert.equal(state.mfaRequired, true);
   assert.equal(state.mfaEnrolled, false);
 });
+
+// --- #193: cykl życia tokenu resetu hasła --------------------------------------------------------
+
+test('#193: token resetu unieważniany po zmianie hasła, logowaniu, wyłączeniu konta, resecie MFA i udanym resecie', async () => {
+  const admin = await seedUserSession(db, { userId: 'u-login-193adm', roles: [{ role: 'admin' }], mfa: true });
+  const issue = async (userId) => {
+    const response = await post(`/api/admin/users/${userId}/password-reset`, {}, { cookie: admin });
+    assert.equal(response.status, 201);
+    return (await response.json()).token;
+  };
+  const resetWith = (token) => post('/api/password/reset', { token, newPassword: newPassword() }, { ip: nextIp() });
+  const revokedReasons = async (userId) => (await auditRows('auth.password_reset_revoked'))
+    .filter((row) => row.metadata_json.userId === userId).map((row) => row.metadata_json.reason);
+
+  // Scenariusz z odtworzenia: token → właściciel pamięta hasło, zmienia je → disable/enable → stary token.
+  const rep = await seedPasswordUser({ userId: 'u-login-193rep' });
+  const token = await issue(rep.userId);
+  const cookie = cookieFrom(await login(rep));
+  const next = newPassword();
+  assert.equal((await post('/api/password/change', { currentPassword: rep.password, newPassword: next }, { cookie })).status, 200);
+  assert.equal((await post(`/api/admin/users/${rep.userId}/disable`, {}, { cookie: admin })).status, 200);
+  assert.equal((await post(`/api/admin/users/${rep.userId}/enable`, {}, { cookie: admin })).status, 200);
+  const stale = await resetWith(token);
+  assert.equal(stale.status, 400);
+  assert.deepEqual(await stale.json(), { error: 'invalid_token' });
+  assert.equal((await login(rep, { password: next })).status, 200, 'hasło właściciela nienaruszone');
+  assert.ok((await revokedReasons(rep.userId)).includes('login_succeeded'));
+
+  // Zmiana hasła.
+  const changer = await seedPasswordUser({ userId: 'u-login-193chg' });
+  const changerCookie = cookieFrom(await login(changer));
+  const t1 = await issue(changer.userId);
+  assert.equal((await post('/api/password/change', { currentPassword: changer.password, newPassword: newPassword() }, { cookie: changerCookie })).status, 200);
+  assert.equal((await resetWith(t1)).status, 400);
+  assert.ok((await revokedReasons(changer.userId)).includes('password_changed'));
+  // Token wydany PO zmianie hasła działa.
+  assert.equal((await resetWith(await issue(changer.userId))).status, 200);
+
+  // Wyłączenie konta.
+  const off = await seedPasswordUser({ userId: 'u-login-193off' });
+  const t2 = await issue(off.userId);
+  await post(`/api/admin/users/${off.userId}/disable`, {}, { cookie: admin });
+  await post(`/api/admin/users/${off.userId}/enable`, {}, { cookie: admin });
+  assert.equal((await resetWith(t2)).status, 400);
+  assert.ok((await revokedReasons(off.userId)).includes('user_disabled'));
+
+  // Reset MFA.
+  const lost = await seedPasswordUser({ userId: 'u-login-193mfa', roles: [{ role: 'board', schoolYearId: 'y-test' }] });
+  await enrollAndConfirm(cookieFrom(await login(lost)));
+  const t3 = await issue(lost.userId);
+  assert.equal((await post(`/api/admin/users/${lost.userId}/mfa-reset`, { confirm: lost.userId }, { cookie: admin })).status, 200);
+  assert.equal((await resetWith(t3)).status, 400);
+  assert.ok((await revokedReasons(lost.userId)).includes('mfa_reset'));
+  // Nowy token + hasło nadal wymaga zapisu MFA dla zarządu.
+  const fresh = newPassword();
+  assert.equal((await post('/api/password/reset', { token: await issue(lost.userId), newPassword: fresh }, { ip: nextIp() })).status, 200);
+  const relogin = await (await login(lost, { password: fresh })).json();
+  assert.equal(relogin.mfaRequired, true);
+  assert.equal(relogin.mfaEnrolled, false);
+
+  // Audyt bez tokenów i e-maili; wiersze tokenów zostają (historia).
+  const audit = JSON.stringify(await auditRows('auth.password_reset_revoked'));
+  assert.ok(!audit.includes('@') && !audit.includes(token));
+  const { rows } = await db.query("SELECT count(*)::int AS n FROM password_reset_tokens WHERE user_id = 'u-login-193rep'");
+  assert.equal(rows[0].n, 1);
+});
+
+test('#193: udany reset unieważnia pozostałe otwarte tokeny konta', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-193two' });
+  const admin = await seedUserSession(db, { userId: 'u-login-193adm2', roles: [{ role: 'admin' }], mfa: true });
+  const { token } = await (await post(`/api/admin/users/${account.userId}/password-reset`, {}, { cookie: admin })).json();
+  // Drugi otwarty token wstawiony bezpośrednio (np. wyścig dwóch administratorów).
+  const { secret, tokenHash } = await createSessionSecret();
+  await db.query(
+    `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_by, expires_at)
+     VALUES ($1, $2, $3, 'u-login-193adm2', now() + interval '1 hour')`,
+    [crypto.randomUUID(), account.userId, tokenHash],
+  );
+  assert.equal((await post('/api/password/reset', { token, newPassword: newPassword() }, { ip: nextIp() })).status, 200);
+  assert.equal((await post('/api/password/reset', { token: secret, newPassword: newPassword() }, { ip: nextIp() })).status, 400);
+});

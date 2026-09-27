@@ -30,7 +30,9 @@
 import { createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions, ROLES } from '../auth.js';
 import { requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
-import { adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS } from '../login.js';
+import {
+  adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
+} from '../login.js';
 
 export const name = 'admin';
 
@@ -214,6 +216,8 @@ async function setUserDisabled(env, actorId, userId, disabled, json) {
     await insertAuditEvent(tx, {
       actorId, action: disabled ? 'user.disabled' : 'user.enabled', entityType: 'user', entityId: userId,
     });
+    // Po ponownym włączeniu konta stary token resetu nie może znów zadziałać (#193).
+    if (disabled) await revokePasswordResetTokens(tx, { userId, actorId, reason: 'user_disabled' });
     return true;
   });
   // loadSession odrzuca konto z disabled_at, więc sesje przestają działać już
