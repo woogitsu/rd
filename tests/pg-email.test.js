@@ -7,15 +7,10 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, matchesAllowlist, recipientRefusal } from '../src/email/brevo.js';
 import { normalizeEmail, emailHash, parseCampaignContent } from '../src/email/content.js';
 import { campaignDailyCap, recordOtherSends, runEmailBatch, ResultNotRecordedError } from '../src/email/worker.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
-
-const realFetch = globalThis.fetch;
-let networkCalls = 0;
-globalThis.fetch = async () => {
-  networkCalls += 1;
-  throw new Error('network_forbidden_in_tests');
-};
-test.after(() => { globalThis.fetch = realFetch; });
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+// Pułapka na sieć (#214) jest teraz instalowana globalnie przez
+// tests/helpers/network-guard.js (importowany przez helpers/pg.js), więc
+// ten plik tylko czyta wspólny licznik zamiast utrzymywać własną kopię.
 
 const YEAR = 'y2026';
 const DAY1 = new Date('2026-10-05T08:00:00Z');
@@ -135,7 +130,7 @@ test('real Brevo transport refuses in APP_ENV=test and under node --test without
   assert.ok(process.env.NODE_TEST_CONTEXT, 'node --test sets NODE_TEST_CONTEXT');
   await assert.rejects(underRunner.send({ to: 'a@example.invalid' }), { code: 'transport_disabled_in_test' });
   assert.equal(calls, 0);
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
 
 test('Brevo client sends one recipient per request with api-key header (injected fetch only)', async () => {
@@ -158,7 +153,7 @@ test('Brevo client sends one recipient per request with api-key header (injected
   await assert.rejects(transport.send(message), (e) => e.code === 'delivery_unknown' && e.uncertain && !e.retryable);
   await assert.rejects(transport.send(message), (e) => e.code === 'provider_rejected_400' && !e.retryable);
   await assert.rejects(transport.send({ ...message, to: ['a@example.invalid', 'b@example.invalid'] }), { code: 'single_recipient_required' });
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
 
 test('allowlist guard outside production and configuration defaults', () => {
@@ -212,7 +207,15 @@ test('access: MFA and board/treasurer role required; admin and representative de
     const body = { schoolYearId: YEAR, title: 'Test', audience: 'all_households', subject: 'Składka', bodyText: BODY };
     const post = (cookie, extra = {}) => t.call(cookie, '/api/email/campaigns', { method: 'POST', headers: { 'Idempotency-Key': 'campaign-key-2' }, body, ...extra });
     assert.equal((await post(null)).status, 401);
-    for (const cookie of [noMfa, rep, admin, otherYear]) assert.equal((await post(cookie)).status, 403);
+    // #214: rozróżnij kod błędu — samo status 403 nie odróżnia braku zapisu MFA
+    // (mfa_enrollment_required) od odmowy zakresu/roli (forbidden), a na tym
+    // rozróżnieniu opiera się obsługa w UI (#99).
+    const noMfaResult = await post(noMfa);
+    assert.deepEqual([noMfaResult.status, noMfaResult.body], [403, { error: 'mfa_enrollment_required' }]);
+    for (const cookie of [rep, admin, otherYear]) {
+      const denied = await post(cookie);
+      assert.deepEqual([denied.status, denied.body], [403, { error: 'forbidden' }]);
+    }
     assert.deepEqual((await post(t.treasurer, { origin: 'https://evil.example' })).body, { error: 'invalid_origin' });
     assert.equal((await post(t.treasurer)).status, 201);
     const replay = await post(t.treasurer);
@@ -410,7 +413,9 @@ test('live run sends each message separately; rerun and double queue never dupli
 
     // Audyt bez adresów e-mail.
     const { rows } = await t.db.query("SELECT metadata_json::text AS m FROM audit_events WHERE action LIKE 'email.%'");
-    assert.ok(rows.length >= 6);
+    // #214: liczba dokładna zamiast >= — brak zdarzenia dla jednej z trzech
+    // rodzin (np. email.sent) nie zostałby wykryty przez próg minimalny.
+    assert.equal(rows.length, 8);
     assert.ok(rows.every((row) => !row.m.includes('@')));
   } finally { await t.close(); }
 });
@@ -848,7 +853,7 @@ test('webhook: missing or wrong secret is rejected; bounce suppresses the addres
     // Webhook to jedyna trasa bez Origin; pozostałe nadal wymagają zgodnego Origin.
     const foreign = await handlePgRequest(request(`/api/email/campaigns/${next.id}/cancel`, { method: 'POST', cookie: t.treasurer, origin: false }), t.env);
     assert.equal(foreign.status, 403);
-    assert.equal(networkCalls, 0);
+    assert.equal(networkGuardCalls(), 0);
   } finally { await t.close(); }
 });
 
@@ -1228,7 +1233,7 @@ test('Brevo 401/402/403 is account-level: transport error flagged accountLevel, 
     transport.send({ to: 'a@example.invalid', sender: { email: 'rada@example.invalid' }, subject: 'S', text: 'T', outboxId: 'o1', idempotencyKey: 'k' }),
     (e) => e.code === 'provider_rejected_400' && !e.accountLevel,
   );
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
 
 test('Brevo rejects the account (401): one call per run, nothing failed, campaign not done; fixed key sends each family once', async () => {
@@ -1259,7 +1264,7 @@ test('Brevo rejects the account (401): one call per run, nothing failed, campaig
     const delivered = transport.requests.slice(2).map((body) => body.headers['X-RD-Idempotency-Key']);
     assert.equal(new Set(delivered).size, 4);
     assert.equal(await ledgerCount(t), 4);
-    assert.equal(networkCalls, 0);
+    assert.equal(networkGuardCalls(), 0);
   } finally { await t.close(); }
 });
 
@@ -1297,5 +1302,5 @@ test('invalid address at the provider (400) fails only that message; the batch c
 });
 
 test('no test in this file touched the network', () => {
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
