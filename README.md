@@ -30,6 +30,7 @@ To wybór wstępny. Nie dodawać konta ani poświadczeń dostawcy do repo. Możn
 - [Przypomnienia e-mail](docs/EMAIL.md)
 - [Prywatność i bezpieczeństwo](docs/SECURITY.md)\n- [Uwierzytelnianie i sesje](docs/AUTH.md)\n- [Autoryzacja i zakres ról](docs/AUTHORIZATION.md)\n- [Model rodzin i opiekunów](docs/DATA_MODEL.md)
 - [Dobrowolne wpłaty i korekty](docs/PAYMENTS.md)
+- [Księga i preliminarz](docs/LEDGER.md)
 - [Zasady pracy agentów](AGENTS.md)
 
 ## Źródła wymagań
