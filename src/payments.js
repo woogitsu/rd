@@ -123,6 +123,20 @@ function correctionFromRow(row) {
   };
 }
 
+function assignmentFromRow(row) {
+  return {
+    id: row.id,
+    paymentEntryId: row.payment_entry_id,
+    householdId: row.household_id,
+  };
+}
+
+function paymentListItem(row) {
+  const payment = paymentFromRow(row);
+  const correctedCents = Number(row.corrected_cents ?? 0);
+  return { ...payment, correctedCents, netAmountCents: payment.amountCents - correctedCents };
+}
+
 function paymentMatches(row, input, actorId) {
   return row.created_by === actorId
     && row.household_id === input.householdId
@@ -156,6 +170,40 @@ async function loadCorrectionByKey(env, key) {
   ).bind(key).first();
 }
 
+async function loadAssignmentByKey(env, key) {
+  return env.DB.prepare(
+    `SELECT id, payment_entry_id, household_id, created_by
+       FROM payment_assignments WHERE idempotency_key = ? LIMIT 1`,
+  ).bind(key).first();
+}
+
+function assignmentMatches(row, paymentEntryId, householdId, actorId) {
+  return row.created_by === actorId
+    && row.payment_entry_id === paymentEntryId
+    && row.household_id === householdId;
+}
+
+function encodeCursor(row) {
+  return btoa(JSON.stringify([row.received_on, row.id]))
+    .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+function decodeCursor(value) {
+  if (!value) return null;
+  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new RequestError('invalid_cursor');
+  try {
+    const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const decoded = JSON.parse(atob(base64 + padding));
+    if (!Array.isArray(decoded) || decoded.length !== 2 || !validDate(decoded[0]) || !validId(decoded[1])) {
+      throw new Error();
+    }
+    return { receivedOn: decoded[0], id: decoded[1] };
+  } catch {
+    throw new RequestError('invalid_cursor');
+  }
+}
+
 function isUniqueError(error) {
   return String(error?.message ?? error).includes('UNIQUE constraint failed');
 }
@@ -168,8 +216,56 @@ function mapDatabaseError(error) {
   if (message.includes('legacy_reversed_payment_cannot_be_corrected')) {
     throw new RequestError('payment_cannot_be_corrected', 409);
   }
+  if (message.includes('payment_not_unmatched')) {
+    throw new RequestError('payment_already_assigned', 409);
+  }
   if (message.includes('FOREIGN KEY constraint failed')) throw new RequestError('invalid_reference');
   throw error;
+}
+
+async function listPayments(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  const status = url.searchParams.get('status');
+  const limitText = url.searchParams.get('limit') ?? '50';
+  if (!validId(schoolYearId) || (status && !['recorded', 'unmatched'].includes(status))) {
+    throw new RequestError('invalid_request');
+  }
+  if (!/^\d{1,3}$/.test(limitText)) throw new RequestError('invalid_limit');
+  const limit = Number(limitText);
+  if (limit < 1 || limit > 100) throw new RequestError('invalid_limit');
+  const cursor = decodeCursor(url.searchParams.get('cursor'));
+  await requireFinancialAccess(request, env, schoolYearId);
+
+  const conditions = ["payment.status IN ('recorded', 'unmatched')", 'payment.school_year_id = ?'];
+  const values = [schoolYearId];
+  if (status) {
+    conditions.push('payment.status = ?');
+    values.push(status);
+  }
+  if (cursor) {
+    conditions.push('(payment.received_on < ? OR (payment.received_on = ? AND payment.id < ?))');
+    values.push(cursor.receivedOn, cursor.receivedOn, cursor.id);
+  }
+  values.push(limit + 1);
+  const result = await env.DB.prepare(
+    `SELECT payment.id, payment.household_id, payment.school_year_id, payment.amount_cents,
+            payment.received_on, payment.method, payment.reference, payment.status,
+            COALESCE((
+              SELECT SUM(correction.amount_cents)
+              FROM payment_corrections correction
+              WHERE correction.payment_entry_id = payment.id
+            ), 0) AS corrected_cents
+       FROM payment_entries payment
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY payment.received_on DESC, payment.id DESC
+      LIMIT ?`,
+  ).bind(...values).all();
+  const rows = result.results ?? [];
+  const visibleRows = rows.slice(0, limit);
+  const nextCursor = rows.length > limit && visibleRows.length
+    ? encodeCursor(visibleRows[visibleRows.length - 1])
+    : null;
+  return json({ payments: visibleRows.map(paymentListItem), nextCursor });
 }
 
 async function requireFinancialAccess(request, env, schoolYearId) {
@@ -279,15 +375,81 @@ async function createCorrection(request, env, paymentEntryId, json) {
   }, 201, { 'Idempotency-Replayed': 'false' });
 }
 
+async function assignPayment(request, env, paymentEntryId, json) {
+  if (!validId(paymentEntryId)) throw new RequestError('invalid_payment_id');
+  const idempotencyKey = readIdempotencyKey(request);
+  const data = await readJson(request);
+  if (!validId(data.householdId)) throw new RequestError('invalid_request');
+  const context = await requireFinancialAccess(request, env);
+  const payment = await env.DB.prepare(
+    'SELECT id, household_id, school_year_id, status FROM payment_entries WHERE id = ? LIMIT 1',
+  ).bind(paymentEntryId).first();
+  if (!payment) throw new RequestError('payment_not_found', 404);
+  if (!isAuthorized(context, {
+    roles: FINANCIAL_ROLES,
+    schoolYearId: payment.school_year_id,
+    requireMfa: true,
+  })) throw new RequestError('forbidden', 403);
+  const actorId = context.session.user.id;
+  const existing = await loadAssignmentByKey(env, idempotencyKey);
+  if (existing) {
+    if (!assignmentMatches(existing, paymentEntryId, data.householdId, actorId)) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return json({ assignment: assignmentFromRow(existing) }, 200, { 'Idempotency-Replayed': 'true' });
+  }
+  if (payment.status !== 'unmatched' || payment.household_id !== null) {
+    throw new RequestError('payment_already_assigned', 409);
+  }
+
+  const assignmentId = crypto.randomUUID();
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO payment_assignments (
+          id, payment_entry_id, household_id, created_by, idempotency_key
+        ) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(assignmentId, paymentEntryId, data.householdId, actorId, idempotencyKey),
+      env.DB.prepare(
+        `UPDATE payment_entries
+            SET household_id = ?, status = 'recorded'
+          WHERE id = ? AND household_id IS NULL AND status = 'unmatched'`,
+      ).bind(data.householdId, paymentEntryId),
+      env.DB.prepare(
+        `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
+         VALUES (?, ?, 'payment.assigned', 'payment_assignment', ?, ?)`,
+      ).bind(crypto.randomUUID(), actorId, assignmentId, JSON.stringify({ paymentEntryId })),
+    ]);
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = await loadAssignmentByKey(env, idempotencyKey);
+      if (replay && assignmentMatches(replay, paymentEntryId, data.householdId, actorId)) {
+        return json({ assignment: assignmentFromRow(replay) }, 200, { 'Idempotency-Replayed': 'true' });
+      }
+      throw new RequestError('payment_already_assigned', 409);
+    }
+    mapDatabaseError(error);
+  }
+
+  return json({
+    assignment: { id: assignmentId, paymentEntryId, householdId: data.householdId },
+  }, 201, { 'Idempotency-Replayed': 'false' });
+}
+
 export async function handlePaymentRequest(request, env, url, json) {
   const correctionMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/corrections$/);
+  const assignmentMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/assignment$/);
   const isPaymentCreate = url.pathname === '/api/payments';
-  if (request.method !== 'POST' || (!isPaymentCreate && !correctionMatch)) return null;
-  if (!isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
+  const isPaymentList = request.method === 'GET' && url.pathname === '/api/payments';
+  const isMutation = request.method === 'POST' && (isPaymentCreate || correctionMatch || assignmentMatch);
+  if (!isPaymentList && !isMutation) return null;
+  if (isMutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
 
   try {
+    if (isPaymentList) return await listPayments(request, env, url, json);
     if (isPaymentCreate) return await createPayment(request, env, json);
-    return await createCorrection(request, env, decodeId(correctionMatch[1]), json);
+    if (correctionMatch) return await createCorrection(request, env, decodeId(correctionMatch[1]), json);
+    return await assignPayment(request, env, decodeId(assignmentMatch[1]), json);
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code }, error.status);
     throw error;
