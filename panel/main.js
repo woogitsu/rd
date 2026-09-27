@@ -29,8 +29,8 @@ function localDate() {
 async function api(url, options = {}) {
   const response = await fetch(url, {
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
+    headers: { "Content-Type": "application/json", ...options.headers },
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error?.message || data.message || `Błąd serwera (${response.status}).`);
@@ -60,7 +60,7 @@ function paymentRow(rawPayment) {
 
   const reference = textCell(payment.reference || "Bez opisu", "reference");
   const family = document.createElement("small");
-  family.textContent = payment.familyId ? payment.familyLabel : "Nie przypisano rodziny";
+  family.textContent = payment.householdId ? `Rodzina: ${payment.householdId}` : "Nie przypisano rodziny";
   reference.append(family);
   row.append(reference);
   row.append(textCell(METHOD_LABELS[payment.method]));
@@ -112,7 +112,7 @@ async function loadPayments({ append = false } = {}) {
       cursor: append ? state.nextCursor : "",
     });
     const result = await api(url);
-    const items = Array.isArray(result.items) ? result.items : [];
+    const items = Array.isArray(result.payments) ? result.payments : [];
     state.payments = append ? [...state.payments, ...items] : items;
     state.nextCursor = result.nextCursor || null;
     render();
@@ -175,8 +175,8 @@ function configureDialog(id, prefix, submit) {
 }
 
 const paymentDialog = configureDialog("payment-dialog", "payment", async (data, requestKey) => {
-  const familyId = String(data.get("familyId") || "").trim();
-  if (familyId && !isValidId(familyId)) throw new Error("Niepoprawny identyfikator rodziny.");
+  const householdId = String(data.get("householdId") || "").trim();
+  if (householdId && !isValidId(householdId)) throw new Error("Niepoprawny identyfikator rodziny.");
   await api("/api/payments", {
     method: "POST",
     headers: { "Idempotency-Key": requestKey },
@@ -186,7 +186,7 @@ const paymentDialog = configureDialog("payment-dialog", "payment", async (data, 
       receivedOn: data.get("receivedOn"),
       method: data.get("method"),
       reference: data.get("reference"),
-      ...(familyId ? { familyId } : {}),
+      ...(householdId ? { householdId } : {}),
     }),
   });
 });
@@ -197,7 +197,7 @@ const correctionDialog = configureDialog("correction-dialog", "correction", asyn
     method: "POST",
     headers: { "Idempotency-Key": requestKey },
     body: JSON.stringify({
-      amountCents: parseEuroAmount(data.get("amount"), { allowNegative: true }),
+      amountCents: parseEuroAmount(data.get("amount")),
       reason: data.get("reason"),
     }),
   });
@@ -205,12 +205,12 @@ const correctionDialog = configureDialog("correction-dialog", "correction", asyn
 
 const assignmentDialog = configureDialog("assignment-dialog", "assignment", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
-  const familyId = String(data.get("familyId") || "").trim();
-  if (!isValidId(familyId)) throw new Error("Niepoprawny identyfikator rodziny.");
+  const householdId = String(data.get("householdId") || "").trim();
+  if (!isValidId(householdId)) throw new Error("Niepoprawny identyfikator rodziny.");
   await api(`/api/payments/${encodeURIComponent(paymentId)}/assignment`, {
     method: "POST",
     headers: { "Idempotency-Key": requestKey },
-    body: JSON.stringify({ familyId }),
+    body: JSON.stringify({ householdId }),
   });
 });
 
