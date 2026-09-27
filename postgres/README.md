@@ -110,6 +110,19 @@ Wyłączenia i zdarzenia webhooka przechowują wyłącznie skrót SHA-256 adresu
 to pseudonimizacja, nie anonimizacja. Wycofanie migracji = usunięcie tych tabel
 i funkcji na bazie bez kampanii; na bazie z historią wysyłek nie cofać.
 
+`0018_news.sql` dodaje aktualności i galerię: `news_photos` (odwołanie do
+pliku w prywatnym magazynie, autor, źródło, data, publiczny podpis licencji,
+liczba rozpoznawalnych dzieci i dorosłych, weryfikacja praw przez inną osobę
+niż rejestrująca, cofnięcie praw), `news_photo_consents` (tylko odwołania do
+dokumentów zgód, bez imion), `news_posts` z niezmiennymi wersjami w
+`news_post_revisions` oraz widok `public_news`. Triggery blokują zatwierdzenie
+i publikację wpisu ze zdjęciem bez zweryfikowanych praw, weryfikację zdjęcia z
+dziećmi bez odwołania do zgody oraz kopię z publicznej strony bez wyraźnej
+licencji; metadanych zdjęć, zgód i wersji nie można zmienić ani usunąć.
+Skutki dla danych: migracja tylko dodaje obiekty, nie zmienia istniejących
+tabel ani wierszy. Wycofanie na bazie z danymi — tylko po kopii zapasowej i
+decyzji o retencji (D-04). Szczegóły: [`docs/NEWS.md`](../docs/NEWS.md).
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.

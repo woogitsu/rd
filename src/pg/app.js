@@ -22,6 +22,7 @@ import * as importRoutes from './routes/import.js';
 import * as documentRoutes from './routes/documents.js';
 import * as ledgerRoutes from './routes/ledger.js';
 import * as emailRoutes from './routes/email.js';
+import * as newsRoutes from './routes/news.js';
 
 export const ROUTES = [
   sessionRoutes,
@@ -32,6 +33,7 @@ export const ROUTES = [
   documentRoutes,
   ledgerRoutes,
   emailRoutes, // #40: allowsCrossOrigin wyłącznie dla POST /api/email/webhooks/brevo
+  newsRoutes,
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 
