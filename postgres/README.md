@@ -13,8 +13,7 @@ i korekty, bilans otwarcia z osobnymi korektami oraz wersjonowany preliminarz.
 Widoki wyliczają kwoty netto, aktualną wersję preliminarza i bilans roku.
 Powiązana wpłata może zasilić tylko jeden wpis przychodowy w tym samym roku.
 Wydatek powyżej 3000 EUR wymaga referencji uchwały; dokładny proces
-zatwierdzania wymaga nadal decyzji Rady. Tabele przypomnień powstaną w
-kolejnych etapach.
+zatwierdzania wymaga nadal decyzji Rady. Tabele przypomnień dodaje `0007_email.sql`.
 
 `0004_auth_access.sql` (issue #35) dodaje tylko kolumny z wartością `NULL` lub
 domyślną oraz ograniczenia; istniejące wiersze nie są przepisywane ani usuwane.
@@ -90,6 +89,26 @@ odtworzonego D1) są dla API niewidoczne do czasu osobnej migracji
 klasyfikującej. Trigger blokuje `UPDATE` i `DELETE` na `documents` — usuwanie
 po okresie retencji będzie osobnym, audytowanym mechanizmem. Opis API i
 bucketu: [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
+
+`0007_email.sql` (issues #10, #40) dodaje wyłącznie nowe tabele, funkcje i
+triggery; istniejące dane nie są zmieniane. `email_campaigns` przechowuje szkic,
+skrót treści, skrót migawki odbiorców i zatwierdzenie (inna osoba niż autor —
+ograniczenie CHECK); trigger cofa kampanię do szkicu przy każdej zmianie treści
+lub listy i blokuje zmiany po zakolejkowaniu, a kampanii nie można usunąć.
+`email_campaign_recipients` to migawka: unikalne (kampania, rodzina) i
+(kampania, skrót adresu); **zawiera adresy e-mail opiekunów** (kopia potrzebna do
+wysyłki), więc podlega tej samej retencji co dane opiekunów (D-04) i musi być
+usuwana razem z kampanią po okresie retencji — procedura usuwania nie jest
+jeszcze zaprojektowana. `email_campaign_exclusions` zapisuje powód pominięcia
+rodziny. `email_outbox` to kolejka z kluczem `campaign:<id>:household:<id>`
+(unikalnym i sprawdzanym CHECK), stanem, liczbą prób i identyfikatorem
+wiadomości dostawcy; trigger pilnuje przejść stanów i zabrania usuwania.
+`email_send_ledger` (dzienne zużycie limitu, także inne wiadomości konta),
+`email_suppressions` (wyłączenia po bounce/skardze), `email_webhook_events`
+(tylko zweryfikowane zdarzenia) i `email_worker_runs` są tylko do dopisywania.
+Wyłączenia i zdarzenia webhooka przechowują wyłącznie skrót SHA-256 adresu —
+to pseudonimizacja, nie anonimizacja. Wycofanie migracji = usunięcie tych tabel
+i funkcji na bazie bez kampanii; na bazie z historią wysyłek nie cofać.
 
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
