@@ -208,6 +208,19 @@ test('payment list is scoped, paginated and returns corrected net amounts', asyn
   assert.equal(invalid.status, 400);
 });
 
+test('payment list rejects representatives, missing MFA and another school year', async () => {
+  for (const options of [{ role: 'representative' }, { mfa: false }]) {
+    const { db, env } = await setup(options);
+    const response = await worker.fetch(get('/api/payments?schoolYearId=y2026'), env);
+    assert.equal(response.status, 403);
+    db.close();
+  }
+  const { db, env } = await setup();
+  const wrongYear = await worker.fetch(get('/api/payments?schoolYearId=y2025'), env);
+  assert.equal(wrongYear.status, 403);
+  db.close();
+});
+
 test('unmatched payment assignment is immutable, audited and idempotent', async t => {
   const { db, env } = await setup();
   t.after(() => db.close());
