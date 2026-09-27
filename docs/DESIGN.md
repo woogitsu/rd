@@ -19,3 +19,6 @@ Sekcja „Z życia szkoły”: 2–3 kadry z rzeczywistych wydarzeń, krótkie p
 ## Widoki
 Publiczny: informacja o Radzie, najbliższe wydarzenia, sekcja archiwalna, kontakt i zatwierdzone dokumenty.
 Panel: nawigacja boczna, nagłówek roku szkolnego, płaskie listy i tabele; na telefonie przewijana nawigacja.
+
+## Dostępność
+Kontrast, fokus, rozmiar celów i reflow: [ACCESSIBILITY.md](ACCESSIBILITY.md). Czerwień `#B3262D` na białym tle ma 6,5:1, a `#8E2026` (fokus, hover) 8,8:1 — obie spełniają WCAG AA dla tekstu.

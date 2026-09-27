@@ -301,7 +301,7 @@ export function renderCardHtml(card) {
     `<header class="card-header"><p class="card-council">${e(card.councilName)}</p>`,
     card.schoolName ? `<p class="card-school">${e(card.schoolName)}</p>` : "",
     `<p class="card-year">Rok szkolny ${e(card.schoolYear)}</p></header>`,
-    `<h2 class="card-title">${e(card.title)}</h2>`,
+    `<h3 class="card-title">${e(card.title)}</h3>`,
     `<p class="card-to">Dla rodziców i opiekunów:</p><ul class="card-students">${students}</ul>`,
     card.paragraphs.map((text) => `<p>${e(text)}</p>`).join(""),
     payment,

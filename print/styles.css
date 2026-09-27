@@ -7,6 +7,7 @@
   --red-dark: #8e2026;
   --line: #e2e2e0;
   --muted: #5d6266;
+  --field: #767676;
 }
 
 * { box-sizing: border-box; }
@@ -43,13 +44,13 @@ h2 { margin-bottom: .5rem; font-size: 1.1rem; }
 label { display: grid; gap: .35rem; font-size: .9rem; font-weight: 600; }
 label small { color: var(--muted); font-weight: 400; }
 label.check { display: flex; align-items: flex-start; gap: .55rem; margin: .75rem 0; font-weight: 500; }
-label.check input { width: 1.15rem; height: 1.15rem; margin: .1rem 0 0; flex: none; }
-input, select { width: 100%; padding: .65rem .75rem; color: inherit; background: #fff; border: 1px solid #8d9296; border-radius: 0; }
-input[type="checkbox"] { width: 1.15rem; height: 1.15rem; accent-color: var(--red); }
+label.check input { width: 1.5rem; height: 1.5rem; margin: 0; flex: none; }
+input, select { width: 100%; padding: .65rem .75rem; color: inherit; background: #fff; border: 1px solid var(--field); border-radius: 0; }
+input[type="checkbox"] { width: 1.5rem; height: 1.5rem; accent-color: var(--red); }
 input[type="file"] { padding: .5rem; }
 :focus-visible { outline: 3px solid var(--red-dark); outline-offset: 2px; }
 
-button { min-height: 44px; padding: .6rem 1rem; color: #282c2f; background: #fff; border: 1px solid #8d9296; border-radius: 0; font-weight: 600; }
+button { min-height: 44px; padding: .6rem 1rem; color: #282c2f; background: #fff; border: 1px solid var(--field); border-radius: 0; font-weight: 600; }
 button:hover { border-color: #282c2f; }
 button.primary { color: #fff; background: var(--red); border-color: var(--red); }
 button.primary:hover { background: var(--red-dark); }
@@ -60,7 +61,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .toolbar label.check { margin: 0 0 .7rem; }
 .buttons { display: flex; flex-wrap: wrap; gap: .5rem; }
 
-.table-wrap { overflow-x: auto; }
+.table-wrap { position: relative; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 th, td { padding: .7rem .75rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
 th { color: var(--muted); font-size: .75rem; letter-spacing: .04em; text-transform: uppercase; }
@@ -93,6 +94,10 @@ td:first-child, th:first-child { width: 3rem; }
   nav a { padding: .45rem .5rem; }
   .print-card { padding: 1.2rem; font-size: 10.5pt; }
   .buttons, .buttons button, #print-button { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
 
 /* Druk: tylko kartki, jedna na stronę A4 (lub dwie z linią cięcia). */

@@ -17,13 +17,14 @@ const skipConflicts = document.querySelector('#skip-conflicts');
 let serverPreview = null, serverPayload = null, idempotencyKey = null, busy = false;
 let matrix = null;
 let lastResult = null;
-function showError(message) { status.className = 'status error'; status.textContent = message; }
+function showError(message) { status.className = 'status error'; status.textContent = message; fileInput.setAttribute('aria-invalid', 'true'); }
+const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 fileInput.addEventListener('change', async () => {
   matrix = null; lastResult = null; resetServer(); mapArea.replaceChildren(); mappingSection.hidden = true; resultSection.hidden = true; serverSection.hidden = true;
   const file = fileInput.files?.[0]; if (!file) return;
   if (file.size > 5 * 1024 * 1024) return showError('Plik przekracza 5 MB.');
   if (!/\.(csv|xlsx)$/i.test(file.name)) return showError('Wybierz plik .csv lub .xlsx.');
-  status.className = 'status muted'; status.textContent = 'Odczyt pliku…';
+  status.className = 'status muted'; status.textContent = 'Odczyt pliku…'; fileInput.removeAttribute('aria-invalid');
   try {
     if (/\.csv$/i.test(file.name)) {
       const bytes = await file.arrayBuffer();
@@ -72,7 +73,8 @@ document.querySelector('#preview').addEventListener('click', () => {
         const td = document.createElement('td'); td.textContent = text; tr.append(td);
       } body.append(tr);
     });
-    resultSection.hidden = false; resultSection.scrollIntoView({behavior:'smooth'});
+    resultSection.hidden = false; resultSection.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth' });
+    document.querySelector('#result-title').focus({ preventScroll: true });
   } catch (error) { lastResult = null; resetServer(); resultSection.hidden = true; serverSection.hidden = true; showError(error.message); }
 });
 
