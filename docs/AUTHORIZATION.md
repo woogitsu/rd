@@ -21,3 +21,52 @@ GET /api/access zwraca zalogowanemu użytkownikowi wyłącznie jego własne akty
 Moduły tras używają `requireAccess(request, env, { roles, classId, schoolYearId, requireMfa }, json)`: `401 unauthenticated` bez sesji, `403 forbidden` bez roli, zakresu lub MFA. Trasa dotycząca klasy lub roku **musi** podać `classId` i `schoolYearId` — bez nich przydział ograniczony do klasy nie jest zawężany. Operacje finansowe podają `requireMfa: true`. Role `principal` i `audit` nie mają domyślnych uprawnień; trasa dopuszcza je tylko jawnie, po decyzji szkoły.
 
 Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i tylko z przydziałem bez `class_id` (wszystkie klasy) obejmującym wybrany rok. Przydział zarządu ograniczony do klasy nie wystarcza — kontrola jest dodatkowa względem `isAuthorized`, która przy braku `classId` w wymaganiu przepuszcza przydziały klasowe. Zakres ról importu to założenie do decyzji D-08.
+
+## Macierz tras API (issue #4) — testy negatywne
+
+Tabela opisuje stan kodu routera PostgreSQL (`src/pg/app.js`, `ROUTES`), a nie zatwierdzoną politykę. Zakresy ról zarządu, przedstawiciela, dyrekcji i Komisji Rewizyjnej to nadal założenia do decyzji D-08/D-09 (docs/DECISIONS.md). Źródłem prawdy dla testów jest `tests/helpers/route-matrix.js`; `tests/pg-authz-matrix.test.js` wykonuje każdą trasę dla wszystkich aktorów, MFA wł./wył. i każdego zakresu, a meta-test nie przepuści modułu z `ROUTES` ani ścieżki z kodu modułu bez wpisu w macierzy i wiersza w tej tabeli.
+
+Aktorzy testu: admin, zarząd, skarbnik, przedstawiciel 1A, przedstawiciel 1B, Komisja Rewizyjna (`audit`), dyrekcja (`principal`) — wszyscy z przydziałem na rok 1 — oraz zalogowany bez przydziału, przydział wygasły, przydział cofnięty, konto wyłączone, sesja wygasła, sesja cofnięta i brak sesji. Zakresy: **1A** (własna klasa przedstawiciela A), **1B** (inna klasa), **R1** (dane ogólnoszkolne roku 1, bez klasy), **R2** (klasa w innym roku). „Rok 1” = 1A, 1B i R1.
+
+Dla każdego przypadku test sprawdza: status; brak jakichkolwiek syntetycznych znaczników danych w odpowiedzi odmownej; brak w odpowiedzi 2xx znaczników zakresu, do którego aktor nie ma przydziału (np. dane 1B u przedstawiciela 1A, dane roku 2 u zarządu roku 1); brak zapisu w tabelach i dzienniku zdarzeń po odmowie żądania zmieniającego stan.
+
+Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, konto wyłączone) każda chroniona trasa zwraca `401 unauthenticated`. Przydział wygasły lub cofnięty działa jak brak przydziału. Rola `principal` nie ma dziś dostępu do żadnej trasy chronionej.
+
+| Trasa | Dozwolone role i zakres | MFA | Odmowa dla zalogowanego | Uwagi |
+|---|---|---|---|---|
+| `GET /api/session` | każdy zalogowany | nie | — | zwraca wyłącznie własną sesję |
+| `GET /api/access` | każdy zalogowany | nie | — | wyłącznie własne aktywne przydziały; wygasłe i cofnięte pominięte |
+| `POST /api/logout` | każdy (także bez sesji) | nie | — | zawsze 204; po wylogowaniu sesja zwraca 401 |
+| `GET /api/payments?schoolYearId=:year` | admin, zarząd, skarbnik — rok 1 | tak | 403 | inny rok: 403 |
+| `POST /api/payments` | admin, zarząd, skarbnik — rok 1 | tak | 403 | walidacja klucza i treści przed sprawdzeniem sesji |
+| `POST /api/payments/:paymentId/corrections` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | wpłata z innego roku: 403; nieistniejąca: 404 |
+| `POST /api/payments/:paymentId/assignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | jak wyżej |
+| `GET /api/public/events` | publiczna | nie | — | tylko opublikowane rewizje, bez danych klas |
+| `GET /api/events?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wydarzenia własnej klasy | nie | 403 | lista przedstawiciela 1A nie zawiera 1B ani wydarzeń ogólnoszkolnych |
+| `POST /api/events` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | |
+| `GET /api/events/:eventId` | jak wyżej | nie | 404 | brak uprawnień nieodróżnialny od braku wydarzenia |
+| `PATCH /api/events/:eventId` | jak wyżej | nie | 403 | 403 zamiast 404 ujawnia istnienie id (test `todo`) |
+| `POST /api/events/:eventId/submit` | jak wyżej | nie | 403 | |
+| `POST /api/events/:eventId/approve` | zarząd — rok 1 | nie | 403 | zasada czterech oczu w bazie |
+| `POST /api/events/:eventId/publish` | zarząd — rok 1 | nie | 403 | |
+| `POST /api/events/:eventId/cancel` | szkic: admin, zarząd — rok 1; przedstawiciel — własna klasa; opublikowane: tylko zarząd | nie | 403 | macierz testuje szkic |
+| `GET /api/meetings?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1 | nie | 403 | przedstawiciel: 403 |
+| `POST /api/meetings` | admin, zarząd — rok 1 | nie | 403 | |
+| `GET /api/meetings/shared-minutes?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; przedstawiciel — rok 1 | nie | 403 | przedstawiciel widzi protokoły ogólne i własnej klasy, nigdy innej klasy |
+| `GET /api/meetings/public-minutes?schoolYearId=:year` | publiczna | nie | — | tylko protokoły o widoczności `public` |
+| `GET /api/meetings/resolutions/lookup?schoolYearId=:year&number=:number` | admin, zarząd, Komisja Rewizyjna, skarbnik — rok 1 | nie | 403 | inny rok: 403 |
+| `GET /api/meetings/:meetingId` | admin, zarząd, Komisja Rewizyjna — rok 1 | nie | 403 | przedstawiciel: 403 także dla zebrania własnej klasy |
+| `PATCH /api/meetings/:meetingId` | admin, zarząd — rok 1 | nie | 403 | |
+| `POST /api/meetings/:meetingId/agenda-items` | admin, zarząd — rok 1 | nie | 403 | |
+| `POST /api/meetings/:meetingId/attendance` | admin, zarząd — rok 1 | nie | 403 | |
+| `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1 | nie | 403 | |
+| `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1 | nie | 403 | |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1 | nie | 403 | |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1 | nie | 403 | |
+| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1 | nie | 403 | |
+| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1 | nie | 403 | |
+| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1 | nie | 403 | |
+
+Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają dziś MFA, także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
+
+Dodając moduł do `ROUTES` lub ścieżkę do istniejącego modułu: dopisz wpis w `tests/helpers/route-matrix.js` (role, MFA, zakres, przykładowa treść) i wiersz w tej tabeli.
