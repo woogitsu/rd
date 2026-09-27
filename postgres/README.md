@@ -151,3 +151,12 @@ i zamraża uzgodnienie, a różnica ≠ 0 wymaga wyjaśnienia. Tytuł przelewu n
 jest zapisywany — tylko solony skrót SHA-256. Skutki dla danych: migracja
 wyłącznie dodaje obiekty; istniejące wiersze nie są zmieniane. Szczegóły:
 [`docs/RECONCILIATION.md`](../docs/RECONCILIATION.md).
+
+`0016_exports.sql` dodaje tabelę `export_runs` — rejestr eksportów rocznych
+i list klas (rodzaj, rok, klasa, wersja formatu, kto i kiedy, SHA-256
+manifestu, liczności wierszy per tabela). Skutki dla danych: migracja tylko
+dodaje tabelę, funkcję i trigger; nie zmienia istniejących wierszy. Tabela nie
+przechowuje treści eksportu ani danych osobowych; wierszy nie da się zmienić
+ani usunąć. Wycofanie na pustej bazie: usunięcie tabeli i funkcji
+`export_run_immutable`; na bazie z danymi — po kopii i decyzji o retencji
+(D-04). Szczegóły: [`docs/EXPORT.md`](../docs/EXPORT.md).
