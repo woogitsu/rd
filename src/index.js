@@ -1,5 +1,6 @@
 import { clearSessionCookie, isSameOrigin, loadSession, revokeSession } from './auth.js';
 import { loadAuthorizationContext } from './authorization.js';
+import { handleLedgerRequest } from './ledger.js';
 import { handlePaymentRequest } from './payments.js';
 
 const JSON_HEADERS = {
@@ -39,6 +40,14 @@ export default {
     if (url.pathname.startsWith('/api/payments')) {
       try {
         const response = await handlePaymentRequest(request, env, url, json);
+        if (response) return response;
+      } catch {
+        return json({ error: 'service_unavailable' }, 503);
+      }
+    }
+    if (url.pathname.startsWith('/api/ledger')) {
+      try {
+        const response = await handleLedgerRequest(request, env, url, json);
         if (response) return response;
       } catch {
         return json({ error: 'service_unavailable' }, 503);
