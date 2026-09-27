@@ -283,7 +283,7 @@ test('document rows are immutable and tampered objects are not served', async ()
   try {
     assert.equal((await get(env, `/api/documents/${data.document.id}/content`, cookie)).status, 503);
   } finally { console.error = original; }
-  assert.match(errors.join('\n'), /error=document_integrity_mismatch/);
+  assert.match(errors.join('\n'), /"code":"document_integrity_mismatch"/);
   assert.equal((await auditRows(db, 'document.downloaded')).length, 0);
 }));
 
