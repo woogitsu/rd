@@ -293,7 +293,9 @@ test('representative, principal and audit cannot manage meetings', async () => {
       { code: 'unauthenticated' });
 
     const meeting = await heldMeeting(db);
-    await assert.rejects(getMeeting(db, rep, { meetingId: meeting.id }), { code: 'forbidden' });
+    // SR-07: odczyt niedostępnego zebrania wygląda jak brak zebrania.
+    await assert.rejects(getMeeting(db, rep, { meetingId: meeting.id }), { code: 'meeting_not_found' });
+    await assert.rejects(getMeeting(db, rep, { meetingId: 'brak-zebrania' }), { code: 'meeting_not_found' });
     await assert.rejects(listMeetings(db, rep, { schoolYearId: 'year' }), { code: 'forbidden' });
     await assert.rejects(recordAttendance(db, rep, { meetingId: meeting.id, userId: 'rep', capacity: 'representative',
       votingEligible: true, present: true }), { code: 'forbidden' });
@@ -426,5 +428,40 @@ test('HTTP handler enforces origin, session, idempotency and roles', async () =>
     response = await call(new Request(`https://rd.example.invalid${path}/${created.meeting.id}`, { method: 'DELETE',
       headers: { Origin: 'https://rd.example.invalid' } }));
     assert.equal(response.status, 405);
+  } finally { await db.close(); }
+});
+
+test('PATCH keeps unspecified quorum fields and a configured rule requires its source', async () => {
+  const db = await meetingsDb();
+  try {
+    const base = { schoolYearId: 'year', kind: 'plenary', title: 'Zebranie', scheduledAt: '2026-10-10T17:00:00Z' };
+    await assert.rejects(createMeeting(db, board, { ...base, idempotencyKey: key(), quorumMode: 'minimum_count', quorumMinCount: 3 }),
+      { code: 'quorum_rule_source_required', status: 400 });
+    await assert.rejects(createMeeting(db, board, { ...base, idempotencyKey: key(), quorumMode: 'fraction', quorumNumerator: 1,
+      quorumDenominator: 2, quorumInclusive: true, votingBodySize: 10, quorumRuleSource: '  ' }), { code: 'quorum_rule_source_required' });
+    const { meeting } = await createMeeting(db, board, {
+      ...base, idempotencyKey: key(), quorumMode: 'fraction', quorumNumerator: 1, quorumDenominator: 2,
+      quorumInclusive: true, votingBodySize: 10, quorumRuleSource: 'Założenie testowe § 1',
+    });
+    // Only the voting body size changes; mode, fraction and source stay.
+    const resized = (await updateMeeting(db, board, { meetingId: meeting.id, votingBodySize: 12 })).meeting.quorumRule;
+    assert.deepEqual(resized, { mode: 'fraction', numerator: 1, denominator: 2, inclusive: true, minCount: null,
+      votingBodySize: 12, source: 'Założenie testowe § 1' });
+    // Switching mode keeps the source and body size, drops the fraction.
+    const counted = (await updateMeeting(db, board, { meetingId: meeting.id, quorumMode: 'minimum_count', quorumMinCount: 5 }))
+      .meeting.quorumRule;
+    assert.deepEqual(counted, { mode: 'minimum_count', numerator: null, denominator: null, inclusive: null, minCount: 5,
+      votingBodySize: 12, source: 'Założenie testowe § 1' });
+    // Explicit null clears the source — refused while a rule is configured.
+    await assert.rejects(updateMeeting(db, board, { meetingId: meeting.id, quorumRuleSource: null }),
+      { code: 'quorum_rule_source_required' });
+    // A title-only PATCH does not touch the rule.
+    const renamed = (await updateMeeting(db, board, { meetingId: meeting.id, title: 'Nowy tytuł' })).meeting;
+    assert.deepEqual(renamed.quorumRule, counted);
+    // Not configured needs no source.
+    const off = (await updateMeeting(db, board, { meetingId: meeting.id, quorumMode: 'not_configured', quorumRuleSource: null }))
+      .meeting.quorumRule;
+    assert.equal(off.mode, 'not_configured');
+    assert.equal(off.source, null);
   } finally { await db.close(); }
 });

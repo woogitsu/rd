@@ -53,7 +53,7 @@ Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe 
 
 Odczyt, eksport i dziennik audytu działają bez zmian. **Korekta po zamknięciu nie ma ścieżki w aplikacji.** Pomyłkę wykrytą po zamknięciu ujmuje się w otwartym roku następnym (np. poprawka bilansu otwarcia z uzasadnieniem odwołującym się do uchwały) — sposób musi zatwierdzić Rada. Ponowne otwarcie roku wymagałoby osobnej migracji i decyzji.
 
-Obecne API wpłat, księgi, wydarzeń i zebrań nie tłumaczy jeszcze błędu `school_year_closed` na kod 409 — zapis jest odrzucany, ale odpowiedź to ogólne 503. Do poprawy w tych modułach.
+API wpłat, księgi, wydarzeń i zebrań tłumaczy odmowę triggera na `409 school_year_closed` (SR-14 w docs/SECURITY_REVIEW.md). Pozostałe moduły (uzgodnienia, kampanie e-mail, aktualności, dokumenty) mogą jeszcze zwracać ogólne 503 — do sprawdzenia osobno.
 
 ## API
 

@@ -17,7 +17,7 @@
 // z 0003_ledger.sql pilnują tych samych reguł na poziomie bazy.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
 
@@ -258,12 +258,15 @@ function mapDatabaseError(error) {
   if (message.includes('ledger_category_inactive')) throw new RequestError('invalid_category');
   if (message.includes('ledger_payment_link_mismatch')
     || error?.constraint === 'ledger_payment_is_income') throw new RequestError('invalid_payment_link');
+  if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   if (error?.code === '23503') throw new RequestError('invalid_reference');
   throw error;
 }
 
+// Księga jest ogólnoszkolna: przydział z class_id nie daje do niej dostępu
+// (isAuthorizedScoped bez classId pomija przydziały klasowe, jak SR-01 we wpłatach).
 function hasFinancialAccess(context, schoolYearId) {
-  return isAuthorized(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true });
+  return isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true });
 }
 
 // Bez schoolYearId sprawdza samą rolę i MFA (przed odczytem wpisu po id);

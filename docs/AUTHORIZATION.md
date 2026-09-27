@@ -18,7 +18,7 @@ GET /api/access zwraca zalogowanemu użytkownikowi wyłącznie jego własne akty
 
 `src/pg/authorization.js` ładuje przydziały z PostgreSQL i używa tej samej funkcji `isAuthorized`. Pomija przydziały wygasłe oraz cofnięte (`revoked_at`). Cofnięcie (`revokeRoleGrant`) nie usuwa wiersza: zapisuje `revoked_at`, `revoked_by` i zdarzenie `role_grant.revoked` w jednej transakcji; działa od następnego żądania. Przydziału nie da się usunąć ani zmienić jego zakresu — nowy zakres to nowy wiersz (trigger z migracji 0004).
 
-Moduły tras używają `requireAccess(request, env, { roles, classId, schoolYearId, requireMfa }, json)`: `401 unauthenticated` bez sesji, `403 forbidden` bez roli, zakresu lub MFA. Trasa dotycząca klasy lub roku **musi** podać `classId` i `schoolYearId` — bez nich przydział ograniczony do klasy nie jest zawężany. Operacje finansowe podają `requireMfa: true`. Role `principal` i `audit` nie mają domyślnych uprawnień; trasa dopuszcza je tylko jawnie, po decyzji szkoły.
+Moduły tras używają `requireAccess(request, env, { roles, classId, schoolYearId, requireMfa }, json)`: `401 unauthenticated` bez sesji, `403 forbidden` bez roli, zakresu lub MFA. Trasa dotycząca klasy **musi** podać `classId`, a trasa roczna `schoolYearId`. Bez `classId` bramka bierze pod uwagę wyłącznie przydziały bez `class_id` (`isAuthorizedScoped`, SR-02) — przydział klasowy nie działa wtedy jak szkolny. Ten sam wariant (`isAuthorizedScoped` lub jawne odfiltrowanie przydziałów klasowych) stosują trasy ogólnoszkolne poza `requireAccess`: wpłaty, księga, kampanie e-mail, uzgodnienie wyciągu, eksport roczny, dane finansowe rodzin, zamknięcie roku, dokumenty ogólnoszkolne (SR-01). Operacje finansowe podają `requireMfa: true`. Role `principal` i `audit` nie mają domyślnych uprawnień; trasa dopuszcza je tylko jawnie, po decyzji szkoły.
 
 Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i tylko z przydziałem bez `class_id` (wszystkie klasy) obejmującym wybrany rok. Przydział zarządu ograniczony do klasy nie wystarcza — kontrola jest dodatkowa względem `isAuthorized`, która przy braku `classId` w wymaganiu przepuszcza przydziały klasowe. Zakres ról importu to założenie do decyzji D-08.
 
@@ -45,17 +45,17 @@ Wspólne reguły: bez ważnej sesji (brak cookie, sesja wygasła lub cofnięta, 
 | `GET /api/events?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wydarzenia własnej klasy | nie | 403 | lista przedstawiciela 1A nie zawiera 1B ani wydarzeń ogólnoszkolnych |
 | `POST /api/events` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | |
 | `GET /api/events/:eventId` | jak wyżej | nie | 404 | brak uprawnień nieodróżnialny od braku wydarzenia |
-| `PATCH /api/events/:eventId` | jak wyżej | nie | 403 | 403 zamiast 404 ujawnia istnienie id (test `todo`) |
-| `POST /api/events/:eventId/submit` | jak wyżej | nie | 403 | |
-| `POST /api/events/:eventId/approve` | zarząd — rok 1 | nie | 403 | zasada czterech oczu w bazie |
-| `POST /api/events/:eventId/publish` | zarząd — rok 1 | nie | 403 | |
-| `POST /api/events/:eventId/cancel` | szkic: admin, zarząd — rok 1; przedstawiciel — własna klasa; opublikowane: tylko zarząd | nie | 403 | macierz testuje szkic |
+| `PATCH /api/events/:eventId` | jak wyżej | nie | 404 | wydarzenie spoza zakresu nieodróżnialne od braku (SR-07) |
+| `POST /api/events/:eventId/submit` | jak wyżej | nie | 404 | |
+| `POST /api/events/:eventId/approve` | zarząd — rok 1 | nie | 403 / 404 | 403, gdy aktor widzi wydarzenie (admin, przedstawiciel własnej klasy); 404 poza zakresem podglądu; zasada czterech oczu w bazie |
+| `POST /api/events/:eventId/publish` | zarząd — rok 1 | nie | 403 / 404 | jak przy zatwierdzeniu |
+| `POST /api/events/:eventId/cancel` | szkic: admin, zarząd — rok 1; przedstawiciel — własna klasa; opublikowane: tylko zarząd | nie | 404 | macierz testuje szkic; opublikowane wydarzenie własnej klasy: przedstawiciel dostaje 403 |
 | `GET /api/meetings?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1 | nie | 403 | przedstawiciel: 403 |
 | `POST /api/meetings` | admin, zarząd — rok 1 | nie | 403 | |
 | `GET /api/meetings/shared-minutes?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; przedstawiciel — rok 1 | nie | 403 | przedstawiciel widzi protokoły ogólne i własnej klasy, nigdy innej klasy |
 | `GET /api/meetings/public-minutes?schoolYearId=:year` | publiczna | nie | — | tylko protokoły o widoczności `public` |
 | `GET /api/meetings/resolutions/lookup?schoolYearId=:year&number=:number` | admin, zarząd, Komisja Rewizyjna, skarbnik — rok 1 | nie | 403 | inny rok: 403 |
-| `GET /api/meetings/:meetingId` | admin, zarząd, Komisja Rewizyjna — rok 1 | nie | 403 | przedstawiciel: 403 także dla zebrania własnej klasy |
+| `GET /api/meetings/:meetingId` | admin, zarząd, Komisja Rewizyjna — rok 1 | nie | 404 | brak uprawnień nieodróżnialny od braku zebrania (SR-07); przedstawiciel: 404 także dla zebrania własnej klasy |
 | `PATCH /api/meetings/:meetingId` | admin, zarząd — rok 1 | nie | 403 | |
 | `POST /api/meetings/:meetingId/agenda-items` | admin, zarząd — rok 1 | nie | 403 | |
 | `POST /api/meetings/:meetingId/attendance` | admin, zarząd — rok 1 | nie | 403 | |

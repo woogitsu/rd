@@ -16,7 +16,7 @@
 // wyłącznie role finansowe z MFA. Jednostka ewidencji składki — decyzja D-11.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 
 export const name = 'families';
@@ -183,7 +183,7 @@ async function listClassStudents(request, env, classId, json) {
 }
 
 function financialYears(context) {
-  if (!isAuthorized(context, { roles: FINANCIAL_ROLES, requireMfa: true })) return null;
+  if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, requireMfa: true })) return null;
   const scope = scopeFromGrants(context.grants.filter((grant) => !grant.classId), FINANCIAL_ROLES);
   return scope.any ? scope : null;
 }

@@ -74,6 +74,7 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
     kind: target.classId ? 'class' : 'plenary', classId: target.classId,
     title: title ?? `Zebranie ${scopeMarker}`, scheduledAt: '2026-10-10T17:00:00Z',
     status: stage === 'draft' ? 'draft' : 'scheduled', quorumMode: 'minimum_count', quorumMinCount: 1,
+    quorumRuleSource: 'Założenie testowe',
   });
   const obj = { meetingId: meeting.id };
   if (stage === 'draft') return obj;
@@ -307,7 +308,8 @@ test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
     assert.ok(route.targets.length > 0 && route.targets.every((key) => key in TARGETS), route.id);
     assert.ok([200, 201, 204].includes(route.ok), `${route.id}: ok`);
     if (typeof route.allow === 'object') {
-      assert.ok([403, 404].includes(route.deny), `${route.id}: deny`);
+      const denies = typeof route.deny === 'function' ? ACTORS.flatMap((actor) => route.targets.map((key) => route.deny(actor, key))) : [route.deny];
+      assert.ok(denies.every((status) => [403, 404].includes(status)), `${route.id}: deny`);
       for (const [actorKey, scopes] of Object.entries(route.allow)) {
         assert.ok(ACTOR_KEYS.includes(actorKey), `${route.id}: nieznany aktor ${actorKey}`);
         assert.ok(scopes.every((scope) => route.targets.includes(scope)), `${route.id}: zakres spoza targets`);
@@ -390,12 +392,10 @@ test('meta: detektor macierzy wykrywa błędny status i wyciek danych (kontrola 
   assert.deepEqual(denied, []);
 });
 
-// ---------- znane rozbieżności (todo: nie blokują CI, opisane w raporcie) ----------
+// ---------- regresje dawnych rozbieżności ----------
 
-test('events: zmiana cudzego szkicu odpowiada jak brak wydarzenia (bez wyroczni istnienia)', {
-  todo: 'bug: src/pg/events.js:379 i :412 zwracają 403 dla istniejącego wydarzenia innej klasy, '
-    + 'a 404 dla nieistniejącego — getInternal (:496) celowo tego unika; PATCH/submit/cancel ujawniają istnienie id',
-}, async () => {
+// SR-07 (naprawione): PATCH/submit/cancel cudzego wydarzenia odpowiadają jak brak wydarzenia.
+test('events: zmiana cudzego szkicu odpowiada jak brak wydarzenia (bez wyroczni istnienia)', async () => {
   const ctx = await matrixContext();
   const repA = ctx.sessions.repA[false];
   const foreign = ctx.fx.events.B.eventId;

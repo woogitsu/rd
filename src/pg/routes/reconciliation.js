@@ -18,7 +18,7 @@
 
 import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
@@ -292,15 +292,16 @@ async function loadReconciliation(executor, id, { lock = false } = {}) {
 
 // --- dostęp ----------------------------------------------------------------
 
+// Uzgodnienie wyciągu dotyczy wpłat całego roku: przydział z class_id nie daje dostępu.
 async function requireContext(request, env, roles, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorized(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
   return context;
 }
 
 function requireYear(context, roles, schoolYearId) {
-  if (!isAuthorized(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
 }
 
 function mapDatabaseError(error) {

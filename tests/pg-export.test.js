@@ -85,7 +85,7 @@ async function seedData(db) {
   const board = { userId: 'u-seed', grants: [{ role: 'board', classId: null, schoolYearId: YEAR, expiresAt: null }], mfaVerified: true };
   const { meeting } = await createMeeting(db, board, {
     idempotencyKey: 'meeting-key-0001', schoolYearId: YEAR, kind: 'plenary', title: 'Zebranie testowe',
-    scheduledAt: '2026-10-01T17:00:00Z', status: 'scheduled', quorumMode: 'minimum_count', quorumMinCount: 1,
+    scheduledAt: '2026-10-01T17:00:00Z', status: 'scheduled', quorumMode: 'minimum_count', quorumMinCount: 1, quorumRuleSource: 'Założenie testowe',
   });
   await updateMeeting(db, board, { meetingId: meeting.id, status: 'held' });
   await recordAttendance(db, board, { meetingId: meeting.id, userId: 'u-voter', capacity: 'representative', votingEligible: true, present: true });
