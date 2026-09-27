@@ -5,10 +5,51 @@ on:
     branches: [main]
 permissions:
   contents: read
+
+# Anuluj poprzedni przebieg tej samej gałęzi/PR, gdy przyjdzie nowy push —
+# 17 runnerów self-hosted jest współdzielonych między agentami (#111).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  verify:
+  # Testy bez potrzeby prawdziwego PostgreSQL, shardowane na 4 równoległe
+  # joby (node --test --test-shard=i/N). Każdy shard uruchamia cały zestaw
+  # tests/*.test.js z --test-concurrency=2, żeby ograniczyć liczbę
+  # równoległych instancji PGlite (każda ~550 MB, #111).
+  test:
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    # Baza dla testów na prawdziwym PostgreSQL, dziś pomijanych bez zmiennej
+    # (tests/pg-reconciliation-race.test.js, współbieżność w
+    # pg-primary-household.test.js, #208). Zakłada, że runner self-hosted
+    # uruchamia joby w kontenerze Dockera (wymóg `services:` w Actions). Jeśli
+    # runnery self-hosted NIE mają Dockera, ten `services:` blok trzeba
+    # zastąpić krokiem instalującym PostgreSQL 16 jako proces (np. z pakietu
+    # dostępnego offline na runnerze) i uruchamiającym go przed testami —
+    # opisane w PR, do potwierdzenia przez osobę utrzymującą runnery.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Testy tworzą i usuwają własną bazę na tym serwerze (prawo CREATE DATABASE).
+      RD_TEST_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      RD_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
@@ -17,7 +58,19 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      - run: npm test
+      - run: node --test --test-concurrency=2 --test-shard=${{ matrix.shard }}/4 tests/*.test.js
+
+  build:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
       - run: npm run build:import
       - run: npm run build:panel
       - run: npm run build:ledger
@@ -33,8 +86,50 @@ jobs:
       # #188/#223: zbudowane strony bez inline <style>, style=, skryptów inline (CSP z src/node-app.js).
       - run: REQUIRE_DIST=1 node --test tests/csp-static.test.js
       - run: test -f railway.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  smoke:
+    needs: build
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
       # PostgreSQL migrations on in-memory PGlite + Node server on 127.0.0.1
       # (ephemeral port): /health and built panels. No Docker, no network
       # services, no secrets and no Railway access.
       - run: npm run smoke
       - run: npm run db:migrate:local
+
+  # Jedyny wymagany check: oblewa, gdy którykolwiek z powyższych jobów nie
+  # zakończył się sukcesem (włącznie z anulowaniem albo pominięciem).
+  ci-ok:
+    needs: [test, build, smoke]
+    if: always()
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Wszystkie joby zielone
+        run: |
+          echo "test: ${{ needs.test.result }}"
+          echo "build: ${{ needs.build.result }}"
+          echo "smoke: ${{ needs.smoke.result }}"
+          if [ "${{ needs.test.result }}" != "success" ] ||
+             [ "${{ needs.build.result }}" != "success" ] ||
+             [ "${{ needs.smoke.result }}" != "success" ]; then
+            echo "Co najmniej jeden wymagany job nie zakończył się sukcesem." >&2
+            exit 1
+          fi
