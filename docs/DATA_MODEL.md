@@ -43,6 +43,17 @@ Zasady historii: członkostwa nie są usuwane ani zmieniane — można je raz za
 - Bezpośrednia zmiana `students.household_id` kończy bieżące główne członkostwo i otwiera nowe od dziś. Dodanie nowego, już obowiązującego głównego członkostwa aktualizuje `students.household_id`. Zakończenie głównego członkostwa bez dodania nowego zostawia w kolumnie poprzednią wartość.
 - `guardians.household_id` oznacza gospodarstwo z chwili utworzenia lub ostatniej bezpośredniej zmiany tej kolumny; pełny obraz daje `guardian_households`.
 
+### Bieżące główne gospodarstwo (0023, issue #194)
+
+`students.household_id` jest **wyłącznie kolumną zgodności** (import nowych uczniów, snapshot D1) i nie służy żadnym decyzjom. Może być nieaktualna: członkostwo z datą przyszłą nie aktualizuje jej, gdy data nadejdzie, a zakończenie głównego członkostwa bez następcy zostawia w niej stare gospodarstwo.
+
+- „Dziś” = data kalendarzowa w strefie Europe/Brussels: `rd_today()` w SQL i `brusselsDay()` w `src/pg/today.js`, niezależnie od `TimeZone` sesji PostgreSQL. Z tej definicji korzystają widoki `student_households_current`, `guardian_households_current` i triggery synchronizacji z 0014 (wcześniej `CURRENT_DATE`).
+- `student_primary_household_on(dzień)` zwraca główne gospodarstwo obowiązujące w danym dniu (najwyżej jedno na ucznia), a widok `student_primary_household_current` — na dziś. Czytają je: migawka kampanii (`computeSnapshot`), worker e-mail przed wysyłką, kartki (`/api/print/cards`) i dopasowanie istniejącego ucznia w imporcie.
+- Uczeń bez obowiązującego głównego członkostwa nie trafia do kampanii ani na kartki, a import zgłasza konflikt do ręcznego powiązania.
+- Opieka naprzemienna (dwa obowiązujące członkostwa, jedno główne): kampania i kartka tylko dla głównego gospodarstwa; karta gospodarstwa pokazuje oba. To założenie do D-11/D-17.
+- Sprawdzanie nakładania zakresów blokuje wiersz ucznia (opiekuna) `FOR NO KEY UPDATE`, więc równoległe zmiany członkostw jednego ucznia wykonują się po kolei (poziom izolacji READ COMMITTED).
+- Wpłaty nie są przepisywane: wpłata zapisana przed zmianą zostaje przy starym gospodarstwie.
+
 ### Klasa w roku
 
 `enrollments` zachowuje ograniczenia z `0001_core.sql` (jeden wiersz na ucznia i rok) i opisuje stan bieżący. Zmiana klasy w tym samym roku aktualizuje `class_id` i dopisuje wpis `class_changed`; nowy rok szkolny to nowy wiersz `enrollments`. Ponowienie tej samej zmiany (podwójne kliknięcie) niczego nie zapisuje.
