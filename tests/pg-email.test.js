@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, matchesAllowlist, recipientRefusal } from '../src/email/brevo.js';
 import { normalizeEmail, emailHash, parseCampaignContent } from '../src/email/content.js';
-import { campaignDailyCap, recordOtherSends, runEmailBatch } from '../src/email/worker.js';
+import { campaignDailyCap, recordOtherSends, runEmailBatch, ResultNotRecordedError } from '../src/email/worker.js';
 import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
 
 const realFetch = globalThis.fetch;
@@ -1005,6 +1005,294 @@ test('bounce webhook: audit failure rolls back the suppression (same transaction
     assert.equal(await t.count('SELECT count(*)::int AS n FROM email_suppressions'), 1);
     assert.equal(await auditCount(t, 'email.address_suppressed'), 1);
     assert.equal((await outboxStates(t, campaign.id))[0].state, 'bounced');
+  } finally { await t.close(); }
+});
+
+// --- Awaria bazy, SIGTERM i odmowa konta w pętli wysyłki (#172, #209) -----
+
+// Baza, która „pada” na żądanie: każde zapytanie rzuca ECONNRESET, dopóki
+// down = true; failWhen(sql) pozwala odrzucić wybrane zapytania.
+function flakyDb(db, { failWhen = () => false } = {}) {
+  const state = { down: false };
+  const guard = (sql) => {
+    if (state.down || failWhen(sql)) throw Object.assign(new Error('simulated_db_down'), { code: 'ECONNRESET' });
+  };
+  const wrap = (executor) => ({ query: async (sql, params) => { guard(sql); return executor.query(sql, params); } });
+  return {
+    state,
+    query: (sql, params) => wrap(db).query(sql, params),
+    transaction: async (fn) => { guard('BEGIN'); return db.transaction((tx) => fn(wrap(tx))); },
+  };
+}
+
+const RECORD_SENT = /SET state = 'sent', sent_at = \$2, provider_message_id/;
+const FAST = { resultRetryDelaysMs: [0, 0, 0] };
+
+function callsPerOutbox(transport) {
+  const counts = {};
+  for (const message of transport.calls) counts[message.outboxId] = (counts[message.outboxId] ?? 0) + 1;
+  return counts;
+}
+
+async function ledgerCount(t) {
+  return t.count("SELECT COALESCE(SUM(message_count), 0)::int AS n FROM email_send_ledger WHERE source = 'campaign'");
+}
+
+async function campaignStatus(t, id) {
+  return (await t.call(t.board, `/api/email/campaigns/${id}`)).body.campaign.status;
+}
+
+test('send accepted, first write of "sent" fails once: row ends sent with email.sent, never email.failed', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    let failures = 0;
+    const db = flakyDb(t.db, { failWhen: (sql) => RECORD_SENT.test(sql) && (failures += 1) === 1 });
+    const transport = fakeTransport();
+    const run = await runEmailBatch({ ...t.env, db }, { transport, dryRun: false, now: DAY1, ...FAST });
+    assert.equal(run.sent, 2);
+    assert.equal(run.failed, 0);
+    assert.deepEqual((await outboxStates(t, campaign.id)).map((r) => r.state), ['sent', 'sent']);
+    assert.equal(await auditCount(t, 'email.failed'), 0);
+    assert.equal(await auditCount(t, 'email.sent'), 2);
+    assert.equal(await ledgerCount(t), transport.calls.length);
+    assert.ok(Object.values(callsPerOutbox(transport)).every((n) => n === 1));
+  } finally { await t.close(); }
+});
+
+test('database down after the first send: rest of the batch stays unsent, at most one delivery_unknown, no double send', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const db = flakyDb(t.db);
+    const transport = interleavingTransport(async () => { db.state.down = true; });
+    const error = await runEmailBatch({ ...t.env, db }, { transport, dryRun: false, now: DAY1, ...FAST }).catch((e) => e);
+    assert.ok(error instanceof ResultNotRecordedError, String(error));
+    assert.equal(error.run.unrecorded.length, 1);
+    assert.equal(error.run.unrecorded[0].outboxId, transport.calls[0].outboxId);
+    assert.match(error.run.unrecorded[0].providerMessageId, /^fake-1-/);
+    assert.ok(!JSON.stringify(error.run).includes('@'), 'no addresses in the run report');
+    assert.equal(transport.calls.length, 1);
+    assert.equal(await campaignStatus(t, campaign.id), 'sending');
+    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'sending'));
+
+    // Baza wraca; kolejny przebieg po wygaśnięciu dzierżawy.
+    db.state.down = false;
+    const later = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    assert.equal(later.sent, 2);
+    const states = await outboxStates(t, campaign.id);
+    assert.equal(states.filter((r) => r.last_error === 'delivery_unknown').length, 1);
+    assert.equal(states.filter((r) => r.state === 'sent').length, 2);
+    assert.equal(states.filter((r) => r.last_error === 'transport_error').length, 0);
+    assert.ok(Object.values(callsPerOutbox(transport)).every((n) => n === 1));
+    assert.equal(transport.calls.length, 3);
+    assert.equal(await ledgerCount(t), transport.calls.length, 'ledger counts messages that may have left');
+    // Niewysłane wiersze nie zużyły próby.
+    assert.equal(await t.count("SELECT max(attempts)::int AS n FROM email_outbox WHERE state = 'sent'"), 1);
+  } finally { await t.close(); }
+});
+
+test('database down after the first send, provider webhook arrives: row is recovered as sent, not delivery_unknown', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    const db = flakyDb(t.db);
+    const transport = interleavingTransport(async () => { db.state.down = true; });
+    await assert.rejects(runEmailBatch({ ...t.env, db }, { transport, dryRun: false, now: DAY1, ...FAST }), ResultNotRecordedError);
+    db.state.down = false;
+    const first = transport.calls[0];
+    const hook = await handlePgRequest(webhookRequest(
+      { event: 'delivered', email: first.to, 'message-id': '<m-accepted@example.invalid>', 'X-Mailin-custom': first.outboxId, ts_event: 1791187200, id: 11 },
+      `Bearer ${WEBHOOK_SECRET}`,
+    ), t.env);
+    assert.equal(hook.status, 200);
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    const { rows } = await t.db.query('SELECT state, last_error, provider_message_id FROM email_outbox WHERE id = $1', [first.outboxId]);
+    assert.deepEqual(rows[0], { state: 'sent', last_error: null, provider_message_id: '<m-accepted@example.invalid>' });
+    assert.equal(await auditCount(t, 'email.sent_recovered', first.outboxId), 1);
+    assert.equal(await auditCount(t, 'email.delivery_unknown'), 0);
+    assert.equal(await campaignStatus(t, campaign.id), 'done');
+    assert.equal(transport.calls.length, 2);
+    assert.equal(await ledgerCount(t), 2);
+  } finally { await t.close(); }
+});
+
+test('short database outage: result written after recovery in the same run, unsent rest back to queued at once', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    let failures = 0;
+    // Wszystkie 4 próby zapisu wyniku padają; potem baza odpowiada.
+    const db = flakyDb(t.db, { failWhen: (sql) => RECORD_SENT.test(sql) && (failures += 1) <= 4 });
+    const transport = fakeTransport();
+    const run = await runEmailBatch({ ...t.env, db }, { transport, dryRun: false, now: DAY1, ...FAST });
+    assert.equal(run.stoppedReason, 'result_not_recorded');
+    assert.equal(run.sent, 1);
+    assert.equal(run.requeued, 2);
+    assert.deepEqual(run.unrecorded, []);
+    const states = await outboxStates(t, campaign.id);
+    assert.equal(states.filter((r) => r.state === 'sent').length, 1);
+    assert.equal(states.filter((r) => r.state === 'queued').length, 2);
+    assert.equal(await campaignStatus(t, campaign.id), 'sending');
+    // Ponowienie zadania od razu (bez czekania na dzierżawę) wysyła resztę.
+    const next = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60_000) });
+    assert.equal(next.sent, 2);
+    assert.equal(await campaignStatus(t, campaign.id), 'done');
+    assert.ok(Object.values(callsPerOutbox(transport)).every((n) => n === 1));
+    assert.equal(await ledgerCount(t), 3);
+    assert.equal(await auditCount(t, 'email.failed'), 0);
+  } finally { await t.close(); }
+});
+
+test('SIGTERM during the loop: current message finishes, rest is queued, run stopped_reason = shutdown', async () => {
+  const t = await setup();
+  try {
+    // Rodzeństwo i dwoje opiekunów w h1: po wznowieniu nadal jedna wiadomość na rodzinę.
+    await family(t.db, 'h1', { students: 2, guardians: [{ primary: true }, {}] });
+    for (const id of ['h2', 'h3', 'h4']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const controller = new AbortController();
+    const transport = interleavingTransport(async () => { controller.abort(); });
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1, signal: controller.signal });
+    assert.equal(run.sent, 1);
+    assert.equal(run.requeued, 3);
+    assert.equal(run.stoppedReason, 'shutdown');
+    assert.equal(transport.calls.length, 1);
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM email_worker_runs WHERE stopped_reason = 'shutdown'"), 1);
+    const states = await outboxStates(t, campaign.id);
+    assert.equal(states.filter((r) => r.state === 'queued').length, 3);
+    assert.equal(await campaignStatus(t, campaign.id), 'sending');
+    assert.equal(await ledgerCount(t), 1);
+    assert.equal(await t.count("SELECT max(attempts)::int AS n FROM email_outbox WHERE state = 'queued'"), 0);
+    // Ponowienie zadania: reszta wychodzi, każda rodzina raz.
+    const next = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60_000) });
+    assert.equal(next.sent, 3);
+    assert.equal(transport.calls.length, 4);
+    assert.equal(new Set(transport.calls.map(householdOf)).size, 4);
+    assert.ok(Object.values(callsPerOutbox(transport)).every((n) => n === 1));
+    assert.equal(await ledgerCount(t), 4);
+  } finally { await t.close(); }
+});
+
+test('payment recorded between an interrupted run and the resume → skipped, no send', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t, { audience: 'no_payment_record' });
+    const controller = new AbortController();
+    const transport = interleavingTransport(async () => { controller.abort(); });
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1, signal: controller.signal });
+    const pending = (await outboxStates(t, campaign.id)).filter((r) => r.state === 'queued');
+    assert.equal(pending.length, 2);
+    // Wpłata częściowa (1 €) jednej z czekających rodzin.
+    await t.db.query(
+      `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+       VALUES ('p-part', $1, $2, 100, '2026-10-05', 'bank', 'recorded', 'u-tr', 'payment-key-part')`,
+      [pending[0].household_id, YEAR],
+    );
+    const next = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60_000) });
+    assert.equal(next.sent, 1);
+    assert.equal(next.skipped, 1);
+    assert.equal(transport.calls.filter((m) => householdOf(m) === pending[0].household_id).length, 0);
+  } finally { await t.close(); }
+});
+
+function brevoStub(statuses) {
+  const requests = [];
+  const fetchImpl = async (url, init) => {
+    requests.push(JSON.parse(init.body));
+    const status = typeof statuses === 'function' ? statuses(requests.length) : statuses[requests.length - 1] ?? 201;
+    return new Response(status === 201 ? JSON.stringify({ messageId: `<m${requests.length}@example.invalid>` }) : '{}', { status });
+  };
+  const transport = createBrevoTransport({ apiKey: 'synthetic-key', appEnv: 'development', fetchImpl, processEnv: {} });
+  transport.requests = requests;
+  return transport;
+}
+
+test('Brevo 401/402/403 is account-level: transport error flagged accountLevel, not retryable', async () => {
+  for (const status of [401, 402, 403]) {
+    const transport = brevoStub([status]);
+    await assert.rejects(
+      transport.send({ to: 'a@example.invalid', sender: { email: 'rada@example.invalid' }, subject: 'S', text: 'T', outboxId: 'o1', idempotencyKey: 'k' }),
+      (e) => e.code === `provider_rejected_${status}` && e.accountLevel && !e.retryable && !e.uncertain,
+    );
+  }
+  const transport = brevoStub([400]);
+  await assert.rejects(
+    transport.send({ to: 'a@example.invalid', sender: { email: 'rada@example.invalid' }, subject: 'S', text: 'T', outboxId: 'o1', idempotencyKey: 'k' }),
+    (e) => e.code === 'provider_rejected_400' && !e.accountLevel,
+  );
+  assert.equal(networkCalls, 0);
+});
+
+test('Brevo rejects the account (401): one call per run, nothing failed, campaign not done; fixed key sends each family once', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3', 'h4']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    let broken = true;
+    const transport = brevoStub(() => (broken ? 401 : 201));
+    for (let i = 0; i < 2; i += 1) {
+      const run = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + i * 60 * 60_000) });
+      assert.equal(run.stoppedReason, 'provider_account_rejected');
+      assert.equal(run.failed, 0);
+      assert.equal(run.requeued, 4);
+      assert.equal(transport.requests.length, i + 1, 'one provider call per run');
+    }
+    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'queued' && r.last_error !== null));
+    assert.equal(await t.count("SELECT max(attempts)::int AS n FROM email_outbox"), 0);
+    assert.equal(await campaignStatus(t, campaign.id), 'sending');
+    assert.equal(await ledgerCount(t), 0);
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM email_worker_runs WHERE stopped_reason = 'provider_account_rejected'"), 2);
+    assert.equal(await auditCount(t, 'email.campaign.provider_rejected', campaign.id), 2);
+
+    broken = false;
+    const fixed = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 3 * 60 * 60_000) });
+    assert.equal(fixed.sent, 4);
+    assert.equal(await campaignStatus(t, campaign.id), 'done');
+    const delivered = transport.requests.slice(2).map((body) => body.headers['X-RD-Idempotency-Key']);
+    assert.equal(new Set(delivered).size, 4);
+    assert.equal(await ledgerCount(t), 4);
+    assert.equal(networkCalls, 0);
+  } finally { await t.close(); }
+});
+
+test('mixed: two accepted, then 403 → run stops, two sent, rest queued', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3', 'h4']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const transport = brevoStub([201, 201, 403]);
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 2);
+    assert.equal(run.stoppedReason, 'provider_account_rejected');
+    assert.equal(transport.requests.length, 3);
+    const states = await outboxStates(t, campaign.id);
+    assert.equal(states.filter((r) => r.state === 'sent').length, 2);
+    assert.equal(states.filter((r) => r.state === 'queued').length, 2);
+    assert.equal(await ledgerCount(t), 2);
+  } finally { await t.close(); }
+});
+
+test('invalid address at the provider (400) fails only that message; the batch continues', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const transport = brevoStub([201, 400, 201]);
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 2);
+    assert.equal(run.failed, 1);
+    const states = await outboxStates(t, campaign.id);
+    assert.equal(states.filter((r) => r.state === 'failed' && r.last_error === 'provider_rejected_400').length, 1);
+    assert.equal(await campaignStatus(t, campaign.id), 'done');
+    assert.equal(await ledgerCount(t), 2, 'explicit rejection does not use the daily limit');
   } finally { await t.close(); }
 });
 
