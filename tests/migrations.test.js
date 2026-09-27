@@ -126,6 +126,13 @@ test('payment corrections are immutable, idempotent and included in net totals',
       'p1', 'h1', 'y2026', 10000, '2026-09-20',
       'bank', 'synthetic-reference', 'recorded', 'u1', 'payment-key-0001'
     );
+    INSERT INTO payment_entries (
+      id, household_id, school_year_id, amount_cents, received_on,
+      method, status, created_by, idempotency_key
+    ) VALUES (
+      'p2', 'h1', 'y2026', 2000, '2026-09-21',
+      'cash', 'recorded', 'u1', 'payment-key-0002'
+    );
     INSERT INTO payment_corrections (
       id, payment_entry_id, amount_cents, reason, created_by, idempotency_key
     ) VALUES
@@ -138,7 +145,7 @@ test('payment corrections are immutable, idempotent and included in net totals',
       SELECT household_id, school_year_id, net_amount_cents, payment_count
       FROM household_payment_totals
     `).get() },
-    { household_id: 'h1', school_year_id: 'y2026', net_amount_cents: 5000, payment_count: 1 },
+    { household_id: 'h1', school_year_id: 'y2026', net_amount_cents: 7000, payment_count: 2 },
   );
   assert.throws(
     () => db.prepare(`
@@ -167,9 +174,18 @@ test('payment corrections are immutable, idempotent and included in net totals',
   assert.throws(
     () => db.prepare(`
       INSERT INTO payment_entries (
+        id, household_id, school_year_id, amount_cents, received_on,
+        method, status, created_by, idempotency_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('p3', 'h1', 'y2026', 1000, '2026-09-22', 'bank', 'recorded', 'u1', 'payment-key-0002'),
+    /UNIQUE constraint failed/,
+  );
+  assert.throws(
+    () => db.prepare(`
+      INSERT INTO payment_entries (
         id, household_id, school_year_id, amount_cents, received_on, method, status, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('p2', 'h1', 'y2026', 2000, '2026-09-21', 'cash', 'recorded', 'u1'),
+    `).run('p4', 'h1', 'y2026', 2000, '2026-09-23', 'cash', 'recorded', 'u1'),
     /payment_idempotency_key_required/,
   );
   assert.throws(
