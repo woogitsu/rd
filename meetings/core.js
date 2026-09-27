@@ -112,6 +112,7 @@ export const ERROR_MESSAGES = Object.freeze({
   minutes_approved_immutable: "Zatwierdzonej wersji protokołu nie można zmienić.",
   minutes_version_immutable: "Zapisanej wersji protokołu nie można zmienić.",
   minutes_not_latest_version: "Zatwierdzić można tylko najnowszą wersję protokołu.",
+  minutes_open_resolutions: "Protokołu nie można zatwierdzić, dopóki zebranie ma projekty uchwał. Rozstrzygnij albo wycofaj każdy projekt.",
   minutes_not_approved: "Widoczność można ustawić tylko dla zatwierdzonej wersji.",
   resolution_final_immutable: "Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu.",
   resolution_identity_immutable: "Numeru ani zebrania uchwały nie można zmienić poprawką.",
@@ -120,6 +121,7 @@ export const ERROR_MESSAGES = Object.freeze({
   resolution_requires_held_meeting: "Wynik uchwały można wpisać tylko dla zebrania oznaczonego jako odbyte.",
   resolution_quorum_check_required: "Wskaż ustalenie quorum z tego zebrania.",
   resolution_votes_exceed_present_voters: "Suma głosów przekracza liczbę obecnych uprawnionych w wybranym ustaleniu quorum.",
+  resolution_quorum_check_stale: "Lista obecności zmieniła się po wybranym ustaleniu quorum. Ustal quorum ponownie i wskaż nowe ustalenie.",
   resolution_number_required: "Uchwała przyjęta wymaga numeru.",
   resolution_number_taken: "Ten numer uchwały jest już zajęty w tym roku szkolnym.",
   vote_record_required: "Wynik uchwały wymaga wszystkich trzech liczb głosów i ustalenia quorum.",
@@ -305,7 +307,9 @@ export function describeQuorumCheck(check) {
   return {
     met: check.met === true,
     headline: check.met === true ? "Quorum osiągnięte" : "Quorum nieosiągnięte",
-    detail: `Obecni z prawem głosu: ${present}; wymagane: ${required}. Reguła: ${describeQuorumRule(check)}.`,
+    detail: `Obecni z prawem głosu: ${present}; wymagane: ${required}. Reguła: ${describeQuorumRule(check)}.`
+      + (check.current === false ? " Lista obecności zmieniła się po tym ustaleniu — nowa uchwała wymaga ponownego ustalenia quorum." : ""),
+    stale: check.current === false,
     basis: QUORUM_BASIS_NOTE,
   };
 }

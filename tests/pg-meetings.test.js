@@ -232,6 +232,123 @@ test('approved minutes are immutable, lock the meeting and are corrected by new 
   } finally { await db.close(); }
 });
 
+test('minutes approval is refused while draft resolutions are open (#81)', async () => {
+  const db = await meetingsDb();
+  try {
+    const meeting = await heldMeeting(db);
+    await attend(db, meeting.id, { userId: 'u1' }, true, true);
+    const { quorumCheck } = await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id });
+    const first = (await createResolution(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, title: 'Projekt pierwszy', body: 'Treść syntetyczna.',
+    })).resolution;
+    const second = (await createResolution(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, title: 'Projekt drugi', body: 'Treść syntetyczna.',
+    })).resolution;
+    const { minutes } = await createMinutesVersion(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, body: 'Protokół syntetyczny z otwartymi projektami.',
+    });
+    const approvals = () => db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'meeting.minutes.approved'");
+
+    // Double click: both requests are refused, nothing changes.
+    const clicks = await Promise.allSettled([
+      approveMinutes(db, board, { meetingId: meeting.id, minutesId: minutes.id }),
+      approveMinutes(db, board, { meetingId: meeting.id, minutesId: minutes.id }),
+    ]);
+    for (const click of clicks) {
+      assert.equal(click.status, 'rejected');
+      assert.equal(click.reason.code, 'minutes_open_resolutions');
+      assert.equal(click.reason.status, 409);
+    }
+    assert.equal((await approvals()).rows[0].n, 0);
+    assert.equal((await db.query('SELECT status FROM meeting_minutes WHERE id = $1', [minutes.id])).rows[0].status, 'draft');
+    // The database refuses it too, not only the API.
+    await assert.rejects(db.query(
+      "UPDATE meeting_minutes SET status = 'approved', approved_by = 'board', approved_at = now() WHERE id = $1",
+      [minutes.id]), /minutes_open_resolutions/);
+
+    // Decide one, withdraw the other (a status change, the row stays in the register).
+    await updateResolution(db, board, { resolutionId: first.id, status: 'rejected',
+      votesFor: 0, votesAgainst: 1, votesAbstain: 0, quorumCheckId: quorumCheck.id });
+    await assert.rejects(approveMinutes(db, board, { minutesId: minutes.id }), { code: 'minutes_open_resolutions' });
+    await assert.rejects(updateResolution(db, rep, { resolutionId: second.id, status: 'withdrawn' }), { code: 'forbidden' });
+    const withdrawn = (await updateResolution(db, board, { resolutionId: second.id, status: 'withdrawn' })).resolution;
+    assert.equal(withdrawn.status, 'withdrawn');
+    const { rows: history } = await db.query(
+      "SELECT metadata_json FROM audit_events WHERE entity_id = $1 AND action = 'resolution.updated'", [second.id]);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].metadata_json.toStatus, 'withdrawn');
+
+    // Roles outside the board cannot approve.
+    for (const actor of [rep, auditor, principal, treasurer]) {
+      await assert.rejects(approveMinutes(db, actor, { minutesId: minutes.id }), { code: 'forbidden' });
+    }
+    const approved = await approveMinutes(db, board, { minutesId: minutes.id });
+    assert.equal(approved.minutes.status, 'approved');
+    assert.equal((await approveMinutes(db, board, { minutesId: minutes.id })).replayed, true);
+    assert.equal((await approvals()).rows[0].n, 1);
+    const { resolutions } = await getMeeting(db, board, { meetingId: meeting.id });
+    assert.deepEqual(resolutions.map(item => item.status).sort(), ['rejected', 'withdrawn']);
+  } finally { await db.close(); }
+});
+
+test('a resolution needs a quorum check made after the last attendance change (#81)', async () => {
+  const db = await meetingsDb();
+  try {
+    const meeting = await heldMeeting(db);
+    await attend(db, meeting.id, { userId: 'u1' }, true, true);
+    await attend(db, meeting.id, { userId: 'u2' }, true, true);
+    await attend(db, meeting.id, { userId: 'u3' }, true, true);
+    const early = (await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id })).quorumCheck;
+    assert.equal(early.presentEligible, 3);
+    // An earlier decision on the then-current check.
+    const decided = (await createResolution(db, board, { idempotencyKey: key(), meetingId: meeting.id,
+      title: 'Uchwała wcześniejsza', body: 'Treść.', status: 'adopted', number: 'U-81/1',
+      votesFor: 3, votesAgainst: 0, votesAbstain: 0, quorumCheckId: early.id })).resolution;
+
+    // Two people leave; their attendance is corrected.
+    await attend(db, meeting.id, { userId: 'u2' }, true, false);
+    await attend(db, meeting.id, { userId: 'u3' }, true, false);
+    const draft = (await createResolution(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, title: 'Projekt późniejszy', body: 'Treść.',
+    })).resolution;
+    await assert.rejects(updateResolution(db, board, { resolutionId: draft.id, status: 'adopted', number: 'U-81/2',
+      votesFor: 3, votesAgainst: 0, votesAbstain: 0, quorumCheckId: early.id }),
+    { code: 'resolution_quorum_check_stale', status: 409 });
+    await assert.rejects(createResolution(db, board, { idempotencyKey: key(), meetingId: meeting.id,
+      title: 'Nowa uchwała', body: 'Treść.', status: 'rejected',
+      votesFor: 0, votesAgainst: 1, votesAbstain: 0, quorumCheckId: early.id }),
+    { code: 'resolution_quorum_check_stale' });
+    await assert.rejects(db.query(
+      `UPDATE resolutions SET status = 'rejected', votes_for = 0, votes_against = 1, votes_abstain = 0,
+         quorum_check_id = $2 WHERE id = $1`, [draft.id, early.id]), /resolution_quorum_check_stale/);
+    // A draft may still point at any check; only the decision needs a current one.
+    await updateResolution(db, board, { resolutionId: draft.id, title: 'Projekt późniejszy, poprawiony' });
+
+    // A correction of the earlier decision keeps its original basis.
+    const corrected = (await correctResolution(db, board, { idempotencyKey: key(), resolutionId: decided.id,
+      reason: 'Pomyłka w zapisie głosów', votesFor: 2, votesAbstain: 1 })).resolution;
+    assert.equal(corrected.quorumCheckId, early.id);
+
+    const late = (await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id })).quorumCheck;
+    assert.equal(late.presentEligible, 1);
+    await assert.rejects(updateResolution(db, board, { resolutionId: draft.id, status: 'adopted', number: 'U-81/2',
+      votesFor: 3, votesAgainst: 0, votesAbstain: 0, quorumCheckId: late.id }),
+    { code: 'resolution_votes_exceed_present_voters' });
+    const adopted = (await updateResolution(db, board, { resolutionId: draft.id, status: 'adopted', number: 'U-81/2',
+      votesFor: 1, votesAgainst: 0, votesAbstain: 0, quorumCheckId: late.id })).resolution;
+    assert.equal(adopted.status, 'adopted');
+
+    // Re-recording identical attendance is also a change of the list.
+    await attend(db, meeting.id, { userId: 'u1' }, true, true);
+    await assert.rejects(createResolution(db, board, { idempotencyKey: key(), meetingId: meeting.id,
+      title: 'Kolejna uchwała', body: 'Treść.', status: 'rejected',
+      votesFor: 0, votesAgainst: 1, votesAbstain: 0, quorumCheckId: late.id }),
+    { code: 'resolution_quorum_check_stale' });
+    const { quorumChecks } = await getMeeting(db, board, { meetingId: meeting.id });
+    assert.deepEqual(quorumChecks.map(check => check.current), [false, false]);
+  } finally { await db.close(); }
+});
+
 test('parents and representatives see only approved minutes explicitly shared with them', async () => {
   const db = await meetingsDb();
   try {

@@ -152,6 +152,22 @@ jest zapisywany — tylko solony skrót SHA-256. Skutki dla danych: migracja
 wyłącznie dodaje obiekty; istniejące wiersze nie są zmieniane. Szczegóły:
 [`docs/RECONCILIATION.md`](../docs/RECONCILIATION.md).
 
+`0021_meetings_integrity.sql` (#81) dodaje tabelę `meeting_attendance_state`
+(licznik zmian listy obecności zebrania, podbijany triggerem przy każdym
+INSERT/UPDATE `meeting_attendees`), kolumnę
+`meeting_quorum_checks.attendance_revision` oraz triggery: zatwierdzenie
+protokołu przy projekcie uchwały daje `minutes_open_resolutions`, a przyjęcie
+lub odrzucenie uchwały na ustaleniu quorum sprzed zmiany obecności —
+`resolution_quorum_check_stale`. Skutki dla danych: istniejące ustalenia
+dostają `attendance_revision = NULL` (stan nieznany, traktowany jako
+nieaktualny — nowe rozstrzygnięcie na już odbytym zebraniu wymaga ponownego
+ustalenia quorum); żaden istniejący wiersz uchwał, obecności ani protokołów nie
+jest zmieniany. Zebrania zatwierdzone wcześniej z projektem uchwały pozostają
+zablokowane bez zmian. Numer 0021 wybrano jako pierwszy wolny po 0018 (main),
+0013/0017 (kolejka) i 0020 (logowanie hasłem). Wycofanie na pustej bazie:
+usunięcie triggerów, funkcji, kolumny i tabeli; na bazie z danymi — po kopii.
+Szczegóły: [`docs/MEETINGS.md`](../docs/MEETINGS.md).
+
 `0016_exports.sql` dodaje tabelę `export_runs` — rejestr eksportów rocznych
 i list klas (rodzaj, rok, klasa, wersja formatu, kto i kiedy, SHA-256
 manifestu, liczności wierszy per tabela). Skutki dla danych: migracja tylko
