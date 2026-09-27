@@ -158,16 +158,25 @@ async function loadChecklist(executor, closureId) {
 
 async function liveSummary(executor, schoolYearId) {
   const { rows } = await executor.query(
-    `SELECT opening_balance_cents, income_cents, expense_cents, closing_balance_cents
-       FROM ledger_year_summary WHERE school_year_id = $1`,
+    `SELECT s.opening_balance_cents, s.income_cents, s.expense_cents, s.closing_balance_cents,
+            c.opening_cash_cents, c.closing_cash_cents
+       FROM ledger_year_summary s
+       JOIN ledger_year_cash_summary c ON c.school_year_id = s.school_year_id
+      WHERE s.school_year_id = $1`,
     [schoolYearId],
   );
   const row = rows[0] ?? {};
+  const closingBalanceCents = toSafeInteger(row.closing_balance_cents) ?? 0;
+  const closingCashCents = toSafeInteger(row.closing_cash_cents) ?? 0;
   return {
     openingBalanceCents: toSafeInteger(row.opening_balance_cents) ?? 0,
     incomeCents: toSafeInteger(row.income_cents) ?? 0,
     expenseCents: toSafeInteger(row.expense_cents) ?? 0,
-    closingBalanceCents: toSafeInteger(row.closing_balance_cents) ?? 0,
+    closingBalanceCents,
+    // Podział rachunek/kasa (#199, 0028): kasa = wszystko poza rachunkiem.
+    openingCashCents: toSafeInteger(row.opening_cash_cents) ?? 0,
+    closingCashCents,
+    closingBankCents: closingBalanceCents - closingCashCents,
   };
 }
 
@@ -194,6 +203,11 @@ function balanceView(closure, live) {
       incomeCents: toSafeInteger(closure.income_cents),
       expenseCents: toSafeInteger(closure.expense_cents),
       closingBalanceCents: toSafeInteger(closure.closing_balance_cents),
+      // Zamknięcia sprzed 0028 nie mają utrwalonego podziału — null.
+      openingCashCents: toSafeInteger(closure.opening_cash_cents),
+      closingCashCents: toSafeInteger(closure.closing_cash_cents),
+      closingBankCents: closure.closing_cash_cents === null || closure.closing_cash_cents === undefined ? null
+        : toSafeInteger(closure.closing_balance_cents) - toSafeInteger(closure.closing_cash_cents),
     };
   }
   return { source: 'live', ...live };
@@ -323,7 +337,7 @@ async function closeYear(request, env, schoolYearId, json) {
     // potem wiersz zamknięcia. Nowe zapisy księgi czekają na koniec transakcji,
     // a trigger zamrożenia zobaczy już status 'closed'.
     await tx.query(`LOCK TABLE ledger_entries, ledger_corrections, ledger_opening_balances,
-      ledger_opening_balance_adjustments IN SHARE MODE`);
+      ledger_opening_balance_adjustments, ledger_transfers IN SHARE MODE`);
     const closure = await loadClosure(tx, schoolYearId, { lock: true });
     if (closure.status === 'closed') return;
     if (closure.initiated_by === actorId) throw new RequestError('four_eyes_required', 409);
@@ -346,11 +360,11 @@ async function closeYear(request, env, schoolYearId, json) {
     const openingId = crypto.randomUUID();
     try {
       await tx.query(
-        `INSERT INTO ledger_opening_balances (id, school_year_id, amount_cents, note, created_by, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO ledger_opening_balances (id, school_year_id, amount_cents, cash_cents, note, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $7, $4, $5, $6)`,
         [openingId, closure.next_school_year_id, summary.closingBalanceCents,
           `Bilans zamknięcia roku ${year.label} przeniesiony przy zamknięciu roku`,
-          actorId, `year-close:${closure.id}`],
+          actorId, `year-close:${closure.id}`, summary.closingCashCents],
       );
     } catch (error) {
       mapDatabaseError(error);
@@ -380,10 +394,11 @@ async function closeYear(request, env, schoolYearId, json) {
       await tx.query(
         `UPDATE school_year_closures SET status = 'closed', closed_by = $2, closed_at = now(),
            opening_balance_cents = $3, income_cents = $4, expense_cents = $5, closing_balance_cents = $6,
-           carried_opening_balance_id = $7, expired_grant_count = $8
+           carried_opening_balance_id = $7, expired_grant_count = $8,
+           opening_cash_cents = $9, closing_cash_cents = $10
          WHERE id = $1`,
         [closure.id, actorId, summary.openingBalanceCents, summary.incomeCents, summary.expenseCents,
-          summary.closingBalanceCents, openingId, expired.length],
+          summary.closingBalanceCents, openingId, expired.length, summary.openingCashCents, summary.closingCashCents],
       );
     } catch (error) {
       mapDatabaseError(error);
@@ -442,10 +457,11 @@ async function handover(request, env, schoolYearId, json) {
     db.query('SELECT status, count(*) AS count FROM events WHERE school_year_id = $1 GROUP BY status', [schoolYearId]),
     status.nextSchoolYearId
       ? db.query(
-        `SELECT o.id, o.amount_cents, COALESCE(sum(a.amount_cents), 0) AS adjustments_cents
+        `SELECT o.id, o.amount_cents, o.cash_cents, COALESCE(sum(a.amount_cents), 0) AS adjustments_cents,
+                COALESCE(sum(a.cash_cents), 0) AS cash_adjustments_cents
            FROM ledger_opening_balances o
            LEFT JOIN ledger_opening_balance_adjustments a ON a.opening_balance_id = o.id
-          WHERE o.school_year_id = $1 GROUP BY o.id, o.amount_cents`,
+          WHERE o.school_year_id = $1 GROUP BY o.id, o.amount_cents, o.cash_cents`,
         [status.nextSchoolYearId],
       )
       : Promise.resolve({ rows: [] }),
@@ -479,6 +495,8 @@ async function handover(request, env, schoolYearId, json) {
         id: opening.id,
         amountCents: toSafeInteger(opening.amount_cents),
         adjustmentsCents: toSafeInteger(opening.adjustments_cents),
+        cashCents: toSafeInteger(opening.cash_cents),
+        cashAdjustmentsCents: toSafeInteger(opening.cash_adjustments_cents),
         carriedFromClosure: opening.id === status.carriedOpeningBalanceId,
       } : null,
     },
