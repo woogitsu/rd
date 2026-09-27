@@ -110,6 +110,7 @@ function renderSummary(summary) {
 function setBusy(busy) {
   filtersForm.querySelector("button").disabled = busy;
   byId("open-entry").disabled = busy || !isValidId(yearInput.value);
+  byId("open-entry-hint").hidden = !byId("open-entry").disabled;
   loadMore.disabled = busy;
 }
 
@@ -160,7 +161,16 @@ loadMore.addEventListener("click", async () => {
   finally { setBusy(false); }
 });
 
-function configureDialog(id, prefix, submit) {
+// Po zapisie tabela jest renderowana od nowa; gdy przycisk otwierający okno zniknie,
+// fokus trafia na nagłówek listy zapisów zamiast na <body> (WCAG 2.4.3).
+function restoreFocus() {
+  if (document.activeElement && document.activeElement !== document.body) return;
+  const target = overview.hidden ? byId("filters-title") : byId("entries-title");
+  target.tabIndex = -1;
+  target.focus();
+}
+
+function configureDialog(id, prefix, submit, successText) {
   const dialog = byId(id);
   const form = dialog.querySelector("form");
   const errorBox = form.querySelector(".form-error");
@@ -178,6 +188,8 @@ function configureDialog(id, prefix, submit) {
       dialog.close();
       form.reset();
       await loadOverview();
+      if (!message.classList.contains("error")) message.textContent = successText;
+      restoreFocus();
     } catch (error) {
       errorBox.textContent = `${error.message} Jeśli zmieniasz dane, anuluj formularz i otwórz go ponownie.`;
     } finally { button.disabled = false; }
@@ -205,7 +217,7 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
       resolutionReference: resolutionReference || null,
     }),
   });
-});
+}, "Zapisano wpis w księdze.");
 
 const correctionDialog = configureDialog("correction-dialog", "ledger-correction", async (data, key) => {
   const entryId = String(data.get("entryId"));
@@ -213,7 +225,7 @@ const correctionDialog = configureDialog("correction-dialog", "ledger-correction
     method: "POST", headers: { "Idempotency-Key": key },
     body: JSON.stringify({ amountCents: parseEuroAmount(data.get("amount")), reason: String(data.get("reason")) }),
   });
-});
+}, "Dodano korektę.");
 
 function updateCategories() {
   const direction = entryDialog.form.elements.direction.value;
@@ -252,3 +264,4 @@ entriesBody.addEventListener("click", (event) => {
 });
 
 byId("open-entry").disabled = true;
+byId("open-entry-hint").hidden = false;

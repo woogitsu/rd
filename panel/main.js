@@ -136,7 +136,16 @@ filtersForm.addEventListener("submit", (event) => {
 });
 loadMore.addEventListener("click", () => loadPayments({ append: true }));
 
-function configureDialog(id, prefix, submit) {
+// Po zapisie tabela jest renderowana od nowa, więc przycisk otwierający okno może zniknąć.
+// Wtedy przenosimy fokus na nagłówek listy, aby nie spadł na <body> (WCAG 2.4.3).
+function restoreFocus() {
+  if (document.activeElement && document.activeElement !== document.body) return;
+  const heading = byId("payments-title");
+  heading.tabIndex = -1;
+  heading.focus();
+}
+
+function configureDialog(id, prefix, submit, successText) {
   const dialog = byId(id);
   const form = dialog.querySelector("form");
   const errorBox = form.querySelector(".form-error");
@@ -160,6 +169,8 @@ function configureDialog(id, prefix, submit) {
       dialog.close();
       form.reset();
       await loadPayments();
+      if (!message.classList.contains("error")) message.textContent = successText;
+      restoreFocus();
     } catch (error) {
       errorBox.textContent = `${error.message} Jeśli chcesz zmienić dane operacji, anuluj formularz i otwórz go ponownie.`;
     } finally {
@@ -189,7 +200,7 @@ const paymentDialog = configureDialog("payment-dialog", "payment", async (data, 
       ...(householdId ? { householdId } : {}),
     }),
   });
-});
+}, "Zapisano wpłatę.");
 
 const correctionDialog = configureDialog("correction-dialog", "correction", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
@@ -201,7 +212,7 @@ const correctionDialog = configureDialog("correction-dialog", "correction", asyn
       reason: data.get("reason"),
     }),
   });
-});
+}, "Dodano korektę.");
 
 const assignmentDialog = configureDialog("assignment-dialog", "assignment", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
@@ -212,7 +223,7 @@ const assignmentDialog = configureDialog("assignment-dialog", "assignment", asyn
     headers: { "Idempotency-Key": requestKey },
     body: JSON.stringify({ householdId }),
   });
-});
+}, "Przypisano rodzinę.");
 
 byId("open-payment").addEventListener("click", () => {
   paymentDialog.form.elements.schoolYearId.value = yearInput.value;
