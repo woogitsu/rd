@@ -67,3 +67,40 @@ test('student-guardian relation validates flags and active date range', () => {
   );
   db.close();
 });
+
+test('enrollment migration keeps history and allows only one class per school year', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  db.exec(migration('0001_initial'));
+  db.exec(`
+    INSERT INTO school_years (id, label, starts_on, ends_on)
+      VALUES ('y2025', '2025/2026', '2025-09-01', '2026-06-30'),
+             ('y2026', '2026/2027', '2026-09-01', '2027-06-30');
+    INSERT INTO classes (id, school_year_id, name)
+      VALUES ('c1a', 'y2025', '1A'), ('c1b', 'y2025', '1B'), ('c2a', 'y2026', '2A');
+    INSERT INTO households (id) VALUES ('h1');
+    INSERT INTO students (id, household_id, first_name, last_name) VALUES ('s1', 'h1', 'Ala', 'Testowa');
+    INSERT INTO enrollments (id, student_id, class_id) VALUES ('e1', 's1', 'c1a');
+  `);
+  db.exec(migration('0002_auth_sessions'));
+  db.exec(migration('0003_student_guardians'));
+  db.exec(migration('0004_enrollment_school_year'));
+
+  assert.equal(db.prepare('SELECT school_year_id FROM enrollments WHERE id = ?').get('e1').school_year_id, 'y2025');
+  assert.throws(
+    () => db.prepare('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES (?, ?, ?, ?)').run('e2', 's1', 'c1b', 'y2025'),
+    /UNIQUE constraint failed/,
+  );
+  db.prepare('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES (?, ?, ?, ?)')
+    .run('e3', 's1', 'c2a', 'y2026');
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM enrollments WHERE student_id = ?').get('s1').count, 2);
+  assert.throws(
+    () => db.prepare('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES (?, ?, ?, ?)').run('e4', 's1', 'c2a', 'y2025'),
+    /enrollment_class_school_year_mismatch/,
+  );
+  assert.throws(
+    () => db.prepare('INSERT INTO enrollments (id, student_id, class_id) VALUES (?, ?, ?)').run('e5', 's1', 'c2a'),
+    /enrollment_class_school_year_mismatch/,
+  );
+  db.close();
+});
