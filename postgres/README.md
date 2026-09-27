@@ -8,7 +8,13 @@ wiersza wpłaty serializuje korekty; samo dodanie zdarzenia przypisania
 atomowo zmienia status wpłaty. Widok sumuje tylko zarejestrowane wpłaty
 pomniejszone o korekty, bez wyliczania długu. Agregaty PostgreSQL typu BIGINT
 mogą wracać z `pg` jako tekst; API musi je bezpiecznie przeliczyć przed
-wysłaniem JSON. Tabele księgi i przypomnień powstaną w kolejnych etapach.
+wysłaniem JSON. `0003_ledger.sql` dodaje kategorie, niezmienne wpisy księgi
+i korekty, bilans otwarcia z osobnymi korektami oraz wersjonowany preliminarz.
+Widoki wyliczają kwoty netto, aktualną wersję preliminarza i bilans roku.
+Powiązana wpłata może zasilić tylko jeden wpis przychodowy w tym samym roku.
+Wydatek powyżej 3000 EUR wymaga referencji uchwały; dokładny proces
+zatwierdzania wymaga nadal decyzji Rady. Tabele przypomnień powstaną w
+kolejnych etapach.
 
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
