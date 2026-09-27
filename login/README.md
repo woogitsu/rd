@@ -21,6 +21,8 @@ npm run build:login    # dist/login, serwowane przez src/node-app.js pod /login/
 6. **Zmiana hasła** — obecne i nowe hasło; pozostałe sesje zostają wylogowane.
 7. **Start** — lista paneli (dostęp sprawdza serwer), wylogowanie i wylogowanie ze wszystkich urządzeń.
 
+Wspólny komputer (#197): ekran to jedna strona, więc przy wylogowaniu, „Wróć do logowania”, zmianie części „#…”, przejściu do kolejnego etapu i `pagehide` funkcja `clearSensitiveViews` (login/core.js) usuwa z DOM klucz TOTP, kod QR, kody odzyskiwania i wszystkie pola haseł i kodów oraz wyłącza „Pokaż hasło”. Komunikat „Wylogowano” pojawia się tylko po odpowiedzi 204 lub 401; przy błędzie sieci lub serwera ekran mówi, że sesja może być nadal aktywna, i zostaje w bieżącym widoku. Wygasła lub zastąpiona konfiguracja MFA (`mfa_enrollment_not_found`) wraca do przycisku „Rozpocznij”. Poza zakresem: znikanie kodów odzyskiwania po czasie i potwierdzenie „Zapisałem kody” przed wylogowaniem (propozycja 2 w #197).
+
 Kolejność widoków po zalogowaniu wybiera `nextView` (core.js) na podstawie `GET /api/auth/state`. Walidacja w przeglądarce (długość hasła, format kodu) jest tylko podpowiedzią — reguły egzekwuje serwer.
 
 Testy czystych funkcji i statycznych wymagań HTML/CSS: `tests/login-core.test.js`. Szczegóły przepływu i otwarte decyzje: [docs/AUTH.md](../docs/AUTH.md).

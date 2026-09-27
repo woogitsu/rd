@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import {
-  PANELS, errorMessage, formatSecret, isRecoveryFormat, isTotpFormat, nextView, normalizeRecoveryCode, normalizeTotp,
+  PANELS, SECRET_INPUT_IDS, clearSensitiveViews, enrollmentConfirmError, errorMessage, formatSecret, isRecoveryFormat,
+  isTotpFormat, logoutOutcome, nextView, normalizeRecoveryCode, normalizeTotp,
   parseFragment, parseOtpauthUri, passwordLength, qrMatrix, qrSvgPath, validateEmail, validateNewPassword,
 } from '../login/core.js';
 import { generateRecoveryCodes, totpMethod } from '../src/pg/mfa.js';
@@ -137,4 +138,110 @@ test('CSS logowania: białe tło, paleta DESIGN.md, fokus, rozmiar celów, ogran
   assert.match(css, /prefers-reduced-motion: reduce/);
   assert.doesNotMatch(css, /outline:\s*(none|0)\b/);
   assert.doesNotMatch(css, /@import|url\(\s*["']?https?:/, 'bez zewnętrznych czcionek i obrazów');
+});
+
+// --- #197: dane wrażliwe w DOM, wylogowanie, „Pokaż hasło”, wygasła konfiguracja --------------
+
+// Minimalna atrapa dokumentu: elementy o id z login/index.html, tekst „body” to suma treści.
+function fakeDocument() {
+  const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+  const elements = new Map();
+  const make = (id) => {
+    const tag = html.match(new RegExp(`<(\\w+)[^>]*\\sid="${id}"[^>]*>`))?.[0] ?? '';
+    const element = {
+      id, textContent: '', value: '', children: [], attributes: {},
+      type: tag.match(/type="([^"]+)"/)?.[1] ?? null,
+      dataset: {},
+      replaceChildren(...nodes) { this.children = nodes; },
+      setAttribute(name, value) { this.attributes[name] = String(value); },
+      getAttribute(name) { return this.attributes[name] ?? null; },
+    };
+    elements.set(id, element);
+    return element;
+  };
+  ids.forEach(make);
+  const toggles = [...html.matchAll(/<button[^>]*class="toggle-password"[^>]*data-target="([^"]+)"[^>]*>/g)].map((match, index) => {
+    const toggle = make(`toggle-${index}`);
+    toggle.dataset.target = match[1];
+    toggle.textContent = 'Pokaż hasło';
+    toggle.attributes['aria-pressed'] = 'false';
+    return toggle;
+  });
+  return {
+    elements, toggles,
+    getElementById: (id) => elements.get(id) ?? null,
+    querySelectorAll: (selector) => (selector === '.toggle-password' ? toggles : []),
+    bodyText: () => [...elements.values()].map((el) => [el.textContent, el.value, ...el.children.map((child) => child.textContent ?? '')].join(' ')).join(' '),
+  };
+}
+
+test('#197: clearSensitiveViews usuwa klucz, QR, kody odzyskiwania i hasła; przywraca „Pokaż hasło”', () => {
+  const doc = fakeDocument();
+  const secret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+  const codes = generateRecoveryCodes(10);
+  doc.getElementById('manual-key').textContent = formatSecret(secret);
+  doc.getElementById('qr-code').replaceChildren({ textContent: `otpauth://totp/RD:osoba@example.invalid?secret=${secret}` });
+  doc.getElementById('recovery-codes').replaceChildren(...codes.map((code) => ({ textContent: code })));
+  for (const id of SECRET_INPUT_IDS) doc.getElementById(id).value = 'haslo syntetyczne 123';
+  doc.getElementById('login-email').value = 'osoba@example.invalid';
+  doc.getElementById('login-password').type = 'text';
+  doc.toggles[0].setAttribute('aria-pressed', 'true');
+  doc.toggles[0].textContent = 'Ukryj hasło';
+
+  clearSensitiveViews(doc);
+  const text = doc.bodyText();
+  assert.ok(!text.includes(secret.slice(0, 8)) && !text.includes('JBSW Y3DP'), 'sekret TOTP w DOM');
+  assert.ok(!text.includes('otpauth'), 'URI otpauth w DOM');
+  for (const code of codes) assert.ok(!text.includes(code), 'kod odzyskiwania w DOM');
+  assert.ok(!text.includes('haslo syntetyczne'), 'hasło w polu');
+  for (const toggle of doc.toggles) {
+    assert.equal(doc.getElementById(toggle.dataset.target).type, 'password');
+    assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+    assert.equal(toggle.textContent, 'Pokaż hasło');
+  }
+  // Każde pole hasła i kodu z HTML jest na liście czyszczonych.
+  for (const [, id] of html.matchAll(/<input id="([^"]+)"[^>]*type="password"/g)) assert.ok(SECRET_INPUT_IDS.includes(id), id);
+  for (const id of ['totp-code', 'recovery-code', 'enroll-code']) assert.ok(SECRET_INPUT_IDS.includes(id));
+});
+
+test('#197: token zaproszenia/resetu zostaje przy keepTokens (hashchange przenosi go do pola)', () => {
+  const doc = fakeDocument();
+  doc.getElementById('invite-token').value = TOKEN;
+  clearSensitiveViews(doc, { keepTokens: true });
+  assert.equal(doc.getElementById('invite-token').value, TOKEN);
+  clearSensitiveViews(doc);
+  assert.equal(doc.getElementById('invite-token').value, '');
+});
+
+test('#197: „Wylogowano” tylko po 204 albo 401; błąd sieci i 503 mówią, że sesja może trwać', () => {
+  assert.deepEqual(logoutOutcome(204), { loggedOut: true, message: 'Wylogowano.' });
+  assert.equal(logoutOutcome(401).loggedOut, true);
+  for (const status of [503, 500, 403, 429]) {
+    const outcome = logoutOutcome(status);
+    assert.equal(outcome.loggedOut, false, String(status));
+    assert.match(outcome.message, /Nie udało się wylogować/);
+    assert.ok(!/^Wylogowano/.test(outcome.message));
+  }
+});
+
+test('#197: mfa_enrollment_not_found wraca do rozpoczęcia konfiguracji; invalid_code podpowiada nowszy QR', () => {
+  const expired = enrollmentConfirmError('mfa_enrollment_not_found', 409);
+  assert.equal(expired.restart, true);
+  assert.match(expired.message, /ponownie/);
+  const wrong = enrollmentConfirmError('invalid_code', 400);
+  assert.equal(wrong.restart, false);
+  assert.match(wrong.message, /innej karcie/);
+  assert.equal(enrollmentConfirmError('mfa_locked', 429).restart, false);
+});
+
+test('#197: main.js czyści dane przy wylogowaniu, powrocie, hashchange i pagehide; wylogowanie sprawdza wynik', () => {
+  const main = read('login/main.js');
+  const logoutHandler = main.slice(main.indexOf('querySelectorAll(".logout")'), main.indexOf('byId("logout-all")'));
+  assert.match(logoutHandler, /clearSensitiveViews\(document\)/);
+  assert.match(logoutHandler, /logoutOutcome\(/);
+  assert.doesNotMatch(logoutHandler, /catch \{ \/\* sesja mogła już wygasnąć \*\/ \}/);
+  assert.match(main, /addEventListener\("pagehide"[\s\S]{0,120}clearSensitiveViews\(document\)/);
+  assert.match(main, /addEventListener\("hashchange"[\s\S]{0,160}clearSensitiveViews\(document, \{ keepTokens: false \}\)/);
+  assert.match(main.slice(main.indexOf('.back-to-login')), /clearSensitiveViews\(document\)/);
+  assert.match(main.slice(main.indexOf('"enroll-confirm-form"')), /enrollmentConfirmError\(/);
 });

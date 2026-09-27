@@ -1,9 +1,12 @@
 import {
   PANELS,
+  clearSensitiveViews,
+  enrollmentConfirmError,
   errorMessage,
   formatSecret,
   isRecoveryFormat,
   isTotpFormat,
+  logoutOutcome,
   nextView,
   normalizeEmailInput,
   normalizeRecoveryCode,
@@ -84,6 +87,8 @@ async function submitting(form, work) {
 async function goNext(state) {
   lastState = state;
   const view = nextView(state);
+  // Przejście do kolejnego etapu: pola haseł puste, „Pokaż hasło” wyłączone (#197).
+  clearSensitiveViews(document);
   if (view === "start") renderStart();
   if (view === "enroll") resetEnrollment();
   showView(view);
@@ -258,7 +263,16 @@ byId("enroll-confirm-form").addEventListener("submit", (event) => {
       byId("codes-title").focus();
     } catch (error) {
       input.value = "";
-      formError(form, "enroll-error", error.message, [input]);
+      const outcome = enrollmentConfirmError(error.code, error.status);
+      if (outcome.restart) {
+        // Wygasła lub zastąpiona konfiguracja: stary QR znika, wracamy do „Rozpocznij” (#197).
+        formError(form, "enroll-error", "");
+        resetEnrollment();
+        byId("enroll-start-error").textContent = outcome.message;
+        byId("enroll-start").focus();
+        return;
+      }
+      formError(form, "enroll-error", outcome.message, [input]);
     }
   });
 });
@@ -379,23 +393,35 @@ function renderStart() {
   }));
 }
 
+// Wylogowanie: dane wrażliwe znikają z DOM zawsze; „Wylogowano” tylko po 204/401 (#197).
 for (const button of document.querySelectorAll(".logout")) {
   button.addEventListener("click", async () => {
-    try { await api("/api/logout", { method: "POST" }); } catch { /* sesja mogła już wygasnąć */ }
-    say("Wylogowano.");
-    showView("login");
+    clearSensitiveViews(document);
+    let status = 204;
+    try { await api("/api/logout", { method: "POST" }); } catch (error) { status = error.status; }
+    const outcome = logoutOutcome(status);
+    say(outcome.message);
+    if (outcome.loggedOut) {
+      lastState = null;
+      resetEnrollment();
+      showView("login");
+    }
   });
 }
 
 byId("logout-all").addEventListener("click", async () => {
+  clearSensitiveViews(document);
   try {
     const result = await api("/api/sessions/revoke-all", { method: "POST" });
     say(result.scope === "current"
       ? "Wylogowano to urządzenie. Inne urządzenia można wylogować po potwierdzeniu kodu z aplikacji."
       : `Wylogowano ze wszystkich urządzeń (sesje: ${result.revoked}).`);
   } catch (error) {
-    say(error.message);
+    const outcome = logoutOutcome(error.status);
+    say(outcome.loggedOut ? outcome.message : error.message);
+    if (!outcome.loggedOut) return;
   }
+  lastState = null;
   showView("login");
 });
 
@@ -425,8 +451,22 @@ async function route() {
 }
 
 for (const button of document.querySelectorAll(".back-to-login")) {
-  button.addEventListener("click", () => showView("login"));
+  button.addEventListener("click", () => {
+    clearSensitiveViews(document);
+    showView("login");
+  });
 }
 
-window.addEventListener("hashchange", () => route());
+// Token z nowego „#…” wstawia route() dopiero po wyczyszczeniu pól.
+window.addEventListener("hashchange", () => {
+  clearSensitiveViews(document, { keepTokens: false });
+  resetEnrollment();
+  route();
+});
+window.addEventListener("pagehide", () => {
+  clearSensitiveViews(document);
+  resetEnrollment();
+});
+// Powrót z pamięci podręcznej przeglądarki (bfcache): widok odtwarzamy ze stanu sesji.
+window.addEventListener("pageshow", (event) => { if (event.persisted) route(); });
 route();

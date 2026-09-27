@@ -167,3 +167,53 @@ export function qrSvgPath(matrix, quiet = 4) {
   });
   return { size, d: parts.join("") };
 }
+
+// --- Dane wrażliwe w DOM (#197) ---------------------------------------------------------
+// Ekran jest jedną stroną: ukryte widoki zostają w drzewie DOM tej samej karty (wspólny
+// komputer). Przy wylogowaniu, powrocie do logowania, zmianie „#…” i opuszczeniu strony
+// czyścimy sekret TOTP, kod QR, kody odzyskiwania i wszystkie pola haseł i kodów.
+
+export const SECRET_INPUT_IDS = Object.freeze([
+  "login-password", "totp-code", "recovery-code", "enroll-code",
+  "invite-password", "invite-repeat", "reset-password", "reset-repeat",
+  "change-current", "change-password", "change-repeat",
+]);
+const TOKEN_INPUT_IDS = Object.freeze(["invite-token", "reset-token"]);
+const SECRET_TEXT_IDS = Object.freeze(["manual-key"]);
+const SECRET_CONTAINER_IDS = Object.freeze(["qr-code", "recovery-codes"]);
+
+export function resetPasswordToggle(doc, toggle) {
+  const input = doc.getElementById(toggle.dataset.target);
+  if (input) input.type = "password";
+  toggle.setAttribute("aria-pressed", "false");
+  toggle.textContent = "Pokaż hasło";
+}
+
+export function clearSensitiveViews(doc, { keepTokens = false } = {}) {
+  for (const id of SECRET_TEXT_IDS) { const node = doc.getElementById(id); if (node) node.textContent = ""; }
+  for (const id of SECRET_CONTAINER_IDS) doc.getElementById(id)?.replaceChildren();
+  for (const id of SECRET_INPUT_IDS) { const input = doc.getElementById(id); if (input) input.value = ""; }
+  if (!keepTokens) for (const id of TOKEN_INPUT_IDS) { const input = doc.getElementById(id); if (input) input.value = ""; }
+  for (const toggle of doc.querySelectorAll(".toggle-password")) resetPasswordToggle(doc, toggle);
+}
+
+// Wynik POST /api/logout (status odpowiedzi albo błędu; błąd sieci = 503). Tylko 204
+// (wylogowano) i 401 (sesji już nie ma) oznaczają brak aktywnej sesji.
+export function logoutOutcome(status) {
+  if (status === 204 || status === 200 || status === 401) return { loggedOut: true, message: "Wylogowano." };
+  return {
+    loggedOut: false,
+    message: "Nie udało się wylogować. Sesja może być nadal aktywna — spróbuj ponownie albo zamknij przeglądarkę.",
+  };
+}
+
+// Błąd POST /api/mfa/confirm w trakcie konfiguracji.
+export function enrollmentConfirmError(code, status) {
+  if (code === "mfa_enrollment_not_found") {
+    return { restart: true, message: "Konfiguracja wygasła albo została rozpoczęta ponownie w innej karcie. Rozpocznij ją ponownie przyciskiem poniżej." };
+  }
+  if (code === "invalid_code") {
+    return { restart: false, message: `${MESSAGES.invalid_code} Jeśli konfigurację rozpoczęto w innej karcie, użyj najnowszego kodu QR.` };
+  }
+  return { restart: false, message: errorMessage(code, status) };
+}
