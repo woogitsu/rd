@@ -32,6 +32,8 @@
 // Wszystkie dane są syntetyczne. Znaczniki zakresów wstawiamy do tytułów,
 // treści protokołów i opisów wpłat; odpowiedź odmowna nie może zawierać żadnego.
 
+import { isMfaGateExempt } from '../../src/pg/mfa-policy.js';
+
 export const YEAR_1 = 'y-1';
 export const YEAR_2 = 'y-2';
 
@@ -358,6 +360,7 @@ export const ROUTE_MATRIX = Object.freeze([
     build: () => ({ path: '/api/session' }),
   },
   {
+    // Zwolniona z bramki MFA, ale sesja czekająca na MFA dostaje pustą listę (#189; test w pg-authz-matrix).
     id: 'session.access', module: 'session', method: 'GET', path: '/api/access', targets: ['-'],
     allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: null,
     build: () => ({ path: '/api/access' }),
@@ -740,6 +743,13 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.userRevokeSessions', 'POST', '/api/admin/users/:userId/revoke-sessions', {
     object: 'active', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/revoke-sessions`, body: {} }),
   }),
+  // Token resetu hasła i reset MFA innego konta (#3): jak cały moduł — wyłącznie admin z MFA.
+  adminRoute('admin.userPasswordReset', 'POST', '/api/admin/users/:userId/password-reset', {
+    ok: 201, object: 'active', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/password-reset`, body: {} }),
+  }),
+  adminRoute('admin.userMfaReset', 'POST', '/api/admin/users/:userId/mfa-reset', {
+    object: 'withFactor', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/mfa-reset`, body: { confirm: obj.userId } }),
+  }),
   adminRoute('admin.grants', 'GET', '/api/admin/grants', {}),
   adminRoute('admin.grantCreate', 'POST', '/api/admin/grants', {
     ok: 201, object: 'active',
@@ -844,6 +854,14 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: `/api/guardians/${obj.guardianId}/contact`, body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' } }),
   },
   {
+    id: 'families.relationContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/students/:studentId',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/students/${obj.studentId}`,
+      body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' },
+    }),
+  },
+  {
     id: 'families.enrollment', module: 'families', method: 'POST', path: '/api/students/:studentId/enrollments',
     targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     // Przypisanie do tej samej klasy (200, bez zmiany) — macierz sprawdza granicę zakresu, nie logikę przeniesień.
@@ -870,6 +888,41 @@ export const ROUTE_MATRIX = Object.freeze([
   mfaRoute('mfa.recovery', '/api/mfa/recovery', 200, 'confirmed'),
   mfaRoute('mfa.revokeAll', '/api/sessions/revoke-all', 200, null),
 
+  // ---------- login (#3, D-10) ----------
+  // Logowanie, przyjęcie zaproszenia i reset hasła działają bez sesji (cookie jest ignorowane) —
+  // uwierzytelnia je hasło albo jednorazowy token; zwolnione z bramki MFA. Zgodny Origin sprawdza router.
+  {
+    id: 'login.password', module: 'login', method: 'POST', path: '/api/login', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static', object: { kind: 'loginAccount' },
+    build: ({ obj }) => ({ path: '/api/login', body: { email: obj.email, password: obj.password } }),
+  },
+  {
+    // Stan własnej sesji dla ekranu logowania; zwolniony z bramki MFA (ekran musi wiedzieć, że trzeba zapisać MFA).
+    id: 'login.state', module: 'login', method: 'GET', path: '/api/auth/state', targets: ['-'],
+    allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/auth/state' }),
+  },
+  {
+    id: 'login.invitationAccept', module: 'login', method: 'POST', path: '/api/invitations/accept', targets: ['-'],
+    allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'invitationToken' },
+    build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password } }),
+  },
+  {
+    id: 'login.passwordReset', module: 'login', method: 'POST', path: '/api/password/reset', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'passwordResetToken' },
+    build: ({ obj }) => ({ path: '/api/password/reset', body: { token: obj.token, newPassword: obj.newPassword } }),
+  },
+  {
+    // Każdy zalogowany zmienia własne hasło; trasa NIE jest zwolniona z bramki MFA, więc admin/zarząd/skarbnik
+    // bez MFA dostają 403 (mfaGateBlocks). Nowy użytkownik na przypadek — zmiana wylogowuje inne sesje konta.
+    id: 'login.passwordChange', module: 'login', method: 'POST', path: '/api/password/change', targets: ['-'],
+    allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'ownPassword' }, freshUser: true,
+    build: ({ obj }) => ({
+      path: '/api/password/change',
+      body: { currentPassword: obj?.password ?? 'Nieznane haslo syntetyczne', newPassword: obj?.newPassword ?? 'Nowe haslo syntetyczne 1' },
+    }),
+  },
+
   // ---------- year-close (#15) ----------
   // Zarząd i skarbnik (odczyt, lista kontrolna), zamknięcie: wyłącznie zarząd; MFA, przydział bez klasy.
   // Osobna baza: zamknięcie roku 1 wygasza przydziały roku 1, więc `close` jest ostatnią trasą grupy.
@@ -895,10 +948,43 @@ export function denyStatus(route, actor, targetKey, mfa) {
   return typeof route.deny === 'function' ? route.deny(actor, targetKey, mfa) : route.deny;
 }
 
+// Bramka MFA routera (src/pg/mfa-policy.js): konto z aktywną rolą z
+// MFA_REQUIRED_ROLES (domyślnie admin, board, treasurer) bez potwierdzonego
+// czynnika i bez sesji z MFA dostaje 403 mfa_enrollment_required na każdej
+// trasie poza zwolnionymi. Aktorzy macierzy nie mają zapisanych czynników.
+const MFA_REQUIRED_ROLES = new Set(['admin', 'board', 'treasurer']);
+// Czy bramka zatrzymałaby tę sesję na trasie chronionej (niezależnie od zwolnień trasy).
+export function mfaPending(actor, mfa) {
+  if (mfa || actor.unauthenticated) return false;
+  return actor.grants.some((grant) => MFA_REQUIRED_ROLES.has(grant.role) && !grant.revoked && !grant.expiresAt);
+}
+export function mfaGateBlocks(route, actor, mfa) {
+  if (isMfaGateExempt(route.path.split('?')[0])) return false;
+  return mfaPending(actor, mfa);
+}
+
+// Każde zwolnienie z bramki MFA (src/pg/mfa-policy.js) ma uzasadnienie; zasada (#189): trasa
+// zwolniona zmienia wyłącznie stan bieżącej sesji albo działa bez sesji i nie ujawnia ról.
+export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
+  '/api/session': 'własna sesja (id, e-mail, stan MFA) — ekran MFA musi wiedzieć, kto jest zalogowany',
+  '/api/access': 'bez potwierdzonego MFA zwraca pustą listę przydziałów i mfaRequired (#189)',
+  '/api/logout': 'wylogowuje wyłącznie bieżącą sesję',
+  '/api/sessions/revoke-all': 'konto z czynnikiem bez potwierdzonego MFA wycofuje wyłącznie bieżącą sesję (#189)',
+  '/api/login': 'działa bez sesji; tworzy nową sesję bez MFA',
+  '/api/auth/state': 'stan własnej sesji dla ekranu logowania (bez ról)',
+  '/api/invitations/accept': 'działa bez sesji; uwierzytelnia token zaproszenia',
+  '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
+  '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
+  '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
+  '/api/mfa/': 'zapis i potwierdzenie MFA; limity błędów per sesja, wyższy sufit per konto (#189)',
+  '/api/public/': 'publiczne dane zatwierdzone',
+});
+
 // Oczekiwany status dla (trasa, aktor, MFA, zakres) — zamierzona polityka, nie stan kodu.
 export function expectedStatus(route, actor, mfa, targetKey) {
   if (route.allow === 'public') return route.ok;
   if (actor.unauthenticated) return 401;
+  if (mfaGateBlocks(route, actor, mfa)) return 403;
   if (route.allow === 'authenticated') return route.ok;
   const scopes = route.allow[actor.key] ?? [];
   if (!scopes.includes(targetKey)) return denyStatus(route, actor, targetKey, mfa);

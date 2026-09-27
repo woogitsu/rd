@@ -345,8 +345,9 @@ test('missing MFA, expired grant, no session and cross-origin writes are refused
     [`/api/payments/${payment.id}/corrections`, { amountCents: 1, reason: 'Bez MFA' }],
     [`/api/payments/${payment.id}/assignment`, { householdId: 'h1' }],
   ];
+  // Skarbnik bez sesji z MFA: bramka MFA routera (mfa_enrollment_required) przed trasą wpłat.
   for (const [path, body] of targets) {
-    for (const [cookie, status, error] of [[backend.cookie, 403, 'forbidden'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
+    for (const [cookie, status, error] of [[backend.cookie, 403, 'mfa_enrollment_required'], [expired, 403, 'forbidden'], [null, 401, 'unauthenticated']]) {
       const result = await read(await backend.fetch(call(cookie, path, { body, key: 'mfa-key-0001' })));
       assert.deepEqual([result.status, result.body], [status, { error }], path);
     }

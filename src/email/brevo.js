@@ -71,11 +71,15 @@ export function liveRunRefusal(config) {
 export class EmailTransportError extends Error {
   // retryable: dostawca jawnie odrzucił przed przyjęciem (np. 429) — można ponowić.
   // uncertain: nie wiadomo, czy wiadomość wyszła — NIE ponawiamy automatycznie.
-  constructor(code, { retryable = false, uncertain = false } = {}) {
+  // accountLevel: dostawca odrzucił konto, nie odbiorcę (401/402/403: zły lub
+  //   obrócony klucz, brak kredytów, nieuprawniony nadawca/IP) — wiadomość nie
+  //   wyszła; przebieg się zatrzymuje, wiersz wraca do kolejki (#209).
+  constructor(code, { retryable = false, uncertain = false, accountLevel = false } = {}) {
     super(code);
     this.code = code;
     this.retryable = retryable;
     this.uncertain = uncertain;
+    this.accountLevel = accountLevel;
   }
 }
 
@@ -120,6 +124,9 @@ export function createBrevoTransport({
       }
       if (response.status === 429) throw new EmailTransportError('provider_rate_limited', { retryable: true });
       if (response.status >= 500) throw new EmailTransportError('delivery_unknown', { uncertain: true });
+      if ([401, 402, 403].includes(response.status)) {
+        throw new EmailTransportError(`provider_rejected_${response.status}`, { accountLevel: true });
+      }
       if (!response.ok) throw new EmailTransportError(`provider_rejected_${response.status}`);
       let messageId = null;
       try {

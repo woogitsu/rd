@@ -2,13 +2,31 @@
 //   npm run email:worker              → dry-run (domyślnie; nic nie wysyła)
 //   npm run email:worker -- --send    → wysyłka, tylko gdy EMAIL_SENDING_ENABLED=true
 // Proces kończy się po jednym przebiegu (wymóg zadań cron Railway).
-// Log zawiera wyłącznie liczby i kody — bez adresów i treści.
+// Log zawiera wyłącznie liczby, kody i identyfikatory — bez adresów i treści.
+// SIGTERM/SIGINT (redeploy lub zatrzymanie usługi na Railway): przebieg kończy
+// bieżącą wiadomość, nie zaczyna następnej, zwraca resztę partii do kolejki
+// i zapisuje stopped_reason = 'shutdown' (#172).
 
 import { createPgDatabase } from '../src/db.js';
 import { createBrevoTransport, emailConfig } from '../src/email/brevo.js';
 import { runEmailBatch } from '../src/email/worker.js';
 
 const live = process.argv.includes('--send');
+const shutdown = new AbortController();
+for (const name of ['SIGTERM', 'SIGINT']) {
+  process.once(name, () => {
+    console.log(`[email-worker] ${name}: finishing the current message and stopping`);
+    shutdown.abort();
+  });
+}
+
+// Wiadomości przyjęte przez dostawcę, których wyniku nie udało się zapisać:
+// identyfikator wiersza i wiadomości dostawcy do ręcznego rozstrzygnięcia.
+function logUnrecorded(run) {
+  for (const entry of run?.unrecorded ?? []) {
+    console.error(`[email-worker] sent_result_unrecorded ${JSON.stringify(entry)}`);
+  }
+}
 
 if (!process.env.DATABASE_URL) {
   console.error('[email-worker] DATABASE_URL is required. Nothing was sent.');
@@ -20,15 +38,17 @@ if (!process.env.DATABASE_URL) {
     const transport = live
       ? createBrevoTransport({ apiKey: process.env.BREVO_API_KEY, appEnv: config.appEnv })
       : null;
-    const run = await runEmailBatch({ db }, { transport, dryRun: !live, config });
-    const { mode, day, remainingQuota, planned, sent, retried, failed, skipped, suppressed, stoppedReason } = run;
-    console.log(`[email-worker] ${JSON.stringify({ mode, day, remainingQuota, planned, sent, retried, failed, skipped, suppressed, stoppedReason })}`);
-    if (live && stoppedReason && ['sending_disabled', 'sender_not_configured', 'transport_missing'].includes(stoppedReason)) {
+    const run = await runEmailBatch({ db }, { transport, dryRun: !live, config, signal: shutdown.signal });
+    const { mode, day, remainingQuota, planned, sent, retried, failed, skipped, suppressed, requeued, stoppedReason } = run;
+    console.log(`[email-worker] ${JSON.stringify({ mode, day, remainingQuota, planned, sent, retried, failed, skipped, suppressed, requeued, stoppedReason })}`);
+    logUnrecorded(run);
+    if (live && stoppedReason && ['sending_disabled', 'sender_not_configured', 'transport_missing', 'provider_account_rejected'].includes(stoppedReason)) {
       process.exitCode = 2;
     }
   } catch (error) {
     const code = typeof error?.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(error.code) ? error.code : 'error';
     console.error(`[email-worker] failed ${code}`);
+    logUnrecorded(error?.run);
     process.exitCode = 1;
   } finally {
     await db.close().catch(() => {});

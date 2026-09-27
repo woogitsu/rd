@@ -77,8 +77,9 @@ test('SR-02: requireAccess without classId ignores class-scoped grants', async (
     };
     const handler = createPgHandler([...ROUTES, probe]);
     const rep = await seedUserSession(db, { userId: 'u-sec-rep', roles: [{ role: 'representative', classId: 'c-sec-1a', schoolYearId: 'y-2026' }] });
-    const classBoard = await seedUserSession(db, { userId: 'u-sec-cboard', roles: [{ role: 'board', classId: 'c-sec-1a', schoolYearId: 'y-2026' }] });
-    const board = await seedUserSession(db, { userId: 'u-sec-board', roles: [{ role: 'board', schoolYearId: 'y-2026' }] });
+    // Zarząd z sesją MFA (bramka MFA routera); test dotyczy zakresu, nie MFA.
+    const classBoard = await seedUserSession(db, { userId: 'u-sec-cboard', roles: [{ role: 'board', classId: 'c-sec-1a', schoolYearId: 'y-2026' }], mfa: true });
+    const board = await seedUserSession(db, { userId: 'u-sec-board', roles: [{ role: 'board', schoolYearId: 'y-2026' }], mfa: true });
     const status = async (cookie, query = '') => (await handler(request(`/api/probe/scope${query}`, { cookie }), env)).status;
     assert.equal(await status(rep), 403);
     assert.equal(await status(classBoard), 403);
