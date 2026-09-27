@@ -414,6 +414,93 @@ describe('karta gospodarstwa: zakres klasowy i zgody relacji (#95)', () => {
   });
 });
 
+describe('zmiana kontaktu opiekuna: zakres klasowy przez relację z uczniem (#200)', () => {
+  let db;
+  after(async () => { await db?.close(); });
+
+  test('zarząd z przydziałem 1A zmienia tylko opiekunów z aktywną relacją do ucznia 1A', async () => {
+    db = await createTestDb();
+    await seedSchoolYear(db, Y1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
+    await seedClass(db, { id: 'c-1a', schoolYearId: Y1, name: '1A' });
+    await seedClass(db, { id: 'c-1b', schoolYearId: Y1, name: '1B' });
+    // h-1: rodzeństwo s-a (1A) i s-b (1B). h-2: drugie gospodarstwo s-a (opieka dzielona).
+    await db.exec(`
+      INSERT INTO households (id) VALUES ('h-1'), ('h-2');
+      INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES
+        ('g-1', 'h-1', 'Alina', 'Pierwsza', 'g1@example.invalid', true),
+        ('g-2', 'h-1', 'Bogdan', 'Drugi', 'g2@example.invalid', true),
+        ('g-4', 'h-1', 'Dorota', 'Czwarta', 'g4@example.invalid', true),
+        ('g-e', 'h-1', 'Edward', 'Dawny', 'ge@example.invalid', true),
+        ('g-f', 'h-1', 'Felicja', 'Przyszla', 'gf@example.invalid', true),
+        ('g-q', 'h-2', 'Quentin', 'Partner', 'gq@example.invalid', true);
+      INSERT INTO students (id, household_id, first_name, last_name) VALUES
+        ('s-a', 'h-1', 'Ada', 'Wspolna'), ('s-b', 'h-1', 'Bartek', 'Wspolny');
+      INSERT INTO student_households (id, student_id, household_id, is_primary, source) VALUES
+        ('sh-a-2', 's-a', 'h-2', false, 'api');
+      INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact, starts_on, ends_on) VALUES
+        ('s-a', 'g-1', true, true, NULL, NULL),
+        ('s-a', 'g-2', true, false, NULL, NULL), ('s-b', 'g-2', true, true, NULL, NULL),
+        ('s-b', 'g-4', true, false, NULL, NULL),
+        ('s-a', 'g-e', true, false, NULL, '2020-01-01'), ('s-b', 'g-e', true, false, NULL, NULL),
+        ('s-a', 'g-f', true, false, '2999-01-01', NULL);
+      INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES
+        ('e-a', 's-a', 'c-1a', '${Y1}'), ('e-b', 's-b', 'c-1b', '${Y1}');
+    `);
+    const env = { db };
+    const call = async (path, cookie, body) => {
+      const response = await handlePgRequest(request(path, { method: 'PATCH', cookie, body }), env);
+      return { status: response.status, body: await response.json() };
+    };
+    const boardA = await seedUserSession(db, { userId: 'u-board-1a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }] });
+    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }] });
+    const body = { email: 'przejete@example.invalid', contactAllowed: false, reason: 'test zakresu' };
+    const snapshot = async () => (await db.query('SELECT id, email, contact_allowed FROM guardians ORDER BY id')).rows;
+    const counts = async () => ({
+      history: Number((await db.query('SELECT count(*) AS n FROM guardian_contact_changes')).rows[0].n),
+      audit: Number((await db.query(`SELECT count(*) AS n FROM audit_events WHERE action = 'guardian.contact.updated'`)).rows[0].n),
+    });
+
+    // Odmowa: 404 jak nieistniejący, bez zapisu w guardians, historii i audycie.
+    const missing = await call('/api/guardians/g-nope/contact', boardA, body);
+    assert.deepEqual(missing, { status: 404, body: { error: 'not_found' } });
+    const before = await snapshot();
+    // g-4: tylko dziecko z 1B we wspólnym gospodarstwie; g-q: nowy partner w drugim
+    // gospodarstwie ucznia 1A bez relacji; g-e: relacja z 1A zakończona; g-f: relacja przyszła.
+    for (const id of ['g-4', 'g-q', 'g-e', 'g-f']) {
+      assert.deepEqual(await call(`/api/guardians/${id}/contact`, boardA, body), missing, id);
+    }
+    assert.deepEqual(await snapshot(), before);
+    assert.deepEqual(await counts(), { history: 0, audit: 0 });
+
+    // Dwoje opiekunów ucznia 1A: obaj w zakresie (g-2 ma też dziecko w 1B; zasada
+    // „wszystkie relacje w zakresie” z #200 wymaga decyzji D-08 i nie jest tu wdrożona).
+    const first = await call('/api/guardians/g-1/contact', boardA, body);
+    assert.deepEqual(first, { status: 200, body: { guardian: { id: 'g-1', email: 'przejete@example.invalid', contactAllowed: false }, changed: true } });
+    // Podwójne kliknięcie: bez nowej zmiany.
+    assert.equal((await call('/api/guardians/g-1/contact', boardA, body)).body.changed, false);
+    const second = await call('/api/guardians/g-2/contact', boardA, { contactAllowed: false, reason: 'test zakresu' });
+    assert.equal(second.status, 200);
+    assert.equal(second.body.changed, true);
+
+    const history = await db.query('SELECT guardian_id, changed_by, reason FROM guardian_contact_changes ORDER BY guardian_id');
+    assert.deepEqual(history.rows, [
+      { guardian_id: 'g-1', changed_by: 'u-board-1a', reason: 'test zakresu' },
+      { guardian_id: 'g-2', changed_by: 'u-board-1a', reason: 'test zakresu' },
+    ]);
+    const audit = await db.query(`SELECT actor_id, entity_id FROM audit_events WHERE action = 'guardian.contact.updated' ORDER BY entity_id`);
+    assert.deepEqual(audit.rows, [{ actor_id: 'u-board-1a', entity_id: 'g-1' }, { actor_id: 'u-board-1a', entity_id: 'g-2' }]);
+
+    // Zarząd bez przydziału klasy: bez zmian (także opiekun spoza 1A i partner bez relacji).
+    for (const id of ['g-4', 'g-q']) {
+      const full = await call(`/api/guardians/${id}/contact`, board, body);
+      assert.equal(full.status, 200, id);
+      assert.equal(full.body.changed, true, id);
+    }
+    const byBoard = await db.query(`SELECT changed_by FROM guardian_contact_changes WHERE guardian_id IN ('g-4', 'g-q')`);
+    assert.deepEqual(byBoard.rows.map((r) => r.changed_by), ['u-board', 'u-board']);
+  });
+});
+
 test('migracja 0014 przepisuje istniejące wiersze z kolumn zgodności', async () => {
   const db = new PGlite();
   try {

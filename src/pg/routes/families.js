@@ -315,6 +315,12 @@ const GUARDIAN_IN_SCOPE = `($1::boolean OR EXISTS (
     SELECT 1 FROM student_guardians sg
      WHERE sg.guardian_id = g.id AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
        AND ${STUDENT_IN_SCOPE('sg.student_id')}))`;
+// Zakres klasowy (#200): opiekun tylko przez aktywną relację z uczniem z zakresu,
+// nie przez wspólne gospodarstwo — ta sama reguła co karta gospodarstwa (#95).
+const GUARDIAN_RELATED_IN_SCOPE = `EXISTS (
+    SELECT 1 FROM student_guardians sg
+     WHERE sg.guardian_id = g.id AND ${RELATION_ACTIVE('sg')}
+       AND ${STUDENT_IN_SCOPE('sg.student_id')})`;
 
 function parseContactInput(data) {
   const input = { reason: readReason(data.reason) };
@@ -349,7 +355,7 @@ async function updateGuardianContact(request, env, guardianId, json) {
   const result = await env.db.transaction(async (tx) => {
     const { rows } = await tx.query(
       `SELECT g.id, g.email, g.contact_allowed FROM guardians g
-        WHERE g.id = $5 AND ${GUARDIAN_IN_SCOPE}
+        WHERE g.id = $5 AND ${isClassScoped(scope) ? GUARDIAN_RELATED_IN_SCOPE : GUARDIAN_IN_SCOPE}
         FOR UPDATE OF g`,
       [...scopeParams(scope), guardianId],
     );
