@@ -361,7 +361,15 @@ test('representative exports only the roster of their own class, without financi
   assert.equal((await roster('')).status, 400);
   const repNoMfa = await seedUserSession(db, { userId: 'u-rep-nomfa', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: false });
   assert.equal((await roster('c-1a', repNoMfa)).status, 403);
+  // Od 0022 przydział klasy z rokiem innym niż rok klasy jest odrzucany (#201);
+  // taki wiersz mógł powstać wcześniej poza API — autoryzacja i tak go nie uznaje.
+  await assert.rejects(
+    seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true }),
+    /class_not_in_school_year/,
+  );
+  await db.exec('ALTER TABLE role_grants DISABLE TRIGGER a0_year_freeze');
   const repOldYear = await seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true });
+  await db.exec('ALTER TABLE role_grants ENABLE TRIGGER a0_year_freeze');
   assert.equal((await roster('c-1a', repOldYear)).status, 403, 'grant for another year');
   const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer' }], mfa: true });
   assert.equal((await roster('c-1a', treasurer)).status, 403);
