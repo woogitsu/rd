@@ -35,6 +35,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Dobrowolne wpłaty i korekty](docs/PAYMENTS.md)
 - [Księga i preliminarz](docs/LEDGER.md)
 - [Wydarzenia i publiczny kalendarz](docs/EVENTS.md)
+- [Zebrania, protokoły i uchwały](docs/MEETINGS.md)
 - [Rejestr decyzji zarządu i szkoły](docs/DECISIONS.md)
 - [Zasady pracy agentów](AGENTS.md)
 

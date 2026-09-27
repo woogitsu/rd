@@ -1,0 +1,430 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import { PGlite } from '@electric-sql/pglite';
+import { loadMigrations } from '../src/postgres-migrations.js';
+import {
+  addAgendaItem, approveMinutes, correctResolution, createMeeting, createMinutesVersion,
+  createResolution, determineQuorum, findAdoptedResolution, getMeeting, handle, listMeetings,
+  listMinutesForParents, listPublicMinutes, listSharedMinutes, recordAttendance,
+  setMinutesVisibility, updateMeeting, updateResolution,
+} from '../src/pg/meetings.js';
+
+const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
+
+const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
+const board = { userId: 'board', grants: [grant('board')], mfaVerified: false };
+const admin = { userId: 'admin', grants: [grant('admin', { schoolYearId: null })], mfaVerified: true };
+const auditor = { userId: 'auditor', grants: [grant('audit')], mfaVerified: false };
+const rep = { userId: 'rep', grants: [grant('representative', { classId: 'class-a' })], mfaVerified: true };
+const principal = { userId: 'principal', grants: [grant('principal')], mfaVerified: true };
+const treasurer = { userId: 'treasurer', grants: [grant('treasurer')], mfaVerified: true };
+const classBoard = { userId: 'class-board', grants: [grant('board', { classId: 'class-a' })] };
+
+let keySeq = 0;
+const key = () => `test-key-${++keySeq}`;
+
+async function meetingsDb() {
+  const db = new PGlite();
+  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  await db.query(`INSERT INTO school_years VALUES
+    ('year','2026/27','2026-09-01','2027-08-31'), ('other','2027/28','2027-09-01','2028-08-31')`);
+  await db.query("INSERT INTO classes (id, school_year_id, name) VALUES ('class-a','year','1A'), ('class-b','year','1B')");
+  await db.query("INSERT INTO households (id) VALUES ('household-1')");
+  await db.query(`INSERT INTO guardians (id, household_id, first_name, last_name)
+    VALUES ('guardian-1','household-1','Syntetyczny','Opiekun')`);
+  const users = ['board', 'admin', 'auditor', 'rep', 'principal', 'treasurer', 'class-board', 'u1', 'u2', 'u3'];
+  for (const id of users) {
+    await db.query('INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)',
+      [id, `${id}@example.invalid`, `Synthetic ${id}`]);
+  }
+  return db;
+}
+
+async function heldMeeting(db, rule = {}, extra = {}) {
+  const { meeting } = await createMeeting(db, board, {
+    idempotencyKey: key(), schoolYearId: 'year', kind: 'plenary', title: 'Zebranie plenarne',
+    scheduledAt: '2026-10-10T17:00:00Z', location: 'Sala 1', status: 'scheduled',
+    quorumMode: 'fraction', quorumNumerator: 1, quorumDenominator: 2, quorumInclusive: true,
+    votingBodySize: 4, quorumRuleSource: 'Założenie testowe', ...rule, ...extra,
+  });
+  await updateMeeting(db, board, { meetingId: meeting.id, status: 'held' });
+  return meeting;
+}
+
+async function attend(db, meetingId, reference, votingEligible, present, capacity = 'representative') {
+  return recordAttendance(db, board, { meetingId, ...reference, capacity, votingEligible, present });
+}
+
+test('quorum is met or not met from eligible present attendees only', async () => {
+  const db = await meetingsDb();
+  try {
+    const meeting = await heldMeeting(db);
+    await attend(db, meeting.id, { userId: 'u1' }, true, true);
+    await attend(db, meeting.id, { userId: 'u2' }, true, true);
+    await attend(db, meeting.id, { userId: 'u3' }, true, false);
+    await attend(db, meeting.id, { guardianId: 'guardian-1' }, false, true, 'guest');
+    const met = (await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id })).quorumCheck;
+    assert.equal(met.presentEligible, 2);
+    assert.equal(met.requiredCount, 2);
+    assert.equal(met.met, true);
+
+    await attend(db, meeting.id, { userId: 'u2' }, true, false);
+    const notMet = (await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id })).quorumCheck;
+    assert.equal(notMet.presentEligible, 1, 'ineligible guest present is not counted');
+    assert.equal(notMet.met, false);
+
+    // "more than half" of 4 requires 3; history of earlier checks is preserved
+    await updateMeeting(db, board, { meetingId: meeting.id, quorumMode: 'fraction', quorumNumerator: 1,
+      quorumDenominator: 2, quorumInclusive: false, votingBodySize: 4 });
+    await attend(db, meeting.id, { userId: 'u2' }, true, true);
+    const strict = (await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id })).quorumCheck;
+    assert.equal(strict.requiredCount, 3);
+    assert.equal(strict.met, false);
+
+    await updateMeeting(db, board, { meetingId: meeting.id, quorumMode: 'minimum_count', quorumMinCount: 2 });
+    const count = (await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id })).quorumCheck;
+    assert.equal(count.requiredCount, 2);
+    assert.equal(count.met, true);
+    const { quorumChecks } = await getMeeting(db, auditor, { meetingId: meeting.id });
+    assert.deepEqual(quorumChecks.map(check => check.met), [true, false, false, true]);
+    await assert.rejects(db.query('UPDATE meeting_quorum_checks SET met = true'), /cannot_be_changed/);
+  } finally { await db.close(); }
+});
+
+test('quorum requires a configured rule and a consistent voting body', async () => {
+  const db = await meetingsDb();
+  try {
+    const meeting = await heldMeeting(db, { quorumMode: 'not_configured', quorumNumerator: undefined,
+      quorumDenominator: undefined, quorumInclusive: undefined, votingBodySize: undefined });
+    await assert.rejects(determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id }),
+      { code: 'quorum_rule_not_configured' });
+    await updateMeeting(db, board, { meetingId: meeting.id, quorumMode: 'minimum_count', quorumMinCount: 1,
+      votingBodySize: 1 });
+    await attend(db, meeting.id, { userId: 'u1' }, true, true);
+    await attend(db, meeting.id, { userId: 'u2' }, true, true);
+    await assert.rejects(determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id }),
+      { code: 'quorum_attendance_exceeds_voting_body' });
+    await assert.rejects(updateMeeting(db, board, { meetingId: meeting.id, quorumMode: 'fraction',
+      quorumNumerator: 3, quorumDenominator: 2, quorumInclusive: true, votingBodySize: 4 }),
+    { code: 'invalid_quorum_rule' });
+    await assert.rejects(db.query("UPDATE meetings SET quorum_mode = 'fraction' WHERE id = $1", [meeting.id]));
+    await assert.rejects(attend(db, meeting.id, { userId: 'u3' }, undefined, true), { code: 'invalid_request' });
+  } finally { await db.close(); }
+});
+
+test('resolution number is unique per school year; corrections keep the number', async () => {
+  const db = await meetingsDb();
+  try {
+    const meeting = await heldMeeting(db);
+    await attend(db, meeting.id, { userId: 'u1' }, true, true);
+    await attend(db, meeting.id, { userId: 'u2' }, true, true);
+    const { quorumCheck } = await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id });
+    const adopted = (await createResolution(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, number: 'UCH/2026/1', title: 'Zakup sprzętu',
+      body: 'Treść syntetyczna.', status: 'adopted', votesFor: 2, votesAgainst: 0, votesAbstain: 0,
+      quorumCheckId: quorumCheck.id,
+    })).resolution;
+    assert.equal(adopted.status, 'adopted');
+    assert.ok(adopted.decidedAt);
+    await assert.rejects(createResolution(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, number: 'UCH/2026/1', title: 'Inny projekt', body: 'Treść.',
+    }), { code: 'resolution_number_taken' });
+
+    const otherYear = (await createMeeting(db, admin, {
+      idempotencyKey: key(), schoolYearId: 'other', kind: 'board', title: 'Zebranie zarządu',
+      scheduledAt: '2027-10-01T17:00:00+02:00',
+    })).meeting;
+    const sameNumber = await createResolution(db, admin, {
+      idempotencyKey: key(), meetingId: otherYear.id, number: 'UCH/2026/1', title: 'Projekt', body: 'Treść.',
+    });
+    assert.equal(sameNumber.resolution.schoolYearId, 'other');
+
+    const corrected = (await correctResolution(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, resolutionId: adopted.id,
+      reason: 'Błąd w liczbie głosów', votesFor: 1, votesAbstain: 1,
+    })).resolution;
+    assert.equal(corrected.number, 'UCH/2026/1');
+    assert.equal(corrected.revision, 2);
+    await assert.rejects(correctResolution(db, board, {
+      idempotencyKey: key(), resolutionId: adopted.id, reason: 'Druga gałąź',
+    }), { code: 'concurrent_version' });
+
+    const found = await findAdoptedResolution(db, treasurer, { schoolYearId: 'year', number: 'UCH/2026/1' });
+    assert.equal(found.resolution.id, corrected.id);
+    await assert.rejects(findAdoptedResolution(db, rep, { schoolYearId: 'year', number: 'UCH/2026/1' }),
+      { code: 'forbidden' });
+
+    // The ledger reference can be reconciled with the adopted resolution.
+    await db.query(`INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+      VALUES ('expense','year','expense','Wydatki','board')`);
+    await db.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id,
+      description, occurred_on, method, resolution_reference, created_by, idempotency_key)
+      VALUES ('large','year','expense',350000,'expense','Synthetic large expense','2026-10-20','bank',
+      ' UCH/2026/1 ','board','ledger-large-1')`);
+    const { rows } = await db.query('SELECT resolution_id FROM ledger_resolution_links');
+    assert.deepEqual(rows, [{ resolution_id: corrected.id }]);
+  } finally { await db.close(); }
+});
+
+test('final resolutions need a vote record and are immutable', async () => {
+  const db = await meetingsDb();
+  try {
+    const meeting = await heldMeeting(db);
+    await attend(db, meeting.id, { userId: 'u1' }, true, true);
+    const { quorumCheck } = await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id });
+    const draft = (await createResolution(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, title: 'Projekt uchwały', body: 'Treść.',
+    })).resolution;
+    await assert.rejects(updateResolution(db, board, { resolutionId: draft.id, status: 'adopted', number: 'U-1' }),
+      { code: 'vote_record_required' });
+    await assert.rejects(updateResolution(db, board, { resolutionId: draft.id, status: 'adopted', number: 'U-1',
+      votesFor: 2, votesAgainst: 0, votesAbstain: 0, quorumCheckId: quorumCheck.id }),
+    { code: 'resolution_votes_exceed_present_voters' });
+    const rejected = (await updateResolution(db, board, { resolutionId: draft.id, status: 'rejected',
+      votesFor: 0, votesAgainst: 1, votesAbstain: 0, quorumCheckId: quorumCheck.id })).resolution;
+    assert.equal(rejected.status, 'rejected');
+    await assert.rejects(updateResolution(db, board, { resolutionId: draft.id, title: 'Zmiana' }),
+      { code: 'resolution_final_immutable' });
+    await assert.rejects(db.query("UPDATE resolutions SET votes_for = 5 WHERE id = $1", [draft.id]),
+      /resolution_final_immutable/);
+    await assert.rejects(db.query('DELETE FROM resolutions WHERE id = $1', [draft.id]), /cannot_be_deleted/);
+  } finally { await db.close(); }
+});
+
+test('approved minutes are immutable, lock the meeting and are corrected by new versions', async () => {
+  const db = await meetingsDb();
+  try {
+    const meeting = await heldMeeting(db);
+    await addAgendaItem(db, board, { idempotencyKey: key(), meetingId: meeting.id, title: 'Otwarcie zebrania' });
+    await attend(db, meeting.id, { userId: 'u1' }, true, true);
+    const v1 = (await createMinutesVersion(db, board, {
+      idempotencyKey: key(), meetingId: meeting.id, body: 'Protokół syntetyczny, wersja pierwsza.',
+    })).minutes;
+    assert.equal(v1.version, 1);
+    await assert.rejects(db.query("UPDATE meeting_minutes SET body = 'Zmieniony tekst draftu' WHERE id = $1", [v1.id]),
+      /minutes_version_immutable/);
+    const approved = await approveMinutes(db, board, { meetingId: meeting.id, minutesId: v1.id });
+    assert.equal(approved.minutes.status, 'approved');
+    assert.equal((await approveMinutes(db, board, { minutesId: v1.id })).replayed, true);
+
+    await assert.rejects(db.query("UPDATE meeting_minutes SET body = 'Zmieniony tekst' WHERE id = $1", [v1.id]),
+      /minutes_approved_immutable/);
+    await assert.rejects(db.query('DELETE FROM meeting_minutes WHERE id = $1', [v1.id]), /cannot_be_deleted/);
+    await assert.rejects(attend(db, meeting.id, { userId: 'u2' }, true, true), { code: 'meeting_locked' });
+    await assert.rejects(addAgendaItem(db, board, { idempotencyKey: key(), meetingId: meeting.id, title: 'Nowy punkt' }),
+      { code: 'meeting_locked' });
+    await assert.rejects(updateMeeting(db, board, { meetingId: meeting.id, title: 'Nowy tytuł zebrania' }),
+      { code: 'meeting_locked' });
+
+    const v2 = (await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: meeting.id,
+      body: 'Protokół syntetyczny, poprawiony.', changeNote: 'Poprawka literówki' })).minutes;
+    const v3 = (await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: meeting.id,
+      body: 'Protokół syntetyczny, poprawiony drugi raz.' })).minutes;
+    assert.deepEqual([v2.version, v3.version, v2.supersedesId, v3.supersedesId], [2, 3, v1.id, v2.id]);
+    await assert.rejects(approveMinutes(db, board, { minutesId: v2.id }), { code: 'minutes_not_latest_version' });
+    await approveMinutes(db, board, { minutesId: v3.id });
+    await updateMeeting(db, board, { meetingId: meeting.id, status: 'archived' });
+    await assert.rejects(createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: meeting.id,
+      body: 'Po archiwizacji nie wolno.' }), { code: 'minutes_require_held_meeting' });
+    const { minutes } = await getMeeting(db, board, { meetingId: meeting.id });
+    assert.deepEqual(minutes.map(item => item.status), ['approved', 'draft', 'approved']);
+  } finally { await db.close(); }
+});
+
+test('parents and representatives see only approved minutes explicitly shared with them', async () => {
+  const db = await meetingsDb();
+  try {
+    const plenary = await heldMeeting(db);
+    const classB = await heldMeeting(db, {}, { kind: 'class', classId: 'class-b', title: 'Zebranie klasy 1B' });
+    const draft = (await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: plenary.id,
+      body: 'Projekt protokołu, niezatwierdzony.' })).minutes;
+    await assert.rejects(setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: draft.id,
+      visibility: 'parents' }), { code: 'minutes_not_approved' });
+    assert.deepEqual((await listMinutesForParents(db, { schoolYearId: 'year', classIds: ['class-a'] })).minutes, []);
+    assert.deepEqual((await listSharedMinutes(db, rep, { schoolYearId: 'year' })).minutes, []);
+
+    await approveMinutes(db, board, { minutesId: draft.id });
+    assert.deepEqual((await listMinutesForParents(db, { schoolYearId: 'year', classIds: ['class-a'] })).minutes, [],
+      'approved but internal minutes are not shared');
+    await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: draft.id, visibility: 'parents' });
+    const classMinutes = (await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: classB.id,
+      body: 'Protokół zebrania klasy 1B.' })).minutes;
+    await approveMinutes(db, board, { minutesId: classMinutes.id });
+    await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: classMinutes.id, visibility: 'parents' });
+
+    const parentsA = (await listMinutesForParents(db, { schoolYearId: 'year', classIds: ['class-a'] })).minutes;
+    assert.deepEqual(parentsA.map(item => item.meetingId), [plenary.id]);
+    const parentsB = (await listMinutesForParents(db, { schoolYearId: 'year', classIds: ['class-b'] })).minutes;
+    assert.equal(parentsB.length, 2);
+    assert.deepEqual((await listSharedMinutes(db, rep, { schoolYearId: 'year' })).minutes.map(item => item.meetingId),
+      [plenary.id]);
+    assert.equal((await listSharedMinutes(db, auditor, { schoolYearId: 'year' })).minutes.length, 2);
+    assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes, []);
+
+    // A newer approved correction is internal until shared again; the draft never leaks.
+    const v2 = (await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: plenary.id,
+      body: 'Poprawiony protokół, jeszcze projekt.' })).minutes;
+    const stillV1 = (await listMinutesForParents(db, { schoolYearId: 'year', classIds: [] })).minutes;
+    assert.deepEqual(stillV1.map(item => [item.minutesId, item.version]), [[draft.id, 1]]);
+    await approveMinutes(db, board, { minutesId: v2.id });
+    assert.deepEqual((await listMinutesForParents(db, { schoolYearId: 'year', classIds: [] })).minutes, []);
+    await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: v2.id, visibility: 'public' });
+    assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.version), [2]);
+    await assert.rejects(db.query('DELETE FROM meeting_minutes_publications'), /cannot_be_changed/);
+    await assert.rejects(listSharedMinutes(db, principal, { schoolYearId: 'year' }), { code: 'forbidden' });
+  } finally { await db.close(); }
+});
+
+test('representative, principal and audit cannot manage meetings', async () => {
+  const db = await meetingsDb();
+  try {
+    const base = { schoolYearId: 'year', title: 'Zebranie', scheduledAt: '2026-10-10T17:00:00Z' };
+    await assert.rejects(createMeeting(db, rep, { ...base, idempotencyKey: key(), kind: 'class', classId: 'class-a' }),
+      { code: 'forbidden' });
+    await assert.rejects(createMeeting(db, rep, { ...base, idempotencyKey: key(), kind: 'plenary' }), { code: 'forbidden' });
+    await assert.rejects(createMeeting(db, principal, { ...base, idempotencyKey: key(), kind: 'plenary' }),
+      { code: 'forbidden' });
+    await assert.rejects(createMeeting(db, auditor, { ...base, idempotencyKey: key(), kind: 'plenary' }),
+      { code: 'forbidden' });
+    await assert.rejects(createMeeting(db, { userId: 'board', grants: [grant('board', { schoolYearId: 'other' })] },
+      { ...base, idempotencyKey: key(), kind: 'plenary' }), { code: 'forbidden' });
+    await assert.rejects(createMeeting(db, null, { ...base, idempotencyKey: key(), kind: 'plenary' }),
+      { code: 'unauthenticated' });
+
+    const meeting = await heldMeeting(db);
+    await assert.rejects(getMeeting(db, rep, { meetingId: meeting.id }), { code: 'forbidden' });
+    await assert.rejects(listMeetings(db, rep, { schoolYearId: 'year' }), { code: 'forbidden' });
+    await assert.rejects(recordAttendance(db, rep, { meetingId: meeting.id, userId: 'rep', capacity: 'representative',
+      votingEligible: true, present: true }), { code: 'forbidden' });
+    await assert.rejects(updateMeeting(db, auditor, { meetingId: meeting.id, title: 'Zmiana' }), { code: 'forbidden' });
+    assert.equal((await getMeeting(db, auditor, { meetingId: meeting.id })).meeting.id, meeting.id);
+
+    // A board grant scoped to one class manages only that class.
+    await assert.rejects(createMeeting(db, classBoard, { ...base, idempotencyKey: key(), kind: 'plenary' }),
+      { code: 'forbidden' });
+    await assert.rejects(createMeeting(db, classBoard, { ...base, idempotencyKey: key(), kind: 'class',
+      classId: 'class-b' }), { code: 'forbidden' });
+    const own = await createMeeting(db, classBoard, { ...base, idempotencyKey: key(), kind: 'class', classId: 'class-a' });
+    assert.equal(own.meeting.classId, 'class-a');
+    assert.deepEqual((await listMeetings(db, classBoard, { schoolYearId: 'year' })).meetings.map(m => m.id), [own.meeting.id]);
+  } finally { await db.close(); }
+});
+
+test('double submit with the same Idempotency-Key creates one record', async () => {
+  const db = await meetingsDb();
+  try {
+    const input = { idempotencyKey: 'meeting-create-1', schoolYearId: 'year', kind: 'plenary',
+      title: 'Zebranie plenarne', scheduledAt: '2026-10-10T17:00:00Z' };
+    const [first, second] = await Promise.all([createMeeting(db, board, input), createMeeting(db, board, input)]);
+    assert.equal(first.meeting.id, second.meeting.id);
+    assert.deepEqual([first.replayed, second.replayed].sort(), [false, true]);
+    const third = await createMeeting(db, board, input);
+    assert.equal(third.replayed, true);
+    const { rows } = await db.query('SELECT count(*)::int AS n FROM meetings');
+    assert.equal(rows[0].n, 1);
+    const audits = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'meeting.created'");
+    assert.equal(audits.rows[0].n, 1);
+    await assert.rejects(createMeeting(db, board, { ...input, title: 'Inny tytuł zebrania' }),
+      { code: 'idempotency_conflict' });
+    await assert.rejects(createMeeting(db, admin, input), { code: 'idempotency_conflict' });
+    await assert.rejects(createMeeting(db, board, { ...input, idempotencyKey: 'short' }),
+      { code: 'invalid_idempotency_key' });
+
+    await updateMeeting(db, board, { meetingId: first.meeting.id, status: 'scheduled' });
+    await updateMeeting(db, board, { meetingId: first.meeting.id, status: 'held' });
+    const minutesInput = { idempotencyKey: 'minutes-create-1', meetingId: first.meeting.id,
+      body: 'Protokół syntetyczny do testu.' };
+    const a = await createMinutesVersion(db, board, minutesInput);
+    const b = await createMinutesVersion(db, board, minutesInput);
+    assert.equal(a.minutes.id, b.minutes.id);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM meeting_minutes')).rows[0].n, 1);
+  } finally { await db.close(); }
+});
+
+test('audit events carry identifiers only, without minutes or resolution text', async () => {
+  const db = await meetingsDb();
+  try {
+    const meeting = await heldMeeting(db);
+    await attend(db, meeting.id, { guardianId: 'guardian-1' }, false, true, 'guest');
+    await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: meeting.id,
+      body: 'Tajny tekst protokołu syntetycznego.' });
+    const { rows } = await db.query('SELECT action, metadata_json FROM audit_events ORDER BY occurred_at, action');
+    assert.ok(rows.length >= 4);
+    const serialized = JSON.stringify(rows);
+    assert.ok(!serialized.includes('Tajny'));
+    assert.ok(!serialized.includes('guardian-1'));
+    assert.ok(!serialized.includes('Syntetyczny'));
+  } finally { await db.close(); }
+});
+
+function json(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+}
+
+function httpEnv(db, actor) {
+  return {
+    db,
+    async loadAuthorizationContext() {
+      if (!actor) return null;
+      return { session: { user: { id: actor.userId }, mfaVerified: actor.mfaVerified }, grants: actor.grants };
+    },
+  };
+}
+
+function post(path, body, headers = {}) {
+  return new Request(`https://rd.example.invalid${path}`, {
+    method: 'POST',
+    headers: { Origin: 'https://rd.example.invalid', 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+test('HTTP handler enforces origin, session, idempotency and roles', async () => {
+  const db = await meetingsDb();
+  try {
+    const body = { schoolYearId: 'year', kind: 'plenary', title: 'Zebranie plenarne',
+      scheduledAt: '2026-10-10T17:00:00Z' };
+    const path = '/api/meetings';
+    const call = (request, actor = board) => handle(request, httpEnv(db, actor), new URL(request.url), json);
+
+    assert.equal(await handle(new Request('https://rd.example.invalid/api/payments'), httpEnv(db, board),
+      new URL('https://rd.example.invalid/api/payments'), json), null);
+    let response = await call(post(path, body, { Origin: 'https://evil.example.invalid', 'Idempotency-Key': key() }));
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'invalid_origin');
+    response = await call(post(path, body));
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, 'invalid_idempotency_key');
+    response = await call(post(path, body, { 'Idempotency-Key': 'http-create-1' }), null);
+    assert.equal(response.status, 401);
+    response = await call(post(path, body, { 'Idempotency-Key': 'http-create-1' }), rep);
+    assert.equal(response.status, 403);
+
+    response = await call(post(path, body, { 'Idempotency-Key': 'http-create-1' }));
+    assert.equal(response.status, 201);
+    const created = await response.json();
+    response = await call(post(path, body, { 'Idempotency-Key': 'http-create-1' }));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Idempotency-Replayed'), 'true');
+    assert.equal((await response.json()).meeting.id, created.meeting.id);
+
+    response = await call(new Request(`https://rd.example.invalid${path}/${created.meeting.id}`));
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).meeting.title, 'Zebranie plenarne');
+    response = await call(new Request(`https://rd.example.invalid${path}?schoolYearId=year`), auditor);
+    assert.equal((await response.json()).meetings.length, 1);
+    response = await call(new Request(`https://rd.example.invalid${path}/public-minutes?schoolYearId=year`), null);
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).minutes, []);
+    response = await call(new Request(`https://rd.example.invalid${path}/${created.meeting.id}`, {
+      method: 'PATCH', headers: { Origin: 'https://rd.example.invalid', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'held' }),
+    }));
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error, 'meeting_status_transition_invalid');
+    response = await call(new Request(`https://rd.example.invalid${path}/${created.meeting.id}`, { method: 'DELETE',
+      headers: { Origin: 'https://rd.example.invalid' } }));
+    assert.equal(response.status, 405);
+  } finally { await db.close(); }
+});
