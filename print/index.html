@@ -79,9 +79,17 @@
 
       <section class="block" aria-labelledby="file-title">
         <h2 id="file-title">2. Lista rodzin</h2>
-        <p class="hint">Plik CSV lub JSON z kolumnami: ID rodziny, Imię ucznia, Nazwisko ucznia, Klasa oraz opcjonalnie Wpłaty netto EUR. Maksymalnie 2 MB i 5000 wierszy.</p>
+        <p class="hint">Plik CSV (UTF-8, Windows-1250 z Excela PL lub UTF-16 z BOM; separator średnik, przecinek lub tabulator) lub JSON (UTF-8) z kolumnami: ID rodziny, Imię ucznia, Nazwisko ucznia, Klasa oraz opcjonalnie Wpłaty netto EUR. Maksymalnie 2 MB i 5000 wierszy.</p>
         <label>Plik z danymi
           <input id="file-input" type="file" accept=".csv,.json,text/csv,application/json" aria-describedby="file-message file-errors" />
+        </label>
+        <label>Kodowanie CSV
+          <select id="file-encoding" aria-describedby="file-message">
+            <option value="auto">Wykryj automatycznie</option>
+            <option value="utf-8">UTF-8</option>
+            <option value="windows-1250">Windows-1250 (Excel PL)</option>
+            <option value="windows-1252">Windows-1252 (Excel BE/FR)</option>
+          </select>
         </label>
         <div class="message" id="file-message" role="status"></div>
         <ul class="errors" id="file-errors" hidden></ul>

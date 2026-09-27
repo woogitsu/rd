@@ -78,6 +78,12 @@ code{background:#f0f1f1;padding:2px 4px}
     <h2 id="file-title">1. Wybierz plik</h2>
     <div class="controls">
       <label>Plik CSV lub Excel (.xlsx)<input id="file" type="file" aria-describedby="file-status" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
+      <label>Kodowanie CSV<select id="encoding" aria-describedby="file-status">
+        <option value="auto">Wykryj automatycznie</option>
+        <option value="utf-8">UTF-8</option>
+        <option value="windows-1250">Windows-1250 (Excel PL)</option>
+        <option value="windows-1252">Windows-1252 (Excel BE/FR)</option>
+      </select></label>
     </div>
     <p class="status muted" id="file-status" role="status">Maksymalnie 5 MB i 5000 wierszy; arkusz pierwszy. <a href="./template.csv" download="szablon-uczniowie.csv">Pobierz przykładowy CSV</a>.</p>
   </section>
