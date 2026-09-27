@@ -282,7 +282,7 @@ test('opieka naprzemienna: wpłata drugiego gospodarstwa liczy się poprawnie do
     await payment(t.db, 'p-hb', 'h-b', 6000);
 
     const totals = await t.db.query(
-      "SELECT household_id, net_amount_cents FROM household_payment_totals WHERE school_year_id = $1 ORDER BY household_id",
+      "SELECT household_id, net_amount_cents::int AS net_amount_cents FROM household_payment_totals WHERE school_year_id = $1 ORDER BY household_id",
       [YEAR],
     );
     assert.deepEqual(totals.rows, [{ household_id: 'h-b', net_amount_cents: 6000 }]);
