@@ -1,0 +1,53 @@
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#202124;background:#fff;font-synthesis:none}
+*{box-sizing:border-box}
+body{margin:0;background:#fff}
+.site-header{height:72px;padding:0 max(24px,calc((100vw - 1180px)/2));display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #ddd}
+.brand{display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none;font-weight:700;line-height:1.05}
+.brand small{font-weight:500;color:#666}
+.brand-mark{display:grid;place-items:center;width:38px;height:38px;background:#c62936;color:#fff;border-radius:4px}
+.site-header nav{display:flex;gap:4px}
+.site-header nav a{padding:9px 12px;color:#555;text-decoration:none;border-radius:4px}
+.site-header nav a:hover,.site-header nav .active{color:#9d1723;box-shadow:inset 0 -2px 0 #b52330}
+main{max-width:1180px;margin:auto;padding:28px 24px 70px}
+.breadcrumbs{font-size:.85rem;color:#666;margin-bottom:14px}
+.breadcrumbs a{color:#444}
+.page-heading{margin-bottom:12px}
+.page-heading h1{margin:3px 0 8px;font-size:clamp(1.6rem,4vw,2.3rem);letter-spacing:-.03em}
+.page-heading p:not(.eyebrow){margin:0;color:#666}
+.eyebrow{margin:0;color:#a11e2a;font-size:.76rem;font-weight:800;letter-spacing:.11em;text-transform:uppercase}
+.card{margin-top:18px;padding:22px;background:#fff;border:1px solid #e0ddd9;border-radius:6px}
+h2{margin:0;font-size:1.1rem}
+.note{color:#666;font-size:.85rem;margin:8px 0 0}
+.table-wrap{overflow:auto;margin-top:14px}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{padding:10px;border-bottom:1px solid #eceae7;text-align:left;vertical-align:top}
+th{color:#6b6661;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+td a{color:#202124}
+.amount{text-align:right;white-space:nowrap}
+.row-actions{white-space:nowrap;text-align:right}
+.row-actions button{padding:6px 9px;font-size:.8rem}
+label{display:grid;gap:7px;font-size:.83rem;font-weight:700;color:#555}
+label.checkbox{display:flex;align-items:center;gap:8px}
+label.checkbox input{width:auto}
+input,select,textarea,button{font:inherit}
+input,select,textarea{width:100%;padding:10px 11px;border:1px solid #bbb;border-radius:4px;background:#fff;color:#222}
+input:focus,select:focus,textarea:focus{outline:3px solid rgba(198,41,54,.14);border-color:#a51d29}
+button{padding:10px 15px;border:1px solid #aaa;border-radius:4px;background:#fff;cursor:pointer;font-weight:700}
+button:hover{border-color:#777}
+button:disabled{opacity:.6;cursor:wait}
+.primary{background:#b52330;color:#fff;border-color:#b52330}
+.primary:hover{background:#951b26}
+.empty,.message{color:#68635e}
+.message.error,.form-error{color:#a11e2a}
+.message:not(:empty){margin:0 0 16px;padding:12px;background:#fff;border:1px solid #e0ddd9;border-left:3px solid #b52330}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+dialog{width:min(560px,calc(100vw - 28px));padding:0;border:1px solid #ddd;border-radius:6px}
+dialog::backdrop{background:rgba(20,18,16,.4)}
+dialog form{display:grid;gap:15px;padding:24px}
+.dialog-heading{display:flex;justify-content:space-between;align-items:start}
+.dialog-heading h2{margin-top:3px;font-size:1.35rem}
+.icon-button{padding:1px 8px;border:0;background:transparent;font-size:1.6rem}
+.context{font-weight:400;color:#666;margin:0}
+.dialog-actions{display:flex;justify-content:flex-end;gap:8px}
+.form-error{min-height:1.2em;font-size:.85rem}
+@media(max-width:760px){.site-header{height:auto;padding:14px 16px;display:block}.site-header nav{margin-top:12px;overflow:auto}.site-header nav a{white-space:nowrap}main{padding:22px 16px 50px}.card{padding:16px}}

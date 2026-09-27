@@ -160,3 +160,15 @@ przechowuje treści eksportu ani danych osobowych; wierszy nie da się zmienić
 ani usunąć. Wycofanie na pustej bazie: usunięcie tabeli i funkcji
 `export_run_immutable`; na bazie z danymi — po kopii i decyzji o retencji
 (D-04). Szczegóły: [`docs/EXPORT.md`](../docs/EXPORT.md).
+
+`0014_households.sql` (issue #5) dodaje wiele gospodarstw ucznia
+(`student_households`, jedno główne na okres), członkostwo opiekunów w
+gospodarstwach (`guardian_households`), historię zmian kontaktu
+(`guardian_contact_changes`) i historię przypisania do klasy
+(`enrollment_history`). Skutki dla danych: kolumny `students.household_id` i
+`guardians.household_id` zostają (NOT NULL) i są przepisywane do nowych tabel;
+istniejące przypisania do klas dostają wpis historii `enrolled`. Żaden
+istniejący wiersz nie jest zmieniany ani usuwany. Od tej migracji nie da się
+usunąć przypisania do klasy ani zmienić jego ucznia lub roku, a uczniów i
+opiekunów z historią nie da się usunąć. Szczegóły:
+[`docs/DATA_MODEL.md`](../docs/DATA_MODEL.md).
