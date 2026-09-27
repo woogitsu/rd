@@ -144,6 +144,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/classes/:classId/students` | jak wyżej | nie | 403 / 404 | rola bez dostępu do rodzin: 403; klasa poza zakresem: 404 |
 | `GET /api/households/:householdId` | jak wyżej (dzieci spoza zakresu pominięte) | nie | 403 / 404 | rodzeństwo w 1A i 1B: przedstawiciel widzi tylko swoje dziecko (test uzupełniający) |
 | `PATCH /api/guardians/:guardianId/contact` | admin, zarząd — klasy roku 1; zarząd z przydziałem klasy — własna klasa | nie | 403 / 404 | rola bez prawa edycji: 403; opiekun poza zakresem: 404 |
+| `PATCH /api/guardians/:guardianId/students/:studentId` | jak wyżej; zakres klasowy — tylko aktywna relacja z uczniem własnej klasy | nie | 403 / 404 | zgoda na kontakt w relacji (#190); relacja poza zakresem lub nieistniejąca: 404; zakończona: 409 |
 | `POST /api/students/:studentId/enrollments` | jak wyżej | nie | 403 / 404 | macierz: przypisanie do tej samej klasy (200) |
 | `GET /api/print/cards?schoolYearId=:year&classId=:class` | admin, zarząd, skarbnik — rok 1 (z klasą lub bez); przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 400 / 403 | przydział klasowy bez classId: 400; kwoty wpłat tylko rola finansowa z MFA |
 | `POST /api/mfa/enroll` | każdy zalogowany (własny czynnik) | nie | — | |

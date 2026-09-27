@@ -813,6 +813,14 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: `/api/guardians/${obj.guardianId}/contact`, body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' } }),
   },
   {
+    id: 'families.relationContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/students/:studentId',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/students/${obj.studentId}`,
+      body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' },
+    }),
+  },
+  {
     id: 'families.enrollment', module: 'families', method: 'POST', path: '/api/students/:studentId/enrollments',
     targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     // Przypisanie do tej samej klasy (200, bez zmiany) — macierz sprawdza granicę zakresu, nie logikę przeniesień.
