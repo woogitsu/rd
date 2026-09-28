@@ -101,7 +101,8 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `guardians` | opiekunowie z tych relacji oraz opiekunowie odnotowani na zebraniach roku |
 | `households` | gospodarstwa uczniów, opiekunów oraz gospodarstwa z wpłat i przypisań roku |
 | `payment_entries`, `payment_corrections`, `payment_assignments` | wpłaty roku, ich korekty i przypisania |
-| `ledger_*` | kategorie, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku |
+| `payment_allocations`, `payment_allocation_reversals` | części wpłat podzielonych na gospodarstwa i ich cofnięcia z powodem (0104, #127) |
+| `ledger_*` | kategorie i historia ich wyłączenia, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku i jego przyjęcie przez zebranie (0073, #107) |
 | `events`, `event_revisions` | wydarzenia roku i ich rewizje |
 | `event_tasks`, `event_task_signups` | zadania i zapisy wolontariuszy wydarzeń roku (0076, #142) |
 | `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102) |
@@ -110,11 +111,33 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
 | `student_guardian_changes` | historia relacji opiekun–dziecko uczniów roku (zgoda, kontakt główny, daty) z dat roku — bez treści powodu (0026, D-03) |
 | `ledger_transfers` | przeniesienia kasa ↔ rachunek roku (0028) |
+| `ledger_entry_reviews` | weryfikacja wydatku przez drugą osobę (decyzja, uwaga przy zakwestionowaniu) roku (0072, #97) |
+| `resolution_spending_authorizations` | kwota upoważnienia z uchwały do wydatku i jej historia (0072, #93) roku |
+| `ledger_allocation_versions`, `ledger_allocation_items` | wersje przypisania wpisów księgi roku do wydarzeń i klas (centra kosztów, 0090, #117) |
 | `bank_reconciliations`, `bank_statement_imports`, `bank_statement_lines`, `bank_reconciliation_matches` | uzgodnienia roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami, także cofniętymi z powodem (0015/0024) |
+| `bank_reconciliation_group_matches`, `bank_reconciliation_group_match_items`, `bank_reconciliation_group_match_revocations` | dopasowania zbiorcze (jedna pozycja wyciągu ↔ kilka wpłat/wpisów), ich pozycje i cofnięcia z powodem (0105, #127) |
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
+| `document_status_events` | zastąpienie/unieważnienie dokumentu z powodem, wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id`/`replacement_document_id` po odtworzeniu nie mają odpowiednika, jak `source_document_id` (0066, #82) |
 | `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia oznaczone tym rokiem (`schoolYearId`), a bez oznaczenia — z dat roku (Europe/Brussels); bez `export.*` |
+
+Zdarzenia dotyczące obiektu przypisanego do roku (wiersz ma kolumnę
+`school_year_id`) niosą `metadata.schoolYearId` wzięte z TEGO wiersza, nie z
+daty zapisu (#174) — inaczej wpłata dopisana we wrześniu za poprzedni rok
+trafiłaby do eksportu złego roku. `insertAuditEvent` (`src/pg/audit.js`)
+odrzuca (`audit_event_missing_school_year`) zdarzenie z przedrostkiem
+`payment.`/`ledger.`/`reconciliation.` (część 1) albo `email.`/`meeting.`/
+`resolution.`/`event.`/`news_post.` (część 2) bez `schoolYearId` — błąd
+programisty wychodzi w testach, nie po cichu zniekształca eksport. Wyjątki
+świadomie bez tego wymogu: `news_photo.*` (biblioteka zdjęć nie ma kolumny
+`school_year_id` — nie jest przypisana do jednego roku),
+`email.address_suppressed` (dotyczy adresu w `email_suppressions`, bez
+kolumny roku — niezależne od kampanii; `schoolYearId` jest dopisywane, gdy
+zdarzenie dało się powiązać z konkretną wysyłką, ale nie jest wymagane) i
+`email.webhook.previous_secret_used` (rotacja sekretu webhooka Brevo — zdarzenie
+bezpieczeństwa integracji, niezwiązane z żadną konkretną kampanią ani rokiem).
+Sesje, MFA i konta pozostają bez roku, jak dotąd.
 
 Tabele z modułów, których migracji nie ma w bazie, są pomijane (wykrywanie
 przez `information_schema`); tabele rdzenia są wymagane.
@@ -129,11 +152,12 @@ Nie są eksportowane (jawna lista `EXPORT_EXCLUDED_TABLES` w
 `src/pg/export.js`, każda z uzasadnieniem; test kompletności w
 `tests/pg-export-v2.test.js` zawodzi, gdy nowa tabela nie jest ani w eksporcie,
 ani na tej liście): konta użytkowników (`users`: e-mail, nazwa), sesje,
-zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity logowania (0020), przydziały ról, klucze idempotencji zebrań,
-metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), dziennik kopii zapasowych `backup_runs` (0058, dane operacyjne), `data_access_log`, metadane importów (`import_batches`, D-04),
+zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity logowania (0020), przydziały ról, wersjonowaną informację o przetwarzaniu danych `privacy_notices` i ewidencję jej przekazania `privacy_notice_deliveries` (0075, #145, D-06 — dokument organizacji, nie zawsze przypisany do jednego roku), rejestr polityk retencji `retention_policies` (0074, #91, D-04 — konfiguracja/decyzje zarządu, nie dane roku), klucze idempotencji zebrań,
+metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), dziennik kopii zapasowych `backup_runs` (0058, dane operacyjne), `data_access_log`, rejestr żądań osób RODO `data_subject_requests` (0068, #100 — rozliczalność wobec osób, nie dane Rady; dostęp i retencja do D-07/D-08/D-09), metadane importów (`import_batches`, D-04),
 dziennik eksportów, kampanie e-mail z odbiorcami, wykluczeniami, kolejką,
 blokadami i zdarzeniami dostawcy (adresy e-mail; zakres i retencja — D-04)
-oraz aktualności i zdjęcia (zgody na wizerunek — osobny zakres), w tym pliki wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres D-04). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
+oraz aktualności i zdjęcia (zgody na wizerunek, w tym rejestr wycofań
+`news_photo_consent_withdrawals` (0083) — osobny zakres, D-04), w tym pliki wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres D-04), a także zatwierdzone dane do wpłaty `payment_instructions` (IBAN/BIC generatora EPC, #92 — dane wrażliwe finansowo, niepotrzebne do odtworzenia stanu klasy/gospodarstwa; wariant zachowawczy do rewizji po D-08) oraz belgijskie referencje płatności OGM-VCS `payment_references`/`payment_reference_revocations` (#83 — pseudonim gospodarstwa jak `payment_entries.reference`; zakres i retencja do decyzji D-04, wariant zachowawczy do rewizji). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
 zawierają więc identyfikatory, które w odtworzonej bazie nie mają
 odpowiednika. Pliki dokumentów kopiuje się osobno (patrz
 [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md), backup Storage Bucket).
@@ -210,6 +234,10 @@ wersję (`rd-eksport-<rok>-v2.json`).
   syntetycznych i stagingu.
 - Wynik testu odtworzenia wpisać do tabeli w
   [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md) (bez danych osobowych).
+- 0087 (#140): `guardian_update_links` (token jednorazowego linku) i
+  `guardian_update_requests` (wniosek rodzica o zmianę kontaktu, z proponowanym
+  e-mailem) są poza paczką roku — wariant zachowawczy do czasu decyzji zarządu
+  o retencji wniosków (D-04), jak `guardian_contact_changes` (D-03).
 
 ## Ryzyka i ograniczenia
 

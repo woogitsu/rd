@@ -96,6 +96,7 @@ test('przedstawiciel widzi tylko swoją klasę i bez informacji o wpłatach (tak
     assert.equal(result.status, 200);
     assert.equal(result.response.headers.get('Cache-Control'), 'no-store');
     assert.equal(result.body.paymentInfoIncluded, false);
+    assert.equal(result.body.paymentInstructions, null);
     assert.deepEqual(result.body.rows, [
       { householdId: 'H-1', firstName: 'Ala', lastName: 'Testowa', className: '1A' },
       { householdId: 'H-2', firstName: 'Ewa', lastName: 'Przykładowa', className: '1A' },
@@ -173,8 +174,8 @@ test('audyt print.cards_requested zawiera tylko liczby i zakres, bez danych osob
     const byActor = Object.fromEntries(rows.map((row) => [row.actor_id, row]));
     assert.equal(byActor['u-rep'].entity_type, 'school_year');
     assert.equal(byActor['u-rep'].entity_id, YEAR);
-    assert.deepEqual(byActor['u-rep'].metadata_json, { classId: 'c-1a', householdCount: 2, studentCount: 2, paymentInfoIncluded: false });
-    assert.deepEqual(byActor['u-tr'].metadata_json, { classId: null, householdCount: 3, studentCount: 4, paymentInfoIncluded: true });
+    assert.deepEqual(byActor['u-rep'].metadata_json, { classId: 'c-1a', householdCount: 2, studentCount: 2, paymentInfoIncluded: false, paymentInstructionsApproved: false });
+    assert.deepEqual(byActor['u-tr'].metadata_json, { classId: null, householdCount: 3, studentCount: 4, paymentInfoIncluded: true, paymentInstructionsApproved: false });
     const text = JSON.stringify(rows);
     assert.doesNotMatch(text, /Ala|Ewa|Olek|Testow|Przykład|H-1|H-2|@|4000/);
   } finally {
@@ -205,6 +206,41 @@ test('odpowiedź jest zgodna z wejściem print/core.js (parseInputRows → build
     const rep = await get(`schoolYearId=${YEAR}&classId=c-1a`, sessions.rep1a);
     const repHouseholds = buildHouseholds(parseInputRows(rep.body).rows).households;
     assert.ok(repHouseholds.every((h) => h.paymentEntry === 'unknown'));
+  } finally {
+    await db.close();
+  }
+});
+
+// #92: zatwierdzone dane do wpłaty (payment_instructions) na kartce i kodzie QR.
+test('zatwierdzone dane do wpłaty trafiają do kartek każdej roli uprawnionej do druku, edycja poza tą trasą', async () => {
+  const { db, sessions, get } = await setup();
+  try {
+    await db.query(
+      `INSERT INTO payment_instructions (id, school_year_id, iban, bic, payee_name, approved_by, idempotency_key)
+       VALUES ('pi-1', $1, 'BE68539007547034', 'GKCCBEBB', 'Rada Rodziców — Szkoła Testowa', 'u-board', 'print-test-pi-1')`,
+      [YEAR],
+    );
+    for (const [cookie, query] of [
+      [sessions.board, `schoolYearId=${YEAR}`],
+      [sessions.treasurerMfa, `schoolYearId=${YEAR}`],
+      [sessions.rep1a, `schoolYearId=${YEAR}&classId=c-1a`],
+    ]) {
+      const result = await get(query, cookie);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body.paymentInstructions, {
+        iban: 'BE68539007547034', bic: 'GKCCBEBB', payeeName: 'Rada Rodziców — Szkoła Testowa',
+        approvedAt: result.body.paymentInstructions.approvedAt,
+      });
+    }
+    // Rok bez zatwierdzonej konfiguracji: nadal null (osobny rok, brak wiersza).
+    const oldYear = await get('schoolYearId=y-old&classId=c-old', sessions.board);
+    assert.equal(oldYear.body.paymentInstructions, null);
+
+    // Ta trasa jest tylko do odczytu — nie da się nią zapisać nowej konfiguracji.
+    const post = await handlePgRequest(request(`/api/print/cards?schoolYearId=${YEAR}`, { method: 'POST', cookie: sessions.board, body: {} }), { db });
+    assert.equal(post.status, 405);
+    const { rows } = await db.query('SELECT count(*)::int AS n FROM payment_instructions');
+    assert.equal(rows[0].n, 1);
   } finally {
     await db.close();
   }

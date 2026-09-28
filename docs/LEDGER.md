@@ -1,6 +1,6 @@
 # Księga przychodów, wydatków i preliminarz
 
-Migracja `0007_ledger_schema.sql` rozwija początkową tabelę `ledger_entries` w niezmienną księgę opartą na centach EUR. Ten etap definiuje model i reguły integralności; nie udostępnia jeszcze API ani interfejsu.
+**Status: model w bazie (migracja `0007_ledger_schema.sql`), API na PostgreSQL (`src/pg/routes/ledger.js`, sekcja niżej) i panel (`ledger/`) — istnieją jako prototyp na danych syntetycznych, nie wdrożone na Railway ani zatwierdzone do pracy na danych rodzin.** Migracja `0007_ledger_schema.sql` rozwija początkową tabelę `ledger_entries` w niezmienną księgę opartą na centach EUR i definiuje model oraz reguły integralności.
 
 ## Zapisy księgi
 
@@ -39,15 +39,18 @@ Zmiana kategorii, daty, metody lub kierunku wpisu (najczęstsze pomyłki skarbni
 
 Dostęp dla dyrekcji i Komisji Rewizyjnej pozostaje wyłączony do zatwierdzenia macierzy kompetencji przez szkołę — dotyczy wszystkich tras tego dokumentu (`GET/POST /api/ledger*`, `export.csv`, przeksięgowanie). Jedyny dziś wyjątek: Komisja Rewizyjna (`audit`) ma odczyt zbiorczego raportu rocznego, osobna trasa `GET /api/reports/audit` opisana w docs/RECONCILIATION.md — bez dostępu do pojedynczych wpisów księgi ani dowodów, więc nie może samodzielnie zweryfikować pozycji raportu. Ten stan (raport tak, wpis i dowód nie) oraz brak ścieżki uwag/ustaleń kontroli to zakres issue #137, zależny od decyzji D-09.
 
-## Dalsze etapy
+## Interfejs
 
-- uzgadnianie księgi z wyciągiem,
-- eksport PDF (eksport CSV: patrz niżej, tylko router PostgreSQL),
-- powiązanie wpisów z prywatnymi dokumentami w Railway Storage Bucket ([DOCUMENTS.md](DOCUMENTS.md)),
 Interfejs w `ledger/` pokazuje podsumowanie roku, bieżący preliminarz i filtrowane wpisy. Pozwala tworzyć przychody lub wydatki i dopisywać korekty, korzystając wyłącznie z chronionego API. Formularz wymusza referencję uchwały dla wydatku powyżej 3000 EUR i zachowuje klucz idempotencji przy ponowieniu tego samego żądania.
 
-- interfejs uzgadniania rachunku,
-- edycja preliminarza,
+## Dalsze etapy
+
+Uzgadnianie księgi z wyciągiem bankowym już istnieje — patrz [RECONCILIATION.md](RECONCILIATION.md) (`src/pg/routes/reconciliation.js`), nie jest to już przyszły etap tego modułu. Pozostałe punkty:
+
+- eksport PDF (eksport CSV: patrz niżej, tylko router PostgreSQL),
+- powiązanie wpisów z prywatnymi dokumentami w Railway Storage Bucket ([DOCUMENTS.md](DOCUMENTS.md)),
+- formularze kategorii, wersji preliminarza i przyjęcia w panelu (dziś tylko API: sekcja „Preliminarz przez API”),
+- formularz przesyłania prywatnego dokumentu w interfejsie księgi (API: [DOCUMENTS.md](DOCUMENTS.md)),
 - numer, data i wystawca dowodu oraz uzasadnienie wydatku bez dowodu (#87, wymaga migracji).
 
 Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowania, korekt, uchwał i dostępu przez Radę oraz szkołę.
@@ -69,6 +72,14 @@ Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowa
 - **Dostęp.** Każda trasa wymaga sesji, MFA i roli `admin`, `board` albo `treasurer` w zakresie roku szkolnego. `representative`, `audit` i `principal` dostają `403`. Zapisy wymagają zgodnego nagłówka `Origin`.
 - **Kolejność błędów.** Przy kilku błędach naraz moduł zwraca ten sam kod co Worker (powiązanie wpłaty, uchwała, dokument, kategoria, ponowne ujęcie wpłaty). Jedyna świadoma różnica: przy korekcie osoba bez roli finansowej lub bez MFA dostaje `403` jeszcze przed wyszukaniem wpisu, więc nie może sprawdzić, czy dany identyfikator istnieje (Worker zwracał wtedy `404`).
 
+### Weryfikacja wydatku i uchwała jako upoważnienie (issue #97, #93; migracja 0072)
+
+- **Cztery oczy (#97).** Wydatek wchodzi do księgi od razu (bilans bez zmian), a druga osoba z roli finansowej (admin, zarząd, skarbnik, MFA) zapisuje `POST /api/ledger/{id}/reviews` `{ decision: 'verified' | 'questioned', note? }` z `Idempotency-Key`. Autor wpisu — także ta sama osoba z dwiema rolami — dostaje `403 four_eyes_required`; trigger `ledger_review_guard` odrzuca to samo przy bezpośrednim `INSERT`. Zakwestionowanie wymaga uwagi i rozwiązuje się korektą albo przeksięgowaniem, nie edycją. Stan (`unverified` / `verified` / `questioned`) to ostatnia decyzja (`ledger_entry_review_status`); lista: `GET /api/ledger/reviews?schoolYearId=…&reviewStatus=…`. Zdarzenie audytu `ledger.entry.verified` / `ledger.entry.questioned` ma aktora, czas, id wpisu i id weryfikacji — bez kwoty, opisu i uwagi. Istniejące wydatki są „niezweryfikowane”. Weryfikacja nie blokuje pracy ani zamknięcia roku; `GET /api/year-close/{rok}` pokazuje `expenseReviews` (liczba i suma niezweryfikowanych i zakwestionowanych wydatków netto > 0). Próg „wymaga weryfikacji” jako konfiguracja roku nie jest wprowadzony — weryfikacji podlega każdy wydatek (D-08).
+- **Uchwała (#93).** `POST /api/ledger` i przeksięgowanie przyjmują opcjonalne `resolutionId`. Uchwała musi być bieżącą rewizją (`409 resolution_not_current`), przyjętą (`409 resolution_not_adopted`), z zebrania ogólnego, z roku wpisu albo bezpośrednio poprzedniego roku (inaczej `404 resolution_not_found`, jak nieistniejąca); przychód: `400 resolution_expense_only`. Bez tekstu referencji zapisuje się numer uchwały; inny tekst niż numer: `400 resolution_reference_mismatch`. Wpis z `resolutionId` spełnia wymóg uchwały powyżej 3000 EUR. Tekstowa `resolutionReference` pozostaje dla zgodności.
+- **Kwota upoważnienia.** Zarząd lub admin (nie skarbnik) zapisuje `POST /api/ledger/resolutions/{id}/authorizations` `{ authorizedAmountCents, validUntil?, note, supersedesId? }`; zmiana kwoty to nowy wiersz wskazujący poprzedni. Gdy kwota istnieje, suma netto powiązanych wydatków (po korektach, cały łańcuch rewizji uchwały) nie może jej przekroczyć (`409 resolution_amount_exceeded`), a data wydatku nie może być późniejsza niż `validUntil` (`409 resolution_expired`). Sprawdza to trigger `c0_ledger_resolution_guard` pod blokadą wiersza uchwały, więc równoległe wydatki się serializują. Uchwała bez kwoty nie ma limitu kwoty (czy kwota jest obowiązkowa — D-15). Automatycznej blokady progu łącznego nie ma.
+- **Raport KR.** Sekcja 3 oznacza „powiązanie tekstowe”, a przy jawnym powiązaniu sprawdza stan bieżącej rewizji uchwały (poprawka na „odrzucona” oznacza wydatek). Sekcja 3a „Wykonanie uchwał finansowych” (`resolution_spending`), sekcja 3b: liczba i suma wydatków niezweryfikowanych, zakwestionowanych i zweryfikowanych oraz zestawienia kilku wydatków do 3000 EUR w tej samej kategorii w 30 dniach, razem powyżej 3000 EUR — jako informacja, nie zarzut.
+- **Lista uchwał dla wpisu.** `GET /api/ledger/resolutions?schoolYearId=…` zwraca numer, tytuł, stan, kwotę, wykorzystanie i pozostałą kwotę (bez treści uchwały i protokołu, D-09).
+
 ### Kasa i rachunek (issue #199)
 
 Bilans otwarcia (`ledger_opening_balances.amount_cents` = całość) ma część poza rachunkiem `cash_cents` (0028); poprawki (`ledger_opening_balance_adjustments`) zmieniają całość (`amount_cents`) i/lub część gotówkową (`cash_cents`). Rachunek = całość − kasa. Kwoty w centach EUR.
@@ -87,6 +98,29 @@ Bilans otwarcia (`ledger_opening_balances.amount_cents` = całość) ma część
 - Założenia (zarząd nic nie zdecydował — wariant zachowawczy): D-13 — jedna kasa, jeden rachunek, „kasa” = wszystko poza rachunkiem; bilans otwarcia i poprawki wyłącznie zarząd (bez admina i skarbnika); zasada czterech oczu dla poprawek (D-12) nie jest wymuszona; ręczny bilans tylko dla pierwszego roku — kolejne lata dostają bilans z zamknięcia.
 - Bilanse przeniesione przed 0028 mają `cash_cents = 0`; jeśli zawierały gotówkę, rozbicie wpisuje zarząd poprawką `{ amountCents: 0, cashCents: <gotówka> }`.
 
+### Centra kosztów: wydarzenie i klasa (issue #117, migracja `0090`)
+
+Wpis księgi można przypisać do **wydarzenia** (`events`) albo **klasy** (`classes`) tego samego roku — w całości albo w częściach (np. zakup dla dwóch klas). Część nieprzypisana to pozycja „ogólne”. Wpisy są niezmienne, więc przypisanie ma **wersje** (`ledger_allocation_versions` + `ledger_allocation_items`): zmiana = nowa wersja wskazująca poprzednią (`supersedesId`) z powodem; historia zostaje, a w dzienniku jest zdarzenie `ledger.allocation.created` (identyfikatory, numer wersji, liczba pozycji — bez kwot i opisów).
+
+- Wydarzenie lub klasa z innego roku → `400 invalid_cost_center` (w bazie: złożone klucze obce z `school_year_id`).
+- Suma pozycji ≤ netto wpisu → inaczej `409 allocation_exceeds_net`. **Korekta wpisu**, po której netto spadłoby poniżej sumy bieżącego przypisania, jest odrzucana (`409 allocation_exceeds_net`, także przeksięgowanie #144): najpierw nowa wersja przypisania z mniejszymi kwotami, potem korekta. Trigger na `ledger_corrections` pilnuje tego także przy bezpośrednim `INSERT`.
+- Wersja budowana na nieaktualnej poprzedniej (podwójne kliknięcie innym kluczem, równoległa zmiana) → `409 allocation_version_conflict` z `currentVersionId`; ten sam `Idempotency-Key` → powtórzenie odpowiedzi. Zmiana (wersja ≥ 2) wymaga powodu.
+- Wydarzenie odwołane zachowuje przypisane wpisy; raport pokazuje jego status.
+- Rok zamknięty → `409 school_year_closed` (obie tabele mają `a0_year_freeze`). Obie tabele są w paczce eksportu roku (docs/EXPORT.md).
+- Kolumny `event_id`/`class_id` w `ledger_entries` (propozycja #117 pkt 1) nie zostały dodane — jedno źródło prawdy to wersje przypisania; przypisanie nowego wpisu to jego wersja 1.
+
+| Trasa | Opis |
+| --- | --- |
+| `GET /api/ledger/{id}/allocations` | netto wpisu, bieżąca wersja, suma przypisana, „ogólne”, historia wersji |
+| `POST /api/ledger/{id}/allocations` | `Idempotency-Key`; `{ "items": [{ "eventId" \| "classId", "amountCents" }], "supersedesId": null \| "<bieżąca wersja>", "reason?" }`; `items: []` = całość do „ogólne” |
+| `GET /api/ledger/cost-centers?schoolYearId=&type=event\|class&format=json\|csv` | przychody, wydatki i wynik per centrum + „ogólne” + razem; suma = `ledger_year_summary` |
+| `GET /api/ledger/cost-centers/events/{eventId}` | rozliczenie wydarzenia: przypisane wpisy (data, kategoria, opis, kwota), wynik |
+
+Rozliczenie wydarzenia jest pod `/api/ledger/…`, bo moduł wydarzeń obsługuje całe `/api/events/*` (zamiast proponowanego `/api/events/{id}/finance`).
+
+Dostęp: admin, zarząd, skarbnik z MFA w zakresie roku (jak księga). **Przedstawiciel klasy, `audit` i `principal` — `403`** na wszystkich trasach, także dla własnej klasy i nieistniejących identyfikatorów (bez wyroczni istnienia) — D-08 i D-09 nie są rozstrzygnięte, wariant zachowawczy. Raport per klasa obejmuje wyłącznie wpisy księgi przypisane klasie (wydatki, dofinansowania), nigdy wpłat rodzin — składki są dobrowolne i raport nie może stać się wskaźnikiem wpłat klasy.
+
+Poza zakresem (dalsze PR): wersja HTML do druku, sekcja „Wynik wydarzeń” w raporcie KR, UI w panelu księgi, widok dla przedstawiciela po decyzji D-08.
 ### Sprawozdanie roczne i przepływy środków (issue #125, część)
 
 Moduł `src/pg/annual-report.js`, trasy `src/pg/routes/financial-reports.js`. Bez migracji.
@@ -102,6 +136,22 @@ Poza zakresem (wymaga migracji i decyzji D-21/D-04): niezmienne migawki `financi
 
 `GET /api/ledger/export.csv?schoolYearId=…` (tylko router PostgreSQL) zwraca wszystkie wpisy roku w kolejności dat, z kwotą pierwotną, sumą korekt i kwotą netto w EUR. Wymaga tych samych ról, MFA i zakresu roku co pozostałe trasy. Plik ma kodowanie UTF-8 z BOM, separator `;` i przecinek dziesiętny (`123,45`), aby otwierał się w arkuszu z polskimi lub belgijskimi ustawieniami — to założenie do potwierdzenia przez skarbnika. Komórki zaczynające się od `=`, `+`, `-`, `@`, tabulatora lub CR dostają prefiks `'`, żeby arkusz nie wykonał ich jako formuły. Eksport ma limit 20 000 wpisów (`413 export_too_large`). Każdy eksport zapisuje zdarzenie `ledger.exported` (osoba, czas, rok, liczba wierszy) bez kwot i treści wpisów. Plik zawiera opisy i źródła wpisane przez skarbnika, więc wolno go przekazywać tylko osobom uprawnionym; zasady przechowywania eksportów wymagają decyzji zarządu.
 
-Schemat nie wymagał zmian — moduł korzysta z tabel, triggerów i widoków z `0003_ledger.sql`. Stary moduł `src/ledger.js` pozostaje bez zmian do czasu testów równoważności na danych syntetycznych i próby odtworzenia. Bilans otwarcia i jego poprawki mają trasy od #199 (sekcja „Kasa i rachunek”); nowe wersje preliminarza nadal dopisuje się poza API (brak tras także w Workerze).
+Schemat nie wymagał zmian — moduł korzysta z tabel, triggerów i widoków z `0003_ledger.sql`. Stary moduł `src/ledger.js` pozostaje bez zmian do czasu testów równoważności na danych syntetycznych i próby odtworzenia. Bilans otwarcia i jego poprawki mają trasy od #199 (sekcja „Kasa i rachunek”); kategorie, wersje preliminarza, jego przyjęcie i zestawienie plan vs wykonanie mają trasy od #107 (sekcja „Preliminarz przez API”; brak ich w Workerze).
+
+### Preliminarz przez API (issue #107; migracja 0073)
+
+Moduł `src/pg/routes/ledger-budget.js`. Zapisy wymagają MFA, same-origin, `Idempotency-Key` (podwójne kliknięcie = jeden zapis, inna treść z tym samym kluczem = `409 idempotency_conflict`); zapis i zdarzenie audytu (aktor, czas, identyfikatory — bez kwot i nazw) powstają w jednej transakcji; zamknięty rok daje `409 school_year_closed`. Rola bez uprawnień dostaje `403` przed sprawdzeniem istnienia obiektów.
+
+| Trasa | Kto | Opis |
+| --- | --- | --- |
+| `POST /api/ledger/categories` | admin, zarząd, skarbnik | `{ schoolYearId, direction, name }` → 201; nazwa zajęta w roku i kierunku: `409 category_exists` |
+| `POST /api/ledger/categories/{id}/deactivation` | jak wyżej | `{ reason }` → 201; wpis historii (`ledger_category_deactivations`), kategoria zostaje w wykonaniu, ale nie przyjmuje nowych wpisów (`400 invalid_category`); ponownie: `409 category_inactive` |
+| `POST /api/ledger/budget` | jak wyżej | `{ schoolYearId, categoryId, plannedCents ≥ 0, note? }` → 201; pierwsza wersja linii kategorii (kolejna: `409 budget_line_exists`) |
+| `POST /api/ledger/budget/{lineId}/revisions` | jak wyżej | `{ plannedCents, reason }` → 201; nowa wersja z `supersedes_id`, poprzednia zostaje; wersja nieaktualna albo przegrana równoległa rewizja: `409 budget_line_superseded` |
+| `POST /api/ledger/budget/adoptions` | zarząd | `{ schoolYearId, adoptedOn, note, resolutionId? }` → 201; zapisuje zestaw bieżących wersji linii („plan przyjęty”); uchwała opcjonalna, a wskazana musi być przyjęta, bieżąca i z zebrania ogólnego tego roku (inaczej 404) |
+| `GET /api/ledger/budget/history?schoolYearId=…` | admin, zarząd, skarbnik | wszystkie wersje linii (kto, kiedy, uzasadnienie, która bieżąca) i przyjęcia |
+| `GET /api/ledger/budget/execution?schoolYearId=…&asOf=…&format=json` (albo `csv`, `html`) | jak wyżej | per kategoria: plan przyjęty (ostatnie przyjęcie do `asOf`), plan bieżący, wykonanie netto (`ledger_entry_net`, wpisy do `asOf`), różnica, % wykonania, „poza planem”, przekroczenie; bez `asOf` `check` porównuje sumy z `ledger_year_summary`. CSV jak `export.csv` (brak planu = pusta komórka), HTML do druku z CSP raportu KR |
+
+Raport Komisji Rewizyjnej ma sekcję „2a. Preliminarz a wykonanie” z tym samym zestawieniem. Panel `ledger/` pokazuje plan bieżący, wykonanie, % i przekroczenie (tekst, nie tylko kolor). Założenia (D-08, D-09, D-21): kategorie i linie zapisują role finansowe, przyjęcie — wyłącznie zarząd; KR widzi zestawienie w raporcie, nie przez trasę; kto uchwala preliminarz — nierozstrzygnięte, dlatego uchwała jest opcjonalna. Sugerowana składka (D-14) nie jest częścią preliminarza; „planowane wpływy ze składek” to zwykła linia przychodów.
 
 To prototyp: router PostgreSQL działa tylko przy ustawionym `DATABASE_URL`, nie jest wdrożony na Railway i nie jest zatwierdzony do pracy na danych rodzin. Zasady księgowania, korekt, format referencji uchwały i dostęp dyrekcji oraz Komisji Rewizyjnej nadal wymagają decyzji Rady i szkoły.

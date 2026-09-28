@@ -79,6 +79,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: jak długo przechowujemy: dane ucznia i opiekuna po zakończeniu nauki, historię wpłat i księgę, dokumenty źródłowe, dziennik audytu, kampanie e-mail, kopie zapasowe oraz przesłany plik importu?
 - Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania. #152 proponuje krótszą retencję jawnej referencji wpłaty (`payment_entries.reference`) niż księgi — sama kolumna/hash nie jest wdrożona, czeka na tę decyzję.
 - Warianty w dokumentacji: nie wskazano okresów. Dokumenty Rady archiwizować zgodnie z regulaminem i decyzją szkoły (SECURITY.md).
+- Mechanizm techniczny (bez wartości): [`docs/RETENTION.md`](RETENTION.md) — rejestr `retention_policies` (#91), raport kandydatów `GET /api/admin/retention/preview`. Wykonanie (usuwanie/anonimizacja) świadomie poza zakresem #91 w obecnym PR.
 - Notatka techniczna (28.09.2026): kilka niescalonych PR wyłączyło zachowawczo nowe tabele z paczki eksportu rocznego (`EXPORT_EXCLUDED_TABLES`, `docs/EXPORT.md`) do czasu tej decyzji — dane nie znikają, tylko nie trafiają do paczki, więc nowa Rada/Komisja Rewizyjna ich stamtąd nie odtworzy: zatwierdzone dane do wpłaty `payment_instructions` w PR #341/#377 (niescalone, #92 — patrz też D-08 niżej, rewizja roli zatwierdzającej), belgijskie referencje płatności OGM-VCS `payment_references`/`payment_reference_revocations` w PR #345 (niescalony, #83), wycofania zgód na wizerunek `news_photo_consent_withdrawals` w PR #337 (niescalony, #106), pliki wariantów zdjęć `news_photo_files` w PR #351 (niescalony, #96), jednorazowy link i wniosek o aktualizację kontaktu opiekuna `guardian_update_links`/`guardian_update_requests` w PR #365 (niescalony, #140), rozstrzygnięcia doręczeń kampanii e-mail `email_outbox_resolutions` w PR #309 (niescalony, #139).
 - Status: otwarta
 - Data decyzji:
@@ -101,6 +102,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: kto, kiedy i jaką treścią informuje opiekunów o przetwarzaniu ich danych i danych dzieci w panelu?
 - Dlaczego: wymagane przed importem (#2) i przed pierwszą wiadomością (#10).
 - Warianty w dokumentacji: nie wskazano.
+- Mechanizm techniczny (bez treści): [`docs/PRIVACY_NOTICE.md`](PRIVACY_NOTICE.md) — wersjonowany rejestr `privacy_notices` (#145), bramka `409 privacy_notice_missing` na commit importu, publiczna trasa `GET /api/public/privacy-notice`. Bramki dla kampanii e-mail i wydruku kartek są świadomie poza zakresem #145 w obecnym PR (kolizja z równoległymi PR-ami na `src/pg/routes/email.js`/`print/core.js`) — patrz dokument.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -136,6 +138,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
   | Eksport roczny / archiwum | roczny: `admin, board`; archiwum kadencji: `board` | `src/pg/routes/exports.js:25,27` | `tests/pg-export-v2.test.js` |
   | Zamknięcie roku | odczyt/checklista: `board, treasurer`; zamknięcie: `board` | `src/pg/routes/year-close.js:35-37` | `tests/pg-year-close.test.js` |
   | Kartki (dowody wpłat) | `admin, board, treasurer` + `representative` (własna klasa) | `src/pg/routes/print.js:30-31` | `tests/pg-print.test.js` |
+  | Centra kosztów (#117) | `admin, board, treasurer`; przedstawiciel, `audit`, `principal` — brak dostępu | `src/pg/routes/ledger-cost-centers.js:28` | `tests/pg-ledger-cost-centers.test.js` |
   | Sprawozdanie roczne i przepływy (#125) | `board, treasurer`; `admin`, `audit`, `principal`, przedstawiciel — brak dostępu | `src/pg/routes/financial-reports.js:20` | `tests/pg-annual-report.test.js` |
   | Uzgodnienia bankowe | zapis: `admin, board, treasurer`; raport: `audit, board, treasurer`; raport archiwum: `board, treasurer` | `src/pg/routes/reconciliation.js:31-34` | `tests/pg-reconciliation.test.js` |
   | Wydarzenia (#12) | tworzy: `admin, board` + `representative` (własna klasa); zatwierdza/publikuje: wyłącznie `board`, zasada czterech oczu | `src/pg/routes/events.js`, `docs/EVENTS.md` | `tests/pg-events.test.js` |

@@ -103,6 +103,10 @@ function householdScope(has) {
       parts.push(`id IN (SELECT pr.new_household_id FROM payment_reassignments pr
         JOIN payment_entries p ON p.id = pr.payment_entry_id WHERE p.school_year_id = $1)`);
     }
+    // #127: gospodarstwa z częściami podzielonych wpłat roku.
+    if (has.has('payment_allocations')) {
+      parts.push('id IN (SELECT household_id FROM payment_allocations WHERE school_year_id = $1)');
+    }
   }
   return `(${parts.join(' OR ')})`;
 }
@@ -166,15 +170,28 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
   { table: 'payment_reassignments', requires: ['payment_entries'],
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
+  // 0104 (#127): części podzielonych wpłat i ich cofnięcia (własna kolumna school_year_id).
+  { table: 'payment_allocations', requires: ['payment_entries'], where: () => 'school_year_id = $1' },
+  { table: 'payment_allocation_reversals', requires: ['payment_allocations'], where: () => 'school_year_id = $1' },
 
   { table: 'ledger_categories', where: () => 'school_year_id = $1' },
+  // 0073 (#107): historia wyłączenia kategorii i przyjęcie preliminarza przez zebranie.
+  { table: 'ledger_category_deactivations', requires: ['ledger_categories'],
+    where: () => 'category_id IN (SELECT id FROM ledger_categories WHERE school_year_id = $1)' },
   { table: 'ledger_opening_balances', where: () => 'school_year_id = $1' },
   { table: 'ledger_opening_balance_adjustments', requires: ['ledger_opening_balances'],
     where: () => 'opening_balance_id IN (SELECT id FROM ledger_opening_balances WHERE school_year_id = $1)' },
   { table: 'ledger_entries', where: () => 'school_year_id = $1' },
   { table: 'ledger_corrections', requires: ['ledger_entries'],
     where: () => 'ledger_entry_id IN (SELECT id FROM ledger_entries WHERE school_year_id = $1)' },
+  // 0072 (#97/#93): weryfikacja wydatku przez drugą osobę i kwota upoważnienia
+  // z uchwały — dane Rady do odtworzenia, mają własny school_year_id.
+  { table: 'ledger_entry_reviews', where: () => 'school_year_id = $1' },
+  { table: 'resolution_spending_authorizations', where: () => 'school_year_id = $1' },
   { table: 'ledger_budget_lines', where: () => 'school_year_id = $1' },
+  { table: 'ledger_budget_adoptions', where: () => 'school_year_id = $1' },
+  { table: 'ledger_budget_adoption_lines', requires: ['ledger_budget_adoptions'],
+    where: () => 'adoption_id IN (SELECT id FROM ledger_budget_adoptions WHERE school_year_id = $1)' },
   { table: 'ledger_transfers', where: () => 'school_year_id = $1' },
 
   // 0015/0024: uzgodnienia rachunku roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami.
@@ -185,6 +202,12 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
   { table: 'bank_reconciliation_matches', requires: ['bank_reconciliations'],
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
+  // 0105 (#127): dopasowania zbiorcze, ich pozycje i cofnięcia (własna kolumna school_year_id).
+  { table: 'bank_reconciliation_group_matches', requires: ['bank_reconciliations'], where: () => 'school_year_id = $1' },
+  { table: 'bank_reconciliation_group_match_items', requires: ['bank_reconciliation_group_matches'],
+    where: () => 'school_year_id = $1' },
+  { table: 'bank_reconciliation_group_match_revocations', requires: ['bank_reconciliation_group_matches'],
+    where: () => 'school_year_id = $1' },
 
   { table: 'events', where: () => 'school_year_id = $1' },
   { table: 'event_revisions', requires: ['events'],
@@ -195,6 +218,9 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'event_task_signups', requires: ['event_tasks', 'events'],
     where: () => `task_id IN (SELECT t.id FROM event_tasks t JOIN events e ON e.id = t.event_id
       WHERE e.school_year_id = $1)` },
+  // 0090 (#117): przypisania wpisów księgi do wydarzeń i klas (po events i ledger_entries — klucze obce).
+  { table: 'ledger_allocation_versions', requires: ['ledger_entries'], where: () => 'school_year_id = $1' },
+  { table: 'ledger_allocation_items', requires: ['ledger_allocation_versions'], where: () => 'school_year_id = $1' },
 
   { table: 'meetings', where: () => 'school_year_id = $1' },
   { table: 'meeting_agenda_items', requires: ['meetings'],
@@ -216,6 +242,14 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'resolution_execution_events', requires: ['resolutions'],
     where: () => 'resolution_id IN (SELECT id FROM resolutions WHERE school_year_id = $1)' },
 
+  // 0066 (#82): zastąpienie/unieważnienie dokumentu — dane Rady do odtworzenia,
+  // w odróżnieniu od samego pliku (`documents` zostaje w EXPORT_EXCLUDED_TABLES).
+  // Brak school_year_id — zakres po dacie utworzenia zdarzenia (jak
+  // guardian_contact_changes). document_id/replacement_document_id wskazują na
+  // documents.id, którego w paczce nie ma — po odtworzeniu bez odpowiednika,
+  // jak już istniejące source_document_id w ledger_entries; restoreBundle
+  // działa z wyłączonymi kluczami obcymi (session_replication_role = replica).
+  { table: 'document_status_events', where: () => YEAR_TIME('created_at') },
   // 0065 (#76/#313): tytuł, kategoria, data i opis dokumentu — dane Rady do
   // odtworzenia, w odróżnieniu od samych plików (`documents` zostaje w
   // EXPORT_EXCLUDED_TABLES, bo pliki kopiuje się osobno ze Storage Bucketu).
@@ -256,9 +290,13 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   login_rate_limits: 'limity prób logowania — dane techniczne',
   password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
+  retention_policies: 'rejestr polityk retencji (D-04) — konfiguracja/decyzje zarządu, nie dane roku do odtworzenia (0074, #91)',
+  privacy_notices: 'wersjonowana informacja o przetwarzaniu danych (D-06) — dokument organizacji, nie zawsze przypisany do jednego roku (school_year_id nullable); zakres i retencja do decyzji D-06 (0075, #145)',
+  privacy_notice_deliveries: 'ewidencja przekazania informacji o przetwarzaniu per gospodarstwo/kanał — jak wyżej, zależy od privacy_notices (0075, #145)',
   documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',
   document_uploads: 'zamiary uploadu dokumentów (klucz obiektu, skrót) — dane techniczne jak documents (0032)',
   data_access_log: 'dziennik odczytu danych rodzin — rozliczalność dostępu, nie dane Rady do odtworzenia; retencja do decyzji D-04 (0067)',
+  data_subject_requests: 'rejestr żądań osób RODO (dostęp/sprostowanie/usunięcie/...) — rozliczalność wobec osób, nie dane Rady do odtworzenia; kto ma dostęp do rejestru i retencja do decyzji D-07/D-08/D-09 (0068, #100)',
   backup_runs: 'dziennik przebiegów kopii zapasowej i próby odtworzenia — dane operacyjne środowiska, nie danych Rady (0058)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',
   export_runs: 'dziennik eksportów — każdy eksport zmieniałby następny',
@@ -270,6 +308,8 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_outbox_resolutions: 'rozstrzygnięcia doręczeń kampanii (#139) — jak email_outbox, D-04',
   email_send_ledger: 'dziennik wysyłek dostawcy — D-04',
   email_suppressions: 'lista blokad adresów e-mail — D-04',
+  email_suppression_release_requests: 'wnioski o zdjęcie blokady adresu e-mail — D-04',
+  email_suppression_releases: 'zdjęcia blokady adresu e-mail (kto zgłosił/zatwierdził) — D-04',
   email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
   email_worker_runs: 'przebiegi zadania wysyłki — dane techniczne',
   email_preferences_events: 'zdarzenia preferencji kontaktu wg kategorii (wypisanie jednym kliknięciem) — adres tylko jako skrót, D-04 (#110)',
@@ -278,7 +318,15 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
   news_photo_consents: 'zgody na wizerunek — osobny zakres (D-04)',
+  payment_references: 'belgijska referencja OGM-VCS (#83) — pseudonim gospodarstwa; zakres i retencja do decyzji D-04 (jak payment_entries.reference), wariant zachowawczy do rewizji',
+  payment_reference_revocations: 'jak payment_references — zdarzenie unieważnienia referencji, ten sam zakres D-04',
+  payment_instructions: 'IBAN/BIC do generatora EPC (#92) — dane wrażliwe finansowo, niepotrzebne do odtworzenia stanu klasy/gospodarstwa; wariant zachowawczy do rewizji po D-08',
+  news_photo_consent_withdrawals: 'wycofania zgód na wizerunek — jak news_photo_consents, osobny zakres (D-04)',
   news_photo_files: 'pliki wariantów zdjęć (#96) — jak news_photos, osobny zakres (D-04); metadane pliku w prywatnym Storage Bucket, nie dane roku',
+  // 0087: wniosek rodzica o aktualizację kontaktu przez jednorazowy link (#140).
+  guardian_update_links: 'jednorazowy token linku do aktualizacji kontaktu (token_hash) — sekret, nigdy w paczce',
+  guardian_update_requests: 'wniosek niesie proponowany e-mail rodzica — jak guardian_contact_changes (D-03) dane '
+    + 'przed decyzją zarządu o zakresie retencji; wariant zachowawczy do czasu decyzji (D-04)',
 });
 
 // ---------------------------------------------------------------------------

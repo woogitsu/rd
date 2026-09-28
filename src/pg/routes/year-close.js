@@ -4,7 +4,7 @@
 //   GET  /api/year-close/{schoolYearId}                    stan, lista kontrolna, bilans
 //   POST /api/year-close/{schoolYearId}/start              { nextSchoolYearId }
 //   POST /api/year-close/{schoolYearId}/checklist/{item}   { note?, documentId? }
-//   POST /api/year-close/{schoolYearId}/close              zarząd + MFA, inna osoba niż rozpoczynająca
+//   POST /api/year-close/{schoolYearId}/close              zarząd + MFA, inna osoba niż rozpoczynająca; krok w górę MFA (#150)
 //   GET  /api/year-close/{schoolYearId}/handover           zestawienie przekazania (JSON, bez danych osobowych)
 //
 // Uprawnienia sprawdzane po stronie serwera. Każda trasa wymaga MFA i przydziału
@@ -15,7 +15,7 @@
 // Zapis i jego zdarzenie audytu powstają w jednej transakcji. Powtórzenie
 // zakończonej operacji zwraca stan bez nowego zapisu (replayed: true).
 
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { freshMfaForbiddenCode, isAuthorized, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
@@ -88,12 +88,19 @@ function optionalText(value, min, max, code) {
 }
 
 // Przydział z zawężeniem do klasy nie daje prawa do zamknięcia całego roku.
-async function authorize(request, env, schoolYearId, roles) {
+// `requireFreshMfa` (#150, SR-10, krok w górę): wyłącznie samo zamknięcie
+// roku (operacja nieodwracalna) wymaga MFA potwierdzonego od niedawna, nie
+// tylko kiedyś w sesji — sprawdzane PO roli/zakresie (SR-07).
+async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = false } = {}) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   const yearWide = { ...context, grants: context.grants.filter((grant) => !grant.classId) };
   if (!isAuthorized(yearWide, { roles, schoolYearId, requireMfa: true })) {
     throw new RequestError('forbidden', 403);
+  }
+  if (requireFreshMfa) {
+    const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+    if (staleCode) throw new RequestError(staleCode, 403);
   }
   return context.session.user.id;
 }
@@ -232,7 +239,23 @@ async function statusView(executor, schoolYearId) {
     checklist,
     missingChecklistItems: checklist.filter((entry) => !entry.confirmed).map((entry) => entry.item),
     balance: balanceView(closure, live),
+    // #97: informacja przed zamknięciem roku — wydatki bez weryfikacji drugiej
+    // osoby lub zakwestionowane. Nie blokuje zamknięcia (D-08).
+    expenseReviews: await expenseReviewSummary(executor, schoolYearId),
   };
+}
+
+async function expenseReviewSummary(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT s.review_status, count(*) AS entry_count, COALESCE(sum(e.net_amount_cents), 0) AS net_cents
+       FROM ledger_entry_review_status s JOIN ledger_entry_net e ON e.id = s.ledger_entry_id
+      WHERE s.school_year_id = $1 AND e.net_amount_cents > 0 AND s.review_status <> 'verified'
+      GROUP BY s.review_status`,
+    [schoolYearId],
+  );
+  const pick = (status) => rows.find((row) => row.review_status === status);
+  const view = (row) => ({ count: toSafeInteger(row?.entry_count ?? 0), netCents: toSafeInteger(row?.net_cents ?? 0) });
+  return { unverified: view(pick('unverified')), questioned: view(pick('questioned')) };
 }
 
 async function requireYear(executor, schoolYearId) {
@@ -333,7 +356,7 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
 }
 
 async function closeYear(request, env, schoolYearId, json) {
-  const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES);
+  const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES, { requireFreshMfa: true });
   await readJson(request);
   const year = await requireYear(env.db, schoolYearId);
 
@@ -469,6 +492,10 @@ async function handover(request, env, schoolYearId, json) {
               COALESCE(sum(net_amount_cents) FILTER (WHERE status = 'recorded'), 0) AS recorded_net_cents,
               count(*) FILTER (WHERE status = 'unmatched') AS unmatched_count,
               COALESCE(sum(net_amount_cents) FILTER (WHERE status = 'unmatched'), 0) AS unmatched_net_cents,
+              -- #127: z tego część już podzielona na gospodarstwa (payment_allocations_current).
+              (SELECT COALESCE(sum(a.amount_cents), 0) FROM payment_allocations_current a
+                 JOIN payment_entries p ON p.id = a.payment_entry_id
+                WHERE p.school_year_id = $1 AND p.status = 'unmatched') AS unmatched_allocated_cents,
               (SELECT count(*) FROM payment_corrections c JOIN payment_entries p ON p.id = c.payment_entry_id
                 WHERE p.school_year_id = $1) AS correction_count
          FROM payment_entry_net WHERE school_year_id = $1`,
@@ -540,6 +567,7 @@ async function handover(request, env, schoolYearId, json) {
       recordedNetCents: toSafeInteger(pay.recorded_net_cents),
       unmatchedCount: toSafeInteger(pay.unmatched_count),
       unmatchedNetCents: toSafeInteger(pay.unmatched_net_cents),
+      unmatchedAllocatedCents: toSafeInteger(pay.unmatched_allocated_cents),
       correctionCount: toSafeInteger(pay.correction_count),
     },
     meetings: {

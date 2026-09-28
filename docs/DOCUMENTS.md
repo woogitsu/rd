@@ -26,9 +26,11 @@ Macierz jest **założeniem technicznym do zatwierdzenia** przez zarząd i szko�
 | Metoda i ścieżka | Opis |
 |---|---|
 | `POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]` | Przesłanie pliku. Ciało to surowe bajty pliku; wymagane nagłówki `Content-Type` i `Idempotency-Key` (8–128 znaków). `classId` wyłącznie dla `class`. Powiązanie (`ledger_entry` albo `payment_entry` z tego samego roku) wyłącznie dla `financial`. |
-| `GET /api/documents?schoolYearId=…[&kind=…][&classId=…][&category=…][&q=…][&limit=…][&offset=…]` | Lista metadanych dostępnych użytkownikowi (najwyżej 100 na stronę), z tytułem i kategorią najnowszej wersji opisu. `q` szuka w tytule i opisie (`ILIKE`, znaki specjalne wzorca uciekane); filtr i paginacja liczą się w SQL przed `LIMIT`. |
-| `GET /api/documents/{id}` | Metadane jednego dokumentu, z pełną historią opisu (`descriptionHistory`, najnowsza wersja pierwsza). |
-| `GET /api/documents/{id}/content` | Pobranie pliku po autoryzacji. |
+| `GET /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&category=…][&q=…][&limit=…][&offset=…]` | Lista metadanych dostępnych użytkownikowi (najwyżej 100 na stronę), z tytułem i kategorią najnowszej wersji opisu. Domyślnie (`status=active`, też brak parametru) pokazuje tylko dokumenty aktywne; `status=all` pokazuje też zastąpione i unieważnione. `q` szuka w tytule i opisie (`ILIKE`, znaki specjalne wzorca uciekane); filtry i paginacja liczą się w SQL przed `LIMIT`. |
+| `GET /api/documents/{id}` | Metadane jednego dokumentu: `status` (`active`/`superseded`/`voided`), `replacementDocumentId` („zastąpiony przez”, dla `superseded`), `supersedes` („zastępuje” — inny dokument, którego zastępstwem jest ten, jeśli istnieje) i pełna historia opisu (`descriptionHistory`, najnowsza wersja pierwsza). |
+| `GET /api/documents/{id}/content` | Pobranie pliku po autoryzacji (działa niezależnie od stanu — unieważniony dokument zostaje w archiwum, nie znika). |
+| `POST /api/documents/{id}/supersede` | Issue #82: `{ replacementDocumentId, reason }`, JSON, `Idempotency-Key`. Zastępstwo musi mieć ten sam rodzaj, rok szkolny i klasę oraz być aktywne (cykl A→B→A jest przez to niemożliwy). |
+| `POST /api/documents/{id}/void` | Issue #82: `{ reason }`, JSON, `Idempotency-Key`. |
 | `POST /api/documents/{id}/description` | Nowa wersja opisu (issue #76): `{ title, category, documentDate?, description? }`, JSON, nagłówek `Idempotency-Key`. Uprawnienie takie samo jak do przesłania danego rodzaju dokumentu (patrz macierz wyżej); MFA wymagane dla `financial`. Dopisuje wiersz — nie edytuje poprzedniej wersji. |
 
 Odpowiedzi:
@@ -42,6 +44,18 @@ Odpowiedzi:
 Ponowienie tego samego żądania (podwójne kliknięcie, ponowiona sieć) z tym samym `Idempotency-Key` zwraca `200` z `replayed: true` i tym samym dokumentem; nie powstaje drugi wpis ani drugi obiekt.
 
 Pobranie ma nagłówki `Content-Disposition: attachment; filename="dokument-<id>.<ext>"`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Content-Security-Policy: sandbox; default-src 'none'`, `Cross-Origin-Resource-Policy: same-origin` i `Referrer-Policy: no-referrer`. Przed wydaniem pliku serwer porównuje rozmiar i SHA-256 obiektu z bazą; niezgodność blokuje pobranie.
+
+## Wersje i unieważnienie (issue #82)
+
+Dokument w `documents` jest i pozostaje niezmienny — „unieważnienie” albo „zastąpienie” **nie usuwa** pliku ani wpisu; dopisuje tylko zdarzenie stanu w osobnej, dopisywanej tabeli `document_status_events`. UI musi to jasno komunikować: to nie jest „Usuń”, plik zostaje w archiwum i nadal można go pobrać (dla ról z dostępem do danego rodzaju).
+
+Zasady:
+- Dokument ma co najwyżej JEDNO zdarzenie stanu — pierwsza zmiana jest ostateczna. Próba unieważnienia już zastąpionego dokumentu (albo odwrotnie) kończy się `409 document_status_conflict`.
+- **Wyjątek — ponowne unieważnienie tym samym działaniem** (np. podwójne kliknięcie „Unieważnij” z innym kluczem idempotencji po błędzie sieci, albo dowolna kolejna próba unieważnienia już unieważnionego dokumentu) zwraca `200` z `replayed: true` i **tym samym** zdarzeniem — nie jest to błąd.
+- Zastępstwo musi mieć ten sam `kind`, `schoolYearId` i `classId` co zastępowany dokument oraz musi być samo aktywne (`400 invalid_replacement_document`, `409 document_status_replacement_not_active`). Wymóg aktywności zastępstwa wyklucza cykl A→B→A: gdy A zostaje zastąpiony przez B, A przestaje być aktywny i nie może już posłużyć jako zastępstwo dla B.
+- Trasy sprawdzają uprawnienia jak przy przesłaniu danego rodzaju (MFA wymagane dla `financial`); nieznany albo niedostępny dokument daje `404 not_found`, tak jak reszta API dokumentów.
+- Dziennik: `document.superseded`, `document.voided` — aktor, czas, identyfikator dokumentu i zastępstwa, **bez powodu** (`reason` jest wewnętrzny, nie trafia do `audit_events`).
+- Lista (`GET /api/documents`) domyślnie pokazuje tylko dokumenty `active`; `status=all` pokazuje też zastąpione/unieważnione. Szczegóły (`GET /api/documents/{id}`) zawsze pokazują aktualny stan i pełny łańcuch („zastąpiony przez” / „zastępuje”).
 
 ## Tytuł, kategoria i wyszukiwanie (issue #76)
 

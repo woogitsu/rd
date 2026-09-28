@@ -28,20 +28,22 @@ import {
   recordAttendance, setMinutesVisibility, updateMeeting,
 } from '../src/pg/meetings.js';
 import {
-  approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
-  uploadPhotoFile, verifyPhoto,
+  addConsent, approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto,
+  submit as submitNews, uploadPhotoFile, verifyPhoto,
 } from '../src/pg/news.js';
 import { hashSecret } from '../src/auth.js';
+import { emailHash as suppressionEmailHash } from '../src/email/content.js';
 import { createSession } from '../src/pg/auth.js';
 import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
+import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
   ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
   campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
-  pngBytes, statementDate, todoReason, visibleScopes, yearDate,
+  pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
 const PAST = '2020-01-01T00:00:00Z';
@@ -102,6 +104,24 @@ async function seedBase(db) {
     await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
       [`en-sib-${key}`, `st-sib-${key}`, TARGETS[key].classId, YEAR_1]);
   }
+  // #145 (D-06): import.commit wymaga opublikowanej informacji o przetwarzaniu
+  // danych — poza zakresem tej macierzy (osobne testy w tests/pg-privacy-notice.test.js).
+  await db.query(
+    `INSERT INTO privacy_notices (id, body_text, content_hash, decision_ref, status, created_by, approved_by, approved_at, published_by, published_at)
+     VALUES ('pn-fx', 'Informacja testowa.', repeat('a', 64), 'D-06/fx', 'published', 'u-fx-admin', 'u-fx-board', now(), 'u-fx-board', now())`,
+  );
+}
+
+// `enrollments.class_id` jest NOT NULL: cele bez klasy (np. W1, dane ogólnoszkolne)
+// dostają jednorazową syntetyczną klasę tego roku — sam fixture (żadna trasa jej
+// nie widzi jako "klasę" w odpowiedzi, więc nie przecieka do asercji znaczników).
+async function fallbackClassId(db, schoolYearId) {
+  const id = `cls-fx-${schoolYearId}`;
+  await db.query(
+    `INSERT INTO classes (id, school_year_id, name) VALUES ($1, $2, 'Klasa fixture') ON CONFLICT (id) DO NOTHING`,
+    [id, schoolYearId],
+  );
+  return id;
 }
 
 async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
@@ -115,8 +135,9 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)',
     [studentId, guardianId]);
   const enrollmentId = `${householdId}-e`;
+  const classId = target.classId ?? await fallbackClassId(db, target.schoolYearId);
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
-    [enrollmentId, studentId, target.classId, target.schoolYearId]);
+    [enrollmentId, studentId, classId, target.schoolYearId]);
   return { householdId, guardianId, studentId, enrollmentId };
 }
 
@@ -200,6 +221,8 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
     });
     return { ...obj, resolutionId: resolution.id };
   }
+  // #93: przyjęta uchwała zebrania ogólnego (numer generowany) — kwota upoważnienia do wydatku.
+  if (stage === 'adoptedResolution' && !resolutionNumber) resolutionNumber = nextKey('UCHW-FX');
   if (stage === 'finalResolution' || resolutionNumber) {
     await recordAttendance(db, fxAdmin, {
       meetingId: meeting.id, userId: fxBoard.userId, capacity: 'board_member', votingEligible: true, present: true,
@@ -210,7 +233,7 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
       status: resolutionNumber ? 'adopted' : 'rejected', number: resolutionNumber,
       votesFor: resolutionNumber ? 1 : 0, votesAgainst: 0, votesAbstain: 0, quorumCheckId: quorumCheck.id,
     });
-    if (stage === 'finalResolution') return { ...obj, resolutionId: resolution.id };
+    if (stage === 'finalResolution' || stage === 'adoptedResolution') return { ...obj, resolutionId: resolution.id };
   }
   const { minutes } = await createMinutesVersion(db, fxAdmin, {
     idempotencyKey: nextKey('fx-minutes'), meetingId: meeting.id,
@@ -226,7 +249,7 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
 
 async function makePayment(db, target, stage) {
   const id = nextKey('fx-payment');
-  const unmatched = stage === 'unmatched';
+  const unmatched = stage === 'unmatched' || stage === 'allocated';
   await db.query(
     `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
        reference, status, created_by, idempotency_key)
@@ -234,7 +257,38 @@ async function makePayment(db, target, stage) {
     [id, unmatched ? null : 'hh-1', target.schoolYearId, `Wpłata ${marker(target.key)}`,
       unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`, yearDate(target, '10-01')],
   );
+  if (stage === 'allocated') {
+    // #127: wpłata nieprzypisana z jedną częścią dla hh-1 (payments.allocations.reversal).
+    const allocationId = `${id}-alloc`;
+    await db.query(
+      `INSERT INTO payment_allocations (id, payment_entry_id, school_year_id, household_id, amount_cents, created_by, idempotency_key)
+       VALUES ($1, $2, $3, 'hh-1', 100, $4, $5)`,
+      [allocationId, id, target.schoolYearId, fxAdmin.userId, `${allocationId}-key`],
+    );
+    return { paymentId: id, allocationId };
+  }
   return { paymentId: id };
+}
+
+// #83: komunikacja strukturalna na świeżym gospodarstwie; 'revoked' dopisuje
+// od razu zdarzenie unieważnienia (dla przypadków, którym wystarczy historia).
+async function makePaymentReference(db, target, stage) {
+  const householdId = nextKey('fx-hh-ref');
+  await db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+  const id = nextKey('fx-ref');
+  await db.query(
+    `INSERT INTO payment_references (id, school_year_id, household_id, structured_reference, created_by, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, target.schoolYearId, householdId, generateStructuredReference(), fxAdmin.userId, `${id}-key`],
+  );
+  if (stage === 'revoked') {
+    await db.query(
+      `INSERT INTO payment_reference_revocations (id, payment_reference_id, reason, created_by, idempotency_key)
+       VALUES ($1, $2, 'Zamknięcie testowe (macierz)', $3, $4)`,
+      [nextKey('fx-ref-rev'), id, fxAdmin.userId, `${id}-rev-key`],
+    );
+  }
+  return { paymentReferenceId: id, householdId };
 }
 
 async function makeNewsPost(db, target, stage) {
@@ -274,6 +328,21 @@ async function makePublicPhotoFile(ctx, target) {
   return { photoId: photo.id };
 }
 
+// #145 (D-06): draft utworzony przez board2 (poza aktorami macierzy),
+// zatwierdzony przez fxAdmin — inna osoba niż autor (cztery oczy), co nadal
+// pozwala aktorom admin/board macierzy wywoływać kolejny krok bez konfliktu
+// z ich własnym tożsamością.
+async function makePrivacyNotice(ctx, _target, stage) {
+  const created = await api(ctx, ctx.fxCookies.board2, 'POST', '/api/admin/privacy-notices',
+    { bodyText: `Informacja testowa (macierz uprawnień, ${nextKey('fx-notice')}).`, decisionRef: 'D-06/fx-macierz' });
+  const noticeId = created.json.notice.id;
+  if (stage === 'draft') return { noticeId };
+  await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/privacy-notices/${noticeId}/approve`, {});
+  if (stage === 'approved') return { noticeId };
+  await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/privacy-notices/${noticeId}/publish`, {});
+  return { noticeId };
+}
+
 async function makeCampaign(ctx, target, stage) {
   const { json } = await api(ctx, ctx.fxCookies.board, 'POST', '/api/email/campaigns', campaignBody(target), withKey(nextKey('fx-campaign')));
   const campaignId = json.campaign.id;
@@ -304,6 +373,23 @@ async function makeCampaign(ctx, target, stage) {
   return obj;
 }
 
+// Blokada aktywna (#94), do zdjęcia w macierzy uprawnień. Adres syntetyczny
+// świeży za każdym razem (webhook to jedyna droga zapisu — bez surowego INSERT).
+async function makeSuppression(ctx, _target, stage) {
+  const email = `${nextKey('fx-suppr')}@example.invalid`;
+  const emailHashValue = suppressionEmailHash(email);
+  await api(ctx, undefined, 'POST', '/api/email/webhooks/brevo',
+    { event: 'hard_bounce', email, id: nextKey('fx-suppr-evt'), ts_event: 1791187200 },
+    { Authorization: `Bearer ${ctx.fx.webhookSecret}` });
+  if (stage === 'active') return { emailHash: emailHashValue };
+  // Wniosek zgłoszony przez inną osobę niż każdy z testowanych aktorów
+  // (fxCookies.board = konto stałe 'u-fx-board', nigdy nie testowane w macierzy),
+  // żeby zatwierdzenie (release) dawało sukces niezależnie od tego, kto go zatwierdza.
+  const { json } = await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/suppressions/${emailHashValue}/release-request`,
+    { schoolYearId: YEAR_1, releaseReason: 'address_corrected' });
+  return { emailHash: emailHashValue, requestId: json.requestId };
+}
+
 async function makeReconciliation(ctx, target, stage) {
   const cookie = ctx.fxCookies.treasurer;
   const { json } = await api(ctx, cookie, 'POST', '/api/reconciliations', {
@@ -312,6 +398,21 @@ async function makeReconciliation(ctx, target, stage) {
   }, withKey(nextKey('fx-rec')));
   const reconciliationId = json.reconciliation.id;
   if (stage === 'draft') return { reconciliationId };
+  if (stage === 'groupReady' || stage === 'groupMatched') {
+    // #127 cz. 2: przelew zbiorczy — jedna pozycja 2000 EUR ↔ dwie wpłaty po 1000 EUR.
+    const first = await makePayment(ctx.db, target, 'recorded');
+    const second = await makePayment(ctx.db, target, 'recorded');
+    await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/lines`, {
+      lines: [{ bookedOn: yearDate(target, '10-01'), amountCents: 200000, reference: 'Przelew zbiorczy syntetyczny' }],
+    }, withKey(nextKey('fx-lines')));
+    const detail = await api(ctx, cookie, 'GET', `/api/reconciliations/${reconciliationId}`);
+    const obj = { reconciliationId, statementLineId: detail.json.lines[0].id, paymentIds: [first.paymentId, second.paymentId] };
+    if (stage === 'groupReady') return obj;
+    const group = await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/group-matches`, {
+      statementLineId: obj.statementLineId, items: obj.paymentIds.map((paymentEntryId) => ({ paymentEntryId })),
+    }, withKey(nextKey('fx-group')));
+    return { ...obj, groupMatchId: group.json.groupMatch.id };
+  }
   const { paymentId } = await makePayment(ctx.db, target, 'recorded');
   await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/lines`, {
     lines: [{ bookedOn: yearDate(target, '10-01'), amountCents: 100000, reference: 'Tytuł syntetyczny' }],
@@ -364,6 +465,12 @@ async function makeAdminTarget(ctx, stage) {
     const schoolYearId = nextKey('y-pusty');
     await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
     return { schoolYearId };
+  }
+  if (stage === 'dataRequest') {
+    // Rejestr żądań osób (#100) — cel dla przejścia stanu; gospodarstwo ogólnoszkolne (hh-1).
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',
+      { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' });
+    return { requestId: json.request.id };
   }
   throw new Error(`unknown admin fixture ${stage}`);
 }
@@ -423,6 +530,18 @@ async function makeOwnPassword(ctx, { cookie }) {
   return { password, newPassword: syntheticPassword() };
 }
 
+// Gospodarstwo bez zapisu (enrollment)/klasy — w odróżnieniu od `household`
+// (niżej, przez makeHousehold) nie woła fallbackClassId. #83: trasa
+// payment-references.create nie zależy od klasy, a każdy target YEAR_TARGETS
+// obejmuje też cel bez classId (W1) — makeHousehold wstawiłby wtedy trwałą
+// "klasę fixture" do bazy współdzielonej z resztą macierzy, zafałszowując
+// listę klas w innych podtestach (families.classes).
+async function makePlainHousehold(db) {
+  const householdId = nextKey('fx-hh-plain');
+  await db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+  return { householdId };
+}
+
 // #150: druga, jednorazowa sesja TEGO SAMEGO konta (nie ta z caseInfo.cookie, którą
 // dalej wysyła żądanie testowe) — do sprawdzenia, że własną (ale INNĄ) sesję da się
 // cofnąć. Bieżąca sesja przypadku zostaje nietknięta.
@@ -442,12 +561,16 @@ async function makeOwnSession(ctx, { cookie }) {
   }
 }
 
+
 const MAKERS = {
+  privacyNotice: (ctx, target, stage) => makePrivacyNotice(ctx, target, stage),
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
   eventTask: (ctx, target, stage) => makeEventTask(ctx.db, target, stage),
   eventTaskSignup: (ctx, target, stage) => makeEventTaskSignup(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
+  paymentReference: (ctx, target, stage) => makePaymentReference(ctx.db, target, stage),
+  plainHousehold: (ctx) => makePlainHousehold(ctx.db),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
   publicPhotoFile: (ctx, target) => makePublicPhotoFile(ctx, target),
   photo: async (ctx) => {
@@ -455,11 +578,26 @@ const MAKERS = {
     const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
     return { photoId: photo.id };
   },
+  // Zgoda do wycofania (#106): zdjęcie bez zidentyfikowanych osób nie wymaga
+  // zgody, ale trasa wycofania działa na dowolnym odwołaniu do dokumentu zgody.
+  consent: async (ctx) => {
+    const key = nextKey('fx-consent');
+    const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
+    const consentDocumentRef = `zgoda-${safeKey(key)}`.slice(0, 120);
+    await addConsent(ctx.db, fxAdmin, { photoId: photo.id, subjectNo: 1, subjectKind: 'adult', consentDocumentRef });
+    return { consentDocumentRef };
+  },
   document: async (ctx, target, kind) => {
     const classPart = kind === 'class' ? `&classId=${target.classId}` : '';
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', `/api/documents?kind=${kind}&schoolYearId=${target.schoolYearId}${classPart}`,
       pdfBytes(target.key), { 'Content-Type': 'application/pdf', 'Idempotency-Key': nextKey('fx-doc') });
     return { documentId: json.document.id };
+  },
+  // Para dokumentów tego samego rodzaju/roku/klasy — cel zastąpienia (issue #82).
+  documentPair: async (ctx, target, kind) => {
+    const original = await MAKERS.document(ctx, target, kind);
+    const replacement = await MAKERS.document(ctx, target, kind);
+    return { documentId: original.documentId, replacementDocumentId: replacement.documentId };
   },
   ledgerEntry: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
@@ -468,16 +606,40 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
-  // #207: kategoria świeża per przypadek — do dezaktywacji (nie może być
-  // współdzielonym `cat-in-<year>`, bo tamta jest używana przez inne trasy).
+  // #97: wydatek zapisany przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  ledgerExpense: async (ctx, target) => {
+    const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
+      schoolYearId: target.schoolYearId, direction: 'expense', amountCents: 1000, categoryId: `cat-out-${target.schoolYearId}`,
+      description: `Wydatek ${marker(target.key)}`, occurredOn: yearDate(target, '10-02'), method: 'bank',
+    }, withKey(nextKey('fx-ledger-exp')));
+    return { ledgerEntryId: json.entry.id };
+  },
+  // Świeża, aktywna kategoria wydatków wprost w bazie — współdzielona przez
+  // ledger.categoryDeactivate (#207, nie może być `cat-in-<year>`, bo tamta
+  // jest używana przez inne trasy), ledgerBudget.deactivateCategory /
+  // ledgerBudget.createLine (#107, bez linii preliminarza).
   ledgerCategory: async (ctx, target) => {
-    const id = nextKey('fx-ledger-cat');
+    const categoryId = nextKey('fx-cat');
     await ctx.db.query(
-      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
-       VALUES ($1, $2, 'income', $3, 'u-fx-admin')`,
-      [id, target.schoolYearId, `Kat ${marker(target.key)} ${id}`],
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ($1, $2, 'expense', $3, 'u-fx-admin')`,
+      [categoryId, target.schoolYearId, `Kategoria ${marker(target.key)} ${categoryId}`],
     );
-    return { categoryId: id };
+    return { categoryId };
+  },
+  // #107: kategoria z pierwszą wersją linii preliminarza.
+  budgetLine: async (ctx, target) => {
+    const categoryId = nextKey('fx-cat-line');
+    const lineId = nextKey('fx-line');
+    await ctx.db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ($1, $2, 'expense', $3, 'u-fx-admin')`,
+      [categoryId, target.schoolYearId, `Plan ${marker(target.key)} ${categoryId}`],
+    );
+    await ctx.db.query(
+      `INSERT INTO ledger_budget_lines (id, school_year_id, category_id, planned_cents, created_by, idempotency_key)
+       VALUES ($1, $2, $3, 10000, 'u-fx-admin', $4)`,
+      [lineId, target.schoolYearId, categoryId, nextKey('fx-line-key')],
+    );
+    return { lineId, categoryId };
   },
   // Bilans otwarcia roku celu wprost w bazie (#199); trasa poprawki wymaga jego istnienia.
   openingBalance: async (ctx, target) => {
@@ -489,8 +651,28 @@ const MAKERS = {
     return {};
   },
   campaign: makeCampaign,
+  suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
+  // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
+  // pod TARGETS.A, niezależnie od przekazanego targetu.
+  guardianOnly: (ctx) => makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guh')),
+  // Gospodarstwo świeże + jednorazowy link (token w treści odpowiedzi tylko
+  // przy wydaniu — do testu podglądu/formularza publicznego).
+  guardianUpdateLink: async (ctx) => {
+    const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guh'));
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+    return { token: json.token, linkId: json.linkId, guardianId };
+  },
+  // Wniosek `pending` świeży na przypadek — do zatwierdzenia/odrzucenia.
+  guardianUpdateRequest: async (ctx) => {
+    const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-gur'));
+    const { json: link } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+    const { json: submitted } = await api(ctx, null, 'POST', '/api/public/guardian-update',
+      { token: link.token, contactAllowed: true });
+    return { requestId: submitted.requestId, guardianId };
+  },
   adminTarget: (ctx, _target, stage) => makeAdminTarget(ctx, stage),
   importPlan: async (ctx, target) => {
     const payload = importPayload(target, nextKey('fximp'));
@@ -569,16 +751,20 @@ function sessionOptions(actor, mfa, withGrants, userId = `mx-${actor.key}`) {
 const WRITE_TABLES = [
   'audit_events', 'events', 'event_revisions', 'meetings', 'meeting_agenda_items', 'meeting_attendees',
   'meeting_quorum_checks', 'meeting_minutes', 'meeting_minutes_publications', 'resolutions',
-  'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments', 'role_grants',
+  'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments',
+  'payment_allocations', 'payment_allocation_reversals', 'role_grants',
   'users', 'sessions', 'invitations', 'user_mfa_factors', 'mfa_recovery_codes',
   'import_batches', 'households', 'guardians', 'students', 'enrollments', 'student_guardians',
   'guardian_contact_changes', 'student_guardian_changes', 'enrollment_history', 'documents',
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'ledger_opening_balance_adjustments', 'ledger_transfers',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
-  'email_webhook_events', 'email_suppressions', 'email_preferences_events', 'email_preview_sends',
+  'email_webhook_events', 'email_suppressions', 'email_suppression_release_requests', 'email_suppression_releases',
+  'email_preferences_events', 'email_preview_sends',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
+  'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
+  'bank_reconciliation_group_match_revocations',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
   'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
@@ -836,12 +1022,16 @@ test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
 const MODULE_SOURCES = {
   session: ['../src/pg/routes/session.js'],
   payments: ['../src/pg/routes/payments.js'],
+  'payment-references': ['../src/pg/routes/payment-references.js'],
+  'payment-instructions': ['../src/pg/routes/payment-instructions.js'],
   events: ['../src/pg/routes/events.js', '../src/pg/events.js'],
   meetings: ['../src/pg/routes/meetings.js', '../src/pg/meetings.js'],
   import: ['../src/pg/routes/import.js'],
   documents: ['../src/pg/routes/documents.js', '../src/documents.js'],
   ledger: ['../src/pg/routes/ledger.js'],
   'ledger-cash': ['../src/pg/routes/ledger-cash.js'],
+  'ledger-budget': ['../src/pg/routes/ledger-budget.js'],
+  'ledger-cost-centers': ['../src/pg/routes/ledger-cost-centers.js'],
   email: ['../src/pg/routes/email.js'],
   news: ['../src/pg/routes/news.js', '../src/pg/news.js'],
   admin: ['../src/pg/routes/admin.js'],
@@ -854,6 +1044,8 @@ const MODULE_SOURCES = {
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
   representative: ['../src/pg/routes/representative.js'],
+  'guardian-updates': ['../src/pg/routes/guardian-updates.js'],
+  'privacy-notice': ['../src/pg/routes/privacy-notice.js'],
   board: ['../src/pg/routes/board.js'],
 };
 

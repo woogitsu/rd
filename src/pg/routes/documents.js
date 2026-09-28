@@ -2,14 +2,16 @@
 //
 //   POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]
 //        ciało = surowe bajty pliku, nagłówki Content-Type i Idempotency-Key
-//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&q=…][&category=…][&limit=…][&offset=…]
-//   GET  /api/documents/{id}            metadane (z historią opisu)
+//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&limit=…][&offset=…]
+//   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
+//   POST /api/documents/{id}/supersede  { replacementDocumentId, reason } — issue #82
+//   POST /api/documents/{id}/void       { reason } — issue #82
 //   POST /api/documents/{id}/description  tytuł, kategoria, data dokumentu (issue #76)
 //
 // Autoryzacja jest liczona dla KAŻDEGO dokumentu na podstawie jego rodzaju,
 // roku i klasy. Nieznany identyfikator i dokument niedostępny dla użytkownika
-// dają tę samą odpowiedź 404 (brak wyroczni istnienia) — także dla opisu.
+// dają tę samą odpowiedź 404 (brak wyroczni istnienia) — także dla supersede/void/opisu.
 //
 // Macierz poniżej to założenie techniczne do zatwierdzenia (D-08, D-09):
 // dyrekcja (`principal`) i Komisja Rewizyjna (`audit`) nie mają dostępu.
@@ -23,6 +25,9 @@ import {
   tryAcquireUploadSlot, UPLOAD_PATH, validateStructure,
 } from '../../documents.js';
 
+const MAX_STATUS_BODY_BYTES = 4096;
+const REASON_PATTERN_MIN = 3;
+const REASON_PATTERN_MAX = 500;
 // Lista zamknięta — założenie techniczne do zatwierdzenia przez zarząd i
 // skarbnika (issue #76, sekcja „Zależności”), niezależna od `kind`.
 export const DOCUMENT_CATEGORIES = Object.freeze([
@@ -46,6 +51,7 @@ const LINK_TABLES = Object.freeze({ ledger_entry: 'ledger_entries', payment_entr
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const DOCUMENT_PATH = /^\/api\/documents\/([^/]+)(\/content)?$/;
+const STATUS_ACTION_PATH = /^\/api\/documents\/([^/]+)\/(supersede|void)$/;
 const DESCRIPTION_PATH = /^\/api\/documents\/([^/]+)\/description$/;
 const MAX_LIST_LIMIT = 100;
 const MAX_OFFSET = 10_000;
@@ -83,6 +89,9 @@ function toDocument(row) {
     linkedEntityId: row.linked_entity_id ?? null,
     createdBy: row.created_by,
     createdAt: isoTimestamp(row.created_at),
+    // Stan (issue #82): 'active' dla dokumentu bez zdarzenia statusu.
+    status: row.status ?? 'active',
+    replacementDocumentId: row.replacement_document_id ?? null,
     // Najnowsza wersja opisu (issue #76); null = brak wpisu ("Bez tytułu" w panelu).
     title: row.description_title ?? null,
     category: row.description_category ?? null,
@@ -105,9 +114,11 @@ function toDescription(row) {
 
 const SELECT_DOCUMENT = `SELECT d.id, d.object_key, d.kind, d.school_year_id, d.class_id, d.mime_type, d.byte_size,
        d.sha256, d.linked_entity_type, d.linked_entity_id, d.created_by, d.created_at, d.idempotency_key,
+       s.status, s.replacement_document_id,
        dd.title AS description_title, dd.category AS description_category,
        to_char(dd.document_date, 'YYYY-MM-DD') AS description_document_date
   FROM documents d
+  LEFT JOIN document_current_status s ON s.document_id = d.id
   LEFT JOIN LATERAL (
     SELECT title, category, document_date, description FROM document_descriptions
      WHERE document_id = d.id ORDER BY revision_no DESC LIMIT 1
@@ -123,6 +134,13 @@ export async function handle(request, env, url, json) {
     if (request.method === 'POST') return upload(request, env, url, json);
     if (request.method === 'GET') return list(request, env, url, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
+  }
+  const statusMatch = STATUS_ACTION_PATH.exec(url.pathname);
+  if (statusMatch) {
+    if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+    return statusMatch[2] === 'supersede'
+      ? supersede(request, env, statusMatch[1], json)
+      : voidDocument(request, env, statusMatch[1], json);
   }
   const descriptionMatch = DESCRIPTION_PATH.exec(url.pathname);
   if (descriptionMatch) {
@@ -158,13 +176,17 @@ async function metadata(request, env, id, json) {
   if (!context) return json({ error: 'unauthenticated' }, 401);
   const found = await authorizedDocument(env, context, id, { auditDenied: false });
   if (!found) return json({ error: 'not_found' }, 404);
+  // "Zastępuje": inny dokument, którego zdarzenie statusu wskazuje na TEN jako zastępstwo.
+  const supersedes = (await env.db.query(
+    'SELECT document_id FROM document_status_events WHERE replacement_document_id = $1', [id],
+  )).rows[0]?.document_id ?? null;
   const history = await env.db.query(
     `SELECT document_id, revision_no, title, category, to_char(document_date, 'YYYY-MM-DD') AS document_date,
             description, created_by, created_at
        FROM document_descriptions WHERE document_id = $1 ORDER BY revision_no DESC`,
     [id],
   );
-  return json({ document: found.doc, descriptionHistory: history.rows.map(toDescription) });
+  return json({ document: found.doc, supersedes, descriptionHistory: history.rows.map(toDescription) });
 }
 
 async function download(request, env, id, json) {
@@ -222,6 +244,10 @@ async function list(request, env, url, json) {
   if (kindFilter && !DOCUMENT_POLICIES[kindFilter]) return json({ error: 'invalid_kind' }, 400);
   const classFilter = optionalId(url.searchParams.get('classId'));
   if (!classFilter.ok) return json({ error: 'invalid_class' }, 400);
+  // Issue #82: domyślnie tylko dokumenty aktywne; ?status=all pokazuje też
+  // zastąpione i unieważnione (historia statusów jest w GET .../{id}).
+  const statusFilter = url.searchParams.get('status') ?? 'active';
+  if (statusFilter !== 'active' && statusFilter !== 'all') return json({ error: 'invalid_status' }, 400);
   const categoryFilter = url.searchParams.get('category');
   if (categoryFilter && !DOCUMENT_CATEGORIES.includes(categoryFilter)) return json({ error: 'invalid_category' }, 400);
   const rawQuery = url.searchParams.get('q');
@@ -260,12 +286,13 @@ async function list(request, env, url, json) {
         AND (d.kind = ANY($2::text[]) OR (d.kind = 'class' AND ($3::boolean OR d.class_id = ANY($4::text[]))))
         AND ($5::text IS NULL OR d.kind = $5)
         AND ($6::text IS NULL OR d.class_id = $6)
-        AND ($9::text IS NULL OR dd.category = $9)
-        AND ($10::text IS NULL OR dd.title ILIKE '%' || $10 || '%' OR dd.description ILIKE '%' || $10 || '%')
+        AND ($9::text = 'all' OR COALESCE(s.status, 'active') = 'active')
+        AND ($10::text IS NULL OR dd.category = $10)
+        AND ($11::text IS NULL OR dd.title ILIKE '%' || $11 || '%' OR dd.description ILIKE '%' || $11 || '%')
       ORDER BY d.created_at DESC, d.id
       LIMIT $7 OFFSET $8`,
     [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value, limit, offset,
-      categoryFilter || null, searchQuery || null],
+      statusFilter, categoryFilter || null, searchQuery || null],
   );
   const documents = rows.map(toDocument).filter((doc) => canAccessDocument(context, doc));
   return json({ documents, limit, offset });
@@ -473,6 +500,31 @@ async function findReplay(db, idempotencyKey, expected, storage) {
   return { doc };
 }
 
+function toStatusEvent(row) {
+  return {
+    id: row.id,
+    documentId: row.document_id,
+    action: row.action,
+    replacementDocumentId: row.replacement_document_id ?? null,
+    createdBy: row.created_by,
+    createdAt: isoTimestamp(row.created_at),
+  };
+}
+
+async function readStatusBody(request) {
+  const type = request.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+  if (type !== 'application/json') return { error: 'invalid_content_type' };
+  const declaredLength = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_STATUS_BODY_BYTES) return { error: 'request_too_large' };
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > MAX_STATUS_BODY_BYTES) return { error: 'request_too_large' };
+  try {
+    return { value: text ? JSON.parse(text) : {} };
+  } catch {
+    return { error: 'invalid_json' };
+  }
+}
+
 const DOCUMENT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function validDocumentDate(value) {
@@ -514,6 +566,136 @@ async function readDescriptionBody(request) {
   } catch {
     return { error: 'invalid_json' };
   }
+}
+
+function validReason(value) {
+  return typeof value === 'string' && value.trim().length >= REASON_PATTERN_MIN && value.trim().length <= REASON_PATTERN_MAX;
+}
+
+// Wspólny rdzeń zastąpienia i unieważnienia (issue #82). documents jest
+// niezmienne — zapisujemy tylko zdarzenie stanu, plik i wpis metadanych
+// zostają. Powtórzone unieważnienie/zastąpienie już unieważnionego lub
+// zastąpionego dokumentu jest odrzucane jako konflikt, chyba że to DOKŁADNIE
+// ta sama akcja (ponowne „Unieważnij”) — wtedy zwracamy istniejące zdarzenie
+// jako replayed:true (kryterium akceptacji #82).
+async function changeStatus(request, env, id, json, action) {
+  const context = await loadAuthorizationContext(request, env);
+  if (!context) return json({ error: 'unauthenticated' }, 401);
+  if (!UUID.test(id)) return json({ error: 'not_found' }, 404);
+
+  const idempotencyKey = (request.headers.get('idempotency-key') ?? '').trim();
+  if (idempotencyKey.length < 8 || idempotencyKey.length > 128) return json({ error: 'idempotency_key_required' }, 400);
+
+  const body = await readStatusBody(request);
+  if (body.error) return json({ error: body.error }, body.error === 'request_too_large' ? 413 : 400);
+  const reason = body.value?.reason;
+  if (!validReason(reason)) return json({ error: 'invalid_reason' }, 400);
+  const replacementDocumentId = action === 'superseded' ? body.value?.replacementDocumentId : null;
+  if (action === 'superseded' && (typeof replacementDocumentId !== 'string' || !UUID.test(replacementDocumentId))) {
+    return json({ error: 'invalid_replacement_document' }, 400);
+  }
+  const actorId = context.session.user.id;
+
+  try {
+    const result = await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        'SELECT id, kind, school_year_id, class_id FROM documents WHERE id = $1 FOR UPDATE', [id],
+      );
+      const doc = rows[0];
+      if (!doc || !canAccessDocument(context, { kind: doc.kind, schoolYearId: doc.school_year_id, classId: doc.class_id })) {
+        return { notFound: true };
+      }
+
+      if (action === 'superseded') {
+        const replacement = (await tx.query(
+          'SELECT id, kind, school_year_id, class_id FROM documents WHERE id = $1', [replacementDocumentId],
+        )).rows[0];
+        if (!replacement || replacement.id === doc.id || replacement.kind !== doc.kind
+            || replacement.school_year_id !== doc.school_year_id || replacement.class_id !== doc.class_id) {
+          return { badReplacement: true };
+        }
+        const replacementStatus = (await tx.query(
+          'SELECT 1 FROM document_status_events WHERE document_id = $1', [replacementDocumentId],
+        )).rows[0];
+        if (replacementStatus) return { replacementNotActive: true };
+      }
+
+      const existingByKey = (await tx.query(
+        `SELECT id, document_id, action, replacement_document_id, created_by, created_at
+           FROM document_status_events WHERE idempotency_key = $1`, [idempotencyKey],
+      )).rows[0];
+      if (existingByKey) {
+        const same = existingByKey.document_id === id && existingByKey.action === action
+          && (existingByKey.replacement_document_id ?? null) === replacementDocumentId;
+        return same ? { replayed: toStatusEvent(existingByKey) } : { idempotencyConflict: true };
+      }
+
+      const existingForDocument = (await tx.query(
+        `SELECT id, document_id, action, replacement_document_id, created_by, created_at
+           FROM document_status_events WHERE document_id = $1`, [id],
+      )).rows[0];
+      if (existingForDocument) {
+        // Ta sama akcja co już zapisana: bezpieczna powtórka (np. dwa kliknięcia
+        // „Unieważnij” z różnymi kluczami po błędzie sieci) — bez nowego wiersza.
+        if (existingForDocument.action === action) return { replayed: toStatusEvent(existingForDocument) };
+        return { conflict: true };
+      }
+
+      const eventId = crypto.randomUUID();
+      const inserted = (await tx.query(
+        `INSERT INTO document_status_events (id, document_id, action, replacement_document_id, reason, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, document_id, action, replacement_document_id, created_by, created_at`,
+        [eventId, id, action, replacementDocumentId, reason.trim(), actorId, idempotencyKey],
+      )).rows[0];
+      // Bez powodu w metadanych (issue #82, "Kryteria akceptacji").
+      await insertAuditEvent(tx, {
+        actorId, action: action === 'superseded' ? 'document.superseded' : 'document.voided',
+        entityType: 'document', entityId: id,
+        metadata: {
+          kind: doc.kind, schoolYearId: doc.school_year_id, classId: doc.class_id,
+          replacementDocumentId, sessionId: context.session.sessionId,
+        },
+      });
+      return { created: toStatusEvent(inserted) };
+    });
+
+    if (result.notFound) return json({ error: 'not_found' }, 404);
+    if (result.badReplacement) return json({ error: 'invalid_replacement_document' }, 400);
+    if (result.replacementNotActive) return json({ error: 'document_status_replacement_not_active' }, 409);
+    if (result.idempotencyConflict) return json({ error: 'idempotency_conflict' }, 409);
+    if (result.conflict) return json({ error: 'document_status_conflict' }, 409);
+    if (result.replayed) return json({ statusEvent: result.replayed, replayed: true }, 200);
+    return json({ statusEvent: result.created }, 201);
+  } catch (error) {
+    if (error?.code === '23505') {
+      if (error?.constraint === 'document_status_events_idempotency_key_key') {
+        return json({ error: 'idempotency_conflict' }, 409);
+      }
+      // Wyścig: dwa równoległe żądania na tym samym dokumencie (issue #82,
+      // "dwa równoległe zastąpienia — tylko jedno się udaje, drugie 409").
+      const existing = (await env.db.query(
+        `SELECT id, document_id, action, replacement_document_id, created_by, created_at
+           FROM document_status_events WHERE document_id = $1`, [id],
+      )).rows[0];
+      if (existing) {
+        if (existing.action === action) return json({ statusEvent: toStatusEvent(existing), replayed: true }, 200);
+        return json({ error: 'document_status_conflict' }, 409);
+      }
+    }
+    if (String(error?.message ?? '').includes('document_status_replacement_not_active')) {
+      return json({ error: 'document_status_replacement_not_active' }, 409);
+    }
+    throw error;
+  }
+}
+
+async function supersede(request, env, id, json) {
+  return changeStatus(request, env, id, json, 'superseded');
+}
+
+async function voidDocument(request, env, id, json) {
+  return changeStatus(request, env, id, json, 'voided');
 }
 
 // Dodaje nową wersję opisu (tytuł, kategoria, data dokumentu — issue #76).

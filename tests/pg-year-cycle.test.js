@@ -75,6 +75,21 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     assert.equal(importPreview.status, 200, JSON.stringify(importPreview.body));
     assert.equal(importPreview.body.counts.rowsAdded, 3);
     assert.equal(importPreview.body.counts.rowsSkipped, 0);
+
+    // #145 (D-06): commit importu wymaga opublikowanej informacji o
+    // przetwarzaniu danych — bez niej `/api/import/commit` odmawia
+    // (`409 privacy_notice_missing`). Zarząd zatwierdza wersję innej osoby
+    // niż autor (four-eyes), więc publikuje ją `board2`.
+    const noticeDraft = await post('/api/admin/privacy-notices', admin, {
+      bodyText: 'Informacja o przetwarzaniu danych — treść syntetyczna testu #207.',
+      decisionRef: 'D-06/test-207',
+    });
+    assert.equal(noticeDraft.status, 201, JSON.stringify(noticeDraft.body));
+    const noticeApproved = await post(`/api/admin/privacy-notices/${noticeDraft.body.notice.id}/approve`, board2);
+    assert.equal(noticeApproved.status, 200, JSON.stringify(noticeApproved.body));
+    const noticePublished = await post(`/api/admin/privacy-notices/${noticeDraft.body.notice.id}/publish`, board2);
+    assert.equal(noticePublished.status, 200, JSON.stringify(noticePublished.body));
+
     const importCommit = await post('/api/import/commit', admin, {
       ...importPayload, fingerprint: importPreview.body.fingerprint, planDigest: importPreview.body.planDigest,
     }, 'import-y1-0001');

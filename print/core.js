@@ -4,6 +4,8 @@ import { parseCsv } from "../import/core.js";
 import { decodeCsvBytes, detectDelimiter } from "../import/csv.js";
 import { formatCents, isValidId, parseEuroAmount } from "../panel/core.js";
 import { MoneyError, parseCentsCell } from "../panel/money.js";
+import { buildEpcPayload } from "./epc.js";
+import { qrSvgMarkup } from "./qr.js";
 
 export const MAX_ROWS = 5000;
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -278,23 +280,52 @@ export function paymentReference(config, household) {
 }
 
 // Model kartki: wyłącznie dane jednej rodziny i zatwierdzone parametry konfiguracji.
-export function buildCard(household, config) {
+// `paymentInstructions` (opcjonalnie): { iban, bic, payeeName } — zatwierdzona
+// na rok konfiguracja z GET /api/print/cards (#92). Gdy podana, ZASTĘPUJE ręcznie
+// wpisane pola rachunku/odbiorcy (formularz tylko je pokazuje) i uruchamia
+// generator kodu QR EPC. Bez niej kartka nie ma kodu QR (jest szkicem danych
+// do wpłaty) — QR powstaje wyłącznie z zatwierdzonej wersji.
+export function buildCard(household, config, paymentInstructions = null) {
   const paragraphs = [
     "Składka na Radę Rodziców jest dobrowolna. Decyzja o wpłacie i jej wysokości należy do rodziny.",
   ];
   if (Number.isSafeInteger(config.suggestedAmountCents)) {
     paragraphs.push(`Sugerowana kwota składki w roku szkolnym ${config.schoolYear}: ${formatCents(config.suggestedAmountCents)}.`);
   }
+  const approved = paymentInstructions
+    ? {
+      iban: clean(paymentInstructions.iban),
+      bic: clean(paymentInstructions.bic ?? ""),
+      payeeName: clean(paymentInstructions.payeeName),
+    }
+    : null;
+  const bankAccount = approved ? approved.iban : config.bankAccount;
+  const bankRecipient = approved ? approved.payeeName : config.bankRecipient;
   const payment = [];
-  if (config.bankAccount) payment.push(["Rachunek", config.bankAccount]);
-  if (config.bankAccount && config.bankRecipient) payment.push(["Odbiorca", config.bankRecipient]);
-  const reference = config.bankAccount ? paymentReference(config, household) : "";
+  if (bankAccount) payment.push(["Rachunek", bankAccount]);
+  if (bankAccount && bankRecipient) payment.push(["Odbiorca", bankRecipient]);
+  const reference = bankAccount ? paymentReference(config, household) : "";
   if (reference) payment.push(["Tytuł przelewu", reference]);
   const closing = "Jeśli wpłata została już wykonana, prosimy pominąć tę informację. Dziękujemy.";
+
+  // Kod QR wyłącznie z zatwierdzonych danych. Błąd generatora (np. zbyt długi
+  // tytuł przelewu) nie przerywa druku kartki — zostaje czytelny tekst obok.
+  let epcSvg = null;
+  if (approved) {
+    try {
+      const payload = buildEpcPayload({
+        iban: approved.iban, bic: approved.bic, name: approved.payeeName, unstructuredText: reference,
+      });
+      epcSvg = qrSvgMarkup(payload, { title: "Kod QR do przelewu (EPC)" });
+    } catch {
+      epcSvg = null;
+    }
+  }
 
   const card = {
     householdId: household.householdId,
     draft: !config.templateApproved,
+    paymentApproved: Boolean(approved),
     councilName: config.councilName,
     schoolName: config.schoolName,
     schoolYear: config.schoolYear,
@@ -302,6 +333,7 @@ export function buildCard(household, config) {
     students: household.students.map((student) => ({ name: student.name, className: student.className })),
     paragraphs,
     payment,
+    epcSvg,
     closing,
     contact: config.contact,
   };
@@ -326,6 +358,11 @@ export function renderCardHtml(card) {
   const payment = card.payment.length
     ? `<dl class="card-payment">${card.payment.map(([label, value]) => `<dt>${e(label)}</dt><dd>${e(value)}</dd>`).join("")}</dl>`
     : "";
+  // Kod QR obok pełnego tekstu IBAN/tytułu (dostępność, wydruk czarno-biały);
+  // podpis nie sugeruje zadłużenia (składka jest dobrowolna, AGENTS.md).
+  const qr = card.epcSvg
+    ? `<div class="card-qr">${card.epcSvg}<p class="card-qr-caption">Kod QR do przelewu (opcjonalnie) — kwotę i tytuł można zmienić w aplikacji bankowej.</p></div>`
+    : "";
   return [
     `<article class="print-card" data-household="${e(card.householdId)}">`,
     card.draft ? `<p class="card-draft">WZÓR — treść niezatwierdzona przez Radę (D-16)</p>` : "",
@@ -336,6 +373,7 @@ export function renderCardHtml(card) {
     `<p class="card-to">Dla rodziców i opiekunów:</p><ul class="card-students">${students}</ul>`,
     card.paragraphs.map((text) => `<p>${e(text)}</p>`).join(""),
     payment,
+    qr,
     `<p>${e(card.closing)}</p>`,
     `<p class="card-contact">Kontakt: ${e(card.contact)}</p>`,
     `<p class="card-ref">Nr rodziny: ${e(card.householdId)}</p>`,
@@ -343,11 +381,11 @@ export function renderCardHtml(card) {
   ].join("");
 }
 
-export function renderCardsHtml(households, selectedIds, rawConfig) {
+export function renderCardsHtml(households, selectedIds, rawConfig, paymentInstructions = null) {
   const { config, errors } = normalizeConfig(rawConfig);
   if (errors.length) throw new Error(errors.join(" "));
   const chosen = selectHouseholds(households, selectedIds);
-  const cards = chosen.map((household) => buildCard(household, config));
+  const cards = chosen.map((household) => buildCard(household, config, paymentInstructions));
   return {
     count: cards.length,
     layout: config.layout,

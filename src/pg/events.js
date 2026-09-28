@@ -372,7 +372,8 @@ export async function createDraft(db, actor, input) {
           content.beginsAt, content.endsAt, content.location, content.organizer, content.audience,
           actor.userId, idempotencyKey],
       );
-      await audit(tx, actor.userId, 'event.created', id, { revision: 1, status: 'draft' });
+      await audit(tx, actor.userId, 'event.created', id,
+        { schoolYearId: scope.school_year_id, revision: 1, status: 'draft' });
       return { event: internalEvent(rows[0]), replayed: false };
     });
   } catch (error) {
@@ -421,7 +422,8 @@ export async function updateDraft(db, actor, input) {
       [row.id, content.title, content.description, content.beginsAt, content.endsAt,
         content.location, content.organizer, content.audience, actor.userId],
     );
-    await audit(tx, actor.userId, 'event.revised', row.id, { revision: rows[0].revision_no, status: 'draft' });
+    await audit(tx, actor.userId, 'event.revised', row.id,
+      { schoolYearId: row.school_year_id, revision: rows[0].revision_no, status: 'draft' });
     return { event: internalEvent(rows[0]), replayed: false };
   });
 }
@@ -448,7 +450,8 @@ async function transition(db, actor, input, spec) {
     const { rows } = await tx.query(
       `UPDATE events SET ${sql} WHERE id = $1 RETURNING ${EVENT_COLUMNS}`, [row.id, ...params],
     );
-    await audit(tx, actor.userId, spec.action, row.id, { revision: row.revision_no, status: rows[0].status });
+    await audit(tx, actor.userId, spec.action, row.id,
+      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status });
     return { event: internalEvent(rows[0]), replayed: false };
   });
 }
@@ -646,7 +649,7 @@ export async function createTask(db, actor, input) {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [id, eventId, content.title, content.startsAt, content.endsAt, content.slotsNeeded, content.isPublic, actor.userId, idempotencyKey],
     );
-    await audit(tx, actor.userId, 'event.task_created', id, { eventId, slotsNeeded: content.slotsNeeded }, 'event_task');
+    await audit(tx, actor.userId, 'event.task_created', id, { eventId, schoolYearId: event.school_year_id, slotsNeeded: content.slotsNeeded }, 'event_task');
     return { task: toTask(rows[0]) };
   });
 }
@@ -667,7 +670,7 @@ export async function cancelTask(db, actor, input) {
       `UPDATE event_tasks SET cancelled_at = now(), cancelled_by = $2, cancellation_reason = $3 WHERE id = $1 RETURNING *`,
       [taskId, actor.userId, reason],
     );
-    await audit(tx, actor.userId, 'event.task_cancelled', taskId, { eventId }, 'event_task');
+    await audit(tx, actor.userId, 'event.task_cancelled', taskId, { eventId, schoolYearId: event.school_year_id }, 'event_task');
     return { task: toTask(updated[0]) };
   });
 }
@@ -755,7 +758,7 @@ export async function createSignup(db, actor, input) {
         `UPDATE event_task_signups SET status = 'confirmed', updated_by = $2, updated_at = now() WHERE id = $1 RETURNING *`,
         [existing.id, actor.userId],
       );
-      await audit(tx, actor.userId, 'event.task_signup_created', existing.id, { taskId, eventId }, 'event_task_signup');
+      await audit(tx, actor.userId, 'event.task_signup_created', existing.id, { taskId, eventId, schoolYearId: event.school_year_id }, 'event_task_signup');
       return { signup: toSignup(updated[0]) };
     }
     const id = crypto.randomUUID();
@@ -779,7 +782,7 @@ export async function createSignup(db, actor, input) {
       }
       throw error;
     }
-    await audit(tx, actor.userId, 'event.task_signup_created', id, { taskId, eventId }, 'event_task_signup');
+    await audit(tx, actor.userId, 'event.task_signup_created', id, { taskId, eventId, schoolYearId: event.school_year_id }, 'event_task_signup');
     return { signup: toSignup(inserted) };
   });
 }
@@ -802,7 +805,7 @@ export async function withdrawSignup(db, actor, input) {
       `UPDATE event_task_signups SET status = 'withdrawn', updated_by = $2, updated_at = now() WHERE id = $1 RETURNING *`,
       [signupId, actor.userId],
     );
-    await audit(tx, actor.userId, 'event.task_signup_withdrawn', signupId, { taskId, eventId }, 'event_task_signup');
+    await audit(tx, actor.userId, 'event.task_signup_withdrawn', signupId, { taskId, eventId, schoolYearId: event.school_year_id }, 'event_task_signup');
     return { signup: toSignup(updated[0]) };
   });
 }

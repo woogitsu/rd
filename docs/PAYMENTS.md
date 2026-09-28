@@ -14,7 +14,7 @@ Korekty są osobnymi, niezmiennymi rekordami w `payment_corrections`. Zawierają
 
 Widok `household_payment_totals` sumuje zarejestrowane wpłaty pomniejszone o korekty dla gospodarstwa i roku szkolnego. Pomija wpłaty nierozpoznane i starsze wpisy ze statusem `reversed`. Widok nie porównuje sumy z sugerowaną składką.
 
-Przed udostępnieniem funkcji produkcyjnej trzeba uzgodnić z Radą zasady korekt oraz uprawnienia do ich zatwierdzania. API i interfejs powstaną w osobnym zakresie po wdrożeniu autoryzacji serwerowej.
+Przed udostępnieniem funkcji produkcyjnej trzeba uzgodnić z Radą zasady korekt oraz uprawnienia do ich zatwierdzania. API (`src/pg/routes/payments.js`, sekcja niżej) i interfejs (`panel/`) już istnieją jako prototyp na danych syntetycznych — status: API na PostgreSQL, panel; nie wdrożone na Railway ani zatwierdzone do pracy na danych rodzin.
 
 ## API zapisu
 
@@ -55,3 +55,29 @@ Zwrot pieniędzy rodzinie (np. podwójny przelew, pomyłka w kwocie) i błędne 
 - **Nieobjęte tym PR** (dalsza praca, opisana w PR #138): dopasowanie zwrotu do ujemnej pozycji wyciągu w uzgodnieniu (`bank_reconciliation_matches.payment_refund_id`); panel (UI) do zgłaszania zwrotu i ponownego przypisania — na razie tylko API.
 
 To prototyp: router PostgreSQL działa tylko przy ustawionym `DATABASE_URL`, nie jest wdrożony na Railway i nie jest zatwierdzony do pracy na danych rodzin. Zasady korekt i uprawnienia do ich zatwierdzania nadal wymagają decyzji Rady.
+
+## Podział wpłaty na kilka gospodarstw (#127, część 1, migracja `0104`)
+
+Jeden przelew może dotyczyć kilku gospodarstw: przelew zbiorczy kilku rodzin, dziadkowie za kilkoro wnuków, rodzeństwo w **różnych** gospodarstwach (opieka dzielona, D-11). Taką wpłatę zapisuje się jako **nieprzypisaną** (`householdId: null`, status `unmatched`) i dzieli na części. W interfejsie to „podział wpłaty”, nie „rozliczenie należności”: składka jest dobrowolna, a system nie wylicza, ile gospodarstwo „powinno” wpłacić.
+
+- **`POST /api/payments/{id}/allocations`** (`Idempotency-Key`; `{ householdId, amountCents }`) tworzy jedną niezmienną część (`payment_allocations`). Każde gospodarstwo to osobne żądanie z własnym kluczem. Ten sam klucz powtarza odpowiedź (`Idempotency-Replayed: true`). Zasady:
+  - Suma bieżących części nie może przekroczyć netto wpłaty (kwota − korekty − zwroty). Inaczej dostajesz `409 payment_allocation_exceeds_net`. Trigger blokuje wiersz wpłaty, więc z dwóch równoległych części, które razem przekraczają kwotę, jedna zostanie odrzucona.
+  - Jedno gospodarstwo może mieć najwyżej jedną bieżącą część danej wpłaty (`409 payment_allocation_household_exists`). To chroni przed podwójnym kliknięciem z nowym kluczem.
+  - Wpłata już przypisana do jednego gospodarstwa: `409 payment_already_assigned`.
+- **`POST /api/payments/{id}/allocations/{allocationId}/reversal`** (`Idempotency-Key`; `{ reason }`) cofa błędną część nowym zapisem z powodem (`payment_allocation_reversals`). Części nie da się zmienić ani usunąć: błąd poprawia się przez cofnięcie i nową część. Drugie cofnięcie tej samej części daje `409 payment_allocation_already_reversed`.
+- **`GET /api/payments/{id}/allocations`** zwraca netto wpłaty, bieżące i cofnięte części, sumę przypisaną oraz `unallocatedCents`, czyli „nieprzypisaną część” do wyjaśnienia.
+- **Korekta lub zwrot po podziale.** Jeśli netto spadłoby poniżej sumy bieżących części, operacja zostaje odrzucona (`409 payment_allocation_exceeds_net`). Najpierw cofnij część (albo cofnij i utwórz mniejszą), dopiero potem koryguj wpłatę.
+- **Zwykłe przypisanie** (`POST /api/payments/{id}/assignment`) wpłaty z bieżącymi częściami jest odrzucane (`409 payment_has_allocations`).
+- **Sumy gospodarstw.** `household_payment_totals` liczy wpłaty przypisane (tak jak dotąd) oraz bieżące części wpłat nieprzypisanych. Dzięki temu karta rodziny, kartki (tylko role finansowe z MFA) i wykluczenie z przypomnienia „brak wpisu wpłaty” widzą część danego gospodarstwa, i tylko ją. Dla danych bez części sumy są identyczne jak przed migracją.
+- **Zamknięcie roku.** Podsumowanie wpłat ma dodatkowe pole `unmatchedAllocatedCents`, czyli część kwoty wpłat nieprzypisanych, która została już podzielona na gospodarstwa. Istniejące pola się nie zmieniają.
+- **Uzgodnienie.** Podzielona wpłata zostaje jedną wpłatą o pełnej kwocie. Przelew zbiorczy (np. 75 EUR za trzy rodziny) można więc powiązać 1:1 z jedną pozycją wyciągu bez różnicy i bez `confirmationNote`.
+- **Dziennik.** Zdarzenia `payment.allocation.created` i `payment.allocation.reversed` mają w metadanych `paymentEntryId` i `schoolYearId`, bez kwot i bez identyfikatorów gospodarstw (tak jak `payment.assigned`). Zapisują się w tej samej transakcji co zapis.
+- **Dostęp.** Admin, zarząd i skarbnik z MFA w roku wpłaty. Przedstawiciel klasy, `audit` i `principal` dostają `403` na wszystkich trzech trasach.
+
+**Nieobjęte częścią 1:**
+- migracja istniejących wpłat `recorded` do `payment_allocations` w proporcji 1:1 (wariant zachowawczy: istniejące przypisania zostają bez zmian, a wpłata z jednym gospodarstwem dalej liczy się przez `household_id`);
+- dopasowania wiele-do-jednego w uzgodnieniu — zrobione w części 2 (migracja `0105`, `bank_reconciliation_group_matches`; `docs/RECONCILIATION.md`, „Dopasowanie zbiorcze”);
+- korekta wskazująca konkretną część;
+- panel (UI);
+- wpłata gotówki zebranej przez przedstawiciela (D-12, D-13);
+- pokazanie części w raporcie KR (sumy raportu się nie zmieniają, bo liczy on wpłaty, nie gospodarstwa).
