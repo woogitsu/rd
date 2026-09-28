@@ -16,6 +16,7 @@
     </header>
 
     <main id="main">
+      <div class="print-meta" id="print-meta" aria-hidden="true"></div>
       <nav class="breadcrumbs" id="breadcrumbs" aria-label="Ścieżka"></nav>
       <div class="message" id="message" role="status"></div>
 
@@ -26,7 +27,10 @@
       </section>
 
       <section id="class-view" hidden>
-        <div class="page-heading"><div><p class="eyebrow" id="class-year"></p><h1 id="class-title">Klasa</h1><p>Lista uczniów i ich gospodarstw. Dane rodzin są poufne.</p></div></div>
+        <div class="page-heading">
+          <div><p class="eyebrow" id="class-year"></p><h1 id="class-title">Klasa</h1><p>Lista uczniów i ich gospodarstw. Dane rodzin są poufne.</p></div>
+          <button id="print-class" type="button">Drukuj listę</button>
+        </div>
         <section class="card">
           <form id="student-search-form" role="search" novalidate>
             <label for="student-search">Szukaj ucznia

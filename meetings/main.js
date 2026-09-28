@@ -35,8 +35,11 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const byId = (id) => document.getElementById(id);
 const state = { schoolYearId: "", meetings: [], detail: null, keys: new Map() };
@@ -546,6 +549,51 @@ const minutesView = setupDialog("minutes-view-dialog");
 const approveDialog = setupDialog("approve-dialog");
 const visibilityDialog = setupDialog("visibility-dialog", "visibility");
 
+// „Drukuj / zapisz jako PDF” w oknie podglądu protokołu (#151, #167). Wydruk
+// okna <dialog> jest zawodny w przeglądarkach (drukuje się strona pod spodem
+// albo tylko widoczna część), więc protokół kopiujemy do zwykłej sekcji
+// #print-minutes i dopiero wtedy drukujemy; okno dialogowe samo znika z
+// wydruku (shared/print.css: dialog { display: none }).
+function fillPrintMinutes(item) {
+  const { meeting, attendees = [], quorumChecks = [] } = state.detail;
+  const draft = item.status !== "approved";
+  mountPrintMeta(byId("print-minutes-meta"), {
+    view: `Protokół zebrania — wersja ${item.version}`,
+    schoolYear: meeting.schoolYearId,
+    printedBy,
+    draft,
+  });
+  byId("print-minutes-title").textContent = meeting.title;
+  byId("print-minutes-info").textContent = [
+    KIND_LABELS[meeting.kind] ?? meeting.kind,
+    meeting.classId ? `klasa ${meeting.classId}` : null,
+    formatBrussels(meeting.scheduledAt),
+    meeting.location,
+  ].filter(Boolean).join(" · ");
+  byId("print-attendance-body").replaceChildren(...(attendees.length ? attendees.map((attendee) => el("tr", {},
+    el("td", {}, CAPACITY_LABELS[attendee.capacity] ?? attendee.capacity),
+    el("td", {}, attendee.present ? "obecna" : "nieobecna"),
+    el("td", {}, attendee.votingEligible ? "tak" : "nie"),
+    el("td", { className: "signature" }, ""),
+  )) : [el("tr", {}, el("td", { colspan: "4", className: "muted" }, "Brak wpisów obecności."))]));
+  const latestCheck = quorumChecks.at(-1);
+  byId("print-quorum-result").textContent = latestCheck
+    ? `Quorum: ${describeQuorumCheck(latestCheck).headline} (${formatBrussels(latestCheck.determinedAt)}).`
+    : "Quorum nie zostało ustalone.";
+  byId("print-minutes-body").textContent = item.body;
+}
+
+let afterPrintCleanup = null;
+byId("print-minutes-button").addEventListener("click", () => {
+  const item = state.viewingMinutes;
+  if (!item || !state.detail) return;
+  fillPrintMinutes(item);
+  document.body.dataset.printTarget = "minutes";
+  afterPrintCleanup = () => { delete document.body.dataset.printTarget; };
+  window.addEventListener("afterprint", afterPrintCleanup, { once: true });
+  window.print();
+});
+
 byId("minutes-body").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-minutes]");
   if (!button) return;
@@ -555,6 +603,7 @@ byId("minutes-body").addEventListener("click", (event) => {
   if (button.dataset.action === "view") {
     byId("minutes-view-title").textContent = `Protokół — wersja ${item.version}`;
     byId("minutes-view-body").textContent = item.body;
+    state.viewingMinutes = item;
     minutesView.dialog.showModal();
   } else if (button.dataset.action === "approve") {
     approveDialog.form.reset();

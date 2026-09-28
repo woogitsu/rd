@@ -20,11 +20,14 @@ import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
 import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const FILTER_KEYS = ["schoolYearId", "direction"];
-const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null };
+const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -34,6 +37,7 @@ const overview = byId("overview");
 const entriesBody = byId("entries-body");
 const budgetBody = byId("budget-body");
 const loadMore = byId("load-more");
+const printButton = byId("print-ledger");
 
 function localDate() {
   const now = new Date();
@@ -86,6 +90,23 @@ function renderEntries() {
   byId("entries-empty").hidden = count !== 0;
   loadMore.hidden = !state.nextCursor;
   updateControls();
+  updatePrintMeta();
+}
+
+// Blok metadanych wydruku (#151) — niewidoczny na ekranie, wypełniany przed
+// każdym renderowaniem, żeby wydruk zawsze pokazywał rok, filtry i kompletność.
+function updatePrintMeta() {
+  const container = byId("print-meta");
+  if (!container) return;
+  const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
+  const filters = state.query?.direction ? DIRECTION_LABELS[state.query.direction] : null;
+  mountPrintMeta(container, {
+    view: "Księga przychodów i wydatków",
+    schoolYear: yearLabel,
+    filters,
+    printedBy,
+    incompleteCount: state.nextCursor ? state.entries.length : null,
+  });
 }
 
 function renderBudget(lines) {
@@ -127,6 +148,7 @@ function updateControls() {
   hint.hidden = !openEntry.disabled || state.loading;
   loadMore.disabled = state.loading || changed;
   byId("load-more-hint").hidden = !changed || !state.nextCursor;
+  printButton.disabled = state.loading || state.printing || !state.query || changed || state.entries.length === 0;
 }
 
 function setBusy(busy) {
@@ -225,6 +247,29 @@ loadMore.addEventListener("click", async () => {
   try { await loadEntries({ append: true }); }
   catch (error) { message.className = "message error"; message.textContent = error.message; }
   finally { setBusy(false); }
+});
+
+// „Drukuj zestawienie” dociąga wszystkie strony bieżącego filtra przed wydrukiem,
+// żeby wydruk nigdy nie ucinał wpisów po jednej stronie (#151). Znacznik
+// state.printing chroni przed podwójnym kliknięciem, tak jak state.loading wyżej.
+printButton.addEventListener("click", async () => {
+  if (state.loading || state.printing || filterChanged() || !state.query) return;
+  state.printing = true;
+  updateControls();
+  try {
+    while (buildNextLedgerUrl(state.query, state.nextCursor)) {
+      await loadEntries({ append: true });
+      renderEntries();
+    }
+    updatePrintMeta();
+    window.print();
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+  } finally {
+    state.printing = false;
+    updateControls();
+  }
 });
 
 // #225: Księgę prowadzą role finansowe. Inne konta widzą jeden komunikat zamiast
