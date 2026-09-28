@@ -7,7 +7,8 @@ import {
   PANELS, SECRET_INPUT_IDS, canOfferVoluntaryMfaEnrollment, clearSensitiveViews, enrollIntroText,
   enrollmentConfirmError, errorMessage, formatSecret, isRecoveryFormat,
   isTotpFormat, logoutOutcome, nextView, normalizeRecoveryCode, normalizeTotp,
-  parseFragment, parseOtpauthUri, passwordLength, qrMatrix, qrSvgPath, validateEmail, validateNewPassword,
+  parseFragment, parseOtpauthUri, passwordLength, qrMatrix, qrSvgPath, shouldShowNoAccessNotice,
+  validateEmail, validateNewPassword,
 } from '../login/core.js';
 import { generateRecoveryCodes, totpMethod } from '../src/pg/mfa.js';
 
@@ -64,6 +65,14 @@ test('dobrowolne włączenie MFA: dowolna zalogowana rola bez czynnika (#161)', 
   assert.equal(canOfferVoluntaryMfaEnrollment(null), false);
   assert.notEqual(enrollIntroText(true), enrollIntroText(false), 'inny tekst dla wymogu roli i wyboru własnego');
   assert.match(enrollIntroText(true), /rola wymaga/);
+});
+
+test('#176: komunikat o braku uprawnień tylko gdy serwer jawnie mówi hasActiveRole:false', () => {
+  assert.equal(shouldShowNoAccessNotice({ grants: [], hasActiveRole: false }), true);
+  assert.equal(shouldShowNoAccessNotice({ grants: [{ role: 'representative' }], hasActiveRole: true }), false);
+  // Nieznany stan (błąd sieci, mfaRequired bez jawnego hasActiveRole) → nie ukrywamy paneli.
+  assert.equal(shouldShowNoAccessNotice(null), false);
+  assert.equal(shouldShowNoAccessNotice({ grants: [], mfaRequired: true }), false, 'hasActiveRole nieobecne');
 });
 
 test('kod QR: URI otpauth z serwera, macierz zgodna z normą, ścieżka SVG z marginesem', () => {

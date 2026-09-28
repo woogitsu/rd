@@ -3,10 +3,23 @@ import assert from 'node:assert/strict';
 import {
   buildGrantsUrl, confirmationText, dateToExpiresAt, describeAuditEvent, errorMessage, grantPayload,
   indexClasses, invitationLink, invitationPayload, isOwnLastAdminGrant, mfaResetConfirmation, passwordResetLink,
-  scopeLabel,
+  PENDING_DECISION_ROLES, ROLE_LABELS, roleNeedsPendingDecisionWarning, scopeLabel,
 } from '../admin/core.js';
+import { ROLE_STATUS } from '../src/pg/auth.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
+
+test('#176: PENDING_DECISION_ROLES zgadza się z ROLE_STATUS (src/pg/auth.js), jedynym źródłem prawdy', () => {
+  const pendingOnServer = Object.entries(ROLE_STATUS)
+    .filter(([, status]) => status === 'pending_decision')
+    .map(([role]) => role)
+    .sort();
+  assert.deepEqual([...PENDING_DECISION_ROLES].sort(), pendingOnServer);
+  for (const role of Object.keys(ROLE_LABELS)) {
+    assert.equal(roleNeedsPendingDecisionWarning(role), pendingOnServer.includes(role), role);
+  }
+  assert.equal(roleNeedsPendingDecisionWarning('nieznana'), false);
+});
 
 test('buildGrantsUrl encodes filters and rejects unknown values', () => {
   assert.equal(buildGrantsUrl(), '/api/admin/grants?status=active');
