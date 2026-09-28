@@ -3,6 +3,7 @@
 import { parseCsv } from "../import/core.js";
 import { decodeCsvBytes, detectDelimiter } from "../import/csv.js";
 import { formatCents, isValidId, parseEuroAmount } from "../panel/core.js";
+import { MoneyError, parseCentsCell } from "../panel/money.js";
 
 export const MAX_ROWS = 5000;
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -48,9 +49,13 @@ function parseRecordedNet(raw, unit) {
   const value = clean(raw);
   if (value === "") return { cents: null };
   if (unit === "cents") {
-    const cents = Number(value);
-    if (!Number.isSafeInteger(cents) || cents < 0) return { error: "Niepoprawna kwota wpłat w centach." };
-    return { cents };
+    // #173: tylko cyfry ASCII bez separatora — "1e3", "0x10", "25.0" to błąd wiersza.
+    try {
+      return { cents: parseCentsCell(value) };
+    } catch (error) {
+      if (error instanceof MoneyError) return { error: "Niepoprawna kwota wpłat w centach." };
+      throw error;
+    }
   }
   if (/^0+(?:[.,]0{1,2})?$/.test(value)) return { cents: 0 };
   try {

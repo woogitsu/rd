@@ -34,19 +34,22 @@
       </select></label>
       <label id="sheet-field" hidden>Arkusz<select id="sheet" aria-describedby="file-status"></select></label>
     </div>
-    <p class="status muted" id="file-status" role="status">Maksymalnie 5 MB i 5000 wierszy. Plik .ods (LibreOffice) nie jest obsługiwany — zapisz jako .xlsx albo .csv. <a href="./template.csv" download="szablon-uczniowie.csv">Pobierz przykładowy CSV</a>.</p>
+    <p class="status muted" id="file-status" role="status">Maksymalnie 5 MB i 5000 wierszy. Plik .ods (LibreOffice) nie jest obsługiwany — zapisz jako .xlsx albo .csv. <a href="./template.csv" download="szablon-uczniowie.csv">Pobierz przykładowy CSV</a> — <a href="./template-instrukcja.txt" download="szablon-instrukcja.txt">instrukcja do szablonu</a>.</p>
   </section>
 
   <section id="mapping-section" aria-labelledby="mapping-title" hidden>
     <h2 id="mapping-title">2. Dopasuj kolumny</h2>
     <p class="muted" id="mapping-hint">Gwiazdka oznacza pole wymagane. Nie łączymy rodzeństwa ani rodzin na podstawie samego nazwiska.</p>
     <div id="mapping" class="mapping" role="group" aria-labelledby="mapping-title" aria-describedby="mapping-hint"></div>
+    <div id="unused-columns" role="status"></div>
     <div class="actions-row"><button id="preview" type="button">Sprawdź dane</button></div>
   </section>
 
   <section id="result-section" aria-labelledby="result-title" hidden>
     <h2 id="result-title" tabindex="-1">3. Wynik sprawdzenia</h2>
     <div id="summary" role="status"></div>
+    <div class="actions-row"><button id="download-report" type="button" disabled>Pobierz raport błędów (CSV)</button></div>
+    <p class="muted">Raport zawiera numer wiersza, etap i komunikat — bez imion, nazwisk ani e-maili. Można go bezpiecznie przekazać szkole.</p>
     <div id="messages"></div>
     <div class="tablewrap" role="region" aria-labelledby="preview-caption" tabindex="0">
       <table>

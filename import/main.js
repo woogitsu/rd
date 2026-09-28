@@ -1,7 +1,10 @@
 import { readXlsxSheets } from './xlsx.js';
 import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
+import { buildErrorReportCsv, unusedColumns } from './report.js';
 const fileInput = document.querySelector('#file');
+const unusedColumnsBox = document.querySelector('#unused-columns');
+const downloadReportButton = document.querySelector('#download-report');
 const encodingSelect = document.querySelector('#encoding');
 const status = document.querySelector('#file-status');
 const mappingSection = document.querySelector('#mapping-section');
@@ -23,6 +26,11 @@ let matrix = null;
 let xlsxSheets = null; // #88: wszystkie arkusze XLSX naraz — zmiana wyboru nie czyta pliku ponownie.
 let lastResult = null;
 let currentFileName = '';
+// #109: raport do pobrania — wszystkie komunikaty z walidacji lokalnej i (jeśli
+// wysłano) podglądu serwera. Tylko numer wiersza, etap, rodzaj i komunikat —
+// bez imion, nazwisk i e-maili.
+let reportEntries = [];
+function updateReportButton() { downloadReportButton.disabled = reportEntries.length === 0; }
 function showError(message) { status.className = 'status error'; status.textContent = message; fileInput.setAttribute('aria-invalid', 'true'); }
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 // Buduje sekcję mapowania kolumn dla aktualnego `matrix` — wywoływane po wczytaniu
@@ -94,6 +102,28 @@ document.querySelector('#preview').addEventListener('click', () => {
   try {
     const result = validateRows(matrix, mapping);
     lastResult = result; resetServer(); serverSection.hidden = false;
+    // #109: raport per wiersz (bez danych osobowych) i wykaz kolumn, których mapowanie nie użyje.
+    reportEntries = [
+      ...result.errors.map((e) => ({ ...e, stage: 'file', kind: 'error' })),
+      ...result.warnings.map((w) => ({ ...w, stage: 'file', kind: 'warning' })),
+    ];
+    updateReportButton();
+    const headers = matrix[0].map((v) => String(v ?? '').trim());
+    const unused = unusedColumns(headers, mapping);
+    unusedColumnsBox.replaceChildren();
+    if (unused.length) {
+      const heading = document.createElement('h3'); heading.textContent = `Kolumny, które nie zostaną użyte: ${unused.length}`;
+      const list = document.createElement('ul');
+      unused.forEach((col) => {
+        const li = document.createElement('li');
+        li.textContent = col.excluded
+          ? `„${col.header}” — wygląda na ${col.excluded}. Ten plik zawiera dane, których nie importujemy. Poproś szkołę o plik bez tej kolumny.`
+          : `„${col.header}”`;
+        if (col.excluded) li.className = 'bad';
+        list.append(li);
+      });
+      unusedColumnsBox.append(heading, list);
+    }
     const summary = document.querySelector('#summary'); summary.replaceChildren();
     const report = document.createElement('div'); report.className = 'report';
     for (const [title, amount] of [['Poprawne wiersze', result.validCount],['Błędy', result.errors.length],['Uwagi do sprawdzenia', result.warnings.length]]) {
@@ -118,7 +148,16 @@ document.querySelector('#preview').addEventListener('click', () => {
     });
     resultSection.hidden = false; resultSection.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth' });
     document.querySelector('#result-title').focus({ preventScroll: true });
-  } catch (error) { lastResult = null; resetServer(); resultSection.hidden = true; serverSection.hidden = true; showError(error.message); }
+  } catch (error) { lastResult = null; reportEntries = []; updateReportButton(); resetServer(); resultSection.hidden = true; serverSection.hidden = true; showError(error.message); }
+});
+downloadReportButton.addEventListener('click', () => {
+  if (!reportEntries.length) return;
+  const csv = buildErrorReportCsv(reportEntries);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'raport-importu.csv'; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
 // --- Krok 4: podgląd i zapis na serwerze (issue #36) -------------------------
@@ -153,6 +192,9 @@ function updateButtons() {
 function resetServer() {
   serverPreview = null; serverPayload = null; idempotencyKey = null;
   serverReport.replaceChildren(); setServerStatus('');
+  // #109: podgląd serwera nieaktualny — raport wraca do samej walidacji lokalnej.
+  reportEntries = reportEntries.filter((entry) => entry.stage !== 'server');
+  updateReportButton();
   updateButtons();
 }
 async function api(path, { method = 'GET', body, headers = {} } = {}) {
@@ -193,6 +235,14 @@ function renderServerPreview(data) {
     ...messageList('Wymaga ręcznej decyzji', problems),
     ...messageList('Uwagi serwera', data.warnings.map(w => [w.row, w.message])),
   );
+  // #109: dołącz komunikaty podglądu serwera do raportu do pobrania.
+  reportEntries = [
+    ...reportEntries.filter((entry) => entry.stage !== 'server'),
+    ...data.rows.filter((row) => row.action === 'conflict' || row.action === 'skipped').flatMap((row) =>
+      (row.messages ?? []).map((message) => ({ row: row.row, stage: 'server', kind: row.action, message }))),
+    ...data.warnings.map((w) => ({ row: w.row, stage: 'server', kind: 'warning', message: w.message })),
+  ];
+  updateReportButton();
 }
 document.querySelector('#server-connect').addEventListener('click', async () => {
   busy = true; updateButtons(); setServerStatus('Pobieranie lat szkolnych…');

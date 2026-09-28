@@ -100,3 +100,18 @@ test('XLSX first sheet with synthetic pupils feeds the preview', async () => {
   assert.deepEqual(result.errors, []);
   assert.equal(result.records[1].email1, 'jan@example.org');
 });
+
+// --- #109: szablon CSV — aliasy nagłówków dają mapowanie bez ręcznego wyboru ---
+test('template.csv parses with guessMapping and only fictional @example.invalid addresses', () => {
+  const csv = readFileSync(new URL('../import/public/template.csv', import.meta.url), 'utf8');
+  const rows = parseCsv(csv);
+  const mapping = guessMapping(rows[0]);
+  for (const field of ['studentId', 'firstName', 'lastName', 'className', 'householdId', 'guardian1', 'email1', 'guardian2', 'email2']) {
+    assert.ok(mapping[field] !== undefined, `brak mapowania dla ${field}`);
+  }
+  const result = validateRows(rows, mapping);
+  assert.equal(result.validCount, 2);
+  assert.deepEqual(result.errors, []);
+  assert.ok(csv.includes('@example.invalid'));
+  assert.ok(!csv.includes('@example.org'));
+});

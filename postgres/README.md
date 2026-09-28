@@ -165,6 +165,23 @@ zmian. Założenie zachowawcze: bez okna wpłat z wyprzedzeniem (decyzja
 skarbnika/zarządu). Wycofanie: usunięcie widoku, triggerów i funkcji; dane
 nie wymagają cofania.
 
+`0028_cash_opening_and_transfers.sql` (#199) dodaje `cash_cents` do
+`ledger_opening_balances` i `ledger_opening_balance_adjustments` (część poza
+rachunkiem; poprawka może tylko przesunąć kwotę między rachunkiem a kasą),
+kolumny `opening_cash_cents`/`closing_cash_cents` w `school_year_closures`,
+niezmienną tabelę `ledger_transfers` (kasa ↔ rachunek, storno przez
+`reverses_id`, zamrożenie roku, data w roku), funkcje
+`ledger_opening_cash_cents`, `ledger_transfers_cash_net_at`, widok
+`ledger_year_cash_summary` i nową wersję `ledger_non_bank_net_at` (dolicza
+gotówkę otwarcia i przeniesienia). Skutki dla danych: istniejące bilanse i
+poprawki dostają `cash_cents = 0` (kwoty całkowite bez zmian); zatwierdzone
+uzgodnienia mają utrwalone wartości i się nie zmieniają; szkice bez przeniesień
+i z `cash_cents = 0` dają ten sam wynik co przed migracją; zamknięcia sprzed
+migracji mają puste kolumny gotówki. Gotówkę zawartą w bilansie przeniesionym
+przed migracją trzeba rozbić poprawką (decyzja skarbnika). Wycofanie:
+przywrócenie funkcji z 0015, usunięcie widoku, funkcji, pustej tabeli
+`ledger_transfers` i kolumn.
+
 To **nie** jest migracja istniejących rekordów D1 i nie oznacza gotowości
 produkcyjnej. Stary Worker nie korzysta z nowych tabel. Przeniesienie zapisu
 audytu do transakcji nowego API jest osobnym zakresem.

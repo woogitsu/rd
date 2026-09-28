@@ -404,6 +404,27 @@ export const ROUTE_MATRIX = Object.freeze([
       path: `/api/payments/${obj.paymentId}/assignment`, headers: withKey(key), body: { householdId: 'hh-1' },
     }),
   },
+  {
+    // #138: zwrot pieniędzy rodzinie — osobny, niezmienny zapis (nie korekta).
+    id: 'payments.refund', module: 'payments', method: 'POST', path: '/api/payments/:paymentId/refunds',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'static',
+    object: { kind: 'payment', stage: 'recorded' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/refunds`, headers: withKey(key),
+      body: { amountCents: 1, refundedOn: yearDate(target, '10-02'), method: 'bank', reason: 'Zwrot syntetyczny' },
+    }),
+  },
+  {
+    // #138: ponowne przypisanie do gospodarstwa — niezmienne zdarzenie zamiast korekty do zera.
+    // fixture 'fresh': każda próba przenosi hh-1 -> hh-2, więc dzielony obiekt nie może się powtórzyć.
+    id: 'payments.reassignment', module: 'payments', method: 'POST', path: '/api/payments/:paymentId/reassignment',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'payment', stage: 'recorded' },
+    build: ({ obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/reassignment`, headers: withKey(key),
+      body: { householdId: 'hh-2', reason: 'Błędne przypisanie, korekta syntetyczna' },
+    }),
+  },
 
   // ---------- events (#12) ----------
   {
@@ -593,6 +614,61 @@ export const ROUTE_MATRIX = Object.freeze([
     object: { kind: 'ledgerEntry' },
     build: ({ obj, key }) => ({
       path: `/api/ledger/${obj.ledgerEntryId}/corrections`, headers: withKey(key), body: { amountCents: 1, reason: 'Korekta syntetyczna' },
+    }),
+  },
+  {
+    // #144: przeksięgowanie (storno + wpis zastępczy) — jednorazowe na wpis, więc fixture 'fresh'.
+    id: 'ledger.replacement', module: 'ledger', method: 'POST', path: '/api/ledger/:ledgerEntryId/replacement',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'ledgerEntry' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/ledger/${obj.ledgerEntryId}/replacement`, headers: withKey(key),
+      body: {
+        schoolYearId: target.schoolYearId, direction: 'income', amountCents: 100000, categoryId: ledgerCategory(target),
+        description: `Wpis zastępczy ${marker(target.key)}`, occurredOn: yearDate(target, '10-06'), method: 'bank',
+        reason: 'Zła kategoria, korekta syntetyczna',
+      },
+    }),
+  },
+
+  // ---------- kasa i rachunek (#199) ----------
+  // Przeniesienia i odczyt: admin/zarząd/skarbnik z MFA, przydział bez klasy w roku (jak księga).
+  // Bilans otwarcia i jego poprawki: wyłącznie zarząd z MFA (docs/LEDGER.md).
+  {
+    id: 'ledgerCash.transfers', module: 'ledger-cash', method: 'GET', path: '/api/ledger/transfers?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/ledger/transfers?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    id: 'ledgerCash.createTransfer', module: 'ledger-cash', method: 'POST', path: '/api/ledger/transfers',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/ledger/transfers', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, direction: 'cash_to_bank', amountCents: 100,
+        transferredOn: yearDate(target, '10-10'), description: `Wpłata gotówki ${marker(target.key)}` },
+    }),
+  },
+  {
+    id: 'ledgerCash.openingBalance', module: 'ledger-cash', method: 'GET', path: '/api/ledger/opening-balance?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/ledger/opening-balance?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    // Osobna baza: rok 1 nie może mieć jeszcze bilansu otwarcia (jeden na rok).
+    id: 'ledgerCash.createOpeningBalance', module: 'ledger-cash', method: 'POST', path: '/api/ledger/opening-balance',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403, fixture: null, group: 'ledgerOpening',
+    build: ({ target, key }) => ({
+      path: '/api/ledger/opening-balance', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, bankCents: 1000, cashCents: 500, note: 'Bilans syntetyczny' },
+    }),
+  },
+  {
+    id: 'ledgerCash.adjustOpeningBalance', module: 'ledger-cash', method: 'POST', path: '/api/ledger/opening-balance/adjustments',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403, fixture: 'static',
+    object: { kind: 'openingBalance' },
+    build: ({ target, key }) => ({
+      path: '/api/ledger/opening-balance/adjustments', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, amountCents: 100, cashCents: 0, reason: 'Poprawka syntetyczna' },
     }),
   },
 
