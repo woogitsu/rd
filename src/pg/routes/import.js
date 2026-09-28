@@ -22,6 +22,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { FIELDS, validateRows } from '../../../import/core.js';
 import { insertAuditEvent } from '../audit.js';
 import { requireAccess } from '../authorization.js';
+import { isProductionEnv } from '../bootstrap-admin.js';
 
 export const name = 'import';
 export const IMPORT_ROLES = Object.freeze(['admin', 'board']);
@@ -60,8 +61,19 @@ class ImportError extends Error {
 const norm = (value) => String(value ?? '').trim().toLocaleLowerCase('pl-PL').replace(/\s+/g, ' ');
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
+// #166: poprzednia wersja porównywała TYLKO do dosłownego 'production' —
+// 'prod' i `Production`/`PRODUCTION` (inna wielkość liter) nie pasowały do
+// tego porównania i zostawiały import WŁĄCZONY bez IMPORT_ENABLED (fail-open,
+// dane dzieci i opiekunów). `isProductionEnv` (src/pg/bootstrap-admin.js,
+// współdzielona z bootstrapem pierwszego administratora) rozpoznaje oba
+// warianty niezależnie od wielkości liter. Założenie zachowane bez zmian
+// (jak dziś i jak `isProductionEnv` gdzie indziej): brak APP_ENV albo inna,
+// nierozpoznana wartość NIE jest traktowana jak produkcja — to osobna
+// decyzja (D-20/#166: jedna funkcja `resolveAppEnv` fail-closed dla
+// nierozpoznanej wartości wszędzie), która zmieniłaby domyślne zachowanie
+// lokalnych środowisk i testów bez APP_ENV.
 function importDisabled(env) {
-  return env?.APP_ENV === 'production' && env?.IMPORT_ENABLED !== 'true';
+  return isProductionEnv(env?.APP_ENV) && env?.IMPORT_ENABLED !== 'true';
 }
 
 // Przydział musi obejmować wszystkie klasy; rok — wskazany albo wszystkie.
