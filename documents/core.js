@@ -44,6 +44,8 @@ export const ERROR_MESSAGES = Object.freeze({
   not_found: "Nie znaleziono dokumentu albo nie masz do niego dostępu.",
   document_too_large: "Plik przekracza limit rozmiaru ustawiony na serwerze.",
   unsupported_media_type: "Niedozwolony typ pliku. Dopuszczalne są wyłącznie PDF, PNG i JPEG, a treść pliku musi odpowiadać typowi.",
+  document_active_content: "Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady.",
+  document_malformed: "Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo z doklejonymi dodatkowymi danymi).",
   storage_unavailable: "Magazyn dokumentów nie jest skonfigurowany. Przesyłanie i pobieranie są niedostępne.",
   service_unavailable: "Magazyn dokumentów jest chwilowo niedostępny. Spróbuj ponownie później — ponowienie nie utworzy duplikatu.",
   idempotency_conflict: "Ta operacja została już zapisana z inną treścią. Wybierz plik i dane ponownie.",
