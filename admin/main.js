@@ -17,6 +17,10 @@ import {
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const state = { me: null, users: [], grants: [], invitations: [], years: [], classes: new Map(), yearMap: new Map() };
 const byId = (id) => document.getElementById(id);

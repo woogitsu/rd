@@ -32,6 +32,10 @@ import {
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const byId = (id) => document.getElementById(id);
 const state = {

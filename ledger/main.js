@@ -16,6 +16,10 @@ import {
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null };
 const byId = (id) => document.getElementById(id);
