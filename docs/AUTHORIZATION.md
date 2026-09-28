@@ -99,6 +99,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
+| `GET /api/email/suppressions?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | adres tylko maskowany; odczyt w dzienniku (#94) |
+| `POST /api/email/suppressions/:emailHash/release-request` | zarząd, skarbnik — jak wyżej | tak | 403 | blokada po `complaint`/`unsubscribed`: tylko powód `parent_request`, inaczej 409 (#94) |
+| `POST /api/email/suppressions/:emailHash/release` | zarząd, skarbnik — jak wyżej; inna osoba niż zgłaszająca wniosek | tak | 403 | ta sama osoba: 403 `self_approval_forbidden`; zużyty wniosek: 409 (#94) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
 | `GET /api/news?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wpisy własnej klasy | nie | 403 | |
 | `POST /api/news` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | zarząd z przydziałem klasy: 403 (szkice klasy tylko przedstawiciel) |

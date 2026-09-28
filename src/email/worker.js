@@ -123,7 +123,9 @@ async function recheckRow(tx, campaign, row, config) {
     );
     if (paid.rows[0]) return { state: 'skipped', error: 'payment_recorded' };
   }
-  const suppressed = await tx.query('SELECT 1 FROM email_suppressions WHERE email_hash = $1', [row.email_hash]);
+  // Tylko widok „aktywnej blokady” (#94) — po zdjęciu blokady zapis w
+  // email_suppressions zostaje w historii, ale nie liczy się już jako blokada.
+  const suppressed = await tx.query('SELECT 1 FROM email_active_suppressions WHERE email_hash = $1', [row.email_hash]);
   if (suppressed.rows[0]) return { state: 'suppressed', error: 'address_suppressed' };
   // Gospodarstwo dziecka = główne członkostwo obowiązujące dziś w Brukseli
   // (#194), jak w migawce; nie kolumna students.household_id. Dzień limitu
@@ -311,7 +313,7 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
               JOIN household_payment_totals p ON p.household_id = o.household_id AND p.school_year_id = c.school_year_id
              WHERE c.id = o.campaign_id AND c.audience = 'no_payment_record' AND p.net_amount_cents > 0)
           AND NOT EXISTS (
-            SELECT 1 FROM email_campaign_recipients r JOIN email_suppressions s ON s.email_hash = r.email_hash
+            SELECT 1 FROM email_campaign_recipients r JOIN email_active_suppressions s ON s.email_hash = r.email_hash
              WHERE r.id = o.recipient_id)
           AND EXISTS (
             SELECT 1

@@ -632,6 +632,33 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { event: 'opened', email: 'nieznany@example.invalid', id: key, ts_event: 1791187200 },
     }),
   },
+  {
+    // Lista wyłączeń (#94): rola sprawdzana przed jakimkolwiek zapytaniem o listę.
+    id: 'email.suppressions.list', module: 'email', method: 'GET', path: '/api/email/suppressions?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/suppressions?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    // Zgłoszenie zdjęcia blokady na nieistniejący (nieaktywny) skrót: dozwolona
+    // rola dochodzi do logiki biznesowej (404 suppression_not_active), rola
+    // spoza EMAIL_EDIT jest zatrzymana wcześniej przez autoryzację (403).
+    id: 'email.suppressions.releaseRequest', module: 'email', method: 'POST',
+    path: '/api/email/suppressions/:emailHash/release-request', targets: YEAR_TARGETS,
+    allow: EMAIL_EDIT, mfa: true, ok: 404, deny: 403, fixture: null,
+    build: ({ target }) => ({
+      path: `/api/email/suppressions/${'0'.repeat(64)}/release-request`,
+      body: { schoolYearId: target.schoolYearId, releaseReason: 'address_corrected' },
+    }),
+  },
+  {
+    id: 'email.suppressions.release', module: 'email', method: 'POST',
+    path: '/api/email/suppressions/:emailHash/release', targets: YEAR_TARGETS,
+    allow: EMAIL_EDIT, mfa: true, ok: 404, deny: 403, fixture: null,
+    build: ({ target }) => ({
+      path: `/api/email/suppressions/${'0'.repeat(64)}/release`,
+      body: { schoolYearId: target.schoolYearId, requestId: '00000000-0000-0000-0000-000000000000' },
+    }),
+  },
 
   // ---------- news (#14) ----------
   {

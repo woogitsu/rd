@@ -68,7 +68,17 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 - Log przebiegu zawiera wyłącznie liczby i kody.
 
 ## Webhook Brevo
-`POST /api/email/webhooks/brevo`. Brevo nie podpisuje treści HMAC; weryfikacja to wspólny sekret `BREVO_WEBHOOK_SECRET` (min. 32 znaki) przesyłany w nagłówku `Authorization: Bearer <sekret>` (konfiguracja „auth” webhooka Brevo) albo jako hasło Basic Auth. Porównanie w stałym czasie; zły lub brak sekretu → 401, brak konfiguracji → 503. To jedyna trasa API zwolniona z kontroli `Origin`. Zapisujemy tylko zweryfikowane zdarzenia, bez adresu (skrót SHA-256), z deduplikacją. `hard_bounce`, `invalid_email`, `blocked`, `spam`, `unsubscribed` dopisują adres do listy wyłączeń; bounce zmienia stan wiersza na `bounced`. Zdjęcie adresu z listy wyłączeń nie jest zaimplementowane (wymaga procedury i decyzji).
+`POST /api/email/webhooks/brevo`. Brevo nie podpisuje treści HMAC; weryfikacja to wspólny sekret `BREVO_WEBHOOK_SECRET` (min. 32 znaki) przesyłany w nagłówku `Authorization: Bearer <sekret>` (konfiguracja „auth” webhooka Brevo) albo jako hasło Basic Auth. Porównanie w stałym czasie; zły lub brak sekretu → 401, brak konfiguracji → 503. To jedyna trasa API zwolniona z kontroli `Origin`. Zapisujemy tylko zweryfikowane zdarzenia, bez adresu (skrót SHA-256), z deduplikacją. `hard_bounce`, `invalid_email`, `blocked`, `spam`, `unsubscribed` dopisują adres do listy wyłączeń; bounce zmienia stan wiersza na `bounced`.
+
+## Lista wyłączeń: przegląd i zdjęcie blokady (#94)
+Blokada (`email_suppressions`) to zdarzenie, nie stan — adres może być zablokowany, odblokowany i ponownie zablokowany; historia jest kompletna i nic nie jest nadpisywane ani usuwane. „Aktywna blokada” dla danego adresu to **wyłącznie** wynik widoku `email_active_suppressions` (ostatnie zdarzenie blokady nowsze niż ostatnie zdjęcie blokady) — migawka kampanii i worker sprawdzają wyłącznie ten widok, nigdy surowej tabeli `email_suppressions`.
+
+- `GET /api/email/suppressions?schoolYearId=…` (board/treasurer, MFA) — lista aktywnych blokad: skrót adresu, powód, data, liczba zdarzeń historii, oraz `guardianId`/`householdId` odzyskane po stronie serwera (skrót bieżącego adresu każdego opiekuna), i adres wyłącznie maskowany (`maskEmail`). Każdy odczyt trafia do dziennika audytu.
+- Zdjęcie blokady to **dwa kroki jak przy zatwierdzeniu kampanii** — zgłasza jedna osoba, zatwierdza inna:
+  1. `POST /api/email/suppressions/{emailHash}/release-request` (board/treasurer, MFA) — `releaseReason` (`address_corrected`, `provider_unblocked`, `bounce_reviewed`, `parent_request`) i opcjonalny `confirmationNote` (krótki kod, np. `parent_email_reply`, bez treści rozmowy). Blokadę po `complaint`/`unsubscribed` można zgłosić do zdjęcia wyłącznie z powodem `parent_request` — inaczej `409 release_reason_not_allowed`.
+  2. `POST /api/email/suppressions/{emailHash}/release` (board/treasurer, MFA, **inna osoba niż zgłaszająca**) z `requestId` — tworzy nowy, niezmienialny zapis w `email_suppression_releases` (`released_by`, `approved_by` — różne osoby, wymuszone też w bazie). Ta sama osoba dostaje `403 self_approval_forbidden`.
+- Zmiana adresu opiekuna (`PATCH /api/guardians/:id/contact`) daje nowy skrót — rodzina automatycznie wraca do migawki przy następnym budowaniu listy, bez zdejmowania żadnej blokady starego adresu.
+- Ograniczenie tego prototypu: przedstawiciel klasy nie widzi nawet licznika „adresów do sprawdzenia” w swoich klasach (opcja z issue #94 zależna od D-08) — nie jest zaimplementowane.
 
 ## Zmienne środowiskowe
 | Zmienna | Znaczenie |
