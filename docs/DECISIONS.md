@@ -75,6 +75,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: jak długo przechowujemy: dane ucznia i opiekuna po zakończeniu nauki, historię wpłat i księgę, dokumenty źródłowe, dziennik audytu, kampanie e-mail, kopie zapasowe oraz przesłany plik importu?
 - Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania.
 - Warianty w dokumentacji: nie wskazano okresów. Dokumenty Rady archiwizować zgodnie z regulaminem i decyzją szkoły (SECURITY.md).
+- Mechanizm techniczny (bez wartości): [`docs/RETENTION.md`](RETENTION.md) — rejestr `retention_policies` (#91), raport kandydatów `GET /api/admin/retention/preview`. Wykonanie (usuwanie/anonimizacja) świadomie poza zakresem #91 w obecnym PR.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:

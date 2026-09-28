@@ -305,3 +305,19 @@ Wycofanie na pustej bazie: usunięcie trzech tabel, funkcji
 bazie z kontami — tylko po kopii zapasowej (wszyscy stracą hasła). Okres
 przechowywania skrótów haseł wyłączonych kont i tokenów zależy od D-04.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
+
+`0074_retention_policies.sql` (issue #91, D-04) dodaje `retention_policies` —
+rejestr polityk retencji, tylko dopisywanie (trigger blokuje UPDATE/DELETE).
+Wiele wierszy per `data_category` w czasie; obowiązująca polityka to
+najnowszy wg `effective_from`. `retain_for` (interval) i `retain_until_rule`
+(opis) są rozłączne (dokładnie jedno wypełnione). `approved_by`, jeśli
+ustawiony, musi różnić się od `created_by` (zasada czterech oczu). Skutki dla
+danych: nowa, pusta tabela; brak zmian w istniejących tabelach. Brak wiersza
+dla kategorii oznacza „nie usuwaj” (ta sama semantyka co `documents.retain_until`
+sprzed tej migracji). Raport kandydatów `GET /api/admin/retention/preview`
+(`src/pg/routes/admin.js`) liczy wyłącznie wiersze per kategoria i rok/rok
+szkolny — nie usuwa ani nie anonimizuje żadnych danych. **Mechanizm wykonania
+retencji (usuwanie/anonimizacja) świadomie nie jest częścią tej migracji ani
+tego PR** — wymaga osobnej decyzji o kształcie funkcji anonimizującej,
+testów rodzeństwa/opieki dzielonej i przeglądu bezpieczeństwa (patrz #91).
+Wycofanie na pustej bazie: `DROP TABLE retention_policies` i funkcji guard.
