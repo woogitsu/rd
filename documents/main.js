@@ -6,8 +6,10 @@ import {
   KIND_LABELS,
   LIST_LIMIT,
   SNIFF_BYTES,
+  buildDescriptionRequest,
   buildListUrl,
   buildUploadRequest,
+  categoryLabel,
   checkFile,
   contentUrl,
   errorMessage,
@@ -20,7 +22,9 @@ import {
   metadataUrl,
   normalizeDocument,
   submissionFingerprint,
+  titleLabel,
   typeLabel,
+  validateDescriptionInput,
   validateUploadMeta,
 } from "./core.js";
 import { MESSAGES, api, errorMessage as sharedErrorMessage, handleAuthFailure } from "../shared/api.js";
@@ -51,6 +55,9 @@ const loadMore = byId("load-more");
 const details = byId("details");
 const detailsList = byId("details-list");
 const detailsDownload = byId("details-download");
+const descriptionHistory = byId("description-history");
+const descriptionForm = byId("description-form");
+const descriptionStatus = byId("description-status");
 const uploadForm = byId("upload-form");
 const fileInput = byId("upload-file");
 const fileCheck = byId("file-check");
@@ -70,9 +77,9 @@ class ApiError extends Error {
 }
 
 // Wspólny klient (#99): 401/403 MFA → /login/ z powrotem.
-async function getJson(url) {
+async function getJson(url, options) {
   try {
-    return await api(url);
+    return await api(url, options);
   } catch (error) {
     throw new ApiError(error.status ?? 0, error.data ?? null);
   }
@@ -95,6 +102,8 @@ function documentRow(raw) {
   const doc = normalizeDocument(raw);
   const row = document.createElement("tr");
   row.append(
+    cell("Tytuł", titleLabel(doc)),
+    cell("Kategoria", categoryLabel(doc)),
     cell("Dodano", formatDateTime(doc.createdAt)),
     cell("Rodzaj", doc.kind ? KIND_LABELS[doc.kind] : "Nieznany"),
     cell("Klasa", doc.classId ?? "—"),
@@ -137,6 +146,8 @@ async function loadList({ append = false } = {}) {
       schoolYearId: String(data.get("schoolYearId") ?? ""),
       kind: String(data.get("kind") ?? ""),
       classId: String(data.get("classId") ?? ""),
+      category: String(data.get("category") ?? ""),
+      q: String(data.get("q") ?? ""),
     };
     state.offset = 0;
   }
@@ -174,9 +185,32 @@ async function loadList({ append = false } = {}) {
   }
 }
 
+function renderDescriptionHistory(history) {
+  const rows = (history ?? []).flatMap((entry) => {
+    const dt = document.createElement("dt");
+    dt.textContent = `Wersja ${entry.revisionNo}, ${formatDateTime(entry.createdAt)}`;
+    const dd = document.createElement("dd");
+    dd.textContent = `${entry.title} (${categoryLabel({ category: entry.category })})`;
+    return [dt, dd];
+  });
+  descriptionHistory.replaceChildren(...rows);
+  if (!rows.length) {
+    const dt = document.createElement("dt");
+    dt.textContent = "Historia opisu";
+    const dd = document.createElement("dd");
+    dd.textContent = "Brak wpisu — dokument nie ma jeszcze tytułu.";
+    descriptionHistory.replaceChildren(dt, dd);
+  }
+}
+
 async function showDetails(id, trigger) {
   details.hidden = false;
   detailsList.replaceChildren();
+  descriptionHistory.replaceChildren();
+  descriptionForm.reset();
+  setMessage(descriptionStatus, "");
+  state.currentDocumentId = null;
+  state.descriptionPending = null;
   // Link pobierania nigdy nie wskazuje poprzedniego dokumentu (#192).
   detailsDownload.hidden = true;
   detailsDownload.removeAttribute("href");
@@ -201,6 +235,8 @@ async function showDetails(id, trigger) {
     detailsList.replaceChildren(...rows);
     detailsDownload.href = contentUrl(result.document.id);
     detailsDownload.hidden = false;
+    state.currentDocumentId = result.document.id;
+    renderDescriptionHistory(result.descriptionHistory);
   } catch (error) {
     if (state.detailsRequest !== request) return;
     status.className = "message error";
@@ -212,6 +248,45 @@ function closeDetails() {
   details.hidden = true;
   details.returnFocus?.focus?.();
 }
+
+descriptionForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const id = state.currentDocumentId;
+  if (!id) return;
+  const data = new FormData(descriptionForm);
+  const input = validateDescriptionInput(Object.fromEntries(data.entries()));
+  if (!input.ok) {
+    setMessage(descriptionStatus, input.error, "error");
+    return;
+  }
+  // Ten sam dokument i te same dane = ponowienie z tym samym kluczem idempotencji.
+  const fingerprint = JSON.stringify([id, input.value]);
+  if (state.descriptionPending?.fingerprint !== fingerprint) {
+    try {
+      state.descriptionPending = { fingerprint, key: makeIdempotencyKey() };
+    } catch (error) {
+      setMessage(descriptionStatus, error.message, "error");
+      return;
+    }
+  }
+  setMessage(descriptionStatus, "Zapisywanie…");
+  byId("description-submit").disabled = true;
+  try {
+    const req = buildDescriptionRequest(id, input.value, state.descriptionPending.key);
+    const result = await getJson(req.url, { method: req.method, body: req.body, idempotencyKey: req.idempotencyKey });
+    state.descriptionPending = null;
+    setMessage(
+      descriptionStatus,
+      result.replayed ? "Opis był już zapisany wcześniej — nie utworzono duplikatu." : "Zapisano opis.",
+      "success",
+    );
+    showDetails(id);
+  } catch (error) {
+    setMessage(descriptionStatus, error.message, "error");
+  } finally {
+    byId("description-submit").disabled = false;
+  }
+});
 
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
