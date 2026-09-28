@@ -6,32 +6,27 @@ import {
   buildGrantsUrl,
   confirmationText,
   describeAuditEvent,
-  errorMessage,
+  ERROR_MESSAGES,
   formatDateTime,
   grantPayload,
   indexClasses,
+  invitationLink,
   invitationPayload,
   isOwnLastAdminGrant,
   scopeLabel,
 } from "./core.js";
+import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const state = { me: null, users: [], grants: [], invitations: [], years: [], classes: new Map(), yearMap: new Map() };
 const byId = (id) => document.getElementById(id);
 const globalMessage = byId("global-message");
 
-class ApiError extends Error {}
-
-async function api(url, { method = "GET", body } = {}) {
-  const response = await fetch(url, {
-    method,
-    credentials: "same-origin",
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ApiError(errorMessage(data.error, response.status));
-  return data;
-}
+// Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
+const api = (url, { method = "GET", body } = {}) => apiRequest(url, { method, body, messages: ERROR_MESSAGES });
 
 function showMessage(text, isError = false) {
   globalMessage.textContent = text;
@@ -272,12 +267,22 @@ async function loadInvitations() {
 }
 
 function hideToken() {
+  byId("invite-link").textContent = "";
   byId("token-value").textContent = "";
   byId("token-meta").textContent = "";
   byId("token-box").hidden = true;
 }
 
 byId("hide-token").addEventListener("click", hideToken);
+byId("copy-link").addEventListener("click", async (event) => {
+  const link = byId("invite-link").textContent;
+  try {
+    await navigator.clipboard.writeText(link);
+    event.currentTarget.textContent = "Skopiowano";
+  } catch {
+    showMessage("Nie udało się skopiować. Zaznacz link i skopiuj ręcznie.", true);
+  }
+});
 byId("copy-token").addEventListener("click", async (event) => {
   const token = byId("token-value").textContent;
   try {
@@ -305,9 +310,11 @@ byId("invitation-form").addEventListener("submit", async (event) => {
   submit.disabled = true;
   try {
     const result = await api("/api/admin/invitations", { method: "POST", body: payload });
+    byId("invite-link").textContent = invitationLink(result.token, window.location.origin);
     byId("token-value").textContent = result.token;
     byId("token-meta").textContent = `${ROLE_LABELS[result.invitation.role]} · ${scopeLabel(result.invitation, state.classes, state.yearMap)} · ważne do ${formatDateTime(result.invitation.expiresAt)}`;
-    byId("copy-token").textContent = "Kopiuj";
+    byId("copy-link").textContent = "Kopiuj link";
+    byId("copy-token").textContent = "Kopiuj kod";
     byId("token-box").hidden = false;
     form.reset();
     await Promise.all([loadInvitations(), loadAudit()]);

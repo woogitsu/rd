@@ -964,7 +964,8 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'login.invitationAccept', module: 'login', method: 'POST', path: '/api/invitations/accept', targets: ['-'],
     allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'invitationToken' },
-    build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password } }),
+    // #164: nowe konto wymaga zgodnego powtórzenia hasła (bez niego: 400 password_mismatch).
+    build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password, passwordRepeat: obj.password } }),
   },
   {
     id: 'login.passwordReset', module: 'login', method: 'POST', path: '/api/password/reset', targets: ['-'],

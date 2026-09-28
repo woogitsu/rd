@@ -8,18 +8,18 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
       <a class="brand" href="../">
         <span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span>
       </a>
       <nav aria-label="Panel">
-        <a href="../panel/">Wpłaty</a>
-        <a href="../ledger/">Księga</a>
-        <a class="active" href="./" aria-current="page">Konta i role</a>
+        <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
+      <div id="shell-account"></div>
     </header>
 
-    <main>
+    <main id="main">
       <section class="page-heading">
         <div>
           <p class="eyebrow">Administracja</p>
@@ -105,13 +105,21 @@
         </form>
 
         <div class="token-box" id="token-box" hidden>
-          <p class="token-warning"><strong>Token jest widoczny tylko teraz.</strong> Przekaż go osobie zapraszanej osobnym, zaufanym kanałem. Nie wklejaj go do zgłoszeń ani czatów grupowych. Po zamknięciu tej ramki nie da się go odzyskać — w razie utraty wycofaj zaproszenie i utwórz nowe.</p>
+          <p class="token-warning"><strong>Link jest widoczny tylko teraz.</strong> Przekaż go osobie zapraszanej osobnym, zaufanym kanałem. Nie wklejaj go do zgłoszeń ani czatów grupowych. Po zamknięciu tej ramki nie da się go odzyskać — w razie utraty wycofaj zaproszenie i utwórz nowe.</p>
+          <p class="hint" id="invite-link-label">Link do przekazania (otwiera od razu widok przyjęcia zaproszenia)</p>
           <div class="token-row">
-            <code id="token-value"></code>
-            <button type="button" id="copy-token">Kopiuj</button>
-            <button type="button" id="hide-token">Zamknij</button>
+            <code id="invite-link" aria-labelledby="invite-link-label"></code>
+            <button type="button" id="copy-link">Kopiuj link</button>
           </div>
+          <details>
+            <summary>Sam kod zaproszenia (gdy link nie działa)</summary>
+            <div class="token-row">
+              <code id="token-value"></code>
+              <button type="button" id="copy-token">Kopiuj kod</button>
+            </div>
+          </details>
           <p class="hint" id="token-meta"></p>
+          <p><button type="button" id="hide-token">Zamknij</button></p>
         </div>
 
         <div class="table-wrap">
