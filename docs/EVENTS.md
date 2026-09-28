@@ -46,6 +46,29 @@ Zmiany wymagają nagłówka `Origin` tej samej domeny, `Content-Type: applicatio
 
 Każdy krok zapisuje `audit_events` (aktor, czas, `entity_type='event'`, identyfikator) w tej samej transakcji. Metadane zawierają tylko numer wersji i status, bez tytułów, powodów ani danych osobowych.
 
+## Zadania i zapisy wolontariuszy (issue #142, Etap 1)
+
+Bez kont rodziców (D-10): zapisy prowadzi przedstawiciel klasy dla wydarzeń **własnej klasy** oraz zarząd/admin (bez ograniczenia klasy), wskazując istniejącego opiekuna (`guardianId`) albo konto (`userId`) — nigdy nowe dane osobowe. Etap 2 (samodzielny zapis rodzica) czeka na konta rodziców.
+
+- `event_tasks`: zadanie w obrębie wydarzenia (tytuł, opcjonalny czas w obrębie czasu wydarzenia, liczba potrzebnych miejsc 1–200, `isPublic`). Treść jest niezmienna po utworzeniu; jedyna dozwolona zmiana to odwołanie (`cancel`), stan końcowy.
+- `event_task_signups`: zapis opiekuna albo konta. Status (`confirmed`/`withdrawn`) może się zmieniać (wycofanie i ponowny zapis tej samej osoby to przejście stanu **tego samego wiersza**, z historią w `audit_events` — nie nowy wiersz, nie nadpisanie: tożsamość zapisu, wraz z `recorded_by`/`created_at`, jest niezmienna, zmienia się wyłącznie `status`). Dwoje opiekunów tego samego dziecka to dwa osobne wiersze (różne `guardian_id`).
+- Limit miejsc: trigger blokuje wiersz zadania i odrzuca zapis, gdy liczba aktywnych (`confirmed`) zapisów osiągnęła `slots_needed` — `409 task_full`. Ten sam trigger zamraża zapisy odwołanego zadania i odwołanego wydarzenia — `409 event_cancelled`; wcześniejsze zapisy zostają (historia, nie usuwanie).
+- Przedstawiciel może wskazać wyłącznie opiekuna dziecka zapisanego (aktualna `enrollments`) do przypisanej klasy w bieżącym roku szkolnym — `400 guardian_outside_class` w przeciwnym razie. Zarząd/admin (przydział bez klasy) nie mają tego ograniczenia.
+- Rok zamknięty: `409 school_year_closed` (rozszerza wspólny trigger zamrożenia — patrz `postgres/README.md`).
+
+### API
+
+- `GET /api/events/:id/tasks` — lista zadań z zapisanymi osobami (imię i nazwisko opiekuna albo nazwa konta) — tylko dla ról z dostępem do wydarzenia (ta sama reguła co reszta modułu: `404 event_not_found` dla nieznanego i niedostępnego wydarzenia).
+- `POST /api/events/:id/tasks` — `{ title, slotsNeeded, startsAt?, endsAt?, isPublic? }`, wymaga `Idempotency-Key`.
+- `POST /api/events/:id/tasks/:taskId/cancel` — `{ reason }`; ponowienie zwraca `replayed: true` bez nowego stanu.
+- `POST /api/events/:id/tasks/:taskId/signups` — `{ guardianId }` albo `{ userId }` (dokładnie jedno), wymaga `Idempotency-Key`. Podwójny zapis tej samej osoby jest bezpieczną powtórką (`replayed: true`), niezależnie od klucza.
+- `POST /api/events/:id/tasks/:taskId/signups/:signupId/withdraw` — wycofanie; ponowne wycofanie już wycofanego zapisu jest bezpieczną powtórką.
+- `GET /api/public/events/:id/tasks` — bez logowania, tylko dla wydarzenia **opublikowanego**: `{ id, title, stillNeeded }` dla zadań jawnie oznaczonych `isPublic` i nieodwołanych. Bez `guardianId`/`userId`, bez liczby zapisów zadań niepublicznych, bez zadań odwołanych.
+
+Dziennik: `event.task_created`, `event.task_cancelled`, `event.task_signup_created`, `event.task_signup_withdrawn` — identyfikatory i numer wersji, **bez** imienia/nazwiska, powodu ani identyfikatora opiekuna/konta w metadanych.
+
+**Poza zakresem tej wersji (Etap 1):** panel (`events/`) nie ma jeszcze widoku zadań/zapisów — na razie tylko API i testy; wybór opiekuna z listy klasy zamiast wpisania identyfikatora; wsteczna kontrola, gdy czas WYDARZENIA zmienia się po utworzeniu zadania poza jego oknem (dziś sprawdzane tylko przy tworzeniu zadania); retencja zapisów po zakończeniu roku (D-04); Etap 2 (samodzielny zapis i wycofanie przez rodzica, przypomnienie przez kampanię — wyłącznie po jawnym zatwierdzeniu treści i listy, nigdy automatycznie).
+
 ## Do decyzji
 
 D-08 (kto tworzy, zatwierdza i publikuje), D-09 (dostęp dyrekcji i Komisji Rewizyjnej), ewentualna publikacja powodu odwołania oraz czas przechowywania historii wersji (D-04), D-20 (domena produkcyjna do `UID` kalendarza iCal).
