@@ -228,6 +228,25 @@ function documentRead(id, path, kind, targets, allow, mfa, suffix) {
   };
 }
 
+// Zmiana stanu dokumentu (zastąpienie/unieważnienie, issue #82): ta sama zasada 404 jak przy
+// odczycie (brak wyroczni istnienia). Świeży dokument (fixture 'fresh') dla każdego udanego
+// przypadku — powtórna zmiana stanu tego samego dokumentu byłaby konfliktem (409), nie 2xx.
+function documentStatus(id, action, kind, targets, allow, mfa) {
+  const isSupersede = action === 'supersede';
+  return {
+    id, module: 'documents', method: 'POST', path: `/api/documents/:${kind}DocumentId/${action}`,
+    targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404, fixture: 'fresh',
+    object: { kind: isSupersede ? 'documentPair' : 'document', stage: kind },
+    build: ({ obj, key }) => ({
+      path: `/api/documents/${obj.documentId}/${action}`,
+      headers: withKey(key),
+      body: isSupersede
+        ? { reason: 'Zastąpienie dokumentu (test macierzy)', replacementDocumentId: obj.replacementDocumentId }
+        : { reason: 'Unieważnienie dokumentu (test macierzy)' },
+    }),
+  };
+}
+
 // Zapis opisu (tytuł/kategoria — issue #76): te same reguły dostępu co odczyt
 // metadanych dokumentu (canAccessDocument), więc mfaDeny/deny = 404 jak wyżej.
 function documentDescribe(id, path, kind, targets, allow, mfa) {
@@ -534,6 +553,48 @@ export const ROUTE_MATRIX = Object.freeze([
   eventAction('events.publish', 'publish', 'approved', EVENT_REVIEW),
   eventAction('events.cancel', 'cancel', 'draft', EVENT_EDIT, { reason: 'Odwołanie syntetyczne' }),
 
+  // ---------- events: zadania i zapisy wolontariuszy (#142) ----------
+  // Dostęp do zadania/zapisu sprawdza ten sam canEdit(actor, event) co szkic
+  // wydarzenia (src/pg/events.js) — te same zakresy i ta sama odmowa 404/403
+  // (SR-07: wydarzenie spoza zakresu podglądu wygląda jak nieznane).
+  {
+    id: 'events.tasksList', module: 'events', method: 'GET', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
+    allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'static', object: { kind: 'event', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks` }),
+  },
+  {
+    id: 'events.taskCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
+    allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage: 'draft' },
+    build: ({ obj, target, key }) => ({
+      path: `/api/events/${obj.eventId}/tasks`, headers: withKey(key),
+      body: { title: `Zadanie ${marker(target.key)}`, slotsNeeded: 2, isPublic: false },
+    }),
+  },
+  {
+    id: 'events.taskCancel', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks/:taskId/cancel',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTask', stage: 'draft' },
+    build: ({ obj }) => ({
+      path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/cancel`, body: { reason: 'Odwołanie syntetyczne' },
+    }),
+  },
+  {
+    id: 'events.signupCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks/:taskId/signups',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTask', stage: 'draft' },
+    build: ({ obj, key }) => ({
+      path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/signups`, headers: withKey(key),
+      body: { userId: 'u-fx-board' },
+    }),
+  },
+  {
+    id: 'events.signupWithdraw', module: 'events',
+    method: 'POST', path: '/api/events/:eventId/tasks/:taskId/signups/:signupId/withdraw',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTaskSignup', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/signups/${obj.signupId}/withdraw` }),
+  },
+
   // ---------- meetings (#13) ----------
   {
     id: 'meetings.list', module: 'meetings', method: 'GET', path: '/api/meetings?schoolYearId=:year',
@@ -689,6 +750,17 @@ export const ROUTE_MATRIX = Object.freeze([
   documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content'),
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
   documentRead('documents.contentClass', '/api/documents/:classDocumentId/content', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, '/content'),
+  // Zmiana stanu dokumentu (issue #82): zastąpienie i unieważnienie — te same reguły dostępu
+  // co odczyt (brak wyroczni istnienia dla nieznanego/niedozwolonego identyfikatora). Kod
+  // (src/pg/routes/documents.js, changeStatus → canAccessDocument) używa DOKŁADNIE tej samej
+  // polityki DOCUMENT_POLICIES co odczyt — zapis nie jest węższy ani szerszy niż odczyt danego
+  // rodzaju, więc macierz lustrzanie powtarza allow/mfa z documentRead dla tego rodzaju.
+  documentStatus('documents.supersedeFinancial', 'supersede', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentStatus('documents.voidFinancial', 'void', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentStatus('documents.supersedeBoard', 'supersede', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentStatus('documents.voidBoard', 'void', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentStatus('documents.supersedeClass', 'supersede', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
+  documentStatus('documents.voidClass', 'void', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
   documentDescribe('documents.describeFinancial', '/api/documents/:financialDocumentId/description', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
   documentDescribe('documents.describeBoard', '/api/documents/:boardDocumentId/description', 'board', YEAR_TARGETS, DOC_BOARD, false),
   documentDescribe('documents.describeClass', '/api/documents/:classDocumentId/description', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
@@ -759,6 +831,85 @@ export const ROUTE_MATRIX = Object.freeze([
     // patrz komentarz przy copyCategories w ledger.js.
     visible: (actor) => [...actor.scopes, 'Y2'],
     build: () => ({ path: '/api/ledger/categories/copy', body: { fromSchoolYearId: YEAR_2, toSchoolYearId: YEAR_1, dryRun: true } }),
+  },
+
+  // ---------- preliminarz i kategorie (#107) ----------
+  // Zapis kategorii i linii: role finansowe z MFA (jak księga); przyjęcie preliminarza: wyłącznie zarząd.
+  //
+  // POST /api/ledger/categories z nagłówkiem Idempotency-Key (jak zawsze
+  // wysyła go moduł ledger-budget.js) to ta sama trasa co ledger.categoryCreate
+  // powyżej — macierz wymaga unikalnej pary metoda+ścieżka, więc granice ról
+  // sprawdza ten jeden wpis; zachowanie specyficzne dla nagłówka (replay,
+  // 409 idempotency_conflict/category_exists) mają testy jednostkowe
+  // tests/pg-ledger-budget.test.js i tests/pg-ledger-categories-api.test.js.
+  {
+    id: 'ledgerBudget.deactivateCategory', module: 'ledger-budget', method: 'POST', path: '/api/ledger/categories/:categoryId/deactivation',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/categories/${obj.categoryId}/deactivation`, headers: withKey(key), body: { reason: 'Wyłączenie syntetyczne' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.createLine', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ target, obj, key }) => ({
+      path: '/api/ledger/budget', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, categoryId: obj.categoryId, plannedCents: 10000 },
+    }),
+  },
+  {
+    id: 'ledgerBudget.reviseLine', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget/:lineId/revisions',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'budgetLine' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/budget/${obj.lineId}/revisions`, headers: withKey(key), body: { plannedCents: 9000, reason: 'Zmiana syntetyczna' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.adopt', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget/adoptions',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target, key }) => ({
+      path: '/api/ledger/budget/adoptions', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, adoptedOn: yearDate(target, '10-15'), note: 'Przyjęcie syntetyczne' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.history', module: 'ledger-budget', method: 'GET', path: '/api/ledger/budget/history?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/ledger/budget/history?schoolYearId=${target.schoolYearId}` }),
+    contains: () => ['W1'],
+  },
+  {
+    id: 'ledgerBudget.execution', module: 'ledger-budget', method: 'GET', path: '/api/ledger/budget/execution?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/ledger/budget/execution?schoolYearId=${target.schoolYearId}` }),
+    contains: () => ['W1'],
+  },
+
+  // ---------- weryfikacja wydatku i uchwała jako upoważnienie (#97, #93) ----------
+  ledgerRead('ledger.reviews', '/api/ledger/reviews?schoolYearId=:year', '/reviews', []),
+  ledgerRead('ledger.resolutions', '/api/ledger/resolutions?schoolYearId=:year', '/resolutions', []),
+  {
+    // Autor wpisu fixture (konto pomocnicze) nie jest żadnym z aktorów, więc każdy aktor finansowy może zweryfikować.
+    id: 'ledger.review', module: 'ledger', method: 'POST', path: '/api/ledger/:ledgerEntryId/reviews',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'static',
+    object: { kind: 'ledgerExpense' },
+    build: ({ obj, key }) => ({ path: `/api/ledger/${obj.ledgerEntryId}/reviews`, headers: withKey(key), body: { decision: 'verified' } }),
+  },
+  {
+    // Kwotę upoważnienia wpisuje zarząd lub admin (nie skarbnik); każdy dozwolony przypadek na świeżej uchwale.
+    id: 'ledger.resolutionAuthorization', module: 'ledger', method: 'POST',
+    path: '/api/ledger/resolutions/:resolutionId/authorizations',
+    targets: YEAR_TARGETS, allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 201,
+    // Uprawniony (admin/zarząd z MFA) do uchwały roku bez przydziału: 404 jak nieistniejąca (bez wyroczni).
+    deny: (actor, targetKey, mfa) => (['admin', 'board'].includes(actor.key) && mfa && targetKey === 'Y2' ? 404 : 403),
+    fixture: 'fresh', object: { kind: 'meeting', stage: 'adoptedResolution' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/resolutions/${obj.resolutionId}/authorizations`, headers: withKey(key),
+      body: { authorizedAmountCents: 100000, note: 'Kwota upoważnienia syntetyczna' },
+    }),
   },
 
   // ---------- centra kosztów (#117) ----------
@@ -883,6 +1034,37 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ key, fx }) => ({
       path: '/api/email/webhooks/brevo', headers: { Authorization: `Bearer ${fx.webhookSecret}` },
       body: { event: 'opened', email: 'nieznany@example.invalid', id: key, ts_event: 1791187200 },
+    }),
+  },
+  {
+    // Lista wyłączeń (#94): rola sprawdzana przed jakimkolwiek zapytaniem o listę.
+    id: 'email.suppressions.list', module: 'email', method: 'GET', path: '/api/email/suppressions?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/suppressions?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    // Blokada świeża per przypadek (fixture 'fresh'): każda próba zgłasza
+    // zdjęcie osobnego, aktywnego zdarzenia (#94).
+    id: 'email.suppressions.releaseRequest', module: 'email', method: 'POST',
+    path: '/api/email/suppressions/:emailHash/release-request', targets: YEAR_TARGETS,
+    allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'suppression', stage: 'active' },
+    build: ({ obj, target }) => ({
+      path: `/api/email/suppressions/${obj.emailHash}/release-request`,
+      body: { schoolYearId: target.schoolYearId, releaseReason: 'address_corrected' },
+    }),
+  },
+  {
+    // Wniosek zgłoszony przez stałe konto fxCookies.board (nigdy nie testowane
+    // w macierzy), więc zatwierdzenie przez dowolnego dozwolonego aktora nie
+    // trafia w self_approval_forbidden (#94).
+    id: 'email.suppressions.release', module: 'email', method: 'POST',
+    path: '/api/email/suppressions/:emailHash/release', targets: YEAR_TARGETS,
+    allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'suppression', stage: 'releaseRequested' },
+    build: ({ obj, target }) => ({
+      path: `/api/email/suppressions/${obj.emailHash}/release`,
+      body: { schoolYearId: target.schoolYearId, requestId: obj.requestId },
     }),
   },
   {
@@ -1229,6 +1411,59 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: ['-'], allow: { repA: ['-'], repB: ['-'] }, mfa: false, ok: 200, deny: 403, fixture: null,
     build: () => ({ path: `/api/representative/overview?schoolYearId=${YEAR_1}` }),
     check: ({ actor, json }) => classListCheck(actor, json),
+  },
+
+  // ---------- guardian-updates (#140) ----------
+  // Wydanie linku i kolejka: admin/zarząd BEZ przydziału klasowego (SR-01,
+  // jak board.js/#131) — przedstawiciel klasy nie widzi kolejki wniosków
+  // (do decyzji D-08). MFA już wymuszone przez bramkę routera dla admin/
+  // zarząd (mfa-policy.js), stąd mfa: true. Formularz publiczny — bez sesji,
+  // ten sam wynik dla każdego wywołującego.
+  {
+    id: 'guardianUpdates.issueLink', module: 'guardian-updates', method: 'POST', path: '/api/admin/guardian-links',
+    targets: ['W1'], allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    // W1 = dane ogólnoszkolne (classId null) — gospodarstwo fixture pod stałą
+    // klasą A (kind 'guardianOnly'), niezależnie od targetu trasy.
+    fixture: 'fresh', object: { kind: 'guardianOnly' },
+    build: ({ obj }) => ({ path: '/api/admin/guardian-links', body: { guardianId: obj.guardianId } }),
+  },
+  {
+    id: 'guardianUpdates.previewPublic', module: 'guardian-updates', method: 'GET',
+    path: '/api/public/guardian-update?token=:token', targets: ['W1'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'guardianUpdateLink' },
+    // Trasa publiczna, jawnie uwierzytelniona tokenem (nie sesją/rolą): pokazuje
+    // wyłącznie nazwę klasy DZIECKA WŁAŚCICIELA TEGO TOKENU — zawsze klasa A
+    // (fixture guardianUpdateLink). To nie jest wyciek poza zakres aktora, bo
+    // każdy wywołujący z tym tokenem ma to samo uprawnienie (posiadanie linku).
+    visible: () => ['A'],
+    build: ({ obj }) => ({ path: `/api/public/guardian-update?token=${obj.token}` }),
+  },
+  {
+    id: 'guardianUpdates.submitPublic', module: 'guardian-updates', method: 'POST', path: '/api/public/guardian-update',
+    targets: ['W1'], allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'guardianUpdateLink' },
+    build: ({ obj, key }) => ({
+      path: '/api/public/guardian-update', body: { token: obj.token, contactAllowed: true, note: `Wniosek ${key}` },
+    }),
+  },
+  {
+    id: 'guardianUpdates.list', module: 'guardian-updates', method: 'GET', path: '/api/admin/guardian-update-requests',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/admin/guardian-update-requests' }),
+  },
+  {
+    // Decyzja na świeżym wniosku (fixture 'fresh' tworzy link + wniosek pending przez formularz publiczny).
+    id: 'guardianUpdates.approve', module: 'guardian-updates', method: 'POST',
+    path: '/api/admin/guardian-update-requests/:requestId/approve', targets: ['W1'],
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'guardianUpdateRequest' },
+    build: ({ obj }) => ({ path: `/api/admin/guardian-update-requests/${obj.requestId}/approve`, body: {} }),
+  },
+  {
+    id: 'guardianUpdates.reject', module: 'guardian-updates', method: 'POST',
+    path: '/api/admin/guardian-update-requests/:requestId/reject', targets: ['W1'],
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'guardianUpdateRequest' },
+    build: ({ obj }) => ({ path: `/api/admin/guardian-update-requests/${obj.requestId}/reject`, body: {} }),
   },
 
   // ---------- board (#131) ----------

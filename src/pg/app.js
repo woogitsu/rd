@@ -35,6 +35,7 @@ import * as importRoutes from './routes/import.js';
 import * as documentRoutes from './routes/documents.js';
 import * as ledgerRoutes from './routes/ledger.js';
 import * as ledgerCashRoutes from './routes/ledger-cash.js';
+import * as ledgerBudgetRoutes from './routes/ledger-budget.js';
 import * as ledgerCostCenterRoutes from './routes/ledger-cost-centers.js';
 import * as emailRoutes from './routes/email.js';
 import * as newsRoutes from './routes/news.js';
@@ -47,6 +48,7 @@ import * as yearCloseRoutes from './routes/year-close.js';
 import * as mfaRoutes from './routes/mfa.js';
 import * as loginRoutes from './routes/login.js';
 import * as representativeRoutes from './routes/representative.js';
+import * as guardianUpdatesRoutes from './routes/guardian-updates.js';
 import * as privacyNoticeRoutes from './routes/privacy-notice.js';
 import * as financialReportRoutes from './routes/financial-reports.js';
 import * as boardRoutes from './routes/board.js';
@@ -61,6 +63,7 @@ export const ROUTES = [
   documentRoutes,
   ledgerRoutes,
   ledgerCashRoutes, // #199: przeniesienia kasa ↔ rachunek, bilans otwarcia
+  ledgerBudgetRoutes, // #107: kategorie, wersje preliminarza, przyjęcie, plan vs wykonanie
   emailRoutes, // #40: allowsCrossOrigin wyłącznie dla POST /api/email/webhooks/brevo
   newsRoutes,
   adminRoutes,
@@ -72,6 +75,7 @@ export const ROUTES = [
   mfaRoutes,
   loginRoutes, // #3: logowanie hasłem, zaproszenia, zmiana i reset hasła
   representativeRoutes, // #118: pulpit przedstawiciela
+  guardianUpdatesRoutes, // #140: wniosek rodzica o aktualizację kontaktu (jednorazowy link)
   privacyNoticeRoutes, // #145: informacja o przetwarzaniu danych (D-06)
   ledgerCostCenterRoutes, // #117: centra kosztów (przypisanie wpisu do wydarzenia/klasy)
   financialReportRoutes, // #125: sprawozdanie roczne i przepływy środków

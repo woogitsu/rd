@@ -50,3 +50,14 @@ test("dociągnięcie księgi używa zapamiętanego zapytania", async () => {
   assert.equal(ledgerFilterChanged(query, { schoolYearId: " y2026", direction: "" }), false);
   assert.throws(() => ledgerQuery({ schoolYearId: "y2026", direction: "transfer" }));
 });
+
+test("#107: wiersz plan vs wykonanie — brak planu to „poza planem”, przekroczenie opisane tekstem", async () => {
+  const { budgetExecutionRow, buildOverviewUrl } = await import("../ledger/core.js");
+  assert.equal(buildOverviewUrl("budget/execution", "y2026"), "/api/ledger/budget/execution?schoolYearId=y2026");
+  const over = budgetExecutionRow({ categoryName: "Wydarzenia", direction: "expense", currentPlanCents: 80000, executedNetCents: 90000, executionPercent: 112.5, overBudget: true, active: true });
+  assert.equal(over.percent, "112,5%");
+  assert.equal(over.note, "przekroczenie planu");
+  assert.equal(over.overBudget, true);
+  const outside = budgetExecutionRow({ categoryName: "Inne", direction: "expense", currentPlanCents: null, executedNetCents: 1500, executionPercent: null, active: false });
+  assert.deepEqual([outside.planned, outside.percent, outside.note], ["—", "—", "kategoria wyłączona, poza planem"]);
+});

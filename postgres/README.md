@@ -345,6 +345,37 @@ zatrzymają migrację czytelnym błędem zamiast cichego zapisania niespójnośc
 i zakres #96; osobna migracja i PR.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
 
+`0066_document_status_events.sql` (issue #82) dodaje wersje dokumentu i
+unieważnienie bez usuwania. `documents` pozostaje niezmienne (0006) — plik
+w buckecie i wpis metadanych nie znikają. Nowa, dopisywana tabela
+`document_status_events` zapisuje co najwyżej JEDNO zdarzenie na dokument
+(unikalny indeks na `document_id`): `superseded` (z `replacement_document_id`
+tego samego rodzaju/roku/klasy) albo `voided`. Trigger `BEFORE INSERT`
+odrzuca zastępstwo dokumentem, który sam już ma zdarzenie stanu — to samo w
+sobie wyklucza cykl A→B→A (po kroku „A zastąpiony przez B” dokument A nie
+jest już aktywny). Widok `document_current_status` wylicza stan
+(`active`/`superseded`/`voided`) bez zmiany `documents`. Skutki dla danych:
+nowa, pusta tabela; istniejące dokumenty są `active` (brak wiersza = active).
+Wycofanie na pustej bazie: usunięcie widoku, tabeli i dwóch funkcji. Opis:
+[`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
+
+`0076_event_volunteering.sql` (issue #142, Etap 1) dodaje zadania i zapisy
+wolontariuszy do wydarzeń. `event_tasks` (treść niezmienna po utworzeniu poza
+jednorazowym odwołaniem) i `event_task_signups` (opiekun albo konto; status
+`confirmed`/`withdrawn` może się zmieniać, ale tożsamość zapisu — zadanie,
+osoba, kto i kiedy zarejestrował — nie). Trigger `event_task_signup_capacity`
+blokuje wiersz zadania i pilnuje limitu miejsc (`task_full`) oraz zamraża
+zapisy do zadania odwołanego wydarzenia (`event_cancelled`). Rozszerza
+WSPÓLNĄ funkcję `year_freeze_via_parent()` o dwie gałęzie — **wychodząc z
+jej najnowszej wersji, scalonej w `0049_year_freeze_union.sql`**, a nie z
+`0036`/`0038`, żeby nie powtórzyć incydentu z #279 (main zepsuty przez
+nadpisanie tej funkcji nie od najnowszej wersji). Skutki dla danych: dwie
+nowe, puste tabele; `events` i inne tabele nie są ruszane. Wycofanie na
+pustej bazie: usunięcie obu tabel, ich triggerów i funkcji, oraz
+przywrócenie `year_freeze_via_parent()` do wersji z
+`0049_year_freeze_union.sql` (bez dwóch nowych gałęzi `ELSIF`). Opis:
+[`docs/EVENTS.md`](../docs/EVENTS.md).
+
 `0065_document_descriptions.sql` (issue #76) dodaje tytuł, kategorię, datę
 dokumentu i opcjonalny opis dla wpisów `documents` (samych `documents` nie
 rusza — pozostaje niezmienne, 0006). Nowa tabela `document_descriptions` jest
@@ -575,6 +606,23 @@ wierszy. Zdjęcie wgrane wcześniej bez `alt_text` i bez `decorative` nie da
 się zweryfikować (`verifyPhoto()`), dopóki nie powstanie jego poprawka
 (nowy rekord); metadane zdjęć pozostają niezmienne.
 
+`0072_ledger_review_resolution_link.sql` (#97, #93) dodaje zasadę czterech
+oczu przy wydatkach i uchwałę jako upoważnienie do wydatku:
+`ledger_entries.resolution_id` (NULL, FK do `resolutions`; tekst
+`resolution_reference` zostaje), trigger `c0_ledger_resolution_guard`
+(uchwała musi być bieżącą rewizją, przyjęta, z zebrania ogólnego, z roku
+wpisu lub wcześniejszego; suma netto wydatków wobec kwoty upoważnienia pod
+blokadą wiersza uchwały), tabelę append-only
+`resolution_spending_authorizations` (kwota upoważnienia; zmiana = nowy
+wiersz z `supersedes_id`), widoki `resolution_authorization_current` i
+`resolution_spending`, funkcję `resolution_chain_ids()` oraz tabelę
+append-only `ledger_entry_reviews` (weryfikacja wydatku przez osobę inną
+niż autor, trigger `ledger_review_guard`) z widokiem
+`ledger_entry_review_status`. Żaden istniejący wiersz nie jest zmieniany
+ani usuwany; istniejące wpisy mają `resolution_id = NULL` (raport KR:
+„powiązanie tekstowe”) i stan „niezweryfikowany”, istniejące uchwały nie
+mają kwoty upoważnienia (brak limitu do czasu jej wpisania, D-15).
+
 `0093_resolution_meeting_campaign_revision.sql` (#215) dodaje
 `revision_no` (`DEFAULT 1`) do `resolutions`, `meetings` i
 `email_campaigns` oraz trigger `bump_revision_no()`, który zwiększa numer
@@ -622,6 +670,40 @@ zostają (trigger działa tylko dla nowych). Wycofanie na bazie bez
 importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
 przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
 importami CODA/CAMT — tylko po kopii zapasowej.
+
+`0073_ledger_budget_adoptions.sql` (#107) dodaje preliminarz przez API:
+`ledger_categories.idempotency_key` (klucz żądania tworzenia kategorii),
+`ledger_category_deactivations` (historia wyłączenia kategorii, tylko
+dopisywanie) oraz `ledger_budget_adoptions` + `ledger_budget_adoption_lines`
+— zamrożoną fotografię preliminarza przyjętego przez zebranie, opcjonalnie
+z uchwałą. Wersjonowane linie `ledger_budget_lines` się nie zmieniają.
+Skutki dla danych: żaden wiersz nie jest zmieniany ani usuwany; istniejące
+linie i wyłączone kategorie nie mają odpowiadającego wpisu historii/
+przyjęcia. Wycofanie: `DROP TABLE ledger_budget_adoption_lines,
+ledger_budget_adoptions, ledger_category_deactivations; DROP FUNCTION
+ledger_budget_adoption_guard(), ledger_budget_adoption_line_guard(),
+ledger_category_deactivation_guard(); ALTER TABLE ledger_categories DROP
+COLUMN idempotency_key`.
+
+`0080_email_suppression_releases.sql` (#94) zmienia klucz główny
+`email_suppressions` z `email_hash` na `id` (nowa kolumna, dotychczasowe
+wiersze dostają wygenerowany UUID), żeby ten sam adres mógł mieć kilka
+zdarzeń blokady w czasie — blokada, zdjęcie blokady, ponowna blokada —
+zamiast nadpisywać jeden wiersz. Dodaje wniosek o zdjęcie blokady
+(`email_suppression_release_requests`, zgłoszenie jednej osoby, wniosek
+jednorazowego użytku) i append-only decyzję (`email_suppression_releases`,
+zatwierdzający ≠ zgłaszający), obie z ograniczeniem: blokadę po skardze
+lub wypisaniu można zdjąć wyłącznie na wyraźną prośbę rodzica
+(`release_reason = 'parent_request'`). Widok `email_active_suppressions`
+wyznacza jedyną „aktywną" blokadę per adres — najnowsze zdarzenie blokady
+nowsze niż najnowsze zdjęcie blokady; migawka kampanii i worker mają
+korzystać wyłącznie z tego widoku, nie z surowej tabeli. Skutki dla
+danych: żaden istniejący wiersz `email_suppressions` nie jest usuwany ani
+zmieniany poza dodaniem identyfikatora; obie nowe tabele startują puste.
+Wycofanie na bazie bez wniosków o zdjęcie blokady: usunięcie widoku, obu
+nowych tabel, przywrócenie `email_hash` jako klucza głównego (wymaga
+unikalności — możliwe tylko, jeśli żaden adres nie miał w międzyczasie
+więcej niż jednego zdarzenia blokady).
 
 `0090_ledger_cost_centers.sql` (#117) dodaje centra kosztów w księdze:
 `ledger_allocation_versions` (wersja przypisania jednego wpisu księgi do
@@ -694,3 +776,16 @@ i odwołanie `decision_note_ref`. Skutki dla danych: nowa, pusta tabela bez
 wstecznego wypełnienia; wiersz nigdy nie jest usuwany. Wycofanie na pustej
 bazie: usunięcie tabeli, triggera i funkcji; z wpisami — tylko po kopii
 zapasowej (rejestr służy rozliczalności wobec osób).
+
+`0087_guardian_update_links.sql` (#140) dodaje wniosek rodzica o
+aktualizację kontaktu przez jednorazowy link: `guardian_update_links` (token
+dla konkretnego opiekuna, przechowywany wyłącznie jako skrót SHA-256,
+jednorazowy i z terminem ważności) i `guardian_update_requests` (wniosek,
+nie zmiana: `pending → approved | rejected`, tylko dopisywanie). Zatwierdzenie
+wykonuje istniejącą ścieżkę zmiany kontaktu opiekuna, więc historia
+(`guardian_contact_changes`, 0014) i audyt opisują to samo zdarzenie.
+Wariant zachowawczy do decyzji D-01/D-06/D-07/D-08/D-16/D-17: każdy wniosek,
+także wycofanie zgody, czeka na zatwierdzenie przez człowieka; kolejkę widzą
+tylko admin i zarząd. Skutki dla danych: dwie nowe, puste tabele, istniejące
+dane bez zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów
+i funkcji; z wnioskami — tylko po kopii zapasowej.
