@@ -167,11 +167,6 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'payment_reassignments', requires: ['payment_entries'],
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
 
-  // 0086: zatwierdzona konfiguracja rachunku (IBAN/BIC/odbiorca) do kodu QR na
-  // kartkach danego roku — potrzebna nowej Radzie i Komisji Rewizyjnej, by
-  // zweryfikować, na jaki rachunek proszono o wpłaty (ciągłość audytu roku).
-  { table: 'payment_instructions', where: () => 'school_year_id = $1' },
-
   { table: 'ledger_categories', where: () => 'school_year_id = $1' },
   { table: 'ledger_opening_balances', where: () => 'school_year_id = $1' },
   { table: 'ledger_opening_balance_adjustments', requires: ['ledger_opening_balances'],
@@ -257,10 +252,12 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_suppressions: 'lista blokad adresów e-mail — D-04',
   email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
   email_worker_runs: 'przebiegi zadania wysyłki — dane techniczne',
+  email_preview_sends: 'dziennik wysyłek testowych kampanii na adresy techniczne Rady — dane operacyjne, nie danych roku (#104, D-04)',
   news_posts: 'aktualności są publiczne i nie należą do roku; archiwum osobno (zgody, D-04)',
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
   news_photo_consents: 'zgody na wizerunek — osobny zakres (D-04)',
+  payment_instructions: 'IBAN/BIC do generatora EPC (#92) — dane wrażliwe finansowo, niepotrzebne do odtworzenia stanu klasy/gospodarstwa; wariant zachowawczy do rewizji po D-08',
 });
 
 // ---------------------------------------------------------------------------
