@@ -276,6 +276,9 @@ async function runContractScenario(backend) {
   // Lista i przegląd po zapisach.
   const pageOne = await step('list page 1', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2 })));
   const pageTwo = await step('list page 2', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2, cursor: pageOne.nextCursor })));
+  // #192: kursor wiąże rok i rodzaj wpisu zapytania, które go wydało.
+  await step('list cursor other direction', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'expense', limit: 2, cursor: pageOne.nextCursor })));
+  await step('list cursor other year', call(cookie, buildLedgerUrl({ schoolYearId: 'y2025', limit: 2, cursor: pageOne.nextCursor })));
   await step('list page 3', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2, cursor: pageTwo.nextCursor })));
   await step('list expense', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'expense' })));
   await step('list income', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'income' })));
@@ -319,6 +322,10 @@ test('PostgreSQL ledger API matches the legacy Worker contract step by step', as
       assert.deepEqual(actual[index], expected[index], `step: ${expected[index].label}`);
     }
     assert.ok(expected.some((s) => s.status === 201) && expected.some((s) => s.status === 409));
+    for (const label of ['list cursor other direction', 'list cursor other year']) {
+      const found = actual.find((s) => s.label === label);
+      assert.deepEqual([found.status, found.body], [400, { error: 'invalid_cursor' }], label);
+    }
     assert.equal(await pg.count('ledger_entries'), 5);
     assert.equal(await pg.count('ledger_corrections'), 2);
     assert.equal(await pg.count('audit_events', "action LIKE 'ledger.%'"), 7);

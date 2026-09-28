@@ -33,10 +33,10 @@ Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawien
 
 1. blokuje tabele księgi (`LOCK … IN SHARE MODE`) i wiersz zamknięcia — trwające zapisy księgi kończą się przed wyliczeniem, nowe czekają i po zamknięciu są odrzucane,
 2. sprawdza komplet listy kontrolnej i zasadę czterech oczu (zamyka inna osoba niż rozpoczynająca; także `CHECK` w bazie),
-3. liczy bilans z widoku `ledger_year_summary` (bilans otwarcia + poprawki + przychody netto − wydatki netto),
-4. tworzy `ledger_opening_balances` następnego roku z dokładnie tą kwotą (klucz idempotencji `year-close:{id zamknięcia}`); poprawka późniejsza tylko przez `ledger_opening_balance_adjustments`,
+3. liczy bilans z widoku `ledger_year_summary` (bilans otwarcia + poprawki + przychody netto − wydatki netto) oraz część poza rachunkiem z `ledger_year_cash_summary` (gotówka z bilansu otwarcia + wpisy z metodą inną niż `bank` + przeniesienia kasa ↔ rachunek; #199),
+4. tworzy `ledger_opening_balances` następnego roku z dokładnie tą kwotą i tą częścią gotówkową (`cash_cents`; rachunek = całość − kasa) (klucz idempotencji `year-close:{id zamknięcia}`); poprawka późniejsza tylko przez `ledger_opening_balance_adjustments` — w otwartym roku przez `POST /api/ledger/opening-balance/adjustments` (docs/LEDGER.md),
 5. ustawia `expires_at = now()` na aktywnych przydziałach ról należących do zamykanego roku — `school_year_id` tego roku albo klasa tego roku (funkcja `role_grant_in_school_year` z 0022, ta sama reguła co `expire-grants`; jedyna zmiana dozwolona przez trigger z 0004; wiersze zostają) i zapisuje zdarzenie `role_grant.expired` dla każdego,
-6. utrwala w wierszu zamknięcia bilans otwarcia, przychody, wydatki, bilans zamknięcia, identyfikator przeniesionego bilansu i liczbę wygaszonych ról,
+6. utrwala w wierszu zamknięcia bilans otwarcia, przychody, wydatki, bilans zamknięcia, gotówkę na otwarcie i zamknięcie (`opening_cash_cents`, `closing_cash_cents`; zamknięcia sprzed 0028 mają tu `NULL`), identyfikator przeniesionego bilansu i liczbę wygaszonych ról,
 7. zapisuje zdarzenia `ledger_opening_balance.carried_forward` i `year_close.closed`.
 
 Zamknięcie jest odrzucane, gdy następny rok ma już bilans otwarcia (`next_year_opening_balance_exists`) — trzeba wyjaśnić rozbieżność, a nie nadpisywać. Ponowne zamknięcie zamkniętego roku zwraca stan z `replayed: true` bez nowych zapisów.
@@ -67,7 +67,7 @@ Wszystkie trasy: aktywna sesja, MFA, przydział bez zawężenia do klasy, w zakr
 | `POST /api/year-close/{rok}/close` | zarząd | 200; 409 `checklist_incomplete` (z listą braków), `four_eyes_required`, `next_year_opening_balance_exists` |
 | `GET /api/year-close/{rok}/handover` | zarząd, skarbnik; po zamknięciu także zarząd/skarbnik roku następnego i admin (tylko odczyt) | zestawienie przekazania (JSON) |
 
-Zestawienie przekazania zawiera wyłącznie liczby, sumy w centach EUR i identyfikatory: bilans, liczby wpisów i korekt księgi, sumy wpłat zapisanych i niewyjaśnionych (bez rodzin), zebrania według stanu i liczbę odbytych bez zatwierdzonego protokołu, uchwały według stanu (bieżące wersje), wydarzenia według stanu, listę kontrolną z identyfikatorami osób, liczbę wygaszonych ról i aktywne role nowego roku. Nie zawiera imion, adresów e-mail ani danych dzieci. Suma wpłat nie jest listą „dłużników” — składki są dobrowolne. Eksport PDF/CSV (0016) powstaje osobno.
+Zestawienie przekazania zawiera wyłącznie liczby, sumy w centach EUR i identyfikatory: bilans (z podziałem rachunek/kasa: `openingCashCents`, `closingCashCents`, `closingBankCents`; bilans otwarcia nowego roku z `cashCents`), liczby wpisów i korekt księgi, sumy wpłat zapisanych i niewyjaśnionych (bez rodzin), zebrania według stanu i liczbę odbytych bez zatwierdzonego protokołu, uchwały według stanu (bieżące wersje), wydarzenia według stanu, listę kontrolną z identyfikatorami osób, liczbę wygaszonych ról i aktywne role nowego roku. Nie zawiera imion, adresów e-mail ani danych dzieci. Suma wpłat nie jest listą „dłużników” — składki są dobrowolne. Eksport PDF/CSV (0016) powstaje osobno.
 
 Po zamknięciu osoby, których jedyny przydział był zawężony do starego roku, tracą dostęp — także do tego zestawienia (zamknięcie wygasza przydziały roku, również `audit` i `treasurer`).
 

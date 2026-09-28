@@ -55,7 +55,7 @@ Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowa
 
 ## PostgreSQL (Railway) — stan prototypu (issue #38)
 
-`src/pg/routes/ledger.js` przenosi trasy księgi (`GET /api/ledger`, `GET /api/ledger/categories`, `GET /api/ledger/summary`, `GET /api/ledger/budget`, `POST /api/ledger`, `POST /api/ledger/{id}/corrections`) do routera PostgreSQL (`src/pg/app.js`). Kontrakt HTTP panelu z `ledger/` pozostaje bez zmian: te same walidacje, kształty JSON, kody statusu i błędów, nagłówek `Idempotency-Replayed` oraz kursor stronicowania. Test `tests/pg-ledger-api.test.js` wykonuje jeden scenariusz (ścieżki budowane funkcjami panelu z `ledger/core.js`) na starym Workerze/D1 i na PostgreSQL i porównuje odpowiedzi krok po kroku.
+`src/pg/routes/ledger.js` przenosi trasy księgi (`GET /api/ledger`, `GET /api/ledger/categories`, `GET /api/ledger/summary`, `GET /api/ledger/budget`, `POST /api/ledger`, `POST /api/ledger/{id}/corrections`) do routera PostgreSQL (`src/pg/app.js`). Kontrakt HTTP panelu z `ledger/` pozostaje bez zmian: te same walidacje, kształty JSON, kody statusu i błędów, nagłówek `Idempotency-Replayed` oraz kursor stronicowania. Test `tests/pg-ledger-api.test.js` wykonuje jeden scenariusz (ścieżki budowane funkcjami panelu z `ledger/core.js`) na starym Workerze/D1 i na PostgreSQL i porównuje odpowiedzi krok po kroku. Kursor `nextCursor` wiąże rok szkolny i filtr zapytania, które go wydało (#192): użycie go z innym `schoolYearId` lub innym filtrem (`direction`) daje `400 invalid_cursor`, zamiast doklejać wiersze innego zapytania. Panel dociąga kolejne strony wyłącznie z zapamiętanego zapytania, a zmienione, niezatwierdzone pola filtra blokują „Wczytaj następne”.
 
 - **Kwoty.** Wszystkie kwoty pozostają w centach EUR (liczby całkowite). Sumy z widoków (`BIGINT`) są zamieniane na liczby tylko w zakresie bezpiecznych liczb całkowitych; poza nim żądanie kończy się błędem technicznym zamiast utraty precyzji.
 - **Niezmienność.** Wpisów, korekt, bilansu otwarcia i wersji preliminarza nie można zmienić ani usunąć (triggery z `postgres/migrations/0003_ledger.sql`). Pomyłkę zapisuje się jako korektę.
@@ -68,10 +68,28 @@ Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowa
 - **Dostęp.** Każda trasa wymaga sesji, MFA i roli `admin`, `board` albo `treasurer` w zakresie roku szkolnego. `representative`, `audit` i `principal` dostają `403`. Zapisy wymagają zgodnego nagłówka `Origin`.
 - **Kolejność błędów.** Przy kilku błędach naraz moduł zwraca ten sam kod co Worker (powiązanie wpłaty, uchwała, dokument, kategoria, ponowne ujęcie wpłaty). Jedyna świadoma różnica: przy korekcie osoba bez roli finansowej lub bez MFA dostaje `403` jeszcze przed wyszukaniem wpisu, więc nie może sprawdzić, czy dany identyfikator istnieje (Worker zwracał wtedy `404`).
 
+### Kasa i rachunek (issue #199)
+
+Bilans otwarcia (`ledger_opening_balances.amount_cents` = całość) ma część poza rachunkiem `cash_cents` (0028); poprawki (`ledger_opening_balance_adjustments`) zmieniają całość (`amount_cents`) i/lub część gotówkową (`cash_cents`). Rachunek = całość − kasa. Kwoty w centach EUR.
+
+| Trasa | Kto | Opis |
+|---|---|---|
+| `GET /api/ledger/transfers?schoolYearId=…` | admin, zarząd, skarbnik + MFA | lista przeniesień roku |
+| `POST /api/ledger/transfers` | admin, zarząd, skarbnik + MFA, `Idempotency-Key` | `{ schoolYearId, direction: 'cash_to_bank' \| 'bank_to_cash', amountCents, transferredOn, description, sourceDocumentId? }` → 201; storno: `{ schoolYearId, reversesId, description }` (przeciwny kierunek, ta sama kwota i data; drugie storno i storno storna → 409) |
+| `GET /api/ledger/opening-balance?schoolYearId=…` | admin, zarząd, skarbnik + MFA | pierwotny bilans (rachunek/kasa), poprawki, stan bieżący, rok, z którego przeniesiono |
+| `POST /api/ledger/opening-balance` | zarząd + MFA, `Idempotency-Key` | `{ schoolYearId, bankCents, cashCents ≥ 0, note, sourceDocumentId? }` → 201; tylko pierwszy rok w systemie (`409 not_first_school_year`), jeden na rok (`409 opening_balance_exists`) |
+| `POST /api/ledger/opening-balance/adjustments` | zarząd + MFA, `Idempotency-Key` | `{ schoolYearId, amountCents, cashCents, reason, sourceDocumentId? }` → 201 (nowy wiersz, poprzednia wartość zostaje); kasa poniżej zera → `409 cash_below_zero`; zamknięty rok → `409 school_year_closed` |
+
+- Przeniesienie jest operacją wewnętrzną: nie zmienia przychodów, wydatków ani bilansu (`ledger_year_summary`), zmienia tylko podział rachunek/kasa. Data w granicach roku (`422 date_outside_school_year`), rok zamknięty → `409`.
+- Wszystko jest niezmienne (triggery); korekta to nowy wiersz. Zapis i zdarzenie audytu (`ledger.transfer.created`, `ledger.transfer.reversed`, `ledger_opening_balance.created`, `ledger_opening_balance.adjusted`) w jednej transakcji, bez kwot i opisów. Podwójne kliknięcie → jeden zapis.
+- Zamknięcie roku przenosi obie części (docs/YEAR_CLOSE.md). Raport KR i zestawienie przekazania pokazują podział.
+- Założenia (zarząd nic nie zdecydował — wariant zachowawczy): D-13 — jedna kasa, jeden rachunek, „kasa” = wszystko poza rachunkiem; bilans otwarcia i poprawki wyłącznie zarząd (bez admina i skarbnika); zasada czterech oczu dla poprawek (D-12) nie jest wymuszona; ręczny bilans tylko dla pierwszego roku — kolejne lata dostają bilans z zamknięcia.
+- Bilanse przeniesione przed 0028 mają `cash_cents = 0`; jeśli zawierały gotówkę, rozbicie wpisuje zarząd poprawką `{ amountCents: 0, cashCents: <gotówka> }`.
+
 ### Eksport CSV (issue #7)
 
 `GET /api/ledger/export.csv?schoolYearId=…` (tylko router PostgreSQL) zwraca wszystkie wpisy roku w kolejności dat, z kwotą pierwotną, sumą korekt i kwotą netto w EUR. Wymaga tych samych ról, MFA i zakresu roku co pozostałe trasy. Plik ma kodowanie UTF-8 z BOM, separator `;` i przecinek dziesiętny (`123,45`), aby otwierał się w arkuszu z polskimi lub belgijskimi ustawieniami — to założenie do potwierdzenia przez skarbnika. Komórki zaczynające się od `=`, `+`, `-`, `@`, tabulatora lub CR dostają prefiks `'`, żeby arkusz nie wykonał ich jako formuły. Eksport ma limit 20 000 wpisów (`413 export_too_large`). Każdy eksport zapisuje zdarzenie `ledger.exported` (osoba, czas, rok, liczba wierszy) bez kwot i treści wpisów. Plik zawiera opisy i źródła wpisane przez skarbnika, więc wolno go przekazywać tylko osobom uprawnionym; zasady przechowywania eksportów wymagają decyzji zarządu.
 
-Schemat nie wymagał zmian — moduł korzysta z tabel, triggerów i widoków z `0003_ledger.sql`. Stary moduł `src/ledger.js` pozostaje bez zmian do czasu testów równoważności na danych syntetycznych i próby odtworzenia. Dopisywanie bilansu otwarcia, jego poprawek i nowych wersji preliminarza nadal odbywa się poza API (brak tras także w Workerze).
+Schemat nie wymagał zmian — moduł korzysta z tabel, triggerów i widoków z `0003_ledger.sql`. Stary moduł `src/ledger.js` pozostaje bez zmian do czasu testów równoważności na danych syntetycznych i próby odtworzenia. Bilans otwarcia i jego poprawki mają trasy od #199 (sekcja „Kasa i rachunek”); nowe wersje preliminarza nadal dopisuje się poza API (brak tras także w Workerze).
 
 To prototyp: router PostgreSQL działa tylko przy ustawionym `DATABASE_URL`, nie jest wdrożony na Railway i nie jest zatwierdzony do pracy na danych rodzin. Zasady księgowania, korekt, format referencji uchwały i dostęp dyrekcji oraz Komisji Rewizyjnej nadal wymagają decyzji Rady i szkoły.

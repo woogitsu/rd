@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createPgHandler, handlePgRequest, ROUTES } from '../src/pg/app.js';
 import { assertNoPii } from '../src/pg/audit.js';
 import { guessMapping, parseCsv, toServerPayload, validateRows } from '../import/core.js';
-import { MESSAGES } from '../src/pg/routes/import.js';
+import { MESSAGES, splitGuardianName } from '../src/pg/routes/import.js';
 import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
@@ -343,4 +343,98 @@ test('unknown import subpaths fall through and wrong methods are rejected', asyn
   const handler = createPgHandler(ROUTES);
   assert.equal((await handler(request('/api/import/nope', { cookie: admin }), env)).status, 404);
   assert.equal((await handler(request('/api/import/preview', { cookie: admin }), env)).status, 405);
+}));
+
+// --- #98: dopasowanie opiekuna, przedrostki nazwisk, raport „brak w pliku" ---
+
+test('splitGuardianName keeps Dutch/Belgian and French surname particles with the last name', () => {
+  assert.deepEqual(splitGuardianName('Jan Kowalski'), { firstName: 'Jan', lastName: 'Kowalski' });
+  assert.deepEqual(splitGuardianName('Anna Maria de Smet'), { firstName: 'Anna Maria', lastName: 'de Smet' });
+  assert.deepEqual(splitGuardianName('Piotr van der Berg'), { firstName: 'Piotr', lastName: 'van der Berg' });
+  assert.deepEqual(splitGuardianName('Ewa von Neumann'), { firstName: 'Ewa', lastName: 'von Neumann' });
+  assert.deepEqual(splitGuardianName('Kowalski'), { firstName: 'Kowalski', lastName: '' });
+  // Same przedrostki bez imienia — co najmniej jeden wyraz zostaje w imieniu.
+  assert.deepEqual(splitGuardianName('van der Berg'), { firstName: 'van', lastName: 'der Berg' });
+});
+
+test('re-import with a changed guardian e-mail is a conflict, not a second guardian (only that row)', async () => withDb(async (db, env, admin) => {
+  const base = csvOf(
+    'S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan@example.invalid',
+    'S2;Ola;Testowa;1A;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan@example.invalid',
+  );
+  const first = await previewAndCommit(env, admin, payloadFromCsv(base), 'key-e98-0001');
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  assert.equal(await count(db, 'guardians'), 2);
+
+  // Tylko drugi opiekun (Jan) zmienia e-mail; pierwszy wiersz (S1) dostaje konflikt,
+  // drugi (S2, ten sam opiekun 2) też — bo dotyczy tej samej pary rodzina+opiekun.
+  const changed = csvOf(
+    'S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan.nowy@example.invalid',
+    'S2;Ola;Testowa;1A;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan.nowy@example.invalid',
+  );
+  const p = await preview(env, admin, payloadFromCsv(changed));
+  assert.equal(p.body.counts.rowsConflict, 2);
+  assert.equal(p.body.counts.guardiansCreated, 0);
+  const byRow = Object.fromEntries(p.body.rows.map((row) => [row.row, row]));
+  assert.equal(byRow[2].messages[0], MESSAGES.guardianMaybeChanged);
+  assert.equal(byRow[3].messages[0], MESSAGES.guardianMaybeChanged);
+
+  const done = await commit(env, admin, payloadFromCsv(changed, { skipConflicts: true }), p.body, 'key-e98-0002');
+  assert.equal(done.status, 201, JSON.stringify(done.body));
+  assert.equal(await count(db, 'guardians'), 2, 'no second guardian is created for a changed e-mail');
+  const stillOld = await db.query("SELECT count(*)::int AS n FROM guardians WHERE email = 'jan@example.invalid'");
+  assert.equal(stillOld.rows[0].n, 1, 'the existing guardian record is left untouched, not overwritten');
+}));
+
+test('re-import with a corrected guardian surname typo (same e-mail) is a conflict', async () => withDb(async (db, env, admin) => {
+  const base = csvOf('S1;Ala;Testowa;1A;R1;Ana Kowalska;ana@example.invalid;;');
+  await previewAndCommit(env, admin, payloadFromCsv(base), 'key-e98-0003');
+  const p = await preview(env, admin, payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;Anna Kowalska;ana@example.invalid;;')));
+  assert.equal(p.body.counts.rowsConflict, 1);
+  assert.equal(p.body.rows[0].messages[0], MESSAGES.guardianMaybeChanged);
+  assert.equal(await count(db, 'guardians'), 1);
+}));
+
+test('the same guardian in two separate households (parents apart) is not a false conflict', async () => withDb(async (db, env, admin) => {
+  const csv = csvOf(
+    'S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;;',
+    'S2;Ola;Inna;1A;R2;Anna Testowa;anna@example.invalid;;',
+  );
+  const p = await preview(env, admin, payloadFromCsv(csv));
+  assert.equal(p.body.counts.rowsConflict, 0);
+  assert.equal(p.body.counts.guardiansCreated, 2);
+  assert.ok(p.body.warnings.some((w) => w.message === MESSAGES.emailElsewhere));
+}));
+
+test('double-click and retry after a guardian conflict do not duplicate guardians', async () => withDb(async (db, env, admin) => {
+  await previewAndCommit(env, admin, payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;;')), 'key-e98-0004');
+  const changed = payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;Hanna Testowa;anna@example.invalid;;'), { skipConflicts: true });
+  const p = await preview(env, admin, changed);
+  const first = await commit(env, admin, changed, p.body, 'key-e98-0005');
+  assert.equal(first.status, 201);
+  const snapshot = await tableCounts(db);
+  const retry = await commit(env, admin, changed, p.body, 'key-e98-0005');
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.replayed, true);
+  assert.deepEqual(await tableCounts(db), snapshot);
+}));
+
+test('preview reports students enrolled this year but missing from the file, without names', async () => withDb(async (db, env, admin) => {
+  await previewAndCommit(env, admin, payloadFromCsv(BASIC), 'key-e98-0006');
+  const onlyTwo = csvOf(
+    'S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan@example.invalid',
+    'S2;Ola;Testowa;2B;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan@example.invalid',
+  );
+  const p = await preview(env, admin, payloadFromCsv(onlyTwo));
+  assert.deepEqual(p.body.missingFromFile, { count: 1, refs: ['S3'] });
+  const text = JSON.stringify(p.body.missingFromFile);
+  for (const fragment of ['Piotr', 'Próbny', 'ewa@']) assert.equal(text.includes(fragment), false, fragment);
+}));
+
+test('a guardian name with a surname particle is split and stored correctly', async () => withDb(async (db, env, admin) => {
+  const csv = csvOf('S1;Ala;Testowa;1A;R1;Anna Maria de Smet;anna@example.invalid;;');
+  const result = await previewAndCommit(env, admin, payloadFromCsv(csv), 'key-e98-0007');
+  assert.equal(result.status, 201, JSON.stringify(result.body));
+  const g = await db.query("SELECT first_name, last_name FROM guardians WHERE email = 'anna@example.invalid'");
+  assert.deepEqual(g.rows[0], { first_name: 'Anna Maria', last_name: 'de Smet' });
 }));
