@@ -14,7 +14,13 @@ const HOUR = 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const encoder = new TextEncoder();
 const PDF = encoder.encode('%PDF-1.4\n% syntetyczny dokument testowy\n1 0 obj <<>> endobj\n%%EOF\n');
-const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+// Sygnatura + IHDR (13 B danych) + IEND: minimalny, strukturalnie poprawny PNG
+// (CRC nieużywany przez kontrolę struktury z issue #89 — dowolny bajt starcza).
+const PNG = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, ...new Array(13).fill(0), 0, 0, 0, 0,
+  0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0, 0, 0, 0,
+]);
 const HTML = encoder.encode('<html><script>alert(1)</script></html>');
 
 async function withEnv(fn, extra = {}) {

@@ -62,6 +62,11 @@ Zasady:
 - CSV nie jest dopuszczony: nie ma sygnatury, a zwykle zawiera listy osób. Import rodzin ma osobny przepływ ([import/README.md](../import/README.md)).
 - Limit rozmiaru: `DOCUMENT_MAX_BYTES`, domyślnie 10 MiB, najwyżej 25 MiB. Serwer Node podnosi limit ciała żądania wyłącznie dla `POST /api/documents`; wszystkie inne trasy nadal mają 1 MiB. Trasa sama liczy bajty podczas odczytu, niezależnie od `Content-Length`.
 - Skan antywirusowy nie jest jeszcze dostępny (ryzyko opisane niżej).
+- **Kontrola struktury (issue #89, heurystyka, NIE zastępuje skanu antywirusowego):** po zgodności sygnatury i typu serwer sprawdza surowe bajty pliku (`src/documents.js#validateStructure`) i odrzuca `415`:
+  - `document_active_content` — PDF zawierający (nieskompresowane) słowa kluczowe `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile`, `/RichMedia`, `/XFA` albo `/Encrypt` (szyfrowanie uniemożliwia dalszą kontrolę treści, więc traktujemy je tak samo);
+  - `document_malformed` — PDF bez `%%EOF` w ostatnim 1 KiB (np. poliglota z dołożonymi danymi po właściwej treści), PNG z uszkodzonym łańcuchem chunków albo danymi po `IEND`, JPEG bez `FF D9` na końcu (po odjęciu dopuszczalnego dopełnienia zerami).
+  - **Ograniczenie:** to kontrola surowych bajtów, nie parser PDF. Strumienie PDF bywają skompresowane (`FlateDecode`) — słowo kluczowe wewnątrz skompresowanego strumienia nie zostanie wykryte. Reguła wymaga przeglądu przed włączeniem na prawdziwych, zanonimizowanych plikach z banku (ryzyko fałszywych odrzuceń podpisanych/zaszyfrowanych PDF-ów).
+  - Ta wersja **nie** obejmuje: kolumny `validation_version` w `documents`, podglądu obrazu (`disposition=inline`) ani renderowania PDF przez samodzielnie hostowany PDF.js w panelu — to osobny zakres (część issue #89 pozostaje otwarta).
 
 ## Klucz obiektu i dane osobowe
 
