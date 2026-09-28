@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const READ_ONLY_EXCEPTIONS = new Map([
   ['src/pg/routes/documents.js', ['document.access_denied', 'document.downloaded', 'document.content_missing']],
   ['src/pg/routes/print.js', ['print.cards_requested']],
-  ['src/pg/routes/email.js', ['email.recipients.viewed']],
+  ['src/pg/routes/email.js', ['email.recipients.viewed', 'email.attention_list.viewed', 'email.webhook.previous_secret_used']],
   ['src/pg/routes/reconciliation.js', ['report.audit.generated']],
   // #181: odczyt dziennika audytu sam zapisuje zdarzenie (bez parametrów zapytania).
   ['src/pg/routes/admin.js', ['audit.viewed']],

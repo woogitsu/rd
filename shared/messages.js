@@ -229,6 +229,8 @@ export const MESSAGES = Object.freeze({
   no_recipients: "Wysyłka nie ma odbiorców.",
   invalid_send_not_before: "Podaj poprawną datę i godzinę startu wysyłki.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
+  outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
+  not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
 
   // --- Import -----------------------------------------------------------------------------------
   import_disabled: "Import jest wyłączony na tym środowisku.",
