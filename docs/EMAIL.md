@@ -84,9 +84,42 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 | `EMAIL_BREAKER_UNCERTAIN` | liczba kolejnych wyników niepewnych (5xx, timeout), po której przebieg się zatrzymuje (domyślnie 2) |
 | `BREVO_API_KEY` | sekret usługi zadania; nigdy w repo ani frontendzie |
 | `BREVO_FROM_EMAIL`, `BREVO_FROM_NAME` | zweryfikowany nadawca (D-17) |
+| `BREVO_REPLY_TO` | adres odpowiedzi (#148); na produkcji wymagany — brak daje `reply_to_not_configured` |
 | `BREVO_WEBHOOK_SECRET` | wspólny sekret webhooka |
+| `EMAIL_DKIM_HOSTS` | (dla `npm run email:preflight`) nazwy hostów DKIM do sprawdzenia w DNS (np. `mail._domainkey.rada.example.invalid`), po przecinku |
 
 ## Wdrożenie
 Brevo API key w sekrecie serwera, zweryfikowana domena, SPF/DKIM/DMARC, osobny adres nadawcy i uwierzytelniony webhook. Nie wysyłać poczty bezpośrednio z przeglądarki ani nie ujawniać klucza w frontendzie. Najpierw testy na kilku własnych adresach technicznych i potwierdzenie szablonu przez Radę.
+
+`liveRunRefusal` (`src/email/brevo.js`) odmawia przebiegu na żywo, gdy adres nadawcy jest w domenie darmowej skrzynki (`sender_free_domain`, lista orientacyjna w `FREE_EMAIL_DOMAINS`) albo — na produkcji — gdy brak `BREVO_REPLY_TO` (`reply_to_not_configured`). Wiadomość wysyłana przez `createBrevoTransport` przekazuje `replyTo`, jeśli jest ustawiony.
+
+### Checklista domeny nadawcy (D-17)
+Do odhaczenia przez osobę zarządzającą kontem Brevo i domeną, zanim `EMAIL_SENDING_ENABLED=true` trafi na jakiekolwiek środowisko z prawdziwymi adresami. Wynik (kto, data, ustalenie) zapisać w rejestrze decyzji ([DECISIONS.md](DECISIONS.md), D-17) — nie w repozytorium kodu.
+
+| Krok | Opis | Wynik (przykład) |
+|---|---|---|
+| 1 | Domena nadawcy należy do szkoły lub Rady i jest wskazana w D-17 — **nie** domena prywatna ani darmowa (patrz `FREE_EMAIL_DOMAINS`). | kto sprawdził / data / TAK-NIE |
+| 2 | Rekord weryfikacyjny Brevo (`brevo-code`) i rekordy DKIM z panelu Brevo dodane w DNS domeny; status domeny w Brevo = „authenticated”. | kto / data / status Brevo |
+| 3 | DMARC: istnieje rekord `_dmarc.<domena>` z `rua=mailto:<skrzynka funkcyjna>`. Start od `p=none` z monitoringiem; zaostrzenie do `quarantine`/`reject` po okresie obserwacji — decyzja zarządcy domeny. | kto / data / treść rekordu |
+| 4 | SPF: wg aktualnej dokumentacji Brevo osobny rekord SPF dla Brevo nie jest wymagany (Brevo używa własnej domeny zwrotnej). Jeśli domena ma istniejący SPF, sprawdzić, że zmiana go nie psuje (limit 10 wyszukiwań DNS). | kto / data / TAK-NIE |
+| 5 | Wyrównanie DMARC: domena w nagłówku `From` = domena z uwierzytelnionym DKIM. | kto / data / TAK-NIE |
+| 6 | `BREVO_REPLY_TO` to obsługiwana skrzynka funkcyjna Rady; wskazana osoba faktycznie odpowiada na pytania rodziców. | kto / data / skrzynka + osoba |
+| 7 | Test wysyłki na skrzynki techniczne u ≥3 dostawców (np. Gmail, Outlook, lokalny belgijski dostawca) i odczyt nagłówka `Authentication-Results` (oczekiwane: `dkim=pass`, `dmarc=pass`). | kto / data / wynik na dostawcę |
+| 8 | Wynik `npm run email:preflight` (poniżej) dołączony do checklisty odbioru #41 i do warunków D-20. | data / skrót wyniku (bez sekretów) |
+
+Przykładowa (syntetyczna) domena do dokumentacji przed decyzją D-17: `rada.example.invalid`. Prawdziwa domena szkoły/Rady nie trafia do repozytorium przed D-17.
+
+### `npm run email:preflight`
+Sprawdza konfigurację i publiczne rekordy DNS **bez wysyłki** i bez `BREVO_API_KEY` (nie łączy się z API Brevo). Wypisuje jeden wiersz na sprawdzenie: `ok`, `missing` albo `warning`, z krótkim opisem — nigdy z sekretem ani adresem rodziny.
+
+Sprawdzane pozycje:
+- `sender_email` — czy `BREVO_FROM_EMAIL` jest ustawiony i nie jest domeną darmową (`warning`, gdy jest — na żywo to `sender_free_domain`);
+- `reply_to` — czy `BREVO_REPLY_TO` jest ustawiony;
+- `webhook_secret` — czy `BREVO_WEBHOOK_SECRET` ma ≥32 znaki;
+- `test_recipients` — czy `EMAIL_TEST_ALLOWLIST` lub `EMAIL_PREVIEW_RECIPIENTS` (#104) są ustawione;
+- `dmarc` — rekord TXT `_dmarc.<domena nadawcy>`: brak → `missing`, `p=none` → `warning`, `p=quarantine`/`p=reject` → `ok`;
+- `dkim` — dla każdego hosta z `EMAIL_DKIM_HOSTS`: obecność rekordu TXT lub CNAME w DNS.
+
+Wynik jest deterministyczny i niczego nie zapisuje w bazie; ponowne uruchomienie daje ten sam wynik dla tej samej konfiguracji i stanu DNS.
 
 Źródło limitu: https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan
