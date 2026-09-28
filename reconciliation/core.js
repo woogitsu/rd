@@ -38,9 +38,10 @@ export function buildReconciliationsUrl(schoolYearId) {
   return `/api/reconciliations?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
 }
 
-export function reconciliationUrl(id) {
+export function reconciliationUrl(id, cursor = null) {
   if (!isValidId(id)) throw new Error('Niepoprawny identyfikator uzgodnienia.');
-  return `/api/reconciliations/${encodeURIComponent(id)}`;
+  const base = `/api/reconciliations/${encodeURIComponent(id)}`;
+  return cursor ? `${base}?cursor=${encodeURIComponent(cursor)}` : base;
 }
 
 export function reconciliationActionUrl(id, action) {
