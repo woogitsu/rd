@@ -49,11 +49,14 @@ export async function seedClass(db, { id, schoolYearId = 'y-test', name = id }) 
 }
 
 // Użytkownik (idempotentnie). Domyślny e-mail jest syntetyczny.
-export async function seedUser(db, { userId, email = `${userId}@example.invalid`, displayName = `Test ${userId}`, disabled = false }) {
+// Domyślny e-mail jest zawsze małymi literami (#198: users.email wymaga
+// lower(btrim(email))) niezależnie od wielkości liter w userId (np. klucze
+// aktorów macierzy uprawnień 'repA', 'boardA').
+export async function seedUser(db, { userId, email = `${String(userId).toLowerCase()}@example.invalid`, displayName = `Test ${userId}`, disabled = false }) {
   await db.query(
     `INSERT INTO users (id, email, display_name, disabled_at) VALUES ($1, $2, $3, CASE WHEN $4::boolean THEN now() END)
      ON CONFLICT (id) DO NOTHING`,
-    [userId, email, displayName, Boolean(disabled)],
+    [userId, String(email).trim().toLowerCase(), displayName, Boolean(disabled)],
   );
   return userId;
 }
@@ -66,7 +69,7 @@ export async function seedUser(db, { userId, email = `${userId}@example.invalid`
  * @param {object} db PGlite z createTestDb()
  * @param {object} options
  * @param {string} options.userId
- * @param {string} [options.email]       domyślnie `${userId}@example.invalid`
+ * @param {string} [options.email]       domyślnie `${userId.toLowerCase()}@example.invalid`
  * @param {Array<{role:string, classId?:string, schoolYearId?:string, expiresAt?:string|Date, revoked?:boolean}>} [options.roles]
  * @param {boolean} [options.mfa=false]  czy sesja ma potwierdzone MFA
  * @param {string|Date} [options.expiresAt] domyślnie za 1 godzinę; data w przeszłości = sesja wygasła

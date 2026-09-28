@@ -206,6 +206,18 @@ const ALLOWED = {
     reason: '#150: GET /api/sessions (lista własnych sesji) to nowa trasa, nieobecna w Workerze — '
       + 'ścieżka nazwana tu "typo" (literówka względem /api/session) zaczęła trafiać w prawdziwą trasę',
   },
+  'access representative (only assigned classes, no expired grant)': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: PostgreSQL dodaje pole hasActiveRole (ROLE_STATUS) do GET /api/access, nieobecne w Workerze',
+  },
+  'access admin': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: jak wyżej — hasActiveRole',
+  },
+  'access without grants': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: jak wyżej — hasActiveRole',
+  },
 };
 
 // #143: /api/session na PostgreSQL dokłada writeMode (tryb tylko do odczytu) —

@@ -179,6 +179,17 @@ export function pdfBytes(scope) {
   return new TextEncoder().encode(`%PDF-1.4\n% ${marker(scope)} dokument syntetyczny\n%%EOF\n`);
 }
 
+// Prawdziwy, poprawny plik PNG 2x2 (nie tekst udający sygnaturę jak pdfBytes
+// powyżej) — POST /api/news-photos/:id/file (#96) dekoduje bajty przez sharp,
+// więc atrapa musi być poprawnym obrazem, nie tylko mieć poprawne magic bytes.
+// Wygenerowany raz: sharp({create:{width:2,height:2,channels:3,background:
+// {r:200,g:30,b:30}}}).png().toBuffer() — bez danych osobowych, bez EXIF.
+const SYNTHETIC_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWM4ISd3Qk6OAUIBAB8mBBGFRCvEAAAAAElFTkSuQmCC';
+export function pngBytes() {
+  const binary = atob(SYNTHETIC_PNG_BASE64);
+  return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+}
+
 export const CAMPAIGN_TEXT = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok {rok}. Tytuł przelewu: {rodzina}. '
   + 'Jeśli wpłata została już wykonana, prosimy pominąć wiadomość.';
 export function campaignBody(target) {
@@ -213,6 +224,21 @@ function documentRead(id, path, kind, targets, allow, mfa, suffix) {
     fixture: 'static', object: { kind: 'document', stage: kind },
     build: ({ obj }) => ({ path: `/api/documents/${obj.documentId}${suffix}` }),
     contains: suffix ? (_actor, target) => [target.key] : undefined,
+  };
+}
+
+// Zapis opisu (tytuł/kategoria — issue #76): te same reguły dostępu co odczyt
+// metadanych dokumentu (canAccessDocument), więc mfaDeny/deny = 404 jak wyżej.
+function documentDescribe(id, path, kind, targets, allow, mfa) {
+  return {
+    id, module: 'documents', method: 'POST', path,
+    targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404,
+    fixture: 'static', object: { kind: 'document', stage: kind },
+    build: ({ obj, target, key }) => ({
+      path: `/api/documents/${obj.documentId}/description`, headers: withKey(key),
+      body: { title: `Opis ${marker(target.key)}`, category: 'inne' },
+    }),
+    contains: (_actor, target) => [target.key],
   };
 }
 
@@ -436,6 +462,12 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { householdId: 'hh-2', reason: 'Błędne przypisanie, korekta syntetyczna' },
     }),
   },
+  {
+    // #141: eksport CSV wpisów wpłat i korekt (skarbnik/zarząd/admin).
+    id: 'payments.exportCsv', module: 'payments', method: 'GET', path: '/api/payments/export.csv?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/payments/export.csv?schoolYearId=${target.schoolYearId}` }),
+  },
 
   // ---------- events (#12) ----------
   {
@@ -564,6 +596,30 @@ export const ROUTE_MATRIX = Object.freeze([
     (obj) => `/resolutions/${obj.resolutionId}/corrections`, {
       ok: 201, create: true, stage: 'finalResolution', body: () => ({ reason: 'Pomyłka w zapisie głosów', votesAgainst: 1 }),
     }),
+  // #102: rejestr uchwał roku. Bez fixture (brak innych tras tworzy uchwały
+  // domyślnie), więc odpowiedź 2xx jest pustą listą — trasa sprawdza tu
+  // wyłącznie granicę roli/MFA; zakres klasowy i treść rejestru ma własny,
+  // dedykowany test w tests/pg-meetings-resolutions.test.js.
+  {
+    id: 'meetings.resolutionRegister', module: 'meetings', method: 'GET',
+    path: '/api/meetings/resolutions?schoolYearId=:year', targets: YEAR_TARGETS,
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, boardA: SCHOOL_Y1 },
+    mfa: false, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/meetings/resolutions?schoolYearId=${target.schoolYearId}` }),
+  },
+  // #102: śledzenie wykonania uchwały — nie zagnieżdżone pod /:meetingId, więc
+  // budowane ręcznie (nie przez meetingRoute), ale z tym samym fixture uchwały
+  // przyjętej (stage 'finalResolution') co korekta wyżej.
+  {
+    id: 'meetings.resolutionExecution', module: 'meetings', method: 'POST',
+    path: '/api/meetings/resolutions/:resolutionId/execution', targets: CLASS_TARGETS,
+    allow: MEETING_MANAGE, mfa: false, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'meeting', stage: 'finalResolution' },
+    build: ({ obj, key }) => ({
+      path: `/api/meetings/resolutions/${obj.resolutionId}/execution`,
+      body: json({ status: 'not_started' }), headers: withKey(key),
+    }),
+  },
   // ---------- import (#36) ----------
   // admin i zarząd z MFA, wyłącznie przydział bez klasy obejmujący rok importu.
   {
@@ -607,6 +663,9 @@ export const ROUTE_MATRIX = Object.freeze([
   documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content'),
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
   documentRead('documents.contentClass', '/api/documents/:classDocumentId/content', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, '/content'),
+  documentDescribe('documents.describeFinancial', '/api/documents/:financialDocumentId/description', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentDescribe('documents.describeBoard', '/api/documents/:boardDocumentId/description', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentDescribe('documents.describeClass', '/api/documents/:classDocumentId/description', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
 
   // ---------- ledger (#38) ----------
   // admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu (docs/LEDGER.md).
@@ -816,6 +875,34 @@ export const ROUTE_MATRIX = Object.freeze([
   photoAction('news.photoConsent', 'consents', PHOTO_REGISTER, 201, { subjectNo: 1, subjectKind: 'adult', consentDocumentRef: 'zgoda-syntetyczna-1' }),
   photoAction('news.photoVerify', 'verify', PHOTO_VERIFY, 200, {}),
   photoAction('news.photoRevoke', 'revoke', PHOTO_VERIFY, 200, { reason: 'Cofnięcie zgody (syntetyczne)' }),
+  {
+    // Plik obrazu (#96): surowe bajty PNG, nie JSON — Content-Type + Idempotency-Key.
+    id: 'news.photoFile', module: 'news', method: 'POST', path: '/api/news-photos/:photoId/file', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: false, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'photo', stage: 'pending' }, visible: () => ['W1'],
+    build: ({ obj, key }) => ({
+      path: `/api/news-photos/${obj.photoId}/file`,
+      headers: { ...withKey(key), 'Content-Type': 'image/png' },
+      body: pngBytes(),
+    }),
+  },
+  // Trasa publiczna (#96): zdjęcie zweryfikowane, z plikiem, w opublikowanym
+  // wpisie -> 200 dla każdego (bez sesji też) — sama treść nie zależy od roli.
+  // Cofnięcie/wygaśnięcie/szkic -> 404 identyczne jak nieistniejące; ta ścieżka
+  // ma dedykowany test w tests/pg-news.test.js (macierz sprawdza tu tylko, że
+  // odpowiedź jest jednakowa dla każdego aktora, nie cały cykl życia pliku).
+  {
+    id: 'news.publicPhotoFileWeb', module: 'news', method: 'GET', path: '/api/public/news-photos/:photoId/web',
+    targets: ['-'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static',
+    object: { kind: 'publicPhotoFile', stage: 'n/a' }, visible: () => [],
+    build: ({ obj }) => ({ path: `/api/public/news-photos/${obj.photoId}/web` }),
+  },
+  {
+    id: 'news.publicPhotoFileThumb', module: 'news', method: 'GET', path: '/api/public/news-photos/:photoId/thumb',
+    targets: ['-'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static',
+    object: { kind: 'publicPhotoFile', stage: 'n/a' }, visible: () => [],
+    build: ({ obj }) => ({ path: `/api/public/news-photos/${obj.photoId}/thumb` }),
+  },
 
   // ---------- admin (#3, #4, #9) ----------
   // Wyłącznie admin z MFA, także odczyt. Moduł obejmuje konta całej szkoły, więc odpowiedź 2xx
