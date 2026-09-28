@@ -17,6 +17,7 @@ import {
   parseFragment,
   qrMatrix,
   qrSvgPath,
+  shouldShowNoAccessNotice,
   validateEmail,
   validateNewPassword,
 } from "./core.js";
@@ -100,7 +101,7 @@ async function goNext(state, { initial = false } = {}) {
     window.location.replace(returnTo);
     return;
   }
-  if (view === "start") renderStart();
+  if (view === "start") await renderStart();
   if (view === "enroll") { resetEnrollment(); renderEnrollIntro(true); }
   showView(view);
 }
@@ -414,19 +415,31 @@ byId("enroll-back").addEventListener("click", async () => goNext(lastState ?? aw
 
 // --- 7. Start i wylogowanie ---------------------------------------------------------------
 
-function renderStart() {
+async function renderStart() {
+  // #176: rola bez żadnej aktywnej trasy (np. principal, decyzja D-09 w toku) nie
+  // dostaje listy 10 paneli kończących się odmową — serwer (hasActiveRole,
+  // GET /api/access) rozstrzyga, czy jest co pokazać.
+  let access = null;
+  try { access = await api("/api/access"); } catch { access = null; }
+  const noAccess = shouldShowNoAccessNotice(access);
+  byId("no-access-notice").hidden = !noAccess;
+  byId("start-hint").hidden = noAccess;
   const list = byId("panel-list");
-  const back = returnTo ? [{ href: returnTo, label: "Powrót do poprzedniej strony", hint: returnTo }] : [];
-  list.replaceChildren(...[...back, ...PANELS].map((panel) => {
-    const item = document.createElement("li");
-    const link = document.createElement("a");
-    link.href = panel.href;
-    link.textContent = panel.label;
-    const hint = document.createElement("span");
-    hint.textContent = panel.hint;
-    item.append(link, hint);
-    return item;
-  }));
+  if (noAccess) {
+    list.replaceChildren();
+  } else {
+    const back = returnTo ? [{ href: returnTo, label: "Powrót do poprzedniej strony", hint: returnTo }] : [];
+    list.replaceChildren(...[...back, ...PANELS].map((panel) => {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = panel.href;
+      link.textContent = panel.label;
+      const hint = document.createElement("span");
+      hint.textContent = panel.hint;
+      item.append(link, hint);
+      return item;
+    }));
+  }
   byId("enroll-voluntary").hidden = !canOfferVoluntaryMfaEnrollment(lastState);
 }
 

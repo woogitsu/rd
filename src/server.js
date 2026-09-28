@@ -80,6 +80,10 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         EMAIL_CAMPAIGN_MIN_DAILY: processEnv.EMAIL_CAMPAIGN_MIN_DAILY,
         // MFA (#3): klucz szyfrowania sekretów TOTP, wyłącznie jako sekret usługi Railway.
         MFA_ENCRYPTION_KEY: processEnv.MFA_ENCRYPTION_KEY,
+        // Import wyciągu CODA/CAMT.053 (#105): klucz HMAC skrótów transakcji (sekret)
+        // i zatwierdzony rachunek Rady (D-13). Bez obu import z pliku jest wyłączony.
+        BANK_TRANSACTION_HASH_KEY: processEnv.BANK_TRANSACTION_HASH_KEY,
+        RECONCILIATION_BANK_ACCOUNT_IBAN: processEnv.RECONCILIATION_BANK_ACCOUNT_IBAN,
         // Logowanie hasłem (#3): role z obowiązkowym MFA i koszt scrypt (log2 N).
         MFA_REQUIRED_ROLES: processEnv.MFA_REQUIRED_ROLES,
         SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
