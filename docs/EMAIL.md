@@ -24,7 +24,7 @@ Każda kampania ma `category`: `contribution_reminder` (przypomnienie o dobrowol
 - Migawka i worker sprawdzają preferencję kategorii tuż przed użyciem/wysyłką (powód wykluczenia `opted_out`); wypisanie między zakolejkowaniem a wysyłką daje `suppressed / category_opted_out`, bez wysyłki.
 - Webhook `unsubscribed`: gdy zdarzenie dotyczy rozpoznanego wiersza kolejki, zapisuje preferencję dla kategorii tej kampanii (`source = 'webhook'`); bez dopasowania — tylko samo zdarzenie, bez żadnej blokady (nie znamy kategorii).
 - Audyt: `email.preference.opt_out` z kategorią i źródłem (`link`/`webhook`/`staff_on_parent_request`), nigdy z adresem.
-- **Ograniczenia tego prototypu**: limit żądań na trasę publiczną jest licznikiem w pamięci procesu (nie działa między instancjami/replikami) — przed produkcją wymaga trwałego licznika. Trasa publiczna zwraca dziś JSON, nie stronę HTML z potwierdzeniem — wymaga uzupełnienia przed wdrożeniem. Kategoria „obowiązkowa bez wypisania” nie jest zaimplementowana (czeka na D-06).
+- **Ograniczenia tego prototypu**: limit żądań na trasę publiczną (`EMAIL_PREFERENCES_RATE_LIMIT`, domyślnie 200/min) jest licznikiem w pamięci procesu (nie działa między instancjami/replikami, nie rozróżnia adresatów po IP) — przed produkcją wymaga trwałego, per-IP licznika. Wartość domyślna jest celowo wysoka, żeby nie kolidować z automatycznym sprawdzaniem uprawnień (macierz #189 odpytuje tę trasę wieloma tożsamościami z tego samego procesu testowego) — realną ochronę przed nadużyciem trzeba dostroić przed wdrożeniem, razem z licznikiem trwałym. Trasa publiczna zwraca dziś JSON, nie stronę HTML z potwierdzeniem — wymaga uzupełnienia przed wdrożeniem. Kategoria „obowiązkowa bez wypisania” nie jest zaimplementowana (czeka na D-06).
 
 Anulowanie (`POST …/cancel`) zatrzymuje wiersze oczekujące w kolejce (`cancelledMessages`). Wiersze już przejęte przez zadanie (`sending`) zadanie samo oznacza jako `cancelled` przy potwierdzeniu przed wysyłką — wyjść może najwyżej wiadomość, której przekazanie do Brevo już trwa (jedna na proces zadania). Wiadomości przyjętej przez Brevo nie da się cofnąć.
 
@@ -101,6 +101,7 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 | `BREVO_WEBHOOK_SECRET` | wspólny sekret webhooka |
 | `EMAIL_UNSUBSCRIBE_SECRET` | (#110) sekret HMAC do podpisu tokenu wypisania jednym kliknięciem; brak = brak stopki i brak nagłówków `List-Unsubscribe*` |
 | `PUBLIC_BASE_URL` | adres bazowy serwera do budowy linku wypisania (i kontroli `Origin` — już używany gdzie indziej) |
+| `EMAIL_PREFERENCES_RATE_LIMIT` | (#110) limit żądań na `GET`/`POST /api/email/preferences` na proces na minutę (domyślnie 200 — patrz „Ograniczenia” niżej) |
 
 ## Wdrożenie
 Brevo API key w sekrecie serwera, zweryfikowana domena, SPF/DKIM/DMARC, osobny adres nadawcy i uwierzytelniony webhook. Nie wysyłać poczty bezpośrednio z przeglądarki ani nie ujawniać klucza w frontendzie. Najpierw testy na kilku własnych adresach technicznych i potwierdzenie szablonu przez Radę.

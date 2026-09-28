@@ -52,11 +52,20 @@ const SUPPRESS_EVENTS = Object.freeze({
 const BOUNCE_EVENTS = new Set(['hard_bounce', 'invalid_email', 'blocked']);
 // Limit prostego, nieporozdzielanego licznika żądań na trasę publiczną (best
 // effort — jeden proces; docelowo wymaga trwałego licznika, patrz docs/EMAIL.md).
+// Konfigurowalny przez EMAIL_PREFERENCES_RATE_LIMIT (test dedykowany ustawia
+// niską wartość, żeby sprawdzić 429 bez setek żądań; macierz uprawnień #189
+// odpytuje tę samą (publiczną) trasę wieloma syntetycznymi tożsamościami z tego
+// samego adresu, więc wartość domyślna musi to znosić bez interferencji).
 const PREF_RATE_WINDOW_MS = 60_000;
-const PREF_RATE_MAX = 30;
+const DEFAULT_PREF_RATE_MAX = 200;
 const prefRateBuckets = new Map();
 
-function prefRateLimited(key) {
+function prefRateMax(env) {
+  const raw = Number(env?.EMAIL_PREFERENCES_RATE_LIMIT);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_PREF_RATE_MAX;
+}
+
+function prefRateLimited(key, env) {
   const now = Date.now();
   const bucket = prefRateBuckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
@@ -64,7 +73,7 @@ function prefRateLimited(key) {
     return false;
   }
   bucket.count += 1;
-  return bucket.count > PREF_RATE_MAX;
+  return bucket.count > prefRateMax(env);
 }
 
 class RequestError extends Error {
@@ -764,7 +773,7 @@ function clientKeyFrom(request) {
 }
 
 async function preferencesShow(request, env, url, json) {
-  if (prefRateLimited(clientKeyFrom(request))) return json({ error: 'rate_limited' }, 429);
+  if (prefRateLimited(clientKeyFrom(request), env)) return json({ error: 'rate_limited' }, 429);
   const token = tokenFromRequest(url);
   const secret = env.EMAIL_UNSUBSCRIBE_SECRET;
   if (!token || !secret) return json({ error: 'invalid_token' }, 400);
@@ -775,7 +784,7 @@ async function preferencesShow(request, env, url, json) {
 }
 
 async function preferencesOptOut(request, env, url, json) {
-  if (prefRateLimited(clientKeyFrom(request))) return json({ error: 'rate_limited' }, 429);
+  if (prefRateLimited(clientKeyFrom(request), env)) return json({ error: 'rate_limited' }, 429);
   const token = tokenFromRequest(url);
   const secret = env.EMAIL_UNSUBSCRIBE_SECRET;
   if (!token || !secret) return json({ error: 'invalid_token' }, 400);

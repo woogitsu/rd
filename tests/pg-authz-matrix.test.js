@@ -52,6 +52,8 @@ const FX_ACCOUNTS = {
 };
 // Sekret syntetyczny, wyłącznie na potrzeby testu (min. 32 znaki).
 const WEBHOOK_SECRET = `syntetyczny-sekret-webhooka-${randomBytes(12).toString('hex')}`;
+// Sekret podpisu tokenu wypisania (#110), wyłącznie na potrzeby testu.
+const UNSUBSCRIBE_SECRET = `syntetyczny-sekret-wypisania-${randomBytes(12).toString('hex')}`;
 const CHECKLIST_PREFILLED = ['financial_report', 'audit_commission_report', 'minutes_approved', 'resolutions_archived'];
 const CHECKLIST_OPEN = ['reconciliation_confirmed', 'documents_handed_over'];
 // Najniższy dozwolony koszt scrypt (N = 2^15) — szybsze testy tras logowania.
@@ -412,7 +414,7 @@ async function staticObject(ctx, kind, stage, targetKey) {
 }
 
 async function seedStatic(ctx) {
-  const fx = { resolutionNumber: { W1: 'UCHW/1/R1', Y2: 'UCHW/1/R2' }, webhookSecret: WEBHOOK_SECRET };
+  const fx = { resolutionNumber: { W1: 'UCHW/1/R1', Y2: 'UCHW/1/R2' }, webhookSecret: WEBHOOK_SECRET, unsubscribeSecret: UNSUBSCRIBE_SECRET };
   for (const key of ['A', 'B', 'W1', 'Y2']) {
     await staticObject(ctx, 'event', 'draft', key);
     ctx.cache.set(`static:meeting:shared:${key}`,
@@ -425,6 +427,10 @@ async function seedStatic(ctx) {
   await makeMeeting(ctx.db, TARGETS.W1, 'shared', {
     title: `Zebranie jawne ${marker('PUBLIC')}`, minutesBody: `Protokół ${marker('PUBLIC')} — treść jawna.`, visibility: 'public',
   });
+  // Kampania istniejąca w bazie (#110): email_preferences_events.campaign_id
+  // ma FK do email_campaigns, więc token wypisania w macierzy musi wskazywać
+  // na prawdziwy wiersz, nie dowolny ciąg znaków.
+  fx.preferencesCampaignId = (await makeCampaign(ctx, TARGETS.W1, 'draft')).campaignId;
   return fx;
 }
 
@@ -461,7 +467,7 @@ const WRITE_TABLES = [
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'ledger_opening_balance_adjustments', 'ledger_transfers',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
-  'email_webhook_events', 'email_suppressions',
+  'email_webhook_events', 'email_suppressions', 'email_preferences_events',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
@@ -484,11 +490,11 @@ async function matrixContext(group = 'main') {
       const db = await createTestDb();
       const env = {
         db, storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
-        BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, ...FAST_SCRYPT,
+        BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, EMAIL_UNSUBSCRIBE_SECRET: UNSUBSCRIBE_SECRET, ...FAST_SCRYPT,
       };
       await seedBase(db);
       const ctx = { db, env, cache: new Map(), fxCookies: await seedFixtureSessions(db), checklistOpen: [...CHECKLIST_OPEN] };
-      ctx.fx = group === 'main' ? await seedStatic(ctx) : { webhookSecret: WEBHOOK_SECRET };
+      ctx.fx = group === 'main' ? await seedStatic(ctx) : { webhookSecret: WEBHOOK_SECRET, unsubscribeSecret: UNSUBSCRIBE_SECRET };
       if (group === 'yearClose') {
         // Zamknięcie roku 1 rozpoczęte przez inną osobę; dwie pozycje listy kontrolnej zostają dla macierzy.
         await api(ctx, ctx.fxCookies.board, 'POST', `/api/year-close/${YEAR_1}/start`, { nextSchoolYearId: YEAR_2 });

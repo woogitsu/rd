@@ -33,6 +33,7 @@
 // treści protokołów i opisów wpłat; odpowiedź odmowna nie może zawierać żadnego.
 
 import { isMfaGateExempt } from '../../src/pg/mfa-policy.js';
+import { emailHash as prefEmailHash, preferencesToken } from '../../src/email/content.js';
 
 export const YEAR_1 = 'y-1';
 export const YEAR_2 = 'y-2';
@@ -709,17 +710,25 @@ export const ROUTE_MATRIX = Object.freeze([
     }),
   },
   {
-    // Wypisanie jednym kliknięciem (#110): publiczna, bez Origin, bez sesji.
-    // Macierz nie konfiguruje EMAIL_UNSUBSCRIBE_SECRET, więc token zawsze
-    // odmawia (400) — niezależnie od tożsamości wywołującego (jak webhook).
+    // Wypisanie jednym kliknięciem (#110): publiczna, bez Origin, bez sesji —
+    // token ważny (podpisany fx.unsubscribeSecret) daje ten sam wynik (200)
+    // niezależnie od tożsamości wywołującego (jak webhook).
     id: 'email.preferences.get', module: 'email', method: 'GET', path: '/api/email/preferences?t=:token', targets: ['-'],
-    allow: 'public', mfa: false, ok: 400, deny: 400, fixture: null,
-    build: () => ({ path: '/api/email/preferences?t=fake-token' }),
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null,
+    build: ({ fx }) => ({
+      path: `/api/email/preferences?t=${encodeURIComponent(preferencesToken(fx.unsubscribeSecret, {
+        campaignId: fx.preferencesCampaignId, category: 'contribution_reminder', emailHash: prefEmailHash('fx-preferences@example.invalid'),
+      }))}`,
+    }),
   },
   {
     id: 'email.preferences.post', module: 'email', method: 'POST', path: '/api/email/preferences?t=:token', targets: ['-'],
-    allow: 'public', mfa: false, ok: 400, deny: 400, fixture: null,
-    build: () => ({ path: '/api/email/preferences?t=fake-token' }),
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null,
+    build: ({ fx }) => ({
+      path: `/api/email/preferences?t=${encodeURIComponent(preferencesToken(fx.unsubscribeSecret, {
+        campaignId: fx.preferencesCampaignId, category: 'contribution_reminder', emailHash: prefEmailHash('fx-preferences-post@example.invalid'),
+      }))}`,
+    }),
   },
 
   // ---------- news (#14) ----------
@@ -1025,6 +1034,7 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
   '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
   '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
+  '/api/email/preferences': 'wypisanie jednym kliknięciem: klika je klient poczty rodzica, nie przeglądarka z sesją (#110); token HMAC jest jedynym zabezpieczeniem',
   '/api/mfa/': 'zapis i potwierdzenie MFA; limity błędów per sesja, wyższy sufit per konto (#189)',
   '/api/public/': 'publiczne dane zatwierdzone',
 });

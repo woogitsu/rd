@@ -183,3 +183,20 @@ test('spam complaint still creates a global suppression (unlike unsubscribed)', 
     assert.equal(await t.count('SELECT count(*)::int AS n FROM email_suppressions'), 1);
   } finally { await t.close(); }
 });
+
+test('public preferences route is rate-limited per process (EMAIL_PREFERENCES_RATE_LIMIT)', async () => {
+  // Limit obniżony tylko dla tego testu — domyślna wartość produkcyjna (200/min)
+  // jest celowo wysoka, żeby nie kolidować z macierzą uprawnień (#189).
+  const t = await setup({ EMAIL_PREFERENCES_RATE_LIMIT: '3' });
+  // Klucz limitu (x-forwarded-for) odrębny od innych testów w tym pliku —
+  // licznik jest w pamięci procesu i dzieli klucz "unknown" ze wszystkimi
+  // wywołaniami bez tego nagłówka.
+  const headers = { 'x-forwarded-for': 'ratelimit-test-client' };
+  try {
+    const results = [];
+    for (let i = 0; i < 4; i += 1) {
+      results.push((await t.call(null, '/api/email/preferences?t=fake-token', { headers })).status);
+    }
+    assert.deepEqual(results, [400, 400, 400, 429]);
+  } finally { await t.close(); }
+});
