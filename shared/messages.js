@@ -164,6 +164,8 @@ export const MESSAGES = Object.freeze({
   already_matched_via_payment: "Pozycja jest już dopasowana do wpłaty.",
   already_matched_via_ledger: "Pozycja jest już dopasowana do wpisu księgi.",
   inconsistent_matches: "Dopasowania są niespójne. Odśwież widok.",
+  group_match_sum_mismatch: "Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu.",
+  group_match_direction_mismatch: "Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ).",
   invalid_csv: "Nie udało się odczytać pliku CSV.",
   invalid_csv_header: "Plik CSV ma niepoprawny nagłówek.",
   cash_below_zero: "Ta operacja doprowadziłaby saldo kasy poniżej zera.",

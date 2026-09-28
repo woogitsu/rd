@@ -76,7 +76,7 @@ Jeden przelew może dotyczyć kilku gospodarstw: przelew zbiorczy kilku rodzin, 
 
 **Nieobjęte częścią 1:**
 - migracja istniejących wpłat `recorded` do `payment_allocations` w proporcji 1:1 (wariant zachowawczy: istniejące przypisania zostają bez zmian, a wpłata z jednym gospodarstwem dalej liczy się przez `household_id`);
-- dopasowania wiele-do-jednego w uzgodnieniu (`bank_reconciliation_match_items`: jedna pozycja wyciągu ↔ kilka osobnych wpłat);
+- dopasowania wiele-do-jednego w uzgodnieniu — zrobione w części 2 (migracja `0105`, `bank_reconciliation_group_matches`; `docs/RECONCILIATION.md`, „Dopasowanie zbiorcze”);
 - korekta wskazująca konkretną część;
 - panel (UI);
 - wpłata gotówki zebranej przez przedstawiciela (D-12, D-13);

@@ -155,6 +155,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/reconciliations/:reconciliationId/suggestions` | jak wyżej | tak | 403 | tylko propozycje; SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/reconciliations/:reconciliationId/group-matches` | jak wyżej | tak | 403 | przelew zbiorczy (#127); SR-01 |
+| `POST /api/reconciliations/:reconciliationId/group-matches/:groupMatchId/revocation` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/confirm` | jak wyżej; inna osoba niż autor | tak | 403 | SR-01 |
 | `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md). Rola i rok pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195) |

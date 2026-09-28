@@ -65,6 +65,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `bank_reconciliations.notes` | treść przepisana z wyciągu bankowego |
 | `bank_reconciliations.confirmation_note` | jw. |
 | `bank_reconciliation_matches.revoke_reason` | uzasadnienie cofnięcia dopasowania z wyciągu |
+| `bank_reconciliation_group_match_revocations.reason` | uzasadnienie cofnięcia dopasowania zbiorczego (przelew kilku rodzin, #127) |
 | `meeting_agenda_items.description` | sprawa konkretnego ucznia w porządku obrad |
 | `meeting_minutes.body` | treść protokołu — może opisywać konkretne dzieci/rodziny |
 | `meeting_minutes.change_note` | jw., przy poprawce protokołu |
