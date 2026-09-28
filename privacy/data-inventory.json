@@ -1790,6 +1790,17 @@
       "exportable": false,
       "data_type": "timestamp with time zone"
     },
+    "revision_no": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    },
     "updated_by": {
       "personal": "none",
       "subject": null,
@@ -5631,6 +5642,17 @@
       "exportable": true,
       "data_type": "timestamp with time zone"
     },
+    "revision_no": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    },
     "voting_body_size": {
       "personal": "none",
       "subject": null,
@@ -7398,6 +7420,17 @@
       "free_text": false,
       "exportable": true,
       "data_type": "timestamp with time zone"
+    },
+    "revision_no": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
     },
     "votes_abstain": {
       "personal": "none",

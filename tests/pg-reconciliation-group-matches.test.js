@@ -452,6 +452,11 @@ test('korekta celu w szkicu jest blokowana; zwrot po dopasowaniu blokuje zatwier
   assert.equal(refund.status, 201, JSON.stringify(refund.body));
   const view = await detail(call, cookies.treasurer, rec);
   assert.equal(view.summary.inconsistentGroupMatchCount, 1);
+  // #379: niespójne dopasowanie zbiorcze nie jest liczone jako dopasowane; suma liczników = lineCount.
+  assert.equal(view.summary.matchedLineCount, 0);
+  assert.equal(view.summary.unmatchedLineCount, 0);
+  assert.equal(view.summary.lineCount, view.summary.matchedLineCount + view.summary.inconsistentMatchCount
+    + view.summary.inconsistentGroupMatchCount + view.summary.unmatchedLineCount);
   assert.deepEqual(view.inconsistentGroupMatches[0].reasons, ['amount_mismatch', 'target_changed']);
 
   const confirm = await call(`/api/reconciliations/${rec}/confirm`, { cookie: cookies.board, body: { confirmationNote: 'Syntetyczne' } });

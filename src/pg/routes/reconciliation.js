@@ -670,7 +670,17 @@ async function getReconciliation(request, env, id, url, json) {
   }));
   const summary = summaryRow.rows[0];
   const lineCount = toSafeInteger(summary.line_count);
-  const matchedLineCount = toSafeInteger(summary.matched_line_count);
+  // #165 pkt 4: matched_line_count z SQL liczy KAŻDĄ aktywną parę, także tę o
+  // niezgodnej kwocie (inconsistentMatches poniżej). Pozycja z takim powiązaniem
+  // nie jest „bez pary" (unmatchedLineCount ją pomija tak jak dotąd — to nie ona
+  // się zmienia), ale też nie jest cicho liczona jako poprawnie dopasowana: ma
+  // własną kategorię "do wyjaśnienia" (inconsistentMatchCount), więc odejmujemy
+  // ją z matchedLineCount, żeby suma trzech liczników = lineCount.
+  const rawMatchedLineCount = toSafeInteger(summary.matched_line_count);
+  const inconsistentMatchCount = inconsistent.length;
+  // #127 cz. 2: niespójne dopasowanie zbiorcze to też pozycja „do wyjaśnienia”.
+  const inconsistentGroupMatchCount = inconsistentGroups.length;
+  const matchedLineCount = rawMatchedLineCount - inconsistentMatchCount - inconsistentGroupMatchCount;
   return json({
     reconciliation,
     lines: lineItems,
@@ -680,11 +690,11 @@ async function getReconciliation(request, env, id, url, json) {
     summary: {
       lineCount,
       matchedLineCount,
-      unmatchedLineCount: lineCount - matchedLineCount,
+      unmatchedLineCount: lineCount - rawMatchedLineCount,
       unmatchedLineTotalCents: toSafeInteger(summary.unmatched_line_total_cents),
-      inconsistentMatchCount: inconsistent.length,
+      inconsistentMatchCount,
       groupMatchedLineCount: toSafeInteger(summary.group_matched_line_count),
-      inconsistentGroupMatchCount: inconsistentGroups.length,
+      inconsistentGroupMatchCount,
     },
     inconsistentMatches: inconsistent,
     inconsistentGroupMatches: inconsistentGroups,
