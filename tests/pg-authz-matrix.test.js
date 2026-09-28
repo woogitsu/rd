@@ -739,6 +739,7 @@ const MODULE_SOURCES = {
   'year-close': ['../src/pg/routes/year-close.js'],
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
+  representative: ['../src/pg/routes/representative.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń
