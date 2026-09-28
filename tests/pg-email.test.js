@@ -176,6 +176,10 @@ test('allowlist guard outside production and configuration defaults', () => {
 test('content validation rejects debt wording, unknown placeholders and invalid e-mails', async () => {
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Zaległość {rok}', bodyText: BODY }), { code: 'forbidden_wording' });
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Składka', bodyText: `${BODY} lista dłużników` }), { code: 'forbidden_wording' });
+  // #120: szkoła jest w Belgii — treść po francusku/niderlandzku sugerująca dług jest odrzucana tak samo.
+  assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Cotisation', bodyText: `${BODY} Merci de régler votre dette.` }), { code: 'forbidden_wording' });
+  assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Bijdrage', bodyText: `${BODY} Gelieve uw achterstallige bijdrage te betalen.` }), { code: 'forbidden_wording' });
+  assert.doesNotThrow(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Bijdrage', bodyText: `${BODY} Dit is een vrijwillige bijdrage.` }));
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Składka', bodyText: `${BODY} {imie_dziecka}` }), { code: 'invalid_placeholder' });
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Składka {rodzina}', bodyText: BODY }), { code: 'invalid_placeholder' });
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'debtors', subject: 'Składka', bodyText: BODY }), { code: 'invalid_audience' });
