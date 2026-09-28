@@ -112,8 +112,9 @@ jobs:
       - run: npm run migrations:manifest -- --check
       - run: npm run migrations:check-functions
       - if: github.event_name == 'pull_request'
+        # fetch-depth: 0 pobiera już origin/<base>; osobny git fetch nie ma
+        # poświadczeń (persist-credentials: false).
         run: |
-          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1000
           node scripts/check-migrations-order.js --base origin/${{ github.event.pull_request.base.ref }}
 
   # Jedyny wymagany check: oblewa, gdy którykolwiek z powyższych jobów nie
