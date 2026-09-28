@@ -1,0 +1,37 @@
+Instrukcja do szablonu importu uczniów (RD)
+============================================
+
+1. Wymagane kolumny: „Imię ucznia”, „Nazwisko ucznia”, „Klasa”. Pozostałe są
+   opcjonalne, ale bez opiekuna nie będzie można wysłać przypomnienia e-mail.
+
+2. „ID ucznia” i „ID rodziny” — jeśli szkoła ma własne identyfikatory, wpisz
+   je jako TEKST (nie liczbę). W Excelu ustaw format tej kolumny na „Tekst”
+   przed wpisaniem danych — inaczej zera wiodące (np. „00123”) znikną, a
+   ponowny import tego samego ucznia utworzy drugi rekord. Ten sam identyfikator
+   musi być identyczny przy każdym kolejnym imporcie tego samego ucznia/rodziny.
+
+3. „Klasa” — wpisuj dokładnie tak, jak w systemie (np. „1A”). Wielkość liter
+   i dodatkowe spacje nie mają znaczenia przy dopasowaniu, ale w pliku lepiej
+   zachować jedną, spójną pisownię.
+
+4. E-mail opiekuna — jeden adres w jednej komórce, format „ktos@domena”.
+   Jeśli podajesz e-mail, podaj też imię i nazwisko opiekuna w tym samym
+   wierszu (i odwrotnie).
+
+5. Nie dodawaj kolumn z numerem PESEL, adresem zamieszkania, numerem telefonu,
+   ocenami ani danymi zdrowotnymi. Import ich nie przyjmuje — takie kolumny
+   trafią na listę „kolumny, które nie zostaną użyte” i plik trzeba będzie
+   poprawić razem ze szkołą.
+
+6. Jeden wiersz = jeden uczeń. Rodzeństwo łączymy przez to samo „ID rodziny” —
+   bez wspólnego ID rodzeństwo trafi do osobnych rodzin.
+
+7. Excel czasem zamienia wpisaną wartość na datę (np. „1-2” na 1 lutego).
+   Jeśli podgląd zgłasza błąd „Excel zamienił wartość na datę”, zmień format
+   tej kolumny na Tekst i wpisz wartość ponownie.
+
+8. Plik: .csv (UTF-8 albo Windows-1250/1252 z polskiego/belgijskiego Excela)
+   lub .xlsx. Pliki .ods (LibreOffice/Calc) nie są obsługiwane — zapisz jako
+   .xlsx albo .csv przed wczytaniem.
+
+Dane w tym szablonie są wyłącznie przykładowe (adresy @example.invalid).

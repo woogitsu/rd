@@ -297,6 +297,16 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
     const closure = await loadClosure(tx, schoolYearId, { lock: true });
     if (!closure) throw new RequestError('year_close_not_started', 409);
     if (closure.status === 'closed') throw new RequestError('school_year_closed', 409);
+    if (documentId) {
+      // #205: dokument spoza roku zamykanego albo rodzaju 'class' nie może
+      // potwierdzać punktu listy kontrolnej — nieistniejący i spoza zakresu
+      // dają ten sam kod, żeby odpowiedź nie była wyrocznią istnienia.
+      const { rows: docRows } = await tx.query('SELECT kind, school_year_id FROM documents WHERE id = $1', [documentId]);
+      const doc = docRows[0];
+      if (!doc || doc.school_year_id !== schoolYearId || !['board', 'financial'].includes(doc.kind)) {
+        throw new RequestError('invalid_document_id');
+      }
+    }
     const { rows } = await tx.query(
       'SELECT 1 FROM school_year_closure_checklist WHERE closure_id = $1 AND item = $2',
       [closure.id, item],
@@ -528,14 +538,14 @@ export async function handle(request, env, url, json) {
     const schoolYearId = decodeId(match[1]);
     const action = match[2] ?? null;
     if (action === null) {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       return await getStatus(request, env, schoolYearId, json);
     }
     if (action === 'handover') {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       return await handover(request, env, schoolYearId, json);
     }
-    if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
     if (action === 'start') return await startClosing(request, env, schoolYearId, json);
     if (action === 'close') return await closeYear(request, env, schoolYearId, json);
     return await confirmChecklistItem(request, env, schoolYearId, match[3], json);

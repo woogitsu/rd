@@ -276,6 +276,9 @@ async function runContractScenario(backend) {
   // Lista i przegląd po zapisach.
   const pageOne = await step('list page 1', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2 })));
   const pageTwo = await step('list page 2', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2, cursor: pageOne.nextCursor })));
+  // #192: kursor wiąże rok i rodzaj wpisu zapytania, które go wydało.
+  await step('list cursor other direction', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'expense', limit: 2, cursor: pageOne.nextCursor })));
+  await step('list cursor other year', call(cookie, buildLedgerUrl({ schoolYearId: 'y2025', limit: 2, cursor: pageOne.nextCursor })));
   await step('list page 3', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2, cursor: pageTwo.nextCursor })));
   await step('list expense', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'expense' })));
   await step('list income', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'income' })));
@@ -319,6 +322,10 @@ test('PostgreSQL ledger API matches the legacy Worker contract step by step', as
       assert.deepEqual(actual[index], expected[index], `step: ${expected[index].label}`);
     }
     assert.ok(expected.some((s) => s.status === 201) && expected.some((s) => s.status === 409));
+    for (const label of ['list cursor other direction', 'list cursor other year']) {
+      const found = actual.find((s) => s.label === label);
+      assert.deepEqual([found.status, found.body], [400, { error: 'invalid_cursor' }], label);
+    }
     assert.equal(await pg.count('ledger_entries'), 5);
     assert.equal(await pg.count('ledger_corrections'), 2);
     assert.equal(await pg.count('audit_events', "action LIKE 'ledger.%'"), 7);
@@ -653,10 +660,11 @@ test('CSV export of a school year is financial-only, injection-safe and audited'
   assert.equal(lines.length, 1 + 3 + 1);
   assert.equal(lines[1], [
     expense.id, '2026-09-10', 'Wydatek', 'Wydarzenia', `"'=HYPERLINK(""http://evil.example"")"`,
-    'Przelew', '"\'+48 konto; ""cytat"""', '', '', 'd1', '123,45', '0,45', '123,00',
+    // #144: nowa kolumna „zastepuje_wpis” (replaces_entry_id) między id_dokumentu a kwota_eur; pusta dla zwykłego wpisu.
+    'Przelew', '"\'+48 konto; ""cytat"""', '', '', 'd1', '', '123,45', '0,45', '123,00',
   ].join(';'));
-  assert.match(lines[2], /;Przychód;Składki dobrowolne;'@SUM\(A1\);Przelew;Konto testowe;;p1;d1;50,00;0,00;50,00$/);
-  assert.match(lines[3], /;Przychód;Inne przychody;"'-2\+3 wiersz\ndrugi";Karta;Konto testowe;;;d1;0,07;0,00;0,07$/);
+  assert.match(lines[2], /;Przychód;Składki dobrowolne;'@SUM\(A1\);Przelew;Konto testowe;;p1;d1;;50,00;0,00;50,00$/);
+  assert.match(lines[3], /;Przychód;Inne przychody;"'-2\+3 wiersz\ndrugi";Karta;Konto testowe;;;d1;;0,07;0,00;0,07$/);
   // Żadna komórka nie zaczyna się od znaku formuły (poza cytowaniem).
   for (const line of lines.slice(1, -1)) {
     for (const cell of line.split(';')) assert.ok(!/^"?[=+\-@]/.test(cell), cell);
@@ -702,7 +710,7 @@ test('ledger CSV line exports negative amounts as numbers and neutralises text (
   });
   assert.equal(line, [
     'le-syn-1', '2026-09-12', 'Przychód', "'=Kategoria", `"'-korekta; ""opis"""`, 'Przelew', "'@konto", "'+U/1",
-    '', '', '10,00', '-12,50', '22,50',
+    '', '', '', '10,00', '-12,50', '22,50',
   ].join(';'));
   assert.deepEqual(ledgerRoutes.LEDGER_CSV_COLUMNS.filter((column) => column.type === 'amount').map((column) => column.header),
     ['kwota_eur', 'korekty_eur', 'netto_eur']);

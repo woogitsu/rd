@@ -10,12 +10,16 @@
 //   POST /api/ledger/{id}/corrections       (Idempotency-Key)
 // Nowa trasa (issue #7, tylko w routerze PostgreSQL):
 //   GET  /api/ledger/export.csv?schoolYearId=…
+// Nowa trasa (#144): przeksięgowanie (storno pełnej pozostałej kwoty + wpis
+// zastępczy), jedna operacja atomowa.
+//   POST /api/ledger/{id}/replacement       (Idempotency-Key)
 //
 // Każdy zapis i jego zdarzenie audytu powstają w jednej transakcji. Korekta
 // blokuje wiersz wpisu (SELECT … FOR UPDATE), a wpis powiązany z wpłatą
 // blokuje wiersz wpłaty, więc równoległe żądania są serializowane. Triggery
 // z 0003_ledger.sql pilnują tych samych reguł na poziomie bazy.
 
+import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
@@ -36,13 +40,14 @@ const MAX_EXPORT_ROWS = 20_000;
 
 const ENTRY_COLUMNS = `id, school_year_id, direction, amount_cents, category_id,
   description, to_char(occurred_on, 'YYYY-MM-DD') AS occurred_on, payment_entry_id,
-  source_document_id, method, source, resolution_reference, created_by`;
+  source_document_id, method, source, resolution_reference, replaces_entry_id, created_by`;
 
 class RequestError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
 }
 
@@ -151,6 +156,24 @@ function parseCorrectionInput(data) {
   return { amountCents: readAmount(data.amountCents), reason };
 }
 
+// Wpis zastępczy (#144): ta sama walidacja co nowy wpis księgi, ale bez
+// payment_entry_id (patrz ograniczenie zakresu w migracji 0040) i z własnym
+// powodem przeksięgowania (dla storna pierwotnego wpisu).
+function parseReplacementInput(data) {
+  const input = parseEntryInput(data);
+  if (input.paymentEntryId) throw new RequestError('payment_linked_entry_not_replaceable', 409);
+  const reason = textOrNull(data.reason, 500);
+  if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
+  return { ...input, reason };
+}
+
+// Klucze podrzędne (storno + wpis zastępczy) pochodne od klucza żądania —
+// skrót SHA-256, więc długość mieści się w CHECK (8..128) niezależnie od
+// długości oryginalnego klucza z nagłówka.
+function derivedIdempotencyKey(idempotencyKey, suffix) {
+  return `${suffix}-${createHash('sha256').update(idempotencyKey).digest('hex')}`;
+}
+
 // Kształt jak entryFromRow w Workerze: pola kategorii i korekt tylko wtedy,
 // gdy zapytanie je zwraca (lista), a nie przy odtworzeniu po kluczu.
 function entryFromRow(row) {
@@ -169,6 +192,10 @@ function entryFromRow(row) {
     source: row.source ?? null,
     resolutionReference: row.resolution_reference ?? null,
   };
+  // #144: pole dodawane tylko dla wpisów zastępczych — zwykły wpis (bez
+  // przeksięgowania) ma dokładnie ten sam kształt odpowiedzi co przed #144
+  // (kontrakt ze starym Workerem, tests/pg-ledger-api.test.js, bez zmian).
+  if (row.replaces_entry_id) entry.replacesEntryId = row.replaces_entry_id;
   if (row.corrected_cents !== undefined) entry.correctedCents = toSafeInteger(row.corrected_cents);
   if (row.net_amount_cents !== undefined) entry.netAmountCents = toSafeInteger(row.net_amount_cents);
   return entry;
@@ -222,19 +249,22 @@ async function loadCorrectionByKey(executor, key) {
   return rows[0] ?? null;
 }
 
-function encodeCursor(row) {
-  return btoa(JSON.stringify([row.occurred_on, row.id]))
+// Kursor wiąże rok szkolny i filtr zapytania, które go wydało (#192): dociągnięcie
+// strony z innym rokiem lub filtrem kończy się 400 invalid_cursor zamiast mieszać wiersze.
+function encodeCursor(row, scope) {
+  return btoa(JSON.stringify([row.occurred_on, row.id, scope.schoolYearId, scope.filter]))
     .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
-function decodeCursor(value) {
+function decodeCursor(value, scope) {
   if (!value) return null;
   if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new RequestError('invalid_cursor');
   try {
     const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
     const padding = '='.repeat((4 - (base64.length % 4)) % 4);
     const decoded = JSON.parse(atob(base64 + padding));
-    if (!Array.isArray(decoded) || decoded.length !== 2 || !validDate(decoded[0]) || !validId(decoded[1])) {
+    if (!Array.isArray(decoded) || decoded.length !== 4 || !validDate(decoded[0]) || !validId(decoded[1])
+      || decoded[2] !== scope.schoolYearId || decoded[3] !== scope.filter) {
       throw new Error();
     }
     return { occurredOn: decoded[0], id: decoded[1] };
@@ -259,10 +289,22 @@ function mapDatabaseError(error) {
   if (message.includes('ledger_category_inactive')) throw new RequestError('invalid_category');
   if (message.includes('ledger_payment_link_mismatch')
     || error?.constraint === 'ledger_payment_is_income') throw new RequestError('invalid_payment_link');
+  // Backstop triggera ledger_entry_insert_guard (#138): kwota wpisu musi
+  // równać się bieżącemu netto wpłaty. Aplikacja sprawdza to wcześniej
+  // (payment_amount_mismatch); ten kod chroni przed równoległym zapisem.
+  if (message.includes('ledger_payment_amount_mismatch')) throw new RequestError('payment_amount_mismatch', 422);
   if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   // Data spoza [starts_on, ends_on] roku (0027, trigger po zamrożeniu roku): jedna
   // reguła w bazie, więc bezpośredni INSERT i API odrzucają to samo.
   if (message.includes('date_outside_school_year')) throw new RequestError('date_outside_school_year', 422);
+  // #144: przeksięgowanie — backstop triggera dla bezpośredniego INSERT.
+  if (message.includes('payment_linked_entry_not_replaceable')) {
+    throw new RequestError('payment_linked_entry_not_replaceable', 409);
+  }
+  if (message.includes('ledger_replacement_mismatch')) throw new RequestError('replacement_target_mismatch', 409);
+  if (error?.code === '23505' && error?.constraint === 'ledger_entries_replaces_idx') {
+    throw new RequestError('ledger_entry_already_replaced', 409);
+  }
   if (error?.code === '23503') throw new RequestError('invalid_reference');
   throw error;
 }
@@ -296,7 +338,8 @@ async function listEntries(request, env, url, json) {
   if (!/^\d{1,3}$/.test(limitText)) throw new RequestError('invalid_limit');
   const limit = Number(limitText);
   if (limit < 1 || limit > 100) throw new RequestError('invalid_limit');
-  const cursor = decodeCursor(url.searchParams.get('cursor'));
+  const cursorScope = { schoolYearId, filter: direction ?? '' };
+  const cursor = decodeCursor(url.searchParams.get('cursor'), cursorScope);
   await requireFinancialContext(request, env, schoolYearId);
 
   const values = [schoolYearId];
@@ -319,7 +362,7 @@ async function listEntries(request, env, url, json) {
             entry.category_id, category.name AS category_name, entry.description,
             to_char(entry.occurred_on, 'YYYY-MM-DD') AS occurred_on,
             entry.payment_entry_id, entry.source_document_id, entry.method, entry.source,
-            entry.resolution_reference, entry.corrected_cents, entry.net_amount_cents
+            entry.resolution_reference, entry.replaces_entry_id, entry.corrected_cents, entry.net_amount_cents
        FROM ledger_entry_net entry
        JOIN ledger_categories category ON category.id = entry.category_id
       WHERE ${conditions.join(' AND ')}
@@ -329,7 +372,7 @@ async function listEntries(request, env, url, json) {
   );
   const visibleRows = rows.slice(0, limit);
   const nextCursor = rows.length > limit && visibleRows.length
-    ? encodeCursor(visibleRows[visibleRows.length - 1])
+    ? encodeCursor(visibleRows[visibleRows.length - 1], cursorScope)
     : null;
   return json({ entries: visibleRows.map(entryFromRow), nextCursor });
 }
@@ -418,6 +461,13 @@ async function validateEntryReferences(tx, input, payment) {
     || payment.status !== 'recorded' || input.direction !== 'income')) {
     throw new RequestError('invalid_payment_link');
   }
+  // Kwota wpisu musi równać się bieżącemu netto wpłaty (kwota - korekty -
+  // zwroty), inaczej wpłata 25 EUR mogłaby zostać ujęta w księdze jako
+  // 250 EUR (#138). Trigger ledger_entry_insert_guard sprawdza to ponownie
+  // na poziomie bazy (backstop przy równoległym zapisie).
+  if (input.paymentEntryId && payment && toSafeInteger(payment.net_amount_cents) !== input.amountCents) {
+    throw new RequestError('payment_amount_mismatch', 422);
+  }
   // Referencja krótsza niż 3 znaki nie spełnia wymogu uchwały (jak trigger D1
   // i CHECK ledger_large_expense_resolution w 0003_ledger.sql).
   if (input.direction === 'expense' && input.amountCents > RESOLUTION_THRESHOLD_CENTS
@@ -459,8 +509,11 @@ async function createEntry(request, env, json) {
       // czekają na siebie; po zwolnieniu blokady ponowienie widzi zapis i go odtwarza.
       let payment = null;
       if (input.paymentEntryId) {
+        // Blokuje wiersz wpłaty (payment_entries), więc równoległa korekta lub
+        // zwrot tej wpłaty czeka; netto czytane z widoku po blokadzie.
+        await tx.query('SELECT id FROM payment_entries WHERE id = $1 FOR UPDATE', [input.paymentEntryId]);
         const { rows } = await tx.query(
-          'SELECT id, school_year_id, status FROM payment_entries WHERE id = $1 FOR UPDATE',
+          'SELECT id, school_year_id, status, net_amount_cents FROM payment_entry_net WHERE id = $1',
           [input.paymentEntryId],
         );
         payment = rows[0] ?? null;
@@ -526,6 +579,19 @@ async function createCorrection(request, env, ledgerEntryId, json) {
       requireYear(context, entry.school_year_id);
       const replay = replayOrConflict(await loadCorrectionByKey(tx, idempotencyKey));
       if (replay) return replay;
+      // #165: korekta z aktywnym powiązaniem w SZKICU uzgodnienia jest zachowawczo
+      // zablokowana — skarbnik najpierw cofa powiązanie (z powodem), dopiero potem
+      // koryguje wpis. Trigger ledger_correction_guard sprawdza to samo (0039).
+      const activeMatch = await tx.query(
+        `SELECT r.id AS reconciliation_id FROM bank_reconciliation_matches m
+           JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+          WHERE m.ledger_entry_id = $1 AND m.revoked_at IS NULL AND r.status = 'draft'
+          LIMIT 1`,
+        [ledgerEntryId],
+      );
+      if (activeMatch.rows.length) {
+        throw new RequestError('active_bank_match', 409, { reconciliationId: activeMatch.rows[0].reconciliation_id });
+      }
       const corrected = await tx.query(
         'SELECT COALESCE(SUM(amount_cents), 0) AS corrected_cents FROM ledger_corrections WHERE ledger_entry_id = $1',
         [ledgerEntryId],
@@ -557,6 +623,103 @@ async function createCorrection(request, env, ledgerEntryId, json) {
   return json(result, 201, CREATED);
 }
 
+// Przeksięgowanie (#144): storno pełnej pozostałej kwoty wpisu + wpis
+// zastępczy powiązany przez replaces_entry_id, atomowo w jednej transakcji.
+// Klucz żądania odtwarza obie części razem (loadReplacementByKey czyta wpis
+// zastępczy po jego własnym, pochodnym kluczu); niezgodna treść przy tym
+// samym kluczu -> 409 idempotency_conflict, tak jak w innych trasach.
+async function loadReplacementByKey(executor, entryKey) {
+  const { rows } = await executor.query(
+    `SELECT ${ENTRY_COLUMNS} FROM ledger_entries WHERE idempotency_key = $1 LIMIT 1`,
+    [entryKey],
+  );
+  return rows[0] ?? null;
+}
+
+async function createReplacement(request, env, ledgerEntryId, json) {
+  if (!validId(ledgerEntryId)) throw new RequestError('invalid_ledger_entry_id');
+  const idempotencyKey = readIdempotencyKey(request);
+  const body = await readJson(request);
+  const input = parseReplacementInput(body);
+  const context = await requireFinancialContext(request, env, input.schoolYearId);
+  const actorId = context.session.user.id;
+  const stornoKey = derivedIdempotencyKey(idempotencyKey, 'ledrepl-storno');
+  const entryKey = derivedIdempotencyKey(idempotencyKey, 'ledrepl-entry');
+
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      // Blokada wiersza zastępowanego wpisu: równoległa korekta lub przeksięgowanie
+      // tego samego wpisu czekają na siebie.
+      const { rows } = await tx.query(
+        'SELECT id, school_year_id, amount_cents, payment_entry_id FROM ledger_entries WHERE id = $1 FOR UPDATE',
+        [ledgerEntryId],
+      );
+      const original = rows[0];
+      if (!original) throw new RequestError('ledger_entry_not_found', 404);
+      requireYear(context, original.school_year_id);
+      if (original.school_year_id !== input.schoolYearId) throw new RequestError('invalid_request');
+      if (original.payment_entry_id) throw new RequestError('payment_linked_entry_not_replaceable', 409);
+
+      const replayedEntry = await loadReplacementByKey(tx, entryKey);
+      if (replayedEntry) {
+        if (replayedEntry.replaces_entry_id !== ledgerEntryId || !entryMatches(replayedEntry, input, actorId)) {
+          throw new RequestError('idempotency_conflict', 409);
+        }
+        return new Replay({ entry: entryFromRow(replayedEntry) });
+      }
+
+      if (await tx.query('SELECT 1 FROM ledger_entries WHERE replaces_entry_id = $1', [ledgerEntryId])
+        .then((r) => r.rows.length)) {
+        throw new RequestError('ledger_entry_already_replaced', 409);
+      }
+      const corrected = await tx.query(
+        'SELECT COALESCE(SUM(amount_cents), 0) AS corrected_cents FROM ledger_corrections WHERE ledger_entry_id = $1',
+        [ledgerEntryId],
+      );
+      const remaining = toSafeInteger(original.amount_cents) - toSafeInteger(corrected.rows[0].corrected_cents);
+      if (remaining <= 0) throw new RequestError('ledger_entry_already_corrected_to_zero', 409);
+
+      await validateEntryReferences(tx, input, null);
+
+      const correctionId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [correctionId, ledgerEntryId, remaining, `Przeksięgowanie: ${input.reason}`, actorId, stornoKey],
+      );
+      const entryId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO ledger_entries (
+           id, school_year_id, direction, amount_cents, category_id, description, occurred_on,
+           payment_entry_id, source_document_id, replaces_entry_id, created_by, method, source,
+           resolution_reference, idempotency_key
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13, $14)`,
+        [entryId, input.schoolYearId, input.direction, input.amountCents, input.categoryId,
+          input.description, input.occurredOn, input.sourceDocumentId, ledgerEntryId,
+          actorId, input.method, input.source, input.resolutionReference, entryKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'ledger.entry.replaced', entityType: 'ledger_entry', entityId: entryId,
+        metadata: { replacesEntryId: ledgerEntryId, correctionId },
+      });
+      return { entry: { id: entryId, replacesEntryId: ledgerEntryId, ...input } };
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      if (error?.constraint === 'ledger_entries_replaces_idx') throw new RequestError('ledger_entry_already_replaced', 409);
+      const replay = await loadReplacementByKey(env.db, entryKey);
+      if (replay && replay.replaces_entry_id === ledgerEntryId && entryMatches(replay, input, actorId)) {
+        return json({ entry: entryFromRow(replay) }, 200, REPLAYED);
+      }
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+  if (result instanceof Replay) return json(result.body, 200, REPLAYED);
+  return json(result, 201, CREATED);
+}
+
 // --- Eksport CSV (issue #7) -------------------------------------------------
 
 const DIRECTION_LABELS = { income: 'Przychód', expense: 'Wydatek' };
@@ -566,7 +729,8 @@ const METHOD_LABELS = { bank: 'Przelew', cash: 'Gotówka', card: 'Karta', other:
 export const LEDGER_CSV_COLUMNS = [
   ['id_wpisu', 'text'], ['data', 'text'], ['rodzaj', 'text'], ['kategoria', 'text'], ['opis', 'text'],
   ['metoda', 'text'], ['zrodlo', 'text'], ['referencja_uchwaly', 'text'], ['id_wplaty', 'text'],
-  ['id_dokumentu', 'text'], ['kwota_eur', 'amount'], ['korekty_eur', 'amount'], ['netto_eur', 'amount'],
+  ['id_dokumentu', 'text'], ['zastepuje_wpis', 'text'], ['kwota_eur', 'amount'], ['korekty_eur', 'amount'],
+  ['netto_eur', 'amount'],
 ].map(([header, type]) => ({ header, type }));
 
 export { csvCell, formatEuro };
@@ -575,7 +739,7 @@ export function ledgerCsvLine(row) {
   return csvRow(LEDGER_CSV_COLUMNS, [
     row.id, row.occurred_on, DIRECTION_LABELS[row.direction], row.category_name, row.description,
     METHOD_LABELS[row.method], row.source, row.resolution_reference, row.payment_entry_id,
-    row.source_document_id, row.amount_cents, row.corrected_cents, row.net_amount_cents,
+    row.source_document_id, row.replaces_entry_id, row.amount_cents, row.corrected_cents, row.net_amount_cents,
   ]);
 }
 
@@ -590,7 +754,7 @@ async function exportCsv(request, env, url) {
       `SELECT entry.id, to_char(entry.occurred_on, 'YYYY-MM-DD') AS occurred_on, entry.direction,
               category.name AS category_name, entry.description, entry.method, entry.source,
               entry.resolution_reference, entry.payment_entry_id, entry.source_document_id,
-              entry.amount_cents, entry.corrected_cents, entry.net_amount_cents
+              entry.replaces_entry_id, entry.amount_cents, entry.corrected_cents, entry.net_amount_cents
          FROM ledger_entry_net entry
          JOIN ledger_categories category ON category.id = entry.category_id
         WHERE entry.school_year_id = $1
@@ -621,13 +785,14 @@ async function exportCsv(request, env, url) {
 
 export async function handle(request, env, url, json) {
   const correctionMatch = url.pathname.match(/^\/api\/ledger\/([^/]+)\/corrections$/);
+  const replacementMatch = url.pathname.match(/^\/api\/ledger\/([^/]+)\/replacement$/);
   const isEntryRoute = url.pathname === '/api/ledger';
   const isList = request.method === 'GET' && isEntryRoute;
   const isCategories = request.method === 'GET' && url.pathname === '/api/ledger/categories';
   const isSummary = request.method === 'GET' && url.pathname === '/api/ledger/summary';
   const isBudget = request.method === 'GET' && url.pathname === '/api/ledger/budget';
   const isExport = request.method === 'GET' && url.pathname === '/api/ledger/export.csv';
-  const isMutation = request.method === 'POST' && (isEntryRoute || correctionMatch);
+  const isMutation = request.method === 'POST' && (isEntryRoute || correctionMatch || replacementMatch);
   if (!isList && !isCategories && !isSummary && !isBudget && !isExport && !isMutation) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.
   if (isMutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
@@ -639,9 +804,10 @@ export async function handle(request, env, url, json) {
     if (isBudget) return await listBudget(request, env, url, json);
     if (isExport) return await exportCsv(request, env, url);
     if (isEntryRoute) return await createEntry(request, env, json);
+    if (replacementMatch) return await createReplacement(request, env, decodeId(replacementMatch[1]), json);
     return await createCorrection(request, env, decodeId(correctionMatch[1]), json);
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }

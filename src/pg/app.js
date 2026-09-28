@@ -19,6 +19,7 @@
 
 import { isSameOrigin } from '../auth.js';
 import { json, logRouteError, UNSAFE_METHODS } from './http.js';
+import { classifyDbError } from './db-errors.js';
 import * as sessionRoutes from './routes/session.js';
 import * as paymentsRoutes from './routes/payments.js';
 import * as eventsRoutes from './routes/events.js';
@@ -87,8 +88,14 @@ export function createPgHandler(routes = ROUTES) {
         const response = await route.handle(request, env, url, json);
         if (response) return response;
       } catch (error) {
-        logRouteError(route.name ?? 'unknown', error);
-        return json({ error: 'service_unavailable' }, 503);
+        // Siec bezpieczeństwa (#156): jeśli moduł nie przetłumaczył wyjątku sam
+        // (RequestError -> własna odpowiedź), rozróżniamy tu stan biznesowy
+        // (409/422), błąd przejściowy (503 + Retry-After) i resztę (503 jak
+        // dotychczas). src/pg/db-errors.js.
+        const { error: code, status, retryAfter, class: errorClass } = classifyDbError(error);
+        logRouteError(route.name ?? 'unknown', error, errorClass);
+        const headers = retryAfter ? { 'Retry-After': String(retryAfter) } : {};
+        return json({ error: code }, status, headers);
       }
     }
     return json({ error: 'not_found' }, 404);

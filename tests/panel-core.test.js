@@ -52,3 +52,26 @@ test("normalizacja wylicza kwotę netto i bezpieczne etykiety", () => {
     netCents: 4_500,
   });
 });
+
+// #192: „Wczytaj następne” używa zapamiętanego zapytania, nie bieżących pól formularza.
+test("dociągnięcie strony używa zapamiętanego zapytania i kursora", async () => {
+  const { paymentsQuery, buildNextPaymentsUrl, paymentsFilterChanged } = await import("../panel/core.js");
+  const query = paymentsQuery({ schoolYearId: " y2026 ", status: "recorded" });
+  assert.deepEqual({ ...query }, { schoolYearId: "y2026", status: "recorded" });
+  assert.ok(Object.isFrozen(query));
+  assert.equal(
+    buildNextPaymentsUrl(query, "abc"),
+    "/api/payments?schoolYearId=y2026&limit=50&status=recorded&cursor=abc",
+  );
+  // Brak kursora (mniej wyników niż limit) albo brak zapytania: żadnego żądania.
+  assert.equal(buildNextPaymentsUrl(query, null), null);
+  assert.equal(buildNextPaymentsUrl(query, ""), null);
+  assert.equal(buildNextPaymentsUrl(null, "abc"), null);
+  // Zmiana pola bez „Pokaż” jest wykrywana; spacje wokół roku nie są zmianą.
+  assert.equal(paymentsFilterChanged(query, { schoolYearId: "y2026 ", status: "recorded" }), false);
+  assert.equal(paymentsFilterChanged(query, { schoolYearId: "y2027", status: "recorded" }), true);
+  assert.equal(paymentsFilterChanged(query, { schoolYearId: "y2026", status: "unmatched" }), true);
+  assert.equal(paymentsFilterChanged(null, { schoolYearId: "y2027", status: "" }), false);
+  assert.throws(() => paymentsQuery({ schoolYearId: "", status: "" }));
+  assert.throws(() => paymentsQuery({ schoolYearId: "y2026", status: "reversed" }));
+});
