@@ -9,6 +9,19 @@ import { storageFromEnv } from './storage.js';
 import { checkReadiness } from './health.js';
 import { createRequestMetrics, describeError, log, startMetricsReporter } from './log.js';
 import { dummyHash } from './pg/password.js';
+import { PHOTO_UPLOAD_MAX_BYTES } from './pg/news.js';
+
+// POST /api/news-photos/:id/file (#96) przesyła surowe bajty obrazu, jak
+// POST /api/documents — potrzebuje wyższego limitu ciała niż domyślny 1 MiB,
+// niezależnego od limitu dokumentów (DOCUMENT_MAX_BYTES).
+const NEWS_PHOTO_FILE_PATH = /^\/api\/news-photos\/[^/]+\/file$/;
+function bodyLimitForApp(documentMaxBytes) {
+  const documentsLimit = bodyLimitFor(documentMaxBytes);
+  return (url, method) => {
+    if (method === 'POST' && NEWS_PHOTO_FILE_PATH.test(url.pathname)) return PHOTO_UPLOAD_MAX_BYTES;
+    return documentsLimit(url, method);
+  };
+}
 
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -67,7 +80,7 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
       },
       fetchHandler: handlePgRequest,
-      bodyLimit: bodyLimitFor(documentMaxBytes),
+      bodyLimit: bodyLimitForApp(documentMaxBytes),
       close: () => db.close(),
     };
   }

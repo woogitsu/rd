@@ -12,6 +12,7 @@ Stan: prototyp dla nowego stosu Node.js + PostgreSQL (migracja `0018_news.sql`, 
 - Źródło `public_website_copy` (kopia z publicznej strony, np. galerii szkoły) jest odrzucane, chyba że zapisano wyraźne udzielenie licencji (`explicitLicenseGranted = true`) i odwołanie do dokumentu licencji. Sama publiczna dostępność zdjęcia nie daje prawa do jego skopiowania.
 - Metadanych zdjęcia i jego zgód nie można zmienić ani usunąć. Korekta = nowe zdjęcie (nowy rekord). Zgody można dopisywać tylko przed weryfikacją.
 - Plik zdjęcia jest w prywatnym magazynie dokumentów (`document_id`). Ten moduł nie przechowuje plików i nie wydaje linków. Klucz obcy do tabeli dokumentów i publiczna ścieżka obrazu (krótkotrwały dostęp tylko do zdjęć zweryfikowanych w opublikowanych wpisach) powstaną razem z modułem magazynu.
+- **Plik obrazu galerii (#96, osobno od `document_id` powyżej).** `POST /api/news-photos/:id/file` przyjmuje surowe bajty PNG/JPEG (admin, zarząd — przydział bez klasy), ponownie koduje je przez `sharp` do JPEG i zapisuje wyłącznie warianty `web` (maks. 1600 px) i `thumb` (maks. 400 px) pod osobnym prefiksem `photos/` w tym samym prywatnym buckecie co dokumenty (`postgres/migrations/0084_news_photo_files.sql`). Ponowne kodowanie odrzuca EXIF/GPS/XMP i honoruje orientację EXIF przed jej usunięciem. **WARIANT ZACHOWAWCZY (brak D-18/D-04/D-05): oryginał nie jest przechowywany** — jeśli zarząd zdecyduje inaczej, potrzebna będzie kolejna migracja i osobna, bardziej restrykcyjna polityka dostępu do oryginału. Jedno zdjęcie = jeden zestaw plików; ponowne przesłanie innego pliku dla zdjęcia, które już ma plik, kończy się `409 photo_file_exists` (korekta = nowe zdjęcie, jak przy metadanych). `GET /api/public/news-photos/:id/{web|thumb}` wydaje wariant tylko dla zdjęcia zweryfikowanego i należącego do opublikowanej wersji niewycofanego wpisu — to samo kryterium co `public_news`; nieznane zdjęcie, wariant bez pliku i zdjęcie niepubliczne dają identyczną odpowiedź `404`.
 
 ## Przebieg wpisu
 
@@ -34,7 +35,9 @@ Tytuł i treść są przechowywane dosłownie jako tekst (końce linii ujednolic
 | Zatwierdzenie, publikacja, wycofanie opublikowanego | zarząd |
 | Wycofanie nieopublikowanego | jak przy szkicu |
 | Rejestracja zdjęcia i odwołań do zgód | admin, zarząd |
+| Przesłanie pliku zdjęcia (warianty web/thumb) | admin, zarząd |
 | Weryfikacja i cofnięcie praw do zdjęcia | zarząd (inna osoba niż rejestrująca) |
+| Publiczny odczyt pliku zdjęcia | wszyscy (tylko zdjęcia zweryfikowane w opublikowanej wersji) |
 
 Przedstawiciel nie widzi wpisów innych klas (404 bez ujawniania istnienia). Skarbnik, Komisja Rewizyjna i dyrekcja nie mają dostępu do czasu decyzji D-08/D-09. Admin techniczny nie zatwierdza, nie publikuje i nie weryfikuje praw (PRODUCT.md). Założenie: kto weryfikuje zgody na wizerunek dzieci (zarząd, dyrekcja czy wyznaczona osoba szkoły) — do rozstrzygnięcia w D-18.
 

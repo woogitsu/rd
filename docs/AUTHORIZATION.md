@@ -112,6 +112,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
+| `GET /api/public/news-photos/:photoId/web` | publiczna | nie | 404 | tylko zdjęcie zweryfikowane w opublikowanej wersji; nieznane/niepubliczne = 404 identyczne (#96) |
+| `GET /api/public/news-photos/:photoId/thumb` | publiczna | nie | 404 | jak wyżej |
 | `GET /api/news?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wpisy własnej klasy | nie | 403 | |
 | `POST /api/news` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | zarząd z przydziałem klasy: 403 (szkice klasy tylko przedstawiciel) |
 | `GET /api/news/:postId` | jak wyżej | nie | 404 | |
@@ -126,6 +128,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/news-photos/:photoId/consents` | admin, zarząd — przydział bez klasy | nie | 403 | |
 | `POST /api/news-photos/:photoId/verify` | zarząd — przydział bez klasy; inna osoba niż rejestrująca | nie | 403 | |
 | `POST /api/news-photos/:photoId/revoke` | zarząd — przydział bez klasy | nie | 403 | |
+| `POST /api/news-photos/:photoId/file` | admin, zarząd — przydział bez klasy | nie | 403 | plik obrazu (PNG/JPEG); warianty web/thumb bez EXIF/GPS (#96) |
 | `GET /api/admin/users` | wyłącznie admin | tak | 403 | moduł obejmuje konta całej szkoły |
 | `POST /api/admin/users/:userId/disable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/enable` | wyłącznie admin | tak | 403 | |
