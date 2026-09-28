@@ -903,6 +903,52 @@ test('importing statement lines runs a constant number of queries regardless of 
   }
 });
 
+// #158: skrót SHA-256 tytułu liczony co najwyżej raz na różną wpłatę-kandydata
+// w jednym żądaniu, nawet gdy ta sama wpłata jest kandydatem dla wielu pozycji
+// wyciągu (ta sama kwota i data, okno wystarczająco szerokie).
+test('suggestions hash a candidate payment reference at most once per request even when it matches several lines', async () => {
+  const { db, cookies, call } = await setup();
+  const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+  let digestCalls = 0;
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
+      reference, status, created_by, idempotency_key)
+      VALUES ('p-1', 'h-1', $1, 2500, '2026-09-14', 'bank', 'SKŁADKA  RD-0001', 'recorded', 'u-treasurer', 'pay-key-0001'),
+             ('p-2', 'h-1', $1, 2500, '2026-09-14', 'bank', 'Składka RD-0001 ', 'recorded', 'u-treasurer', 'pay-key-0002')`, [YEAR]);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    // Bazowa liczba wywołań digest tej samej trasy zanim istnieją jakiekolwiek
+    // pozycje wyciągu (brak kandydatów z dopasowaniem tytułu): uwierzytelnienie
+    // sesji też liczy SHA-256, #158 mierzy tylko przyrost od dopasowywania tytułu.
+    crypto.subtle.digest = async (...args) => { digestCalls += 1; return originalDigest(...args); };
+    await (await call(`/api/reconciliations/${reconciliation.id}/suggestions`, { cookie: cookies.treasurer })).json();
+    const baseline = digestCalls;
+    digestCalls = 0;
+    // Dwie pozycje wyciągu tej samej kwoty i daty, z tytułem — obie widzą oba
+    // wpłaty jako kandydatów (2 pozycje x 2 wpłaty = 4 pary, ale tylko 2 różne
+    // teksty tytułu do policzenia).
+    await call(`/api/reconciliations/${reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') },
+      body: { lines: [
+        { bookedOn: '2026-09-14', amountCents: 2500, reference: 'składka rd-0001' },
+        { bookedOn: '2026-09-14', amountCents: 2500, reference: 'składka rd-0001' },
+      ] },
+    });
+    digestCalls = 0;
+    const { suggestions } = await (await call(`/api/reconciliations/${reconciliation.id}/suggestions`, { cookie: cookies.treasurer })).json();
+    assert.equal(suggestions.length, 2);
+    for (const suggestion of suggestions) {
+      assert.deepEqual(suggestion.candidates.map((c) => [c.id, c.referenceMatch]).sort(), [['p-1', true], ['p-2', true]]);
+    }
+    // 2 różne wpłaty-kandydaci (tekst tytułu), niezależnie od liczby pozycji, które je widzą,
+    // ponad bazową liczbę wywołań (uwierzytelnienie sesji) tej samej trasy.
+    assert.equal(digestCalls - baseline, 2);
+  } finally {
+    crypto.subtle.digest = originalDigest;
+    await db.close();
+  }
+});
+
 // #218: karta uzgodnienia nie zwraca już `unmatchedLines` jako duplikatu
 // obiektów z `lines` — pole `match` w każdej pozycji wystarcza.
 test('reconciliation detail does not duplicate line objects in a separate unmatchedLines field', async () => {
@@ -947,6 +993,38 @@ test('reconciliation detail paginates lines with a stable cursor and full summar
     const allIds = [...page1.lines, ...page2.lines, ...page3.lines].map((line) => line.id);
     assert.equal(new Set(allIds).size, 7);
     assert.equal(allIds.length, 7);
+  } finally {
+    await db.close();
+  }
+});
+
+// #158: SQL ogranicza liczbę kandydatów na pozycję z zapasem (MAX_CANDIDATES * 4),
+// a dopasowanie po tytule nadal może wypchnąć dalszego dniowo kandydata na górę.
+test('suggestions still rank a reference match to the top even with many same-day candidates', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    // 15 wpłat tej samej kwoty i daty bez zgodnego tytułu (poniżej zapasu SQL
+    // MAX_CANDIDATES*4=20), plus jedna dalsza dniowo (ale w oknie) ze zgodnym
+    // tytułem — bez zapasu w SQL (samo LIMIT MAX_CANDIDATES po day_distance)
+    // dopasowanie po tytule zostałoby odrzucone przed sortowaniem w JS.
+    const rows = [];
+    for (let i = 0; i < 15; i += 1) {
+      const paymentId = `p-noise-${i}`;
+      rows.push(`('${paymentId}', 'h-1', $1, 2500, '2026-09-14', 'bank', 'inny tytuł', 'recorded', 'u-treasurer', 'pay-key-noise-${i}')`);
+    }
+    rows.push("('p-match', 'h-1', $1, 2500, '2026-09-12', 'bank', 'składka rd-0001', 'recorded', 'u-treasurer', 'pay-key-match')");
+    await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
+      reference, status, created_by, idempotency_key) VALUES ${rows.join(', ')}`, [YEAR]);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await call(`/api/reconciliations/${reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') },
+      body: { lines: [{ bookedOn: '2026-09-14', amountCents: 2500, reference: 'składka rd-0001' }] },
+    });
+    const { suggestions } = await (await call(`/api/reconciliations/${reconciliation.id}/suggestions?windowDays=7`, { cookie: cookies.treasurer })).json();
+    assert.equal(suggestions[0].candidates.length, 5);
+    assert.equal(suggestions[0].candidates[0].id, 'p-match');
+    assert.equal(suggestions[0].candidates[0].referenceMatch, true);
   } finally {
     await db.close();
   }
