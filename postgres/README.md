@@ -692,32 +692,6 @@ importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
 przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
 importami CODA/CAMT — tylko po kopii zapasowej.
 
-`0085_payment_references.sql` (#83) dodaje tabele `payment_references` i
-`payment_reference_revocations`: belgijska komunikacja strukturalna
-OGM-VCS (12 cyfr, suma kontrolna mod 97) jako tytuł przelewu zamiast
-wewnętrznego `household_id`. Baza referencji jest losowana w aplikacji
-(crypto), nie z sekwencji ani danych rodziny/klasy. Najwyżej jedna
-aktywna referencja na gospodarstwo i rok szkolny; unieważnienie to
-osobny, niezmienny zapis (jak przy `payment_assignments`/
-`payment_corrections`), nie nadpisanie wiersza. Integracja z importem
-wyciągu i propozycjami dopasowania po referencji to osobny zakres (patrz
-PR). Skutki dla danych: wyłącznie nowe tabele; `payment_entries.reference`
-i istniejące wpłaty, korekty, przypisania i uzgodnienia pozostają bez
-zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów i
-funkcji; na bazie z wygenerowanymi referencjami — tylko po kopii
-zapasowej (historia referencji zniknie).
-
-`0086_payment_instructions.sql` (#92) dodaje tabelę `payment_instructions`
-(IBAN/BIC/nazwa odbiorcy zatwierdzone na rok do generatora kodu QR EPC na
-kartkach). Żadna istniejąca tabela nie jest zmieniana. Zmiana rachunku w
-trakcie roku nie nadpisuje poprzedniej wersji — to nowy wiersz (bieżąca
-konfiguracja roku = wiersz o najnowszym `approved_at`); trigger
-`payment_instructions_guard()` blokuje `UPDATE`/`DELETE`. IBAN/BIC nie
-trafiają do metadanych zdarzeń audytu. Wycofanie: usunięcie tabeli,
-triggera i funkcji (żadna inna tabela nie odwołuje się do
-`payment_instructions`).
-
-<<<<<<< HEAD
 `0112_news_photo_is_public_consent.sql` (#106) dokłada do
 `news_photo_is_public` (0084) ten sam warunek zgody, który `public_news`
 (0083) sprawdza przez `news_photo_consents_public_ok`: po scaleniu z main
@@ -730,35 +704,6 @@ zmienia się wyłącznie wynik funkcji (a więc dostępność pliku dla odczytu
 publicznego). Wycofanie: `CREATE OR REPLACE FUNCTION news_photo_is_public`
 z ciałem sprzed tej migracji (jak w 0084, bez warunku zgody).
 
-`0072_ledger_review_resolution_link.sql` (#97, część #93) dodaje zasadę
-czterech oczu przy wydatkach i jawne powiązanie wpisu księgi z uchwałą:
-`ledger_entries.resolution_id`, trigger sprawdzający uchwałę (bieżąca
-rewizja, przyjęta, z zebrania ogólnego, w limicie kwoty upoważnienia),
-tabelę `resolution_spending_authorizations` (tylko dopisywanie, kwota
-upoważnienia jako nowy wiersz z `supersedes_id`) oraz widok
-`resolution_spending`. Skutki dla danych: nowa kolumna jest `NULL` dla
-istniejących wpisów, nowe tabele puste; żaden istniejący wiersz nie jest
-zmieniany. Wycofanie na pustej bazie: usunięcie triggera/funkcji, widoku,
-tabeli `resolution_spending_authorizations` i kolumny
-`ledger_entries.resolution_id`; na bazie z danymi — bezpieczne, dopóki
-żaden wpis nie ma ustawionego powiązania.
-
-||||||| cac1983
-`0072_ledger_review_resolution_link.sql` (#97, część #93) dodaje zasadę
-czterech oczu przy wydatkach i jawne powiązanie wpisu księgi z uchwałą:
-`ledger_entries.resolution_id`, trigger sprawdzający uchwałę (bieżąca
-rewizja, przyjęta, z zebrania ogólnego, w limicie kwoty upoważnienia),
-tabelę `resolution_spending_authorizations` (tylko dopisywanie, kwota
-upoważnienia jako nowy wiersz z `supersedes_id`) oraz widok
-`resolution_spending`. Skutki dla danych: nowa kolumna jest `NULL` dla
-istniejących wpisów, nowe tabele puste; żaden istniejący wiersz nie jest
-zmieniany. Wycofanie na pustej bazie: usunięcie triggera/funkcji, widoku,
-tabeli `resolution_spending_authorizations` i kolumny
-`ledger_entries.resolution_id`; na bazie z danymi — bezpieczne, dopóki
-żaden wpis nie ma ustawionego powiązania.
-
-=======
->>>>>>> chain-claude/exciting-noether-705ndx-fix-107
 `0073_ledger_budget_adoptions.sql` (#107) dodaje preliminarz przez API:
 `ledger_categories.idempotency_key` (klucz żądania tworzenia kategorii),
 `ledger_category_deactivations` (historia wyłączenia kategorii, tylko
@@ -877,3 +822,28 @@ także wycofanie zgody, czeka na zatwierdzenie przez człowieka; kolejkę widzą
 tylko admin i zarząd. Skutki dla danych: dwie nowe, puste tabele, istniejące
 dane bez zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów
 i funkcji; z wnioskami — tylko po kopii zapasowej.
+
+`0086_payment_instructions.sql` (#92) dodaje tabelę `payment_instructions`
+(IBAN/BIC/nazwa odbiorcy zatwierdzone na rok do generatora kodu QR EPC na
+kartkach). Żadna istniejąca tabela nie jest zmieniana. Zmiana rachunku w
+trakcie roku nie nadpisuje poprzedniej wersji — to nowy wiersz (bieżąca
+konfiguracja roku = wiersz o najnowszym `approved_at`); trigger
+`payment_instructions_guard()` blokuje `UPDATE`/`DELETE`. IBAN/BIC nie
+trafiają do metadanych zdarzeń audytu. Wycofanie: usunięcie tabeli,
+triggera i funkcji (żadna inna tabela nie odwołuje się do
+`payment_instructions`).
+
+`0085_payment_references.sql` (#83) dodaje tabele `payment_references` i
+`payment_reference_revocations`: belgijska komunikacja strukturalna
+OGM-VCS (12 cyfr, suma kontrolna mod 97) jako tytuł przelewu zamiast
+wewnętrznego `household_id`. Baza referencji jest losowana w aplikacji
+(crypto), nie z sekwencji ani danych rodziny/klasy. Najwyżej jedna
+aktywna referencja na gospodarstwo i rok szkolny; unieważnienie to
+osobny, niezmienny zapis (jak przy `payment_assignments`/
+`payment_corrections`), nie nadpisanie wiersza. Integracja z importem
+wyciągu i propozycjami dopasowania po referencji to osobny zakres (patrz
+PR). Skutki dla danych: wyłącznie nowe tabele; `payment_entries.reference`
+i istniejące wpłaty, korekty, przypisania i uzgodnienia pozostają bez
+zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów i
+funkcji; na bazie z wygenerowanymi referencjami — tylko po kopii
+zapasowej (historia referencji zniknie).
