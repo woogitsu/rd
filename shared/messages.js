@@ -5,6 +5,10 @@
 // Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
 
 export const MESSAGES = Object.freeze({
+  // --- Rejestr uchwał (#102) --------------------------------------------------------
+  invalid_relation_kind: "Wybierz rodzaj powiązania uchwały z listy.",
+  invalid_execution_status: "Wybierz stan wykonania uchwały z listy.",
+  resolution_not_decided: "Stan wykonania można zapisać tylko dla podjętej uchwały.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
