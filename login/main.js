@@ -315,22 +315,30 @@ byId("invite-form").addEventListener("submit", (event) => {
   const password = byId("invite-password");
   const repeat = byId("invite-repeat");
   if (!/^[A-Za-z0-9_-]{43}$/.test(token.value.trim())) return formError(form, "invite-error", "Kod zaproszenia ma 43 znaki. Skopiuj go w całości.", [token]);
-  // Powtórzenie wymagane tylko przy nowym haśle (pole puste = istniejące konto).
-  const problem = repeat.value ? validateNewPassword(password.value, repeat.value) : (password.value ? null : "Podaj hasło.");
-  if (problem) return formError(form, "invite-error", problem, [password]);
+  // #164: powtórzenie jest zawsze obowiązkowe — bez niego literówka w haśle
+  // nowego konta wychodzi na jaw dopiero przy kolejnym logowaniu (blokada,
+  // reset przez admina). Serwer i tak sam wymusza zgodność dla nowego konta.
+  if (!password.value) return formError(form, "invite-error", "Podaj hasło.", [password]);
+  if (!repeat.value) return formError(form, "invite-error", "Powtórz hasło.", [repeat]);
+  if (password.value !== repeat.value) return formError(form, "invite-error", "Hasła nie są takie same.", [repeat]);
   return submitting(form, async () => {
     try {
       const displayName = byId("invite-name").value.trim();
       const result = await api("/api/invitations/accept", {
         method: "POST",
-        body: { token: token.value.trim(), password: password.value, ...(displayName ? { displayName } : {}) },
+        body: {
+          token: token.value.trim(), password: password.value, passwordRepeat: repeat.value,
+          ...(displayName ? { displayName } : {}),
+        },
       });
       password.value = ""; repeat.value = ""; token.value = "";
       formError(form, "invite-error", "");
       say(result.created ? "Konto zostało utworzone." : "Rola została dodana do Twojego konta.");
       await goNext({ authenticated: true, mfaVerified: false, ...result });
     } catch (error) {
-      formError(form, "invite-error", error.message, error.code?.startsWith("password") || error.code === "invalid_credentials" ? [password] : [token]);
+      const fields = error.code === "password_mismatch" ? [repeat]
+        : error.code?.startsWith("password") || error.code === "invalid_credentials" ? [password] : [token];
+      formError(form, "invite-error", error.message, fields);
     }
   });
 });
