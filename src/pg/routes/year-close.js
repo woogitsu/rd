@@ -342,14 +342,31 @@ async function closeYear(request, env, schoolYearId, json) {
     return json({ ...(await statusView(env.db, schoolYearId)), replayed: true });
   }
 
-  await env.db.transaction(async (tx) => {
+  const result = await env.db.transaction(async (tx) => {
+    // #212: dwa równoległe zamknięcia (dwie osoby albo podwójne kliknięcie)
+    // brały LOCK TABLE ... IN SHARE MODE jako pierwszą blokadę — SHARE nie
+    // wyklucza sam siebie, więc obie transakcje ją dostawały, a potem każda
+    // czekała na blokadę wiersza zamknięcia / INSERT bilansu otwarcia:
+    // zakleszczenie (40P01) wykrywane dopiero po deadlock_timeout, przez co
+    // księga WSZYSTKICH lat stała aż do wykrycia. Advisory lock w trybie
+    // transakcyjnym (zwalniany automatycznie na COMMIT/ROLLBACK) szereguje
+    // zamknięcia PRZED wzięciem jakiejkolwiek blokady na tabelach księgi —
+    // druga transakcja czeka tutaj, a nie w środku zakleszczenia. Musi to być
+    // pierwsze zapytanie transakcji i nigdy nie odwracać kolejności z LOCK
+    // TABLE w innych trasach (patrz docs/YEAR_CLOSE.md).
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['rd_year_close']);
     // Kolejność: najpierw blokady tabel księgi (czekają na trwające zapisy),
     // potem wiersz zamknięcia. Nowe zapisy księgi czekają na koniec transakcji,
     // a trigger zamrożenia zobaczy już status 'closed'.
     await tx.query(`LOCK TABLE ledger_entries, ledger_corrections, ledger_opening_balances,
       ledger_opening_balance_adjustments, ledger_transfers IN SHARE MODE`);
     const closure = await loadClosure(tx, schoolYearId, { lock: true });
-    if (closure.status === 'closed') return;
+    // Druga transakcja (po zwolnieniu advisory locka przez pierwszą) widzi już
+    // rok zamknięty — to nie błąd, tylko spóźniona odpowiedź na to samo
+    // żądanie albo podwójne kliknięcie. Zwracamy replayed:true zamiast
+    // cichego 200 bez zapisu (dotychczasowe zachowanie, patrz #212) i zamiast
+    // zakleszczenia.
+    if (closure.status === 'closed') return { replayed: true };
     if (closure.initiated_by === actorId) throw new RequestError('four_eyes_required', 409);
 
     const missing = checklistView(await loadChecklist(tx, closure.id))
@@ -417,8 +434,9 @@ async function closeYear(request, env, schoolYearId, json) {
       actorId, action: 'year_close.closed', entityType: 'school_year_closure', entityId: closure.id,
       metadata: { schoolYearId, nextSchoolYearId: closure.next_school_year_id, openingBalanceId: openingId, expiredGrantCount: expired.length },
     });
+    return { replayed: false };
   });
-  return json({ ...(await statusView(env.db, schoolYearId)), replayed: false });
+  return json({ ...(await statusView(env.db, schoolYearId)), replayed: result.replayed });
 }
 
 function countsBy(rows, key = 'status') {

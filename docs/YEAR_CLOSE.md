@@ -29,8 +29,9 @@ Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawien
 
 ## Zamknięcie
 
-`POST /api/year-close/{rok}/close` wykonuje w jednej transakcji:
+`POST /api/year-close/{rok}/close` wykonuje w jednej transakcji, w tej kolejności blokad (#212 — nie odwracać, ani w tej, ani w innej trasie):
 
+0. `SELECT pg_advisory_xact_lock(hashtext('rd_year_close'))` — jedna globalna blokada doradcza dla WSZYSTKICH zamknięć, dowolnego roku, zwalniana automatycznie na koniec transakcji. Musi być pierwszym zapytaniem, przed `LOCK TABLE`. Bez niej dwa równoległe zamknięcia (dwie osoby albo podwójne kliknięcie) dostawały obie `LOCK … IN SHARE MODE` naraz (tryb `SHARE` nie wyklucza sam siebie), a potem każda transakcja czekała na blokadę wiersza zamknięcia / `INSERT` bilansu otwarcia — zakleszczenie (`40P01`) wykrywane dopiero po `deadlock_timeout`, w trakcie którego zapisy księgi WSZYSTKICH lat czekały. Założenie: zamknięcie jest rzadkie, więc globalna serializacja nie wpływa na wydajność (D-21).
 1. blokuje tabele księgi (`LOCK … IN SHARE MODE`) i wiersz zamknięcia — trwające zapisy księgi kończą się przed wyliczeniem, nowe czekają i po zamknięciu są odrzucane,
 2. sprawdza komplet listy kontrolnej i zasadę czterech oczu (zamyka inna osoba niż rozpoczynająca; także `CHECK` w bazie),
 3. liczy bilans z widoku `ledger_year_summary` (bilans otwarcia + poprawki + przychody netto − wydatki netto) oraz część poza rachunkiem z `ledger_year_cash_summary` (gotówka z bilansu otwarcia + wpisy z metodą inną niż `bank` + przeniesienia kasa ↔ rachunek; #199),
@@ -39,7 +40,7 @@ Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawien
 6. utrwala w wierszu zamknięcia bilans otwarcia, przychody, wydatki, bilans zamknięcia, gotówkę na otwarcie i zamknięcie (`opening_cash_cents`, `closing_cash_cents`; zamknięcia sprzed 0028 mają tu `NULL`), identyfikator przeniesionego bilansu i liczbę wygaszonych ról,
 7. zapisuje zdarzenia `ledger_opening_balance.carried_forward` i `year_close.closed`.
 
-Zamknięcie jest odrzucane, gdy następny rok ma już bilans otwarcia (`next_year_opening_balance_exists`) — trzeba wyjaśnić rozbieżność, a nie nadpisywać. Ponowne zamknięcie zamkniętego roku zwraca stan z `replayed: true` bez nowych zapisów.
+Zamknięcie jest odrzucane, gdy następny rok ma już bilans otwarcia (`next_year_opening_balance_exists`) — trzeba wyjaśnić rozbieżność, a nie nadpisywać. Ponowne zamknięcie zamkniętego roku (przed rozpoczęciem transakcji albo po niej — druga transakcja widzi już `closed` po zwolnieniu advisory locka przez pierwszą) zwraca stan z `replayed: true` bez nowych zapisów, `200`, bez zakleszczenia (#212).
 
 ## Zamrożenie
 
