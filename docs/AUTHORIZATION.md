@@ -124,13 +124,18 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/snapshot` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/email/campaigns/:campaignId/preview` | jak wyżej | tak | 403 | bez wysyłki; SR-01 |
 | `GET /api/email/campaigns/:campaignId/recipients` | jak wyżej | tak | 403 | odczyt w dzienniku; SR-01 |
+| `GET /api/email/campaigns/:campaignId/report` | jak wyżej | tak | 403 | wyłącznie agregaty, bez adresów/imion/identyfikatorów rodzin (#139) |
+| `GET /api/email/campaigns/:campaignId/attention` | jak wyżej | tak | 403 | adres maskowany, odczyt w dzienniku (`email.attention_list.viewed`, #139) |
 | `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak, krok w górę: ≤15 min (#150) | 403 | skarbnik: 403; SR-01; MFA starsze niż 15 min → `403 mfa_stale` |
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
+| `POST /api/email/campaigns/:campaignId/resolutions` | zarząd, skarbnik — jak wyżej | tak | 403 | `confirmed_not_sent` wymaga zarządu; podwójne kliknięcie zwraca istniejący zapis (#139) |
 | `POST /api/email/campaigns/:campaignId/pause` | zarząd, skarbnik — jak wyżej | tak | 403 | wstrzymanie wysyłki (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/resume` | zarząd, skarbnik — jak wyżej | tak | 403 | wznowienie (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/email/campaigns/:campaignId/test-send` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko adres z `EMAIL_PREVIEW_RECIPIENTS`, nie adres opiekuna; `EMAIL_SENDING_ENABLED≠true` → 409 bez sieci; limit 5/kampanię i 20/konto na dobę → 429 (#104) |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
+| `GET /api/email/preferences?t=:token` | publiczna, bez sesji | nie | — | tylko odczyt kategorii z tokenu, bez skutku; zły/zmieniony token → 400; limit żądań → 429 (#110) |
+| `POST /api/email/preferences?t=:token` | publiczna, bez sesji; zwolniona z `Origin` (jak webhook) | nie | — | wypisanie z kategorii kampanii, idempotentne; zły/zmieniony token → 400; limit żądań → 429 (#110) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
 | `GET /api/public/news-photos/:photoId/web` | publiczna | nie | 404 | tylko zdjęcie zweryfikowane w opublikowanej wersji; nieznane/niepubliczne = 404 identyczne (#96) |
 | `GET /api/public/news-photos/:photoId/thumb` | publiczna | nie | 404 | jak wyżej |

@@ -32,6 +32,9 @@ export const MFA_GATE_EXEMPT_EXACT = Object.freeze([
   '/api/login', '/api/auth/state', '/api/invitations/accept', '/api/password/reset',
   // Trasy publiczne i webhook: działają bez sesji, więc cookie niczego tu nie zmienia.
   '/api/meetings/public-minutes', '/api/email/webhooks/brevo',
+  // Wypisanie jednym kliknięciem (#110): klika je klient poczty rodzica, nie
+  // przeglądarka z sesją; token HMAC jest jedynym zabezpieczeniem.
+  '/api/email/preferences',
 ]);
 // #150: lista i cofnięcie WŁASNEJ sesji (GET /api/sessions, POST /api/sessions/{id}/revoke)
 // muszą działać tak samo jak /api/sessions/revoke-all — sesja bez potwierdzonego MFA musi

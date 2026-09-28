@@ -225,9 +225,11 @@ wpisów).
 | `nonexistent_local_time` | Ta godzina nie istnieje w Brukseli (zmiana czasu z zimowego na letni). Wybierz inną godzinę. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_first_school_year` | Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_found` | Nie znaleziono zasobu albo nie masz do niego dostępu. | Zależy od kontekstu (patrz moduł trasy). |
+| `not_resolvable` | Tej wiadomości nie można jeszcze rozstrzygnąć. | Nie — popraw dane żądania. |
 | `offset_not_valid_in_europe_brussels` | Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_exists` | Bilans otwarcia dla tego roku szkolnego już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_not_found` | Nie znaleziono bilansu otwarcia dla tego roku szkolnego. | Nie — popraw dane żądania. |
+| `outbox_not_found` | Nie znaleziono tej wiadomości w kolejce. | Nie — popraw dane żądania. |
 | `password_mismatch` | Hasła nie są takie same. | Nie — popraw dane żądania. |
 | `password_required` | Podaj hasło. | Nie — popraw dane żądania. |
 | `password_too_long` | Hasło jest za długie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -261,6 +263,7 @@ wpisów).
 | `production_restore_requires_allow_production` | Odtworzenie na produkcji wymaga osobnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `public_copy_requires_license` | Publiczna kopia wymaga zapisanej licencji lub zgody. | Zależy od kontekstu (patrz moduł trasy). |
 | `quorum_rule_source_required` | Podaj źródło reguły quorum (np. regulamin). | Nie — popraw dane żądania. |
+| `rate_limited` | Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę. | Zależy od kontekstu (patrz moduł trasy). |
 | `read_only` | Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych. | Zależy od kontekstu (patrz moduł trasy). |
 | `recipients_hash_mismatch` | Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie. | Nie — popraw dane żądania. |
 | `reconciliation_confirmed` | Uzgodnienie jest już potwierdzone i nie można go zmienić. | Zależy od kontekstu (patrz moduł trasy). |

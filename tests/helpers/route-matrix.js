@@ -33,6 +33,7 @@
 // treści protokołów i opisów wpłat; odpowiedź odmowna nie może zawierać żadnego.
 
 import { isMfaGateExempt } from '../../src/pg/mfa-policy.js';
+import { emailHash as prefEmailHash, preferencesToken } from '../../src/email/content.js';
 
 export const YEAR_1 = 'y-1';
 export const YEAR_2 = 'y-2';
@@ -798,6 +799,19 @@ export const ROUTE_MATRIX = Object.freeze([
   emailRoute('email.snapshot', 'POST', '/snapshot', 'draft', {}),
   emailRoute('email.preview', 'GET', '/preview', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
   emailRoute('email.recipients', 'GET', '/recipients', 'snapshot', { fixture: 'static' }),
+  emailRoute('email.report', 'GET', '/report', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
+  emailRoute('email.attention', 'GET', '/attention', 'snapshot', { fixture: 'static' }),
+  {
+    // Rozstrzygnięcie delivery_unknown/error (#139): confirmed_delivered wystarcza board/treasurer;
+    // confirmed_not_sent (silniejsze twierdzenie) wymaga roli board — sprawdzone osobno w pg-email.test.js.
+    id: 'email.resolutions', module: 'email', method: 'POST', path: '/api/email/campaigns/:campaignId/resolutions',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'campaign', stage: 'failed' },
+    build: ({ obj }) => ({
+      path: `/api/email/campaigns/${obj.campaignId}/resolutions`,
+      body: { outboxId: obj.outboxId, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
+    }),
+  },
   emailRoute('email.approve', 'POST', '/approve', 'snapshot', {
     allow: EMAIL_APPROVE, body: (_target, obj) => ({ contentHash: obj.contentHash, recipientsHash: obj.recipientsHash }),
   }),
@@ -817,6 +831,27 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ key, fx }) => ({
       path: '/api/email/webhooks/brevo', headers: { Authorization: `Bearer ${fx.webhookSecret}` },
       body: { event: 'opened', email: 'nieznany@example.invalid', id: key, ts_event: 1791187200 },
+    }),
+  },
+  {
+    // Wypisanie jednym kliknięciem (#110): publiczna, bez Origin, bez sesji —
+    // token ważny (podpisany fx.unsubscribeSecret) daje ten sam wynik (200)
+    // niezależnie od tożsamości wywołującego (jak webhook).
+    id: 'email.preferences.get', module: 'email', method: 'GET', path: '/api/email/preferences?t=:token', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null,
+    build: ({ fx }) => ({
+      path: `/api/email/preferences?t=${encodeURIComponent(preferencesToken(fx.unsubscribeSecret, {
+        campaignId: fx.preferencesCampaignId, category: 'contribution_reminder', emailHash: prefEmailHash('fx-preferences@example.invalid'),
+      }))}`,
+    }),
+  },
+  {
+    id: 'email.preferences.post', module: 'email', method: 'POST', path: '/api/email/preferences?t=:token', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null,
+    build: ({ fx }) => ({
+      path: `/api/email/preferences?t=${encodeURIComponent(preferencesToken(fx.unsubscribeSecret, {
+        campaignId: fx.preferencesCampaignId, category: 'contribution_reminder', emailHash: prefEmailHash('fx-preferences-post@example.invalid'),
+      }))}`,
     }),
   },
 
@@ -1241,6 +1276,7 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
   '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
   '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
+  '/api/email/preferences': 'wypisanie jednym kliknięciem: klika je klient poczty rodzica, nie przeglądarka z sesją (#110); token HMAC jest jedynym zabezpieczeniem',
   '/api/mfa/': 'zapis i potwierdzenie MFA; limity błędów per sesja, wyższy sufit per konto (#189)',
   '/api/public/': 'publiczne dane zatwierdzone',
   '/api/sessions': 'lista WYŁĄCZNIE własnych sesji (id, czas, stan MFA) — jak /api/session (#150)',
