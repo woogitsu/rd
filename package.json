@@ -58,6 +58,8 @@
     "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir",
     "dev:year-close": "vite year-close",
     "build:year-close": "vite build year-close --outDir ../dist/year-close --base ./ --emptyOutDir",
+    "demo:seed": "node scripts/demo-seed.js",
+    "demo:start": "node scripts/demo-start.js",
     "pretest:e2e": "npm run build",
     "test:e2e": "playwright test"
   },
