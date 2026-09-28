@@ -11,6 +11,10 @@ import {
 } from "./core.js";
 import { describeSource } from "../import/csv.js";
 import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 // Stan wyłącznie w pamięci karty przeglądarki: nic nie jest zapisywane ani wysyłane.
 // Jedyne żądanie sieciowe to odczyt GET /api/print/cards po kliknięciu „Wczytaj z serwera”.

@@ -1,0 +1,36 @@
+/* Styl bloku konta wspólnej powłoki paneli (issue #85). Białe tło, oszczędny
+   czerwony akcent, bez ikon dekoracyjnych — zgodnie z AGENTS.md. Każdy panel
+   dołącza ten plik obok własnego styles.css. */
+#shell-nav { list-style: none; display: flex; margin: 0; padding: 0; gap: .1rem; }
+#shell-account {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-left: auto;
+  font-size: .9rem;
+}
+#shell-account .shell-account-name { font-weight: 600; }
+#shell-account .shell-account-scope { color: #5a5f63; }
+#shell-account a,
+#shell-account button {
+  background: none;
+  border: 1px solid #b3262d;
+  color: #b3262d;
+  padding: .35rem .7rem;
+  min-height: 44px;
+  min-width: 44px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: none;
+}
+#shell-account a:hover,
+#shell-account button:hover { background: #fbe9ea; }
+#shell-account button:disabled { opacity: .6; cursor: default; }
+#shell-account :focus-visible { outline: 3px solid #8e2026; outline-offset: 2px; }
+
+@media (max-width: 480px) {
+  #shell-nav { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #shell-nav li { white-space: nowrap; }
+  #shell-account { flex-wrap: wrap; margin-left: 0; }
+}
