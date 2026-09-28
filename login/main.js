@@ -1,6 +1,8 @@
 import {
   PANELS,
+  canOfferVoluntaryMfaEnrollment,
   clearSensitiveViews,
+  enrollIntroText,
   enrollmentConfirmError,
   errorMessage,
   formatSecret,
@@ -99,8 +101,15 @@ async function goNext(state, { initial = false } = {}) {
     return;
   }
   if (view === "start") renderStart();
-  if (view === "enroll") resetEnrollment();
+  if (view === "enroll") { resetEnrollment(); renderEnrollIntro(true); }
   showView(view);
+}
+
+// #161: tekst i przycisk powrotu zależą od tego, czy widok wymusiła rola
+// (nextView → "enroll") czy konto weszło tu dobrowolnie z widoku startowego.
+function renderEnrollIntro(forced) {
+  byId("enroll-intro-text").textContent = enrollIntroText(forced);
+  byId("enroll-back").hidden = forced;
 }
 
 async function refreshState() {
@@ -386,6 +395,15 @@ byId("change-form").addEventListener("submit", (event) => {
 byId("change-cancel").addEventListener("click", async () => goNext(lastState ?? await refreshState()));
 byId("open-change").addEventListener("click", () => showView("change"));
 
+// #161: włączenie MFA z własnej inicjatywy (dowolna rola, konto bez czynnika).
+byId("enroll-voluntary").addEventListener("click", () => {
+  clearSensitiveViews(document);
+  resetEnrollment();
+  renderEnrollIntro(false);
+  showView("enroll");
+});
+byId("enroll-back").addEventListener("click", async () => goNext(lastState ?? await refreshState()));
+
 // --- 7. Start i wylogowanie ---------------------------------------------------------------
 
 function renderStart() {
@@ -401,6 +419,7 @@ function renderStart() {
     item.append(link, hint);
     return item;
   }));
+  byId("enroll-voluntary").hidden = !canOfferVoluntaryMfaEnrollment(lastState);
 }
 
 // Wylogowanie: dane wrażliwe znikają z DOM zawsze; „Wylogowano” tylko po 204/401 (#197).
