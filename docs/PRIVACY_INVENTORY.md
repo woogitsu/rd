@@ -39,6 +39,14 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`enrollments`|`ended_reason`|Uczeń|direct|wolny tekst|uzasadnienie zmiany|nieustalona (D-04)|tak|tak|
 |`enrollments`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`event_revisions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`event_task_signups`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie zapisu wolontariusza z opiekunem|nieustalona (D-04)|nie|tak|
+|`event_task_signups`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą wpisującą zapis|nieustalona (D-04)|nie|tak|
+|`event_task_signups`|`updated_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zmiany statusu zapisu z osobą|nieustalona (D-04)|nie|tak|
+|`event_task_signups`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie zapisu wolontariusza z kontem|nieustalona (D-04)|nie|tak|
+|`event_tasks`|`cancellation_reason`|Osoba trzecia|direct|wolny tekst|powód odwołania zadania wolontariackiego|audit_event|tak|tak|
+|`event_tasks`|`cancelled_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie odwołania zadania z osobą|nieustalona (D-04)|nie|tak|
+|`event_tasks`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`event_tasks`|`title`|Osoba trzecia|direct|wolny tekst|tytuł zadania wolontariackiego|audit_event|tak|tak|
 |`events`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`guardian_contact_changes`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -114,7 +122,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **101**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **109**, w tym wolnego tekstu: **25** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -450,6 +458,38 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `revision_no` | none | — | tak |
 | `source` | none | — | tak |
 | `title` | none | — | tak |
+
+### `event_task_signups`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | tak |
+| `guardian_id` | pseudonymous | guardian | tak |
+| `id` | none | — | tak |
+| `recorded_by` | pseudonymous | board_member | tak |
+| `status` | none | — | tak |
+| `task_id` | none | — | tak |
+| `updated_at` | none | — | tak |
+| `updated_by` | pseudonymous | board_member | tak |
+| `user_id` | pseudonymous | board_member | tak |
+
+### `event_tasks`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `cancellation_reason` | direct | third_party | tak |
+| `cancelled_at` | none | — | tak |
+| `cancelled_by` | pseudonymous | board_member | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `ends_at` | none | — | tak |
+| `event_id` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `is_public` | none | — | tak |
+| `slots_needed` | none | — | tak |
+| `starts_at` | none | — | tak |
+| `title` | direct | third_party | tak |
 
 ### `events`
 

@@ -243,6 +243,14 @@ export const MESSAGES = Object.freeze({
   ambiguous_local_time: "Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi.",
   nonexistent_local_time: "Ta godzina nie istnieje w Brukseli (zmiana czasu z zimowego na letni). Wybierz inną godzinę.",
   offset_not_valid_in_europe_brussels: "Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli.",
+  invalid_slots_needed: "Liczba potrzebnych miejsc musi być od 1 do 200.",
+  task_time_outside_event: "Czas zadania musi mieścić się w czasie wydarzenia.",
+  task_full: "Brak wolnych miejsc w tym zadaniu. Odśwież listę.",
+  event_task_not_found: "Nie znaleziono zadania albo nie masz do niego dostępu.",
+  event_task_already_cancelled: "To zadanie zostało już odwołane.",
+  event_task_signup_not_found: "Nie znaleziono zapisu.",
+  guardian_outside_class: "Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku.",
+  invalid_signup_target: "Wskaż dokładnie jedną osobę: opiekuna albo konto.",
 
   // --- Zebrania i uchwały -----------------------------------------------------------------------
   meeting_not_found: "Nie znaleziono zebrania.",

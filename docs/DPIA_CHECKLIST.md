@@ -79,6 +79,8 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `news_photos.revocation_reason` | powód wycofania zgody, może zawierać dane osoby wycofującej |
 | `email_campaigns.subject` | temat kampanii — do przeglądu przy zatwierdzeniu treści |
 | `email_campaigns.body_text` | treść kampanii — do przeglądu przy zatwierdzeniu treści |
+| `event_tasks.title` | tytuł zadania wolontariackiego może zawierać imię i nazwisko lub okoliczności rodzinne (#142) |
+| `event_tasks.cancellation_reason` | powód odwołania zadania może zawierać imię i nazwisko lub okoliczności rodzinne (#142) |
 
 ## Środki już istniejące (do odwołania w DPIA)
 

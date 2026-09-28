@@ -306,6 +306,23 @@ bazie z kontami — tylko po kopii zapasowej (wszyscy stracą hasła). Okres
 przechowywania skrótów haseł wyłączonych kont i tokenów zależy od D-04.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
 
+`0076_event_volunteering.sql` (issue #142, Etap 1) dodaje zadania i zapisy
+wolontariuszy do wydarzeń. `event_tasks` (treść niezmienna po utworzeniu poza
+jednorazowym odwołaniem) i `event_task_signups` (opiekun albo konto; status
+`confirmed`/`withdrawn` może się zmieniać, ale tożsamość zapisu — zadanie,
+osoba, kto i kiedy zarejestrował — nie). Trigger `event_task_signup_capacity`
+blokuje wiersz zadania i pilnuje limitu miejsc (`task_full`) oraz zamraża
+zapisy do zadania odwołanego wydarzenia (`event_cancelled`). Rozszerza
+WSPÓLNĄ funkcję `year_freeze_via_parent()` o dwie gałęzie — **wychodząc z
+jej najnowszej wersji, scalonej w `0049_year_freeze_union.sql`**, a nie z
+`0036`/`0038`, żeby nie powtórzyć incydentu z #279 (main zepsuty przez
+nadpisanie tej funkcji nie od najnowszej wersji). Skutki dla danych: dwie
+nowe, puste tabele; `events` i inne tabele nie są ruszane. Wycofanie na
+pustej bazie: usunięcie obu tabel, ich triggerów i funkcji, oraz
+przywrócenie `year_freeze_via_parent()` do wersji z
+`0049_year_freeze_union.sql` (bez dwóch nowych gałęzi `ELSIF`). Opis:
+[`docs/EVENTS.md`](../docs/EVENTS.md).
+
 `0082_immutability_hardening.sql` (issue #204, część: punkty 1, 2 i 5 z
 propozycji) zamyka trzy furtki, przez które kilka faktów traktowanych jako
 trwałe dało się zmienić albo sfałszować mimo istniejących triggerów

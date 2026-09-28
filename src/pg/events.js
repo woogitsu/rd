@@ -278,8 +278,11 @@ function publicEvent(row) {
 }
 
 // #184: przechodzi przez insertAuditEvent (assertNoPii), nie własny INSERT.
-async function audit(tx, actorId, action, eventId, metadata) {
-  await insertAuditEvent(tx, { actorId, action, entityType: 'event', entityId: eventId, metadata });
+// entityType domyślnie 'event'; #142 audytuje też event_task/event_task_signup
+// (metadata carries only workflow numbers and identifiers, never titles,
+// reasons or personal data — no guardian/user id either).
+async function audit(tx, actorId, action, eventId, metadata, entityType = 'event') {
+  await insertAuditEvent(tx, { actorId, action, entityType, entityId: eventId, metadata });
 }
 
 async function lockEvent(tx, eventId) {
@@ -300,6 +303,14 @@ function mapDatabaseError(error) {
   if (/event_invalid_|event_content_and_workflow_change/.test(message)) throw new EventError('invalid_transition', 409);
   // Rok zamknięty (0017_year_close.sql): stan danych, nie awaria usługi.
   if (message.includes('school_year_closed')) throw new EventError('school_year_closed', 409);
+  // Issue #142: limit miejsc i odwołanie wydarzenia (trigger event_task_signup_capacity, 0076).
+  if (message.includes('task_full')) throw new EventError('task_full', 409);
+  if (message.includes('event_cancelled')) throw new EventError('event_cancelled', 409);
+  if (message.includes('event_task_not_found')) throw new EventError('event_task_not_found', 404);
+  if (message.includes('event_tasks_are_immutable') || message.includes('event_task_already_cancelled')) {
+    throw new EventError('event_task_already_cancelled', 409);
+  }
+  if (message.includes('event_task_signups_identity_is_immutable')) throw new EventError('invalid_request', 409);
   if (error?.code === '23503') throw new EventError('invalid_reference');
   if (error?.code === '23514') throw new EventError('invalid_request');
   throw error;
@@ -536,6 +547,283 @@ export async function listInternal(db, actor, input) {
   return { events: rows.map(internalEvent) };
 }
 
+// ---------- volunteer tasks and signups (issue #142, Etap 1) ----------
+//
+// No parent accounts yet (D-10): a class representative signs up an EXISTING
+// guardian of a child in THEIR OWN class (checked below), or a board/admin
+// account signs up any guardian or user account. No new personal data is
+// collected — only a reference to an existing guardian or user id.
+
+const TASK_TITLE_LIMIT = { min: 3, max: 200, code: 'invalid_title' };
+
+function toTask(row) {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    title: row.title,
+    startsAtUtc: iso(row.starts_at),
+    endsAtUtc: iso(row.ends_at),
+    slotsNeeded: row.slots_needed,
+    isPublic: row.is_public,
+    cancelledAt: iso(row.cancelled_at),
+    cancellationReason: row.cancellation_reason ?? null,
+    createdBy: row.created_by,
+    createdAt: iso(row.created_at),
+  };
+}
+
+function toSignup(row) {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    userId: row.user_id ?? null,
+    guardianId: row.guardian_id ?? null,
+    // Nazwisko dołączane wyłącznie w odpowiedzi dla autoryzowanego widoku
+    // (GET listy zadań), nigdy w publicznym API ani w dzienniku.
+    personName: row.person_name ?? undefined,
+    status: row.status,
+    recordedBy: row.recorded_by,
+    createdAt: iso(row.created_at),
+    updatedBy: row.updated_by,
+    updatedAt: iso(row.updated_at),
+  };
+}
+
+function parseTaskInput(input, event) {
+  const title = text(input?.title, { ...TASK_TITLE_LIMIT, required: true });
+  const slotsNeeded = input?.slotsNeeded;
+  if (!Number.isSafeInteger(slotsNeeded) || slotsNeeded < 1 || slotsNeeded > 200) {
+    throw new EventError('invalid_slots_needed');
+  }
+  const isPublic = Boolean(input?.isPublic);
+  const parseOptional = (value) => (value === undefined || value === null || value === '' ? null : parseBrusselsLocal(value));
+  const startsAt = parseOptional(input?.startsAt);
+  const endsAt = parseOptional(input?.endsAt);
+  if (startsAt && endsAt && endsAt < startsAt) throw new EventError('ends_before_start');
+  // "W obrębie wydarzenia" (issue #142 propozycja punkt 1): zadanie nie może
+  // zaczynać się przed wydarzeniem ani kończyć po nim (gdy wydarzenie ma
+  // koniec). Zmiana czasu wydarzenia PO utworzeniu zadania nie jest tu
+  // sprawdzana wstecznie — poza zakresem tego PR (patrz "Ryzyka").
+  if (startsAt && startsAt < event.begins_at) throw new EventError('task_time_outside_event');
+  if (endsAt && event.ends_at && endsAt > event.ends_at) throw new EventError('task_time_outside_event');
+  return { title, slotsNeeded, isPublic, startsAt, endsAt };
+}
+
+function sameTaskContent(row, content, eventId) {
+  return row.event_id === eventId && row.title === content.title && row.slots_needed === content.slotsNeeded
+    && row.is_public === content.isPublic
+    && iso(row.starts_at) === (content.startsAt ? content.startsAt.toISOString() : null)
+    && iso(row.ends_at) === (content.endsAt ? content.endsAt.toISOString() : null);
+}
+
+export async function createTask(db, actor, input) {
+  requireActor(actor);
+  const eventId = decodeId(input?.eventId);
+  const idempotencyKey = input?.idempotencyKey;
+  if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_PATTERN.test(idempotencyKey)) {
+    throw new EventError('invalid_idempotency_key');
+  }
+  return run(db, async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    // Ten sam 404 dla wydarzenia nieznanego i niedostępnego (brak wyroczni istnienia).
+    if (!canEdit(actor, event)) throw new EventError('event_not_found', 404);
+    const existing = (await tx.query('SELECT * FROM event_tasks WHERE idempotency_key = $1', [idempotencyKey])).rows[0];
+    const content = parseTaskInput(input, event);
+    if (existing) {
+      if (!sameTaskContent(existing, content, eventId)) throw new EventError('idempotency_conflict', 409);
+      return { task: toTask(existing), replayed: true };
+    }
+    const id = crypto.randomUUID();
+    const { rows } = await tx.query(
+      `INSERT INTO event_tasks (id, event_id, title, starts_at, ends_at, slots_needed, is_public, created_by, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [id, eventId, content.title, content.startsAt, content.endsAt, content.slotsNeeded, content.isPublic, actor.userId, idempotencyKey],
+    );
+    await audit(tx, actor.userId, 'event.task_created', id, { eventId, slotsNeeded: content.slotsNeeded }, 'event_task');
+    return { task: toTask(rows[0]) };
+  });
+}
+
+export async function cancelTask(db, actor, input) {
+  requireActor(actor);
+  const eventId = decodeId(input?.eventId);
+  const taskId = decodeId(input?.taskId);
+  const reason = text(input?.reason, { min: 3, max: 500, required: true, code: 'invalid_reason' });
+  return run(db, async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!canEdit(actor, event)) throw new EventError('event_not_found', 404);
+    const { rows } = await tx.query('SELECT * FROM event_tasks WHERE id = $1 AND event_id = $2 FOR UPDATE', [taskId, eventId]);
+    const task = rows[0];
+    if (!task) throw new EventError('event_task_not_found', 404);
+    if (task.cancelled_at) return { task: toTask(task), replayed: true };
+    const { rows: updated } = await tx.query(
+      `UPDATE event_tasks SET cancelled_at = now(), cancelled_by = $2, cancellation_reason = $3 WHERE id = $1 RETURNING *`,
+      [taskId, actor.userId, reason],
+    );
+    await audit(tx, actor.userId, 'event.task_cancelled', taskId, { eventId }, 'event_task');
+    return { task: toTask(updated[0]) };
+  });
+}
+
+export async function listTasks(db, actor, input) {
+  requireActor(actor);
+  const eventId = decodeId(input?.eventId);
+  const { rows } = await db.query(`SELECT ${EVENT_COLUMNS} FROM events WHERE id = $1`, [eventId]);
+  const event = rows[0];
+  if (!event || !canEdit(actor, event)) throw new EventError('event_not_found', 404);
+  const { rows: taskRows } = await db.query('SELECT * FROM event_tasks WHERE event_id = $1 ORDER BY created_at, id', [eventId]);
+  const { rows: signupRows } = await db.query(
+    `SELECT s.*, COALESCE(g.first_name || ' ' || g.last_name, u.display_name) AS person_name
+       FROM event_task_signups s
+       LEFT JOIN guardians g ON g.id = s.guardian_id
+       LEFT JOIN users u ON u.id = s.user_id
+      WHERE s.task_id = ANY($1::text[]) ORDER BY s.created_at, s.id`,
+    [taskRows.map((row) => row.id)],
+  );
+  const byTask = new Map();
+  for (const row of signupRows) {
+    const list = byTask.get(row.task_id) ?? [];
+    list.push(toSignup(row));
+    byTask.set(row.task_id, list);
+  }
+  return {
+    tasks: taskRows.map((row) => ({
+      ...toTask(row),
+      signups: byTask.get(row.id) ?? [],
+      confirmedCount: (byTask.get(row.id) ?? []).filter((s) => s.status === 'confirmed').length,
+    })),
+  };
+}
+
+// Przedstawiciel może wskazać wyłącznie opiekuna dziecka z przypisanej klasy
+// w bieżącym roku (issue #142, kryteria akceptacji) — sprawdzone po stronie
+// serwera niezależnie od tego, co pokazuje formularz. Zarząd/administrator
+// (przydział bez klasy) nie ma tego ograniczenia.
+async function assertGuardianInClass(tx, guardianId, event) {
+  if (!event.class_id) return; // wydarzenie ogólnoszkolne: brak ograniczenia klasy
+  const { rows } = await tx.query(
+    `SELECT 1 FROM student_guardians sg
+       JOIN enrollments en ON en.student_id = sg.student_id
+      WHERE sg.guardian_id = $1 AND en.class_id = $2 AND en.school_year_id = $3 LIMIT 1`,
+    [guardianId, event.class_id, event.school_year_id],
+  );
+  if (!rows[0]) throw new EventError('guardian_outside_class', 400);
+}
+
+export async function createSignup(db, actor, input) {
+  requireActor(actor);
+  const eventId = decodeId(input?.eventId);
+  const taskId = decodeId(input?.taskId);
+  const idempotencyKey = input?.idempotencyKey;
+  if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_PATTERN.test(idempotencyKey)) {
+    throw new EventError('invalid_idempotency_key');
+  }
+  const guardianId = input?.guardianId ?? null;
+  const userId = input?.userId ?? null;
+  if (Boolean(guardianId) === Boolean(userId)) throw new EventError('invalid_signup_target');
+  if (guardianId && !validId(guardianId)) throw new EventError('invalid_signup_target');
+  if (userId && !validId(userId)) throw new EventError('invalid_signup_target');
+
+  return run(db, async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!canEdit(actor, event)) throw new EventError('event_not_found', 404);
+    const { rows: taskRows } = await tx.query('SELECT * FROM event_tasks WHERE id = $1 AND event_id = $2', [taskId, eventId]);
+    const task = taskRows[0];
+    if (!task) throw new EventError('event_task_not_found', 404);
+    if (guardianId && !schoolWide(actor, EVENT_POLICY.draftSchoolWide, event.school_year_id)) {
+      await assertGuardianInClass(tx, guardianId, event);
+    }
+    const existing = (await tx.query(
+      `SELECT * FROM event_task_signups WHERE task_id = $1 AND (user_id = $2 OR guardian_id = $3) FOR UPDATE`,
+      [taskId, userId, guardianId],
+    )).rows[0];
+    if (existing && existing.status === 'confirmed') {
+      // Już zapisany: bezpieczna powtórka (podwójne kliknięcie), niezależnie od klucza.
+      return { signup: toSignup(existing), replayed: true };
+    }
+    if (existing) {
+      // Wycofany wcześniej -> ponowny zapis to przejście stanu tego samego
+      // wiersza (historia w audit_events), nie nowy wiersz — patrz migracja.
+      const { rows: updated } = await tx.query(
+        `UPDATE event_task_signups SET status = 'confirmed', updated_by = $2, updated_at = now() WHERE id = $1 RETURNING *`,
+        [existing.id, actor.userId],
+      );
+      await audit(tx, actor.userId, 'event.task_signup_created', existing.id, { taskId, eventId }, 'event_task_signup');
+      return { signup: toSignup(updated[0]) };
+    }
+    const id = crypto.randomUUID();
+    let inserted;
+    try {
+      inserted = (await tx.query(
+        `INSERT INTO event_task_signups (id, task_id, user_id, guardian_id, status, recorded_by, updated_by)
+         VALUES ($1, $2, $3, $4, 'confirmed', $5, $5) RETURNING *`,
+        [id, taskId, userId, guardianId, actor.userId],
+      )).rows[0];
+    } catch (error) {
+      // Wyścig: dwa równoległe pierwsze zapisy tej samej osoby do tego
+      // samego zadania (FOR UPDATE wyżej nie blokuje wiersza, który jeszcze
+      // nie istnieje) — drugi przegrywa unikalny indeks, nie limit miejsc.
+      if (isUniqueViolation(error)) {
+        const again = (await tx.query(
+          'SELECT * FROM event_task_signups WHERE task_id = $1 AND (user_id = $2 OR guardian_id = $3)',
+          [taskId, userId, guardianId],
+        )).rows[0];
+        if (again) return { signup: toSignup(again), replayed: true };
+      }
+      throw error;
+    }
+    await audit(tx, actor.userId, 'event.task_signup_created', id, { taskId, eventId }, 'event_task_signup');
+    return { signup: toSignup(inserted) };
+  });
+}
+
+export async function withdrawSignup(db, actor, input) {
+  requireActor(actor);
+  const eventId = decodeId(input?.eventId);
+  const taskId = decodeId(input?.taskId);
+  const signupId = decodeId(input?.signupId);
+  return run(db, async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!canEdit(actor, event)) throw new EventError('event_not_found', 404);
+    const { rows } = await tx.query(
+      'SELECT * FROM event_task_signups WHERE id = $1 AND task_id = $2 FOR UPDATE', [signupId, taskId],
+    );
+    const signup = rows[0];
+    if (!signup) throw new EventError('event_task_signup_not_found', 404);
+    if (signup.status === 'withdrawn') return { signup: toSignup(signup), replayed: true };
+    const { rows: updated } = await tx.query(
+      `UPDATE event_task_signups SET status = 'withdrawn', updated_by = $2, updated_at = now() WHERE id = $1 RETURNING *`,
+      [signupId, actor.userId],
+    );
+    await audit(tx, actor.userId, 'event.task_signup_withdrawn', signupId, { taskId, eventId }, 'event_task_signup');
+    return { signup: toSignup(updated[0]) };
+  });
+}
+
+// Publiczna strona: najwyżej "potrzebni jeszcze: N" dla zadań JAWNIE
+// oznaczonych jako publiczne, wyłącznie wydarzeń opublikowanych. Bez
+// identyfikatorów osób i bez zadań niepublicznych.
+export async function listPublicTasks(db, input) {
+  const eventId = decodeId(input?.eventId);
+  const { rows: published } = await db.query('SELECT id FROM public_events WHERE id = $1', [eventId]);
+  if (!published[0]) throw new EventError('event_not_found', 404);
+  const { rows } = await db.query(
+    `SELECT t.id, t.title, t.slots_needed,
+            (SELECT count(*) FROM event_task_signups s WHERE s.task_id = t.id AND s.status = 'confirmed') AS confirmed_count
+       FROM event_tasks t
+      WHERE t.event_id = $1 AND t.is_public AND t.cancelled_at IS NULL
+      ORDER BY t.created_at, t.id`,
+    [eventId],
+  );
+  return {
+    tasks: rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      stillNeeded: Math.max(0, row.slots_needed - Number(row.confirmed_count)),
+    })),
+  };
+}
+
 const PUBLIC_ICS_COLUMNS = `id, title, description, begins_at, ends_at, location, organizer, timezone,
             public_status, published_at, first_published_at,
             (SELECT e.status <> 'cancelled' AND e.revision_no <> e.published_revision_no
@@ -683,7 +971,8 @@ export async function handle(request, env, url, json) {
   const isPublicIcsChannel = path === '/api/public/events.ics';
   const icsMatch = path.match(/^\/api\/public\/events\/([^/]+)\.ics$/);
   const isPublicIcs = isPublicIcsChannel || Boolean(icsMatch);
-  if (!isPublic && !isPublicIcs && path !== '/api/events' && !path.startsWith('/api/events/')) return null;
+  const publicTasksMatch = path.match(/^\/api\/public\/events\/([^/]+)\/tasks$/);
+  if (!isPublic && !isPublicIcs && !publicTasksMatch && path !== '/api/events' && !path.startsWith('/api/events/')) return null;
   try {
     if (!env?.db) throw new EventError('service_unavailable', 503);
     if (isPublic) {
@@ -718,18 +1007,34 @@ export async function handle(request, env, url, json) {
       const event = await getPublicForIcs(env.db, decodeId(icsMatch[1]));
       return icsResponse(buildCalendar([event], { uidDomain: icalUidDomain(env), calName: event.title }), request);
     }
+    if (publicTasksMatch) {
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+      const result = await listPublicTasks(env.db, { eventId: decodeId(publicTasksMatch[1]) });
+      return json(result, 200, { 'Cache-Control': 'public, max-age=60' });
+    }
 
     const itemMatch = path.match(/^\/api\/events\/([^/]+)$/);
     const actionMatch = path.match(/^\/api\/events\/([^/]+)\/(submit|approve|publish|cancel)$/);
+    const tasksMatch = path.match(/^\/api\/events\/([^/]+)\/tasks$/);
+    const taskCancelMatch = path.match(/^\/api\/events\/([^/]+)\/tasks\/([^/]+)\/cancel$/);
+    const signupsMatch = path.match(/^\/api\/events\/([^/]+)\/tasks\/([^/]+)\/signups$/);
+    const withdrawMatch = path.match(/^\/api\/events\/([^/]+)\/tasks\/([^/]+)\/signups\/([^/]+)\/withdraw$/);
     const isList = path === '/api/events' && request.method === 'GET';
     const isCreate = path === '/api/events' && request.method === 'POST';
     const isGet = itemMatch && request.method === 'GET';
     const isUpdate = itemMatch && request.method === 'PATCH';
     const isAction = actionMatch && request.method === 'POST';
-    if (!isList && !isCreate && !isGet && !isUpdate && !isAction) {
+    const isTasksList = tasksMatch && request.method === 'GET';
+    const isTaskCreate = tasksMatch && request.method === 'POST';
+    const isTaskCancel = taskCancelMatch && request.method === 'POST';
+    const isSignupCreate = signupsMatch && request.method === 'POST';
+    const isSignupWithdraw = withdrawMatch && request.method === 'POST';
+    if (!isList && !isCreate && !isGet && !isUpdate && !isAction
+        && !isTasksList && !isTaskCreate && !isTaskCancel && !isSignupCreate && !isSignupWithdraw) {
       return json({ error: 'not_found' }, 404);
     }
-    if ((isCreate || isUpdate || isAction) && !isSameOrigin(request)) {
+    if ((isCreate || isUpdate || isAction || isTaskCreate || isTaskCancel || isSignupCreate || isSignupWithdraw)
+        && !isSameOrigin(request)) {
       return json({ error: 'invalid_origin' }, 403);
     }
     const actor = await loadActor(request, env);
@@ -737,6 +1042,38 @@ export async function handle(request, env, url, json) {
 
     if (isList) return json(await listInternal(env.db, actor, { schoolYearId: url.searchParams.get('schoolYearId') }), 200, noStore);
     if (isGet) return json(await getInternal(env.db, actor, { eventId: decodeId(itemMatch[1]) }), 200, noStore);
+    if (isTasksList) return json(await listTasks(env.db, actor, { eventId: decodeId(tasksMatch[1]) }), 200, noStore);
+
+    if (isTaskCreate || isSignupCreate) {
+      const idempotencyKey = request.headers.get('Idempotency-Key')?.trim();
+      if (!idempotencyKey || !IDEMPOTENCY_PATTERN.test(idempotencyKey)) throw new EventError('invalid_idempotency_key');
+      const data = await readJson(request);
+      if (isTaskCreate) {
+        const result = await createTask(env.db, actor, {
+          ...pick(data, ['title', 'startsAt', 'endsAt', 'slotsNeeded', 'isPublic']),
+          eventId: decodeId(tasksMatch[1]), idempotencyKey,
+        });
+        return json({ task: result.task, replayed: Boolean(result.replayed) }, result.replayed ? 200 : 201, noStore);
+      }
+      const result = await createSignup(env.db, actor, {
+        ...pick(data, ['guardianId', 'userId']),
+        eventId: decodeId(signupsMatch[1]), taskId: decodeId(signupsMatch[2]), idempotencyKey,
+      });
+      return json({ signup: result.signup, replayed: Boolean(result.replayed) }, result.replayed ? 200 : 201, noStore);
+    }
+    if (isTaskCancel) {
+      const data = await readJson(request);
+      const result = await cancelTask(env.db, actor, {
+        ...pick(data, ['reason']), eventId: decodeId(taskCancelMatch[1]), taskId: decodeId(taskCancelMatch[2]),
+      });
+      return json({ task: result.task, replayed: Boolean(result.replayed) }, 200, noStore);
+    }
+    if (isSignupWithdraw) {
+      const result = await withdrawSignup(env.db, actor, {
+        eventId: decodeId(withdrawMatch[1]), taskId: decodeId(withdrawMatch[2]), signupId: decodeId(withdrawMatch[3]),
+      });
+      return json({ signup: result.signup, replayed: Boolean(result.replayed) }, 200, noStore);
+    }
 
     const data = await readJson(request);
     if (isCreate) {
