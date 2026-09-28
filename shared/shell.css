@@ -30,6 +30,15 @@
 #shell-account :focus-visible { outline: 3px solid #8e2026; outline-offset: 2px; }
 
 @media (max-width: 480px) {
+  /* #182: #shell-nav ma tu overflow-x:auto, żeby lista linków przewijała się
+     w sobie (przewijana nawigacja na telefonie, docs/DESIGN.md), a nie
+     rozpychała całą stronę. To działa tylko, gdy otaczający <nav> (styl
+     zdefiniowany osobno w każdym panelu) też może się skurczyć — domyślne
+     min-width:auto elementu flex blokuje kurczenie poniżej szerokości treści,
+     więc bez tej reguły <nav> (i przez to #shell-header) był szerszy niż
+     ekran w admin/meetings/events/documents/panel (poziomy scroll całej
+     strony przy 8–9 linkach). */
+  nav:has(> #shell-nav) { min-width: 0; }
   #shell-nav { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   #shell-nav li { white-space: nowrap; }
   #shell-account { flex-wrap: wrap; margin-left: 0; }
