@@ -62,6 +62,14 @@ Rodzice widzą protokoły zebrań ogólnych i zarządu udostępnione rodzicom or
 - **Aplikacja nie wymaga, by quorum było osiągnięte**, ani nie ocenia większości głosów — to zasady regulaminu. Wynik quorum jest widoczny przy uchwale.
 - Uchwała przyjęta lub odrzucona jest niezmienna. Pomyłkę w zapisie (np. liczbie głosów) poprawia się nową rewizją z tym samym numerem i powodem (`correctResolution`) — tylko przed zatwierdzeniem protokołu. Później zmiana wymaga nowej uchwały zmieniającej (`amendsResolutionId`).
 
+## Rejestr uchwał roku (#102)
+
+- `GET /api/meetings/resolutions?schoolYearId=&status=&q=&executionStatus=` — bieżące rewizje (`resolution_current`) z numerem, tytułem, wynikiem głosowania, datą i zebraniem, relacjami „zmieniona przez”/„uchylona przez” i bieżącym stanem wykonania. Dostęp: role odczytu (admin, zarząd, Komisja Rewizyjna); przydział klasowy widzi wyłącznie uchwały zebrań tej klasy. Przedstawiciel dostaje `403` — rejestr nie jest dziś dla niego przewidziany (do potwierdzenia w D-08/D-09).
+- **Podpowiedź numeru** (`suggestedNumber` w odpowiedzi `POST .../resolutions`): z ustawienia roku `resolution_number_pattern` (np. `{seq}/{year}`, `{year}` = rok kalendarzowy początku roku szkolnego). Bez ustawionego wzorca (domyślnie, do decyzji D-15) `suggestedNumber` jest `null` i nic nie jest narzucane — sekretarz wpisuje numer ręcznie jak dotąd. Podpowiedź nigdy nie zastępuje kontroli unikalności: dwa równoległe projekty z tą samą podpowiedzią kończą się dla drugiego `409 resolution_number_taken` ze świeżą podpowiedzią w odpowiedzi.
+- **Relacja zmienia/uchyla**: `amendsResolutionId` wymaga `relationKind` (`amends` albo `repeals`) — oba pola albo żadne. Musi wskazywać **bieżącą rewizję** przyjętej uchwały (`resolution_current`); nieaktualna rewizja albo uchwała, która nie jest `adopted`, daje `409 resolution_amends_requires_adopted`. Wskazanie uchwały z innego roku wymaga jawnego `relationCrossYear: true`, inaczej `409 resolution_amends_cross_year_requires_flag`.
+- **Status obowiązywania** (`effectiveStatus` w rejestrze, wyszukiwarce i odpowiedzi `findAdoptedResolution`): `in_force` (obowiązuje), `amended` (zmieniona) albo `repealed` (uchylona) — liczony z relacji przez widok `resolution_effective_status`, bez modyfikacji wiersza samej uchwały. Uchwała uchylona zostaje w rejestrze i w historii; przestaje być traktowana jak obowiązująca w `findAdoptedResolution` i `ledger_resolution_links` (oba zwracają `effectiveStatus`/`effective_status`, ale nadal odnajdują wpis — ocena należy do człowieka sprawdzającego wydatek).
+- **Śledzenie wykonania**: `POST /api/meetings/resolutions/:id/execution` (`status`: `not_started`/`in_progress`/`done`/`will_not_be_done`, opcjonalnie `responsibleUserId` — konto, nie opiekun ani nazwisko w tekście — `dueOn` i `note` do 500 znaków) dopisuje zdarzenie do `resolution_execution_events` (tylko dopisywanie, jak `meeting_quorum_checks`). Bieżący stan to najnowsze zdarzenie; korekta to nowy wpis, nigdy nadpisanie. Dozwolone także **po zatwierdzeniu protokołu** — tabela nie jest objęta blokadą zebrania (`meeting_assert_editable` dotyczy samej uchwały, obecności i protokołu, nie tej tabeli). Uprawnienia jak przy innych mutacjach uchwał (zarządzanie zebraniem).
+
 ## Związek z księgą
 
 Wydatek powyżej 3000 EUR wymaga w `ledger_entries.resolution_reference` tekstowej referencji uchwały. Ta migracja **nie zmienia** tej reguły (D-15). Należy wpisywać dokładnie numer uchwały; widok `ledger_resolution_links` łączy wpis księgi z aktualną rewizją przyjętej uchwały z tego samego roku i pokazuje wpisy bez dopasowania. `findAdoptedResolution` (`GET /api/meetings/resolutions/lookup`) pozwala sprawdzić numer przy tworzeniu wydatku.
@@ -100,6 +108,8 @@ Wszystkie mutacje wymagają nagłówka `Origin` zgodnego z serwerem. Odmowy regu
 | `GET /api/meetings/shared-minutes?schoolYearId=` | `listSharedMinutes` |
 | `GET /api/meetings/public-minutes?schoolYearId=` | `listPublicMinutes` (bez logowania) |
 | `GET /api/meetings/resolutions/lookup?schoolYearId=&number=` | `findAdoptedResolution` |
+| `GET /api/meetings/resolutions?schoolYearId=&status=&q=&executionStatus=` | `listResolutionRegister` (#102) |
+| `POST /api/meetings/resolutions/:resolutionId/execution` | `recordResolutionExecution` (#102; działa też po zatwierdzeniu protokołu) |
 
 ## Dziennik zdarzeń
 
@@ -111,3 +121,4 @@ Każda zmiana zapisuje `audit_events` z aktorem, czasem, typem i identyfikatorem
 - Po zatwierdzeniu protokołu nie można poprawić struktury listy obecności; poprawkę opisuje nowa wersja protokołu.
 - Treść protokołu jest tekstem wpisanym przez człowieka: system nie wykrywa w niej danych osobowych przed publikacją.
 - Retencja protokołów i uchwał wymaga decyzji D-04.
+- **Rejestr uchwał (#102):** format numeru (D-15), czy regulamin w ogóle przewiduje uchylanie i zmianę uchwał (D-21), czy dyrekcja widzi rejestr (D-09) — do czasu tych decyzji `resolution_number_pattern` zostaje pusty (brak podpowiedzi), a relacje zmienia/uchyla działają, ale nikt nie musi ich używać. Osoba odpowiedzialna za wykonanie uchwały to konto (`users`); nie przechowujemy w rejestrze nazwisk ani stanowisk poza kontem systemowym.

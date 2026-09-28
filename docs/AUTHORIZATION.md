@@ -68,6 +68,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
 | `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
 | `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `GET /api/meetings/resolutions?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — tylko uchwały zebrań tej klasy | nie | 403 | #102: rejestr roku; przyjmuje też `status=`, `q=` i `executionStatus=` (filtry, nieujęte w ścieżce macierzy); przedstawiciel: 403; macierz sprawdza tylko granicę roli (pusty rejestr), zakres klasowy ma dedykowany test w `tests/pg-meetings-resolutions.test.js` |
+| `POST /api/meetings/resolutions/:resolutionId/execution` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | #102: dopisywanie zdarzenia wykonania; działa też po zatwierdzeniu protokołu (osobna tabela, nie objęta blokadą zebrania) |
 | `GET /api/import/options` | admin, zarząd — przydział bez klasy | tak | 403 | tylko lata z przydziału; zarząd z przydziałem klasy: 403 |
 | `POST /api/import/preview` | admin, zarząd — przydział bez klasy obejmujący rok importu | tak | 403 | nic nie zapisuje; inny rok: 403 |
 | `POST /api/import/commit` | jak wyżej | tak | 403 | wymaga podglądu (fingerprint, planDigest) i Idempotency-Key |
