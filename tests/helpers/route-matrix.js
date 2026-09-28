@@ -439,7 +439,11 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'payment-references.create', module: 'payment-references', method: 'POST', path: '/api/payment-references',
     targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
-    object: { kind: 'household' },
+    // 'plainHousehold' (nie ogólne 'household'): brak zapisu/klasy — rok W1 w
+    // YEAR_TARGETS nie ma classId, a ogólny fixture wstawiłby trwałą klasę
+    // fixture do współdzielonej bazy macierzy (patrz komentarz przy MAKERS
+    // w tests/pg-authz-matrix.test.js).
+    object: { kind: 'plainHousehold' },
     build: ({ target, obj, key }) => ({
       path: '/api/payment-references', headers: withKey(key),
       body: { schoolYearId: target.schoolYearId, householdId: obj.householdId },

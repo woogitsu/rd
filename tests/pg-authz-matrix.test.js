@@ -396,11 +396,24 @@ async function makeOwnPassword(ctx, { cookie }) {
   return { password, newPassword: syntheticPassword() };
 }
 
+// Gospodarstwo bez zapisu (enrollment)/klasy — w odróżnieniu od `household`
+// (niżej, przez makeHousehold) nie woła fallbackClassId. #83: trasa
+// payment-references.create nie zależy od klasy, a każdy target YEAR_TARGETS
+// obejmuje też cel bez classId (W1) — makeHousehold wstawiłby wtedy trwałą
+// "klasę fixture" do bazy współdzielonej z resztą macierzy, zafałszowując
+// listę klas w innych podtestach (families.classes).
+async function makePlainHousehold(db) {
+  const householdId = nextKey('fx-hh-plain');
+  await db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+  return { householdId };
+}
+
 const MAKERS = {
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
   paymentReference: (ctx, target, stage) => makePaymentReference(ctx.db, target, stage),
+  plainHousehold: (ctx) => makePlainHousehold(ctx.db),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
   photo: async (ctx) => {
     const key = nextKey('fx-photo');
