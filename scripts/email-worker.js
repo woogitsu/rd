@@ -10,8 +10,16 @@
 import { createPgDatabase } from '../src/db.js';
 import { createBrevoTransport, emailConfig } from '../src/email/brevo.js';
 import { runEmailBatch } from '../src/email/worker.js';
+import { resolveWriteMode, WRITE_MODE_READ_ONLY } from '../src/write-mode.js';
 
 const live = process.argv.includes('--send');
+let writeMode;
+try {
+  writeMode = resolveWriteMode(process.env.APP_WRITE_MODE);
+} catch (error) {
+  console.error(`[email-worker] ${error.message}`);
+  process.exitCode = 1;
+}
 const shutdown = new AbortController();
 for (const name of ['SIGTERM', 'SIGINT']) {
   process.once(name, () => {
@@ -28,7 +36,13 @@ function logUnrecorded(run) {
   }
 }
 
-if (!process.env.DATABASE_URL) {
+if (writeMode === undefined) {
+  // Błąd konfiguracji (APP_WRITE_MODE) już zalogowany powyżej; process.exitCode ustawiony.
+} else if (writeMode === WRITE_MODE_READ_ONLY) {
+  // Tryb tylko do odczytu (#143): przebieg kończy się bez dotykania kolejki
+  // (żadnego połączenia z bazą) — zapisy są wstrzymane na czas okna serwisowego.
+  console.log(`[email-worker] ${JSON.stringify({ stoppedReason: 'read_only', sent: 0, planned: 0 })}`);
+} else if (!process.env.DATABASE_URL) {
   console.error('[email-worker] DATABASE_URL is required. Nothing was sent.');
   process.exitCode = 1;
 } else {
