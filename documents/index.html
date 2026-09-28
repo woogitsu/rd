@@ -42,6 +42,23 @@
           <label>Klasa
             <input id="filter-class" name="classId" autocomplete="off" placeholder="opcjonalnie" />
           </label>
+          <label>Kategoria
+            <select id="filter-category" name="category">
+              <option value="">Wszystkie</option>
+              <option value="faktura">Faktura</option>
+              <option value="potwierdzenie_przelewu">Potwierdzenie przelewu</option>
+              <option value="wyciag">Wyciąg bankowy</option>
+              <option value="protokol">Protokół</option>
+              <option value="uchwala">Uchwała</option>
+              <option value="umowa">Umowa</option>
+              <option value="regulamin">Regulamin</option>
+              <option value="sprawozdanie_rewizyjne">Sprawozdanie dla Komisji Rewizyjnej</option>
+              <option value="inne">Inne</option>
+            </select>
+          </label>
+          <label>Szukaj w tytule i opisie
+            <input id="filter-search" name="q" autocomplete="off" placeholder="np. faktura wynajem" />
+          </label>
           <button type="submit">Pokaż</button>
         </form>
       </section>
@@ -57,6 +74,8 @@
             <caption class="sr-only">Dokumenty dostępne dla zalogowanego użytkownika</caption>
             <thead>
               <tr>
+                <th scope="col">Tytuł</th>
+                <th scope="col">Kategoria</th>
                 <th scope="col">Dodano</th>
                 <th scope="col">Rodzaj</th>
                 <th scope="col">Klasa</th>
@@ -80,6 +99,41 @@
         <dl id="details-list" class="details"></dl>
         <p><a id="details-download" class="button-link" href="#" rel="noopener">Pobierz plik</a></p>
         <p class="hint">Plik zostanie zapisany jako załącznik z nazwą techniczną. Pobranie jest zapisywane w dzienniku zdarzeń.</p>
+
+        <h3>Tytuł i kategoria</h3>
+        <p class="hint">Nie wpisuj imion i nazwisk uczniów ani rodziców — tytuł jest widoczny dla każdego z dostępem do dokumentów tego rodzaju. Zapis dodaje nową wersję opisu; poprzednia zostaje w historii.</p>
+        <dl id="description-history" class="details"></dl>
+        <form id="description-form" novalidate>
+          <label>Tytuł
+            <input name="title" id="description-title" autocomplete="off" required maxlength="200" placeholder="np. Faktura — wynajem sali, październik" />
+          </label>
+          <div class="field-row">
+            <label>Kategoria
+              <select name="category" id="description-category" required>
+                <option value="">Wybierz…</option>
+                <option value="faktura">Faktura</option>
+                <option value="potwierdzenie_przelewu">Potwierdzenie przelewu</option>
+                <option value="wyciag">Wyciąg bankowy</option>
+                <option value="protokol">Protokół</option>
+                <option value="uchwala">Uchwała</option>
+                <option value="umowa">Umowa</option>
+                <option value="regulamin">Regulamin</option>
+                <option value="sprawozdanie_rewizyjne">Sprawozdanie dla Komisji Rewizyjnej</option>
+                <option value="inne">Inne</option>
+              </select>
+            </label>
+            <label>Data dokumentu
+              <input type="date" name="documentDate" id="description-date" autocomplete="off" />
+            </label>
+          </div>
+          <label>Opis (opcjonalnie)
+            <textarea name="description" id="description-text" maxlength="1000" rows="2"></textarea>
+          </label>
+          <div class="actions">
+            <button class="primary" id="description-submit" type="submit">Zapisz opis</button>
+          </div>
+          <p class="message" id="description-status" role="status" aria-live="polite"></p>
+        </form>
       </section>
 
       <section class="section" aria-labelledby="upload-title">

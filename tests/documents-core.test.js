@@ -2,12 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CATEGORY_LABELS,
   DEFAULT_MAX_BYTES,
   TYPES,
+  buildDescriptionRequest,
   buildListUrl,
   buildUploadRequest,
+  categoryLabel,
   checkFile,
   contentUrl,
+  descriptionUrl,
   errorMessage,
   formatBytes,
   isRetryable,
@@ -17,9 +21,12 @@ import {
   normalizeDocument,
   sniffType,
   submissionFingerprint,
+  titleLabel,
+  validateDescriptionInput,
   validateUploadMeta,
 } from "../documents/core.js";
 import { ALLOWED_TYPES, DEFAULT_MAX_UPLOAD_BYTES } from "../src/documents.js";
+import { DOCUMENT_CATEGORIES } from "../src/pg/routes/documents.js";
 
 const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -156,4 +163,64 @@ test("normalizacja i metadane nie ufają nieznanym wartościom", () => {
   assert.match(rows.Dodano, /27\.09\.2026/);
   assert.equal(formatBytes(512), "512 B");
   assert.equal(formatBytes(10 * 1024 * 1024), "10 MiB");
+});
+
+// --- Tytuł, kategoria i wyszukiwanie (issue #76) ------------------------------------
+
+test("kategorie panelu odpowiadają liście serwera (DOCUMENT_CATEGORIES)", () => {
+  assert.deepEqual(Object.keys(CATEGORY_LABELS).sort(), [...DOCUMENT_CATEGORIES].sort());
+});
+
+test("validateDescriptionInput: tytuł, kategoria, data i opis", () => {
+  const ok = validateDescriptionInput({ title: "Faktura — wynajem sali", category: "faktura", documentDate: "2026-10-05", description: "  " });
+  assert.deepEqual(ok, { ok: true, value: { title: "Faktura — wynajem sali", category: "faktura", documentDate: "2026-10-05", description: null } });
+  assert.equal(validateDescriptionInput({ title: "ab", category: "faktura" }).ok, false);
+  assert.equal(validateDescriptionInput({ title: "x".repeat(201), category: "faktura" }).ok, false);
+  assert.equal(validateDescriptionInput({ title: "Poprawny tytuł", category: "nieznana" }).ok, false);
+  assert.equal(validateDescriptionInput({ title: "Poprawny tytuł", category: "faktura", documentDate: "2026-13-01" }).ok, false);
+  assert.equal(validateDescriptionInput({ title: "Poprawny tytuł", category: "faktura", description: "y".repeat(1001) }).ok, false);
+  assert.equal(validateDescriptionInput({ title: "Poprawny tytuł", category: "inne" }).ok, true);
+});
+
+test("descriptionUrl i buildDescriptionRequest", () => {
+  assert.equal(descriptionUrl(DOC_ID), `/api/documents/${DOC_ID}/description`);
+  const req = buildDescriptionRequest(DOC_ID, { title: "T", category: "inne" }, "12345678");
+  assert.equal(req.method, "POST");
+  assert.equal(req.url, `/api/documents/${DOC_ID}/description`);
+  assert.deepEqual(req.body, { title: "T", category: "inne" });
+  assert.equal(req.idempotencyKey, "12345678");
+  assert.throws(() => buildDescriptionRequest(DOC_ID, {}, "short"));
+});
+
+test("titleLabel i categoryLabel: dokument bez opisu pokazuje wartości domyślne", () => {
+  assert.equal(titleLabel({ title: null }), "Bez tytułu");
+  assert.equal(titleLabel({ title: "Regulamin" }), "Regulamin");
+  assert.equal(categoryLabel({ category: null }), "—");
+  assert.equal(categoryLabel({ category: "wyciag" }), "Wyciąg bankowy");
+});
+
+test("buildListUrl koduje kategorię i wyszukiwaną frazę", () => {
+  const url = buildListUrl({ schoolYearId: "2026-2027", category: "faktura", q: "wynajem sali" });
+  assert.match(url, /category=faktura/);
+  assert.match(url, /q=wynajem\+sali/);
+  assert.throws(() => buildListUrl({ schoolYearId: "2026-2027", category: "nieznana" }));
+  assert.throws(() => buildListUrl({ schoolYearId: "2026-2027", q: "x".repeat(201) }));
+});
+
+test("normalizeDocument i metadataRows pokazują tytuł, kategorię i datę dokumentu", () => {
+  const doc = normalizeDocument({
+    id: DOC_ID, kind: "financial", schoolYearId: "2026-2027", classId: null, mimeType: "application/pdf",
+    byteSize: 2048, createdBy: "user_1", createdAt: "2026-09-27T10:00:00.000Z",
+    title: "Faktura — wynajem sali", category: "faktura", documentDate: "2026-10-05",
+  });
+  assert.equal(doc.title, "Faktura — wynajem sali");
+  assert.equal(doc.category, "faktura");
+  assert.equal(doc.documentDate, "2026-10-05");
+  const rows = Object.fromEntries(metadataRows(doc));
+  assert.equal(rows["Tytuł"], "Faktura — wynajem sali");
+  assert.equal(rows["Kategoria"], "Faktura");
+  assert.equal(rows["Data dokumentu"], "2026-10-05");
+  const bare = normalizeDocument({ id: DOC_ID, kind: "financial" });
+  assert.equal(bare.title, null);
+  assert.equal(Object.fromEntries(metadataRows(bare))["Tytuł"], "Bez tytułu");
 });

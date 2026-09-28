@@ -305,3 +305,23 @@ Wycofanie na pustej bazie: usunięcie trzech tabel, funkcji
 bazie z kontami — tylko po kopii zapasowej (wszyscy stracą hasła). Okres
 przechowywania skrótów haseł wyłączonych kont i tokenów zależy od D-04.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
+
+`0065_document_descriptions.sql` (issue #76) dodaje tytuł, kategorię, datę
+dokumentu i opcjonalny opis dla wpisów `documents` (samych `documents` nie
+rusza — pozostaje niezmienne, 0006). Nowa tabela `document_descriptions` jest
+dopisywana: zmiana tytułu/kategorii to zawsze NOWY wiersz (kolejny
+`revision_no`), nigdy edycja poprzedniego; trigger blokuje `UPDATE`/`DELETE`,
+a drugi trigger pilnuje, że `revision_no` jest kolejnym numerem po
+najnowszym istniejącym dla danego dokumentu. Kategoria to lista zamknięta
+(`faktura`, `potwierdzenie_przelewu`, `wyciag`, `protokol`, `uchwala`,
+`umowa`, `regulamin`, `sprawozdanie_rewizyjne`, `inne`) — założenie
+techniczne do zatwierdzenia przez zarząd i skarbnika, niezależne od `kind`
+dokumentu. Skutki dla danych: nowa, pusta tabela; istniejące dokumenty nie
+dostają wpisu opisu i panel pokazuje dla nich „Bez tytułu” (brak wpisu, nie
+błąd). **Poza zakresem tej migracji:** tabela nie ma jeszcze triggera
+zamrożenia roku szkolnego (`a0_year_freeze`/0036) — dodanie opisu do
+dokumentu z zamkniętego roku jest dziś możliwe; rozszerzenie
+`year_freeze_via_parent` na tę tabelę to osobny, świadomie odłożony PR (żeby
+wyjść od najnowszej wersji tej funkcji na `main` i nie powtórzyć incydentu z
+#279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch funkcji. Opis:
+[`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
