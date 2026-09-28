@@ -173,6 +173,12 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  // Centra kosztów w księdze (#117).
+  invalid_allocation: "Niepoprawny podział wpisu na wydarzenia lub klasy.",
+  invalid_cost_center: "Wskazane wydarzenie lub klasa nie należy do roku tego wpisu.",
+  allocation_exceeds_net: "Suma przypisań przekracza kwotę wpisu po korektach. Najpierw zmień przypisanie.",
+  allocation_version_conflict: "Przypisanie tego wpisu zostało w międzyczasie zmienione. Odśwież widok.",
+  allocation_reason_required: "Zmiana przypisania wymaga podania powodu.",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",

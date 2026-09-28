@@ -302,6 +302,8 @@ function mapDatabaseError(error) {
     throw new RequestError('payment_linked_entry_not_replaceable', 409);
   }
   if (message.includes('ledger_replacement_mismatch')) throw new RequestError('replacement_target_mismatch', 409);
+  // #117: korekta poniżej sumy przypisania do centrów kosztów — najpierw nowa wersja przypisania.
+  if (message.includes('ledger_allocation_exceeds_net')) throw new RequestError('allocation_exceeds_net', 409);
   if (error?.code === '23505' && error?.constraint === 'ledger_entries_replaces_idx') {
     throw new RequestError('ledger_entry_already_replaced', 409);
   }

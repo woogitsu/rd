@@ -28,6 +28,7 @@ import * as importRoutes from './routes/import.js';
 import * as documentRoutes from './routes/documents.js';
 import * as ledgerRoutes from './routes/ledger.js';
 import * as ledgerCashRoutes from './routes/ledger-cash.js';
+import * as ledgerCostCenterRoutes from './routes/ledger-cost-centers.js';
 import * as emailRoutes from './routes/email.js';
 import * as newsRoutes from './routes/news.js';
 import * as adminRoutes from './routes/admin.js';
@@ -61,6 +62,7 @@ export const ROUTES = [
   mfaRoutes,
   loginRoutes, // #3: logowanie hasłem, zaproszenia, zmiana i reset hasła
   representativeRoutes, // #118: pulpit przedstawiciela
+  ledgerCostCenterRoutes, // #117: centra kosztów (przypisanie wpisu do wydarzenia/klasy)
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 
