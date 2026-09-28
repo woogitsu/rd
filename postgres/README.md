@@ -419,6 +419,12 @@ Wszystkie istniejące wiersze dostają `ended_on = NULL` (bez zmian).
 Zakończenie relacji opiekun–dziecko i członkostwa w gospodarstwie zostaje
 poza zakresem (osobna migracja/PR).
 
+`0056_email_preview_sends.sql` (#104) dodaje wysyłkę testową kampanii na
+adresy techniczne Rady: rozszerza `CHECK` dziennika limitu dostawcy
+(`email_send_ledger`) o `source = 'preview'` (kampania bez wiersza kolejki
+`email_outbox`), tak by wysyłka testowa liczyła się do dziennego limitu
+konta. Bez nowej tabeli ani zmiany istniejących wierszy.
+
 `0058_backup_runs.sql` (#90) dodaje tabelę append-only `backup_runs` —
 dziennik przebiegów kopii zapasowej PostgreSQL i próbnego odtworzenia (jak
 `email_worker_runs` w `0007`), obejmujący też `storage_backup` (kopia
@@ -449,6 +455,14 @@ czynnika MFA zamiast nadpisywać niezmienny `user_mfa_factors` (trigger
 logicznie unieważniać. Wyłącznie nowa kolumna; bez zmiany istniejących
 wierszy (domyślnie `NULL`).
 
+`0071_news_photo_alt_text_required.sql` (#124) dodaje
+`news_photos.decorative` (domyślnie `false`) i ograniczenie
+`news_photo_alt_text_required` (`alt_text IS NOT NULL OR decorative`),
+dodane z `NOT VALID` — Postgres nie sprawdza wstecznie istniejących
+wierszy. Zdjęcie wgrane wcześniej bez `alt_text` i bez `decorative` nie da
+się zweryfikować (`verifyPhoto()`), dopóki nie powstanie jego poprawka
+(nowy rekord); metadane zdjęć pozostają niezmienne.
+
 `0093_resolution_meeting_campaign_revision.sql` (#215) dodaje
 `revision_no` (`DEFAULT 1`) do `resolutions`, `meetings` i
 `email_campaigns` oraz trigger `bump_revision_no()`, który zwiększa numer
@@ -456,3 +470,14 @@ wersji przy każdym `UPDATE` wiersza — niezależnie od tego, czy trasa API
 sprawdza wersję (optimistic concurrency), tak jak już działa dla
 `events`/`news`. Żadne istniejące wiersze nie zmieniają treści, tylko
 dostają numer wersji startowej.
+
+`0095_close_legacy_d1_and_truncate_guard.sql` (SR-05/SR-06, #101) zamyka
+dwie luki bez rozdziału ról bazy: (1) `event_before_insert()` (redefinicja
+z najnowszej wersji, `0008`) pozwala wstawić wydarzenie od razu jako
+`published` już tylko w trybie odtworzenia migawki
+(`SET LOCAL rd.restore = 'on'`) — zwykły `INSERT` z tym statusem poza tym
+trybem kończy się `legacy_publish_restore_only`; (2) nowa funkcja
+`deny_truncate()` i trigger `BEFORE TRUNCATE` na każdej tabeli chronionej
+dziś triggerem niezmienności UPDATE/DELETE. Żaden istniejący wiersz nie
+jest zmieniany ani usuwany; zmienia się wyłącznie zachowanie przyszłych
+operacji.
