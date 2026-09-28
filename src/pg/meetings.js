@@ -50,7 +50,25 @@ const DATABASE_CONFLICTS = new Set([
   'minutes_must_start_as_draft', 'meetings_cannot_be_deleted',
   // Rok zamknięty (0017_year_close.sql, triggery a0_year_freeze).
   'school_year_closed',
+  // #135: zasada czterech oczu w triggerze (bezpośredni UPDATE z pominięciem
+  // serwisu, który tę samą regułę zwraca jako 403 — zob. approveMinutes).
+  'minutes_four_eyes_required',
 ]);
+
+// #135 (SR-10): operacje, które uzasadniają wydatek powyżej 3000 EUR albo
+// nieodwracalnie ustalają dokument zebrania, wymagają sesji z potwierdzonym
+// MFA (403 mfa_required, zgodnie z obsługą w panelu, zob. #99). Jedna lista,
+// udokumentowana w docs/AUTHORIZATION.md; szkic uchwały i porządek obrad
+// nadal działają bez MFA.
+export const MFA_REQUIRED_ACTIONS = Object.freeze([
+  'resolution.decide', // createResolution/updateResolution -> adopted|rejected, correctResolution
+  'meeting.minutes.approve', // approveMinutes
+  'meeting.minutes.publish', // setMinutesVisibility -> parents|public
+]);
+
+function requireMfaVerified(actor) {
+  if (!actor?.mfaVerified) throw new MeetingError('mfa_required', 403);
+}
 
 export class MeetingError extends Error {
   constructor(code, status = 400) {
@@ -715,6 +733,10 @@ export async function approveMinutes(db, actor, input = {}) {
   await meetingForManage(db, actor, minutes.meeting_id);
   const approvalNote = text(input.approvalNote, 3, 500, { optional: true });
   if (minutes.status === 'approved') return { minutes: minutesFromRow(minutes), replayed: true };
+  requireMfaVerified(actor);
+  // #135: zasada czterech oczu — zatwierdzający musi być inną osobą niż autor
+  // tej wersji protokołu. Ta sama reguła w triggerze (0042) chroni bezpośredni UPDATE.
+  if (minutes.created_by === actor.userId) throw new MeetingError('minutes_four_eyes_required', 403);
   const changed = await mutate(db, async tx => {
     const { rows } = await tx.query(
       `UPDATE meeting_minutes SET status = 'approved', approved_by = $2, approved_at = now(), approval_note = $3
@@ -737,6 +759,10 @@ export async function setMinutesVisibility(db, actor, input = {}) {
     visibility: input.visibility,
     reason: text(input.reason, 3, 500, { optional: true }),
   };
+  // #135: udostępnienie rodzicom lub publicznie wymaga MFA (treść protokołu
+  // nie jest automatycznie sprawdzana pod kątem danych osobowych); widoczność
+  // wyłącznie wewnętrzna nadal działa bez MFA.
+  if (data.visibility === 'parents' || data.visibility === 'public') requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'meeting.minutes.visibility', data, async tx => {
     const id = randomUUID();
     await tx.query(
@@ -828,6 +854,8 @@ export async function createResolution(db, actor, input = {}) {
   };
   if (status === 'adopted' && !data.number) throw new MeetingError('resolution_number_required');
   requireFinalVotes(status, data, data.quorumCheckId);
+  // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; projekt (draft) nie.
+  if (status === 'adopted' || status === 'rejected') requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'resolution.create', data, async tx => {
     const id = randomUUID();
     await tx.query(
@@ -863,6 +891,8 @@ export async function updateResolution(db, actor, input = {}) {
   if (!RESOLUTION_STATUSES.has(next.status)) throw new MeetingError('invalid_request');
   if (next.status === 'adopted' && !next.number) throw new MeetingError('resolution_number_required');
   requireFinalVotes(next.status, next, next.quorumCheckId);
+  // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; edycja projektu nie.
+  if (next.status === 'adopted' || next.status === 'rejected') requireMfaVerified(actor);
   await mutate(db, async tx => {
     const { rows } = await tx.query(
       `UPDATE resolutions SET number = $2, title = $3, body = $4, status = $5, votes_for = $6,
@@ -902,6 +932,8 @@ export async function correctResolution(db, actor, input = {}) {
   };
   if (status === 'adopted' && !previous.number) throw new MeetingError('resolution_number_required');
   requireFinalVotes(status, data, data.quorumCheckId);
+  // #135: korekta zawsze zapisuje rozstrzygnięcie (adopted/rejected) — zawsze wymaga MFA.
+  requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'resolution.correct', data, async tx => {
     const id = randomUUID();
     await tx.query(

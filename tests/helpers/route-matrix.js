@@ -101,10 +101,10 @@ const json = (body) => body;
 const withKey = (key) => ({ 'Idempotency-Key': key });
 const everyY1 = () => Y1_ALL;
 
-function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft', body, create = false }) {
+function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft', body, create = false, mfa = false }) {
   return {
     id, module: 'meetings', method, path: template, targets: CLASS_TARGETS,
-    allow: MEETING_MANAGE, mfa: false, ok, deny: 403, fixture: 'fresh',
+    allow: MEETING_MANAGE, mfa, ok, deny: 403, fixture: 'fresh',
     object: { kind: 'meeting', stage },
     build: ({ obj, key, target }) => ({
       path: `/api/meetings/${obj.meetingId}${suffix(obj)}`,
@@ -509,8 +509,10 @@ export const ROUTE_MATRIX = Object.freeze([
   meetingRoute('meetings.minutes', 'POST', '/api/meetings/:meetingId/minutes', () => '/minutes', {
     ok: 201, create: true, stage: 'held', body: (target) => ({ body: `Protokół roboczy ${marker(target.key)}` }),
   }),
+  // #135: zawsze wymaga MFA (rozstrzyga o przyjęciu dokumentu zebrania).
   meetingRoute('meetings.minutesApproval', 'POST', '/api/meetings/:meetingId/minutes/:minutesId/approval',
-    (obj) => `/minutes/${obj.minutesId}/approval`, { stage: 'draftMinutes', body: () => ({}) }),
+    (obj) => `/minutes/${obj.minutesId}/approval`, { stage: 'draftMinutes', body: () => ({}), mfa: true }),
+  // #135: fixture udostępnia `internal` (bez MFA); `parents`/`public` wymagają MFA (nietestowane tu wprost).
   meetingRoute('meetings.minutesVisibility', 'POST', '/api/meetings/:meetingId/minutes/:minutesId/visibility',
     (obj) => `/minutes/${obj.minutesId}/visibility`, {
       ok: 201, create: true, stage: 'approvedMinutes', body: () => ({ visibility: 'internal' }),
@@ -523,9 +525,11 @@ export const ROUTE_MATRIX = Object.freeze([
     (obj) => `/resolutions/${obj.resolutionId}`, {
       stage: 'draftResolution', body: (target) => ({ title: `Poprawiony tytuł ${marker(target.key)}` }),
     }),
+  // #135: korekta zawsze zapisuje rozstrzygnięcie (adopted/rejected) — zawsze wymaga MFA.
   meetingRoute('meetings.resolutionCorrection', 'POST', '/api/meetings/:meetingId/resolutions/:resolutionId/corrections',
     (obj) => `/resolutions/${obj.resolutionId}/corrections`, {
       ok: 201, create: true, stage: 'finalResolution', body: () => ({ reason: 'Pomyłka w zapisie głosów', votesAgainst: 1 }),
+      mfa: true,
     }),
   // ---------- import (#36) ----------
   // admin i zarząd z MFA, wyłącznie przydział bez klasy obejmujący rok importu.
