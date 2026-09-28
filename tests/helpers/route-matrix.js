@@ -770,7 +770,13 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.invitationRevoke', 'POST', '/api/admin/invitations/:invitationId/revoke', {
     object: 'invitation', build: ({ obj }) => ({ path: `/api/admin/invitations/${obj.invitationId}/revoke`, body: {} }),
   }),
+  adminRoute('admin.invitationReissue', 'POST', '/api/admin/invitations/:invitationId/reissue', {
+    ok: 201, object: 'invitation', build: ({ obj }) => ({ path: `/api/admin/invitations/${obj.invitationId}/reissue`, body: {} }),
+  }),
   adminRoute('admin.schoolYears', 'GET', '/api/admin/school-years', {}),
+  adminRoute('admin.classCoverage', 'GET', '/api/admin/class-coverage?schoolYearId=:year', {
+    build: () => ({ path: `/api/admin/class-coverage?schoolYearId=${YEAR_1}` }),
+  }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
 
   // ---------- reconciliation (#7, #15) ----------

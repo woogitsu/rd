@@ -132,7 +132,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail |
 | `POST /api/admin/invitations/:invitationId/revoke` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108) |
 | `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |
+| `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | |
 | `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
 | `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
