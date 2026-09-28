@@ -132,6 +132,15 @@ export function canOfferVoluntaryMfaEnrollment(state) {
   return Boolean(state && state.authenticated !== false && !state.mfaEnrolled);
 }
 
+// #176: ekran startowy pokazuje listę paneli tylko gdy konto ma co najmniej jedną
+// rolę z aktywnymi trasami (`hasActiveRole` z GET /api/access, obliczone przez
+// serwer z ROLE_STATUS — src/pg/auth.js — jedyne źródło prawdy). Brak odpowiedzi
+// (błąd sieci, `mfaRequired`) traktujemy jak "nieznane" i pokazujemy panele
+// jak dotychczas — komunikat nie może fałszywie stwierdzić braku dostępu.
+export function shouldShowNoAccessNotice(access) {
+  return Boolean(access) && access.hasActiveRole === false;
+}
+
 // Treść widoku konfiguracji: inna, gdy rola jej wymaga (nie można pominąć),
 // niż gdy konto włącza ją z własnej inicjatywy (można wrócić do paneli).
 export function enrollIntroText(forced) {

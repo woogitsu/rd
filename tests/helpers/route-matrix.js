@@ -559,6 +559,30 @@ export const ROUTE_MATRIX = Object.freeze([
       ok: 201, create: true, stage: 'finalResolution', body: () => ({ reason: 'Pomyłka w zapisie głosów', votesAgainst: 1 }),
       mfa: true,
     }),
+  // #102: rejestr uchwał roku. Bez fixture (brak innych tras tworzy uchwały
+  // domyślnie), więc odpowiedź 2xx jest pustą listą — trasa sprawdza tu
+  // wyłącznie granicę roli/MFA; zakres klasowy i treść rejestru ma własny,
+  // dedykowany test w tests/pg-meetings-resolutions.test.js.
+  {
+    id: 'meetings.resolutionRegister', module: 'meetings', method: 'GET',
+    path: '/api/meetings/resolutions?schoolYearId=:year', targets: YEAR_TARGETS,
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, boardA: SCHOOL_Y1 },
+    mfa: false, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/meetings/resolutions?schoolYearId=${target.schoolYearId}` }),
+  },
+  // #102: śledzenie wykonania uchwały — nie zagnieżdżone pod /:meetingId, więc
+  // budowane ręcznie (nie przez meetingRoute), ale z tym samym fixture uchwały
+  // przyjętej (stage 'finalResolution') co korekta wyżej.
+  {
+    id: 'meetings.resolutionExecution', module: 'meetings', method: 'POST',
+    path: '/api/meetings/resolutions/:resolutionId/execution', targets: CLASS_TARGETS,
+    allow: MEETING_MANAGE, mfa: false, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'meeting', stage: 'finalResolution' },
+    build: ({ obj, key }) => ({
+      path: `/api/meetings/resolutions/${obj.resolutionId}/execution`,
+      body: json({ status: 'not_started' }), headers: withKey(key),
+    }),
+  },
   // ---------- import (#36) ----------
   // admin i zarząd z MFA, wyłącznie przydział bez klasy obejmujący rok importu.
   {
