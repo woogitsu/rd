@@ -11,7 +11,11 @@ export async function handle(request, env, url, json) {
   if (url.pathname === '/api/session' && request.method === 'GET') {
     const session = await loadSession(request, env);
     if (!session) return json({ error: 'unauthenticated' }, 401);
-    return json(session);
+    // #150: `mfaVerifiedAt` (dodane do loadSession na potrzeby kroku w górę,
+    // src/pg/authorization.js) zostaje wewnętrzne — kontrakt GET /api/session
+    // ma być identyczny jak w starym Workerze (patrz test).
+    const { mfaVerifiedAt, ...publicSession } = session;
+    return json(publicSession);
   }
   if (url.pathname === '/api/access' && request.method === 'GET') {
     const context = await loadAuthorizationContext(request, env);

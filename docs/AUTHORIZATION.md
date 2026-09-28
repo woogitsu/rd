@@ -154,7 +154,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/confirm` | jak wyżej; inna osoba niż autor | tak | 403 | SR-01 |
 | `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md). Rola i rok pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
-| `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195) |
+| `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak, krok w górę: ≤15 min (#150) | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195); MFA starsze niż 15 min → `403 mfa_stale` |
 | `GET /api/exports/class-roster?classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | tak | 403 | Rola i klasa pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `GET /api/classes` | admin, zarząd, skarbnik — klasy roku przydziału; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | Komisja Rewizyjna, dyrekcja: 403 |
 | `GET /api/classes/:classId/students` | jak wyżej | nie | 403 / 404 | rola bez dostępu do rodzin: 403; klasa poza zakresem: 404 |

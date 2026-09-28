@@ -51,7 +51,13 @@ Trasy (wszystkie POST, wymagają aktywnej sesji i zgodnego nagłówka `Origin`; 
 
 ### SR-10: MFA na trasach zarządzania (#150)
 
-Zarządzanie zebraniami, protokołami i uchwałami (`src/pg/meetings.js`, `MANAGE_ROLES` = admin, board) oraz zatwierdzenie i publikacja wydarzeń i aktualności (`src/pg/events.js`, `src/pg/news.js`) wymagają teraz **jawnie potwierdzonego MFA na poziomie trasy** (`403 mfa_required`), niezależnie od bramki routera opisanej niżej — uchwały uzasadniają wydatki > 3000 EUR (D-15). Sprawdzenie jest zawsze PO roli/zakresie (SR-07): brak roli albo zakresu daje ten sam ogólny `forbidden`, `mfa_required` tylko gdy dostęp jest, brakuje tylko MFA. Macierz uprawnień (`tests/helpers/route-matrix.js`) to wymusza.
+Zarządzanie zebraniami, protokołami i uchwałami (`src/pg/meetings.js`, `MANAGE_ROLES` = admin, board, oraz #171: przedstawiciel-gospodarz własnej klasy) oraz zatwierdzenie i publikacja wydarzeń i aktualności (`src/pg/events.js`, `src/pg/news.js`) wymagają teraz **jawnie potwierdzonego MFA na poziomie trasy** (`403 mfa_required`), niezależnie od bramki routera opisanej niżej — uchwały uzasadniają wydatki > 3000 EUR (D-15). Sprawdzenie jest zawsze PO roli/zakresie (SR-07): brak roli albo zakresu daje ten sam ogólny `forbidden`, `mfa_required` tylko gdy dostęp jest, brakuje tylko MFA. Macierz uprawnień (`tests/helpers/route-matrix.js`) to wymusza.
+
+### Krok w górę (step-up): świeże MFA dla operacji krytycznych (#150)
+
+`requireAccess(request, env, { roles, requireMfa: { maxAgeSeconds }, … }, json)` przyjmuje obok `requireMfa: true` (MFA kiedykolwiek w tej sesji) także obiekt `{ maxAgeSeconds }` — MFA musi być potwierdzone od NIEDAWNA (`freshMfaForbiddenCode`, `src/pg/authorization.js`), nie tylko kiedyś w tej sesji. Sprawdzenie jest zawsze PO roli/zakresie (SR-07). Odpowiedź `403 mfa_stale` (czynnik zapisany, ale potwierdzenie za stare) albo `403 mfa_required` (sesja bez potwierdzonego MFA w ogóle) — klient prosi o kod i ponawia to samo żądanie (spójnie z #99), bez żadnego zapisu przy odmowie. Domyślny próg: `MFA_STEP_UP_MAX_AGE_SECONDS` = 15 minut (założenie do D-10).
+
+Wdrożone dziś: **eksport roczny** (`POST /api/exports`, `src/pg/routes/exports.js`) — jedyna operacja z testem step-up wprost wskazanym w issue #150. Mechanizm jest ogólny (`requireAccess`/`freshMfaForbiddenCode`); pozostałe operacje wymienione w issue jako kandydaci (zamknięcie roku, zatwierdzenie kampanii e-mail, nadanie roli, reset hasła/MFA, przyjęcie uchwały) **NIE mają jeszcze** wymogu świeżości — dziś mają tylko `requireMfa: true` (kiedykolwiek w sesji), co jest zgodne z resztą kryteriów SR-10, ale nie z krokiem w górę. Rozszerzenie na te trasy zostaje do osobnego PR (patrz opis w PR #150).
 
 Ochrona:
 

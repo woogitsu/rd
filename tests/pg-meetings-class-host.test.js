@@ -17,7 +17,10 @@ const ON = { MEETINGS_CLASS_HOST: 'representative' };
 const OFF = {};
 
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
-const board = { userId: 'board', grants: [grant('board')], mfaVerified: false };
+// #150 (SR-10): zarządzanie zebraniem wymaga teraz jawnie potwierdzonego MFA,
+// także na trasach OrClassHost (#171) — board i classBoardAdmin naprawdę
+// zarządzają w tych testach, więc dostają mfaVerified: true.
+const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
 // Rodzeństwo: przedstawiciel prowadzi 1A i 2B (dwa przydziały klasowe).
 const rep1a = { userId: 'rep-1a', grants: [grant('representative', { classId: 'class-a' })], mfaVerified: true };
 const rep1a2b = {
@@ -27,7 +30,7 @@ const rep1a2b = {
 const rep1b = { userId: 'rep-1b', grants: [grant('representative', { classId: 'class-b' })], mfaVerified: true };
 const rep2 = { userId: 'rep2-1a', grants: [grant('representative', { classId: 'class-a' })], mfaVerified: true };
 const lastYearRep = { userId: 'rep-old', grants: [grant('representative', { classId: 'class-a', schoolYearId: 'other' })], mfaVerified: true };
-const classBoardAdmin = { userId: 'class-board', grants: [grant('board', { classId: 'class-a' })] };
+const classBoardAdmin = { userId: 'class-board', grants: [grant('board', { classId: 'class-a' })], mfaVerified: true };
 
 let keySeq = 0;
 const key = () => `test-key-${++keySeq}`;

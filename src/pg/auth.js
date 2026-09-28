@@ -86,6 +86,11 @@ export async function loadSession(request, env) {
     sessionId: row.session_id,
     expiresAt: isoTimestamp(row.expires_at),
     mfaVerified: Boolean(row.mfa_verified_at),
+    // #150 (SR-10, step-up): moment potwierdzenia MFA — używany przez
+    // freshMfaForbiddenCode (src/pg/authorization.js), by operacje krytyczne
+    // (np. eksport roczny) mogły wymagać MFA potwierdzonego NIEDAWNO, nie
+    // tylko kiedyś w tej sesji.
+    mfaVerifiedAt: isoTimestamp(row.mfa_verified_at),
     user: { id: row.user_id, email: row.email, displayName: row.display_name },
   };
 }

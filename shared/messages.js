@@ -25,6 +25,9 @@ export const MESSAGES = Object.freeze({
   mfa_unavailable: "Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem.",
   mfa_key_missing: "Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
+  // #150 (SR-10, krok w górę): dla operacji krytycznych (np. eksport roczny)
+  // MFA musi być potwierdzone od niedawna, nie tylko kiedyś w tej sesji.
+  mfa_stale: "Ta operacja wymaga świeżego potwierdzenia kodem — podaj kod jeszcze raz.",
   forbidden: "Brak uprawnień do tej operacji w Twoim zakresie.",
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji.",
   invalid_credentials: "Nieprawidłowy adres e-mail lub hasło.",
