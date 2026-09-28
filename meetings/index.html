@@ -41,7 +41,7 @@
         </form>
       </section>
 
-      <section class="block" aria-labelledby="list-title">
+      <section class="block" id="list-section" aria-labelledby="list-title">
         <div class="section-heading">
           <h2 id="list-title">Zebrania</h2>
           <span class="loading" id="list-loading" hidden>Wczytywanie…</span>
@@ -52,6 +52,24 @@
             <caption class="sr-only">Zebrania w wybranym roku szkolnym</caption>
             <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Tytuł</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
             <tbody id="list-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- #167: przedstawiciel bez roli zarządzającej/audytu widzi wyłącznie
+           protokoły udostępnione (parents/public), bez obecności, quorum,
+           projektów uchwał ani protokołów wewnętrznych. -->
+      <section class="block" id="shared-section" aria-labelledby="shared-title" hidden>
+        <div class="section-heading">
+          <h2 id="shared-title">Protokoły udostępnione</h2>
+          <span class="loading" id="shared-loading" hidden>Wczytywanie…</span>
+        </div>
+        <p class="message" id="shared-message" role="status">Wybierz rok szkolny, aby pobrać udostępnione protokoły.</p>
+        <div class="table-wrap" id="shared-wrap" hidden>
+          <table>
+            <caption class="sr-only">Protokoły udostępnione w wybranym roku szkolnym</caption>
+            <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Klasa</th><th scope="col">Tytuł</th><th scope="col">Wersja</th><th scope="col">Zatwierdzono</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="shared-body"></tbody>
           </table>
         </div>
       </section>

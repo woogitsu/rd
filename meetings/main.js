@@ -1,4 +1,4 @@
-import { canManageMeetings } from "./core.js";
+import { canManageMeetings, meetingsViewMode } from "./core.js";
 import {
   CAPACITY_LABELS,
   KIND_LABELS,
@@ -14,6 +14,7 @@ import {
   buildAttendancePayload,
   buildMeetingsUrl,
   buildQuorumRule,
+  buildSharedMinutesUrl,
   canApproveMinutes,
   currentResolutions,
   describeQuorumCheck,
@@ -241,11 +242,78 @@ async function loadList() {
   }
 }
 
+// ---------- widok przedstawiciela: protokoły udostępnione (#167) ----------
+// Bez roli z MEETING_READ_ROLES nie wołamy GET /api/meetings (kończy się 403),
+// tylko od razu GET /api/meetings/shared-minutes — te same dane co strona
+// publiczna/rodzice, plus zebrania klasowe własnej klasy.
+const sharedBody = byId("shared-body");
+const sharedWrap = byId("shared-wrap");
+const sharedMessage = byId("shared-message");
+const sharedLoading = byId("shared-loading");
+state.sharedMinutes = [];
+
+function renderSharedList() {
+  sharedBody.replaceChildren(...state.sharedMinutes.map((item) => el("tr", {},
+    el("td", { className: "nowrap" }, item.scheduledAt ? formatBrussels(item.scheduledAt) : "—"),
+    el("td", {}, KIND_LABELS[item.kind] ?? item.kind),
+    el("td", {}, item.classId ?? "—"),
+    el("td", {}, item.title),
+    el("td", { className: "num" }, String(item.version)),
+    el("td", { className: "nowrap" }, item.approvedAt ? formatBrussels(item.approvedAt) : "—"),
+    el("td", { className: "row-actions" }, el("button", {
+      type: "button", dataset: { shared: item.id }, "aria-label": `Pokaż protokół: ${item.title}`,
+    }, "Pokaż")),
+  )));
+  sharedWrap.hidden = state.sharedMinutes.length === 0;
+  setMessage(sharedMessage, state.sharedMinutes.length
+    ? `Udostępnione protokoły w roku ${state.schoolYearId}: ${state.sharedMinutes.length}.`
+    : `Brak udostępnionych protokołów w roku ${state.schoolYearId}.`);
+}
+
+async function loadSharedList() {
+  sharedLoading.hidden = false;
+  try {
+    const url = buildSharedMinutesUrl(yearInput.value);
+    state.schoolYearId = yearInput.value.trim();
+    const result = await api(url);
+    state.sharedMinutes = Array.isArray(result.minutes) ? result.minutes : [];
+    renderSharedList();
+    rememberLocation();
+  } catch (error) {
+    state.sharedMinutes = [];
+    sharedWrap.hidden = true;
+    setMessage(sharedMessage, error.message, "error");
+  } finally {
+    sharedLoading.hidden = true;
+  }
+}
+
+sharedBody.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-shared]");
+  if (!button) return;
+  const item = state.sharedMinutes.find((entry) => entry.id === button.dataset.shared);
+  if (!item) return;
+  byId("minutes-view-title").textContent = `${item.title} — wersja ${item.version}`;
+  byId("minutes-view-body").textContent = item.body;
+  state.viewingMinutes = item;
+  minutesView.dialog.showModal();
+});
+
+// state.viewMode: "full" (READ_ROLES — bez zmian), "shared" (przedstawiciel —
+// tylko protokoły udostępnione), "none" (brak przydziału, np. sesja przed MFA).
+function applyViewMode(mode) {
+  state.viewMode = mode;
+  byId("list-section").hidden = mode !== "full";
+  byId("shared-section").hidden = mode !== "shared";
+  byId("open-meeting").hidden = mode !== "full" || !state.canManage;
+}
+
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!filtersForm.reportValidity()) return;
   closeDetail();
-  loadList();
+  if (state.viewMode === "shared") loadSharedList();
+  else loadList();
 });
 
 listBody.addEventListener("click", (event) => {
@@ -725,18 +793,37 @@ handleSubmit(resolutionForm, async (data, form) => {
 
 // ---------- start ----------
 
-const initial = new URLSearchParams(location.search);
-if (isValidId(initial.get("rok") ?? "")) {
-  yearInput.value = initial.get("rok");
-  loadList().then(() => {
-    const meetingId = initial.get("zebranie");
-    if (meetingId && isValidId(meetingId)) openDetail(meetingId);
-  });
-}
-
-// #225: „Nowe zebranie” tylko dla ról zarządzających (sesja przed MFA: puste grants).
+// #167: tryb widoku zależy od GET /api/access, sprawdzany RAZ przed pierwszym
+// żądaniem listy — przedstawiciel bez roli READ_ROLES nigdy nie woła
+// GET /api/meetings (kończyłoby się to 403, zob. src/pg/meetings.js READ_ROLES).
 byId("open-meeting").hidden = true;
+byId("list-section").hidden = true;
+byId("shared-section").hidden = true;
+
+const initial = new URLSearchParams(location.search);
+const hasInitialYear = isValidId(initial.get("rok") ?? "");
+if (hasInitialYear) yearInput.value = initial.get("rok");
+
 api("/api/access").then(
-  (access) => { byId("open-meeting").hidden = !canManageMeetings(access?.grants); },
-  () => { byId("open-meeting").hidden = false; },
+  (access) => {
+    const grants = access?.grants;
+    state.canManage = canManageMeetings(grants);
+    applyViewMode(meetingsViewMode(grants));
+    if (!hasInitialYear) return;
+    if (state.viewMode === "shared") {
+      loadSharedList();
+    } else if (state.viewMode === "full") {
+      loadList().then(() => {
+        const meetingId = initial.get("zebranie");
+        if (meetingId && isValidId(meetingId)) openDetail(meetingId);
+      });
+    }
+  },
+  () => {
+    // Sesja przed MFA lub błąd sieci: pokaż pełny widok jak dotychczas —
+    // serwer i tak odrzuci każde żądanie zapisu/odczytu bez uprawnień.
+    state.canManage = false;
+    applyViewMode("full");
+    if (hasInitialYear) loadList();
+  },
 );
