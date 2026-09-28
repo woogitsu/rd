@@ -61,7 +61,7 @@ jobs:
       # Ostrzeżenie (nie oblewa buildu): pełny raport low/moderate/high jako
       # artefakt do przeglądu (lista wyjątków, patrz docs/RAILWAY_OPERATIONS.md).
       - run: npm audit --json > npm-audit-report.json || true
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-audit-report
           path: npm-audit-report.json
@@ -87,7 +87,7 @@ jobs:
       # #188/#223: zbudowane strony bez inline <style>, style=, skryptów inline (CSP z src/node-app.js).
       - run: REQUIRE_DIST=1 node --test tests/csp-static.test.js
       - run: test -f railway.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
           path: dist/
