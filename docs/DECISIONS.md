@@ -129,7 +129,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 ### D-09. Uprawnienia dyrekcji i Komisji Rewizyjnej
 
 - Pytanie: czy i w jakim zakresie dyrekcja oraz Komisja Rewizyjna mają dostęp do wpłat, księgi, dokumentów i eksportu?
-- Dlaczego: dostęp ról `principal` i `audit` do wpłat i księgi jest wyłączony do czasu decyzji (PAYMENTS.md, LEDGER.md). Dotyczy #4, #6, #7, #35.
+- Dlaczego: dostęp ról `principal` i `audit` do wpłat i księgi jest wyłączony do czasu decyzji (PAYMENTS.md, LEDGER.md). Dotyczy #4, #6, #7, #35, #137 (ścieżka kontroli KR: uwagi, odpowiedzi skarbnika, protokół — zablokowana tą samą decyzją).
 - Warianty w dokumentacji: PRODUCT.md — Komisja Rewizyjna: odczyt wpłat, odczyt i eksport księgi, minimum danych rodzin; dyrekcja: domyślnie brak dostępu do wpłat, raport zbiorczy księgi.
 - Status: otwarta
 - Data decyzji:
