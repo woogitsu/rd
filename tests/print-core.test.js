@@ -96,6 +96,13 @@ test("słowa sugerujące dług w konfiguracji są odrzucane, nazwiska i ulice ni
   assert.equal(findForbiddenWording("brak długu"), "długu");
   assert.equal(findForbiddenWording("ul. Długa 5"), null);
   assert.equal(findForbiddenWording("Jan Długosz"), null);
+  // #120: szkoła jest w Belgii — te same słowa po francusku i niderlandzku.
+  assert.equal(findForbiddenWording("Merci de régler votre dette avant la fin du mois."), "dette");
+  assert.equal(findForbiddenWording("Vous êtes en mise en demeure de payer."), "mise en demeure");
+  assert.equal(findForbiddenWording("Gelieve uw achterstallige bijdrage te betalen."), "achterstallige");
+  assert.equal(findForbiddenWording("Lijst van wanbetalers."), "wanbetalers");
+  assert.equal(findForbiddenWording("Cotisation volontaire pour l'année scolaire."), null);
+  assert.equal(findForbiddenWording("Vrijwillige bijdrage voor het schooljaar."), null);
   const { errors } = normalizeConfig({ ...CONFIG, contact: "w sprawie zaległości: rada@example.test" });
   assert.equal(errors.length, 1);
   assert.throws(() => renderCardsHtml(households(), ["H-1"], { ...CONFIG, contact: "dług" }));
@@ -186,4 +193,52 @@ test("#173: kolumna centów odrzuca 1e3, 0x10 i 25.0 (bez separatorów)", () => 
   ] }), "dane.json");
   assert.deepEqual(ok.errors, []);
   assert.equal(ok.rows[0].recordedNetCents, 2500);
+});
+
+// --- #92: dane do wpłaty i kod QR EPC wyłącznie z zatwierdzonej konfiguracji ---
+
+const PAYMENT_INSTRUCTIONS = { iban: "BE68539007547034", bic: "GKCCBEBB", payeeName: "Rada Rodziców Szkoły" };
+
+test("brak zatwierdzonej konfiguracji: kartka bez kodu QR, dane do wpłaty tylko z formularza (szkic)", () => {
+  const list = households();
+  const withoutServer = renderCardsHtml(list, ["H-1"], CONFIG);
+  assert.doesNotMatch(withoutServer.html, /card-qr/);
+
+  const card = buildCard(list.find((h) => h.householdId === "H-1"), normalizeConfig(CONFIG).config, null);
+  assert.equal(card.paymentApproved, false);
+  assert.equal(card.epcSvg, null);
+});
+
+test("zatwierdzona konfiguracja zastępuje ręcznie wpisany rachunek i generuje kod QR", () => {
+  const list = households();
+  const config = { ...CONFIG, bankAccount: "BE00 0000 0000 0000", bankRecipient: "Ktoś inny", referenceTemplate: "RR {rok} {rodzina}" };
+  const result = renderCardsHtml(list, ["H-1"], config, PAYMENT_INSTRUCTIONS);
+  assert.match(result.html, /card-qr-svg/);
+  assert.match(result.html, /BE68539007547034/);
+  assert.match(result.html, /Rada Rodziców Szkoły/);
+  assert.doesNotMatch(result.html, /BE00 0000 0000 0000/);
+  assert.doesNotMatch(result.html, /Ktoś inny/);
+});
+
+test("kod QR: rodzeństwo w jednej rodzinie ma jedną kartkę i jeden kod QR z tą samą konfiguracją", () => {
+  const list = households();
+  const household = list.find((h) => h.householdId === "H-1");
+  assert.ok(household.students.length >= 2, "test zakłada rodzeństwo w H-1");
+  const result = renderCardsHtml(list, ["H-1"], CONFIG, PAYMENT_INSTRUCTIONS);
+  assert.equal((result.html.match(/card-qr-svg/g) ?? []).length, 1);
+});
+
+test("zbyt długi tytuł przelewu nie przerywa druku — kartka zostaje bez kodu QR", () => {
+  const list = households();
+  const config = { ...CONFIG, referenceTemplate: "R".repeat(200) };
+  const result = renderCardsHtml(list, ["H-1"], config, PAYMENT_INSTRUCTIONS);
+  assert.doesNotMatch(result.html, /card-qr-svg/);
+  assert.match(result.html, /R{100,}/); // tekst tytułu zostaje czytelny mimo braku QR
+});
+
+test("podpis przy kodzie QR nie sugeruje zadłużenia", () => {
+  const list = households();
+  const result = renderCardsHtml(list, ["H-1"], CONFIG, PAYMENT_INSTRUCTIONS);
+  const caption = result.html.match(/<p class="card-qr-caption">([^<]*)<\/p>/)[1];
+  assert.equal(findForbiddenWording(caption), null);
 });

@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNodeHandler } from '../src/node-app.js';
+import { baselineSecurityHeaders, createNodeHandler } from '../src/node-app.js';
 import { bodyLimitFor } from '../src/documents.js';
 
 async function listen(handler) {
@@ -79,7 +79,13 @@ test('Node server serves built applications and delegates API requests safely', 
     const api = await fetch(`${baseUrl}/api/example`);
     assert.equal(api.status, 200);
     assert.equal(api.headers.get('cache-control'), 'no-store');
+    assert.equal(api.headers.get('x-robots-tag'), 'noindex, nofollow');
     assert.deepEqual(await api.json(), { ok: true });
+
+    // Panel (nie /site/) — noindex, żeby przeglądarki i wyszukiwarki nie
+    // indeksowały ekranów wymagających logowania (#116).
+    assert.equal(html.headers.get('x-robots-tag'), 'noindex, nofollow');
+    assert.equal(asset.headers.get('x-robots-tag'), 'noindex, nofollow');
 
     const beforeLargeRequest = delegated;
     const tooLarge = await fetch(`${baseUrl}/api/example`, {
@@ -89,6 +95,46 @@ test('Node server serves built applications and delegates API requests safely', 
     assert.equal(tooLarge.status, 413);
     assert.deepEqual(await tooLarge.json(), { error: 'request_too_large' });
     assert.equal(delegated, beforeLargeRequest);
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Node server keeps /site/ and /api/public/ indexable and serves robots.txt (#116)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
+  await mkdir(join(root, 'site'), { recursive: true });
+  await writeFile(join(root, 'site', 'index.html'), '<!doctype html><title>Strona RD</title>');
+
+  const fetchHandler = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/api/public/news') {
+      return Response.json({ items: [] }, { headers: { 'Cache-Control': 'public, max-age=60' } });
+    }
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  };
+  const handler = createNodeHandler({ distRoot: root, fetchHandler });
+  const { server, baseUrl } = await listen(handler);
+
+  try {
+    const site = await fetch(`${baseUrl}/site/`);
+    assert.equal(site.status, 200);
+    assert.equal(site.headers.get('x-robots-tag'), null);
+
+    const publicApi = await fetch(`${baseUrl}/api/public/news`);
+    assert.equal(publicApi.status, 200);
+    assert.equal(publicApi.headers.get('x-robots-tag'), null);
+
+    const robots = await fetch(`${baseUrl}/robots.txt`);
+    assert.equal(robots.status, 200);
+    assert.equal(robots.headers.get('content-type'), 'text/plain; charset=utf-8');
+    const body = await robots.text();
+    assert.match(body, /Disallow: \/panel\//);
+    assert.match(body, /Disallow: \/documents\//);
+    assert.match(body, /Disallow: \/api\//);
+    assert.match(body, /Allow: \/api\/public\//);
+    assert.match(body, /Allow: \/site\//);
+    assert.doesNotMatch(body, /Disallow: \/site\//);
   } finally {
     await close(server);
     await rm(root, { recursive: true, force: true });
@@ -114,6 +160,43 @@ test('Node server raises the body limit only for the document upload route', asy
     const tooLarge = await fetch(`${baseUrl}/api/documents`, { method: 'POST', body: 'x'.repeat(2 * 1024 * 1024 + 1) });
     assert.equal(tooLarge.status, 413);
     assert.equal(received.length, 1);
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// #185: POST /api/documents nie może buforować ciała w pamięci przed
+// sprawdzeniem sesji. Trasa (fetchHandler symuluje documents.js) odrzuca bez
+// sesji BEZ dotykania request.body — serwer nie może przeczytać strumienia
+// za nią, więc licznik odebranych bajtów musi zostać na zerze.
+test('Node server: POST /api/documents nie czyta ciała, gdy trasa odrzuca przed jego odczytem (np. brak sesji)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
+  let bodyTouched = false;
+  const fetchHandler = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/api/documents') {
+      // Symuluje documents.js: sprawdza sesję i odrzuca, zanim cokolwiek
+      // dotknie request.body.
+      return Response.json({ error: 'unauthenticated' }, { status: 401 });
+    }
+    bodyTouched = true;
+    return Response.json({ ok: true });
+  };
+  const bodyLimit = bodyLimitFor(10 * 1024 * 1024);
+  const { server, baseUrl } = await listen(createNodeHandler({ distRoot: root, fetchHandler, bodyLimit }));
+  try {
+    // Ciało większe niż limit dla zwykłych tras (1 MiB) — gdyby serwer
+    // buforował je przed wywołaniem trasy (stary kod), zadziałałoby to
+    // tak samo jak przy prawdziwym uploadzie; tu liczy się, że w ogóle nie
+    // jest czytane.
+    const body = 'x'.repeat(5 * 1024 * 1024);
+    const res = await fetch(`${baseUrl}/api/documents`, { method: 'POST', body });
+    assert.equal(res.status, 401);
+    assert.equal(bodyTouched, false, 'fetchHandler dla innej trasy nie powinien się wykonać');
+    // Połączenie zamknięte świadomie (patrz writeFetchResponse) — nieprzeczytane
+    // bajty nie zawisają na współdzielonym gnieździe keep-alive.
+    assert.equal(res.headers.get('connection'), 'close');
   } finally {
     await close(server);
     await rm(root, { recursive: true, force: true });
@@ -147,6 +230,63 @@ test('Node server: / przekierowuje na /login/, adres klienta nadpisuje nagłówe
   } finally {
     await close(direct.server);
     await close(proxied.server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// #114 (SR-12): HSTS tylko gdy PUBLIC_BASE_URL zaczyna się od https://ale niezależnie
+// od tego nosniff/X-Frame-Options/Referrer-Policy trafiają do KAŻDEJ odpowiedzi (statyczna,
+// API, przekierowanie 308, /health/ready, błąd 413/500) — nie tylko do plików statycznych.
+test('baselineSecurityHeaders: HSTS tylko przy https, reszta zawsze', () => {
+  const withHttps = baselineSecurityHeaders('https://rd.example.invalid');
+  assert.equal(withHttps['Strict-Transport-Security'], 'max-age=31536000; includeSubDomains');
+  assert.equal(withHttps['X-Content-Type-Options'], 'nosniff');
+  assert.equal(withHttps['X-Frame-Options'], 'DENY');
+  assert.equal(withHttps['Referrer-Policy'], 'no-referrer');
+
+  for (const value of ['http://rd.example.invalid', '', undefined, 'not-a-url']) {
+    const headers = baselineSecurityHeaders(value);
+    assert.equal(headers['Strict-Transport-Security'], undefined, String(value));
+    assert.equal(headers['X-Content-Type-Options'], 'nosniff');
+  }
+});
+
+test('każda odpowiedź serwera Node ma nosniff, X-Frame-Options i (przy https) HSTS', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-headers-'));
+  await mkdir(join(root, 'panel'), { recursive: true });
+  await writeFile(join(root, 'panel', 'index.html'), '<!doctype html><title>Panel RD</title>');
+  const fetchHandler = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/health/ready') throw new Error('nieużywane — /health/ready jest obsługiwane wcześniej');
+    if (url.pathname === '/api/boom') throw new Error('błąd testowy');
+    return Response.json({ ok: true });
+  };
+  const readiness = async () => ({ ready: true, body: { status: 'ready' } });
+  const httpHandler = createNodeHandler({ distRoot: root, fetchHandler, readiness, publicBaseUrl: 'http://rd.test' });
+  const httpsHandler = createNodeHandler({ distRoot: root, fetchHandler, readiness, publicBaseUrl: 'https://rd.example.invalid' });
+  const http = await listen(httpHandler);
+  const https = await listen(httpsHandler);
+  try {
+    for (const { baseUrl, expectHsts } of [{ baseUrl: http.baseUrl, expectHsts: false }, { baseUrl: https.baseUrl, expectHsts: true }]) {
+      const cases = [
+        await fetch(`${baseUrl}/panel`, { redirect: 'manual' }), // 308
+        await fetch(`${baseUrl}/panel/`), // 200 statyczna
+        await fetch(`${baseUrl}/health/ready`), // 200 gotowość
+        await fetch(`${baseUrl}/api/example`), // 200 API
+        await fetch(`${baseUrl}/api/example`, { method: 'POST', body: 'x'.repeat(1024 * 1024 + 1) }), // 413
+        await fetch(`${baseUrl}/api/boom`), // 500
+      ];
+      for (const response of cases) {
+        assert.equal(response.headers.get('x-content-type-options'), 'nosniff', `${response.status} ${baseUrl}`);
+        assert.equal(response.headers.get('x-frame-options'), 'DENY', `${response.status} ${baseUrl}`);
+        assert.equal(response.headers.get('referrer-policy'), 'no-referrer', `${response.status} ${baseUrl}`);
+        if (expectHsts) assert.match(response.headers.get('strict-transport-security') ?? '', /max-age=31536000/, `${response.status} ${baseUrl}`);
+        else assert.equal(response.headers.get('strict-transport-security'), null, `${response.status} ${baseUrl} nie powinien mieć HSTS bez https`);
+      }
+    }
+  } finally {
+    await close(http.server);
+    await close(https.server);
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPgDatabase, poolConfig } from '../src/db.js';
 import { createPgHandler, handlePgRequest, ROUTES } from '../src/pg/app.js';
-import { acceptInvitation, createInvitation, createSession, loadSession, revokeInvitation, rotateSession, revokeUserSessions } from '../src/pg/auth.js';
+import {
+  acceptInvitation, createInvitation, createSession, listOwnSessions, loadSession, revokeInvitation,
+  revokeOwnSession, rotateSession, revokeUserSessions, SESSION_TTL_SECONDS,
+} from '../src/pg/auth.js';
 import { requireAccess, revokeRoleGrant } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
 import { resolveRuntime } from '../src/server.js';
@@ -70,10 +73,13 @@ test('valid session returns the same JSON contract as the Worker', async () => w
   const response = await handlePgRequest(request('/api/session', { cookie }), env);
   assert.equal(response.status, 200);
   const data = await response.json();
-  assert.deepEqual(Object.keys(data).sort(), ['expiresAt', 'mfaVerified', 'sessionId', 'user']);
+  assert.deepEqual(Object.keys(data).sort(), ['expiresAt', 'mfaVerified', 'sessionId', 'user', 'writeMode']);
   assert.equal(data.mfaVerified, true);
   assert.deepEqual(data.user, { id: 'u1', email: 'u1@example.invalid', displayName: 'Test u1' });
   assert.match(data.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+  // #143: writeMode informuje panele o trybie tylko do odczytu; poza tym testem
+  // (bez APP_WRITE_MODE=read_only) system działa normalnie.
+  assert.equal(data.writeMode, 'normal');
 }));
 
 test('missing, malformed, unknown, expired, revoked and disabled sessions are rejected', async () => withDb(async (db, env) => {
@@ -108,7 +114,20 @@ test('access lists only own active grants; expired and revoked grants are ignore
   const response = await handlePgRequest(request('/api/access', { cookie }), env);
   assert.deepEqual(await response.json(), {
     grants: [{ role: 'representative', classId: 'c-1a', schoolYearId: 'y-2026', expiresAt: null }],
+    hasActiveRole: true,
   });
+}));
+
+// #176: hasActiveRole odzwierciedla ROLE_STATUS (src/pg/auth.js), jedno źródło prawdy
+// dla ekranu startowego login/ — konto z samym `principal` nie dostaje listy paneli.
+test('access: hasActiveRole is false for principal alone, true once any other role is granted', async () => withDb(async (db, env) => {
+  const principalOnly = await seedUserSession(db, { userId: 'dir1', roles: [{ role: 'principal' }] });
+  const none = await seedUserSession(db, { userId: 'dir2', roles: [] });
+  const withAudit = await seedUserSession(db, { userId: 'dir3', roles: [{ role: 'principal' }, { role: 'audit' }] });
+  const access = async (cookie) => (await handlePgRequest(request('/api/access', { cookie }), env)).json();
+  assert.equal((await access(principalOnly)).hasActiveRole, false);
+  assert.equal((await access(none)).hasActiveRole, false);
+  assert.equal((await access(withAudit)).hasActiveRole, true, 'audit ma częściowy dostęp (partial), nie pending_decision');
 }));
 
 test('representative cannot reach another class or school year; two representatives of one class both can', async () => withDb(async (db, env) => {
@@ -336,4 +355,113 @@ test('server selects PostgreSQL API only when DATABASE_URL is set and never migr
   assert.equal(pgRuntime.fetchHandler, handlePgRequest);
   assert.equal(config.connectionString, 'postgres://synthetic.invalid/rd');
   assert.equal('DATABASE_URL' in pgRuntime.env, false);
+});
+
+// --- #150: limit bezczynności, absolutny limit rotacji, własne sesje --------
+
+test('#150: sesja bez aktywności dłużej niż limit jest wycofana (idle), z audytem, bez zacierania historii', async () => withDb(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-idle' });
+  const session = await loadSession(request('/api/session', { cookie }), env);
+  assert.ok(session, 'sesja świeżo utworzona jest ważna');
+  // Symulacja bezczynności: cofamy last_seen_at poza domyślny limit (30 min).
+  // `created_at` jest niezmienne po zapisie (migracja 0082, session_guard_trigger)
+  // i tak nie decyduje o bezczynności, gdy last_seen_at jest już ustawione.
+  await db.query(
+    "UPDATE sessions SET last_seen_at = now() - interval '31 minutes' WHERE id = $1",
+    [session.sessionId],
+  );
+  assert.equal(await loadSession(request('/api/session', { cookie }), env), null, 'sesja bezczynna dłużej niż limit przestaje działać');
+  const row = (await db.query('SELECT revoked_at, revoked_reason FROM sessions WHERE id = $1', [session.sessionId])).rows[0];
+  assert.ok(row.revoked_at, 'wygaśnięcie z bezczynności jest jawnym wycofaniem, nie cichym zniknięciem');
+  assert.equal(row.revoked_reason, 'idle');
+  const audit = (await db.query("SELECT * FROM audit_events WHERE entity_id = $1 AND action = 'session.revoked'", [session.sessionId])).rows;
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].metadata_json.reason, 'idle');
+
+  // Limit skonfigurowany na 0 wyłącza sprawdzenie (tylko do testów/lokalnie).
+  const cookie2 = await seedUserSession(db, { userId: 'u-idle2' });
+  const session2 = await loadSession(request('/api/session', { cookie: cookie2 }), env);
+  await db.query("UPDATE sessions SET last_seen_at = now() - interval '10 hours' WHERE id = $1", [session2.sessionId]);
+  assert.ok(await loadSession(request('/api/session', { cookie: cookie2 }), { ...env, SESSION_IDLE_TIMEOUT_SECONDS: '0' }));
+}));
+
+test('#150: last_seen_at jest aktualizowany najwyżej raz na okno throttlingu, nie przy każdym żądaniu', async () => withDb(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-throttle' });
+  const first = await loadSession(request('/api/session', { cookie }), env);
+  const afterFirst = (await db.query('SELECT last_seen_at FROM sessions WHERE id = $1', [first.sessionId])).rows[0].last_seen_at;
+  assert.ok(afterFirst, 'pierwsze żądanie ustawia last_seen_at (był NULL po utworzeniu)');
+  // Drugie żądanie tuż po pierwszym: w oknie throttlingu (5 min) — bez nowego zapisu.
+  await loadSession(request('/api/session', { cookie }), env);
+  const afterSecond = (await db.query('SELECT last_seen_at FROM sessions WHERE id = $1', [first.sessionId])).rows[0].last_seen_at;
+  assert.deepEqual(afterSecond, afterFirst, 'drugie żądanie w oknie throttlingu nie zmienia last_seen_at');
+}));
+
+test('#150: rotacja (MFA/zmiana hasła) nie przedłuża absolutnego limitu 24h od pierwszego logowania', async () => withDb(async (db, env) => {
+  // `created_at` sesji jest niezmienne po zapisie (migracja 0082,
+  // session_guard_trigger), więc symulacja "zalogowała się 23h50m temu"
+  // musi ustawić created_at PRZY tworzeniu sesji, nie przez UPDATE po fakcie.
+  const almostExpired = new Date(Date.now() - (SESSION_TTL_SECONDS - 10 * 60) * 1000);
+  const cookie = await seedUserSession(db, { userId: 'u-rotchain', createdAt: almostExpired, expiresAt: new Date(almostExpired.getTime() + SESSION_TTL_SECONDS * 1000) });
+  // last_seen_at (mutowalne — w przeciwieństwie do created_at) musi być świeże,
+  // inaczej test padnie na limicie bezczynności zamiast na absolutnym limicie
+  // rotacji, który tu badamy: w praktyce sesja miałaby aktywność w tym czasie.
+  await db.query("UPDATE sessions SET last_seen_at = now() WHERE user_id = 'u-rotchain'");
+  const first = await loadSession(request('/api/session', { cookie }), env);
+
+  const rotated = await rotateSession(env, first, { mfaVerified: true });
+  const rotatedExpires = new Date(rotated.expiresAt).getTime();
+  // Bez ochrony absolutnego limitu rotacja dałaby ~24h OD TERAZ; z ochroną — najwyżej
+  // ~10 minut od teraz (do granicy 24h od PIERWSZEGO logowania), z tolerancją na czas testu.
+  const maxExpected = Date.now() + 15 * 60 * 1000;
+  assert.ok(rotatedExpires <= maxExpected, `expiresAt nie może przekroczyć absolutnego limitu pierwszej sesji: ${rotated.expiresAt}`);
+
+  // Druga rotacja w łańcuchu (np. kolejne potwierdzenie MFA) nadal respektuje TEN SAM
+  // pierwotny limit — nie "24h od drugiej rotacji".
+  const secondSession = await loadSession(request('/api/session', { cookie: `rd_session=${rotated.secret}` }), env);
+  const rotatedAgain = await rotateSession(env, secondSession, { mfaVerified: true });
+  const rotatedAgainExpires = new Date(rotatedAgain.expiresAt).getTime();
+  assert.ok(rotatedAgainExpires <= maxExpected, `łańcuch rotacji nie przedłuża absolutnego limitu: ${rotatedAgain.expiresAt}`);
+}));
+
+test('#150: własne sesje — lista tylko swoich, cofnięcie cudzej sesji nic nie zmienia', async () => withDb(async (db, env) => {
+  const cookieA1 = await seedUserSession(db, { userId: 'u-sess-a' });
+  const cookieA2 = await seedUserSession(db, { userId: 'u-sess-a' });
+  const cookieB = await seedUserSession(db, { userId: 'u-sess-b' });
+  const sessA1 = await loadSession(request('/api/session', { cookie: cookieA1 }), env);
+  const sessA2 = await loadSession(request('/api/session', { cookie: cookieA2 }), env);
+  const sessB = await loadSession(request('/api/session', { cookie: cookieB }), env);
+
+  const listed = await listOwnSessions(env, sessA1);
+  assert.equal(listed.length, 2, 'tylko własne sesje konta u-sess-a');
+  assert.ok(listed.every((row) => !('ip' in row) && !('userAgent' in row)), 'bez IP i User-Agent (minimalizacja)');
+  assert.deepEqual(listed.find((row) => row.id === sessA1.sessionId)?.current, true);
+  assert.deepEqual(listed.find((row) => row.id === sessA2.sessionId)?.current, false);
+
+  // Cudza sesja: `false` (jak brak obiektu, SR-07) — nic się nie zmienia w bazie.
+  assert.equal(await revokeOwnSession(env, sessA1, sessB.sessionId), false);
+  assert.equal((await db.query('SELECT revoked_at FROM sessions WHERE id = $1', [sessB.sessionId])).rows[0].revoked_at, null);
+
+  // Własna, ale INNA sesja (inne urządzenie): cofnięta, bieżąca (sessA1) zostaje.
+  assert.equal(await revokeOwnSession(env, sessA1, sessA2.sessionId), true);
+  assert.ok((await db.query('SELECT revoked_at FROM sessions WHERE id = $1', [sessA2.sessionId])).rows[0].revoked_at);
+  assert.equal(await loadSession(request('/api/session', { cookie: cookieA1 }), env) !== null, true, 'bieżąca sesja zostaje aktywna');
+
+  // Podwójne kliknięcie „Wyloguj to urządzenie”: drugie wywołanie na już wycofanej sesji -> false.
+  assert.equal(await revokeOwnSession(env, sessA1, sessA2.sessionId), false);
+}));
+
+test('bodyLimit: POST /api/news-photos/:id/file has its own higher limit, independent of DOCUMENT_MAX_BYTES', async () => {
+  const fakeDb = { query: async () => ({ rows: [] }), transaction: async () => {}, close: async () => {} };
+  const { bodyLimit } = resolveRuntime(
+    { DATABASE_URL: 'postgres://synthetic.invalid/rd', DOCUMENT_MAX_BYTES: String(2 * 1024 * 1024) },
+    { createDatabase: () => fakeDb },
+  );
+  const photoUrl = new URL('https://rd.example.invalid/api/news-photos/abc/file');
+  const docUrl = new URL('https://rd.example.invalid/api/documents');
+  const otherUrl = new URL('https://rd.example.invalid/api/news-photos');
+  assert.equal(bodyLimit(photoUrl, 'POST'), 10 * 1024 * 1024);
+  assert.equal(bodyLimit(docUrl, 'POST'), 2 * 1024 * 1024);
+  assert.notEqual(bodyLimit(otherUrl, 'POST'), 10 * 1024 * 1024);
+  // GET nie zmienia limitu (żadna z tras nie przesyła ciała).
+  assert.notEqual(bodyLimit(photoUrl, 'GET'), 10 * 1024 * 1024);
 });

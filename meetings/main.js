@@ -1,4 +1,4 @@
-import { canManageMeetings } from "./core.js";
+import { canManageMeetings, meetingsViewMode } from "./core.js";
 import {
   CAPACITY_LABELS,
   KIND_LABELS,
@@ -14,6 +14,7 @@ import {
   buildAttendancePayload,
   buildMeetingsUrl,
   buildQuorumRule,
+  buildSharedMinutesUrl,
   canApproveMinutes,
   currentResolutions,
   describeQuorumCheck,
@@ -35,8 +36,12 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
+import { initialSchoolYearId } from "../shared/school-year.js";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const byId = (id) => document.getElementById(id);
 const state = { schoolYearId: "", meetings: [], detail: null, keys: new Map() };
@@ -241,11 +246,78 @@ async function loadList() {
   }
 }
 
+// ---------- widok przedstawiciela: protokoły udostępnione (#167) ----------
+// Bez roli z MEETING_READ_ROLES nie wołamy GET /api/meetings (kończy się 403),
+// tylko od razu GET /api/meetings/shared-minutes — te same dane co strona
+// publiczna/rodzice, plus zebrania klasowe własnej klasy.
+const sharedBody = byId("shared-body");
+const sharedWrap = byId("shared-wrap");
+const sharedMessage = byId("shared-message");
+const sharedLoading = byId("shared-loading");
+state.sharedMinutes = [];
+
+function renderSharedList() {
+  sharedBody.replaceChildren(...state.sharedMinutes.map((item) => el("tr", {},
+    el("td", { className: "nowrap" }, item.scheduledAt ? formatBrussels(item.scheduledAt) : "—"),
+    el("td", {}, KIND_LABELS[item.kind] ?? item.kind),
+    el("td", {}, item.classId ?? "—"),
+    el("td", {}, item.title),
+    el("td", { className: "num" }, String(item.version)),
+    el("td", { className: "nowrap" }, item.approvedAt ? formatBrussels(item.approvedAt) : "—"),
+    el("td", { className: "row-actions" }, el("button", {
+      type: "button", dataset: { shared: item.id }, "aria-label": `Pokaż protokół: ${item.title}`,
+    }, "Pokaż")),
+  )));
+  sharedWrap.hidden = state.sharedMinutes.length === 0;
+  setMessage(sharedMessage, state.sharedMinutes.length
+    ? `Udostępnione protokoły w roku ${state.schoolYearId}: ${state.sharedMinutes.length}.`
+    : `Brak udostępnionych protokołów w roku ${state.schoolYearId}.`);
+}
+
+async function loadSharedList() {
+  sharedLoading.hidden = false;
+  try {
+    const url = buildSharedMinutesUrl(yearInput.value);
+    state.schoolYearId = yearInput.value.trim();
+    const result = await api(url);
+    state.sharedMinutes = Array.isArray(result.minutes) ? result.minutes : [];
+    renderSharedList();
+    rememberLocation();
+  } catch (error) {
+    state.sharedMinutes = [];
+    sharedWrap.hidden = true;
+    setMessage(sharedMessage, error.message, "error");
+  } finally {
+    sharedLoading.hidden = true;
+  }
+}
+
+sharedBody.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-shared]");
+  if (!button) return;
+  const item = state.sharedMinutes.find((entry) => entry.id === button.dataset.shared);
+  if (!item) return;
+  byId("minutes-view-title").textContent = `${item.title} — wersja ${item.version}`;
+  byId("minutes-view-body").textContent = item.body;
+  state.viewingMinutes = item;
+  minutesView.dialog.showModal();
+});
+
+// state.viewMode: "full" (READ_ROLES — bez zmian), "shared" (przedstawiciel —
+// tylko protokoły udostępnione), "none" (brak przydziału, np. sesja przed MFA).
+function applyViewMode(mode) {
+  state.viewMode = mode;
+  byId("list-section").hidden = mode !== "full";
+  byId("shared-section").hidden = mode !== "shared";
+  byId("open-meeting").hidden = mode !== "full" || !state.canManage;
+}
+
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!filtersForm.reportValidity()) return;
   closeDetail();
-  loadList();
+  if (state.viewMode === "shared") loadSharedList();
+  else loadList();
 });
 
 listBody.addEventListener("click", (event) => {
@@ -546,6 +618,51 @@ const minutesView = setupDialog("minutes-view-dialog");
 const approveDialog = setupDialog("approve-dialog");
 const visibilityDialog = setupDialog("visibility-dialog", "visibility");
 
+// „Drukuj / zapisz jako PDF” w oknie podglądu protokołu (#151, #167). Wydruk
+// okna <dialog> jest zawodny w przeglądarkach (drukuje się strona pod spodem
+// albo tylko widoczna część), więc protokół kopiujemy do zwykłej sekcji
+// #print-minutes i dopiero wtedy drukujemy; okno dialogowe samo znika z
+// wydruku (shared/print.css: dialog { display: none }).
+function fillPrintMinutes(item) {
+  const { meeting, attendees = [], quorumChecks = [] } = state.detail;
+  const draft = item.status !== "approved";
+  mountPrintMeta(byId("print-minutes-meta"), {
+    view: `Protokół zebrania — wersja ${item.version}`,
+    schoolYear: meeting.schoolYearId,
+    printedBy,
+    draft,
+  });
+  byId("print-minutes-title").textContent = meeting.title;
+  byId("print-minutes-info").textContent = [
+    KIND_LABELS[meeting.kind] ?? meeting.kind,
+    meeting.classId ? `klasa ${meeting.classId}` : null,
+    formatBrussels(meeting.scheduledAt),
+    meeting.location,
+  ].filter(Boolean).join(" · ");
+  byId("print-attendance-body").replaceChildren(...(attendees.length ? attendees.map((attendee) => el("tr", {},
+    el("td", {}, CAPACITY_LABELS[attendee.capacity] ?? attendee.capacity),
+    el("td", {}, attendee.present ? "obecna" : "nieobecna"),
+    el("td", {}, attendee.votingEligible ? "tak" : "nie"),
+    el("td", { className: "signature" }, ""),
+  )) : [el("tr", {}, el("td", { colspan: "4", className: "muted" }, "Brak wpisów obecności."))]));
+  const latestCheck = quorumChecks.at(-1);
+  byId("print-quorum-result").textContent = latestCheck
+    ? `Quorum: ${describeQuorumCheck(latestCheck).headline} (${formatBrussels(latestCheck.determinedAt)}).`
+    : "Quorum nie zostało ustalone.";
+  byId("print-minutes-body").textContent = item.body;
+}
+
+let afterPrintCleanup = null;
+byId("print-minutes-button").addEventListener("click", () => {
+  const item = state.viewingMinutes;
+  if (!item || !state.detail) return;
+  fillPrintMinutes(item);
+  document.body.dataset.printTarget = "minutes";
+  afterPrintCleanup = () => { delete document.body.dataset.printTarget; };
+  window.addEventListener("afterprint", afterPrintCleanup, { once: true });
+  window.print();
+});
+
 byId("minutes-body").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-minutes]");
   if (!button) return;
@@ -555,6 +672,7 @@ byId("minutes-body").addEventListener("click", (event) => {
   if (button.dataset.action === "view") {
     byId("minutes-view-title").textContent = `Protokół — wersja ${item.version}`;
     byId("minutes-view-body").textContent = item.body;
+    state.viewingMinutes = item;
     minutesView.dialog.showModal();
   } else if (button.dataset.action === "approve") {
     approveDialog.form.reset();
@@ -725,18 +843,44 @@ handleSubmit(resolutionForm, async (data, form) => {
 
 // ---------- start ----------
 
-const initial = new URLSearchParams(location.search);
-if (isValidId(initial.get("rok") ?? "")) {
-  yearInput.value = initial.get("rok");
-  loadList().then(() => {
-    const meetingId = initial.get("zebranie");
-    if (meetingId && isValidId(meetingId)) openDetail(meetingId);
-  });
-}
-
-// #225: „Nowe zebranie” tylko dla ról zarządzających (sesja przed MFA: puste grants).
+// #167: tryb widoku zależy od GET /api/access, sprawdzany RAZ przed pierwszym
+// żądaniem listy — przedstawiciel bez roli READ_ROLES nigdy nie woła
+// GET /api/meetings (kończyłoby się to 403, zob. src/pg/meetings.js READ_ROLES).
 byId("open-meeting").hidden = true;
+byId("list-section").hidden = true;
+byId("shared-section").hidden = true;
+
+const initial = new URLSearchParams(location.search);
+let hasInitialYear = isValidId(initial.get("rok") ?? "");
+if (hasInitialYear) yearInput.value = initial.get("rok");
+
 api("/api/access").then(
-  (access) => { byId("open-meeting").hidden = !canManageMeetings(access?.grants); },
-  () => { byId("open-meeting").hidden = false; },
+  (access) => {
+    const grants = access?.grants;
+    state.canManage = canManageMeetings(grants);
+    applyViewMode(meetingsViewMode(grants));
+    // Rok domyślny (#128/#UI: puste ekrany): jeśli adres nie wskazuje roku,
+    // wypełnij najnowszym z przydziałów (awaryjnie heurystyka daty) i wczytaj
+    // od razu — tylko gdy panel w ogóle pokazuje listę (viewMode != "none").
+    if (!hasInitialYear && state.viewMode !== "none") {
+      yearInput.value = initialSchoolYearId(grants);
+      hasInitialYear = true;
+    }
+    if (!hasInitialYear) return;
+    if (state.viewMode === "shared") {
+      loadSharedList();
+    } else if (state.viewMode === "full") {
+      loadList().then(() => {
+        const meetingId = initial.get("zebranie");
+        if (meetingId && isValidId(meetingId)) openDetail(meetingId);
+      });
+    }
+  },
+  () => {
+    // Sesja przed MFA lub błąd sieci: pokaż pełny widok jak dotychczas —
+    // serwer i tak odrzuci każde żądanie zapisu/odczytu bez uprawnień.
+    state.canManage = false;
+    applyViewMode("full");
+    if (hasInitialYear) loadList();
+  },
 );

@@ -4,6 +4,7 @@ import {
   METHOD_LABELS,
   buildLedgerUrl,
   buildNextLedgerUrl,
+  budgetExecutionRow,
   buildOverviewUrl,
   formatCents,
   isValidId,
@@ -15,12 +16,19 @@ import {
   parseEuroAmount,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
+import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
+import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
-const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null };
+const FILTER_KEYS = ["schoolYearId", "direction"];
+const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -30,6 +38,7 @@ const overview = byId("overview");
 const entriesBody = byId("entries-body");
 const budgetBody = byId("budget-body");
 const loadMore = byId("load-more");
+const printButton = byId("print-ledger");
 
 function localDate() {
   const now = new Date();
@@ -51,9 +60,10 @@ function entryRow(raw) {
   const row = document.createElement("tr");
   row.append(textCell(entry.occurredOn));
   const description = textCell(entry.description || "Bez opisu", "entry-description");
-  if (entry.source || entry.resolutionReference) {
+  const evidence = entry.attachmentCount === null ? "" : `Dowody: ${entry.attachmentCount}`;
+  if (entry.source || entry.resolutionReference || evidence) {
     const details = document.createElement("small");
-    details.textContent = [entry.source && `Źródło: ${entry.source}`, entry.resolutionReference && `Uchwała: ${entry.resolutionReference}`].filter(Boolean).join(" · ");
+    details.textContent = [entry.source && `Źródło: ${entry.source}`, entry.resolutionReference && `Uchwała: ${entry.resolutionReference}`, evidence].filter(Boolean).join(" · ");
     description.append(details);
   }
   row.append(description, textCell(entry.categoryName), textCell(METHOD_LABELS[entry.method]));
@@ -82,15 +92,36 @@ function renderEntries() {
   byId("entries-empty").hidden = count !== 0;
   loadMore.hidden = !state.nextCursor;
   updateControls();
+  updatePrintMeta();
 }
 
+// Blok metadanych wydruku (#151) — niewidoczny na ekranie, wypełniany przed
+// każdym renderowaniem, żeby wydruk zawsze pokazywał rok, filtry i kompletność.
+function updatePrintMeta() {
+  const container = byId("print-meta");
+  if (!container) return;
+  const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
+  const filters = state.query?.direction ? DIRECTION_LABELS[state.query.direction] : null;
+  mountPrintMeta(container, {
+    view: "Księga przychodów i wydatków",
+    schoolYear: yearLabel,
+    filters,
+    printedBy,
+    incompleteCount: state.nextCursor ? state.entries.length : null,
+  });
+}
+
+// #107: preliminarz bieżący a wykonanie netto (GET /api/ledger/budget/execution).
 function renderBudget(lines) {
-  const rows = lines.map((line) => {
+  const rows = lines.map((item) => {
+    const view = budgetExecutionRow(item);
     const row = document.createElement("tr");
-    row.append(textCell(String(line.categoryName ?? "Bez kategorii")));
-    const type = textCell(DIRECTION_LABELS[line.direction] ?? "—");
-    type.className = line.direction === "expense" ? "expense" : "income";
-    row.append(type, textCell(String(line.note ?? "—")), textCell(formatCents(line.plannedCents), "amount"));
+    row.append(textCell(view.categoryName));
+    const type = textCell(DIRECTION_LABELS[view.direction] ?? "—");
+    type.className = view.direction === "expense" ? "expense" : "income";
+    row.append(type, textCell(view.planned, "amount"),
+      textCell(view.executed, view.overBudget ? "amount over-budget" : "amount"), textCell(view.percent, "amount"),
+      textCell(view.note || "—"));
     return row;
   });
   budgetBody.replaceChildren(...rows);
@@ -123,6 +154,7 @@ function updateControls() {
   hint.hidden = !openEntry.disabled || state.loading;
   loadMore.disabled = state.loading || changed;
   byId("load-more-hint").hidden = !changed || !state.nextCursor;
+  printButton.disabled = state.loading || state.printing || !state.query || changed || state.entries.length === 0;
 }
 
 function setBusy(busy) {
@@ -163,14 +195,14 @@ async function loadOverview({ reload = false } = {}) {
     const year = query.schoolYearId;
     const [summaryData, budgetData, categoriesData] = await Promise.all([
       api(buildOverviewUrl("summary", year)),
-      api(buildOverviewUrl("budget", year)),
+      api(buildOverviewUrl("budget/execution", year)),
       api(buildOverviewUrl("categories", year)),
       loadEntries({ query }),
     ]);
     state.query = query;
     state.categories = Array.isArray(categoriesData.categories) ? categoriesData.categories : [];
     renderSummary(summaryData.summary ?? {});
-    renderBudget(Array.isArray(budgetData.budget) ? budgetData.budget : []);
+    renderBudget(Array.isArray(budgetData.execution?.items) ? budgetData.execution.items : []);
     overview.hidden = false;
   } catch (error) {
     state.entries = [];
@@ -182,13 +214,68 @@ async function loadOverview({ reload = false } = {}) {
   }
 }
 
-filtersForm.addEventListener("submit", (event) => { event.preventDefault(); loadOverview(); });
+function syncFiltersToUrl() {
+  const query = filtersToQuery({ schoolYearId: yearInput.value, direction: directionInput.value });
+  const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
+  window.history.replaceState(null, "", url);
+}
+
+filtersForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  syncFiltersToUrl();
+  loadOverview();
+});
+
+// Wybór roku z listy zamiast wpisywania identyfikatora (issue #128); filtry odtwarzane
+// z adresu (query string), nie z localStorage.
+(async function initFilters() {
+  const restored = filtersFromQuery(window.location.search, FILTER_KEYS);
+  let years = [];
+  try {
+    const access = await api("/api/access");
+    years = yearsFromGrants(access && access.grants);
+  } catch {
+    years = [];
+  }
+  const year = defaultYear(years, restored.schoolYearId);
+  yearInput.innerHTML = yearOptionsHtml(years, year);
+  if (restored.direction && [...directionInput.options].some((o) => o.value === restored.direction)) {
+    directionInput.value = restored.direction;
+  }
+  if (year) {
+    syncFiltersToUrl();
+    loadOverview();
+  }
+})();
 loadMore.addEventListener("click", async () => {
   if (state.loading || filterChanged() || !buildNextLedgerUrl(state.query, state.nextCursor)) return;
   setBusy(true);
   try { await loadEntries({ append: true }); }
   catch (error) { message.className = "message error"; message.textContent = error.message; }
   finally { setBusy(false); }
+});
+
+// „Drukuj zestawienie” dociąga wszystkie strony bieżącego filtra przed wydrukiem,
+// żeby wydruk nigdy nie ucinał wpisów po jednej stronie (#151). Znacznik
+// state.printing chroni przed podwójnym kliknięciem, tak jak state.loading wyżej.
+printButton.addEventListener("click", async () => {
+  if (state.loading || state.printing || filterChanged() || !state.query) return;
+  state.printing = true;
+  updateControls();
+  try {
+    while (buildNextLedgerUrl(state.query, state.nextCursor)) {
+      await loadEntries({ append: true });
+      renderEntries();
+    }
+    updatePrintMeta();
+    window.print();
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+  } finally {
+    state.printing = false;
+    updateControls();
+  }
 });
 
 // #225: Księgę prowadzą role finansowe. Inne konta widzą jeden komunikat zamiast
@@ -222,7 +309,7 @@ function restoreFocus() {
   target.focus();
 }
 
-function configureDialog(id, prefix, submit, successText) {
+function configureDialog(id, prefix, submit, successText, describeConfirm) {
   const dialog = byId(id);
   const form = dialog.querySelector("form");
   const errorBox = form.querySelector(".form-error");
@@ -230,6 +317,11 @@ function configureDialog(id, prefix, submit, successText) {
     event.preventDefault();
     if (event.submitter?.value === "cancel") { dialog.close(); return; }
     if (!form.reportValidity()) return;
+    // Podsumowanie skutków przed zapisem (issue #136) — zapis jest trwały.
+    if (describeConfirm) {
+      const confirmed = await confirmAction(describeConfirm(new FormData(form)));
+      if (!confirmed) return;
+    }
     const button = event.submitter;
     button.disabled = true;
     errorBox.textContent = "";
@@ -259,11 +351,14 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
   if (needsResolution(direction, amountCents) && !resolutionReference) throw new Error("Dla tego wydatku podaj referencję uchwały.");
   const sourceDocumentId = String(data.get("sourceDocumentId") || "").trim();
   if (sourceDocumentId && !isValidId(sourceDocumentId)) throw new Error("Niepoprawny identyfikator dokumentu.");
-  await api("/api/ledger", {
+  const evidenceFile = data.get("evidenceFile");
+  const hasFile = evidenceFile && typeof evidenceFile === "object" && evidenceFile.size > 0;
+  const schoolYearId = String(data.get("schoolYearId"));
+  const created = await api("/api/ledger", {
     method: "POST",
     headers: { "Idempotency-Key": key },
     body: JSON.stringify({
-      schoolYearId: String(data.get("schoolYearId")), direction, amountCents,
+      schoolYearId, direction, amountCents,
       categoryId: String(data.get("categoryId")), description: String(data.get("description")),
       occurredOn: String(data.get("occurredOn")), method: String(data.get("method")),
       source: String(data.get("source") || "") || null,
@@ -271,7 +366,43 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
       resolutionReference: resolutionReference || null,
     }),
   });
-}, "Zapisano wpis w księdze.");
+  // #87: dowód dołączany po zapisie wpisu, z kluczem pochodnym od klucza wpisu —
+  // ponowienie po błędzie odtwarza wpis (ten sam klucz) i dołącza plik raz.
+  if (hasFile && created?.entry?.id) {
+    const query = new URLSearchParams({ kind: "financial", schoolYearId, linkedEntityType: "ledger_entry", linkedEntityId: created.entry.id });
+    try {
+      await api(`/api/documents?${query}`, {
+        method: "POST", headers: { "Idempotency-Key": `${key}-doc`, "Content-Type": evidenceFile.type }, body: evidenceFile,
+      });
+    } catch (error) {
+      error.message = `Wpis zapisano, ale nie dołączono dowodu: ${error.message} Zapisz ponownie, aby dołączyć plik.`;
+      throw error;
+    }
+  }
+}, "Zapisano wpis w księdze.", (data) => {
+  const direction = String(data.get("direction"));
+  const category = state.categories.find((c) => c.id === data.get("categoryId"));
+  let amountText = String(data.get("amount") || "");
+  let warning = "";
+  try {
+    const cents = parseEuroAmount(data.get("amount"));
+    amountText = formatCents(cents);
+    if (cents > 100_000) warning = "Kwota jest nietypowo wysoka (ponad 1000 EUR). Sprawdź, zanim zapiszesz.";
+  } catch {
+    // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
+  }
+  return {
+    title: "Zapisać wpis w księdze?",
+    effects: [
+      `Kwota: ${amountText} (${DIRECTION_LABELS[direction] ?? direction})`,
+      `Data: ${data.get("occurredOn")}`,
+      `Kategoria: ${category ? category.name : data.get("categoryId")}`,
+      "Zapis jest trwały; pomyłkę poprawisz korektą widoczną w historii.",
+    ],
+    warning,
+    confirmLabel: "Zapisz wpis",
+  };
+});
 
 const correctionDialog = configureDialog("correction-dialog", "ledger-correction", async (data, key) => {
   const entryId = String(data.get("entryId"));
@@ -279,7 +410,23 @@ const correctionDialog = configureDialog("correction-dialog", "ledger-correction
     method: "POST", headers: { "Idempotency-Key": key },
     body: JSON.stringify({ amountCents: parseEuroAmount(data.get("amount")), reason: String(data.get("reason")) }),
   });
-}, "Dodano korektę.");
+}, "Dodano korektę.", (data) => {
+  let amountText = String(data.get("amount") || "");
+  try {
+    amountText = formatCents(parseEuroAmount(data.get("amount")));
+  } catch {
+    // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
+  }
+  return {
+    title: "Dodać korektę?",
+    effects: [
+      `Kwota pomniejszenia: ${amountText}`,
+      `Powód: ${String(data.get("reason") || "").trim() || "—"}`,
+      "Korekta nie usuwa pierwotnego wpisu — saldo netto zostanie przeliczone, historia zostaje widoczna.",
+    ],
+    confirmLabel: "Dodaj korektę",
+  };
+});
 
 function updateCategories() {
   const direction = entryDialog.form.elements.direction.value;

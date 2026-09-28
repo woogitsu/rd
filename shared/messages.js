@@ -5,12 +5,35 @@
 // Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
 
 export const MESSAGES = Object.freeze({
+  // --- Ponowne wysłanie zaproszenia (#108) ---------------------------------------
+  invitation_not_pending: "To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie.",
+  // --- Konfiguracja roku szkolnego i klas (#78) -------------------------------------
+  invalid_label: "Podaj nazwę roku szkolnego (maksymalnie 200 znaków).",
+  invalid_date_range: "Data końca nie może być wcześniejsza niż data początku.",
+  school_year_exists: "Taki rok szkolny już istnieje.",
+  invalid_names: "Podaj nazwy klas (każda do 60 znaków).",
+  duplicate_name: "Nazwy klas na liście powtarzają się.",
+  class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
+  // --- Zakończenie przypisania do klasy (#86) --------------------------------------
+  invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
+  // --- Rejestr uchwał (#102) --------------------------------------------------------
+  invalid_relation_kind: "Wybierz rodzaj powiązania uchwały z listy.",
+  invalid_execution_status: "Wybierz stan wykonania uchwały z listy.",
+  resolution_not_decided: "Stan wykonania można zapisać tylko dla podjętej uchwały.",
+  // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
+  minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
+  // --- Tryb tylko do odczytu (#143) ------------------------------------------------
+  read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
   mfa_enrollment_required: "Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą.",
   mfa_unavailable: "Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem.",
+  mfa_key_missing: "Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
+  // #150 (SR-10, krok w górę): dla operacji krytycznych (np. eksport roczny)
+  // MFA musi być potwierdzone od niedawna, nie tylko kiedyś w tej sesji.
+  mfa_stale: "Ta operacja wymaga świeżego potwierdzenia kodem — podaj kod jeszcze raz.",
   forbidden: "Brak uprawnień do tej operacji w Twoim zakresie.",
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji.",
   invalid_credentials: "Nieprawidłowy adres e-mail lub hasło.",
@@ -19,6 +42,7 @@ export const MESSAGES = Object.freeze({
   invalid_token: "Kod jest nieważny, wygasł albo został już użyty.",
   invalid_invitation: "Zaproszenie jest nieważne, wygasło albo zostało już wykorzystane.",
   too_many_attempts: "Zbyt wiele prób. Spróbuj ponownie później.",
+  login_busy: "Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund.",
   user_disabled: "Konto jest wyłączone.",
   password_mismatch: "Hasła nie są takie same.",
   password_required: "Podaj hasło.",
@@ -31,6 +55,8 @@ export const MESSAGES = Object.freeze({
   invalid_json: "Serwer nie odczytał danych formularza.",
   invalid_content_type: "Serwer nie odczytał formatu danych.",
   unsupported_media_type: "Niedozwolony typ danych lub pliku.",
+  document_active_content: "Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady.",
+  document_malformed: "Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane).",
   request_too_large: "Za dużo danych w jednym żądaniu.",
   service_unavailable: "Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę.",
   retry_later: "Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę.",
@@ -60,6 +86,11 @@ export const MESSAGES = Object.freeze({
   invalid_signature: "Niepoprawny podpis żądania.",
   webhook_not_configured: "Powiadomienia zwrotne nie są skonfigurowane na tym środowisku.",
 
+  invalid_domain: "Wybierz obszar dziennika z listy.",
+  invalid_entity_type: "Nieznany rodzaj obiektu w dzienniku.",
+  invalid_from: "Podaj poprawną datę początkową (RRRR-MM-DD).",
+  invalid_to: "Podaj poprawną datę końcową (RRRR-MM-DD).",
+
   // --- Rok szkolny i klasy ---------------------------------------------------------
   invalid_school_year: "Niepoprawny identyfikator roku szkolnego.",
   invalid_school_year_id: "Niepoprawny identyfikator roku szkolnego.",
@@ -77,6 +108,10 @@ export const MESSAGES = Object.freeze({
   no_classes_in_school_year: "Rok szkolny nie ma zdefiniowanych klas.",
   invalid_reference: "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje.",
   relation_ended: "Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa.",
+  guardian_not_found: "Nie znaleziono opiekuna.",
+  invalid_or_expired_link: "Ten link jest nieprawidłowy albo już nieaktywny.",
+  link_used: "Ten link został już wykorzystany.",
+  request_not_found: "Nie znaleziono wniosku.",
 
   // --- Konta, role i zaproszenia ------------------------------------------------------
   invalid_role: "Wybierz rolę z listy.",
@@ -85,6 +120,7 @@ export const MESSAGES = Object.freeze({
   grant_not_found: "Nie znaleziono przydziału.",
   last_admin_grant: "Nie można odebrać sobie ostatniego aktywnego przydziału administratora.",
   cannot_disable_self: "Nie można wyłączyć własnego konta.",
+  cannot_grant_self: "Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu.",
   cannot_reset_own_mfa: "Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora.",
   invalid_expires_at: "Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata).",
   invalid_ttl: "Ważność zaproszenia: od 1 do 336 godzin.",
@@ -94,6 +130,18 @@ export const MESSAGES = Object.freeze({
   admin_exists: "Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne.",
   pending_admin_invitation: "Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij.",
   production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
+  role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji.",
+  class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
+
+  // --- Rejestr żądań osób (RODO, #100) -----------------------------------------------
+  subject_required: "Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie.",
+  invalid_received_on: "Podaj poprawną datę wpłynięcia żądania.",
+  invalid_due_on: "Podaj poprawną datę terminu odpowiedzi.",
+  invalid_decision_note_ref: "Odwołanie do decyzji może mieć od 1 do 200 znaków.",
+  household_not_found: "Nie znaleziono gospodarstwa.",
+  student_not_found: "Nie znaleziono ucznia.",
+  data_request_not_found: "Nie znaleziono żądania.",
+  data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",
 
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
@@ -106,6 +154,8 @@ export const MESSAGES = Object.freeze({
   payment_already_linked: "Wpłata jest już powiązana z innym wpisem.",
   payment_cannot_be_corrected: "Tej wpłaty nie można skorygować w obecnym stanie.",
   correction_exceeds_remaining_amount: "Korekta przekracza kwotę pozostałą po wcześniejszych korektach.",
+  possible_personal_data: "Ten tekst zostanie zapisany na stałe i trafi do eksportu. Usuń dane osobowe albo potwierdź, że to konieczne.",
+  minutes_contain_personal_data: "Protokół zawiera możliwe dane osobowe (imię i nazwisko, e-mail albo IBAN) — publikacja publiczna jest zablokowana.",
   payment_amount_mismatch: "Kwota wpłaty nie zgadza się z powiązanym wpisem księgi. Odśwież widok i sprawdź dane.",
   payment_cannot_be_refunded: "Tej wpłaty nie można zwrócić w obecnym stanie.",
   payment_not_assigned: "Wpłata nie jest przypisana do żadnej rodziny.",
@@ -115,6 +165,13 @@ export const MESSAGES = Object.freeze({
   ledger_correction_required: "Najpierw skoryguj powiązany wpis księgi o tę samą kwotę, dopiero potem powtórz tę operację.",
   invalid_payment_link: "Niepoprawne powiązanie z wpłatą.",
   invalid_category: "Wybierz kategorię z listy.",
+  // #107: kategorie i preliminarz.
+  category_exists: "Kategoria o tej nazwie już istnieje w tym roku.",
+  category_inactive: "Kategoria jest już wyłączona.",
+  budget_line_exists: "Ta kategoria ma już linię preliminarza. Zmień ją nową wersją.",
+  budget_line_not_found: "Nie znaleziono linii preliminarza.",
+  budget_line_superseded: "Ta wersja linii preliminarza została już zmieniona. Odśwież widok i zmień aktualną wersję.",
+  budget_empty: "Preliminarz tego roku nie ma jeszcze żadnej linii.",
   invalid_ledger_entry_id: "Niepoprawny identyfikator wpisu księgi.",
   ledger_entry_not_found: "Nie znaleziono wpisu księgi.",
   active_bank_match: "Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis.",
@@ -126,12 +183,26 @@ export const MESSAGES = Object.freeze({
   invalid_source_detail: "Niepoprawny opis źródła.",
   invalid_source_document: "Niepoprawny dokument źródłowy.",
   resolution_required: "Ten wydatek wymaga wskazania uchwały.",
+  // #93: uchwała wskazana jako upoważnienie do wydatku.
+  resolution_not_adopted: "Wskazana uchwała nie jest przyjęta.",
+  resolution_not_current: "Wskazana uchwała ma nowszą wersję (poprawkę). Wybierz aktualną wersję.",
+  resolution_expense_only: "Uchwałę jako upoważnienie można wskazać tylko przy wydatku.",
+  resolution_reference_mismatch: "Referencja uchwały nie zgadza się z numerem wskazanej uchwały.",
+  resolution_amount_exceeded: "Ten wydatek przekracza kwotę upoważnioną uchwałą. Sprawdź pozostałą kwotę albo potrzebną nową uchwałę.",
+  resolution_expired: "Termin upoważnienia z uchwały minął przed datą wydatku.",
+  resolution_repealed: "Wskazana uchwała została uchylona.",
+  authorization_superseded: "Kwota upoważnienia zmieniła się w międzyczasie. Odśwież widok i spróbuj ponownie.",
+  // #97: weryfikacja wydatku przez drugą osobę.
+  review_expense_only: "Weryfikacja drugiej osoby dotyczy wyłącznie wydatków.",
   invalid_effective_on: "Podaj poprawną datę.",
   closing_balance_out_of_range: "Saldo zamknięcia jest poza dozwolonym zakresem.",
   next_year_opening_balance_exists: "Bilans otwarcia następnego roku już istnieje.",
+  category_not_found: "Nie znaleziono kategorii księgi.",
   difference_requires_note: "Różnica wymaga wpisania wyjaśnienia.",
   reconciliation_not_found: "Nie znaleziono uzgodnienia.",
   reconciliation_confirmed: "Uzgodnienie jest już potwierdzone i nie można go zmienić.",
+  reconciliation_abandoned: "Szkic uzgodnienia został porzucony i nie można go już zmienić ani potwierdzić.",
+  reconciliation_has_active_matches: "Szkic ma aktywne dopasowania — cofnij je, zanim porzucisz szkic.",
   invalid_statement_line: "Niepoprawna pozycja wyciągu.",
   invalid_line_count: "Niepoprawna liczba pozycji wyciągu.",
   statement_line_after_statement_date: "Pozycja wyciągu ma datę późniejszą niż data wyciągu.",
@@ -146,6 +217,8 @@ export const MESSAGES = Object.freeze({
   already_matched_via_payment: "Pozycja jest już dopasowana do wpłaty.",
   already_matched_via_ledger: "Pozycja jest już dopasowana do wpisu księgi.",
   inconsistent_matches: "Dopasowania są niespójne. Odśwież widok.",
+  group_match_sum_mismatch: "Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu.",
+  group_match_direction_mismatch: "Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ).",
   invalid_csv: "Nie udało się odczytać pliku CSV.",
   invalid_csv_header: "Plik CSV ma niepoprawny nagłówek.",
   cash_below_zero: "Ta operacja doprowadziłaby saldo kasy poniżej zera.",
@@ -155,6 +228,42 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  // Import wyciągu CODA / CAMT.053 (#105).
+  invalid_statement_file: "Nie udało się odczytać pliku wyciągu. Sprawdź format pliku.",
+  statement_account_mismatch: "Rachunek w pliku wyciągu nie jest zatwierdzonym rachunkiem Rady.",
+  statement_account_unsupported: "Ten rodzaj numeru rachunku w wyciągu nie jest obsługiwany.",
+  statement_currency_unsupported: "Obsługiwane są wyłącznie wyciągi w EUR.",
+  statement_multiple_not_supported: "Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno.",
+  statement_transaction_id_missing: "Ruch w wyciągu nie ma identyfikatora transakcji banku.",
+  statement_amount_out_of_range: "Kwota w wyciągu przekracza dozwolony zakres.",
+  statement_already_imported: "Ten plik wyciągu został już zaimportowany.",
+  bank_import_not_configured: "Import wyciągu z pliku banku nie jest skonfigurowany.",
+  matched_in_other_reconciliation: "Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku.",
+  // Podział wpłaty na gospodarstwa (#127).
+  payment_allocation_exceeds_net: "Suma części wpłaty przekroczyłaby jej kwotę po korektach i zwrotach. Najpierw cofnij część.",
+  payment_allocation_household_exists: "To gospodarstwo ma już część tej wpłaty. Cofnij ją, jeśli kwota jest błędna.",
+  payment_has_allocations: "Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części.",
+  payment_allocation_not_found: "Nie znaleziono tej części wpłaty.",
+  payment_allocation_already_reversed: "Ta część wpłaty została już cofnięta.",
+  // Centra kosztów w księdze (#117).
+  invalid_allocation: "Niepoprawny podział wpisu na wydarzenia lub klasy.",
+  invalid_cost_center: "Wskazane wydarzenie lub klasa nie należy do roku tego wpisu.",
+  allocation_exceeds_net: "Suma przypisań przekracza kwotę wpisu po korektach. Najpierw zmień przypisanie.",
+  allocation_version_conflict: "Przypisanie tego wpisu zostało w międzyczasie zmienione. Odśwież widok.",
+  allocation_reason_required: "Zmiana przypisania wymaga podania powodu.",
+  statement_line_not_found: "Nie znaleziono pozycji wyciągu.",
+  statement_line_not_income: "Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia.",
+
+  // --- Dane do wpłaty i kod QR EPC (#92) --------------------------------------------
+  invalid_iban: "Numer rachunku (IBAN) jest niepoprawny — sprawdź sumę kontrolną.",
+  invalid_bic: "Numer BIC jest niepoprawny (8 albo 11 znaków).",
+  invalid_payee_name: "Podaj nazwę odbiorcy (maksymalnie 70 znaków).",
+  invalid_name: "Nazwa odbiorcy jest niepoprawna albo za długa (maksymalnie 70 znaków).",
+  invalid_info: "Informacja dla płatnika jest za długa (maksymalnie 70 znaków).",
+  invalid_remittance_both: "Podaj wyłącznie referencję strukturalną albo tytuł przelewu, nie oba naraz.",
+  invalid_structured_reference: "Niepoprawny format komunikacji strukturalnej (12 cyfr).",
+  invalid_unstructured_text: "Tytuł przelewu jest za długi (maksymalnie 140 znaków).",
+  epc_payload_too_large: "Dane do kodu QR są za długie (limit specyfikacji EPC).",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",
@@ -169,7 +278,15 @@ export const MESSAGES = Object.freeze({
   campaign_not_draft: "Wysyłkę można zmieniać tylko jako szkic.",
   campaign_locked: "Wysyłka jest zablokowana i nie można jej zmienić.",
   no_recipients: "Wysyłka nie ma odbiorców.",
+  invalid_send_not_before: "Podaj poprawną datę i godzinę startu wysyłki.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
+  invalid_confirmation_note: "Podaj uzasadnienie (od 3 do 1000 znaków).",
+  invalid_release_reason: "Wybierz jeden z dopuszczalnych powodów zdjęcia blokady.",
+  release_reason_not_allowed: "Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”.",
+  request_already_consumed: "Ten wniosek o zdjęcie blokady został już rozpatrzony.",
+  suppression_not_active: "Ta blokada nie jest już aktywna.",
+  outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
+  not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
 
   // --- Import -----------------------------------------------------------------------------------
   import_disabled: "Import jest wyłączony na tym środowisku.",
@@ -187,6 +304,14 @@ export const MESSAGES = Object.freeze({
   fingerprint_mismatch: "Dane różnią się od podglądu. Wyślij podgląd ponownie.",
   import_has_conflicts: "Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy.",
   idempotency_key_reused: "Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie.",
+  privacy_notice_missing: "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import.",
+
+  // --- Informacja o przetwarzaniu danych (D-06) --------------------------------------------------
+  invalid_body_text: "Podaj treść informacji (1–20000 znaków).",
+  invalid_decision_ref: "Podaj odwołanie do decyzji (np. numer uchwały).",
+  privacy_notice_not_found: "Nie znaleziono tej wersji informacji.",
+  privacy_notice_not_draft: "Tę wersję już zatwierdzono albo opublikowano.",
+  privacy_notice_not_approved: "Najpierw zatwierdź tę wersję (inna osoba niż autor).",
 
   // --- Eksport ----------------------------------------------------------------------------------
   export_too_large: "Eksport jest za duży. Zawęź zakres.",
@@ -195,6 +320,7 @@ export const MESSAGES = Object.freeze({
   unsupported_value: "Eksport zawiera nieobsługiwaną wartość.",
   invalid_format: "Wybierz format eksportu z listy (CSV albo JSON).",
   production_restore_requires_allow_production: "Odtworzenie na produkcji wymaga osobnego potwierdzenia.",
+  export_in_progress: "Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie.",
 
   // --- Dokumenty ---------------------------------------------------------------------------------
   invalid_document_id: "Niepoprawny identyfikator dokumentu.",
@@ -204,7 +330,13 @@ export const MESSAGES = Object.freeze({
   document_too_large: "Plik przekracza dozwolony rozmiar.",
   content_hash_mismatch: "Plik uszkodził się podczas przesyłania. Wyślij go ponownie.",
   document_integrity_mismatch: "Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi.",
+  // invalid_title, invalid_category, invalid_description: wspólne z innymi modułami (patrz niżej / „Wpłaty, księga, uzgodnienia”).
+  invalid_document_date: "Niepoprawna data dokumentu.",
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
+  invalid_replacement_document: "Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę.",
+  document_status_replacement_not_active: "Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny.",
+  document_status_conflict: "Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok.",
+  upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
   // --- Wydarzenia -------------------------------------------------------------------------------
   invalid_event_id: "Niepoprawny identyfikator wydarzenia.",
@@ -222,6 +354,14 @@ export const MESSAGES = Object.freeze({
   ambiguous_local_time: "Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi.",
   nonexistent_local_time: "Ta godzina nie istnieje w Brukseli (zmiana czasu z zimowego na letni). Wybierz inną godzinę.",
   offset_not_valid_in_europe_brussels: "Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli.",
+  invalid_slots_needed: "Liczba potrzebnych miejsc musi być od 1 do 200.",
+  task_time_outside_event: "Czas zadania musi mieścić się w czasie wydarzenia.",
+  task_full: "Brak wolnych miejsc w tym zadaniu. Odśwież listę.",
+  event_task_not_found: "Nie znaleziono zadania albo nie masz do niego dostępu.",
+  event_task_already_cancelled: "To zadanie zostało już odwołane.",
+  event_task_signup_not_found: "Nie znaleziono zapisu.",
+  guardian_outside_class: "Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku.",
+  invalid_signup_target: "Wskaż dokładnie jedną osobę: opiekuna albo konto.",
 
   // --- Zebrania i uchwały -----------------------------------------------------------------------
   meeting_not_found: "Nie znaleziono zebrania.",
@@ -247,6 +387,8 @@ export const MESSAGES = Object.freeze({
   photo_revoked: "Zgoda na publikację zdjęcia została wycofana.",
   duplicate_photo: "To zdjęcie jest już dodane.",
   invalid_alt_text: "Podaj opis zdjęcia (tekst alternatywny).",
+  alt_text_required: "Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne.",
+  invalid_decorative: "Niepoprawna wartość pola „zdjęcie dekoracyjne”.",
   invalid_taken_on: "Niepoprawna data wykonania zdjęcia.",
   invalid_depicts_children: "Zaznacz, czy zdjęcie przedstawia dzieci.",
   invalid_consent: "Niepoprawny zapis zgody na publikację.",
@@ -257,6 +399,29 @@ export const MESSAGES = Object.freeze({
   invalid_rights_note: "Niepoprawna notatka o prawach.",
   public_copy_requires_license: "Publiczna kopia wymaga zapisanej licencji lub zgody.",
   photos_require_school_wide_role: "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
+  // --- Kopie zapasowe (#90) ---------------------------------------------------------
+  backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
+  restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  // --- Belgijska referencja płatności OGM-VCS (#83) --------------------------------
+  invalid_ogm_base: "Niepoprawna baza referencji płatności.",
+  invalid_ogm_reference: "Niepoprawna referencja płatności (oczekiwano 12 cyfr).",
+  payment_reference_already_active: "To gospodarstwo ma już aktywną referencję płatności w tym roku. Najpierw ją unieważnij.",
+  payment_reference_already_revoked: "Ta referencja płatności jest już unieważniona.",
+  payment_reference_not_found: "Nie znaleziono referencji płatności.",
+  invalid_consent_scope: "Wybierz zakres zgody z listy (strona Rady, druk, media społecznościowe).",
+  invalid_consent_valid_until: "Niepoprawna data ważności zgody (RRRR-MM-DD).",
+  consent_not_found: "Nie znaleziono zgody o tym odwołaniu.",
+  rate_limited: "Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę.",
+  // --- Plik zdjęcia galerii (#96) ----------------------------------------------------
+  empty_photo_file: "Plik zdjęcia jest pusty.",
+  photo_file_too_large: "Plik zdjęcia przekracza dozwolony rozmiar.",
+  photo_file_malformed: "Plik zdjęcia odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi.",
+  photo_file_active_content: "Plik zdjęcia odrzucony: zawiera potencjalnie aktywną treść niedozwoloną w zdjęciach galerii.",
+  photo_file_exists: "To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik.",
+  photo_file_integrity_mismatch: "Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi.",
+  preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
+  preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
+  sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).
@@ -269,7 +434,7 @@ export const STATUS_MESSAGES = Object.freeze({
   405: MESSAGES.method_not_allowed,
   409: MESSAGES.conflict,
   413: MESSAGES.request_too_large,
-  415: MESSAGES.unsupported_media_type,
+  415: MESSAGES.unsupported_media_type, // document_active_content i document_malformed mają własne komunikaty (mapa wyżej)
   429: "Zbyt wiele żądań. Odczekaj chwilę i spróbuj ponownie.",
 });
 

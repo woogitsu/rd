@@ -4,17 +4,26 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { revokeRoleGrant } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
-import { bodyLimitFor, DEFAULT_BODY_LIMIT_BYTES, detectType, maxUploadBytes, HARD_MAX_UPLOAD_BYTES } from '../src/documents.js';
+import {
+  bodyLimitFor, DEFAULT_BODY_LIMIT_BYTES, DEFAULT_MAX_CONCURRENT_UPLOADS, detectType, maxUploadBytes,
+  HARD_MAX_UPLOAD_BYTES, resetUploadSlotsForTests, tryAcquireUploadSlot,
+} from '../src/documents.js';
 import { createMemoryStorage, createS3Storage, sha256Hex, signRequest, storageFromEnv } from '../src/storage.js';
 import { resolveRuntime } from '../src/server.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 const HOUR = 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const encoder = new TextEncoder();
 const PDF = encoder.encode('%PDF-1.4\n% syntetyczny dokument testowy\n1 0 obj <<>> endobj\n%%EOF\n');
-const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+// Sygnatura + IHDR (13 B danych) + IEND: minimalny, strukturalnie poprawny PNG
+// (CRC nieużywany przez kontrolę struktury z issue #89 — dowolny bajt starcza).
+const PNG = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, ...new Array(13).fill(0), 0, 0, 0, 0,
+  0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0, 0, 0, 0,
+]);
 const HTML = encoder.encode('<html><script>alert(1)</script></html>');
 
 async function withEnv(fn, extra = {}) {
@@ -230,6 +239,30 @@ test('too large upload is refused with 413 (streamed and declared length)', asyn
   assert.equal((await upload(env, { cookie, bytes: PDF })).response.status, 201);
   assert.equal(storage.keys().length, 1);
 }, { documentMaxBytes: 1024 }));
+
+// #185 pkt 3: piąty równoczesny upload dostaje 503 upload_busy BEZ dotknięcia
+// magazynu ani bazy — sprawdzone bezpośrednio (semafor to stan procesu,
+// PGlite i tak serializuje transakcje, więc nie da się tego odtworzyć przez
+// prawdziwą równoległość żądań tutaj, patrz tests/pg-reconciliation-race.test.js).
+test('a fifth concurrent upload gets 503 upload_busy with Retry-After, before the body is touched', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  resetUploadSlotsForTests();
+  const releases = Array.from({ length: DEFAULT_MAX_CONCURRENT_UPLOADS }, () => tryAcquireUploadSlot());
+  assert.ok(releases.every((release) => typeof release === 'function'));
+  try {
+    const busy = await upload(env, { cookie });
+    assert.equal(busy.response.status, 503);
+    assert.equal(busy.data.error, 'upload_busy');
+    assert.ok(busy.response.headers.get('retry-after'));
+    assert.equal(storage.keys().length, 0, 'ciało nie zostało zapisane do magazynu');
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM document_uploads')).rows[0].n, 0, 'ciało nie zostało nawet odczytane');
+  } finally {
+    for (const release of releases) release();
+  }
+  // Po zwolnieniu miejsc kolejny upload przebiega normalnie.
+  assert.equal((await upload(env, { cookie })).response.status, 201);
+  resetUploadSlotsForTests();
+}));
 
 test('expired and revoked grants lose access from the next request', async () => withEnv(async (db, env) => {
   const cookie = await treasurer(db);
@@ -551,3 +584,429 @@ test('replay does not report success when the object behind the idempotency key 
   assert.equal(retry.response.status, 409);
   assert.equal(retry.data.error, 'document_content_missing');
 }));
+
+// --- Wersje i unieważnienie dokumentu (issue #82) -----------------------------------
+
+function statusRequest({ cookie, id, action, key, body, origin, headers = {} }) {
+  return request(`/api/documents/${id}/${action}`, {
+    method: 'POST', cookie, origin,
+    headers: { 'Idempotency-Key': key ?? `status-key-${++keyCounter}-${Date.now()}`, ...headers },
+    body: body ?? { reason: 'Poprawka po pomyłce w kwocie' },
+  });
+}
+
+async function changeStatus(env, options) {
+  const response = await handlePgRequest(statusRequest(options), env);
+  return { response, data: await response.json().catch(() => null) };
+}
+
+test('treasurer supersedes a financial document with another of the same kind/year; old one leaves the active list but stays downloadable', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const original = await upload(env, { cookie });
+  const replacement = await upload(env, { cookie });
+
+  const result = await changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede',
+    body: { replacementDocumentId: replacement.data.document.id, reason: 'Faktura korygująca — zła kwota' },
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.statusEvent.action, 'superseded');
+
+  const meta = await get(env, `/api/documents/${original.data.document.id}`, cookie);
+  const metaData = await meta.json();
+  assert.equal(metaData.document.status, 'superseded');
+  assert.equal(metaData.document.replacementDocumentId, replacement.data.document.id);
+
+  const replacementMeta = await (await get(env, `/api/documents/${replacement.data.document.id}`, cookie)).json();
+  assert.equal(replacementMeta.supersedes, original.data.document.id);
+
+  // Download still works — the file stays in the archive.
+  assert.equal((await get(env, `/api/documents/${original.data.document.id}/content`, cookie)).status, 200);
+
+  const activeList = await (await get(env, `/api/documents?schoolYearId=${YEAR}`, cookie)).json();
+  assert.equal(activeList.documents.some((d) => d.id === original.data.document.id), false);
+  const allList = await (await get(env, `/api/documents?schoolYearId=${YEAR}&status=all`, cookie)).json();
+  assert.equal(allList.documents.some((d) => d.id === original.data.document.id), true);
+
+  const rows = await auditRows(db, 'document.superseded');
+  assert.equal(rows.length, 1);
+  await assertNoPii(rows.map((row) => row.metadata_json));
+  assert.equal(JSON.stringify(rows[0].metadata_json).includes('korygująca'), false);
+}));
+
+test('void a document: it disappears from the default list, but content stays downloadable', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const result = await changeStatus(env, { cookie, id: data.document.id, action: 'void' });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.statusEvent.action, 'voided');
+
+  const activeList = await (await get(env, `/api/documents?schoolYearId=${YEAR}`, cookie)).json();
+  assert.equal(activeList.documents.length, 0);
+  assert.equal((await get(env, `/api/documents/${data.document.id}/content`, cookie)).status, 200);
+
+  const rows = await auditRows(db, 'document.voided');
+  assert.equal(rows.length, 1);
+}));
+
+test('repeated void of an already-voided document replays instead of erroring', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const first = await changeStatus(env, { cookie, id: data.document.id, action: 'void', key: 'void-key-1' });
+  const retry = await changeStatus(env, { cookie, id: data.document.id, action: 'void', key: 'void-key-2' });
+  assert.equal(first.response.status, 201);
+  assert.equal(retry.response.status, 200);
+  assert.equal(retry.data.replayed, true);
+  assert.equal(retry.data.statusEvent.id, first.data.statusEvent.id);
+  const count = await db.query('SELECT count(*)::int AS n FROM document_status_events WHERE document_id = $1', [data.document.id]);
+  assert.equal(count.rows[0].n, 1);
+}));
+
+test('a voided document cannot be superseded, and a superseded one cannot be voided again', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const voided = await upload(env, { cookie });
+  await changeStatus(env, { cookie, id: voided.data.document.id, action: 'void' });
+  const replacement = await upload(env, { cookie });
+  const attempt = await changeStatus(env, {
+    cookie, id: voided.data.document.id, action: 'supersede', body: { replacementDocumentId: replacement.data.document.id, reason: 'proba' },
+  });
+  assert.equal(attempt.response.status, 409);
+  assert.equal(attempt.data.error, 'document_status_conflict');
+
+  const supersededOriginal = await upload(env, { cookie });
+  const supersededReplacement = await upload(env, { cookie });
+  await changeStatus(env, {
+    cookie, id: supersededOriginal.data.document.id, action: 'supersede',
+    body: { replacementDocumentId: supersededReplacement.data.document.id, reason: 'zastapienie' },
+  });
+  const voidAttempt = await changeStatus(env, { cookie, id: supersededOriginal.data.document.id, action: 'void' });
+  assert.equal(voidAttempt.response.status, 409);
+  assert.equal(voidAttempt.data.error, 'document_status_conflict');
+}));
+
+test('cycle A -> B -> A is rejected: B cannot be superseded by A once A is already superseded by B', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const a = await upload(env, { cookie });
+  const b = await upload(env, { cookie });
+  const first = await changeStatus(env, {
+    cookie, id: a.data.document.id, action: 'supersede', body: { replacementDocumentId: b.data.document.id, reason: 'A do B' },
+  });
+  assert.equal(first.response.status, 201);
+  const cycle = await changeStatus(env, {
+    cookie, id: b.data.document.id, action: 'supersede', body: { replacementDocumentId: a.data.document.id, reason: 'B do A' },
+  });
+  assert.equal(cycle.response.status, 409);
+  assert.equal(cycle.data.error, 'document_status_replacement_not_active');
+}));
+
+test('replacement from a different year or class is rejected with 400', async () => withEnv(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const classA = await upload(env, { cookie, kind: 'class', classId: 'c-1a' });
+  const classB = await upload(env, { cookie, kind: 'class', classId: 'c-1b' });
+  const attempt = await changeStatus(env, {
+    cookie, id: classA.data.document.id, action: 'supersede', body: { replacementDocumentId: classB.data.document.id, reason: 'zla klasa' },
+  });
+  assert.equal(attempt.response.status, 400);
+  assert.equal(attempt.data.error, 'invalid_replacement_document');
+}));
+
+test('class representative cannot supersede or void a document of another class (404, no oracle)', async () => withEnv(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const docA = await upload(env, { cookie, kind: 'class', classId: 'c-1a' });
+  const repBCookie = await repB(db);
+  const denied = await changeStatus(env, { cookie: repBCookie, id: docA.data.document.id, action: 'void' });
+  assert.equal(denied.response.status, 404);
+}));
+
+test('treasurer without MFA cannot void a financial document (global MFA gate, 403 mfa_enrollment_required)', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const noMfa = await seedUserSession(db, { userId: 'u-treasurer-no-mfa', roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
+  const attempt = await changeStatus(env, { cookie: noMfa, id: data.document.id, action: 'void' });
+  // Jak reszta API dokumentów (src/pg/app.js: globalna bramka MFA przed
+  // dotarciem do trasy) — nie 404, bo to sesja bez potwierdzonego MFA, a nie
+  // nieautoryzowany dostęp do konkretnego dokumentu. Konto bez zarejestrowanego
+  // czynnika dostaje mfa_enrollment_required (mfa-policy.js), nie mfa_required
+  // (to drugie jest dla czynnika zarejestrowanego, ale niepotwierdzonego w tej sesji).
+  assert.equal(attempt.response.status, 403);
+  assert.equal(attempt.data.error, 'mfa_enrollment_required');
+}));
+
+test('double click on supersede with the same Idempotency-Key reuses the row; different content conflicts', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const original = await upload(env, { cookie });
+  const replacement = await upload(env, { cookie });
+  const key = 'supersede-double-click';
+  const first = await changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede', key, body: { replacementDocumentId: replacement.data.document.id, reason: 'powod r1' },
+  });
+  const retry = await changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede', key, body: { replacementDocumentId: replacement.data.document.id, reason: 'powod r1' },
+  });
+  assert.equal(first.response.status, 201);
+  assert.equal(retry.response.status, 200);
+  assert.equal(retry.data.replayed, true);
+
+  const other = await upload(env, { cookie });
+  const conflict = await changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede', key, body: { replacementDocumentId: other.data.document.id, reason: 'powod r2' },
+  });
+  assert.equal(conflict.response.status, 409);
+  assert.equal(conflict.data.error, 'idempotency_conflict');
+}));
+
+test('invalid reason and unknown or malformed replacement id are rejected', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  assert.equal((await changeStatus(env, { cookie, id: data.document.id, action: 'void', body: { reason: 'ab' } })).response.status, 400);
+  assert.equal((await changeStatus(env, {
+    cookie, id: data.document.id, action: 'supersede', body: { replacementDocumentId: 'not-a-uuid', reason: 'poprawny powod' },
+  })).response.status, 400);
+  assert.equal((await changeStatus(env, {
+    cookie, id: data.document.id, action: 'supersede',
+    body: { replacementDocumentId: '00000000-0000-4000-8000-000000000000', reason: 'poprawny powod' },
+  })).response.status, 400);
+}));
+
+test('document_status_events rows are immutable', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  await changeStatus(env, { cookie, id: data.document.id, action: 'void' });
+  await assert.rejects(
+    db.query("UPDATE document_status_events SET action = 'superseded' WHERE document_id = $1", [data.document.id]),
+    /document_status_events_are_immutable/,
+  );
+  await assert.rejects(
+    db.query('DELETE FROM document_status_events WHERE document_id = $1', [data.document.id]),
+    /document_status_events_are_immutable/,
+  );
+}));
+
+test('cross-origin status change request is refused before touching the database', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const response = await handlePgRequest(statusRequest({ cookie, id: data.document.id, action: 'void', origin: 'https://evil.example' }), env);
+  assert.equal(response.status, 403);
+  const count = await db.query('SELECT count(*)::int AS n FROM document_status_events');
+  assert.equal(count.rows[0].n, 0);
+}));
+// --- Tytuł, kategoria i wyszukiwanie (issue #76) ------------------------------------
+
+function describeRequest({ cookie, id, key, body, origin, headers = {} }) {
+  return request(`/api/documents/${id}/description`, {
+    method: 'POST', cookie, origin,
+    headers: { 'Idempotency-Key': key ?? `desc-key-${++keyCounter}-${Date.now()}`, ...headers },
+    body: body ?? { title: 'Faktura — wynajem sali, październik', category: 'faktura', documentDate: '2026-10-05' },
+  });
+}
+
+async function describe(env, options) {
+  const response = await handlePgRequest(describeRequest(options), env);
+  return { response, data: await response.json().catch(() => null) };
+}
+
+test('treasurer adds a title and category to a financial document; history keeps the previous version', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+
+  const first = await describe(env, { cookie, id });
+  assert.equal(first.response.status, 201);
+  assert.equal(first.data.description.revisionNo, 1);
+  assert.equal(first.data.description.title, 'Faktura — wynajem sali, październik');
+
+  const second = await describe(env, {
+    cookie, id, body: { title: 'Faktura — wynajem sali, poprawiona data', category: 'faktura', documentDate: '2026-10-06' },
+  });
+  assert.equal(second.response.status, 201);
+  assert.equal(second.data.description.revisionNo, 2);
+
+  const meta = await get(env, `/api/documents/${id}`, cookie);
+  const metaData = await meta.json();
+  assert.equal(metaData.document.title, 'Faktura — wynajem sali, poprawiona data');
+  assert.equal(metaData.descriptionHistory.length, 2);
+  assert.equal(metaData.descriptionHistory[0].revisionNo, 2);
+  assert.equal(metaData.descriptionHistory[1].revisionNo, 1);
+  assert.equal(metaData.descriptionHistory[1].title, 'Faktura — wynajem sali, październik');
+
+  const rows = await auditRows(db, 'document.described');
+  assert.equal(rows.length, 2);
+  await assertNoPii(rows.map((row) => row.metadata_json));
+  assert.equal(JSON.stringify(rows[0].metadata_json).includes('Faktura'), false);
+}));
+
+test('class representative can only describe documents of their own class', async () => withEnv(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const { data } = await upload(env, { cookie, kind: 'class', classId: 'c-1a' });
+  const id = data.document.id;
+
+  const repACookie = await repA(db);
+  const okResponse = await describe(env, { cookie: repACookie, id });
+  assert.equal(okResponse.response.status, 201);
+
+  const repBCookie = await repB(db);
+  const denied = await describe(env, { cookie: repBCookie, id, key: `desc-key-${++keyCounter}` });
+  assert.equal(denied.response.status, 404);
+}));
+
+test('unknown document id gives the same 404 as an inaccessible one (no existence oracle)', async () => withEnv(async (db, env) => {
+  const repBCookie = await repB(db);
+  const missing = await describe(env, { cookie: repBCookie, id: '00000000-0000-4000-8000-000000000000' });
+  assert.equal(missing.response.status, 404);
+}));
+
+test('double click and network retry with the same Idempotency-Key reuse the row; different content conflicts', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+  const key = 'describe-double-click';
+
+  const first = await describe(env, { cookie, id, key });
+  const retry = await describe(env, { cookie, id, key });
+  assert.equal(first.response.status, 201);
+  assert.equal(retry.response.status, 200);
+  assert.equal(retry.data.replayed, true);
+  assert.equal(retry.data.description.revisionNo, 1);
+
+  const conflict = await describe(env, { cookie, id, key, body: { title: 'Inny tytuł, ten sam klucz', category: 'inne' } });
+  assert.equal(conflict.response.status, 409);
+  assert.equal(conflict.data.error, 'idempotency_conflict');
+
+  const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions WHERE document_id = $1', [id]);
+  assert.equal(count.rows[0].n, 1);
+}));
+
+test('description validation: title length, unknown category, malformed date and oversize description', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+
+  assert.equal((await describe(env, { cookie, id, body: { title: 'ab', category: 'faktura' } })).response.status, 400);
+  assert.equal((await describe(env, { cookie, id, body: { title: 'Poprawny tytuł', category: 'nieznana' } })).response.status, 400);
+  assert.equal((await describe(env, { cookie, id, body: { title: 'Poprawny tytuł', category: 'faktura', documentDate: '2026-13-40' } })).response.status, 400);
+  assert.equal((await describe(env, { cookie, id, body: { title: 'Poprawny tytuł', category: 'faktura', description: 'x'.repeat(1001) } })).response.status, 400);
+  assert.equal((await describe(env, { cookie, id, key: 'no-body-key' })).response.status, 201);
+}));
+
+test('search finds a title within scope, but never a document from another class or from board (no oracle)', async () => withEnv(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const uploadA = await upload(env, { cookie, kind: 'class', classId: 'c-1a' });
+  const uploadB = await upload(env, { cookie, kind: 'class', classId: 'c-1b' });
+  const uploadBoard = await upload(env, { cookie, kind: 'board' });
+  await describe(env, { cookie, id: uploadA.data.document.id, body: { title: 'Regulamin wycieczki klasowej', category: 'regulamin' } });
+  await describe(env, { cookie, id: uploadB.data.document.id, body: { title: 'Regulamin świetlicy', category: 'regulamin' } });
+  await describe(env, { cookie, id: uploadBoard.data.document.id, body: { title: 'Regulamin Rady Rodziców', category: 'regulamin' } });
+
+  const repACookie = await repA(db);
+  const response = await get(env, `/api/documents?schoolYearId=${YEAR}&q=Regulamin`, repACookie);
+  const listData = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(listData.documents.length, 1);
+  assert.equal(listData.documents[0].title, 'Regulamin wycieczki klasowej');
+}));
+
+test('category filter narrows the list in SQL', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const invoice = await upload(env, { cookie });
+  const bankStatement = await upload(env, { cookie });
+  await describe(env, { cookie, id: invoice.data.document.id, body: { title: 'Faktura za wynajem', category: 'faktura' } });
+  await describe(env, { cookie, id: bankStatement.data.document.id, body: { title: 'Wyciąg bankowy wrzesień', category: 'wyciag' } });
+
+  const response = await get(env, `/api/documents?schoolYearId=${YEAR}&category=wyciag`, cookie);
+  const listData = await response.json();
+  assert.equal(listData.documents.length, 1);
+  assert.equal(listData.documents[0].category, 'wyciag');
+}));
+
+test('document without any description shows title: null (panel renders "Bez tytułu")', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const meta = await get(env, `/api/documents/${data.document.id}`, cookie);
+  const metaData = await meta.json();
+  assert.equal(metaData.document.title, null);
+  assert.equal(metaData.descriptionHistory.length, 0);
+}));
+
+test('document_descriptions rows are immutable', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  await describe(env, { cookie, id: data.document.id });
+  await assert.rejects(
+    db.query("UPDATE document_descriptions SET title = 'x' WHERE document_id = $1", [data.document.id]),
+    /document_descriptions_are_immutable/,
+  );
+  await assert.rejects(
+    db.query('DELETE FROM document_descriptions WHERE document_id = $1', [data.document.id]),
+    /document_descriptions_are_immutable/,
+  );
+}));
+
+test('cross-origin describe request is refused before touching the database', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const response = await handlePgRequest(describeRequest({ cookie, id: data.document.id, origin: 'https://evil.example' }), env);
+  assert.equal(response.status, 403);
+  const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions');
+  assert.equal(count.rows[0].n, 0);
+}));
+
+// Zamrożenie roku (follow-up #76/#313, 0106_document_descriptions_year_freeze.sql):
+// document_descriptions nie ma własnej kolumny school_year_id — rok ustala
+// dokument-rodzic. Zamknięcie "na skróty" (jak w tests/pg-year-close-finance-freeze.test.js)
+// wyłącznie wstawia wiersz zamknięcia, bez wygaszania przydziałów ról ani
+// prawdziwej procedury /close — interesuje nas wyłącznie trigger a0_year_freeze.
+test('opis dokumentu: w otwartym roku działa, po zamknięciu roku dokumentu-rodzica 409 school_year_closed', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+
+  const open = await describe(env, { cookie, id });
+  assert.equal(open.response.status, 201);
+
+  await seedSchoolYear(db, 'y-2027-next', { startsOn: '2027-09-01', endsOn: '2028-08-31' });
+  await db.exec(`
+    SET session_replication_role = replica;
+    INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
+      closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
+      carried_opening_balance_id, expired_grant_count)
+    VALUES ('clo-doc-desc', '${YEAR}', 'y-2027-next', 'closed', 'u-a', 'u-b', now(), 0, 0, 0, 0, 'ob-next', 0);
+    SET session_replication_role = origin;
+  `);
+
+  const closed = await describe(env, { cookie, id, key: 'desc-key-closed-year' });
+  assert.equal(closed.response.status, 409);
+  assert.equal(closed.data.error, 'school_year_closed');
+
+  // Odrzucenie triggera cofa transakcję — żadnej nowej wersji opisu.
+  const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions WHERE document_id = $1', [id]);
+  assert.equal(count.rows[0].n, 1);
+}));
+
+// Dokumenty przywrócone bez school_year_id (np. z D1) nie są objęte
+// zamrożeniem — school_year_assert_open() pomija NULL, ten sam wzorzec co
+// przy samym documents (0036). Sprawdzenie na poziomie bazy (bez API): sam
+// canAccessDocument już i tak odmawia dostępu do dokumentu bez roku
+// (niezależnie od zamrożenia), więc tu weryfikujemy wyłącznie trigger.
+test('trigger a0_year_freeze na document_descriptions pomija dokument bez school_year_id', async () => {
+  const db = await createTestDb();
+  try {
+    await db.query(
+      `INSERT INTO users (id, email, display_name) VALUES ('u-legacy', 'u-legacy@example.invalid', 'Legacy')`,
+    );
+    const legacyId = '00000000-0000-4000-8000-0000000000d1';
+    await db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+       VALUES ($1, 'legacy/obj', 'application/pdf', 10, 'board', 'u-legacy', NULL, repeat('a', 64), 'legacy-doc-key')`,
+      [legacyId],
+    );
+    await db.query(
+      `INSERT INTO document_descriptions (document_id, revision_no, title, category, created_by)
+       VALUES ($1, 1, 'Tytuł dokumentu bez roku', 'inne', 'u-legacy')`,
+      [legacyId],
+    );
+    const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions WHERE document_id = $1', [legacyId]);
+    assert.equal(count.rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});

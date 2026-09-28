@@ -11,12 +11,30 @@ import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.
 const YEAR = 'y-2026';
 const HEADER = 'ID ucznia;Imię ucznia;Nazwisko ucznia;Klasa;ID rodziny;Opiekun 1;E-mail opiekuna 1;Opiekun 2;E-mail opiekuna 2';
 
+// #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu danych.
+// Wstawiana bezpośrednio (poza API) jako naturalny stan tła dla testów, które
+// nie dotyczą tej bramki; test samej bramki (poniżej) używa świeżej bazy bez niej.
+async function seedPublishedPrivacyNotice(db, { id = 'pn-test', createdBy = 'u-privacy-author' } = {}) {
+  await db.query(
+    `INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+    [createdBy, `${createdBy}@example.invalid`, 'Test Autor'],
+  );
+  await db.query(
+    `INSERT INTO privacy_notices (id, body_text, content_hash, decision_ref, status, created_by, approved_by, approved_at, published_by, published_at)
+     VALUES ($1, 'Testowa informacja o przetwarzaniu danych.', repeat('a', 64), 'D-06/test', 'published',
+             $2, 'u-admin', now(), 'u-admin', now())`,
+    [id, createdBy],
+  );
+  return id;
+}
+
 async function withDb(fn) {
   const db = await createTestDb();
   try {
     await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
     await seedClass(db, { id: 'c-2b', schoolYearId: YEAR, name: '2B' });
     const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
+    await seedPublishedPrivacyNotice(db);
     return await fn(db, { db }, admin);
   } finally { await db.close(); }
 }
@@ -231,12 +249,26 @@ test('new school year enrolment for an existing student is an update', async () 
   assert.equal(await count(db, 'enrollments'), 2);
 }));
 
-test('invalid class, unknown year and invalid e-mail are rejected by the server', async () => withDb(async (db, env, admin) => {
+test('invalid class and unknown year are rejected by the server; invalid e-mail only degrades to a warning (#207)', async () => withDb(async (db, env, admin) => {
+  // #207 (krok 3a): błędny e-mail JEDNEGO opiekuna nie wyrzuca całego wiersza z importu —
+  // uczeń i opiekun trafiają do bazy z email = NULL, a wiersz dostaje ostrzeżenie do
+  // poprawienia i ponownego wczytania. Skipowany jest tylko wiersz z nieznaną klasą.
   const csv = csvOf('S1;Ala;Testowa;9Z;R1;;;;', 'S2;Ola;Testowa;1A;R1;Anna Testowa;zly-adres;;');
-  const p = await preview(env, admin, payloadFromCsv(csv));
-  assert.equal(p.body.counts.rowsSkipped, 2);
+  // Ostrzeżenie o błędnym adresie powstaje w przeglądarce (validateRows), zanim
+  // dane trafią do serwera — payloadFromCsv wysyła już oczyszczony wiersz
+  // (email = ''), więc serwer, uruchamiając tę samą walidację ponownie na już
+  // wyczyszczonym wejściu, tego ostrzeżenia nie powtarza (nie ma już czego flagować).
+  const clientResult = validateRows(parseCsv(csv), guessMapping(parseCsv(csv)[0]));
+  assert.match(clientResult.warnings.map((w) => w.message).join(' '), /Niepoprawny adres e-mail/);
+  const payload = toServerPayload(clientResult, YEAR, { skipConflicts: true });
+  const p = await preview(env, admin, payload);
+  assert.equal(p.body.counts.rowsSkipped, 1);
+  assert.equal(p.body.counts.rowsAdded, 1);
   assert.match(p.body.rows[0].messages.join(' '), /Nieznana klasa/);
-  assert.match(p.body.rows[1].messages.join(' '), /Niepoprawny adres/);
+  assert.equal(p.body.rows[1].action, 'add');
+  assert.equal((await commit(env, admin, payload, p.body, 'key-bad-email-0001')).status, 201);
+  const g = await db.query("SELECT email FROM guardians WHERE first_name = 'Anna'");
+  assert.equal(g.rows[0].email, null);
   const unknownYear = await preview(env, admin, payloadFromCsv(BASIC, {}, 'y-1999'));
   assert.equal(unknownYear.status, 422);
   assert.equal(unknownYear.body.error, 'unknown_school_year');
@@ -248,7 +280,8 @@ test('invalid class, unknown year and invalid e-mail are rejected by the server'
   for (const bad of [{ ...tampered, columns: ['x'] }, { ...tampered, version: 2 }, { ...tampered, rows: [[{}, 1, 2, 3, 4, 5, 6, 7, 8]] }]) {
     assert.equal((await preview(env, admin, bad)).status, 400);
   }
-  assert.equal(await count(db, 'students'), 0);
+  // 1 uczeń (Ola) z wcześniejszego commitu tego testu (#207: e-mail nie blokuje importu).
+  assert.equal(await count(db, 'students'), 1);
 }));
 
 test('formula-like text is stored verbatim as inert text', async () => withDb(async (db, env, admin) => {
@@ -321,6 +354,24 @@ test('production requires an explicit IMPORT_ENABLED switch', async () => withDb
   assert.equal((await off.json()).error, 'import_disabled');
   const on = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, APP_ENV: 'production', IMPORT_ENABLED: 'true' });
   assert.equal(on.status, 200);
+
+  // #166: 'prod' i inna wielkość liter ('Production'/'PRODUCTION') muszą być
+  // rozpoznane tak samo jak 'production' — literówka w konfiguracji Railway
+  // nie może zostawić importu danych dzieci i opiekunów włączonym po cichu.
+  for (const appEnv of ['prod', 'Production', 'PRODUCTION', '  production  ']) {
+    const blocked = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, APP_ENV: appEnv });
+    assert.equal(blocked.status, 403, appEnv);
+    assert.equal((await blocked.json()).error, 'import_disabled', appEnv);
+    const allowed = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, APP_ENV: appEnv, IMPORT_ENABLED: 'true' });
+    assert.equal(allowed.status, 200, appEnv);
+  }
+  // Ta sama trasa commit, nie tylko preview.
+  const commitBlocked = await handlePgRequest(
+    post('/api/import/commit', admin, { ...payload, fingerprint: '0'.repeat(64), planDigest: '0'.repeat(64) }, { key: 'key-prod-01' }),
+    { ...env, APP_ENV: 'PROD' },
+  );
+  assert.equal(commitBlocked.status, 403);
+  assert.equal((await commitBlocked.json()).error, 'import_disabled');
 }));
 
 test('audit event records actor and counts only, without PII', async () => withDb(async (db, env, admin) => {
@@ -339,11 +390,119 @@ test('audit event records actor and counts only, without PII', async () => withD
   await assert.rejects(db.query('DELETE FROM import_batches'), /append_only/);
 }));
 
+// #248: bez set_config('rd.actor_id', …, true) przed bulkInsert, triggery historii
+// rodzin (0014/0023) zapisywały created_by/changed_by = NULL i source = 'direct',
+// jakby import był bezpośrednim SQL-em, mimo że audit_events i import_batches
+// poprawnie wskazywały operatora. Sprawdza nowego ucznia, nowego opiekuna,
+// rodzeństwo we wspólnej rodzinie i istniejącego ucznia bez przypisania w wybranym
+// roku, a także że podwójne kliknięcie/ponowienie nie dopisuje kolejnych wierszy.
+test('#248: import stamps the actor on student_households/guardian_households/enrollment_history, not just audit_events', async () => withDb(async (db, env, admin) => {
+  await seedClass(db, { id: 'c-2a-27', schoolYearId: 'y-2027', name: '2A' });
+
+  // Nowy uczeń, nowy opiekun, rodzeństwo we wspólnej rodzinie (S1+S2 -> R1), uczeń bez opiekunów (S3).
+  const first = await previewAndCommit(env, admin, payloadFromCsv(BASIC), 'key-hist-0001');
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+
+  const sh = await db.query('SELECT created_by, source FROM student_households');
+  assert.equal(sh.rows.length, 3);
+  for (const row of sh.rows) {
+    assert.equal(row.created_by, 'u-admin', JSON.stringify(row));
+    assert.equal(row.source, 'student_insert');
+  }
+  const gh = await db.query('SELECT created_by, source FROM guardian_households');
+  assert.equal(gh.rows.length, 3);
+  for (const row of gh.rows) {
+    assert.equal(row.created_by, 'u-admin', JSON.stringify(row));
+    assert.equal(row.source, 'guardian_insert');
+  }
+  const eh = await db.query("SELECT changed_by, source, reason FROM enrollment_history WHERE kind = 'enrolled' AND school_year_id = $1", [YEAR]);
+  assert.equal(eh.rows.length, 3);
+  for (const row of eh.rows) {
+    assert.equal(row.changed_by, 'u-admin', JSON.stringify(row));
+    assert.equal(row.source, 'api');
+    assert.equal(row.reason, 'import_csv_xlsx');
+  }
+
+  // Istniejący uczeń (S1) bez przypisania w nowo wybranym roku szkolnym: nowy
+  // wpis enrollment_history typu 'enrolled', bez tworzenia drugiej rodziny/opiekunów.
+  const nextYearPayload = payloadFromCsv(csvOf('S1;Ala;Testowa;2A;R1;;;;'), {}, 'y-2027');
+  const nextYear = await previewAndCommit(env, admin, nextYearPayload, 'key-hist-0002');
+  assert.equal(nextYear.status, 201, JSON.stringify(nextYear.body));
+  const enrolled2027 = await db.query("SELECT changed_by, source, reason FROM enrollment_history WHERE school_year_id = 'y-2027'");
+  assert.equal(enrolled2027.rows.length, 1);
+  assert.equal(enrolled2027.rows[0].changed_by, 'u-admin');
+  assert.equal(enrolled2027.rows[0].source, 'api');
+  assert.equal(enrolled2027.rows[0].reason, 'import_csv_xlsx');
+  // Ten import nie dotknął gospodarstw ani opiekunów — liczba wierszy bez zmian.
+  assert.equal(await count(db, 'student_households'), 3);
+  assert.equal(await count(db, 'guardian_households'), 3);
+
+  // Podwójne kliknięcie (ten sam klucz idempotencji) tej samej pierwszej partii:
+  // wynik z cache, żadnych dodatkowych wierszy historii.
+  const shBefore = await count(db, 'student_households');
+  const ghBefore = await count(db, 'guardian_households');
+  const ehBefore = await count(db, 'enrollment_history');
+  const doubleClick = await commit(env, admin, payloadFromCsv(BASIC), first.preview, 'key-hist-0001');
+  assert.equal(doubleClick.status, 200);
+  assert.equal(doubleClick.body.replayed, true);
+  assert.equal(doubleClick.body.batchId, first.body.batchId);
+  assert.equal(await count(db, 'student_households'), shBefore);
+  assert.equal(await count(db, 'guardian_households'), ghBefore);
+  assert.equal(await count(db, 'enrollment_history'), ehBefore);
+
+  // Ponowienie tej samej partii z nowym kluczem idempotencji (ale ten sam
+  // fingerprint danych) — ten sam batch, wciąż żadnych nowych wierszy historii.
+  const secondPreview = await preview(env, admin, payloadFromCsv(BASIC));
+  const retry = await commit(env, admin, payloadFromCsv(BASIC), secondPreview.body, 'key-hist-0003');
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.batchId, first.body.batchId);
+  assert.equal(await count(db, 'student_households'), shBefore);
+  assert.equal(await count(db, 'guardian_households'), ghBefore);
+  assert.equal(await count(db, 'enrollment_history'), ehBefore);
+}));
+
 test('unknown import subpaths fall through and wrong methods are rejected', async () => withDb(async (db, env, admin) => {
   const handler = createPgHandler(ROUTES);
   assert.equal((await handler(request('/api/import/nope', { cookie: admin }), env)).status, 404);
   assert.equal((await handler(request('/api/import/preview', { cookie: admin }), env)).status, 405);
 }));
+
+// --- #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu danych ---
+
+test('#145 commit without a published privacy notice is refused; preview is not blocked', async () => {
+  const db = await createTestDb();
+  try {
+    await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
+    const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
+    const env = { db };
+    const payload = payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;Jan Testowy;jan@example.invalid;;'));
+    const p = await preview(env, admin, payload);
+    assert.equal(p.status, 200, 'podgląd nie zapisuje niczego i nie jest blokowany przez bramkę');
+    const c = await commit(env, admin, payload, p.body, 'key-privacy-0001');
+    assert.equal(c.status, 409);
+    assert.deepEqual(c.body, { error: 'privacy_notice_missing' });
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM import_batches')).rows[0].n, 0);
+
+    // Draft/nieopublikowana wersja nadal blokuje.
+    await db.query(
+      `INSERT INTO privacy_notices (id, body_text, content_hash, decision_ref, status, created_by)
+       VALUES ('pn-draft', 'Szkic.', repeat('b', 64), 'D-06/szkic', 'draft', 'u-admin')`,
+    );
+    const stillMissing = await commit(env, admin, payload, p.body, 'key-privacy-0001');
+    assert.deepEqual(stillMissing.body, { error: 'privacy_notice_missing' });
+
+    // Publikacja odblokowuje; batch zapisuje, która wersja obowiązywała.
+    const noticeId = await seedPublishedPrivacyNotice(db, { id: 'pn-published' });
+    const ok = await commit(env, admin, payload, p.body, 'key-privacy-0001');
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+    assert.equal(
+      (await db.query('SELECT privacy_notice_id FROM import_batches WHERE id = $1', [ok.body.batchId])).rows[0].privacy_notice_id,
+      noticeId,
+    );
+  } finally {
+    await db.close();
+  }
+});
 
 // --- #98: dopasowanie opiekuna, przedrostki nazwisk, raport „brak w pliku" ---
 

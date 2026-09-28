@@ -13,13 +13,21 @@ import {
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
-const board = { userId: 'board', grants: [grant('board')], mfaVerified: false };
+// #150 (SR-10): zarządzanie zebraniami/protokołami/uchwałami wymaga teraz jawnie
+// potwierdzonego MFA na KAŻDEJ trasie zarządzania (nie tylko #135's podzbiorze) —
+// board i classBoard dostają mfaVerified: true, tak jak pozostali aktorzy tego
+// pliku, którzy naprawdę zarządzają (rep, principal, treasurer są tu wyłącznie
+// do testów odmowy). `boardNoMfa` — ten sam przydział, sesja bez MFA — służy
+// testom odmowy `403 mfa_required` (rozszerzonym w #150 na wszystkie trasy
+// zarządzania, nie tylko decyzję o uchwale/zatwierdzenie protokołu z #135).
+const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
+const boardNoMfa = { userId: 'board', grants: [grant('board')], mfaVerified: false };
 const admin = { userId: 'admin', grants: [grant('admin', { schoolYearId: null })], mfaVerified: true };
 const auditor = { userId: 'auditor', grants: [grant('audit')], mfaVerified: false };
 const rep = { userId: 'rep', grants: [grant('representative', { classId: 'class-a' })], mfaVerified: true };
 const principal = { userId: 'principal', grants: [grant('principal')], mfaVerified: true };
 const treasurer = { userId: 'treasurer', grants: [grant('treasurer')], mfaVerified: true };
-const classBoard = { userId: 'class-board', grants: [grant('board', { classId: 'class-a' })] };
+const classBoard = { userId: 'class-board', grants: [grant('board', { classId: 'class-a' })], mfaVerified: true };
 
 let keySeq = 0;
 const key = () => `test-key-${++keySeq}`;
@@ -264,9 +272,9 @@ test('approved minutes are immutable, lock the meeting and are corrected by new 
     assert.equal(v1.version, 1);
     await assert.rejects(db.query("UPDATE meeting_minutes SET body = 'Zmieniony tekst draftu' WHERE id = $1", [v1.id]),
       /minutes_version_immutable/);
-    const approved = await approveMinutes(db, board, { meetingId: meeting.id, minutesId: v1.id });
+    const approved = await approveMinutes(db, admin, { meetingId: meeting.id, minutesId: v1.id });
     assert.equal(approved.minutes.status, 'approved');
-    assert.equal((await approveMinutes(db, board, { minutesId: v1.id })).replayed, true);
+    assert.equal((await approveMinutes(db, admin, { minutesId: v1.id })).replayed, true);
 
     await assert.rejects(db.query("UPDATE meeting_minutes SET body = 'Zmieniony tekst' WHERE id = $1", [v1.id]),
       /minutes_approved_immutable/);
@@ -282,8 +290,8 @@ test('approved minutes are immutable, lock the meeting and are corrected by new 
     const v3 = (await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: meeting.id,
       body: 'Protokół syntetyczny, poprawiony drugi raz.' })).minutes;
     assert.deepEqual([v2.version, v3.version, v2.supersedesId, v3.supersedesId], [2, 3, v1.id, v2.id]);
-    await assert.rejects(approveMinutes(db, board, { minutesId: v2.id }), { code: 'minutes_not_latest_version' });
-    await approveMinutes(db, board, { minutesId: v3.id });
+    await assert.rejects(approveMinutes(db, admin, { minutesId: v2.id }), { code: 'minutes_not_latest_version' });
+    await approveMinutes(db, admin, { minutesId: v3.id });
     await updateMeeting(db, board, { meetingId: meeting.id, status: 'archived' });
     await assert.rejects(createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: meeting.id,
       body: 'Po archiwizacji nie wolno.' }), { code: 'minutes_require_held_meeting' });
@@ -311,8 +319,8 @@ test('minutes approval is refused while draft resolutions are open (#81)', async
 
     // Double click: both requests are refused, nothing changes.
     const clicks = await Promise.allSettled([
-      approveMinutes(db, board, { meetingId: meeting.id, minutesId: minutes.id }),
-      approveMinutes(db, board, { meetingId: meeting.id, minutesId: minutes.id }),
+      approveMinutes(db, admin, { meetingId: meeting.id, minutesId: minutes.id }),
+      approveMinutes(db, admin, { meetingId: meeting.id, minutesId: minutes.id }),
     ]);
     for (const click of clicks) {
       assert.equal(click.status, 'rejected');
@@ -321,15 +329,17 @@ test('minutes approval is refused while draft resolutions are open (#81)', async
     }
     assert.equal((await approvals()).rows[0].n, 0);
     assert.equal((await db.query('SELECT status FROM meeting_minutes WHERE id = $1', [minutes.id])).rows[0].status, 'draft');
-    // The database refuses it too, not only the API.
+    // The database refuses it too, not only the API. approved_by differs from
+    // created_by ('board') so this exercises minutes_open_resolutions, not #135's
+    // four-eyes guard (covered by its own test below).
     await assert.rejects(db.query(
-      "UPDATE meeting_minutes SET status = 'approved', approved_by = 'board', approved_at = now() WHERE id = $1",
+      "UPDATE meeting_minutes SET status = 'approved', approved_by = 'admin', approved_at = now() WHERE id = $1",
       [minutes.id]), /minutes_open_resolutions/);
 
     // Decide one, withdraw the other (a status change, the row stays in the register).
     await updateResolution(db, board, { resolutionId: first.id, status: 'rejected',
       votesFor: 0, votesAgainst: 1, votesAbstain: 0, quorumCheckId: quorumCheck.id });
-    await assert.rejects(approveMinutes(db, board, { minutesId: minutes.id }), { code: 'minutes_open_resolutions' });
+    await assert.rejects(approveMinutes(db, admin, { minutesId: minutes.id }), { code: 'minutes_open_resolutions' });
     await assert.rejects(updateResolution(db, rep, { resolutionId: second.id, status: 'withdrawn' }), { code: 'forbidden' });
     const withdrawn = (await updateResolution(db, board, { resolutionId: second.id, status: 'withdrawn' })).resolution;
     assert.equal(withdrawn.status, 'withdrawn');
@@ -342,9 +352,9 @@ test('minutes approval is refused while draft resolutions are open (#81)', async
     for (const actor of [rep, auditor, principal, treasurer]) {
       await assert.rejects(approveMinutes(db, actor, { minutesId: minutes.id }), { code: 'forbidden' });
     }
-    const approved = await approveMinutes(db, board, { minutesId: minutes.id });
+    const approved = await approveMinutes(db, admin, { minutesId: minutes.id });
     assert.equal(approved.minutes.status, 'approved');
-    assert.equal((await approveMinutes(db, board, { minutesId: minutes.id })).replayed, true);
+    assert.equal((await approveMinutes(db, admin, { minutesId: minutes.id })).replayed, true);
     assert.equal((await approvals()).rows[0].n, 1);
     const { resolutions } = await getMeeting(db, board, { meetingId: meeting.id });
     assert.deepEqual(resolutions.map(item => item.status).sort(), ['rejected', 'withdrawn']);
@@ -421,13 +431,13 @@ test('parents and representatives see only approved minutes explicitly shared wi
     assert.deepEqual((await listMinutesForParents(db, { schoolYearId: 'year', classIds: ['class-a'] })).minutes, []);
     assert.deepEqual((await listSharedMinutes(db, rep, { schoolYearId: 'year' })).minutes, []);
 
-    await approveMinutes(db, board, { minutesId: draft.id });
+    await approveMinutes(db, admin, { minutesId: draft.id });
     assert.deepEqual((await listMinutesForParents(db, { schoolYearId: 'year', classIds: ['class-a'] })).minutes, [],
       'approved but internal minutes are not shared');
     await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: draft.id, visibility: 'parents' });
     const classMinutes = (await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: classB.id,
       body: 'Protokół zebrania klasy 1B.' })).minutes;
-    await approveMinutes(db, board, { minutesId: classMinutes.id });
+    await approveMinutes(db, admin, { minutesId: classMinutes.id });
     await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: classMinutes.id, visibility: 'parents' });
 
     const parentsA = (await listMinutesForParents(db, { schoolYearId: 'year', classIds: ['class-a'] })).minutes;
@@ -444,7 +454,7 @@ test('parents and representatives see only approved minutes explicitly shared wi
       body: 'Poprawiony protokół, jeszcze projekt.' })).minutes;
     const stillV1 = (await listMinutesForParents(db, { schoolYearId: 'year', classIds: [] })).minutes;
     assert.deepEqual(stillV1.map(item => [item.minutesId, item.version]), [[draft.id, 1]]);
-    await approveMinutes(db, board, { minutesId: v2.id });
+    await approveMinutes(db, admin, { minutesId: v2.id });
     assert.deepEqual((await listMinutesForParents(db, { schoolYearId: 'year', classIds: [] })).minutes, []);
     await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: v2.id, visibility: 'public' });
     assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.version), [2]);
@@ -640,5 +650,46 @@ test('PATCH keeps unspecified quorum fields and a configured rule requires its s
       .meeting.quorumRule;
     assert.equal(off.mode, 'not_configured');
     assert.equal(off.source, null);
+  } finally { await db.close(); }
+});
+
+// --- #152: publikacja publiczna protokołu z możliwymi danymi osobowymi -----
+
+test('publishing minutes as public is blocked when the body contains a known name, an e-mail or an IBAN; internal/parents visibility is not blocked', async () => {
+  const db = await meetingsDb();
+  try {
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('student-pii','household-1','Kuba','Testowanski')");
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('en-pii','student-pii','class-a','year')");
+
+    const meeting = await heldMeeting(db);
+    // Autor i zatwierdzający muszą być różnymi osobami (zasada czterech oczu,
+    // #135) — protokół tworzy board, zatwierdza admin.
+    const withName = (await createMinutesVersion(db, board,
+      { idempotencyKey: key(), meetingId: meeting.id, body: 'Omówiono sprawę Kuba Testowanski i jego nieobecności.' })).minutes;
+    await approveMinutes(db, admin, { minutesId: withName.id });
+    await assert.rejects(
+      setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withName.id, visibility: 'public' }),
+      { code: 'minutes_contain_personal_data', status: 409 },
+    );
+    assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes, []);
+    // Widoczność wewnętrzna/dla rodziców nie jest blokowana (tylko ostrzeżenie
+    // w innych miejscach zapisu — poza zakresem tej trasy w tym PR).
+    const internal = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withName.id, visibility: 'internal' });
+    assert.equal(internal.replayed, false);
+
+    const withEmail = (await createMinutesVersion(db, board,
+      { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: ktos@example.invalid, do ustalenia.' })).minutes;
+    await approveMinutes(db, admin, { minutesId: withEmail.id });
+    await assert.rejects(
+      setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withEmail.id, visibility: 'public' }),
+      { code: 'minutes_contain_personal_data' },
+    );
+
+    const clean = (await createMinutesVersion(db, board,
+      { idempotencyKey: key(), meetingId: meeting.id, body: 'Protokół bez żadnych danych osobowych, wyłącznie sprawy ogólne.' })).minutes;
+    await approveMinutes(db, admin, { minutesId: clean.id });
+    const published = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: clean.id, visibility: 'public' });
+    assert.equal(published.replayed, false);
+    assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.minutesId), [clean.id]);
   } finally { await db.close(); }
 });

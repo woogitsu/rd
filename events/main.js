@@ -31,8 +31,10 @@ import {
   validateReason,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { initialSchoolYearId } from "../shared/school-year.js";
 
 mountShell();
 
@@ -127,9 +129,11 @@ async function start() {
     fillDatalist("class-ids", grants.map((g) => g.classId).filter(isValidId));
     app.hidden = false;
     openCreate.hidden = !canDraftEvents(grants);
-    const unique = [...new Set(years)];
-    if (unique.length === 1) {
-      yearInput.value = unique[0];
+    // Rok domyślny (puste ekrany bez klikania): najnowszy z przydziałów, awaryjnie
+    // heurystyka daty (shared/school-year.js). Użytkownik nadal może zmienić rok.
+    const year = initialSchoolYearId(grants);
+    if (year) {
+      yearInput.value = year;
       await loadList();
     }
   } catch (error) {
@@ -363,6 +367,23 @@ detailActions.addEventListener("click", async (event) => {
   const action = button.dataset.action;
   if (action === "edit") return openEdit(state.detail.event);
   if (action === "cancel") return openCancel(state.detail.event);
+  if (action === "publish") {
+    // Podgląd dokładnie tego, co zobaczy site/ (issue #136) — tytuł, termin w
+    // Europe/Brussels, miejsce, odbiorcy.
+    const ev = state.detail.event;
+    const confirmed = await confirmAction({
+      title: "Opublikować wydarzenie?",
+      effects: [
+        ev.title,
+        `Termin: ${formatRange(ev.startsAtUtc, ev.endsAtUtc)}`,
+        ev.location ? `Miejsce: ${ev.location}` : null,
+        `Odbiorcy: ${AUDIENCE_LABELS[ev.audience] ?? ev.audience}`,
+        "Strona publiczna pokaże tę wersję w ciągu ok. 60 s.",
+      ],
+      confirmLabel: "Opublikuj",
+    });
+    if (!confirmed) return;
+  }
   state.busy = true;
   const buttons = [...detailActions.querySelectorAll("button")];
   buttons.forEach((b) => { b.disabled = true; });

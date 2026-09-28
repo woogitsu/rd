@@ -237,7 +237,7 @@ test('double-click create is idempotent and conflicting reuse of a key is reject
     assert.equal(rows[0].n, 1);
     const audits = await db.query(`SELECT action, actor_id, entity_id, metadata_json FROM audit_events WHERE entity_type='event'`);
     assert.equal(audits.rows.length, 1);
-    assert.deepEqual(audits.rows[0].metadata_json, { revision: 1, status: 'draft' });
+    assert.deepEqual(audits.rows[0].metadata_json, { schoolYearId: input.schoolYearId, revision: 1, status: 'draft' });
     await assert.rejects(createDraft(db, board1, { ...input, title: 'Inny tytuł' }), { code: 'idempotency_conflict' });
     await assert.rejects(createDraft(db, board2, input), { code: 'idempotency_conflict' });
 
@@ -359,9 +359,16 @@ test('HTTP: mutations require same origin, JSON limits and Idempotency-Key', asy
 test('legacy D1 rows restore as published (no approval record) or draft', async () => {
   const db = await eventsDb();
   try {
+    // #101 (SR-06): bezpośredni INSERT ... visibility='published' jest
+    // zamknięty poza trybem odtworzenia (SET LOCAL rd.restore='on', ten sam
+    // mechanizm co 0027 dla dat spoza roku szkolnego). Prawdziwe odtworzenie
+    // (src/d1-postgres-migration.js) włącza ten tryb w swojej transakcji.
+    await db.query(`BEGIN`);
+    await db.query(`SET LOCAL rd.restore = 'on'`);
     await db.query(`INSERT INTO events (id,school_year_id,title,begins_at,description,visibility,published_at,created_by)
       VALUES ('legacy-pub','year','Stare wydarzenie','2026-09-20T10:00:00Z',NULL,'published','2026-09-01T00:00:00Z','board1'),
              ('legacy-draft','year','Stary szkic','2026-09-21T10:00:00Z',NULL,'draft_public',NULL,'board1')`);
+    await db.query(`COMMIT`);
     const { rows } = await db.query(`SELECT e.id, e.status, e.visibility, r.source FROM events e JOIN event_revisions r ON r.event_id=e.id ORDER BY e.id`);
     assert.deepEqual(rows, [
       { id: 'legacy-draft', status: 'draft', visibility: 'draft_public', source: 'app' },
@@ -369,6 +376,33 @@ test('legacy D1 rows restore as published (no approval record) or draft', async 
     ]);
     assert.deepEqual((await listPublic(db)).events.map((e) => e.id), ['legacy-pub']);
     await assert.rejects(db.query(`INSERT INTO events (id,school_year_id,title,begins_at,status,created_by) VALUES ('x','year','X',now(),'approved','board1')`), /event_must_start_as_draft/);
+  } finally { await db.close(); }
+});
+
+test('#101 (SR-06): direct publish outside restore mode is rejected', async () => {
+  const db = await eventsDb();
+  try {
+    await assert.rejects(db.query(`INSERT INTO events (id,school_year_id,title,begins_at,description,visibility,published_at,created_by)
+      VALUES ('direct-pub','year','Bezpośredni zapis','2026-09-20T10:00:00Z',NULL,'published','2026-09-01T00:00:00Z','board1')`),
+      /legacy_publish_restore_only/);
+    const { rows } = await db.query(`SELECT count(*)::int AS n FROM events WHERE id = 'direct-pub'`);
+    assert.equal(rows[0].n, 0);
+  } finally { await db.close(); }
+});
+
+test('#101 (SR-05): TRUNCATE on tables with an immutability guard is blocked, not just DELETE', async () => {
+  const db = await eventsDb();
+  try {
+    await db.query(`INSERT INTO events (id,school_year_id,title,begins_at,description,visibility,created_by)
+      VALUES ('t1','year','Wydarzenie','2026-09-20T10:00:00Z',NULL,'internal','board1')`);
+    // `events` ma zależną tabelę (event_revisions) przez klucz obcy —
+    // PostgreSQL wymaga CASCADE dla jednotabelowego TRUNCATE w takim
+    // przypadku; nawet z CASCADE trigger BEFORE TRUNCATE blokuje przed
+    // jakimkolwiek usunięciem.
+    await assert.rejects(db.query(`TRUNCATE events CASCADE`), /truncate_not_allowed/);
+    await assert.rejects(db.query(`TRUNCATE event_revisions`), /truncate_not_allowed/);
+    const { rows } = await db.query(`SELECT count(*)::int AS n FROM events`);
+    assert.equal(rows[0].n, 1);
   } finally { await db.close(); }
 });
 

@@ -13,6 +13,16 @@ export const ROLE_LABELS = Object.freeze({
   principal: "Dyrekcja",
 });
 
+// #176: role bez żadnej trasy chronionej dziś (decyzja D-09 nierozstrzygnięta).
+// Jedyne źródło prawdy jest po stronie serwera: ROLE_STATUS w src/pg/auth.js
+// (tests/admin-core.test.js sprawdza, że ta lista się z nim zgadza). Front-end
+// ostrzega przed wysłaniem formularza; serwer i tak odrzuca 422 role_pending_decision.
+export const PENDING_DECISION_ROLES = Object.freeze(['principal']);
+
+export function roleNeedsPendingDecisionWarning(role) {
+  return PENDING_DECISION_ROLES.includes(role);
+}
+
 export const GRANT_STATUS_LABELS = Object.freeze({
   active: "Aktywny",
   expired: "Wygasły",
@@ -27,6 +37,9 @@ export const INVITATION_STATUS_LABELS = Object.freeze({
 });
 
 export const ACTION_LABELS = Object.freeze({
+  "auth.password_reset_issued": "Wydanie kodu resetu hasła",
+  "auth.password_reset_revoked": "Unieważnienie kodu resetu hasła",
+  "mfa.reset": "Reset weryfikacji dwuetapowej",
   "role_grant.created": "Nadanie roli",
   "role_grant.revoked": "Wycofanie roli",
   "role_grant.expired": "Wygaszenie roli",
@@ -50,7 +63,8 @@ export const ERROR_MESSAGES = Object.freeze({
   school_year_not_found: "Wskazany rok szkolny nie istnieje.",
   class_not_in_school_year: "Klasa nie należy do wskazanego roku szkolnego.",
   school_year_not_finished: "Rok szkolny jeszcze się nie zakończył.",
-  confirmation_required: "Potwierdź identyfikator roku szkolnego.",
+  confirmation_required: "Potwierdź identyfikator (konta albo roku szkolnego).",
+  cannot_reset_own_mfa: "Nie można zresetować weryfikacji dwuetapowej własnego konta.",
   invitation_pending: "Dla tego adresu i zakresu istnieje już oczekujące zaproszenie.",
   invitation_already_accepted: "Zaproszenie zostało już przyjęte.",
   user_disabled: "Konto jest wyłączone.",
@@ -60,6 +74,10 @@ export const ERROR_MESSAGES = Object.freeze({
   invalid_role: "Wybierz rolę z listy.",
   invalid_expires_at: "Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata).",
   invalid_ttl: "Ważność zaproszenia: od 1 do 336 godzin.",
+  // #176: rola bez żadnej trasy dziś (np. principal) i przydział klasowy dla roli
+  // bez tras klasowych — patrz docs/AUTHORIZATION.md „Stan roli i konto bez funkcji”.
+  role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji. Potwierdź świadomie albo wybierz inną rolę.",
+  class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
 });
 
 export function errorMessage(code, status) {
@@ -186,8 +204,24 @@ export function confirmationText(action, subject) {
     case "disable": return `Wyłączyć konto ${subject}? Wszystkie sesje zostaną wycofane.`;
     case "enable": return `Włączyć konto ${subject}? Przydziały ról pozostają bez zmian.`;
     case "revoke-sessions": return `Wylogować ${subject} ze wszystkich urządzeń?`;
+    case "password-reset": return `Wydać nowy kod resetu hasła dla ${subject}? Poprzedni nieużyty kod przestanie działać.`;
     default: return "Potwierdzić operację?";
   }
+}
+
+// #224: reset MFA wyłącza czynnik i kody odzyskiwania konta — wymaga wpisania
+// identyfikatora konta (kontrakt POST /api/admin/users/{id}/mfa-reset), żeby
+// nie wykasować cudzego dostępu jednym kliknięciem. `typed` to surowa wartość
+// z okna przeglądarki: null = anulowano (Escape/Anuluj), string = wpisano.
+export function mfaResetConfirmation(typed, userId) {
+  if (typed === null) return { cancelled: true, ok: false };
+  return { cancelled: false, ok: typed.trim() === userId };
+}
+
+// #224: link gotowy do wklejenia zamiast samego kodu resetu — patrz #164,
+// gdzie ten sam brak dotyczy zaproszeń. Token wyłącznie w części „#…”.
+export function passwordResetLink(token, origin) {
+  return `${origin}/login/#reset=${token}`;
 }
 
 export function describeAuditEvent(event) {

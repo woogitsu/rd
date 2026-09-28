@@ -4,11 +4,15 @@
 //   GET  /api/reconciliations?schoolYearId=…
 //   POST /api/reconciliations                                 (Idempotency-Key)
 //   GET  /api/reconciliations/{id}
-//   POST /api/reconciliations/{id}/lines                      (Idempotency-Key) JSON lines albo CSV
+//   POST /api/reconciliations/{id}/lines                      (Idempotency-Key) JSON lines, CSV, CODA albo CAMT.053
+//   POST /api/reconciliations/{id}/lines/{lineId}/payment      (Idempotency-Key) wpłata + powiązanie naraz (#115)
 //   GET  /api/reconciliations/{id}/suggestions?windowDays=…   tylko propozycje, nigdy zatwierdzenie
 //   POST /api/reconciliations/{id}/matches                    (Idempotency-Key)
 //   POST /api/reconciliations/{id}/matches/{matchId}/revocation
+//   POST /api/reconciliations/{id}/group-matches              (Idempotency-Key) przelew zbiorczy (#127)
+//   POST /api/reconciliations/{id}/group-matches/{groupId}/revocation
 //   POST /api/reconciliations/{id}/confirm                    zasada czterech oczu
+//   POST /api/reconciliations/{id}/abandon                    porzucenie szkicu bez aktywnych powiązań (0107)
 //   GET  /api/reports/audit?schoolYearId=…&format=json|html
 //
 // Uzgodnienia: admin, board, treasurer z MFA w zakresie roku. Raport: audit,
@@ -24,6 +28,11 @@ import { toSafeInteger } from './payments.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
+import { buildBudgetExecution } from './ledger-budget.js';
+import { readSnapshot } from '../db-snapshot.js';
+import { StatementFileError, normalizeIban } from '../bank/common.js';
+import { parseCoda } from '../bank/coda.js';
+import { parseCamt053 } from '../bank/camt053.js';
 
 export const name = 'reconciliation';
 
@@ -41,6 +50,9 @@ const MAX_BALANCE_CENTS = 10_000_000_000;
 const MAX_REFERENCE_LENGTH = 300;
 const LARGE_EXPENSE_CENTS = 300_000;
 const MAX_CANDIDATES = 5;
+// Dopasowanie zbiorcze (#127, cz. 2): jedna pozycja wyciągu ↔ 2…50 wpłat/wpisów.
+const MIN_GROUP_ITEMS = 2;
+const MAX_GROUP_ITEMS = 50;
 
 class RequestError extends Error {
   constructor(code, status = 400, extra = {}) {
@@ -211,18 +223,20 @@ export function parseStatementCsv(text) {
   });
 }
 
+const FILE_PARSERS = { coda: parseCoda, camt053: parseCamt053 };
+const MIN_HASH_KEY_LENGTH = 32;
+
 function parseStatementLines(data) {
-  const hasLines = data.lines !== undefined;
-  const hasCsv = data.csv !== undefined;
-  if (hasLines === hasCsv) throw new RequestError('invalid_request');
-  let source;
+  const kinds = ['lines', 'csv', 'coda', 'camt053'].filter((kind) => data[kind] !== undefined);
+  if (kinds.length !== 1) throw new RequestError('invalid_request');
+  const [kind] = kinds;
+  if (FILE_PARSERS[kind]) return parseStatementFile(kind, data[kind]);
+  const source = kind === 'csv' ? 'csv' : 'manual';
   let lines;
-  if (hasCsv) {
-    source = 'csv';
+  if (kind === 'csv') {
     lines = parseStatementCsv(data.csv);
   } else {
     if (!Array.isArray(data.lines)) throw new RequestError('invalid_request');
-    source = 'manual';
     lines = data.lines;
   }
   if (!lines.length || lines.length > MAX_LINES) throw new RequestError('invalid_line_count');
@@ -243,6 +257,54 @@ function parseStatementLines(data) {
   };
 }
 
+// CODA / CAMT.053 (#105). Błąd pliku zwraca numer rekordu, nigdy fragment treści.
+function parseStatementFile(source, text) {
+  if (typeof text !== 'string' || !text.trim()) throw new RequestError('invalid_statement_file');
+  const content = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  let statement;
+  try {
+    statement = FILE_PARSERS[source](content);
+  } catch (error) {
+    if (error instanceof StatementFileError) {
+      throw new RequestError(error.code, 400, error.record ? { record: error.record } : {});
+    }
+    throw error;
+  }
+  if (statement.movements.length > MAX_LINES) throw new RequestError('invalid_line_count');
+  return {
+    source,
+    content,
+    statement,
+    lines: statement.movements.map((movement) => ({
+      record: movement.record,
+      bookedOn: movement.bookedOn,
+      amountCents: movement.amountCents,
+      transactionId: movement.transactionId,
+      // Tytuł trafia wyłącznie do solonego skrótu; zbyt długi jest przycinany.
+      reference: movement.reference
+        ? normalizeReference(movement.reference.normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, MAX_REFERENCE_LENGTH))
+        : null,
+    })),
+  };
+}
+
+// Klucz HMAC skrótów transakcji i plików oraz zatwierdzony rachunek Rady (D-13)
+// pochodzą z konfiguracji serwera. Bez nich import z pliku jest wyłączony.
+function bankImportConfig(env) {
+  const key = typeof env.BANK_TRANSACTION_HASH_KEY === 'string' ? env.BANK_TRANSACTION_HASH_KEY : '';
+  const iban = normalizeIban(typeof env.RECONCILIATION_BANK_ACCOUNT_IBAN === 'string' ? env.RECONCILIATION_BANK_ACCOUNT_IBAN : '');
+  if (key.length < MIN_HASH_KEY_LENGTH || !iban) throw new RequestError('bank_import_not_configured', 503);
+  return { key, iban };
+}
+
+async function hmacHex(key, text) {
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(text));
+  return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 // --- mapowanie wierszy -------------------------------------------------------
 
 const RECONCILIATION_COLUMNS = `r.id, r.school_year_id, to_char(r.statement_date, 'YYYY-MM-DD') AS statement_date,
@@ -252,7 +314,7 @@ const RECONCILIATION_COLUMNS = `r.id, r.school_year_id, to_char(r.statement_date
   CASE WHEN r.status = 'draft' THEN ledger_non_bank_net_at(r.school_year_id, r.statement_date)
        ELSE r.ledger_non_bank_cents END AS ledger_non_bank_cents,
   r.status, r.notes, r.reference_salt, r.created_by, r.created_at, r.confirmed_by, r.confirmed_at,
-  r.confirmation_note`;
+  r.confirmation_note, r.abandoned_by, r.abandoned_at, r.abandon_reason`;
 
 function reconciliationFromRow(row) {
   const statementBalanceCents = toSafeInteger(row.statement_balance_cents);
@@ -272,7 +334,17 @@ function reconciliationFromRow(row) {
     confirmedBy: row.confirmed_by ?? null,
     confirmedAt: isoTimestamp(row.confirmed_at),
     confirmationNote: row.confirmation_note ?? null,
+    abandonedBy: row.abandoned_by ?? null,
+    abandonedAt: isoTimestamp(row.abandoned_at),
+    abandonReason: row.abandon_reason ?? null,
   };
+}
+
+// Zapis do uzgodnienia, które nie jest szkicem: zatwierdzone albo porzucone (0107).
+function notDraftError(row) {
+  return row.status === 'abandoned'
+    ? new RequestError('reconciliation_abandoned', 409)
+    : new RequestError('reconciliation_confirmed', 409);
 }
 
 function matchFromRow(row) {
@@ -322,6 +394,13 @@ function mapDatabaseError(error) {
   // w #80 na uzgodnienia rachunku) — stan, nie awaria bazy (#156).
   if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   if (message.includes('bank_reconciliation_confirmed_immutable')) throw new RequestError('reconciliation_confirmed', 409);
+  if (message.includes('bank_reconciliation_abandoned')) throw new RequestError('reconciliation_abandoned', 409);
+  if (message.includes('bank_reconciliation_has_active_matches')) throw new RequestError('reconciliation_has_active_matches', 409);
+  // Równoległy import tego samego pliku/ruchu (0107) — API sprawdza to samo pod blokadą doradczą.
+  if (message.includes('bank_statement_file_already_imported')
+      || message.includes('bank_statement_transaction_already_imported')) {
+    throw new RequestError('statement_already_imported', 409);
+  }
   if (message.includes('bank_reconciliation_date_outside_year')) throw new RequestError('statement_date_outside_school_year');
   if (message.includes('bank_statement_line_after_statement_date')) throw new RequestError('statement_line_after_statement_date');
   if (message.includes('bank_match_amount_mismatch')) throw new RequestError('match_amount_mismatch', 409);
@@ -331,6 +410,16 @@ function mapDatabaseError(error) {
   if (message.includes('bank_match_method_mismatch')) throw new RequestError('match_method_mismatch', 409);
   if (message.includes('bank_match_target_mismatch')) throw new RequestError('invalid_match_target');
   if (message.includes('bank_match_line_mismatch')) throw new RequestError('invalid_statement_line');
+  // Dopasowanie zbiorcze (0105): pozycja/cel zajęte przez inne dopasowanie, suma ≠ kwota pozycji.
+  if (message.includes('bank_group_match_line_taken') || message.includes('bank_group_match_target_taken')) {
+    throw new RequestError('already_matched', 409);
+  }
+  if (message.includes('bank_group_match_sum_mismatch')) throw new RequestError('group_match_sum_mismatch', 409);
+  if (message.includes('bank_group_match_too_few_items')) throw new RequestError('invalid_request');
+  if (message.includes('bank_group_match_direction_mismatch')) throw new RequestError('group_match_direction_mismatch', 409);
+  // #105/#127: cel aktywnie dopasowany w innym uzgodnieniu tego roku (0089 dla 1:1, 0105 dla zbiorczych).
+  if (message.includes('bank_match_in_other_reconciliation')) throw new RequestError('matched_in_other_reconciliation', 409);
+  if (message.includes('bank_match_already_revoked')) throw new RequestError('match_already_revoked', 409);
   if (message.includes('bank_reconciliation_four_eyes')) throw new RequestError('four_eyes_required', 403);
   if (error?.code === '23503') throw new RequestError('invalid_reference');
   throw error;
@@ -431,6 +520,99 @@ async function inconsistentMatches(executor, id) {
   }));
 }
 
+// Aktywne dopasowania zbiorcze (0105), w których suma dzisiejszego netto celów
+// różni się od kwoty pozycji albo któryś cel zmienił netto od dopasowania.
+async function inconsistentGroupMatches(executor, id) {
+  const { rows } = await executor.query(
+    `SELECT group_match_id, statement_line_id, line_amount_cents, matched_total_cents, target_net_cents, items_unchanged
+       FROM bank_group_match_consistency
+      WHERE reconciliation_id = $1 AND (target_net_cents <> line_amount_cents OR NOT items_unchanged)
+      ORDER BY statement_line_id, group_match_id`,
+    [id],
+  );
+  return rows.map((row) => ({
+    groupMatchId: row.group_match_id,
+    statementLineId: row.statement_line_id,
+    lineAmountCents: toSafeInteger(row.line_amount_cents),
+    matchedTotalCents: toSafeInteger(row.matched_total_cents),
+    targetNetCents: toSafeInteger(row.target_net_cents),
+    reasons: [
+      ...(toSafeInteger(row.target_net_cents) !== toSafeInteger(row.line_amount_cents) ? ['amount_mismatch'] : []),
+      ...(row.items_unchanged ? [] : ['target_changed']),
+    ],
+  }));
+}
+
+async function loadGroupMatches(executor, reconciliationId, groupId = null) {
+  const values = [reconciliationId];
+  let filter = '';
+  if (groupId) { values.push(groupId); filter = ' AND g.id = $2'; }
+  const { rows } = await executor.query(
+    `SELECT g.id, g.reconciliation_id, g.statement_line_id, g.created_by, g.created_at, g.idempotency_key,
+            v.created_at AS revoked_at, v.created_by AS revoked_by, v.reason AS revoke_reason
+       FROM bank_reconciliation_group_matches g
+       LEFT JOIN bank_reconciliation_group_match_revocations v ON v.group_match_id = g.id
+      WHERE g.reconciliation_id = $1${filter}
+      ORDER BY g.created_at, g.id`,
+    values,
+  );
+  if (!rows.length) return [];
+  const items = await executor.query(
+    `SELECT id, group_match_id, ledger_entry_id, payment_entry_id, amount_cents
+       FROM bank_reconciliation_group_match_items WHERE group_match_id = ANY($1::text[])
+      ORDER BY group_match_id, id`,
+    [rows.map((row) => row.id)],
+  );
+  const byGroup = new Map(rows.map((row) => [row.id, []]));
+  for (const item of items.rows) {
+    byGroup.get(item.group_match_id)?.push({
+      id: item.id,
+      ledgerEntryId: item.ledger_entry_id ?? null,
+      paymentEntryId: item.payment_entry_id ?? null,
+      amountCents: toSafeInteger(item.amount_cents),
+    });
+  }
+  return rows.map((row) => ({
+    id: row.id,
+    reconciliationId: row.reconciliation_id,
+    statementLineId: row.statement_line_id,
+    items: byGroup.get(row.id),
+    createdBy: row.created_by,
+    createdAt: isoTimestamp(row.created_at),
+    revokedAt: isoTimestamp(row.revoked_at),
+    revokedBy: row.revoked_by ?? null,
+    revokeReason: row.revoke_reason ?? null,
+    idempotencyKey: row.idempotency_key,
+  }));
+}
+
+const publicGroupMatch = ({ idempotencyKey, ...rest }) => rest;
+
+// Kursor pozycji wyciągu wiąże uzgodnienie, które go wydało (#218, wzorzec z
+// listPayments w payments.js): dociągnięcie strony innego uzgodnienia kończy
+// się 400 invalid_cursor zamiast mieszać wiersze.
+function encodeLinesCursor(row, reconciliationId) {
+  return btoa(JSON.stringify([row.booked_on, row.id, reconciliationId]))
+    .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+function decodeLinesCursor(value, reconciliationId) {
+  if (!value) return null;
+  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new RequestError('invalid_cursor');
+  try {
+    const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const decoded = JSON.parse(atob(base64 + padding));
+    if (!Array.isArray(decoded) || decoded.length !== 3 || !validDate(decoded[0]) || !validId(decoded[1])
+      || decoded[2] !== reconciliationId) {
+      throw new Error();
+    }
+    return { bookedOn: decoded[0], id: decoded[1] };
+  } catch {
+    throw new RequestError('invalid_cursor');
+  }
+}
+
 async function loadAuthorizedReconciliation(request, env, id, executor = env.db, lock = false) {
   const context = await requireContext(request, env, WRITE_ROLES);
   const row = await loadReconciliation(executor, id, { lock });
@@ -439,26 +621,63 @@ async function loadAuthorizedReconciliation(request, env, id, executor = env.db,
   return { context, row };
 }
 
-async function getReconciliation(request, env, id, json) {
-  const { row } = await loadAuthorizedReconciliation(request, env, id);
-  const reconciliation = reconciliationFromRow(row);
-  const [lines, matches, entries, inconsistent] = await Promise.all([
-    env.db.query(
+const LINES_PAGE_DEFAULT = 500;
+const LINES_PAGE_MAX = 500;
+
+async function getReconciliation(request, env, id, url, json) {
+  // Autoryzacja poza migawką (nie czyta danych uzgodnienia poza row.school_year_id
+  // z loadReconciliation poniżej — patrz requireContext), ale sam odczyt
+  // uzgodnienia i wszystkie zapytania pochodne muszą widzieć tę samą chwilę
+  // (#213): dotąd Promise.all na env.db (pula) mógł trafić na inne połączenia
+  // i inne migawki READ COMMITTED niż loadReconciliation, więc pozycja mogła
+  // być pokazana jako niedopasowana razem z dopasowaniem, którego już nie
+  // widać na liście. Ta sama migawka obejmuje teraz też stronicowane pozycje
+  // i podsumowanie (#218).
+  const context = await requireContext(request, env, WRITE_ROLES);
+
+  const limitText = url.searchParams.get('limit') ?? String(LINES_PAGE_DEFAULT);
+  if (!/^\d{1,3}$/.test(limitText)) throw new RequestError('invalid_limit');
+  const limit = Number(limitText);
+  if (limit < 1 || limit > LINES_PAGE_MAX) throw new RequestError('invalid_limit');
+  const cursor = decodeLinesCursor(url.searchParams.get('cursor'), id);
+
+  const lineValues = [id];
+  const lineConditions = ['l.reconciliation_id = $1'];
+  if (cursor) {
+    lineValues.push(cursor.bookedOn, cursor.id);
+    const dateParam = `$${lineValues.length - 1}::date`;
+    const idParam = `$${lineValues.length}`;
+    lineConditions.push(`(l.booked_on > ${dateParam} OR (l.booked_on = ${dateParam} AND l.id > ${idParam}))`);
+  }
+  lineValues.push(limit + 1);
+
+  const {
+    reconciliation, lines, matches, entries, inconsistent, summaryRow, inconsistentGroups, groupMatches,
+  } = await readSnapshot(env.db, async (tx) => {
+    const row = await loadReconciliation(tx, id);
+    if (!row) throw new RequestError('reconciliation_not_found', 404);
+    requireYear(context, WRITE_ROLES, row.school_year_id);
+    const linesResult = await tx.query(
       `SELECT l.id, l.import_id, i.source, l.line_no, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on,
               l.amount_cents, l.reference_hash IS NOT NULL AS has_reference,
-              m.id AS match_id, m.ledger_entry_id, m.payment_entry_id
+              m.id AS match_id, m.ledger_entry_id, m.payment_entry_id,
+              g.id AS group_match_id,
+              (SELECT count(*) FROM bank_reconciliation_group_match_items gi WHERE gi.group_match_id = g.id) AS group_item_count
          FROM bank_statement_lines l
          JOIN bank_statement_imports i ON i.id = l.import_id
          LEFT JOIN bank_reconciliation_matches m ON m.statement_line_id = l.id AND m.revoked_at IS NULL
-        WHERE l.reconciliation_id = $1
-        ORDER BY l.booked_on, i.created_at, l.line_no`,
-      [id],
-    ),
-    env.db.query(
+         LEFT JOIN bank_reconciliation_group_matches_current g ON g.statement_line_id = l.id
+        WHERE ${lineConditions.join(' AND ')}
+        ORDER BY l.booked_on, l.id
+        LIMIT $${lineValues.length}`,
+      lineValues,
+    );
+    const matchesResult = await tx.query(
       `SELECT * FROM bank_reconciliation_matches WHERE reconciliation_id = $1 ORDER BY created_at, id`, [id],
-    ),
+    );
     // Wpisy bankowe księgi do daty wyciągu, których nie powiązano z żadną pozycją.
-    env.db.query(
+    // Pobrane 1001, żeby stwierdzić obcięcie bez osobnego zapytania COUNT.
+    const entriesResult = await tx.query(
       `SELECT e.id, e.direction, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
               e.category_id, e.description
          FROM ledger_entry_net e
@@ -472,13 +691,43 @@ async function getReconciliation(request, env, id, json) {
             SELECT 1 FROM bank_reconciliation_matches m
              WHERE m.reconciliation_id = $3 AND e.payment_entry_id IS NOT NULL
                AND m.payment_entry_id = e.payment_entry_id AND m.revoked_at IS NULL)
+          -- To samo dla pozycji aktywnych dopasowań zbiorczych (#127, 0105).
+          AND NOT EXISTS (
+            SELECT 1 FROM bank_group_match_items_current gi
+             WHERE gi.reconciliation_id = $3
+               AND (gi.ledger_entry_id = e.id
+                 OR (e.payment_entry_id IS NOT NULL AND gi.payment_entry_id = e.payment_entry_id)))
         ORDER BY e.occurred_on, e.id
-        LIMIT 1000`,
+        LIMIT 1001`,
       [row.school_year_id, row.statement_date, id],
-    ),
-    inconsistentMatches(env.db, id),
-  ]);
-  const lineItems = lines.rows.map((line) => ({
+    );
+    const inconsistentResult = await inconsistentMatches(tx, id);
+    const inconsistentGroupsResult = await inconsistentGroupMatches(tx, id);
+    const groupMatchesResult = await loadGroupMatches(tx, id);
+    // Podsumowanie liczone niezależnie od stronicowania `lines` (#218): stronicowanie
+    // pokazuje tylko jedną stronę pozycji, ale liczby w summary muszą objąć wszystkie.
+    const summaryResult = await tx.query(
+      `SELECT count(*) AS line_count, count(m.id) + count(g.id) AS matched_line_count,
+              count(g.id) AS group_matched_line_count,
+              COALESCE(sum(l.amount_cents) FILTER (WHERE m.id IS NULL AND g.id IS NULL), 0) AS unmatched_line_total_cents
+         FROM bank_statement_lines l
+         LEFT JOIN bank_reconciliation_matches m ON m.statement_line_id = l.id AND m.revoked_at IS NULL
+         LEFT JOIN bank_reconciliation_group_matches_current g ON g.statement_line_id = l.id
+        WHERE l.reconciliation_id = $1`,
+      [id],
+    );
+    return {
+      reconciliation: reconciliationFromRow(row), lines: linesResult, matches: matchesResult,
+      entries: entriesResult, inconsistent: inconsistentResult, summaryRow: summaryResult,
+      inconsistentGroups: inconsistentGroupsResult, groupMatches: groupMatchesResult,
+    };
+  });
+
+  const visibleLineRows = lines.rows.slice(0, limit);
+  const nextCursor = lines.rows.length > limit && visibleLineRows.length
+    ? encodeLinesCursor(visibleLineRows[visibleLineRows.length - 1], id)
+    : null;
+  const lineItems = visibleLineRows.map((line) => ({
     id: line.id,
     importId: line.import_id,
     source: line.source,
@@ -489,22 +738,42 @@ async function getReconciliation(request, env, id, json) {
     match: line.match_id
       ? { id: line.match_id, ledgerEntryId: line.ledger_entry_id ?? null, paymentEntryId: line.payment_entry_id ?? null }
       : null,
+    // Dopasowanie zbiorcze (#127): `match` zostaje null, pozycja jest dopasowana przez `groupMatch`.
+    groupMatch: line.group_match_id
+      ? { id: line.group_match_id, itemCount: toSafeInteger(line.group_item_count) }
+      : null,
   }));
-  const unmatchedLines = lineItems.filter((line) => !line.match);
+  const summary = summaryRow.rows[0];
+  const lineCount = toSafeInteger(summary.line_count);
+  // #165 pkt 4: matched_line_count z SQL liczy KAŻDĄ aktywną parę, także tę o
+  // niezgodnej kwocie (inconsistentMatches poniżej). Pozycja z takim powiązaniem
+  // nie jest „bez pary" (unmatchedLineCount ją pomija tak jak dotąd — to nie ona
+  // się zmienia), ale też nie jest cicho liczona jako poprawnie dopasowana: ma
+  // własną kategorię "do wyjaśnienia" (inconsistentMatchCount), więc odejmujemy
+  // ją z matchedLineCount, żeby suma trzech liczników = lineCount.
+  const rawMatchedLineCount = toSafeInteger(summary.matched_line_count);
+  const inconsistentMatchCount = inconsistent.length;
+  // #127 cz. 2: niespójne dopasowanie zbiorcze to też pozycja „do wyjaśnienia”.
+  const inconsistentGroupMatchCount = inconsistentGroups.length;
+  const matchedLineCount = rawMatchedLineCount - inconsistentMatchCount - inconsistentGroupMatchCount;
   return json({
     reconciliation,
     lines: lineItems,
+    nextCursor,
     matches: matches.rows.map(matchFromRow),
+    groupMatches: groupMatches.map(publicGroupMatch),
     summary: {
-      lineCount: lineItems.length,
-      matchedLineCount: lineItems.length - unmatchedLines.length,
-      unmatchedLineCount: unmatchedLines.length,
-      unmatchedLineTotalCents: unmatchedLines.reduce((sum, line) => sum + line.amountCents, 0),
-      inconsistentMatchCount: inconsistent.length,
+      lineCount,
+      matchedLineCount,
+      unmatchedLineCount: lineCount - rawMatchedLineCount,
+      unmatchedLineTotalCents: toSafeInteger(summary.unmatched_line_total_cents),
+      inconsistentMatchCount,
+      groupMatchedLineCount: toSafeInteger(summary.group_matched_line_count),
+      inconsistentGroupMatchCount,
     },
-    unmatchedLines,
     inconsistentMatches: inconsistent,
-    unmatchedLedgerEntries: entries.rows.map((entry) => ({
+    inconsistentGroupMatches: inconsistentGroups,
+    unmatchedLedgerEntries: entries.rows.slice(0, 1000).map((entry) => ({
       id: entry.id,
       direction: entry.direction,
       occurredOn: entry.occurred_on,
@@ -512,6 +781,7 @@ async function getReconciliation(request, env, id, json) {
       categoryId: entry.category_id,
       description: entry.description,
     })),
+    unmatchedLedgerEntriesTruncated: entries.rows.length > 1000,
   });
 }
 
@@ -520,9 +790,21 @@ async function importLines(request, env, id, json) {
   const input = parseStatementLines(await readJson(request, MAX_IMPORT_BYTES));
   const context = await requireContext(request, env, WRITE_ROLES);
   const actorId = context.session.user.id;
+  const fromFile = Boolean(input.statement);
+  let fileHash = null;
+  let transactionHashes = null;
+  if (fromFile) {
+    const config = bankImportConfig(env);
+    if (input.statement.accountIban !== config.iban) throw new RequestError('statement_account_mismatch');
+    fileHash = await hmacHex(config.key, `file:${input.content}`);
+    transactionHashes = await Promise.all(input.lines.map(
+      (line) => hmacHex(config.key, `tx:${config.iban}:${line.transactionId}`),
+    ));
+  }
 
   const byKey = async (executor) => (await executor.query(
-    'SELECT id, reconciliation_id, source, line_count, request_hash, created_by FROM bank_statement_imports WHERE idempotency_key = $1',
+    `SELECT id, reconciliation_id, source, line_count, request_hash, created_by, skipped_duplicate_count
+       FROM bank_statement_imports WHERE idempotency_key = $1`,
     [idempotencyKey],
   )).rows[0] ?? null;
 
@@ -532,7 +814,10 @@ async function importLines(request, env, id, json) {
     if (row.created_by !== actorId || row.reconciliation_id !== id || row.request_hash !== requestHash) {
       throw new RequestError('idempotency_conflict', 409);
     }
-    return json({ import: { id: row.id, reconciliationId: id, source: row.source, lineCount: row.line_count } }, 200, REPLAYED);
+    return json({
+      import: { id: row.id, reconciliationId: id, source: row.source, lineCount: row.line_count },
+      ...(fromFile ? { skippedDuplicateCount: row.skipped_duplicate_count } : {}),
+    }, 200, REPLAYED);
   };
 
   try {
@@ -540,14 +825,19 @@ async function importLines(request, env, id, json) {
       const row = await loadReconciliation(tx, id, { lock: true });
       if (!row) throw new RequestError('reconciliation_not_found', 404);
       requireYear(context, WRITE_ROLES, row.school_year_id);
-      const hashed = await Promise.all(input.lines.map(async (line) => ({
-        ...line, referenceHash: line.reference ? await sha256Hex(`${row.reference_salt}:${line.reference}`) : null,
+      const hashed = await Promise.all(input.lines.map(async (line, index) => ({
+        ...line,
+        referenceHash: line.reference ? await sha256Hex(`${row.reference_salt}:${line.reference}`) : null,
+        transactionHash: transactionHashes?.[index] ?? null,
       })));
-      requestHash = await sha256Hex(JSON.stringify([input.source,
-        hashed.map((line) => [line.bookedOn, line.amountCents, line.referenceHash])]));
+      requestHash = fromFile
+        ? await sha256Hex(JSON.stringify([input.source, fileHash]))
+        : await sha256Hex(JSON.stringify([input.source,
+          hashed.map((line) => [line.bookedOn, line.amountCents, line.referenceHash])]));
       const replay = replayOrConflict(await byKey(tx));
       if (replay) return replay;
-      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      if (row.status !== 'draft') throw notDraftError(row);
+      if (fromFile) return importStatementFile(tx, { context, actorId, row, input, hashed, fileHash, requestHash, idempotencyKey, json });
 
       const importId = crypto.randomUUID();
       await tx.query(
@@ -555,11 +845,23 @@ async function importLines(request, env, id, json) {
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [importId, id, input.source, hashed.length, requestHash, actorId, idempotencyKey],
       );
-      for (const [index, line] of hashed.entries()) {
+      // Jeden INSERT … SELECT FROM unnest(...) zamiast 500 osobnych zapytań w
+      // pętli (#218): tyle samo aktywacji triggera bank_statement_line_guard,
+      // ale jedna podróż do bazy zamiast MAX_LINES. Kolejność z tablic JS
+      // (tożsama z kolejnością w pliku, `index + 1`) jest zachowana przez
+      // unnest na równoległych tablicach — bez polegania na WITH ORDINALITY.
+      if (hashed.length > 0) {
         await tx.query(
           `INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents, reference_hash, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [crypto.randomUUID(), id, importId, index + 1, line.bookedOn, line.amountCents, line.referenceHash, actorId],
+           SELECT t.id, $1, $2, t.line_no, t.booked_on, t.amount_cents, t.reference_hash, $3
+             FROM unnest($4::text[], $5::int[], $6::date[], $7::bigint[], $8::text[])
+                  AS t(id, line_no, booked_on, amount_cents, reference_hash)`,
+          [id, importId, actorId,
+            hashed.map(() => crypto.randomUUID()),
+            hashed.map((_, index) => index + 1),
+            hashed.map((line) => line.bookedOn),
+            hashed.map((line) => line.amountCents),
+            hashed.map((line) => line.referenceHash)],
         );
       }
       // Możliwe duplikaty z wcześniejszych importów (ta sama data, kwota i skrót tytułu).
@@ -574,7 +876,7 @@ async function importLines(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.lines.imported', entityType: 'bank_statement_import', entityId: importId,
-        metadata: { reconciliationId: id, source: input.source, lineCount: hashed.length },
+        metadata: { reconciliationId: id, source: input.source, lineCount: hashed.length, schoolYearId: row.school_year_id },
       });
       return json({
         import: { id: importId, reconciliationId: id, source: input.source, lineCount: hashed.length },
@@ -591,6 +893,116 @@ async function importLines(request, env, id, json) {
   }
 }
 
+// Import pliku CODA/CAMT.053 w otwartej transakcji (#105). Blokada doradcza
+// szereguje importy z plików, więc sprawdzenie „ten plik / ten ruch już jest”
+// nie przegra wyścigu z równoległym importem do innego uzgodnienia.
+async function importStatementFile(tx, { context, actorId, row, input, hashed, fileHash, requestHash, idempotencyKey, json }) {
+  const id = row.id;
+  const { statement } = input;
+  await tx.query("SELECT pg_advisory_xact_lock(hashtext('bank_statement_file_import'))");
+  const earlier = (await tx.query(
+    `SELECT i.id, i.reconciliation_id, r.school_year_id
+       FROM bank_statement_imports i JOIN bank_reconciliations r ON r.id = i.reconciliation_id
+      WHERE i.file_hash = $1 AND r.status <> 'abandoned'`,
+    [fileHash],
+  )).rows[0];
+  if (earlier) {
+    // Odnośnik tylko dla osoby z dostępem do roku wcześniejszego importu.
+    const visible = isAuthorizedScoped(context, { roles: WRITE_ROLES, schoolYearId: earlier.school_year_id, requireMfa: true });
+    throw new RequestError('statement_already_imported', 409,
+      visible ? { importId: earlier.id, reconciliationId: earlier.reconciliation_id } : {});
+  }
+
+  const known = new Map((await tx.query(
+    `SELECT l.bank_transaction_hash, l.reconciliation_id, r.school_year_id
+       FROM bank_statement_lines l JOIN bank_reconciliations r ON r.id = l.reconciliation_id
+      WHERE l.bank_transaction_hash = ANY($1::text[]) AND r.status <> 'abandoned'`,
+    [hashed.map((line) => line.transactionHash)],
+  )).rows.map((item) => [item.bank_transaction_hash, item]));
+  const seen = new Set();
+  const fresh = [];
+  const skipped = [];
+  for (const line of hashed) {
+    const previous = known.get(line.transactionHash);
+    if (previous || seen.has(line.transactionHash)) {
+      const visible = previous
+        && isAuthorizedScoped(context, { roles: WRITE_ROLES, schoolYearId: previous.school_year_id, requireMfa: true });
+      skipped.push({
+        record: line.record, bookedOn: line.bookedOn, amountCents: line.amountCents,
+        reconciliationId: visible ? previous.reconciliation_id : null,
+      });
+      continue;
+    }
+    seen.add(line.transactionHash);
+    fresh.push(line);
+  }
+
+  // Kontrola ciągłości — tylko ostrzeżenia, nic nie blokuje.
+  const warnings = [];
+  const movementSum = statement.movements.reduce((sum, movement) => sum + movement.amountCents, 0);
+  if (statement.openingBalanceCents + movementSum !== statement.closingBalanceCents) warnings.push('closing_balance_mismatch');
+  const previousFile = (await tx.query(
+    `SELECT i.closing_balance_cents FROM bank_statement_imports i
+       JOIN bank_reconciliations r ON r.id = i.reconciliation_id
+      WHERE r.school_year_id = $1 AND i.file_hash IS NOT NULL AND r.status <> 'abandoned'
+      ORDER BY i.created_at DESC, i.id DESC LIMIT 1`,
+    [row.school_year_id],
+  )).rows[0];
+  if (previousFile && toSafeInteger(previousFile.closing_balance_cents) !== statement.openingBalanceCents) {
+    warnings.push('opening_balance_discontinuity');
+  }
+  if (statement.closingDate !== row.statement_date) warnings.push('statement_date_differs');
+  else if (statement.closingBalanceCents !== toSafeInteger(row.statement_balance_cents)) warnings.push('statement_balance_differs');
+
+  const fileBalances = {
+    statementNumber: statement.statementNumber ?? null,
+    openingBalanceCents: statement.openingBalanceCents,
+    openingDate: statement.openingDate,
+    closingBalanceCents: statement.closingBalanceCents,
+    closingDate: statement.closingDate,
+  };
+  if (!fresh.length) {
+    // Wszystkie ruchy są już zaimportowane: brak nowej paczki (line_count >= 1).
+    return json({
+      import: null, lineCount: 0, skippedDuplicateCount: skipped.length, skippedDuplicates: skipped,
+      warnings, fileBalances,
+    }, 200, { 'Idempotency-Replayed': 'false' });
+  }
+
+  const importId = crypto.randomUUID();
+  await tx.query(
+    `INSERT INTO bank_statement_imports (id, reconciliation_id, source, line_count, request_hash, created_by,
+       idempotency_key, file_hash, statement_number, opening_balance_cents, closing_balance_cents, skipped_duplicate_count)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [importId, id, input.source, fresh.length, requestHash, actorId, idempotencyKey, fileHash,
+      statement.statementNumber ? String(statement.statementNumber).slice(0, 35) : null,
+      statement.openingBalanceCents, statement.closingBalanceCents, skipped.length],
+  );
+  for (const [index, line] of fresh.entries()) {
+    await tx.query(
+      `INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents,
+         reference_hash, bank_transaction_hash, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [crypto.randomUUID(), id, importId, index + 1, line.bookedOn, line.amountCents, line.referenceHash,
+        line.transactionHash, actorId],
+    );
+  }
+  await insertAuditEvent(tx, {
+    actorId, action: 'reconciliation.lines.imported', entityType: 'bank_statement_import', entityId: importId,
+    metadata: {
+      reconciliationId: id, schoolYearId: row.school_year_id, source: input.source, lineCount: fresh.length,
+      skippedDuplicateCount: skipped.length, warnings,
+    },
+  });
+  return json({
+    import: { id: importId, reconciliationId: id, source: input.source, lineCount: fresh.length },
+    skippedDuplicateCount: skipped.length,
+    skippedDuplicates: skipped,
+    warnings,
+    fileBalances,
+  }, 201, CREATED);
+}
+
 async function suggestMatches(request, env, id, url, json) {
   const windowText = url.searchParams.get('windowDays') ?? '7';
   if (!/^\d{1,2}$/.test(windowText) || Number(windowText) > 31) throw new RequestError('invalid_window');
@@ -598,46 +1010,70 @@ async function suggestMatches(request, env, id, url, json) {
   const { row } = await loadAuthorizedReconciliation(request, env, id);
 
   const openLine = `l.reconciliation_id = $1 AND NOT EXISTS (
-      SELECT 1 FROM bank_reconciliation_matches m WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)`;
-  const [lines, ledger, payments] = await Promise.all([
-    env.db.query(
+      SELECT 1 FROM bank_reconciliation_matches m WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_group_matches_current g WHERE g.statement_line_id = l.id)`;
+  // Zapas ponad limit odpowiedzi (#158): dopasowanie po tytule (referenceMatch)
+  // liczone jest dopiero w JS, więc SQL musi przepuścić więcej niż MAX_CANDIDATES,
+  // żeby kandydat z trafionym tytułem, ale dalszą datą, mógł wypchnąć bliższego
+  // dniowo, ale bez zgodności tytułu, kandydata na pierwsze miejsce.
+  const candidateLimit = MAX_CANDIDATES * 4;
+  // Jedna migawka (REPEATABLE READ, READ ONLY) na jednym połączeniu: równoległe
+  // potwierdzenie dopasowania (POST …/matches) na innym połączeniu nie może
+  // sprawić, że ta sama pozycja/kandydat wygląda inaczej w trzech zapytaniach.
+  const [lines, ledger, payments] = await env.db.transaction(async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    const linesResult = await tx.query(
       `SELECT l.id, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on, l.amount_cents, l.reference_hash
          FROM bank_statement_lines l WHERE ${openLine} ORDER BY l.booked_on, l.id`,
       [id],
-    ),
-    env.db.query(
-      `SELECT l.id AS line_id, e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
-              e.method, abs(e.occurred_on - l.booked_on) AS day_distance
-         FROM bank_statement_lines l
-         JOIN ledger_entry_net e ON e.school_year_id = $2
-          AND (CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END) = l.amount_cents
-          AND abs(e.occurred_on - l.booked_on) <= $3
-        WHERE ${openLine}
-          AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
-                           WHERE m.reconciliation_id = $1 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
-        ORDER BY l.id, day_distance, e.id`,
-      [id, row.school_year_id, windowDays],
-    ),
+    );
+    const ledgerResult = await tx.query(
+      `SELECT line_id, id, occurred_on, net_amount_cents, method, day_distance FROM (
+         SELECT l.id AS line_id, e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
+                e.method, abs(e.occurred_on - l.booked_on) AS day_distance,
+                row_number() OVER (PARTITION BY l.id ORDER BY abs(e.occurred_on - l.booked_on), e.id) AS rn
+           FROM bank_statement_lines l
+           JOIN ledger_entry_net e ON e.school_year_id = $2
+            AND (CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END) = l.amount_cents
+            AND e.occurred_on BETWEEN l.booked_on - $3::int AND l.booked_on + $3::int
+          WHERE ${openLine}
+            -- #105: wpis powiązany w dowolnym uzgodnieniu roku nie jest już kandydatem.
+            AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                              JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+                             WHERE r.school_year_id = $2 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM bank_group_match_items_current gi
+                             WHERE gi.school_year_id = $2 AND gi.ledger_entry_id = e.id)
+         ) ranked WHERE rn <= $4
+        ORDER BY line_id, day_distance, id`,
+      [id, row.school_year_id, windowDays, candidateLimit],
+    );
     // Wpłaty nieujęte jeszcze w księdze (wpłata ujęta w księdze jest proponowana jako wpis księgi).
-    env.db.query(
-      `SELECT l.id AS line_id, p.id, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.reference,
-              p.method, p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
-              abs(p.received_on - l.booked_on) AS day_distance
-         FROM bank_statement_lines l
-         JOIN payment_entries p ON p.school_year_id = $2 AND p.status IN ('recorded', 'unmatched')
-          AND p.method = 'bank'
-          AND abs(p.received_on - l.booked_on) <= $3
-         LEFT JOIN (SELECT payment_entry_id, sum(amount_cents) AS corrected
-                      FROM payment_corrections GROUP BY payment_entry_id) c ON c.payment_entry_id = p.id
-        WHERE ${openLine} AND l.amount_cents > 0
-          AND p.amount_cents - COALESCE(c.corrected, 0) = l.amount_cents
-          AND NOT EXISTS (SELECT 1 FROM ledger_entries le WHERE le.payment_entry_id = p.id)
-          AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
-                           WHERE m.reconciliation_id = $1 AND m.payment_entry_id = p.id AND m.revoked_at IS NULL)
-        ORDER BY l.id, day_distance, p.id`,
-      [id, row.school_year_id, windowDays],
-    ),
-  ]);
+    const paymentsResult = await tx.query(
+      `SELECT line_id, id, received_on, reference, method, net_amount_cents, day_distance FROM (
+         SELECT l.id AS line_id, p.id, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.reference,
+                p.method, p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
+                abs(p.received_on - l.booked_on) AS day_distance,
+                row_number() OVER (PARTITION BY l.id ORDER BY abs(p.received_on - l.booked_on), p.id) AS rn
+           FROM bank_statement_lines l
+           JOIN payment_entries p ON p.school_year_id = $2 AND p.status IN ('recorded', 'unmatched')
+            AND p.method = 'bank'
+            AND p.received_on BETWEEN l.booked_on - $3::int AND l.booked_on + $3::int
+           LEFT JOIN (SELECT payment_entry_id, sum(amount_cents) AS corrected
+                        FROM payment_corrections GROUP BY payment_entry_id) c ON c.payment_entry_id = p.id
+          WHERE ${openLine} AND l.amount_cents > 0
+            AND p.amount_cents - COALESCE(c.corrected, 0) = l.amount_cents
+            AND NOT EXISTS (SELECT 1 FROM ledger_entries le WHERE le.payment_entry_id = p.id)
+            AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                              JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+                             WHERE r.school_year_id = $2 AND m.payment_entry_id = p.id AND m.revoked_at IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM bank_group_match_items_current gi
+                             WHERE gi.school_year_id = $2 AND gi.payment_entry_id = p.id)
+         ) ranked WHERE rn <= $4
+        ORDER BY line_id, day_distance, id`,
+      [id, row.school_year_id, windowDays, candidateLimit],
+    );
+    return [linesResult, ledgerResult, paymentsResult];
+  });
 
   const byLine = new Map(lines.rows.map((line) => [line.id, { line, candidates: [] }]));
   for (const entry of ledger.rows) {
@@ -647,12 +1083,19 @@ async function suggestMatches(request, env, id, url, json) {
       referenceMatch: false,
     });
   }
+  // Skrót tytułu liczony co najwyżej raz na wpłatę-kandydata w całym żądaniu
+  // (#158), nawet gdy ta sama wpłata jest kandydatem dla wielu pozycji.
+  const hashCache = new Map();
+  const cachedHashReference = (salt, value) => {
+    if (!hashCache.has(value)) hashCache.set(value, hashReference(salt, value));
+    return hashCache.get(value);
+  };
   for (const payment of payments.rows) {
     const slot = byLine.get(payment.line_id);
     if (!slot) continue;
     let referenceMatch = false;
     if (slot.line.reference_hash && payment.reference) {
-      referenceMatch = (await hashReference(row.reference_salt, payment.reference)) === slot.line.reference_hash;
+      referenceMatch = (await cachedHashReference(row.reference_salt, payment.reference)) === slot.line.reference_hash;
     }
     slot.candidates.push({
       type: 'payment_entry', id: payment.id, date: payment.received_on, method: payment.method,
@@ -671,6 +1114,120 @@ async function suggestMatches(request, env, id, url, json) {
   }));
   // Wyłącznie propozycje: zatwierdzenie wymaga osobnego POST …/matches.
   return json({ reconciliationId: id, windowDays, suggestions });
+}
+
+// Wpłata wprost z pozycji wyciągu (#115, część 2): kwota i data pochodzą z
+// pozycji, nie z klienta; metoda jest zawsze 'bank' (pozycja jest z wyciągu
+// bankowego). household_id — skarbnik wskazuje gospodarstwo albo zostawia
+// NULL (status 'unmatched', przypisanie później przez istniejące
+// POST /api/payments/{id}/assignment). Wpłata i powiązanie powstają w jednej
+// transakcji z jednym kluczem idempotencji: ponowienie/podwójne kliknięcie
+// daje ten sam wynik, nigdy drugą wpłatę ani drugie powiązanie. Triggery z
+// 0015/0024_reconciliation.sql (bank_reconciliation_require_draft,
+// bank_match_guard) są backstopem: zatwierdzone uzgodnienie odrzuca nowe
+// powiązanie tak samo jak przy ręcznym POST …/matches.
+async function createPaymentFromLine(request, env, id, lineId, json) {
+  const idempotencyKey = readIdempotencyKey(request);
+  const data = await readJson(request);
+  if (data.householdId !== null && data.householdId !== undefined && !validId(data.householdId)) {
+    throw new RequestError('invalid_request');
+  }
+  const householdId = data.householdId ?? null;
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+
+  const byKey = async (executor) => (await executor.query(
+    `SELECT p.id AS payment_id, p.household_id, p.school_year_id, p.amount_cents,
+            to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.method, p.status, p.created_by,
+            m.id AS match_id, m.statement_line_id
+       FROM payment_entries p
+       JOIN bank_reconciliation_matches m ON m.payment_entry_id = p.id AND m.revoked_at IS NULL
+      WHERE p.idempotency_key = $1`,
+    [idempotencyKey],
+  )).rows[0] ?? null;
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    if (row.created_by !== actorId || row.statement_line_id !== lineId
+        || (row.household_id ?? null) !== householdId) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return json({
+      payment: {
+        id: row.payment_id, householdId: row.household_id ?? null, schoolYearId: row.school_year_id,
+        amountCents: toSafeInteger(row.amount_cents), receivedOn: row.received_on, method: row.method,
+        status: row.status,
+      },
+      match: { id: row.match_id, reconciliationId: id, statementLineId: row.statement_line_id, paymentEntryId: row.payment_id },
+    }, 200, REPLAYED);
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      const replay = replayOrConflict(await byKey(tx));
+      if (replay) return replay;
+      if (row.status !== 'draft') throw notDraftError(row);
+      const line = await tx.query(
+        `SELECT id, amount_cents, to_char(booked_on, 'YYYY-MM-DD') AS booked_on
+           FROM bank_statement_lines WHERE id = $1 AND reconciliation_id = $2`,
+        [lineId, id],
+      );
+      if (!line.rows[0]) throw new RequestError('statement_line_not_found', 404);
+      const amountCents = toSafeInteger(line.rows[0].amount_cents);
+      if (amountCents <= 0) throw new RequestError('statement_line_not_income');
+      // Pozycja zajęta dopasowaniem 1:1 albo zbiorczym (0105) — trigger
+      // bank_match_group_exclusive_guard sprawdza to samo w bazie.
+      const taken = await tx.query(
+        `SELECT 1 FROM bank_reconciliation_matches WHERE statement_line_id = $1 AND revoked_at IS NULL
+         UNION ALL
+         SELECT 1 FROM bank_reconciliation_group_matches_current WHERE statement_line_id = $1
+         LIMIT 1`, [lineId],
+      );
+      if (taken.rows.length) throw new RequestError('already_matched', 409);
+
+      const receivedOn = line.rows[0].booked_on;
+      const status = householdId ? 'recorded' : 'unmatched';
+      const paymentId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on,
+           method, reference, status, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, 'bank', NULL, $6, $7, $8)`,
+        [paymentId, householdId, row.school_year_id, amountCents, receivedOn, status, actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'payment.created', entityType: 'payment_entry', entityId: paymentId,
+        metadata: {
+          schoolYearId: row.school_year_id, source: 'reconciliation_line', reconciliationId: id, statementLineId: lineId,
+        },
+      });
+      const matchId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id, payment_entry_id, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [matchId, id, lineId, paymentId, actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.match.confirmed', entityType: 'bank_reconciliation_match', entityId: matchId,
+        metadata: {
+          reconciliationId: id, statementLineId: lineId, paymentEntryId: paymentId, schoolYearId: row.school_year_id,
+          source: 'line_payment',
+        },
+      });
+      return json({
+        payment: { id: paymentId, householdId, schoolYearId: row.school_year_id, amountCents, receivedOn, method: 'bank', status },
+        match: { id: matchId, reconciliationId: id, statementLineId: lineId, paymentEntryId: paymentId },
+      }, 201, CREATED);
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await byKey(env.db));
+      if (replay) return replay;
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
 }
 
 async function confirmMatch(request, env, id, json) {
@@ -704,7 +1261,7 @@ async function confirmMatch(request, env, id, json) {
       requireYear(context, WRITE_ROLES, row.school_year_id);
       const replay = replayOrConflict(await byKey(tx));
       if (replay) return replay;
-      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      if (row.status !== 'draft') throw notDraftError(row);
       const taken = await tx.query(
         `SELECT 1 FROM bank_reconciliation_matches
           WHERE revoked_at IS NULL AND (statement_line_id = $1
@@ -712,6 +1269,17 @@ async function confirmMatch(request, env, id, json) {
         [data.statementLineId, id, ledgerEntryId, paymentEntryId],
       );
       if (taken.rows.length) throw new RequestError('already_matched', 409);
+      // Pozycja lub cel w aktywnym dopasowaniu zbiorczym (#127, 0105; trigger bank_matches_z_group_guard).
+      const takenByGroup = await tx.query(
+        `SELECT 1 FROM bank_reconciliation_group_matches_current g
+          WHERE g.statement_line_id = $1
+         UNION ALL
+         SELECT 1 FROM bank_group_match_items_current i
+          WHERE i.reconciliation_id = $2 AND (i.ledger_entry_id = $3 OR i.payment_entry_id = $4)
+         LIMIT 1`,
+        [data.statementLineId, id, ledgerEntryId, paymentEntryId],
+      );
+      if (takenByGroup.rows.length) throw new RequestError('already_matched', 409);
       if (paymentEntryId !== null) {
         // Pozycja wyciągu to przelew: wpłaty gotówkowej ani „innej” nie wolno z nią powiązać (#115).
         const payment = await tx.query('SELECT method FROM payment_entries WHERE id = $1', [paymentEntryId]);
@@ -732,6 +1300,16 @@ async function confirmMatch(request, env, id, json) {
       if (counted.rows.length) {
         throw new RequestError(counted.rows[0].via_ledger ? 'already_matched_via_ledger' : 'already_matched_via_payment', 409);
       }
+      // #105: ten sam cel nie może być powiązany w dwóch uzgodnieniach roku —
+      // 1:1 (trigger bank_match_year_unique_guard, 0089) ani zbiorczo
+      // (bank_match_group_exclusive_guard, 0105); obie ścieżki pod blokadą roku.
+      const elsewhere = (await tx.query(
+        'SELECT bank_target_matched_elsewhere_in_year($1, $2, $3, $4, true) AS reconciliation_id',
+        [row.school_year_id, id, ledgerEntryId, paymentEntryId],
+      )).rows[0];
+      if (elsewhere?.reconciliation_id) {
+        throw new RequestError('matched_in_other_reconciliation', 409, { reconciliationId: elsewhere.reconciliation_id });
+      }
       const matchId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id, ledger_entry_id,
@@ -741,7 +1319,10 @@ async function confirmMatch(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.confirmed', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id, statementLineId: data.statementLineId, ledgerEntryId, paymentEntryId },
+        metadata: {
+          reconciliationId: id, statementLineId: data.statementLineId, ledgerEntryId, paymentEntryId,
+          schoolYearId: row.school_year_id,
+        },
       });
       const { rows } = await tx.query('SELECT * FROM bank_reconciliation_matches WHERE id = $1', [matchId]);
       return json({ match: matchFromRow(rows[0]) }, 201, CREATED);
@@ -778,7 +1359,7 @@ async function revokeMatch(request, env, id, matchId, json) {
         }
         throw new RequestError('match_already_revoked', 409);
       }
-      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      if (row.status !== 'draft') throw notDraftError(row);
       const updated = await tx.query(
         `UPDATE bank_reconciliation_matches SET revoked_at = now(), revoked_by = $2, revoke_reason = $3
           WHERE id = $1 RETURNING *`,
@@ -786,11 +1367,273 @@ async function revokeMatch(request, env, id, matchId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.revoked', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id },
+        metadata: { reconciliationId: id, schoolYearId: row.school_year_id },
       });
       return json({ match: matchFromRow(updated.rows[0]) }, 200, CREATED);
     });
   } catch (error) {
+    mapDatabaseError(error);
+  }
+}
+
+// --- dopasowanie zbiorcze (#127, część 2; 0105) -----------------------------
+
+// Pozycje: [{ paymentEntryId } | { ledgerEntryId }], 2…50, bez powtórzeń.
+// Kwot nie podaje klient: każda pozycja to pełne dzisiejsze netto celu,
+// a suma musi równać się kwocie pozycji wyciągu (bez dopasowań „z różnicą”).
+function parseGroupItems(value) {
+  if (!Array.isArray(value) || value.length < MIN_GROUP_ITEMS || value.length > MAX_GROUP_ITEMS) {
+    throw new RequestError('invalid_request');
+  }
+  const seen = new Set();
+  return value.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new RequestError('invalid_request');
+    const keys = Object.keys(item);
+    const ledgerEntryId = item.ledgerEntryId ?? null;
+    const paymentEntryId = item.paymentEntryId ?? null;
+    if (keys.length !== 1 || (ledgerEntryId === null) === (paymentEntryId === null)
+        || (ledgerEntryId !== null && !validId(ledgerEntryId)) || (paymentEntryId !== null && !validId(paymentEntryId))) {
+      throw new RequestError('invalid_request');
+    }
+    const signature = ledgerEntryId ? `l:${ledgerEntryId}` : `p:${paymentEntryId}`;
+    if (seen.has(signature)) throw new RequestError('invalid_request');
+    seen.add(signature);
+    return { ledgerEntryId, paymentEntryId, signature };
+  });
+}
+
+const groupSignature = (items) => items.map((item) => (item.ledgerEntryId ? `l:${item.ledgerEntryId}` : `p:${item.paymentEntryId}`))
+  .sort().join('|');
+
+async function confirmGroupMatch(request, env, id, json) {
+  const idempotencyKey = readIdempotencyKey(request);
+  const data = await readJson(request);
+  if (!validId(data.statementLineId)) throw new RequestError('invalid_request');
+  const items = parseGroupItems(data.items);
+  const signature = groupSignature(items);
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+
+  const byKey = async (executor) => {
+    const { rows } = await executor.query(
+      'SELECT id, reconciliation_id FROM bank_reconciliation_group_matches WHERE idempotency_key = $1', [idempotencyKey],
+    );
+    if (!rows[0]) return null;
+    return (await loadGroupMatches(executor, rows[0].reconciliation_id, rows[0].id))[0] ?? null;
+  };
+  const replayOrConflict = (group) => {
+    if (!group) return null;
+    if (group.createdBy !== actorId || group.reconciliationId !== id || group.statementLineId !== data.statementLineId
+        || groupSignature(group.items) !== signature) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return json({ groupMatch: publicGroupMatch(group) }, 200, REPLAYED);
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      const replay = replayOrConflict(await byKey(tx));
+      if (replay) return replay;
+      if (row.status !== 'draft') throw notDraftError(row);
+
+      const line = (await tx.query(
+        'SELECT id, amount_cents FROM bank_statement_lines WHERE id = $1 AND reconciliation_id = $2',
+        [data.statementLineId, id],
+      )).rows[0];
+      if (!line) throw new RequestError('invalid_statement_line');
+      const lineTaken = await tx.query(
+        `SELECT 1 FROM bank_reconciliation_matches WHERE statement_line_id = $1 AND revoked_at IS NULL
+         UNION ALL
+         SELECT 1 FROM bank_reconciliation_group_matches_current WHERE statement_line_id = $1
+         LIMIT 1`,
+        [line.id],
+      );
+      if (lineTaken.rows.length) throw new RequestError('already_matched', 409);
+      const lineAmount = toSafeInteger(line.amount_cents);
+
+      // Cele blokowane FOR SHARE w stałej kolejności (jak przy zatwierdzeniu), potem netto.
+      const paymentIds = items.filter((item) => item.paymentEntryId).map((item) => item.paymentEntryId).sort();
+      const ledgerIds = items.filter((item) => item.ledgerEntryId).map((item) => item.ledgerEntryId).sort();
+      if (ledgerIds.length) {
+        await tx.query('SELECT 1 FROM ledger_entries WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', [ledgerIds]);
+      }
+      if (paymentIds.length) {
+        await tx.query('SELECT 1 FROM payment_entries WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', [paymentIds]);
+      }
+      const payments = new Map((await tx.query(
+        `SELECT id, school_year_id, status, method, net_amount_cents FROM payment_entry_net WHERE id = ANY($1::text[])`,
+        [paymentIds],
+      )).rows.map((payment) => [payment.id, payment]));
+      const entries = new Map((await tx.query(
+        `SELECT id, school_year_id, direction, net_amount_cents, payment_entry_id FROM ledger_entry_net WHERE id = ANY($1::text[])`,
+        [ledgerIds],
+      )).rows.map((entry) => [entry.id, entry]));
+
+      const resolved = [];
+      for (const item of items) {
+        let amountCents;
+        if (item.paymentEntryId) {
+          const payment = payments.get(item.paymentEntryId);
+          if (!payment || payment.school_year_id !== row.school_year_id || !['recorded', 'unmatched'].includes(payment.status)) {
+            throw new RequestError('invalid_match_target');
+          }
+          if (payment.method !== 'bank') throw new RequestError('match_method_mismatch', 409);
+          amountCents = toSafeInteger(payment.net_amount_cents);
+        } else {
+          const entry = entries.get(item.ledgerEntryId);
+          if (!entry || entry.school_year_id !== row.school_year_id) throw new RequestError('invalid_match_target');
+          const net = toSafeInteger(entry.net_amount_cents);
+          amountCents = entry.direction === 'income' ? net : -net;
+        }
+        if (amountCents === 0 || Math.sign(amountCents) !== Math.sign(lineAmount)) {
+          throw new RequestError('group_match_direction_mismatch', 409);
+        }
+        resolved.push({ ...item, amountCents });
+      }
+
+      // Cel zajęty przez inne aktywne dopasowanie (1:1 albo zbiorcze) tego uzgodnienia.
+      const taken = await tx.query(
+        `SELECT 1 FROM bank_reconciliation_matches m
+          WHERE m.reconciliation_id = $1 AND m.revoked_at IS NULL
+            AND (m.payment_entry_id = ANY($2::text[]) OR m.ledger_entry_id = ANY($3::text[]))
+         UNION ALL
+         SELECT 1 FROM bank_group_match_items_current i
+          WHERE i.reconciliation_id = $1
+            AND (i.payment_entry_id = ANY($2::text[]) OR i.ledger_entry_id = ANY($3::text[]))
+         LIMIT 1`,
+        [id, paymentIds, ledgerIds],
+      );
+      if (taken.rows.length) throw new RequestError('already_matched', 409);
+      // Podwójne ujęcie (#162): wpłata i wpis księgi z tą wpłatą — w tym samym
+      // żądaniu albo w innym aktywnym dopasowaniu tego uzgodnienia.
+      const entryPaymentIds = [...entries.values()].map((entry) => entry.payment_entry_id).filter(Boolean);
+      if (entryPaymentIds.some((paymentId) => paymentIds.includes(paymentId))) {
+        throw new RequestError('already_matched_via_ledger', 409);
+      }
+      const viaLedger = await tx.query(
+        `SELECT 1 FROM bank_reconciliation_matches m JOIN ledger_entries le ON le.id = m.ledger_entry_id
+          WHERE m.reconciliation_id = $1 AND m.revoked_at IS NULL AND le.payment_entry_id = ANY($2::text[])
+         UNION ALL
+         SELECT 1 FROM bank_group_match_items_current i JOIN ledger_entries le ON le.id = i.ledger_entry_id
+          WHERE i.reconciliation_id = $1 AND le.payment_entry_id = ANY($2::text[])
+         LIMIT 1`,
+        [id, paymentIds],
+      );
+      if (viaLedger.rows.length) throw new RequestError('already_matched_via_ledger', 409);
+      const viaPayment = await tx.query(
+        `SELECT 1 FROM bank_reconciliation_matches m
+          WHERE m.reconciliation_id = $1 AND m.revoked_at IS NULL AND m.payment_entry_id = ANY($2::text[])
+         UNION ALL
+         SELECT 1 FROM bank_group_match_items_current i
+          WHERE i.reconciliation_id = $1 AND i.payment_entry_id = ANY($2::text[])
+         LIMIT 1`,
+        [id, entryPaymentIds],
+      );
+      if (viaPayment.rows.length) throw new RequestError('already_matched_via_payment', 409);
+      // Jedno aktywne dopasowanie celu w roku (#105): ten sam cel (albo para wpłata–wpis)
+      // nie może być dopasowany w innym uzgodnieniu tego roku. Trigger sprawdza to samo
+      // pod blokadą doradczą roku.
+      for (const item of resolved) {
+        const { rows: [elsewhere] } = await tx.query(
+          'SELECT bank_target_matched_elsewhere_in_year($1, $2, $3, $4, true) AS reconciliation_id',
+          [row.school_year_id, id, item.ledgerEntryId ?? null, item.paymentEntryId ?? null],
+        );
+        if (elsewhere?.reconciliation_id) {
+          throw new RequestError('matched_in_other_reconciliation', 409, { reconciliationId: elsewhere.reconciliation_id });
+        }
+      }
+
+      const itemsTotalCents = resolved.reduce((sum, item) => sum + item.amountCents, 0);
+      if (itemsTotalCents !== lineAmount) {
+        throw new RequestError('group_match_sum_mismatch', 409, { lineAmountCents: lineAmount, itemsTotalCents });
+      }
+
+      const groupId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO bank_reconciliation_group_matches (id, reconciliation_id, school_year_id, statement_line_id,
+           created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [groupId, id, row.school_year_id, line.id, actorId, idempotencyKey],
+      );
+      for (const item of resolved) {
+        await tx.query(
+          `INSERT INTO bank_reconciliation_group_match_items (id, group_match_id, reconciliation_id, school_year_id,
+             ledger_entry_id, payment_entry_id, amount_cents)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [crypto.randomUUID(), groupId, id, row.school_year_id, item.ledgerEntryId, item.paymentEntryId, item.amountCents],
+        );
+      }
+      // Kontrola sumy (constraint trigger, domyślnie przy COMMIT) już teraz — błąd wraca w tej transakcji.
+      await tx.query('SET CONSTRAINTS bank_group_matches_sum_check, bank_group_match_items_sum_check IMMEDIATE');
+      // Bez kwot i bez identyfikatorów gospodarstw (jak reconciliation.match.confirmed).
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.group_match.confirmed', entityType: 'bank_reconciliation_group_match',
+        entityId: groupId,
+        metadata: {
+          reconciliationId: id, statementLineId: line.id, itemCount: resolved.length,
+          paymentEntryIds: paymentIds, ledgerEntryIds: ledgerIds, schoolYearId: row.school_year_id,
+        },
+      });
+      const [group] = await loadGroupMatches(tx, id, groupId);
+      return json({ groupMatch: publicGroupMatch(group) }, 201, CREATED);
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await byKey(env.db));
+      if (replay) return replay;
+      throw new RequestError('already_matched', 409);
+    }
+    mapDatabaseError(error);
+  }
+}
+
+// Cofnięcie = nowy, niezmienny zapis z powodem (bank_reconciliation_group_match_revocations).
+async function revokeGroupMatch(request, env, id, groupId, json) {
+  const data = await readJson(request);
+  const reason = optionalText(data.reason, 3, 500, 'invalid_reason');
+  if (!reason) throw new RequestError('invalid_reason');
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      const [group] = await loadGroupMatches(tx, id, groupId);
+      if (!group) throw new RequestError('match_not_found', 404);
+      if (group.revokedAt) {
+        if (group.revokedBy === actorId && group.revokeReason === reason) {
+          return json({ groupMatch: publicGroupMatch(group) }, 200, REPLAYED);
+        }
+        throw new RequestError('match_already_revoked', 409);
+      }
+      if (row.status !== 'draft') throw notDraftError(row);
+      const revocationId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO bank_reconciliation_group_match_revocations (id, group_match_id, reconciliation_id, school_year_id,
+           reason, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [revocationId, groupId, id, row.school_year_id, reason, actorId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.group_match.revoked', entityType: 'bank_reconciliation_group_match',
+        entityId: groupId, metadata: { reconciliationId: id, revocationId, schoolYearId: row.school_year_id },
+      });
+      const [updated] = await loadGroupMatches(tx, id, groupId);
+      return json({ groupMatch: publicGroupMatch(updated) }, 200, CREATED);
+    });
+  } catch (error) {
+    // Równoległe drugie cofnięcie: UNIQUE(group_match_id).
+    if (isUniqueError(error)) {
+      const [group] = await loadGroupMatches(env.db, id, groupId);
+      if (group?.revokedBy === actorId && group.revokeReason === reason) {
+        return json({ groupMatch: publicGroupMatch(group) }, 200, REPLAYED);
+      }
+      throw new RequestError('match_already_revoked', 409);
+    }
     mapDatabaseError(error);
   }
 }
@@ -809,11 +1652,15 @@ async function confirmReconciliation(request, env, id, json) {
         if (row.confirmed_by === actorId) return json({ reconciliation: reconciliationFromRow(row) }, 200, REPLAYED);
         throw new RequestError('reconciliation_confirmed', 409);
       }
+      if (row.status === 'abandoned') throw new RequestError('reconciliation_abandoned', 409);
       // Zasada czterech oczu: zatwierdza inna osoba niż autor uzgodnienia.
       if (row.created_by === actorId) throw new RequestError('four_eyes_required', 403);
       // Kwoty powiązań sprawdzane ponownie (#165): korekta po powiązaniu albo podwójne ujęcie (#162).
       const inconsistent = await inconsistentMatches(tx, id);
-      if (inconsistent.length) throw new RequestError('inconsistent_matches', 409, { matches: inconsistent });
+      const inconsistentGroups = await inconsistentGroupMatches(tx, id);
+      if (inconsistent.length || inconsistentGroups.length) {
+        throw new RequestError('inconsistent_matches', 409, { matches: inconsistent, groupMatches: inconsistentGroups });
+      }
       const current = reconciliationFromRow(row);
       if (current.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
       await tx.query(
@@ -838,8 +1685,62 @@ async function confirmReconciliation(request, env, id, json) {
     }
     // Trigger (0024) wykrył niezgodność powstałą równolegle z odczytem w trasie.
     if (String(error?.message ?? '').includes('bank_reconciliation_inconsistent_matches')) {
-      throw new RequestError('inconsistent_matches', 409, { matches: await inconsistentMatches(env.db, id) });
+      throw new RequestError('inconsistent_matches', 409, {
+        matches: await inconsistentMatches(env.db, id), groupMatches: await inconsistentGroupMatches(env.db, id),
+      });
     }
+    mapDatabaseError(error);
+  }
+}
+
+// Porzucenie szkicu (0107, przegląd #344): przejście stanu, nie usunięcie —
+// importy, pozycje i cofnięte powiązania zostają w historii. Porzucony szkic
+// nie blokuje ponownego importu tego samego pliku do nowego szkicu. Role jak
+// przy zatwierdzeniu; bez zasady czterech oczu (porzucenie nie utrwala salda
+// jako uzgodnionego) — założenie do potwierdzenia przez Radę (D-13).
+// Idempotencja jak przy zatwierdzeniu: ponowienie tej samej osoby z tym samym
+// powodem zwraca 200 z Idempotency-Replayed: true.
+async function abandonReconciliation(request, env, id, json) {
+  const data = await readJson(request);
+  const reason = optionalText(data.reason, 3, 500, 'invalid_reason');
+  if (!reason) throw new RequestError('invalid_reason');
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      if (row.status === 'abandoned') {
+        if (row.abandoned_by === actorId && row.abandon_reason === reason) {
+          return json({ reconciliation: reconciliationFromRow(row) }, 200, REPLAYED);
+        }
+        throw new RequestError('reconciliation_abandoned', 409);
+      }
+      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      const active = await tx.query(
+        `SELECT count(*) AS n FROM bank_reconciliation_matches
+          WHERE reconciliation_id = $1 AND revoked_at IS NULL`, [id],
+      );
+      const activeMatchCount = toSafeInteger(active.rows[0].n);
+      if (activeMatchCount > 0) {
+        throw new RequestError('reconciliation_has_active_matches', 409, { activeMatchCount });
+      }
+      // Dopasowania zbiorcze (#390, jeśli są) sprawdza trigger bazy (0107).
+      await tx.query(
+        `UPDATE bank_reconciliations
+            SET status = 'abandoned', abandoned_by = $2, abandoned_at = now(), abandon_reason = $3
+          WHERE id = $1`,
+        [id, actorId, reason],
+      );
+      const abandoned = await loadReconciliation(tx, id);
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.abandoned', entityType: 'bank_reconciliation', entityId: id,
+        metadata: { schoolYearId: row.school_year_id },
+      });
+      return json({ reconciliation: reconciliationFromRow(abandoned) }, 200, CREATED);
+    });
+  } catch (error) {
     mapDatabaseError(error);
   }
 }
@@ -903,6 +1804,19 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
   const amountMismatch = toSafeInteger(matches.amount_mismatch);
   const doubleCounted = toSafeInteger(matches.double_counted);
   const amountMismatchConfirmed = toSafeInteger(matches.amount_mismatch_confirmed);
+  // Dopasowania zbiorcze (#127, 0105): suma dzisiejszego netto celów ≠ kwota pozycji
+  // albo cel zmieniony po dopasowaniu. Osobne pola — liczby dla 1:1 bez zmian.
+  const groups = (await executor.query(
+    `SELECT count(*) FILTER (WHERE c.target_net_cents <> c.line_amount_cents OR NOT c.items_unchanged) AS mismatch,
+            count(*) FILTER (WHERE (c.target_net_cents <> c.line_amount_cents OR NOT c.items_unchanged)
+                               AND r.status = 'confirmed') AS mismatch_confirmed
+       FROM bank_group_match_consistency c
+       JOIN bank_reconciliations r ON r.id = c.reconciliation_id
+      WHERE r.school_year_id = $1`,
+    [yearId],
+  )).rows[0];
+  const groupMismatch = toSafeInteger(groups.mismatch);
+  const groupMismatchConfirmed = toSafeInteger(groups.mismatch_confirmed);
 
   // 5. Ostatnie zatwierdzone uzgodnienie: różnica (utrwalona) i przelewy księgi po jego dacie.
   let latest = { ok: null, statementDate: null, differenceCents: null, bankEntriesAfterStatement: null };
@@ -946,18 +1860,24 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
     },
     {
       id: 'reconciliation_matches',
-      ok: amountMismatch === 0 && doubleCounted === 0,
+      ok: amountMismatch === 0 && doubleCounted === 0 && groupMismatch === 0,
       amountMismatchCount: amountMismatch,
       doubleCountedCount: doubleCounted,
       // #165: podzbiór powyższego — powiązania niezgodne w uzgodnieniu JUŻ
       // zatwierdzonym (niezmiennym); powstały z korekty po zatwierdzeniu.
       amountMismatchConfirmedCount: amountMismatchConfirmed,
+      groupAmountMismatchCount: groupMismatch,
+      groupAmountMismatchConfirmedCount: groupMismatchConfirmed,
     },
     { id: 'latest_confirmed_reconciliation', ...latest },
   ];
 }
 
 export async function buildAuditReport(executor, schoolYearId) {
+  // #213: chwila migawki z now() TEJ transakcji (stała przez cały
+  // REPEATABLE READ), nie z zegara procesu Node — raport i jego "asOf"
+  // zawsze opisują dokładnie te dane, które poniżej odczytał.
+  const asOf = (await executor.query('SELECT now() AS now')).rows[0].now;
   const year = (await executor.query(
     `SELECT id, label, to_char(starts_on, 'YYYY-MM-DD') AS starts_on, to_char(ends_on, 'YYYY-MM-DD') AS ends_on
        FROM school_years WHERE id = $1`, [schoolYearId],
@@ -990,15 +1910,25 @@ export async function buildAuditReport(executor, schoolYearId) {
     netCents: toSafeInteger(row.net_cents),
   }));
 
+  // #107: preliminarz (przyjęty i bieżący) a wykonanie netto per kategoria.
+  const budgetExecution = await buildBudgetExecution(executor, schoolYearId);
+
   // Widok z 0009_meetings.sql; bez niego zgodność z uchwałą pozostaje niesprawdzona.
   const linksView = (await executor.query("SELECT to_regclass('ledger_resolution_links') IS NOT NULL AS present")).rows[0];
   const hasLinks = Boolean(linksView?.present);
   const largeExpenses = (await executor.query(
     `SELECT e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.amount_cents, e.net_amount_cents,
             e.description, c.name AS category, e.resolution_reference,
-            ${hasLinks ? 'link.resolution_id' : 'NULL::text AS resolution_id'}
+            ${hasLinks ? 'link.resolution_id' : 'NULL::text AS resolution_id'},
+            le.resolution_id AS explicit_resolution_id, explicit.status AS explicit_status
        FROM ledger_entry_net e
        JOIN ledger_categories c ON c.id = e.category_id
+       JOIN ledger_entries le ON le.id = e.id
+       -- #93: jawne powiązanie (resolution_id) — stan bieżącej rewizji uchwały.
+       LEFT JOIN LATERAL (
+         SELECT rs.status FROM resolution_spending rs
+          WHERE le.resolution_id IN (SELECT resolution_chain_ids(rs.resolution_id)) LIMIT 1
+       ) explicit ON le.resolution_id IS NOT NULL
        ${hasLinks ? 'LEFT JOIN ledger_resolution_links link ON link.ledger_entry_id = e.id' : ''}
       WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.amount_cents > $2
       ORDER BY e.occurred_on, e.id`,
@@ -1011,10 +1941,15 @@ export async function buildAuditReport(executor, schoolYearId) {
     description: row.description,
     category: row.category,
     resolutionReference: row.resolution_reference ?? null,
-    resolutionId: row.resolution_id ?? null,
-    matchesAdoptedResolution: hasLinks ? Boolean(row.resolution_id) : null,
-    flagged: !row.resolution_id,
+    resolutionId: row.explicit_resolution_id ?? row.resolution_id ?? null,
+    // #93: 'explicit' = wskazana przy zapisie (resolution_id), 'text' = dopasowanie po numerze.
+    resolutionLink: row.explicit_resolution_id ? 'explicit' : 'text',
+    matchesAdoptedResolution: row.explicit_resolution_id ? row.explicit_status === 'adopted'
+      : (hasLinks ? Boolean(row.resolution_id) : null),
+    flagged: row.explicit_resolution_id ? row.explicit_status !== 'adopted' : !row.resolution_id,
   }));
+
+  const evidence = await buildEvidenceSection(executor, schoolYearId);
 
   const corrections = (await executor.query(
     `SELECT k.id, k.ledger_entry_id, to_char(e.occurred_on, 'YYYY-MM-DD') AS entry_occurred_on, e.direction,
@@ -1027,6 +1962,9 @@ export async function buildAuditReport(executor, schoolYearId) {
     direction: row.direction, amountCents: toSafeInteger(row.amount_cents), reason: row.reason,
     createdBy: row.created_by, createdAt: isoTimestamp(row.created_at),
   }));
+
+  const resolutionExecution = await buildResolutionExecution(executor, schoolYearId);
+  const expenseReviews = await buildExpenseReviews(executor, schoolYearId);
 
   const openingAdjustments = (await executor.query(
     `SELECT a.id, a.amount_cents, a.reason, a.created_by, a.created_at
@@ -1044,7 +1982,10 @@ export async function buildAuditReport(executor, schoolYearId) {
             (SELECT count(*) FROM bank_statement_lines l
               WHERE l.reconciliation_id = r.id AND NOT EXISTS (
                 SELECT 1 FROM bank_reconciliation_matches m
-                 WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)) AS unmatched_line_count
+                 WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)
+                AND NOT EXISTS (
+                SELECT 1 FROM bank_reconciliation_group_matches_current g
+                 WHERE g.statement_line_id = l.id)) AS unmatched_line_count
        FROM bank_reconciliations r
       WHERE r.school_year_id = $1
       ORDER BY r.statement_date, r.created_at, r.id`,
@@ -1059,6 +2000,7 @@ export async function buildAuditReport(executor, schoolYearId) {
       unmatchedLineCount: toSafeInteger(row.unmatched_line_count),
       createdBy: item.createdBy, confirmedBy: item.confirmedBy, confirmedAt: item.confirmedAt,
       confirmationNote: item.confirmationNote,
+      abandonedAt: item.abandonedAt, abandonReason: item.abandonReason,
     };
   });
   const confirmed = items.filter((item) => item.status === 'confirmed');
@@ -1078,23 +2020,167 @@ export async function buildAuditReport(executor, schoolYearId) {
 
   return {
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },
-    generatedAt: new Date().toISOString(),
+    generatedAt: isoTimestamp(asOf),
     balance,
     categories,
+    budgetExecution,
     largeExpenseThresholdCents: LARGE_EXPENSE_CENTS,
     largeExpenses,
+    resolutionExecution,
+    expenseReviews,
     corrections,
     openingAdjustments,
     reconciliations: {
       items,
       confirmedCount: confirmed.length,
-      draftCount: items.length - confirmed.length,
+      draftCount: items.filter((item) => item.status === 'draft').length,
+      abandonedCount: items.filter((item) => item.status === 'abandoned').length,
       latestConfirmed: confirmed.at(-1) ?? null,
     },
     checks: {
       items: checks,
       largeExpensesWithoutAdoptedResolution: largeExpenses.filter((item) => item.flagged).length,
     },
+    evidence,
+  };
+}
+
+// #87: dowody wydatków dla Komisji Rewizyjnej. Liczą się wydatki z netto > 0
+// (wpis skorygowany do zera, np. storno przy przeksięgowaniu, nie wymaga już
+// dowodu). Dowodem jest dokument główny (source_document_id) albo dokument
+// dołączony przez documents.linked_entity_*. „Możliwy duplikat” = ten sam
+// plik (sha256; dla wierszy bez skrótu — ten sam dokument) przy więcej niż
+// jednym wydatku — informacja do sprawdzenia, nie zarzut. Numer faktury i
+// wystawca (tabela ledger_entry_evidence z #87) wymagają osobnej migracji.
+async function buildEvidenceSection(executor, schoolYearId) {
+  const evidenceCte = `WITH expense AS (
+      SELECT e.id, e.occurred_on, e.description, e.net_amount_cents, e.category_id
+        FROM ledger_entry_net e
+       WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.net_amount_cents > 0
+    ), evidence AS (
+      SELECT x.id AS ledger_entry_id, l.source_document_id AS document_id
+        FROM expense x JOIN ledger_entries l ON l.id = x.id
+       WHERE l.source_document_id IS NOT NULL
+      UNION
+      SELECT x.id, d.id FROM expense x
+        JOIN documents d ON d.linked_entity_type = 'ledger_entry' AND d.linked_entity_id = x.id
+    )`;
+  const missingRows = (await executor.query(
+    `${evidenceCte}
+     SELECT x.id, to_char(x.occurred_on, 'YYYY-MM-DD') AS occurred_on, x.description, x.net_amount_cents,
+            c.name AS category
+       FROM expense x JOIN ledger_categories c ON c.id = x.category_id
+      WHERE NOT EXISTS (SELECT 1 FROM evidence v WHERE v.ledger_entry_id = x.id)
+      ORDER BY x.occurred_on, x.id`,
+    [schoolYearId],
+  )).rows;
+  const duplicateRows = (await executor.query(
+    `${evidenceCte}
+     SELECT COALESCE(d.sha256, v.document_id) AS evidence_key,
+            array_agg(DISTINCT v.document_id ORDER BY v.document_id) AS document_ids,
+            array_agg(DISTINCT v.ledger_entry_id ORDER BY v.ledger_entry_id) AS ledger_entry_ids
+       FROM evidence v LEFT JOIN documents d ON d.id = v.document_id
+      GROUP BY COALESCE(d.sha256, v.document_id)
+     HAVING count(DISTINCT v.ledger_entry_id) > 1
+      ORDER BY 1`,
+    [schoolYearId],
+  )).rows;
+  const withoutEvidence = missingRows.map((row) => ({
+    id: row.id, occurredOn: row.occurred_on, category: row.category, description: row.description,
+    netAmountCents: toSafeInteger(row.net_amount_cents),
+  }));
+  return {
+    expensesWithoutEvidence: {
+      count: withoutEvidence.length,
+      netCents: withoutEvidence.reduce((sum, item) => sum + item.netAmountCents, 0),
+      items: withoutEvidence,
+    },
+    possibleDuplicateEvidence: duplicateRows.map((row) => ({
+      documentIds: row.document_ids, ledgerEntryIds: row.ledger_entry_ids,
+    })),
+  };
+}
+
+// #93: wykonanie uchwał finansowych — uchwały roku (albo powiązane z wydatkiem
+// tego roku) z kwotą upoważnienia i sumą netto wydatków (po korektach).
+// Oznaczone: uchwała nie jest już przyjęta (np. poprawka zmieniła stan na
+// „odrzucona”) albo suma przekracza kwotę.
+async function buildResolutionExecution(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT rs.resolution_id, rs.school_year_id, rs.number, rs.title, rs.status, rs.authorized_amount_cents,
+            to_char(rs.valid_until, 'YYYY-MM-DD') AS valid_until, rs.spent_net_cents, rs.remaining_cents, rs.entry_count
+       FROM resolution_spending rs
+      WHERE rs.school_year_id = $1 OR EXISTS (
+        SELECT 1 FROM ledger_entries e
+         WHERE e.school_year_id = $1 AND e.resolution_id IN (SELECT resolution_chain_ids(rs.resolution_id)))
+      ORDER BY rs.number COLLATE "C", rs.resolution_id`,
+    [schoolYearId],
+  );
+  return rows.map((row) => {
+    const authorized = row.authorized_amount_cents === null ? null : toSafeInteger(row.authorized_amount_cents);
+    const remaining = authorized === null ? null : toSafeInteger(row.remaining_cents);
+    return {
+      resolutionId: row.resolution_id, schoolYearId: row.school_year_id, number: row.number, title: row.title,
+      status: row.status, authorizedAmountCents: authorized, validUntil: row.valid_until ?? null,
+      spentNetCents: toSafeInteger(row.spent_net_cents), remainingCents: remaining,
+      entryCount: toSafeInteger(row.entry_count),
+      flagged: row.status !== 'adopted' || (remaining !== null && remaining < 0),
+    };
+  });
+}
+
+const SPLIT_WINDOW_DAYS = 30;
+
+// #97: weryfikacja wydatków przez drugą osobę i sygnał możliwego podziału
+// wydatku (kilka wydatków ≤ 3000 EUR w tej samej kategorii w oknie 30 dni,
+// razem > 3000 EUR). Informacja do sprawdzenia, nie zarzut. Liczone są wydatki
+// z netto > 0 (wpis skorygowany do zera nie wymaga weryfikacji).
+async function buildExpenseReviews(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents, e.category_id,
+            c.name AS category, s.review_status
+       FROM ledger_entry_net e
+       JOIN ledger_categories c ON c.id = e.category_id
+       JOIN ledger_entry_review_status s ON s.ledger_entry_id = e.id
+      WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.net_amount_cents > 0
+      ORDER BY e.category_id, e.occurred_on, e.id`,
+    [schoolYearId],
+  );
+  const expenses = rows.map((row) => ({
+    id: row.id, occurredOn: row.occurred_on, netCents: toSafeInteger(row.net_amount_cents),
+    categoryId: row.category_id, category: row.category, reviewStatus: row.review_status,
+  }));
+  const tally = (status) => {
+    const matching = expenses.filter((item) => item.reviewStatus === status);
+    return { count: matching.length, netCents: matching.reduce((sum, item) => sum + item.netCents, 0) };
+  };
+  const day = (text) => Date.parse(`${text}T00:00:00Z`) / 86_400_000;
+  const possibleSplits = [];
+  const small = expenses.filter((item) => item.netCents <= LARGE_EXPENSE_CENTS);
+  let index = 0;
+  while (index < small.length) {
+    const start = small[index];
+    const window = small.filter((item) => item.categoryId === start.categoryId
+      && day(item.occurredOn) >= day(start.occurredOn) && day(item.occurredOn) < day(start.occurredOn) + SPLIT_WINDOW_DAYS);
+    const total = window.reduce((sum, item) => sum + item.netCents, 0);
+    if (window.length > 1 && total > LARGE_EXPENSE_CENTS) {
+      possibleSplits.push({
+        category: start.category, fromDate: start.occurredOn, toDate: window.at(-1).occurredOn,
+        entryCount: window.length, netCents: total, ledgerEntryIds: window.map((item) => item.id),
+      });
+      // Następne okno zaczyna się po ostatnim wpisie tego okna (bez powtórzeń).
+      index = small.indexOf(window.at(-1)) + 1;
+    } else {
+      index += 1;
+    }
+  }
+  return {
+    unverified: tally('unverified'),
+    verified: tally('verified'),
+    questioned: tally('questioned'),
+    questionedEntryIds: expenses.filter((item) => item.reviewStatus === 'questioned').map((item) => item.id),
+    splitWindowDays: SPLIT_WINDOW_DAYS,
+    possibleSplits,
   };
 }
 
@@ -1116,11 +2202,16 @@ async function auditReport(request, env, url, json) {
       actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route: 'reports.audit',
     });
   }
-  const report = await buildAuditReport(env.db, schoolYearId);
+  // #213: jedna migawka REPEATABLE READ dla całego raportu — inaczej równoległy
+  // zapis między którymikolwiek z zapytań buildAuditReport (bilans, kategorie,
+  // korekty, uzgodnienia...) na osobnych połączeniach z puli daje wewnętrznie
+  // sprzeczny wynik (patrz opis w issue: "sumy kategorii nie są zgodne z
+  // bilansem" mimo poprawnej księgi).
+  const report = await readSnapshot(env.db, (tx) => buildAuditReport(tx, schoolYearId));
   if (!report) throw new RequestError('school_year_not_found', 404);
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'report.audit.generated', entityType: 'school_year',
-    entityId: schoolYearId, metadata: { format },
+    entityId: schoolYearId, metadata: { format, asOf: report.generatedAt },
   });
   if (format === 'json') return json({ report });
   return new Response(renderAuditReportHtml(report), {
@@ -1155,23 +2246,29 @@ export async function handle(request, env, url, json) {
       if (method === 'POST') return await createReconciliation(request, env, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
-    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|confirm))?(?:\/([^/]+)\/(revocation))?$/);
+    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|group-matches|confirm|abandon))?(?:\/([^/]+)\/(revocation|payment))?$/);
     if (!match) return null;
     const id = decodeId(match[1]);
     const action = match[2] ?? null;
-    if (match[3] && action !== 'matches') return null;
-    if (!action && method === 'GET') return await getReconciliation(request, env, id, json);
+    const subAction = match[4] ?? null;
+    if (subAction === 'revocation' && action !== 'matches' && action !== 'group-matches') return null;
+    if (subAction === 'payment' && action !== 'lines') return null;
+    if (!action && method === 'GET') return await getReconciliation(request, env, id, url, json);
     if (action === 'suggestions' && method === 'GET') return await suggestMatches(request, env, id, url, json);
     if (method !== 'POST') {
       // GET, HEAD i inne — jedyne trasy tej ścieżki bez akcji/z 'suggestions' dopuszczają GET,
-      // reszta akcji (lines/matches/confirm/revocation) wyłącznie POST.
+      // reszta akcji (lines/matches/group-matches/confirm/abandon/revocation/payment) wyłącznie POST.
       const allow = (!action || action === 'suggestions') ? 'GET' : 'POST';
       return json({ error: 'method_not_allowed' }, 405, { Allow: allow });
     }
+    if (action === 'lines' && subAction === 'payment') return await createPaymentFromLine(request, env, id, decodeId(match[3]), json);
     if (action === 'lines') return await importLines(request, env, id, json);
-    if (action === 'matches' && match[3]) return await revokeMatch(request, env, id, decodeId(match[3]), json);
+    if (action === 'matches' && subAction === 'revocation') return await revokeMatch(request, env, id, decodeId(match[3]), json);
     if (action === 'matches') return await confirmMatch(request, env, id, json);
+    if (action === 'group-matches' && subAction === 'revocation') return await revokeGroupMatch(request, env, id, decodeId(match[3]), json);
+    if (action === 'group-matches') return await confirmGroupMatch(request, env, id, json);
     if (action === 'confirm') return await confirmReconciliation(request, env, id, json);
+    if (action === 'abandon') return await abandonReconciliation(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);

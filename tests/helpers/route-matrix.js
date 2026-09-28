@@ -33,6 +33,7 @@
 // treści protokołów i opisów wpłat; odpowiedź odmowna nie może zawierać żadnego.
 
 import { isMfaGateExempt } from '../../src/pg/mfa-policy.js';
+import { emailHash as prefEmailHash, preferencesToken } from '../../src/email/content.js';
 
 export const YEAR_1 = 'y-1';
 export const YEAR_2 = 'y-2';
@@ -93,6 +94,8 @@ const YEAR_TARGETS = ['W1', 'Y2'];
 const EVENT_EDIT = { admin: Y1_ALL, board: Y1_ALL, repA: ['A'], repB: ['B'] };
 const EVENT_REVIEW = { board: Y1_ALL };
 const FINANCIAL = { admin: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 };
+// #92: zatwierdzenie danych do wpłaty — wariant zachowawczy do decyzji D-08, bez skarbnika.
+const PAYMENT_INSTRUCTIONS_APPROVE = { admin: SCHOOL_Y1, board: SCHOOL_Y1 };
 // Zarząd z przydziałem klasy 1A zarządza wyłącznie zebraniami klasy 1A.
 const MEETING_MANAGE = { admin: Y1_ALL, board: Y1_ALL, boardA: ['A'] };
 const MEETING_READ = { admin: Y1_ALL, board: Y1_ALL, audit: Y1_ALL, boardA: ['A'] };
@@ -101,10 +104,14 @@ const json = (body) => body;
 const withKey = (key) => ({ 'Idempotency-Key': key });
 const everyY1 = () => Y1_ALL;
 
+// #150 (SR-10): zarządzanie zebraniami, protokołami i uchwałami wymaga jawnie
+// potwierdzonego MFA (src/pg/meetings.js, meetingForManage/meetingForManageOrClassHost
+// /createMeeting) — stąd mfa: true zawsze dla każdej trasy zbudowanej tym helperem
+// (parametr `mfa` z origin/main nie jest już potrzebny, bo nic go nie różnicuje).
 function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft', body, create = false }) {
   return {
     id, module: 'meetings', method, path: template, targets: CLASS_TARGETS,
-    allow: MEETING_MANAGE, mfa: false, ok, deny: 403, fixture: 'fresh',
+    allow: MEETING_MANAGE, mfa: true, ok, deny: 403, fixture: 'fresh',
     object: { kind: 'meeting', stage },
     build: ({ obj, key, target }) => ({
       path: `/api/meetings/${obj.meetingId}${suffix(obj)}`,
@@ -118,10 +125,13 @@ function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft',
 // widoczne, ale bez prawa do kroku (np. zatwierdzenie przez przedstawiciela) — 403.
 const eventDeny = (actor, targetKey) => ((EVENT_EDIT[actor.key] ?? []).includes(targetKey) ? 403 : 404);
 
+// #150 (SR-10): zatwierdzenie i publikacja (src/pg/events.js, approve/publish)
+// wymagają jawnie potwierdzonego MFA; szkic/zgłoszenie/odwołanie — nie.
 function eventAction(id, action, stage, allow, body = {}) {
   return {
     id, module: 'events', method: 'POST', path: `/api/events/:eventId/${action}`, targets: CLASS_TARGETS,
-    allow, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage },
+    allow, mfa: action === 'approve' || action === 'publish', ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'event', stage },
     build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/${action}`, body: { revision: 1, ...body } }),
   };
 }
@@ -172,6 +182,17 @@ export function pdfBytes(scope) {
   return new TextEncoder().encode(`%PDF-1.4\n% ${marker(scope)} dokument syntetyczny\n%%EOF\n`);
 }
 
+// Prawdziwy, poprawny plik PNG 2x2 (nie tekst udający sygnaturę jak pdfBytes
+// powyżej) — POST /api/news-photos/:id/file (#96) dekoduje bajty przez sharp,
+// więc atrapa musi być poprawnym obrazem, nie tylko mieć poprawne magic bytes.
+// Wygenerowany raz: sharp({create:{width:2,height:2,channels:3,background:
+// {r:200,g:30,b:30}}}).png().toBuffer() — bez danych osobowych, bez EXIF.
+const SYNTHETIC_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWM4ISd3Qk6OAUIBAB8mBBGFRCvEAAAAAElFTkSuQmCC';
+export function pngBytes() {
+  const binary = atob(SYNTHETIC_PNG_BASE64);
+  return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+}
+
 export const CAMPAIGN_TEXT = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok {rok}. Tytuł przelewu: {rodzina}. '
   + 'Jeśli wpłata została już wykonana, prosimy pominąć wiadomość.';
 export function campaignBody(target) {
@@ -209,6 +230,40 @@ function documentRead(id, path, kind, targets, allow, mfa, suffix) {
   };
 }
 
+// Zmiana stanu dokumentu (zastąpienie/unieważnienie, issue #82): ta sama zasada 404 jak przy
+// odczycie (brak wyroczni istnienia). Świeży dokument (fixture 'fresh') dla każdego udanego
+// przypadku — powtórna zmiana stanu tego samego dokumentu byłaby konfliktem (409), nie 2xx.
+function documentStatus(id, action, kind, targets, allow, mfa) {
+  const isSupersede = action === 'supersede';
+  return {
+    id, module: 'documents', method: 'POST', path: `/api/documents/:${kind}DocumentId/${action}`,
+    targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404, fixture: 'fresh',
+    object: { kind: isSupersede ? 'documentPair' : 'document', stage: kind },
+    build: ({ obj, key }) => ({
+      path: `/api/documents/${obj.documentId}/${action}`,
+      headers: withKey(key),
+      body: isSupersede
+        ? { reason: 'Zastąpienie dokumentu (test macierzy)', replacementDocumentId: obj.replacementDocumentId }
+        : { reason: 'Unieważnienie dokumentu (test macierzy)' },
+    }),
+  };
+}
+
+// Zapis opisu (tytuł/kategoria — issue #76): te same reguły dostępu co odczyt
+// metadanych dokumentu (canAccessDocument), więc mfaDeny/deny = 404 jak wyżej.
+function documentDescribe(id, path, kind, targets, allow, mfa) {
+  return {
+    id, module: 'documents', method: 'POST', path,
+    targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404,
+    fixture: 'static', object: { kind: 'document', stage: kind },
+    build: ({ obj, target, key }) => ({
+      path: `/api/documents/${obj.documentId}/description`, headers: withKey(key),
+      body: { title: `Opis ${marker(target.key)}`, category: 'inne' },
+    }),
+    contains: (_actor, target) => [target.key],
+  };
+}
+
 function ledgerRead(id, path, suffix, contains) {
   return {
     id, module: 'ledger', method: 'GET', path, targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403,
@@ -218,12 +273,13 @@ function ledgerRead(id, path, suffix, contains) {
   };
 }
 
-function emailRoute(id, method, suffix, stage, { fixture = 'fresh', allow = EMAIL_EDIT, body, contains }) {
+function emailRoute(id, method, suffix, stage, { fixture = 'fresh', allow = EMAIL_EDIT, body, contains, ok = 200, withKey: keyed = false }) {
   return {
     id, module: 'email', method, path: `/api/email/campaigns/:campaignId${suffix}`, targets: YEAR_TARGETS,
-    allow, mfa: true, ok: 200, deny: 403, fixture, object: { kind: 'campaign', stage },
-    build: ({ obj, target }) => ({
+    allow, mfa: true, ok, deny: 403, fixture, object: { kind: 'campaign', stage },
+    build: ({ obj, target, key }) => ({
       path: `/api/email/campaigns/${obj.campaignId}${suffix}`,
+      headers: method !== 'GET' && keyed ? withKey(key) : {},
       body: method === 'GET' ? undefined : (body ? body(target, obj) : {}),
     }),
     contains,
@@ -235,10 +291,13 @@ function newsReviewDeny(actor, targetKey) {
   return (EVENT_EDIT[actor.key] ?? []).includes(targetKey) ? 403 : 404;
 }
 
+// #150 (SR-10): zatwierdzenie i publikacja (src/pg/news.js, approve/publish)
+// wymagają jawnie potwierdzonego MFA; szkic/zgłoszenie/wycofanie — nie.
 function newsAction(id, action, stage, allow, deny, extra = {}) {
   return {
     id, module: 'news', method: 'POST', path: `/api/news/:postId/${action}`, targets: CLASS_TARGETS,
-    allow, mfa: false, ok: 200, deny, fixture: 'fresh', object: { kind: 'newsPost', stage },
+    allow, mfa: action === 'approve' || action === 'publish', ok: 200, deny, fixture: 'fresh',
+    object: { kind: 'newsPost', stage },
     build: ({ obj }) => ({ path: `/api/news/${obj.postId}/${action}`, body: { revision: 1, ...extra } }),
   };
 }
@@ -425,6 +484,88 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { householdId: 'hh-2', reason: 'Błędne przypisanie, korekta syntetyczna' },
     }),
   },
+  // #127: podział wpłaty nieprzypisanej na gospodarstwa; cofnięcie części jako nowy zapis.
+  {
+    id: 'payments.allocations.list', module: 'payments', method: 'GET', path: '/api/payments/:paymentId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'static',
+    object: { kind: 'payment', stage: 'recorded' },
+    build: ({ obj }) => ({ path: `/api/payments/${obj.paymentId}/allocations` }),
+  },
+  {
+    id: 'payments.allocations.create', module: 'payments', method: 'POST', path: '/api/payments/:paymentId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'payment', stage: 'unmatched' },
+    build: ({ obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/allocations`, headers: withKey(key), body: { householdId: 'hh-1', amountCents: 100 },
+    }),
+  },
+  {
+    id: 'payments.allocations.reversal', module: 'payments', method: 'POST',
+    path: '/api/payments/:paymentId/allocations/:allocationId/reversal',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'payment', stage: 'allocated' },
+    build: ({ obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/allocations/${obj.allocationId}/reversal`, headers: withKey(key),
+      body: { reason: 'Błędna część, korekta syntetyczna' },
+    }),
+  },
+  {
+    // #141: eksport CSV wpisów wpłat i korekt (skarbnik/zarząd/admin).
+    id: 'payments.exportCsv', module: 'payments', method: 'GET', path: '/api/payments/export.csv?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/payments/export.csv?schoolYearId=${target.schoolYearId}` }),
+  },
+
+  // ---------- payment-references (#83) ----------
+  {
+    id: 'payment-references.list', module: 'payment-references', method: 'GET',
+    path: '/api/payment-references?schoolYearId=:year&householdId=:id',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'paymentReference', stage: 'active' },
+    build: ({ target, obj }) => ({
+      path: `/api/payment-references?schoolYearId=${target.schoolYearId}&householdId=${obj.householdId}`,
+    }),
+  },
+  {
+    id: 'payment-references.create', module: 'payment-references', method: 'POST', path: '/api/payment-references',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    // 'plainHousehold' (nie ogólne 'household'): brak zapisu/klasy — rok W1 w
+    // YEAR_TARGETS nie ma classId, a ogólny fixture wstawiłby trwałą klasę
+    // fixture do współdzielonej bazy macierzy (patrz komentarz przy MAKERS
+    // w tests/pg-authz-matrix.test.js).
+    object: { kind: 'plainHousehold' },
+    build: ({ target, obj, key }) => ({
+      path: '/api/payment-references', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, householdId: obj.householdId },
+    }),
+  },
+  {
+    id: 'payment-references.revoke', module: 'payment-references', method: 'POST',
+    path: '/api/payment-references/:id/revoke',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'paymentReference', stage: 'active' },
+    build: ({ obj, key }) => ({
+      path: `/api/payment-references/${obj.paymentReferenceId}/revoke`, headers: withKey(key),
+      body: { reason: 'Zamknięcie testowe (macierz)' },
+    }),
+  },
+
+  // ---------- payment-instructions (#92) ----------
+  {
+    id: 'payment-instructions.get', module: 'payment-instructions', method: 'GET',
+    path: '/api/payment-instructions?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/payment-instructions?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    id: 'payment-instructions.approve', module: 'payment-instructions', method: 'POST',
+    path: '/api/payment-instructions',
+    targets: YEAR_TARGETS, allow: PAYMENT_INSTRUCTIONS_APPROVE, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/payment-instructions', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, iban: 'BE68539007547034', payeeName: `Rada ${marker(target.key)}` },
+    }),
+  },
 
   // ---------- events (#12) ----------
   {
@@ -465,6 +606,48 @@ export const ROUTE_MATRIX = Object.freeze([
   eventAction('events.publish', 'publish', 'approved', EVENT_REVIEW),
   eventAction('events.cancel', 'cancel', 'draft', EVENT_EDIT, { reason: 'Odwołanie syntetyczne' }),
 
+  // ---------- events: zadania i zapisy wolontariuszy (#142) ----------
+  // Dostęp do zadania/zapisu sprawdza ten sam canEdit(actor, event) co szkic
+  // wydarzenia (src/pg/events.js) — te same zakresy i ta sama odmowa 404/403
+  // (SR-07: wydarzenie spoza zakresu podglądu wygląda jak nieznane).
+  {
+    id: 'events.tasksList', module: 'events', method: 'GET', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
+    allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'static', object: { kind: 'event', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks` }),
+  },
+  {
+    id: 'events.taskCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
+    allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage: 'draft' },
+    build: ({ obj, target, key }) => ({
+      path: `/api/events/${obj.eventId}/tasks`, headers: withKey(key),
+      body: { title: `Zadanie ${marker(target.key)}`, slotsNeeded: 2, isPublic: false },
+    }),
+  },
+  {
+    id: 'events.taskCancel', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks/:taskId/cancel',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTask', stage: 'draft' },
+    build: ({ obj }) => ({
+      path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/cancel`, body: { reason: 'Odwołanie syntetyczne' },
+    }),
+  },
+  {
+    id: 'events.signupCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks/:taskId/signups',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTask', stage: 'draft' },
+    build: ({ obj, key }) => ({
+      path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/signups`, headers: withKey(key),
+      body: { userId: 'u-fx-board' },
+    }),
+  },
+  {
+    id: 'events.signupWithdraw', module: 'events',
+    method: 'POST', path: '/api/events/:eventId/tasks/:taskId/signups/:signupId/withdraw',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTaskSignup', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/signups/${obj.signupId}/withdraw` }),
+  },
+
   // ---------- meetings (#13) ----------
   {
     id: 'meetings.list', module: 'meetings', method: 'GET', path: '/api/meetings?schoolYearId=:year',
@@ -476,7 +659,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'meetings.create', module: 'meetings', method: 'POST', path: '/api/meetings', targets: CLASS_TARGETS,
-    allow: MEETING_MANAGE, mfa: false, ok: 201, deny: 403, fixture: null,
+    allow: MEETING_MANAGE, mfa: true, ok: 201, deny: 403, fixture: null,
     build: ({ target, key }) => ({
       path: '/api/meetings', headers: withKey(key),
       body: { schoolYearId: target.schoolYearId, kind: target.classId ? 'class' : 'plenary', classId: target.classId,
@@ -530,8 +713,11 @@ export const ROUTE_MATRIX = Object.freeze([
   meetingRoute('meetings.minutes', 'POST', '/api/meetings/:meetingId/minutes', () => '/minutes', {
     ok: 201, create: true, stage: 'held', body: (target) => ({ body: `Protokół roboczy ${marker(target.key)}` }),
   }),
+  // #135: rozstrzyga o przyjęciu dokumentu zebrania; #150: MFA teraz zawsze wymagane
+  // na poziomie meetingForManage, niezależnie od tej reguły biznesowej.
   meetingRoute('meetings.minutesApproval', 'POST', '/api/meetings/:meetingId/minutes/:minutesId/approval',
     (obj) => `/minutes/${obj.minutesId}/approval`, { stage: 'draftMinutes', body: () => ({}) }),
+  // #135: fixture udostępnia `internal`; #150: MFA wymagane niezależnie od widoczności.
   meetingRoute('meetings.minutesVisibility', 'POST', '/api/meetings/:meetingId/minutes/:minutesId/visibility',
     (obj) => `/minutes/${obj.minutesId}/visibility`, {
       ok: 201, create: true, stage: 'approvedMinutes', body: () => ({ visibility: 'internal' }),
@@ -544,10 +730,36 @@ export const ROUTE_MATRIX = Object.freeze([
     (obj) => `/resolutions/${obj.resolutionId}`, {
       stage: 'draftResolution', body: (target) => ({ title: `Poprawiony tytuł ${marker(target.key)}` }),
     }),
+  // #135: korekta zawsze zapisuje rozstrzygnięcie (adopted/rejected); #150: MFA
+  // wymagane niezależnie od tej reguły.
   meetingRoute('meetings.resolutionCorrection', 'POST', '/api/meetings/:meetingId/resolutions/:resolutionId/corrections',
     (obj) => `/resolutions/${obj.resolutionId}/corrections`, {
       ok: 201, create: true, stage: 'finalResolution', body: () => ({ reason: 'Pomyłka w zapisie głosów', votesAgainst: 1 }),
     }),
+  // #102: rejestr uchwał roku. Bez fixture (brak innych tras tworzy uchwały
+  // domyślnie), więc odpowiedź 2xx jest pustą listą — trasa sprawdza tu
+  // wyłącznie granicę roli/MFA; zakres klasowy i treść rejestru ma własny,
+  // dedykowany test w tests/pg-meetings-resolutions.test.js.
+  {
+    id: 'meetings.resolutionRegister', module: 'meetings', method: 'GET',
+    path: '/api/meetings/resolutions?schoolYearId=:year', targets: YEAR_TARGETS,
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, boardA: SCHOOL_Y1 },
+    mfa: false, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/meetings/resolutions?schoolYearId=${target.schoolYearId}` }),
+  },
+  // #102: śledzenie wykonania uchwały — nie zagnieżdżone pod /:meetingId, więc
+  // budowane ręcznie (nie przez meetingRoute), ale z tym samym fixture uchwały
+  // przyjętej (stage 'finalResolution') co korekta wyżej.
+  {
+    id: 'meetings.resolutionExecution', module: 'meetings', method: 'POST',
+    path: '/api/meetings/resolutions/:resolutionId/execution', targets: CLASS_TARGETS,
+    allow: MEETING_MANAGE, mfa: false, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'meeting', stage: 'finalResolution' },
+    build: ({ obj, key }) => ({
+      path: `/api/meetings/resolutions/${obj.resolutionId}/execution`,
+      body: json({ status: 'not_started' }), headers: withKey(key),
+    }),
+  },
   // ---------- import (#36) ----------
   // admin i zarząd z MFA, wyłącznie przydział bez klasy obejmujący rok importu.
   {
@@ -591,6 +803,20 @@ export const ROUTE_MATRIX = Object.freeze([
   documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content'),
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
   documentRead('documents.contentClass', '/api/documents/:classDocumentId/content', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, '/content'),
+  // Zmiana stanu dokumentu (issue #82): zastąpienie i unieważnienie — te same reguły dostępu
+  // co odczyt (brak wyroczni istnienia dla nieznanego/niedozwolonego identyfikatora). Kod
+  // (src/pg/routes/documents.js, changeStatus → canAccessDocument) używa DOKŁADNIE tej samej
+  // polityki DOCUMENT_POLICIES co odczyt — zapis nie jest węższy ani szerszy niż odczyt danego
+  // rodzaju, więc macierz lustrzanie powtarza allow/mfa z documentRead dla tego rodzaju.
+  documentStatus('documents.supersedeFinancial', 'supersede', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentStatus('documents.voidFinancial', 'void', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentStatus('documents.supersedeBoard', 'supersede', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentStatus('documents.voidBoard', 'void', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentStatus('documents.supersedeClass', 'supersede', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
+  documentStatus('documents.voidClass', 'void', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
+  documentDescribe('documents.describeFinancial', '/api/documents/:financialDocumentId/description', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentDescribe('documents.describeBoard', '/api/documents/:boardDocumentId/description', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentDescribe('documents.describeClass', '/api/documents/:classDocumentId/description', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
 
   // ---------- ledger (#38) ----------
   // admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu (docs/LEDGER.md).
@@ -629,6 +855,141 @@ export const ROUTE_MATRIX = Object.freeze([
         reason: 'Zła kategoria, korekta syntetyczna',
       },
     }),
+  },
+  {
+    // #207: kategorie przez API zamiast SQL. Bez Idempotency-Key — dedup przez
+    // UNIQUE(school_year_id, direction, name); `key` (unikalny na przypadek testu)
+    // jako nazwa, żeby równoległe przypadki się nie zderzały.
+    id: 'ledger.categoryCreate', module: 'ledger', method: 'POST', path: '/api/ledger/categories',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/ledger/categories',
+      body: { schoolYearId: target.schoolYearId, direction: 'expense', name: `Kat ${key}` },
+    }),
+  },
+  {
+    id: 'ledger.categoryDeactivate', module: 'ledger', method: 'POST',
+    path: '/api/ledger/categories/:categoryId/deactivate', targets: YEAR_TARGETS,
+    allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ obj }) => ({ path: `/api/ledger/categories/${obj.categoryId}/deactivate` }),
+  },
+  {
+    // Kopiowanie wymaga przydziału bez klasy wyłącznie w roku DOCELOWYM
+    // (rok źródłowy — tu YEAR_2 — nie wymaga dostępu: kopiowane są tylko
+    // nazwy/kierunki kategorii, bez kwot).
+    id: 'ledger.categoryCopy', module: 'ledger', method: 'POST', path: '/api/ledger/categories/copy',
+    targets: ['W1'], allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    // Podgląd celowo zawiera NAZWY kategorii roku źródłowego (Y2), nawet gdy
+    // aktor nie ma przydziału do tego roku — to nie kwoty ani dane rodzin,
+    // patrz komentarz przy copyCategories w ledger.js.
+    visible: (actor) => [...actor.scopes, 'Y2'],
+    build: () => ({ path: '/api/ledger/categories/copy', body: { fromSchoolYearId: YEAR_2, toSchoolYearId: YEAR_1, dryRun: true } }),
+  },
+
+  // ---------- preliminarz i kategorie (#107) ----------
+  // Zapis kategorii i linii: role finansowe z MFA (jak księga); przyjęcie preliminarza: wyłącznie zarząd.
+  //
+  // POST /api/ledger/categories z nagłówkiem Idempotency-Key (jak zawsze
+  // wysyła go moduł ledger-budget.js) to ta sama trasa co ledger.categoryCreate
+  // powyżej — macierz wymaga unikalnej pary metoda+ścieżka, więc granice ról
+  // sprawdza ten jeden wpis; zachowanie specyficzne dla nagłówka (replay,
+  // 409 idempotency_conflict/category_exists) mają testy jednostkowe
+  // tests/pg-ledger-budget.test.js i tests/pg-ledger-categories-api.test.js.
+  {
+    id: 'ledgerBudget.deactivateCategory', module: 'ledger-budget', method: 'POST', path: '/api/ledger/categories/:categoryId/deactivation',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/categories/${obj.categoryId}/deactivation`, headers: withKey(key), body: { reason: 'Wyłączenie syntetyczne' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.createLine', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ target, obj, key }) => ({
+      path: '/api/ledger/budget', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, categoryId: obj.categoryId, plannedCents: 10000 },
+    }),
+  },
+  {
+    id: 'ledgerBudget.reviseLine', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget/:lineId/revisions',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'budgetLine' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/budget/${obj.lineId}/revisions`, headers: withKey(key), body: { plannedCents: 9000, reason: 'Zmiana syntetyczna' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.adopt', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget/adoptions',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target, key }) => ({
+      path: '/api/ledger/budget/adoptions', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, adoptedOn: yearDate(target, '10-15'), note: 'Przyjęcie syntetyczne' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.history', module: 'ledger-budget', method: 'GET', path: '/api/ledger/budget/history?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/ledger/budget/history?schoolYearId=${target.schoolYearId}` }),
+    contains: () => ['W1'],
+  },
+  {
+    id: 'ledgerBudget.execution', module: 'ledger-budget', method: 'GET', path: '/api/ledger/budget/execution?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/ledger/budget/execution?schoolYearId=${target.schoolYearId}` }),
+    contains: () => ['W1'],
+  },
+
+  // ---------- weryfikacja wydatku i uchwała jako upoważnienie (#97, #93) ----------
+  ledgerRead('ledger.reviews', '/api/ledger/reviews?schoolYearId=:year', '/reviews', []),
+  ledgerRead('ledger.resolutions', '/api/ledger/resolutions?schoolYearId=:year', '/resolutions', []),
+  {
+    // Autor wpisu fixture (konto pomocnicze) nie jest żadnym z aktorów, więc każdy aktor finansowy może zweryfikować.
+    id: 'ledger.review', module: 'ledger', method: 'POST', path: '/api/ledger/:ledgerEntryId/reviews',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'static',
+    object: { kind: 'ledgerExpense' },
+    build: ({ obj, key }) => ({ path: `/api/ledger/${obj.ledgerEntryId}/reviews`, headers: withKey(key), body: { decision: 'verified' } }),
+  },
+  {
+    // Kwotę upoważnienia wpisuje zarząd lub admin (nie skarbnik); każdy dozwolony przypadek na świeżej uchwale.
+    id: 'ledger.resolutionAuthorization', module: 'ledger', method: 'POST',
+    path: '/api/ledger/resolutions/:resolutionId/authorizations',
+    targets: YEAR_TARGETS, allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 201,
+    // Uprawniony (admin/zarząd z MFA) do uchwały roku bez przydziału: 404 jak nieistniejąca (bez wyroczni).
+    deny: (actor, targetKey, mfa) => (['admin', 'board'].includes(actor.key) && mfa && targetKey === 'Y2' ? 404 : 403),
+    fixture: 'fresh', object: { kind: 'meeting', stage: 'adoptedResolution' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/resolutions/${obj.resolutionId}/authorizations`, headers: withKey(key),
+      body: { authorizedAmountCents: 100000, note: 'Kwota upoważnienia syntetyczna' },
+    }),
+  },
+
+  // ---------- centra kosztów (#117) ----------
+  // Jak księga: admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu; przedstawiciel,
+  // audit i principal 403 (D-08/D-09 — domyślnie bez dostępu).
+  {
+    ...ledgerRead('ledgerCostCenters.report', '/api/ledger/cost-centers?schoolYearId=:year', '/cost-centers', []),
+    module: 'ledger-cost-centers',
+  },
+  {
+    id: 'ledgerCostCenters.allocations', module: 'ledger-cost-centers', method: 'GET', path: '/api/ledger/:ledgerEntryId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'static',
+    object: { kind: 'ledgerEntry' },
+    build: ({ obj }) => ({ path: `/api/ledger/${obj.ledgerEntryId}/allocations` }),
+  },
+  {
+    // Pierwsza wersja przypisania jest jednorazowa na wpis (kolejna wymaga supersedesId) — fixture 'fresh'.
+    id: 'ledgerCostCenters.allocationCreate', module: 'ledger-cost-centers', method: 'POST', path: '/api/ledger/:ledgerEntryId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'ledgerEntry' },
+    build: ({ obj, key }) => ({ path: `/api/ledger/${obj.ledgerEntryId}/allocations`, headers: withKey(key), body: { items: [] } }),
+  },
+  {
+    id: 'ledgerCostCenters.eventFinance', module: 'ledger-cost-centers', method: 'GET', path: '/api/ledger/cost-centers/events/:eventId',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'static',
+    object: { kind: 'event', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/ledger/cost-centers/events/${obj.eventId}` }),
   },
 
   // ---------- kasa i rachunek (#199) ----------
@@ -694,11 +1055,31 @@ export const ROUTE_MATRIX = Object.freeze([
   emailRoute('email.snapshot', 'POST', '/snapshot', 'draft', {}),
   emailRoute('email.preview', 'GET', '/preview', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
   emailRoute('email.recipients', 'GET', '/recipients', 'snapshot', { fixture: 'static' }),
+  emailRoute('email.report', 'GET', '/report', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
+  emailRoute('email.attention', 'GET', '/attention', 'snapshot', { fixture: 'static' }),
+  {
+    // Rozstrzygnięcie delivery_unknown/error (#139): confirmed_delivered wystarcza board/treasurer;
+    // confirmed_not_sent (silniejsze twierdzenie) wymaga roli board — sprawdzone osobno w pg-email.test.js.
+    id: 'email.resolutions', module: 'email', method: 'POST', path: '/api/email/campaigns/:campaignId/resolutions',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'campaign', stage: 'failed' },
+    build: ({ obj }) => ({
+      path: `/api/email/campaigns/${obj.campaignId}/resolutions`,
+      body: { outboxId: obj.outboxId, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
+    }),
+  },
   emailRoute('email.approve', 'POST', '/approve', 'snapshot', {
     allow: EMAIL_APPROVE, body: (_target, obj) => ({ contentHash: obj.contentHash, recipientsHash: obj.recipientsHash }),
   }),
   emailRoute('email.queue', 'POST', '/queue', 'approved', {}),
+  emailRoute('email.pause', 'POST', '/pause', 'sending', {}),
+  emailRoute('email.resume', 'POST', '/resume', 'paused', {}),
   emailRoute('email.cancel', 'POST', '/cancel', 'draft', {}),
+  // Środowisko macierzy wstrzykuje transport (nigdy nie łączy się z siecią) i
+  // adres z EMAIL_PREVIEW_RECIPIENTS, więc dozwolona osoba dostaje 201.
+  emailRoute('email.testSend', 'POST', '/test-send', 'draft', {
+    ok: 201, withKey: true, body: () => ({ recipientEmail: 'fx-preview@rada.example.invalid' }),
+  }),
   {
     // Webhook Brevo: bez sesji i bez Origin; uwierzytelnia wspólny sekret (brak/zły sekret = 401, test niżej).
     id: 'email.webhook', module: 'email', method: 'POST', path: '/api/email/webhooks/brevo', targets: ['-'],
@@ -706,6 +1087,58 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ key, fx }) => ({
       path: '/api/email/webhooks/brevo', headers: { Authorization: `Bearer ${fx.webhookSecret}` },
       body: { event: 'opened', email: 'nieznany@example.invalid', id: key, ts_event: 1791187200 },
+    }),
+  },
+  {
+    // Lista wyłączeń (#94): rola sprawdzana przed jakimkolwiek zapytaniem o listę.
+    id: 'email.suppressions.list', module: 'email', method: 'GET', path: '/api/email/suppressions?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/suppressions?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    // Blokada świeża per przypadek (fixture 'fresh'): każda próba zgłasza
+    // zdjęcie osobnego, aktywnego zdarzenia (#94).
+    id: 'email.suppressions.releaseRequest', module: 'email', method: 'POST',
+    path: '/api/email/suppressions/:emailHash/release-request', targets: YEAR_TARGETS,
+    allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'suppression', stage: 'active' },
+    build: ({ obj, target }) => ({
+      path: `/api/email/suppressions/${obj.emailHash}/release-request`,
+      body: { schoolYearId: target.schoolYearId, releaseReason: 'address_corrected' },
+    }),
+  },
+  {
+    // Wniosek zgłoszony przez stałe konto fxCookies.board (nigdy nie testowane
+    // w macierzy), więc zatwierdzenie przez dowolnego dozwolonego aktora nie
+    // trafia w self_approval_forbidden (#94).
+    id: 'email.suppressions.release', module: 'email', method: 'POST',
+    path: '/api/email/suppressions/:emailHash/release', targets: YEAR_TARGETS,
+    allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'suppression', stage: 'releaseRequested' },
+    build: ({ obj, target }) => ({
+      path: `/api/email/suppressions/${obj.emailHash}/release`,
+      body: { schoolYearId: target.schoolYearId, requestId: obj.requestId },
+    }),
+  },
+  {
+    // Wypisanie jednym kliknięciem (#110): publiczna, bez Origin, bez sesji —
+    // token ważny (podpisany fx.unsubscribeSecret) daje ten sam wynik (200)
+    // niezależnie od tożsamości wywołującego (jak webhook).
+    id: 'email.preferences.get', module: 'email', method: 'GET', path: '/api/email/preferences?t=:token', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null,
+    build: ({ fx }) => ({
+      path: `/api/email/preferences?t=${encodeURIComponent(preferencesToken(fx.unsubscribeSecret, {
+        campaignId: fx.preferencesCampaignId, category: 'contribution_reminder', emailHash: prefEmailHash('fx-preferences@example.invalid'),
+      }))}`,
+    }),
+  },
+  {
+    id: 'email.preferences.post', module: 'email', method: 'POST', path: '/api/email/preferences?t=:token', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null,
+    build: ({ fx }) => ({
+      path: `/api/email/preferences?t=${encodeURIComponent(preferencesToken(fx.unsubscribeSecret, {
+        campaignId: fx.preferencesCampaignId, category: 'contribution_reminder', emailHash: prefEmailHash('fx-preferences-post@example.invalid'),
+      }))}`,
     }),
   },
 
@@ -764,6 +1197,41 @@ export const ROUTE_MATRIX = Object.freeze([
   photoAction('news.photoConsent', 'consents', PHOTO_REGISTER, 201, { subjectNo: 1, subjectKind: 'adult', consentDocumentRef: 'zgoda-syntetyczna-1' }),
   photoAction('news.photoVerify', 'verify', PHOTO_VERIFY, 200, {}),
   photoAction('news.photoRevoke', 'revoke', PHOTO_VERIFY, 200, { reason: 'Cofnięcie zgody (syntetyczne)' }),
+  {
+    id: 'news.consentWithdraw', module: 'news', method: 'POST',
+    path: '/api/news-photo-consents/:consentDocumentRef/withdraw', targets: ['-'],
+    allow: PHOTO_VERIFY, mfa: false, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'consent', stage: 'pending' }, visible: () => ['W1'],
+    build: ({ obj }) => ({ path: `/api/news-photo-consents/${obj.consentDocumentRef}/withdraw`, body: {} }),
+  },
+  {
+    // Plik obrazu (#96): surowe bajty PNG, nie JSON — Content-Type + Idempotency-Key.
+    id: 'news.photoFile', module: 'news', method: 'POST', path: '/api/news-photos/:photoId/file', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: false, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'photo', stage: 'pending' }, visible: () => ['W1'],
+    build: ({ obj, key }) => ({
+      path: `/api/news-photos/${obj.photoId}/file`,
+      headers: { ...withKey(key), 'Content-Type': 'image/png' },
+      body: pngBytes(),
+    }),
+  },
+  // Trasa publiczna (#96): zdjęcie zweryfikowane, z plikiem, w opublikowanym
+  // wpisie -> 200 dla każdego (bez sesji też) — sama treść nie zależy od roli.
+  // Cofnięcie/wygaśnięcie/szkic -> 404 identyczne jak nieistniejące; ta ścieżka
+  // ma dedykowany test w tests/pg-news.test.js (macierz sprawdza tu tylko, że
+  // odpowiedź jest jednakowa dla każdego aktora, nie cały cykl życia pliku).
+  {
+    id: 'news.publicPhotoFileWeb', module: 'news', method: 'GET', path: '/api/public/news-photos/:photoId/web',
+    targets: ['-'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static',
+    object: { kind: 'publicPhotoFile', stage: 'n/a' }, visible: () => [],
+    build: ({ obj }) => ({ path: `/api/public/news-photos/${obj.photoId}/web` }),
+  },
+  {
+    id: 'news.publicPhotoFileThumb', module: 'news', method: 'GET', path: '/api/public/news-photos/:photoId/thumb',
+    targets: ['-'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static',
+    object: { kind: 'publicPhotoFile', stage: 'n/a' }, visible: () => [],
+    build: ({ obj }) => ({ path: `/api/public/news-photos/${obj.photoId}/thumb` }),
+  },
 
   // ---------- admin (#3, #4, #9) ----------
   // Wyłącznie admin z MFA, także odczyt. Moduł obejmuje konta całej szkoły, więc odpowiedź 2xx
@@ -805,8 +1273,43 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.invitationRevoke', 'POST', '/api/admin/invitations/:invitationId/revoke', {
     object: 'invitation', build: ({ obj }) => ({ path: `/api/admin/invitations/${obj.invitationId}/revoke`, body: {} }),
   }),
+  adminRoute('admin.invitationReissue', 'POST', '/api/admin/invitations/:invitationId/reissue', {
+    ok: 201, object: 'invitation', build: ({ obj }) => ({ path: `/api/admin/invitations/${obj.invitationId}/reissue`, body: {} }),
+  }),
   adminRoute('admin.schoolYears', 'GET', '/api/admin/school-years', {}),
+  adminRoute('admin.classCoverage', 'GET', '/api/admin/class-coverage?schoolYearId=:year', {
+    build: () => ({ path: `/api/admin/class-coverage?schoolYearId=${YEAR_1}` }),
+  }),
+  // Konfiguracja roku i klas (#78): wyłącznie admin z MFA, jak cały moduł.
+  adminRoute('admin.schoolYearCreate', 'POST', '/api/admin/school-years', {
+    ok: 201,
+    build: ({ key }) => ({
+      path: '/api/admin/school-years',
+      body: { id: `y-matrix-${safeKey(key).toLowerCase()}`, label: `Rok macierzy ${safeKey(key)}`, startsOn: '2030-09-01', endsOn: '2031-08-31' },
+    }),
+  }),
+  adminRoute('admin.classesCreate', 'POST', '/api/admin/school-years/:schoolYearId/classes', {
+    ok: 201, object: 'emptySchoolYear',
+    build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
+  }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Rejestr żądań osób (#100): wariant zachowawczy, wyłącznie admin (jak cały moduł).
+  adminRoute('admin.dataRequests', 'GET', '/api/admin/data-requests', {}),
+  adminRoute('admin.dataRequestCreate', 'POST', '/api/admin/data-requests', {
+    ok: 201,
+    build: () => ({
+      path: '/api/admin/data-requests',
+      body: { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' },
+    }),
+  }),
+  adminRoute('admin.dataRequestStatus', 'POST', '/api/admin/data-requests/:requestId/status', {
+    object: 'dataRequest',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/status`, body: { status: 'identity_verified' } }),
+  }),
+  // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
+  adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
+  // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
+  adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 
   // ---------- reconciliation (#7, #15) ----------
   // Uzgodnienia: admin/zarząd/skarbnik z MFA w roku uzgodnienia; raport: Komisja Rewizyjna/zarząd/skarbnik z MFA.
@@ -830,6 +1333,9 @@ export const ROUTE_MATRIX = Object.freeze([
     ok: 201, withKey: true,
     body: (target) => ({ lines: [{ bookedOn: yearDate(target, '10-02'), amountCents: 1234, reference: 'Tytuł syntetyczny' }] }),
   }),
+  reconciliationRoute('reconciliation.linePayment', 'POST', '/lines/:lineId/payment', 'withLine', {
+    ok: 201, withKey: true, suffix: (obj) => `/lines/${obj.statementLineId}/payment`, body: () => ({ householdId: null }),
+  }),
   reconciliationRoute('reconciliation.suggestions', 'GET', '/suggestions', 'withLine', { fixture: 'static' }),
   reconciliationRoute('reconciliation.match', 'POST', '/matches', 'withLine', {
     ok: 201, withKey: true, body: (_target, obj) => ({ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }),
@@ -837,14 +1343,43 @@ export const ROUTE_MATRIX = Object.freeze([
   reconciliationRoute('reconciliation.matchRevocation', 'POST', '/matches/:matchId/revocation', 'matched', {
     suffix: (obj) => `/matches/${obj.matchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
   }),
+  // #127 cz. 2: dopasowanie zbiorcze (jedna pozycja ↔ kilka wpłat) i jego cofnięcie.
+  reconciliationRoute('reconciliation.groupMatch', 'POST', '/group-matches', 'groupReady', {
+    ok: 201, withKey: true,
+    body: (_target, obj) => ({
+      statementLineId: obj.statementLineId, items: obj.paymentIds.map((paymentEntryId) => ({ paymentEntryId })),
+    }),
+  }),
+  reconciliationRoute('reconciliation.groupMatchRevocation', 'POST', '/group-matches/:groupMatchId/revocation', 'groupMatched', {
+    suffix: (obj) => `/group-matches/${obj.groupMatchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
+  }),
   reconciliationRoute('reconciliation.confirm', 'POST', '/confirm', 'draft', {
     body: () => ({ confirmationNote: 'Różnica wyjaśniona (syntetyczne)' }),
+  }),
+  // Porzucenie szkicu bez aktywnych dopasowań (0107, przegląd #344).
+  reconciliationRoute('reconciliation.abandon', 'POST', '/abandon', 'draft', {
+    body: () => ({ reason: 'Saldo pliku niezgodne (syntetyczne)' }),
   }),
   {
     id: 'reconciliation.auditReport', module: 'reconciliation', method: 'GET', path: '/api/reports/audit?schoolYearId=:year&format=json',
     targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=json` }),
+  },
+
+  // ---------- sprawozdanie roczne i przepływy (#125) ----------
+  // Zarząd i skarbnik z MFA; admin, audit, principal, przedstawiciel: 403 (D-08/D-09).
+  {
+    id: 'financialReports.annual', module: 'financial-reports', method: 'GET', path: '/api/reports/annual?schoolYearId=:year&format=json',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/annual?schoolYearId=${target.schoolYearId}&format=json` }),
+  },
+  {
+    id: 'financialReports.cashFlow', module: 'financial-reports', method: 'GET', path: '/api/reports/cash-flow?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/cash-flow?schoolYearId=${target.schoolYearId}` }),
   },
 
   // ---------- exports (#9) ----------
@@ -905,6 +1440,15 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { schoolYearId: target.schoolYearId, classId: target.classId, effectiveOn: yearDate(target, '10-01'), reason: 'Korekta przydziału (syntetyczne)' },
     }),
   },
+  {
+    id: 'families.enrollmentEnd', module: 'families', method: 'POST', path: '/api/students/:studentId/enrollments/:enrollmentId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    // Odejście ze szkoły (#86) — data w przeszłości, żeby uczeń zniknął z bieżących list od razu.
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/enrollments/${obj.enrollmentId}/end`,
+      body: { endedOn: '2020-01-01', reason: 'Odejście ze szkoły (syntetyczne)' },
+    }),
+  },
 
   // ---------- print (#11) ----------
   {
@@ -912,7 +1456,94 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: CLASS_TARGETS, allow: PRINT, mfa: false, ok: 200, deny: printDeny, fixture: null,
     build: ({ target }) => ({ path: `/api/print/cards?schoolYearId=${target.schoolYearId}${target.classId ? `&classId=${target.classId}` : ''}` }),
     contains: (_actor, target) => (target.classId ? [target.key] : ['A', 'B']),
+    // Zatwierdzona konfiguracja rachunku do QR (#92, payment_instructions) jest
+    // ogólnoszkolna (W1) i celowo trafia na każdą kartkę, także przy druku
+    // wyłącznie własnej klasy — to nie jest wyciek poza zakres.
+    visible: (actor) => {
+      const own = actor.ownClass ?? actor.classBoard;
+      return own ? [own, 'W1'] : actor.scopes;
+    },
     check: ({ actor, mfa, json }) => printPaymentCheck(actor, mfa, json),
+  },
+
+  // ---------- representative (#118) ----------
+  // Pulpit przedstawiciela: wyłącznie rola `representative` (nie zarząd nawet
+  // z przydziałem klasy) — własne przypisane klasy, wyliczone z przydziałów,
+  // bez parametru classId w ścieżce. Trasa nie przyjmuje zakresu w żądaniu
+  // (tylko schoolYearId) — pojedynczy target '-' jak families.classes; zakres
+  // sprawdzamy treścią odpowiedzi (classListCheck), nie odmową per-target.
+  {
+    id: 'representative.overview', module: 'representative', method: 'GET',
+    path: '/api/representative/overview?schoolYearId=:year',
+    targets: ['-'], allow: { repA: ['-'], repB: ['-'] }, mfa: false, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: `/api/representative/overview?schoolYearId=${YEAR_1}` }),
+    check: ({ actor, json }) => classListCheck(actor, json),
+  },
+
+  // ---------- guardian-updates (#140) ----------
+  // Wydanie linku i kolejka: admin/zarząd BEZ przydziału klasowego (SR-01,
+  // jak board.js/#131) — przedstawiciel klasy nie widzi kolejki wniosków
+  // (do decyzji D-08). MFA już wymuszone przez bramkę routera dla admin/
+  // zarząd (mfa-policy.js), stąd mfa: true. Formularz publiczny — bez sesji,
+  // ten sam wynik dla każdego wywołującego.
+  {
+    id: 'guardianUpdates.issueLink', module: 'guardian-updates', method: 'POST', path: '/api/admin/guardian-links',
+    targets: ['W1'], allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    // W1 = dane ogólnoszkolne (classId null) — gospodarstwo fixture pod stałą
+    // klasą A (kind 'guardianOnly'), niezależnie od targetu trasy.
+    fixture: 'fresh', object: { kind: 'guardianOnly' },
+    build: ({ obj }) => ({ path: '/api/admin/guardian-links', body: { guardianId: obj.guardianId } }),
+  },
+  {
+    id: 'guardianUpdates.previewPublic', module: 'guardian-updates', method: 'GET',
+    path: '/api/public/guardian-update?token=:token', targets: ['W1'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'guardianUpdateLink' },
+    // Trasa publiczna, jawnie uwierzytelniona tokenem (nie sesją/rolą): pokazuje
+    // wyłącznie nazwę klasy DZIECKA WŁAŚCICIELA TEGO TOKENU — zawsze klasa A
+    // (fixture guardianUpdateLink). To nie jest wyciek poza zakres aktora, bo
+    // każdy wywołujący z tym tokenem ma to samo uprawnienie (posiadanie linku).
+    visible: () => ['A'],
+    build: ({ obj }) => ({ path: `/api/public/guardian-update?token=${obj.token}` }),
+  },
+  {
+    id: 'guardianUpdates.submitPublic', module: 'guardian-updates', method: 'POST', path: '/api/public/guardian-update',
+    targets: ['W1'], allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'guardianUpdateLink' },
+    build: ({ obj, key }) => ({
+      path: '/api/public/guardian-update', body: { token: obj.token, contactAllowed: true, note: `Wniosek ${key}` },
+    }),
+  },
+  {
+    id: 'guardianUpdates.list', module: 'guardian-updates', method: 'GET', path: '/api/admin/guardian-update-requests',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/admin/guardian-update-requests' }),
+  },
+  {
+    // Decyzja na świeżym wniosku (fixture 'fresh' tworzy link + wniosek pending przez formularz publiczny).
+    id: 'guardianUpdates.approve', module: 'guardian-updates', method: 'POST',
+    path: '/api/admin/guardian-update-requests/:requestId/approve', targets: ['W1'],
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'guardianUpdateRequest' },
+    build: ({ obj }) => ({ path: `/api/admin/guardian-update-requests/${obj.requestId}/approve`, body: {} }),
+  },
+  {
+    id: 'guardianUpdates.reject', module: 'guardian-updates', method: 'POST',
+    path: '/api/admin/guardian-update-requests/:requestId/reject', targets: ['W1'],
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'guardianUpdateRequest' },
+    build: ({ obj }) => ({ path: `/api/admin/guardian-update-requests/${obj.requestId}/reject`, body: {} }),
+  },
+
+  // ---------- board (#131) ----------
+  // Pulpit zarządu: statystyki per klasa. Admin/zarząd bez przydziału klasowego
+  // (przydział zarządu ograniczony do klasy — `boardA` — nie otwiera tego
+  // widoku, SR-01); skarbnik i inne role — 403. MFA jest już wymuszone przez
+  // bramkę routera dla admin/board (mfa-policy.js), stąd `mfa: true` tutaj.
+  {
+    id: 'board.overview', module: 'board', method: 'GET',
+    path: '/api/board/overview?schoolYearId=:year',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: `/api/board/overview?schoolYearId=${YEAR_1}` }),
+    check: ({ actor, json }) => classListCheck(actor, json),
   },
 
   // ---------- mfa (#3) ----------
@@ -922,6 +1553,22 @@ export const ROUTE_MATRIX = Object.freeze([
   mfaRoute('mfa.verify', '/api/mfa/verify', 200, 'confirmed'),
   mfaRoute('mfa.recovery', '/api/mfa/recovery', 200, 'confirmed'),
   mfaRoute('mfa.revokeAll', '/api/sessions/revoke-all', 200, null),
+  // #150: lista własnych sesji — każda sesja widzi wyłącznie swoje (bez ról/zakresu, jak revoke-all).
+  {
+    id: 'sessions.list', module: 'mfa', method: 'GET', path: '/api/sessions', targets: ['-'],
+    allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/sessions' }),
+  },
+  // Cofnięcie WŁASNEJ (ale innej niż bieżąca — fixture ownSession) sesji: każdy
+  // uwierzytelniony aktor może to zrobić dla siebie. Cudza/nieistniejąca sesja
+  // (404, zakres "tylko własne", SR-07) i cofnięcie BIEŻĄCEJ sesji (czyści cookie)
+  // są poza macierzą ról — sprawdzone w tests/pg-sessions.test.js.
+  {
+    id: 'sessions.revokeOne', module: 'mfa', method: 'POST', path: '/api/sessions/:id/revoke', targets: ['-'],
+    allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'ownSession' },
+    build: ({ obj }) => ({ path: `/api/sessions/${obj.sessionId}/revoke`, body: {} }),
+  },
 
   // ---------- login (#3, D-10) ----------
   // Logowanie, przyjęcie zaproszenia i reset hasła działają bez sesji (cookie jest ignorowane) —
@@ -974,6 +1621,36 @@ export const ROUTE_MATRIX = Object.freeze([
   yearCloseRoute('yearClose.close', 'POST', '/api/year-close/:schoolYearId/close', '/close', YEAR_CLOSE_BOARD, 200, {
     body: () => ({}),
   }),
+
+  // ---------- privacy-notice (#145, D-06) ----------
+  {
+    id: 'privacyNotice.public', module: 'privacy-notice', method: 'GET', path: '/api/public/privacy-notice', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null, needs: [['privacyNotice', 'published', ['-']]],
+    build: () => ({ path: '/api/public/privacy-notice' }),
+  },
+  {
+    id: 'privacyNotice.list', module: 'privacy-notice', method: 'GET', path: '/api/admin/privacy-notices', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/admin/privacy-notices' }),
+  },
+  {
+    id: 'privacyNotice.create', module: 'privacy-notice', method: 'POST', path: '/api/admin/privacy-notices', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: () => ({
+      path: '/api/admin/privacy-notices',
+      body: { bodyText: 'Treść informacji o przetwarzaniu danych (macierz uprawnień).', decisionRef: 'D-06/macierz' },
+    }),
+  },
+  {
+    id: 'privacyNotice.approve', module: 'privacy-notice', method: 'POST', path: '/api/admin/privacy-notices/:id/approve', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: true, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'privacyNotice', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/admin/privacy-notices/${obj.noticeId}/approve` }),
+  },
+  {
+    id: 'privacyNotice.publish', module: 'privacy-notice', method: 'POST', path: '/api/admin/privacy-notices/:id/publish', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: true, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'privacyNotice', stage: 'approved' },
+    build: ({ obj }) => ({ path: `/api/admin/privacy-notices/${obj.noticeId}/publish` }),
+  },
 ].map((route) => Object.freeze(route)));
 
 export function requiresMfa(route, actor) {
@@ -1012,8 +1689,11 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
   '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
   '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
+  '/api/email/preferences': 'wypisanie jednym kliknięciem: klika je klient poczty rodzica, nie przeglądarka z sesją (#110); token HMAC jest jedynym zabezpieczeniem',
   '/api/mfa/': 'zapis i potwierdzenie MFA; limity błędów per sesja, wyższy sufit per konto (#189)',
   '/api/public/': 'publiczne dane zatwierdzone',
+  '/api/sessions': 'lista WYŁĄCZNIE własnych sesji (id, czas, stan MFA) — jak /api/session (#150)',
+  '/api/sessions/': 'cofnięcie własnej sesji (dowolne urządzenie) — jak /api/sessions/revoke-all (#150)',
 });
 
 // Oczekiwany status dla (trasa, aktor, MFA, zakres) — zamierzona polityka, nie stan kodu.

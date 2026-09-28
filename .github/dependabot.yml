@@ -1,0 +1,24 @@
+# #153: aktualizacje zależności i akcji GitHub jako osobne PR, bez
+# automatycznego scalania (scalanie — decyzja recenzenta po zielonym CI,
+# w tym joby test/audit/build/smoke z .github/workflows/ci.yml).
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      # Deweloperskie razem (build/test), żeby nie mnożyć PR bez wpływu na
+      # kod produkcyjny.
+      dev-dependencies:
+        dependency-type: "development"
+    # Zależności produkcyjne (pg, read-excel-file, sql.js, fflate,
+    # qrcode-generator) dostają osobny PR każda — przetwarzają dane rodzin
+    # (import XLSX, eksport/odtworzenie), więc recenzja ma być pojedyncza.
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5

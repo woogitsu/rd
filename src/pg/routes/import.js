@@ -22,11 +22,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { FIELDS, validateRows } from '../../../import/core.js';
 import { insertAuditEvent } from '../audit.js';
 import { requireAccess } from '../authorization.js';
+import { isProductionEnv } from '../bootstrap-admin.js';
 
 export const name = 'import';
 export const IMPORT_ROLES = Object.freeze(['admin', 'board']);
 export const FIELD_KEYS = Object.freeze(FIELDS.map(([key]) => key));
 export const IMPORT_FORMAT_VERSION = 1;
+// #248: powód zmiany, jaki widzi historia rodzin/przypisań (triggery z 0014/0023
+// czytają rd.change_reason). Stała, kontrolowana wartość — import nie przyjmuje
+// dowolnego tekstu od operatora.
+export const IMPORT_CHANGE_REASON = 'import_csv_xlsx';
 // Ten sam limit co globalny limit ciała żądania w src/node-app.js.
 export const MAX_IMPORT_BODY_BYTES = 1024 * 1024;
 export const MAX_IMPORT_ROWS = 5000;
@@ -60,8 +65,19 @@ class ImportError extends Error {
 const norm = (value) => String(value ?? '').trim().toLocaleLowerCase('pl-PL').replace(/\s+/g, ' ');
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
+// #166: poprzednia wersja porównywała TYLKO do dosłownego 'production' —
+// 'prod' i `Production`/`PRODUCTION` (inna wielkość liter) nie pasowały do
+// tego porównania i zostawiały import WŁĄCZONY bez IMPORT_ENABLED (fail-open,
+// dane dzieci i opiekunów). `isProductionEnv` (src/pg/bootstrap-admin.js,
+// współdzielona z bootstrapem pierwszego administratora) rozpoznaje oba
+// warianty niezależnie od wielkości liter. Założenie zachowane bez zmian
+// (jak dziś i jak `isProductionEnv` gdzie indziej): brak APP_ENV albo inna,
+// nierozpoznana wartość NIE jest traktowana jak produkcja — to osobna
+// decyzja (D-20/#166: jedna funkcja `resolveAppEnv` fail-closed dla
+// nierozpoznanej wartości wszędzie), która zmieniłaby domyślne zachowanie
+// lokalnych środowisk i testów bez APP_ENV.
 function importDisabled(env) {
-  return env?.APP_ENV === 'production' && env?.IMPORT_ENABLED !== 'true';
+  return isProductionEnv(env?.APP_ENV) && env?.IMPORT_ENABLED !== 'true';
 }
 
 // Przydział musi obejmować wszystkie klasy; rok — wskazany albo wszystkie.
@@ -439,6 +455,18 @@ function batchResult(row, replayed) {
   };
 }
 
+// #248: bez tego ustawienia triggery historii rodzin (0014/0023 — student_households,
+// guardian_households, enrollment_history) zapisują created_by/changed_by = NULL
+// i source = 'direct', jakby zmianę wykonano bezpośrednim SQL-em, mimo że zapis
+// wykonuje uwierzytelnione API. `true` = ustawienie lokalne dla tej transakcji
+// (nie globalna sesja) — znika automatycznie po COMMIT/ROLLBACK.
+async function setImportChangeContext(tx, actorId) {
+  await tx.query(
+    "SELECT set_config('rd.actor_id', $1, true), set_config('rd.change_reason', $2, true)",
+    [actorId, IMPORT_CHANGE_REASON],
+  );
+}
+
 async function bulkInsert(tx, batchId, inserts) {
   const column = (list, key) => list.map((item) => item[key]);
   if (inserts.households.length) {
@@ -487,6 +515,11 @@ async function bulkInsert(tx, batchId, inserts) {
 }
 
 async function commit(env, actorId, payload, idempotencyKey) {
+  // #248: zapis historii bez aktora nie jest anonimowym zapisem awaryjnym —
+  // to odmowa. requireAccess wyżej w handle() zawsze daje tu ID uwierzytelnionej
+  // sesji; ten warunek jest strażnikiem na wypadek błędu w wywołującym, nie
+  // ścieżką, którą ma przechodzić prawdziwy ruch.
+  if (!actorId) throw new Error('actor_required');
   return env.db.transaction(async (tx) => {
     // Jeden import naraz: podwójne kliknięcie i ponowienie czekają i widzą zapisany wynik.
     await tx.query("SELECT pg_advisory_xact_lock(hashtext('rd_import_commit'))");
@@ -501,6 +534,15 @@ async function commit(env, actorId, payload, idempotencyKey) {
     const same = previous.rows.find((row) => row.fingerprint === fingerprint);
     if (same) return { status: 200, body: batchResult(same, true) };
 
+    // #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu
+    // danych. Sprawdzane dopiero tutaj (nie w preview) — podgląd nie zapisuje
+    // niczego i nie powinien blokować pracy nad mapowaniem przed publikacją.
+    const { rows: noticeRows } = await tx.query(
+      "SELECT id FROM privacy_notices WHERE status = 'published' ORDER BY version DESC LIMIT 1",
+    );
+    if (!noticeRows[0]) throw new ImportError(409, 'privacy_notice_missing');
+    const privacyNoticeId = noticeRows[0].id;
+
     if (plan.planDigest !== payload.planDigest) throw new ImportError(409, 'preview_stale');
     if ((plan.counts.rowsConflict || plan.counts.rowsSkipped) && !payload.skipConflicts) {
       throw new ImportError(422, 'import_has_conflicts');
@@ -510,13 +552,19 @@ async function commit(env, actorId, payload, idempotencyKey) {
     const { rows } = await tx.query(
       `INSERT INTO import_batches (id, actor_id, school_year_id, fingerprint, idempotency_key, plan_digest,
          rows_total, rows_added, rows_updated, rows_unchanged, rows_conflict, rows_skipped,
-         households_created, guardians_created, students_created, enrollments_created, links_created)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         households_created, guardians_created, students_created, enrollments_created, links_created,
+         privacy_notice_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING *`,
       [batchId, actorId, payload.schoolYearId, fingerprint, idempotencyKey, plan.planDigest,
         c.rowsTotal, c.rowsAdded, c.rowsUpdated, c.rowsUnchanged, c.rowsConflict, c.rowsSkipped,
-        c.householdsCreated, c.guardiansCreated, c.studentsCreated, c.enrollmentsCreated, c.linksCreated],
+        c.householdsCreated, c.guardiansCreated, c.studentsCreated, c.enrollmentsCreated, c.linksCreated,
+        privacyNoticeId],
     );
+    // #248: aktor musi być ustawiony w tej samej transakcji, PRZED zapisami
+    // domenowymi — triggery historii rodzin (student_households, guardian_households,
+    // enrollment_history) czytają rd.actor_id/rd.change_reason w momencie INSERT-a.
+    await setImportChangeContext(tx, actorId);
     await bulkInsert(tx, batchId, plan.inserts);
     // Audyt: aktor, rok i liczniki. Bez imion, nazwisk, adresów i identyfikatorów ze źródła.
     await insertAuditEvent(tx, {

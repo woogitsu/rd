@@ -91,7 +91,16 @@ async function pgBackend() {
     [session.id, session.userId, await hashSecret(session.token), utc(session.createdAt ?? '2026-09-27 07:00:00'),
       utc(session.expiresAt), utc(session.mfa), utc(session.revoked), session.revoked ? 'admin' : null]);
   }
-  const env = { db };
+  // #150 (SR-10): loadSession odrzuca teraz sesję bezczynną dłużej niż
+  // SESSION_IDLE_TIMEOUT_SECONDS (domyślnie 30 min) wg zegara systemowego —
+  // stary Worker (legacy) nie zna tego pojęcia. Fixture ma stałe `createdAt`
+  // ('2026-09-27 07:00:00'), więc przy realnym zegarze test byłby
+  // niedeterministyczny (przechodzi tylko, dopóki data testu jest mniej niż
+  // 30 minut po tej stałej — inaczej PG odrzuca sesję jako `unauthenticated`,
+  // a scenariusz porównuje kontrakt session/access/logout, nie politykę
+  // bezczynności, którą osobno pokrywa tests/pg-auth.test.js). Wyłączamy
+  // limit tylko w tym scenariuszu równoważności.
+  const env = { db, SESSION_IDLE_TIMEOUT_SECONDS: '0' };
   return {
     kind: 'pg',
     fetch: (req) => handlePgRequest(req, env),
@@ -192,10 +201,37 @@ const ALLOWED = {
     legacy: { status: 404, error: 'not_found' }, pg: { status: 401, error: 'unauthenticated' },
     reason: 'nowa trasa (#13), nieobecna w Workerze',
   },
+  'sessions typo': {
+    legacy: { status: 404, error: 'not_found' }, pg: { status: 200 },
+    reason: '#150: GET /api/sessions (lista własnych sesji) to nowa trasa, nieobecna w Workerze — '
+      + 'ścieżka nazwana tu "typo" (literówka względem /api/session) zaczęła trafiać w prawdziwą trasę',
+  },
+  'access representative (only assigned classes, no expired grant)': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: PostgreSQL dodaje pole hasActiveRole (ROLE_STATUS) do GET /api/access, nieobecne w Workerze',
+  },
+  'access admin': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: jak wyżej — hasActiveRole',
+  },
+  'access without grants': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: jak wyżej — hasActiveRole',
+  },
 };
 
+// #143: /api/session na PostgreSQL dokłada writeMode (tryb tylko do odczytu) —
+// pole nieobecne w starym Workerze z zasady, nie luka równoważności. Testowane
+// osobno w tests/write-mode.test.js.
+function stripWriteMode(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body) || !('writeMode' in body)) return body;
+  const { writeMode, ...rest } = body;
+  return rest;
+}
+
 async function run(backend) {
-  const normalize = createNormalizer({ cursorKeys: [], timestampKeys: ['expiresAt'] });
+  const baseNormalize = createNormalizer({ cursorKeys: [], timestampKeys: ['expiresAt'] });
+  const normalize = (body) => stripWriteMode(baseNormalize(body));
   const steps = [];
   for (const [label, req] of SCENARIO) {
     const response = await backend.fetch(req.clone());
@@ -260,7 +296,7 @@ test('session, access, logout, health and 404 match the legacy Worker step by st
     const [oldBody, newBody] = [await readSession(legacy), await readSession(pg)];
     assert.equal(oldBody.expiresAt, '2099-01-01 00:00:00');
     assert.equal(newBody.expiresAt, '2099-01-01T00:00:00.000Z');
-    assert.deepEqual({ ...oldBody, expiresAt: null }, { ...newBody, expiresAt: null });
+    assert.deepEqual({ ...oldBody, expiresAt: null }, stripWriteMode({ ...newBody, expiresAt: null }));
 
     // Różnica danych (nie odpowiedzi): PostgreSQL zapisuje powód wycofania.
     assert.equal((await pg.one("SELECT revoked_reason FROM sessions WHERE id = ?", 's-logout')).revoked_reason, 'logout');

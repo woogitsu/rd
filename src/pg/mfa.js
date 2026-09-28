@@ -20,6 +20,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { insertAuditEvent } from './audit.js';
 import { rotateSession } from './auth.js';
+import { freshMfaForbiddenCode } from './authorization.js';
 
 // Założenia do potwierdzenia (D-10): 5 błędów w 15 min → blokada 15 min, 10 kodów odzyskiwania.
 // maxFailures dotyczy sesji; userMaxFailures to wyższy sufit dla konta (#189): błędne kody
@@ -28,7 +29,14 @@ export const MFA_POLICY = Object.freeze({
   maxFailures: 5, userMaxFailures: 20, windowSeconds: 15 * 60, lockSeconds: 15 * 60, recoveryCodeCount: 10,
 });
 export const MFA_ISSUER = 'RD';
-const KEY_VERSION = 1;
+// #134: KEY_VERSION jako stała była zapisywana przy KAŻDYM nowym czynniku i użyta
+// w AAD niezależnie od wiersza (`aadFor` brała stałą z kodu, nie `key_version`
+// wiersza) — po zmianie tej stałej odszyfrowanie WSZYSTKICH istniejących czynników
+// kończyło się błędem GCM. DEFAULT_KEY_VERSION zostaje jako wartość dla wywołań
+// bez jawnego `keyVersion` (zgodność wsteczna testów i pojedynczego klucza),
+// ale bieżący numer wersji do zapisu nowych czynników bierzemy z pierścienia
+// kluczy (`loadEncryptionKeys`), nie z tej stałej.
+const DEFAULT_KEY_VERSION = 1;
 
 // --- Base32 (RFC 4648, bez dopełnienia) -----------------------------------
 
@@ -119,32 +127,64 @@ export const DEFAULT_MFA_METHOD = 'totp';
 
 // --- Szyfrowanie sekretu (AES-256-GCM) --------------------------------------
 
+function parseKeyMaterial(text) {
+  if (/^[0-9a-fA-F]{64}$/.test(text)) return Buffer.from(text, 'hex');
+  if (/^[A-Za-z0-9+/_-]{43}=?$/.test(text)) return Buffer.from(text, 'base64');
+  return null;
+}
+
 // Klucz: 32 bajty jako 64 znaki hex albo base64/base64url. Brak lub zły format → null.
+// Zachowany dla zgodności wstecznej (pojedynczy klucz, wersja 1) — nowy kod używa
+// `loadEncryptionKeys` (pierścień), która w trybie jednego klucza daje ten sam wynik.
 export function loadEncryptionKey(env) {
   const raw = env && Object.hasOwn(env, 'MFA_ENCRYPTION_KEY') ? env.MFA_ENCRYPTION_KEY : process.env.MFA_ENCRYPTION_KEY;
   if (typeof raw !== 'string' || raw.trim() === '') return null;
-  const text = raw.trim();
-  let key;
-  if (/^[0-9a-fA-F]{64}$/.test(text)) key = Buffer.from(text, 'hex');
-  else if (/^[A-Za-z0-9+/_-]{43}=?$/.test(text)) key = Buffer.from(text, 'base64');
-  else return null;
-  return key.length === 32 ? key : null;
+  const key = parseKeyMaterial(raw.trim());
+  return key && key.length === 32 ? key : null;
+}
+
+// #134: pierścień kluczy dla rotacji bez naruszania niezmienności wierszy.
+// Format `MFA_ENCRYPTION_KEYS`: "2:<klucz>,1:<klucz>" (wersja:klucz, dowolna
+// kolejność). Bieżąca wersja do SZYFROWANIA nowych sekretów to najwyższy numer
+// w pierścieniu; ODSZYFROWANIE używa klucza z wersji zapisanej w wierszu
+// (`key_version`), więc stare czynniki nadal działają, dopóki stary klucz jest
+// w pierścieniu. Bez `MFA_ENCRYPTION_KEYS` — jeden klucz z `MFA_ENCRYPTION_KEY`
+// jako wersja `DEFAULT_KEY_VERSION` (zachowanie sprzed #134, bez zmian).
+export function loadEncryptionKeys(env) {
+  const raw = env && Object.hasOwn(env, 'MFA_ENCRYPTION_KEYS') ? env.MFA_ENCRYPTION_KEYS : process.env.MFA_ENCRYPTION_KEYS;
+  const ring = new Map();
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    for (const part of raw.split(',')) {
+      const [versionRaw, keyRaw] = part.split(':').map((piece) => piece?.trim());
+      const version = Number(versionRaw);
+      if (!versionRaw || !keyRaw || !Number.isInteger(version) || version < 1) continue;
+      const key = parseKeyMaterial(keyRaw);
+      if (key && key.length === 32) ring.set(version, key);
+    }
+  }
+  if (ring.size === 0) {
+    const legacy = loadEncryptionKey(env);
+    if (legacy) ring.set(DEFAULT_KEY_VERSION, legacy);
+  }
+  if (ring.size === 0) return null;
+  const currentVersion = Math.max(...ring.keys());
+  return { ring, currentVersion, currentKey: ring.get(currentVersion) };
 }
 
 const toB64u = (buffer) => Buffer.from(buffer).toString('base64url');
-const aadFor = (factorId, userId) => Buffer.from(`rd-mfa:v${KEY_VERSION}:${factorId}:${userId}`);
+const aadFor = (factorId, userId, keyVersion) => Buffer.from(`rd-mfa:v${keyVersion}:${factorId}:${userId}`);
 
-export function encryptSecret(key, secret, { factorId, userId }) {
+export function encryptSecret(key, secret, { factorId, userId, keyVersion = DEFAULT_KEY_VERSION }) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
-  cipher.setAAD(aadFor(factorId, userId));
+  cipher.setAAD(aadFor(factorId, userId, keyVersion));
   const ciphertext = Buffer.concat([cipher.update(secret), cipher.final()]);
   return { ciphertext: toB64u(ciphertext), iv: toB64u(iv), tag: toB64u(cipher.getAuthTag()) };
 }
 
-export function decryptSecret(key, { ciphertext, iv, tag }, { factorId, userId }) {
+export function decryptSecret(key, { ciphertext, iv, tag }, { factorId, userId, keyVersion = DEFAULT_KEY_VERSION }) {
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
-  decipher.setAAD(aadFor(factorId, userId));
+  decipher.setAAD(aadFor(factorId, userId, keyVersion));
   decipher.setAuthTag(Buffer.from(tag, 'base64url'));
   return Buffer.concat([decipher.update(Buffer.from(ciphertext, 'base64url')), decipher.final()]);
 }
@@ -184,7 +224,7 @@ async function lockUser(tx, userId) {
 
 async function activeFactors(tx, userId) {
   const { rows } = await tx.query(
-    `SELECT id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at, last_used_step
+    `SELECT id, method, secret_ciphertext, secret_iv, secret_tag, key_version, confirmed_at, last_used_step
        FROM user_mfa_factors
       WHERE user_id = $1 AND disabled_at IS NULL
       FOR UPDATE`,
@@ -277,22 +317,31 @@ async function markVerifiedAndRotate(tx, session) {
 export async function enrollFactor(env, session, { method = DEFAULT_MFA_METHOD } = {}) {
   const implementation = MFA_METHODS[method];
   if (!implementation) throw new MfaError('invalid_method', 400);
-  const key = loadEncryptionKey(env);
-  if (!key) throw new MfaError('mfa_unavailable', 503);
+  const keys = loadEncryptionKeys(env);
+  if (!keys) throw new MfaError('mfa_unavailable', 503);
   return database(env).transaction(async (tx) => {
     await lockUser(tx, session.user.id);
     const factors = await activeFactors(tx, session.user.id);
     if (factors.confirmed && !session.mfaVerified) throw new MfaError('mfa_required', 403);
+    // #150 (krok w górę): wymiana potwierdzonego czynnika na nowy (np. przez
+    // osobę z przejętą sesją) kończy się świeżym MFA i odcina właściciela od
+    // jego aplikacji — wymaga więc MFA potwierdzonego od niedawna, nie tylko
+    // kiedyś w tej sesji. Pierwszy zapis czynnika (brak potwierdzonego) bez zmian.
+    if (factors.confirmed) {
+      const staleCode = freshMfaForbiddenCode({ session });
+      if (staleCode) throw new MfaError(staleCode, 403);
+    }
     if (factors.pending) {
       await tx.query('UPDATE user_mfa_factors SET disabled_at = now() WHERE id = $1', [factors.pending.id]);
     }
     const factorId = crypto.randomUUID();
     const secret = implementation.generateSecret();
-    const sealed = encryptSecret(key, secret, { factorId, userId: session.user.id });
+    // Nowy czynnik jest zawsze szyfrowany BIEŻĄCĄ (najwyższą) wersją klucza z pierścienia.
+    const sealed = encryptSecret(keys.currentKey, secret, { factorId, userId: session.user.id, keyVersion: keys.currentVersion });
     await tx.query(
       `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, key_version)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [factorId, session.user.id, implementation.id, sealed.ciphertext, sealed.iv, sealed.tag, KEY_VERSION],
+      [factorId, session.user.id, implementation.id, sealed.ciphertext, sealed.iv, sealed.tag, keys.currentVersion],
     );
     await insertAuditEvent(tx, {
       actorId: session.user.id, action: 'mfa.enrollment_started', entityType: 'mfa_factor', entityId: factorId,
@@ -313,8 +362,8 @@ export async function enrollFactor(env, session, { method = DEFAULT_MFA_METHOD }
 // 'recovery' (potwierdzony, kod odzyskiwania). Błąd liczy się do limitu
 // i jest zatwierdzany razem z licznikiem; sukces rotuje sesję.
 export async function attemptFactor(env, session, { kind, code, nowMs = Date.now() }) {
-  const key = kind === 'recovery' ? null : loadEncryptionKey(env);
-  if (kind !== 'recovery' && !key) throw new MfaError('mfa_unavailable', 503);
+  const keys = kind === 'recovery' ? null : loadEncryptionKeys(env);
+  if (kind !== 'recovery' && !keys) throw new MfaError('mfa_unavailable', 503);
   const outcome = await database(env).transaction(async (tx) => {
     await lockUser(tx, session.user.id);
     const factors = await activeFactors(tx, session.user.id);
@@ -331,9 +380,14 @@ export async function attemptFactor(env, session, { kind, code, nowMs = Date.now
     let failureReason = null;
     if (kind === 'recovery') {
       const hash = Buffer.from(hashRecoveryCode(code), 'hex');
+      // #134: kody odzyskiwania wskazują `factor_id` czynnika, który je wydał —
+      // po rotacji klucza czynnik dostaje NOWY wiersz (id się zmienia), więc
+      // dopasowujemy też kody przepięte na bieżący czynnik (`rotated_to_factor_id`,
+      // ustawiane przez scripts/rotate-mfa-key.js). Niewykorzystany kod działa dalej.
       const { rows } = await tx.query(
         `SELECT id, code_hash FROM mfa_recovery_codes
-          WHERE user_id = $1 AND factor_id = $2 AND used_at IS NULL AND invalidated_at IS NULL`,
+          WHERE user_id = $1 AND (factor_id = $2 OR rotated_to_factor_id = $2)
+            AND used_at IS NULL AND invalidated_at IS NULL`,
         [session.user.id, factor.id],
       );
       for (const row of rows) {
@@ -341,7 +395,12 @@ export async function attemptFactor(env, session, { kind, code, nowMs = Date.now
       }
       if (typeof code !== 'string' || !recoveryCodeId) failureReason = 'invalid_code';
     } else {
-      const secret = decryptSecret(key, { ciphertext: factor.secret_ciphertext, iv: factor.secret_iv, tag: factor.secret_tag }, { factorId: factor.id, userId: session.user.id });
+      // #134: klucz jest wybierany według WERSJI ZAPISANEJ W WIERSZU, nie według
+      // bieżącej wersji procesu — tak stare czynniki (sprzed rotacji) nadal się
+      // odszyfrowują, dopóki ich klucz jest w pierścieniu (MFA_ENCRYPTION_KEYS).
+      const key = keys.ring.get(Number(factor.key_version));
+      if (!key) throw new MfaError('mfa_key_missing', 503);
+      const secret = decryptSecret(key, { ciphertext: factor.secret_ciphertext, iv: factor.secret_iv, tag: factor.secret_tag }, { factorId: factor.id, userId: session.user.id, keyVersion: factor.key_version });
       const lastUsedStep = factor.last_used_step === null || factor.last_used_step === undefined ? null : Number(factor.last_used_step);
       const match = implementation.matchStep(secret, code, { nowMs, lastUsedStep });
       secret.fill(0);

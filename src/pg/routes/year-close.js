@@ -4,7 +4,7 @@
 //   GET  /api/year-close/{schoolYearId}                    stan, lista kontrolna, bilans
 //   POST /api/year-close/{schoolYearId}/start              { nextSchoolYearId }
 //   POST /api/year-close/{schoolYearId}/checklist/{item}   { note?, documentId? }
-//   POST /api/year-close/{schoolYearId}/close              zarząd + MFA, inna osoba niż rozpoczynająca
+//   POST /api/year-close/{schoolYearId}/close              zarząd + MFA, inna osoba niż rozpoczynająca; krok w górę MFA (#150)
 //   GET  /api/year-close/{schoolYearId}/handover           zestawienie przekazania (JSON, bez danych osobowych)
 //
 // Uprawnienia sprawdzane po stronie serwera. Każda trasa wymaga MFA i przydziału
@@ -15,10 +15,11 @@
 // Zapis i jego zdarzenie audytu powstają w jednej transakcji. Powtórzenie
 // zakończonej operacji zwraca stan bez nowego zapisu (replayed: true).
 
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { freshMfaForbiddenCode, isAuthorized, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
+import { readSnapshot } from '../db-snapshot.js';
 
 export const name = 'year-close';
 
@@ -86,13 +87,62 @@ function optionalText(value, min, max, code) {
   return text;
 }
 
+// #212 (dopisek do naprawy zakleszczenia): zamknięcie roku wygasza w tej samej
+// transakcji przydziały zarządu/skarbnika zawężone do zamykanego roku
+// (`role_grant_in_school_year`, patrz niżej w `closeYear`). Gdy dwie osoby
+// (albo podwójne kliknięcie) próbują zamknąć ten sam rok, druga prośba może
+// wejść do `authorize()` PO tym, jak pierwsza już w pełni zatwierdziła swoją
+// transakcję — a wtedy własny przydział drugiej osoby (jeśli był zawężony do
+// TEGO roku, jak `board` roku OLD) jest już wygasły i zwykłe sprawdzenie roli
+// rzuca 403 `forbidden`. To nie przeplot testowy — kolejność w kodzie
+// (authorize PRZED odczytem stanu zamknięcia) sprawia, że dowolna druga
+// prośba osoby uprawnionej w chwili wysłania traci uprawnienie w trakcie
+// przetwarzania. `wasAuthorizedAtOwnClosure` rozpoznaje DOKŁADNIE ten
+// przypadek (przydział wygasł w tej samej transakcji, która zamknęła TEN
+// rok — `expires_at` i `closed_at` to ten sam `now()` transakcji, patrz
+// docs/YEAR_CLOSE.md).
+//
+// WAŻNE (najmniej uprawnień — nie pełny replay): rozpoznanie tego przypadku
+// NIE wpuszcza aktora do pełnej odpowiedzi `replayed: true` z bilansem i
+// identyfikatorami zamknięcia — jego przydział do tego roku już nie istnieje,
+// więc nie ma dziś prawa czytać tych danych. Zamiast tego `closeYear` zwraca
+// zwykłe `409 school_year_closed` (ten sam kod, którego już używa `start` po
+// zamknięciu) — informacja „rok jest zamknięty” nie wykracza poza to, co ta
+// osoba i tak wie (sama próbowała go zamknąć). Bez wymogu świeżego MFA (nic
+// się nie zmienia w tej gałęzi) i bez zdarzenia audytu (stan bazy się nie
+// zmienia — to czysty odczyt uprawnień, nie zapis).
+async function wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles) {
+  const { rows } = await env.db.query(
+    `SELECT 1 FROM role_grants g
+       JOIN school_year_closures c
+         ON c.school_year_id = $3 AND c.status = 'closed' AND g.expires_at = c.closed_at
+      WHERE g.user_id = $1 AND g.role = ANY($2::text[]) AND g.class_id IS NULL
+        AND g.school_year_id = $3 AND g.revoked_at IS NULL
+      LIMIT 1`,
+    [actorId, roles, schoolYearId],
+  );
+  return rows.length > 0;
+}
+
 // Przydział z zawężeniem do klasy nie daje prawa do zamknięcia całego roku.
-async function authorize(request, env, schoolYearId, roles) {
+// `requireFreshMfa` (#150, SR-10, krok w górę): wyłącznie samo zamknięcie
+// roku (operacja nieodwracalna) wymaga MFA potwierdzonego od niedawna, nie
+// tylko kiedyś w sesji — sprawdzane PO roli/zakresie (SR-07).
+async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = false, allowExpiredByOwnClosure = false } = {}) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   const yearWide = { ...context, grants: context.grants.filter((grant) => !grant.classId) };
   if (!isAuthorized(yearWide, { roles, schoolYearId, requireMfa: true })) {
+    const actorId = context.session.user.id;
+    if (allowExpiredByOwnClosure && context.session.mfaVerified
+      && (await wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles))) {
+      throw new RequestError('school_year_closed', 409);
+    }
     throw new RequestError('forbidden', 403);
+  }
+  if (requireFreshMfa) {
+    const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+    if (staleCode) throw new RequestError(staleCode, 403);
   }
   return context.session.user.id;
 }
@@ -231,7 +281,23 @@ async function statusView(executor, schoolYearId) {
     checklist,
     missingChecklistItems: checklist.filter((entry) => !entry.confirmed).map((entry) => entry.item),
     balance: balanceView(closure, live),
+    // #97: informacja przed zamknięciem roku — wydatki bez weryfikacji drugiej
+    // osoby lub zakwestionowane. Nie blokuje zamknięcia (D-08).
+    expenseReviews: await expenseReviewSummary(executor, schoolYearId),
   };
+}
+
+async function expenseReviewSummary(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT s.review_status, count(*) AS entry_count, COALESCE(sum(e.net_amount_cents), 0) AS net_cents
+       FROM ledger_entry_review_status s JOIN ledger_entry_net e ON e.id = s.ledger_entry_id
+      WHERE s.school_year_id = $1 AND e.net_amount_cents > 0 AND s.review_status <> 'verified'
+      GROUP BY s.review_status`,
+    [schoolYearId],
+  );
+  const pick = (status) => rows.find((row) => row.review_status === status);
+  const view = (row) => ({ count: toSafeInteger(row?.entry_count ?? 0), netCents: toSafeInteger(row?.net_cents ?? 0) });
+  return { unverified: view(pick('unverified')), questioned: view(pick('questioned')) };
 }
 
 async function requireYear(executor, schoolYearId) {
@@ -332,7 +398,9 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
 }
 
 async function closeYear(request, env, schoolYearId, json) {
-  const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES);
+  const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES, {
+    requireFreshMfa: true, allowExpiredByOwnClosure: true,
+  });
   await readJson(request);
   const year = await requireYear(env.db, schoolYearId);
 
@@ -342,14 +410,31 @@ async function closeYear(request, env, schoolYearId, json) {
     return json({ ...(await statusView(env.db, schoolYearId)), replayed: true });
   }
 
-  await env.db.transaction(async (tx) => {
+  const result = await env.db.transaction(async (tx) => {
+    // #212: dwa równoległe zamknięcia (dwie osoby albo podwójne kliknięcie)
+    // brały LOCK TABLE ... IN SHARE MODE jako pierwszą blokadę — SHARE nie
+    // wyklucza sam siebie, więc obie transakcje ją dostawały, a potem każda
+    // czekała na blokadę wiersza zamknięcia / INSERT bilansu otwarcia:
+    // zakleszczenie (40P01) wykrywane dopiero po deadlock_timeout, przez co
+    // księga WSZYSTKICH lat stała aż do wykrycia. Advisory lock w trybie
+    // transakcyjnym (zwalniany automatycznie na COMMIT/ROLLBACK) szereguje
+    // zamknięcia PRZED wzięciem jakiejkolwiek blokady na tabelach księgi —
+    // druga transakcja czeka tutaj, a nie w środku zakleszczenia. Musi to być
+    // pierwsze zapytanie transakcji i nigdy nie odwracać kolejności z LOCK
+    // TABLE w innych trasach (patrz docs/YEAR_CLOSE.md).
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['rd_year_close']);
     // Kolejność: najpierw blokady tabel księgi (czekają na trwające zapisy),
     // potem wiersz zamknięcia. Nowe zapisy księgi czekają na koniec transakcji,
     // a trigger zamrożenia zobaczy już status 'closed'.
     await tx.query(`LOCK TABLE ledger_entries, ledger_corrections, ledger_opening_balances,
       ledger_opening_balance_adjustments, ledger_transfers IN SHARE MODE`);
     const closure = await loadClosure(tx, schoolYearId, { lock: true });
-    if (closure.status === 'closed') return;
+    // Druga transakcja (po zwolnieniu advisory locka przez pierwszą) widzi już
+    // rok zamknięty — to nie błąd, tylko spóźniona odpowiedź na to samo
+    // żądanie albo podwójne kliknięcie. Zwracamy replayed:true zamiast
+    // cichego 200 bez zapisu (dotychczasowe zachowanie, patrz #212) i zamiast
+    // zakleszczenia.
+    if (closure.status === 'closed') return { replayed: true };
     if (closure.initiated_by === actorId) throw new RequestError('four_eyes_required', 409);
 
     const missing = checklistView(await loadChecklist(tx, closure.id))
@@ -417,8 +502,9 @@ async function closeYear(request, env, schoolYearId, json) {
       actorId, action: 'year_close.closed', entityType: 'school_year_closure', entityId: closure.id,
       metadata: { schoolYearId, nextSchoolYearId: closure.next_school_year_id, openingBalanceId: openingId, expiredGrantCount: expired.length },
     });
+    return { replayed: false };
   });
-  return json({ ...(await statusView(env.db, schoolYearId)), replayed: false });
+  return json({ ...(await statusView(env.db, schoolYearId)), replayed: result.replayed });
 }
 
 function countsBy(rows, key = 'status') {
@@ -429,61 +515,71 @@ function countsBy(rows, key = 'status') {
 
 async function handover(request, env, schoolYearId, json) {
   await authorizeArchiveRead(request, env, schoolYearId, READ_ROLES, 'year_close.handover');
-  const db = env.db;
-  const year = await requireYear(db, schoolYearId);
-  const status = await statusView(db, schoolYearId);
-
-  const [ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants] = await Promise.all([
-    db.query(
-      `SELECT (SELECT count(*) FROM ledger_entries WHERE school_year_id = $1) AS entries,
+  // #213: zestawienie przekazania jest dokumentem podpisywanym/archiwizowanym
+  // przez zarząd i następcę — jedna migawka REPEATABLE READ dla wszystkich
+  // ośmiu zapytań poniżej (dotąd Promise.all na env.db, każde zapytanie mogło
+  // trafić na inne połączenie z puli i inną chwilę bazy). W transakcji nie ma
+  // sensu Promise.all: jedno połączenie i tak kolejkuje zapytania, więc idą
+  // sekwencyjnie na tx.
+  const { year, status, ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants } =
+    await readSnapshot(env.db, async (tx) => {
+      const year = await requireYear(tx, schoolYearId);
+      const status = await statusView(tx, schoolYearId);
+      const ledgerCounts = await tx.query(
+        `SELECT (SELECT count(*) FROM ledger_entries WHERE school_year_id = $1) AS entries,
               (SELECT count(*) FROM ledger_corrections c JOIN ledger_entries e ON e.id = c.ledger_entry_id
                 WHERE e.school_year_id = $1) AS corrections`,
-      [schoolYearId],
-    ),
-    db.query(
-      `SELECT count(*) FILTER (WHERE status = 'recorded') AS recorded_count,
+        [schoolYearId],
+      );
+      const payments = await tx.query(
+        `SELECT count(*) FILTER (WHERE status = 'recorded') AS recorded_count,
               COALESCE(sum(net_amount_cents) FILTER (WHERE status = 'recorded'), 0) AS recorded_net_cents,
               count(*) FILTER (WHERE status = 'unmatched') AS unmatched_count,
               COALESCE(sum(net_amount_cents) FILTER (WHERE status = 'unmatched'), 0) AS unmatched_net_cents,
+              -- #127: z tego część już podzielona na gospodarstwa (payment_allocations_current).
+              (SELECT COALESCE(sum(a.amount_cents), 0) FROM payment_allocations_current a
+                 JOIN payment_entries p ON p.id = a.payment_entry_id
+                WHERE p.school_year_id = $1 AND p.status = 'unmatched') AS unmatched_allocated_cents,
               (SELECT count(*) FROM payment_corrections c JOIN payment_entries p ON p.id = c.payment_entry_id
                 WHERE p.school_year_id = $1) AS correction_count
          FROM payment_entry_net WHERE school_year_id = $1`,
-      [schoolYearId],
-    ),
-    db.query('SELECT status, count(*) AS count FROM meetings WHERE school_year_id = $1 GROUP BY status', [schoolYearId]),
-    db.query(
-      `SELECT count(*) AS count FROM meetings m
+        [schoolYearId],
+      );
+      const meetings = await tx.query('SELECT status, count(*) AS count FROM meetings WHERE school_year_id = $1 GROUP BY status', [schoolYearId]);
+      const meetingsWithoutMinutes = await tx.query(
+        `SELECT count(*) AS count FROM meetings m
         WHERE m.school_year_id = $1 AND m.status IN ('held', 'archived')
           AND NOT meeting_has_approved_minutes(m.id)`,
-      [schoolYearId],
-    ),
-    db.query(
-      `SELECT r.status, count(*) AS count FROM resolutions r
+        [schoolYearId],
+      );
+      const resolutions = await tx.query(
+        `SELECT r.status, count(*) AS count FROM resolutions r
         WHERE r.school_year_id = $1
           AND NOT EXISTS (SELECT 1 FROM resolutions newer WHERE newer.corrects_id = r.id)
         GROUP BY r.status`,
-      [schoolYearId],
-    ),
-    db.query('SELECT status, count(*) AS count FROM events WHERE school_year_id = $1 GROUP BY status', [schoolYearId]),
-    status.nextSchoolYearId
-      ? db.query(
-        `SELECT o.id, o.amount_cents, o.cash_cents, COALESCE(sum(a.amount_cents), 0) AS adjustments_cents,
+        [schoolYearId],
+      );
+      const events = await tx.query('SELECT status, count(*) AS count FROM events WHERE school_year_id = $1 GROUP BY status', [schoolYearId]);
+      const nextOpening = status.nextSchoolYearId
+        ? await tx.query(
+          `SELECT o.id, o.amount_cents, o.cash_cents, COALESCE(sum(a.amount_cents), 0) AS adjustments_cents,
                 COALESCE(sum(a.cash_cents), 0) AS cash_adjustments_cents
            FROM ledger_opening_balances o
            LEFT JOIN ledger_opening_balance_adjustments a ON a.opening_balance_id = o.id
           WHERE o.school_year_id = $1 GROUP BY o.id, o.amount_cents, o.cash_cents`,
-        [status.nextSchoolYearId],
-      )
-      : Promise.resolve({ rows: [] }),
-    status.nextSchoolYearId
-      ? db.query(
-        `SELECT role, count(*) AS count FROM role_grants
+          [status.nextSchoolYearId],
+        )
+        : { rows: [] };
+      const nextGrants = status.nextSchoolYearId
+        ? await tx.query(
+          `SELECT role, count(*) AS count FROM role_grants
           WHERE school_year_id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
           GROUP BY role`,
-        [status.nextSchoolYearId],
-      )
-      : Promise.resolve({ rows: [] }),
-  ]);
+          [status.nextSchoolYearId],
+        )
+        : { rows: [] };
+      return { year, status, ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants };
+    });
 
   const ledger = ledgerCounts.rows[0];
   const pay = payments.rows[0];
@@ -515,6 +611,7 @@ async function handover(request, env, schoolYearId, json) {
       recordedNetCents: toSafeInteger(pay.recorded_net_cents),
       unmatchedCount: toSafeInteger(pay.unmatched_count),
       unmatchedNetCents: toSafeInteger(pay.unmatched_net_cents),
+      unmatchedAllocatedCents: toSafeInteger(pay.unmatched_allocated_cents),
       correctionCount: toSafeInteger(pay.correction_count),
     },
     meetings: {

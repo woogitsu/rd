@@ -5,19 +5,48 @@
 //   POST /api/admin/users/{id}/disable          wyłącza konto i wycofuje wszystkie sesje
 //   POST /api/admin/users/{id}/enable
 //   POST /api/admin/users/{id}/revoke-sessions
-//   POST /api/admin/users/{id}/password-reset   { ttlHours? } — jednorazowy token resetu hasła (zwracany raz)
-//   POST /api/admin/users/{id}/mfa-reset        { confirm: "<id konta>" } — wyłącza MFA i kody odzyskiwania
+//   POST /api/admin/users/{id}/password-reset   { ttlHours? } — jednorazowy token resetu hasła (zwracany raz); krok w górę MFA (#150)
+//   POST /api/admin/users/{id}/mfa-reset        { confirm: "<id konta>" } — wyłącza MFA i kody odzyskiwania; krok w górę MFA (#150)
 //   GET  /api/admin/grants?userId=&role=&schoolYearId=&classId=&status=
-//   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? }
+//   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? } — krok w górę MFA (#150)
 //   POST /api/admin/grants/{id}/revoke
 //   POST /api/admin/school-years/{id}/expire-grants   { confirm: "<id roku>" } — wygaszenie kadencji
 //   GET  /api/admin/invitations
 //   POST /api/admin/invitations                 { email, role, classId?, schoolYearId?, ttlHours? }
 //   POST /api/admin/invitations/{id}/revoke
+//   POST /api/admin/invitations/{id}/reissue    wycofuje i tworzy nowe zaproszenie (#108); tylko oczekujące
 //   GET  /api/admin/school-years                lata i klasy do formularzy
-//   GET  /api/admin/audit?limit=                dziennik zmian kont i ról
+//   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
+//   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
+//   GET  /api/admin/class-coverage?schoolYearId= obsada klas roku: przydziały, oczekujące zaproszenia, ostatnie logowanie (#108)
+//   GET  /api/admin/audit?limit=&domain=&actorId=&from=&to=&schoolYearId=
+//        dziennik zdarzeń; bez `domain` — jak dotąd (zmiany kont i ról).
+//        Z `domain` (finance|email|access|security|documents|year_close) — akcje
+//        tej domeny (#181). `schoolYearId` filtruje tylko zdarzenia, które mają
+//        ten identyfikator w metadanych — część zdarzeń go jeszcze nie ma (#174).
+//   GET  /api/admin/audit/entity/{entityType}/{entityId}
+//        historia jednego obiektu (#181): payment_entry, ledger_entry,
+//        reconciliation, email_campaign. 404, gdy obiekt nie istnieje.
+//   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
+//   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
+//   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
+//
+// #100 wariant zachowawczy: wyłącznie rejestr żądań i przejścia stanu (bez
+// cofania, bez usuwania — patrz migracja 0068). Eksport danych jednej rodziny,
+// sprostowanie identyfikacyjne i ograniczenie przetwarzania (kampanie/kartki)
+// NIE są tu zaimplementowane — zależą od D-07 (kto przyjmuje, weryfikacja
+// tożsamości, termin) i D-08/D-09 (kto czyta rejestr); do tego czasu odczyt i
+// zapis są wyłącznie dla admina, jak reszta modułu.
+//   GET  /api/admin/retention/preview           raport kandydatów do retencji (D-04, #91):
+//                                                 wyłącznie liczności per kategoria i rok/rok szkolny
+//                                                 + zarejestrowane polityki (`retention_policies`, bez PII).
+//                                                 Nie usuwa ani nie anonimizuje żadnych danych — sam odczyt.
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
+// #181: docelowo domeny finance/email mają też role zarządu/skarbnika/kampanii
+// (nie tylko admina) — zostaje to do decyzji D-08/D-09 (kto z zarządu i
+// Komisji Rewizyjnej czyta które domeny); do tego czasu odczyt dziennika
+// (listing i historia obiektu) jest wariantem zachowawczym: wyłącznie admin.
 // Założenie do decyzji D-08/D-09: zarząd nie ma tu nawet odczytu, dopóki
 // szkoła nie zatwierdzi macierzy kompetencji. Przyjęcie zaproszenia z hasłem:
 // POST /api/invitations/accept (src/pg/routes/login.js).
@@ -27,12 +56,16 @@
 // przydziałów admina są serializowane blokadą doradczą, aby dwie równoległe
 // operacje nie odebrały sobie nawzajem ostatniego dostępu administratora.
 
-import { createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions, ROLES } from '../auth.js';
-import { requireAccess } from '../authorization.js';
+import {
+  allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions,
+  revokeUserSessionsWith, ROLE_STATUS, ROLES,
+} from '../auth.js';
+import { freshMfaForbiddenCode, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
 } from '../login.js';
+import { computeOpsStatus } from '../ops-status.js';
 
 export const name = 'admin';
 
@@ -158,6 +191,11 @@ async function assertActorStillAdmin(tx, actorId) {
 async function resolveScope(executor, { role, classId, schoolYearId }) {
   if (!ROLES.includes(role)) throw new RequestError('invalid_role');
   if (role === 'representative' && !classId) throw new RequestError('class_required');
+  // #176: przydział klasowy dla roli bez żadnej trasy klasowej jest dziś ciche
+  // „nic” (isAuthorizedScoped odfiltrowuje przydziały klasowe na trasach
+  // ogólnoszkolnych, a klasowej trasy te role nie mają) — odrzucamy zamiast
+  // milcząco zapisywać przydział, który niczego nie da.
+  if (classId && !CLASS_SCOPE_ROLES.includes(role)) throw new RequestError('class_scope_not_supported', 422);
   let yearId = schoolYearId;
   if (classId) {
     const { rows } = await executor.query('SELECT school_year_id FROM classes WHERE id = $1', [classId]);
@@ -183,7 +221,9 @@ async function listUsers(env, json) {
               WHERE g.user_id = u.id AND g.revoked_at IS NULL
                 AND (g.expires_at IS NULL OR g.expires_at > now())) AS active_grants,
             (SELECT count(*)::int FROM sessions s
-              WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions
+              WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions,
+            EXISTS (SELECT 1 FROM user_mfa_factors f
+                     WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL AND f.disabled_at IS NULL) AS mfa_enrolled
        FROM users u
       ORDER BY lower(u.email)
       LIMIT ${MAX_LIST}`,
@@ -195,6 +235,7 @@ async function listUsers(env, json) {
       displayName: row.display_name,
       disabledAt: isoTimestamp(row.disabled_at),
       createdAt: isoTimestamp(row.created_at),
+      mfaEnrolled: Boolean(row.mfa_enrolled),
       activeGrants: Number(row.active_grants),
       activeSessions: Number(row.active_sessions),
     })),
@@ -203,7 +244,13 @@ async function listUsers(env, json) {
 
 async function setUserDisabled(env, actorId, userId, disabled, json) {
   if (disabled && userId === actorId) throw new RequestError('cannot_disable_self', 409);
-  const changed = await env.db.transaction(async (tx) => {
+  // disabled_at i trwałe wycofanie sesji (revoked_at) muszą zatwierdzić się
+  // razem. Osobna, późniejsza transakcja mogła (#256) zawieść już po
+  // zapisaniu disabled_at: loadSession i tak odrzucał sesję po disabled_at,
+  // więc błąd był niewidoczny — ale sesje zostawały w bazie z
+  // revoked_at IS NULL i po ponownym włączeniu konta znów były akceptowane
+  // aż do wygaśnięcia TTL. Jedna transakcja usuwa to okno.
+  const { changed, revokedSessions } = await env.db.transaction(async (tx) => {
     const { rows: existing } = await tx.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
     if (!existing[0]) throw new Abort('user_not_found', 404);
     const { rows } = await tx.query(
@@ -212,20 +259,15 @@ async function setUserDisabled(env, actorId, userId, disabled, json) {
         : 'UPDATE users SET disabled_at = NULL WHERE id = $1 AND disabled_at IS NOT NULL RETURNING id',
       [userId],
     );
-    if (!rows[0]) return false;
+    if (!rows[0]) return { changed: false, revokedSessions: 0 };
     await insertAuditEvent(tx, {
       actorId, action: disabled ? 'user.disabled' : 'user.enabled', entityType: 'user', entityId: userId,
     });
     // Po ponownym włączeniu konta stary token resetu nie może znów zadziałać (#193).
     if (disabled) await revokePasswordResetTokens(tx, { userId, actorId, reason: 'user_disabled' });
-    return true;
+    const revoked = disabled ? await revokeUserSessionsWith(tx, { userId, actorId, reason: 'user_disabled' }) : 0;
+    return { changed: true, revokedSessions: revoked };
   });
-  // loadSession odrzuca konto z disabled_at, więc sesje przestają działać już
-  // po powyższym COMMIT. Wycofanie (osobna transakcja revokeUserSessions)
-  // zapisuje to trwale z audytem każdej sesji; ponowienie jest bezpieczne.
-  const revokedSessions = disabled
-    ? await revokeUserSessions(env, { userId, actorId, reason: 'user_disabled' })
-    : 0;
   return json({ userId, disabled, changed, revokedSessions });
 }
 
@@ -302,6 +344,10 @@ async function listGrants(env, url, json) {
 async function createGrant(env, actorId, request, json) {
   const data = await readJson(request);
   if (!validId(data.userId)) throw new RequestError('invalid_user_id');
+  // #146: samonadanie roli (np. admin nadaje sobie treasurer/board) omija zasadę
+  // czterech oczu wymaganą wszędzie indziej dla ważnych decyzji. Odrzucamy przed
+  // transakcją: żaden wiersz nie powstaje, żadne zdarzenie audytu się nie zapisuje.
+  if (data.userId === actorId) throw new RequestError('cannot_grant_self', 409);
   const role = data.role;
   const classId = optionalId(data.classId, 'invalid_class_id');
   const schoolYearIdInput = optionalId(data.schoolYearId, 'invalid_school_year_id');
@@ -452,6 +498,18 @@ async function createInvitationRoute(env, actorId, request, json) {
   }
   if (typeof data.email !== 'string') throw new RequestError('invalid_email');
   const email = data.email.trim().toLowerCase();
+  // #146: zaproszenie na WŁASNY adres i jego przyjęcie własnym hasłem nadawało
+  // rolę bez drugiej osoby — to samo samonadanie, które POST /grants odrzuca.
+  // Odrzucamy przed zapisem (bez zaproszenia i zdarzenia audytu); przyjęcie
+  // sprawdza to jeszcze raz (src/pg/auth.js, src/pg/login.js).
+  const { rows: self } = await env.db.query('SELECT 1 FROM users WHERE id = $1 AND lower(email) = $2', [actorId, email]);
+  if (self[0]) throw new RequestError('cannot_grant_self', 409);
+  // #176: rola bez żadnej trasy chronionej dziś (`pending_decision`, np. principal)
+  // tworzy konto z danymi osobowymi bez celu (D-01/D-06) — odrzucamy, chyba że
+  // ALLOW_PENDING_ROLES=true (przygotowanie kont z wyprzedzeniem przed D-09, testy).
+  if (ROLE_STATUS[data.role] === 'pending_decision' && !allowPendingRoles(env)) {
+    throw new RequestError('role_pending_decision', 422);
+  }
   const scope = await resolveScope(env.db, { role: data.role, classId, schoolYearId: schoolYearIdInput });
 
   // Podwójne kliknięcie: drugie zaproszenie o tym samym zakresie dla adresu,
@@ -495,6 +553,159 @@ async function revokeInvitationRoute(env, actorId, invitationId, json) {
   return json({ invitationId, changed });
 }
 
+// --- Konfiguracja roku (#78) ------------------------------------------------
+// Założenie do decyzji D-08: dopóki zarząd nie ma odczytu w tym module (patrz
+// nagłówek pliku), tworzenie roku i klas zostaje wyłącznie przy adminie —
+// wariant zachowawczy węższy niż propozycja z issue (admin, zarząd).
+// Usuwanie klas i lat nie ma trasy (AC issue #78: brak drogi do usunięcia
+// klasy z przypisaniami) — korekta to nowa klasa i przeniesienie uczniów.
+
+function validDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+function slugify(name) {
+  return String(name).trim().toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+async function createSchoolYear(env, actorId, request, json) {
+  const data = await readJson(request);
+  if (!validId(data.id)) throw new RequestError('invalid_id');
+  const label = typeof data.label === 'string' ? data.label.trim() : '';
+  if (!label || label.length > 200) throw new RequestError('invalid_label');
+  if (!validDate(data.startsOn) || !validDate(data.endsOn)) throw new RequestError('invalid_date');
+  if (data.endsOn < data.startsOn) throw new RequestError('invalid_date_range');
+  const result = await env.db.transaction(async (tx) => {
+    const existing = await tx.query('SELECT 1 FROM school_years WHERE id = $1 OR label = $2', [data.id, label]);
+    if (existing.rows.length) throw new Abort('school_year_exists', 409);
+    await tx.query(
+      'INSERT INTO school_years (id, label, starts_on, ends_on) VALUES ($1, $2, $3, $4)',
+      [data.id, label, data.startsOn, data.endsOn],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'school_year.created', entityType: 'school_year', entityId: data.id,
+      metadata: { startsOn: data.startsOn, endsOn: data.endsOn },
+    });
+    return { id: data.id, label, startsOn: data.startsOn, endsOn: data.endsOn };
+  });
+  return json({ schoolYear: result }, 201);
+}
+
+async function createClasses(env, actorId, schoolYearId, request, json) {
+  const data = await readJson(request);
+  if (!Array.isArray(data.names) || !data.names.length || data.names.length > 100) {
+    throw new RequestError('invalid_names');
+  }
+  const names = [];
+  const seen = new Set();
+  for (const raw of data.names) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (!name || name.length > 60) throw new RequestError('invalid_names');
+    const key = name.toLowerCase();
+    if (seen.has(key)) throw new RequestError('duplicate_name');
+    seen.add(key);
+    names.push(name);
+  }
+  const result = await env.db.transaction(async (tx) => {
+    const year = await tx.query('SELECT id FROM school_years WHERE id = $1', [schoolYearId]);
+    if (!year.rows[0]) throw new Abort('school_year_not_found', 404);
+    const existing = await tx.query('SELECT name FROM classes WHERE school_year_id = $1', [schoolYearId]);
+    const existingNames = new Set(existing.rows.map((row) => row.name.toLowerCase()));
+    const created = [];
+    const usedIds = new Set();
+    for (const name of names) {
+      if (existingNames.has(name.toLowerCase())) throw new Abort('class_exists', 409);
+      let id = `${schoolYearId}-${slugify(name)}`;
+      if (id === `${schoolYearId}-` || usedIds.has(id)) id = `${schoolYearId}-${crypto.randomUUID()}`;
+      usedIds.add(id);
+      await tx.query('INSERT INTO classes (id, school_year_id, name) VALUES ($1, $2, $3)', [id, schoolYearId, name]);
+      await insertAuditEvent(tx, {
+        actorId, action: 'class.created', entityType: 'class', entityId: id,
+        metadata: { schoolYearId, name },
+      });
+      created.push({ id, name, schoolYearId });
+    }
+    return created;
+  });
+  return json({ classes: result }, 201);
+}
+
+// „Wyślij ponownie” (#108): wycofuje stare zaproszenie i tworzy nowe o tym
+// samym zakresie (token wraca raz, jak przy utworzeniu). Tylko dla zaproszeń
+// wciąż oczekujących — przyjęte, wygasłe lub już wycofane nie mają tu drogi
+// (nowe zaproszenie od zera przez POST /api/admin/invitations).
+async function reissueInvitationRoute(env, actorId, invitationId, json) {
+  const { rows } = await env.db.query(`SELECT ${INVITATION_COLUMNS} FROM invitations i WHERE i.id = $1`, [invitationId]);
+  const invitation = rows[0];
+  if (!invitation) throw new RequestError('invitation_not_found', 404);
+  if (invitation.status !== 'pending') throw new RequestError('invitation_not_pending', 409);
+  const revoked = await revokeInvitation(env, { invitationId, actorId });
+  if (!revoked) throw new RequestError('invitation_not_pending', 409);
+  const created = await createInvitation(env, {
+    actorId, email: invitation.email, role: invitation.role,
+    classId: invitation.class_id, schoolYearId: invitation.school_year_id,
+    replacesInvitationId: invitationId,
+  });
+  return json({
+    invitation: {
+      id: created.invitationId, email: invitation.email, role: invitation.role,
+      classId: invitation.class_id, schoolYearId: invitation.school_year_id,
+      expiresAt: created.expiresAt, status: 'pending', replacesInvitationId: invitationId,
+    },
+    token: created.secret,
+  }, 201);
+}
+
+// Tabela obsady klas roku (#108): przydziały przedstawiciela aktywne dziś,
+// oczekujące zaproszenia (bez tokenów) i data ostatniego logowania (bez
+// godziny) przedstawiciela tej klasy — wyłącznie liczby i daty, bez e-maili.
+function toSafeInteger(value) {
+  const number = Number(value ?? 0);
+  if (!Number.isSafeInteger(number)) throw new Error('unsafe_integer');
+  return number;
+}
+
+async function classCoverage(env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_school_year_id');
+  const year = await env.db.query('SELECT 1 FROM school_years WHERE id = $1', [schoolYearId]);
+  if (!year.rows[0]) throw new RequestError('school_year_not_found', 404);
+  const { rows } = await env.db.query(
+    `SELECT c.id, c.name,
+            (SELECT count(DISTINCT g.user_id) FROM role_grants g
+               WHERE g.class_id = c.id AND g.role = 'representative'
+                 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now())) AS active_count,
+            (SELECT count(*) FROM invitations i
+               WHERE i.class_id = c.id AND i.role = 'representative'
+                 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS pending_count,
+            (SELECT min(i.expires_at) FROM invitations i
+               WHERE i.class_id = c.id AND i.role = 'representative'
+                 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS next_expires_at,
+            (SELECT to_char(max(s.created_at), 'YYYY-MM-DD') FROM sessions s
+               JOIN role_grants g2 ON g2.user_id = s.user_id
+              WHERE g2.class_id = c.id AND g2.role = 'representative'
+                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on
+       FROM classes c WHERE c.school_year_id = $1
+       ORDER BY c.name, c.id`,
+    [schoolYearId],
+  );
+  return json({
+    schoolYearId,
+    classes: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      activeRepresentativeCount: toSafeInteger(row.active_count),
+      pendingInvitationCount: toSafeInteger(row.pending_count),
+      nextInvitationExpiresAt: isoTimestamp(row.next_expires_at),
+      lastRepresentativeLoginOn: row.last_login_on ?? null,
+    })),
+  });
+}
+
 // --- Słowniki i dziennik ---------------------------------------------------
 
 async function listSchoolYears(env, json) {
@@ -514,25 +725,74 @@ async function listSchoolYears(env, json) {
 
 const AUDIT_ACTIONS = [
   'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
-  'school_year.grants_expired',
-  'invitation.created', 'invitation.revoked', 'invitation.accepted',
+  'school_year.grants_expired', 'school_year.created', 'class.created',
+  'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued',
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
   'auth.password_changed', 'mfa.reset',
 ];
 
-async function listAudit(env, url, json) {
+// #181: domeny mapowane na przedrostki action. Wariant zachowawczy — odczyt
+// zostaje wyłącznie dla admina (D-08/D-09 nie ustaliły jeszcze ról zarządu/KR
+// per domena), zmienia się tylko zakres akcji, jaki admin może przefiltrować.
+const DOMAIN_ACTION_PREFIXES = {
+  access: ['role_grant.', 'invitation.', 'user.', 'session.', 'school_year.grants_expired', 'access.denied'],
+  finance: ['payment.', 'ledger.', 'reconciliation.', 'report.audit.'],
+  email: ['email.'],
+  security: ['mfa.', 'auth.'],
+  documents: ['document.', 'export.', 'print.'],
+  year_close: ['year_close.', 'ledger_opening_balance.'],
+};
+
+function parseAuditFilters(url) {
+  const domain = url.searchParams.get('domain');
+  if (domain !== null && !Object.hasOwn(DOMAIN_ACTION_PREFIXES, domain)) throw new RequestError('invalid_domain');
+  const actorId = optionalId(url.searchParams.get('actorId'), 'invalid_actor_id');
+  const schoolYearId = optionalId(url.searchParams.get('schoolYearId'), 'invalid_school_year_id');
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  if (from !== null && Number.isNaN(Date.parse(from))) throw new RequestError('invalid_from');
+  if (to !== null && Number.isNaN(Date.parse(to))) throw new RequestError('invalid_to');
+  return { domain, actorId, schoolYearId, from, to };
+}
+
+async function listAudit(env, url, json, actorId) {
   const limitParam = url.searchParams.get('limit');
   const limit = limitParam === null ? 100 : Number(limitParam);
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST) throw new RequestError('invalid_limit');
+  const filters = parseAuditFilters(url);
+  const values = [];
+  const conditions = [];
+  if (filters.domain) {
+    conditions.push(`(${DOMAIN_ACTION_PREFIXES[filters.domain].map((prefix) => {
+      values.push(`${prefix}%`);
+      return `action LIKE $${values.length}`;
+    }).join(' OR ')})`);
+  } else {
+    values.push(AUDIT_ACTIONS);
+    conditions.push(`action = ANY($${values.length}::text[])`);
+  }
+  if (filters.actorId) { values.push(filters.actorId); conditions.push(`actor_id = $${values.length}`); }
+  if (filters.from) { values.push(filters.from); conditions.push(`occurred_at >= $${values.length}`); }
+  if (filters.to) { values.push(filters.to); conditions.push(`occurred_at <= $${values.length}`); }
+  if (filters.schoolYearId) {
+    values.push(filters.schoolYearId);
+    conditions.push(`metadata_json ->> 'schoolYearId' = $${values.length}`);
+  }
+  values.push(limit);
   const { rows } = await env.db.query(
     `SELECT id, actor_id, action, entity_type, entity_id, occurred_at, metadata_json
        FROM audit_events
-      WHERE action = ANY($1::text[])
+      WHERE ${conditions.join(' AND ')}
       ORDER BY occurred_at DESC, id
-      LIMIT $2`,
-    [AUDIT_ACTIONS, limit],
+      LIMIT $${values.length}`,
+    values,
   );
+  // #181 pkt 4: odczyt dziennika sam zapisuje zdarzenie, bez parametrów zapytania.
+  await insertAuditEvent(env.db, {
+    actorId, action: 'audit.viewed', entityType: 'audit_log', entityId: filters.domain ?? 'access',
+    metadata: {},
+  });
   return json({
     events: rows.map((row) => ({
       id: row.id, actorId: row.actor_id ?? null, action: row.action, entityType: row.entity_type,
@@ -540,6 +800,251 @@ async function listAudit(env, url, json) {
       metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
     })),
   });
+}
+
+// --- Rejestr żądań osób (RODO, #100) ---------------------------------------
+
+const DATA_REQUEST_KINDS = new Set(['access', 'rectification', 'erasure', 'restriction', 'objection', 'portability']);
+const DATA_REQUEST_STATUSES = ['received', 'identity_verified', 'in_progress', 'answered', 'rejected'];
+const DATA_REQUEST_STATUS_RANK = { received: 0, identity_verified: 1, in_progress: 2, answered: 3, rejected: 3 };
+const DATA_REQUEST_COLUMNS = `id, kind, household_id, guardian_id, student_id, received_on, due_on, status,
+  handled_by, decision_note_ref, created_by, created_at, updated_at`;
+
+function dataRequestFromRow(row) {
+  return {
+    id: row.id, kind: row.kind,
+    householdId: row.household_id, guardianId: row.guardian_id, studentId: row.student_id,
+    receivedOn: row.received_on, dueOn: row.due_on, status: row.status,
+    handledBy: row.handled_by, decisionNoteRef: row.decision_note_ref,
+    createdBy: row.created_by, createdAt: isoTimestamp(row.created_at), updatedAt: isoTimestamp(row.updated_at),
+  };
+}
+
+async function listDataRequests(env, url, json) {
+  const status = url.searchParams.get('status');
+  const kind = url.searchParams.get('kind');
+  if (status !== null && !DATA_REQUEST_STATUSES.includes(status)) throw new RequestError('invalid_status');
+  if (kind !== null && !DATA_REQUEST_KINDS.has(kind)) throw new RequestError('invalid_kind');
+  const conditions = [];
+  const values = [];
+  if (status) { values.push(status); conditions.push(`status = $${values.length}`); }
+  if (kind) { values.push(kind); conditions.push(`kind = $${values.length}`); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const { rows } = await env.db.query(
+    `SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests ${where} ORDER BY received_on, created_at`,
+    values,
+  );
+  return json({ requests: rows.map(dataRequestFromRow) });
+}
+
+async function createDataRequest(env, actorId, request, json) {
+  const data = await readJson(request);
+  if (!DATA_REQUEST_KINDS.has(data.kind)) throw new RequestError('invalid_kind');
+  const householdId = optionalId(data.householdId, 'invalid_household_id');
+  const guardianId = optionalId(data.guardianId, 'invalid_guardian_id');
+  const studentId = optionalId(data.studentId, 'invalid_student_id');
+  if (!householdId && !guardianId && !studentId) throw new RequestError('subject_required');
+  if (!validDate(data.receivedOn)) throw new RequestError('invalid_received_on');
+  const dueOn = data.dueOn === undefined || data.dueOn === null || data.dueOn === '' ? null : data.dueOn;
+  if (dueOn !== null && !validDate(dueOn)) throw new RequestError('invalid_due_on');
+
+  const result = await env.db.transaction(async (tx) => {
+    if (householdId) {
+      const { rows } = await tx.query('SELECT 1 FROM households WHERE id = $1', [householdId]);
+      if (!rows.length) throw new Abort('household_not_found', 404);
+    }
+    if (guardianId) {
+      const { rows } = await tx.query('SELECT 1 FROM guardians WHERE id = $1', [guardianId]);
+      if (!rows.length) throw new Abort('guardian_not_found', 404);
+    }
+    if (studentId) {
+      const { rows } = await tx.query('SELECT 1 FROM students WHERE id = $1', [studentId]);
+      if (!rows.length) throw new Abort('student_not_found', 404);
+    }
+    const id = crypto.randomUUID();
+    await tx.query(
+      `INSERT INTO data_subject_requests (id, kind, household_id, guardian_id, student_id, received_on, due_on, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, data.kind, householdId, guardianId, studentId, data.receivedOn, dueOn, actorId],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'data_subject_request.created', entityType: 'data_subject_request', entityId: id,
+      metadata: { kind: data.kind },
+    });
+    const { rows } = await tx.query(`SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests WHERE id = $1`, [id]);
+    return dataRequestFromRow(rows[0]);
+  });
+  return json({ request: result }, 201);
+}
+
+async function setDataRequestStatus(env, actorId, requestId, request, json) {
+  const data = await readJson(request);
+  if (!DATA_REQUEST_STATUSES.includes(data.status)) throw new RequestError('invalid_status');
+  const decisionNoteRef = data.decisionNoteRef === undefined || data.decisionNoteRef === null || data.decisionNoteRef === ''
+    ? null
+    : String(data.decisionNoteRef);
+  if (decisionNoteRef !== null && (decisionNoteRef.length < 1 || decisionNoteRef.length > 200)) {
+    throw new RequestError('invalid_decision_note_ref');
+  }
+  const result = await env.db.transaction(async (tx) => {
+    const { rows } = await tx.query(`SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests WHERE id = $1 FOR UPDATE`, [requestId]);
+    if (!rows[0]) throw new Abort('data_request_not_found', 404);
+    const current = rows[0];
+    // Podwójne kliknięcie / ponowienie: to samo docelowe przejście nic nie zmienia i nie audytuje ponownie.
+    if (current.status === data.status) return { request: dataRequestFromRow(current), changed: false };
+    if (DATA_REQUEST_STATUS_RANK[data.status] < DATA_REQUEST_STATUS_RANK[current.status]
+        || ['answered', 'rejected'].includes(current.status)) {
+      throw new Abort('data_request_status_cannot_go_back', 409);
+    }
+    const { rows: updated } = await tx.query(
+      `UPDATE data_subject_requests SET status = $2, handled_by = $3,
+              decision_note_ref = COALESCE($4, decision_note_ref), updated_at = now()
+        WHERE id = $1
+        RETURNING ${DATA_REQUEST_COLUMNS}`,
+      [requestId, data.status, actorId, decisionNoteRef],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'data_subject_request.status_changed', entityType: 'data_subject_request', entityId: requestId,
+      metadata: { status: data.status },
+    });
+    return { request: dataRequestFromRow(updated[0]), changed: true };
+  });
+  return json(result);
+}
+
+// --- Retencja (D-04, #91): raport kandydatów, wyłącznie odczyt --------------
+//
+// Kategorie zgodne z privacy/data-inventory.json (retention_category, #123) i
+// z CHECK w postgres/migrations/0074_retention_policies.sql. Zapytanie liczy
+// WYŁĄCZNIE wiersze (COUNT), nigdy imion/nazwisk/e-maili/referencji — odpowiedź
+// zawiera tylko identyfikatory techniczne (id roku szkolnego, etykieta roku,
+// rok kalendarzowy) i liczby, zgodnie z kryterium akceptacji #91.
+const RETENTION_PREVIEW_SQL = `
+  SELECT 'guardian_contact' AS category, NULL::text AS school_year_id, NULL::text AS school_year_label,
+         EXTRACT(YEAR FROM changed_at)::int AS period_year, COUNT(*) AS candidate_count
+    FROM guardian_contact_changes GROUP BY 4
+  UNION ALL
+  SELECT 'student_identity', e.school_year_id, sy.label, NULL, COUNT(*)
+    FROM enrollments e JOIN school_years sy ON sy.id = e.school_year_id GROUP BY 2, 3
+  UNION ALL
+  SELECT 'email_snapshot', c.school_year_id, sy.label, NULL, COUNT(*)
+    FROM email_campaign_recipients r
+    JOIN email_campaigns c ON c.id = r.campaign_id
+    JOIN school_years sy ON sy.id = c.school_year_id
+   GROUP BY 2, 3
+  UNION ALL
+  SELECT 'payment_reference', p.school_year_id, sy.label, NULL, COUNT(*)
+    FROM payment_entries p JOIN school_years sy ON sy.id = p.school_year_id
+   WHERE p.reference IS NOT NULL AND btrim(p.reference) <> ''
+   GROUP BY 2, 3
+  UNION ALL
+  SELECT 'document_financial', NULL, NULL, EXTRACT(YEAR FROM created_at)::int, COUNT(*)
+    FROM documents GROUP BY 4
+  UNION ALL
+  SELECT 'audit_event', NULL, NULL, EXTRACT(YEAR FROM occurred_at)::int, COUNT(*)
+    FROM audit_events GROUP BY 4
+  UNION ALL
+  SELECT 'export_package', er.school_year_id, sy.label, NULL, COUNT(*)
+    FROM export_runs er JOIN school_years sy ON sy.id = er.school_year_id
+   GROUP BY 2, 3
+  UNION ALL
+  SELECT 'import_file', ib.school_year_id, sy.label, NULL, COUNT(*)
+    FROM import_batches ib JOIN school_years sy ON sy.id = ib.school_year_id
+   GROUP BY 2, 3
+  ORDER BY 1, 4, 2
+`;
+
+async function retentionPreview(env, json) {
+  const [{ rows: candidateRows }, { rows: policyRows }] = await Promise.all([
+    env.db.query(RETENTION_PREVIEW_SQL),
+    env.db.query(
+      `SELECT id, data_category, retain_for, retain_until_rule, decision_ref, effective_from, approved_by, created_by, created_at
+         FROM retention_policies
+        ORDER BY data_category, effective_from DESC`,
+    ),
+  ]);
+  const currentByCategory = new Map();
+  for (const row of policyRows) {
+    if (!currentByCategory.has(row.data_category)) currentByCategory.set(row.data_category, row);
+  }
+  return json({
+    generatedAt: isoTimestamp(new Date()),
+    candidates: candidateRows.map((row) => ({
+      category: row.category,
+      schoolYearId: row.school_year_id ?? null,
+      schoolYearLabel: row.school_year_label ?? null,
+      periodYear: row.period_year ?? null,
+      count: Number(row.candidate_count),
+      hasPolicy: currentByCategory.has(row.category),
+    })),
+    policies: policyRows.map((row) => ({
+      id: row.id,
+      category: row.data_category,
+      retainFor: row.retain_for ?? null,
+      retainUntilRule: row.retain_until_rule ?? null,
+      decisionRef: row.decision_ref,
+      effectiveFrom: isoTimestamp(row.effective_from),
+      approvedBy: row.approved_by ?? null,
+      createdBy: row.created_by,
+      createdAt: isoTimestamp(row.created_at),
+      current: currentByCategory.get(row.data_category)?.id === row.id,
+    })),
+  });
+}
+
+// #181: historia jednego obiektu. Wariant zachowawczy — tylko admin (jak cały
+// moduł); role finansowe/kampanii własnego zakresu (skarbnik widzi historię
+// swojej wpłaty) zostają do decyzji D-08/D-09, kiedy dojdzie osobna trasa
+// spoza /api/admin z ich autoryzacją. Etykieta roli aktora w chwili zdarzenia
+// (z issue) nie jest tu liczona — wymagałaby złączenia z historią przydziałów
+// ról po czasie; odłożone jako osobne rozszerzenie.
+const ENTITY_TABLES = {
+  payment_entry: 'payment_entries',
+  ledger_entry: 'ledger_entries',
+  reconciliation: 'bank_reconciliations',
+  email_campaign: 'email_campaigns',
+};
+// Zdarzenia powiązane (korekta, przypisanie, zwrot, dopasowanie…) mają własny
+// entity_type/entity_id, a odniesienie do obiektu głównego trzymają w
+// metadanych pod tym kluczem (konwencja już istniejąca w routes/payments.js,
+// ledger.js, reconciliation.js — patrz ich insertAuditEvent).
+const RELATED_METADATA_KEY = {
+  payment_entry: 'paymentEntryId',
+  ledger_entry: 'ledgerEntryId',
+  reconciliation: 'reconciliationId',
+  email_campaign: 'campaignId',
+};
+
+async function entityAudit(env, entityType, entityId, json, actorId) {
+  const table = ENTITY_TABLES[entityType];
+  if (!table) throw new RequestError('invalid_entity_type');
+  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
+  if (!exists.length) throw new RequestError('not_found', 404);
+  const { rows } = await env.db.query(
+    `SELECT id, actor_id, action, occurred_at, metadata_json
+       FROM audit_events
+      WHERE (entity_type = $1 AND entity_id = $2) OR metadata_json ->> $3 = $2
+      ORDER BY occurred_at, id`,
+    [entityType, entityId, RELATED_METADATA_KEY[entityType]],
+  );
+  await insertAuditEvent(env.db, {
+    actorId, action: 'audit.viewed', entityType, entityId, metadata: {},
+  });
+  return json({
+    entityType, entityId,
+    events: rows.map((row) => ({
+      id: row.id, actorId: row.actor_id ?? null, action: row.action, occurredAt: isoTimestamp(row.occurred_at),
+      metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
+    })),
+  });
+}
+
+// Stan techniczny systemu (issue #149). Cache-Control: no-store — nigdy nie
+// trzymane w pamięci podręcznej przeglądarki/proxy; tylko liczby i znaczniki
+// czasu (bez adresów, nazw rodzin i treści — patrz src/pg/ops-status.js).
+async function opsStatus(env, json) {
+  const status = await computeOpsStatus({ db: env.db, env });
+  return json(status, 200, { 'Cache-Control': 'no-store' });
 }
 
 // --- Router ----------------------------------------------------------------
@@ -560,7 +1065,7 @@ function allowedMethodsFor(section, pathLength, action) {
   }
   if (section === 'invitations') {
     if (pathLength === 1) return ['GET', 'POST'];
-    if (pathLength === 3 && action === 'revoke') return ['POST'];
+    if (pathLength === 3 && ['revoke', 'reissue'].includes(action)) return ['POST'];
     return null;
   }
   if (section === 'school-years') {
@@ -568,14 +1073,40 @@ function allowedMethodsFor(section, pathLength, action) {
     if (pathLength === 3 && action === 'expire-grants') return ['POST'];
     return null;
   }
+  if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
+  if (section === 'data-requests') {
+    if (pathLength === 1) return ['GET', 'POST'];
+    if (pathLength === 3 && action === 'status') return ['POST'];
+    return null;
+  }
+  if (section === 'retention' && pathLength === 2) return ['GET'];
+  if (section === 'ops-status' && pathLength === 1) return ['GET'];
   return null;
 }
 
-async function route(request, env, url, json, actorId) {
+// #150 (SR-10, krok w górę/step-up): operacje nieodwracalne na cudzym koncie
+// (reset hasła, wyłączenie MFA) i nadanie roli wymagają MFA potwierdzonego od
+// niedawna, nie tylko kiedyś w tej sesji — sprawdzane PO roli 'admin' (SR-07),
+// więc konto bez dostępu dostaje ten sam `forbidden` niezależnie od wieku MFA.
+// Utworzenie i ponowne wydanie zaproszenia — jak nadanie roli (rola powstaje
+// przy przyjęciu). Pozostałe trasy admina (lista, wyłączenie/włączenie konta,
+// cofnięcie sesji, cofnięcie zaproszenia, lata szkolne, cofnięcie przydziału, audyt) zostają przy MFA
+// "kiedyś w sesji" jak dotąd — poza zakresem #150 część 2.
+function requireFreshMfa(context) {
+  const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+  if (staleCode) throw new RequestError(staleCode, 403);
+}
+
+async function route(request, env, url, json, actorId, context) {
   const path = url.pathname.slice(PREFIX.length).split('/');
   const method = request.method;
   const [section, rawId, action, ...rest] = path;
+  // GET /api/admin/audit/entity/{entityType}/{entityId} (#181): jedyna trasa
+  // z czterema segmentami, więc obsługiwana przed ogólnym `if (rest.length)`.
+  if (section === 'audit' && rawId === 'entity' && rest.length === 1 && method === 'GET') {
+    return entityAudit(env, action, decodeId(rest[0]), json, actorId);
+  }
   if (rest.length) return null;
 
   if (section === 'users') {
@@ -585,31 +1116,54 @@ async function route(request, env, url, json, actorId) {
       if (action === 'disable') return setUserDisabled(env, actorId, userId, true, json);
       if (action === 'enable') return setUserDisabled(env, actorId, userId, false, json);
       if (action === 'revoke-sessions') return revokeSessionsOf(env, actorId, userId, json);
-      if (action === 'password-reset') return passwordResetRoute(env, actorId, userId, request, json);
-      if (action === 'mfa-reset') return mfaResetRoute(env, actorId, userId, request, json);
+      if (action === 'password-reset') { requireFreshMfa(context); return passwordResetRoute(env, actorId, userId, request, json); }
+      if (action === 'mfa-reset') { requireFreshMfa(context); return mfaResetRoute(env, actorId, userId, request, json); }
     }
   }
   if (section === 'grants') {
     if (path.length === 1 && method === 'GET') return listGrants(env, url, json);
-    if (path.length === 1 && method === 'POST') return createGrant(env, actorId, request, json);
+    if (path.length === 1 && method === 'POST') { requireFreshMfa(context); return createGrant(env, actorId, request, json); }
     if (path.length === 3 && action === 'revoke' && method === 'POST') return revokeGrant(env, actorId, decodeId(rawId), json);
   }
   if (section === 'invitations') {
     if (path.length === 1 && method === 'GET') return listInvitations(env, json);
-    if (path.length === 1 && method === 'POST') return createInvitationRoute(env, actorId, request, json);
+    // Zaproszenie (i jego ponowne wydanie) nadaje rolę w chwili przyjęcia —
+    // to też „nadanie roli”, więc ten sam krok w górę co POST /grants; bez tego
+    // admin ze starym MFA (przejęta sesja) zapraszał dowolny adres do roli admin.
+    if (path.length === 1 && method === 'POST') { requireFreshMfa(context); return createInvitationRoute(env, actorId, request, json); }
     if (path.length === 3 && action === 'revoke' && method === 'POST') return revokeInvitationRoute(env, actorId, decodeId(rawId), json);
+    if (path.length === 3 && action === 'reissue' && method === 'POST') {
+      requireFreshMfa(context);
+      return reissueInvitationRoute(env, actorId, decodeId(rawId), json);
+    }
   }
   if (section === 'school-years') {
     if (path.length === 1 && method === 'GET') return listSchoolYears(env, json);
+    if (path.length === 1 && method === 'POST') return createSchoolYear(env, actorId, request, json);
     if (path.length === 3 && action === 'expire-grants' && method === 'POST') {
       return expireSchoolYear(env, actorId, decodeId(rawId), request, json);
     }
+    if (path.length === 3 && action === 'classes' && method === 'POST') {
+      return createClasses(env, actorId, decodeId(rawId), request, json);
+    }
   }
-  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json);
+  if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
+  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId);
+  if (section === 'data-requests') {
+    if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);
+    if (path.length === 1 && method === 'POST') return createDataRequest(env, actorId, request, json);
+    if (path.length === 3 && action === 'status' && method === 'POST') {
+      return setDataRequestStatus(env, actorId, decodeId(rawId), request, json);
+    }
+  }
+  if (section === 'retention' && rawId === 'preview' && path.length === 2 && method === 'GET') {
+    return retentionPreview(env, json);
+  }
+  if (section === 'ops-status' && path.length === 1 && method === 'GET') return opsStatus(env, json);
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'audit']);
+const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'data-requests', 'retention', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
@@ -622,7 +1176,7 @@ export async function handle(request, env, url, json) {
   if (access.response) return access.response;
   const actorId = access.context.session.user.id;
   try {
-    const response = await route(request, env, url, json, actorId);
+    const response = await route(request, env, url, json, actorId, access.context);
     if (response === null) return null;
     if (response !== undefined) return response;
     const allowed = rest.length ? null : allowedMethodsFor(section, path.length, action);

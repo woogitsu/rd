@@ -2,12 +2,16 @@
 // Czyste funkcje bez sieci i bazy. Składka jest dobrowolna — słownik
 // niedozwolonych sformułowań jest wspólny z kartkami (print/core.js).
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { findForbiddenWording } from '../../print/core.js';
 
 export { findForbiddenWording };
 
 export const AUDIENCES = Object.freeze(['all_households', 'no_payment_record']);
+// Kategoria komunikatu (#110). `organizational` bez linku wypisania wymaga
+// osobnej decyzji zarządu/szkoły (D-06) — do tego czasu każda kategoria ma link.
+export const CATEGORIES = Object.freeze(['contribution_reminder', 'organizational']);
+export const DEFAULT_CATEGORY = 'contribution_reminder';
 // {rok} — etykieta roku szkolnego, {rodzina} — identyfikator rodziny jako tytuł przelewu.
 // Brak placeholderów z imieniem dziecka lub opiekuna (minimalizacja, EMAIL.md).
 export const BODY_PLACEHOLDERS = Object.freeze(['rok', 'rodzina']);
@@ -54,13 +58,16 @@ export function parseCampaignContent(data) {
   const subject = checkText(data.subject, { min: 3, max: 200, field: 'subject', allowNewlines: false, placeholders: SUBJECT_PLACEHOLDERS });
   const bodyText = checkText(data.bodyText, { min: 20, max: 10000, field: 'body', allowNewlines: true, placeholders: BODY_PLACEHOLDERS });
   if (!AUDIENCES.includes(data.audience)) throw new ContentError('invalid_audience');
-  return { title, subject, bodyText, audience: data.audience };
+  const category = data.category === undefined ? DEFAULT_CATEGORY : data.category;
+  if (!CATEGORIES.includes(category)) throw new ContentError('invalid_category');
+  return { title, subject, bodyText, audience: data.audience, category };
 }
 
 // Skrót dokładnej treści, którą zatwierdza zarząd. Tytuł wewnętrzny nie trafia
-// do rodziców, więc nie wchodzi do skrótu.
-export function contentHash({ schoolYearId, audience, subject, bodyText }) {
-  return sha256Hex(JSON.stringify(['rd-email-content-v1', schoolYearId, audience, subject, bodyText]));
+// do rodziców, więc nie wchodzi do skrótu. Kategoria wchodzi do skrótu (v2,
+// #110) — decyduje o stopce wypisania, więc jest częścią zatwierdzanej treści.
+export function contentHash({ schoolYearId, audience, subject, bodyText, category = DEFAULT_CATEGORY }) {
+  return sha256Hex(JSON.stringify(['rd-email-content-v2', schoolYearId, audience, category, subject, bodyText]));
 }
 
 // Skrót migawki odbiorców: posortowane trójki (rodzina, opiekun, skrót adresu).
@@ -102,13 +109,61 @@ function fill(text, values) {
   return text.replace(PLACEHOLDER, (_, name) => (Object.hasOwn(values, name) ? String(values[name]) : ''));
 }
 
+// Stopka wypisania (#110): dodawana przez serwer, poza edycją autora treści,
+// ale zależna wyłącznie od kategorii (część zatwierdzanego content_hash — ta
+// sama kategoria zawsze daje tę samą stopkę, tylko link jest inny na rodzinę).
+const UNSUBSCRIBE_FOOTER = '\n\n--\nAby zrezygnować z tej kategorii wiadomości, otwórz: {link_wypisania}';
+
+function appendUnsubscribeFooter(text, unsubscribeUrl) {
+  if (!unsubscribeUrl) return text;
+  return text + UNSUBSCRIBE_FOOTER.replace('{link_wypisania}', unsubscribeUrl);
+}
+
 // Jedna wiadomość = jedna rodzina. Czysty tekst (bez HTML), więc bez wstrzyknięć znaczników.
-export function renderMessage(campaign, { schoolYearLabel, householdId }) {
+export function renderMessage(campaign, { schoolYearLabel, householdId, unsubscribeUrl = null }) {
   const values = { rok: schoolYearLabel, rodzina: householdId };
   const subject = fill(campaign.subject, values);
-  const text = fill(campaign.body_text ?? campaign.bodyText, values);
+  const text = appendUnsubscribeFooter(fill(campaign.body_text ?? campaign.bodyText, values), unsubscribeUrl);
   if (findForbiddenWording(subject) || findForbiddenWording(text)) throw new ContentError('forbidden_wording');
   return { subject, text };
+}
+
+// --- Preferencje kontaktu i wypisanie jednym kliknięciem (#110) -----------
+
+const PREF_TOKEN_VERSION = 'rd-email-pref-v1';
+
+// Token nieprzezroczysty: koduje (kampania, kategoria, skrót adresu) i jest
+// podpisany HMAC-SHA256 sekretem serwera. URL nie zawiera adresu ani osobnych
+// identyfikatorów w postaci jawnej — tylko ten jeden nieprzezroczysty parametr.
+export function preferencesToken(secret, { campaignId, category, emailHash }) {
+  const body = Buffer.from(JSON.stringify([PREF_TOKEN_VERSION, campaignId, category, emailHash])).toString('base64url');
+  const signature = createHmac('sha256', String(secret)).update(body).digest('base64url');
+  return `${body}.${signature}`;
+}
+
+// Zwraca { campaignId, category, emailHash } albo null (zły/zmieniony token —
+// odmowa bez ujawniania, która część jest niepoprawna).
+export function verifyPreferencesToken(secret, token) {
+  if (typeof token !== 'string' || token.length > 2000) return null;
+  const dot = token.lastIndexOf('.');
+  if (dot < 1) return null;
+  const body = token.slice(0, dot);
+  const signature = token.slice(dot + 1);
+  let expected;
+  try {
+    expected = createHmac('sha256', String(secret)).update(body).digest('base64url');
+  } catch { return null; }
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  try {
+    const [version, campaignId, category, emailHash] = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (version !== PREF_TOKEN_VERSION || typeof campaignId !== 'string' || typeof emailHash !== 'string'
+        || !CATEGORIES.includes(category) || !/^[0-9a-f]{64}$/.test(emailHash)) return null;
+    return { campaignId, category, emailHash };
+  } catch {
+    return null;
+  }
 }
 
 // Uwagi dla zatwierdzającego (nie blokują — treść szablonu zatwierdza Rada, D-16).

@@ -49,11 +49,14 @@ export async function seedClass(db, { id, schoolYearId = 'y-test', name = id }) 
 }
 
 // Użytkownik (idempotentnie). Domyślny e-mail jest syntetyczny.
-export async function seedUser(db, { userId, email = `${userId}@example.invalid`, displayName = `Test ${userId}`, disabled = false }) {
+// Domyślny e-mail jest zawsze małymi literami (#198: users.email wymaga
+// lower(btrim(email))) niezależnie od wielkości liter w userId (np. klucze
+// aktorów macierzy uprawnień 'repA', 'boardA').
+export async function seedUser(db, { userId, email = `${String(userId).toLowerCase()}@example.invalid`, displayName = `Test ${userId}`, disabled = false }) {
   await db.query(
     `INSERT INTO users (id, email, display_name, disabled_at) VALUES ($1, $2, $3, CASE WHEN $4::boolean THEN now() END)
      ON CONFLICT (id) DO NOTHING`,
-    [userId, email, displayName, Boolean(disabled)],
+    [userId, String(email).trim().toLowerCase(), displayName, Boolean(disabled)],
   );
   return userId;
 }
@@ -66,7 +69,7 @@ export async function seedUser(db, { userId, email = `${userId}@example.invalid`
  * @param {object} db PGlite z createTestDb()
  * @param {object} options
  * @param {string} options.userId
- * @param {string} [options.email]       domyślnie `${userId}@example.invalid`
+ * @param {string} [options.email]       domyślnie `${userId.toLowerCase()}@example.invalid`
  * @param {Array<{role:string, classId?:string, schoolYearId?:string, expiresAt?:string|Date, revoked?:boolean}>} [options.roles]
  * @param {boolean} [options.mfa=false]  czy sesja ma potwierdzone MFA
  * @param {string|Date} [options.expiresAt] domyślnie za 1 godzinę; data w przeszłości = sesja wygasła
@@ -75,7 +78,7 @@ export async function seedUser(db, { userId, email = `${userId}@example.invalid`
  * @returns {Promise<string>} wartość nagłówka Cookie, np. `rd_session=…`
  */
 export async function seedUserSession(db, {
-  userId, email, displayName, roles = [], mfa = false, expiresAt, revoked = false, disabled = false,
+  userId, email, displayName, roles = [], mfa = false, expiresAt, revoked = false, disabled = false, createdAt,
 }) {
   if (!userId) throw new Error('seedUserSession: userId is required');
   await seedUser(db, { userId, email, displayName, disabled });
@@ -91,7 +94,11 @@ export async function seedUserSession(db, {
   }
   const { secret, tokenHash } = await createSessionSecret();
   const expires = expiresAt ? new Date(expiresAt) : new Date(Date.now() + 60 * 60 * 1000);
-  const created = new Date(Math.min(Date.now(), expires.getTime() - 60 * 1000));
+  // #150 (SR-10, migracja 0082 — session_guard_trigger): `created_at` sesji
+  // jest niezmienne po zapisie (identity_immutable), więc symulacja "logowania
+  // dawno temu" (absolutny limit rotacji, bezczynność) musi ustawić created_at
+  // przy INSERT, nie przez UPDATE po fakcie — stąd jawny `createdAt`.
+  const created = createdAt ? new Date(createdAt) : new Date(Math.min(Date.now(), expires.getTime() - 60 * 1000));
   await db.query(
     `INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, mfa_verified_at, revoked_at, revoked_reason)
      VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::boolean THEN $4::timestamptz END,

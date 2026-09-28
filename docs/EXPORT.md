@@ -59,9 +59,9 @@ zamierzone: każde pobranie danych jest odnotowane.
 ```json
 {
   "format": "rd-yearly-export",
-  "formatVersion": 1,
+  "formatVersion": 2,
   "manifest": {
-    "format": "rd-yearly-export", "formatVersion": 1, "schoolYearId": "…",
+    "format": "rd-yearly-export", "formatVersion": 2, "schoolYearId": "…",
     "schema": { "migrations": ["0001_core.sql", "…"] },
     "files": [
       { "path": "payment_entries.jsonl", "table": "payment_entries",
@@ -101,10 +101,43 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `guardians` | opiekunowie z tych relacji oraz opiekunowie odnotowani na zebraniach roku |
 | `households` | gospodarstwa uczniów, opiekunów oraz gospodarstwa z wpłat i przypisań roku |
 | `payment_entries`, `payment_corrections`, `payment_assignments` | wpłaty roku, ich korekty i przypisania |
-| `ledger_*` | kategorie, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku |
+| `payment_allocations`, `payment_allocation_reversals` | części wpłat podzielonych na gospodarstwa i ich cofnięcia z powodem (0104, #127) |
+| `ledger_*` | kategorie i historia ich wyłączenia, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku i jego przyjęcie przez zebranie (0073, #107) |
 | `events`, `event_revisions` | wydarzenia roku i ich rewizje |
-| `meetings`, `meeting_*`, `resolutions` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały |
+| `event_tasks`, `event_task_signups` | zadania i zapisy wolontariuszy wydarzeń roku (0076, #142) |
+| `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102) |
+| `student_households`, `guardian_households` | członkostwo uczniów roku (także drugie gospodarstwo przy opiece dzielonej, `is_primary`) i opiekunów z zakresu w gospodarstwach, z historią (0014) |
+| `enrollment_history` | historia przypisań do klas w danym roku (0014) |
+| `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
+| `student_guardian_changes` | historia relacji opiekun–dziecko uczniów roku (zgoda, kontakt główny, daty) z dat roku — bez treści powodu (0026, D-03) |
+| `ledger_transfers` | przeniesienia kasa ↔ rachunek roku (0028) |
+| `ledger_entry_reviews` | weryfikacja wydatku przez drugą osobę (decyzja, uwaga przy zakwestionowaniu) roku (0072, #97) |
+| `resolution_spending_authorizations` | kwota upoważnienia z uchwały do wydatku i jej historia (0072, #93) roku |
+| `ledger_allocation_versions`, `ledger_allocation_items` | wersje przypisania wpisów księgi roku do wydarzeń i klas (centra kosztów, 0090, #117) |
+| `bank_reconciliations`, `bank_statement_imports`, `bank_statement_lines`, `bank_reconciliation_matches` | uzgodnienia roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami, także cofniętymi z powodem (0015/0024) |
+| `bank_reconciliation_group_matches`, `bank_reconciliation_group_match_items`, `bank_reconciliation_group_match_revocations` | dopasowania zbiorcze (jedna pozycja wyciągu ↔ kilka wpłat/wpisów), ich pozycje i cofnięcia z powodem (0105, #127) |
+| `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
+| `document_status_events` | zastąpienie/unieważnienie dokumentu z powodem, wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id`/`replacement_document_id` po odtworzeniu nie mają odpowiednika, jak `source_document_id` (0066, #82) |
+| `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
+| `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia oznaczone tym rokiem (`schoolYearId`), a bez oznaczenia — z dat roku (Europe/Brussels); bez `export.*` |
+
+Zdarzenia dotyczące obiektu przypisanego do roku (wiersz ma kolumnę
+`school_year_id`) niosą `metadata.schoolYearId` wzięte z TEGO wiersza, nie z
+daty zapisu (#174) — inaczej wpłata dopisana we wrześniu za poprzedni rok
+trafiłaby do eksportu złego roku. `insertAuditEvent` (`src/pg/audit.js`)
+odrzuca (`audit_event_missing_school_year`) zdarzenie z przedrostkiem
+`payment.`/`ledger.`/`reconciliation.` (część 1) albo `email.`/`meeting.`/
+`resolution.`/`event.`/`news_post.` (część 2) bez `schoolYearId` — błąd
+programisty wychodzi w testach, nie po cichu zniekształca eksport. Wyjątki
+świadomie bez tego wymogu: `news_photo.*` (biblioteka zdjęć nie ma kolumny
+`school_year_id` — nie jest przypisana do jednego roku),
+`email.address_suppressed` (dotyczy adresu w `email_suppressions`, bez
+kolumny roku — niezależne od kampanii; `schoolYearId` jest dopisywane, gdy
+zdarzenie dało się powiązać z konkretną wysyłką, ale nie jest wymagane) i
+`email.webhook.previous_secret_used` (rotacja sekretu webhooka Brevo — zdarzenie
+bezpieczeństwa integracji, niezwiązane z żadną konkretną kampanią ani rokiem).
+Sesje, MFA i konta pozostają bez roku, jak dotąd.
 
 Tabele z modułów, których migracji nie ma w bazie, są pomijane (wykrywanie
 przez `information_schema`); tabele rdzenia są wymagane.
@@ -115,9 +148,16 @@ imię, nazwisko, e-mail, zgoda na kontakt, gospodarstwo; relacja — zgoda,
 kontakt główny, daty. Nowa kolumna w tych tabelach nie trafi do eksportu bez
 zmiany kodu. Jeżeli D-03 zawęzi listę, zawęża się też eksport.
 
-Nie są eksportowane: konta użytkowników (`users`: e-mail, nazwa), sesje,
-zaproszenia, przydziały ról, klucze idempotencji zebrań, metadane i pliki
-dokumentów. Kolumny `created_by`, `actor_id`, `source_document_id` itp.
+Nie są eksportowane (jawna lista `EXPORT_EXCLUDED_TABLES` w
+`src/pg/export.js`, każda z uzasadnieniem; test kompletności w
+`tests/pg-export-v2.test.js` zawodzi, gdy nowa tabela nie jest ani w eksporcie,
+ani na tej liście): konta użytkowników (`users`: e-mail, nazwa), sesje,
+zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity logowania (0020), przydziały ról, wersjonowaną informację o przetwarzaniu danych `privacy_notices` i ewidencję jej przekazania `privacy_notice_deliveries` (0075, #145, D-06 — dokument organizacji, nie zawsze przypisany do jednego roku), rejestr polityk retencji `retention_policies` (0074, #91, D-04 — konfiguracja/decyzje zarządu, nie dane roku), klucze idempotencji zebrań,
+metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), dziennik kopii zapasowych `backup_runs` (0058, dane operacyjne), `data_access_log`, rejestr żądań osób RODO `data_subject_requests` (0068, #100 — rozliczalność wobec osób, nie dane Rady; dostęp i retencja do D-07/D-08/D-09), metadane importów (`import_batches`, D-04),
+dziennik eksportów, kampanie e-mail z odbiorcami, wykluczeniami, kolejką,
+blokadami i zdarzeniami dostawcy (adresy e-mail; zakres i retencja — D-04)
+oraz aktualności i zdjęcia (zgody na wizerunek, w tym rejestr wycofań
+`news_photo_consent_withdrawals` (0083) — osobny zakres, D-04), w tym pliki wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres D-04), a także zatwierdzone dane do wpłaty `payment_instructions` (IBAN/BIC generatora EPC, #92 — dane wrażliwe finansowo, niepotrzebne do odtworzenia stanu klasy/gospodarstwa; wariant zachowawczy do rewizji po D-08) oraz belgijskie referencje płatności OGM-VCS `payment_references`/`payment_reference_revocations` (#83 — pseudonim gospodarstwa jak `payment_entries.reference`; zakres i retencja do decyzji D-04, wariant zachowawczy do rewizji). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
 zawierają więc identyfikatory, które w odtworzonej bazie nie mają
 odpowiednika. Pliki dokumentów kopiuje się osobno (patrz
 [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md), backup Storage Bucket).
@@ -126,14 +166,14 @@ odpowiednika. Pliki dokumentów kopiuje się osobno (patrz
 
 ```sh
 # 1. Tylko manifest, sumy i format (bez bazy)
-node scripts/verify-export.js /private/path/rd-eksport-y-2026-v1.json
+node scripts/verify-export.js /private/path/rd-eksport-y-2026-v2.json
 
 # 2. Odtworzenie do pustego PGlite w pamięci (migracje z repozytorium)
-node scripts/verify-export.js /private/path/rd-eksport-y-2026-v1.json --restore-pglite
+node scripts/verify-export.js /private/path/rd-eksport-y-2026-v2.json --restore-pglite
 
 # 3. Odtworzenie do PUSTEJ bazy PostgreSQL po `npm run db:migrate:postgres`
 DATABASE_URL='…' APP_ENV=staging node scripts/verify-export.js \
-  /private/path/rd-eksport-y-2026-v1.json --restore-database
+  /private/path/rd-eksport-y-2026-v2.json --restore-database
 ```
 
 (`npm run db:verify-export -- …` jest skrótem do tego samego skryptu.)
@@ -148,12 +188,23 @@ Odtworzenie:
 - odmawia bazy, w której jakakolwiek tabela (poza `schema_migrations`) ma
   wiersze; odmawia `APP_ENV=production` bez `--allow-production`;
 - działa w jednej transakcji — pierwszy błąd wycofuje całość;
+- przyjmuje paczki w wersji 2 i 1 (patrz „Wersje formatu”);
 - na czas transakcji wyłącza triggery i klucze obce
   (`session_replication_role = replica`, wymaga roli superużytkownika, jak
   domyślny użytkownik PostgreSQL w Railway). Paczka odtwarza stan końcowy,
   a nie przebieg operacji, więc triggery pilnujące przebiegu (np. przypisanie
   wpłaty tylko ze stanu `unmatched`) nie mogą działać przy odtwarzaniu. Po
   zatwierdzeniu triggery działają normalnie — historii nie da się zmienić;
+- wyłączenie triggerów nie gubi danych: wszystko, co w działającej bazie
+  wypełniają triggery (członkostwo w gospodarstwach, historia klas, licznik
+  obecności zebrań), jest w paczce wersji 2. Kolumny generowane (np.
+  `difference_cents`) baza wylicza sama;
+- przed zatwierdzeniem transakcji porównuje z manifestem **pełną** liczność i
+  sumy `*_cents` każdej odtworzonej tabeli w bazie docelowej
+  (`restore_verification_failed:rows|sums:<tabela>`), sprawdza, że tabele spoza
+  paczki pozostały puste (`restore_unexpected_rows:<tabela>`) i że każdy uczeń
+  i opiekun ma członkostwo w gospodarstwie
+  (`restore_verification_failed:derived:<tabela>`); błąd wycofuje całość;
 - przestawia sekwencje kolumn `IDENTITY` za najwyższą wartość;
 - po zatwierdzeniu wykonuje ponowny eksport z odtworzonej bazy i porównuje
   SHA-256, liczności i sumy każdego pliku oraz sumy wpłat i księgi. Raport
@@ -161,6 +212,16 @@ Odtworzenie:
 
 Odtworzona baza służy do kontroli i archiwum. Nie jest bazą produkcyjną: brak
 kont, sesji i dokumentów.
+
+## Wersje formatu
+
+| `formatVersion` | Zawartość | Weryfikacja i odtworzenie |
+|---|---|---|
+| 2 (od #202) | jak wyżej, z tabelami 0014, 0015/0024, 0017, 0021 i 0028 | pełne |
+| 1 | bez tych tabel | przyjmowana z ostrzeżeniem `bundle_incomplete` i listą `missingTables` (skrypt wypisuje ostrzeżenie na stderr). Przy odtworzeniu członkostwo w gospodarstwach powstaje z kolumn zgodności jak backfill 0014 (`source = 'legacy_backfill'`, ostrzeżenie `households_backfilled_from_v1`) — bez drugiego gospodarstwa, historii klas, uzgodnień, przeniesień i stanu zamknięcia roku. Paczka v1 z tabelą wersji 2 jest odrzucana (`table_not_in_format_version`). |
+
+Nieznana wersja → `unsupported_format_version`. Plik paczki ma w nazwie
+wersję (`rd-eksport-<rok>-v2.json`).
 
 ## Zasady przechowywania
 
@@ -173,11 +234,31 @@ kont, sesji i dokumentów.
   syntetycznych i stagingu.
 - Wynik testu odtworzenia wpisać do tabeli w
   [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md) (bez danych osobowych).
+- 0087 (#140): `guardian_update_links` (token jednorazowego linku) i
+  `guardian_update_requests` (wniosek rodzica o zmianę kontaktu, z proponowanym
+  e-mailem) są poza paczką roku — wariant zachowawczy do czasu decyzji zarządu
+  o retencji wniosków (D-04), jak `guardian_contact_changes` (D-03).
 
 ## Ryzyka i ograniczenia
 
 - Paczka jest budowana w pamięci (limit 500 000 wierszy na tabelę). Dla
   jednej szkoły wystarcza; przy większych danych potrzebny będzie strumień.
+  **Nie jest jeszcze zaimplementowane** (#216, poza zakresem PR, który dodał
+  punkty niżej): strumieniowy format v2 (kursor, partie, SHA-256 przyrostowo),
+  odpowiedź HTTP jako `ReadableStream` bez buforowania w `node-app.js` i
+  podniesienie/pilnowanie `idle_in_transaction_session_timeout` w trakcie
+  budowania paczki. Rok z ok. 200 tys. zdarzeń audytu nadal może wyczerpać
+  stertę procesu przy niskim limicie pamięci usługi.
+- **Blokada jednego eksportu na rok** (#216): `POST /api/exports` bierze
+  `pg_try_advisory_xact_lock(hashtext('rd_export:'||rok))` na czas transakcji
+  budującej paczkę. Drugi równoczesny przebieg tego samego roku dostaje od
+  razu `409 export_in_progress` (bez czekania) zamiast budować drugą paczkę
+  naraz — to zapobiega podwójnemu zużyciu pamięci i dwóm wierszom
+  `export_runs` przy podwójnym kliknięciu „Eksportuj”. Blokada zwalnia się
+  sama na COMMIT/ROLLBACK; różne lata eksportują się równolegle bez
+  przeszkód. Między kolejnymi tabelami paczki proces oddaje pętlę zdarzeń
+  (`setImmediate`) — zmniejsza to, ale nie eliminuje, blokowanie innych
+  żądań podczas budowania bardzo dużej paczki (patrz punkt wyżej).
 - Zmiana schematu wymaga oceny, czy trzeba podnieść `formatVersion`.
   Weryfikator odrzuca nieznaną wersję; odtworzenie wymaga, by docelowy
   schemat miał wszystkie kolumny z manifestu.

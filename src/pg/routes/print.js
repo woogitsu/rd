@@ -1,9 +1,15 @@
 // GET /api/print/cards?schoolYearId=…&classId=… — dane do kartek o dobrowolnej
 // składce (issue #11). Prototyp na PostgreSQL — nie jest wdrożony.
 //
-// Odpowiedź ma kształt wejścia JSON modułu print/core.js (parseInputRows):
-//   { schoolYearId, classId, paymentInfoIncluded, rows: [
+// Odpowiedź ma kształt wejścia JSON modułu print/core.js (parseInputRows) plus
+// zatwierdzoną konfigurację danych do wpłaty (#92, payment_instructions):
+//   { schoolYearId, classId, paymentInfoIncluded, paymentInstructions, rows: [
 //       { householdId, firstName, lastName, className, recordedNetCents? } ] }
+// paymentInstructions: { iban, bic, payeeName, approvedAt } albo null, gdy rok
+// nie ma jeszcze zatwierdzonej wersji (kartka jest wtedy szkicem, bez kodu QR —
+// zob. print/core.js buildCard). Dostępne dla każdej roli uprawnionej do druku
+// (także przedstawiciela klasy) — edycja/zatwierdzanie pozostaje w
+// POST /api/payment-instructions (admin/board).
 // Jeden wiersz na ucznia; rodzeństwo ma ten sam householdId.
 //
 // Zakres (założenie do potwierdzenia w D-08, macierz kompetencji):
@@ -21,6 +27,7 @@
 
 import { loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { recordDataAccess } from '../data-access.js';
 import { toSafeInteger } from './payments.js';
 import { effectiveDay } from '../today.js';
 
@@ -64,7 +71,7 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
     values.push(classId);
     if (full) {
       conditions.push(`p.household_id IN (
-        SELECT p2.household_id FROM enrollments e2 JOIN ${primary} p2 ON p2.student_id = e2.student_id
+        SELECT p2.household_id FROM enrollments_current e2 JOIN ${primary} p2 ON p2.student_id = e2.student_id
          WHERE e2.school_year_id = $1 AND e2.class_id = $3)`);
     } else {
       conditions.push('e.class_id = $3');
@@ -77,7 +84,7 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
     : '';
   const { rows } = await db.query(
     `SELECT p.household_id, s.first_name, s.last_name, c.name AS class_name${paymentColumn}
-       FROM enrollments e
+       FROM enrollments_current e
        JOIN students s ON s.id = e.student_id
        JOIN ${primary} p ON p.student_id = e.student_id
        JOIN households h ON h.id = p.household_id
@@ -89,6 +96,28 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
     values,
   );
   return rows;
+}
+
+// Zatwierdzona na rok konfiguracja danych do wpłaty (#92, payment-instructions.js).
+// Czytana tu dla WSZYSTKICH ról uprawnionych do druku kartek (także przedstawiciela
+// klasy) — to nie jest dana finansowa rodziny, tylko rachunek Rady sam w sobie
+// drukowany na każdej kartce; edycja/zatwierdzanie zostaje ograniczone do
+// admin/board (POST /api/payment-instructions). IBAN/BIC nigdy nie trafiają
+// do audytu (assertNoPii + reguła ręczna w payment-instructions.js).
+async function loadPaymentInstructions(db, schoolYearId) {
+  const { rows } = await db.query(
+    `SELECT iban, bic, payee_name, approved_at FROM payment_instructions
+      WHERE school_year_id = $1 ORDER BY approved_at DESC, id DESC LIMIT 1`,
+    [schoolYearId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    iban: row.iban,
+    bic: row.bic ?? null,
+    payeeName: row.payee_name,
+    approvedAt: new Date(row.approved_at).toISOString(),
+  };
 }
 
 function rowOut(row, paymentInfo) {
@@ -118,18 +147,26 @@ export async function handle(request, env, url, json) {
   const scope = printScope(context, { schoolYearId, classId });
   if (scope.error) return json({ error: scope.error }, scope.status);
 
+  const actorId = context.session.user.id;
   if (classId) {
     const { rows } = await env.db.query('SELECT 1 FROM classes WHERE id = $1 AND school_year_id = $2', [classId, schoolYearId]);
-    if (!rows.length) return json({ error: 'class_not_found' }, 404);
+    if (!rows.length) {
+      await recordDataAccess(env, { actorId, accessKind: 'print_cards', schoolYearId, classId, outcome: 'not_found' });
+      return json({ error: 'class_not_found' }, 404);
+    }
   } else {
     const { rows } = await env.db.query('SELECT 1 FROM school_years WHERE id = $1', [schoolYearId]);
-    if (!rows.length) return json({ error: 'school_year_not_found' }, 404);
+    if (!rows.length) {
+      await recordDataAccess(env, { actorId, accessKind: 'print_cards', schoolYearId, outcome: 'not_found' });
+      return json({ error: 'school_year_not_found' }, 404);
+    }
   }
 
   const rows = await loadRows(env.db, { schoolYearId, classId, ...scope, on: effectiveDay(env) });
   if (rows.length > MAX_PRINT_ROWS) return json({ error: 'too_many_rows' }, 413);
 
   const households = new Set(rows.map((row) => row.household_id));
+  const paymentInstructions = await loadPaymentInstructions(env.db, schoolYearId);
   // Wyłącznie liczby i identyfikatory zakresu — bez identyfikatorów rodzin i danych osobowych.
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id,
@@ -141,13 +178,18 @@ export async function handle(request, env, url, json) {
       householdCount: households.size,
       studentCount: rows.length,
       paymentInfoIncluded: scope.paymentInfo,
+      paymentInstructionsApproved: Boolean(paymentInstructions),
     },
+  });
+  await recordDataAccess(env, {
+    actorId, accessKind: 'print_cards', schoolYearId, classId, outcome: 'ok', rowCount: rows.length,
   });
 
   return json({
     schoolYearId,
     classId,
     paymentInfoIncluded: scope.paymentInfo,
+    paymentInstructions,
     rows: rows.map((row) => rowOut(row, scope.paymentInfo)),
   });
 }

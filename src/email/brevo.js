@@ -13,6 +13,26 @@
 export const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
 const REQUEST_TIMEOUT_MS = 15_000;
 
+// Domeny darmowych skrzynek pocztowych (adres nadawcy nie może z nich pochodzić
+// na produkcji — issue #148). Lista orientacyjna, do uzupełnienia przy D-17.
+export const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.fr', 'outlook.com', 'hotmail.com',
+  'hotmail.fr', 'live.com', 'live.fr', 'msn.com', 'aol.com', 'icloud.com', 'me.com',
+  'gmx.com', 'gmx.net', 'protonmail.com', 'proton.me', 'mail.com', 'yandex.com',
+  'wp.pl', 'o2.pl', 'interia.pl', 'onet.pl', 'gazeta.pl', 'skynet.be', 'telenet.be',
+  'proximus.be', 'voo.be',
+]);
+
+export function senderDomain(email) {
+  const address = String(email ?? '').toLowerCase();
+  const at = address.lastIndexOf('@');
+  return at >= 0 ? address.slice(at + 1) : '';
+}
+
+export function isFreeEmailDomain(email) {
+  return FREE_EMAIL_DOMAINS.has(senderDomain(email));
+}
+
 function intFrom(value, fallback, { min = 0, max = 100_000 } = {}) {
   if (value === undefined || value === null || value === '') return fallback;
   const number = Number(value);
@@ -27,6 +47,82 @@ export function parseAllowlist(value) {
     .filter((item) => /^(\*|[^\s@*,]+)@[a-z0-9.-]+$/.test(item));
 }
 
+// EMAIL_PREVIEW_RECIPIENTS (#104): pełne adresy skrzynek technicznych Rady,
+// bez wieloznaczników — inaczej niż EMAIL_TEST_ALLOWLIST. Wpis, który nie
+// wygląda na pojedynczy adres, jest odrzucany przy parsowaniu (nigdy nie
+// trafia na listę), więc literówka nie otwiera wysyłki testowej szerzej.
+export function parsePreviewRecipients(value) {
+  return String(value ?? '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => /^[^\s@*,]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(item));
+}
+
+const DEFAULT_QUOTA_TIMEZONE = 'Europe/Brussels';
+
+// Strefa doby limitu Brevo (#84): konto szkoły najpewniej pracuje w strefie
+// belgijskiej, nie w UTC. Wartość niedozwolona dla Intl (literówka w env)
+// wraca do domyślnej zamiast rzucać wyjątek przy starcie workera.
+function quotaTimezoneFrom(value) {
+  const candidate = typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_QUOTA_TIMEZONE;
+  try {
+    // eslint-disable-next-line no-new -- tylko walidacja identyfikatora strefy
+    new Intl.DateTimeFormat('en-CA', { timeZone: candidate });
+    return candidate;
+  } catch {
+    return DEFAULT_QUOTA_TIMEZONE;
+  }
+}
+
+// Ta sama walidacja, dla okna wysyłki (#130) — osobna funkcja, bo ma inną
+// (parametryzowaną) wartość domyślną niż strefa limitu Brevo powyżej.
+function validTimezone(value, fallback) {
+  const candidate = typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  try {
+    // eslint-disable-next-line no-new -- tylko walidacja identyfikatora strefy
+    new Intl.DateTimeFormat('en-CA', { timeZone: candidate });
+    return candidate;
+  } catch {
+    return fallback;
+  }
+}
+
+// 'HH:MM' -> minuty od północy, albo null jeśli nieprawidłowe.
+function minutesFrom(value) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value ?? '').trim());
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+// Dni tygodnia ISO (1 = poniedziałek … 7 = niedziela), np. '1-5' albo '1,3,5'.
+function daysFrom(value) {
+  const text = String(value ?? '1-5').trim();
+  const days = new Set();
+  for (const part of text.split(',')) {
+    const range = /^([1-7])(?:-([1-7]))?$/.exec(part.trim());
+    if (!range) continue;
+    const start = Number(range[1]);
+    const end = range[2] ? Number(range[2]) : start;
+    for (let d = start; d <= end; d += 1) days.add(d);
+  }
+  return days.size ? days : new Set([1, 2, 3, 4, 5]);
+}
+
+// Okno godzin wysyłki (#130). Wyłączone domyślnie — termin i godziny ustala
+// zarząd/szkoła (D-16); włącza się jawnie przez EMAIL_SEND_WINDOW_ENABLED.
+function sendWindowFrom(env) {
+  const enabled = env.EMAIL_SEND_WINDOW_ENABLED === 'true';
+  const startMinutes = minutesFrom(env.EMAIL_SEND_WINDOW_START) ?? 9 * 60;
+  const endMinutes = minutesFrom(env.EMAIL_SEND_WINDOW_END) ?? 18 * 60;
+  return {
+    enabled,
+    timezone: validTimezone(env.EMAIL_SEND_WINDOW_TIMEZONE, 'Europe/Brussels'),
+    days: daysFrom(env.EMAIL_SEND_WINDOW_DAYS),
+    // Okno puste (start >= end) po literówce w env liczy się jako zamknięte
+    // przez całą dobę, nigdy jako "cały dzień otwarte".
+    startMinutes, endMinutes: Math.max(startMinutes, endMinutes),
+  };
+}
+
 // Konfiguracja z env (process.env w skrypcie, obiekt env w testach).
 export function emailConfig(env = {}) {
   const dailyLimit = intFrom(env.EMAIL_DAILY_LIMIT, 300, { min: 0, max: 100_000 });
@@ -35,6 +131,7 @@ export function emailConfig(env = {}) {
     sendingEnabled: env.EMAIL_SENDING_ENABLED === 'true',
     dailyLimit,
     dailyReserved: Math.min(dailyLimit, intFrom(env.EMAIL_DAILY_RESERVED, 0, { min: 0, max: 100_000 })),
+    quotaTimezone: quotaTimezoneFrom(env.EMAIL_QUOTA_TIMEZONE),
     minDays: intFrom(env.EMAIL_CAMPAIGN_MIN_DAYS, 7, { min: 1, max: 60 }),
     minDailyCap: intFrom(env.EMAIL_CAMPAIGN_MIN_DAILY, 50, { min: 1, max: 10_000 }),
     batchSize: intFrom(env.EMAIL_BATCH_SIZE, 50, { min: 1, max: 500 }),
@@ -43,8 +140,43 @@ export function emailConfig(env = {}) {
     // przebieg się zatrzymuje, a reszta partii zostaje w kolejce.
     breakerUncertain: intFrom(env.EMAIL_BREAKER_UNCERTAIN, 2, { min: 1, max: 50 }),
     allowlist: parseAllowlist(env.EMAIL_TEST_ALLOWLIST),
+    previewRecipients: parsePreviewRecipients(env.EMAIL_PREVIEW_RECIPIENTS),
+    // D-16: czy test jest obowiązkowy przed zatwierdzeniem. Domyślnie wyłączone
+    // (wariant zachowawczy — brak decyzji zarządu).
+    previewRequiredBeforeApproval: env.EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL === 'true',
     sender: { email: env.BREVO_FROM_EMAIL || null, name: env.BREVO_FROM_NAME || 'Rada Rodziców' },
+    // Wypisanie jednym kliknięciem (#110): sekret podpisu tokenu i adres bazowy
+    // do budowy linku publicznego. Brak jednego z nich = brak stopki (bez łamania wysyłki).
+    unsubscribeSecret: env.EMAIL_UNSUBSCRIBE_SECRET || null,
+    publicBaseUrl: env.PUBLIC_BASE_URL || null,
+    // Adres odpowiedzi (#148) — puste pole na produkcji jest odmową (rodzic bez odpowiedzi).
+    replyTo: env.BREVO_REPLY_TO || null,
+    sendWindow: sendWindowFrom(env),
   };
+}
+
+// Odmowa wysyłki testowej albo null. `guardianEmails` to zbiór znormalizowanych
+// adresów opiekunów z bazy (ochrona przed pomyłkowym testem na adres rodzica).
+export function previewRecipientRefusal(config, email, guardianEmails) {
+  const address = String(email ?? '').trim().toLowerCase();
+  if (!config.previewRecipients.includes(address)) return 'preview_recipient_not_allowed';
+  if (guardianEmails?.has(address)) return 'preview_recipient_not_allowed';
+  return null;
+}
+
+// #130: czy `now` mieści się w oknie dni/godzin wysyłki. Okno wyłączone
+// (domyślnie) zawsze zwraca true.
+export function withinSendWindow(now, sendWindow) {
+  if (!sendWindow?.enabled) return true;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: sendWindow.timezone, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now);
+  const weekdayName = parts.find((p) => p.type === 'weekday').value;
+  const hour = Number(parts.find((p) => p.type === 'hour').value);
+  const minute = Number(parts.find((p) => p.type === 'minute').value);
+  const isoWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(weekdayName) + 1;
+  const minutes = hour * 60 + minute;
+  return sendWindow.days.has(isoWeekday) && minutes >= sendWindow.startMinutes && minutes < sendWindow.endMinutes;
 }
 
 export function isProduction(config) {
@@ -68,6 +200,10 @@ export function recipientRefusal(config, email) {
 export function liveRunRefusal(config) {
   if (!config.sendingEnabled) return 'sending_disabled';
   if (!config.sender.email) return 'sender_not_configured';
+  // Darmowa domena (prywatna skrzynka) nie przechodzi DMARC/DKIM domeny szkoły/Rady (#148, D-17).
+  if (isFreeEmailDomain(config.sender.email)) return 'sender_free_domain';
+  // Na produkcji odpowiedzi rodzica muszą trafić na obsługiwaną skrzynkę (#148).
+  if (isProduction(config) && !config.replyTo) return 'reply_to_not_configured';
   return null;
 }
 
@@ -148,11 +284,18 @@ export function createBrevoTransport({
           body: JSON.stringify({
             sender: message.sender,
             to: [{ email: message.to }],
+            ...(message.replyTo ? { replyTo: { email: message.replyTo } } : {}),
             subject: message.subject,
             textContent: message.text,
             headers: {
               'X-Mailin-custom': message.outboxId,
               'X-RD-Idempotency-Key': message.idempotencyKey,
+              // RFC 8058 — wypisanie jednym kliknięciem (#110). Obecne tylko,
+              // gdy wiadomość ma stopkę wypisania (unsubscribeUrl ustawiony).
+              ...(message.unsubscribeUrl ? {
+                'List-Unsubscribe': `<${message.unsubscribeUrl}>`,
+                'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+              } : {}),
             },
             tags: ['rd-campaign'],
           }),

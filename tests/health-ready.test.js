@@ -55,6 +55,7 @@ test('ready when the database answers and every repository migration is applied'
     status: 'ready',
     checks: { database: 'ok', migrations: 'ok' },
     migrations: { expected: names.length, applied: names.length },
+    write_mode: 'normal',
   });
   await withHttp({ db }, async (base) => {
     const response = await fetch(`${base}/health/ready`);
@@ -81,6 +82,7 @@ test('503 with only the count and names of missing migrations', async () => {
       status: 'not_ready',
       checks: { database: 'ok', migrations: 'pending' },
       migrations: { expected: names.length, applied: names.length - 1, missing_count: 1, missing: [last] },
+      write_mode: 'normal',
     });
     assert.equal(JSON.parse(lines[0]).event, 'readiness_migrations_pending');
     await withHttp({ db }, async (base) => {
@@ -139,13 +141,13 @@ test('503 without leaking error details when the database throws or hangs', asyn
   const failing = { query: async () => { throw leaky; } };
   const { logger, lines } = quietLogger();
   const result = await checkReadiness({ db: failing }, { logger });
-  assert.deepEqual(result, { ready: false, body: { status: 'not_ready', checks: { database: 'error' } } });
+  assert.deepEqual(result, { ready: false, body: { status: 'not_ready', checks: { database: 'error' }, write_mode: 'normal' } });
   assert.doesNotMatch(lines.join('\n'), /secret|@|postgres:/);
   assert.equal(JSON.parse(lines[0]).code, 'ECONNREFUSED');
 
   const hanging = { query: () => new Promise(() => {}) };
   const timedOut = await checkReadiness({ db: hanging }, { logger, timeoutMs: 20 });
-  assert.deepEqual(timedOut.body, { status: 'not_ready', checks: { database: 'timeout' } });
+  assert.deepEqual(timedOut.body, { status: 'not_ready', checks: { database: 'timeout' }, write_mode: 'normal' });
 
   await withHttp({ db: failing }, async (base) => {
     const response = await fetch(`${base}/health/ready`);
@@ -155,9 +157,53 @@ test('503 without leaking error details when the database throws or hangs', asyn
   });
 });
 
+test('równoległe sondy dla tej samej bazy dzielą jedno sprawdzenie (single-flight, #244)', async () => {
+  let calls = 0;
+  let resolveQuery;
+  const gate = new Promise((resolve) => { resolveQuery = resolve; });
+  const slow = {
+    query: async (text) => {
+      calls += 1;
+      if (text === 'SELECT 1') await gate;
+      if (text.includes('to_regclass')) return { rows: [{ present: false }] };
+      return { rows: [] };
+    },
+  };
+  const { logger } = quietLogger();
+  // 5 równoległych sond, zanim pierwsze zapytanie w ogóle się zakończy.
+  const probes = Promise.all(Array.from({ length: 5 }, () => checkReadiness({ db: slow }, { logger })));
+  resolveQuery();
+  const results = await probes;
+  // Jedno sprawdzenie wykonuje dokładnie dwa zapytania (SELECT 1, potem sprawdzenie
+  // schema_migrations — present:false kończy je bez trzeciego). Dla pięciu równoległych
+  // sond powinny to być te same dwa zapytania, a nie 5×2 — bez tego dziesiątki
+  // równoległych /health/ready mogłyby zająć całą pulę połączeń.
+  assert.equal(calls, 2);
+  for (const result of results) assert.equal(result.ready, false); // brak schema_migrations
+  for (const result of results) assert.deepEqual(result, results[0]);
+
+  // Po zakończeniu poprzedniego sprawdzenia kolejne wywołanie zaczyna od nowa
+  // (to nie jest trwały bufor wyniku).
+  const again = await checkReadiness({ db: slow }, { logger });
+  assert.equal(calls, 4);
+  assert.deepEqual(again, results[0]);
+
+  // Różne instancje `db` (np. inny test/pula) nigdy nie dzielą sprawdzenia z `slow`.
+  let otherCalls = 0;
+  const other = {
+    query: async (text) => {
+      otherCalls += 1;
+      return text === 'SELECT 1' ? { rows: [] } : { rows: [{ present: false }] };
+    },
+  };
+  await checkReadiness({ db: other }, { logger });
+  assert.equal(otherCalls, 2);
+  assert.equal(calls, 4); // niezmienione — `other` nie dzieli sprawdzenia z `slow`
+});
+
 test('503 not_configured when no database is attached', async () => {
   const result = await checkReadiness({}, { logger: quietLogger().logger });
-  assert.deepEqual(result, { ready: false, body: { status: 'not_ready', checks: { database: 'not_configured' } } });
+  assert.deepEqual(result, { ready: false, body: { status: 'not_ready', checks: { database: 'not_configured' }, write_mode: 'normal' } });
 });
 
 test('request log contains method, sanitized path, status and duration — no query string', async () => {

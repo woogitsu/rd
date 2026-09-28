@@ -10,9 +10,33 @@ Brevo Free: do 300 wysłanych wiadomości dziennie, limit wspólny dla całego k
 2. Serwer buduje migawkę odbiorców (`POST …/snapshot`): jedna wiadomość na rodzinę, tylko opiekunowie ze zgodą na kontakt, bez adresów z listy wyłączeń, bez powtórzeń adresu w kampanii. Wykluczenia są zapisane z powodem.
 3. Podgląd (`GET …/preview`) pokazuje liczbę odbiorców, wykluczenia, próbkę spersonalizowanej treści, plan dni i skróty treści oraz listy. Podgląd niczego nie wysyła. Lista adresatów (`GET …/recipients`) jest dostępna do weryfikacji, a każdy odczyt trafia do dziennika.
 4. Członek zarządu z MFA, **inny niż autor** (tworzący, ostatnio edytujący i budujący listę), zatwierdza dokładne skróty treści i listy, które widział w podglądzie. Każda późniejsza zmiana treści lub przebudowa listy cofa kampanię do szkicu i wymaga ponownego zatwierdzenia.
+
+   **Kontrola wersji edycji** (#215): kampania ma `revisionNo`, rosnący przy każdej zmianie wiersza (także z workera). `PUT …/{id}` przyjmuje opcjonalne pole `revision` — niezgodność z bieżącym `revisionNo` (odczytanym pod blokadą wiersza) daje `409 revision_conflict` zamiast cichego nadpisania treści drugiej osoby. Bez tego pola PUT działa jak dawniej (pełne zastąpienie treści). Podwójne kliknięcie tej samej edycji jest odtwarzane bez błędu.
 5. `POST …/queue` tworzy wiersze kolejki `email_outbox` (klucz `campaign:<id>:household:<id>`, unikalny) i ustala dzienny przydział kampanii. Zadanie Railway wysyła każdą wiadomość osobno i nie przekracza limitu.
-6. Webhook Brevo zapisuje wynik; bounce, skarga lub wypisanie dopisuje adres (tylko jego skrót) do listy wyłączeń i zapisuje w dzienniku potrzebę poprawy danych opiekuna.
+6. Webhook Brevo zapisuje wynik; bounce lub skarga (`spam`) dopisuje adres (tylko jego skrót) do listy wyłączeń globalnych i zapisuje w dzienniku potrzebę poprawy danych opiekuna. Wypisanie (`unsubscribed`) jest teraz preferencją kategorii, nie blokadą globalną — patrz niżej (#110).
 7. `GET /api/email/campaigns/{id}` pokazuje wysłane, oczekujące, błędy, pominięte po wpłacie i wyłączone. Wznowienie nie duplikuje wiadomości.
+
+## Kategorie komunikatów i wypisanie jednym kliknięciem (#110)
+Każda kampania ma `category`: `contribution_reminder` (przypomnienie o dobrowolnej składce, domyślna) albo `organizational` (informacja organizacyjna). Kategoria wchodzi do zatwierdzanego skrótu treści (`rd-email-content-v2`) — zmiana kategorii wymaga ponownego zatwierdzenia, tak jak zmiana tematu czy treści. Do czasu decyzji zarządu/szkoły o tym, co jest komunikatem obowiązkowym (D-06), **obie kategorie mają link wypisania** — wariant zachowawczy.
+
+- Każda wiadomość ma stopkę z linkiem wypisania, dodawaną przez serwer (poza edycją autora treści, ale zależną wyłącznie od kategorii, więc objętą tym samym skrótem i podglądem). Adres: `GET/POST /api/email/preferences?t=<token>`, gdzie token jest nieprzezroczystym, podpisanym HMAC-SHA256 (`EMAIL_UNSUBSCRIBE_SECRET`) zapisem (kampania, kategoria, skrót adresu) — bez adresu ani czytelnych identyfikatorów w URL.
+- `GET` tylko pokazuje kategorię z tokenu (bez skutku — ochrona przed skanerami linków w skrzynkach). `POST` wypisuje: idempotentnie (drugie kliknięcie tego samego linku nie tworzy drugiego zdarzenia) i bez logowania. Zły lub zmieniony token → `400 invalid_token`, bez ujawniania, która część jest niepoprawna. Obie trasy są zwolnione z kontroli `Origin` (jak webhook) i mają prosty limit żądań (na proces — patrz „Ograniczenia” niżej).
+- Nagłówki `List-Unsubscribe` i `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058) trafiają do żądania Brevo tylko, gdy `EMAIL_UNSUBSCRIBE_SECRET` i `PUBLIC_BASE_URL` są ustawione — inaczej wiadomość wychodzi bez stopki i bez tych nagłówków (nie blokuje wysyłki).
+- Stan preferencji: tabela `email_preferences_events` (tylko dopisywanie); aktywny stan dla (adres, kategoria) to ostatnie zdarzenie. Wypisanie z jednej kategorii nie blokuje innych. Skarga (`spam`) nadal blokuje wszystko, globalnie, przez `email_suppressions`.
+- Migawka i worker sprawdzają preferencję kategorii tuż przed użyciem/wysyłką (powód wykluczenia `opted_out`); wypisanie między zakolejkowaniem a wysyłką daje `suppressed / category_opted_out`, bez wysyłki.
+- Webhook `unsubscribed`: gdy zdarzenie dotyczy rozpoznanego wiersza kolejki, zapisuje preferencję dla kategorii tej kampanii (`source = 'webhook'`); bez dopasowania — tylko samo zdarzenie, bez żadnej blokady (nie znamy kategorii).
+- Audyt: `email.preference.opt_out` z kategorią i źródłem (`link`/`webhook`/`staff_on_parent_request`), nigdy z adresem.
+- **Ograniczenia tego prototypu**: limit żądań na trasę publiczną (`EMAIL_PREFERENCES_RATE_LIMIT`, domyślnie 200/min) jest licznikiem w pamięci procesu (nie działa między instancjami/replikami, nie rozróżnia adresatów po IP) — przed produkcją wymaga trwałego, per-IP licznika. Wartość domyślna jest celowo wysoka, żeby nie kolidować z automatycznym sprawdzaniem uprawnień (macierz #189 odpytuje tę trasę wieloma tożsamościami z tego samego procesu testowego) — realną ochronę przed nadużyciem trzeba dostroić przed wdrożeniem, razem z licznikiem trwałym. Trasa publiczna zwraca dziś JSON, nie stronę HTML z potwierdzeniem — wymaga uzupełnienia przed wdrożeniem. Kategoria „obowiązkowa bez wypisania” nie jest zaimplementowana (czeka na D-06).
+
+### Wysyłka testowa (`POST …/test-send`, #104)
+Board lub skarbnik z MFA mogą wysłać jedną wiadomość z bieżącą treścią kampanii (temat z prefiksem `[TEST] `, `{rodzina}` = `PRZYKŁAD`) na adres z `EMAIL_PREVIEW_RECIPIENTS` — pełne adresy skrzynek technicznych Rady, bez wieloznaczników. Adres identyczny z jakimkolwiek `guardians.email` w bazie jest odrzucany (`preview_recipient_not_allowed`), żeby pomyłkowo nie wysłać testu do rodzica. Wysyłka testowa korzysta z tego samego klienta i tych samych barier co zadanie kolejki (ten sam moduł `src/email/brevo.js`), nie ma własnej implementacji sieciowej.
+
+- Wymaga `EMAIL_SENDING_ENABLED=true`; inaczej `409 sending_disabled` bez żadnego zapytania do sieci.
+- Limit: 5 testów na kampanię i 20 na konto na dobę (UTC), liczone z `email_preview_sends`; przekroczenie daje `429`. Każda próba (udana albo zakończona błędem dostawcy) zużywa pulę dnia Brevo (`email_send_ledger`, `source = 'preview'`) — to prawdziwa wiadomość wychodząca z tego samego konta.
+- `Idempotency-Key` jak przy szkicu kampanii: powtórzone żądanie z tym samym kluczem nie wysyła drugiej wiadomości.
+- Test nie zmienia stanu kampanii, migawki ani zatwierdzenia.
+- Flaga `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` (domyślnie wyłączona — brak decyzji D-16): gdy włączona, `POST …/approve` odrzuca zatwierdzenie treści, dla której nie było jeszcze udanej próby wysyłki testowej (`preview_required`).
+- Audyt (`email.preview.sent`) zawiera skrót treści i indeks adresu na liście `EMAIL_PREVIEW_RECIPIENTS`, nigdy sam adres.
 
 Anulowanie (`POST …/cancel`) zatrzymuje wiersze oczekujące w kolejce (`cancelledMessages`). Wiersze już przejęte przez zadanie (`sending`) zadanie samo oznacza jako `cancelled` przy potwierdzeniu przed wysyłką — wyjść może najwyżej wiadomość, której przekazanie do Brevo już trwa (jedna na proces zadania). Wiadomości przyjętej przez Brevo nie da się cofnąć.
 
@@ -53,11 +77,20 @@ Serwer odrzuca słownictwo sugerujące zadłużenie (ten sam słownik co kartki 
 - Przebieg zatrzymuje się po awarii bazy, po sygnale `SIGTERM`/`SIGINT` (redeploy lub zatrzymanie usługi Railway; bieżąca wiadomość jest kończona, następna nie jest zaczynana, `stopped_reason = 'shutdown'`) oraz po odmowie konta przez Brevo. Wiersze przejęte przez przebieg, których wysyłka się nie rozpoczęła, od razu wracają do `queued` bez zużycia próby (`email.requeued`). Jeśli baza jest wtedy niedostępna, zrobi to `recoverStale` po wygaśnięciu dzierżawy (`lease_expired`), a nie `delivery_unknown`.
 - 401, 402 i 403 z Brevo (zły lub obrócony klucz, brak kredytów, nieuprawniony nadawca lub IP) dotyczą konta, nie odbiorcy. Przebieg kończy się po pierwszej takiej odpowiedzi z `stopped_reason = 'provider_account_rejected'`. Wiadomość wraca do kolejki bez zużycia próby. Na kampanii powstaje zdarzenie `email.campaign.provider_rejected`. Kampania nie przechodzi w `done`. Każdy kolejny przebieg wykonuje najwyżej jedno takie wywołanie, dopóki konfiguracja nie zostanie poprawiona. Trwała pauza zdejmowana jawnie przez zarząd nie jest jeszcze zaimplementowana. 400 (błędny adres) nadal dotyczy tylko jednej wiadomości.
 
+## Harmonogram startu, wstrzymanie i wznowienie (#130)
+- `send_not_before` (opcjonalne) odracza start wysyłki kampanii już zakolejkowanej (`sending`); zadanie pomija taką kampanię, dopóki termin nie nadejdzie. Pole jest traktowane jak treść: zmienia się tylko w szkicu/przed zatwierdzeniem i każda zmiana cofa kampanię do szkicu (`PUT …` z `sendNotBefore`), więc nie da się przesunąć startu po zatwierdzeniu bez wiedzy zatwierdzającego.
+- `POST …/pause` (board/treasurer, MFA) wstrzymuje wysyłkę: kampania `sending → paused`. Nie rusza wiersza, którego wysyłka już trwa (`send_started_at` ustawione) — ten kończy się normalnie (`sent`/`failed`); zatrzymuje tylko przejmowanie kolejnych wierszy. Idempotentne — druga pauza jest no-opem (200, bez nowego zdarzenia audytu).
+- `POST …/resume` (board/treasurer, MFA) wraca do `sending`. Nie wymaga ponownego zatwierdzenia — treść i lista odbiorców są niezmienne przez cały czas `sending`/`paused`. Idempotentne jak pauza.
+- `paused → cancelled` jest dozwolone (`POST …/cancel`), tak jak z `sending`. Wstrzymanie tygodniowe kampanii „brak wpisu wpłaty” i wpłata w tym czasie: po wznowieniu rodzina, która zapłaciła, dostaje `skipped` (`payment_recorded`) — recheck dzieje się przy każdym przejęciu wiersza, niezależnie od pauzy.
+- Opcjonalne okno dni/godzin wysyłki (`EMAIL_SEND_WINDOW_*`, patrz zmienne środowiskowe) jest wyłączone domyślnie — termin i godziny ustala zarząd (D-16). Włączone, poza oknem przebieg kończy się `stopped_reason = 'outside_send_window'` bez zmian w kolejce (sprawdzane przed dotknięciem czegokolwiek, także w dry-run).
+- **Nie jest częścią tego PR** (issue #130 pozostaje częściowo otwarte): konfiguracja usługi cron jako kod (`railway.email-worker.json`), `GET /api/email/campaigns/{id}/worker-status` i alarm „brak przebiegów”, oraz `EMAIL_BLACKOUT_DATES` (ferie). Cron pozostaje opisany tylko w `docs/RAILWAY_MIGRATION.md`/tym pliku, nie jest wdrożony.
+
 ## Dzienny limit
 - Dziennik `email_send_ledger` (dzień UTC, tylko dopisywanie) liczy wiadomości kampanii, które **mogły wyjść** (przyjęte przez dostawcę albo z wynikiem niepewnym), oraz inne wiadomości konta (`source = 'other'`, funkcja `recordOtherSends`). Wpis powstaje razem z wynikiem, nie przy przejęciu. Jawna odmowa dostawcy (np. 400, 401/403), wiersze zwrócone do kolejki i zatrzymany przebieg nie zużywają limitu. Wiadomości w locie (`sending` bez wpisu) są liczone do puli, więc równoległe przebiegi jej nie przekroczą (#172).
 - Pula dnia = `EMAIL_DAILY_LIMIT` (domyślnie 300) − `EMAIL_DAILY_RESERVED` (rezerwa na inne wiadomości konta, np. zaproszenia, wysyłki ręczne z panelu Brevo) − wszystkie wpisy dnia.
 - Przydział kampanii na dzień = max(ceil(N / `EMAIL_CAMPAIGN_MIN_DAYS`), `EMAIL_CAMPAIGN_MIN_DAILY`), nie więcej niż pula konta. Dla ~2000 adresatów: 286 dziennie, 7 dni.
-- Założenie: doba Brevo liczona jest w UTC. Jeżeli dostawca liczy inaczej, rezerwa `EMAIL_DAILY_RESERVED` powinna pokryć różnicę. Wiadomości wysłane poza aplikacją trzeba dopisać do dziennika lub pokryć rezerwą.
+- Doba resetu limitu na koncie Brevo nie jest udokumentowana jednoznacznie (część źródeł podaje UTC, część strefę konta). Kolumna `email_send_ledger.day` (i `email_worker_runs.day`) zostaje dobą UTC dla zgodności, ale pozostała pula (`remainingQuota`, #84) liczy **większe** z dwóch zużyć: doby UTC (po kolumnie `day`) i doby strefy konta `EMAIL_QUOTA_TIMEZONE` (domyślnie `Europe/Brussels`, po `recorded_at`). Żadna z dwóch dób nie zostaje więc przekroczona; w dni graniczne (23:xx UTC) tryb ten może obniżyć przepustowość o kilka wiadomości — akceptowalne przy kampanii rozłożonej na ≥7 dni.
+- **Przed produkcją**: sprawdzić w ustawieniach konta Brevo, w jakiej strefie faktycznie liczony jest limit, i ustawić `EMAIL_QUOTA_TIMEZONE` zgodnie (D-17). Wiadomości wysłane poza aplikacją trzeba dopisać do dziennika (`recordOtherSends`) lub pokryć rezerwą `EMAIL_DAILY_RESERVED`.
 
 ## Zadanie na Railway
 `npm run email:worker` wykonuje jeden przebieg i kończy proces. Domyślnie jest to **dry-run**: te same sprawdzenia i renderowanie, zapis przebiegu w `email_worker_runs`, bez zmian w kolejce i dzienniku limitu i bez połączenia z Brevo. Wysyłka: `npm run email:worker -- --send` przy `EMAIL_SENDING_ENABLED=true`.
@@ -68,25 +101,88 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 - Log przebiegu zawiera wyłącznie liczby i kody.
 
 ## Webhook Brevo
-`POST /api/email/webhooks/brevo`. Brevo nie podpisuje treści HMAC; weryfikacja to wspólny sekret `BREVO_WEBHOOK_SECRET` (min. 32 znaki) przesyłany w nagłówku `Authorization: Bearer <sekret>` (konfiguracja „auth” webhooka Brevo) albo jako hasło Basic Auth. Porównanie w stałym czasie; zły lub brak sekretu → 401, brak konfiguracji → 503. To jedyna trasa API zwolniona z kontroli `Origin`. Zapisujemy tylko zweryfikowane zdarzenia, bez adresu (skrót SHA-256), z deduplikacją. `hard_bounce`, `invalid_email`, `blocked`, `spam`, `unsubscribed` dopisują adres do listy wyłączeń; bounce zmienia stan wiersza na `bounced`. Zdjęcie adresu z listy wyłączeń nie jest zaimplementowane (wymaga procedury i decyzji).
+`POST /api/email/webhooks/brevo`. Brevo nie podpisuje treści HMAC; weryfikacja to wspólny sekret `BREVO_WEBHOOK_SECRET` (min. 32 znaki) przesyłany w nagłówku `Authorization: Bearer <sekret>` (konfiguracja „auth” webhooka Brevo) albo jako hasło Basic Auth. Porównanie w stałym czasie; zły lub brak sekretu → 401, brak konfiguracji → 503. To jedyna trasa API zwolniona z kontroli `Origin` (obok `/api/email/preferences`, niżej). Zapisujemy tylko zweryfikowane zdarzenia, bez adresu (skrót SHA-256), z deduplikacją. `hard_bounce`, `invalid_email`, `blocked`, `spam` dopisują adres do listy wyłączeń globalnych; bounce zmienia stan wiersza na `bounced`. `unsubscribed` zapisuje preferencję kategorii kampanii, nie blokadę globalną (#110).
+- Rotacja sekretu (#139): opcjonalne `BREVO_WEBHOOK_SECRET_PREVIOUS` — przez czas rotacji akceptowane są oba sekrety (zdarzenie z poprzednim loguje się jako `email.webhook.previous_secret_used`, bez treści zdarzenia). Po usunięciu zmiennej stary sekret znów daje 401. Ograniczenie do zakresów IP Brevo (`BREVO_WEBHOOK_ALLOWED_CIDRS`) **nie jest zaimplementowane** w tym PR.
+
+## Lista wyłączeń: przegląd i zdjęcie blokady (#94)
+Blokada (`email_suppressions`) to zdarzenie, nie stan — adres może być zablokowany, odblokowany i ponownie zablokowany; historia jest kompletna i nic nie jest nadpisywane ani usuwane. „Aktywna blokada” dla danego adresu to **wyłącznie** wynik widoku `email_active_suppressions` (ostatnie zdarzenie blokady nowsze niż ostatnie zdjęcie blokady) — migawka kampanii i worker sprawdzają wyłącznie ten widok, nigdy surowej tabeli `email_suppressions`. Od #110 `unsubscribed` już nie tworzy blokady globalnej (patrz wyżej), więc powodem aktywnej blokady w praktyce jest już tylko `complaint` z grupy wymagającej `parent_request`.
+
+- `GET /api/email/suppressions?schoolYearId=…` (board/treasurer, MFA) — lista aktywnych blokad: skrót adresu, powód, data, liczba zdarzeń historii, oraz `guardianId`/`householdId` odzyskane po stronie serwera (skrót bieżącego adresu każdego opiekuna), i adres wyłącznie maskowany (`maskEmail`). Każdy odczyt trafia do dziennika audytu.
+- Zdjęcie blokady to **dwa kroki jak przy zatwierdzeniu kampanii** — zgłasza jedna osoba, zatwierdza inna:
+  1. `POST /api/email/suppressions/{emailHash}/release-request` (board/treasurer, MFA) — `releaseReason` (`address_corrected`, `provider_unblocked`, `bounce_reviewed`, `parent_request`) i opcjonalny `confirmationNote` (krótki kod, np. `parent_email_reply`, bez treści rozmowy). Blokadę po `complaint`/`unsubscribed` można zgłosić do zdjęcia wyłącznie z powodem `parent_request` — inaczej `409 release_reason_not_allowed`.
+  2. `POST /api/email/suppressions/{emailHash}/release` (board/treasurer, MFA, **inna osoba niż zgłaszająca**) z `requestId` — tworzy nowy, niezmienialny zapis w `email_suppression_releases` (`released_by`, `approved_by` — różne osoby, wymuszone też w bazie). Ta sama osoba dostaje `403 self_approval_forbidden`.
+- Zmiana adresu opiekuna (`PATCH /api/guardians/:id/contact`) daje nowy skrót — rodzina automatycznie wraca do migawki przy następnym budowaniu listy, bez zdejmowania żadnej blokady starego adresu.
+- Ograniczenie tego prototypu: przedstawiciel klasy nie widzi nawet licznika „adresów do sprawdzenia” w swoich klasach (opcja z issue #94 zależna od D-08) — nie jest zaimplementowane.
+
+`GET`/`POST /api/email/preferences?t=…` (#110) — patrz „Kategorie komunikatów” wyżej. Te dwie trasy oraz webhook Brevo są jedynymi trasami API zwolnionymi z kontroli `Origin`.
+
+## Raport doręczeń i lista operacyjna (#139)
+- `GET /api/email/campaigns/{id}/report` (board/treasurer, MFA): liczby per stan kolejki (`outbox`), per ostatnie zapisane zdarzenie dostawcy (`lastProviderEvent`, brak zdarzenia = `none`), per rozstrzygnięcie (`resolutions`) i wykluczenia. Wyłącznie agregaty — bez adresów, imion i identyfikatorów rodzin (sprawdzane testem). Eksport CSV i dostęp Komisji Rewizyjnej (D-09) **nie są zaimplementowane**.
+- `GET /api/email/campaigns/{id}/attention` (board/treasurer, MFA, dziennik odczytu): wiersze w stanie `failed` (w tym `delivery_unknown`) i adresy z ≥3 zdarzeniami `soft_bounce`. Adres zawsze maskowany; `outboxId`/`providerMessageId` (= `X-Mailin-custom`) do wyszukania w logach Brevo.
+- `POST /api/email/campaigns/{id}/resolutions` (`{ outboxId, resolution: 'confirmed_delivered'|'confirmed_not_sent', evidenceCode }`), tylko dla wierszy `failed`; tylko dopisywanie (`email_outbox_resolutions`), historia wiersza outbox się nie zmienia. `confirmed_not_sent` wymaga roli `board` (twierdzenie poważniejsze — otwiera możliwość przebiegu uzupełniającego); `confirmed_delivered` — board/treasurer. Podwójne kliknięcie zwraca istniejący zapis zamiast tworzyć drugi. **Pełna zasada czterech oczu (inna osoba niż każdy, kto wcześniej działał na wierszu) nie jest zaimplementowana** — obecnie kontrolą jest tylko silniejsza rola dla `confirmed_not_sent`.
+- **Nie jest częścią tego PR**: przebieg uzupełniający (`followup`) do rodzin `confirmed_not_sent`, skrypt `npm run email:reconcile`, CIDR webhooka.
 
 ## Zmienne środowiskowe
 | Zmienna | Znaczenie |
 |---|---|
 | `EMAIL_SENDING_ENABLED` | `true` włącza wysyłkę; domyślnie wyłączona |
 | `EMAIL_TEST_ALLOWLIST` | poza produkcją: dozwolone adresy techniczne (`*@domena` lub pełny adres, po przecinku) |
+| `EMAIL_PREVIEW_RECIPIENTS` | (#104) adresy dozwolone dla `POST …/test-send` — wyłącznie pełne adresy skrzynek technicznych Rady, bez wieloznaczników, po przecinku |
+| `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` | (#104) `true` wymaga udanej wysyłki testowej dla bieżącej treści przed zatwierdzeniem kampanii; domyślnie wyłączone (D-16 nie zapadła) |
 | `EMAIL_DAILY_LIMIT` | limit konta Brevo na dobę (domyślnie 300) |
 | `EMAIL_DAILY_RESERVED` | rezerwa na inne wiadomości konta (domyślnie 0) |
+| `EMAIL_QUOTA_TIMEZONE` | strefa doby limitu konta Brevo (domyślnie `Europe/Brussels`); nieznana strefa wraca do domyślnej |
 | `EMAIL_CAMPAIGN_MIN_DAYS` | minimalna liczba dni rozłożenia kampanii (domyślnie 7) |
 | `EMAIL_CAMPAIGN_MIN_DAILY` | minimalny dzienny przydział małej kampanii (domyślnie 50) |
 | `EMAIL_BATCH_SIZE` | wiersze na jeden przebieg (domyślnie 50) |
 | `EMAIL_MAX_ATTEMPTS` | maks. prób przy odmowie z możliwością ponowienia (domyślnie 5; 429 i brak połączenia nie zużywają próby) |
 | `EMAIL_BREAKER_UNCERTAIN` | liczba kolejnych wyników niepewnych (5xx, timeout), po której przebieg się zatrzymuje (domyślnie 2) |
+| `EMAIL_SEND_WINDOW_ENABLED` | `true` włącza okno dni/godzin wysyłki (#130); domyślnie wyłączone — termin ustala zarząd (D-16) |
+| `EMAIL_SEND_WINDOW_TIMEZONE` | strefa okna wysyłki (domyślnie `Europe/Brussels`) |
+| `EMAIL_SEND_WINDOW_DAYS` | dni tygodnia ISO, 1=poniedziałek…7=niedziela (domyślnie `1-5`) |
+| `EMAIL_SEND_WINDOW_START` / `EMAIL_SEND_WINDOW_END` | godziny okna `HH:MM` w strefie okna (domyślnie `09:00`–`18:00`) |
 | `BREVO_API_KEY` | sekret usługi zadania; nigdy w repo ani frontendzie |
 | `BREVO_FROM_EMAIL`, `BREVO_FROM_NAME` | zweryfikowany nadawca (D-17) |
+| `BREVO_REPLY_TO` | adres odpowiedzi (#148); na produkcji wymagany — brak daje `reply_to_not_configured` |
 | `BREVO_WEBHOOK_SECRET` | wspólny sekret webhooka |
+| `BREVO_WEBHOOK_SECRET_PREVIOUS` | poprzedni sekret, akceptowany dodatkowo na czas rotacji (#139) |
+| `EMAIL_UNSUBSCRIBE_SECRET` | (#110) sekret HMAC do podpisu tokenu wypisania jednym kliknięciem; brak = brak stopki i brak nagłówków `List-Unsubscribe*` |
+| `PUBLIC_BASE_URL` | adres bazowy serwera do budowy linku wypisania (i kontroli `Origin` — już używany gdzie indziej) |
+| `EMAIL_PREFERENCES_RATE_LIMIT` | (#110) limit żądań na `GET`/`POST /api/email/preferences` na proces na minutę (domyślnie 200 — patrz „Ograniczenia” niżej) |
+| `EMAIL_DKIM_HOSTS` | (dla `npm run email:preflight`) nazwy hostów DKIM do sprawdzenia w DNS (np. `mail._domainkey.rada.example.invalid`), po przecinku |
 
 ## Wdrożenie
 Brevo API key w sekrecie serwera, zweryfikowana domena, SPF/DKIM/DMARC, osobny adres nadawcy i uwierzytelniony webhook. Nie wysyłać poczty bezpośrednio z przeglądarki ani nie ujawniać klucza w frontendzie. Najpierw testy na kilku własnych adresach technicznych i potwierdzenie szablonu przez Radę.
+
+`liveRunRefusal` (`src/email/brevo.js`) odmawia przebiegu na żywo, gdy adres nadawcy jest w domenie darmowej skrzynki (`sender_free_domain`, lista orientacyjna w `FREE_EMAIL_DOMAINS`) albo — na produkcji — gdy brak `BREVO_REPLY_TO` (`reply_to_not_configured`). Wiadomość wysyłana przez `createBrevoTransport` przekazuje `replyTo`, jeśli jest ustawiony.
+
+### Checklista domeny nadawcy (D-17)
+Do odhaczenia przez osobę zarządzającą kontem Brevo i domeną, zanim `EMAIL_SENDING_ENABLED=true` trafi na jakiekolwiek środowisko z prawdziwymi adresami. Wynik (kto, data, ustalenie) zapisać w rejestrze decyzji ([DECISIONS.md](DECISIONS.md), D-17) — nie w repozytorium kodu.
+
+| Krok | Opis | Wynik (przykład) |
+|---|---|---|
+| 1 | Domena nadawcy należy do szkoły lub Rady i jest wskazana w D-17 — **nie** domena prywatna ani darmowa (patrz `FREE_EMAIL_DOMAINS`). | kto sprawdził / data / TAK-NIE |
+| 2 | Rekord weryfikacyjny Brevo (`brevo-code`) i rekordy DKIM z panelu Brevo dodane w DNS domeny; status domeny w Brevo = „authenticated”. | kto / data / status Brevo |
+| 3 | DMARC: istnieje rekord `_dmarc.<domena>` z `rua=mailto:<skrzynka funkcyjna>`. Start od `p=none` z monitoringiem; zaostrzenie do `quarantine`/`reject` po okresie obserwacji — decyzja zarządcy domeny. | kto / data / treść rekordu |
+| 4 | SPF: wg aktualnej dokumentacji Brevo osobny rekord SPF dla Brevo nie jest wymagany (Brevo używa własnej domeny zwrotnej). Jeśli domena ma istniejący SPF, sprawdzić, że zmiana go nie psuje (limit 10 wyszukiwań DNS). | kto / data / TAK-NIE |
+| 5 | Wyrównanie DMARC: domena w nagłówku `From` = domena z uwierzytelnionym DKIM. | kto / data / TAK-NIE |
+| 6 | `BREVO_REPLY_TO` to obsługiwana skrzynka funkcyjna Rady; wskazana osoba faktycznie odpowiada na pytania rodziców. | kto / data / skrzynka + osoba |
+| 7 | Test wysyłki na skrzynki techniczne u ≥3 dostawców (np. Gmail, Outlook, lokalny belgijski dostawca) i odczyt nagłówka `Authentication-Results` (oczekiwane: `dkim=pass`, `dmarc=pass`). | kto / data / wynik na dostawcę |
+| 8 | Wynik `npm run email:preflight` (poniżej) dołączony do checklisty odbioru #41 i do warunków D-20. | data / skrót wyniku (bez sekretów) |
+
+Przykładowa (syntetyczna) domena do dokumentacji przed decyzją D-17: `rada.example.invalid`. Prawdziwa domena szkoły/Rady nie trafia do repozytorium przed D-17.
+
+### `npm run email:preflight`
+Sprawdza konfigurację i publiczne rekordy DNS **bez wysyłki** i bez `BREVO_API_KEY` (nie łączy się z API Brevo). Wypisuje jeden wiersz na sprawdzenie: `ok`, `missing` albo `warning`, z krótkim opisem — nigdy z sekretem ani adresem rodziny.
+
+Sprawdzane pozycje:
+- `sender_email` — czy `BREVO_FROM_EMAIL` jest ustawiony i nie jest domeną darmową (`warning`, gdy jest — na żywo to `sender_free_domain`);
+- `reply_to` — czy `BREVO_REPLY_TO` jest ustawiony;
+- `webhook_secret` — czy `BREVO_WEBHOOK_SECRET` ma ≥32 znaki;
+- `test_recipients` — czy `EMAIL_TEST_ALLOWLIST` lub `EMAIL_PREVIEW_RECIPIENTS` (#104) są ustawione;
+- `dmarc` — rekord TXT `_dmarc.<domena nadawcy>`: brak → `missing`, `p=none` → `warning`, `p=quarantine`/`p=reject` → `ok`;
+- `dkim` — dla każdego hosta z `EMAIL_DKIM_HOSTS`: obecność rekordu TXT lub CNAME w DNS.
+
+Wynik jest deterministyczny i niczego nie zapisuje w bazie; ponowne uruchomienie daje ten sam wynik dla tej samej konfiguracji i stanu DNS.
 
 Źródło limitu: https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan

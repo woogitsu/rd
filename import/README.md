@@ -35,7 +35,7 @@ Kroki 1–3 (plik, mapowanie, sprawdzenie) nadal działają wyłącznie lokalnie
 
 ## Krok 4: podgląd i zapis na serwerze (prototyp)
 
-Opcjonalny, dostępny tylko w nowym API na PostgreSQL (`src/pg/routes/import.js`). **To nie jest zgoda na import danych rodzin** — do czasu decyzji D-01–D-06 w [rejestrze decyzji](../docs/DECISIONS.md) używamy wyłącznie danych fikcyjnych. Na środowisku `APP_ENV=production` trasy zwracają `403 import_disabled`, dopóki administrator nie ustawi `IMPORT_ENABLED=true` po decyzji szkoły.
+Opcjonalny, dostępny tylko w nowym API na PostgreSQL (`src/pg/routes/import.js`). **To nie jest zgoda na import danych rodzin** — do czasu decyzji D-01–D-06 w [rejestrze decyzji](../docs/DECISIONS.md) używamy wyłącznie danych fikcyjnych. Na środowisku `APP_ENV=production` (rozpoznawane jak w `isProductionEnv`, `src/pg/bootstrap-admin.js`: także `prod`, niezależnie od wielkości liter — #166) trasy zwracają `403 import_disabled`, dopóki administrator nie ustawi `IMPORT_ENABLED=true` po decyzji szkoły. Inna, nierozpoznana wartość `APP_ENV` albo jej brak **nie** jest dziś traktowana jak produkcja (założenie do potwierdzenia w D-20/#166, wspólne dla całego repo).
 
 Przepływ:
 

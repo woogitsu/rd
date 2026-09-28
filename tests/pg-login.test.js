@@ -8,9 +8,11 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { createInvitation } from '../src/pg/auth.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import {
-  checkPasswordPolicy, hashPassword, needsRehash, parseHash, verifyPassword, verifyPasswordOrDummy,
+  checkPasswordPolicy, hashPassword, MAX_CONCURRENT, MAX_WAITING, needsRehash, parseHash, verifyPassword,
+  verifyPasswordOrDummy, withSlot,
 } from '../src/pg/password.js';
 import { LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
+import { freshMfaForbiddenCode, loadAuthorizationContext } from '../src/pg/authorization.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const KEY = randomBytes(32).toString('base64');
@@ -96,6 +98,15 @@ test('hash scrypt: format z parametrami, poprawne i błędne hasło, unikalna s�
   assert.equal(needsRehash(hash, {}), true, 'domyślny koszt 2^17 wymaga przeliczenia');
   assert.equal(parseHash('scrypt$1024$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), null, 'zbyt słaby koszt odrzucony');
   assert.equal(parseHash('md5$abc'), null);
+  // #203: N=2^20, r=16 z bazy (dopuszczone samym zakresem log2/r wcześniej) dają
+  // 128·N·r ≈ 2 GiB na jedno obliczenie — traktowane jak nieprawidłowy hash
+  // (fikcyjna weryfikacja niżej), bez próby alokacji tej pamięci.
+  assert.equal(
+    parseHash('scrypt$1048576$16$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+    null,
+    'koszt pamięciowy 128·N·r > budżetu jest odrzucony',
+  );
+  assert.equal(await verifyPasswordOrDummy('cokolwiek', 'scrypt$1048576$16$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', FAST), false);
   assert.equal(await verifyPasswordOrDummy('cokolwiek dluzszego', null, FAST), false);
 });
 
@@ -503,6 +514,23 @@ test('przyjęcie zaproszenia: wygasłe odrzucone; istniejące konto wymaga obecn
   assert.deepEqual(grants.rows.map((row) => row.role), ['representative']);
 });
 
+// #146: admin zaprasza WŁASNY adres i przyjmuje zaproszenie własnym hasłem —
+// samonadanie roli z pominięciem drugiej osoby. Przyjęcie jest odrzucane
+// (invalid_invitation), rola nie powstaje, zaproszenie zostaje nieprzyjęte.
+test('#146: zaproszenie wystawione przez to samo konto nie nadaje mu roli (HTTP)', async () => {
+  const self = await seedPasswordUser({ userId: 'u-login-selfinv', roles: [{ role: 'admin' }] });
+  const { secret, invitationId } = await createInvitation(env, {
+    actorId: self.userId, email: self.email, role: 'treasurer', schoolYearId: 'y-test',
+  });
+  const accept = await post('/api/invitations/accept', { token: secret, password: self.password });
+  assert.equal(accept.status, 400);
+  assert.deepEqual(await accept.json(), { error: 'invalid_invitation' });
+  const grants = await db.query("SELECT role FROM role_grants WHERE user_id = 'u-login-selfinv' AND role = 'treasurer'");
+  assert.equal(grants.rows.length, 0);
+  const invitation = await db.query('SELECT accepted_at FROM invitations WHERE id = $1', [invitationId]);
+  assert.equal(invitation.rows[0].accepted_at, null);
+});
+
 // --- Zmiana i reset hasła ---------------------------------------------------------------
 
 test('zmiana hasła wymaga obecnego hasła, wycofuje inne sesje i rotuje bieżącą', async () => {
@@ -529,6 +557,31 @@ test('zmiana hasła wymaga obecnego hasła, wycofuje inne sesje i rotuje bieżą
   const reasons = await db.query("SELECT revoked_reason FROM sessions WHERE user_id = 'u-login-change' AND revoked_at IS NOT NULL ORDER BY revoked_reason");
   assert.deepEqual(reasons.rows.map((row) => row.revoked_reason), ['password_changed', 'rotated']);
   assert.equal((await auditRows('auth.password_changed')).filter((row) => row.actor_id === 'u-login-change').length, 1);
+});
+
+// #150 (krok w górę): rotacja przy zmianie hasła przenosi MOMENT potwierdzenia
+// MFA, nie ustawia now() — inaczej przejęta sesja ze starym MFA + znane hasło
+// dawały „świeże” MFA bez kodu (np. dla eksportu rocznego, nadania roli).
+test('#150: zmiana hasła nie odświeża świeżości MFA (krok w górę nie jest omijany)', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-stepup' });
+  const cookie = cookieFrom(await login(account));
+  await db.query(
+    "UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-login-stepup' AND revoked_at IS NULL",
+  );
+  const before = (await db.query(
+    "SELECT mfa_verified_at FROM sessions WHERE user_id = 'u-login-stepup' AND revoked_at IS NULL",
+  )).rows[0].mfa_verified_at;
+  const changed = await post('/api/password/change', { currentPassword: account.password, newPassword: newPassword() }, { cookie });
+  assert.equal(changed.status, 200);
+  const rotatedCookie = cookieFrom(changed);
+  const after = (await db.query(
+    "SELECT mfa_verified_at FROM sessions WHERE user_id = 'u-login-stepup' AND revoked_at IS NULL",
+  )).rows;
+  assert.equal(after.length, 1);
+  assert.equal(new Date(after[0].mfa_verified_at).getTime(), new Date(before).getTime(), 'moment MFA przeniesiony, nie now()');
+  const context = await loadAuthorizationContext(request('/api/session', { cookie: rotatedCookie }), env);
+  assert.equal(context.session.mfaVerified, true);
+  assert.equal(freshMfaForbiddenCode(context), 'mfa_stale');
 });
 
 test('reset hasła: token tylko od administratora (admin + MFA), jednorazowy, nowy unieważnia stary', async () => {
@@ -797,4 +850,33 @@ test('#193: udany reset unieważnia pozostałe otwarte tokeny konta', async () =
   );
   assert.equal((await post('/api/password/reset', { token, newPassword: newPassword() }, { ip: nextIp() })).status, 200);
   assert.equal((await post('/api/password/reset', { token: secret, newPassword: newPassword() }, { ip: nextIp() })).status, 400);
+});
+
+// #203: kolejka scrypt pełna (np. zalew żądań logowania z jednego IP) — /api/login
+// odpowiada 503 login_busy z Retry-After, BEZ liczenia scrypt dla tego żądania,
+// bez wpisu do licznika prób (login_rate_limits) i bez zdarzenia audytu.
+test('#203: pełna kolejka scrypt daje 503 login_busy z Retry-After, bez wpływu na licznik prób i audyt', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-203busy' });
+  const ip = nextIp();
+  // Zajmujemy wszystkie trwające i oczekujące miejsca atrapą, która czeka aż test ją zwolni.
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const occupied = Array.from({ length: MAX_CONCURRENT + MAX_WAITING }, () => withSlot(() => held).catch(() => {}));
+  try {
+    const busy = await login(account, { ip });
+    assert.equal(busy.status, 503);
+    assert.equal((await busy.json()).error, 'login_busy');
+    assert.equal(busy.headers.get('Retry-After'), '5');
+    // Rezerwacja jest tworzona i od razu zwalniana (GREATEST(-1, 0) na świeżym wierszu
+    // zostaje przy 0) — licznik prób nie rośnie, tak jak przy udanym logowaniu.
+    const after = (await db.query(
+      "SELECT failure_count FROM login_rate_limits WHERE scope_type = 'ip' AND scope_hash = $1",
+      [scopeHash('ip', ip)],
+    )).rows;
+    assert.deepEqual(after.map((r) => r.failure_count), [0], 'login_busy nie liczy się jako próba');
+    assert.equal((await auditRows('auth.login_failed')).filter((row) => JSON.stringify(row).includes(ip)).length, 0);
+  } finally {
+    release();
+    await Promise.all(occupied);
+  }
 });

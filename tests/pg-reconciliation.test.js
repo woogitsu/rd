@@ -663,6 +663,27 @@ test('a payment and the ledger entry that books it cannot both be matched in one
       ledger_entry_id, created_by, idempotency_key) VALUES ('m-direct', $1, $2, 'le-dup', 'u-treasurer', 'direct-match-1')`,
     [first.id, first.lineIds[1]]), /bank_match_already_matched_via_payment/);
 
+    // #105: ten sam cel nie może być aktywnie powiązany w dwóch uzgodnieniach roku,
+    // więc przed kolejnym scenariuszem cofamy powiązanie z poprzedniego uzgodnienia.
+    const revokeActive = async (reconciliationId) => {
+      const { rows } = await db.query(
+        'SELECT id FROM bank_reconciliation_matches WHERE reconciliation_id = $1 AND revoked_at IS NULL', [reconciliationId]);
+      for (const { id: activeId } of rows) {
+        const response = await call(`/api/reconciliations/${reconciliationId}/matches/${activeId}/revocation`, {
+          method: 'POST', cookie: cookies.treasurer, body: { reason: 'Kolejny scenariusz testu' },
+        });
+        assert.equal(response.status, 200);
+      }
+    };
+    const blocked = await draftWithLines(call, cookies, [2500]);
+    const elsewhere = await matchCall(call, cookies.treasurer, blocked.id, { statementLineId: blocked.lineIds[0], ledgerEntryId: 'le-dup' });
+    assert.equal(elsewhere.status, 409);
+    assert.deepEqual(await elsewhere.json(), { error: 'matched_in_other_reconciliation', reconciliationId: first.id });
+    await assert.rejects(db.query(`INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id,
+      payment_entry_id, created_by, idempotency_key) VALUES ('m-elsewhere', $1, $2, 'p-dup', 'u-treasurer', 'direct-match-0')`,
+    [blocked.id, blocked.lineIds[0]]), /bank_match_in_other_reconciliation/);
+    await revokeActive(first.id);
+
     // Odwrotna kolejność: najpierw wpis księgi, potem wpłata.
     const second = await draftWithLines(call, cookies, [2500, 2500]);
     assert.equal((await matchCall(call, cookies.treasurer, second.id, { statementLineId: second.lineIds[0], ledgerEntryId: 'le-dup' })).status, 201);
@@ -686,6 +707,7 @@ test('a payment and the ledger entry that books it cannot both be matched in one
     assert.equal(revoked.status, 200);
     assert.equal((await matchCall(call, cookies.treasurer, second.id, { statementLineId: second.lineIds[1], paymentEntryId: 'p-dup' })).status, 201);
 
+    await revokeActive(second.id);
     // Dwa równoległe żądania (wpłata i jej wpis) — jedno 201, drugie 409.
     const third = await draftWithLines(call, cookies, [2500, 2500]);
     const raced = await Promise.all([
@@ -778,6 +800,10 @@ test('a correction after matching blocks confirmation with a list of inconsisten
 
     const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
     assert.equal(detail.summary.inconsistentMatchCount, 3);
+    // #165 pkt 4: wszystkie 3 pary są teraz niezgodne kwotowo — żadna nie liczy
+    // się jako poprawnie dopasowana, choć żadna pozycja nie jest "bez pary".
+    assert.equal(detail.summary.matchedLineCount, 0);
+    assert.equal(detail.summary.unmatchedLineCount, 0);
 
     const confirm = (cookie, body = { confirmationNote: 'Sprawdzone z wyciągiem' }) =>
       call(`/api/reconciliations/${draft.id}/confirm`, { method: 'POST', cookie, body });
@@ -840,6 +866,10 @@ test('pre-existing double-counted matches are reported and block confirmation wi
     });
     const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
     assert.equal(detail.summary.inconsistentMatchCount, 2);
+    // #165 pkt 4: powiązania niespójne (tu: podwójne ujęcie) nie liczą się jako
+    // poprawnie dopasowane — mają własną kategorię, nie wchodzą do matchedLineCount.
+    assert.equal(detail.summary.matchedLineCount, 0);
+    assert.equal(detail.summary.unmatchedLineCount, 0);
     assert.ok(detail.inconsistentMatches.every((m) => m.reasons.includes('double_counted') && !m.reasons.includes('amount_mismatch')));
     const refused = await call(`/api/reconciliations/${draft.id}/confirm`, {
       method: 'POST', cookie: cookies.board, body: { confirmationNote: 'Sprawdzone z wyciągiem' },
@@ -847,6 +877,387 @@ test('pre-existing double-counted matches are reported and block confirmation wi
     assert.equal(refused.status, 409);
     assert.deepEqual((await refused.json()).matches.map((m) => m.matchId).sort(), ['m-old-1', 'm-old-2']);
     assert.equal((await db.query('SELECT count(*)::int AS n FROM bank_reconciliation_matches WHERE revoked_at IS NULL')).rows[0].n, 2);
+  } finally {
+    await db.close();
+  }
+});
+
+// #165 pkt 4: matchedLineCount/unmatchedLineCount/inconsistentMatchCount muszą się
+// sumować do lineCount, także przy mieszance wszystkich trzech kategorii naraz.
+test('summary counts split matched, unmatched and inconsistent lines into three disjoint categories', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await seedPayments(db, [
+      ['p-good', 'h-1', 1000, '2026-09-14', 'bank'],
+      ['p-stale', 'h-2', 2000, '2026-09-15', 'bank'],
+    ]);
+    const draft = await draftWithLines(call, cookies, [1000, 2000, 3000]);
+    const okMatch = await matchCall(call, cookies.treasurer, draft.id, { statementLineId: draft.lineIds[0], paymentEntryId: 'p-good' });
+    assert.equal(okMatch.status, 201);
+    const staleMatch = await matchCall(call, cookies.treasurer, draft.id, { statementLineId: draft.lineIds[1], paymentEntryId: 'p-stale' });
+    assert.equal(staleMatch.status, 201);
+    // draft.lineIds[2] (3000) zostaje bez żadnej pary.
+
+    // Stan, który normalny przepływ korekty dziś blokuje (409 active_bank_match,
+    // patrz test wyżej) — odtworzony bezpośrednio w bazie, jak w innych testach
+    // tego pliku (dane sprzed blokady albo zapis z pominięciem triggerów).
+    await db.exec(`
+      SET session_replication_role = replica;
+      INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
+        VALUES ('corr-p-stale', 'p-stale', 500, 'Korekta syntetyczna', 'u-treasurer', 'corr-p-stale-key');
+      SET session_replication_role = origin;
+    `);
+
+    const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(detail.summary.lineCount, 3);
+    assert.equal(detail.summary.matchedLineCount, 1);
+    assert.equal(detail.summary.inconsistentMatchCount, 1);
+    assert.equal(detail.summary.unmatchedLineCount, 1);
+    assert.equal(
+      detail.summary.matchedLineCount + detail.summary.inconsistentMatchCount + detail.summary.unmatchedLineCount,
+      detail.summary.lineCount,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+// #218: import wielu pozycji wyciągu wykonuje stałą liczbę zapytań SQL,
+// niezależną od liczby pozycji (jeden INSERT … SELECT FROM unnest(...)
+// zamiast pętli 1 INSERT na pozycję).
+function countingCall(db) {
+  let calls = 0;
+  const countQuery = (fn) => (...args) => { calls += 1; return fn(...args); };
+  const wrapped = {
+    query: countQuery(db.query.bind(db)),
+    exec: db.exec.bind(db),
+    close: db.close.bind(db),
+    transaction: (fn) => db.transaction((tx) => fn({ query: countQuery(tx.query.bind(tx)) })),
+  };
+  return { call: (path, options = {}) => handlePgRequest(request(path, options), { db: wrapped }), getCalls: () => calls, resetCalls: () => { calls = 0; } };
+}
+
+test('importing statement lines runs a constant number of queries regardless of line count', async () => {
+  const { db, cookies } = await setup();
+  const counting = countingCall(db);
+  try {
+    const draftSmall = await (await counting.call('/api/reconciliations', {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key() },
+      body: { schoolYearId: YEAR, statementDate: '2026-09-30', statementBalanceCents: 0 },
+    })).json();
+    counting.resetCalls();
+    const smallLines = Array.from({ length: 5 }, (_, i) => ({ bookedOn: '2026-09-14', amountCents: 100 + i }));
+    const smallResponse = await counting.call(`/api/reconciliations/${draftSmall.reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') }, body: { lines: smallLines },
+    });
+    assert.equal(smallResponse.status, 201);
+    const smallCalls = counting.getCalls();
+
+    const draftLarge = await (await counting.call('/api/reconciliations', {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key() },
+      body: { schoolYearId: YEAR, statementDate: '2026-09-30', statementBalanceCents: 0 },
+    })).json();
+    counting.resetCalls();
+    const largeLines = Array.from({ length: 80 }, (_, i) => ({ bookedOn: '2026-09-14', amountCents: 100 + i }));
+    const largeResponse = await counting.call(`/api/reconciliations/${draftLarge.reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') }, body: { lines: largeLines },
+    });
+    assert.equal(largeResponse.status, 201);
+    const largeCalls = counting.getCalls();
+
+    // Ta sama liczba zapytań SQL niezależnie od liczby pozycji (5 kontra 80).
+    // Próg podniesiony z 10 do 11: #150 dodaje do loadSession JEDNO stałe
+    // zapytanie na żądanie (UPDATE last_seen_at, tronowane co
+    // LAST_SEEN_THROTTLE_SECONDS — src/pg/auth.js) niezależne od liczby
+    // importowanych pozycji; sama stałość (smallCalls === largeCalls) nadal
+    // jest sprawdzana wyżej.
+    assert.equal(smallCalls, largeCalls);
+    assert.ok(largeCalls <= 11, `spodziewano się stałej, małej liczby zapytań, otrzymano ${largeCalls}`);
+  } finally {
+    await db.close();
+  }
+});
+
+// #158: skrót SHA-256 tytułu liczony co najwyżej raz na różną wpłatę-kandydata
+// w jednym żądaniu, nawet gdy ta sama wpłata jest kandydatem dla wielu pozycji
+// wyciągu (ta sama kwota i data, okno wystarczająco szerokie).
+test('suggestions hash a candidate payment reference at most once per request even when it matches several lines', async () => {
+  const { db, cookies, call } = await setup();
+  const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+  let digestCalls = 0;
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
+      reference, status, created_by, idempotency_key)
+      VALUES ('p-1', 'h-1', $1, 2500, '2026-09-14', 'bank', 'SKŁADKA  RD-0001', 'recorded', 'u-treasurer', 'pay-key-0001'),
+             ('p-2', 'h-1', $1, 2500, '2026-09-14', 'bank', 'Składka RD-0001 ', 'recorded', 'u-treasurer', 'pay-key-0002')`, [YEAR]);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    // Bazowa liczba wywołań digest tej samej trasy zanim istnieją jakiekolwiek
+    // pozycje wyciągu (brak kandydatów z dopasowaniem tytułu): uwierzytelnienie
+    // sesji też liczy SHA-256, #158 mierzy tylko przyrost od dopasowywania tytułu.
+    crypto.subtle.digest = async (...args) => { digestCalls += 1; return originalDigest(...args); };
+    await (await call(`/api/reconciliations/${reconciliation.id}/suggestions`, { cookie: cookies.treasurer })).json();
+    const baseline = digestCalls;
+    digestCalls = 0;
+    // Dwie pozycje wyciągu tej samej kwoty i daty, z tytułem — obie widzą oba
+    // wpłaty jako kandydatów (2 pozycje x 2 wpłaty = 4 pary, ale tylko 2 różne
+    // teksty tytułu do policzenia).
+    await call(`/api/reconciliations/${reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') },
+      body: { lines: [
+        { bookedOn: '2026-09-14', amountCents: 2500, reference: 'składka rd-0001' },
+        { bookedOn: '2026-09-14', amountCents: 2500, reference: 'składka rd-0001' },
+      ] },
+    });
+    digestCalls = 0;
+    const { suggestions } = await (await call(`/api/reconciliations/${reconciliation.id}/suggestions`, { cookie: cookies.treasurer })).json();
+    assert.equal(suggestions.length, 2);
+    for (const suggestion of suggestions) {
+      assert.deepEqual(suggestion.candidates.map((c) => [c.id, c.referenceMatch]).sort(), [['p-1', true], ['p-2', true]]);
+    }
+    // 2 różne wpłaty-kandydaci (tekst tytułu), niezależnie od liczby pozycji, które je widzą,
+    // ponad bazową liczbę wywołań (uwierzytelnienie sesji) tej samej trasy.
+    assert.equal(digestCalls - baseline, 2);
+  } finally {
+    crypto.subtle.digest = originalDigest;
+    await db.close();
+  }
+});
+
+// #218: karta uzgodnienia nie zwraca już `unmatchedLines` jako duplikatu
+// obiektów z `lines` — pole `match` w każdej pozycji wystarcza.
+test('reconciliation detail does not duplicate line objects in a separate unmatchedLines field', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await seedPayments(db, [['p-1', 'h-1', 2500, '2026-09-14', 'bank']]);
+    const draft = await draftWithLines(call, cookies, [2500]);
+    const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(detail.unmatchedLines, undefined);
+    assert.equal(detail.lines.length, 1);
+    assert.equal(detail.lines[0].match, null);
+    assert.equal(detail.summary.unmatchedLineCount, 1);
+  } finally {
+    await db.close();
+  }
+});
+
+// #218: stronicowanie pozycji wyciągu — remis booked_on rozstrzygany po id,
+// bez duplikatów i luk między stronami; summary liczy wszystkie pozycje,
+// niezależnie od rozmiaru strony.
+test('reconciliation detail paginates lines with a stable cursor and full summary counts', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const draft = await (await createDraft(call, cookies.treasurer)).json();
+    const lines = Array.from({ length: 7 }, (_, i) => ({ bookedOn: '2026-09-14', amountCents: 100 + i }));
+    await importLines(call, cookies.treasurer, draft.reconciliation.id, lines);
+
+    const page1 = await (await call(`/api/reconciliations/${draft.reconciliation.id}?limit=3`, { cookie: cookies.treasurer })).json();
+    assert.equal(page1.lines.length, 3);
+    assert.ok(page1.nextCursor);
+    assert.equal(page1.summary.lineCount, 7);
+    assert.equal(page1.summary.unmatchedLineCount, 7);
+
+    const page2 = await (await call(`/api/reconciliations/${draft.reconciliation.id}?limit=3&cursor=${encodeURIComponent(page1.nextCursor)}`, { cookie: cookies.treasurer })).json();
+    assert.equal(page2.lines.length, 3);
+    assert.ok(page2.nextCursor);
+
+    const page3 = await (await call(`/api/reconciliations/${draft.reconciliation.id}?limit=3&cursor=${encodeURIComponent(page2.nextCursor)}`, { cookie: cookies.treasurer })).json();
+    assert.equal(page3.lines.length, 1);
+    assert.equal(page3.nextCursor, null);
+
+    const allIds = [...page1.lines, ...page2.lines, ...page3.lines].map((line) => line.id);
+    assert.equal(new Set(allIds).size, 7);
+    assert.equal(allIds.length, 7);
+  } finally {
+    await db.close();
+  }
+});
+
+// #158: SQL ogranicza liczbę kandydatów na pozycję z zapasem (MAX_CANDIDATES * 4),
+// a dopasowanie po tytule nadal może wypchnąć dalszego dniowo kandydata na górę.
+test('suggestions still rank a reference match to the top even with many same-day candidates', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    // 15 wpłat tej samej kwoty i daty bez zgodnego tytułu (poniżej zapasu SQL
+    // MAX_CANDIDATES*4=20), plus jedna dalsza dniowo (ale w oknie) ze zgodnym
+    // tytułem — bez zapasu w SQL (samo LIMIT MAX_CANDIDATES po day_distance)
+    // dopasowanie po tytule zostałoby odrzucone przed sortowaniem w JS.
+    const rows = [];
+    for (let i = 0; i < 15; i += 1) {
+      const paymentId = `p-noise-${i}`;
+      rows.push(`('${paymentId}', 'h-1', $1, 2500, '2026-09-14', 'bank', 'inny tytuł', 'recorded', 'u-treasurer', 'pay-key-noise-${i}')`);
+    }
+    rows.push("('p-match', 'h-1', $1, 2500, '2026-09-12', 'bank', 'składka rd-0001', 'recorded', 'u-treasurer', 'pay-key-match')");
+    await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
+      reference, status, created_by, idempotency_key) VALUES ${rows.join(', ')}`, [YEAR]);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await call(`/api/reconciliations/${reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') },
+      body: { lines: [{ bookedOn: '2026-09-14', amountCents: 2500, reference: 'składka rd-0001' }] },
+    });
+    const { suggestions } = await (await call(`/api/reconciliations/${reconciliation.id}/suggestions?windowDays=7`, { cookie: cookies.treasurer })).json();
+    assert.equal(suggestions[0].candidates.length, 5);
+    assert.equal(suggestions[0].candidates[0].id, 'p-match');
+    assert.equal(suggestions[0].candidates[0].referenceMatch, true);
+  } finally {
+    await db.close();
+  }
+});
+
+// #115 część 2: POST …/lines/{lineId}/payment — wpłata utworzona wprost z pozycji
+// wyciągu, powiązana w tej samej transakcji.
+function linePaymentCall(call, cookie, reconciliationId, lineId, body = {}, idempotencyKey = key('lp')) {
+  return call(`/api/reconciliations/${reconciliationId}/lines/${lineId}/payment`, {
+    method: 'POST', cookie, headers: { 'Idempotency-Key': idempotencyKey }, body,
+  });
+}
+
+test('a payment created from a statement line takes its amount and date from the server, not the client', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    const { id, lineIds } = await draftWithLines(call, cookies, [2500]);
+    // Klient próbuje przemycić inną kwotę i datę — serwer ich nie czyta.
+    const response = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], {
+      householdId: 'h-1', amountCents: 999999, receivedOn: '2099-01-01',
+    });
+    assert.equal(response.status, 201);
+    const { payment, match } = await response.json();
+    assert.equal(payment.amountCents, 2500);
+    assert.equal(payment.receivedOn, '2026-09-14');
+    assert.equal(payment.method, 'bank');
+    assert.equal(payment.householdId, 'h-1');
+    assert.equal(payment.status, 'recorded');
+    assert.equal(match.statementLineId, lineIds[0]);
+    assert.equal(match.paymentEntryId, payment.id);
+
+    const stored = await db.query('SELECT amount_cents, received_on::text, method, household_id FROM payment_entries WHERE id = $1', [payment.id]);
+    assert.equal(Number(stored.rows[0].amount_cents), 2500);
+    assert.equal(stored.rows[0].received_on, '2026-09-14');
+    assert.equal(stored.rows[0].method, 'bank');
+    assert.equal(stored.rows[0].household_id, 'h-1');
+  } finally {
+    await db.close();
+  }
+});
+
+test('a line payment without a household is unmatched and can be assigned later; double-click makes only one payment and one match', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const { id, lineIds } = await draftWithLines(call, cookies, [1200]);
+    const idempotencyKey = key('lp');
+    const first = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: null }, idempotencyKey);
+    assert.equal(first.status, 201);
+    const firstBody = await first.json();
+    assert.equal(firstBody.payment.householdId, null);
+    assert.equal(firstBody.payment.status, 'unmatched');
+
+    // Ponowienie/podwójne kliknięcie z tym samym kluczem: 200, ta sama wpłata i to samo powiązanie.
+    const replay = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: null }, idempotencyKey);
+    assert.equal(replay.status, 200);
+    const replayBody = await replay.json();
+    assert.equal(replayBody.payment.id, firstBody.payment.id);
+    assert.equal(replayBody.match.id, firstBody.match.id);
+
+    const payments = await db.query('SELECT count(*) AS n FROM payment_entries WHERE household_id IS NULL AND school_year_id = $1', [YEAR]);
+    assert.equal(Number(payments.rows[0].n), 1);
+    const matches = await db.query(
+      'SELECT count(*) AS n FROM bank_reconciliation_matches WHERE statement_line_id = $1 AND revoked_at IS NULL', [lineIds[0]],
+    );
+    assert.equal(Number(matches.rows[0].n), 1);
+  } finally {
+    await db.close();
+  }
+});
+
+test('a line payment cannot be created twice for the same statement line', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const { id, lineIds } = await draftWithLines(call, cookies, [1800]);
+    const first = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: null });
+    assert.equal(first.status, 201);
+    const second = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: null });
+    assert.equal(second.status, 409);
+    assert.equal((await second.json()).error, 'already_matched');
+  } finally {
+    await db.close();
+  }
+});
+
+test('a line payment is refused for an expense line (non-positive amount)', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await importLines(call, cookies.treasurer, reconciliation.id, [{ bookedOn: '2026-09-20', amountCents: -20000 }]);
+    const detail = await (await call(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer })).json();
+    const expenseLineId = detail.lines[0].id;
+
+    const notIncome = await linePaymentCall(call, cookies.treasurer, reconciliation.id, expenseLineId, { householdId: null });
+    assert.equal(notIncome.status, 400);
+    assert.equal((await notIncome.json()).error, 'statement_line_not_income');
+  } finally {
+    await db.close();
+  }
+});
+
+test('a line payment for a line of another reconciliation is not found', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const { reconciliation: other } = await (await createDraft(call, cookies.treasurer)).json();
+    const { lineIds } = await draftWithLines(call, cookies, [900]);
+    const response = await linePaymentCall(call, cookies.treasurer, other.id, lineIds[0], { householdId: null });
+    assert.equal(response.status, 404);
+    assert.equal((await response.json()).error, 'statement_line_not_found');
+  } finally {
+    await db.close();
+  }
+});
+
+test('a line payment refuses an unknown household id (foreign key)', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const { id, lineIds } = await draftWithLines(call, cookies, [3300]);
+    const response = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: 'h-nonexistent' });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, 'invalid_reference');
+  } finally {
+    await db.close();
+  }
+});
+
+test('a confirmed reconciliation refuses a new payment from its line, like a manual match', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const { id, lineIds } = await draftWithLines(call, cookies, [4100]);
+    const confirmed = await call(`/api/reconciliations/${id}/confirm`, {
+      method: 'POST', cookie: cookies.board, headers: { 'Idempotency-Key': key('conf') },
+      body: { confirmationNote: 'Różnica wyjaśniona (syntetyczne)' },
+    });
+    assert.equal(confirmed.status, 200);
+    const response = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: null });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error, 'reconciliation_confirmed');
+    const payments = await db.query("SELECT count(*) AS n FROM payment_entries WHERE amount_cents = 4100");
+    assert.equal(Number(payments.rows[0].n), 0);
+  } finally {
+    await db.close();
+  }
+});
+
+test('two guardians paying separate lines to the same household sum up in household_payment_totals', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-siblings')");
+    const { id, lineIds } = await draftWithLines(call, cookies, [1000, 1500]);
+    const first = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: 'h-siblings' });
+    const second = await linePaymentCall(call, cookies.treasurer, id, lineIds[1], { householdId: 'h-siblings' });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    const totals = await db.query(
+      'SELECT net_amount_cents FROM household_payment_totals WHERE household_id = $1 AND school_year_id = $2', ['h-siblings', YEAR],
+    );
+    assert.equal(Number(totals.rows[0].net_amount_cents), 2500);
   } finally {
     await db.close();
   }

@@ -12,7 +12,7 @@ import {
 import { nextFromFragment } from '../login/core.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import'];
+const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close'];
 
 function fakeLocation(pathname, search = '', hash = '') {
   return { pathname, search, hash };
@@ -211,7 +211,7 @@ test('errorMessage: polskie teksty dla statusów, surowy kod tylko jako dopisek 
     [409, /zmieniły się/], [413, /Za dużo danych/], [415, /typ/], [429, /Zbyt wiele żądań/], [503, /niedostępna/], [0, /Brak połączenia/]]) {
     assert.match(errorMessage('', status), pattern, String(status));
   }
-  assert.equal(errorMessage('rate_limited', 429), `${errorMessage('', 429)} (kod techniczny: rate_limited)`);
+  assert.equal(errorMessage('unknown_throttle_code', 429), `${errorMessage('', 429)} (kod techniczny: unknown_throttle_code)`);
   assert.equal(errorMessage('something_new', 400), `${errorMessage('', 400)} (kod techniczny: something_new)`);
   for (const status of [0, 400, 401, 403, 404, 409, 413, 415, 429, 500, 503]) {
     assert.doesNotMatch(errorMessage('', status), /Błąd serwera \(|Failed|Error/);

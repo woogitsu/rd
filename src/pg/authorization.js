@@ -2,11 +2,19 @@
 // ze starym modułem src/authorization.js; tu zmienia się tylko źródło danych.
 
 import { isAuthorized } from '../authorization.js';
-import { isoTimestamp, loadSession } from './auth.js';
+import { isoTimestamp, loadSession, ROLE_STATUS } from './auth.js';
 import { insertAuditEvent } from './audit.js';
 import { mfaStatus } from './mfa-policy.js';
 
 export { isAuthorized };
+
+// #176: konto może mieć rolę bez żadnej trasy chronionej dziś (np. `principal`,
+// ROLE_STATUS 'pending_decision'). Serwer — nie front-end — rozstrzyga, czy
+// przydziały dają cokolwiek: jedno źródło prawdy (ROLE_STATUS), żeby ekran
+// startowy nie musiał duplikować tej wiedzy ani zgadywać.
+export function hasActiveRole(grants) {
+  return Array.isArray(grants) && grants.some((grant) => ROLE_STATUS[grant.role] !== 'pending_decision');
+}
 
 export async function loadActiveGrants(env, userId) {
   const { rows } = await env.db.query(
@@ -53,11 +61,87 @@ export function isAuthorizedScoped(context, requirement) {
   return isAuthorized(scoped, requirement);
 }
 
+// #184 pkt 1: ślad odmowy 403 dla zalogowanego aktora (anonim/401 — bez
+// zdarzenia, patrz uzasadnienie w issue). Zapis poza transakcją żądania
+// (env.db, autocommit — wyjątek w tests/audit-transaction-boundary.test.js),
+// nigdy nie blokuje ani nie zmienia odpowiedzi 403.
+// Wyłącznie GET: odmowa żądania zmieniającego stan (POST/PUT/PATCH/DELETE) ma
+// pozostać bez żadnego zapisu — to sprawdza już macierz uprawnień
+// (tests/pg-authz-matrix.test.js, WRITE_TABLES obejmuje audit_events). Ślad
+// odmowy przy odczycie jest najprostszym sygnałem powtarzającego się
+// nieuprawnionego przeglądania (patrz #133).
+// Deduplikacja: ten sam aktor + ta sama ścieżka w oknie 5 minut → bez nowego
+// wiersza (audit_events jest tylko do dopisywania — nie ma tu licznika w
+// jednym wierszu; kolejne odmowy w oknie po prostu nie dopisują drugiego
+// zdarzenia, więc widoczne jest zawsze tylko jedno na okno).
+const ACCESS_DENIED_WINDOW_MS = 5 * 60 * 1000;
+
+export async function logAccessDenied(env, context, requirement, request) {
+  try {
+    if (request?.method && request.method !== 'GET') return;
+    const actorId = context?.session?.user?.id;
+    if (!actorId || !env?.db?.query) return;
+    const url = new URL(request.url);
+    const route = url.pathname;
+    const sessionId = context.session.sessionId ?? null;
+    const requiredRole = Array.isArray(requirement?.roles) ? requirement.roles.join(',') : null;
+    const since = new Date(Date.now() - ACCESS_DENIED_WINDOW_MS).toISOString();
+    const { rows } = await env.db.query(
+      `SELECT 1 FROM audit_events
+        WHERE actor_id = $1 AND action = 'access.denied' AND entity_type = 'route' AND entity_id = $2
+          AND occurred_at > $3
+        LIMIT 1`,
+      [actorId, route, since],
+    );
+    if (rows[0]) return;
+    await insertAuditEvent(env.db, {
+      actorId, action: 'access.denied', entityType: 'route', entityId: route,
+      metadata: { requiredRole, sessionId },
+    });
+  } catch {
+    // Ślad audytu nigdy nie może zablokować ani zmienić odpowiedzi 403.
+  }
+}
+
 export async function requireAccess(request, env, requirement, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return { response: json({ error: 'unauthenticated' }, 401) };
-  if (!isAuthorizedScoped(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
+  if (!isAuthorizedScoped(context, requirement)) {
+    await logAccessDenied(env, context, requirement, request);
+    return { response: json({ error: 'forbidden' }, 403) };
+  }
+  // #150 (SR-10, krok w górę/step-up): `requireMfa: { maxAgeSeconds }` zamiast
+  // `true` — SPRAWDZANE PO roli/zakresie (SR-07), więc osoba bez dostępu
+  // dostaje ten sam ogólny `forbidden`, niezależnie od wieku MFA.
+  if (requirement?.requireMfa && typeof requirement.requireMfa === 'object') {
+    const code = freshMfaForbiddenCode(context, requirement.requireMfa.maxAgeSeconds);
+    if (code) return { response: json({ error: code }, 403) };
+  }
   return { context };
+}
+
+// Wiek ostatniego potwierdzenia MFA bieżącej sesji w sekundach, albo null,
+// gdy sesja nie ma potwierdzonego MFA (loadSession ustawia mfaVerifiedAt).
+export function mfaAgeSeconds(session) {
+  const verifiedAt = session?.mfaVerifiedAt ? new Date(session.mfaVerifiedAt).getTime() : NaN;
+  return Number.isFinite(verifiedAt) ? Math.max(0, (Date.now() - verifiedAt) / 1000) : null;
+}
+
+// Domyślny próg świeżości MFA dla operacji nieodwracalnych/masowych (założenie
+// do D-10, zob. issue #150): eksport roczny, zamknięcie roku, zatwierdzenie
+// kampanii e-mail, nadanie roli, reset hasła/MFA, przyjęcie uchwały > 3000 EUR.
+export const MFA_STEP_UP_MAX_AGE_SECONDS = 15 * 60;
+
+// Krok w górę (step-up, #150 SR-10): zwraca null, gdy MFA jest wystarczająco
+// świeże, albo kod błędu 403 do zwrócenia wywołującemu — `mfa_required`, gdy
+// sesja w ogóle nie ma potwierdzonego MFA (spójne z bramką routera), albo
+// `mfa_stale`, gdy jest, ale starsze niż `maxAgeSeconds`. Klient prosi o kod
+// i ponawia to samo żądanie (spójnie z #99) — nic nie jest tu zapisywane.
+export function freshMfaForbiddenCode(context, maxAgeSeconds = MFA_STEP_UP_MAX_AGE_SECONDS) {
+  const session = context?.session;
+  if (!session?.mfaVerified) return 'mfa_required';
+  const age = mfaAgeSeconds(session);
+  return age === null || age > maxAgeSeconds ? 'mfa_stale' : null;
 }
 
 // Rozróżnia powód odmowy 403 dla wymogu z `requireMfa` (#161). Sam brak roli

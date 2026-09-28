@@ -4,9 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createBrevoTransport, emailConfig, EmailTransportError, matchesAllowlist, parseRetryAfter, recipientRefusal } from '../src/email/brevo.js';
+import { createBrevoTransport, emailConfig, EmailTransportError, isFreeEmailDomain, liveRunRefusal, matchesAllowlist, parseRetryAfter, recipientRefusal } from '../src/email/brevo.js';
 import { normalizeEmail, emailHash, parseCampaignContent } from '../src/email/content.js';
-import { campaignDailyCap, recordOtherSends, runEmailBatch, ResultNotRecordedError } from '../src/email/worker.js';
+import {
+  accountDay, campaignDailyCap, recordOtherSends, remainingQuota, runEmailBatch, ResultNotRecordedError,
+} from '../src/email/worker.js';
 import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
 // Pułapka na sieć (#214) jest teraz instalowana globalnie przez
 // tests/helpers/network-guard.js (importowany przez helpers/pg.js), więc
@@ -148,12 +150,24 @@ test('Brevo client sends one recipient per request with api-key header (injected
   assert.equal(requests[0].init.headers['api-key'], 'synthetic-key');
   assert.deepEqual(sent.to, [{ email: 'a@example.invalid' }]);
   assert.equal(sent.headers['X-RD-Idempotency-Key'], 'campaign:c:household:h');
+  assert.equal(sent.replyTo, undefined, 'brak replyTo w wiadomości nie dodaje pola');
   assert.equal(sent.headers['X-Mailin-custom'], 'o1');
   await assert.rejects(transport.send(message), (e) => e instanceof EmailTransportError && e.retryable && !e.uncertain);
   await assert.rejects(transport.send(message), (e) => e.code === 'delivery_unknown' && e.uncertain && !e.retryable);
   await assert.rejects(transport.send(message), (e) => e.code === 'provider_rejected_400' && !e.retryable);
   await assert.rejects(transport.send({ ...message, to: ['a@example.invalid', 'b@example.invalid'] }), { code: 'single_recipient_required' });
   assert.equal(networkGuardCalls(), 0);
+});
+
+test('Brevo client passes replyTo when configured (#148)', async () => {
+  const requests = [];
+  const spy = async (url, init) => { requests.push(JSON.parse(init.body)); return new Response(JSON.stringify({ messageId: '<m@example.invalid>' }), { status: 201 }); };
+  const transport = createBrevoTransport({ apiKey: 'synthetic-key', appEnv: 'development', fetchImpl: spy, processEnv: {} });
+  await transport.send({
+    to: 'a@example.invalid', sender: { email: 'rada@example.invalid', name: 'Rada' }, replyTo: 'kontakt@example.invalid',
+    subject: 'S', text: 'T', outboxId: 'o1', idempotencyKey: 'campaign:c:household:h',
+  });
+  assert.deepEqual(requests[0].replyTo, { email: 'kontakt@example.invalid' });
 });
 
 test('allowlist guard outside production and configuration defaults', () => {
@@ -171,11 +185,32 @@ test('allowlist guard outside production and configuration defaults', () => {
   assert.equal(emailConfig({ EMAIL_SENDING_ENABLED: 'TRUE' }).sendingEnabled, false);
   assert.equal(campaignDailyCap(2000, defaults), 286);
   assert.equal(campaignDailyCap(10, defaults), 50);
+  // #84: doba limitu domyślnie w strefie konta Belgii, nie w UTC.
+  assert.equal(defaults.quotaTimezone, 'Europe/Brussels');
+  assert.equal(emailConfig({ EMAIL_QUOTA_TIMEZONE: 'UTC' }).quotaTimezone, 'UTC');
+  // Nieznana strefa (literówka w env) nie wywraca konfiguracji — wraca do domyślnej.
+  assert.equal(emailConfig({ EMAIL_QUOTA_TIMEZONE: 'Nie/Istnieje' }).quotaTimezone, 'Europe/Brussels');
+});
+
+test('sender readiness (#148): free domain and missing reply-to on production', () => {
+  const base = { EMAIL_SENDING_ENABLED: 'true', BREVO_FROM_EMAIL: 'rada@example.invalid' };
+  assert.equal(liveRunRefusal(emailConfig({ ...base, BREVO_FROM_EMAIL: '' })), 'sender_not_configured');
+  assert.equal(liveRunRefusal(emailConfig({ ...base, BREVO_FROM_EMAIL: 'ktos@gmail.com' })), 'sender_free_domain');
+  assert.ok(isFreeEmailDomain('ktos@gmail.com'));
+  assert.ok(!isFreeEmailDomain('rada@example.invalid'));
+  // Poza produkcją brak replyTo nie blokuje przebiegu.
+  assert.equal(liveRunRefusal(emailConfig({ ...base, APP_ENV: 'staging' })), null);
+  assert.equal(liveRunRefusal(emailConfig({ ...base, APP_ENV: 'production' })), 'reply_to_not_configured');
+  assert.equal(liveRunRefusal(emailConfig({ ...base, APP_ENV: 'production', BREVO_REPLY_TO: 'kontakt@example.invalid' })), null);
 });
 
 test('content validation rejects debt wording, unknown placeholders and invalid e-mails', async () => {
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Zaległość {rok}', bodyText: BODY }), { code: 'forbidden_wording' });
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Składka', bodyText: `${BODY} lista dłużników` }), { code: 'forbidden_wording' });
+  // #120: szkoła jest w Belgii — treść po francusku/niderlandzku sugerująca dług jest odrzucana tak samo.
+  assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Cotisation', bodyText: `${BODY} Merci de régler votre dette.` }), { code: 'forbidden_wording' });
+  assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Bijdrage', bodyText: `${BODY} Gelieve uw achterstallige bijdrage te betalen.` }), { code: 'forbidden_wording' });
+  assert.doesNotThrow(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Bijdrage', bodyText: `${BODY} Dit is een vrijwillige bijdrage.` }));
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Składka', bodyText: `${BODY} {imie_dziecka}` }), { code: 'invalid_placeholder' });
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'all_households', subject: 'Składka {rodzina}', bodyText: BODY }), { code: 'invalid_placeholder' });
   assert.throws(() => parseCampaignContent({ title: 'Test', audience: 'debtors', subject: 'Składka', bodyText: BODY }), { code: 'invalid_audience' });
@@ -267,6 +302,82 @@ test('no send before approval; author and snapshot builder cannot self-approve; 
     // Baza też pilnuje zasady czterech oczu.
     await assert.rejects(t.db.query("UPDATE email_campaigns SET status = 'draft', approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL WHERE id = $1", [campaign.id]).then(() =>
       t.db.query("UPDATE email_campaigns SET status = 'approved', approved_by = created_by, approved_at = now(), approved_content_hash = content_hash, approved_recipients_hash = recipients_hash WHERE id = $1", [campaign.id])), /four_eyes/);
+  } finally { await t.close(); }
+});
+
+// #150 (SR-10, krok w górę): zatwierdzenie kampanii uruchamia rzeczywistą
+// wysyłkę do rodzin — MFA musi być potwierdzone od niedawna (15 min), nie
+// tylko kiedyś w sesji. Sprawdzane PO roli/zakresie (SR-07, campaignFor).
+test('campaign approval requires FRESH MFA (step-up): stale confirmation is 403 mfa_stale', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await createDraft(t);
+    await snapshot(t, campaign.id);
+    await t.db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-bd'");
+
+    const preview = (await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).body;
+    const stale = await t.call(t.board, `/api/email/campaigns/${campaign.id}/approve`, {
+      method: 'POST', body: { contentHash: preview.contentHash, recipientsHash: preview.recipientsHash },
+    });
+    assert.deepEqual(stale, { status: 403, body: { error: 'mfa_stale' } });
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM email_campaigns WHERE id = $1 AND status = 'approved'", [campaign.id]), 0);
+
+    // Podgląd (bez skutku dla stanu) nadal działa z MFA sprzed 20 minut.
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).status, 200);
+
+    await t.db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-bd'");
+    const ok = await approve(t, campaign.id, t.board);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.campaign.status, 'approved');
+  } finally { await t.close(); }
+});
+
+// #215: PUT zastępowało treść bez wersji — druga osoba, która wczytała tę
+// samą bazową wersję, po cichu nadpisywała poprawkę pierwszej. `revision`
+// opcjonalnie w treści żądania: niezgodność z bieżącym revisionNo daje
+// 409 revision_conflict zamiast cichego nadpisania.
+test('two board members editing the same campaign: treasurer 200, board 409 on stale revision, nothing lost', async () => {
+  const t = await setup();
+  try {
+    const campaign = await createDraft(t);
+    assert.equal(campaign.revisionNo, 1);
+
+    const putTreasurer = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT',
+      body: {
+        title: campaign.title, audience: 'all_households', bodyText: campaign.bodyText, revision: 1,
+        subject: 'Składka – rok szkolny 2026/27 (poprawiony temat skarbnika)',
+      },
+    });
+    assert.equal(putTreasurer.status, 200);
+    assert.equal(putTreasurer.body.campaign.revisionNo, 2);
+
+    // Członek zarządu wczytał tę samą wersję 1 i poprawia treść — konflikt, temat skarbnika nie ginie.
+    const putBoard = await t.call(t.board, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT',
+      body: {
+        title: campaign.title, audience: 'all_households', subject: campaign.subject, revision: 1,
+        bodyText: 'Inna treść od członka zarządu, wystarczająco długa na walidację.',
+      },
+    });
+    assert.equal(putBoard.status, 409);
+    assert.equal(putBoard.body.error, 'revision_conflict');
+
+    const reread = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`);
+    assert.equal(reread.body.campaign.subject, 'Składka – rok szkolny 2026/27 (poprawiony temat skarbnika)');
+
+    // Powtórzenie tej samej edycji skarbnika (np. podwójne kliknięcie) z tą samą bazową wersją
+    // odtwarza wynik bez błędu, bo treść już jest zapisana — nie podnosi wersji drugi raz.
+    const replay = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT',
+      body: {
+        title: campaign.title, audience: 'all_households', bodyText: campaign.bodyText, revision: 1,
+        subject: 'Składka – rok szkolny 2026/27 (poprawiony temat skarbnika)',
+      },
+    });
+    assert.equal(replay.status, 200);
+    assert.equal(replay.body.campaign.revisionNo, 2);
   } finally { await t.close(); }
 });
 
@@ -483,6 +594,29 @@ test('daily limit is shared with other account mail and EMAIL_DAILY_RESERVED', a
     const day2 = await runEmailBatch(reservedEnv, { transport, dryRun: false, now: new Date('2026-10-06T08:00:00Z') });
     assert.equal(day2.sent, 5);
     assert.equal(transport.calls.length, 10);
+  } finally { await t.close(); }
+});
+
+test('#84 quota near midnight: usage counted in either UTC day or account-timezone day is not double-crossed', async () => {
+  const t = await setup({ EMAIL_DAILY_LIMIT: '5' });
+  try {
+    assert.equal(accountDay(new Date('2026-01-16T00:00:00Z'), 'Europe/Brussels'), '2026-01-16');
+    // "Inna wiadomość" zapisana o 23:45 UTC (00:45 w Brukseli w styczniu, CET
+    // = UTC+1): kolumna `day` (UTC) to jeszcze 15, ale doba konta w Brukseli to
+    // już 16. Dawny kod liczył pulę wyłącznie po kolumnie `day` i o północy UTC
+    // (16 stycznia) zgłosiłby pełną, niewykorzystaną pulę — mimo że w dobie
+    // konta Brevo (Bruksela) 5 z 5 wiadomości już wyszło.
+    await t.db.query(
+      `INSERT INTO email_send_ledger (id, day, source, message_count, recorded_at)
+       VALUES ('other-1', '2026-01-15', 'other', 5, '2026-01-15T23:45:00Z')`,
+    );
+    const config = emailConfig({ ...t.env, EMAIL_DAILY_LIMIT: '5' });
+    const remaining = await remainingQuota(t.db, new Date('2026-01-16T00:00:00Z'), config);
+    assert.equal(remaining, 0, 'pula doby konta w Brukseli jest już wyczerpana');
+    // Symetrycznie: zużycie zapisane pod dobą konta nie znika, gdy patrzymy z
+    // dnia UTC, który jeszcze się nie zaczął dla Brukseli.
+    const beforeUtcMidnight = await remainingQuota(t.db, new Date('2026-01-15T23:50:00Z'), config);
+    assert.equal(beforeUtcMidnight, 0);
   } finally { await t.close(); }
 });
 
@@ -721,7 +855,9 @@ test('address suppressed during a batch is not sent', async () => {
     let target;
     const transport = interleavingTransport(async (message) => {
       target = otherThan(message, ['h1', 'h2']);
-      await t.db.query("INSERT INTO email_suppressions (email_hash, reason) VALUES ($1, 'hard_bounce')", [emailHash(`${target}-g1@example.invalid`)]);
+      // email_suppressions.id (#94): klucz główny zmieniony z email_hash na id,
+      // żeby ten sam adres mógł mieć kilka zdarzeń blokady w czasie.
+      await t.db.query("INSERT INTO email_suppressions (id, email_hash, reason) VALUES ($1, $2, 'hard_bounce')", [crypto.randomUUID(), emailHash(`${target}-g1@example.invalid`)]);
     });
     const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
     assert.equal(run.sent, 1);
@@ -1478,6 +1614,263 @@ test('no_payment_record: payment recorded during a provider pause → skipped af
     const states = Object.fromEntries((await outboxStates(t, campaign.id)).map((r) => [r.household_id, r.state]));
     assert.equal(states[limitedHousehold], 'skipped');
     assert.equal(transport.requests.length, 2);
+  } finally { await t.close(); }
+});
+
+// --- #139: raport doręczeń, lista operacyjna, rozstrzyganie delivery_unknown, rotacja sekretu ----
+
+test('#139 report: only counts and codes, no addresses/names/household ids', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport({ fail: (_m, n) => (n === 1 ? new EmailTransportError('provider_rejected_400', { retryable: false }) : null) });
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/report`);
+    assert.equal(res.status, 200);
+    const text = JSON.stringify(res.body);
+    assert.ok(!/@/.test(text), `raport nie może zawierać adresów: ${text}`);
+    assert.ok(!/h1|h2/.test(text), `raport nie może zawierać identyfikatorów rodzin: ${text}`);
+    assert.equal(res.body.outbox.sent + res.body.outbox.failed, 2);
+    assert.equal(res.body.lastProviderEvent.none, 2, 'żadne zdarzenie webhooka jeszcze nie doszło');
+    assert.deepEqual(res.body.resolutions, {});
+    for (const cookie of [null]) assert.equal((await t.call(cookie, `/api/email/campaigns/${campaign.id}/report`)).status, 401);
+    const rep = await seedUserSession(t.db, { userId: 'u-rep139', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/report`)).status, 403);
+  } finally { await t.close(); }
+});
+
+test('#139 attention list: failed/delivery_unknown and ≥3 soft_bounce rows, masked address, read is logged', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    await t.db.query("UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2, claim_token = $3, send_started_at = $2 WHERE campaign_id = $1 AND household_id = 'h1'", [campaign.id, DAY1.toISOString(), crypto.randomUUID()]);
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    assert.equal((await outboxStates(t, campaign.id)).find((r) => r.household_id === 'h1').state, 'failed');
+    const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/attention`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.rows.length, 1);
+    assert.equal(res.body.rows[0].lastError, 'delivery_unknown');
+    assert.match(res.body.rows[0].email, /^h\*\*\*@example\.invalid$/);
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.attention_list.viewed' AND entity_id = $1`, [campaign.id]), 1);
+    const rep = await seedUserSession(t.db, { userId: 'u-rep139b', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/attention`)).status, 403);
+  } finally { await t.close(); }
+});
+
+test('#139 resolutions: confirmed_not_sent requires board, not_resolvable for sent rows, double click keeps one record', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    await t.db.query("UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2, claim_token = $3, send_started_at = $2 WHERE campaign_id = $1", [campaign.id, DAY1.toISOString(), crypto.randomUUID()]);
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    const [row] = await outboxStates(t, campaign.id);
+    assert.equal(row.state, 'failed');
+    const { rows: [{ id: outboxId }] } = await t.db.query('SELECT id FROM email_outbox WHERE campaign_id = $1', [campaign.id]);
+
+    // Bardziej dotkliwe twierdzenie wymaga silniejszej roli.
+    const deniedTreasurer = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId, resolution: 'confirmed_not_sent', evidenceCode: 'brevo_log_no_event' },
+    });
+    assert.deepEqual([deniedTreasurer.status, deniedTreasurer.body], [403, { error: 'forbidden' }]);
+
+    const ok = await t.call(t.board, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId, resolution: 'confirmed_not_sent', evidenceCode: 'brevo_log_no_event' },
+    });
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+
+    // Podwójne kliknięcie: ten sam wiersz, jeden zapis w historii.
+    const again = await t.call(t.board, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId, resolution: 'confirmed_not_sent', evidenceCode: 'brevo_log_no_event' },
+    });
+    assert.equal(again.status, 200);
+    assert.equal(await t.count('SELECT count(*)::int AS n FROM email_outbox_resolutions WHERE outbox_id = $1', [outboxId]), 1);
+
+    // Wiersz, który jeszcze nie jest w stanie końcowym, nie da się rozstrzygnąć.
+    await family(t.db, 'h2');
+    const campaign2 = await readyCampaign(t, { key: crypto.randomUUID() });
+    const { rows: [{ id: queuedId }] } = await t.db.query('SELECT id FROM email_outbox WHERE campaign_id = $1', [campaign2.id]);
+    const notResolvable = await t.call(t.treasurer, `/api/email/campaigns/${campaign2.id}/resolutions`, {
+      method: 'POST', body: { outboxId: queuedId, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
+    });
+    assert.deepEqual(notResolvable.body, { error: 'not_resolvable' });
+  } finally { await t.close(); }
+});
+
+test('#139 webhook secret rotation: previous secret still accepted, logged; removing it makes it a plain wrong secret', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    const sent = transport.calls[0];
+    const { rows: [row] } = await t.db.query('SELECT provider_message_id FROM email_outbox WHERE id = $1', [sent.outboxId]);
+    const event = { event: 'delivered', email: 'h1-g1@example.invalid', 'message-id': row.provider_message_id, ts_event: 1791187200, id: 1 };
+    const rotatedEnv = { ...t.env, BREVO_WEBHOOK_SECRET: 'n'.repeat(48), BREVO_WEBHOOK_SECRET_PREVIOUS: WEBHOOK_SECRET };
+    const res = await handlePgRequest(webhookRequest(event, `Bearer ${WEBHOOK_SECRET}`), rotatedEnv);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { received: 1, recorded: 1, suppressed: 0 });
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.webhook.previous_secret_used'`), 1);
+    // Sekret usunięty z env: stary klucz znowu jest zwykłym złym sekretem.
+    const withoutPrevious = await handlePgRequest(webhookRequest({ ...event, id: 2 }, `Bearer ${WEBHOOK_SECRET}`), { ...t.env, BREVO_WEBHOOK_SECRET: 'n'.repeat(48) });
+    assert.deepEqual(await withoutPrevious.json(), { error: 'invalid_signature' });
+  } finally { await t.close(); }
+});
+
+test('#130 pause/resume: role boundaries, invalid transitions, idempotent double click', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    const rep = await seedUserSession(t.db, { userId: 'u-rep130', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    const admin = await seedUserSession(t.db, { userId: 'u-adm130', mfa: true, roles: [{ role: 'admin' }] });
+    const classTreasurer = await seedUserSession(t.db, { userId: 'u-ctr130', mfa: true, roles: [{ role: 'treasurer', classId: 'c1', schoolYearId: YEAR }] });
+    for (const cookie of [rep, admin]) {
+      const denied = await t.call(cookie, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+      assert.deepEqual([denied.status, denied.body], [403, { error: 'forbidden' }]);
+    }
+    // Trasy kampanii dotyczą całej szkoły — przydział klasowy ich nie otwiera.
+    assert.equal((await t.call(classTreasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' })).status, 403);
+
+    const draft = await createDraft(t, { key: crypto.randomUUID() });
+    assert.deepEqual((await t.call(t.treasurer, `/api/email/campaigns/${draft.id}/pause`, { method: 'POST' })).body, { error: 'campaign_locked' });
+    assert.deepEqual((await t.call(t.treasurer, `/api/email/campaigns/${draft.id}/resume`, { method: 'POST' })).body, { error: 'campaign_locked' });
+    // Wznowienie kampanii, która już wysyła, jest no-opem (idempotencja), nie błędem.
+    const noopResume = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    assert.equal(noopResume.status, 200);
+    assert.equal(noopResume.body.campaign.status, 'sending');
+
+    const paused1 = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    assert.equal(paused1.status, 200);
+    assert.equal(paused1.body.campaign.status, 'paused');
+    assert.ok(paused1.body.campaign.pausedBy);
+    const paused2 = await t.call(t.board, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    assert.equal(paused2.status, 200, 'druga pauza jest no-opem, nie błędem');
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.campaign.paused' AND entity_id = $1`, [campaign.id]), 1);
+
+    const resumed1 = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    assert.equal(resumed1.status, 200);
+    assert.equal(resumed1.body.campaign.status, 'sending');
+    assert.ok(resumed1.body.campaign.resumedBy);
+    // Wznowienie nie wymaga ponownego zatwierdzenia (treść/lista niezmienne).
+    assert.equal(resumed1.body.campaign.approvedBy, campaign.approvedBy ?? resumed1.body.campaign.approvedBy);
+    const resumed2 = await t.call(t.board, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    assert.equal(resumed2.status, 200, 'drugie wznowienie jest no-opem');
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.campaign.resumed' AND entity_id = $1`, [campaign.id]), 1);
+
+    // paused -> cancelled dozwolone.
+    await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    const cancelled = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' });
+    assert.equal(cancelled.status, 200);
+    assert.equal(cancelled.body.campaign.status, 'cancelled');
+  } finally { await t.close(); }
+});
+
+test('#130 worker skips paused campaigns entirely; queue is untouched while paused', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    const transport = fakeTransport();
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 0);
+    assert.equal(transport.calls.length, 0);
+    assert.deepEqual((await outboxStates(t, campaign.id)).map((r) => r.state), ['queued', 'queued']);
+
+    const resumed = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    assert.equal(resumed.status, 200);
+    const after = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(after.sent, 2);
+  } finally { await t.close(); }
+});
+
+test('#130 no_payment_record: payment recorded while campaign is paused → skipped after resume', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t, { audience: 'no_payment_record' });
+    await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    await t.db.query(
+      `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+       VALUES ('p-pause130', 'h1', $1, 500, '2026-10-05', 'bank', 'recorded', 'u-tr', 'payment-key-pause130')`,
+      [YEAR],
+    );
+    await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    const transport = fakeTransport();
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 0);
+    assert.equal(run.skipped, 1);
+    assert.equal((await outboxStates(t, campaign.id))[0].state, 'skipped');
+  } finally { await t.close(); }
+});
+
+test('#130 send_not_before delays the run; changing it after approval requires reapproval', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await createDraft(t);
+    await snapshot(t, campaign.id);
+    const future = new Date(DAY1.getTime() + 24 * 3600_000).toISOString();
+    const updated = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT', body: { title: campaign.title, subject: campaign.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
+    });
+    assert.equal(updated.status, 200, JSON.stringify(updated.body));
+    assert.equal(updated.body.campaign.sendNotBefore, future);
+    await snapshot(t, campaign.id);
+    const approved = await approve(t, campaign.id);
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    const queued = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/queue`, { method: 'POST' });
+    assert.equal(queued.status, 200);
+
+    const transport = fakeTransport();
+    const early = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(early.sent, 0, 'termin startu jeszcze nie nadszedł');
+    assert.equal(transport.calls.length, 0);
+
+    const onTime = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 25 * 3600_000) });
+    assert.equal(onTime.sent, 1);
+
+    // Zmiana terminu po zatwierdzeniu cofa do szkicu (jak treść).
+    const draft2 = await createDraft(t, { key: crypto.randomUUID() });
+    await snapshot(t, draft2.id);
+    const approved2 = await approve(t, draft2.id);
+    assert.equal(approved2.status, 200);
+    const changed = await t.call(t.treasurer, `/api/email/campaigns/${draft2.id}`, {
+      method: 'PUT', body: { title: draft2.title, subject: draft2.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
+    });
+    assert.equal(changed.status, 200);
+    assert.equal(changed.body.campaign.status, 'draft');
+    assert.equal(changed.body.approvalInvalidated, true);
+  } finally { await t.close(); }
+});
+
+test('#130 EMAIL_SEND_WINDOW: a run outside the configured window stops without touching the queue', async () => {
+  const t = await setup({
+    EMAIL_SEND_WINDOW_ENABLED: 'true', EMAIL_SEND_WINDOW_TIMEZONE: 'Europe/Brussels',
+    EMAIL_SEND_WINDOW_DAYS: '1-5', EMAIL_SEND_WINDOW_START: '09:00', EMAIL_SEND_WINDOW_END: '18:00',
+  });
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport();
+    // DAY1 = 2026-10-05T08:00Z = 10:00 w Brukseli (CEST) — poniedziałek, w oknie.
+    const inWindow = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(inWindow.stoppedReason, null);
+    assert.equal(inWindow.sent, 1);
+    // 20:30 w Brukseli tego samego dnia — poza oknem.
+    const outside = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date('2026-10-05T18:30:00Z') });
+    assert.equal(outside.stoppedReason, 'outside_send_window');
+    assert.equal(outside.sent, 0);
+    assert.equal(transport.calls.length, 1, 'druga próba nie dotyka kolejki');
   } finally { await t.close(); }
 });
 

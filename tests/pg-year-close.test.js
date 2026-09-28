@@ -196,7 +196,7 @@ describe('po zamknięciu roku przez drugą osobę z zarządu', () => {
     assert.deepEqual(summary.finance.nextYearOpeningBalance.amountCents, 143500);
     assert.equal(summary.finance.nextYearOpeningBalance.carriedFromClosure, true);
     assert.deepEqual(summary.payments, {
-      recordedCount: 1, recordedNetCents: 2000, unmatchedCount: 1, unmatchedNetCents: 1500, correctionCount: 0,
+      recordedCount: 1, recordedNetCents: 2000, unmatchedCount: 1, unmatchedNetCents: 1500, unmatchedAllocatedCents: 0, correctionCount: 0,
     });
     assert.deepEqual(summary.meetings.byStatus, { draft: 1 });
     assert.equal(summary.checklist.every((entry) => entry.confirmed && entry.confirmedBy && entry.confirmedAt), true);
@@ -341,6 +341,122 @@ test('ponowne zamknięcie jest idempotentne i nie dubluje bilansu ani audytu', a
   }
 });
 
+test('#212: dwa równoległe „Zamknij rok” (dwie osoby albo podwójne kliknięcie) — bez zakleszczenia, dokładnie jeden bilans otwarcia', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    await startAndConfirm(env, cookies);
+    // Dwóch różnych członków zarządu (żaden nie rozpoczynał — boardA
+    // rozpoczęła) naraz. PGlite serializuje same transakcje, ale obie
+    // odpowiedzi przechodzą przez tę samą ścieżkę kodu co na prawdziwym
+    // PostgreSQL: advisory lock szereguje wejście do transakcji.
+    // boardB ma rolę board ZAWĘŻONĄ do roku OLD — jeśli boardGlobal zamknie
+    // rok jako pierwszy, zanim żądanie boardB dotrze do własnego
+    // `authorize()`, własny przydział boardB jest już wygaszony przez to
+    // zamknięcie: dostaje wtedy `409 school_year_closed` (wariant
+    // zachowawczy — bez ujawniania bilansu komuś, kto już nie ma roli w tym
+    // roku), a nie `403 forbidden` ani pełny `replayed:true`. boardGlobal ma
+    // rolę BEZ zawężenia do roku — jego przydział nigdy nie wygasa przez to
+    // zamknięcie, więc zawsze dostaje 200 (replayed:true albo false).
+    const [a, b] = await Promise.all([
+      post(env, `/api/year-close/${OLD}/close`, cookies.boardB),
+      post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
+    ]);
+    const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
+    assert.equal(b.status, 200, `boardGlobal (rola bez zawężenia do roku) zawsze 200: ${b.status}`);
+    assert.equal(
+      a.status === 200 || (a.status === 409 && bodyA.error === 'school_year_closed'),
+      true,
+      `boardB: 200 albo 409 school_year_closed, dostał ${a.status} ${JSON.stringify(bodyA)}`,
+    );
+    if (a.status === 409) assert.equal('balance' in bodyA, false, '409 school_year_closed nie ujawnia bilansu');
+
+    const writers = [a.status === 200 ? bodyA.replayed : null, bodyB.replayed].filter((v) => v === false);
+    assert.equal(writers.length, 1, 'dokładnie jedna odpowiedź 200 zapisała (replayed:false)');
+
+    const { rows } = await db.query('SELECT count(*)::int AS n FROM ledger_opening_balances WHERE school_year_id = $1', [NEW]);
+    assert.equal(rows[0].n, 1, 'dokładnie jeden bilans otwarcia');
+    assert.equal(await auditCount(db, 'year_close.closed'), 1, 'dokładnie jedno zdarzenie year_close.closed');
+  } finally {
+    await db.close();
+  }
+});
+
+test('#212: zamknięcie roku wygasza WŁASNY przydział drugiej osoby zarządu — 409 school_year_closed bez bilansu, nie 403', async () => {
+  // Deterministyczna wersja przyczyny niestabilności #212 (bez zależności od
+  // realnego przeplotu Promise.all): zamknięcie wygasza w tej samej
+  // transakcji przydziały zarządu zawężone do zamykanego roku
+  // (`role_grant_in_school_year`, src/pg/routes/year-close.js). boardB ma
+  // rolę board ZE ZAWĘŻENIEM do roku OLD. Jeśli boardGlobal zamknie rok
+  // jako pierwszy (choćby przez to, że pod obciążeniem CI kolejka żądań
+  // boardB dotarła do `authorize()` później — patrz komentarz przy
+  // `wasAuthorizedAtOwnClosure`), własny przydział boardB jest już wygasły,
+  // gdy jego żądanie w końcu trafia do serwera. Sekwencyjnie odtwarza to
+  // dokładnie ten sam stan bez potrzeby wygrywania realnego wyścigu.
+  //
+  // Wariant zachowawczy (najmniej uprawnień): boardB nie dostaje pełnej
+  // odpowiedzi replay (bilans, identyfikatory) — jego przydział do tego roku
+  // już nie istnieje, więc nie ma dziś prawa tych danych czytać. Dostaje
+  // sam fakt "rok zamknięty" (409, kod używany też przez `start`), bez
+  // wymogu świeżego MFA i bez nowego zdarzenia audytu.
+  const { db, env, cookies } = await setup();
+  try {
+    await startAndConfirm(env, cookies);
+    // Rola board zawężona do roku OLD, ale COFNIĘTA (revoked_at) — zasiana
+    // PRZED zamknięciem, bo trigger zamrożenia (0017) odrzuca nowe przydziały
+    // dla już zamkniętego roku. To zwykły brak uprawnień (nigdy nie miała
+    // prawa zamknąć), a nie skutek uboczny TEGO zamknięcia.
+    const boardRevoked = await seedUserSession(db, {
+      userId: 'u-board-revoked', roles: [{ role: 'board', schoolYearId: OLD, revoked: true }], mfa: true,
+    });
+
+    const auditBefore = await auditCount(db, 'year_close.closed');
+    const first = await post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal);
+    assert.equal(first.status, 200);
+    assert.equal((await first.json()).replayed, false);
+
+    const { rows } = await db.query(
+      "SELECT expires_at FROM role_grants WHERE user_id = 'u-board-b' AND school_year_id = $1", [OLD]);
+    assert.notEqual(rows[0]?.expires_at, null, 'przydział boardB do roku OLD jest wygaszony przez zamknięcie');
+
+    const second = await post(env, `/api/year-close/${OLD}/close`, cookies.boardB);
+    assert.equal(second.status, 409, `boardB stracił własny przydział przez to zamknięcie: ${second.status}`);
+    const secondBody = await second.json();
+    assert.equal(secondBody.error, 'school_year_closed');
+    assert.equal('balance' in secondBody, false, 'bez bilansu');
+    assert.equal('carriedOpeningBalanceId' in secondBody, false, 'bez identyfikatora bilansu otwarcia');
+    assert.equal('replayed' in secondBody, false, 'bez replayed — to nie jest odpowiedź zamknięcia');
+    assert.equal(await auditCount(db, 'year_close.closed'), auditBefore + 1, 'brak nowego zdarzenia audytu przy 409');
+
+    // boardNew: rola board zawężona do INNEGO roku (NEW) — przydział nie
+    // został i nie mógł zostać wygaszony przez zamknięcie roku OLD, więc to
+    // zwykły brak uprawnień, nie "właśnie zamknięte przeze mnie".
+    assert.equal((await post(env, `/api/year-close/${OLD}/close`, cookies.boardNew)).status, 403);
+    assert.equal((await post(env, `/api/year-close/${OLD}/close`, boardRevoked)).status, 403);
+  } finally {
+    await db.close();
+  }
+});
+
+test('#212: podwójne kliknięcie „Zamknij rok” przez tę samą osobę — bez zakleszczenia, drugie replayed:true', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    await startAndConfirm(env, cookies);
+    const [a, b] = await Promise.all([
+      post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
+      post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
+    ]);
+    assert.equal(a.status < 300, true);
+    assert.equal(b.status < 300, true);
+    const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
+    assert.deepEqual([bodyA.replayed, bodyB.replayed].sort(), [false, true]);
+
+    const { rows } = await db.query('SELECT count(*)::int AS n FROM ledger_opening_balances WHERE school_year_id = $1', [NEW]);
+    assert.equal(rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});
+
 test('zamknięcie odmawia, gdy nowy rok ma już bilans otwarcia lub rok następny jest niepoprawny', async () => {
   const { db, env, cookies } = await setup();
   try {
@@ -358,6 +474,32 @@ test('zamknięcie odmawia, gdy nowy rok ma już bilans otwarcia lub rok następn
     assert.equal((await refused.json()).error, 'next_year_opening_balance_exists');
     const { rows } = await db.query('SELECT count(*)::int AS n FROM role_grants WHERE school_year_id = $1 AND expires_at IS NOT NULL', [OLD]);
     assert.equal(rows[0].n, 0, 'odmowa nie wygasza ról');
+  } finally {
+    await db.close();
+  }
+});
+
+// #150 (SR-10, krok w górę): samo zamknięcie roku (operacja nieodwracalna)
+// wymaga MFA potwierdzonego od niedawna (15 min), nie tylko kiedyś w sesji.
+// Rozpoczęcie i checklista zostają przy MFA "kiedyś w sesji" — poza zakresem.
+test('zamknięcie roku wymaga ŚWIEŻEGO MFA (krok w górę): stare potwierdzenie to 403 mfa_stale', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    await startAndConfirm(env, cookies);
+    await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-board-b'");
+
+    const stale = await post(env, `/api/year-close/${OLD}/close`, cookies.boardB);
+    assert.equal(stale.status, 403);
+    assert.equal((await stale.json()).error, 'mfa_stale');
+    assert.equal(await auditCount(db, 'year_close.closed'), 0, 'odmowa mfa_stale nic nie zapisuje');
+
+    // Rozpoczęcie i checklista dalej działają z MFA sprzed 20 minut (poza zakresem #150 część 2).
+    assert.equal((await get(env, `/api/year-close/${OLD}`, cookies.boardB)).status, 200);
+
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-board-b'");
+    const closed = await post(env, `/api/year-close/${OLD}/close`, cookies.boardB);
+    assert.equal(closed.status, 200);
+    assert.equal(await auditCount(db, 'year_close.closed'), 1);
   } finally {
     await db.close();
   }

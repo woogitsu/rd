@@ -77,8 +77,15 @@ async function seedData(db) {
   await db.query(`INSERT INTO ledger_budget_lines (id, school_year_id, category_id, planned_cents, created_by, created_at, idempotency_key)
     VALUES ('bl-1', '${YEAR}', 'cat-out', 50000, 'u-seed', '2026-09-01T10:00:00Z', 'budget-key-0001')`);
 
+  // #101 (SR-06): bezpośredni INSERT ... visibility='published' jest zamknięty poza
+  // trybem odtworzenia (SET LOCAL rd.restore='on', ten sam mechanizm co 0027 dla dat
+  // spoza roku szkolnego) — dane seedowe tego testu nie przechodzą przez pełny
+  // przepływ szkic→publikacja, więc odtwarzamy tu ten tryb jak legacy_d1.
+  await db.query(`BEGIN`);
+  await db.query(`SET LOCAL rd.restore = 'on'`);
   await db.query(`INSERT INTO events (id, school_year_id, title, begins_at, description, visibility, published_at, created_by)
     VALUES ('ev-1', '${YEAR}', 'Piknik testowy', '2026-10-10T10:00:00Z', NULL, 'published', '2026-09-20T00:00:00Z', 'u-seed')`);
+  await db.query(`COMMIT`);
 
   // Zebranie z obecnością (także opiekuna), kworum, uchwałą i protokołem — przez moduł zebrań.
   await seedUser(db, { userId: 'u-voter' });
@@ -142,7 +149,7 @@ test('yearly export is deterministic, scoped to the year and recorded without co
   const first = await exportRequest(db, cookie);
   assert.equal(first.status, 200);
   assert.match(first.headers.get('Content-Type'), /^application\/json/);
-  assert.equal(first.headers.get('Content-Disposition'), `attachment; filename="rd-eksport-${YEAR}-v1.json"`);
+  assert.equal(first.headers.get('Content-Disposition'), `attachment; filename="rd-eksport-${YEAR}-v2.json"`);
   assert.equal(first.headers.get('Cache-Control'), 'no-store');
   const firstBody = await first.text();
 
@@ -195,6 +202,22 @@ test('yearly export is deterministic, scoped to the year and recorded without co
   assert.equal(events.rows[0].actor_id, 'u-admin');
   assert.equal(events.rows[0].metadata_json.rowCounts.guardians, 3);
   assert.doesNotMatch(JSON.stringify(events.rows), /@|Opiekun|Uczeń/);
+});
+
+// #154: readJson w exports.js nie sprawdzał deklarowanego Content-Length przed
+// odczytem ciała (inne moduły, np. families.js/email.js, robią to najpierw).
+// Skutek: zawyżony nagłówek Content-Length dla małego, poprawnego ciała nie był
+// odrzucany — trasa wykonywała żądanie tak, jakby nagłówek był zgodny z rzeczywistością.
+test('POST /api/exports odrzuca zawyżony deklarowany Content-Length, nawet gdy ciało mieści się w limicie', async () => {
+  const cookie = await adminCookie(db, 'u-admin-cl');
+  const res = await handlePgRequest(request('/api/exports', {
+    method: 'POST',
+    cookie,
+    body: { schoolYearId: YEAR },
+    headers: { 'Content-Length': '999999' },
+  }), { db });
+  assert.equal(res.status, 413);
+  assert.deepEqual(await res.json(), { error: 'request_too_large' });
 });
 
 test('manifest verification detects tampering', async () => {
@@ -349,6 +372,31 @@ test('yearly export requires admin or board with MFA in the year scope', async (
   assert.equal(await countRuns(), runsBefore + 1, 'refused requests create no export run');
 });
 
+// #150 (SR-10, krok w górę): eksport roczny wymaga MFA potwierdzonego od
+// niedawna (15 min), nie tylko kiedyś w bieżącej sesji.
+test('yearly export requires FRESH MFA (step-up): stale confirmation is 403 mfa_stale, a new one is 200', async () => {
+  const countRuns = async () => (await db.query('SELECT count(*)::int AS n FROM export_runs')).rows[0].n;
+
+  const fresh10min = await seedUserSession(db, { userId: 'u-board-fresh', roles: [{ role: 'board', schoolYearId: YEAR }], mfa: true });
+  await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '10 minutes' WHERE user_id = 'u-board-fresh'");
+  const runsBefore = await countRuns();
+  assert.equal((await exportRequest(db, fresh10min)).status, 200, 'MFA 10 min temu jest wciąż świeże (próg 15 min)');
+  assert.equal(await countRuns(), runsBefore + 1);
+
+  const stale20min = await seedUserSession(db, { userId: 'u-board-stale', roles: [{ role: 'board', schoolYearId: YEAR }], mfa: true });
+  await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-board-stale'");
+  const stale = await exportRequest(db, stale20min);
+  assert.equal(stale.status, 403);
+  assert.deepEqual(await stale.json(), { error: 'mfa_stale' });
+  assert.equal(await countRuns(), runsBefore + 1, 'odmowa mfa_stale nic nie zapisuje');
+
+  // Po ponownym potwierdzeniu kodu (symulowane: mfa_verified_at znów świeże,
+  // ta sama sesja) żądanie przechodzi.
+  await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-board-stale'");
+  assert.equal((await exportRequest(db, stale20min)).status, 200);
+  assert.equal(await countRuns(), runsBefore + 2);
+});
+
 test('representative exports only the roster of their own class, without financial data', async () => {
   const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: true });
   const roster = (classId, cookie = rep) => handlePgRequest(request(`/api/exports/class-roster?classId=${classId}`, { cookie }), { db });
@@ -393,9 +441,19 @@ test('representative exports only the roster of their own class, without financi
     seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true }),
     /class_not_in_school_year/,
   );
-  await db.exec('ALTER TABLE role_grants DISABLE TRIGGER a0_year_freeze');
-  const repOldYear = await seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true });
-  await db.exec('ALTER TABLE role_grants ENABLE TRIGGER a0_year_freeze');
+  // Od #198/0081 ten wiersz jest odrzucany nawet z wyłączonym triggerem —
+  // złożony FK role_grants_class_in_year (niezależna gwarancja obok
+  // a0_year_freeze) blokuje go też na poziomie bazy. session_replication_role
+  // = replica wyłącza triggery I sprawdzanie FK na czas jednej transakcji,
+  // żeby odtworzyć wiersz jak sprzed obu zabezpieczeń (np. z importu D1) i
+  // sprawdzić, że autoryzacja i tak go nie uznaje.
+  await db.query("SET session_replication_role = replica");
+  let repOldYear;
+  try {
+    repOldYear = await seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true });
+  } finally {
+    await db.query("SET session_replication_role = origin");
+  }
   assert.equal((await roster('c-1a', repOldYear)).status, 403, 'grant for another year');
   const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer' }], mfa: true });
   assert.equal((await roster('c-1a', treasurer)).status, 403);

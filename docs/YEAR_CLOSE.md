@@ -22,15 +22,16 @@ Każdy punkt potwierdza osoba z rolą zarządu albo skarbnika (MFA). Zapisywane 
 | `audit_commission_report` | raport Komisji Rewizyjnej przekazany |
 | `minutes_approved` | protokoły zebrań zatwierdzone |
 | `resolutions_archived` | uchwały zebrane w archiwum |
-| `reconciliation_confirmed` | księga uzgodniona z rachunkiem (moduł uzgodnień, migracja 0015, powstaje osobno) |
+| `reconciliation_confirmed` | księga uzgodniona z rachunkiem (moduł uzgodnień istnieje — `src/pg/routes/reconciliation.js`, migracja `0015`, [docs/RECONCILIATION.md](RECONCILIATION.md)) |
 | `documents_handed_over` | dokumenty przekazane nowej Radzie |
 
 Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawienie przekazania pokazuje pomocniczo np. liczbę odbytych zebrań bez zatwierdzonego protokołu.
 
 ## Zamknięcie
 
-`POST /api/year-close/{rok}/close` wykonuje w jednej transakcji:
+`POST /api/year-close/{rok}/close` wykonuje w jednej transakcji, w tej kolejności blokad (#212 — nie odwracać, ani w tej, ani w innej trasie):
 
+0. `SELECT pg_advisory_xact_lock(hashtext('rd_year_close'))` — jedna globalna blokada doradcza dla WSZYSTKICH zamknięć, dowolnego roku, zwalniana automatycznie na koniec transakcji. Musi być pierwszym zapytaniem, przed `LOCK TABLE`. Bez niej dwa równoległe zamknięcia (dwie osoby albo podwójne kliknięcie) dostawały obie `LOCK … IN SHARE MODE` naraz (tryb `SHARE` nie wyklucza sam siebie), a potem każda transakcja czekała na blokadę wiersza zamknięcia / `INSERT` bilansu otwarcia — zakleszczenie (`40P01`) wykrywane dopiero po `deadlock_timeout`, w trakcie którego zapisy księgi WSZYSTKICH lat czekały. Założenie: zamknięcie jest rzadkie, więc globalna serializacja nie wpływa na wydajność (D-21).
 1. blokuje tabele księgi (`LOCK … IN SHARE MODE`) i wiersz zamknięcia — trwające zapisy księgi kończą się przed wyliczeniem, nowe czekają i po zamknięciu są odrzucane,
 2. sprawdza komplet listy kontrolnej i zasadę czterech oczu (zamyka inna osoba niż rozpoczynająca; także `CHECK` w bazie),
 3. liczy bilans z widoku `ledger_year_summary` (bilans otwarcia + poprawki + przychody netto − wydatki netto) oraz część poza rachunkiem z `ledger_year_cash_summary` (gotówka z bilansu otwarcia + wpisy z metodą inną niż `bank` + przeniesienia kasa ↔ rachunek; #199),
@@ -39,7 +40,11 @@ Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawien
 6. utrwala w wierszu zamknięcia bilans otwarcia, przychody, wydatki, bilans zamknięcia, gotówkę na otwarcie i zamknięcie (`opening_cash_cents`, `closing_cash_cents`; zamknięcia sprzed 0028 mają tu `NULL`), identyfikator przeniesionego bilansu i liczbę wygaszonych ról,
 7. zapisuje zdarzenia `ledger_opening_balance.carried_forward` i `year_close.closed`.
 
-Zamknięcie jest odrzucane, gdy następny rok ma już bilans otwarcia (`next_year_opening_balance_exists`) — trzeba wyjaśnić rozbieżność, a nie nadpisywać. Ponowne zamknięcie zamkniętego roku zwraca stan z `replayed: true` bez nowych zapisów.
+Zamknięcie jest odrzucane, gdy następny rok ma już bilans otwarcia (`next_year_opening_balance_exists`) — trzeba wyjaśnić rozbieżność, a nie nadpisywać. Ponowne zamknięcie zamkniętego roku (przed rozpoczęciem transakcji albo po niej — druga transakcja widzi już `closed` po zwolnieniu advisory locka przez pierwszą) zwraca stan z `replayed: true` bez nowych zapisów, `200`, bez zakleszczenia (#212).
+
+Krok 5 (wygaszenie przydziałów zawężonych do zamykanego roku) ma skutek uboczny przy dwóch równoległych `/close` (#212, dopisek): jeśli osoba B ma rolę `board` zawężoną WŁAŚNIE do zamykanego roku (jak osoba A, zwykle w tej samej kadencji), a osoba A zamknie rok jako pierwsza, przydział B do tego roku jest już wygaszony, zanim żądanie B dotrze do sprawdzenia roli (`authorize()` w `src/pg/routes/year-close.js` biegnie PRZED transakcją, więc kolejność wejścia do samej autoryzacji nie jest chroniona advisory lockiem). Zwykłe sprawdzenie roli zwróciłoby wtedy mylące `403 forbidden` osobie, która miała prawo zamknąć rok w chwili wysłania żądania. `wasAuthorizedAtOwnClosure` rozpoznaje ten dokładny przypadek — przydział wygasł w TEJ SAMEJ transakcji, która zamknęła TEN rok (`role_grants.expires_at = school_year_closures.closed_at`, oba `now()` tej samej transakcji SQL).
+
+Wariant zachowawczy (najmniej uprawnień, D-08/D-09 jeszcze nierozstrzygnięte): taka osoba NIE dostaje pełnej odpowiedzi `replayed: true` z bilansem i identyfikatorami zamknięcia — jej przydział do tego roku już nie istnieje, więc nie ma dziś prawa tych danych czytać. Dostaje zamiast tego zwykłe `409 school_year_closed` (ten sam kod, którego już używa `start` po zamknięciu), bez wymogu świeżego MFA (nic się nie zmienia w tej gałęzi) i bez nowego zdarzenia audytu (stan bazy się nie zmienia — to czysty odczyt uprawnień, nie zapis). Nie dotyczy osoby, która nigdy nie miała odpowiedniej roli w tym roku, ani przydziału wygasłego z innego powodu (rewokacja, wcześniejsze naturalne wygaśnięcie sprzed TEGO konkretnego zamknięcia) — te dostają zwykłe `403 forbidden`, jak dotąd.
 
 ## Zamrożenie
 
@@ -76,7 +81,7 @@ Wszystkie trasy: aktywna sesja, MFA, przydział bez zawężenia do klasy, w zakr
 | `POST /api/year-close/{rok}/close` | zarząd | 200; 409 `checklist_incomplete` (z listą braków), `four_eyes_required`, `next_year_opening_balance_exists` |
 | `GET /api/year-close/{rok}/handover` | zarząd, skarbnik; po zamknięciu także zarząd/skarbnik roku następnego i admin (tylko odczyt) | zestawienie przekazania (JSON) |
 
-Zestawienie przekazania zawiera wyłącznie liczby, sumy w centach EUR i identyfikatory: bilans (z podziałem rachunek/kasa: `openingCashCents`, `closingCashCents`, `closingBankCents`; bilans otwarcia nowego roku z `cashCents`), liczby wpisów i korekt księgi, sumy wpłat zapisanych i niewyjaśnionych (bez rodzin), zebrania według stanu i liczbę odbytych bez zatwierdzonego protokołu, uchwały według stanu (bieżące wersje), wydarzenia według stanu, listę kontrolną z identyfikatorami osób, liczbę wygaszonych ról i aktywne role nowego roku. Nie zawiera imion, adresów e-mail ani danych dzieci. Suma wpłat nie jest listą „dłużników” — składki są dobrowolne. Eksport PDF/CSV (0016) powstaje osobno.
+Zestawienie przekazania zawiera wyłącznie liczby, sumy w centach EUR i identyfikatory: bilans (z podziałem rachunek/kasa: `openingCashCents`, `closingCashCents`, `closingBankCents`; bilans otwarcia nowego roku z `cashCents`), liczby wpisów i korekt księgi, sumy wpłat zapisanych i niewyjaśnionych (bez rodzin), zebrania według stanu i liczbę odbytych bez zatwierdzonego protokołu, uchwały według stanu (bieżące wersje), wydarzenia według stanu, listę kontrolną z identyfikatorami osób, liczbę wygaszonych ról i aktywne role nowego roku. Nie zawiera imion, adresów e-mail ani danych dzieci. Suma wpłat nie jest listą „dłużników” — składki są dobrowolne. Eksport roczny (0016, `docs/EXPORT.md`, `POST /api/exports`) już istnieje dla listy klasy (JSON/CSV) i archiwum kadencji, ale **nie** dla samego zestawienia przekazania: `GET /api/year-close/{rok}/handover` zwraca dziś wyłącznie JSON — drukowalny PDF/CSV tego konkretnego dokumentu (do podpisu przy przekazaniu) nie istnieje i pozostaje przyszłym etapem.
 
 Po zamknięciu osoby, których jedyny przydział był zawężony do starego roku, tracą dostęp — także do tego zestawienia (zamknięcie wygasza przydziały roku, również `audit` i `treasurer`).
 
@@ -102,7 +107,7 @@ Wariant zachowawczy do czasu decyzji D-08/D-09 (zarząd jeszcze nie zdecydował)
 
 - Zasada czterech oczu przy zamknięciu (inna osoba niż rozpoczynająca) — założenie, nie przepis regulaminu (D-21).
 - Rozpoczyna i zamyka zarząd; skarbnik tylko potwierdza punkty listy. Komisja Rewizyjna, dyrekcja i admin techniczny nie mają dostępu do czasu D-08/D-09 — z wyjątkiem odczytu archiwum zamkniętego roku przez admina (#195).
-- Wygaszane są przydziały z `school_year_id` zamykanego roku oraz przydziały klas tego roku (#201). Przydziały bez zakresu roku (np. admin techniczny) nie wygasają automatycznie — obsługuje je zarządzanie rolami (0012).
+- Wygaszane są przydziały z `school_year_id` zamykanego roku oraz przydziały klas tego roku (#201). Przydziały bez zakresu roku (np. admin techniczny) nie wygasają automatycznie — obsługuje je zarządzanie rolami (`src/pg/routes/admin.js`, `POST /api/admin/grants/:id/revoke`, `docs/ACCOUNTS.md`; nie ma osobnej migracji dla samego zarządzania rolami).
 - Następny rok musi zaczynać się później niż zamykany i nie może mieć rozpoczętego zamknięcia.
 - Bilans liczony jest z księgi, nie z wpłat; wpłata wpływa na bilans dopiero przez wpis przychodu.
 

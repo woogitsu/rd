@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Kampanie e-mail — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../"><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
+      <nav aria-label="Panel">
+        <ul id="shell-nav" aria-live="polite"></ul>
+      </nav>
+      <div id="shell-account"></div>
+    </header>
+
+    <main id="main">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">Dobrowolna składka</p>
+          <h1>Kampanie e-mail</h1>
+          <p>Żaden ekran nie wysyła poczty — wysyła wyłącznie zadanie po zatwierdzeniu i zakolejkowaniu.</p>
+        </div>
+        <div class="heading-action"><button class="primary" id="open-create" type="button">Nowa kampania</button></div>
+      </section>
+
+      <p class="message error" id="access-notice" role="status" hidden>Kampanie e-mail prowadzą zarząd i skarbnik (z MFA). To konto nie ma dostępu do tego ekranu.</p>
+
+      <section class="card filters" aria-labelledby="filters-title">
+        <h2 id="filters-title">Rok szkolny</h2>
+        <form id="filters-form">
+          <label>Rok szkolny <input id="school-year-id" name="schoolYearId" required autocomplete="off" placeholder="np. 2026-2027" /></label>
+          <button type="submit">Pokaż</button>
+        </form>
+      </section>
+
+      <div class="message" id="message" role="status"></div>
+
+      <section class="card" aria-labelledby="campaigns-title">
+        <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="campaigns-title">Kampanie</h2></div><span id="campaigns-count" aria-live="polite"></span></div>
+        <div class="table-wrap" id="campaigns-table" role="region" aria-labelledby="campaigns-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Kampanie e-mail wybranego roku</caption>
+            <thead><tr><th scope="col">Tytuł</th><th scope="col">Odbiorcy</th><th scope="col">Stan</th><th scope="col" class="amount">Liczba odbiorców</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="campaigns-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="campaigns-empty" hidden>Brak kampanii dla wybranego roku.</p>
+      </section>
+
+      <section class="card" id="detail" aria-labelledby="detail-title" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Kampania</p><h2 id="detail-title">—</h2></div>
+          <span id="detail-status" class="badge"></span>
+        </div>
+        <dl class="detail-grid">
+          <div><dt>Odbiorcy</dt><dd id="detail-audience"></dd></div>
+          <div><dt>Temat</dt><dd id="detail-subject"></dd></div>
+        </dl>
+        <p class="context">Treść wiadomości (jedna na rodzinę):</p>
+        <p class="body-preview" id="detail-body"></p>
+
+        <div class="summary-grid two">
+          <div><span>Liczba odbiorców po migawce</span><strong id="detail-recipients-count">—</strong></div>
+          <div><span>Plan wysyłki</span><strong id="detail-plan">—</strong></div>
+        </div>
+        <p class="message error" id="detail-snapshot-current" hidden>Dane od migawki zmieniły się (nowe wpłaty albo przydziały). Utwórz migawkę ponownie przed zatwierdzeniem.</p>
+
+        <h3>Wykluczenia z listy odbiorców</h3>
+        <ul id="detail-exclusions"></ul>
+        <p class="empty" id="detail-exclusions-empty" hidden>Brak wykluczeń albo migawka nie została jeszcze utworzona.</p>
+
+        <div class="message error" id="detail-warnings-box" hidden>
+          <h3>Uwagi do treści</h3>
+          <ul id="detail-warnings"></ul>
+        </div>
+
+        <div id="detail-outbox-box" hidden>
+          <h3>Stan kolejki</h3>
+          <ul id="detail-outbox"></ul>
+        </div>
+
+        <div class="dialog-actions detail-actions">
+          <button id="edit-campaign" type="button">Edytuj szkic</button>
+          <button id="build-snapshot" type="button">Utwórz migawkę odbiorców</button>
+          <button id="view-recipients" type="button" hidden>Pokaż listę odbiorców</button>
+          <button id="approve-campaign" type="button" class="primary" aria-describedby="approve-hint">Zatwierdź kampanię</button>
+          <button id="queue-campaign" type="button" class="primary" hidden>Zakolejkuj</button>
+          <button id="cancel-campaign" type="button" hidden>Anuluj kampanię</button>
+        </div>
+        <p class="message" id="approve-waiting" hidden>Czeka na drugą osobę — kto przygotował treść lub migawkę, nie może zatwierdzić tej kampanii.</p>
+        <p class="empty" id="approve-hint">Zatwierdzenie jest aktywne dopiero po aktualnej migawce odbiorców z co najmniej jednym adresem.</p>
+      </section>
+    </main>
+
+    <dialog id="create-dialog" aria-labelledby="create-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Nowa kampania</p><h2 id="create-dialog-title">Utwórz szkic</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <label>Tytuł wewnętrzny (nie trafia do rodziców) <input name="title" minlength="3" maxlength="200" required autofocus /></label>
+      <label>Odbiorcy <select name="audience"><option value="all_households">Wszystkie rodziny roku</option><option value="no_payment_record">Rodziny bez odnotowanej wpłaty</option></select></label>
+      <label>Temat wiadomości <input name="subject" minlength="3" maxlength="200" required placeholder="Może zawierać {rok}" /></label>
+      <label>Treść wiadomości <textarea name="bodyText" rows="8" minlength="20" maxlength="10000" required placeholder="Może zawierać {rok} i {rodzina}. Wspomnij, że wpłacający mogą pominąć wiadomość."></textarea></label>
+      <div class="form-error" id="create-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="create-error">Zapisz szkic</button></div>
+    </form></dialog>
+
+    <dialog id="edit-dialog" aria-labelledby="edit-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Zmiana treści</p><h2 id="edit-dialog-title">Edytuj szkic</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context">Każda zmiana cofa kampanię do szkicu i usuwa istniejące zatwierdzenie.</p>
+      <label>Tytuł wewnętrzny <input name="title" minlength="3" maxlength="200" required autofocus /></label>
+      <label>Odbiorcy <select name="audience"><option value="all_households">Wszystkie rodziny roku</option><option value="no_payment_record">Rodziny bez odnotowanej wpłaty</option></select></label>
+      <label>Temat wiadomości <input name="subject" minlength="3" maxlength="200" required /></label>
+      <label>Treść wiadomości <textarea name="bodyText" rows="8" minlength="20" maxlength="10000" required></textarea></label>
+      <div class="form-error" id="edit-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="edit-error">Zapisz zmiany</button></div>
+    </form></dialog>
+
+    <dialog id="recipients-dialog" aria-labelledby="recipients-dialog-title">
+      <div class="dialog-heading"><div><p class="eyebrow">Weryfikacja</p><h2 id="recipients-dialog-title">Lista odbiorców</h2></div><button class="icon-button" id="recipients-close" type="button" aria-label="Zamknij">×</button></div>
+      <p class="context">Adresy są domyślnie zamaskowane. Otwarcie tej listy jest zapisywane w dzienniku zdarzeń.</p>
+      <div class="table-wrap" role="region" aria-labelledby="recipients-dialog-title" tabindex="0">
+        <table>
+          <caption class="sr-only">Odbiorcy kampanii</caption>
+          <thead><tr><th scope="col">Rodzina</th><th scope="col">Adres e-mail</th></tr></thead>
+          <tbody id="recipients-body"></tbody>
+        </table>
+      </div>
+      <p id="recipients-count" aria-live="polite"></p>
+      <button class="load-more" id="recipients-load-more" type="button" hidden>Wczytaj następne</button>
+    </dialog>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

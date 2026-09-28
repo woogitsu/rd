@@ -2,10 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildGrantsUrl, confirmationText, dateToExpiresAt, describeAuditEvent, errorMessage, grantPayload,
-  indexClasses, invitationLink, invitationPayload, isOwnLastAdminGrant, scopeLabel,
+  indexClasses, invitationLink, invitationPayload, isOwnLastAdminGrant, mfaResetConfirmation, passwordResetLink,
+  PENDING_DECISION_ROLES, ROLE_LABELS, roleNeedsPendingDecisionWarning, scopeLabel,
 } from '../admin/core.js';
+import { ROLE_STATUS } from '../src/pg/auth.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
+
+test('#176: PENDING_DECISION_ROLES zgadza się z ROLE_STATUS (src/pg/auth.js), jedynym źródłem prawdy', () => {
+  const pendingOnServer = Object.entries(ROLE_STATUS)
+    .filter(([, status]) => status === 'pending_decision')
+    .map(([role]) => role)
+    .sort();
+  assert.deepEqual([...PENDING_DECISION_ROLES].sort(), pendingOnServer);
+  for (const role of Object.keys(ROLE_LABELS)) {
+    assert.equal(roleNeedsPendingDecisionWarning(role), pendingOnServer.includes(role), role);
+  }
+  assert.equal(roleNeedsPendingDecisionWarning('nieznana'), false);
+});
 
 test('buildGrantsUrl encodes filters and rejects unknown values', () => {
   assert.equal(buildGrantsUrl(), '/api/admin/grants?status=active');
@@ -63,10 +77,29 @@ test('labels, scope and audit descriptions are Polish and contain identifiers on
   assert.equal(scopeLabel({ classId: 'c-1a', schoolYearId: 'y-2026' }, classes, yearMap), 'klasa 1A, rok 2026/27');
   assert.equal(scopeLabel({}, classes, yearMap), 'cała Rada');
   assert.equal(errorMessage('last_admin_grant'), 'Nie można odebrać sobie ostatniego aktywnego przydziału administratora.');
+  assert.match(errorMessage('cannot_grant_self'), /Nie można nadać roli własnemu kontu/);
   assert.match(errorMessage(undefined, 503), /niedostępna/);
   assert.match(errorMessage('weird', 400), /weird/);
   assert.match(confirmationText('disable', 'u-1'), /sesje zostaną wycofane/);
   const described = describeAuditEvent({ action: 'role_grant.expired', metadata: { role: 'board', userId: 'u-1', schoolYearId: 'y-2026', reason: 'term_closed' } });
   assert.equal(described.label, 'Wygaszenie roli');
   assert.equal(described.details, 'Zarząd, konto u-1, rok y-2026, powód: term_closed');
+});
+
+// #224: pole potwierdzenia resetu MFA musi dokładnie odpowiadać identyfikatorowi
+// konta (kontrakt POST /api/admin/users/{id}/mfa-reset) i rozróżniać anulowanie
+// okna (Escape/Anuluj -> null) od wpisania złego tekstu.
+test('mfaResetConfirmation requires an exact account id and distinguishes cancel from a wrong answer', () => {
+  assert.deepEqual(mfaResetConfirmation(null, 'u-target'), { cancelled: true, ok: false });
+  assert.deepEqual(mfaResetConfirmation('', 'u-target'), { cancelled: false, ok: false });
+  assert.deepEqual(mfaResetConfirmation('u-inny', 'u-target'), { cancelled: false, ok: false });
+  assert.deepEqual(mfaResetConfirmation(' u-target ', 'u-target'), { cancelled: false, ok: true });
+  assert.deepEqual(mfaResetConfirmation('u-target', 'u-target'), { cancelled: false, ok: true });
+});
+
+test('passwordResetLink builds a /login/#reset= link carrying the token only in the fragment', () => {
+  assert.equal(
+    passwordResetLink('abc123', 'https://rd.example.invalid'),
+    'https://rd.example.invalid/login/#reset=abc123',
+  );
 });

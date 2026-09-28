@@ -62,7 +62,8 @@ export function ledgerFilterChanged(query, current) {
 }
 
 export function buildOverviewUrl(resource, schoolYearId, direction = "") {
-  if (!["categories", "summary", "budget"].includes(resource) || !isValidId(schoolYearId)) {
+  // #107: "budget/execution" — preliminarz (przyjęty i bieżący) a wykonanie netto per kategoria.
+  if (!["categories", "summary", "budget", "budget/execution"].includes(resource) || !isValidId(schoolYearId)) {
     throw new Error("Niepoprawne parametry podsumowania.");
   }
   const params = new URLSearchParams({ schoolYearId: schoolYearId.trim() });
@@ -87,6 +88,8 @@ export function normalizeEntry(entry) {
     method: Object.hasOwn(METHOD_LABELS, entry?.method) ? entry.method : "other",
     source: entry?.source ? String(entry.source) : "",
     resolutionReference: entry?.resolutionReference ? String(entry.resolutionReference) : "",
+    // #87: liczba dowodów (dokument główny + dołączone); null, gdy API jej nie podaje.
+    attachmentCount: Array.isArray(entry?.attachmentIds) ? entry.attachmentIds.length : null,
     amountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
     correctedCents: Number.isSafeInteger(correctedCents) ? correctedCents : 0,
     netCents: Number.isSafeInteger(Number(entry?.netAmountCents))
@@ -117,4 +120,25 @@ export function describeApiError(status, code) {
   if (code === "mfa_required") return "Potwierdź logowanie drugim składnikiem (MFA), aby korzystać z finansów.";
   if (status === 403 || code === "forbidden") return "Nie masz uprawnień do tej operacji w wybranym roku szkolnym.";
   return null;
+}
+
+// #107: wiersz zestawienia plan vs wykonanie dla tabeli panelu. Brak planu to
+// „poza planem”, nie plan zerowy; przekroczenie opisane tekstem, nie tylko kolorem.
+export function budgetExecutionRow(item) {
+  const planned = Number.isSafeInteger(item?.currentPlanCents) ? item.currentPlanCents : null;
+  const executed = Number.isSafeInteger(item?.executedNetCents) ? item.executedNetCents : 0;
+  const percent = typeof item?.executionPercent === "number" ? `${String(item.executionPercent).replace(".", ",")}%` : "—";
+  const notes = [];
+  if (item?.active === false) notes.push("kategoria wyłączona");
+  if (planned === null) notes.push("poza planem");
+  if (item?.overBudget) notes.push("przekroczenie planu");
+  return {
+    categoryName: String(item?.categoryName ?? "Bez kategorii"),
+    direction: Object.hasOwn(DIRECTION_LABELS, item?.direction) ? item.direction : "expense",
+    planned: planned === null ? "—" : formatCents(planned),
+    executed: formatCents(executed),
+    percent,
+    note: notes.join(", "),
+    overBudget: Boolean(item?.overBudget),
+  };
 }

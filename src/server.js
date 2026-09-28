@@ -8,14 +8,63 @@ import { bodyLimitFor, maxUploadBytes } from './documents.js';
 import { storageFromEnv } from './storage.js';
 import { checkReadiness } from './health.js';
 import { createRequestMetrics, describeError, log, startMetricsReporter } from './log.js';
+import { dummyHash } from './pg/password.js';
+import { PHOTO_UPLOAD_MAX_BYTES } from './pg/news.js';
+import { resolveWriteMode } from './write-mode.js';
+
+// POST /api/news-photos/:id/file (#96) przesyła surowe bajty obrazu, jak
+// POST /api/documents — potrzebuje wyższego limitu ciała niż domyślny 1 MiB,
+// niezależnego od limitu dokumentów (DOCUMENT_MAX_BYTES).
+const NEWS_PHOTO_FILE_PATH = /^\/api\/news-photos\/[^/]+\/file$/;
+function bodyLimitForApp(documentMaxBytes) {
+  const documentsLimit = bodyLimitFor(documentMaxBytes);
+  return (url, method) => {
+    if (method === 'POST' && NEWS_PHOTO_FILE_PATH.test(url.pathname)) return PHOTO_UPLOAD_MAX_BYTES;
+    return documentsLimit(url, method);
+  };
+}
 
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+// #185 pkt 4: bez limitu jawnego Node trzyma bufor żądania (i gniazdo)
+// nieograniczenie długo dla wolnego/złośliwego klienta. 120 s starcza na
+// upload 10-25 MB nawet na słabym łączu; headersTimeout musi być mniejszy
+// niż requestTimeout (wymóg Node — inaczej ostrzeżenie/błąd konfiguracji).
+export const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+export const DEFAULT_HEADERS_TIMEOUT_MS = 60_000;
+
+// #126: bez TRUST_PROXY za proxy Railway `clientAddress` (src/node-app.js) bierze
+// adres gniazda (adres proxy), więc limit logowań na IP jest wspólny dla całej
+// szkoły — 20 błędnych prób od kogokolwiek blokuje logowanie wszystkim. Poza
+// development/test (domyślne, bez APP_ENV — lokalnie i w testach) i wprost
+// oznaczonym staging/production wymagamy jawnego TRUST_PROXY. Konwencja nazw
+// zgodna z `isProductionEnv` (src/pg/bootstrap-admin.js): nierozpoznana wartość
+// APP_ENV NIE jest traktowana jak produkcja (nie blokuje startu po cichu),
+// ale `staging`/`production`/`prod` wprost tego wymagają — literówka w APP_ENV
+// nie ma więc być jedynym zabezpieczeniem produkcji (założenie do potwierdzenia).
+const PROXY_REQUIRED_ENVS = new Set(['staging', 'production', 'prod']);
+
+export function trustProxyRequired(appEnv) {
+  return PROXY_REQUIRED_ENVS.has(String(appEnv ?? '').trim().toLowerCase());
+}
+
+export function assertTrustProxyConfigured(processEnv = process.env) {
+  if (!trustProxyRequired(processEnv.APP_ENV)) return;
+  if (processEnv.TRUST_PROXY === '1' || processEnv.TRUST_PROXY === 'true') return;
+  throw new Error(
+    `TRUST_PROXY musi być ustawione (1 lub true) gdy APP_ENV=${processEnv.APP_ENV} — inaczej licznik prób logowania `
+    + 'na adres IP jest wspólny dla całej szkoły (#126, docs/AUTH.md).',
+  );
+}
 
 // Wybór warstwy API. Z DATABASE_URL: nowe API na PostgreSQL (env.db).
 // Bez niej: dotychczasowy router Workera (bez D1 chronione trasy zwracają 503).
 // Migracje NIE są uruchamiane przy starcie — wyłącznie `npm run db:migrate:postgres`.
 // Storage Bucket (BUCKET_*) jest opcjonalny: bez niego trasy dokumentów zwracają 503.
+// APP_WRITE_MODE (#143): wartość inna niż 'normal'/'read_only' zatrzymuje start
+// (błąd konfiguracji), zanim powstanie pula bazy czy klient magazynu.
 export function resolveRuntime(processEnv = process.env, { createDatabase = createPgDatabase, createStorage = storageFromEnv } = {}) {
+  const writeMode = resolveWriteMode(processEnv.APP_WRITE_MODE);
+  log.info('write_mode_active', { mode: writeMode });
   if (processEnv.DATABASE_URL) {
     const storage = createStorage(processEnv);
     const documentMaxBytes = maxUploadBytes(processEnv.DOCUMENT_MAX_BYTES);
@@ -26,7 +75,14 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         db,
         storage,
         documentMaxBytes,
+        // #185 pkt 3: limit uploadów naraz NA PROCES (nie na klaster) — patrz
+        // src/documents.js tryAcquireUploadSlot. Nieustawione/niepoprawne ->
+        // domyślne 4 (DEFAULT_MAX_CONCURRENT_UPLOADS).
+        maxConcurrentUploads: Number.isInteger(Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS))
+          && Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS) > 0
+          ? Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS) : undefined,
         APP_ENV: processEnv.APP_ENV,
+        APP_WRITE_MODE: writeMode,
         IMPORT_ENABLED: processEnv.IMPORT_ENABLED,
         // Webhook i plan kampanii e-mail (#40). Klucz API Brevo NIE trafia do serwera HTTP —
         // używa go wyłącznie zadanie scripts/email-worker.js.
@@ -37,16 +93,28 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         EMAIL_CAMPAIGN_MIN_DAILY: processEnv.EMAIL_CAMPAIGN_MIN_DAILY,
         // MFA (#3): klucz szyfrowania sekretów TOTP, wyłącznie jako sekret usługi Railway.
         MFA_ENCRYPTION_KEY: processEnv.MFA_ENCRYPTION_KEY,
+        // Import wyciągu CODA/CAMT.053 (#105): klucz HMAC skrótów transakcji (sekret)
+        // i zatwierdzony rachunek Rady (D-13). Bez obu import z pliku jest wyłączony.
+        BANK_TRANSACTION_HASH_KEY: processEnv.BANK_TRANSACTION_HASH_KEY,
+        RECONCILIATION_BANK_ACCOUNT_IBAN: processEnv.RECONCILIATION_BANK_ACCOUNT_IBAN,
         // Logowanie hasłem (#3): role z obowiązkowym MFA i koszt scrypt (log2 N).
         MFA_REQUIRED_ROLES: processEnv.MFA_REQUIRED_ROLES,
         SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
+        // Stan systemu i heartbeat zadań (#149) — tylko liczby/kody, żadnych
+        // sekretów oprócz tokenu monitora (nigdy nie zwracanego w odpowiedzi).
+        RAILWAY_GIT_COMMIT_SHA: processEnv.RAILWAY_GIT_COMMIT_SHA,
+        APP_WRITE_MODE: processEnv.APP_WRITE_MODE,
+        HEALTH_JOBS_TOKEN: processEnv.HEALTH_JOBS_TOKEN,
+        BACKUP_MAX_AGE_HOURS: processEnv.BACKUP_MAX_AGE_HOURS,
+        EMAIL_WORKER_MAX_AGE_HOURS: processEnv.EMAIL_WORKER_MAX_AGE_HOURS,
+        EMAIL_QUEUE_MAX_AGE_HOURS: processEnv.EMAIL_QUEUE_MAX_AGE_HOURS,
       },
       fetchHandler: handlePgRequest,
-      bodyLimit: bodyLimitFor(documentMaxBytes),
+      bodyLimit: bodyLimitForApp(documentMaxBytes),
       close: () => db.close(),
     };
   }
-  return { mode: 'legacy', env: {}, fetchHandler: worker.fetch.bind(worker), close: async () => {} };
+  return { mode: 'legacy', env: { APP_WRITE_MODE: writeMode }, fetchHandler: worker.fetch.bind(worker), close: async () => {} };
 }
 
 export async function startServer({
@@ -61,10 +129,15 @@ export async function startServer({
   metrics,
   readiness,
   trustProxy = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
+  requestTimeout = DEFAULT_REQUEST_TIMEOUT_MS,
+  headersTimeout = DEFAULT_HEADERS_TIMEOUT_MS,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');
   const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit, logger, metrics, readiness, trustProxy });
   const server = createServer(handler);
+  // #185 pkt 4: patrz DEFAULT_REQUEST_TIMEOUT_MS wyżej.
+  server.requestTimeout = requestTimeout;
+  server.headersTimeout = headersTimeout;
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, resolve);
@@ -116,7 +189,15 @@ function positiveMs(value, fallback) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  assertTrustProxyConfigured();
   const runtime = resolveRuntime();
+  // #203: wylicza i zapamiętuje fikcyjny hash PRZED pierwszym żądaniem — inaczej
+  // pierwsze logowanie nieznanym adresem e-mail po starcie procesu liczyło dwa
+  // obliczenia scrypt (ten hash + weryfikacja) zamiast jednego, co dawało wolniejszą
+  // odpowiedź niż dla istniejącego konta (różnica czasu ujawniająca istnienie konta).
+  if (runtime.mode === 'postgres') {
+    await dummyHash(runtime.env).catch((error) => log.error('dummy_hash_precompute_failed', describeError(error)));
+  }
   const metrics = createRequestMetrics();
   let draining = false;
   const readiness = async (env) => (draining

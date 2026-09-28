@@ -39,7 +39,7 @@ test('admin API refuses anonymous, non-admin, admin without MFA and cross-origin
     const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer' }], mfa: true });
     const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-now-1a', schoolYearId: 'y-now' }], mfa: true });
     for (const cookie of [board, treasurer, rep]) {
-      for (const path of ['/api/admin/users', '/api/admin/grants', '/api/admin/invitations', '/api/admin/audit', '/api/admin/school-years']) {
+      for (const path of ['/api/admin/users', '/api/admin/grants', '/api/admin/invitations', '/api/admin/audit', '/api/admin/school-years', '/api/admin/retention/preview']) {
         assert.equal((await call(env, path, { cookie })).status, 403, path);
       }
       const denied = await post(env, '/api/admin/grants', cookie, { userId: 'u-target', role: 'admin' });
@@ -69,7 +69,8 @@ test('admin API refuses anonymous, non-admin, admin without MFA and cross-origin
     assert.equal(users.status, 200);
     assert.equal(users.headers.get('Cache-Control'), 'no-store');
     const target = users.data.users.find((user) => user.id === 'u-target');
-    assert.deepEqual(Object.keys(target).sort(), ['activeGrants', 'activeSessions', 'createdAt', 'disabledAt', 'displayName', 'email', 'id']);
+    assert.deepEqual(Object.keys(target).sort(),
+      ['activeGrants', 'activeSessions', 'createdAt', 'disabledAt', 'displayName', 'email', 'id', 'mfaEnrolled']);
   } finally {
     await db.close();
   }
@@ -127,6 +128,57 @@ test('grant creation validates scope, blocks duplicates and is audited without P
   }
 });
 
+// #146: samonadanie roli omijałoby zasadę czterech oczu (admin nadaje sobie
+// treasurer/board bez udziału drugiej osoby).
+test('an admin cannot grant themselves a role, but another admin can grant it to them', async () => {
+  const { db, env, admin } = await setup();
+  try {
+    const selfGrant = await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'treasurer' });
+    assert.equal(selfGrant.status, 409);
+    assert.equal(selfGrant.data.error, 'cannot_grant_self');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM role_grants WHERE user_id = 'u-admin' AND role = 'treasurer'")).rows[0].n, 0);
+    assert.equal((await auditRows(db)).filter((row) => row.action === 'role_grant.created').length, 0);
+
+    // Podwójne kliknięcie tego samego (odrzuconego) żądania: nadal 409, nic nie powstaje.
+    const repeat = await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'treasurer' });
+    assert.equal(repeat.status, 409);
+    assert.equal(repeat.data.error, 'cannot_grant_self');
+
+    // Samonadanie własnej roli reprezentanta (nie tylko ról merytorycznych) jest tak samo odrzucane.
+    assert.equal((await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'representative', classId: 'c-now-1a' })).data.error, 'cannot_grant_self');
+
+    // Obejście przez zaproszenie na własny adres: odrzucone przy tworzeniu (bez
+    // wiersza i zdarzenia) — także z inną wielkością liter i spacjami.
+    const selfInvite = await post(env, '/api/admin/invitations', admin, { email: ' U-Admin@Example.invalid ', role: 'treasurer' });
+    assert.equal(selfInvite.status, 409);
+    assert.equal(selfInvite.data.error, 'cannot_grant_self');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM invitations WHERE lower(email) = 'u-admin@example.invalid'")).rows[0].n, 0);
+    assert.equal((await auditRows(db)).filter((row) => row.action === 'invitation.created').length, 0);
+
+    // Zaproszenie wystawione przez to samo konto innym sposobem (np. zapis
+    // sprzed poprawki) nie nadaje roli przy przyjęciu.
+    const { hashSecret } = await import('../src/auth.js');
+    const token = 'S'.repeat(43);
+    await db.query(
+      `INSERT INTO invitations (id, email, token_hash, role, created_by, expires_at)
+       VALUES ('inv-self', 'u-admin@example.invalid', $1, 'treasurer', 'u-admin', now() + interval '1 hour')`,
+      [await hashSecret(token)],
+    );
+    const accepted = await acceptInvitation(env, { token, userId: 'u-admin' });
+    assert.equal(accepted.ok, false);
+    assert.equal(accepted.reason, 'self_invitation');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM role_grants WHERE user_id = 'u-admin' AND role = 'treasurer'")).rows[0].n, 0);
+
+    // Druga osoba z rolą admina może nadać przydział pierwszej.
+    const second = await seedUserSession(db, { userId: 'u-admin2', roles: [{ role: 'admin' }], mfa: true });
+    const granted = await post(env, '/api/admin/grants', second, { userId: 'u-admin', role: 'treasurer' });
+    assert.equal(granted.status, 201);
+    assert.equal(granted.data.grant.grantedBy, 'u-admin2');
+  } finally {
+    await db.close();
+  }
+});
+
 test('revoking grants keeps history and an admin cannot remove their own last admin grant', async () => {
   const { db, env, admin } = await setup();
   try {
@@ -140,8 +192,10 @@ test('revoking grants keeps history and an admin cannot remove their own last ad
 
     assert.equal((await post(env, '/api/admin/users/u-admin/disable', admin)).data.error, 'cannot_disable_self');
 
-    // Z drugim przydziałem admina wycofanie pierwszego jest dozwolone.
-    const second = await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'admin', schoolYearId: 'y-now' });
+    // Z drugim przydziałem admina wycofanie pierwszego jest dozwolone. Samonadanie jest
+    // zabronione (#146), więc drugi przydział wydaje inny administrator.
+    const grantor = await seedUserSession(db, { userId: 'u-admin-grantor', roles: [{ role: 'admin' }], mfa: true });
+    const second = await post(env, '/api/admin/grants', grantor, { userId: 'u-admin', role: 'admin', schoolYearId: 'y-now' });
     assert.equal(second.status, 201);
     const ok = await post(env, `/api/admin/grants/${own[0].id}/revoke`, admin);
     assert.equal(ok.status, 200);
@@ -254,6 +308,59 @@ test('disabling a user revokes all their sessions; enable restores login ability
   }
 });
 
+// #256: disabled_at i trwałe wycofanie sesji muszą zatwierdzić się razem.
+// Przed poprawką były dwiema osobnymi transakcjami — awaria drugiej
+// zostawiała disabled_at zapisane, a sesje aktywne w bazie (revoked_at IS
+// NULL); ponowne włączenie konta mogło je potem znów zaakceptować.
+test('#256: disable rolls back entirely when revoking sessions fails (no half-disabled account)', async () => {
+  const { db, admin } = await setup();
+  try {
+    const victim = await seedUserSession(db, { userId: 'u-victim2' });
+
+    let calls = 0;
+    const failingOnce = {
+      // Kontrakt src/db.js: query(text, params) -> { rows }, transaction(fn).
+      query: (text, params) => db.query(text, params),
+      transaction: (fn) => db.transaction((tx) => fn({
+        query: (text, params) => {
+          if (calls === 0 && typeof text === 'string' && text.includes('UPDATE sessions SET revoked_at')) {
+            calls += 1;
+            throw Object.assign(new Error('injected_failure'), { code: '40001' });
+          }
+          return tx.query(text, params);
+        },
+      })),
+    };
+    const env = { db: failingOnce };
+
+    const disabled = await post(env, '/api/admin/users/u-victim2/disable', admin);
+    assert.equal(disabled.status, 503, 'awaria wycofania sesji ujawnia się jako błąd, nie 200');
+    assert.equal(calls, 1);
+
+    // Cała transakcja (disabled_at, audyt, wycofanie sesji) poszła w jednej
+    // paczce, więc awaria wycofania sesji cofa też disabled_at — konto nie
+    // zostaje w stanie „wyłączone, ale z aktywną sesją”.
+    const userRow = (await db.query("SELECT disabled_at FROM users WHERE id = 'u-victim2'")).rows[0];
+    assert.equal(userRow.disabled_at, null, 'disabled_at nie mógł zostać zapisany bez wycofania sesji');
+    const sessionRow = (await db.query("SELECT revoked_at FROM sessions WHERE user_id = 'u-victim2'")).rows[0];
+    assert.equal(sessionRow.revoked_at, null, 'sesja pozostaje aktywna, tak jak disabled_at');
+    assert.equal((await call({ db }, '/api/session', { cookie: victim })).status, 200, 'sesja nadal działa — konto nie jest w cichej połowicznej blokadzie');
+
+    const eventsAfterFailure = await auditRows(db);
+    assert.equal(eventsAfterFailure.filter((row) => row.entity_type === 'user' && row.entity_id === 'u-victim2').length, 0,
+      'audyt user.disabled też nie mógł się zapisać bez wycofania sesji');
+
+    // Ponowienie bez wstrzykniętej awarii jest bezpieczne i kończy się sukcesem.
+    const retried = await post({ db }, '/api/admin/users/u-victim2/disable', admin);
+    assert.equal(retried.status, 200);
+    assert.equal(retried.data.changed, true);
+    assert.equal(retried.data.revokedSessions, 1);
+    assert.equal((await call({ db }, '/api/session', { cookie: victim })).status, 401);
+  } finally {
+    await db.close();
+  }
+});
+
 test('invitations return the token once, block duplicates, can be revoked and never log the address', async () => {
   const { db, env, admin } = await setup();
   try {
@@ -296,6 +403,149 @@ test('invitations return the token once, block duplicates, can be revoked and ne
     const allAudit = JSON.stringify(await auditRows(db));
     assert.doesNotMatch(allAudit, /example\.invalid/i);
     assert.ok(!allAudit.includes(created.data.token));
+  } finally {
+    await db.close();
+  }
+});
+
+// #224: panel admina otrzymał akcje resetu hasła i resetu MFA (API istniało
+// wcześniej, #238) — testy przechodzą przez trasę HTTP, nie przez funkcje login.js.
+test('password reset and MFA reset: single valid token, self-reset blocked, disabled accounts refused', async () => {
+  const { db, env, admin } = await setup();
+  try {
+    // Podwójne kliknięcie „Wydaj kod resetu”: drugi token unieważnia pierwszy.
+    const first = await post(env, '/api/admin/users/u-target/password-reset', admin, {});
+    assert.equal(first.status, 201);
+    assert.match(first.data.token, /^[A-Za-z0-9_-]{20,}$/);
+    assert.equal(first.data.reset.userId, 'u-target');
+    const second = await post(env, '/api/admin/users/u-target/password-reset', admin, {});
+    assert.equal(second.status, 201);
+    assert.notEqual(second.data.token, first.data.token);
+    const tokens = (await db.query(
+      "SELECT used_at, revoked_at FROM password_reset_tokens WHERE user_id = 'u-target' ORDER BY created_at",
+    )).rows;
+    assert.equal(tokens.length, 2);
+    assert.ok(tokens[0].revoked_at, 'pierwszy nieużyty token jest unieważniony przez drugi');
+    assert.equal(tokens[1].revoked_at, null);
+
+    // Nieprawidłowy ttlHours jest odrzucony, ważny mieści się w limicie.
+    assert.equal((await post(env, '/api/admin/users/u-target/password-reset', admin, { ttlHours: 1000 })).data.error, 'invalid_ttl');
+    assert.equal((await post(env, '/api/admin/users/u-target/password-reset', admin, { ttlHours: 24 })).status, 201);
+
+    // Admin nie może wydać resetu ani zresetować MFA własnego konta.
+    assert.equal((await post(env, '/api/admin/users/u-admin/password-reset', admin, {})).status, 201, 'reset hasła własnego konta jest dozwolony');
+    const ownMfa = await post(env, '/api/admin/users/u-admin/mfa-reset', admin, { confirm: 'u-admin' });
+    assert.equal(ownMfa.status, 409);
+    assert.equal(ownMfa.data.error, 'cannot_reset_own_mfa');
+
+    // Konto wyłączone: reset hasła niedostępny.
+    await seedUser(db, { userId: 'u-off', disabled: true });
+    const offReset = await post(env, '/api/admin/users/u-off/password-reset', admin, {});
+    assert.equal(offReset.status, 409);
+    assert.equal(offReset.data.error, 'user_disabled');
+
+    // Reset MFA bez potwierdzenia identyfikatora konta jest odrzucony.
+    const noConfirm = await post(env, '/api/admin/users/u-target/mfa-reset', admin, {});
+    assert.equal(noConfirm.data.error, 'confirmation_required');
+    const wrongConfirm = await post(env, '/api/admin/users/u-target/mfa-reset', admin, { confirm: 'u-inny' });
+    assert.equal(wrongConfirm.data.error, 'confirmation_required');
+
+    // Konto bez zapisanego czynnika ani kodów odzyskiwania: reset nic nie zmienia.
+    const untouched = await post(env, '/api/admin/users/u-target/mfa-reset', admin, { confirm: 'u-target' });
+    assert.equal(untouched.status, 200);
+    assert.equal(untouched.data.changed, false);
+
+    // Konto z potwierdzonym czynnikiem: reset wyłącza czynnik, wylogowuje i loguje zdarzenie bez PII.
+    const victim = await seedUserSession(db, { userId: 'u-mfa-victim', roles: [{ role: 'board' }], mfa: true });
+    await db.query(
+      `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
+       VALUES ('f-victim', 'u-mfa-victim', 'totp', 'AAAAAAAAAA', 'BBBBBBBBBBBBBBBB', 'CCCCCCCCCCCCCCCCCCCCCC', now())`,
+    );
+    const reset = await post(env, '/api/admin/users/u-mfa-victim/mfa-reset', admin, { confirm: 'u-mfa-victim' });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.data.changed, true);
+    assert.equal(reset.data.disabledFactors, 1);
+    assert.equal(
+      (await db.query("SELECT disabled_at FROM user_mfa_factors WHERE id = 'f-victim'")).rows[0].disabled_at !== null,
+      true,
+    );
+    assert.equal((await call(env, '/api/session', { cookie: victim })).status, 401, 'reset MFA wylogowuje konto');
+
+    const users = await call(env, '/api/admin/users', { cookie: admin });
+    const target = users.data.users.find((user) => user.id === 'u-mfa-victim');
+    assert.equal(target.mfaEnrolled, false, 'po resecie czynnik nie jest już aktywny');
+    const stillEnrolled = await seedUserSession(db, { userId: 'u-mfa-ok', mfa: true });
+    await db.query(
+      `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
+       VALUES ('f-ok', 'u-mfa-ok', 'totp', 'DDDDDDDDDD', 'EEEEEEEEEEEEEEEE', 'FFFFFFFFFFFFFFFFFFFFFF', now())`,
+    );
+    void stillEnrolled;
+    const usersAfter = await call(env, '/api/admin/users', { cookie: admin });
+    assert.equal(usersAfter.data.users.find((user) => user.id === 'u-mfa-ok').mfaEnrolled, true);
+
+    const events = (await auditRows(db)).filter((row) => row.action.startsWith('auth.password_reset') || row.action === 'mfa.reset');
+    assert.ok(events.length >= 5);
+    for (const event of events) assert.doesNotMatch(event.metadata, /@|example\.invalid/);
+  } finally {
+    await db.close();
+  }
+});
+
+// #150 (SR-10, krok w górę): reset hasła, reset MFA i nadanie roli — operacje
+// nieodwracalne na cudzym koncie — wymagają MFA potwierdzonego od niedawna
+// (15 min), nie tylko kiedyś w bieżącej sesji. Sprawdzane PO roli admina
+// (SR-07): konto bez dostępu w ogóle dostaje zwykłe `forbidden` (patrz test
+// wyżej), niezależnie od wieku MFA.
+test('password reset, MFA reset and role grant require FRESH MFA (step-up)', async () => {
+  const { db, env } = await setup();
+  try {
+    const stale = await seedUserSession(db, { userId: 'u-admin-stale', roles: [{ role: 'admin' }], mfa: true });
+    await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-admin-stale'");
+
+    const staleReset = await post(env, '/api/admin/users/u-target/password-reset', stale, {});
+    assert.equal(staleReset.status, 403);
+    assert.equal(staleReset.data.error, 'mfa_stale');
+
+    const staleMfaReset = await post(env, '/api/admin/users/u-target/mfa-reset', stale, { confirm: 'u-target' });
+    assert.equal(staleMfaReset.status, 403);
+    assert.equal(staleMfaReset.data.error, 'mfa_stale');
+
+    const staleGrant = await post(env, '/api/admin/grants', stale, { userId: 'u-target', role: 'board' });
+    assert.equal(staleGrant.status, 403);
+    assert.equal(staleGrant.data.error, 'mfa_stale');
+
+    // Zaproszenie nadaje rolę przy przyjęciu — ten sam krok w górę co /grants
+    // (inaczej przejęta sesja ze starym MFA zapraszała dowolny adres do roli admin).
+    const staleInvite = await post(env, '/api/admin/invitations', stale, { email: 'stale-invite@example.invalid', role: 'admin' });
+    assert.equal(staleInvite.status, 403);
+    assert.equal(staleInvite.data.error, 'mfa_stale');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM invitations WHERE email = 'stale-invite@example.invalid'")).rows[0].n, 0);
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-admin-stale'");
+    const freshInvite = await post(env, '/api/admin/invitations', stale, { email: 'stale-invite@example.invalid', role: 'board' });
+    assert.equal(freshInvite.status, 201);
+    await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-admin-stale'");
+    const staleReissue = await post(env, `/api/admin/invitations/${freshInvite.data.invitation.id}/reissue`, stale, {});
+    assert.equal(staleReissue.status, 403);
+    assert.equal(staleReissue.data.error, 'mfa_stale');
+
+    // Trasy poza zakresem #150 część 2 (lista, wyłączenie/włączenie konta,
+    // cofnięcie sesji, cofnięcie przydziału) nadal działają z MFA "kiedyś w sesji".
+    await seedUser(db, { userId: 'u-other-target' });
+    assert.equal((await call(env, '/api/admin/users', { cookie: stale })).status, 200);
+    assert.equal((await post(env, '/api/admin/users/u-other-target/disable', stale, {})).status, 200);
+
+    assert.equal(
+      (await db.query(
+        "SELECT count(*)::int AS n FROM audit_events WHERE action IN ('auth.password_reset_issued', 'mfa.reset', 'role_grant.created', 'invitation.reissued')",
+      )).rows[0].n,
+      0,
+      'odmowa mfa_stale nic nie zapisuje',
+    );
+
+    // Po ponownym potwierdzeniu kodu (mfa_verified_at znów świeże) żądanie przechodzi.
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-admin-stale'");
+    assert.equal((await post(env, '/api/admin/users/u-target/password-reset', stale, {})).status, 201);
+    assert.equal((await post(env, '/api/admin/grants', stale, { userId: 'u-target', role: 'board' })).status, 201);
   } finally {
     await db.close();
   }

@@ -3,14 +3,21 @@
 :root {
   color: #252323;
   background: #fff;
+  --red: #b3262d;
+  --red-dark: #8e2026;
+  --field: #767676;
+  --muted: #5d6266;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
 }
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: #fff; }
+.skip-link { position: absolute; left: -999px; top: 0; padding: .6rem 1rem; background: #fff; color: var(--red-dark); }
+.skip-link:focus { left: 1rem; z-index: 10; }
+:focus-visible { outline: 3px solid var(--red-dark); outline-offset: 2px; }
 button, input, select { font: inherit; }
-button { cursor: pointer; }
+button { cursor: pointer; min-height: 44px; }
 
 .site-header {
   min-height: 72px;
@@ -20,14 +27,14 @@ button { cursor: pointer; }
   justify-content: space-between;
   gap: 2rem;
   background: #fff;
-  border-top: 4px solid #c92127;
+  border-top: 4px solid var(--red);
   border-bottom: 1px solid #e4dfdb;
 }
 .brand { color: inherit; text-decoration: none; font-weight: 700; line-height: 1.15; }
-.brand small { color: #6e6864; font-weight: 500; }
+.brand small { color: var(--muted); font-weight: 500; }
 nav { display: flex; gap: .4rem; flex-wrap: wrap; }
-nav a { padding: .6rem .8rem; color: #5b5551; text-decoration: none; border-radius: 4px; }
-nav a:hover, nav a.active { color: #a5161b; background: #fbeff0; }
+nav a { padding: .6rem .8rem; color: #5b5551; text-decoration: none; }
+nav a:hover, nav a.active { color: var(--red-dark); background: #fbeff0; }
 
 main { width: min(1180px, 92vw); margin: 0 auto; padding: 2.5rem 0 5rem; }
 .page-heading, .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem; }
@@ -35,51 +42,68 @@ h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: .6rem; font-family: Georgia, serif; font-size: clamp(1.9rem, 4vw, 2.7rem); font-weight: 500; }
 h2 { margin-bottom: .3rem; font-size: 1.08rem; }
 h3 { margin: 1.6rem 0 .6rem; font-size: .95rem; }
-.page-heading p:not(.eyebrow), .section-heading p, .hint { color: #6e6864; margin-bottom: 0; }
+.page-heading p:not(.eyebrow), .section-heading p, .hint { color: var(--muted); margin-bottom: 0; }
 .hint { font-size: .85rem; margin-top: .6rem; }
-.eyebrow { margin-bottom: .4rem; color: #a5161b; font-size: .75rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+.eyebrow { margin-bottom: .4rem; color: var(--red); font-size: .75rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
 
-.notice { margin: 1.2rem 0 1.5rem; padding: .9rem 1.1rem; background: #fff; border-left: 3px solid #c92127; color: #574d49; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
-.card { margin-bottom: 1.4rem; padding: 1.4rem; background: #fff; border: 1px solid #e2dedb; border-radius: 6px; }
+.notice { margin: 1.2rem 0 1.5rem; padding: .9rem 1.1rem; background: #fff; border-left: 3px solid var(--red); color: #574d49; border-top: 1px solid #eee; border-bottom: 1px solid #eee; }
+.card { margin-bottom: 1.4rem; padding: 1.4rem; background: #fff; border: 1px solid #e2dedb; }
 
 .filters, .grid-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); align-items: end; gap: .9rem; margin-top: 1rem; }
 .grid-form .form-error { grid-column: 1 / -1; margin: 0; }
 label { display: grid; gap: .35rem; color: #49433f; font-size: .85rem; font-weight: 650; }
-input, select { width: 100%; padding: .62rem .7rem; color: #292525; background: #fff; border: 1px solid #bbb3ae; border-radius: 4px; }
-input:focus, select:focus { outline: 3px solid #f4c8ca; border-color: #b91f25; }
-button { padding: .62rem .95rem; color: #3e3936; background: #fff; border: 1px solid #bdb6b1; border-radius: 4px; font-weight: 700; }
-button:hover { border-color: #817873; }
-button.primary { color: #fff; background: #b91f25; border-color: #b91f25; }
-button.primary:hover { background: #97181d; }
-button.danger { color: #9e161b; border-color: #d9a3a5; }
-button.danger:hover { border-color: #9e161b; }
+input, select { width: 100%; padding: .62rem .7rem; color: #292525; background: #fff; border: 1px solid var(--field); }
+button { padding: .62rem .95rem; color: #3e3936; background: #fff; border: 1px solid var(--field); font-weight: 700; }
+button:hover { border-color: #292525; }
+button.primary { color: #fff; background: var(--red); border-color: var(--red); }
+button.primary:hover { background: var(--red-dark); }
+button.danger { color: var(--red-dark); border-color: #d9a3a5; }
+button.danger:hover { border-color: var(--red-dark); }
 button:disabled { cursor: not-allowed; opacity: .55; }
 
 .table-wrap { position: relative; margin: 1.2rem -1.4rem 0; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+caption { text-align: left; }
 th, td { padding: .7rem 1rem; text-align: left; border-top: 1px solid #ece8e5; vertical-align: top; }
 th { color: #625c57; background: #faf9f8; font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.mono, code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; }
-td.empty { color: #8a817c; text-align: center; padding: 1.4rem; }
-.status { display: inline-block; padding: .2rem .5rem; border-radius: 3px; font-size: .75rem; font-weight: 700; background: #f3f1ef; color: #4f4945; }
+td.empty { color: var(--muted); text-align: center; padding: 1.4rem; }
+.status { display: inline-block; padding: .2rem .5rem; font-size: .75rem; font-weight: 700; background: #f3f1ef; color: #4f4945; border: 1px solid transparent; }
 .status.active, .status.pending { background: #edf5ef; color: #23613e; }
-.status.revoked, .status.disabled { background: #fbeff0; color: #9e161b; }
+.status.revoked, .status.disabled { background: #fbeff0; color: var(--red-dark); }
 .row-actions { display: flex; justify-content: flex-end; gap: .35rem; flex-wrap: wrap; }
-.row-actions button { padding: .35rem .55rem; font-size: .76rem; white-space: nowrap; }
+.row-actions button { padding: .35rem .55rem; font-size: .76rem; white-space: nowrap; min-height: 36px; }
 
-.message { margin-bottom: 1rem; color: #69625e; min-height: 1.2em; }
-.message.error, .form-error { color: #9e161b; }
+.message { margin-bottom: 1rem; color: var(--muted); min-height: 1.2em; }
+.message.error, .form-error { color: var(--red-dark); }
 .form-error { min-height: 1.2em; font-size: .85rem; }
 
-.token-box { margin-top: 1.2rem; padding: 1rem; border: 2px solid #c92127; border-radius: 6px; background: #fff; }
+.token-box { margin-top: 1.2rem; padding: 1rem; border: 2px solid var(--red); background: #fff; }
 .token-warning { color: #574d49; margin-bottom: .8rem; }
 .token-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-.token-row code { flex: 1 1 320px; padding: .6rem .7rem; background: #faf9f8; border: 1px solid #e2dedb; border-radius: 4px; word-break: break-all; user-select: all; }
+.token-row code { flex: 1 1 320px; padding: .6rem .7rem; background: #faf9f8; border: 1px solid #e2dedb; word-break: break-all; user-select: all; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 640px) {
-  .site-header { flex-direction: column; align-items: flex-start; padding: .8rem 16px; gap: .6rem; }
+  /* #182: align-items:flex-start zostawiał <nav> (i #shell-nav) sam sobie —
+     nierozciągnięty do szerokości nagłówka nav nie ma się do czego skurczyć,
+     8–9 linków renderuje się w jednej linii szerszej niż ekran (poziomy
+     scroll całej strony). align-items:stretch (wartość domyślna) rozciąga
+     nav na pełną szerokość, więc przewijana lista linków (shared/shell.css)
+     mieści się w ekranie. */
+  .site-header { flex-direction: column; align-items: stretch; padding: .8rem 16px; gap: .6rem; }
   main { width: auto; padding: 1.5rem 16px 4rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
+
+/* Tryb wysokiego kontrastu Windows (#112): plakietki i aktywna zakładka nie
+   mogą polegać wyłącznie na tle albo box-shadow, które w forced-colors znikają. */
+@media (forced-colors: active) {
+  .status { border: 1px solid CanvasText; }
+  nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
 }

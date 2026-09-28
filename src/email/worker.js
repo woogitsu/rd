@@ -45,8 +45,8 @@
 // przejścia stanów pilnowane triggerem, a wysyłany jest tylko wiersz przejęty
 // z „queued” do „sending” w tej samej transakcji.
 
-import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal } from './brevo.js';
-import { contentHash, renderMessage } from './content.js';
+import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
+import { contentHash, preferencesToken, renderMessage } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { brusselsDay } from '../pg/today.js';
 
@@ -57,6 +57,16 @@ const BACKOFF_MAX_MINUTES = 6 * 60;
 
 export function utcDay(now) {
   return now.toISOString().slice(0, 10);
+}
+
+// Doba limitu w strefie konta Brevo (#84; domyślnie Europe/Brussels — patrz
+// emailConfig/quotaTimezone). Osobna od brusselsDay() w pg/today.js, która
+// liczy dobę obowiązywania członkostw i jest zawsze w Brukseli, niezależnie
+// od tej konfiguracji.
+export function accountDay(now, timezone) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
 }
 
 export function backoffMinutes(attempts) {
@@ -94,11 +104,24 @@ const IN_FLIGHT = `SELECT COUNT(*)::int FROM email_outbox o
    WHERE o.state = 'sending'
      AND NOT EXISTS (SELECT 1 FROM email_send_ledger l WHERE l.outbox_id = o.id AND l.attempt = o.attempts)`;
 
-export async function remainingQuota(executor, day, config) {
+// Pula pozostała liczona ostrożnie (#84): dziennik `email_send_ledger.day` jest
+// zawsze dobą UTC, ale konto Brevo może resetować limit w swojej strefie
+// (domyślnie Europe/Brussels — `config.quotaTimezone`). Bierzemy WIĘKSZE
+// z dwóch zużyć — dnia UTC (kolumna `day`) i doby konta (`recorded_at`
+// przeliczone do jego strefy) — więc żadna z dwóch dób nie zostaje przekroczona.
+// Gdy obie doby się pokrywają (quotaTimezone = UTC), wynik jest identyczny jak
+// wcześniej.
+export async function remainingQuota(executor, now, config) {
+  const utc = utcDay(now);
+  const account = accountDay(now, config.quotaTimezone);
   const { rows } = await executor.query(
-    `SELECT (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger WHERE day = $1)
-          + (${IN_FLIGHT}) AS used`,
-    [day],
+    `SELECT GREATEST(
+        (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger WHERE day = $1),
+        (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger
+           WHERE (recorded_at AT TIME ZONE $3) >= $2::date
+             AND (recorded_at AT TIME ZONE $3) < $2::date + 1)
+     ) + (${IN_FLIGHT}) AS used`,
+    [utc, account, config.quotaTimezone],
   );
   return Math.max(0, config.dailyLimit - config.dailyReserved - Number(rows[0].used));
 }
@@ -114,6 +137,15 @@ async function recordLedger(tx, { day, campaignId, outboxId, attempt }) {
   );
 }
 
+// Link wypisania (#110): tylko gdy oba sekrety/adresy są skonfigurowane —
+// inaczej wiadomość wychodzi bez stopki (brak nadawcy publicznego URL nie
+// blokuje wysyłki, ale wtedy trzeba się rozliczyć z tego w D-06/D-17).
+export function unsubscribeUrlFor(config, { campaignId, category, emailHash }) {
+  if (!config.unsubscribeSecret || !config.publicBaseUrl) return null;
+  const token = preferencesToken(config.unsubscribeSecret, { campaignId, category, emailHash });
+  return `${config.publicBaseUrl.replace(/\/+$/, '')}/api/email/preferences?t=${encodeURIComponent(token)}`;
+}
+
 async function recheckRow(tx, campaign, row, config) {
   if (campaign.audience === 'no_payment_record') {
     const paid = await tx.query(
@@ -123,21 +155,30 @@ async function recheckRow(tx, campaign, row, config) {
     );
     if (paid.rows[0]) return { state: 'skipped', error: 'payment_recorded' };
   }
-  const suppressed = await tx.query('SELECT 1 FROM email_suppressions WHERE email_hash = $1', [row.email_hash]);
+  // Tylko widok „aktywnej blokady” (#94) — po zdjęciu blokady zapis w
+  // email_suppressions zostaje w historii, ale nie liczy się już jako blokada.
+  const suppressed = await tx.query('SELECT 1 FROM email_active_suppressions WHERE email_hash = $1', [row.email_hash]);
   if (suppressed.rows[0]) return { state: 'suppressed', error: 'address_suppressed' };
+  // Wypisanie z tej kategorii między zakolejkowaniem a wysyłką (#110): stan
+  // preferencji to ostatnie zdarzenie dla (adres, kategoria).
+  const preference = await tx.query(
+    `SELECT action FROM email_preferences_events
+      WHERE email_hash = $1 AND category = $2
+      ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [row.email_hash, campaign.category],
+  );
+  if (preference.rows[0]?.action === 'opt_out') return { state: 'suppressed', error: 'category_opted_out' };
   // Gospodarstwo dziecka = główne członkostwo obowiązujące dziś w Brukseli
   // (#194), jak w migawce; nie kolumna students.household_id. Dzień limitu
   // Brevo (row.day) pozostaje w UTC.
   const consent = await tx.query(
     `SELECT 1
        FROM guardians g
-       JOIN student_guardians sg ON sg.guardian_id = g.id
+       JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
        JOIN student_primary_household_on($4::date) p ON p.student_id = sg.student_id
       WHERE g.id = $1 AND p.household_id = $2
         AND g.contact_allowed AND sg.contact_allowed
         AND lower(btrim(g.email)) = $3
-        AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
-        AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date)
       LIMIT 1`,
     [row.guardian_id, row.household_id, row.email, row.memberDay],
   );
@@ -167,17 +208,19 @@ async function recoverStale(db, now) {
               provider_message_id = COALESCE(o.provider_message_id, w.provider_message_id)
          FROM (SELECT DISTINCT ON (outbox_id) outbox_id, provider_message_id
                  FROM email_webhook_events WHERE outbox_id IS NOT NULL
-                ORDER BY outbox_id, provider_message_id NULLS LAST, received_at) w
+                ORDER BY outbox_id, provider_message_id NULLS LAST, received_at) w,
+              email_campaigns c
         WHERE w.outbox_id = o.id AND o.state = 'sending' AND o.send_started_at IS NOT NULL
-          AND o.claimed_at < $1::timestamptz - make_interval(mins => $2)
-        RETURNING o.id, o.campaign_id, o.attempts, to_char(o.send_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
+          AND o.claimed_at < $1::timestamptz - make_interval(mins => $2) AND c.id = o.campaign_id
+        RETURNING o.id, o.campaign_id, o.attempts, c.school_year_id,
+                  to_char(o.send_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
       [now.toISOString(), LEASE_MINUTES],
     );
     for (const row of accepted) {
       await recordLedger(tx, { day: row.day, campaignId: row.campaign_id, outboxId: row.id, attempt: row.attempts });
       await insertAuditEvent(tx, {
         action: 'email.sent_recovered', entityType: 'email_outbox', entityId: row.id,
-        metadata: { campaignId: row.campaign_id, reason: 'provider_webhook' },
+        metadata: { schoolYearId: row.school_year_id, campaignId: row.campaign_id, reason: 'provider_webhook' },
       });
     }
     // Wiersz z tokenem, którego wysyłka się nie rozpoczęła, na pewno nie wyszedł —
@@ -185,15 +228,16 @@ async function recoverStale(db, now) {
     // wiersz sprzed migracji 0025 bez tokenu) → delivery_unknown, bez
     // ponawiania, z wpisem w dzienniku limitu (mogła wyjść).
     const { rows } = await tx.query(
-      `UPDATE email_outbox
+      `UPDATE email_outbox eo
           SET state = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN 'queued' ELSE 'failed' END,
               attempts = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN GREATEST(0, attempts - 1) ELSE attempts END,
               last_error = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN 'lease_expired' ELSE 'delivery_unknown' END,
               next_attempt_at = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN $1::timestamptz ELSE next_attempt_at END,
               updated_at = $1
-        WHERE state = 'sending' AND claimed_at < $1::timestamptz - make_interval(mins => $2)
-        RETURNING id, campaign_id, state, attempts,
-                  to_char(COALESCE(send_started_at, claimed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
+         FROM email_campaigns c
+        WHERE eo.state = 'sending' AND eo.claimed_at < $1::timestamptz - make_interval(mins => $2) AND c.id = eo.campaign_id
+        RETURNING eo.id, eo.campaign_id, eo.state, eo.attempts, c.school_year_id,
+                  to_char(COALESCE(eo.send_started_at, eo.claimed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
       [now.toISOString(), LEASE_MINUTES],
     );
     for (const row of rows) {
@@ -203,7 +247,7 @@ async function recoverStale(db, now) {
       await insertAuditEvent(tx, {
         action: row.state === 'queued' ? 'email.lease_expired_requeued' : 'email.delivery_unknown',
         entityType: 'email_outbox', entityId: row.id,
-        metadata: { campaignId: row.campaign_id },
+        metadata: { schoolYearId: row.school_year_id, campaignId: row.campaign_id },
       });
     }
     return rows.length + accepted.length;
@@ -214,26 +258,26 @@ async function recoverStale(db, now) {
 async function claim(db, { config, now, day, dryRun, run, runToken }) {
   return db.transaction(async (tx) => {
     await tx.query('SELECT pg_advisory_xact_lock($1)', [QUOTA_LOCK_ID]);
-    let remaining = await remainingQuota(tx, day, config);
+    let remaining = await remainingQuota(tx, now, config);
     run.remainingQuota = remaining;
     let batchLeft = config.batchSize;
     const claimed = [];
     const { rows: campaigns } = await tx.query(
-      `SELECT c.id, c.school_year_id, c.audience, c.subject, c.body_text, c.content_hash,
+      `SELECT c.id, c.school_year_id, c.audience, c.category, c.subject, c.body_text, c.content_hash,
               c.approved_content_hash, c.approved_recipients_hash, c.recipients_hash, c.daily_cap,
               y.label AS school_year_label,
               (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id)
                 + (${IN_FLIGHT} AND o.campaign_id = c.id) AS sent_today
          FROM email_campaigns c JOIN school_years y ON y.id = c.school_year_id
-        WHERE c.status = 'sending'
+        WHERE c.status = 'sending' AND (c.send_not_before IS NULL OR c.send_not_before <= $2::timestamptz)
         ORDER BY c.queued_at, c.id
         FOR UPDATE OF c`,
-      [day],
+      [day, now.toISOString()],
     );
     for (const campaign of campaigns) {
       if (remaining <= 0 || batchLeft <= 0) break;
       // Ostatnia kontrola: treść w bazie odpowiada zatwierdzonemu skrótowi.
-      const hash = contentHash({ schoolYearId: campaign.school_year_id, audience: campaign.audience, subject: campaign.subject, bodyText: campaign.body_text });
+      const hash = contentHash({ schoolYearId: campaign.school_year_id, audience: campaign.audience, category: campaign.category, subject: campaign.subject, bodyText: campaign.body_text });
       if (hash !== campaign.content_hash || hash !== campaign.approved_content_hash
           || campaign.recipients_hash !== campaign.approved_recipients_hash) {
         run.stoppedReason = 'approval_mismatch';
@@ -267,12 +311,13 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
             );
             await insertAuditEvent(tx, {
               action: `email.${verdict.state}`, entityType: 'email_outbox', entityId: row.id,
-              metadata: { campaignId: campaign.id, reason: verdict.error },
+              metadata: { schoolYearId: campaign.school_year_id, campaignId: campaign.id, reason: verdict.error },
             });
           }
           continue;
         }
-        const message = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: row.household_id });
+        const unsubscribeUrl = unsubscribeUrlFor(config, { campaignId: campaign.id, category: campaign.category, emailHash: row.email_hash });
+        const message = { ...renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: row.household_id, unsubscribeUrl }), unsubscribeUrl };
         run.planned += 1;
         remaining -= 1;
         capLeft -= 1;
@@ -311,19 +356,17 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
               JOIN household_payment_totals p ON p.household_id = o.household_id AND p.school_year_id = c.school_year_id
              WHERE c.id = o.campaign_id AND c.audience = 'no_payment_record' AND p.net_amount_cents > 0)
           AND NOT EXISTS (
-            SELECT 1 FROM email_campaign_recipients r JOIN email_suppressions s ON s.email_hash = r.email_hash
+            SELECT 1 FROM email_campaign_recipients r JOIN email_active_suppressions s ON s.email_hash = r.email_hash
              WHERE r.id = o.recipient_id)
           AND EXISTS (
             SELECT 1
               FROM email_campaign_recipients r
               JOIN guardians g ON g.id = r.guardian_id
-              JOIN student_guardians sg ON sg.guardian_id = g.id
+              JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
               JOIN students s ON s.id = sg.student_id
              WHERE r.id = o.recipient_id AND s.household_id = o.household_id
                AND g.contact_allowed AND sg.contact_allowed
-               AND lower(btrim(g.email)) = r.email
-               AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
-               AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date))
+               AND lower(btrim(g.email)) = r.email)
         RETURNING o.id`,
       [item.id, runToken, sendAt.toISOString(), item.day],
     );
@@ -339,7 +382,7 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
       // Wiersz przejął inny przebieg albo został już rozstrzygnięty — nie ruszamy go.
       await insertAuditEvent(tx, {
         action: 'email.send_aborted', entityType: 'email_outbox', entityId: item.id,
-        metadata: { campaignId: item.campaignId, reason: 'lease_lost', runId: runToken },
+        metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: 'lease_lost', runId: runToken },
       });
       return { state: null, error: 'lease_lost' };
     }
@@ -358,7 +401,7 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
     await insertAuditEvent(tx, {
       action: verdict.state === 'queued' ? 'email.send_deferred' : `email.${verdict.state}`,
       entityType: 'email_outbox', entityId: item.id,
-      metadata: { campaignId: item.campaignId, reason: verdict.error, stage: 'before_send' },
+      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: verdict.error, stage: 'before_send' },
     });
     return verdict;
   });
@@ -399,13 +442,16 @@ async function recordSent(db, item, { messageId, now, runToken }) {
       // rozstrzygnięty (delivery_unknown). Zapisujemy fakt wysyłki, nie „sent”.
       await insertAuditEvent(tx, {
         action: 'email.sent_after_lease_lost', entityType: 'email_outbox', entityId: item.id,
-        metadata: { campaignId: item.campaignId, householdId: item.household_id, providerMessageId: messageId, runId: runToken },
+        metadata: {
+          schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId,
+          householdId: item.household_id, providerMessageId: messageId, runId: runToken,
+        },
       });
       return 'lease_lost';
     }
     await insertAuditEvent(tx, {
       action: 'email.sent', entityType: 'email_outbox', entityId: item.id,
-      metadata: { campaignId: item.campaignId, householdId: item.household_id },
+      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, householdId: item.household_id },
     });
     return 'sent';
   });
@@ -439,12 +485,12 @@ async function requeueNotSent(db, item, { code, now, runToken, stage, delaySecon
     if (!rows[0]) return 'lease_lost';
     await insertAuditEvent(tx, {
       action: 'email.requeued', entityType: 'email_outbox', entityId: item.id,
-      metadata: { campaignId: item.campaignId, reason: code, stage },
+      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: code, stage },
     });
     if (stage === 'provider_account_rejected') {
       await insertAuditEvent(tx, {
         action: 'email.campaign.provider_rejected', entityType: 'email_campaign', entityId: item.campaignId,
-        metadata: { reason: code, runId: runToken },
+        metadata: { schoolYearId: item.campaign.school_year_id, reason: code, runId: runToken },
       });
     }
     return 'requeued';
@@ -458,16 +504,17 @@ async function requeueNotSent(db, item, { code, now, runToken, stage, delaySecon
 async function releaseClaims(db, { runToken, now, reason }) {
   return db.transaction(async (tx) => {
     const { rows } = await tx.query(
-      `UPDATE email_outbox SET state = 'queued', last_error = $3, updated_at = $2, next_attempt_at = $2::timestamptz,
+      `UPDATE email_outbox eo SET state = 'queued', last_error = $3, updated_at = $2, next_attempt_at = $2::timestamptz,
               attempts = GREATEST(0, attempts - 1)
-        WHERE claim_token = $1 AND state = 'sending' AND send_started_at IS NULL
-        RETURNING id, campaign_id`,
+         FROM email_campaigns c
+        WHERE eo.claim_token = $1 AND eo.state = 'sending' AND eo.send_started_at IS NULL AND c.id = eo.campaign_id
+        RETURNING eo.id, eo.campaign_id, c.school_year_id`,
       [runToken, now.toISOString(), reason],
     );
     for (const row of rows) {
       await insertAuditEvent(tx, {
         action: 'email.requeued', entityType: 'email_outbox', entityId: row.id,
-        metadata: { campaignId: row.campaign_id, reason, stage: 'run_stopped' },
+        metadata: { schoolYearId: row.school_year_id, campaignId: row.campaign_id, reason, stage: 'run_stopped' },
       });
     }
     return rows.length;
@@ -480,8 +527,10 @@ async function deliver(db, item, { transport, config, now, runToken, resultRetry
     result = await transport.send({
       to: item.email,
       sender: config.sender,
+      replyTo: config.replyTo,
       subject: item.message.subject,
       text: item.message.text,
+      unsubscribeUrl: item.message.unsubscribeUrl,
       outboxId: item.id,
       idempotencyKey: item.idempotency_key,
     });
@@ -532,13 +581,16 @@ async function recordTransportError(db, item, error, { config, now, runToken }) 
     if (!rows[0]) {
       await insertAuditEvent(tx, {
         action: 'email.send_aborted', entityType: 'email_outbox', entityId: item.id,
-        metadata: { campaignId: item.campaignId, reason: 'lease_lost', transportError: code, runId: runToken },
+        metadata: {
+          schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId,
+          reason: 'lease_lost', transportError: code, runId: runToken,
+        },
       });
       return 'lease_lost';
     }
     await insertAuditEvent(tx, {
       action: retry ? 'email.retry_scheduled' : 'email.failed', entityType: 'email_outbox', entityId: item.id,
-      metadata: { campaignId: item.campaignId, reason: code },
+      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: code },
     });
     return retry ? 'retried' : 'failed';
   }), uncertain: !retry && mayHaveLeft };
@@ -552,11 +604,14 @@ async function completeCampaigns(db, now) {
       `UPDATE email_campaigns c SET status = 'done', completed_at = $1
         WHERE c.status = 'sending'
           AND NOT EXISTS (SELECT 1 FROM email_outbox o WHERE o.campaign_id = c.id AND o.state IN ('queued', 'sending'))
-        RETURNING id`,
+        RETURNING id, school_year_id`,
       [now.toISOString()],
     );
     for (const row of rows) {
-      await insertAuditEvent(tx, { action: 'email.campaign.done', entityType: 'email_campaign', entityId: row.id });
+      await insertAuditEvent(tx, {
+        action: 'email.campaign.done', entityType: 'email_campaign', entityId: row.id,
+        metadata: { schoolYearId: row.school_year_id },
+      });
     }
     return rows.length;
   });
@@ -568,6 +623,7 @@ async function completeCampaigns(db, now) {
 // anulowana — do decyzji zarządu przy #130). Metadane: wyłącznie skróty.
 async function recordIntegrityMismatch(tx, campaign, observedContentHash) {
   const metadata = {
+    schoolYearId: campaign.school_year_id,
     observedContentHash,
     contentHash: campaign.content_hash,
     approvedContentHash: campaign.approved_content_hash,
@@ -602,11 +658,20 @@ export async function runEmailBatch(env, {
     planned: 0, sent: 0, retried: 0, failed: 0, skipped: 0, suppressed: 0, stoppedReason: null, sample: null,
     requeued: 0, unrecorded: [],
   };
+  // Okno godzin wysyłki (#130): sprawdzane przed dotknięciem kolejki, żeby
+  // przebieg poza oknem nie zmieniał niczego (kryterium akceptacji). Dotyczy
+  // też dry-run, żeby podgląd przebiegu zgadzał się z rzeczywistym.
+  if (!withinSendWindow(now, config.sendWindow)) {
+    run.stoppedReason = 'outside_send_window';
+    run.remainingQuota = await remainingQuota(db, now, config);
+    await recordRun(db, run);
+    return run;
+  }
   if (!dryRun) {
     const refusal = liveRunRefusal(config) ?? (transport ? null : 'transport_missing');
     if (refusal) {
       run.stoppedReason = refusal;
-      run.remainingQuota = await remainingQuota(db, day, config);
+      run.remainingQuota = await remainingQuota(db, now, config);
       await recordRun(db, run);
       return run;
     }
