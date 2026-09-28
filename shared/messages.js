@@ -205,7 +205,7 @@ export const MESSAGES = Object.freeze({
   document_too_large: "Plik przekracza dozwolony rozmiar.",
   content_hash_mismatch: "Plik uszkodził się podczas przesyłania. Wyślij go ponownie.",
   document_integrity_mismatch: "Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi.",
-  document_content_missing: "Plik nie dotarł do magazynu dokumentów. Prześlij go ponownie.",
+  document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
 
   // --- Wydarzenia -------------------------------------------------------------------------------
   invalid_event_id: "Niepoprawny identyfikator wydarzenia.",
