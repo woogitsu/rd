@@ -472,6 +472,13 @@ export async function buildYearlyExport(executor, schoolYearId) {
       sha256: sha256Hex(content),
       sums: centsSums(columnNames, records),
     });
+    // #216: oddaje pętlę zdarzeń między tabelami, żeby długi eksport (np.
+    // audit_events roku z ~200 tys. wierszy) nie blokował innych żądań
+    // (także /health/ready) przez cały czas budowania paczki. Nie dzieli
+    // jeszcze przetwarzania JEDNEJ dużej tabeli na partie — pełne
+    // strumieniowanie (format v2, kursor, licząca się przyrostowo suma
+    // kontrolna) zostaje do osobnego PR, patrz opis PR i issue #216 pkt 1.
+    await new Promise((resolve) => { setImmediate(resolve); });
   }
 
   const manifest = {
