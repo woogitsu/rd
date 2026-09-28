@@ -95,8 +95,18 @@ test('invitations.email: zapis w innej postaci niż lower(btrim()) jest odrzucon
 // Lint schematu: każda para kolumn class_id + school_year_id w jednej tabeli
 // musi mieć złożony FK (class_id, school_year_id) -> classes(id, school_year_id).
 // Nowa tabela z tymi dwiema kolumnami bez takiego klucza psuje ten test —
-// to jest zamierzone (#198, kryterium 4).
-test('lint schematu: każda tabela z class_id + school_year_id ma złożony FK do classes', async () => {
+// to jest zamierzone (#198, kryterium 4). Wyjątek: tabele, gdzie brak FK
+// jest świadomą decyzją opisaną w ich migracji (dopisz uzasadnienie tutaj,
+// nie tylko w komentarzu migracji, żeby przyszła zmiana widziała je razem
+// z testem, który inaczej by ją zablokował).
+const CLASS_YEAR_FK_EXEMPT = new Set([
+  // data_access_log (#133, 0067): dziennik odczytu celowo NIE ma FK na
+  // class_id/school_year_id/household_id — outcome='not_found' pozwala
+  // zalogować odczyt identyfikatora, który nie istnieje (maskowanie
+  // istnienia, jak w odpowiedzi API), więc FK odrzucałby prawidłowe wpisy.
+  'data_access_log',
+]);
+test('lint schematu: każda tabela z class_id + school_year_id ma złożony FK do classes (poza wyjątkami)', async () => {
   const db = await createTestDb();
   try {
     const { rows: candidates } = await db.query(`
@@ -118,7 +128,9 @@ test('lint schematu: każda tabela z class_id + school_year_id ma złożony FK d
          )
     `);
     const guardedNames = new Set(guarded.map((row) => row.table_name));
-    const missing = candidates.map((row) => row.table_name).filter((name) => !guardedNames.has(name));
+    const missing = candidates
+      .map((row) => row.table_name)
+      .filter((name) => !guardedNames.has(name) && !CLASS_YEAR_FK_EXEMPT.has(name));
     assert.deepEqual(missing, [], `Tabele z class_id+school_year_id bez złożonego FK do classes: ${missing.join(', ')}`);
   } finally {
     await db.close();
