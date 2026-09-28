@@ -15,7 +15,9 @@ import { createMeeting, updateMeeting } from '../src/pg/meetings.js';
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
-const board = { userId: 'board', grants: [grant('board')], mfaVerified: false };
+// #150 (SR-10): tworzenie/aktualizacja zebrania wymaga teraz jawnie
+// potwierdzonego MFA — board naprawdę zarządza w tym teście.
+const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
 
 let keySeq = 0;
 const key = () => `test-key-${++keySeq}`;

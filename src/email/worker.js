@@ -46,7 +46,7 @@
 // z „queued” do „sending” w tej samej transakcji.
 
 import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
-import { contentHash, renderMessage } from './content.js';
+import { contentHash, preferencesToken, renderMessage } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { brusselsDay } from '../pg/today.js';
 
@@ -137,6 +137,15 @@ async function recordLedger(tx, { day, campaignId, outboxId, attempt }) {
   );
 }
 
+// Link wypisania (#110): tylko gdy oba sekrety/adresy są skonfigurowane —
+// inaczej wiadomość wychodzi bez stopki (brak nadawcy publicznego URL nie
+// blokuje wysyłki, ale wtedy trzeba się rozliczyć z tego w D-06/D-17).
+export function unsubscribeUrlFor(config, { campaignId, category, emailHash }) {
+  if (!config.unsubscribeSecret || !config.publicBaseUrl) return null;
+  const token = preferencesToken(config.unsubscribeSecret, { campaignId, category, emailHash });
+  return `${config.publicBaseUrl.replace(/\/+$/, '')}/api/email/preferences?t=${encodeURIComponent(token)}`;
+}
+
 async function recheckRow(tx, campaign, row, config) {
   if (campaign.audience === 'no_payment_record') {
     const paid = await tx.query(
@@ -148,6 +157,15 @@ async function recheckRow(tx, campaign, row, config) {
   }
   const suppressed = await tx.query('SELECT 1 FROM email_suppressions WHERE email_hash = $1', [row.email_hash]);
   if (suppressed.rows[0]) return { state: 'suppressed', error: 'address_suppressed' };
+  // Wypisanie z tej kategorii między zakolejkowaniem a wysyłką (#110): stan
+  // preferencji to ostatnie zdarzenie dla (adres, kategoria).
+  const preference = await tx.query(
+    `SELECT action FROM email_preferences_events
+      WHERE email_hash = $1 AND category = $2
+      ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [row.email_hash, campaign.category],
+  );
+  if (preference.rows[0]?.action === 'opt_out') return { state: 'suppressed', error: 'category_opted_out' };
   // Gospodarstwo dziecka = główne członkostwo obowiązujące dziś w Brukseli
   // (#194), jak w migawce; nie kolumna students.household_id. Dzień limitu
   // Brevo (row.day) pozostaje w UTC.
@@ -243,7 +261,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
     let batchLeft = config.batchSize;
     const claimed = [];
     const { rows: campaigns } = await tx.query(
-      `SELECT c.id, c.school_year_id, c.audience, c.subject, c.body_text, c.content_hash,
+      `SELECT c.id, c.school_year_id, c.audience, c.category, c.subject, c.body_text, c.content_hash,
               c.approved_content_hash, c.approved_recipients_hash, c.recipients_hash, c.daily_cap,
               y.label AS school_year_label,
               (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id)
@@ -257,7 +275,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
     for (const campaign of campaigns) {
       if (remaining <= 0 || batchLeft <= 0) break;
       // Ostatnia kontrola: treść w bazie odpowiada zatwierdzonemu skrótowi.
-      const hash = contentHash({ schoolYearId: campaign.school_year_id, audience: campaign.audience, subject: campaign.subject, bodyText: campaign.body_text });
+      const hash = contentHash({ schoolYearId: campaign.school_year_id, audience: campaign.audience, category: campaign.category, subject: campaign.subject, bodyText: campaign.body_text });
       if (hash !== campaign.content_hash || hash !== campaign.approved_content_hash
           || campaign.recipients_hash !== campaign.approved_recipients_hash) {
         run.stoppedReason = 'approval_mismatch';
@@ -296,7 +314,8 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
           }
           continue;
         }
-        const message = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: row.household_id });
+        const unsubscribeUrl = unsubscribeUrlFor(config, { campaignId: campaign.id, category: campaign.category, emailHash: row.email_hash });
+        const message = { ...renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: row.household_id, unsubscribeUrl }), unsubscribeUrl };
         run.planned += 1;
         remaining -= 1;
         capLeft -= 1;
@@ -509,6 +528,7 @@ async function deliver(db, item, { transport, config, now, runToken, resultRetry
       replyTo: config.replyTo,
       subject: item.message.subject,
       text: item.message.text,
+      unsubscribeUrl: item.message.unsubscribeUrl,
       outboxId: item.id,
       idempotencyKey: item.idempotency_key,
     });

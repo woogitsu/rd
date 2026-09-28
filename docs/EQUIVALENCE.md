@@ -20,6 +20,11 @@ kontraktem referencyjnym, nie wdrożeniem Railway.
   zestarzeć po cichu).
 - Oprócz odpowiedzi test sprawdza skutki w bazie: wycofanie sesji i jedno
   zdarzenie audytu `session.logout` z aktorem mimo podwójnego kliknięcia.
+- Limit bezczynności sesji (#150, `SESSION_IDLE_TIMEOUT_SECONDS`, domyślnie
+  30 min) jest w tym scenariuszu wyłączony (`'0'`) — to nowa polityka tylko
+  PostgreSQL, nieobecna w Workerze, a fixture ma stały `createdAt` z przeszłości;
+  bez wyłączenia scenariusz byłby niedeterministyczny względem zegara
+  systemowego. Politykę bezczynności pokrywa osobno `tests/pg-auth.test.js`.
 - Pliki: `tests/api-parity-session.test.js`, `tests/pg-payments-api.test.js`
   (wpłaty), `tests/d1-postgres-restore-compat.test.js` (odtworzenie),
   wspólne narzędzia `tests/helpers/parity.js`.
@@ -41,7 +46,8 @@ kontraktem referencyjnym, nie wdrożeniem Railway.
 | `POST /api/logout` — bez cookie, nieznany token, wygasła sesja | zgodne | `204`, `Cache-Control: no-store`, `Set-Cookie` czyszczące cookie |
 | `POST /api/logout` — ważna sesja i podwójne kliknięcie | zgodne | `204`; potem `401` dla sesji; jedno zdarzenie `session.logout`. Nowy zapisuje dodatkowo `revoked_reason = 'logout'` (tylko w bazie) |
 | `GET /api/logout` | zgodne | `404 not_found` |
-| 404: `/`, `/api`, `/api/`, `/api/session/`, `/API/session`, `/api/sessions`, `/api/unknown`, `/secret.txt`, `DELETE /api/unknown` ze zgodnym Origin | zgodne | `404 not_found`, nagłówki JSON |
+| 404: `/`, `/api`, `/api/`, `/api/session/`, `/API/session`, `/api/unknown`, `/secret.txt`, `DELETE /api/unknown` ze zgodnym Origin | zgodne | `404 not_found`, nagłówki JSON |
+| `GET /api/sessions` (z sesją) | uzasadniona różnica | stary: `404 not_found` (trasa nie istniała); nowy: `200` z listą własnych sesji (#150, krok w górę — SR-10). Nowa trasa, nieobecna w Workerze |
 | `DELETE /api/unknown` bez Origin | uzasadniona różnica | jak wyżej: `403 invalid_origin` zamiast `404` |
 | Awaria bazy: `/api/session`, `/api/access`, `/api/logout` z cookie | zgodne | `503 service_unavailable`; `/health` nadal `200`; bez cookie brak zapytania do bazy (`401`/`204`). Log nowego API zawiera tylko moduł i kod błędu, bez tokenu i e-maila |
 | `/api/events`, `/api/public/events`, `/api/meetings` | uzasadniona różnica | nowe funkcje (#12, #13), w Workerze `404`. `/api/public/events` ma celowo `Cache-Control: public, max-age=60` |
