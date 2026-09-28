@@ -21,7 +21,9 @@ export function parseEuroAmount(value) {
     if (error instanceof MoneyError && error.code === "amount_out_of_range") {
       throw new Error("Kwota musi mieścić się między 0,01 EUR a 1 000 000 EUR.");
     }
-    throw new Error("Podaj poprawną kwotę w EUR, np. 12,50.");
+    // Treść zgodna z poprzednim komunikatem (tests/ledger-panel-core.test.js) —
+    // maksymalnie dwa miejsca po przecinku to najczęstsza przyczyna błędu formatu.
+    throw new Error("Podaj kwotę z maksymalnie dwoma miejscami po przecinku.");
   }
 }
 
