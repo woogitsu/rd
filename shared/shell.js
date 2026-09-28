@@ -22,6 +22,8 @@ export const PANELS = Object.freeze([
   { id: "panel", href: "/panel/", label: "Wpłaty", roles: ["admin", "board", "treasurer"] },
   // src/pg/routes/ledger.js FINANCIAL_ROLES.
   { id: "ledger", href: "/ledger/", label: "Księga", roles: ["admin", "board", "treasurer"] },
+  // src/pg/routes/email.js EDITOR_ROLES (admin nie ma dostępu do kampanii e-mail).
+  { id: "email", href: "/email/", label: "Kampanie e-mail", roles: ["board", "treasurer"] },
   // src/pg/routes/reconciliation.js WRITE_ROLES (widok tylko-do-odczytu Komisji
   // Rewizyjnej — REPORT_ROLES — nie ma dziś osobnego ekranu, patrz reconciliation/core.js).
   { id: "reconciliation", href: "/reconciliation/", label: "Uzgodnienia wyciągu", roles: ["admin", "board", "treasurer"] },
@@ -34,8 +36,6 @@ export const PANELS = Object.freeze([
   { id: "meetings", href: "/meetings/", label: "Zebrania", roles: ["admin", "board", "audit", "representative"] },
   // src/pg/routes/documents.js DOCUMENT_POLICIES (suma ról wszystkich rodzajów dokumentów).
   { id: "documents", href: "/documents/", label: "Dokumenty", roles: ["admin", "board", "treasurer", "representative"] },
-  // src/pg/routes/email.js EDITOR_ROLES (admin nie ma dostępu do kampanii e-mail).
-  { id: "email", href: "/email/", label: "Kampanie e-mail", roles: ["board", "treasurer"] },
   // src/pg/routes/import.js IMPORT_ROLES.
   { id: "import", href: "/import/", label: "Import uczniów", roles: ["admin", "board"] },
   // src/pg/routes/year-close.js READ_ROLES (admin i Komisja Rewizyjna bez dostępu).

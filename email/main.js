@@ -17,9 +17,9 @@ import {
   maskEmail,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
-import { confirmAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { confirmAction } from "../shared/confirm-dialog.js";
 
 mountShell();
 
