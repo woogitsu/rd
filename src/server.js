@@ -8,6 +8,7 @@ import { bodyLimitFor, maxUploadBytes } from './documents.js';
 import { storageFromEnv } from './storage.js';
 import { checkReadiness } from './health.js';
 import { createRequestMetrics, describeError, log, startMetricsReporter } from './log.js';
+import { resolveWriteMode } from './write-mode.js';
 
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -15,7 +16,11 @@ export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 // Bez niej: dotychczasowy router Workera (bez D1 chronione trasy zwracają 503).
 // Migracje NIE są uruchamiane przy starcie — wyłącznie `npm run db:migrate:postgres`.
 // Storage Bucket (BUCKET_*) jest opcjonalny: bez niego trasy dokumentów zwracają 503.
+// APP_WRITE_MODE (#143): wartość inna niż 'normal'/'read_only' zatrzymuje start
+// (błąd konfiguracji), zanim powstanie pula bazy czy klient magazynu.
 export function resolveRuntime(processEnv = process.env, { createDatabase = createPgDatabase, createStorage = storageFromEnv } = {}) {
+  const writeMode = resolveWriteMode(processEnv.APP_WRITE_MODE);
+  log.info('write_mode_active', { mode: writeMode });
   if (processEnv.DATABASE_URL) {
     const storage = createStorage(processEnv);
     const documentMaxBytes = maxUploadBytes(processEnv.DOCUMENT_MAX_BYTES);
@@ -27,6 +32,7 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         storage,
         documentMaxBytes,
         APP_ENV: processEnv.APP_ENV,
+        APP_WRITE_MODE: writeMode,
         IMPORT_ENABLED: processEnv.IMPORT_ENABLED,
         // Webhook i plan kampanii e-mail (#40). Klucz API Brevo NIE trafia do serwera HTTP —
         // używa go wyłącznie zadanie scripts/email-worker.js.
@@ -46,7 +52,7 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
       close: () => db.close(),
     };
   }
-  return { mode: 'legacy', env: {}, fetchHandler: worker.fetch.bind(worker), close: async () => {} };
+  return { mode: 'legacy', env: { APP_WRITE_MODE: writeMode }, fetchHandler: worker.fetch.bind(worker), close: async () => {} };
 }
 
 export async function startServer({
