@@ -142,7 +142,7 @@ test('yearly export is deterministic, scoped to the year and recorded without co
   const first = await exportRequest(db, cookie);
   assert.equal(first.status, 200);
   assert.match(first.headers.get('Content-Type'), /^application\/json/);
-  assert.equal(first.headers.get('Content-Disposition'), `attachment; filename="rd-eksport-${YEAR}-v1.json"`);
+  assert.equal(first.headers.get('Content-Disposition'), `attachment; filename="rd-eksport-${YEAR}-v2.json"`);
   assert.equal(first.headers.get('Cache-Control'), 'no-store');
   const firstBody = await first.text();
 
