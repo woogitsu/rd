@@ -100,6 +100,36 @@ describe('pulpit przedstawiciela (#118)', () => {
     await db.close();
   });
 
+  test('uczeń, który odszedł ze szkoły (enrollments.ended_on w przeszłości), nie liczy się na pulpicie (#86 + #118, enrollments_current)', async () => {
+    const db = await createTestDb();
+    await seedClass(db, { id: 'c-1a', schoolYearId: Y, name: '1A' });
+    const env = { db };
+    const rep = await seedUserSession(db, {
+      userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y }],
+    });
+    await db.exec(`
+      INSERT INTO households (id) VALUES ('h-1'), ('h-2');
+      INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES
+        ('g-1', 'h-1', 'Anna', 'Testowa', 'g1@example.invalid', true),
+        ('g-2', 'h-2', 'Piotr', 'Testowy', 'g2@example.invalid', true);
+      INSERT INTO students (id, household_id, first_name, last_name) VALUES
+        ('s-1', 'h-1', 'Ola', 'Testowa'),
+        ('s-2', 'h-2', 'Jan', 'Testowy');
+      INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES
+        ('s-1', 'g-1', true, true), ('s-2', 'g-2', true, true);
+      INSERT INTO enrollments (id, student_id, class_id, school_year_id, ended_on, ended_reason, ended_at) VALUES
+        ('e-1', 's-1', 'c-1a', '${Y}', '2020-01-01', 'zmiana szkoly', now()),
+        ('e-2', 's-2', 'c-1a', '${Y}', NULL, NULL, NULL);
+    `);
+    const result = await call(env, `/api/representative/overview?schoolYearId=${Y}`, { cookie: rep });
+    assert.equal(result.status, 200);
+    const klass = result.data.classes.find((c) => c.id === 'c-1a');
+    assert.equal(klass.studentCount, 1, 's-1 odszedł (ended_on w przeszłości) — liczy się tylko s-2');
+    assert.equal(klass.householdCount, 1, 'gospodarstwo s-1 nie liczy się po odejściu');
+    assert.equal(klass.needsPaperCardCount, 0, 's-1 nie wymaga kartki po odejściu (oboje opiekunowie z e-mailem i zgodą)');
+    await db.close();
+  });
+
   test('nieprawidłowy schoolYearId — 400', async () => {
     const db = await createTestDb();
     const env = { db };
