@@ -213,6 +213,22 @@ wersję (`rd-eksport-<rok>-v2.json`).
 
 - Paczka jest budowana w pamięci (limit 500 000 wierszy na tabelę). Dla
   jednej szkoły wystarcza; przy większych danych potrzebny będzie strumień.
+  **Nie jest jeszcze zaimplementowane** (#216, poza zakresem PR, który dodał
+  punkty niżej): strumieniowy format v2 (kursor, partie, SHA-256 przyrostowo),
+  odpowiedź HTTP jako `ReadableStream` bez buforowania w `node-app.js` i
+  podniesienie/pilnowanie `idle_in_transaction_session_timeout` w trakcie
+  budowania paczki. Rok z ok. 200 tys. zdarzeń audytu nadal może wyczerpać
+  stertę procesu przy niskim limicie pamięci usługi.
+- **Blokada jednego eksportu na rok** (#216): `POST /api/exports` bierze
+  `pg_try_advisory_xact_lock(hashtext('rd_export:'||rok))` na czas transakcji
+  budującej paczkę. Drugi równoczesny przebieg tego samego roku dostaje od
+  razu `409 export_in_progress` (bez czekania) zamiast budować drugą paczkę
+  naraz — to zapobiega podwójnemu zużyciu pamięci i dwóm wierszom
+  `export_runs` przy podwójnym kliknięciu „Eksportuj”. Blokada zwalnia się
+  sama na COMMIT/ROLLBACK; różne lata eksportują się równolegle bez
+  przeszkód. Między kolejnymi tabelami paczki proces oddaje pętlę zdarzeń
+  (`setImmediate`) — zmniejsza to, ale nie eliminuje, blokowanie innych
+  żądań podczas budowania bardzo dużej paczki (patrz punkt wyżej).
 - Zmiana schematu wymaga oceny, czy trzeba podnieść `formatVersion`.
   Weryfikator odrzuca nieznaną wersję; odtworzenie wymaga, by docelowy
   schemat miał wszystkie kolumny z manifestu.
