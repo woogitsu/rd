@@ -838,6 +838,8 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
+  adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 
   // ---------- reconciliation (#7, #15) ----------
   // Uzgodnienia: admin/zarząd/skarbnik z MFA w roku uzgodnienia; raport: Komisja Rewizyjna/zarząd/skarbnik z MFA.
