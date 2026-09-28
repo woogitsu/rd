@@ -679,6 +679,9 @@ test('a payment and the ledger entry that books it cannot both be matched in one
     const elsewhere = await matchCall(call, cookies.treasurer, blocked.id, { statementLineId: blocked.lineIds[0], ledgerEntryId: 'le-dup' });
     assert.equal(elsewhere.status, 409);
     assert.deepEqual(await elsewhere.json(), { error: 'matched_in_other_reconciliation', reconciliationId: first.id });
+    await assert.rejects(db.query(`INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id,
+      payment_entry_id, created_by, idempotency_key) VALUES ('m-elsewhere', $1, $2, 'p-dup', 'u-treasurer', 'direct-match-0')`,
+    [blocked.id, blocked.lineIds[0]]), /bank_match_in_other_reconciliation/);
     await revokeActive(first.id);
 
     // Odwrotna kolejność: najpierw wpis księgi, potem wpłata.
