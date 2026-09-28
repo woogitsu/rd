@@ -365,6 +365,25 @@ wyjść od najnowszej wersji tej funkcji na `main` i nie powtórzyć incydentu z
 #279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch funkcji. Opis:
 [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
 
+`0075_privacy_notices.sql` (issue #145, D-06) dodaje `privacy_notices` —
+wersjonowany rejestr informacji o przetwarzaniu danych: stan
+`draft → approved → published → superseded` pilnowany triggerem (identyczność
+i treść niezmienne po INSERT; `approved_by` różny od `created_by` — cztery
+oczy). Najwyżej jedna wersja `published` naraz (unikalny indeks częściowy) —
+publikacja nowej przenosi poprzednią do `superseded` w tej samej transakcji.
+Dodaje też `privacy_notice_deliveries` (opcjonalna ewidencja przekazania per
+gospodarstwo i kanał, tylko dopisywanie — dziś bez żadnej trasy zapisującej)
+oraz nullable `import_batches.privacy_notice_id` (migawka obowiązującej wersji
+w chwili commitu). Skutki dla danych: dwie nowe, puste tabele; istniejące
+wiersze `import_batches` dostają `privacy_notice_id = NULL` (importy sprzed
+tej migracji nie miały i nie mogły mieć powiązanej wersji). Bramka
+`409 privacy_notice_missing` na `POST /api/import/commit` — **świadomie NIE
+obejmuje** kampanii e-mail ani wydruku kartek w tym PR (kolizja z równoległymi
+PR-ami na `src/pg/routes/email.js`/`print/core.js`, patrz opis w PR i
+`docs/PRIVACY_NOTICE.md`). Wycofanie na pustej bazie: `DROP TABLE
+privacy_notice_deliveries, privacy_notices`, `DROP COLUMN import_batches.privacy_notice_id`
+i funkcji guard. Opis: [`docs/PRIVACY_NOTICE.md`](../docs/PRIVACY_NOTICE.md).
+
 `0082_immutability_hardening.sql` (issue #204, część: punkty 1, 2 i 5 z
 propozycji) zamyka trzy furtki, przez które kilka faktów traktowanych jako
 trwałe dało się zmienić albo sfałszować mimo istniejących triggerów
@@ -602,3 +621,63 @@ i istniejące wpłaty, korekty, przypisania i uzgodnienia pozostają bez
 zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów i
 funkcji; na bazie z wygenerowanymi referencjami — tylko po kopii
 zapasowej (historia referencji zniknie).
+
+`0090_ledger_cost_centers.sql` (#117) dodaje centra kosztów w księdze:
+`ledger_allocation_versions` (wersja przypisania jednego wpisu księgi do
+wydarzeń lub klas, z poprzednią wersją, powodem, aktorem i kluczem
+idempotencji; najwyżej jeden następca wersji) i `ledger_allocation_items`
+(pozycje wersji: wydarzenie ALBO klasa z roku wpisu i kwota w centach).
+Suma pozycji nie przekracza netto wpisu (trigger odroczony do końca
+transakcji), a korekta wpisu, po której netto spadłoby poniżej bieżącego
+przypisania, jest odrzucana (`ledger_allocation_exceeds_net`) osobnym
+triggerem — `ledger_correction_guard` (0039) nie jest redefiniowana. Obie
+tabele są niezmienne i objęte zamrożeniem roku. Skutki dla danych: tylko
+nowe tabele, indeksy, dwa ograniczenia UNIQUE `(id, school_year_id)` na
+`events` i `ledger_entries` (prawdziwe z definicji) i triggery; żaden
+wiersz nie jest zmieniany, wszystkie istniejące wpisy są „ogólne”.
+Wycofanie: usunięcie obu tabel, funkcji i dodanych ograniczeń; na bazie
+z przypisaniami — tylko po kopii zapasowej.
+
+`0104_payment_allocations.sql` (#127, część 1) pozwala podzielić jedną
+nieprzypisaną wpłatę na kilka gospodarstw: `payment_allocations`
+(niezmienna część z kwotą w centach) i `payment_allocation_reversals`
+(cofnięcie części jako nowy zapis z powodem). Suma bieżących części nie
+przekracza netto wpłaty — pilnują tego triggery pod blokadą wiersza wpłaty
+także przy korektach i zwrotach (`payment_allocation_exceeds_net`);
+istniejące funkcje strażnicze (0002, 0038, 0039) nie są redefiniowane.
+`household_payment_totals` liczy też bieżące części (`CREATE OR REPLACE
+VIEW`, te same kolumny). Obie tabele są niezmienne, objęte zamrożeniem roku
+i blokadą `TRUNCATE`. Skutki dla danych: tylko nowe tabele, widok, funkcje
+i triggery; żaden wiersz nie jest zmieniany, istniejące przypisania
+zostają bez migracji do części, a sumy są równe jak przed migracją, dopóki
+nikt nie utworzy części. Wycofanie na bazie bez części: przywrócenie
+`household_payment_totals` z 0002, usunięcie widoku, tabel i funkcji; na
+bazie z częściami — tylko po kopii zapasowej.
+
+`0105_reconciliation_group_matches.sql` (#127, część 2) dodaje dopasowanie
+wiele-do-jednego w uzgodnieniu rachunku: jedna pozycja wyciągu (przelew
+zbiorczy) ↔ kilka wpłat albo wpisów księgi. Tabele
+`bank_reconciliation_group_matches`, `bank_reconciliation_group_match_items`
+i `bank_reconciliation_group_match_revocations` (cofnięcie jako nowy zapis).
+Suma pozycji musi równać się kwocie pozycji wyciągu (sprawdzane przy
+COMMIT); pozycja wyciągu i wpłata/wpis mają najwyżej jedno aktywne
+dopasowanie (1:1 albo zbiorcze), także między uzgodnieniami tego samego
+roku (`bank_match_in_other_reconciliation`). Skutki dla danych: tylko nowe
+tabele, widoki, funkcje i triggery; żaden wiersz nie jest zmieniany ani
+usuwany, istniejące dopasowania 1:1 zostają. Wycofanie na bazie bez
+dopasowań zbiorczych: usunięcie triggerów, widoków, tabel i funkcji; na
+bazie z dopasowaniami — tylko po kopii zapasowej i decyzji o retencji (D-04).
+
+`0107_reconciliation_abandon.sql` (przegląd #344, #105) pozwala porzucić
+szkic uzgodnienia: `bank_reconciliations.status` dopuszcza `'abandoned'`,
+dochodzą kolumny `abandoned_by`, `abandoned_at`, `abandon_reason`.
+Porzucenie to przejście stanu, nie usunięcie — szkic, importy i historia
+zostają; porzucić można tylko szkic bez aktywnych powiązań. Globalne
+indeksy UNIQUE z 0089 na skrócie pliku i ruchu banku zastępują triggery
+pilnujące unikalności wyłącznie wśród nieporzuconych uzgodnień, więc ten
+sam plik można zaimportować do nowego szkicu. Skutki dla danych: żaden
+wiersz nie jest zmieniany ani usuwany, nowe kolumny są `NULL`; istniejące
+uzgodnienia są `draft`/`confirmed`, więc dotychczasowa unikalność spełnia
+nową. Wycofanie: tylko bez porzuconych uzgodnień i zduplikowanych skrótów
+(odtworzenie indeksów UNIQUE z 0089, funkcji z 0024/0015 i poprzedniego
+CHECK); w przeciwnym razie wyłącznie po kopii zapasowej.
