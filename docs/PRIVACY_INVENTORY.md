@@ -103,6 +103,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_references`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`payment_references`|`structured_reference`|Opiekun|pseudonymous|identyfikacja|belgijska referencja płatności OGM-VCS — pseudonim gospodarstwa na tytule przelewu|payment_reference|nie|nie|
 |`payment_refunds`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`resolution_execution_events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`resolution_execution_events`|`note`|Członek Rady|direct|wolny tekst|notatka o postępie wykonania uchwały|audit_event|tak|tak|
+|`resolution_execution_events`|`responsible_user_id`|Członek Rady|pseudonymous|identyfikacja|wskazanie osoby odpowiedzialnej za wykonanie uchwały|nieustalona (D-04)|nie|tak|
 |`resolutions`|`body`|Członek Rady|direct|wolny tekst|treść uchwały|audit_event|tak|tak|
 |`resolutions`|`correction_reason`|Członek Rady|direct|wolny tekst|uzasadnienie korekty uchwały|audit_event|tak|tak|
 |`resolutions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -122,7 +125,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **109**, w tym wolnego tekstu: **25** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **112**, w tym wolnego tekstu: **26** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -1062,6 +1065,19 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `reason` | none | — | tak |
 | `refunded_on` | none | — | tak |
 
+### `resolution_execution_events`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `due_on` | none | — | tak |
+| `id` | none | — | tak |
+| `note` | direct | board_member | tak |
+| `resolution_id` | none | — | tak |
+| `responsible_user_id` | pseudonymous | board_member | tak |
+| `status` | none | — | tak |
+
 ### `resolutions`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
@@ -1077,6 +1093,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `meeting_id` | none | — | tak |
 | `number` | none | — | tak |
 | `quorum_check_id` | none | — | tak |
+| `relation_cross_year` | none | — | tak |
+| `relation_kind` | none | — | tak |
 | `revision` | none | — | tak |
 | `revision_no` | none | — | tak |
 | `school_year_id` | none | — | tak |
@@ -1142,6 +1160,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `ends_on` | none | — | tak |
 | `id` | none | — | tak |
 | `label` | none | — | tak |
+| `resolution_number_pattern` | none | — | tak |
 | `starts_on` | none | — | tak |
 
 ### `sessions`
