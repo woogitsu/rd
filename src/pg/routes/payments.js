@@ -23,6 +23,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { csvCell, csvHeader, csvRow } from '../csv.js';
 import { detectPossiblePersonalData } from '../pii-check.js';
 import { recordDataAccess } from '../data-access.js';
 
@@ -34,6 +35,10 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const METHODS = new Set(['bank', 'cash', 'other']);
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_AMOUNT_CENTS = 100_000_000;
+// #141: eksport CSV wpisów wpłat i korekt (skarbnik/zarząd/admin). Ten sam
+// limit co eksport księgi (#7, ledger.js MAX_EXPORT_ROWS) — jeden wiersz
+// arkusza tabelarycznego jako granica pamięci pojedynczego żądania.
+const MAX_EXPORT_ROWS = 20_000;
 
 const PAYMENT_COLUMNS = `id, household_id, school_year_id, amount_cents,
   to_char(received_on, 'YYYY-MM-DD') AS received_on, method, reference, status, created_by`;
@@ -1018,6 +1023,132 @@ async function reverseAllocation(request, env, paymentEntryId, allocationId, jso
   return json(result, 201, CREATED);
 }
 
+// --- Eksport CSV (#141, część 1: wpisy wpłat — raport KR i księga w #141 dalej poza zakresem) ---
+//
+// Jeden plik, dwa rodzaje wierszy (typ_wiersza): "wpis" (jeden na wpłatę) i
+// "korekta" (jedna na każdą korektę — historia widoczna, nic nie jest zacierane,
+// zgodnie z AGENTS.md). Eksport NIE generuje listy rodzin „bez wpłaty” ani
+// statusu rodziny — opisuje wyłącznie zapisane wpisy (AGENTS.md: składki są
+// dobrowolne). Imiona/nazwiska uczniów i pełny e-mail nigdy nie trafiają do
+// pliku; numer rodziny to wewnętrzny household_id, nie dana ucznia.
+
+const EXPORT_METHOD_LABELS = { bank: 'Przelew', cash: 'Gotówka', other: 'Inna' };
+const EXPORT_ASSIGNMENT_LABELS = { recorded: 'przypisana', unmatched: 'nieprzypisana do wyjaśnienia' };
+
+export const PAYMENT_EXPORT_COLUMNS = [
+  ['typ_wiersza', 'text'], ['id', 'text'], ['data', 'text'], ['kwota_eur', 'amount'], ['metoda', 'text'],
+  ['stan_przypisania', 'text'], ['numer_rodziny', 'text'], ['suma_korekt_eur', 'amount'],
+  ['suma_zwrotow_eur', 'amount'], ['netto_eur', 'amount'], ['powod_korekty', 'text'], ['rola_aktora', 'text'],
+].map(([header, type]) => ({ header, type }));
+
+// Nagłówek arkusza wymagany przez #141: plik opisuje zapisane wpisy, nie
+// należności rodzin. Nie jest to wiersz danych — pierwsza linia pliku.
+const EXPORT_DISCLAIMER = 'Składki są dobrowolne; brak wpisu nie oznacza braku wpłaty.';
+
+export function paymentExportEntryLine(row) {
+  const assigned = row.status === 'recorded';
+  return csvRow(PAYMENT_EXPORT_COLUMNS, [
+    'wpis', row.id, row.received_on, row.amount_cents, EXPORT_METHOD_LABELS[row.method] ?? row.method,
+    EXPORT_ASSIGNMENT_LABELS[row.status] ?? row.status, assigned ? row.household_id : '',
+    row.corrected_cents, row.refunded_cents, row.net_amount_cents, '', '',
+  ]);
+}
+
+export function paymentExportCorrectionLine(row) {
+  return csvRow(PAYMENT_EXPORT_COLUMNS, [
+    'korekta', row.id, row.created_on, row.amount_cents, '', '', row.household_id ?? '', 0, 0, 0,
+    row.reason, row.actor_role ?? 'nieznana',
+  ]);
+}
+
+function readExportFilters(url) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  const method = url.searchParams.get('method');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  if (from && !validDate(from)) throw new RequestError('invalid_date');
+  if (to && !validDate(to)) throw new RequestError('invalid_date');
+  if (from && to && from > to) throw new RequestError('invalid_window');
+  if (method && !METHODS.has(method)) throw new RequestError('invalid_method');
+  return { schoolYearId, from: from || null, to: to || null, method: method || null };
+}
+
+async function exportCsv(request, env, url) {
+  const { schoolYearId, from, to, method } = readExportFilters(url);
+  const context = await requireFinancialContext(request, env, schoolYearId);
+  const actorId = context.session.user.id;
+
+  const conditions = ["p.status IN ('recorded', 'unmatched')", 'p.school_year_id = $1'];
+  const values = [schoolYearId];
+  if (from) { values.push(from); conditions.push(`p.received_on >= $${values.length}::date`); }
+  if (to) { values.push(to); conditions.push(`p.received_on <= $${values.length}::date`); }
+  if (method) { values.push(method); conditions.push(`p.method = $${values.length}`); }
+  const whereClause = conditions.join(' AND ');
+
+  const { entryRows, correctionRows } = await env.db.transaction(async (tx) => {
+    const year = await tx.query('SELECT id FROM school_years WHERE id = $1', [schoolYearId]);
+    if (!year.rows.length) throw new RequestError('school_year_not_found', 404);
+    const entries = await tx.query(
+      `SELECT p.id, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.amount_cents, p.method,
+              p.status, p.household_id,
+              COALESCE((SELECT SUM(c.amount_cents) FROM payment_corrections c WHERE c.payment_entry_id = p.id), 0) AS corrected_cents,
+              COALESCE((SELECT SUM(r.amount_cents) FROM payment_refunds r WHERE r.payment_entry_id = p.id), 0) AS refunded_cents,
+              p.amount_cents
+                - COALESCE((SELECT SUM(c.amount_cents) FROM payment_corrections c WHERE c.payment_entry_id = p.id), 0)
+                - COALESCE((SELECT SUM(r.amount_cents) FROM payment_refunds r WHERE r.payment_entry_id = p.id), 0)
+                AS net_amount_cents
+         FROM payment_entries p
+        WHERE ${whereClause}
+        ORDER BY p.received_on, p.id COLLATE "C"
+        LIMIT $${values.length + 1}`,
+      [...values, MAX_EXPORT_ROWS + 1],
+    );
+    if (entries.rows.length > MAX_EXPORT_ROWS) throw new RequestError('export_too_large', 413);
+    const corrections = await tx.query(
+      `SELECT c.id, to_char(c.created_at, 'YYYY-MM-DD') AS created_on, c.amount_cents, c.reason, p.household_id,
+              COALESCE((
+                SELECT rg.role FROM role_grants rg
+                 WHERE rg.user_id = c.created_by AND rg.revoked_at IS NULL
+                   AND (rg.school_year_id = p.school_year_id OR rg.school_year_id IS NULL)
+                 ORDER BY rg.role LIMIT 1
+              ), 'nieznana') AS actor_role
+         FROM payment_corrections c
+         JOIN payment_entries p ON p.id = c.payment_entry_id
+        WHERE ${whereClause}
+        ORDER BY c.created_at, c.id COLLATE "C"
+        LIMIT $${values.length + 1}`,
+      [...values, MAX_EXPORT_ROWS + 1],
+    );
+    if (corrections.rows.length > MAX_EXPORT_ROWS) throw new RequestError('export_too_large', 413);
+    // Dziennik: kto, kiedy i ile wierszy wyeksportował — bez kwot i treści (#141).
+    await insertAuditEvent(tx, {
+      actorId, action: 'payment.exported', entityType: 'school_year', entityId: schoolYearId,
+      metadata: {
+        schoolYearId, format: 'csv', entryCount: entries.rows.length, correctionCount: corrections.rows.length,
+      },
+    });
+    return { entryRows: entries.rows, correctionRows: corrections.rows };
+  });
+
+  const lines = [
+    csvCell(EXPORT_DISCLAIMER),
+    csvHeader(PAYMENT_EXPORT_COLUMNS),
+    ...entryRows.map(paymentExportEntryLine),
+    ...correctionRows.map(paymentExportCorrectionLine),
+  ];
+  // BOM UTF-8, żeby arkusz poprawnie odczytał polskie znaki (jak eksport księgi, #121).
+  return new Response(`﻿${lines.join('\r\n')}\r\n`, {
+    status: 200,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="wplaty-${schoolYearId.replace(/[^A-Za-z0-9_-]/g, '_')}.csv"`,
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
+}
+
 export async function handle(request, env, url, json) {
   const correctionMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/corrections$/);
   const assignmentMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/assignment$/);
@@ -1028,15 +1159,17 @@ export async function handle(request, env, url, json) {
   const isPaymentCreate = url.pathname === '/api/payments';
   const isPaymentList = request.method === 'GET' && url.pathname === '/api/payments';
   const isAllocationList = request.method === 'GET' && Boolean(allocationsMatch);
+  const isExport = request.method === 'GET' && url.pathname === '/api/payments/export.csv';
   const isMutation = request.method === 'POST'
     && (isPaymentCreate || correctionMatch || assignmentMatch || refundMatch || reassignmentMatch
       || allocationsMatch || allocationReversalMatch);
-  if (!isPaymentList && !isAllocationList && !isMutation) return null;
+  if (!isPaymentList && !isAllocationList && !isExport && !isMutation) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.
   if (isMutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
 
   try {
     if (isPaymentList) return await listPayments(request, env, url, json);
+    if (isExport) return await exportCsv(request, env, url);
     if (isAllocationList) return await listAllocations(request, env, decodeId(allocationsMatch[1]), json);
     if (allocationsMatch) return await createAllocation(request, env, decodeId(allocationsMatch[1]), json);
     if (allocationReversalMatch) {

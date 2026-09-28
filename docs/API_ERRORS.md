@@ -78,6 +78,7 @@ wpisów).
 | `duplicate_name` | Nazwy klas na liście powtarzają się. | Nie — popraw dane żądania. |
 | `duplicate_photo` | To zdjęcie jest już dodane. | Nie — popraw dane żądania. |
 | `empty_document` | Plik jest pusty. | Zależy od kontekstu (patrz moduł trasy). |
+| `empty_photo_file` | Plik zdjęcia jest pusty. | Nie — popraw dane żądania. |
 | `ends_before_start` | Koniec nie może być wcześniej niż początek. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_cancelled` | Wydarzenie jest odwołane; odwołanie jest ostateczne. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_not_found` | Nie znaleziono wydarzenia albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
@@ -247,6 +248,10 @@ wpisów).
 | `payment_reassignment_household_mismatch` | Nie można przepisać wpłaty na tę rodzinę — powiązany wpis księgi wskazuje inną rodzinę. | Nie — popraw dane żądania. |
 | `payment_reassignment_same_household` | Wpłata jest już przypisana do tej rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `pending_admin_invitation` | Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
+| `photo_file_exists` | To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik. | Nie — popraw dane żądania. |
+| `photo_file_integrity_mismatch` | Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi. | Zależy od kontekstu (patrz moduł trasy). |
+| `photo_file_malformed` | Plik zdjęcia odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi. | Nie — popraw dane żądania. |
+| `photo_file_too_large` | Plik zdjęcia przekracza dozwolony rozmiar. | Nie — popraw dane żądania. |
 | `photo_not_found` | Nie znaleziono zdjęcia. | Nie — popraw dane żądania. |
 | `photo_revoked` | Zgoda na publikację zdjęcia została wycofana. | Zależy od kontekstu (patrz moduł trasy). |
 | `photos_require_school_wide_role` | Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły. | Zależy od kontekstu (patrz moduł trasy). |
