@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const APP_DIRS = ['admin', 'documents', 'events', 'families', 'import', 'ledger', 'meetings', 'panel', 'print', 'site'];
+const APP_DIRS = ['admin', 'documents', 'email', 'events', 'families', 'import', 'ledger', 'meetings', 'panel', 'print', 'reconciliation', 'site'];
 
 function jsFiles(dir) {
   const out = [];
