@@ -318,6 +318,9 @@ function requireYear(context, roles, schoolYearId) {
 function mapDatabaseError(error) {
   if (error instanceof RequestError) throw error;
   const message = String(error?.message ?? '');
+  // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze, rozszerzony
+  // w #80 na uzgodnienia rachunku) — stan, nie awaria bazy (#156).
+  if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   if (message.includes('bank_reconciliation_confirmed_immutable')) throw new RequestError('reconciliation_confirmed', 409);
   if (message.includes('bank_reconciliation_date_outside_year')) throw new RequestError('statement_date_outside_school_year');
   if (message.includes('bank_statement_line_after_statement_date')) throw new RequestError('statement_line_after_statement_date');
