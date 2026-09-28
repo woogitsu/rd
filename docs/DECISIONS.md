@@ -253,6 +253,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: które zdjęcia wolno publikować na stronie Rady, kto sprawdza prawa autorskie i zgody na wizerunek dzieci oraz gdzie są zapisywane?
 - Dlaczego: blokuje galerię i sekcję archiwalną (#14).
 - Warianty w dokumentacji: SECURITY.md i DESIGN.md — dla każdego zdjęcia autor, źródło, data i prawo do publikacji; publiczna dostępność na stronie szkoły nie daje prawa do kopiowania; bez zbliżeń rozpoznawalnych dzieci bez potwierdzenia zgód.
+- #96 (magazyn plików zdjęć galerii) wdrożony na wariancie zachowawczym w braku tej decyzji: serwer NIE przechowuje przesłanego oryginału, tylko przetworzone warianty (`web`/`thumb`) bez EXIF/GPS. Jeśli D-18 rozstrzygnie, że oryginał ma być zachowany jako dowód (np. do sporu o prawa), potrzebna będzie kolejna migracja z osobną, bardziej restrykcyjną polityką dostępu do niego.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
