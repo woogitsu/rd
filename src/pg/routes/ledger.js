@@ -19,6 +19,13 @@
 //   POST /api/ledger/{id}/reviews           (Idempotency-Key)
 //   GET  /api/ledger/resolutions?schoolYearId=…
 //   POST /api/ledger/resolutions/{id}/authorizations (Idempotency-Key; admin/zarząd)
+// Nowe trasy (#207, część 1: kategorie księgi przez API, bez SQL co roku):
+//   POST /api/ledger/categories                          {schoolYearId, direction, name}
+//   POST /api/ledger/categories/{id}/deactivate
+//   POST /api/ledger/categories/copy                     {fromSchoolYearId, toSchoolYearId, dryRun?}
+// Zamrożenie roku (INSERT/UPDATE na ledger_categories w zamkniętym roku) pilnuje
+// już trigger a0_year_freeze z 0017_year_close.sql — te trasy nie dodają nowego
+// mechanizmu, tylko API nad istniejącą tabelą i triggerami. Bez migracji.
 //
 // Każdy zapis i jego zdarzenie audytu powstają w jednej transakcji. Korekta
 // blokuje wiersz wpisu (SELECT … FOR UPDATE), a wpis powiązany z wpłatą
@@ -164,6 +171,26 @@ function parseEntryInput(data) {
     resolutionReference,
     resolutionId,
   };
+}
+
+function parseCategoryInput(data) {
+  const name = textOrNull(data.name, 100);
+  if (!validId(data.schoolYearId) || !DIRECTIONS.has(data.direction) || !name || name.length < 2) {
+    throw new RequestError('invalid_request');
+  }
+  return { schoolYearId: data.schoolYearId, direction: data.direction, name };
+}
+
+function parseCopyInput(data) {
+  if (!validId(data.fromSchoolYearId) || !validId(data.toSchoolYearId)
+    || data.fromSchoolYearId === data.toSchoolYearId) {
+    throw new RequestError('invalid_request');
+  }
+  return { fromSchoolYearId: data.fromSchoolYearId, toSchoolYearId: data.toSchoolYearId, dryRun: data.dryRun === true };
+}
+
+function categoryFromRow(row) {
+  return { id: row.id, schoolYearId: row.school_year_id, direction: row.direction, name: row.name, active: row.active };
 }
 
 function parseCorrectionInput(data) {
@@ -457,6 +484,150 @@ async function listCategories(request, env, url, json) {
     values,
   );
   return json({ categories: rows.map((row) => ({ id: row.id, direction: row.direction, name: row.name })) });
+}
+
+// #207: kategorie księgi przez API (dotąd tylko SQL). Podwójne kliknięcie
+// z tą samą nazwą/kierunkiem/rokiem nie tworzy drugiej kategorii — trafia
+// w UNIQUE(school_year_id, direction, name) i odtwarza istniejący wiersz
+// (200, nie 201), tak jak reszta modułu traktuje ponowienie.
+async function createCategory(request, env, json) {
+  const input = parseCategoryInput(await readJson(request));
+  const context = await requireFinancialContext(request, env, input.schoolYearId);
+  const actorId = context.session.user.id;
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      const inserted = await tx.query(
+        `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, school_year_id, direction, name, active`,
+        [crypto.randomUUID(), input.schoolYearId, input.direction, input.name, actorId],
+      );
+      const row = inserted.rows[0];
+      await insertAuditEvent(tx, {
+        actorId, action: 'ledger_category.created', entityType: 'ledger_category', entityId: row.id,
+      });
+      return { created: true, row };
+    });
+  } catch (error) {
+    if (!isUniqueError(error)) mapDatabaseError(error);
+    // Jedyny INSERT tej funkcji: konflikt może pochodzić wyłącznie z
+    // UNIQUE(school_year_id, direction, name) — id jest losowym UUID. Błąd
+    // przerywa transakcję (25P02 przy kolejnym zapytaniu na tym samym tx),
+    // więc odczyt istniejącego wiersza idzie NOWYM zapytaniem, poza transakcją,
+    // tak jak replay po kolizji Idempotency-Key w createEntry powyżej.
+    const existing = await env.db.query(
+      `SELECT id, school_year_id, direction, name, active FROM ledger_categories
+        WHERE school_year_id = $1 AND direction = $2 AND name = $3`,
+      [input.schoolYearId, input.direction, input.name],
+    );
+    if (!existing.rows[0]) throw error;
+    result = { created: false, row: existing.rows[0] };
+  }
+  return json({ category: categoryFromRow(result.row) }, result.created ? 201 : 200);
+}
+
+// Idempotentne: dezaktywacja już nieaktywnej kategorii zwraca ten sam wynik
+// (200) zamiast błędu — podwójne kliknięcie nie jest zdarzeniem audytu dwa razy.
+async function deactivateCategory(request, env, categoryId, json) {
+  if (!validId(categoryId)) throw new RequestError('invalid_request');
+  const context = await requireFinancialContext(request, env);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        'SELECT id, school_year_id, direction, name, active FROM ledger_categories WHERE id = $1 FOR UPDATE',
+        [categoryId],
+      );
+      const category = rows[0];
+      if (!category) throw new RequestError('category_not_found', 404);
+      requireYear(context, category.school_year_id);
+      if (!category.active) return json({ category: categoryFromRow(category) });
+      const updated = await tx.query(
+        `UPDATE ledger_categories SET active = false WHERE id = $1
+         RETURNING id, school_year_id, direction, name, active`,
+        [categoryId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'ledger_category.deactivated', entityType: 'ledger_category', entityId: categoryId,
+      });
+      return json({ category: categoryFromRow(updated.rows[0]) });
+    });
+  } catch (error) {
+    mapDatabaseError(error);
+  }
+  return undefined;
+}
+
+// Kopiowanie kategorii do nowego roku (#207, krok 7/19 audytu cyklu roku):
+// wymaga dostępu finansowego do roku DOCELOWEGO (SR-01 — zarząd przydzielony
+// do jednego roku nie skopiuje do roku spoza własnego przydziału). Rok
+// źródłowy nie wymaga osobnego dostępu — kopiowane są wyłącznie NAZWY i
+// KIERUNKI kategorii (bez kwot i innych danych), czyli ten sam poziom
+// wrażliwości co przydział kategorii przy tworzeniu wpisu księgi. `dryRun`
+// daje podgląd bez zapisu. Zapis jest jednym wielowierszowym INSERTem z
+// ON CONFLICT DO NOTHING — idempotentny (podwójne kliknięcie nie duplikuje
+// kategorii) i nie zostawia transakcji w stanie błędu przy częściowym konflikcie.
+async function copyCategories(request, env, json) {
+  const input = parseCopyInput(await readJson(request));
+  const context = await requireFinancialContext(request, env);
+  requireYear(context, input.toSchoolYearId);
+  const actorId = context.session.user.id;
+
+  const source = await env.db.query(
+    `SELECT direction, name FROM ledger_categories WHERE school_year_id = $1 AND active
+      ORDER BY direction, name COLLATE "C"`,
+    [input.fromSchoolYearId],
+  );
+  if (!source.rows.length) return json({ dryRun: input.dryRun, copied: [], skipped: [] });
+
+  if (input.dryRun) {
+    const existing = await env.db.query(
+      'SELECT direction, name FROM ledger_categories WHERE school_year_id = $1',
+      [input.toSchoolYearId],
+    );
+    const existingKeys = new Set(existing.rows.map((row) => `${row.direction}:${row.name}`));
+    const copied = [];
+    const skipped = [];
+    for (const row of source.rows) {
+      const target = existingKeys.has(`${row.direction}:${row.name}`) ? skipped : copied;
+      target.push({ direction: row.direction, name: row.name });
+    }
+    return json({ dryRun: true, copied, skipped });
+  }
+
+  const values = [];
+  const placeholders = source.rows.map((row, index) => {
+    const base = index * 5;
+    values.push(crypto.randomUUID(), input.toSchoolYearId, row.direction, row.name, actorId);
+    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`;
+  });
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (school_year_id, direction, name) DO NOTHING
+         RETURNING id, direction, name`,
+        values,
+      );
+      if (rows.length) {
+        await insertAuditEvent(tx, {
+          actorId, action: 'ledger_category.copied', entityType: 'school_year', entityId: input.toSchoolYearId,
+          metadata: { from: input.fromSchoolYearId, count: rows.length },
+        });
+      }
+      return json({
+        dryRun: false,
+        copied: rows.map((row) => ({ id: row.id, direction: row.direction, name: row.name })),
+        skippedCount: source.rows.length - rows.length,
+      });
+    });
+  } catch (error) {
+    mapDatabaseError(error);
+  }
+  return undefined;
 }
 
 async function readSummary(request, env, url, json) {
@@ -1182,14 +1353,17 @@ export async function handle(request, env, url, json) {
   const authorizationMatch = url.pathname.match(/^\/api\/ledger\/resolutions\/([^/]+)\/authorizations$/);
   const isReviews = request.method === 'GET' && url.pathname === '/api/ledger/reviews';
   const isResolutions = request.method === 'GET' && url.pathname === '/api/ledger/resolutions';
+  const categoryDeactivateMatch = url.pathname.match(/^\/api\/ledger\/categories\/([^/]+)\/deactivate$/);
   const isEntryRoute = url.pathname === '/api/ledger';
   const isList = request.method === 'GET' && isEntryRoute;
   const isCategories = request.method === 'GET' && url.pathname === '/api/ledger/categories';
+  const isCategoryCreate = request.method === 'POST' && url.pathname === '/api/ledger/categories';
+  const isCategoryCopy = request.method === 'POST' && url.pathname === '/api/ledger/categories/copy';
   const isSummary = request.method === 'GET' && url.pathname === '/api/ledger/summary';
   const isBudget = request.method === 'GET' && url.pathname === '/api/ledger/budget';
   const isExport = request.method === 'GET' && url.pathname === '/api/ledger/export.csv';
   const isMutation = request.method === 'POST' && (isEntryRoute || correctionMatch || replacementMatch
-    || reviewMatch || authorizationMatch);
+    || reviewMatch || authorizationMatch || isCategoryCreate || isCategoryCopy || categoryDeactivateMatch);
   if (!isList && !isCategories && !isSummary && !isBudget && !isExport && !isMutation
     && !isReviews && !isResolutions) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.
@@ -1203,6 +1377,9 @@ export async function handle(request, env, url, json) {
     if (isExport) return await exportCsv(request, env, url);
     if (isReviews) return await listReviews(request, env, url, json);
     if (isResolutions) return await listResolutions(request, env, url, json);
+    if (isCategoryCreate) return await createCategory(request, env, json);
+    if (isCategoryCopy) return await copyCategories(request, env, json);
+    if (categoryDeactivateMatch) return await deactivateCategory(request, env, decodeId(categoryDeactivateMatch[1]), json);
     if (isEntryRoute) return await createEntry(request, env, json);
     if (authorizationMatch) return await createAuthorization(request, env, decodeId(authorizationMatch[1]), json);
     if (reviewMatch) return await createReview(request, env, decodeId(reviewMatch[1]), json);
