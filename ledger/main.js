@@ -51,9 +51,10 @@ function entryRow(raw) {
   const row = document.createElement("tr");
   row.append(textCell(entry.occurredOn));
   const description = textCell(entry.description || "Bez opisu", "entry-description");
-  if (entry.source || entry.resolutionReference) {
+  const evidence = entry.attachmentCount === null ? "" : `Dowody: ${entry.attachmentCount}`;
+  if (entry.source || entry.resolutionReference || evidence) {
     const details = document.createElement("small");
-    details.textContent = [entry.source && `Źródło: ${entry.source}`, entry.resolutionReference && `Uchwała: ${entry.resolutionReference}`].filter(Boolean).join(" · ");
+    details.textContent = [entry.source && `Źródło: ${entry.source}`, entry.resolutionReference && `Uchwała: ${entry.resolutionReference}`, evidence].filter(Boolean).join(" · ");
     description.append(details);
   }
   row.append(description, textCell(entry.categoryName), textCell(METHOD_LABELS[entry.method]));
@@ -259,11 +260,14 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
   if (needsResolution(direction, amountCents) && !resolutionReference) throw new Error("Dla tego wydatku podaj referencję uchwały.");
   const sourceDocumentId = String(data.get("sourceDocumentId") || "").trim();
   if (sourceDocumentId && !isValidId(sourceDocumentId)) throw new Error("Niepoprawny identyfikator dokumentu.");
-  await api("/api/ledger", {
+  const evidenceFile = data.get("evidenceFile");
+  const hasFile = evidenceFile && typeof evidenceFile === "object" && evidenceFile.size > 0;
+  const schoolYearId = String(data.get("schoolYearId"));
+  const created = await api("/api/ledger", {
     method: "POST",
     headers: { "Idempotency-Key": key },
     body: JSON.stringify({
-      schoolYearId: String(data.get("schoolYearId")), direction, amountCents,
+      schoolYearId, direction, amountCents,
       categoryId: String(data.get("categoryId")), description: String(data.get("description")),
       occurredOn: String(data.get("occurredOn")), method: String(data.get("method")),
       source: String(data.get("source") || "") || null,
@@ -271,6 +275,19 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
       resolutionReference: resolutionReference || null,
     }),
   });
+  // #87: dowód dołączany po zapisie wpisu, z kluczem pochodnym od klucza wpisu —
+  // ponowienie po błędzie odtwarza wpis (ten sam klucz) i dołącza plik raz.
+  if (hasFile && created?.entry?.id) {
+    const query = new URLSearchParams({ kind: "financial", schoolYearId, linkedEntityType: "ledger_entry", linkedEntityId: created.entry.id });
+    try {
+      await api(`/api/documents?${query}`, {
+        method: "POST", headers: { "Idempotency-Key": `${key}-doc`, "Content-Type": evidenceFile.type }, body: evidenceFile,
+      });
+    } catch (error) {
+      error.message = `Wpis zapisano, ale nie dołączono dowodu: ${error.message} Zapisz ponownie, aby dołączyć plik.`;
+      throw error;
+    }
+  }
 }, "Zapisano wpis w księdze.");
 
 const correctionDialog = configureDialog("correction-dialog", "ledger-correction", async (data, key) => {
