@@ -321,6 +321,24 @@ test('production requires an explicit IMPORT_ENABLED switch', async () => withDb
   assert.equal((await off.json()).error, 'import_disabled');
   const on = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, APP_ENV: 'production', IMPORT_ENABLED: 'true' });
   assert.equal(on.status, 200);
+
+  // #166: 'prod' i inna wielkość liter ('Production'/'PRODUCTION') muszą być
+  // rozpoznane tak samo jak 'production' — literówka w konfiguracji Railway
+  // nie może zostawić importu danych dzieci i opiekunów włączonym po cichu.
+  for (const appEnv of ['prod', 'Production', 'PRODUCTION', '  production  ']) {
+    const blocked = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, APP_ENV: appEnv });
+    assert.equal(blocked.status, 403, appEnv);
+    assert.equal((await blocked.json()).error, 'import_disabled', appEnv);
+    const allowed = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, APP_ENV: appEnv, IMPORT_ENABLED: 'true' });
+    assert.equal(allowed.status, 200, appEnv);
+  }
+  // Ta sama trasa commit, nie tylko preview.
+  const commitBlocked = await handlePgRequest(
+    post('/api/import/commit', admin, { ...payload, fingerprint: '0'.repeat(64), planDigest: '0'.repeat(64) }, { key: 'key-prod-01' }),
+    { ...env, APP_ENV: 'PROD' },
+  );
+  assert.equal(commitBlocked.status, 403);
+  assert.equal((await commitBlocked.json()).error, 'import_disabled');
 }));
 
 test('audit event records actor and counts only, without PII', async () => withDb(async (db, env, admin) => {

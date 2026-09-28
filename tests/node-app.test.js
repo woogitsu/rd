@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNodeHandler } from '../src/node-app.js';
+import { baselineSecurityHeaders, createNodeHandler } from '../src/node-app.js';
 import { bodyLimitFor } from '../src/documents.js';
 
 async function listen(handler) {
@@ -147,6 +147,63 @@ test('Node server: / przekierowuje na /login/, adres klienta nadpisuje nagłówe
   } finally {
     await close(direct.server);
     await close(proxied.server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// #114 (SR-12): HSTS tylko gdy PUBLIC_BASE_URL zaczyna się od https://ale niezależnie
+// od tego nosniff/X-Frame-Options/Referrer-Policy trafiają do KAŻDEJ odpowiedzi (statyczna,
+// API, przekierowanie 308, /health/ready, błąd 413/500) — nie tylko do plików statycznych.
+test('baselineSecurityHeaders: HSTS tylko przy https, reszta zawsze', () => {
+  const withHttps = baselineSecurityHeaders('https://rd.example.invalid');
+  assert.equal(withHttps['Strict-Transport-Security'], 'max-age=31536000; includeSubDomains');
+  assert.equal(withHttps['X-Content-Type-Options'], 'nosniff');
+  assert.equal(withHttps['X-Frame-Options'], 'DENY');
+  assert.equal(withHttps['Referrer-Policy'], 'no-referrer');
+
+  for (const value of ['http://rd.example.invalid', '', undefined, 'not-a-url']) {
+    const headers = baselineSecurityHeaders(value);
+    assert.equal(headers['Strict-Transport-Security'], undefined, String(value));
+    assert.equal(headers['X-Content-Type-Options'], 'nosniff');
+  }
+});
+
+test('każda odpowiedź serwera Node ma nosniff, X-Frame-Options i (przy https) HSTS', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-headers-'));
+  await mkdir(join(root, 'panel'), { recursive: true });
+  await writeFile(join(root, 'panel', 'index.html'), '<!doctype html><title>Panel RD</title>');
+  const fetchHandler = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/health/ready') throw new Error('nieużywane — /health/ready jest obsługiwane wcześniej');
+    if (url.pathname === '/api/boom') throw new Error('błąd testowy');
+    return Response.json({ ok: true });
+  };
+  const readiness = async () => ({ ready: true, body: { status: 'ready' } });
+  const httpHandler = createNodeHandler({ distRoot: root, fetchHandler, readiness, publicBaseUrl: 'http://rd.test' });
+  const httpsHandler = createNodeHandler({ distRoot: root, fetchHandler, readiness, publicBaseUrl: 'https://rd.example.invalid' });
+  const http = await listen(httpHandler);
+  const https = await listen(httpsHandler);
+  try {
+    for (const { baseUrl, expectHsts } of [{ baseUrl: http.baseUrl, expectHsts: false }, { baseUrl: https.baseUrl, expectHsts: true }]) {
+      const cases = [
+        await fetch(`${baseUrl}/panel`, { redirect: 'manual' }), // 308
+        await fetch(`${baseUrl}/panel/`), // 200 statyczna
+        await fetch(`${baseUrl}/health/ready`), // 200 gotowość
+        await fetch(`${baseUrl}/api/example`), // 200 API
+        await fetch(`${baseUrl}/api/example`, { method: 'POST', body: 'x'.repeat(1024 * 1024 + 1) }), // 413
+        await fetch(`${baseUrl}/api/boom`), // 500
+      ];
+      for (const response of cases) {
+        assert.equal(response.headers.get('x-content-type-options'), 'nosniff', `${response.status} ${baseUrl}`);
+        assert.equal(response.headers.get('x-frame-options'), 'DENY', `${response.status} ${baseUrl}`);
+        assert.equal(response.headers.get('referrer-policy'), 'no-referrer', `${response.status} ${baseUrl}`);
+        if (expectHsts) assert.match(response.headers.get('strict-transport-security') ?? '', /max-age=31536000/, `${response.status} ${baseUrl}`);
+        else assert.equal(response.headers.get('strict-transport-security'), null, `${response.status} ${baseUrl} nie powinien mieć HSTS bez https`);
+      }
+    }
+  } finally {
+    await close(http.server);
+    await close(https.server);
     await rm(root, { recursive: true, force: true });
   }
 });

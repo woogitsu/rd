@@ -8,18 +8,18 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
       <a class="brand" href="../">
         <span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span>
       </a>
       <nav aria-label="Panel">
-        <a href="../panel/">Wpłaty</a>
-        <a href="../ledger/">Księga</a>
-        <a class="active" href="./" aria-current="page">Konta i role</a>
+        <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
+      <div id="shell-account"></div>
     </header>
 
-    <main>
+    <main id="main">
       <section class="page-heading">
         <div>
           <p class="eyebrow">Administracja</p>
@@ -38,6 +38,23 @@
       <section class="card" aria-labelledby="users-title">
         <div class="section-heading">
           <div><h2 id="users-title">Konta</h2><p id="users-summary">Wczytywanie…</p></div>
+        </div>
+        <div class="token-box" id="reset-token-box" hidden>
+          <p class="token-warning"><strong>Link i kod są widoczne tylko teraz.</strong> Przekaż je osobie osobnym, zaufanym kanałem. Po zamknięciu tej ramki nie da się ich odzyskać — w razie utraty wydaj nowy kod.</p>
+          <p class="hint" id="reset-link-label">Link do przekazania (otwiera od razu widok „Nowe hasło”)</p>
+          <div class="token-row">
+            <code id="reset-link" aria-labelledby="reset-link-label"></code>
+            <button type="button" id="copy-reset-link">Kopiuj link</button>
+          </div>
+          <details>
+            <summary>Sam kod resetu (gdy link nie działa)</summary>
+            <div class="token-row">
+              <code id="reset-token-value"></code>
+              <button type="button" id="copy-reset-token">Kopiuj kod</button>
+            </div>
+          </details>
+          <p class="hint" id="reset-token-meta"></p>
+          <p><button type="button" id="hide-reset-token">Zamknij</button></p>
         </div>
         <div class="table-wrap">
           <table>

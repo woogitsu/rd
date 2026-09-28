@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, isFreeEmailDomain, liveRunRefusal, matchesAllowlist, parseRetryAfter, recipientRefusal } from '../src/email/brevo.js';
 import { normalizeEmail, emailHash, parseCampaignContent } from '../src/email/content.js';
-import { campaignDailyCap, recordOtherSends, runEmailBatch, ResultNotRecordedError } from '../src/email/worker.js';
+import {
+  accountDay, campaignDailyCap, recordOtherSends, remainingQuota, runEmailBatch, ResultNotRecordedError,
+} from '../src/email/worker.js';
 import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
 // Pułapka na sieć (#214) jest teraz instalowana globalnie przez
 // tests/helpers/network-guard.js (importowany przez helpers/pg.js), więc
@@ -183,6 +185,11 @@ test('allowlist guard outside production and configuration defaults', () => {
   assert.equal(emailConfig({ EMAIL_SENDING_ENABLED: 'TRUE' }).sendingEnabled, false);
   assert.equal(campaignDailyCap(2000, defaults), 286);
   assert.equal(campaignDailyCap(10, defaults), 50);
+  // #84: doba limitu domyślnie w strefie konta Belgii, nie w UTC.
+  assert.equal(defaults.quotaTimezone, 'Europe/Brussels');
+  assert.equal(emailConfig({ EMAIL_QUOTA_TIMEZONE: 'UTC' }).quotaTimezone, 'UTC');
+  // Nieznana strefa (literówka w env) nie wywraca konfiguracji — wraca do domyślnej.
+  assert.equal(emailConfig({ EMAIL_QUOTA_TIMEZONE: 'Nie/Istnieje' }).quotaTimezone, 'Europe/Brussels');
 });
 
 test('sender readiness (#148): free domain and missing reply-to on production', () => {
@@ -507,6 +514,29 @@ test('daily limit is shared with other account mail and EMAIL_DAILY_RESERVED', a
     const day2 = await runEmailBatch(reservedEnv, { transport, dryRun: false, now: new Date('2026-10-06T08:00:00Z') });
     assert.equal(day2.sent, 5);
     assert.equal(transport.calls.length, 10);
+  } finally { await t.close(); }
+});
+
+test('#84 quota near midnight: usage counted in either UTC day or account-timezone day is not double-crossed', async () => {
+  const t = await setup({ EMAIL_DAILY_LIMIT: '5' });
+  try {
+    assert.equal(accountDay(new Date('2026-01-16T00:00:00Z'), 'Europe/Brussels'), '2026-01-16');
+    // "Inna wiadomość" zapisana o 23:45 UTC (00:45 w Brukseli w styczniu, CET
+    // = UTC+1): kolumna `day` (UTC) to jeszcze 15, ale doba konta w Brukseli to
+    // już 16. Dawny kod liczył pulę wyłącznie po kolumnie `day` i o północy UTC
+    // (16 stycznia) zgłosiłby pełną, niewykorzystaną pulę — mimo że w dobie
+    // konta Brevo (Bruksela) 5 z 5 wiadomości już wyszło.
+    await t.db.query(
+      `INSERT INTO email_send_ledger (id, day, source, message_count, recorded_at)
+       VALUES ('other-1', '2026-01-15', 'other', 5, '2026-01-15T23:45:00Z')`,
+    );
+    const config = emailConfig({ ...t.env, EMAIL_DAILY_LIMIT: '5' });
+    const remaining = await remainingQuota(t.db, new Date('2026-01-16T00:00:00Z'), config);
+    assert.equal(remaining, 0, 'pula doby konta w Brukseli jest już wyczerpana');
+    // Symetrycznie: zużycie zapisane pod dobą konta nie znika, gdy patrzymy z
+    // dnia UTC, który jeszcze się nie zaczął dla Brukseli.
+    const beforeUtcMidnight = await remainingQuota(t.db, new Date('2026-01-15T23:50:00Z'), config);
+    assert.equal(beforeUtcMidnight, 0);
   } finally { await t.close(); }
 });
 
