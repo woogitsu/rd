@@ -28,6 +28,7 @@ export const MESSAGES = Object.freeze({
   invalid_token: "Kod jest nieważny, wygasł albo został już użyty.",
   invalid_invitation: "Zaproszenie jest nieważne, wygasło albo zostało już wykorzystane.",
   too_many_attempts: "Zbyt wiele prób. Spróbuj ponownie później.",
+  login_busy: "Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund.",
   user_disabled: "Konto jest wyłączone.",
   password_mismatch: "Hasła nie są takie same.",
   password_required: "Podaj hasło.",

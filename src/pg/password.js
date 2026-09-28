@@ -11,7 +11,9 @@
 // - porównanie w czasie stałym (timingSafeEqual); nieznany e-mail jest
 //   sprawdzany względem fikcyjnego hasha o tych samych parametrach,
 // - najwyżej 2 obliczenia scrypt naraz (każde zajmuje ok. 128 MiB przy N = 2^17),
-//   kolejne czekają — ochrona pamięci serwera przed zalewem prób logowania,
+//   kolejne czekają w kolejce ograniczonej do MAX_WAITING pozycji i WAIT_TIMEOUT_MS
+//   — po przekroczeniu limitu ScryptQueueBusyError (do przełożenia na 503
+//   `login_busy` + Retry-After w warstwie tras, #203),
 // - polityka NIST SP 800-63B: 12–128 znaków (po normalizacji NFKC), bez reguł
 //   składu, odrzucenie haseł powszechnie używanych, powtórzeń i adresu e-mail,
 // - hasło nigdy nie trafia do logów, audytu ani odpowiedzi.
@@ -40,20 +42,67 @@ export function currentParams(env) {
 
 // --- Ograniczenie równoległości ---------------------------------------------
 
-const MAX_CONCURRENT = 2;
+// #203: kolejka `waiting` była wcześniej nieograniczona i bez limitu czasu —
+// kilkaset małych żądań POST z jednego IP (poprawny JSON, dowolny e-mail)
+// trafiało do tej samej globalnej kolejki i blokowało logowanie całej szkoły
+// na dziesiątki sekund lub minuty, bez znajomości żadnego konta. Teraz:
+// najwyżej MAX_WAITING oczekujących globalnie, każde z limitem czasu
+// WAIT_TIMEOUT_MS — po przekroczeniu jednego z limitów ScryptQueueBusyError
+// (warstwa tras przekłada to na 503 `login_busy` + Retry-After, bez liczenia
+// scrypt dla żądania, które i tak by nie zdążyło). Limit per adres IP (punkt 1
+// propozycji z issue) zostaje w warstwie wywołującej (src/pg/login.js), która
+// zna adres — tu pilnujemy tylko wspólnego budżetu pamięci/CPU procesu.
+export class ScryptQueueBusyError extends Error {
+  // `reason` to wewnętrzny opis diagnostyczny (queueFull/timeout), NIE kod API —
+  // przekłada się zawsze na ten sam kod odpowiedzi 'login_busy' (src/pg/login.js).
+  constructor(reason) { super('login_busy'); this.code = 'login_busy'; this.reason = reason; }
+}
+
+export const MAX_CONCURRENT = 2;
+export const MAX_WAITING = 20;
+export const WAIT_TIMEOUT_MS = 10_000;
 let running = 0;
 const waiting = [];
 
-async function withSlot(fn) {
-  if (running >= MAX_CONCURRENT) await new Promise((resolve) => waiting.push(resolve));
+// Do metryk/diagnostyki (bez adresów ani e-maili) — liczba trwających i
+// oczekujących obliczeń scrypt w tym procesie.
+export function scryptQueueDepth() {
+  return { running, waiting: waiting.length };
+}
+
+// Wyeksportowane dla testów (tests/pg-password-queue.test.js) z atrapą `fn`,
+// żeby sprawdzić przepełnienie/FIFO/timeout bez prawdziwego, kosztownego scrypt.
+export async function withSlot(fn) {
+  if (running >= MAX_CONCURRENT) {
+    if (waiting.length >= MAX_WAITING) throw new ScryptQueueBusyError('queueFull');
+    await new Promise((resolve, reject) => {
+      const entry = {};
+      entry.settle = (ok) => {
+        clearTimeout(entry.timer);
+        const index = waiting.indexOf(entry);
+        if (index !== -1) waiting.splice(index, 1);
+        if (ok) resolve(); else reject(new ScryptQueueBusyError('waitTimeout'));
+      };
+      entry.timer = setTimeout(() => entry.settle(false), WAIT_TIMEOUT_MS);
+      entry.timer.unref?.();
+      waiting.push(entry);
+    });
+  }
   running += 1;
   try {
     return await fn();
   } finally {
     running -= 1;
-    waiting.shift()?.();
+    waiting.shift()?.settle(true);
   }
 }
+
+// #203 punkt 3: parametry z bazy mogą (dziś) opisywać koszt do 128·2^20·16 ≈ 2 GiB
+// — więcej niż RAM typowej usługi Railway, i to razy MAX_CONCURRENT. Hash, który
+// przekracza rozsądny budżet pamięci, jest traktowany jak nieprawidłowy (parseHash
+// zwraca null → verifyPasswordOrDummy przechodzi na fikcyjną weryfikację), więc
+// nigdy nie próbujemy alokować tej pamięci.
+const MEMORY_BUDGET_BYTES = 256 * 1024 * 1024;
 
 function deriveKey(password, salt, { N, r, p }, length = KEY_BYTES) {
   return withSlot(() => new Promise((resolve, reject) => {
@@ -83,6 +132,9 @@ export function parseHash(hash) {
   // Tylko potęgi dwójki w dozwolonym zakresie — inaczej ktoś z zapisem do bazy mógłby wymusić ogromny koszt.
   const log2 = Math.log2(params.N);
   if (!Number.isInteger(log2) || log2 < MIN_COST_LOG2 || log2 > MAX_COST_LOG2 || params.r < 1 || params.r > 16 || params.p < 1 || params.p > 4) return null;
+  // 128·N·r jest wzorem scrypt na pamięć jednego obliczenia (node:crypto go egzekwuje
+  // przez `maxmem`, ale dopiero PO próbie alokacji — my odrzucamy wcześniej, bez alokacji).
+  if (128 * params.N * params.r > MEMORY_BUDGET_BYTES) return null;
   return { params, salt: Buffer.from(salt, 'base64url'), key: Buffer.from(key, 'base64url') };
 }
 
@@ -101,7 +153,13 @@ export function needsRehash(hash, env) {
 }
 
 // Fikcyjny hash dla nieznanego adresu: ta sama ścieżka kodu i koszt co dla
-// prawdziwego konta. Wyliczany raz na proces i zestaw parametrów.
+// prawdziwego konta. Wyliczany raz na proces i zestaw parametrów — #203:
+// pierwsze żądanie z nieznanym e-mailem po starcie procesu wcześniej liczyło
+// DWA scrypt (ten hash + weryfikacja niżej), więc było ok. 2× wolniejsze niż
+// dla istniejącego konta (różnica czasu ujawniająca, że konto nie istnieje).
+// Wywołanie `dummyHash(env)` przy starcie serwera (src/server.js) wypełnia ten
+// cache przed pierwszym żądaniem, więc w praktyce liczy się już tylko jedno
+// obliczenie na żądanie, tak jak dla znanego konta.
 const dummyHashes = new Map();
 export async function dummyHash(env) {
   const params = currentParams(env);
