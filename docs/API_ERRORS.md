@@ -115,6 +115,7 @@ wpisów).
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |
+| `invalid_document_date` | Niepoprawna data dokumentu. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
 | `invalid_email` | Podaj poprawny adres e-mail. | Nie — popraw dane żądania. |
