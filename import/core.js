@@ -116,8 +116,16 @@ export function validateRows(matrix, mapping, options = {}) {
     }
     for (const key of ['firstName', 'lastName', 'className']) if (!record[key]) issues.push(`Brak: ${key}.`);
     for (const key of ['firstName', 'lastName', 'className', 'guardian1', 'guardian2']) if (record[key].length > 120) issues.push(`Za długa wartość: ${key}.`);
+    // #207 (krok 3a): błędny adres JEDNEGO opiekuna nie może wyrzucić z importu
+    // całego ucznia/rodziny — degradujemy do ostrzeżenia, zerujemy tylko ten
+    // adres (opiekun jest importowany z email = NULL) i wiersz trafia do
+    // raportu „popraw adres” zamiast być pomijany (#109, #94). Wiersz jest
+    // nadal odrzucany wyłącznie, gdy brakuje wymaganych pól ucznia/klasy.
     for (const key of ['email1', 'email2']) {
-      if (record[key].length > 254 || (record[key] && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(record[key]))) issues.push(`Niepoprawny adres: ${key}.`);
+      if (record[key] && (record[key].length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(record[key]))) {
+        warnings.push({ row: number, message: `Niepoprawny adres e-mail (${FIELD_LABELS[key]}) — zaimportowano bez adresu, popraw i wczytaj ponownie.` });
+        record[key] = '';
+      }
     }
     if (record.email1 && !record.guardian1) issues.push('E-mail opiekuna 1 bez nazwiska opiekuna.');
     if (record.email2 && !record.guardian2) issues.push('E-mail opiekuna 2 bez nazwiska opiekuna.');
