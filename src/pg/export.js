@@ -202,6 +202,9 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'events', where: () => 'school_year_id = $1' },
   { table: 'event_revisions', requires: ['events'],
     where: () => 'event_id IN (SELECT id FROM events WHERE school_year_id = $1)' },
+  // 0090 (#117): przypisania wpisów księgi do wydarzeń i klas (po events i ledger_entries — klucze obce).
+  { table: 'ledger_allocation_versions', requires: ['ledger_entries'], where: () => 'school_year_id = $1' },
+  { table: 'ledger_allocation_items', requires: ['ledger_allocation_versions'], where: () => 'school_year_id = $1' },
 
   { table: 'meetings', where: () => 'school_year_id = $1' },
   { table: 'meeting_agenda_items', requires: ['meetings'],

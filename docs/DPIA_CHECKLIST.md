@@ -61,6 +61,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `payment_allocation_reversals.reason` | powód cofnięcia części wpłaty, może opisywać rodzinę lub dziecko (#127) |
 | `ledger_entries.description` | nazwisko wystawcy faktury / osoby rozliczanej |
 | `ledger_corrections.reason` | jw. |
+| `ledger_allocation_versions.reason` | jw. (powód zmiany przypisania do centrum kosztów, #117) |
 | `ledger_opening_balance_adjustments.reason` | jw. |
 | `bank_reconciliations.notes` | treść przepisana z wyciągu bankowego |
 | `bank_reconciliations.confirmation_note` | jw. |

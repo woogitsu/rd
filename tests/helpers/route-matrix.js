@@ -761,6 +761,33 @@ export const ROUTE_MATRIX = Object.freeze([
     build: () => ({ path: '/api/ledger/categories/copy', body: { fromSchoolYearId: YEAR_2, toSchoolYearId: YEAR_1, dryRun: true } }),
   },
 
+  // ---------- centra kosztów (#117) ----------
+  // Jak księga: admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu; przedstawiciel,
+  // audit i principal 403 (D-08/D-09 — domyślnie bez dostępu).
+  {
+    ...ledgerRead('ledgerCostCenters.report', '/api/ledger/cost-centers?schoolYearId=:year', '/cost-centers', []),
+    module: 'ledger-cost-centers',
+  },
+  {
+    id: 'ledgerCostCenters.allocations', module: 'ledger-cost-centers', method: 'GET', path: '/api/ledger/:ledgerEntryId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'static',
+    object: { kind: 'ledgerEntry' },
+    build: ({ obj }) => ({ path: `/api/ledger/${obj.ledgerEntryId}/allocations` }),
+  },
+  {
+    // Pierwsza wersja przypisania jest jednorazowa na wpis (kolejna wymaga supersedesId) — fixture 'fresh'.
+    id: 'ledgerCostCenters.allocationCreate', module: 'ledger-cost-centers', method: 'POST', path: '/api/ledger/:ledgerEntryId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'ledgerEntry' },
+    build: ({ obj, key }) => ({ path: `/api/ledger/${obj.ledgerEntryId}/allocations`, headers: withKey(key), body: { items: [] } }),
+  },
+  {
+    id: 'ledgerCostCenters.eventFinance', module: 'ledger-cost-centers', method: 'GET', path: '/api/ledger/cost-centers/events/:eventId',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'static',
+    object: { kind: 'event', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/ledger/cost-centers/events/${obj.eventId}` }),
+  },
+
   // ---------- kasa i rachunek (#199) ----------
   // Przeniesienia i odczyt: admin/zarząd/skarbnik z MFA, przydział bez klasy w roku (jak księga).
   // Bilans otwarcia i jego poprawki: wyłącznie zarząd z MFA (docs/LEDGER.md).
