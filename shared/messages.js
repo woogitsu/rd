@@ -73,6 +73,7 @@ export const MESSAGES = Object.freeze({
   class_year_mismatch: "Klasa należy do innego roku szkolnego.",
   no_classes_in_school_year: "Rok szkolny nie ma zdefiniowanych klas.",
   invalid_reference: "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje.",
+  relation_ended: "Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa.",
 
   // --- Konta, role i zaproszenia ------------------------------------------------------
   invalid_role: "Wybierz rolę z listy.",
@@ -87,6 +88,9 @@ export const MESSAGES = Object.freeze({
   invitation_pending: "Dla tego adresu i zakresu istnieje już oczekujące zaproszenie.",
   invitation_not_found: "Nie znaleziono zaproszenia.",
   invitation_already_accepted: "Zaproszenie zostało już przyjęte.",
+  admin_exists: "Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne.",
+  pending_admin_invitation: "Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij.",
+  production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
 
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
@@ -117,6 +121,7 @@ export const MESSAGES = Object.freeze({
   invalid_line_count: "Niepoprawna liczba pozycji wyciągu.",
   statement_line_after_statement_date: "Pozycja wyciągu ma datę późniejszą niż data wyciągu.",
   statement_date_outside_school_year: "Data wyciągu jest poza rokiem szkolnym.",
+  date_outside_school_year: "Data wpisu jest poza rokiem szkolnym.",
   invalid_match_target: "Niepoprawny cel dopasowania.",
   match_not_found: "Nie znaleziono dopasowania.",
   match_already_revoked: "Dopasowanie zostało już wycofane.",
