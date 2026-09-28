@@ -265,6 +265,9 @@ export const MESSAGES = Object.freeze({
   invalid_rights_note: "Niepoprawna notatka o prawach.",
   public_copy_requires_license: "Publiczna kopia wymaga zapisanej licencji lub zgody.",
   photos_require_school_wide_role: "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
+  // --- Kopie zapasowe (#90) ---------------------------------------------------------
+  backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
+  restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).
@@ -279,9 +282,6 @@ export const STATUS_MESSAGES = Object.freeze({
   413: MESSAGES.request_too_large,
   415: MESSAGES.unsupported_media_type,
   429: "Zbyt wiele żądań. Odczekaj chwilę i spróbuj ponownie.",
-  // --- Kopie zapasowe (#90) ---------------------------------------------------------
-  backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
-  restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
 });
 
 const CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
