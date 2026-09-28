@@ -18,9 +18,10 @@
 
 import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
+import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 
@@ -179,12 +180,19 @@ function parseCsvDate(value) {
   return null;
 }
 
+// #173: jeden moduł kwot (panel/money.js) — akceptuje też „1 234,56”, „1.234,56”
+// (zapis belgijski) i „12,50 €”; komunikat rozróżnia format od limitu kwoty.
 function parseCsvAmount(value) {
-  const text = value.replace(/[\s ]/g, '').replace(/EUR$/i, '');
-  const match = text.match(/^([+-]?)(\d{1,7})(?:[.,](\d{1,2}))?$/);
-  if (!match) return null;
-  const cents = Number(match[2]) * 100 + Number((match[3] ?? '0').padEnd(2, '0'));
-  return match[1] === '-' ? -cents : cents;
+  try {
+    const cents = parseStatementAmount(value, { max: MAX_LINE_CENTS });
+    if (cents === 0) return { error: 'invalid_statement_line' };
+    return { cents };
+  } catch (error) {
+    if (error instanceof MoneyError) {
+      return { error: error.code === 'amount_out_of_range' ? 'statement_amount_out_of_range' : 'invalid_statement_line' };
+    }
+    throw error;
+  }
 }
 
 export function parseStatementCsv(text) {
@@ -195,11 +203,11 @@ export function parseStatementCsv(text) {
   if (column('date') < 0 || column('amount') < 0) throw new RequestError('invalid_csv_header');
   return rows.map((cells, index) => {
     const bookedOn = parseCsvDate(cells[column('date')] ?? '');
-    const amountCents = parseCsvAmount(cells[column('amount')] ?? '');
-    if (!bookedOn || amountCents === null) {
-      throw new RequestError('invalid_statement_line', 400, { line: index + 1 });
+    const amount = parseCsvAmount(cells[column('amount')] ?? '');
+    if (!bookedOn || amount.error) {
+      throw new RequestError(amount?.error ?? 'invalid_statement_line', 400, { line: index + 1 });
     }
-    return { bookedOn, amountCents, reference: column('reference') >= 0 ? cells[column('reference')] ?? null : null };
+    return { bookedOn, amountCents: amount.cents, reference: column('reference') >= 0 ? cells[column('reference')] ?? null : null };
   });
 }
 
@@ -310,6 +318,9 @@ function requireYear(context, roles, schoolYearId) {
 function mapDatabaseError(error) {
   if (error instanceof RequestError) throw error;
   const message = String(error?.message ?? '');
+  // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze, rozszerzony
+  // w #80 na uzgodnienia rachunku) — stan, nie awaria bazy (#156).
+  if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   if (message.includes('bank_reconciliation_confirmed_immutable')) throw new RequestError('reconciliation_confirmed', 409);
   if (message.includes('bank_reconciliation_date_outside_year')) throw new RequestError('statement_date_outside_school_year');
   if (message.includes('bank_statement_line_after_statement_date')) throw new RequestError('statement_line_after_statement_date');
@@ -875,9 +886,15 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
   const ledgerLinkedNetCents = toSafeInteger(payments.ledger_linked_net_cents);
 
   // 4. Powiązania pozycji wyciągu niezgodne kwotowo (#165) albo podwójne (#162).
+  // Osobno liczone powiązania w uzgodnieniach JUŻ ZATWIERDZONYCH — mogą stać się
+  // niezgodne dopiero po zatwierdzeniu (późniejsza korekta wpisu/wpłaty); #165
+  // blokuje korektę, dopóki takie powiązanie jest aktywne w SZKICU, więc
+  // niezgodność w zatwierdzonym uzgodnieniu jest tym, co KR musi wyjaśnić ręcznie
+  // (zatwierdzone uzgodnienie jest niezmienne — nie ma ścieżki jego poprawy).
   const matches = (await executor.query(
     `SELECT count(*) FILTER (WHERE NOT c.amount_matches) AS amount_mismatch,
-            count(*) FILTER (WHERE c.double_counted) AS double_counted
+            count(*) FILTER (WHERE c.double_counted) AS double_counted,
+            count(*) FILTER (WHERE NOT c.amount_matches AND r.status = 'confirmed') AS amount_mismatch_confirmed
        FROM bank_match_consistency c
        JOIN bank_reconciliations r ON r.id = c.reconciliation_id
       WHERE r.school_year_id = $1`,
@@ -885,6 +902,7 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
   )).rows[0];
   const amountMismatch = toSafeInteger(matches.amount_mismatch);
   const doubleCounted = toSafeInteger(matches.double_counted);
+  const amountMismatchConfirmed = toSafeInteger(matches.amount_mismatch_confirmed);
 
   // 5. Ostatnie zatwierdzone uzgodnienie: różnica (utrwalona) i przelewy księgi po jego dacie.
   let latest = { ok: null, statementDate: null, differenceCents: null, bankEntriesAfterStatement: null };
@@ -931,6 +949,9 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
       ok: amountMismatch === 0 && doubleCounted === 0,
       amountMismatchCount: amountMismatch,
       doubleCountedCount: doubleCounted,
+      // #165: podzbiór powyższego — powiązania niezgodne w uzgodnieniu JUŻ
+      // zatwierdzonym (niezmiennym); powstały z korekty po zatwierdzeniu.
+      amountMismatchConfirmedCount: amountMismatchConfirmed,
     },
     { id: 'latest_confirmed_reconciliation', ...latest },
   ];
@@ -1085,7 +1106,12 @@ async function auditReport(request, env, url, json) {
   if (!context) throw new RequestError('unauthenticated', 401);
   if (!isAuthorizedScoped(context, { roles: REPORT_ROLES, schoolYearId, requireMfa: true })) {
     const via = await archiveReadVia(env.db, context, schoolYearId, ARCHIVE_REPORT_ROLES);
-    if (!via) throw new RequestError('forbidden', 403);
+    if (!via) {
+      // #161: sam brak MFA (rola audit/board/treasurer i rok pasują) zwraca
+      // mfa_required/mfa_enrollment_required zamiast ogólnego forbidden.
+      const code = await mfaAwareForbiddenCode(context, { roles: REPORT_ROLES, schoolYearId, requireMfa: true }, env);
+      throw new RequestError(code, 403);
+    }
     await recordArchiveRead(env.db, {
       actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route: 'reports.audit',
     });
