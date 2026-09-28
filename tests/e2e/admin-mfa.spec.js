@@ -47,9 +47,14 @@ test('admin: logowanie hasłem, konfiguracja MFA w przeglądarce i otwarcie pane
   await expect(page.locator('h1')).toHaveText('Konta i przydziały ról');
 
   // Sesja jest naprawdę zweryfikowana MFA po stronie serwera (nie tylko UI).
-  const session = await page.request.get('/api/session');
-  expect(session.status()).toBe(200);
-  const body = await session.json();
-  expect(body.mfaVerified).toBe(true);
-  expect(body.user.id).toBe(runtime.admin.userId);
+  // page.evaluate (fetch w kontekście strony) zamiast page.request — cookie
+  // sesji jest HttpOnly, więc leci automatycznie tylko z prawdziwego żądania
+  // przeglądarki, nie z osobnego jar-a APIRequestContext.
+  const session = await page.evaluate(async () => {
+    const res = await fetch('/api/session', { credentials: 'same-origin' });
+    return { status: res.status, body: await res.json() };
+  });
+  expect(session.status).toBe(200);
+  expect(session.body.mfaVerified).toBe(true);
+  expect(session.body.user.id).toBe(runtime.admin.userId);
 });
