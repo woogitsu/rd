@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { revokeRoleGrant } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
-import { bodyLimitFor, DEFAULT_BODY_LIMIT_BYTES, detectType, maxUploadBytes, HARD_MAX_UPLOAD_BYTES } from '../src/documents.js';
+import {
+  bodyLimitFor, DEFAULT_BODY_LIMIT_BYTES, DEFAULT_MAX_CONCURRENT_UPLOADS, detectType, maxUploadBytes,
+  HARD_MAX_UPLOAD_BYTES, resetUploadSlotsForTests, tryAcquireUploadSlot,
+} from '../src/documents.js';
 import { createMemoryStorage, createS3Storage, sha256Hex, signRequest, storageFromEnv } from '../src/storage.js';
 import { resolveRuntime } from '../src/server.js';
 import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
@@ -236,6 +239,30 @@ test('too large upload is refused with 413 (streamed and declared length)', asyn
   assert.equal((await upload(env, { cookie, bytes: PDF })).response.status, 201);
   assert.equal(storage.keys().length, 1);
 }, { documentMaxBytes: 1024 }));
+
+// #185 pkt 3: piąty równoczesny upload dostaje 503 upload_busy BEZ dotknięcia
+// magazynu ani bazy — sprawdzone bezpośrednio (semafor to stan procesu,
+// PGlite i tak serializuje transakcje, więc nie da się tego odtworzyć przez
+// prawdziwą równoległość żądań tutaj, patrz tests/pg-reconciliation-race.test.js).
+test('a fifth concurrent upload gets 503 upload_busy with Retry-After, before the body is touched', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  resetUploadSlotsForTests();
+  const releases = Array.from({ length: DEFAULT_MAX_CONCURRENT_UPLOADS }, () => tryAcquireUploadSlot());
+  assert.ok(releases.every((release) => typeof release === 'function'));
+  try {
+    const busy = await upload(env, { cookie });
+    assert.equal(busy.response.status, 503);
+    assert.equal(busy.data.error, 'upload_busy');
+    assert.ok(busy.response.headers.get('retry-after'));
+    assert.equal(storage.keys().length, 0, 'ciało nie zostało zapisane do magazynu');
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM document_uploads')).rows[0].n, 0, 'ciało nie zostało nawet odczytane');
+  } finally {
+    for (const release of releases) release();
+  }
+  // Po zwolnieniu miejsc kolejny upload przebiega normalnie.
+  assert.equal((await upload(env, { cookie })).response.status, 201);
+  resetUploadSlotsForTests();
+}));
 
 test('expired and revoked grants lose access from the next request', async () => withEnv(async (db, env) => {
   const cookie = await treasurer(db);

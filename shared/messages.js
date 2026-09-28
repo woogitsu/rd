@@ -229,6 +229,7 @@ export const MESSAGES = Object.freeze({
   invalid_document_date: "Niepoprawna data dokumentu.",
   invalid_description: "Opis może mieć najwyżej 1000 znaków.",
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
+  upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
   // --- Wydarzenia -------------------------------------------------------------------------------
   invalid_event_id: "Niepoprawny identyfikator wydarzenia.",
