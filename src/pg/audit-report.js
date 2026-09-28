@@ -5,6 +5,8 @@
 // zawiera skryptów; CSP dopuszcza wyłącznie wbudowany arkusz stylów o znanym
 // skrócie SHA-256.
 
+import { formatEur as formatEurShared } from '../../panel/money.js';
+
 const CHECK_LABEL = {
   year_end_balance: 'Saldo księgi na ostatni dzień roku (wpisy do tej daty) a bilans zamknięcia',
   dates_within_school_year: 'Daty wpisów i wpłat w granicach roku szkolnego',
@@ -80,14 +82,10 @@ export function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-// 123456 -> "1 234,56 EUR" (spacja nierozdzielająca między tysiącami).
+// #173: jeden moduł kwot EUR (panel/money.js) — 123456 -> "1 234,56 EUR"
+// (spacja nierozdzielająca), brak wartości -> „—” (nigdy „0,00 EUR”).
 export function formatEur(cents) {
-  const value = Number(cents ?? 0);
-  const sign = value < 0 ? '−' : '';
-  const abs = Math.abs(value);
-  const whole = String(Math.trunc(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  const fraction = String(abs % 100).padStart(2, '0');
-  return `${sign}${whole},${fraction} EUR`;
+  return formatEurShared(cents, { style: 'print' });
 }
 
 // "2026-10-20" -> "20.10.2026"; znacznik czasu -> "20.10.2026 14:05 UTC".
