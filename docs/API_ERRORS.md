@@ -50,6 +50,7 @@ wpisów).
 | `cannot_grant_self` | Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu. | Zależy od kontekstu (patrz moduł trasy). |
 | `cannot_reset_own_mfa` | Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora. | Zależy od kontekstu (patrz moduł trasy). |
 | `cash_below_zero` | Ta operacja doprowadziłaby saldo kasy poniżej zera. | Zależy od kontekstu (patrz moduł trasy). |
+| `category_not_found` | Nie znaleziono kategorii księgi. | Nie — popraw dane żądania. |
 | `checklist_incomplete` | Lista kontrolna nie jest ukończona. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_exists` | Klasa o tej nazwie już istnieje w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_not_found` | Nie znaleziono klasy albo nie masz do niej dostępu. | Nie — popraw dane żądania. |

@@ -231,12 +231,26 @@ test('new school year enrolment for an existing student is an update', async () 
   assert.equal(await count(db, 'enrollments'), 2);
 }));
 
-test('invalid class, unknown year and invalid e-mail are rejected by the server', async () => withDb(async (db, env, admin) => {
+test('invalid class and unknown year are rejected by the server; invalid e-mail only degrades to a warning (#207)', async () => withDb(async (db, env, admin) => {
+  // #207 (krok 3a): błędny e-mail JEDNEGO opiekuna nie wyrzuca całego wiersza z importu —
+  // uczeń i opiekun trafiają do bazy z email = NULL, a wiersz dostaje ostrzeżenie do
+  // poprawienia i ponownego wczytania. Skipowany jest tylko wiersz z nieznaną klasą.
   const csv = csvOf('S1;Ala;Testowa;9Z;R1;;;;', 'S2;Ola;Testowa;1A;R1;Anna Testowa;zly-adres;;');
-  const p = await preview(env, admin, payloadFromCsv(csv));
-  assert.equal(p.body.counts.rowsSkipped, 2);
+  // Ostrzeżenie o błędnym adresie powstaje w przeglądarce (validateRows), zanim
+  // dane trafią do serwera — payloadFromCsv wysyła już oczyszczony wiersz
+  // (email = ''), więc serwer, uruchamiając tę samą walidację ponownie na już
+  // wyczyszczonym wejściu, tego ostrzeżenia nie powtarza (nie ma już czego flagować).
+  const clientResult = validateRows(parseCsv(csv), guessMapping(parseCsv(csv)[0]));
+  assert.match(clientResult.warnings.map((w) => w.message).join(' '), /Niepoprawny adres e-mail/);
+  const payload = toServerPayload(clientResult, YEAR, { skipConflicts: true });
+  const p = await preview(env, admin, payload);
+  assert.equal(p.body.counts.rowsSkipped, 1);
+  assert.equal(p.body.counts.rowsAdded, 1);
   assert.match(p.body.rows[0].messages.join(' '), /Nieznana klasa/);
-  assert.match(p.body.rows[1].messages.join(' '), /Niepoprawny adres/);
+  assert.equal(p.body.rows[1].action, 'add');
+  assert.equal((await commit(env, admin, payload, p.body, 'key-bad-email-0001')).status, 201);
+  const g = await db.query("SELECT email FROM guardians WHERE first_name = 'Anna'");
+  assert.equal(g.rows[0].email, null);
   const unknownYear = await preview(env, admin, payloadFromCsv(BASIC, {}, 'y-1999'));
   assert.equal(unknownYear.status, 422);
   assert.equal(unknownYear.body.error, 'unknown_school_year');
@@ -248,7 +262,8 @@ test('invalid class, unknown year and invalid e-mail are rejected by the server'
   for (const bad of [{ ...tampered, columns: ['x'] }, { ...tampered, version: 2 }, { ...tampered, rows: [[{}, 1, 2, 3, 4, 5, 6, 7, 8]] }]) {
     assert.equal((await preview(env, admin, bad)).status, 400);
   }
-  assert.equal(await count(db, 'students'), 0);
+  // 1 uczeń (Ola) z wcześniejszego commitu tego testu (#207: e-mail nie blokuje importu).
+  assert.equal(await count(db, 'students'), 1);
 }));
 
 test('formula-like text is stored verbatim as inert text', async () => withDb(async (db, env, admin) => {
