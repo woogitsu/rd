@@ -874,6 +874,57 @@ test('pre-existing double-counted matches are reported and block confirmation wi
   }
 });
 
+// #218: import wielu pozycji wyciągu wykonuje stałą liczbę zapytań SQL,
+// niezależną od liczby pozycji (jeden INSERT … SELECT FROM unnest(...)
+// zamiast pętli 1 INSERT na pozycję).
+function countingCall(db) {
+  let calls = 0;
+  const countQuery = (fn) => (...args) => { calls += 1; return fn(...args); };
+  const wrapped = {
+    query: countQuery(db.query.bind(db)),
+    exec: db.exec.bind(db),
+    close: db.close.bind(db),
+    transaction: (fn) => db.transaction((tx) => fn({ query: countQuery(tx.query.bind(tx)) })),
+  };
+  return { call: (path, options = {}) => handlePgRequest(request(path, options), { db: wrapped }), getCalls: () => calls, resetCalls: () => { calls = 0; } };
+}
+
+test('importing statement lines runs a constant number of queries regardless of line count', async () => {
+  const { db, cookies } = await setup();
+  const counting = countingCall(db);
+  try {
+    const draftSmall = await (await counting.call('/api/reconciliations', {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key() },
+      body: { schoolYearId: YEAR, statementDate: '2026-09-30', statementBalanceCents: 0 },
+    })).json();
+    counting.resetCalls();
+    const smallLines = Array.from({ length: 5 }, (_, i) => ({ bookedOn: '2026-09-14', amountCents: 100 + i }));
+    const smallResponse = await counting.call(`/api/reconciliations/${draftSmall.reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') }, body: { lines: smallLines },
+    });
+    assert.equal(smallResponse.status, 201);
+    const smallCalls = counting.getCalls();
+
+    const draftLarge = await (await counting.call('/api/reconciliations', {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key() },
+      body: { schoolYearId: YEAR, statementDate: '2026-09-30', statementBalanceCents: 0 },
+    })).json();
+    counting.resetCalls();
+    const largeLines = Array.from({ length: 80 }, (_, i) => ({ bookedOn: '2026-09-14', amountCents: 100 + i }));
+    const largeResponse = await counting.call(`/api/reconciliations/${draftLarge.reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') }, body: { lines: largeLines },
+    });
+    assert.equal(largeResponse.status, 201);
+    const largeCalls = counting.getCalls();
+
+    // Ta sama liczba zapytań SQL niezależnie od liczby pozycji (5 kontra 80).
+    assert.equal(smallCalls, largeCalls);
+    assert.ok(largeCalls <= 10, `spodziewano się stałej, małej liczby zapytań, otrzymano ${largeCalls}`);
+  } finally {
+    await db.close();
+  }
+});
+
 // #158: skrót SHA-256 tytułu liczony co najwyżej raz na różną wpłatę-kandydata
 // w jednym żądaniu, nawet gdy ta sama wpłata jest kandydatem dla wielu pozycji
 // wyciągu (ta sama kwota i data, okno wystarczająco szerokie).
@@ -916,6 +967,55 @@ test('suggestions hash a candidate payment reference at most once per request ev
     assert.equal(digestCalls - baseline, 2);
   } finally {
     crypto.subtle.digest = originalDigest;
+    await db.close();
+  }
+});
+
+// #218: karta uzgodnienia nie zwraca już `unmatchedLines` jako duplikatu
+// obiektów z `lines` — pole `match` w każdej pozycji wystarcza.
+test('reconciliation detail does not duplicate line objects in a separate unmatchedLines field', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await seedPayments(db, [['p-1', 'h-1', 2500, '2026-09-14', 'bank']]);
+    const draft = await draftWithLines(call, cookies, [2500]);
+    const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(detail.unmatchedLines, undefined);
+    assert.equal(detail.lines.length, 1);
+    assert.equal(detail.lines[0].match, null);
+    assert.equal(detail.summary.unmatchedLineCount, 1);
+  } finally {
+    await db.close();
+  }
+});
+
+// #218: stronicowanie pozycji wyciągu — remis booked_on rozstrzygany po id,
+// bez duplikatów i luk między stronami; summary liczy wszystkie pozycje,
+// niezależnie od rozmiaru strony.
+test('reconciliation detail paginates lines with a stable cursor and full summary counts', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const draft = await (await createDraft(call, cookies.treasurer)).json();
+    const lines = Array.from({ length: 7 }, (_, i) => ({ bookedOn: '2026-09-14', amountCents: 100 + i }));
+    await importLines(call, cookies.treasurer, draft.reconciliation.id, lines);
+
+    const page1 = await (await call(`/api/reconciliations/${draft.reconciliation.id}?limit=3`, { cookie: cookies.treasurer })).json();
+    assert.equal(page1.lines.length, 3);
+    assert.ok(page1.nextCursor);
+    assert.equal(page1.summary.lineCount, 7);
+    assert.equal(page1.summary.unmatchedLineCount, 7);
+
+    const page2 = await (await call(`/api/reconciliations/${draft.reconciliation.id}?limit=3&cursor=${encodeURIComponent(page1.nextCursor)}`, { cookie: cookies.treasurer })).json();
+    assert.equal(page2.lines.length, 3);
+    assert.ok(page2.nextCursor);
+
+    const page3 = await (await call(`/api/reconciliations/${draft.reconciliation.id}?limit=3&cursor=${encodeURIComponent(page2.nextCursor)}`, { cookie: cookies.treasurer })).json();
+    assert.equal(page3.lines.length, 1);
+    assert.equal(page3.nextCursor, null);
+
+    const allIds = [...page1.lines, ...page2.lines, ...page3.lines].map((line) => line.id);
+    assert.equal(new Set(allIds).size, 7);
+    assert.equal(allIds.length, 7);
+  } finally {
     await db.close();
   }
 });
