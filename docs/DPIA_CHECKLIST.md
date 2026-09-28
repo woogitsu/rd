@@ -82,6 +82,8 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `email_campaigns.body_text` | treść kampanii — do przeglądu przy zatwierdzeniu treści |
 | `payment_references.revoke_reason` | uzasadnienie unieważnienia referencji OGM-VCS, może opisywać sytuację rodzinną (#83) |
 | `payment_reference_revocations.reason` | jw. |
+| `document_descriptions.title` | tytuł dokumentu może zawierać imię i nazwisko (np. „Zwrot dla rodziny Kowalski”) (#76/#313) |
+| `document_descriptions.description` | opis dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#76/#313) |
 
 ## Środki już istniejące (do odwołania w DPIA)
 
