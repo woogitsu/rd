@@ -134,8 +134,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/snapshot` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/email/campaigns/:campaignId/preview` | jak wyżej | tak | 403 | bez wysyłki; SR-01 |
 | `GET /api/email/campaigns/:campaignId/recipients` | jak wyżej | tak | 403 | odczyt w dzienniku; SR-01 |
+| `GET /api/email/campaigns/:campaignId/report` | jak wyżej | tak | 403 | wyłącznie agregaty, bez adresów/imion/identyfikatorów rodzin (#139) |
+| `GET /api/email/campaigns/:campaignId/attention` | jak wyżej | tak | 403 | adres maskowany, odczyt w dzienniku (`email.attention_list.viewed`, #139) |
 | `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak | 403 | skarbnik: 403; SR-01 |
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
+| `POST /api/email/campaigns/:campaignId/resolutions` | zarząd, skarbnik — jak wyżej | tak | 403 | `confirmed_not_sent` wymaga zarządu; podwójne kliknięcie zwraca istniejący zapis (#139) |
 | `POST /api/email/campaigns/:campaignId/pause` | zarząd, skarbnik — jak wyżej | tak | 403 | wstrzymanie wysyłki (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/resume` | zarząd, skarbnik — jak wyżej | tak | 403 | wznowienie (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
