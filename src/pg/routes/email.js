@@ -9,6 +9,8 @@
 //   GET  /api/email/campaigns/{id}/recipients        lista odbiorców do weryfikacji (dziennik odczytu)
 //   POST /api/email/campaigns/{id}/approve           zarząd + MFA, inna osoba niż autor; dokładne skróty
 //   POST /api/email/campaigns/{id}/queue             zakolejkowanie zatwierdzonej kampanii
+//   POST /api/email/campaigns/{id}/pause             wstrzymanie wysyłki (#130), idempotentne
+//   POST /api/email/campaigns/{id}/resume            wznowienie wysyłki (#130), idempotentne
 //   POST /api/email/campaigns/{id}/cancel            anulowanie (wiersze w kolejce → cancelled)
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
 //
@@ -95,7 +97,8 @@ function requireYear(context, roles, schoolYearId) {
 const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.subject, c.body_text, c.content_hash,
   c.status, c.recipients_hash, c.recipients_count, c.created_by, c.updated_by, c.snapshot_built_by,
   c.approved_by, c.approved_at, c.approved_content_hash, c.approved_recipients_hash, c.daily_cap,
-  c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key`;
+  c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key, c.send_not_before,
+  c.paused_by, c.paused_at, c.resumed_by, c.resumed_at`;
 
 async function loadCampaign(executor, id, { lock = false } = {}) {
   const { rows } = await executor.query(
@@ -130,6 +133,11 @@ function campaignView(row) {
     queuedAt: iso(row.queued_at),
     completedAt: iso(row.completed_at),
     cancelledAt: iso(row.cancelled_at),
+    sendNotBefore: iso(row.send_not_before),
+    pausedBy: row.paused_by ?? null,
+    pausedAt: iso(row.paused_at),
+    resumedBy: row.resumed_by ?? null,
+    resumedAt: iso(row.resumed_at),
   };
 }
 
@@ -226,6 +234,17 @@ async function createCampaign(request, env, json) {
   }
 }
 
+// #130: undefined = bez zmian, null = usunięcie terminu, string = data ISO.
+// Traktowane w bazie jak treść (email_campaign_guard) — zmiana cofa do szkicu.
+function parseSendNotBefore(value, current) {
+  if (value === undefined) return current;
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new RequestError('invalid_send_not_before');
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) throw new RequestError('invalid_send_not_before');
+  return date.toISOString();
+}
+
 async function updateCampaign(request, env, id, json) {
   const data = await readJson(request);
   let input;
@@ -237,23 +256,28 @@ async function updateCampaign(request, env, id, json) {
       const campaign = await loadCampaign(tx, id, { lock: true });
       if (!['draft', 'approved'].includes(campaign.status)) throw new RequestError('campaign_locked', 409);
       const hash = contentHash({ schoolYearId: campaign.school_year_id, ...input });
-      if (hash === campaign.content_hash && input.title === campaign.title) {
+      const currentSendNotBefore = campaign.send_not_before ? new Date(campaign.send_not_before).toISOString() : null;
+      const sendNotBefore = parseSendNotBefore(data.sendNotBefore, currentSendNotBefore);
+      if (hash === campaign.content_hash && input.title === campaign.title && sendNotBefore === currentSendNotBefore) {
         return json({ campaign: campaignView(campaign), approvalInvalidated: false });
       }
-      // Każda zmiana (także tytułu — zmienia updated_by) cofa kampanię do szkicu
-      // i usuwa zatwierdzenie; historia zostaje w audit_events.
+      // Każda zmiana (także tytułu i terminu startu — zmienia updated_by) cofa
+      // kampanię do szkicu i usuwa zatwierdzenie; historia zostaje w audit_events.
       const invalidated = campaign.status === 'approved';
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET title = $2, audience = $3, subject = $4, body_text = $5, content_hash = $6,
-                updated_by = $7, updated_at = now(), status = 'draft',
+                updated_by = $7, updated_at = now(), status = 'draft', send_not_before = $8,
                 approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL
           WHERE id = $1
           RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
-        [id, input.title, input.audience, input.subject, input.bodyText, hash, actorId],
+        [id, input.title, input.audience, input.subject, input.bodyText, hash, actorId, sendNotBefore],
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.updated', entityType: 'email_campaign', entityId: id,
-        metadata: { contentHash: hash, previousContentHash: campaign.content_hash, approvalInvalidated: invalidated },
+        metadata: {
+          contentHash: hash, previousContentHash: campaign.content_hash, approvalInvalidated: invalidated,
+          sendNotBeforeChanged: sendNotBefore !== currentSendNotBefore,
+        },
       });
       return json({ campaign: campaignView(rows[0]), approvalInvalidated: invalidated });
     });
@@ -279,15 +303,15 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     `WITH d AS (SELECT COALESCE($2::date, rd_today()) AS on_date)
      SELECT p.household_id, g.id AS guardian_id, g.email,
             COALESCE(g.contact_allowed, false) AS guardian_allowed,
-            COALESCE(bool_or(sg.contact_allowed
-              AND (sg.starts_on IS NULL OR sg.starts_on <= d.on_date)
-              AND (sg.ends_on IS NULL OR sg.ends_on >= d.on_date)), false) AS relation_allowed,
-            COALESCE(bool_or(sg.is_primary_contact), false) AS is_primary
+            COALESCE(bool_or(sg.contact_allowed), false) AS relation_allowed,
+            -- Priorytet kontaktu głównego tylko z relacji bieżącej ZE zgodą (#157, komentarz):
+            -- relacja bez zgody nie może podnieść priorytetu opiekuna z inną, niegłówną relacją.
+            COALESCE(bool_or(sg.is_primary_contact) FILTER (WHERE sg.contact_allowed), false) AS is_primary
        FROM d
-       CROSS JOIN enrollments e
+       CROSS JOIN enrollments_current e
        JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = e.student_id
        JOIN households h ON h.id = p.household_id AND h.archived_at IS NULL
-       LEFT JOIN student_guardians sg ON sg.student_id = e.student_id
+       LEFT JOIN student_guardians_current_on((SELECT on_date FROM d)) sg ON sg.student_id = e.student_id
        LEFT JOIN guardians g ON g.id = sg.guardian_id
       WHERE e.school_year_id = $1
       GROUP BY p.household_id, g.id, g.email, g.contact_allowed
@@ -558,6 +582,57 @@ async function queue(request, env, id, json) {
   }
 }
 
+// #130: wstrzymanie nie rusza wierszy już „sending” (mogą wyjść — worker o tym
+// nie wie, bo widzi tylko status kampanii); worker po prostu pomija kampanię,
+// dopóki nie wróci do 'sending'. Idempotentne: druga pauza/wznowienie to no-op.
+async function pause(request, env, id, json) {
+  const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const campaign = await loadCampaign(tx, id, { lock: true });
+      if (campaign.status === 'paused') return json({ campaign: campaignView(campaign) }, 200, { 'Idempotency-Replayed': 'true' });
+      if (campaign.status !== 'sending') throw new RequestError('campaign_locked', 409);
+      const { rows } = await tx.query(
+        `UPDATE email_campaigns SET status = 'paused', paused_by = $2, paused_at = now()
+          WHERE id = $1 RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
+        [id, actorId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'email.campaign.paused', entityType: 'email_campaign', entityId: id, metadata: {},
+      });
+      return json({ campaign: campaignView(rows[0]) });
+    });
+  } catch (error) {
+    return mapDatabaseError(error);
+  }
+}
+
+async function resume(request, env, id, json) {
+  const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const campaign = await loadCampaign(tx, id, { lock: true });
+      if (campaign.status === 'sending') return json({ campaign: campaignView(campaign) }, 200, { 'Idempotency-Replayed': 'true' });
+      if (campaign.status !== 'paused') throw new RequestError('campaign_locked', 409);
+      // Treść i lista są niezmienne w sending/paused — wznowienie nie wymaga
+      // ponownego zatwierdzenia.
+      const { rows } = await tx.query(
+        `UPDATE email_campaigns SET status = 'sending', resumed_by = $2, resumed_at = now()
+          WHERE id = $1 RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
+        [id, actorId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'email.campaign.resumed', entityType: 'email_campaign', entityId: id, metadata: {},
+      });
+      return json({ campaign: campaignView(rows[0]) });
+    });
+  } catch (error) {
+    return mapDatabaseError(error);
+  }
+}
+
 async function cancel(request, env, id, json) {
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   const actorId = context.session.user.id;
@@ -714,6 +789,8 @@ const CAMPAIGN_ACTION_METHODS = Object.freeze({
   snapshot: ['POST'],
   approve: ['POST'],
   queue: ['POST'],
+  pause: ['POST'],
+  resume: ['POST'],
   cancel: ['POST'],
 });
 
@@ -731,7 +808,7 @@ export async function handle(request, env, url, json) {
       if (method === 'POST') return await createCampaign(request, env, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
-    const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|approve|queue|cancel))?$/);
+    const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|approve|queue|pause|resume|cancel))?$/);
     if (!match) return null;
     let id;
     try { id = decodeURIComponent(match[1]); } catch { throw new RequestError('invalid_campaign_id'); }
@@ -744,6 +821,8 @@ export async function handle(request, env, url, json) {
     if (action === 'snapshot') return await buildSnapshot(request, env, id, json);
     if (action === 'approve') return await approve(request, env, id, json);
     if (action === 'queue') return await queue(request, env, id, json);
+    if (action === 'pause') return await pause(request, env, id, json);
+    if (action === 'resume') return await resume(request, env, id, json);
     if (action === 'cancel') return await cancel(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
   } catch (error) {

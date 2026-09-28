@@ -8,6 +8,7 @@ import { bodyLimitFor, maxUploadBytes } from './documents.js';
 import { storageFromEnv } from './storage.js';
 import { checkReadiness } from './health.js';
 import { createRequestMetrics, describeError, log, startMetricsReporter } from './log.js';
+import { dummyHash } from './pg/password.js';
 
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -150,6 +151,13 @@ function positiveMs(value, fallback) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   assertTrustProxyConfigured();
   const runtime = resolveRuntime();
+  // #203: wylicza i zapamiętuje fikcyjny hash PRZED pierwszym żądaniem — inaczej
+  // pierwsze logowanie nieznanym adresem e-mail po starcie procesu liczyło dwa
+  // obliczenia scrypt (ten hash + weryfikacja) zamiast jednego, co dawało wolniejszą
+  // odpowiedź niż dla istniejącego konta (różnica czasu ujawniająca istnienie konta).
+  if (runtime.mode === 'postgres') {
+    await dummyHash(runtime.env).catch((error) => log.error('dummy_hash_precompute_failed', describeError(error)));
+  }
   const metrics = createRequestMetrics();
   let draining = false;
   const readiness = async (env) => (draining

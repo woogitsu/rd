@@ -14,9 +14,11 @@
 //   GET  /api/admin/invitations
 //   POST /api/admin/invitations                 { email, role, classId?, schoolYearId?, ttlHours? }
 //   POST /api/admin/invitations/{id}/revoke
+//   POST /api/admin/invitations/{id}/reissue    wycofuje i tworzy nowe zaproszenie (#108); tylko oczekujące
 //   GET  /api/admin/school-years                lata i klasy do formularzy
 //   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
 //   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
+//   GET  /api/admin/class-coverage?schoolYearId= obsada klas roku: przydziały, oczekujące zaproszenia, ostatnie logowanie (#108)
 //   GET  /api/admin/audit?limit=                dziennik zmian kont i ról
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
@@ -586,6 +588,78 @@ async function createClasses(env, actorId, schoolYearId, request, json) {
   return json({ classes: result }, 201);
 }
 
+// „Wyślij ponownie” (#108): wycofuje stare zaproszenie i tworzy nowe o tym
+// samym zakresie (token wraca raz, jak przy utworzeniu). Tylko dla zaproszeń
+// wciąż oczekujących — przyjęte, wygasłe lub już wycofane nie mają tu drogi
+// (nowe zaproszenie od zera przez POST /api/admin/invitations).
+async function reissueInvitationRoute(env, actorId, invitationId, json) {
+  const { rows } = await env.db.query(`SELECT ${INVITATION_COLUMNS} FROM invitations i WHERE i.id = $1`, [invitationId]);
+  const invitation = rows[0];
+  if (!invitation) throw new RequestError('invitation_not_found', 404);
+  if (invitation.status !== 'pending') throw new RequestError('invitation_not_pending', 409);
+  const revoked = await revokeInvitation(env, { invitationId, actorId });
+  if (!revoked) throw new RequestError('invitation_not_pending', 409);
+  const created = await createInvitation(env, {
+    actorId, email: invitation.email, role: invitation.role,
+    classId: invitation.class_id, schoolYearId: invitation.school_year_id,
+    replacesInvitationId: invitationId,
+  });
+  return json({
+    invitation: {
+      id: created.invitationId, email: invitation.email, role: invitation.role,
+      classId: invitation.class_id, schoolYearId: invitation.school_year_id,
+      expiresAt: created.expiresAt, status: 'pending', replacesInvitationId: invitationId,
+    },
+    token: created.secret,
+  }, 201);
+}
+
+// Tabela obsady klas roku (#108): przydziały przedstawiciela aktywne dziś,
+// oczekujące zaproszenia (bez tokenów) i data ostatniego logowania (bez
+// godziny) przedstawiciela tej klasy — wyłącznie liczby i daty, bez e-maili.
+function toSafeInteger(value) {
+  const number = Number(value ?? 0);
+  if (!Number.isSafeInteger(number)) throw new Error('unsafe_integer');
+  return number;
+}
+
+async function classCoverage(env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_school_year_id');
+  const year = await env.db.query('SELECT 1 FROM school_years WHERE id = $1', [schoolYearId]);
+  if (!year.rows[0]) throw new RequestError('school_year_not_found', 404);
+  const { rows } = await env.db.query(
+    `SELECT c.id, c.name,
+            (SELECT count(DISTINCT g.user_id) FROM role_grants g
+               WHERE g.class_id = c.id AND g.role = 'representative'
+                 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now())) AS active_count,
+            (SELECT count(*) FROM invitations i
+               WHERE i.class_id = c.id AND i.role = 'representative'
+                 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS pending_count,
+            (SELECT min(i.expires_at) FROM invitations i
+               WHERE i.class_id = c.id AND i.role = 'representative'
+                 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS next_expires_at,
+            (SELECT to_char(max(s.created_at), 'YYYY-MM-DD') FROM sessions s
+               JOIN role_grants g2 ON g2.user_id = s.user_id
+              WHERE g2.class_id = c.id AND g2.role = 'representative'
+                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on
+       FROM classes c WHERE c.school_year_id = $1
+       ORDER BY c.name, c.id`,
+    [schoolYearId],
+  );
+  return json({
+    schoolYearId,
+    classes: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      activeRepresentativeCount: toSafeInteger(row.active_count),
+      pendingInvitationCount: toSafeInteger(row.pending_count),
+      nextInvitationExpiresAt: isoTimestamp(row.next_expires_at),
+      lastRepresentativeLoginOn: row.last_login_on ?? null,
+    })),
+  });
+}
+
 // --- Słowniki i dziennik ---------------------------------------------------
 
 async function listSchoolYears(env, json) {
@@ -606,7 +680,7 @@ async function listSchoolYears(env, json) {
 const AUDIT_ACTIONS = [
   'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
   'school_year.grants_expired', 'school_year.created', 'class.created',
-  'invitation.created', 'invitation.revoked', 'invitation.accepted',
+  'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued',
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
   'auth.password_changed', 'mfa.reset',
@@ -659,7 +733,7 @@ function allowedMethodsFor(section, pathLength, action) {
   }
   if (section === 'invitations') {
     if (pathLength === 1) return ['GET', 'POST'];
-    if (pathLength === 3 && action === 'revoke') return ['POST'];
+    if (pathLength === 3 && ['revoke', 'reissue'].includes(action)) return ['POST'];
     return null;
   }
   if (section === 'school-years') {
@@ -667,6 +741,7 @@ function allowedMethodsFor(section, pathLength, action) {
     if (pathLength === 3 && action === 'expire-grants') return ['POST'];
     return null;
   }
+  if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
   if (section === 'ops-status' && pathLength === 1) return ['GET'];
   return null;
@@ -698,6 +773,7 @@ async function route(request, env, url, json, actorId) {
     if (path.length === 1 && method === 'GET') return listInvitations(env, json);
     if (path.length === 1 && method === 'POST') return createInvitationRoute(env, actorId, request, json);
     if (path.length === 3 && action === 'revoke' && method === 'POST') return revokeInvitationRoute(env, actorId, decodeId(rawId), json);
+    if (path.length === 3 && action === 'reissue' && method === 'POST') return reissueInvitationRoute(env, actorId, decodeId(rawId), json);
   }
   if (section === 'school-years') {
     if (path.length === 1 && method === 'GET') return listSchoolYears(env, json);
@@ -709,12 +785,13 @@ async function route(request, env, url, json, actorId) {
       return createClasses(env, actorId, decodeId(rawId), request, json);
     }
   }
+  if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json);
   if (section === 'ops-status' && path.length === 1 && method === 'GET') return opsStatus(env, json);
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'audit', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
