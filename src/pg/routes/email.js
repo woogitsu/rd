@@ -287,7 +287,7 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
               AND (sg.ends_on IS NULL OR sg.ends_on >= d.on_date)), false) AS relation_allowed,
             COALESCE(bool_or(sg.is_primary_contact), false) AS is_primary
        FROM d
-       CROSS JOIN enrollments e
+       CROSS JOIN enrollments_current e
        JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = e.student_id
        JOIN households h ON h.id = p.household_id AND h.archived_at IS NULL
        LEFT JOIN student_guardians sg ON sg.student_id = e.student_id
