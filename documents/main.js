@@ -30,6 +30,7 @@ import {
 import { MESSAGES, api, errorMessage as sharedErrorMessage, handleAuthFailure } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { initialSchoolYearId } from "../shared/school-year.js";
 
 mountShell();
 
@@ -47,6 +48,7 @@ const byId = (id) => document.getElementById(id);
 const state = { documents: [], query: null, offset: 0, pending: null, uploading: false, detailsRequest: null };
 
 const filtersForm = byId("filters-form");
+const yearInput = byId("filter-year");
 const listBody = byId("documents-body");
 const listMessage = byId("list-message");
 const listSummary = byId("list-summary");
@@ -449,6 +451,13 @@ async function applyAccess() {
     grants = Array.isArray(access.grants) ? access.grants : [];
   } catch {
     return; // bez informacji o rolach formularz zostaje; serwer i tak autoryzuje
+  }
+  // Rok domyślny (puste ekrany bez klikania „Pokaż”): najnowszy z przydziałów,
+  // awaryjnie heurystyka daty (shared/school-year.js). Bez tego pole zostaje puste,
+  // dopóki użytkownik sam nie wpisze roku. Użytkownik nadal może go zmienić.
+  if (!yearInput.value.trim()) {
+    yearInput.value = initialSchoolYearId(grants);
+    if (yearInput.value) await loadList();
   }
   const allowed = new Set(uploadableKinds(grants));
   for (const option of [...kindSelect.options]) {

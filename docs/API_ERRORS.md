@@ -36,6 +36,9 @@ wpisów).
 | `active_bank_match` | Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `admin_exists` | Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne. | Zależy od kontekstu (patrz moduł trasy). |
 | `agenda_position_taken` | Ta pozycja porządku obrad jest już zajęta. | Zależy od kontekstu (patrz moduł trasy). |
+| `allocation_exceeds_net` | Suma przypisań przekracza kwotę wpisu po korektach. Najpierw zmień przypisanie. | Nie — popraw dane żądania. |
+| `allocation_reason_required` | Zmiana przypisania wymaga podania powodu. | Nie — popraw dane żądania. |
+| `allocation_version_conflict` | Przypisanie tego wpisu zostało w międzyczasie zmienione. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `already_matched_via_ledger` | Pozycja jest już dopasowana do wpisu księgi. | Nie — popraw dane żądania. |
 | `already_matched_via_payment` | Pozycja jest już dopasowana do wpłaty. | Nie — popraw dane żądania. |
 | `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
@@ -89,12 +92,15 @@ wpisów).
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `four_eyes_required` | Tę operację musi zatwierdzić inna osoba niż autor. | Nie — popraw dane żądania. |
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
+| `group_match_direction_mismatch` | Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ). | Nie — popraw dane żądania. |
+| `group_match_sum_mismatch` | Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_reused` | Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `import_disabled` | Import jest wyłączony na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `import_has_conflicts` | Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `inconsistent_matches` | Dopasowania są niespójne. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
+| `invalid_allocation` | Niepoprawny podział wpisu na wydarzenia lub klasy. | Nie — popraw dane żądania. |
 | `invalid_alt_text` | Podaj opis zdjęcia (tekst alternatywny). | Nie — popraw dane żądania. |
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
 | `invalid_audience` | Wybierz odbiorców. | Nie — popraw dane żądania. |
@@ -110,6 +116,7 @@ wpisów).
 | `invalid_columns` | Niepoprawne kolumny importu. | Nie — popraw dane żądania. |
 | `invalid_consent` | Niepoprawny zapis zgody na publikację. | Nie — popraw dane żądania. |
 | `invalid_content_type` | Serwer nie odczytał formatu danych. | Nie — popraw dane żądania. |
+| `invalid_cost_center` | Wskazane wydarzenie lub klasa nie należy do roku tego wpisu. | Nie — popraw dane żądania. |
 | `invalid_credentials` | Nieprawidłowy adres e-mail lub hasło. | Nie — popraw dane żądania. |
 | `invalid_csv_header` | Plik CSV ma niepoprawny nagłówek. | Nie — popraw dane żądania. |
 | `invalid_csv` | Nie udało się odczytać pliku CSV. | Nie — popraw dane żądania. |
@@ -236,11 +243,16 @@ wpisów).
 | `password_required` | Podaj hasło. | Nie — popraw dane żądania. |
 | `password_too_long` | Hasło jest za długie. | Zależy od kontekstu (patrz moduł trasy). |
 | `password_unchanged` | Nowe hasło musi być inne niż obecne. | Zależy od kontekstu (patrz moduł trasy). |
+| `payment_allocation_already_reversed` | Ta część wpłaty została już cofnięta. | Nie — popraw dane żądania. |
+| `payment_allocation_exceeds_net` | Suma części wpłaty przekroczyłaby jej kwotę po korektach i zwrotach. Najpierw cofnij część. | Nie — popraw dane żądania. |
+| `payment_allocation_household_exists` | To gospodarstwo ma już część tej wpłaty. Cofnij ją, jeśli kwota jest błędna. | Nie — popraw dane żądania. |
+| `payment_allocation_not_found` | Nie znaleziono tej części wpłaty. | Nie — popraw dane żądania. |
 | `payment_already_assigned` | Wpłata jest już przypisana do rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_already_linked` | Wpłata jest już powiązana z innym wpisem. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_amount_mismatch` | Kwota wpłaty nie zgadza się z powiązanym wpisem księgi. Odśwież widok i sprawdź dane. | Nie — popraw dane żądania. |
 | `payment_cannot_be_corrected` | Tej wpłaty nie można skorygować w obecnym stanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_cannot_be_refunded` | Tej wpłaty nie można zwrócić w obecnym stanie. | Zależy od kontekstu (patrz moduł trasy). |
+| `payment_has_allocations` | Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części. | Nie — popraw dane żądania. |
 | `payment_linked_entry_not_replaceable` | Wpisu powiązanego z wpłatą nie można przeksięgować. Skoryguj albo wpłatę, albo wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_not_assigned` | Wpłata nie jest przypisana do żadnej rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_not_found` | Nie znaleziono wpłaty albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
@@ -271,7 +283,9 @@ wpisów).
 | `rate_limited` | Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę. | Zależy od kontekstu (patrz moduł trasy). |
 | `read_only` | Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych. | Zależy od kontekstu (patrz moduł trasy). |
 | `recipients_hash_mismatch` | Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie. | Nie — popraw dane żądania. |
+| `reconciliation_abandoned` | Szkic uzgodnienia został porzucony i nie można go już zmienić ani potwierdzić. | Nie — utwórz nowy szkic. |
 | `reconciliation_confirmed` | Uzgodnienie jest już potwierdzone i nie można go zmienić. | Zależy od kontekstu (patrz moduł trasy). |
+| `reconciliation_has_active_matches` | Szkic ma aktywne dopasowania — cofnij je, zanim porzucisz szkic. | Tak — po cofnięciu dopasowań. |
 | `reconciliation_not_found` | Nie znaleziono uzgodnienia. | Nie — popraw dane żądania. |
 | `refund_exceeds_remaining_amount` | Zwrot przekracza kwotę pozostałą po wcześniejszych korektach i zwrotach. | Zależy od kontekstu (patrz moduł trasy). |
 | `relation_ended` | Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa. | Zależy od kontekstu (patrz moduł trasy). |
