@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import {
-  PANELS, SECRET_INPUT_IDS, clearSensitiveViews, enrollmentConfirmError, errorMessage, formatSecret, isRecoveryFormat,
+  PANELS, SECRET_INPUT_IDS, canOfferVoluntaryMfaEnrollment, clearSensitiveViews, enrollIntroText,
+  enrollmentConfirmError, errorMessage, formatSecret, isRecoveryFormat,
   isTotpFormat, logoutOutcome, nextView, normalizeRecoveryCode, normalizeTotp,
   parseFragment, parseOtpauthUri, passwordLength, qrMatrix, qrSvgPath, validateEmail, validateNewPassword,
 } from '../login/core.js';
@@ -54,6 +55,15 @@ test('następny widok po logowaniu', () => {
   assert.equal(nextView({ authenticated: true, mfaVerified: false, mfaEnrolled: false, mfaRequired: false }), 'start');
   assert.equal(nextView({ authenticated: true, mfaVerified: true, mfaEnrolled: true }), 'start');
   assert.equal(nextView({ authenticated: true, mfaVerified: true, mustChangePassword: true }), 'change');
+});
+
+test('dobrowolne włączenie MFA: dowolna zalogowana rola bez czynnika (#161)', () => {
+  assert.equal(canOfferVoluntaryMfaEnrollment({ authenticated: true, mfaEnrolled: false }), true);
+  assert.equal(canOfferVoluntaryMfaEnrollment({ authenticated: true, mfaEnrolled: true }), false, 'czynnik już jest');
+  assert.equal(canOfferVoluntaryMfaEnrollment({ authenticated: false, mfaEnrolled: false }), false, 'trzeba być zalogowanym');
+  assert.equal(canOfferVoluntaryMfaEnrollment(null), false);
+  assert.notEqual(enrollIntroText(true), enrollIntroText(false), 'inny tekst dla wymogu roli i wyboru własnego');
+  assert.match(enrollIntroText(true), /rola wymaga/);
 });
 
 test('kod QR: URI otpauth z serwera, macierz zgodna z normą, ścieżka SVG z marginesem', () => {

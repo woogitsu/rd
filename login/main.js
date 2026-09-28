@@ -1,6 +1,8 @@
 import {
   PANELS,
+  canOfferVoluntaryMfaEnrollment,
   clearSensitiveViews,
+  enrollIntroText,
   enrollmentConfirmError,
   errorMessage,
   formatSecret,
@@ -90,8 +92,15 @@ async function goNext(state) {
   // Przejście do kolejnego etapu: pola haseł puste, „Pokaż hasło” wyłączone (#197).
   clearSensitiveViews(document);
   if (view === "start") renderStart();
-  if (view === "enroll") resetEnrollment();
+  if (view === "enroll") { resetEnrollment(); renderEnrollIntro(true); }
   showView(view);
+}
+
+// #161: tekst i przycisk powrotu zależą od tego, czy widok wymusiła rola
+// (nextView → "enroll") czy konto weszło tu dobrowolnie z widoku startowego.
+function renderEnrollIntro(forced) {
+  byId("enroll-intro-text").textContent = enrollIntroText(forced);
+  byId("enroll-back").hidden = forced;
 }
 
 async function refreshState() {
@@ -306,22 +315,30 @@ byId("invite-form").addEventListener("submit", (event) => {
   const password = byId("invite-password");
   const repeat = byId("invite-repeat");
   if (!/^[A-Za-z0-9_-]{43}$/.test(token.value.trim())) return formError(form, "invite-error", "Kod zaproszenia ma 43 znaki. Skopiuj go w całości.", [token]);
-  // Powtórzenie wymagane tylko przy nowym haśle (pole puste = istniejące konto).
-  const problem = repeat.value ? validateNewPassword(password.value, repeat.value) : (password.value ? null : "Podaj hasło.");
-  if (problem) return formError(form, "invite-error", problem, [password]);
+  // #164: powtórzenie jest zawsze obowiązkowe — bez niego literówka w haśle
+  // nowego konta wychodzi na jaw dopiero przy kolejnym logowaniu (blokada,
+  // reset przez admina). Serwer i tak sam wymusza zgodność dla nowego konta.
+  if (!password.value) return formError(form, "invite-error", "Podaj hasło.", [password]);
+  if (!repeat.value) return formError(form, "invite-error", "Powtórz hasło.", [repeat]);
+  if (password.value !== repeat.value) return formError(form, "invite-error", "Hasła nie są takie same.", [repeat]);
   return submitting(form, async () => {
     try {
       const displayName = byId("invite-name").value.trim();
       const result = await api("/api/invitations/accept", {
         method: "POST",
-        body: { token: token.value.trim(), password: password.value, ...(displayName ? { displayName } : {}) },
+        body: {
+          token: token.value.trim(), password: password.value, passwordRepeat: repeat.value,
+          ...(displayName ? { displayName } : {}),
+        },
       });
       password.value = ""; repeat.value = ""; token.value = "";
       formError(form, "invite-error", "");
       say(result.created ? "Konto zostało utworzone." : "Rola została dodana do Twojego konta.");
       await goNext({ authenticated: true, mfaVerified: false, ...result });
     } catch (error) {
-      formError(form, "invite-error", error.message, error.code?.startsWith("password") || error.code === "invalid_credentials" ? [password] : [token]);
+      const fields = error.code === "password_mismatch" ? [repeat]
+        : error.code?.startsWith("password") || error.code === "invalid_credentials" ? [password] : [token];
+      formError(form, "invite-error", error.message, fields);
     }
   });
 });
@@ -377,6 +394,15 @@ byId("change-form").addEventListener("submit", (event) => {
 byId("change-cancel").addEventListener("click", async () => goNext(lastState ?? await refreshState()));
 byId("open-change").addEventListener("click", () => showView("change"));
 
+// #161: włączenie MFA z własnej inicjatywy (dowolna rola, konto bez czynnika).
+byId("enroll-voluntary").addEventListener("click", () => {
+  clearSensitiveViews(document);
+  resetEnrollment();
+  renderEnrollIntro(false);
+  showView("enroll");
+});
+byId("enroll-back").addEventListener("click", async () => goNext(lastState ?? await refreshState()));
+
 // --- 7. Start i wylogowanie ---------------------------------------------------------------
 
 function renderStart() {
@@ -391,6 +417,7 @@ function renderStart() {
     item.append(link, hint);
     return item;
   }));
+  byId("enroll-voluntary").hidden = !canOfferVoluntaryMfaEnrollment(lastState);
 }
 
 // Wylogowanie: dane wrażliwe znikają z DOM zawsze; „Wylogowano” tylko po 204/401 (#197).

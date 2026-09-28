@@ -1,5 +1,7 @@
 // Czyste funkcje widoku rodzin (bez DOM), aby dało się je testować w Node.
 
+import { formatEur } from "../panel/money.js";
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -59,8 +61,10 @@ export function canEditFamilies(grants) {
   return Array.isArray(grants) && grants.some((grant) => grant.role === "admin" || grant.role === "board");
 }
 
+// #173: jeden moduł kwot EUR (panel/money.js). Wartość null/błędna -> „—”,
+// nigdy „0,00 €” (czytane wcześniej jako „brak wpłaty”).
 export function formatCents(cents) {
-  return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "EUR" }).format((Number(cents) || 0) / 100);
+  return formatEur(cents, { style: "screen" });
 }
 
 // Zwraca obiekt do PATCH /api/guardians/{id}/contact albo { error }.

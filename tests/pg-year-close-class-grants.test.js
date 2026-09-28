@@ -66,6 +66,8 @@ async function legacyDb() {
     'SELECT count(*)::int AS n FROM role_grants WHERE class_id IS NOT NULL AND school_year_id IS NULL',
   )).rows[0].n;
   await db.exec(migrations.find((item) => item.name === BACKFILL).sql);
+  // Pozostałe migracje po 0022: aplikacja korzysta z obiektów z późniejszych plików (np. 0028).
+  for (const migration of migrations.filter((item) => item.name > BACKFILL)) await db.exec(migration.sql);
   return { db, env: { db }, cookies, nullBefore };
 }
 
