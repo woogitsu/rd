@@ -4,6 +4,7 @@ import { clearSessionCookie } from '../../auth.js';
 import { loadSession, revokeSession } from '../auth.js';
 import { loadAuthorizationContext } from '../authorization.js';
 import { mfaGate } from '../mfa-policy.js';
+import { isReadOnly } from '../../write-mode.js';
 
 export const name = 'session';
 
@@ -14,8 +15,11 @@ export async function handle(request, env, url, json) {
     // #150: `mfaVerifiedAt` (dodane do loadSession na potrzeby kroku w górę,
     // src/pg/authorization.js) zostaje wewnętrzne — kontrakt GET /api/session
     // ma być identyczny jak w starym Workerze (patrz test).
+    // Tryb tylko do odczytu (#143): panele czytają writeMode, żeby pokazać baner
+    // okna serwisowego i wyłączyć przyciski zapisu (kontrola dostępu jest zawsze
+    // na serwerze — patrz src/pg/app.js).
     const { mfaVerifiedAt, ...publicSession } = session;
-    return json(publicSession);
+    return json({ ...publicSession, writeMode: isReadOnly(env) ? 'read_only' : 'normal' });
   }
   if (url.pathname === '/api/access' && request.method === 'GET') {
     const context = await loadAuthorizationContext(request, env);

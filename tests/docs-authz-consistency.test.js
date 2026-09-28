@@ -27,6 +27,7 @@ const MODULES = [
   { file: 'src/pg/routes/year-close.js', roles: ['board', 'treasurer'] },
   { file: 'src/pg/routes/print.js', roles: ['admin', 'board', 'treasurer', 'representative'] },
   { file: 'src/pg/routes/reconciliation.js', roles: ['admin', 'board', 'treasurer', 'audit'] },
+  { file: 'src/pg/routes/financial-reports.js', roles: ['board', 'treasurer'] },
 ];
 
 test('every module in MODULES actually defines the roles this test expects (fixture stays honest)', async () => {

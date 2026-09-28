@@ -1432,6 +1432,28 @@
       "exportable": false,
       "data_type": "text"
     },
+    "paused_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
+    },
+    "paused_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
     "queued_at": {
       "personal": "none",
       "subject": null,
@@ -1476,6 +1498,28 @@
       "exportable": false,
       "data_type": "text"
     },
+    "resumed_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
+    },
+    "resumed_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
     "school_year_id": {
       "personal": "none",
       "subject": null,
@@ -1486,6 +1530,17 @@
       "free_text": false,
       "exportable": false,
       "data_type": "text"
+    },
+    "send_not_before": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
     },
     "snapshot_built_at": {
       "personal": "none",
@@ -1574,61 +1629,6 @@
       "free_text": false,
       "exportable": false,
       "data_type": "text"
-    },
-    "paused_at": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "timestamptz"
-    },
-    "paused_by": {
-      "personal": "pseudonymous",
-      "subject": "board_member",
-      "category": "identyfikacja",
-      "purpose": "powiązanie rekordu z osobą",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "resumed_at": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "timestamptz"
-    },
-    "resumed_by": {
-      "personal": "pseudonymous",
-      "subject": "board_member",
-      "category": "identyfikacja",
-      "purpose": "powiązanie rekordu z osobą",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "send_not_before": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "timestamptz"
     }
   },
   "email_outbox": {
@@ -1798,6 +1798,96 @@
       "data_type": "text"
     },
     "updated_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    }
+  },
+  "email_preview_sends": {
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "campaign_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "content_hash": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "recipient_hash": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "kontakt",
+      "purpose": "limit wysyłek testowych na adres techniczny Rady",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "actor_id": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie wysyłki testowej z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "idempotency_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "provider_message_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "created_at": {
       "personal": "none",
       "subject": null,
       "category": null,
@@ -5687,6 +5777,17 @@
       "free_text": true,
       "exportable": false,
       "data_type": "text"
+    },
+    "decorative": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "boolean"
     },
     "depicts_children": {
       "personal": "none",

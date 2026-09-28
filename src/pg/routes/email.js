@@ -12,9 +12,11 @@
 //   POST /api/email/campaigns/{id}/pause             wstrzymanie wysyłki (#130), idempotentne
 //   POST /api/email/campaigns/{id}/resume            wznowienie wysyłki (#130), idempotentne
 //   POST /api/email/campaigns/{id}/cancel            anulowanie (wiersze w kolejce → cancelled)
+//   POST /api/email/campaigns/{id}/test-send         wysyłka testowa na adres z EMAIL_PREVIEW_RECIPIENTS (#104)
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
 //
-// Żadna trasa nie wysyła poczty. Wysyła wyłącznie zadanie scripts/email-worker.js.
+// Żadna trasa nie wysyła poczty do rodzin. Wysyła wyłącznie zadanie
+// scripts/email-worker.js oraz — na adresy techniczne Rady — test-send (#104).
 // Role (założenie do D-08/D-16/D-17): szkic i lista — board/treasurer z MFA,
 // zatwierdzenie — wyłącznie board z MFA. Rola admin (techniczna) nie ma dostępu.
 
@@ -23,12 +25,12 @@ import { isSameOrigin } from '../../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { effectiveDay } from '../today.js';
-import { emailConfig } from '../../email/brevo.js';
+import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
 import {
   ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
   parseCampaignContent, recipientsHash, renderMessage, sha256Hex,
 } from '../../email/content.js';
-import { campaignDailyCap, planDays } from '../../email/worker.js';
+import { campaignDailyCap, planDays, utcDay } from '../../email/worker.js';
 
 export const name = 'email';
 
@@ -551,6 +553,16 @@ async function approve(request, env, id, json) {
         throw new RequestError('approval_stale', 409);
       }
       if (!recipients.length) throw new RequestError('no_recipients', 409);
+      // D-16 (domyślnie wyłączone, wariant zachowawczy): jeśli flaga jest
+      // włączona, zatwierdzenie wymaga co najmniej jednej wysyłki testowej
+      // dla dokładnie bieżącej treści (#104).
+      if (emailConfig(env).previewRequiredBeforeApproval) {
+        const { rows: previewRows } = await tx.query(
+          'SELECT 1 FROM email_preview_sends WHERE campaign_id = $1 AND content_hash = $2 LIMIT 1',
+          [id, campaign.content_hash],
+        );
+        if (!previewRows[0]) throw new RequestError('preview_required', 409);
+      }
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'approved', approved_by = $2, approved_at = now(),
                 approved_content_hash = content_hash, approved_recipients_hash = recipients_hash
@@ -689,6 +701,103 @@ async function cancel(request, env, id, json) {
   }
 }
 
+// --- Wysyłka testowa (#104) ------------------------------------------------
+
+const PREVIEW_CAMPAIGN_DAILY_LIMIT = 5;
+const PREVIEW_ACCOUNT_DAILY_LIMIT = 20;
+const TEST_SUBJECT_PREFIX = '[TEST] ';
+
+// Transport wstrzykiwany w testach (`env.emailTransport`); poza testami
+// tworzy prawdziwy klient Brevo (ten sam moduł i te same bariery co worker —
+// wysyłka testowa nie ma własnej implementacji sieciowej, zgodnie z #104).
+function transportFor(env, config) {
+  return env.emailTransport ?? createBrevoTransport({ apiKey: env.BREVO_API_KEY, appEnv: config.appEnv });
+}
+
+async function testSend(request, env, id, json) {
+  const key = request.headers.get('Idempotency-Key')?.trim();
+  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
+  const data = await readJson(request);
+  const normalized = normalizeEmail(data.recipientEmail);
+  if (!normalized) throw new RequestError('invalid_request');
+  const { context, campaign } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const actorId = context.session.user.id;
+  const config = emailConfig(env);
+
+  // Bramka bez sieci: brak wysyłki włączonej — 409 natychmiast, zanim
+  // powstanie transport albo jakiekolwiek zapytanie o limit.
+  if (!config.sendingEnabled) throw new RequestError('sending_disabled', 409);
+
+  const { rows: replayRows } = await env.db.query(
+    'SELECT id, provider_message_id FROM email_preview_sends WHERE idempotency_key = $1', [key],
+  );
+  if (replayRows[0]) {
+    return json({ sent: true, providerMessageId: replayRows[0].provider_message_id ?? null }, 200, { 'Idempotency-Replayed': 'true' });
+  }
+
+  // Ochrona przed pomyłką „test do rodzica”: adres musi być na liście
+  // techniczej Rady i nie może być adresem żadnego opiekuna w bazie.
+  const { rows: guardianRows } = await env.db.query(
+    'SELECT 1 FROM guardians WHERE lower(btrim(email)) = $1 LIMIT 1', [normalized],
+  );
+  const guardianEmails = guardianRows.length ? new Set([normalized]) : new Set();
+  const refusal = previewRecipientRefusal(config, normalized, guardianEmails);
+  if (refusal) throw new RequestError(refusal, 403);
+
+  const dayStart = `${utcDay(new Date())}T00:00:00Z`;
+  const { rows: campaignCount } = await env.db.query(
+    'SELECT COUNT(*)::int AS n FROM email_preview_sends WHERE campaign_id = $1 AND created_at >= $2', [id, dayStart],
+  );
+  if (campaignCount[0].n >= PREVIEW_CAMPAIGN_DAILY_LIMIT) throw new RequestError('preview_campaign_limit', 429);
+  const { rows: accountCount } = await env.db.query(
+    'SELECT COUNT(*)::int AS n FROM email_preview_sends WHERE created_at >= $1', [dayStart],
+  );
+  if (accountCount[0].n >= PREVIEW_ACCOUNT_DAILY_LIMIT) throw new RequestError('preview_account_limit', 429);
+
+  const rendered = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD' });
+  const transport = transportFor(env, config);
+  let providerMessageId = null;
+  let transportError = null;
+  try {
+    const result = await transport.send({
+      to: normalized, sender: config.sender, replyTo: config.replyTo,
+      subject: TEST_SUBJECT_PREFIX + rendered.subject, text: rendered.text,
+      outboxId: `preview:${id}`, idempotencyKey: key,
+    });
+    providerMessageId = result?.messageId ?? null;
+  } catch (error) {
+    if (!(error instanceof EmailTransportError)) throw error;
+    transportError = error;
+  }
+
+  // Zapis próby (nie retry — jedna próba na żądanie) jest oddzielony od
+  // wywołania sieciowego, tak jak w workerze. Liczy się do puli dnia (#104
+  // pkt 3), niezależnie od wyniku — to była realna próba wysyłki.
+  const recipientIndex = config.previewRecipients.indexOf(normalized);
+  try {
+    await env.db.transaction(async (tx) => {
+      await tx.query(
+        `INSERT INTO email_preview_sends (id, campaign_id, content_hash, recipient_hash, actor_id, idempotency_key, provider_message_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [crypto.randomUUID(), id, campaign.content_hash, emailHash(normalized), actorId, key, providerMessageId],
+      );
+      await tx.query(
+        `INSERT INTO email_send_ledger (id, day, source, campaign_id, message_count) VALUES ($1, $2, 'preview', $3, 1)`,
+        [crypto.randomUUID(), utcDay(new Date()), id],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'email.preview.sent', entityType: 'email_campaign', entityId: id,
+        metadata: { contentHash: campaign.content_hash, recipientIndex, ok: !transportError, transportError: transportError?.code ?? null },
+      });
+    });
+  } catch (error) {
+    if (error?.code !== '23505') throw error;
+    // Podwójne kliknięcie równoległe z tym samym kluczem: replay, bez drugiej wiadomości.
+  }
+  if (transportError) throw new RequestError(transportError.code, 502);
+  return json({ sent: true, providerMessageId }, 201, { 'Idempotency-Replayed': 'false' });
+}
+
 async function status(request, env, id, json) {
   const { campaign } = await campaignFor(request, env, id, EDITOR_ROLES);
   const { rows } = await env.db.query(
@@ -819,6 +928,7 @@ const CAMPAIGN_ACTION_METHODS = Object.freeze({
   pause: ['POST'],
   resume: ['POST'],
   cancel: ['POST'],
+  'test-send': ['POST'],
 });
 
 export async function handle(request, env, url, json) {
@@ -835,7 +945,7 @@ export async function handle(request, env, url, json) {
       if (method === 'POST') return await createCampaign(request, env, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
-    const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|approve|queue|pause|resume|cancel))?$/);
+    const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|approve|queue|pause|resume|cancel|test-send))?$/);
     if (!match) return null;
     let id;
     try { id = decodeURIComponent(match[1]); } catch { throw new RequestError('invalid_campaign_id'); }
@@ -851,6 +961,7 @@ export async function handle(request, env, url, json) {
     if (action === 'pause') return await pause(request, env, id, json);
     if (action === 'resume') return await resume(request, env, id, json);
     if (action === 'cancel') return await cancel(request, env, id, json);
+    if (action === 'test-send') return await testSend(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code }, error.status);
