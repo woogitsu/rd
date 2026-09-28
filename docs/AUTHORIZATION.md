@@ -103,6 +103,12 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded` |
 | `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
 | `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |
+| `POST /api/documents/:financialDocumentId/supersede` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | issue #82: te same reguły dostępu co odczyt dokumentu finansowego (canAccessDocument); zastąpienie tylko dokumentem tego samego rodzaju/roku/klasy; powtórka tym samym kluczem — `replayed:true` |
+| `POST /api/documents/:boardDocumentId/supersede` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | issue #82: te same reguły dostępu co odczyt dokumentu zarządu; skarbnik, przedstawiciel — 404 |
+| `POST /api/documents/:classDocumentId/supersede` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | issue #82: zastąpienie tylko dokumentem tego samego rodzaju/roku/klasy; powtórka tym samym kluczem — `replayed:true` |
+| `POST /api/documents/:financialDocumentId/void` | jak wyżej (supersede, dokument finansowy) | tak | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
+| `POST /api/documents/:boardDocumentId/void` | jak wyżej (supersede, dokument zarządu) | nie | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
+| `POST /api/documents/:classDocumentId/void` | jak wyżej (supersede, dokument klasy) | nie | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
 | `POST /api/documents/:financialDocumentId/description` | jak metadane dokumentu finansowego | tak | 404 | tytuł/kategoria (#76); dopisuje wersję, `documents` niezmienne |
 | `POST /api/documents/:boardDocumentId/description` | jak metadane dokumentu zarządu | nie | 404 | #76 |
 | `POST /api/documents/:classDocumentId/description` | jak metadane dokumentu klasy | nie | 404 | #76 |
@@ -179,6 +185,10 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | #181: filtry `domain`/`actorId`/`from`/`to`/`schoolYearId`; sam zapisuje `audit.viewed` |
 | `GET /api/admin/audit/entity/:entityType/:entityId` | wyłącznie admin | tak | 403 | #181: wariant zachowawczy — role finansowe/kampanii własnego zakresu do D-08/D-09; nieistniejący obiekt: 404 |
+| `GET /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: wariant zachowawczy — zakres do D-08/D-09 |
+| `POST /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: rejestr żądania, bez eksportu danych rodziny |
+| `POST /api/admin/data-requests/:requestId/status` | wyłącznie admin | tak | 403 | #100: przejście stanu bez cofania; nieistniejące żądanie: 404 |
+| `GET /api/admin/retention/preview` | wyłącznie admin | tak | 403 | rejestr polityk retencji i raport kandydatów (D-04, #91); bez adresów i nazw rodzin |
 | `GET /api/admin/ops-status` | wyłącznie admin | tak | 403 | stan operacyjny: kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści (#149) |
 | `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
 | `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
@@ -189,6 +199,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/reconciliations/:reconciliationId/matches` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/confirm` | jak wyżej; inna osoba niż autor | tak | 403 | SR-01 |
+| `POST /api/reconciliations/:reconciliationId/abandon` | jak wyżej (także autor szkicu) | tak | 403 | tylko szkic bez aktywnych dopasowań; rok zamknięty: 409; SR-01 |
 | `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md). Rola i rok pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `GET /api/reports/annual?schoolYearId=:year&format=json` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | także `format=html`; admin, audit, principal, przedstawiciel: 403 (D-08/D-09, #125); SR-01. Brak MFA przy pasującej roli: `403 mfa_required`/`mfa_enrollment_required` |
 | `GET /api/reports/cash-flow?schoolYearId=:year` | jak wyżej | tak | 403 | przepływy per miesiąc i metoda, saldo kasy (#125); SR-01 |

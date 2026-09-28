@@ -68,12 +68,16 @@ wpisów).
 | `consents_locked` | Zgód nie można zmienić w obecnym stanie wpisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `content_hash_mismatch` | Plik uszkodził się podczas przesyłania. Wyślij go ponownie. | Nie — popraw dane żądania. |
 | `correction_exceeds_remaining_amount` | Korekta przekracza kwotę pozostałą po wcześniejszych korektach. | Zależy od kontekstu (patrz moduł trasy). |
+| `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
+| `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
 | `date_outside_school_year` | Data wpisu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `difference_requires_note` | Różnica wymaga wpisania wyjaśnienia. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_active_content` | Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_content_missing` | Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_integrity_mismatch` | Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi. | Nie — popraw dane żądania. |
 | `document_malformed` | Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane). | Zależy od kontekstu (patrz moduł trasy). |
+| `document_status_conflict` | Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
+| `document_status_replacement_not_active` | Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_too_large` | Plik przekracza dozwolony rozmiar. | Zależy od kontekstu (patrz moduł trasy). |
 | `duplicate_name` | Nazwy klas na liście powtarzają się. | Nie — popraw dane żądania. |
 | `duplicate_photo` | To zdjęcie jest już dodane. | Nie — popraw dane żądania. |
@@ -92,7 +96,9 @@ wpisów).
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `four_eyes_required` | Tę operację musi zatwierdzić inna osoba niż autor. | Nie — popraw dane żądania. |
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
+| `guardian_not_found` | Nie znaleziono opiekuna. | Nie — popraw dane żądania. |
 | `guardian_outside_class` | Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku. | Zależy od kontekstu (patrz moduł trasy). |
+| `household_not_found` | Nie znaleziono gospodarstwa. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_reused` | Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -122,6 +128,7 @@ wpisów).
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
 | `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_datetime` | Niepoprawna data lub godzina. | Nie — popraw dane żądania. |
+| `invalid_decision_note_ref` | Odwołanie do decyzji może mieć od 1 do 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_decorative` | Niepoprawna wartość pola „zdjęcie dekoracyjne”. | Nie — popraw dane. |
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
@@ -129,6 +136,7 @@ wpisów).
 | `invalid_document_date` | Niepoprawna data dokumentu. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
 | `invalid_domain` | Wybierz obszar dziennika z listy. | Nie — popraw dane. |
+| `invalid_due_on` | Podaj poprawną datę terminu odpowiedzi. | Nie — popraw dane żądania. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
 | `invalid_email` | Podaj poprawny adres e-mail. | Nie — popraw dane żądania. |
 | `invalid_ended_on` | Podaj poprawną datę odejścia (RRRR-MM-DD). | Nie — popraw dane. |
@@ -168,9 +176,11 @@ wpisów).
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
+| `invalid_received_on` | Podaj poprawną datę wpłynięcia żądania. | Nie — popraw dane żądania. |
 | `invalid_reference_text` | Opis wpłaty jest za długi albo zawiera niedozwolone znaki. | Nie — popraw dane żądania. |
 | `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje. | Nie — popraw dane żądania. |
 | `invalid_relation_kind` | Wybierz rodzaj powiązania uchwały z listy. | Nie — popraw dane. |
+| `invalid_replacement_document` | Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę. | Nie — popraw dane żądania. |
 | `invalid_request` | Serwer odrzucił dane formularza. Sprawdź pola. | Nie — popraw dane żądania. |
 | `invalid_reversal` | Tego przeniesienia nie można cofnąć w obecnym stanie. | Nie — popraw dane żądania. |
 | `invalid_revision` | Brak numeru wersji. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -272,7 +282,9 @@ wpisów).
 | `rate_limited` | Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę. | Zależy od kontekstu (patrz moduł trasy). |
 | `read_only` | Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych. | Zależy od kontekstu (patrz moduł trasy). |
 | `recipients_hash_mismatch` | Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie. | Nie — popraw dane żądania. |
+| `reconciliation_abandoned` | Szkic uzgodnienia został porzucony i nie można go już zmienić ani potwierdzić. | Nie — utwórz nowy szkic. |
 | `reconciliation_confirmed` | Uzgodnienie jest już potwierdzone i nie można go zmienić. | Zależy od kontekstu (patrz moduł trasy). |
+| `reconciliation_has_active_matches` | Szkic ma aktywne dopasowania — cofnij je, zanim porzucisz szkic. | Tak — po cofnięciu dopasowań. |
 | `reconciliation_not_found` | Nie znaleziono uzgodnienia. | Nie — popraw dane żądania. |
 | `refund_exceeds_remaining_amount` | Zwrot przekracza kwotę pozostałą po wcześniejszych korektach i zwrotach. | Zależy od kontekstu (patrz moduł trasy). |
 | `relation_ended` | Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa. | Zależy od kontekstu (patrz moduł trasy). |
@@ -308,6 +320,8 @@ wpisów).
 | `statement_multiple_not_supported` | Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno. | Nie — popraw dane żądania. |
 | `statement_transaction_id_missing` | Ruch w wyciągu nie ma identyfikatora transakcji banku. | Nie — popraw dane żądania. |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `student_not_found` | Nie znaleziono ucznia. | Nie — popraw dane żądania. |
+| `subject_required` | Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `task_full` | Brak wolnych miejsc w tym zadaniu. Odśwież listę. | Zależy od kontekstu (patrz moduł trasy). |
 | `task_time_outside_event` | Czas zadania musi mieścić się w czasie wydarzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `timeout` | Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |

@@ -330,6 +330,20 @@ zatrzymają migrację czytelnym błędem zamiast cichego zapisania niespójnośc
 i zakres #96; osobna migracja i PR.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
 
+`0066_document_status_events.sql` (issue #82) dodaje wersje dokumentu i
+unieważnienie bez usuwania. `documents` pozostaje niezmienne (0006) — plik
+w buckecie i wpis metadanych nie znikają. Nowa, dopisywana tabela
+`document_status_events` zapisuje co najwyżej JEDNO zdarzenie na dokument
+(unikalny indeks na `document_id`): `superseded` (z `replacement_document_id`
+tego samego rodzaju/roku/klasy) albo `voided`. Trigger `BEFORE INSERT`
+odrzuca zastępstwo dokumentem, który sam już ma zdarzenie stanu — to samo w
+sobie wyklucza cykl A→B→A (po kroku „A zastąpiony przez B” dokument A nie
+jest już aktywny). Widok `document_current_status` wylicza stan
+(`active`/`superseded`/`voided`) bez zmiany `documents`. Skutki dla danych:
+nowa, pusta tabela; istniejące dokumenty są `active` (brak wiersza = active).
+Wycofanie na pustej bazie: usunięcie widoku, tabeli i dwóch funkcji. Opis:
+[`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
+
 `0076_event_volunteering.sql` (issue #142, Etap 1) dodaje zadania i zapisy
 wolontariuszy do wydarzeń. `event_tasks` (treść niezmienna po utworzeniu poza
 jednorazowym odwołaniem) i `event_task_signups` (opiekun albo konto; status
@@ -366,6 +380,22 @@ dokumentu z zamkniętego roku jest dziś możliwe; rozszerzenie
 wyjść od najnowszej wersji tej funkcji na `main` i nie powtórzyć incydentu z
 #279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch funkcji. Opis:
 [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
+
+`0074_retention_policies.sql` (issue #91, D-04) dodaje `retention_policies` —
+rejestr polityk retencji, tylko dopisywanie (trigger blokuje UPDATE/DELETE).
+Wiele wierszy per `data_category` w czasie; obowiązująca polityka to
+najnowszy wg `effective_from`. `retain_for` (interval) i `retain_until_rule`
+(opis) są rozłączne (dokładnie jedno wypełnione). `approved_by`, jeśli
+ustawiony, musi różnić się od `created_by` (zasada czterech oczu). Skutki dla
+danych: nowa, pusta tabela; brak zmian w istniejących tabelach. Brak wiersza
+dla kategorii oznacza „nie usuwaj” (ta sama semantyka co `documents.retain_until`
+sprzed tej migracji). Raport kandydatów `GET /api/admin/retention/preview`
+(`src/pg/routes/admin.js`) liczy wyłącznie wiersze per kategoria i rok/rok
+szkolny — nie usuwa ani nie anonimizuje żadnych danych. **Mechanizm wykonania
+retencji (usuwanie/anonimizacja) świadomie nie jest częścią tej migracji ani
+tego PR** — wymaga osobnej decyzji o kształcie funkcji anonimizującej,
+testów rodzeństwa/opieki dzielonej i przeglądu bezpieczeństwa (patrz #91).
+Wycofanie na pustej bazie: `DROP TABLE retention_policies` i funkcji guard.
 
 `0082_immutability_hardening.sql` (issue #204, część: punkty 1, 2 i 5 z
 propozycji) zamyka trzy furtki, przez które kilka faktów traktowanych jako

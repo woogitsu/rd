@@ -129,6 +129,17 @@ export const MESSAGES = Object.freeze({
   role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji.",
   class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
 
+  // --- Rejestr żądań osób (RODO, #100) -----------------------------------------------
+  subject_required: "Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie.",
+  invalid_received_on: "Podaj poprawną datę wpłynięcia żądania.",
+  invalid_due_on: "Podaj poprawną datę terminu odpowiedzi.",
+  invalid_decision_note_ref: "Odwołanie do decyzji może mieć od 1 do 200 znaków.",
+  household_not_found: "Nie znaleziono gospodarstwa.",
+  guardian_not_found: "Nie znaleziono opiekuna.",
+  student_not_found: "Nie znaleziono ucznia.",
+  data_request_not_found: "Nie znaleziono żądania.",
+  data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",
+
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
   invalid_cents_value: "Niepoprawna kwota w EUR.",
@@ -169,6 +180,8 @@ export const MESSAGES = Object.freeze({
   difference_requires_note: "Różnica wymaga wpisania wyjaśnienia.",
   reconciliation_not_found: "Nie znaleziono uzgodnienia.",
   reconciliation_confirmed: "Uzgodnienie jest już potwierdzone i nie można go zmienić.",
+  reconciliation_abandoned: "Szkic uzgodnienia został porzucony i nie można go już zmienić ani potwierdzić.",
+  reconciliation_has_active_matches: "Szkic ma aktywne dopasowania — cofnij je, zanim porzucisz szkic.",
   invalid_statement_line: "Niepoprawna pozycja wyciągu.",
   invalid_line_count: "Niepoprawna liczba pozycji wyciągu.",
   statement_line_after_statement_date: "Pozycja wyciągu ma datę późniejszą niż data wyciągu.",
@@ -261,6 +274,9 @@ export const MESSAGES = Object.freeze({
   // invalid_title, invalid_category, invalid_description: wspólne z innymi modułami (patrz niżej / „Wpłaty, księga, uzgodnienia”).
   invalid_document_date: "Niepoprawna data dokumentu.",
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
+  invalid_replacement_document: "Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę.",
+  document_status_replacement_not_active: "Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny.",
+  document_status_conflict: "Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok.",
   upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
   // --- Wydarzenia -------------------------------------------------------------------------------

@@ -365,6 +365,12 @@ async function makeAdminTarget(ctx, stage) {
     await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
     return { schoolYearId };
   }
+  if (stage === 'dataRequest') {
+    // Rejestr żądań osób (#100) — cel dla przejścia stanu; gospodarstwo ogólnoszkolne (hh-1).
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',
+      { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' });
+    return { requestId: json.request.id };
+  }
   throw new Error(`unknown admin fixture ${stage}`);
 }
 
@@ -460,6 +466,12 @@ const MAKERS = {
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', `/api/documents?kind=${kind}&schoolYearId=${target.schoolYearId}${classPart}`,
       pdfBytes(target.key), { 'Content-Type': 'application/pdf', 'Idempotency-Key': nextKey('fx-doc') });
     return { documentId: json.document.id };
+  },
+  // Para dokumentów tego samego rodzaju/roku/klasy — cel zastąpienia (issue #82).
+  documentPair: async (ctx, target, kind) => {
+    const original = await MAKERS.document(ctx, target, kind);
+    const replacement = await MAKERS.document(ctx, target, kind);
+    return { documentId: original.documentId, replacementDocumentId: replacement.documentId };
   },
   ledgerEntry: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
