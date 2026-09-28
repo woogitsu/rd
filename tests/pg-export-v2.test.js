@@ -74,7 +74,7 @@ async function seedSource(db) {
   const transfer = await call(db, 'POST', '/api/ledger/transfers', cookies.treasurer, {
     schoolYearId: YEAR, direction: 'cash_to_bank', amountCents: 3000, transferredOn: '2026-09-25', description: 'Wpłata gotówki na rachunek',
   }, key('tr'));
-  assert.equal(transfer.status, 201);
+  assert.equal(transfer.status, 201, JSON.stringify(transfer.body));
 
   // Uzgodnienie: pozycje, powiązanie cofnięte z powodem, ponowne powiązanie, zatwierdzenie przez drugą osobę.
   const created = await call(db, 'POST', '/api/reconciliations', cookies.treasurer,

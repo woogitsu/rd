@@ -238,6 +238,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
   documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',
+  document_uploads: 'zamiary uploadu dokumentów (klucz obiektu, skrót) — dane techniczne jak documents (0032)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',
   export_runs: 'dziennik eksportów — każdy eksport zmieniałby następny',
   meeting_request_keys: 'klucze idempotencji żądań — dane techniczne',
