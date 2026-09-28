@@ -306,10 +306,6 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
-  // --- Zatwierdzone dane do wpłaty / generator EPC (#92) ----------------------------
-  invalid_iban: "Podaj poprawny numer IBAN.",
-  invalid_bic: "Podaj poprawny kod BIC (8 lub 11 znaków) albo zostaw pole puste.",
-  invalid_payee_name: "Podaj nazwę odbiorcy przelewu (1–70 znaków).",
   preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
   preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
   sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
