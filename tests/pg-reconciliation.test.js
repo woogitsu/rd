@@ -966,8 +966,13 @@ test('importing statement lines runs a constant number of queries regardless of 
     const largeCalls = counting.getCalls();
 
     // Ta sama liczba zapytań SQL niezależnie od liczby pozycji (5 kontra 80).
+    // Próg podniesiony z 10 do 11: #150 dodaje do loadSession JEDNO stałe
+    // zapytanie na żądanie (UPDATE last_seen_at, tronowane co
+    // LAST_SEEN_THROTTLE_SECONDS — src/pg/auth.js) niezależne od liczby
+    // importowanych pozycji; sama stałość (smallCalls === largeCalls) nadal
+    // jest sprawdzana wyżej.
     assert.equal(smallCalls, largeCalls);
-    assert.ok(largeCalls <= 10, `spodziewano się stałej, małej liczby zapytań, otrzymano ${largeCalls}`);
+    assert.ok(largeCalls <= 11, `spodziewano się stałej, małej liczby zapytań, otrzymano ${largeCalls}`);
   } finally {
     await db.close();
   }
