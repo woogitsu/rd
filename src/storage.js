@@ -3,6 +3,7 @@
 // Kontrakt (wspólny dla pamięci i S3):
 //   storage.putObject(key, bytes, contentType) -> Promise<void>
 //   storage.getObject(key)                     -> Promise<{ body: Uint8Array, contentType, size }>
+//   storage.headObject(key)                    -> Promise<boolean>  // czy obiekt istnieje, bez treści (#168)
 //   storage.deleteObject(key)                  -> Promise<void>  // wyłącznie sprzątanie obiektu,
 //                                                               // do którego nie powstał wpis w bazie,
 //                                                               // i test smoke; dokumentów nie usuwamy (D-04)
@@ -46,6 +47,12 @@ export function createMemoryStorage() {
       const object = objects.get(key);
       if (!object) throw storageError('storage_object_not_found');
       return { body: Uint8Array.from(object.body), contentType: object.contentType, size: object.body.length };
+    },
+    // Czy obiekt istnieje, bez pobierania treści (#168: potwierdzenie przed
+    // usunięciem osieroconego obiektu albo przed zwrotem replayed:true).
+    async headObject(key) {
+      assertObjectKey(key);
+      return objects.has(key);
     },
     async deleteObject(key) {
       assertObjectKey(key);
@@ -152,6 +159,13 @@ export function createS3Storage({
       if (!response.ok) { await response.arrayBuffer().catch(() => {}); throw storageError(`storage_get_${response.status}`); }
       const body = new Uint8Array(await response.arrayBuffer());
       return { body, contentType: response.headers.get('content-type'), size: body.length };
+    },
+    async headObject(key) {
+      const response = await send('HEAD', key);
+      await response.arrayBuffer().catch(() => {});
+      if (response.status === 404) return false;
+      if (!response.ok) throw storageError(`storage_head_${response.status}`);
+      return true;
     },
     async deleteObject(key) {
       const response = await send('DELETE', key);

@@ -50,6 +50,27 @@ export function buildPaymentsUrl({ schoolYearId, status = "", cursor = "", limit
   return `/api/payments?${params.toString()}`;
 }
 
+// Zapytanie listy zapamiętywane przy wczytaniu pierwszej strony (#192).
+// „Wczytaj następne” używa wyłącznie tego zapytania i kursora z serwera,
+// nigdy bieżących, niezatwierdzonych pól formularza.
+export function paymentsQuery({ schoolYearId, status = "" }) {
+  buildPaymentsUrl({ schoolYearId, status });
+  return Object.freeze({ schoolYearId: String(schoolYearId).trim(), status: String(status ?? "") });
+}
+
+// Adres następnej strony albo null, gdy nie ma czego dociągać (brak kursora lub zapytania).
+export function buildNextPaymentsUrl(query, cursor) {
+  if (!query || typeof cursor !== "string" || cursor === "") return null;
+  return buildPaymentsUrl({ ...query, cursor });
+}
+
+// true, gdy pola formularza różnią się od zapytania, które dało wyświetloną listę.
+export function paymentsFilterChanged(query, current) {
+  if (!query) return false;
+  return String(current?.schoolYearId ?? "").trim() !== query.schoolYearId
+    || String(current?.status ?? "") !== query.status;
+}
+
 export function makeIdempotencyKey(prefix, randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto)) {
   if (typeof randomUUID !== "function") throw new Error("Ta przeglądarka nie obsługuje bezpiecznych identyfikatorów operacji.");
   return `${prefix}-${randomUUID()}`;
@@ -75,4 +96,23 @@ export function normalizePayment(payment) {
         ? amountCents - correctedCents
         : 0,
   };
+}
+
+// Role finansowe jak FINANCIAL_ROLES w src/pg/routes/payments.js i ledger.js (test
+// tests/role-policy-parity.test.js pilnuje zgodności). Liczą się tylko przydziały bez klasy
+// (isAuthorizedScoped bez classId). Ukrycie akcji to skrót — serwer i tak autoryzuje (#225).
+export const FINANCIAL_ROLES = Object.freeze(["admin", "board", "treasurer"]);
+
+export function hasFinancialAccess(grants, schoolYearId = "") {
+  return (Array.isArray(grants) ? grants : []).some((grant) => FINANCIAL_ROLES.includes(grant?.role)
+    && !grant.classId
+    && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === String(schoolYearId).trim()));
+}
+
+// Opis błędu HTTP dla osoby korzystającej z panelu: 403 to brak uprawnień, nie awaria.
+export function describeApiError(status, code) {
+  if (status === 401 || code === "unauthenticated") return "Sesja wygasła. Zaloguj się ponownie.";
+  if (code === "mfa_required") return "Potwierdź logowanie drugim składnikiem (MFA), aby korzystać z finansów.";
+  if (status === 403 || code === "forbidden") return "Nie masz uprawnień do tej operacji w wybranym roku szkolnym.";
+  return null;
 }

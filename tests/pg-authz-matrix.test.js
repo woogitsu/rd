@@ -367,6 +367,15 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // Bilans otwarcia roku celu wprost w bazie (#199); trasa poprawki wymaga jego istnienia.
+  openingBalance: async (ctx, target) => {
+    await ctx.db.query(
+      `INSERT INTO ledger_opening_balances (id, school_year_id, amount_cents, cash_cents, note, created_by, idempotency_key)
+       VALUES ($1, $2, 10000, 2000, 'Bilans syntetyczny', 'u-fx-admin', $3) ON CONFLICT (school_year_id) DO NOTHING`,
+      [nextKey('fx-ob'), target.schoolYearId, nextKey('fx-ob-key')],
+    );
+    return {};
+  },
   campaign: makeCampaign,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
@@ -448,6 +457,7 @@ const WRITE_TABLES = [
   'import_batches', 'households', 'guardians', 'students', 'enrollments', 'student_guardians',
   'guardian_contact_changes', 'student_guardian_changes', 'enrollment_history', 'documents',
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
+  'ledger_opening_balance_adjustments', 'ledger_transfers',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
   'email_webhook_events', 'email_suppressions',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
@@ -608,6 +618,15 @@ for (const route of ROUTE_MATRIX) {
   }
 }
 
+// #214: `todo` w macierzy nie oblewa CI, więc bez limitu jest wygodnym miejscem
+// na ukrycie nowej regresji uprawnień. Dziś macierz nie ma żadnego wpisu — ten
+// meta-test to zabezpiecza: dodanie `todo` do route-matrix.js musi być świadome
+// i opisane w PR/issue, nie przejść bez zauważenia.
+test('macierz uprawnień: zero wpisów `todo` (znana luka wymaga świadomej decyzji, patrz #214)', () => {
+  const allTodoReasons = ROUTE_MATRIX.flatMap((route) => caseList(route).map((item) => item.todo).filter(Boolean));
+  assert.deepEqual(allTodoReasons, [], `macierz ma ${allTodoReasons.length} wpis(y) todo — opisz je w PR i w issue: ${allTodoReasons.join(' | ')}`);
+});
+
 test.after(async () => {
   for (const pending of contexts.values()) await (await pending).db.close();
 });
@@ -701,6 +720,7 @@ const MODULE_SOURCES = {
   import: ['../src/pg/routes/import.js'],
   documents: ['../src/pg/routes/documents.js', '../src/documents.js'],
   ledger: ['../src/pg/routes/ledger.js'],
+  'ledger-cash': ['../src/pg/routes/ledger-cash.js'],
   email: ['../src/pg/routes/email.js'],
   news: ['../src/pg/routes/news.js', '../src/pg/news.js'],
   admin: ['../src/pg/routes/admin.js'],

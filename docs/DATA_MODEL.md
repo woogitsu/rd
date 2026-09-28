@@ -15,19 +15,25 @@ Pole household_id przy uczniu pozostaje na razie głównym przypisaniem organiza
 Jedyna definicja tego, czy relacja `student_guardians` obowiązuje w danym dniu, to
 widok `student_guardians_current` i funkcja `student_guardians_current_on(as_of)`
 (`postgres/migrations/0035_student_guardians_current.sql`). Semantyka przedziału to
-`[starts_on, ends_on)`: `starts_on` włącznie (`NULL` = od początku ewidencji),
-`ends_on` **wyłącznie** (`NULL` = relacja nadal trwa; w dniu `ends_on` relacja
-uznawana jest już za zakończoną). Dzień odniesienia to `rd_today()` (Europe/Brussels,
-migracja 0023), nie `CURRENT_DATE` serwera bazy.
+`[starts_on, ends_on]`: **oba końce włącznie** (`NULL` = odpowiednio „od początku
+ewidencji” / „relacja nadal trwa”; dzień PO `ends_on` relacja jest już zakończona).
+Dzień odniesienia to `rd_today()` (Europe/Brussels, migracja 0023), nie
+`CURRENT_DATE` serwera bazy. To **inna** semantyka niż `[starts_on, ends_on)` w
+`0014_households.sql` (`student_households`/`guardian_households`) — te dwie
+tabele mają odrębne, ustalone już wcześniej konwencje; ta migracja ich nie
+ujednolica, tylko ujednolica trzy moduły czytające `student_guardians`.
 
 `src/pg/routes/families.js` (karta gospodarstwa), `src/pg/routes/email.js`
 (migawka adresatów kampanii) i `src/pg/export.js` (lista klasy dla przedstawiciela)
 czytają wyłącznie z tego widoku/funkcji — żaden z nich nie powtarza warunku
 `starts_on`/`ends_on` samodzielnie (pilnuje tego test statyczny w
 `tests/pg-routes-wiring.test.js`). Wcześniej te trzy moduły liczyły "aktualność"
-inaczej (patrz issue #157); ta zmiana ujednolica zachowanie, kosztem przesunięcia
-o jeden dzień widoczności relacji z `ends_on = dziś` w migawce kampanii i na
-liście klasy (poprzednio liczonych tam do `ends_on` włącznie).
+inaczej (patrz issue #157): `email.js`/`export.js` już liczyły `ends_on` włącznie
+(zgodnie z tą migracją — brak zmiany zachowania), `families.js` liczył `ends_on`
+wyłącznie. Ujednolicenie do wariantu włącznego (zgodnego z
+`tests/pg-primary-household.test.js`, #194) przesuwa widoczność na karcie
+gospodarstwa o jeden dzień w dniu granicznym `ends_on` — bez regresji w
+istniejących testach (żaden nie sprawdzał tam dnia granicznego).
 
 Migracja zachowuje stare dane deweloperskie, tworząc relacje pomiędzy uczniami i opiekunami z tego samego gospodarstwa. Przed migracją jakichkolwiek danych produkcyjnych taki podgląd musi zostać ręcznie sprawdzony — wspólny household_id nie dowodzi uprawnienia do kontaktu w sprawie każdego dziecka.
 

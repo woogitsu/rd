@@ -13,6 +13,7 @@
 // zapisywać jej w repo, CI, logach ani zgłoszeniach.
 
 import { createHash } from 'node:crypto';
+import { csvHeader, csvRow } from './csv.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
 export const EXPORT_FORMAT_VERSION = 1;
@@ -598,4 +599,52 @@ export async function buildClassRoster(executor, classId) {
     schoolYearId: klass.school_year_id,
     rowCounts: { students: roster.students.length, guardians: guardianIds.size },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Lista klasy jako CSV do wydruku (#132). Dane te same co JSON (deterministyczny
+// `roster` z buildClassRoster) — tylko sortowanie i format są inne. JSON zostaje
+// przy COLLATE "C" dla determinizmu bajt w bajt; CSV jest czytany przez ludzi,
+// więc sortujemy przez Intl.Collator('pl') (Ćwik/Łukasik/Śliwa/Żak w kolejności
+// alfabetu polskiego, nie po bajtach). Bez wpłat, kwot i identyfikatorów rodzin.
+const ROSTER_CSV_COLUMNS = [
+  { header: 'Lp.', type: 'text' },
+  { header: 'Nazwisko ucznia', type: 'text' },
+  { header: 'Imię ucznia', type: 'text' },
+  { header: 'Opiekun 1', type: 'text' },
+  { header: 'E-mail opiekuna 1 (tylko przy zgodzie na kontakt)', type: 'text' },
+  { header: 'Opiekun 2', type: 'text' },
+  { header: 'E-mail opiekuna 2 (tylko przy zgodzie na kontakt)', type: 'text' },
+  { header: 'Kontakt główny', type: 'text' },
+  { header: 'Uwagi', type: 'text' },
+];
+
+export function buildClassRosterCsv(roster, { generatedAt = new Date() } = {}) {
+  const collator = new Intl.Collator('pl', { sensitivity: 'base' });
+  const students = [...roster.students].sort((a, b) =>
+    collator.compare(a.lastName, b.lastName) || collator.compare(a.firstName, b.firstName) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const lines = [];
+  const isoDate = generatedAt.toISOString().slice(0, 10);
+  const oneCell = (text) => csvRow([{ header: '', type: 'text' }], [text]);
+  lines.push(oneCell(`Lista klasy ${roster.class.name} — rok szkolny ${roster.class.schoolYearId} — wygenerowano ${isoDate}`));
+  lines.push('');
+  lines.push(csvHeader(ROSTER_CSV_COLUMNS));
+  students.forEach((student, index) => {
+    const [g1, g2] = student.guardians;
+    const primary = student.guardians.find((g) => g.primaryContact);
+    lines.push(csvRow(ROSTER_CSV_COLUMNS, [
+      String(index + 1),
+      student.lastName,
+      student.firstName,
+      g1 ? `${g1.firstName} ${g1.lastName}` : '',
+      g1?.email ?? '',
+      g2 ? `${g2.firstName} ${g2.lastName}` : '',
+      g2?.email ?? '',
+      primary ? `${primary.firstName} ${primary.lastName}` : '',
+      '',
+    ]));
+  });
+  lines.push('');
+  lines.push(oneCell('Zawiera dane osobowe — nie przesyłać dalej, usunąć po wykorzystaniu.'));
+  return `${lines.join('\r\n')}\r\n`;
 }

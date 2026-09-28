@@ -276,6 +276,9 @@ async function runContractScenario(backend) {
   // Lista i przegląd po zapisach.
   const pageOne = await step('list page 1', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2 })));
   const pageTwo = await step('list page 2', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2, cursor: pageOne.nextCursor })));
+  // #192: kursor wiąże rok i rodzaj wpisu zapytania, które go wydało.
+  await step('list cursor other direction', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'expense', limit: 2, cursor: pageOne.nextCursor })));
+  await step('list cursor other year', call(cookie, buildLedgerUrl({ schoolYearId: 'y2025', limit: 2, cursor: pageOne.nextCursor })));
   await step('list page 3', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', limit: 2, cursor: pageTwo.nextCursor })));
   await step('list expense', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'expense' })));
   await step('list income', call(cookie, buildLedgerUrl({ schoolYearId: 'y2026', direction: 'income' })));
@@ -319,6 +322,10 @@ test('PostgreSQL ledger API matches the legacy Worker contract step by step', as
       assert.deepEqual(actual[index], expected[index], `step: ${expected[index].label}`);
     }
     assert.ok(expected.some((s) => s.status === 201) && expected.some((s) => s.status === 409));
+    for (const label of ['list cursor other direction', 'list cursor other year']) {
+      const found = actual.find((s) => s.label === label);
+      assert.deepEqual([found.status, found.body], [400, { error: 'invalid_cursor' }], label);
+    }
     assert.equal(await pg.count('ledger_entries'), 5);
     assert.equal(await pg.count('ledger_corrections'), 2);
     assert.equal(await pg.count('audit_events', "action LIKE 'ledger.%'"), 7);
@@ -601,9 +608,34 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
   } finally {
     console.error = original;
   }
+  // #214: kontrola pozytywna — bez niej test przechodzi także wtedy, gdy logger przestaje pisać na console.error.
+  assert.ok(errors.length > 0, 'awarie triggera audytu muszą zostać zalogowane przez console.error');
   assert.ok(errors.every((line) => !line.includes('Syntetyczny') && !line.includes('@')));
   assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 0);
   assert.equal(await backend.count('ledger_corrections'), 1);
+
+  // #211: ponowienie tym samym kluczem po usunięciu awarii — dokładnie ten krok
+  // wykona przeglądarka skarbnika po 503 (macierz scenariuszy AGENTS.md, księga).
+  await backend.db.exec('DROP TRIGGER fail_ledger_audit ON audit_events; DROP FUNCTION fail_ledger_audit();');
+  const retried = await createEntry(backend, {}, 'audit-fail-0001');
+  assert.equal(retried.status, 201);
+  assert.equal(retried.replayed, 'false');
+  assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 1);
+  assert.equal(await backend.count('audit_events', `action = 'ledger.entry.created' AND entity_id = '${retried.body.entry.id}'`), 1);
+  const thirdTry = await createEntry(backend, {}, 'audit-fail-0001');
+  assert.equal(thirdTry.status, 200);
+  assert.equal(thirdTry.replayed, 'true');
+  assert.equal(thirdTry.body.entry.id, retried.body.entry.id);
+  assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 1);
+
+  const correctionRetry = await correct(backend, entry.id, { amountCents: 1, reason: 'Bez audytu' }, 'audit-fail-0002');
+  assert.equal(correctionRetry.status, 201);
+  assert.equal(correctionRetry.replayed, 'false');
+  assert.equal(await backend.count('ledger_corrections'), 2);
+  const correctionThird = await correct(backend, entry.id, { amountCents: 1, reason: 'Bez audytu' }, 'audit-fail-0002');
+  assert.equal(correctionThird.status, 200);
+  assert.equal(correctionThird.replayed, 'true');
+  assert.equal(await backend.count('ledger_corrections'), 2);
 }));
 
 test('CSV export of a school year is financial-only, injection-safe and audited', async () => withPg({}, async (backend) => {

@@ -596,6 +596,47 @@ export const ROUTE_MATRIX = Object.freeze([
     }),
   },
 
+  // ---------- kasa i rachunek (#199) ----------
+  // Przeniesienia i odczyt: admin/zarząd/skarbnik z MFA, przydział bez klasy w roku (jak księga).
+  // Bilans otwarcia i jego poprawki: wyłącznie zarząd z MFA (docs/LEDGER.md).
+  {
+    id: 'ledgerCash.transfers', module: 'ledger-cash', method: 'GET', path: '/api/ledger/transfers?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/ledger/transfers?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    id: 'ledgerCash.createTransfer', module: 'ledger-cash', method: 'POST', path: '/api/ledger/transfers',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/ledger/transfers', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, direction: 'cash_to_bank', amountCents: 100,
+        transferredOn: yearDate(target, '10-10'), description: `Wpłata gotówki ${marker(target.key)}` },
+    }),
+  },
+  {
+    id: 'ledgerCash.openingBalance', module: 'ledger-cash', method: 'GET', path: '/api/ledger/opening-balance?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/ledger/opening-balance?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    // Osobna baza: rok 1 nie może mieć jeszcze bilansu otwarcia (jeden na rok).
+    id: 'ledgerCash.createOpeningBalance', module: 'ledger-cash', method: 'POST', path: '/api/ledger/opening-balance',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403, fixture: null, group: 'ledgerOpening',
+    build: ({ target, key }) => ({
+      path: '/api/ledger/opening-balance', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, bankCents: 1000, cashCents: 500, note: 'Bilans syntetyczny' },
+    }),
+  },
+  {
+    id: 'ledgerCash.adjustOpeningBalance', module: 'ledger-cash', method: 'POST', path: '/api/ledger/opening-balance/adjustments',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403, fixture: 'static',
+    object: { kind: 'openingBalance' },
+    build: ({ target, key }) => ({
+      path: '/api/ledger/opening-balance/adjustments', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, amountCents: 100, cashCents: 0, reason: 'Poprawka syntetyczna' },
+    }),
+  },
+
   // ---------- email (#10, #40) ----------
   // Szkic i kolejka: zarząd, skarbnik z MFA; zatwierdzenie: wyłącznie zarząd z MFA (inna osoba niż autor).
   // Admin techniczny nie ma dostępu. Przydział klasowy nie otwiera kampanii całego roku.

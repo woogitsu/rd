@@ -13,7 +13,11 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { createSessionSecret } from '../../src/auth.js';
 import { loadMigrations } from '../../src/postgres-migrations.js';
+// #214: instaluje globalną pułapkę na sieć jako efekt uboczny importu — każdy
+// plik, który używa tego helpera, jest chroniony bez osobnej konfiguracji.
+import { networkGuardCalls } from './network-guard.js';
 
+export { networkGuardCalls };
 export const TEST_ORIGIN = 'https://rd.test';
 const migrationsDirectory = fileURLToPath(new URL('../../postgres/migrations/', import.meta.url));
 
