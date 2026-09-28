@@ -43,6 +43,55 @@ function quotaTimezoneFrom(value) {
   }
 }
 
+// Ta sama walidacja, dla okna wysyłki (#130) — osobna funkcja, bo ma inną
+// (parametryzowaną) wartość domyślną niż strefa limitu Brevo powyżej.
+function validTimezone(value, fallback) {
+  const candidate = typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  try {
+    // eslint-disable-next-line no-new -- tylko walidacja identyfikatora strefy
+    new Intl.DateTimeFormat('en-CA', { timeZone: candidate });
+    return candidate;
+  } catch {
+    return fallback;
+  }
+}
+
+// 'HH:MM' -> minuty od północy, albo null jeśli nieprawidłowe.
+function minutesFrom(value) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value ?? '').trim());
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+// Dni tygodnia ISO (1 = poniedziałek … 7 = niedziela), np. '1-5' albo '1,3,5'.
+function daysFrom(value) {
+  const text = String(value ?? '1-5').trim();
+  const days = new Set();
+  for (const part of text.split(',')) {
+    const range = /^([1-7])(?:-([1-7]))?$/.exec(part.trim());
+    if (!range) continue;
+    const start = Number(range[1]);
+    const end = range[2] ? Number(range[2]) : start;
+    for (let d = start; d <= end; d += 1) days.add(d);
+  }
+  return days.size ? days : new Set([1, 2, 3, 4, 5]);
+}
+
+// Okno godzin wysyłki (#130). Wyłączone domyślnie — termin i godziny ustala
+// zarząd/szkoła (D-16); włącza się jawnie przez EMAIL_SEND_WINDOW_ENABLED.
+function sendWindowFrom(env) {
+  const enabled = env.EMAIL_SEND_WINDOW_ENABLED === 'true';
+  const startMinutes = minutesFrom(env.EMAIL_SEND_WINDOW_START) ?? 9 * 60;
+  const endMinutes = minutesFrom(env.EMAIL_SEND_WINDOW_END) ?? 18 * 60;
+  return {
+    enabled,
+    timezone: validTimezone(env.EMAIL_SEND_WINDOW_TIMEZONE, 'Europe/Brussels'),
+    days: daysFrom(env.EMAIL_SEND_WINDOW_DAYS),
+    // Okno puste (start >= end) po literówce w env liczy się jako zamknięte
+    // przez całą dobę, nigdy jako "cały dzień otwarte".
+    startMinutes, endMinutes: Math.max(startMinutes, endMinutes),
+  };
+}
+
 // Konfiguracja z env (process.env w skrypcie, obiekt env w testach).
 export function emailConfig(env = {}) {
   const dailyLimit = intFrom(env.EMAIL_DAILY_LIMIT, 300, { min: 0, max: 100_000 });
@@ -65,7 +114,23 @@ export function emailConfig(env = {}) {
     // do budowy linku publicznego. Brak jednego z nich = brak stopki (bez łamania wysyłki).
     unsubscribeSecret: env.EMAIL_UNSUBSCRIBE_SECRET || null,
     publicBaseUrl: env.PUBLIC_BASE_URL || null,
+    sendWindow: sendWindowFrom(env),
   };
+}
+
+// #130: czy `now` mieści się w oknie dni/godzin wysyłki. Okno wyłączone
+// (domyślnie) zawsze zwraca true.
+export function withinSendWindow(now, sendWindow) {
+  if (!sendWindow?.enabled) return true;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: sendWindow.timezone, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now);
+  const weekdayName = parts.find((p) => p.type === 'weekday').value;
+  const hour = Number(parts.find((p) => p.type === 'hour').value);
+  const minute = Number(parts.find((p) => p.type === 'minute').value);
+  const isoWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(weekdayName) + 1;
+  const minutes = hour * 60 + minute;
+  return sendWindow.days.has(isoWeekday) && minutes >= sendWindow.startMinutes && minutes < sendWindow.endMinutes;
 }
 
 export function isProduction(config) {
