@@ -28,6 +28,16 @@ Każda kampania ma `category`: `contribution_reminder` (przypomnienie o dobrowol
 - Audyt: `email.preference.opt_out` z kategorią i źródłem (`link`/`webhook`/`staff_on_parent_request`), nigdy z adresem.
 - **Ograniczenia tego prototypu**: limit żądań na trasę publiczną (`EMAIL_PREFERENCES_RATE_LIMIT`, domyślnie 200/min) jest licznikiem w pamięci procesu (nie działa między instancjami/replikami, nie rozróżnia adresatów po IP) — przed produkcją wymaga trwałego, per-IP licznika. Wartość domyślna jest celowo wysoka, żeby nie kolidować z automatycznym sprawdzaniem uprawnień (macierz #189 odpytuje tę trasę wieloma tożsamościami z tego samego procesu testowego) — realną ochronę przed nadużyciem trzeba dostroić przed wdrożeniem, razem z licznikiem trwałym. Trasa publiczna zwraca dziś JSON, nie stronę HTML z potwierdzeniem — wymaga uzupełnienia przed wdrożeniem. Kategoria „obowiązkowa bez wypisania” nie jest zaimplementowana (czeka na D-06).
 
+### Wysyłka testowa (`POST …/test-send`, #104)
+Board lub skarbnik z MFA mogą wysłać jedną wiadomość z bieżącą treścią kampanii (temat z prefiksem `[TEST] `, `{rodzina}` = `PRZYKŁAD`) na adres z `EMAIL_PREVIEW_RECIPIENTS` — pełne adresy skrzynek technicznych Rady, bez wieloznaczników. Adres identyczny z jakimkolwiek `guardians.email` w bazie jest odrzucany (`preview_recipient_not_allowed`), żeby pomyłkowo nie wysłać testu do rodzica. Wysyłka testowa korzysta z tego samego klienta i tych samych barier co zadanie kolejki (ten sam moduł `src/email/brevo.js`), nie ma własnej implementacji sieciowej.
+
+- Wymaga `EMAIL_SENDING_ENABLED=true`; inaczej `409 sending_disabled` bez żadnego zapytania do sieci.
+- Limit: 5 testów na kampanię i 20 na konto na dobę (UTC), liczone z `email_preview_sends`; przekroczenie daje `429`. Każda próba (udana albo zakończona błędem dostawcy) zużywa pulę dnia Brevo (`email_send_ledger`, `source = 'preview'`) — to prawdziwa wiadomość wychodząca z tego samego konta.
+- `Idempotency-Key` jak przy szkicu kampanii: powtórzone żądanie z tym samym kluczem nie wysyła drugiej wiadomości.
+- Test nie zmienia stanu kampanii, migawki ani zatwierdzenia.
+- Flaga `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` (domyślnie wyłączona — brak decyzji D-16): gdy włączona, `POST …/approve` odrzuca zatwierdzenie treści, dla której nie było jeszcze udanej próby wysyłki testowej (`preview_required`).
+- Audyt (`email.preview.sent`) zawiera skrót treści i indeks adresu na liście `EMAIL_PREVIEW_RECIPIENTS`, nigdy sam adres.
+
 Anulowanie (`POST …/cancel`) zatrzymuje wiersze oczekujące w kolejce (`cancelledMessages`). Wiersze już przejęte przez zadanie (`sending`) zadanie samo oznacza jako `cancelled` przy potwierdzeniu przed wysyłką — wyjść może najwyżej wiadomość, której przekazanie do Brevo już trwa (jedna na proces zadania). Wiadomości przyjętej przez Brevo nie da się cofnąć.
 
 ## Dobór adresatów (założenie do decyzji D-11 i D-17)
@@ -100,6 +110,8 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 |---|---|
 | `EMAIL_SENDING_ENABLED` | `true` włącza wysyłkę; domyślnie wyłączona |
 | `EMAIL_TEST_ALLOWLIST` | poza produkcją: dozwolone adresy techniczne (`*@domena` lub pełny adres, po przecinku) |
+| `EMAIL_PREVIEW_RECIPIENTS` | (#104) adresy dozwolone dla `POST …/test-send` — wyłącznie pełne adresy skrzynek technicznych Rady, bez wieloznaczników, po przecinku |
+| `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` | (#104) `true` wymaga udanej wysyłki testowej dla bieżącej treści przed zatwierdzeniem kampanii; domyślnie wyłączone (D-16 nie zapadła) |
 | `EMAIL_DAILY_LIMIT` | limit konta Brevo na dobę (domyślnie 300) |
 | `EMAIL_DAILY_RESERVED` | rezerwa na inne wiadomości konta (domyślnie 0) |
 | `EMAIL_QUOTA_TIMEZONE` | strefa doby limitu konta Brevo (domyślnie `Europe/Brussels`); nieznana strefa wraca do domyślnej |
@@ -114,12 +126,45 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 | `EMAIL_SEND_WINDOW_START` / `EMAIL_SEND_WINDOW_END` | godziny okna `HH:MM` w strefie okna (domyślnie `09:00`–`18:00`) |
 | `BREVO_API_KEY` | sekret usługi zadania; nigdy w repo ani frontendzie |
 | `BREVO_FROM_EMAIL`, `BREVO_FROM_NAME` | zweryfikowany nadawca (D-17) |
+| `BREVO_REPLY_TO` | adres odpowiedzi (#148); na produkcji wymagany — brak daje `reply_to_not_configured` |
 | `BREVO_WEBHOOK_SECRET` | wspólny sekret webhooka |
 | `EMAIL_UNSUBSCRIBE_SECRET` | (#110) sekret HMAC do podpisu tokenu wypisania jednym kliknięciem; brak = brak stopki i brak nagłówków `List-Unsubscribe*` |
 | `PUBLIC_BASE_URL` | adres bazowy serwera do budowy linku wypisania (i kontroli `Origin` — już używany gdzie indziej) |
 | `EMAIL_PREFERENCES_RATE_LIMIT` | (#110) limit żądań na `GET`/`POST /api/email/preferences` na proces na minutę (domyślnie 200 — patrz „Ograniczenia” niżej) |
+| `EMAIL_DKIM_HOSTS` | (dla `npm run email:preflight`) nazwy hostów DKIM do sprawdzenia w DNS (np. `mail._domainkey.rada.example.invalid`), po przecinku |
 
 ## Wdrożenie
 Brevo API key w sekrecie serwera, zweryfikowana domena, SPF/DKIM/DMARC, osobny adres nadawcy i uwierzytelniony webhook. Nie wysyłać poczty bezpośrednio z przeglądarki ani nie ujawniać klucza w frontendzie. Najpierw testy na kilku własnych adresach technicznych i potwierdzenie szablonu przez Radę.
+
+`liveRunRefusal` (`src/email/brevo.js`) odmawia przebiegu na żywo, gdy adres nadawcy jest w domenie darmowej skrzynki (`sender_free_domain`, lista orientacyjna w `FREE_EMAIL_DOMAINS`) albo — na produkcji — gdy brak `BREVO_REPLY_TO` (`reply_to_not_configured`). Wiadomość wysyłana przez `createBrevoTransport` przekazuje `replyTo`, jeśli jest ustawiony.
+
+### Checklista domeny nadawcy (D-17)
+Do odhaczenia przez osobę zarządzającą kontem Brevo i domeną, zanim `EMAIL_SENDING_ENABLED=true` trafi na jakiekolwiek środowisko z prawdziwymi adresami. Wynik (kto, data, ustalenie) zapisać w rejestrze decyzji ([DECISIONS.md](DECISIONS.md), D-17) — nie w repozytorium kodu.
+
+| Krok | Opis | Wynik (przykład) |
+|---|---|---|
+| 1 | Domena nadawcy należy do szkoły lub Rady i jest wskazana w D-17 — **nie** domena prywatna ani darmowa (patrz `FREE_EMAIL_DOMAINS`). | kto sprawdził / data / TAK-NIE |
+| 2 | Rekord weryfikacyjny Brevo (`brevo-code`) i rekordy DKIM z panelu Brevo dodane w DNS domeny; status domeny w Brevo = „authenticated”. | kto / data / status Brevo |
+| 3 | DMARC: istnieje rekord `_dmarc.<domena>` z `rua=mailto:<skrzynka funkcyjna>`. Start od `p=none` z monitoringiem; zaostrzenie do `quarantine`/`reject` po okresie obserwacji — decyzja zarządcy domeny. | kto / data / treść rekordu |
+| 4 | SPF: wg aktualnej dokumentacji Brevo osobny rekord SPF dla Brevo nie jest wymagany (Brevo używa własnej domeny zwrotnej). Jeśli domena ma istniejący SPF, sprawdzić, że zmiana go nie psuje (limit 10 wyszukiwań DNS). | kto / data / TAK-NIE |
+| 5 | Wyrównanie DMARC: domena w nagłówku `From` = domena z uwierzytelnionym DKIM. | kto / data / TAK-NIE |
+| 6 | `BREVO_REPLY_TO` to obsługiwana skrzynka funkcyjna Rady; wskazana osoba faktycznie odpowiada na pytania rodziców. | kto / data / skrzynka + osoba |
+| 7 | Test wysyłki na skrzynki techniczne u ≥3 dostawców (np. Gmail, Outlook, lokalny belgijski dostawca) i odczyt nagłówka `Authentication-Results` (oczekiwane: `dkim=pass`, `dmarc=pass`). | kto / data / wynik na dostawcę |
+| 8 | Wynik `npm run email:preflight` (poniżej) dołączony do checklisty odbioru #41 i do warunków D-20. | data / skrót wyniku (bez sekretów) |
+
+Przykładowa (syntetyczna) domena do dokumentacji przed decyzją D-17: `rada.example.invalid`. Prawdziwa domena szkoły/Rady nie trafia do repozytorium przed D-17.
+
+### `npm run email:preflight`
+Sprawdza konfigurację i publiczne rekordy DNS **bez wysyłki** i bez `BREVO_API_KEY` (nie łączy się z API Brevo). Wypisuje jeden wiersz na sprawdzenie: `ok`, `missing` albo `warning`, z krótkim opisem — nigdy z sekretem ani adresem rodziny.
+
+Sprawdzane pozycje:
+- `sender_email` — czy `BREVO_FROM_EMAIL` jest ustawiony i nie jest domeną darmową (`warning`, gdy jest — na żywo to `sender_free_domain`);
+- `reply_to` — czy `BREVO_REPLY_TO` jest ustawiony;
+- `webhook_secret` — czy `BREVO_WEBHOOK_SECRET` ma ≥32 znaki;
+- `test_recipients` — czy `EMAIL_TEST_ALLOWLIST` lub `EMAIL_PREVIEW_RECIPIENTS` (#104) są ustawione;
+- `dmarc` — rekord TXT `_dmarc.<domena nadawcy>`: brak → `missing`, `p=none` → `warning`, `p=quarantine`/`p=reject` → `ok`;
+- `dkim` — dla każdego hosta z `EMAIL_DKIM_HOSTS`: obecność rekordu TXT lub CNAME w DNS.
+
+Wynik jest deterministyczny i niczego nie zapisuje w bazie; ponowne uruchomienie daje ten sam wynik dla tej samej konfiguracji i stanu DNS.
 
 Źródło limitu: https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan
