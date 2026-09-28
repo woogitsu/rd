@@ -58,6 +58,8 @@
     "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir",
     "dev:year-close": "vite year-close",
     "build:year-close": "vite build year-close --outDir ../dist/year-close --base ./ --emptyOutDir",
+    "demo:seed": "node scripts/demo-seed.js",
+    "demo:start": "node scripts/demo-start.js",
     "pretest:e2e": "npm run build",
     "test:e2e": "playwright test"
   },
@@ -71,7 +73,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
-    "@playwright/test": "1.56.1",
+    "@playwright/test": "1.63.0",
     "vite": "^8.3.1",
     "wrangler": "^4.40.0"
   }

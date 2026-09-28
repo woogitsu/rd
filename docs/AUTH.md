@@ -6,7 +6,7 @@ Logowanie: adres e-mail i hasło, a następnie kod z aplikacji uwierzytelniając
 
 - Sekret sesji ma 256 bitów losowości i trafia do przeglądarki w cookie HttpOnly, Secure, SameSite=Lax.
 - Baza (D1 w starym Workerze, PostgreSQL w prototypie na `src/pg/auth.js` — sekcja niżej) przechowuje wyłącznie SHA-256 sekretu. Surowy sekret nie może znaleźć się w bazie, logach ani dzienniku audytu.
-- Sesja jest ważna najwyżej 24 godziny. Zapytanie odrzuca sesję wygasłą, wycofaną i konto wyłączone.
+- Sesja jest ważna najwyżej 24 godziny (limit absolutny, liczony od pierwszego logowania — patrz niżej) i wygasa też po bezczynności (patrz „Limit bezczynności i sesje własne”, #150). Zapytanie odrzuca sesję wygasłą, wycofaną i konto wyłączone.
 - GET /api/session zwraca minimum danych bieżącego użytkownika i stan potwierdzenia MFA.
 - POST /api/logout wymaga zgodnego nagłówka Origin, wycofuje sesję i zapisuje zdarzenie audytowe.
 - Tabele invitations i sessions tworzy migracja 0002_auth_sessions.sql. Migracji zdalnej nie uruchamiać bez przeglądu.
@@ -37,11 +37,29 @@ Proponowane parametry: TOTP według RFC 6238 — HMAC-SHA-1, 6 cyfr, krok 30 s, 
 
 Trasy (wszystkie POST, wymagają aktywnej sesji i zgodnego nagłówka `Origin`; bez sesji `401 unauthenticated`, z obcej domeny `403 invalid_origin`):
 
-- `POST /api/mfa/enroll` — tworzy oczekujący czynnik i **jeden raz** zwraca sekret (base32) oraz URI `otpauth://` do zeskanowania. Poprzedni niepotwierdzony czynnik zostaje wyłączony. Gdy konto ma już potwierdzony czynnik, wymiana wymaga sesji z potwierdzonym MFA (`403 mfa_required`) — inaczej przejęta sesja pozwoliłaby obejść MFA. Bez poprawnego klucza szyfrowania: `503 mfa_unavailable`.
+- `POST /api/mfa/enroll` — tworzy oczekujący czynnik i **jeden raz** zwraca sekret (base32) oraz URI `otpauth://` do zeskanowania. Poprzedni niepotwierdzony czynnik zostaje wyłączony. Gdy konto ma już potwierdzony czynnik, wymiana wymaga sesji z potwierdzonym MFA (`403 mfa_required`) — inaczej przejęta sesja pozwoliłaby obejść MFA — i to potwierdzonym od niedawna (krok w górę, `403 mfa_stale`, #150): potwierdzenie nowego czynnika daje świeże MFA i odcina właściciela od jego aplikacji. Bez poprawnego klucza szyfrowania: `503 mfa_unavailable`.
 - `POST /api/mfa/confirm` z `{ "code": "123456" }` — potwierdza czynnik pierwszym kodem, wyłącza poprzedni potwierdzony czynnik (i unieważnia jego kody odzyskiwania), generuje 10 kodów odzyskiwania i zwraca je **jeden raz**. Sesja zostaje oznaczona jako potwierdzona MFA i zrotowana.
 - `POST /api/mfa/verify` z `{ "code": "123456" }` — ustawia `sessions.mfa_verified_at` wyłącznie dla **bieżącej** sesji, po czym od razu ją rotuje (`rotateSession`): stara sesja dostaje `revoked_reason='rotated'`, nowy sekret trafia tylko do cookie (ochrona przed utrwaleniem sesji). Inne sesje tego samego konta pozostają bez MFA.
 - `POST /api/mfa/recovery` z `{ "code": "XXXX-XXXX-XXXX-XXXX" }` — zamiast kodu TOTP; kod odzyskiwania jest jednorazowy. Wielkość liter, spacje i myślniki nie mają znaczenia.
 - `POST /api/sessions/revoke-all` — wycofuje wszystkie aktywne sesje **własnego** konta, także bieżącą (`revoked_reason='user_revoke_all'`), czyści cookie i zwraca `{ "revoked": n, "scope": "all" }`. Nie dotyka sesji innych kont. Konto z potwierdzonym czynnikiem: sesja bez potwierdzonego MFA (samo hasło) wycofuje wyłącznie siebie (`"scope": "current"`, #189) — sama znajomość hasła nie wystarcza, by wylogować właściciela.
+
+### Limit bezczynności i sesje własne (#150)
+
+- **Bezczynność:** `SESSION_IDLE_TIMEOUT_SECONDS` (domyślnie 1800 s = 30 min; `0` wyłącza sprawdzenie — tylko do testów/lokalnie). `loadSession` porównuje z `sessions.last_seen_at` (albo `created_at`, dopóki `last_seen_at` jest jeszcze puste) i po przekroczeniu limitu **jawnie wycofuje** sesję (`revoked_reason='idle'`, zdarzenie `session.revoked` w audycie — bez zacierania historii) zamiast po cichu przestać działać. Wariant zachowawczy (jeden próg dla wszystkich ról, nie różne progi wg roli finansowej jak w pierwotnej propozycji issue) — do potwierdzenia D-10. `last_seen_at` jest zapisywany najwyżej raz na 5 minut (nie przy każdym żądaniu), żeby nie zwiększać liczby zapisów w bazie.
+- **Absolutny limit przy rotacji:** `rotateSession` (potwierdzenie MFA, zmiana hasła) NIE przedłuża limitu 24 h ponad moment PIERWSZEGO logowania — nowa sesja dziedziczy `expires_at` z `created_at` najstarszej sesji w łańcuchu `rotated_from` (`WITH RECURSIVE`). Kod TOTP podany wieczorem nie daje więc pełnych kolejnych 24 h następnego dnia.
+- **Własne sesje:** `GET /api/sessions` zwraca WYŁĄCZNIE sesje wołającego — `id`, `createdAt`, `lastSeenAt`, `mfaVerified`, `current` (bez adresu IP i User-Agent — nie są dziś zapisywane, minimalizacja danych). `POST /api/sessions/{id}/revoke` cofa jedną własną sesję (inne urządzenie albo bieżące, jak „Wyloguj”); cudza albo nieistniejąca sesja daje `404` (zakres „tylko własne”, SR-07 — nie ujawnia jej istnienia); cofnięcie bieżącej sesji czyści cookie. Obie trasy są zwolnione z bramki MFA (`MFA_GATE_EXEMPT_PREFIXES`), tak jak `/api/sessions/revoke-all` — sesja bez potwierdzonego MFA musi móc zobaczyć swoje sesje i się wylogować.
+
+### SR-10: MFA na trasach zarządzania (#150)
+
+Zarządzanie zebraniami, protokołami i uchwałami (`src/pg/meetings.js`, `MANAGE_ROLES` = admin, board, oraz #171: przedstawiciel-gospodarz własnej klasy) oraz zatwierdzenie i publikacja wydarzeń i aktualności (`src/pg/events.js`, `src/pg/news.js`) wymagają teraz **jawnie potwierdzonego MFA na poziomie trasy** (`403 mfa_required`), niezależnie od bramki routera opisanej niżej — uchwały uzasadniają wydatki > 3000 EUR (D-15). Sprawdzenie jest zawsze PO roli/zakresie (SR-07): brak roli albo zakresu daje ten sam ogólny `forbidden`, `mfa_required` tylko gdy dostęp jest, brakuje tylko MFA. Macierz uprawnień (`tests/helpers/route-matrix.js`) to wymusza.
+
+### Krok w górę (step-up): świeże MFA dla operacji krytycznych (#150)
+
+`requireAccess(request, env, { roles, requireMfa: { maxAgeSeconds }, … }, json)` przyjmuje obok `requireMfa: true` (MFA kiedykolwiek w tej sesji) także obiekt `{ maxAgeSeconds }` — MFA musi być potwierdzone od NIEDAWNA (`freshMfaForbiddenCode`, `src/pg/authorization.js`), nie tylko kiedyś w tej sesji. Sprawdzenie jest zawsze PO roli/zakresie (SR-07). Odpowiedź `403 mfa_stale` (czynnik zapisany, ale potwierdzenie za stare) albo `403 mfa_required` (sesja bez potwierdzonego MFA w ogóle) — klient prosi o kod i ponawia to samo żądanie (spójnie z #99), bez żadnego zapisu przy odmowie. Domyślny próg: `MFA_STEP_UP_MAX_AGE_SECONDS` = 15 minut (założenie do D-10).
+
+Rotacja sesji (potwierdzenie MFA, zmiana hasła) przenosi na nową sesję **moment** potwierdzenia MFA ze starej (`createSession({ mfaVerifiedAt })`), a nie `now()` — zmiana hasła nie odświeża więc świeżości MFA bez podania kodu. Świeże MFA daje wyłącznie `POST /api/mfa/verify`, `/api/mfa/recovery` lub `/api/mfa/confirm`.
+
+Wdrożone dziś: **eksport roczny** (`POST /api/exports`, `src/pg/routes/exports.js`) — jedyna operacja z testem step-up wprost wskazanym w issue #150. Mechanizm jest ogólny (`requireAccess`/`freshMfaForbiddenCode`); pozostałe operacje wymienione w issue jako kandydaci (zamknięcie roku, zatwierdzenie kampanii e-mail, nadanie roli, reset hasła/MFA, przyjęcie uchwały) **NIE mają jeszcze** wymogu świeżości — dziś mają tylko `requireMfa: true` (kiedykolwiek w sesji), co jest zgodne z resztą kryteriów SR-10, ale nie z krokiem w górę. Rozszerzenie na te trasy zostaje do osobnego PR (patrz opis w PR #150).
 
 Ochrona:
 
