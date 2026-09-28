@@ -57,12 +57,19 @@ async function auditCount(db, action) {
 
 // ---------- resolutions: MFA to decide ----------
 
-test('deciding a resolution (adopted/rejected) requires MFA; a draft does not', async () => {
+// #150 (SR-10) rozszerza #135: zarządzanie zebraniem (w tym createResolution
+// dla PROJEKTU, nie tylko decyzja) wymaga teraz MFA na poziomie meetingForManage,
+// niezależnie od statusu uchwały — stąd draft też wymaga MFA (inaczej niż
+// pierwotna nazwa testu z #135 sugerowała).
+test('deciding a resolution (adopted/rejected) requires MFA; a draft now also does (#150)', async () => {
   const db = await meetingsDb();
   try {
     const { meeting, quorumCheck } = await heldMeetingWithQuorum(db);
-    // Draft: no MFA needed at all.
-    const draft = (await createResolution(db, boardANoMfa, {
+    // #150: nawet projekt (draft) wymaga MFA — zarządzanie zebraniem w ogóle.
+    await assert.rejects(createResolution(db, boardANoMfa, {
+      idempotencyKey: key(), meetingId: meeting.id, title: 'Projekt uchwały (bez MFA)', body: 'Treść syntetyczna.',
+    }), { code: 'mfa_required', status: 403 });
+    const draft = (await createResolution(db, boardA, {
       idempotencyKey: key(), meetingId: meeting.id, title: 'Projekt uchwały', body: 'Treść syntetyczna.',
     })).resolution;
     assert.equal(draft.status, 'draft');
@@ -163,7 +170,10 @@ test('retrying after MFA expired mid-session leaves no partial write', async () 
 
 // ---------- minutes visibility: MFA only for parents/public ----------
 
-test('sharing minutes with parents or publicly requires MFA; internal does not', async () => {
+// #150 (SR-10) rozszerza #135: zarządzanie zebraniem (meetingForManage) wymaga
+// teraz MFA niezależnie od widoczności — internal wymaga go już na poziomie
+// dostępu do zebrania, nie dopiero przy parents/public.
+test('sharing minutes with parents or publicly requires MFA; internal now also does (#150)', async () => {
   const db = await meetingsDb();
   try {
     const { meeting } = await heldMeetingWithQuorum(db);
@@ -172,8 +182,10 @@ test('sharing minutes with parents or publicly requires MFA; internal does not',
     })).minutes;
     await approveMinutes(db, boardB, { minutesId: v1.id });
 
-    // internal: no MFA required.
-    await setMinutesVisibility(db, boardANoMfa, { idempotencyKey: key(), minutesId: v1.id, visibility: 'internal' });
+    // #150: internal również wymaga MFA (meetingForManage sprawdza je jako pierwsze).
+    await assert.rejects(setMinutesVisibility(db, boardANoMfa,
+      { idempotencyKey: key(), minutesId: v1.id, visibility: 'internal' }), { code: 'mfa_required', status: 403 });
+    await setMinutesVisibility(db, boardA, { idempotencyKey: key(), minutesId: v1.id, visibility: 'internal' });
 
     // parents/public: MFA required, refused otherwise with nothing written.
     await assert.rejects(setMinutesVisibility(db, boardANoMfa, {
