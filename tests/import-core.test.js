@@ -50,6 +50,48 @@ test('1000 rows are accepted without truncation', () => {
   const rows = Array.from({length:1000},(_,i)=>['Ala','Nowak',`1A`,'','','ID'+i]);
   assert.equal(preview(rows).validCount,1000);
 });
+// --- #88: zera wiodące, komórki dat, klasa bez rozróżniania wielkości liter ---
+
+test('numeric XLSX-style cell in an ID column is kept as text with a leading-zero warning', () => {
+  // Symulacja komórki liczbowej Excela: read-excel-file zwraca JS `number`, nie string.
+  const r = validateRows([head, ['Ala', 'Nowak', '1A', '', '', 7]], guessMapping(head));
+  assert.equal(r.validCount, 1);
+  assert.equal(r.records[0].studentId, '7');
+  assert.ok(r.warnings.some((w) => /zapisany jako liczba \(7\)/.test(w.message) && /zera wiodące/.test(w.message)));
+});
+
+test('an ID number beyond Number.isSafeInteger is a row error, not silent precision loss', () => {
+  const r = validateRows([head, ['Ala', 'Nowak', '1A', '', '', 12345678901234567890]], guessMapping(head));
+  assert.equal(r.validCount, 0);
+  assert.match(r.errors[0].message, /zbyt duża/);
+});
+
+test('a Date cell in the class column is a readable row error, not "Mon Jan 02 2026…"', () => {
+  const r = validateRows([head, ['Ala', 'Nowak', new Date('2026-01-02'), '', '', 'A1']], guessMapping(head));
+  assert.equal(r.validCount, 0);
+  assert.match(r.errors[0].message, /Klasa.*Excel zamienił wartość na datę/);
+});
+
+test('a Date cell in a guardian name column is also a row error', () => {
+  const headers = [...head, 'Opiekun 2', 'E-mail opiekuna 2'];
+  const r = validateRows([headers, ['Ala', 'Nowak', '1A', new Date(), '', 'A1', '', '']], guessMapping(headers));
+  assert.equal(r.validCount, 0);
+  assert.match(r.errors[0].message, /Opiekun 1.*datę/);
+});
+
+test('class matching ignores case and extra spaces, and maps to the canonical DB spelling', () => {
+  const r1 = validateRows([head, ['Ala', 'Nowak', '1a', '', '', 'A1']], guessMapping(head), { allowedClasses: ['1A'] });
+  assert.equal(r1.validCount, 1); assert.equal(r1.records[0].className, '1A');
+  const r2 = validateRows([head, ['Ala', 'Nowak', ' 1A ', '', '', 'A1']], guessMapping(head), { allowedClasses: ['1A'] });
+  assert.equal(r2.validCount, 1); assert.equal(r2.records[0].className, '1A');
+});
+
+test('two allowed classes that normalize to the same key are reported as ambiguous, not silently matched', () => {
+  const r = validateRows([head, ['Ala', 'Nowak', '1a', '', '', 'A1']], guessMapping(head), { allowedClasses: ['1a', '1A'] });
+  assert.equal(r.validCount, 0);
+  assert.match(r.errors[0].message, /Niejednoznaczna/);
+});
+
 test('XLSX first sheet with synthetic pupils feeds the preview', async () => {
   const fixture = new URL('./fixtures-students.xlsx.base64', import.meta.url);
   const sheet = await readSheet(Buffer.from(readFileSync(fixture, 'utf8').trim(), 'base64'));
