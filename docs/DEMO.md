@@ -6,6 +6,8 @@ Zakres: uzupełnia [#404](https://github.com/woogitsu/rd/pull/404) (`scripts/dem
 
 Zweryfikowano lokalnie 28.09.2026 (`origin/main` + merge `origin/claude/new-session-v02wnl-demo-seed`, Playwright/Chromium): kroki 1–9 poniżej przechodzą z danymi z `npm run demo:seed`. Usterki i rzeczy do poprawienia przed pokazem są opisane w raporcie PR, nie w tym dokumencie.
 
+`npm run demo:seed` zakłada też SZKIC uzgodnienia wyciągu bankowego (nigdy nie zatwierdzany — żadne zadanie testowe nie potwierdza uzgodnienia w cudzym imieniu, AGENTS.md) z 8 pozycjami zaimportowanymi z CSV przez tę samą trasę importu co panel `/reconciliation/`. 6 z 8 pozycji odpowiada wpłatom lub wpisom księgi z pozostałych danych demo — panel może więc zaproponować dopasowania tak jak przy prawdziwych danych; 2 pozycje (2026-11-18 i 2026-11-25) celowo NIE odpowiadają niczemu, do pokazu stanu „niedopasowana” / „do wyjaśnienia” w kroku 4.
+
 ## Przygotowanie (nie pokazywać zarządowi, zrobić wcześniej)
 
 ```bash
@@ -16,7 +18,7 @@ npm run demo:start     # PORT=3000 npm start na tej samej bazie
 
 Konta powstałe z seeda (hasła i sekrety TOTP tylko na konsoli, nigdzie indziej): `admin@example.invalid` (administrator), `zarzad1@example.invalid` i `zarzad2@example.invalid` (zarząd, prezes/sekretarz), `skarbnik@example.invalid` (skarbnik), `przedstawiciel@example.invalid` (przedstawiciel klasy 0-A), `komisja-rewizyjna@example.invalid` (Komisja Rewizyjna). MFA jest skonfigurowane dla `admin`, `board` i `treasurer` (`MFA_REQUIRED_ROLES`, docs/AUTH.md); dla przedstawiciela i komisji rewizyjnej — nie.
 
-Kilka ekranów (Uzgodnienia wyciągu, Zebrania, Zamknięcie roku) pokazuje dane dopiero po wpisaniu roku szkolnego `2026-2027` w polu „Rok szkolny” i kliknięciu „Pokaż” — zrobić to przed pokazem, żeby nie szukać tego na żywo.
+Dziś (przed scaleniem [#408](https://github.com/woogitsu/rd/pull/408)) kilka ekranów (Uzgodnienia wyciągu, Zebrania, Zamknięcie roku) pokazuje dane dopiero po wpisaniu roku szkolnego `2026-2027` w polu „Rok szkolny” i kliknięciu „Pokaż” — zrobić to przed pokazem, żeby nie szukać tego na żywo. Po scaleniu `#408` panele same wypełniają to pole najnowszym rokiem z przydziałów konta (albo, gdy przydział nie wskazuje roku, heurystyką daty 1 września) i ładują dane od razu po wejściu — pole zostaje edytowalne, więc krok „Pokaż” nadal działa, jeśli ktoś chce zmienić rok.
 
 ## Kolejność ekranów
 
@@ -41,8 +43,8 @@ Kilka ekranów (Uzgodnienia wyciągu, Zebrania, Zamknięcie roku) pokazuje dane 
 
 ### 4. Uzgodnienie wyciągu (ok. 2 min)
 **Ekran:** `/reconciliation/` — wpisać rok szkolny `2026-2027` i kliknąć „Pokaż”.
-**Co pokazać:** ekran uzgodnień; dane demo nie zawierają żadnego wgranego wyciągu, więc lista jest pusta — to jest oczekiwany stan, nie błąd. Opisać krótko przycisk „Nowe uzgodnienie” i zdanie na ekranie: „Dopasowania są wyłącznie propozycjami — zatwierdzenie i potwierdzenie są ręczne.”
-**Co powiedzieć:** System tylko podpowiada, które wpłaty i wpisy księgi pasują do pozycji z wyciągu banku — nikt nie jest automatycznie uznawany za rozliczonego bez ręcznego potwierdzenia.
+**Co pokazać:** SZKIC uzgodnienia z danych demo — 8 pozycji zaimportowanych z wyciągu, 6 z propozycją dopasowania do wpłaty albo wpisu księgi, 2 oznaczone jako „niedopasowana” / „do wyjaśnienia” (2026-11-18, 2026-11-25 — celowo nie odpowiadają niczemu w danych demo). Zdanie na ekranie: „Dopasowania są wyłącznie propozycjami — zatwierdzenie i potwierdzenie są ręczne.” Uzgodnienie jest szkicem — nie zostało i nie zostanie zatwierdzone przez seed.
+**Co powiedzieć:** System tylko podpowiada, które wpłaty i wpisy księgi pasują do pozycji z wyciągu banku — nikt nie jest automatycznie uznawany za rozliczonego bez ręcznego potwierdzenia; pozycje bez dopasowania (jak te dwie) wymagają ręcznego wyjaśnienia przez skarbnika, zanim uzgodnienie zostanie zatwierdzone.
 **Pytanie na koniec:** **D-13** (kto i jak często uzgadnia księgę z wyciągiem, ten sam punkt co w kroku 3).
 
 ### 5. Przedstawiciel widzi tylko swoją klasę (ok. 3 min)
