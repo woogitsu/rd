@@ -1030,7 +1030,8 @@ export async function correctResolution(db, actor, input = {}) {
         previous.id, data.reason, previous.amends_resolution_id, data.title, data.body, data.status,
         data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId, actor.userId]);
     await audit(tx, actor, 'resolution.corrected', 'resolution', id,
-      { meetingId: previous.meeting_id, correctsId: previous.id, revision: previous.revision + 1, status });
+      { meetingId: previous.meeting_id, schoolYearId: previous.school_year_id, correctsId: previous.id,
+        revision: previous.revision + 1, status });
     return { entityType: 'resolution', entityId: id };
   });
   return { resolution: resolutionFromRow(await loadResolution(db, result.entityId)), replayed: result.replayed };

@@ -401,7 +401,7 @@ export async function createDraft(db, actor, input) {
           actor.userId, idempotencyKey],
       );
       await audit(tx, actor.userId, 'news_post.created', 'news_post', id,
-        { revision: 1, status: 'draft', photoCount: content.photoIds.length });
+        { schoolYearId: scope.school_year_id, revision: 1, status: 'draft', photoCount: content.photoIds.length });
       return { post: internalPost(rows[0]), replayed: false };
     });
   } catch (error) {
@@ -438,7 +438,7 @@ export async function updateDraft(db, actor, input) {
       [row.id, content.title, content.body, content.photoIds, actor.userId],
     );
     await audit(tx, actor.userId, 'news_post.revised', 'news_post', row.id,
-      { revision: rows[0].revision_no, status: 'draft', photoCount: content.photoIds.length });
+      { schoolYearId: row.school_year_id, revision: rows[0].revision_no, status: 'draft', photoCount: content.photoIds.length });
     return { post: internalPost(rows[0]), replayed: false };
   });
 }
@@ -459,7 +459,7 @@ async function transition(db, actor, input, spec) {
       `UPDATE news_posts SET ${sql} WHERE id = $1 RETURNING ${POST_COLUMNS}`, [row.id, ...params],
     );
     await audit(tx, actor.userId, spec.action, 'news_post', row.id,
-      { revision: row.revision_no, status: rows[0].status });
+      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status });
     return { post: internalPost(rows[0]), replayed: false };
   });
 }

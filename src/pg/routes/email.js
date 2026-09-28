@@ -275,6 +275,7 @@ async function updateCampaign(request, env, id, json) {
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.updated', entityType: 'email_campaign', entityId: id,
         metadata: {
+          schoolYearId: campaign.school_year_id,
           contentHash: hash, previousContentHash: campaign.content_hash, approvalInvalidated: invalidated,
           sendNotBeforeChanged: sendNotBefore !== currentSendNotBefore,
         },
@@ -409,7 +410,10 @@ async function buildSnapshot(request, env, id, json) {
       await insertAuditEvent(tx, {
         actorId, action: 'email.snapshot.built', entityType: 'email_campaign', entityId: id,
         // Kody powodów jako pary [kod, liczba] — nazwa kodu (np. no_valid_email) nie jest daną osobową.
-        metadata: { recipientsHash: snapshot.hash, recipients: snapshot.recipients.length, exclusionCounts: Object.entries(byReason), approvalInvalidated: wasApproved },
+        metadata: {
+          schoolYearId: campaign.school_year_id,
+          recipientsHash: snapshot.hash, recipients: snapshot.recipients.length, exclusionCounts: Object.entries(byReason), approvalInvalidated: wasApproved,
+        },
       });
       return json({
         recipientsHash: snapshot.hash, recipientsCount: snapshot.recipients.length,
@@ -479,7 +483,7 @@ async function listRecipients(request, env, id, url, json) {
   );
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'email.recipients.viewed', entityType: 'email_campaign', entityId: id,
-    metadata: { offset, recipientsHash: campaign.recipients_hash ?? null },
+    metadata: { schoolYearId: campaign.school_year_id, offset, recipientsHash: campaign.recipients_hash ?? null },
   });
   return json({
     recipients: rows.slice(0, RECIPIENT_PAGE).map((row) => ({ householdId: row.household_id, guardianId: row.guardian_id, email: row.email })),
@@ -534,7 +538,10 @@ async function approve(request, env, id, json) {
       if (!rows[0]) throw new RequestError('approval_stale', 409);
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.approved', entityType: 'email_campaign', entityId: id,
-        metadata: { contentHash: data.contentHash, recipientsHash: data.recipientsHash, recipients: recipients.length },
+        metadata: {
+          schoolYearId: campaign.school_year_id,
+          contentHash: data.contentHash, recipientsHash: data.recipientsHash, recipients: recipients.length,
+        },
       });
       return json({ campaign: campaignView(rows[0]) });
     });
@@ -573,7 +580,10 @@ async function queue(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.queued', entityType: 'email_campaign', entityId: id,
-        metadata: { queued: inserted.length, dailyCap, recipientsHash: campaign.recipients_hash },
+        metadata: {
+          schoolYearId: campaign.school_year_id,
+          queued: inserted.length, dailyCap, recipientsHash: campaign.recipients_hash,
+        },
       });
       return json({ campaign: campaignView(rows[0]), queued: inserted.length });
     });
@@ -599,7 +609,8 @@ async function pause(request, env, id, json) {
         [id, actorId],
       );
       await insertAuditEvent(tx, {
-        actorId, action: 'email.campaign.paused', entityType: 'email_campaign', entityId: id, metadata: {},
+        actorId, action: 'email.campaign.paused', entityType: 'email_campaign', entityId: id,
+        metadata: { schoolYearId: campaign.school_year_id },
       });
       return json({ campaign: campaignView(rows[0]) });
     });
@@ -624,7 +635,8 @@ async function resume(request, env, id, json) {
         [id, actorId],
       );
       await insertAuditEvent(tx, {
-        actorId, action: 'email.campaign.resumed', entityType: 'email_campaign', entityId: id, metadata: {},
+        actorId, action: 'email.campaign.resumed', entityType: 'email_campaign', entityId: id,
+        metadata: { schoolYearId: campaign.school_year_id },
       });
       return json({ campaign: campaignView(rows[0]) });
     });
@@ -653,7 +665,7 @@ async function cancel(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.cancelled', entityType: 'email_campaign', entityId: id,
-        metadata: { previousStatus: campaign.status, cancelledMessages: cancelled.length },
+        metadata: { schoolYearId: campaign.school_year_id, previousStatus: campaign.status, cancelledMessages: cancelled.length },
       });
       return json({ campaign: campaignView(rows[0]), cancelledMessages: cancelled.length });
     });
@@ -737,8 +749,9 @@ async function recordWebhookEvent(db, event) {
   const dedupeKey = sha256Hex(JSON.stringify([eventName, messageId, event.id ?? null, event.ts_event ?? event.date ?? null, hash]));
   return db.transaction(async (tx) => {
     const { rows: outboxRows } = await tx.query(
-      `SELECT o.id, o.state, o.campaign_id, r.guardian_id, r.email_hash
+      `SELECT o.id, o.state, o.campaign_id, c.school_year_id, r.guardian_id, r.email_hash
          FROM email_outbox o JOIN email_campaign_recipients r ON r.id = o.recipient_id
+              JOIN email_campaigns c ON c.id = o.campaign_id
         WHERE ($1::text IS NOT NULL AND o.provider_message_id = $1) OR ($2::text IS NOT NULL AND o.id = $2)
         LIMIT 1 FOR UPDATE OF o`,
       [messageId, custom],
@@ -765,10 +778,18 @@ async function recordWebhookEvent(db, event) {
       await tx.query(`UPDATE email_outbox SET state = 'bounced', last_error = $2, updated_at = now() WHERE id = $1`, [outbox.id, eventName]);
     }
     // Zgłoszenie potrzeby poprawy adresu: identyfikator opiekuna, bez adresu.
+    // #174: adres jest wyłączeniem NIEZALEŻNYM od roku (email_suppressions nie
+    // ma school_year_id — dotyczy adresu, nie jednej kampanii); schoolYearId
+    // dopisujemy, gdy zdarzenie dało się powiązać z konkretną wysyłką, ale
+    // celowo NIE wymagamy go (brak dopasowania do outboksu jest normalny —
+    // webhook może dotyczyć adresu bez żadnej kampanii w toku).
     await insertAuditEvent(tx, {
       action: 'email.address_suppressed', entityType: outbox ? 'email_outbox' : 'email_webhook_event',
       entityId: outbox?.id ?? eventId,
-      metadata: { event: eventName, reason, guardianId: outbox?.guardian_id ?? null, campaignId: outbox?.campaign_id ?? null },
+      metadata: {
+        event: eventName, reason, guardianId: outbox?.guardian_id ?? null,
+        campaignId: outbox?.campaign_id ?? null, schoolYearId: outbox?.school_year_id ?? null,
+      },
     });
     return { recorded: true, suppressed: true };
   });
