@@ -176,8 +176,9 @@ export function publicMinutes(rawList) {
     .sort((a, b) => (b.meetingDate?.getTime() ?? 0) - (a.meetingDate?.getTime() ?? 0));
 }
 
-// The news API is optional and its shape is not fixed yet: accept
-// { news: [...] } or { items: [...] } with title + body/summary.
+// Kanoniczny kontrakt GET /api/public/news (src/pg/news.js listPublic):
+// { posts: [{ id, title, body, publishedAt, photos }] }. Historyczne warianty
+// { news: [...] } i { items: [...] } (title + body/summary) zostają dla zgodności.
 export function normalizeNews(raw) {
   if (!raw || typeof raw !== "object") return null;
   const title = cleanText(raw.title, 300);
@@ -188,7 +189,7 @@ export function normalizeNews(raw) {
 }
 
 export function newsItems(payload) {
-  const list = Array.isArray(payload?.news) ? payload.news : Array.isArray(payload?.items) ? payload.items : [];
+  const list = [payload?.posts, payload?.news, payload?.items].find(Array.isArray) ?? [];
   return list
     .map(normalizeNews)
     .filter(Boolean)
