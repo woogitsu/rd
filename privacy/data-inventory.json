@@ -5879,6 +5879,17 @@
       "exportable": false,
       "data_type": "text"
     },
+    "decorative": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "boolean"
+    },
     "depicts_children": {
       "personal": "none",
       "subject": null,

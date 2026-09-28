@@ -241,10 +241,26 @@ function entryFromRow(row) {
   if (row.replaces_entry_id) entry.replacesEntryId = row.replaces_entry_id;
   // #93: jak replacesEntryId — tylko dla wpisu z jawnie wskazaną uchwałą.
   if (row.resolution_id) entry.resolutionId = row.resolution_id;
+  // #87: wszystkie dowody wpisu (dokument główny source_document_id oraz
+  // dokumenty dołączone później przez POST /api/documents z linkedEntity*),
+  // tylko na liście — odtworzenie po kluczu zachowuje dawny kształt.
+  if (row.linked_document_ids !== undefined) entry.attachmentIds = attachmentIds(row);
   if (row.corrected_cents !== undefined) entry.correctedCents = toSafeInteger(row.corrected_cents);
   if (row.net_amount_cents !== undefined) entry.netAmountCents = toSafeInteger(row.net_amount_cents);
   return entry;
 }
+
+// Identyfikatory dowodów wpisu bez powtórzeń: najpierw dokument główny,
+// potem dołączone (created_at, id).
+function attachmentIds(row) {
+  const ids = [row.source_document_id, ...(row.linked_document_ids ?? [])].filter(Boolean);
+  return [...new Set(ids)];
+}
+
+// Podzapytanie: dokumenty powiązane z wpisem przez documents.linked_entity_*.
+const LINKED_DOCUMENTS_SQL = `ARRAY(SELECT d.id FROM documents d
+              WHERE d.linked_entity_type = 'ledger_entry' AND d.linked_entity_id = entry.id
+              ORDER BY d.created_at, d.id COLLATE "C") AS linked_document_ids`;
 
 function correctionFromRow(row) {
   return {
@@ -442,7 +458,8 @@ async function listEntries(request, env, url, json) {
             entry.category_id, category.name AS category_name, entry.description,
             to_char(entry.occurred_on, 'YYYY-MM-DD') AS occurred_on,
             entry.payment_entry_id, entry.source_document_id, entry.method, entry.source,
-            entry.resolution_reference, entry.replaces_entry_id, entry.corrected_cents, entry.net_amount_cents
+            entry.resolution_reference, entry.replaces_entry_id, entry.corrected_cents, entry.net_amount_cents,
+            ${LINKED_DOCUMENTS_SQL}
        FROM ledger_entry_net entry
        JOIN ledger_categories category ON category.id = entry.category_id
       WHERE ${conditions.join(' AND ')}
@@ -726,8 +743,16 @@ async function validateEntryReferences(tx, input, payment) {
     && !input.resolutionId && (input.resolutionReference ?? '').length < 3) {
     throw new RequestError('resolution_required');
   }
+  // #87: dowodem może być wyłącznie dokument finansowy z API tego samego roku
+  // (wiersze z D1 mają school_year_id IS NULL). Dokument klasowy, zarządu,
+  // innego roku, bez roku i nieistniejący dają ten sam kod — bez wyroczni
+  // istnienia (uprawnienia do roku sprawdzono wcześniej, requireFinancialContext).
   if (input.sourceDocumentId) {
-    const { rows } = await tx.query('SELECT 1 FROM documents WHERE id = $1', [input.sourceDocumentId]);
+    const { rows } = await tx.query(
+      `SELECT 1 FROM documents
+        WHERE id = $1 AND kind = 'financial' AND school_year_id IS NOT NULL AND school_year_id = $2`,
+      [input.sourceDocumentId, input.schoolYearId],
+    );
     if (!rows.length) throw new RequestError('invalid_source_document');
   }
   const category = await tx.query(
@@ -1294,6 +1319,8 @@ export const LEDGER_CSV_COLUMNS = [
   ['metoda', 'text'], ['zrodlo', 'text'], ['referencja_uchwaly', 'text'], ['id_wplaty', 'text'],
   ['id_dokumentu', 'text'], ['zastepuje_wpis', 'text'], ['kwota_eur', 'amount'], ['korekty_eur', 'amount'],
   ['netto_eur', 'amount'],
+  // #87: liczba i identyfikatory wszystkich dowodów (dokument główny + dołączone).
+  ['liczba_dowodow', 'text'], ['id_dowodow', 'text'],
 ].map(([header, type]) => ({ header, type }));
 
 export { csvCell, formatEuro };
@@ -1303,6 +1330,7 @@ export function ledgerCsvLine(row) {
     row.id, row.occurred_on, DIRECTION_LABELS[row.direction], row.category_name, row.description,
     METHOD_LABELS[row.method], row.source, row.resolution_reference, row.payment_entry_id,
     row.source_document_id, row.replaces_entry_id, row.amount_cents, row.corrected_cents, row.net_amount_cents,
+    String(attachmentIds(row).length), attachmentIds(row).join(' '),
   ]);
 }
 
@@ -1317,7 +1345,8 @@ async function exportCsv(request, env, url) {
       `SELECT entry.id, to_char(entry.occurred_on, 'YYYY-MM-DD') AS occurred_on, entry.direction,
               category.name AS category_name, entry.description, entry.method, entry.source,
               entry.resolution_reference, entry.payment_entry_id, entry.source_document_id,
-              entry.replaces_entry_id, entry.amount_cents, entry.corrected_cents, entry.net_amount_cents
+              entry.replaces_entry_id, entry.amount_cents, entry.corrected_cents, entry.net_amount_cents,
+              ${LINKED_DOCUMENTS_SQL}
          FROM ledger_entry_net entry
          JOIN ledger_categories category ON category.id = entry.category_id
         WHERE entry.school_year_id = $1

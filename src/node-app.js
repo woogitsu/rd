@@ -11,6 +11,16 @@ const MAX_BODY_BYTES = 1024 * 1024;
 // Jedyne źródło listy paneli statycznych (issue #119): smoke test i inne
 // narzędzia mają importować ten eksport zamiast wpisywać listę na sztywno.
 export const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close']);
+// Jedyny prefiks przeznaczony do indeksowania przez wyszukiwarki (#116).
+// Wszystkie pozostałe prefiksy z STATIC_PREFIXES i cały /api/ poza /api/public/
+// wymagają logowania do danych, więc dostają `X-Robots-Tag: noindex, nofollow`.
+const PUBLIC_STATIC_PREFIX = 'site';
+const ROBOTS_NOINDEX = 'noindex, nofollow';
+// Blokuje wszystkie prefiksy paneli i całe /api/ poza /api/public/ — to samo
+// rozróżnienie co X-Robots-Tag powyżej, na wypadek czytników, które nie patrzą
+// na nagłówki odpowiedzi (#116).
+const ROBOTS_TXT_BODY = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close']
+  .map((prefix) => `Disallow: /${prefix}/`).join('\n')}\nDisallow: /api/\nAllow: /api/public/\nAllow: /${PUBLIC_STATIC_PREFIX}/\n`;
 // Nagłówek z adresem klienta dla limitów logowania (src/pg/login.js). Zawsze
 // nadpisywany przez serwer — wartość wysłana przez klienta jest ignorowana.
 export const CLIENT_IP_HEADER = 'x-rd-client-ip';
@@ -129,6 +139,7 @@ async function serveStatic(request, response, url, distRoot, baseline) {
     'Content-Type': type,
     'Content-Length': info.size,
     'Cache-Control': extension === '.html' ? 'no-store' : 'public, max-age=3600',
+    ...(first === PUBLIC_STATIC_PREFIX ? {} : { 'X-Robots-Tag': ROBOTS_NOINDEX }),
   });
   response.statusCode = 200;
   if (request.method === 'HEAD') response.end();
@@ -136,7 +147,7 @@ async function serveStatic(request, response, url, distRoot, baseline) {
   return true;
 }
 
-async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baseline, streamedRequestBody = false) {
+async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baseline, indexable, streamedRequestBody = false) {
   // Bazowe nagłówki najpierw: trasa (webResponse) może świadomie nadpisać
   // którykolwiek z nich (dziś żadna tego nie robi).
   for (const [name, value] of Object.entries(baseline)) nodeResponse.setHeader(name, value);
@@ -146,6 +157,9 @@ async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baselin
   const cookies = webResponse.headers.getSetCookie?.() ?? [];
   if (cookies.length) nodeResponse.setHeader('Set-Cookie', cookies);
   if (apiRequest) nodeResponse.setHeader('Cache-Control', 'no-store');
+  // Cała reszta API wymaga zalogowania — `/api/public/` jest jedynym wyjątkiem
+  // przeznaczonym do indeksowania (#116).
+  if (apiRequest && !indexable) nodeResponse.setHeader('X-Robots-Tag', ROBOTS_NOINDEX);
   if (streamedRequestBody) {
     // #185: trasa mogła zwrócić odpowiedź (np. 401/403/400) bez przeczytania
     // strumienia ciała (celowo — patrz wyżej). Node nie wznowi obsługi
@@ -245,6 +259,15 @@ export function createNodeHandler({
         response.end();
         return;
       }
+      if (url.pathname === '/robots.txt' && ['GET', 'HEAD'].includes(request.method)) {
+        response.writeHead(200, {
+          ...baseline,
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600',
+        });
+        response.end(request.method === 'HEAD' ? undefined : ROBOTS_TXT_BODY);
+        return;
+      }
       if (await serveStatic(request, response, url, distRoot, baseline)) return;
       const method = request.method || 'GET';
       // #185: POST /api/documents buforowało całe ciało (do 25 MB) w pamięci
@@ -276,7 +299,8 @@ export function createNodeHandler({
       headers.set(CLIENT_IP_HEADER, clientAddress(request, trustProxy));
       const webRequest = new Request(url, { method, headers, body, ...(streamBody ? { duplex: 'half' } : {}) });
       const webResponse = await fetchHandler(webRequest, env);
-      await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'), baseline, streamBody);
+      const indexable = url.pathname.startsWith('/api/public/');
+      await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'), baseline, indexable, streamBody);
     } catch (error) {
       const tooLarge = error instanceof RangeError && error.message === 'request_too_large';
       if (!tooLarge) logger.error('http_handler_error', describeError(error));

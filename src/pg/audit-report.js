@@ -166,6 +166,15 @@ export function renderAuditReportHtml(report) {
     [e(item.confirmedBy ?? '—')], [e(item.confirmationNote ?? '')],
   ]));
 
+  // #87: raporty zbudowane przed tą zmianą (np. z archiwum) nie mają sekcji dowodów.
+  const evidence = report.evidence ?? { expensesWithoutEvidence: { count: 0, netCents: 0, items: [] }, possibleDuplicateEvidence: [] };
+  const missingEvidenceRows = evidence.expensesWithoutEvidence.items.map((item) => row([
+    [e(formatDate(item.occurredOn))], [e(item.category)], [e(item.description)], [money(item.netAmountCents), 'num'], [e(item.id)],
+  ]));
+  const duplicateEvidenceRows = evidence.possibleDuplicateEvidence.map((item) => row([
+    [item.documentIds.map(e).join('<br>')], [item.ledgerEntryIds.map(e).join('<br>')],
+  ]));
+
   const checkRows = (report.checks.items ?? []).map((check) => row([
     [e(CHECK_LABEL[check.id] ?? check.id)],
     [check.ok === null ? 'nie liczono' : check.ok ? 'zgodne' : '<span class="flag">niezgodne</span>'],
@@ -233,6 +242,13 @@ ${adjustmentRows.length ? `<p>Korekty bilansu otwarcia:</p>${table([['Zapisano']
 ${table([['Data wyciągu'], ['Status'], ['Saldo wyciągu', 'num'], ['Saldo księgi', 'num'], ['Różnica', 'num'], ['Niedopasowane pozycje', 'num'], ['Zatwierdził (id)'], ['Wyjaśnienie']],
     reconciliationRows, 'Brak uzgodnień rachunku w tym roku.')}
 <p class="meta">Zatwierdzone uzgodnienia: ${e(reconciliations.confirmedCount)}; szkice: ${e(reconciliations.draftCount)}. Saldo księgi w szkicu jest wyliczane na bieżąco.</p>
+
+<h2>6. Dowody wydatków</h2>
+<p>Wydatki bez dowodu: ${e(evidence.expensesWithoutEvidence.count)}; suma netto ${money(evidence.expensesWithoutEvidence.netCents)}.</p>
+${table([['Data'], ['Kategoria'], ['Opis'], ['Netto', 'num'], ['Wpis księgi']], missingEvidenceRows, 'Każdy wydatek ma co najmniej jeden dokument.')}
+<p>Możliwe duplikaty dowodu (ten sam plik przy więcej niż jednym wydatku — do sprawdzenia):</p>
+${table([['Dokument'], ['Wpisy księgi']], duplicateEvidenceRows, 'Brak powtórzonych dokumentów.')}
+<p class="meta">Liczone są wydatki z kwotą netto powyżej zera. Numer i wystawca faktury nie są jeszcze zapisywane, więc duplikat tej samej faktury w innym pliku nie zostanie wykryty.</p>
 
 <h2>Uwagi Komisji Rewizyjnej</h2>
 <p class="empty">&nbsp;</p>

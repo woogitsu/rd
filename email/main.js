@@ -17,6 +17,7 @@ import {
   maskEmail,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
@@ -387,7 +388,14 @@ byId("queue-campaign").addEventListener("click", async () => {
 });
 
 byId("cancel-campaign").addEventListener("click", async () => {
-  if (!window.confirm(`Anulować kampanię „${state.detail.campaign.title}”? Zakolejkowane wiadomości nie zostaną wysłane.`)) return;
+  const confirmed = await confirmAction({
+    title: "Anulować kampanię?",
+    effects: [`Kampania „${state.detail.campaign.title}”.`, "Zakolejkowane wiadomości nie zostaną wysłane."],
+    confirmLabel: "Anuluj kampanię",
+    cancelLabel: "Wróć",
+    destructive: true,
+  });
+  if (!confirmed) return;
   const button = byId("cancel-campaign");
   button.disabled = true;
   try {
