@@ -239,6 +239,8 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
   documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',
   document_uploads: 'zamiary uploadu dokumentów (klucz obiektu, skrót) — dane techniczne jak documents (0032)',
+  data_access_log: 'dziennik odczytu danych rodzin — rozliczalność dostępu, nie dane Rady do odtworzenia; retencja do decyzji D-04 (0067)',
+  backup_runs: 'dziennik przebiegów kopii zapasowej i próby odtworzenia — dane operacyjne środowiska, nie danych Rady (0058)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',
   export_runs: 'dziennik eksportów — każdy eksport zmieniałby następny',
   meeting_request_keys: 'klucze idempotencji żądań — dane techniczne',
@@ -765,10 +767,8 @@ export async function buildClassRoster(executor, classId) {
     `SELECT sg.student_id, g.id, g.first_name, g.last_name,
             CASE WHEN sg.contact_allowed AND g.contact_allowed THEN g.email END AS email,
             sg.is_primary_contact
-       FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
+       FROM student_guardians_current sg JOIN guardians g ON g.id = sg.guardian_id
       WHERE sg.student_id IN (SELECT student_id FROM enrollments_current WHERE class_id = $1 AND school_year_id = $2)
-        AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
-        AND (sg.ends_on IS NULL OR sg.ends_on >= CURRENT_DATE)
       ORDER BY sg.student_id COLLATE "C", g.last_name COLLATE "C", g.first_name COLLATE "C", g.id COLLATE "C"`,
     [klass.id, klass.school_year_id],
   );
