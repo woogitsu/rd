@@ -8741,5 +8741,139 @@
       "exportable": false,
       "data_type": "text"
     }
+  },
+  "news_photo_files": {
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "photo_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "variant": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "object_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "mime_type": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "width": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "height": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "byte_size": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "sha256": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "source_sha256": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "created_by": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    }
   }
 }

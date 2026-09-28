@@ -87,7 +87,7 @@ Dziennik: `document.described` zapisuje aktora, czas, identyfikator dokumentu, k
 
 Klucz w buckecie ma postać `docs/<losowy uuid>`, niezależny od identyfikatora dokumentu w API. Nie zawiera nazwy pliku, roku, klasy, rodziny ani użytkownika; wymusza to ograniczenie w bazie. Oryginalna nazwa pliku **nie jest zapisywana** (często zawiera nazwisko). Plik do pobrania dostaje nazwę technyczną `dokument-<id>`. Dziennik zapisuje wyłącznie identyfikatory, rodzaj, typ, rozmiar i SHA-256 — bez nazwy pliku, treści i danych osobowych.
 
-Bucket nie może zawierać zdjęć archiwalnych ani wizerunku dzieci: publikacja zdjęć wymaga osobnego sprawdzenia praw i zgód (AGENTS.md).
+Bucket nie może zawierać zdjęć archiwalnych ani wizerunku dzieci: publikacja zdjęć wymaga osobnego sprawdzenia praw i zgód (AGENTS.md). Od #96 zdjęcia galerii mają osobny prefiks `photos/<losowy uuid>` w tym samym prywatnym buckecie (moduł `src/pg/news.js`, migracja `postgres/migrations/0084_news_photo_files.sql`) — oddzielny od `docs/` używanego przez ten moduł, żeby dowody finansowe/dokumenty zarządu i zdjęcia galerii się nie mieszały. Trasy dokumentów (`POST /api/documents`, `GET /api/documents/:id/content`) nie przyjmują ani nie wydają obiektów spod `photos/`, i odwrotnie — patrz [NEWS.md](NEWS.md).
 
 ## Dane w PostgreSQL
 
