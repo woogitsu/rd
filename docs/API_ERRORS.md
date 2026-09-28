@@ -56,6 +56,7 @@ wpisów).
 | `class_not_found` | Nie znaleziono klasy albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
 | `class_not_in_school_year` | Klasa nie należy do wskazanego roku szkolnego. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_required` | Wskaż klasę. | Nie — popraw dane żądania. |
+| `class_scope_not_supported` | Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste. | Nie — popraw dane żądania. |
 | `class_year_mismatch` | Klasa należy do innego roku szkolnego. | Nie — popraw dane żądania. |
 | `closing_balance_out_of_range` | Saldo zamknięcia jest poza dozwolonym zakresem. | Zależy od kontekstu (patrz moduł trasy). |
 | `concurrent_version` | Ktoś inny zapisał zmianę w tym samym czasie. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
@@ -257,6 +258,7 @@ wpisów).
 | `restore_drill_failed` | Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
 | `retry_later` | Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `revision_conflict` | Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `role_pending_decision` | Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji. | Nie — popraw dane żądania. |
 | `school_year_closed` | Rok szkolny jest zamknięty. Zmiany nie są możliwe. | Zależy od kontekstu (patrz moduł trasy). |
 | `school_year_exists` | Taki rok szkolny już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `school_year_not_finished` | Rok szkolny jeszcze się nie zakończył. | Zależy od kontekstu (patrz moduł trasy). |
