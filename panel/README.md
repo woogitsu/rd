@@ -5,11 +5,12 @@ Lekki interfejs do chronionego API ewidencji dobrowolnych wpłat. Nie zawiera da
 ## Uruchomienie
 
 ```bash
-npm run dev
-npm run dev:panel
+npm ci && npm run build
+DATABASE_URL=postgres://… npm run db:migrate:postgres
+DATABASE_URL=postgres://… PORT=3000 npm start
 ```
 
-`wrangler dev` udostępnia API, a Vite interfejs. W środowisku docelowym panel i API powinny działać pod tym samym originem; żądania używają ciasteczka sesji i serwerowych reguł ról.
+Panel i API (dziś na PostgreSQL, `src/pg/routes/payments.js`) muszą działać pod tym samym originem — patrz „Uruchomienie lokalne” w [README głównym](../README.md); żądania używają ciasteczka sesji i serwerowych reguł ról. `npm run dev` + `npm run dev:panel` (Vite, brak proxy `/api`) nie łączą się dziś ze sobą — nadają się wyłącznie do pracy nad samym interfejsem bez API. Stary router Workera (`npm run dev`) ma równoważne trasy `/api/payments*` jako kontrakt równoważności ([docs/EQUIVALENCE.md](../docs/EQUIVALENCE.md)), nie jako droga dev.
 
 ## Zakres
 
