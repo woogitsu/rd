@@ -19,6 +19,12 @@ Obsługiwane CSV (kodowanie i separator wykrywane w `import/csv.js`, patrz niże
 
 Kroki 1–3 (plik, mapowanie, sprawdzenie) nadal działają wyłącznie lokalnie i niczego nie wysyłają.
 
+### Raport importu i pominięte kolumny (#109)
+
+- **Raport błędów do pobrania** (`import/report.js`, przycisk „Pobierz raport błędów (CSV)” w kroku 3): CSV z kolumnami `Wiersz; Etap; Rodzaj; Komunikat`, generowany w przeglądarce przez wspólny eskaper formuł `src/pg/csv.js` (#206) — obejmuje wszystkie komunikaty walidacji lokalnej i, jeśli wysłano, podglądu serwera (nie tylko pierwsze 40 pokazane na ekranie). **Nie zawiera** imion, nazwisk ani e-maili — tylko numer wiersza źródłowego i treść komunikatu (te same komunikaty co w interfejsie, które już nie zawierają danych osobowych). Można go bezpiecznie przekazać szkole.
+- **Kolumny, które nie zostaną użyte**: po dopasowaniu kolumn (krok 2) lista nagłówków z pliku bez przypisanego pola. Nagłówek pasujący do listy wykluczeń (`PESEL`, `adres`, `telefon`, `oceny`, dane zdrowotne, numer dokumentu) dostaje wyraźne ostrzeżenie „Ten plik zawiera dane, których nie importujemy”. Pokazywane są tylko nazwy nagłówków, nigdy wartości komórek.
+- **Szablon**: `import/public/template.csv` (dane `@example.invalid`) i `import/public/template-instrukcja.txt` — krótka instrukcja PL (pola wymagane, format identyfikatorów jako tekst, czego nie wpisywać, obsługiwane formaty plików).
+
 ## Krok 4: podgląd i zapis na serwerze (prototyp)
 
 Opcjonalny, dostępny tylko w nowym API na PostgreSQL (`src/pg/routes/import.js`). **To nie jest zgoda na import danych rodzin** — do czasu decyzji D-01–D-06 w [rejestrze decyzji](../docs/DECISIONS.md) używamy wyłącznie danych fikcyjnych. Na środowisku `APP_ENV=production` trasy zwracają `403 import_disabled`, dopóki administrator nie ustawi `IMPORT_ENABLED=true` po decyzji szkoły.
