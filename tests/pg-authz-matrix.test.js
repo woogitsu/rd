@@ -207,6 +207,8 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
     });
     return { ...obj, resolutionId: resolution.id };
   }
+  // #93: przyjęta uchwała zebrania ogólnego (numer generowany) — kwota upoważnienia do wydatku.
+  if (stage === 'adoptedResolution' && !resolutionNumber) resolutionNumber = nextKey('UCHW-FX');
   if (stage === 'finalResolution' || resolutionNumber) {
     await recordAttendance(db, fxAdmin, {
       meetingId: meeting.id, userId: fxBoard.userId, capacity: 'board_member', votingEligible: true, present: true,
@@ -217,7 +219,7 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
       status: resolutionNumber ? 'adopted' : 'rejected', number: resolutionNumber,
       votesFor: resolutionNumber ? 1 : 0, votesAgainst: 0, votesAbstain: 0, quorumCheckId: quorumCheck.id,
     });
-    if (stage === 'finalResolution') return { ...obj, resolutionId: resolution.id };
+    if (stage === 'finalResolution' || stage === 'adoptedResolution') return { ...obj, resolutionId: resolution.id };
   }
   const { minutes } = await createMinutesVersion(db, fxAdmin, {
     idempotencyKey: nextKey('fx-minutes'), meetingId: meeting.id,
@@ -543,6 +545,14 @@ const MAKERS = {
       schoolYearId: target.schoolYearId, direction: 'income', amountCents: 100000, categoryId: ledgerCategory(target),
       description: `Wpis ${marker(target.key)}`, occurredOn: yearDate(target, '10-01'), method: 'bank',
     }, withKey(nextKey('fx-ledger')));
+    return { ledgerEntryId: json.entry.id };
+  },
+  // #97: wydatek zapisany przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  ledgerExpense: async (ctx, target) => {
+    const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
+      schoolYearId: target.schoolYearId, direction: 'expense', amountCents: 1000, categoryId: `cat-out-${target.schoolYearId}`,
+      description: `Wydatek ${marker(target.key)}`, occurredOn: yearDate(target, '10-02'), method: 'bank',
+    }, withKey(nextKey('fx-ledger-exp')));
     return { ledgerEntryId: json.entry.id };
   },
   // #207: kategoria świeża per przypadek — do dezaktywacji (nie może być

@@ -833,6 +833,30 @@ export const ROUTE_MATRIX = Object.freeze([
     build: () => ({ path: '/api/ledger/categories/copy', body: { fromSchoolYearId: YEAR_2, toSchoolYearId: YEAR_1, dryRun: true } }),
   },
 
+  // ---------- weryfikacja wydatku i uchwała jako upoważnienie (#97, #93) ----------
+  ledgerRead('ledger.reviews', '/api/ledger/reviews?schoolYearId=:year', '/reviews', []),
+  ledgerRead('ledger.resolutions', '/api/ledger/resolutions?schoolYearId=:year', '/resolutions', []),
+  {
+    // Autor wpisu fixture (konto pomocnicze) nie jest żadnym z aktorów, więc każdy aktor finansowy może zweryfikować.
+    id: 'ledger.review', module: 'ledger', method: 'POST', path: '/api/ledger/:ledgerEntryId/reviews',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'static',
+    object: { kind: 'ledgerExpense' },
+    build: ({ obj, key }) => ({ path: `/api/ledger/${obj.ledgerEntryId}/reviews`, headers: withKey(key), body: { decision: 'verified' } }),
+  },
+  {
+    // Kwotę upoważnienia wpisuje zarząd lub admin (nie skarbnik); każdy dozwolony przypadek na świeżej uchwale.
+    id: 'ledger.resolutionAuthorization', module: 'ledger', method: 'POST',
+    path: '/api/ledger/resolutions/:resolutionId/authorizations',
+    targets: YEAR_TARGETS, allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 201,
+    // Uprawniony (admin/zarząd z MFA) do uchwały roku bez przydziału: 404 jak nieistniejąca (bez wyroczni).
+    deny: (actor, targetKey, mfa) => (['admin', 'board'].includes(actor.key) && mfa && targetKey === 'Y2' ? 404 : 403),
+    fixture: 'fresh', object: { kind: 'meeting', stage: 'adoptedResolution' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/resolutions/${obj.resolutionId}/authorizations`, headers: withKey(key),
+      body: { authorizedAmountCents: 100000, note: 'Kwota upoważnienia syntetyczna' },
+    }),
+  },
+
   // ---------- centra kosztów (#117) ----------
   // Jak księga: admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu; przedstawiciel,
   // audit i principal 403 (D-08/D-09 — domyślnie bez dostępu).

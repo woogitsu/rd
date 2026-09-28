@@ -13,6 +13,12 @@
 // Nowa trasa (#144): przeksięgowanie (storno pełnej pozostałej kwoty + wpis
 // zastępczy), jedna operacja atomowa.
 //   POST /api/ledger/{id}/replacement       (Idempotency-Key)
+// Nowe trasy (#97, #93): weryfikacja wydatku przez drugą osobę i uchwała jako
+// upoważnienie do wydatku (migracja 0072).
+//   GET  /api/ledger/reviews?schoolYearId=…[&reviewStatus=unverified|verified|questioned]
+//   POST /api/ledger/{id}/reviews           (Idempotency-Key)
+//   GET  /api/ledger/resolutions?schoolYearId=…
+//   POST /api/ledger/resolutions/{id}/authorizations (Idempotency-Key; admin/zarząd)
 // Nowe trasy (#207, część 1: kategorie księgi przez API, bez SQL co roku):
 //   POST /api/ledger/categories                          {schoolYearId, direction, name}
 //   POST /api/ledger/categories/{id}/deactivate
@@ -30,6 +36,7 @@ import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvCell, csvHeader, csvRow, formatEuro } from '../csv.js';
 
@@ -44,10 +51,15 @@ const MAX_BODY_BYTES = 16 * 1024;
 const MAX_AMOUNT_CENTS = 100_000_000;
 const RESOLUTION_THRESHOLD_CENTS = 300_000;
 const MAX_EXPORT_ROWS = 20_000;
+// #93: kwotę upoważnienia z uchwały wpisuje zarząd (lub admin techniczny), nie
+// skarbnik — osoba księgująca wydatki nie ustala sobie limitu (D-08, D-15).
+const AUTHORIZATION_ROLES = ['admin', 'board'];
+const REVIEW_DECISIONS = new Set(['verified', 'questioned']);
+const REVIEW_STATUSES = new Set(['unverified', 'verified', 'questioned']);
 
 const ENTRY_COLUMNS = `id, school_year_id, direction, amount_cents, category_id,
   description, to_char(occurred_on, 'YYYY-MM-DD') AS occurred_on, payment_entry_id,
-  source_document_id, method, source, resolution_reference, replaces_entry_id, created_by`;
+  source_document_id, method, source, resolution_reference, replaces_entry_id, created_by, resolution_id`;
 
 class RequestError extends Error {
   constructor(code, status = 400, extra = {}) {
@@ -139,7 +151,10 @@ function parseEntryInput(data) {
   }
   const amountCents = readAmount(data.amountCents);
   const resolutionReference = textOrNull(data.resolutionReference, 200);
-  if (data.direction === 'expense' && amountCents > RESOLUTION_THRESHOLD_CENTS && !resolutionReference) {
+  // #93: jawne wskazanie uchwały (resolutionId) spełnia wymóg progu; numer
+  // uchwały trafia wtedy do resolution_reference (CHECK z 0003).
+  const resolutionId = optionalId(data.resolutionId);
+  if (data.direction === 'expense' && amountCents > RESOLUTION_THRESHOLD_CENTS && !resolutionReference && !resolutionId) {
     throw new RequestError('resolution_required');
   }
   return {
@@ -154,6 +169,7 @@ function parseEntryInput(data) {
     method: data.method,
     source: textOrNull(data.source, 200),
     resolutionReference,
+    resolutionId,
   };
 }
 
@@ -223,6 +239,8 @@ function entryFromRow(row) {
   // przeksięgowania) ma dokładnie ten sam kształt odpowiedzi co przed #144
   // (kontrakt ze starym Workerem, tests/pg-ledger-api.test.js, bez zmian).
   if (row.replaces_entry_id) entry.replacesEntryId = row.replaces_entry_id;
+  // #93: jak replacesEntryId — tylko dla wpisu z jawnie wskazaną uchwałą.
+  if (row.resolution_id) entry.resolutionId = row.resolution_id;
   // #87: wszystkie dowody wpisu (dokument główny source_document_id oraz
   // dokumenty dołączone później przez POST /api/documents z linkedEntity*),
   // tylko na liście — odtworzenie po kluczu zachowuje dawny kształt.
@@ -265,7 +283,17 @@ function entryMatches(row, input, actorId) {
     && (row.source_document_id ?? null) === input.sourceDocumentId
     && row.method === input.method
     && (row.source ?? null) === input.source
-    && (row.resolution_reference ?? null) === input.resolutionReference;
+    && (row.resolution_id ?? null) === input.resolutionId
+    // Przy resolutionId bez tekstu serwer zapisał numer uchwały jako referencję.
+    && ((row.resolution_reference ?? null) === input.resolutionReference
+      || (Boolean(input.resolutionId) && input.resolutionReference === null));
+}
+
+// Odpowiedź po zapisie: kształt jak dawniej (kontrakt z Workerem), resolutionId
+// tylko wtedy, gdy wskazano uchwałę.
+function createdEntry(id, input, extra = {}) {
+  const { resolutionId, ...rest } = input;
+  return { id, ...extra, ...rest, ...(resolutionId ? { resolutionId } : {}) };
 }
 
 function correctionMatches(row, ledgerEntryId, input, actorId) {
@@ -349,6 +377,24 @@ function mapDatabaseError(error) {
   if (message.includes('ledger_allocation_exceeds_net')) throw new RequestError('allocation_exceeds_net', 409);
   if (error?.code === '23505' && error?.constraint === 'ledger_entries_replaces_idx') {
     throw new RequestError('ledger_entry_already_replaced', 409);
+  }
+  // #93: backstop triggera c0_ledger_resolution_guard (0072).
+  const resolutionCodes = {
+    ledger_resolution_amount_exceeded: ['resolution_amount_exceeded', 409],
+    ledger_resolution_expired: ['resolution_expired', 409],
+    ledger_resolution_repealed: ['resolution_repealed', 409],
+    ledger_resolution_not_adopted: ['resolution_not_adopted', 409],
+    ledger_resolution_not_current: ['resolution_not_current', 409],
+    ledger_resolution_not_found: ['resolution_not_found', 404],
+    ledger_resolution_out_of_scope: ['resolution_not_found', 404],
+    ledger_resolution_expense_only: ['resolution_expense_only', 400],
+    // #97: backstop triggera ledger_review_guard (0072).
+    ledger_review_four_eyes: ['four_eyes_required', 403],
+    ledger_review_expense_only: ['review_expense_only', 409],
+    resolution_authorization_requires_adopted: ['resolution_not_adopted', 409],
+  };
+  for (const [marker, [code, status]] of Object.entries(resolutionCodes)) {
+    if (message.includes(marker)) throw new RequestError(code, status);
   }
   if (error?.code === '23503') throw new RequestError('invalid_reference');
   throw error;
@@ -653,6 +699,34 @@ const CREATED = { 'Idempotency-Replayed': 'false' };
 // Kolejność sprawdzeń odpowiada kolejności triggerów w D1 (ostatnio utworzony
 // działa pierwszy): powiązanie wpłaty, uchwała, dokument, kategoria, a na końcu
 // unikalność powiązania wpłaty.
+// #93: uchwała wskazana przez resolutionId. Uchwała nieistniejąca, z zebrania
+// klasowego albo spoza zakresu (rok wpisu lub bezpośrednio poprzedni rok
+// szkolny) daje to samo 404 — bez wyroczni istnienia. Stan, termin i kwotę
+// sprawdza też trigger c0_ledger_resolution_guard (0072) pod blokadą wiersza
+// uchwały, więc dwa równoległe wydatki nie przekroczą razem kwoty.
+async function validateResolution(tx, input) {
+  const { rows } = await tx.query(
+    `SELECT r.id, r.number, r.status, m.class_id,
+            EXISTS (SELECT 1 FROM resolutions n WHERE n.corrects_id = r.id) AS superseded,
+            r.school_year_id = $2
+              OR r.school_year_id = (SELECT p.id FROM school_years p, school_years y
+                                      WHERE y.id = $2 AND p.starts_on < y.starts_on
+                                      ORDER BY p.starts_on DESC LIMIT 1) AS in_scope
+       FROM resolutions r JOIN meetings m ON m.id = r.meeting_id
+      WHERE r.id = $1`,
+    [input.resolutionId, input.schoolYearId],
+  );
+  const row = rows[0];
+  if (!row || row.class_id || !row.in_scope) throw new RequestError('resolution_not_found', 404);
+  if (input.direction !== 'expense') throw new RequestError('resolution_expense_only');
+  if (row.superseded) throw new RequestError('resolution_not_current', 409);
+  if (row.status !== 'adopted') throw new RequestError('resolution_not_adopted', 409);
+  if (input.resolutionReference && input.resolutionReference !== row.number) {
+    throw new RequestError('resolution_reference_mismatch');
+  }
+  return row.number;
+}
+
 async function validateEntryReferences(tx, input, payment) {
   if (input.paymentEntryId && (!payment || payment.school_year_id !== input.schoolYearId
     || payment.status !== 'recorded' || input.direction !== 'income')) {
@@ -668,7 +742,7 @@ async function validateEntryReferences(tx, input, payment) {
   // Referencja krótsza niż 3 znaki nie spełnia wymogu uchwały (jak trigger D1
   // i CHECK ledger_large_expense_resolution w 0003_ledger.sql).
   if (input.direction === 'expense' && input.amountCents > RESOLUTION_THRESHOLD_CENTS
-    && (input.resolutionReference ?? '').length < 3) {
+    && !input.resolutionId && (input.resolutionReference ?? '').length < 3) {
     throw new RequestError('resolution_required');
   }
   // #87: dowodem może być wyłącznie dokument finansowy z API tego samego roku
@@ -693,6 +767,9 @@ async function validateEntryReferences(tx, input, payment) {
     const linked = await tx.query('SELECT 1 FROM ledger_entries WHERE payment_entry_id = $1', [input.paymentEntryId]);
     if (linked.rows.length) throw new RequestError('payment_already_linked', 409);
   }
+  // Zwraca referencję do zapisu: tekst z formularza albo numer wskazanej uchwały.
+  if (input.resolutionId) return (await validateResolution(tx, input));
+  return input.resolutionReference;
 }
 
 async function createEntry(request, env, json) {
@@ -725,23 +802,27 @@ async function createEntry(request, env, json) {
       }
       const replay = replayOrConflict(await loadEntryByKey(tx, idempotencyKey));
       if (replay) return replay;
-      await validateEntryReferences(tx, input, payment);
+      const resolutionReference = await validateEntryReferences(tx, input, payment);
       const entryId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_entries (
            id, school_year_id, direction, amount_cents, category_id, description, occurred_on,
            payment_entry_id, source_document_id, created_by, method, source,
-           resolution_reference, idempotency_key
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+           resolution_reference, idempotency_key, resolution_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [entryId, input.schoolYearId, input.direction, input.amountCents, input.categoryId,
           input.description, input.occurredOn, input.paymentEntryId, input.sourceDocumentId,
-          actorId, input.method, input.source, input.resolutionReference, idempotencyKey],
+          actorId, input.method, input.source, resolutionReference, idempotencyKey, input.resolutionId],
       );
+      // #93: dziennik ma identyfikator uchwały (bez kwoty i opisu).
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.entry.created', entityType: 'ledger_entry', entityId: entryId,
-        metadata: { schoolYearId: input.schoolYearId },
+        metadata: {
+          schoolYearId: input.schoolYearId,
+          ...(input.resolutionId ? { resolutionId: input.resolutionId } : {}),
+        },
       });
-      return { entry: { id: entryId, ...input } };
+      return { entry: createdEntry(entryId, { ...input, resolutionReference }) };
     });
   } catch (error) {
     if (isUniqueError(error)) {
@@ -891,7 +972,7 @@ async function createReplacement(request, env, ledgerEntryId, json) {
       const remaining = toSafeInteger(original.amount_cents) - toSafeInteger(corrected.rows[0].corrected_cents);
       if (remaining <= 0) throw new RequestError('ledger_entry_already_corrected_to_zero', 409);
 
-      await validateEntryReferences(tx, input, null);
+      const resolutionReference = await validateEntryReferences(tx, input, null);
 
       const correctionId = crypto.randomUUID();
       await tx.query(
@@ -904,17 +985,22 @@ async function createReplacement(request, env, ledgerEntryId, json) {
         `INSERT INTO ledger_entries (
            id, school_year_id, direction, amount_cents, category_id, description, occurred_on,
            payment_entry_id, source_document_id, replaces_entry_id, created_by, method, source,
-           resolution_reference, idempotency_key
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13, $14)`,
+           resolution_reference, idempotency_key, resolution_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [entryId, input.schoolYearId, input.direction, input.amountCents, input.categoryId,
           input.description, input.occurredOn, input.sourceDocumentId, ledgerEntryId,
-          actorId, input.method, input.source, input.resolutionReference, entryKey],
+          actorId, input.method, input.source, resolutionReference, entryKey, input.resolutionId],
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.entry.replaced', entityType: 'ledger_entry', entityId: entryId,
-        metadata: { replacesEntryId: ledgerEntryId, correctionId, schoolYearId: input.schoolYearId },
+        metadata: {
+          replacesEntryId: ledgerEntryId,
+          correctionId,
+          schoolYearId: input.schoolYearId,
+          ...(input.resolutionId ? { resolutionId: input.resolutionId } : {}),
+        },
       });
-      return { entry: { id: entryId, replacesEntryId: ledgerEntryId, ...input } };
+      return { entry: createdEntry(entryId, { ...input, resolutionReference }, { replacesEntryId: ledgerEntryId }) };
     });
   } catch (error) {
     if (isUniqueError(error)) {
@@ -924,6 +1010,304 @@ async function createReplacement(request, env, ledgerEntryId, json) {
         return json({ entry: entryFromRow(replay) }, 200, REPLAYED);
       }
       throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+  if (result instanceof Replay) return json(result.body, 200, REPLAYED);
+  return json(result, 201, CREATED);
+}
+
+// --- Weryfikacja wydatku przez drugą osobę (#97) ---------------------------
+//
+// Weryfikacja jest następcza: wpis jest w księdze od chwili zapisu (bilans się
+// nie zmienia), a stan „niezweryfikowany / zweryfikowany / zakwestionowany” to
+// ostatnia decyzja z ledger_entry_reviews. Zakwestionowanie rozwiązuje się
+// korektą lub przeksięgowaniem, nie edycją. Autor wpisu nie może go
+// zweryfikować (403 four_eyes_required; trigger ledger_review_guard to samo).
+
+function parseReviewInput(data) {
+  if (!REVIEW_DECISIONS.has(data.decision)) throw new RequestError('invalid_request');
+  const note = textOrNull(data.note, 500);
+  if (note !== null && note.length < 3) throw new RequestError('invalid_request');
+  if (data.decision === 'questioned' && !note) throw new RequestError('invalid_reason');
+  return { decision: data.decision, note };
+}
+
+function reviewFromRow(row) {
+  return {
+    id: row.id,
+    ledgerEntryId: row.ledger_entry_id,
+    decision: row.decision,
+    note: row.note ?? null,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: isoTimestamp(row.reviewed_at),
+  };
+}
+
+async function loadReviewByKey(executor, key) {
+  const { rows } = await executor.query(
+    `SELECT id, ledger_entry_id, decision, note, reviewed_by, reviewed_at
+       FROM ledger_entry_reviews WHERE idempotency_key = $1 LIMIT 1`,
+    [key],
+  );
+  return rows[0] ?? null;
+}
+
+async function createReview(request, env, ledgerEntryId, json) {
+  if (!validId(ledgerEntryId)) throw new RequestError('invalid_ledger_entry_id');
+  const idempotencyKey = readIdempotencyKey(request);
+  const input = parseReviewInput(await readJson(request));
+  const context = await requireFinancialContext(request, env);
+  const actorId = context.session.user.id;
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    if (row.reviewed_by !== actorId || row.ledger_entry_id !== ledgerEntryId
+      || row.decision !== input.decision || (row.note ?? null) !== input.note) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return new Replay({ review: reviewFromRow(row) });
+  };
+
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        'SELECT id, school_year_id, direction, created_by FROM ledger_entries WHERE id = $1 FOR SHARE',
+        [ledgerEntryId],
+      );
+      const entry = rows[0];
+      if (!entry) throw new RequestError('ledger_entry_not_found', 404);
+      requireYear(context, entry.school_year_id);
+      const replay = replayOrConflict(await loadReviewByKey(tx, idempotencyKey));
+      if (replay) return replay;
+      if (entry.direction !== 'expense') throw new RequestError('review_expense_only', 409);
+      if (entry.created_by === actorId) throw new RequestError('four_eyes_required', 403);
+      const id = crypto.randomUUID();
+      const inserted = await tx.query(
+        `INSERT INTO ledger_entry_reviews (id, school_year_id, ledger_entry_id, decision, note, reviewed_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, ledger_entry_id, decision, note, reviewed_by, reviewed_at`,
+        [id, entry.school_year_id, ledgerEntryId, input.decision, input.note, actorId, idempotencyKey],
+      );
+      // Dziennik: aktor, czas, identyfikator wpisu i decyzja — bez kwoty, opisu i uwagi.
+      await insertAuditEvent(tx, {
+        actorId, action: `ledger.entry.${input.decision}`, entityType: 'ledger_entry', entityId: ledgerEntryId,
+        metadata: { reviewId: id, schoolYearId: entry.school_year_id },
+      });
+      return { review: reviewFromRow(inserted.rows[0]) };
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await loadReviewByKey(env.db, idempotencyKey));
+      if (replay) return json(replay.body, 200, REPLAYED);
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+  if (result instanceof Replay) return json(result.body, 200, REPLAYED);
+  return json(result, 201, CREATED);
+}
+
+async function listReviews(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  const reviewStatus = url.searchParams.get('reviewStatus');
+  if (!validId(schoolYearId) || (reviewStatus && !REVIEW_STATUSES.has(reviewStatus))) {
+    throw new RequestError('invalid_request');
+  }
+  await requireFinancialContext(request, env, schoolYearId);
+  const { rows } = await env.db.query(
+    `SELECT s.ledger_entry_id, s.review_status, s.last_reviewed_by, s.last_reviewed_at, s.review_count,
+            to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.description, e.net_amount_cents,
+            e.created_by, c.name AS category_name
+       FROM ledger_entry_review_status s
+       JOIN ledger_entry_net e ON e.id = s.ledger_entry_id
+       JOIN ledger_categories c ON c.id = e.category_id
+      WHERE s.school_year_id = $1 AND ($2::text IS NULL OR s.review_status = $2)
+      ORDER BY e.occurred_on DESC, e.id COLLATE "C" DESC
+      LIMIT $3`,
+    [schoolYearId, reviewStatus || null, MAX_EXPORT_ROWS],
+  );
+  const items = rows.map((row) => ({
+    ledgerEntryId: row.ledger_entry_id,
+    reviewStatus: row.review_status,
+    reviewCount: toSafeInteger(row.review_count),
+    lastReviewedBy: row.last_reviewed_by ?? null,
+    lastReviewedAt: row.last_reviewed_at ? isoTimestamp(row.last_reviewed_at) : null,
+    occurredOn: row.occurred_on,
+    description: row.description,
+    categoryName: row.category_name,
+    netAmountCents: toSafeInteger(row.net_amount_cents),
+    createdBy: row.created_by,
+  }));
+  return json({ reviews: items });
+}
+
+// --- Uchwały jako upoważnienie do wydatku (#93) -----------------------------
+//
+// Skarbnik widzi numer, tytuł, status i kwoty uchwały — bez treści projektu i
+// protokołu (D-09). Lista obejmuje przyjęte, bieżące rewizje uchwał zebrań
+// ogólnych z roku wpisu i z bezpośrednio poprzedniego roku (uchwała budżetowa
+// z czerwca upoważnia wydatki od września).
+
+function resolutionSpendingFromRow(row) {
+  const authorized = row.authorized_amount_cents === null ? null : toSafeInteger(row.authorized_amount_cents);
+  return {
+    id: row.id,
+    schoolYearId: row.school_year_id,
+    number: row.number,
+    title: row.title,
+    status: row.status,
+    decidedAt: row.decided_at ? isoTimestamp(row.decided_at) : null,
+    authorizationId: row.authorization_id ?? null,
+    authorizedAmountCents: authorized,
+    validUntil: row.valid_until ?? null,
+    spentNetCents: toSafeInteger(row.spent_net_cents ?? 0),
+    remainingCents: authorized === null ? null : toSafeInteger(row.remaining_cents),
+    entryCount: toSafeInteger(row.entry_count ?? 0),
+  };
+}
+
+const RESOLUTION_SPENDING_SELECT = `SELECT r.id, r.school_year_id, r.number, r.title, r.status, r.decided_at,
+         auth.id AS authorization_id, auth.authorized_amount_cents, to_char(auth.valid_until, 'YYYY-MM-DD') AS valid_until,
+         COALESCE(spending.spent_net_cents, 0) AS spent_net_cents,
+         auth.authorized_amount_cents - COALESCE(spending.spent_net_cents, 0) AS remaining_cents,
+         COALESCE(spending.entry_count, 0) AS entry_count
+    FROM resolutions r
+    JOIN meetings m ON m.id = r.meeting_id AND m.class_id IS NULL
+    LEFT JOIN LATERAL (
+      SELECT a.id, a.authorized_amount_cents, a.valid_until FROM resolution_authorization_current a
+       WHERE a.resolution_id IN (SELECT resolution_chain_ids(r.id))
+       ORDER BY a.created_at DESC, a.id DESC LIMIT 1
+    ) auth ON true
+    LEFT JOIN LATERAL (
+      SELECT sum(n.net_amount_cents)::BIGINT AS spent_net_cents, count(*) AS entry_count
+        FROM ledger_entries e JOIN ledger_entry_net n ON n.id = e.id
+       WHERE e.resolution_id IN (SELECT resolution_chain_ids(r.id)) AND e.direction = 'expense'
+    ) spending ON true
+   WHERE r.status = 'adopted'
+     AND NOT EXISTS (SELECT 1 FROM resolutions newer WHERE newer.corrects_id = r.id)`;
+
+async function listResolutions(request, env, url, json) {
+  const { schoolYearId } = readOverviewFilters(url);
+  await requireFinancialContext(request, env, schoolYearId);
+  const { rows } = await env.db.query(
+    `${RESOLUTION_SPENDING_SELECT}
+       AND (r.school_year_id = $1
+         OR r.school_year_id = (SELECT p.id FROM school_years p, school_years y
+                                 WHERE y.id = $1 AND p.starts_on < y.starts_on
+                                 ORDER BY p.starts_on DESC LIMIT 1))
+     ORDER BY r.decided_at DESC NULLS LAST, r.number COLLATE "C"`,
+    [schoolYearId],
+  );
+  return json({ resolutions: rows.map(resolutionSpendingFromRow) });
+}
+
+function parseAuthorizationInput(data) {
+  const note = textOrNull(data.note, 500);
+  if (!note || note.length < 3) throw new RequestError('invalid_reason');
+  const validUntil = data.validUntil === undefined || data.validUntil === null || data.validUntil === ''
+    ? null : data.validUntil;
+  if (validUntil !== null && !validDate(validUntil)) throw new RequestError('invalid_request');
+  return {
+    authorizedAmountCents: readAmount(data.authorizedAmountCents),
+    validUntil,
+    note,
+    supersedesId: optionalId(data.supersedesId),
+  };
+}
+
+async function loadAuthorizationByKey(executor, key) {
+  const { rows } = await executor.query(
+    `SELECT id, resolution_id, authorized_amount_cents, to_char(valid_until, 'YYYY-MM-DD') AS valid_until,
+            note, supersedes_id, created_by
+       FROM resolution_spending_authorizations WHERE idempotency_key = $1 LIMIT 1`,
+    [key],
+  );
+  return rows[0] ?? null;
+}
+
+function authorizationFromRow(row) {
+  return {
+    id: row.id,
+    resolutionId: row.resolution_id,
+    authorizedAmountCents: toSafeInteger(row.authorized_amount_cents),
+    validUntil: row.valid_until ?? null,
+    note: row.note,
+    supersedesId: row.supersedes_id ?? null,
+  };
+}
+
+async function createAuthorization(request, env, resolutionId, json) {
+  if (!validId(resolutionId)) throw new RequestError('invalid_request');
+  const idempotencyKey = readIdempotencyKey(request);
+  const input = parseAuthorizationInput(await readJson(request));
+  const context = await loadAuthorizationContext(request, env);
+  if (!context) throw new RequestError('unauthenticated', 401);
+  // Rola i MFA przed odczytem uchwały (bez wyroczni istnienia); rok po odczycie.
+  const canAuthorize = (schoolYearId) => isAuthorizedScoped(context, { roles: AUTHORIZATION_ROLES, schoolYearId, requireMfa: true });
+  if (!canAuthorize()) throw new RequestError('forbidden', 403);
+  const actorId = context.session.user.id;
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    if (row.created_by !== actorId || row.resolution_id !== resolutionId
+      || toSafeInteger(row.authorized_amount_cents) !== input.authorizedAmountCents
+      || (row.valid_until ?? null) !== input.validUntil || row.note !== input.note
+      || (row.supersedes_id ?? null) !== input.supersedesId) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return new Replay({ authorization: authorizationFromRow(row) });
+  };
+
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        `SELECT r.id, r.school_year_id, r.status, m.class_id,
+                EXISTS (SELECT 1 FROM resolutions n WHERE n.corrects_id = r.id) AS superseded
+           FROM resolutions r JOIN meetings m ON m.id = r.meeting_id
+          WHERE r.id = $1 FOR UPDATE OF r`,
+        [resolutionId],
+      );
+      const resolution = rows[0];
+      if (!resolution || resolution.class_id || !canAuthorize(resolution.school_year_id)) {
+        throw new RequestError('resolution_not_found', 404);
+      }
+      const replay = replayOrConflict(await loadAuthorizationByKey(tx, idempotencyKey));
+      if (replay) return replay;
+      if (resolution.superseded) throw new RequestError('resolution_not_current', 409);
+      if (resolution.status !== 'adopted') throw new RequestError('resolution_not_adopted', 409);
+      // Nowa kwota musi wskazywać bieżącą (ostatnią) kwotę łańcucha uchwały —
+      // równoległa zmiana na podstawie nieaktualnego stanu daje 409.
+      const current = await tx.query(
+        `SELECT a.id FROM resolution_authorization_current a
+          WHERE a.resolution_id IN (SELECT resolution_chain_ids($1))
+          ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
+        [resolutionId],
+      );
+      if ((current.rows[0]?.id ?? null) !== input.supersedesId) {
+        throw new RequestError('authorization_superseded', 409, { currentAuthorizationId: current.rows[0]?.id ?? null });
+      }
+      const id = crypto.randomUUID();
+      const inserted = await tx.query(
+        `INSERT INTO resolution_spending_authorizations
+           (id, school_year_id, resolution_id, authorized_amount_cents, valid_until, note, supersedes_id, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id, resolution_id, authorized_amount_cents, to_char(valid_until, 'YYYY-MM-DD') AS valid_until, note, supersedes_id`,
+        [id, resolution.school_year_id, resolutionId, input.authorizedAmountCents, input.validUntil, input.note,
+          input.supersedesId, actorId, idempotencyKey],
+      );
+      // Dziennik bez kwoty (jak inne zapisy finansowe): aktor, czas, uchwała, poprzednia kwota.
+      await insertAuditEvent(tx, {
+        actorId, action: 'resolution.spending_authorization.recorded', entityType: 'resolution', entityId: resolutionId,
+        metadata: { schoolYearId: resolution.school_year_id, authorizationId: id, supersedesId: input.supersedesId },
+      });
+      return { authorization: authorizationFromRow(inserted.rows[0]) };
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await loadAuthorizationByKey(env.db, idempotencyKey));
+      if (replay) return json(replay.body, 200, REPLAYED);
+      throw new RequestError('authorization_superseded', 409);
     }
     mapDatabaseError(error);
   }
@@ -1001,6 +1385,10 @@ async function exportCsv(request, env, url) {
 export async function handle(request, env, url, json) {
   const correctionMatch = url.pathname.match(/^\/api\/ledger\/([^/]+)\/corrections$/);
   const replacementMatch = url.pathname.match(/^\/api\/ledger\/([^/]+)\/replacement$/);
+  const reviewMatch = url.pathname.match(/^\/api\/ledger\/([^/]+)\/reviews$/);
+  const authorizationMatch = url.pathname.match(/^\/api\/ledger\/resolutions\/([^/]+)\/authorizations$/);
+  const isReviews = request.method === 'GET' && url.pathname === '/api/ledger/reviews';
+  const isResolutions = request.method === 'GET' && url.pathname === '/api/ledger/resolutions';
   const categoryDeactivateMatch = url.pathname.match(/^\/api\/ledger\/categories\/([^/]+)\/deactivate$/);
   const isEntryRoute = url.pathname === '/api/ledger';
   const isList = request.method === 'GET' && isEntryRoute;
@@ -1011,8 +1399,9 @@ export async function handle(request, env, url, json) {
   const isBudget = request.method === 'GET' && url.pathname === '/api/ledger/budget';
   const isExport = request.method === 'GET' && url.pathname === '/api/ledger/export.csv';
   const isMutation = request.method === 'POST' && (isEntryRoute || correctionMatch || replacementMatch
-    || isCategoryCreate || isCategoryCopy || categoryDeactivateMatch);
-  if (!isList && !isCategories && !isSummary && !isBudget && !isExport && !isMutation) return null;
+    || reviewMatch || authorizationMatch || isCategoryCreate || isCategoryCopy || categoryDeactivateMatch);
+  if (!isList && !isCategories && !isSummary && !isBudget && !isExport && !isMutation
+    && !isReviews && !isResolutions) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.
   if (isMutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
 
@@ -1022,10 +1411,14 @@ export async function handle(request, env, url, json) {
     if (isSummary) return await readSummary(request, env, url, json);
     if (isBudget) return await listBudget(request, env, url, json);
     if (isExport) return await exportCsv(request, env, url);
+    if (isReviews) return await listReviews(request, env, url, json);
+    if (isResolutions) return await listResolutions(request, env, url, json);
     if (isCategoryCreate) return await createCategory(request, env, json);
     if (isCategoryCopy) return await copyCategories(request, env, json);
     if (categoryDeactivateMatch) return await deactivateCategory(request, env, decodeId(categoryDeactivateMatch[1]), json);
     if (isEntryRoute) return await createEntry(request, env, json);
+    if (authorizationMatch) return await createAuthorization(request, env, decodeId(authorizationMatch[1]), json);
+    if (reviewMatch) return await createReview(request, env, decodeId(reviewMatch[1]), json);
     if (replacementMatch) return await createReplacement(request, env, decodeId(replacementMatch[1]), json);
     return await createCorrection(request, env, decodeId(correctionMatch[1]), json);
   } catch (error) {

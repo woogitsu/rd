@@ -103,6 +103,7 @@ const money = (cents) => e(formatEur(cents));
 
 const DIRECTION = { income: 'przychód', expense: 'wydatek' };
 const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone', abandoned: 'porzucone' };
+const RESOLUTION_STATUS = { adopted: 'przyjęta', rejected: 'odrzucona', draft: 'projekt', withdrawn: 'wycofana' };
 
 function table(headers, rows, emptyText) {
   if (!rows.length) return `<p class="empty">${e(emptyText)}</p>`;
@@ -125,10 +126,26 @@ export function renderAuditReportHtml(report) {
   const largeRows = largeExpenses.map((item) => row([
     [e(formatDate(item.occurredOn))], [e(item.category)], [e(item.description)],
     [money(item.amountCents), 'num'], [money(item.netAmountCents), 'num'],
-    [e(item.resolutionReference ?? '—')],
+    [`${e(item.resolutionReference ?? '—')}${item.resolutionLink === 'text' && item.resolutionReference ? ' <span class="meta">(powiązanie tekstowe)</span>' : ''}`],
     [item.matchesAdoptedResolution === true ? 'tak'
       : item.matchesAdoptedResolution === false ? '<span class="flag">brak zgodnej przyjętej uchwały</span>'
         : 'nie sprawdzono'],
+  ]));
+
+  // #93/#97: raporty sprzed migracji 0072 (np. z archiwum) nie mają tych sekcji.
+  const resolutionExecution = report.resolutionExecution ?? [];
+  const reviews = report.expenseReviews ?? null;
+  const executionRows = resolutionExecution.map((item) => row([
+    [e(item.number)], [e(item.title)],
+    [item.status === 'adopted' ? 'przyjęta' : `<span class="flag">${e(RESOLUTION_STATUS[item.status] ?? item.status)}</span>`],
+    [item.authorizedAmountCents === null ? 'bez kwoty' : money(item.authorizedAmountCents), 'num'],
+    [money(item.spentNetCents), 'num'],
+    [item.remainingCents === null ? '—' : item.remainingCents < 0 ? `<span class="flag">${money(item.remainingCents)}</span>` : money(item.remainingCents), 'num'],
+    [e(item.entryCount), 'num'],
+  ]));
+  const splitRows = (reviews?.possibleSplits ?? []).map((item) => row([
+    [e(item.category)], [`${e(formatDate(item.fromDate))}–${e(formatDate(item.toDate))}`], [e(item.entryCount), 'num'],
+    [money(item.netCents), 'num'], [item.ledgerEntryIds.map(e).join('<br>')],
   ]));
 
   const correctionRows = corrections.map((item) => row([
@@ -200,6 +217,21 @@ ${table([['Rodzaj'], ['Kategoria'], ['Wpisy', 'num'], ['Kwota pierwotna', 'num']
 <h2>3. Wydatki powyżej 3000 EUR</h2>
 ${table([['Data'], ['Kategoria'], ['Opis'], ['Kwota', 'num'], ['Netto', 'num'], ['Uchwała'], ['Zgodność z przyjętą uchwałą']],
     largeRows, 'Brak wydatków powyżej 3000 EUR.')}
+
+<h2>3a. Wykonanie uchwał finansowych</h2>
+${table([['Uchwała'], ['Tytuł'], ['Stan'], ['Kwota upoważnienia', 'num'], ['Wydatki netto', 'num'], ['Pozostało', 'num'], ['Wpisy', 'num']],
+    executionRows, 'Brak wydatków powiązanych z uchwałą przez jej wskazanie.')}
+<p class="meta">Wydatki powiązane wyłącznie numerem w tekście nie są tu liczone (sekcja 3: „powiązanie tekstowe”).</p>
+${reviews ? `
+<h2>3b. Weryfikacja wydatków przez drugą osobę</h2>
+<table><tbody>
+<tr><th>Niezweryfikowane</th><td class="num">${e(reviews.unverified.count)}</td><td class="num">${money(reviews.unverified.netCents)}</td></tr>
+<tr><th>Zakwestionowane</th><td class="num">${e(reviews.questioned.count)}</td><td class="num">${money(reviews.questioned.netCents)}</td></tr>
+<tr><th>Zweryfikowane</th><td class="num">${e(reviews.verified.count)}</td><td class="num">${money(reviews.verified.netCents)}</td></tr>
+</tbody></table>
+<p>Kilka wydatków do 3000 EUR w tej samej kategorii w ciągu ${e(reviews.splitWindowDays)} dni, razem powyżej 3000 EUR (informacja do sprawdzenia, nie zarzut):</p>
+${table([['Kategoria'], ['Okres'], ['Wpisy', 'num'], ['Razem netto', 'num'], ['Wpisy księgi']], splitRows, 'Brak takich zestawień.')}
+` : ''}
 
 <h2>4. Korekty</h2>
 ${table([['Zapisano'], ['Wpis księgi'], ['Data wpisu'], ['Rodzaj'], ['Kwota korekty', 'num'], ['Powód'], ['Autor (id)']],

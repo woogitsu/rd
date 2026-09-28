@@ -606,6 +606,23 @@ wierszy. Zdjęcie wgrane wcześniej bez `alt_text` i bez `decorative` nie da
 się zweryfikować (`verifyPhoto()`), dopóki nie powstanie jego poprawka
 (nowy rekord); metadane zdjęć pozostają niezmienne.
 
+`0072_ledger_review_resolution_link.sql` (#97, #93) dodaje zasadę czterech
+oczu przy wydatkach i uchwałę jako upoważnienie do wydatku:
+`ledger_entries.resolution_id` (NULL, FK do `resolutions`; tekst
+`resolution_reference` zostaje), trigger `c0_ledger_resolution_guard`
+(uchwała musi być bieżącą rewizją, przyjęta, z zebrania ogólnego, z roku
+wpisu lub wcześniejszego; suma netto wydatków wobec kwoty upoważnienia pod
+blokadą wiersza uchwały), tabelę append-only
+`resolution_spending_authorizations` (kwota upoważnienia; zmiana = nowy
+wiersz z `supersedes_id`), widoki `resolution_authorization_current` i
+`resolution_spending`, funkcję `resolution_chain_ids()` oraz tabelę
+append-only `ledger_entry_reviews` (weryfikacja wydatku przez osobę inną
+niż autor, trigger `ledger_review_guard`) z widokiem
+`ledger_entry_review_status`. Żaden istniejący wiersz nie jest zmieniany
+ani usuwany; istniejące wpisy mają `resolution_id = NULL` (raport KR:
+„powiązanie tekstowe”) i stan „niezweryfikowany”, istniejące uchwały nie
+mają kwoty upoważnienia (brak limitu do czasu jej wpisania, D-15).
+
 `0093_resolution_meeting_campaign_revision.sql` (#215) dodaje
 `revision_no` (`DEFAULT 1`) do `resolutions`, `meetings` i
 `email_campaigns` oraz trigger `bump_revision_no()`, który zwiększa numer
