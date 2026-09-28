@@ -128,7 +128,7 @@ const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.categor
   c.status, c.recipients_hash, c.recipients_count, c.created_by, c.updated_by, c.snapshot_built_by,
   c.approved_by, c.approved_at, c.approved_content_hash, c.approved_recipients_hash, c.daily_cap,
   c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key, c.send_not_before,
-  c.paused_by, c.paused_at, c.resumed_by, c.resumed_at`;
+  c.paused_by, c.paused_at, c.resumed_by, c.resumed_at, c.revision_no`;
 
 async function loadCampaign(executor, id, { lock = false } = {}) {
   const { rows } = await executor.query(
@@ -154,6 +154,8 @@ function campaignView(row) {
     subject: row.subject,
     bodyText: row.body_text,
     status: row.status,
+    // #215: optymistyczna kontrola wersji edycji PUT — patrz updateCampaign.
+    revisionNo: row.revision_no,
     contentHash: row.content_hash,
     recipientsHash: row.recipients_hash ?? null,
     recipientsCount: row.recipients_count ?? null,
@@ -276,10 +278,23 @@ function parseSendNotBefore(value, current) {
   return date.toISOString();
 }
 
+// #215: PUT zastępowało całą treść kampanii bez wersji — autor, którego
+// poprawkę nadpisano, dostawał 200 i nie wiedział, że ktoś inny zmienił
+// kampanię w międzyczasie (zatwierdzający widział ostatnią wersję, więc
+// błąd był niewidoczny do czasu wysyłki). `revision`, gdy podane w treści
+// żądania, musi zgadzać się z bieżącym `revisionNo` kampanii (odczytanym
+// pod blokadą wiersza) — niezgodność daje `409 revision_conflict` zamiast
+// cichego nadpisania. Pole opcjonalne na razie (etapowe wprowadzenie, patrz
+// "Ryzyko zmiany" w #215) — starzy klienci bez `revision` zachowują się jak
+// dawniej.
 async function updateCampaign(request, env, id, json) {
   const data = await readJson(request);
   let input;
   try { input = parseCampaignContent(data); } catch (error) { mapContentError(error); }
+  const expectedRevision = data.revision !== undefined ? Number(data.revision) : null;
+  if (expectedRevision !== null && !Number.isSafeInteger(expectedRevision)) {
+    throw new RequestError('invalid_revision');
+  }
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   const actorId = context.session.user.id;
   try {
@@ -289,8 +304,14 @@ async function updateCampaign(request, env, id, json) {
       const hash = contentHash({ schoolYearId: campaign.school_year_id, ...input });
       const currentSendNotBefore = campaign.send_not_before ? new Date(campaign.send_not_before).toISOString() : null;
       const sendNotBefore = parseSendNotBefore(data.sendNotBefore, currentSendNotBefore);
+      // Podwójne kliknięcie / powtórzenie tej samej edycji: treść już
+      // identyczna z zapisaną — odtworzenie bez błędu, niezależnie od
+      // `revision` (patrz updateResolution/updateMeeting, ten sam wzorzec).
       if (hash === campaign.content_hash && input.title === campaign.title && sendNotBefore === currentSendNotBefore) {
         return json({ campaign: campaignView(campaign), approvalInvalidated: false });
+      }
+      if (expectedRevision !== null && campaign.revision_no !== expectedRevision) {
+        throw new RequestError('revision_conflict', 409);
       }
       // Każda zmiana (także tytułu i terminu startu — zmienia updated_by) cofa
       // kampanię do szkicu i usuwa zatwierdzenie; historia zostaje w audit_events.
@@ -308,6 +329,7 @@ async function updateCampaign(request, env, id, json) {
         metadata: {
           contentHash: hash, previousContentHash: campaign.content_hash, approvalInvalidated: invalidated,
           sendNotBeforeChanged: sendNotBefore !== currentSendNotBefore,
+          fromRevision: campaign.revision_no, toRevision: rows[0].revision_no,
         },
       });
       return json({ campaign: campaignView(rows[0]), approvalInvalidated: invalidated });

@@ -423,6 +423,8 @@ function meetingFromRow(row) {
     scheduledAt: iso(row.scheduled_at),
     location: row.location ?? null,
     status: row.status,
+    // #215: optymistyczna kontrola wersji edycji PATCH — patrz updateMeeting.
+    revisionNo: row.revision_no,
     quorumRule: {
       mode: row.quorum_mode,
       numerator: row.quorum_numerator ?? null,
@@ -499,6 +501,9 @@ function resolutionFromRow(row) {
     meetingId: row.meeting_id,
     number: row.number ?? null,
     revision: row.revision,
+    // #215: revisionNo osobno od revision (łańcucha korekt) — do optymistycznej
+    // kontroli wersji edycji PATCH (patrz updateResolution).
+    revisionNo: row.revision_no,
     correctsId: row.corrects_id ?? null,
     correctionReason: row.correction_reason ?? null,
     amendsResolutionId: row.amends_resolution_id ?? null,
@@ -636,51 +641,75 @@ export async function createMeeting(db, actor, input = {}, env) {
   return { meeting: meetingFromRow(await loadMeeting(db, result.entityId)), replayed: result.replayed };
 }
 
+// #215: reguła quorum jest scalana z zapisanym stanem (pola nieobecne w
+// żądaniu zostają) — ten merge czytał sprzed transakcji, więc druga
+// równoległa edycja innego pola quorum po cichu cofała pierwszą. Merge i
+// zapis są teraz w jednej transakcji, pod blokadą wiersza (FOR UPDATE), a
+// `input.revision`, gdy podane, musi zgadzać się z bieżącym `revision_no`
+// (inaczej `409 revision_conflict`) — opcjonalne na razie, patrz
+// updateResolution wyżej i "Ryzyko zmiany" w #215.
 export async function updateMeeting(db, actor, input = {}, env) {
   const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
-  const changes = {};
-  if (input.title !== undefined) changes.title = text(input.title, 3, 200);
-  if (input.scheduledAt !== undefined) changes.scheduled_at = timestamp(input.scheduledAt);
-  if (input.location !== undefined) changes.location = text(input.location, 1, 200, { optional: true });
-  if (input.status !== undefined) {
-    if (!STATUSES.has(input.status)) throw new MeetingError('invalid_request');
-    changes.status = input.status;
-  }
-  if (QUORUM_FIELDS.some(field => input[field] !== undefined)) {
-    // PATCH: pola reguły nieobecne w żądaniu zostają z zapisanej reguły;
-    // jawne null czyści pole. Pola nieużywane przez nowy tryb są zerowane.
-    const merged = storedQuorumInput(meeting);
-    for (const field of QUORUM_FIELDS) {
-      if (input[field] !== undefined) merged[field] = input[field];
-    }
-    const rule = parseQuorumRule(merged);
-    Object.assign(changes, {
-      quorum_mode: rule.quorumMode,
-      quorum_numerator: rule.quorumNumerator,
-      quorum_denominator: rule.quorumDenominator,
-      quorum_inclusive: rule.quorumInclusive,
-      quorum_min_count: rule.quorumMinCount,
-      voting_body_size: rule.votingBodySize,
-      quorum_rule_source: rule.quorumRuleSource,
-    });
-  }
-  const columns = Object.keys(changes);
-  if (!columns.length) throw new MeetingError('invalid_request');
-  // #113: termin zmieniony dostaje własne zdarzenie w dzienniku, ze starą i
-  // nową datą jako znaczniki czasu (bez treści zebrania) — dziś nie ma jeszcze
-  // zawiadomienia (kampanii) ani jego wersji porządku, do których to zdarzenie
-  // mogłoby się odnosić (osobny zakres, patrz docs/MEETINGS.md).
-  const reschedule = changes.scheduled_at !== undefined
-    && new Date(changes.scheduled_at).getTime() !== new Date(meeting.scheduled_at).getTime()
-    ? { fromScheduledAt: iso(meeting.scheduled_at), toScheduledAt: iso(changes.scheduled_at) } : null;
+  const expectedRevision = input.revision !== undefined ? integer(input.revision, 1, 1000000000) : null;
   await mutate(db, async tx => {
+    const { rows: lockedRows } = await tx.query('SELECT * FROM meetings WHERE id = $1 FOR UPDATE', [meeting.id]);
+    const locked = lockedRows[0];
+    if (!locked) throw new MeetingError('meeting_not_found', 404);
+    const changes = {};
+    if (input.title !== undefined) changes.title = text(input.title, 3, 200);
+    if (input.scheduledAt !== undefined) changes.scheduled_at = timestamp(input.scheduledAt);
+    if (input.location !== undefined) changes.location = text(input.location, 1, 200, { optional: true });
+    if (input.status !== undefined) {
+      if (!STATUSES.has(input.status)) throw new MeetingError('invalid_request');
+      changes.status = input.status;
+    }
+    if (QUORUM_FIELDS.some(field => input[field] !== undefined)) {
+      // PATCH: pola reguły nieobecne w żądaniu zostają z zapisanej reguły;
+      // jawne null czyści pole. Pola nieużywane przez nowy tryb są zerowane.
+      const merged = storedQuorumInput(locked);
+      for (const field of QUORUM_FIELDS) {
+        if (input[field] !== undefined) merged[field] = input[field];
+      }
+      const rule = parseQuorumRule(merged);
+      Object.assign(changes, {
+        quorum_mode: rule.quorumMode,
+        quorum_numerator: rule.quorumNumerator,
+        quorum_denominator: rule.quorumDenominator,
+        quorum_inclusive: rule.quorumInclusive,
+        quorum_min_count: rule.quorumMinCount,
+        voting_body_size: rule.votingBodySize,
+        quorum_rule_source: rule.quorumRuleSource,
+      });
+    }
+    if (!Object.keys(changes).length) throw new MeetingError('invalid_request');
+    // Wartości identyczne z zapisanymi (poza scheduled_at, porównywanym jako
+    // znacznik czasu) odfiltrowane — podwójne kliknięcie/powtórzenie tej
+    // samej edycji nic nie zmienia w wierszu, więc dostaje odtworzenie bez
+    // błędu i bez nowego zdarzenia audytu, zamiast konfliktu wersji.
+    const columns = Object.keys(changes).filter((column) => (
+      column === 'scheduled_at'
+        ? new Date(changes[column]).getTime() !== new Date(locked.scheduled_at).getTime()
+        : changes[column] !== locked[column]
+    ));
+    if (!columns.length) return;
+    if (expectedRevision !== null && locked.revision_no !== expectedRevision) {
+      throw new MeetingError('revision_conflict', 409);
+    }
+    // #113: termin zmieniony dostaje własne zdarzenie w dzienniku, ze starą i
+    // nową datą jako znaczniki czasu (bez treści zebrania) — dziś nie ma jeszcze
+    // zawiadomienia (kampanii) ani jego wersji porządku, do których to zdarzenie
+    // mogłoby się odnosić (osobny zakres, patrz docs/MEETINGS.md).
+    const reschedule = changes.scheduled_at !== undefined
+      && new Date(changes.scheduled_at).getTime() !== new Date(locked.scheduled_at).getTime()
+      ? { fromScheduledAt: iso(locked.scheduled_at), toScheduledAt: iso(changes.scheduled_at) } : null;
     const assignments = columns.map((column, index) => `${column} = $${index + 2}`).join(', ');
-    await tx.query(`UPDATE meetings SET ${assignments} WHERE id = $1`,
+    const { rows } = await tx.query(`UPDATE meetings SET ${assignments} WHERE id = $1 RETURNING revision_no`,
       [meeting.id, ...columns.map(column => changes[column])]);
     await audit(tx, actor, 'meeting.updated', 'meeting', meeting.id, {
       fields: columns,
-      ...(changes.status && changes.status !== meeting.status
-        ? { fromStatus: meeting.status, toStatus: changes.status } : {}),
+      fromRevision: locked.revision_no, toRevision: rows[0].revision_no,
+      ...(changes.status && changes.status !== locked.status
+        ? { fromStatus: locked.status, toStatus: changes.status } : {}),
     });
     if (reschedule) {
       await audit(tx, actor, 'meeting.rescheduled', 'meeting', meeting.id, reschedule);
@@ -951,37 +980,67 @@ export async function createResolution(db, actor, input = {}) {
 }
 
 // Edits a draft or records its final outcome. Final resolutions are immutable.
+//
+// #215: read-modify-write happened outside the transaction (stale base for
+// fields not present in the request) with no version check, so a parallel
+// edit of a different field silently overwrote the first editor's change,
+// and a parallel adoption could apply to content already replaced. The row
+// is now locked (SELECT ... FOR UPDATE) and merged *inside* the transaction,
+// and `input.revision`, when the caller sends it, must match the row's
+// current `revision_no` or the request gets `409 revision_conflict` instead
+// of silently merging. `revision` stays optional for now (existing callers
+// that do not send it keep the previous best-effort merge behaviour, now at
+// least race-free because the merge base is read under the lock) — see
+// issue #215 "Ryzyko zmiany" for the staged rollout.
 export async function updateResolution(db, actor, input = {}) {
   const resolution = await loadResolution(db, input.resolutionId, input.meetingId);
   await meetingForManage(db, actor, resolution.meeting_id);
-  if (resolution.status !== 'draft') throw new MeetingError('resolution_final_immutable', 409);
-  const next = {
-    number: input.number !== undefined ? text(input.number, 3, 64, { optional: true }) : resolution.number,
-    title: input.title !== undefined ? text(input.title, 3, 300) : resolution.title,
-    body: input.body !== undefined ? text(input.body, 3, 20000) : resolution.body,
-    status: input.status ?? resolution.status,
-    votesFor: input.votesFor !== undefined ? integer(input.votesFor, 0, 10000, { optional: true }) : resolution.votes_for,
-    votesAgainst: input.votesAgainst !== undefined
-      ? integer(input.votesAgainst, 0, 10000, { optional: true }) : resolution.votes_against,
-    votesAbstain: input.votesAbstain !== undefined
-      ? integer(input.votesAbstain, 0, 10000, { optional: true }) : resolution.votes_abstain,
-    quorumCheckId: input.quorumCheckId !== undefined ? optionalId(input.quorumCheckId) : resolution.quorum_check_id,
-  };
-  if (!RESOLUTION_STATUSES.has(next.status)) throw new MeetingError('invalid_request');
-  if (next.status === 'adopted' && !next.number) throw new MeetingError('resolution_number_required');
-  requireFinalVotes(next.status, next, next.quorumCheckId);
-  // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; edycja projektu nie.
-  if (next.status === 'adopted' || next.status === 'rejected') requireMfaVerified(actor);
+  const expectedRevision = input.revision !== undefined ? integer(input.revision, 1, 1000000000) : null;
   await mutate(db, async tx => {
+    const { rows: lockedRows } = await tx.query('SELECT * FROM resolutions WHERE id = $1 FOR UPDATE', [resolution.id]);
+    const locked = lockedRows[0];
+    if (!locked) throw new MeetingError('resolution_not_found', 404);
+    const next = {
+      number: input.number !== undefined ? text(input.number, 3, 64, { optional: true }) : locked.number,
+      title: input.title !== undefined ? text(input.title, 3, 300) : locked.title,
+      body: input.body !== undefined ? text(input.body, 3, 20000) : locked.body,
+      status: input.status ?? locked.status,
+      votesFor: input.votesFor !== undefined ? integer(input.votesFor, 0, 10000, { optional: true }) : locked.votes_for,
+      votesAgainst: input.votesAgainst !== undefined
+        ? integer(input.votesAgainst, 0, 10000, { optional: true }) : locked.votes_against,
+      votesAbstain: input.votesAbstain !== undefined
+        ? integer(input.votesAbstain, 0, 10000, { optional: true }) : locked.votes_abstain,
+      quorumCheckId: input.quorumCheckId !== undefined ? optionalId(input.quorumCheckId) : locked.quorum_check_id,
+    };
+    // Podwójne kliknięcie / powtórzenie tej samej edycji: żądanie opisuje
+    // dokładnie stan, w którym wiersz już jest (niezależnie od wersji) —
+    // odtworzenie bez błędu i bez drugiego zdarzenia audytu, jak przy
+    // wydarzeniach/aktualnościach (events.js/news.js).
+    const isNoOp = next.number === locked.number && next.title === locked.title && next.body === locked.body
+      && next.status === locked.status && next.votesFor === locked.votes_for
+      && next.votesAgainst === locked.votes_against && next.votesAbstain === locked.votes_abstain
+      && next.quorumCheckId === locked.quorum_check_id;
+    if (isNoOp) return;
+    if (expectedRevision !== null && locked.revision_no !== expectedRevision) {
+      throw new MeetingError('revision_conflict', 409);
+    }
+    if (locked.status !== 'draft') throw new MeetingError('resolution_final_immutable', 409);
+    if (!RESOLUTION_STATUSES.has(next.status)) throw new MeetingError('invalid_request');
+    if (next.status === 'adopted' && !next.number) throw new MeetingError('resolution_number_required');
+    requireFinalVotes(next.status, next, next.quorumCheckId);
+    // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; edycja projektu nie.
+    if (next.status === 'adopted' || next.status === 'rejected') requireMfaVerified(actor);
     const { rows } = await tx.query(
       `UPDATE resolutions SET number = $2, title = $3, body = $4, status = $5, votes_for = $6,
          votes_against = $7, votes_abstain = $8, quorum_check_id = $9
-       WHERE id = $1 AND status = 'draft' RETURNING id`,
+       WHERE id = $1 AND status = 'draft' RETURNING id, revision_no`,
       [resolution.id, next.number, next.title, next.body, next.status, next.votesFor,
         next.votesAgainst, next.votesAbstain, next.quorumCheckId]);
     if (!rows.length) throw new MeetingError('resolution_final_immutable', 409);
-    await audit(tx, actor, 'resolution.updated', 'resolution', resolution.id,
-      { meetingId: resolution.meeting_id, fromStatus: resolution.status, toStatus: next.status });
+    await audit(tx, actor, 'resolution.updated', 'resolution', resolution.id, {
+      meetingId: resolution.meeting_id, fromStatus: locked.status, toStatus: next.status,
+      fromRevision: locked.revision_no, toRevision: rows[0].revision_no,
+    });
   });
   return { resolution: resolutionFromRow(await loadResolution(db, resolution.id)) };
 }
