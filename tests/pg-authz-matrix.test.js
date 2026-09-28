@@ -73,6 +73,8 @@ async function seedBase(db) {
   }
   for (const account of Object.values(FX_ACCOUNTS)) await seedUser(db, { userId: account.userId });
   await db.query("INSERT INTO households (id) VALUES ('hh-1')");
+  // #138: cel ponownego przypisania wpłaty (payments.reassignment).
+  await db.query("INSERT INTO households (id) VALUES ('hh-2')");
   // Kategorie księgi z nazwą niosącą znacznik roku (W1 = rok 1, Y2 = rok 2).
   for (const [year, scope] of [[YEAR_1, 'W1'], [YEAR_2, 'Y2']]) {
     await db.query(

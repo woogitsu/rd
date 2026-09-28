@@ -259,6 +259,10 @@ function mapDatabaseError(error) {
   if (message.includes('ledger_category_inactive')) throw new RequestError('invalid_category');
   if (message.includes('ledger_payment_link_mismatch')
     || error?.constraint === 'ledger_payment_is_income') throw new RequestError('invalid_payment_link');
+  // Backstop triggera ledger_entry_insert_guard (#138): kwota wpisu musi
+  // równać się bieżącemu netto wpłaty. Aplikacja sprawdza to wcześniej
+  // (payment_amount_mismatch); ten kod chroni przed równoległym zapisem.
+  if (message.includes('ledger_payment_amount_mismatch')) throw new RequestError('payment_amount_mismatch', 422);
   if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   // Data spoza [starts_on, ends_on] roku (0027, trigger po zamrożeniu roku): jedna
   // reguła w bazie, więc bezpośredni INSERT i API odrzucają to samo.
@@ -418,6 +422,13 @@ async function validateEntryReferences(tx, input, payment) {
     || payment.status !== 'recorded' || input.direction !== 'income')) {
     throw new RequestError('invalid_payment_link');
   }
+  // Kwota wpisu musi równać się bieżącemu netto wpłaty (kwota - korekty -
+  // zwroty), inaczej wpłata 25 EUR mogłaby zostać ujęta w księdze jako
+  // 250 EUR (#138). Trigger ledger_entry_insert_guard sprawdza to ponownie
+  // na poziomie bazy (backstop przy równoległym zapisie).
+  if (input.paymentEntryId && payment && toSafeInteger(payment.net_amount_cents) !== input.amountCents) {
+    throw new RequestError('payment_amount_mismatch', 422);
+  }
   // Referencja krótsza niż 3 znaki nie spełnia wymogu uchwały (jak trigger D1
   // i CHECK ledger_large_expense_resolution w 0003_ledger.sql).
   if (input.direction === 'expense' && input.amountCents > RESOLUTION_THRESHOLD_CENTS
@@ -459,8 +470,11 @@ async function createEntry(request, env, json) {
       // czekają na siebie; po zwolnieniu blokady ponowienie widzi zapis i go odtwarza.
       let payment = null;
       if (input.paymentEntryId) {
+        // Blokuje wiersz wpłaty (payment_entries), więc równoległa korekta lub
+        // zwrot tej wpłaty czeka; netto czytane z widoku po blokadzie.
+        await tx.query('SELECT id FROM payment_entries WHERE id = $1 FOR UPDATE', [input.paymentEntryId]);
         const { rows } = await tx.query(
-          'SELECT id, school_year_id, status FROM payment_entries WHERE id = $1 FOR UPDATE',
+          'SELECT id, school_year_id, status, net_amount_cents FROM payment_entry_net WHERE id = $1',
           [input.paymentEntryId],
         );
         payment = rows[0] ?? null;

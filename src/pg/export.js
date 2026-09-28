@@ -83,6 +83,12 @@ function householdScope(has) {
       parts.push(`id IN (SELECT pa.household_id FROM payment_assignments pa
         JOIN payment_entries p ON p.id = pa.payment_entry_id WHERE p.school_year_id = $1)`);
     }
+    if (has.has('payment_reassignments')) {
+      parts.push(`id IN (SELECT pr.old_household_id FROM payment_reassignments pr
+        JOIN payment_entries p ON p.id = pr.payment_entry_id WHERE p.school_year_id = $1)`);
+      parts.push(`id IN (SELECT pr.new_household_id FROM payment_reassignments pr
+        JOIN payment_entries p ON p.id = pr.payment_entry_id WHERE p.school_year_id = $1)`);
+    }
   }
   return `(${parts.join(' OR ')})`;
 }
@@ -118,6 +124,10 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'payment_corrections', requires: ['payment_entries'],
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
   { table: 'payment_assignments', requires: ['payment_entries'],
+    where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
+  { table: 'payment_refunds', requires: ['payment_entries'],
+    where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
+  { table: 'payment_reassignments', requires: ['payment_entries'],
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
 
   { table: 'ledger_categories', where: () => 'school_year_id = $1' },

@@ -6,7 +6,7 @@ Migracja `0007_ledger_schema.sql` rozwija początkową tabelę `ledger_entries` 
 
 Nowy zapis ma kierunek `income` albo `expense`, aktywną kategorię właściwą dla tego samego roku i kierunku, dodatnią kwotę, opis, datę, metodę oraz unikalny klucz idempotencji. Opcjonalnie wskazuje źródło, prywatny dokument oraz powiązaną wpłatę.
 
-Powiązana wpłata musi mieć status `recorded`, należeć do tego samego roku i może zostać wskazana tylko w jednym wpisie przychodowym. Migracja `0008_ledger_payment_links.sql` chroni przed podwójnym ujęciem wpływu.
+Powiązana wpłata musi mieć status `recorded`, należeć do tego samego roku i może zostać wskazana tylko w jednym wpisie przychodowym. Migracja `0008_ledger_payment_links.sql` chroni przed podwójnym ujęciem wpływu. Migracja `0038` (#138) dodaje kontrolę kwoty: wpis z `paymentEntryId` musi mieć kwotę równą bieżącemu netto wpłaty (kwota − korekty − zwroty) w chwili zapisu — inaczej `422 payment_amount_mismatch`. Zwrot i ponowne przypisanie wpłaty (`payment_refunds`, `payment_reassignments`) opisuje docs/PAYMENTS.md.
 
 Fakty finansowe nie mogą być edytowane ani usuwane. Pomyłkę zmniejszającą kwotę zapisuje się w `ledger_corrections`; suma korekt nie może przekroczyć wpisu. Widok `ledger_entry_net` pokazuje wartość pierwotną, korekty i wartość netto.
 

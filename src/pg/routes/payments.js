@@ -6,6 +6,9 @@
 //   POST /api/payments                      (Idempotency-Key)
 //   POST /api/payments/{id}/corrections     (Idempotency-Key)
 //   POST /api/payments/{id}/assignment      (Idempotency-Key)
+// Nowe trasy (#138): zwrot i ponowne przypisanie jako osobne, niezmienne zdarzenia.
+//   POST /api/payments/{id}/refunds         (Idempotency-Key)
+//   POST /api/payments/{id}/reassignment    (Idempotency-Key)
 //
 // Każdy zapis i jego zdarzenie audytu powstają w jednej transakcji. Korekta
 // i przypisanie blokują wiersz wpłaty (SELECT … FOR UPDATE), więc równoległe
@@ -137,6 +140,21 @@ function parseCorrectionInput(data) {
   return { amountCents: readAmount(data.amountCents), reason };
 }
 
+// Zwrot pieniędzy rodzinie (#138): własna data skutku i metoda, jak wpłata.
+function parseRefundInput(data) {
+  const reason = textOrNull(data.reason, 500);
+  if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
+  if (!validDate(data.refundedOn) || !METHODS.has(data.method)) throw new RequestError('invalid_request');
+  return { amountCents: readAmount(data.amountCents), refundedOn: data.refundedOn, method: data.method, reason };
+}
+
+function parseReassignmentInput(data) {
+  const reason = textOrNull(data.reason, 500);
+  if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
+  if (!validId(data.householdId)) throw new RequestError('invalid_request');
+  return { householdId: data.householdId, reason };
+}
+
 function paymentFromRow(row) {
   return {
     id: row.id,
@@ -163,10 +181,37 @@ function assignmentFromRow(row) {
   return { id: row.id, paymentEntryId: row.payment_entry_id, householdId: row.household_id };
 }
 
+function refundFromRow(row) {
+  return {
+    id: row.id,
+    paymentEntryId: row.payment_entry_id,
+    amountCents: toSafeInteger(row.amount_cents),
+    refundedOn: row.refunded_on,
+    method: row.method,
+    reason: row.reason,
+  };
+}
+
+function reassignmentFromRow(row) {
+  return {
+    id: row.id,
+    paymentEntryId: row.payment_entry_id,
+    oldHouseholdId: row.old_household_id,
+    newHouseholdId: row.new_household_id,
+    reason: row.reason,
+  };
+}
+
 function paymentListItem(row) {
   const payment = paymentFromRow(row);
   const correctedCents = toSafeInteger(row.corrected_cents);
-  return { ...payment, correctedCents, netAmountCents: payment.amountCents - correctedCents };
+  // #138: netto wpłaty na liście też pomniejsza zwrot, nie tylko korektę, ale
+  // pole refundedCents celowo NIE jest dodane do odpowiedzi listy — zachowuje
+  // to zgodność kontraktu ze starym Workerem (test parity), który zwrotów nie
+  // ma. Kwotę zwrotu widać w szczegółach przez GET przyszłej trasy (poza
+  // zakresem tego PR) albo wprost w tabeli payment_refunds.
+  const refundedCents = toSafeInteger(row.refunded_cents ?? 0);
+  return { ...payment, correctedCents, netAmountCents: payment.amountCents - correctedCents - refundedCents };
 }
 
 function paymentMatches(row, input, actorId) {
@@ -193,6 +238,23 @@ function assignmentMatches(row, paymentEntryId, householdId, actorId) {
     && row.household_id === householdId;
 }
 
+function refundMatches(row, paymentEntryId, input, actorId) {
+  return row.created_by === actorId
+    && row.payment_entry_id === paymentEntryId
+    && toSafeInteger(row.amount_cents) === input.amountCents
+    && row.refunded_on === input.refundedOn
+    && row.method === input.method
+    && row.reason === input.reason;
+}
+
+function reassignmentMatches(row, paymentEntryId, oldHouseholdId, input, actorId) {
+  return row.created_by === actorId
+    && row.payment_entry_id === paymentEntryId
+    && row.old_household_id === oldHouseholdId
+    && row.new_household_id === input.householdId
+    && row.reason === input.reason;
+}
+
 async function loadPaymentByKey(executor, key) {
   const { rows } = await executor.query(
     `SELECT ${PAYMENT_COLUMNS} FROM payment_entries WHERE idempotency_key = $1 LIMIT 1`,
@@ -214,6 +276,25 @@ async function loadAssignmentByKey(executor, key) {
   const { rows } = await executor.query(
     `SELECT id, payment_entry_id, household_id, created_by
        FROM payment_assignments WHERE idempotency_key = $1 LIMIT 1`,
+    [key],
+  );
+  return rows[0] ?? null;
+}
+
+async function loadRefundByKey(executor, key) {
+  const { rows } = await executor.query(
+    `SELECT id, payment_entry_id, amount_cents, to_char(refunded_on, 'YYYY-MM-DD') AS refunded_on,
+            method, reason, created_by
+       FROM payment_refunds WHERE idempotency_key = $1 LIMIT 1`,
+    [key],
+  );
+  return rows[0] ?? null;
+}
+
+async function loadReassignmentByKey(executor, key) {
+  const { rows } = await executor.query(
+    `SELECT id, payment_entry_id, old_household_id, new_household_id, reason, created_by
+       FROM payment_reassignments WHERE idempotency_key = $1 LIMIT 1`,
     [key],
   );
   return rows[0] ?? null;
@@ -256,6 +337,17 @@ function mapDatabaseError(error) {
   }
   if (message.includes('payment_not_unmatched')) {
     throw new RequestError('payment_already_assigned', 409);
+  }
+  // #138: korekta/zwrot wpłaty powiązanej z wpisem księgi jest odrzucana,
+  // dopóki skarbnik najpierw nie skoryguje wpisu księgi o tę samą kwotę
+  // (wariant zachowawczy — bez automatycznej korekty księgi).
+  if (message.includes('ledger_correction_required')) throw new RequestError('ledger_correction_required', 409);
+  if (message.includes('payment_refund_exceeds_remaining_amount')) {
+    throw new RequestError('refund_exceeds_remaining_amount', 409);
+  }
+  if (message.includes('payment_cannot_be_refunded')) throw new RequestError('payment_cannot_be_refunded', 409);
+  if (message.includes('payment_reassignment_household_mismatch')) {
+    throw new RequestError('payment_reassignment_household_mismatch', 409);
   }
   // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze) — stan, nie awaria.
   if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
@@ -314,7 +406,10 @@ async function listPayments(request, env, url, json) {
             to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.method, p.reference, p.status,
             COALESCE((
               SELECT SUM(c.amount_cents) FROM payment_corrections c WHERE c.payment_entry_id = p.id
-            ), 0) AS corrected_cents
+            ), 0) AS corrected_cents,
+            COALESCE((
+              SELECT SUM(r.amount_cents) FROM payment_refunds r WHERE r.payment_entry_id = p.id
+            ), 0) AS refunded_cents
        FROM payment_entries p
       WHERE ${conditions.join(' AND ')}
       ORDER BY p.received_on DESC, p.id DESC
@@ -496,12 +591,156 @@ async function assignPayment(request, env, paymentEntryId, json) {
   return json(result, 201, CREATED);
 }
 
+// Zwrot pieniędzy rodzinie (#138): niezmienny zapis, zmniejsza netto wpłaty
+// jak korekta. Odrzucony, jeśli wpłata ma powiązany wpis księgi o innym
+// netto niż to, co zostanie po zwrocie (`ledger_correction_required`) —
+// skarbnik koryguje najpierw wpis księgi, potem ponawia zwrot.
+async function createRefund(request, env, paymentEntryId, json) {
+  if (!validId(paymentEntryId)) throw new RequestError('invalid_payment_id');
+  const idempotencyKey = readIdempotencyKey(request);
+  const input = parseRefundInput(await readJson(request));
+  const context = await requireFinancialContext(request, env);
+  const actorId = context.session.user.id;
+
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    if (!refundMatches(row, paymentEntryId, input, actorId)) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return new Replay({ refund: refundFromRow(row) });
+  };
+
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      // Blokada wiersza wpłaty: równoległe korekty/zwroty tej samej wpłaty czekają na siebie.
+      const { rows } = await tx.query(
+        `SELECT id, school_year_id, status, amount_cents
+           FROM payment_entries WHERE id = $1 FOR UPDATE`,
+        [paymentEntryId],
+      );
+      const payment = rows[0];
+      if (!payment) throw new RequestError('payment_not_found', 404);
+      requireYear(context, payment.school_year_id);
+      const replay = replayOrConflict(await loadRefundByKey(tx, idempotencyKey));
+      if (replay) return replay;
+      if (payment.status === 'reversed') throw new RequestError('payment_cannot_be_refunded', 409);
+      const totals = await tx.query(
+        `SELECT COALESCE((SELECT SUM(amount_cents) FROM payment_corrections WHERE payment_entry_id = $1), 0) AS corrected_cents,
+                COALESCE((SELECT SUM(amount_cents) FROM payment_refunds WHERE payment_entry_id = $1), 0) AS refunded_cents`,
+        [paymentEntryId],
+      );
+      const correctedCents = toSafeInteger(totals.rows[0].corrected_cents);
+      const refundedCents = toSafeInteger(totals.rows[0].refunded_cents);
+      if (correctedCents + refundedCents + input.amountCents > toSafeInteger(payment.amount_cents)) {
+        throw new RequestError('refund_exceeds_remaining_amount', 409);
+      }
+      const refundId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO payment_refunds (id, payment_entry_id, amount_cents, refunded_on, method, reason, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [refundId, paymentEntryId, input.amountCents, input.refundedOn, input.method, input.reason, actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'payment.refund.created', entityType: 'payment_refund',
+        entityId: refundId, metadata: { paymentEntryId },
+      });
+      return { refund: {
+        id: refundId, paymentEntryId, amountCents: input.amountCents,
+        refundedOn: input.refundedOn, method: input.method, reason: input.reason,
+      } };
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await loadRefundByKey(env.db, idempotencyKey));
+      if (replay) return json(replay.body, 200, REPLAYED);
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+  if (result instanceof Replay) return json(result.body, 200, REPLAYED);
+  return json(result, 201, CREATED);
+}
+
+// Ponowne przypisanie do gospodarstwa (#138): niezmienne zdarzenie zamiast
+// korekty do zera. Historia zostaje w payment_reassignments; widok
+// gospodarstwa pokazuje wyłącznie bieżące household_id wpłaty.
+async function reassignPayment(request, env, paymentEntryId, json) {
+  if (!validId(paymentEntryId)) throw new RequestError('invalid_payment_id');
+  const idempotencyKey = readIdempotencyKey(request);
+  const input = parseReassignmentInput(await readJson(request));
+  const context = await requireFinancialContext(request, env);
+  const actorId = context.session.user.id;
+
+  let result;
+  let oldHouseholdId;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        `SELECT id, household_id, school_year_id, status
+           FROM payment_entries WHERE id = $1 FOR UPDATE`,
+        [paymentEntryId],
+      );
+      const payment = rows[0];
+      if (!payment) throw new RequestError('payment_not_found', 404);
+      requireYear(context, payment.school_year_id);
+      oldHouseholdId = payment.household_id;
+      const replay = ((row) => {
+        if (!row) return null;
+        if (!reassignmentMatches(row, paymentEntryId, oldHouseholdId, input, actorId)) {
+          throw new RequestError('idempotency_conflict', 409);
+        }
+        return new Replay({ reassignment: reassignmentFromRow(row) });
+      })(await loadReassignmentByKey(tx, idempotencyKey));
+      if (replay) return replay;
+      if (payment.status !== 'recorded' || payment.household_id === null) {
+        throw new RequestError('payment_not_assigned', 409);
+      }
+      if (payment.household_id === input.householdId) {
+        throw new RequestError('payment_reassignment_same_household', 409);
+      }
+      if (!(await tx.query('SELECT 1 FROM households WHERE id = $1', [input.householdId])).rows.length) {
+        throw new RequestError('invalid_reference');
+      }
+      const reassignmentId = crypto.randomUUID();
+      // Trigger payment_reassignments_apply_insert ustawia nowe household_id.
+      await tx.query(
+        `INSERT INTO payment_reassignments (id, payment_entry_id, old_household_id, new_household_id, reason, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [reassignmentId, paymentEntryId, oldHouseholdId, input.householdId, input.reason, actorId, idempotencyKey],
+      );
+      // Dziennik bez identyfikatorów gospodarstw w metadanych, jak przy przypisaniu.
+      await insertAuditEvent(tx, {
+        actorId, action: 'payment.reassigned', entityType: 'payment_reassignment',
+        entityId: reassignmentId, metadata: { paymentEntryId },
+      });
+      return { reassignment: {
+        id: reassignmentId, paymentEntryId, oldHouseholdId, newHouseholdId: input.householdId, reason: input.reason,
+      } };
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = await loadReassignmentByKey(env.db, idempotencyKey);
+      if (replay && reassignmentMatches(replay, paymentEntryId, oldHouseholdId, input, actorId)) {
+        return json({ reassignment: reassignmentFromRow(replay) }, 200, REPLAYED);
+      }
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+  if (result instanceof Replay) return json(result.body, 200, REPLAYED);
+  return json(result, 201, CREATED);
+}
+
 export async function handle(request, env, url, json) {
   const correctionMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/corrections$/);
   const assignmentMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/assignment$/);
+  const refundMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/refunds$/);
+  const reassignmentMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/reassignment$/);
   const isPaymentCreate = url.pathname === '/api/payments';
   const isPaymentList = request.method === 'GET' && url.pathname === '/api/payments';
-  const isMutation = request.method === 'POST' && (isPaymentCreate || correctionMatch || assignmentMatch);
+  const isMutation = request.method === 'POST'
+    && (isPaymentCreate || correctionMatch || assignmentMatch || refundMatch || reassignmentMatch);
   if (!isPaymentList && !isMutation) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.
   if (isMutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
@@ -510,6 +749,8 @@ export async function handle(request, env, url, json) {
     if (isPaymentList) return await listPayments(request, env, url, json);
     if (isPaymentCreate) return await createPayment(request, env, json);
     if (correctionMatch) return await createCorrection(request, env, decodeId(correctionMatch[1]), json);
+    if (refundMatch) return await createRefund(request, env, decodeId(refundMatch[1]), json);
+    if (reassignmentMatch) return await reassignPayment(request, env, decodeId(reassignmentMatch[1]), json);
     return await assignPayment(request, env, decodeId(assignmentMatch[1]), json);
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code }, error.status);
