@@ -120,6 +120,43 @@ test('Node server raises the body limit only for the document upload route', asy
   }
 });
 
+// #185: POST /api/documents nie może buforować ciała w pamięci przed
+// sprawdzeniem sesji. Trasa (fetchHandler symuluje documents.js) odrzuca bez
+// sesji BEZ dotykania request.body — serwer nie może przeczytać strumienia
+// za nią, więc licznik odebranych bajtów musi zostać na zerze.
+test('Node server: POST /api/documents nie czyta ciała, gdy trasa odrzuca przed jego odczytem (np. brak sesji)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
+  let bodyTouched = false;
+  const fetchHandler = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/api/documents') {
+      // Symuluje documents.js: sprawdza sesję i odrzuca, zanim cokolwiek
+      // dotknie request.body.
+      return Response.json({ error: 'unauthenticated' }, { status: 401 });
+    }
+    bodyTouched = true;
+    return Response.json({ ok: true });
+  };
+  const bodyLimit = bodyLimitFor(10 * 1024 * 1024);
+  const { server, baseUrl } = await listen(createNodeHandler({ distRoot: root, fetchHandler, bodyLimit }));
+  try {
+    // Ciało większe niż limit dla zwykłych tras (1 MiB) — gdyby serwer
+    // buforował je przed wywołaniem trasy (stary kod), zadziałałoby to
+    // tak samo jak przy prawdziwym uploadzie; tu liczy się, że w ogóle nie
+    // jest czytane.
+    const body = 'x'.repeat(5 * 1024 * 1024);
+    const res = await fetch(`${baseUrl}/api/documents`, { method: 'POST', body });
+    assert.equal(res.status, 401);
+    assert.equal(bodyTouched, false, 'fetchHandler dla innej trasy nie powinien się wykonać');
+    // Połączenie zamknięte świadomie (patrz writeFetchResponse) — nieprzeczytane
+    // bajty nie zawisają na współdzielonym gnieździe keep-alive.
+    assert.equal(res.headers.get('connection'), 'close');
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Node server: / przekierowuje na /login/, adres klienta nadpisuje nagłówek od klienta', async () => {
   const root = await mkdtemp(join(tmpdir(), 'rd-node-login-'));
   await mkdir(join(root, 'login'), { recursive: true });

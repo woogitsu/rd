@@ -11,6 +11,12 @@ import { createRequestMetrics, describeError, log, startMetricsReporter } from '
 import { dummyHash } from './pg/password.js';
 
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+// #185 pkt 4: bez limitu jawnego Node trzyma bufor żądania (i gniazdo)
+// nieograniczenie długo dla wolnego/złośliwego klienta. 120 s starcza na
+// upload 10-25 MB nawet na słabym łączu; headersTimeout musi być mniejszy
+// niż requestTimeout (wymóg Node — inaczej ostrzeżenie/błąd konfiguracji).
+export const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+export const DEFAULT_HEADERS_TIMEOUT_MS = 60_000;
 
 // #126: bez TRUST_PROXY za proxy Railway `clientAddress` (src/node-app.js) bierze
 // adres gniazda (adres proxy), więc limit logowań na IP jest wspólny dla całej
@@ -51,6 +57,12 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         db,
         storage,
         documentMaxBytes,
+        // #185 pkt 3: limit uploadów naraz NA PROCES (nie na klaster) — patrz
+        // src/documents.js tryAcquireUploadSlot. Nieustawione/niepoprawne ->
+        // domyślne 4 (DEFAULT_MAX_CONCURRENT_UPLOADS).
+        maxConcurrentUploads: Number.isInteger(Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS))
+          && Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS) > 0
+          ? Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS) : undefined,
         APP_ENV: processEnv.APP_ENV,
         IMPORT_ENABLED: processEnv.IMPORT_ENABLED,
         // Webhook i plan kampanii e-mail (#40). Klucz API Brevo NIE trafia do serwera HTTP —
@@ -86,10 +98,15 @@ export async function startServer({
   metrics,
   readiness,
   trustProxy = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
+  requestTimeout = DEFAULT_REQUEST_TIMEOUT_MS,
+  headersTimeout = DEFAULT_HEADERS_TIMEOUT_MS,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');
   const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit, logger, metrics, readiness, trustProxy });
   const server = createServer(handler);
+  // #185 pkt 4: patrz DEFAULT_REQUEST_TIMEOUT_MS wyżej.
+  server.requestTimeout = requestTimeout;
+  server.headersTimeout = headersTimeout;
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, resolve);
