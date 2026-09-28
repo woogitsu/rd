@@ -168,6 +168,9 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
 
   { table: 'ledger_categories', where: () => 'school_year_id = $1' },
+  // 0073 (#107): historia wyłączenia kategorii i przyjęcie preliminarza przez zebranie.
+  { table: 'ledger_category_deactivations', requires: ['ledger_categories'],
+    where: () => 'category_id IN (SELECT id FROM ledger_categories WHERE school_year_id = $1)' },
   { table: 'ledger_opening_balances', where: () => 'school_year_id = $1' },
   { table: 'ledger_opening_balance_adjustments', requires: ['ledger_opening_balances'],
     where: () => 'opening_balance_id IN (SELECT id FROM ledger_opening_balances WHERE school_year_id = $1)' },
@@ -175,6 +178,9 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'ledger_corrections', requires: ['ledger_entries'],
     where: () => 'ledger_entry_id IN (SELECT id FROM ledger_entries WHERE school_year_id = $1)' },
   { table: 'ledger_budget_lines', where: () => 'school_year_id = $1' },
+  { table: 'ledger_budget_adoptions', where: () => 'school_year_id = $1' },
+  { table: 'ledger_budget_adoption_lines', requires: ['ledger_budget_adoptions'],
+    where: () => 'adoption_id IN (SELECT id FROM ledger_budget_adoptions WHERE school_year_id = $1)' },
   { table: 'ledger_transfers', where: () => 'school_year_id = $1' },
 
   // 0015/0024: uzgodnienia rachunku roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami.

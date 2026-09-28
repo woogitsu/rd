@@ -43,6 +43,10 @@ wpisów).
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `backup_failed` | Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
+| `budget_empty` | Preliminarz tego roku nie ma jeszcze żadnej linii. | Zależy od kontekstu (patrz moduł trasy). |
+| `budget_line_exists` | Ta kategoria ma już linię preliminarza. Zmień ją nową wersją. | Zależy od kontekstu (patrz moduł trasy). |
+| `budget_line_not_found` | Nie znaleziono linii preliminarza. | Nie — popraw dane żądania. |
+| `budget_line_superseded` | Ta wersja linii preliminarza została już zmieniona. Odśwież widok i zmień aktualną wersję. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
@@ -50,6 +54,9 @@ wpisów).
 | `cannot_grant_self` | Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu. | Zależy od kontekstu (patrz moduł trasy). |
 | `cannot_reset_own_mfa` | Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora. | Zależy od kontekstu (patrz moduł trasy). |
 | `cash_below_zero` | Ta operacja doprowadziłaby saldo kasy poniżej zera. | Zależy od kontekstu (patrz moduł trasy). |
+| `category_exists` | Kategoria o tej nazwie już istnieje w tym roku. | Zależy od kontekstu (patrz moduł trasy). |
+| `category_inactive` | Kategoria jest już wyłączona. | Zależy od kontekstu (patrz moduł trasy). |
+| `category_not_found` | Nie znaleziono kategorii. | Nie — popraw dane żądania. |
 | `checklist_incomplete` | Lista kontrolna nie jest ukończona. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_exists` | Klasa o tej nazwie już istnieje w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_not_found` | Nie znaleziono klasy albo nie masz do niej dostępu. | Nie — popraw dane żądania. |

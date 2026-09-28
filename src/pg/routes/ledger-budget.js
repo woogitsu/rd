@@ -594,7 +594,7 @@ async function execution(request, env, url, json) {
     // Dziennik wydruku/eksportu: kto i kiedy, bez kwot.
     await insertAuditEvent(env.db, {
       actorId: context.session.user.id, action: 'ledger.budget_execution.exported', entityType: 'school_year',
-      entityId: schoolYearId, metadata: { format, asOf },
+      entityId: schoolYearId, metadata: { schoolYearId, format, asOf },
     });
   }
   if (format === 'json') return json({ execution: report });
