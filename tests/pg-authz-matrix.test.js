@@ -186,7 +186,8 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
     body: minutesBody ?? `Protokół ${scopeMarker} — treść syntetyczna.`,
   });
   if (stage === 'draftMinutes') return { ...obj, minutesId: minutes.id };
-  await approveMinutes(db, fxAdmin, { minutesId: minutes.id });
+  // #135: zatwierdzający musi być inną osobą niż autor wersji (fxAdmin powyżej).
+  await approveMinutes(db, fxBoard, { minutesId: minutes.id });
   if (stage === 'approvedMinutes') return { ...obj, minutesId: minutes.id };
   await setMinutesVisibility(db, fxAdmin, { idempotencyKey: nextKey('fx-vis'), minutesId: minutes.id, visibility });
   return { ...obj, minutesId: minutes.id };
@@ -232,14 +233,23 @@ async function makeCampaign(ctx, target, stage) {
   await api(ctx, ctx.fxCookies.board2, 'POST', `/api/email/campaigns/${campaignId}/approve`,
     { contentHash: obj.contentHash, recipientsHash: obj.recipientsHash });
   if (stage === 'approved') return obj;
-  // #139: wiersz w stanie końcowym 'failed' do testu trasy resolutions (queued -> failed
-  // jest dozwolonym przejściem bez przechodzenia przez worker/'sending').
+  // #130: harmonogram — sending/paused budowane na zakolejkowanej kampanii.
   await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/queue`, {});
-  const { rows: [outboxRow] } = await ctx.db.query(
-    "UPDATE email_outbox SET state = 'failed', last_error = 'delivery_unknown' WHERE campaign_id = $1 RETURNING id",
-    [campaignId],
-  );
-  return { ...obj, outboxId: outboxRow.id };
+  if (stage === 'sending') return obj;
+  if (stage === 'paused') {
+    await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/pause`, {});
+    return obj;
+  }
+  if (stage === 'failed') {
+    // #139: wiersz w stanie końcowym 'failed' do testu trasy resolutions (queued -> failed
+    // jest dozwolonym przejściem bez przechodzenia przez worker/'sending').
+    const { rows: [outboxRow] } = await ctx.db.query(
+      "UPDATE email_outbox SET state = 'failed', last_error = 'delivery_unknown' WHERE campaign_id = $1 RETURNING id",
+      [campaignId],
+    );
+    return { ...obj, outboxId: outboxRow.id };
+  }
+  return obj;
 }
 
 async function makeReconciliation(ctx, target, stage) {

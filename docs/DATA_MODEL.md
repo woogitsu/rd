@@ -10,6 +10,35 @@ Migracja 0003 oddziela relację dziecko–opiekun od przynależności do jednego
 
 Pole household_id przy uczniu pozostaje na razie głównym przypisaniem organizacyjnym. Nie wolno na jego podstawie automatycznie ustalać obowiązku, wysokości ani adresata dobrowolnej składki. Zasady wpłat dla opieki dzielonej wymagają decyzji Rady i szkoły.
 
+## Relacja "aktualna" (issue #157)
+
+Jedyna definicja tego, czy relacja `student_guardians` obowiązuje w danym dniu, to
+widok `student_guardians_current` i funkcja `student_guardians_current_on(as_of)`
+(`postgres/migrations/0035_student_guardians_current.sql`). Semantyka przedziału to
+`[starts_on, ends_on]`: **oba końce włącznie** (`NULL` = odpowiednio „od początku
+ewidencji” / „relacja nadal trwa”; dzień PO `ends_on` relacja jest już zakończona).
+Dzień odniesienia to `rd_today()` (Europe/Brussels, migracja 0023), nie
+`CURRENT_DATE` serwera bazy. To **inna** semantyka niż `[starts_on, ends_on)` w
+`0014_households.sql` (`student_households`/`guardian_households`) — te dwie
+tabele mają odrębne, ustalone już wcześniej konwencje; ta migracja ich nie
+ujednolica, tylko ujednolica trzy moduły czytające `student_guardians`.
+
+`src/pg/routes/families.js` (karta gospodarstwa), `src/pg/routes/email.js`
+(migawka adresatów kampanii) i `src/pg/export.js` (lista klasy dla przedstawiciela)
+oraz worker wysyłki (`src/email/worker.js`, kontrola zgody tuż przed wysyłką)
+czytają wyłącznie z tego widoku/funkcji — żaden z nich nie powtarza warunku
+`starts_on`/`ends_on` samodzielnie (pilnuje tego test statyczny w
+`tests/pg-routes-wiring.test.js`, obejmuje `src/pg` i `src/email`). W migawce
+kampanii priorytet „kontakt główny” liczy się wyłącznie z relacji bieżącej ze
+zgodą (`contact_allowed`): wygasła, przyszła lub pozbawiona zgody relacja
+`is_primary_contact` nie podnosi priorytetu opiekuna (założenie do D-17). Wcześniej te trzy moduły liczyły "aktualność"
+inaczej (patrz issue #157): `email.js`/`export.js` już liczyły `ends_on` włącznie
+(zgodnie z tą migracją — brak zmiany zachowania), `families.js` liczył `ends_on`
+wyłącznie. Ujednolicenie do wariantu włącznego (zgodnego z
+`tests/pg-primary-household.test.js`, #194) przesuwa widoczność na karcie
+gospodarstwa o jeden dzień w dniu granicznym `ends_on` — bez regresji w
+istniejących testach (żaden nie sprawdzał tam dnia granicznego).
+
 Migracja zachowuje stare dane deweloperskie, tworząc relacje pomiędzy uczniami i opiekunami z tego samego gospodarstwa. Przed migracją jakichkolwiek danych produkcyjnych taki podgląd musi zostać ręcznie sprawdzony — wspólny household_id nie dowodzi uprawnienia do kontaktu w sprawie każdego dziecka.
 
 ## Klasa i rok szkolny
