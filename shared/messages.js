@@ -108,6 +108,10 @@ export const MESSAGES = Object.freeze({
   no_classes_in_school_year: "Rok szkolny nie ma zdefiniowanych klas.",
   invalid_reference: "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje.",
   relation_ended: "Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa.",
+  guardian_not_found: "Nie znaleziono opiekuna.",
+  invalid_or_expired_link: "Ten link jest nieprawidłowy albo już nieaktywny.",
+  link_used: "Ten link został już wykorzystany.",
+  request_not_found: "Nie znaleziono wniosku.",
 
   // --- Konta, role i zaproszenia ------------------------------------------------------
   invalid_role: "Wybierz rolę z listy.",
@@ -128,6 +132,16 @@ export const MESSAGES = Object.freeze({
   production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
   role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji.",
   class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
+
+  // --- Rejestr żądań osób (RODO, #100) -----------------------------------------------
+  subject_required: "Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie.",
+  invalid_received_on: "Podaj poprawną datę wpłynięcia żądania.",
+  invalid_due_on: "Podaj poprawną datę terminu odpowiedzi.",
+  invalid_decision_note_ref: "Odwołanie do decyzji może mieć od 1 do 200 znaków.",
+  household_not_found: "Nie znaleziono gospodarstwa.",
+  student_not_found: "Nie znaleziono ucznia.",
+  data_request_not_found: "Nie znaleziono żądania.",
+  data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",
 
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
@@ -255,6 +269,12 @@ export const MESSAGES = Object.freeze({
   no_recipients: "Wysyłka nie ma odbiorców.",
   invalid_send_not_before: "Podaj poprawną datę i godzinę startu wysyłki.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
+  invalid_confirmation_note: "Podaj uzasadnienie (od 3 do 1000 znaków).",
+  invalid_release_reason: "Wybierz jeden z dopuszczalnych powodów zdjęcia blokady.",
+  release_reason_not_allowed: "Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”.",
+  request_already_consumed: "Ten wniosek o zdjęcie blokady został już rozpatrzony.",
+  request_not_found: "Nie znaleziono wniosku o zdjęcie blokady.",
+  suppression_not_active: "Ta blokada nie jest już aktywna.",
   outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
   not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
 
@@ -303,6 +323,9 @@ export const MESSAGES = Object.freeze({
   // invalid_title, invalid_category, invalid_description: wspólne z innymi modułami (patrz niżej / „Wpłaty, księga, uzgodnienia”).
   invalid_document_date: "Niepoprawna data dokumentu.",
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
+  invalid_replacement_document: "Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę.",
+  document_status_replacement_not_active: "Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny.",
+  document_status_conflict: "Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok.",
   upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
   // --- Wydarzenia -------------------------------------------------------------------------------
@@ -321,6 +344,14 @@ export const MESSAGES = Object.freeze({
   ambiguous_local_time: "Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi.",
   nonexistent_local_time: "Ta godzina nie istnieje w Brukseli (zmiana czasu z zimowego na letni). Wybierz inną godzinę.",
   offset_not_valid_in_europe_brussels: "Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli.",
+  invalid_slots_needed: "Liczba potrzebnych miejsc musi być od 1 do 200.",
+  task_time_outside_event: "Czas zadania musi mieścić się w czasie wydarzenia.",
+  task_full: "Brak wolnych miejsc w tym zadaniu. Odśwież listę.",
+  event_task_not_found: "Nie znaleziono zadania albo nie masz do niego dostępu.",
+  event_task_already_cancelled: "To zadanie zostało już odwołane.",
+  event_task_signup_not_found: "Nie znaleziono zapisu.",
+  guardian_outside_class: "Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku.",
+  invalid_signup_target: "Wskaż dokładnie jedną osobę: opiekuna albo konto.",
 
   // --- Zebrania i uchwały -----------------------------------------------------------------------
   meeting_not_found: "Nie znaleziono zebrania.",
