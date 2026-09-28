@@ -141,6 +141,9 @@ function mapContentError(error) {
 function mapDatabaseError(error) {
   if (error instanceof RequestError) throw error;
   const message = String(error?.message ?? '');
+  // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze, rozszerzony
+  // w #80 na nowe kampanie) — stan, nie awaria bazy (#156).
+  if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   if (message.includes('email_campaign_closed') || message.includes('email_campaign_content_locked')
       || message.includes('email_snapshot_locked') || message.includes('email_campaign_invalid_transition')) {
     throw new RequestError('campaign_locked', 409);
@@ -702,19 +705,31 @@ export function allowsCrossOrigin(request, url) {
   return request.method === 'POST' && url.pathname === WEBHOOK_PATH;
 }
 
+// Dozwolone metody per akcja pod /api/email/campaigns/{id}/{action} (#156,
+// nagłówek Allow przy 405). null akcji = sam zasób kampanii (GET/PUT).
+const CAMPAIGN_ACTION_METHODS = Object.freeze({
+  null: ['GET', 'PUT'],
+  preview: ['GET'],
+  recipients: ['GET'],
+  snapshot: ['POST'],
+  approve: ['POST'],
+  queue: ['POST'],
+  cancel: ['POST'],
+});
+
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith('/api/email/')) return null;
   const method = request.method;
   try {
     if (url.pathname === WEBHOOK_PATH) {
-      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
       return await webhook(request, env, json);
     }
     if (method !== 'GET' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     if (url.pathname === '/api/email/campaigns') {
       if (method === 'GET') return await listCampaigns(request, env, url, json);
       if (method === 'POST') return await createCampaign(request, env, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|approve|queue|cancel))?$/);
     if (!match) return null;
@@ -725,12 +740,12 @@ export async function handle(request, env, url, json) {
     if (!action && method === 'PUT') return await updateCampaign(request, env, id, json);
     if (action === 'preview' && method === 'GET') return await preview(request, env, id, json);
     if (action === 'recipients' && method === 'GET') return await listRecipients(request, env, id, url, json);
-    if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
     if (action === 'snapshot') return await buildSnapshot(request, env, id, json);
     if (action === 'approve') return await approve(request, env, id, json);
     if (action === 'queue') return await queue(request, env, id, json);
     if (action === 'cancel') return await cancel(request, env, id, json);
-    return json({ error: 'method_not_allowed' }, 405);
+    return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code }, error.status);
     throw error;

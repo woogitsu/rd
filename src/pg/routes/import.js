@@ -45,6 +45,7 @@ export const MESSAGES = Object.freeze({
   emailElsewhere: 'Ten sam adres e-mail opiekuna występuje w innej rodzinie — rodzin nie łączymy automatycznie.',
   noCurrentHousehold: 'Uczeń nie ma w bazie bieżącego głównego gospodarstwa — wymaga ręcznego powiązania.',
   noHouseholdLink: 'Wiersz bez ID rodziny: utworzono osobną rodzinę; rodzeństwo nie zostanie powiązane.',
+  guardianMaybeChanged: 'Możliwa zmiana danych opiekuna (e-mail lub pisownia) — wymaga ręcznej decyzji. Nie utworzono nowego opiekuna.',
 });
 
 class ImportError extends Error {
@@ -156,14 +157,40 @@ export function importFingerprint(schoolYearId, allowNewHouseholds, records) {
   }));
 }
 
+// Przedrostki nazwisk (niderlandzkie/belgijskie, francuskie, niemieckie), które zostają
+// przy nazwisku, np. "Anna Maria de Smet" -> imię "Anna Maria", nazwisko "de Smet" (#98).
+const NAME_PARTICLES = new Set([
+  'de', 'van', 'der', 'den', 'ten', 'ter', 'te', 'op', 'het',
+  'la', 'le', 'du', 'des', 'di', 'del', 'della', 'dos', 'das', 'von', 'af', 'av',
+]);
+
 export function splitGuardianName(fullName) {
   const parts = String(fullName).trim().split(/\s+/).filter(Boolean);
   if (parts.length < 2) return { firstName: parts[0] ?? '', lastName: '' };
-  const lastName = parts.pop();
-  return { firstName: parts.join(' '), lastName };
+  let cut = parts.length - 1;
+  while (cut > 0 && NAME_PARTICLES.has(parts[cut - 1].toLocaleLowerCase('pl-PL'))) cut--;
+  if (cut === 0) cut = 1; // co najmniej jeden wyraz zostaje w imieniu, reszta (przedrostki) w nazwisku
+  return { firstName: parts.slice(0, cut).join(' '), lastName: parts.slice(cut).join(' ') };
 }
 
 const guardianKey = (householdId, fullName, email) => `${householdId}|${norm(fullName)}|${norm(email)}`;
+
+// #98: opiekun tej samej rodziny z tym samym e-mailem, ale inną pisownią imienia/nazwiska,
+// albo tym samym imieniem i nazwiskiem, ale innym e-mailem — prawdopodobnie ta sama osoba
+// z poprawionym zapisem, nie nowy opiekun.
+function findPartialGuardianMatch(guardiansByHousehold, householdId, fullName, email) {
+  const normFull = norm(fullName);
+  const normEmail = norm(email);
+  for (const candidate of guardiansByHousehold.get(householdId) ?? []) {
+    const candidateFull = norm(`${candidate.first_name} ${candidate.last_name}`);
+    const candidateEmail = norm(candidate.email);
+    const sameFull = candidateFull === normFull;
+    const sameEmail = Boolean(normEmail) && Boolean(candidateEmail) && normEmail === candidateEmail;
+    if (sameEmail && !sameFull) return candidate;
+    if (sameFull && !sameEmail) return candidate;
+  }
+  return null;
+}
 
 // Plan importu. Wyłącznie odczyty; wykonywany w podglądzie (db) i w zatwierdzeniu (tx).
 async function buildPlan(executor, { schoolYearId, classIds, records, errors, warnings, allowNewHouseholds }) {
@@ -212,6 +239,9 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     for (const row of linked.rows) links.add(`${row.student_id}|${row.guardian_id}`);
   }
   const guardianIndex = new Map();
+  // #98: opiekunowie DB grupowani po rodzinie, żeby wykryć zmianę pisowni/e-maila
+  // istniejącego opiekuna (dopasowanie częściowe) zamiast tworzyć drugi rekord.
+  const guardiansByHousehold = new Map();
   if (householdIds.length) {
     const { rows } = await executor.query(
       'SELECT id, household_id, first_name, last_name, email FROM guardians WHERE household_id = ANY($1::text[])',
@@ -220,8 +250,23 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     for (const row of rows) {
       const key = guardianKey(row.household_id, `${row.first_name} ${row.last_name}`, row.email);
       if (!guardianIndex.has(key)) guardianIndex.set(key, row.id);
+      if (!guardiansByHousehold.has(row.household_id)) guardiansByHousehold.set(row.household_id, []);
+      guardiansByHousehold.get(row.household_id).push(row);
     }
   }
+  // Uczniowie zapisani w tym roku, których nie ma w pliku (#98) — tylko informacja
+  // do ręcznego wyjaśnienia; identyfikatory ze źródła, bez imion i nazwisk.
+  // Cała zawartość pliku (także wiersze błędne) — uczeń wpisany w pliku, choćby
+  // z błędem, nie powinien trafić na listę „brak w pliku”.
+  const fileStudentRefs = new Set(records.map((r) => norm(r.studentId)).filter(Boolean));
+  const { rows: enrolledRows } = await executor.query(
+    `SELECT s.source_ref FROM enrollments e JOIN students s ON s.id = e.student_id WHERE e.school_year_id = $1`,
+    [schoolYearId],
+  );
+  const missingFromFile = enrolledRows
+    .map((row) => row.source_ref)
+    .filter((ref) => ref && !fileStudentRefs.has(norm(ref)))
+    .sort((a, b) => a.localeCompare(b, 'pl-PL'));
   // Adres e-mail → rodziny, w których występuje (baza + planowane). Tylko do ostrzeżeń.
   const emailHouseholds = new Map();
   if (emails.length) {
@@ -296,11 +341,19 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     }
 
     let emailWarning = false;
+    let guardianConflict = false;
     for (const [fullName, email] of [[record.guardian1, record.email1], [record.guardian2, record.email2]]) {
       if (!fullName) continue;
       const key = guardianKey(householdId, fullName, email);
       let guardianId = guardianIndex.get(key);
       if (!guardianId) {
+        // #98: e-mail lub pisownia zmienione względem zapisu w bazie — to nie jest
+        // nowy opiekun. Rozstrzyga uprawniona osoba poza importem (osobna, audytowana
+        // zmiana danych opiekuna); import niczego nie nadpisuje ani nie dubluje.
+        if (findPartialGuardianMatch(guardiansByHousehold, householdId, fullName, email)) {
+          guardianConflict = true;
+          continue;
+        }
         guardianId = randomUUID();
         guardianIndex.set(key, guardianId);
         inserts.guardians.push({ id: guardianId, householdId, ...splitGuardianName(fullName), email: email || null });
@@ -321,6 +374,10 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
       }
     }
     if (emailWarning) serverWarnings.push({ row: record.row, message: MESSAGES.emailElsewhere });
+    if (guardianConflict) {
+      rows.push({ row: record.row, action: 'conflict', messages: [MESSAGES.guardianMaybeChanged] });
+      continue;
+    }
     const action = existing ? (changes.length ? 'update' : 'unchanged') : 'add';
     rows.push({ row: record.row, action, changes: [...new Set(changes)] });
   }
@@ -343,7 +400,12 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     rows: rows.map((row) => [row.row, row.action, row.changes ?? [], row.messages ?? []]),
     counts,
   }));
-  return { rows, counts, planDigest, inserts, warnings: [...warnings, ...serverWarnings].sort((a, b) => a.row - b.row) };
+  return {
+    rows, counts, planDigest, inserts,
+    warnings: [...warnings, ...serverWarnings].sort((a, b) => a.row - b.row),
+    // #98: informacyjnie — nie zapisywane, nie wpływa na planDigest ani commitAllowed.
+    missingFromFile: { count: missingFromFile.length, refs: missingFromFile },
+  };
 }
 
 async function prepare(executor, payload) {
@@ -493,7 +555,9 @@ export async function handle(request, env, url, json) {
   const route = url.pathname.slice('/api/import/'.length);
   const method = request.method;
   if (!((route === 'options' && method === 'GET') || (['preview', 'commit'].includes(route) && method === 'POST'))) {
-    return ['options', 'preview', 'commit'].includes(route) ? json({ error: 'method_not_allowed' }, 405) : null;
+    if (route === 'options') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    if (['preview', 'commit'].includes(route)) return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+    return null;
   }
   const access = await requireAccess(request, env, ACCESS, json);
   if (access.response) return access.response;
@@ -519,6 +583,7 @@ export async function handle(request, env, url, json) {
         commitAllowed: plan.counts.rowsConflict + plan.counts.rowsSkipped === 0,
         rows: plan.rows,
         warnings: plan.warnings,
+        missingFromFile: plan.missingFromFile,
         written: false,
       });
     }

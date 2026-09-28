@@ -65,9 +65,10 @@
       <section class="card" id="view-enroll" aria-labelledby="enroll-title" hidden>
         <h2 id="enroll-title">Skonfiguruj weryfikację dwuetapową</h2>
         <div id="enroll-intro">
-          <p>Twoja rola wymaga drugiego składnika logowania. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP).</p>
+          <p id="enroll-intro-text">Twoja rola wymaga drugiego składnika logowania. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP).</p>
           <button class="primary" type="button" id="enroll-start">Rozpocznij konfigurację</button>
           <p class="form-error" id="enroll-start-error" role="alert"></p>
+          <p><button type="button" id="enroll-back" hidden>Wróć</button></p>
         </div>
         <div id="enroll-scan" hidden>
           <ol class="steps">
@@ -172,6 +173,7 @@
         <ul class="panel-list" id="panel-list"></ul>
         <div class="account-actions">
           <button type="button" id="open-change">Zmień hasło</button>
+          <button type="button" id="enroll-voluntary" hidden>Włącz weryfikację dwuetapową</button>
           <button type="button" class="logout">Wyloguj</button>
           <button type="button" id="logout-all">Wyloguj ze wszystkich urządzeń</button>
         </div>
