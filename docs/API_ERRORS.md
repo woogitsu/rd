@@ -231,6 +231,8 @@ wpisów).
 | `photos_require_school_wide_role` | Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły. | Zależy od kontekstu (patrz moduł trasy). |
 | `post_not_found` | Nie znaleziono wpisu. | Nie — popraw dane żądania. |
 | `post_withdrawn` | Wpis został wycofany. | Zależy od kontekstu (patrz moduł trasy). |
+| `preview_account_limit` | Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro. | Zależy od kontekstu (patrz moduł trasy). |
+| `preview_campaign_limit` | Wyczerpano limit wiadomości testowych dla tej kampanii. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_required` | Najpierw wyślij podgląd importu. | Nie — popraw dane żądania. |
 | `preview_stale` | Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `production_requires_flag` | Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
@@ -257,6 +259,7 @@ wpisów).
 | `school_year_not_finished` | Rok szkolny jeszcze się nie zakończył. | Zależy od kontekstu (patrz moduł trasy). |
 | `school_year_not_found` | Nie znaleziono roku szkolnego. | Nie — popraw dane żądania. |
 | `self_approval_forbidden` | Nie można zatwierdzić własnego wpisu. Zatwierdzić musi inna osoba. | Zależy od kontekstu (patrz moduł trasy). |
+| `sending_disabled` | Wysyłka e-mail jest wyłączona w tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `service_unavailable` | Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `snapshot_required` | Najpierw utwórz kopię stanu danych. | Nie — popraw dane żądania. |
 | `statement_date_outside_school_year` | Data wyciągu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
