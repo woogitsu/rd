@@ -102,7 +102,7 @@ const e = escapeHtml;
 const money = (cents) => e(formatEur(cents));
 
 const DIRECTION = { income: 'przychód', expense: 'wydatek' };
-const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone' };
+const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone', abandoned: 'porzucone' };
 
 function table(headers, rows, emptyText) {
   if (!rows.length) return `<p class="empty">${e(emptyText)}</p>`;
@@ -209,7 +209,7 @@ ${adjustmentRows.length ? `<p>Korekty bilansu otwarcia:</p>${table([['Zapisano']
 <h2>5. Uzgodnienia rachunku bankowego</h2>
 ${table([['Data wyciągu'], ['Status'], ['Saldo wyciągu', 'num'], ['Saldo księgi', 'num'], ['Różnica', 'num'], ['Niedopasowane pozycje', 'num'], ['Zatwierdził (id)'], ['Wyjaśnienie']],
     reconciliationRows, 'Brak uzgodnień rachunku w tym roku.')}
-<p class="meta">Zatwierdzone uzgodnienia: ${e(reconciliations.confirmedCount)}; szkice: ${e(reconciliations.draftCount)}. Saldo księgi w szkicu jest wyliczane na bieżąco.</p>
+<p class="meta">Zatwierdzone uzgodnienia: ${e(reconciliations.confirmedCount)}; szkice: ${e(reconciliations.draftCount)}; porzucone szkice: ${e(reconciliations.abandonedCount ?? 0)}. Saldo księgi w szkicu jest wyliczane na bieżąco.</p>
 
 <h2>6. Dowody wydatków</h2>
 <p>Wydatki bez dowodu: ${e(evidence.expensesWithoutEvidence.count)}; suma netto ${money(evidence.expensesWithoutEvidence.netCents)}.</p>

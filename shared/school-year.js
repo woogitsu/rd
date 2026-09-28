@@ -27,3 +27,28 @@ export function defaultYear(years, previous) {
   if (previous && years.includes(previous)) return previous;
   return years[0] || "";
 }
+
+// Rok szkolny na podstawie daty (Europe/Brussels, rok zaczyna się 1 września) —
+// ta sama heurystyka co site/core.js#defaultSchoolYearId, stąd wspólna funkcja
+// zamiast dwóch kopii (patrz panele: pusty ekran bez domyślnego roku). Używana
+// jako wartość awaryjna, gdy przydziały (grants) nie dają żadnego roku, np. rola
+// bez przypisanego roku szkolnego (admin/board o zasięgu globalnym).
+const HEURISTIC_TIME_ZONE = "Europe/Brussels";
+const HEURISTIC_PARTS = new Intl.DateTimeFormat("en-CA", {
+  timeZone: HEURISTIC_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+});
+
+export function heuristicSchoolYearId(now = new Date()) {
+  const [year, month] = HEURISTIC_PARTS.format(now).split("-").map(Number);
+  const start = month >= 9 ? year : year - 1;
+  return `${start}-${start + 1}`;
+}
+
+// Rok do wstępnego wypełnienia panelu przy wejściu (bez klikania „Pokaż”):
+// ostatnio wybrany/z adresu (previous), inaczej najnowszy z przydziałów (grants),
+// inaczej heurystyka daty. Użytkownik nadal może zmienić rok ręcznie.
+export function initialSchoolYearId(grants, { previous = "", now = new Date() } = {}) {
+  return defaultYear(yearsFromGrants(grants), previous) || heuristicSchoolYearId(now);
+}

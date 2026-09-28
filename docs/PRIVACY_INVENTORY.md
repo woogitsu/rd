@@ -15,6 +15,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`bank_reconciliation_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_matches`|`revoke_reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania|document_financial|tak|tak|
 |`bank_reconciliation_matches`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`bank_reconciliations`|`abandon_reason`|Osoba trzecia|direct|wolny tekst|powód porzucenia szkicu uzgodnienia|document_financial|tak|tak|
 |`bank_reconciliations`|`confirmation_note`|Osoba trzecia|direct|wolny tekst|notatka potwierdzenia uzgodnienia|document_financial|tak|tak|
 |`bank_reconciliations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliations`|`notes`|Osoba trzecia|direct|wolny tekst|notatka uzgodnienia banku|document_financial|tak|tak|
@@ -126,7 +127,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **113**, w tym wolnego tekstu: **26** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **114**, w tym wolnego tekstu: **27** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -179,6 +180,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
+| `abandon_reason` | direct | third_party | tak |
+| `abandoned_at` | none | — | tak |
+| `abandoned_by` | none | — | tak |
 | `confirmation_note` | direct | third_party | tak |
 | `confirmed_at` | none | — | tak |
 | `confirmed_by` | none | — | tak |

@@ -1039,6 +1039,10 @@ export const ROUTE_MATRIX = Object.freeze([
   reconciliationRoute('reconciliation.confirm', 'POST', '/confirm', 'draft', {
     body: () => ({ confirmationNote: 'Różnica wyjaśniona (syntetyczne)' }),
   }),
+  // Porzucenie szkicu bez aktywnych dopasowań (0107, przegląd #344).
+  reconciliationRoute('reconciliation.abandon', 'POST', '/abandon', 'draft', {
+    body: () => ({ reason: 'Saldo pliku niezgodne (syntetyczne)' }),
+  }),
   {
     id: 'reconciliation.auditReport', module: 'reconciliation', method: 'GET', path: '/api/reports/audit?schoolYearId=:year&format=json',
     targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
