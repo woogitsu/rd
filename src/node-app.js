@@ -5,7 +5,7 @@ import { checkReadiness } from './health.js';
 import { describeError, log, sanitizePath } from './log.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
-const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login']);
+const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'year-close']);
 // Nagłówek z adresem klienta dla limitów logowania (src/pg/login.js). Zawsze
 // nadpisywany przez serwer — wartość wysłana przez klienta jest ignorowana.
 export const CLIENT_IP_HEADER = 'x-rd-client-ip';
