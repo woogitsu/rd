@@ -283,6 +283,10 @@ test('suma pozycji ≠ kwota pozycji wyciągu: odrzucenie w API i w bazie (takż
   // Nagłówka i pozycji nie da się zmienić ani usunąć.
   await assert.rejects(db.query('UPDATE bank_reconciliation_group_match_items SET amount_cents = 1'));
   await assert.rejects(db.query('DELETE FROM bank_reconciliation_group_matches'));
+  for (const table of ['bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
+    'bank_reconciliation_group_match_revocations']) {
+    await assert.rejects(db.query(`TRUNCATE ${table} CASCADE`), /truncate_not_allowed/);
+  }
 });
 
 test('podwójne kliknięcie i równoległe dopasowania: jedno przyjęte, reszta odrzucona', async () => {
@@ -692,4 +696,27 @@ test('jedno aktywne dopasowanie celu w roku (#105): zbiorcze ↔ 1:1 i zbiorcze 
   assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
   assert.equal((await match1(recB, b2, { paymentEntryId: pb })).status, 201);
   assert.equal((await match1(recB, b3, { paymentEntryId: pc })).status, 201);
+});
+
+test('wpłata wprost z pozycji (#115) odrzucona, gdy pozycja jest dopasowana zbiorczo; po cofnięciu działa', async () => {
+  const { db, cookies, call } = await setup();
+  const p1 = await createPayment(call, cookies.treasurer, { amountCents: 2500, householdId: 'h-a' });
+  const p2 = await createPayment(call, cookies.treasurer, { amountCents: 2500, householdId: 'h-b' });
+  const rec = await createDraft(call, cookies.treasurer);
+  const [lineId] = await importLines(call, cookies.treasurer, rec, [5000]);
+  const grouped = await groupMatch(call, cookies.treasurer, rec, lineId, payments(p1, p2));
+  assert.equal(grouped.status, 201, JSON.stringify(grouped.body));
+  const before = (await db.query('SELECT count(*)::int AS n FROM payment_entries')).rows[0].n;
+  const refused = await call(`/api/reconciliations/${rec}/lines/${lineId}/payment`, {
+    cookie: cookies.treasurer, idempotencyKey: key('fromline'), body: { householdId: null },
+  });
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.equal(refused.body.error, 'already_matched');
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM payment_entries')).rows[0].n, before, 'bez nowej wpłaty');
+  const revoked = await revokeGroup(call, cookies.treasurer, rec, grouped.body.groupMatch.id);
+  assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
+  const created = await call(`/api/reconciliations/${rec}/lines/${lineId}/payment`, {
+    cookie: cookies.treasurer, idempotencyKey: key('fromline'), body: { householdId: null },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
 });

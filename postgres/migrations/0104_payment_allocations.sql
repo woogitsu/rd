@@ -30,7 +30,8 @@
 --   wynik jest identyczny jak przed migracją.
 -- * Obie tabele: niezmienne (immutable_financial_record) i objęte zamrożeniem
 --   roku (year_freeze_direct na własnej kolumnie school_year_id; bez zmiany
---   year_freeze_via_parent).
+--   year_freeze_via_parent) oraz — jak pozostałe tabele niezmienne od 0095
+--   (SR-05, #101) — trigger BEFORE TRUNCATE z deny_truncate().
 --
 -- Skutki dla istniejących danych: tylko nowe tabele, widok, funkcje
 -- i triggery. Żaden wiersz nie jest zmieniany. Istniejące przypisania
@@ -43,7 +44,7 @@
 --
 -- Wycofanie: na bazie bez części — DROP VIEW payment_allocations_current po
 -- przywróceniu household_payment_totals z 0002_payments.sql, DROP TABLE
--- payment_allocation_reversals, payment_allocations, DROP FUNCTION poniżej.
+-- (z triggerami *_no_truncate) payment_allocation_reversals, payment_allocations, DROP FUNCTION poniżej.
 -- Na bazie z częściami — tylko po kopii zapasowej: sumy gospodarstw
 -- zmaleją o części, a wpłaty wrócą do stanu „nieprzypisana”.
 
@@ -110,6 +111,8 @@ CREATE TRIGGER payment_allocations_guard_insert BEFORE INSERT ON payment_allocat
   FOR EACH ROW EXECUTE FUNCTION payment_allocation_guard();
 CREATE TRIGGER payment_allocations_no_change BEFORE UPDATE OR DELETE ON payment_allocations
   FOR EACH ROW EXECUTE FUNCTION immutable_financial_record();
+CREATE TRIGGER payment_allocations_no_truncate BEFORE TRUNCATE ON payment_allocations
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_truncate();
 
 CREATE FUNCTION payment_allocation_reversal_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE allocation payment_allocations%ROWTYPE;
@@ -130,6 +133,8 @@ CREATE TRIGGER payment_allocation_reversals_guard_insert BEFORE INSERT ON paymen
   FOR EACH ROW EXECUTE FUNCTION payment_allocation_reversal_guard();
 CREATE TRIGGER payment_allocation_reversals_no_change BEFORE UPDATE OR DELETE ON payment_allocation_reversals
   FOR EACH ROW EXECUTE FUNCTION immutable_financial_record();
+CREATE TRIGGER payment_allocation_reversals_no_truncate BEFORE TRUNCATE ON payment_allocation_reversals
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_truncate();
 
 -- Korekta i zwrot nie mogą zejść poniżej sumy bieżących części. Nazwy triggerów
 -- z prefiksem `z_`: uruchamiają się PO dotychczasowych strażnikach (kolejność

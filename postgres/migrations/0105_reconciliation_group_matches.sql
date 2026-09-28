@@ -64,7 +64,9 @@
 --   niezgodność wychodzi przy zatwierdzeniu.
 -- * Zamrożenie roku: wszystkie trzy tabele mają własną kolumnę
 --   school_year_id (= rok uzgodnienia) i trigger year_freeze_direct; bez
---   zmiany year_freeze_via_parent. Niezmienność: immutable_financial_record.
+--   zmiany year_freeze_via_parent. Niezmienność: immutable_financial_record
+--   oraz — jak tabele z 0095 (SR-05, #101) — trigger BEFORE TRUNCATE
+--   z deny_truncate() na każdej z trzech tabel.
 --
 -- Skutki dla istniejących danych: tylko nowe tabele, widoki, funkcje
 -- i triggery. Żaden wiersz nie jest zmieniany ani usuwany. Istniejące
@@ -247,6 +249,8 @@ CREATE TRIGGER bank_group_matches_guard_insert BEFORE INSERT ON bank_reconciliat
   FOR EACH ROW EXECUTE FUNCTION bank_group_match_guard();
 CREATE TRIGGER bank_group_matches_no_change BEFORE UPDATE OR DELETE ON bank_reconciliation_group_matches
   FOR EACH ROW EXECUTE FUNCTION immutable_financial_record();
+CREATE TRIGGER bank_reconciliation_group_matches_no_truncate BEFORE TRUNCATE ON bank_reconciliation_group_matches
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_truncate();
 
 CREATE FUNCTION bank_group_match_item_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE v_parent bank_reconciliations%ROWTYPE;
@@ -316,6 +320,8 @@ CREATE TRIGGER bank_group_match_items_guard_insert BEFORE INSERT ON bank_reconci
   FOR EACH ROW EXECUTE FUNCTION bank_group_match_item_guard();
 CREATE TRIGGER bank_group_match_items_no_change BEFORE UPDATE OR DELETE ON bank_reconciliation_group_match_items
   FOR EACH ROW EXECUTE FUNCTION immutable_financial_record();
+CREATE TRIGGER bank_reconciliation_group_match_items_no_truncate BEFORE TRUNCATE ON bank_reconciliation_group_match_items
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_truncate();
 
 -- Przy COMMIT: suma pozycji = kwota pozycji wyciągu, co najmniej dwie pozycje.
 CREATE FUNCTION bank_group_match_sum_check() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -365,6 +371,8 @@ CREATE TRIGGER bank_group_match_revocations_guard_insert BEFORE INSERT ON bank_r
   FOR EACH ROW EXECUTE FUNCTION bank_group_match_revocation_guard();
 CREATE TRIGGER bank_group_match_revocations_no_change BEFORE UPDATE OR DELETE ON bank_reconciliation_group_match_revocations
   FOR EACH ROW EXECUTE FUNCTION immutable_financial_record();
+CREATE TRIGGER bank_reconciliation_group_match_revocations_no_truncate BEFORE TRUNCATE ON bank_reconciliation_group_match_revocations
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_truncate();
 
 -- Dopasowanie 1:1: wyłączność z dopasowaniami zbiorczymi. Uruchamia się po
 -- bank_matches_guard_insert (0024), który już zablokował wiersz uzgodnienia.
