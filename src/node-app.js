@@ -1,13 +1,16 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
+import { Readable } from 'node:stream';
 import { checkReadiness } from './health.js';
+import { checkJobsHealth, tokensMatch } from './pg/jobs-health.js';
 import { describeError, log, sanitizePath } from './log.js';
+import { UPLOAD_PATH } from './documents.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 // Jedyne źródło listy paneli statycznych (issue #119): smoke test i inne
 // narzędzia mają importować ten eksport zamiast wpisywać listę na sztywno.
-export const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation']);
+export const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close']);
 // Jedyny prefiks przeznaczony do indeksowania przez wyszukiwarki (#116).
 // Wszystkie pozostałe prefiksy z STATIC_PREFIXES i cały /api/ poza /api/public/
 // wymagają logowania do danych, więc dostają `X-Robots-Tag: noindex, nofollow`.
@@ -16,7 +19,7 @@ const ROBOTS_NOINDEX = 'noindex, nofollow';
 // Blokuje wszystkie prefiksy paneli i całe /api/ poza /api/public/ — to samo
 // rozróżnienie co X-Robots-Tag powyżej, na wypadek czytników, które nie patrzą
 // na nagłówki odpowiedzi (#116).
-const ROBOTS_TXT_BODY = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation']
+const ROBOTS_TXT_BODY = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close']
   .map((prefix) => `Disallow: /${prefix}/`).join('\n')}\nDisallow: /api/\nAllow: /api/public/\nAllow: /${PUBLIC_STATIC_PREFIX}/\n`;
 // Nagłówek z adresem klienta dla limitów logowania (src/pg/login.js). Zawsze
 // nadpisywany przez serwer — wartość wysłana przez klienta jest ignorowana.
@@ -144,7 +147,7 @@ async function serveStatic(request, response, url, distRoot, baseline) {
   return true;
 }
 
-async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baseline, indexable) {
+async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baseline, indexable, streamedRequestBody = false) {
   // Bazowe nagłówki najpierw: trasa (webResponse) może świadomie nadpisać
   // którykolwiek z nich (dziś żadna tego nie robi).
   for (const [name, value] of Object.entries(baseline)) nodeResponse.setHeader(name, value);
@@ -157,7 +160,18 @@ async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baselin
   // Cała reszta API wymaga zalogowania — `/api/public/` jest jedynym wyjątkiem
   // przeznaczonym do indeksowania (#116).
   if (apiRequest && !indexable) nodeResponse.setHeader('X-Robots-Tag', ROBOTS_NOINDEX);
+  if (streamedRequestBody) {
+    // #185: trasa mogła zwrócić odpowiedź (np. 401/403/400) bez przeczytania
+    // strumienia ciała (celowo — patrz wyżej). Node nie wznowi obsługi
+    // kolejnego żądania na tym samym gnieździe keep-alive, dopóki ciało nie
+    // zostanie odebrane albo połączenie zamknięte — więc zamykamy je jawnie
+    // zamiast czekać, aż klient sam doślizgnie resztę bajtów.
+    nodeResponse.setHeader('Connection', 'close');
+  }
   nodeResponse.statusCode = webResponse.status;
+  // `finish`, nie zaraz po `end()`: destroy przed pełnym zapisaniem odpowiedzi
+  // do gniazda mógłby uciąć jej ostatnie bajty u klienta.
+  if (streamedRequestBody) nodeResponse.once('finish', () => nodeResponse.socket?.destroy());
   if (!webResponse.body) return nodeResponse.end();
   const data = Buffer.from(await webResponse.arrayBuffer());
   nodeResponse.end(data);
@@ -191,11 +205,33 @@ async function serveReadiness(response, env, readiness, baseline) {
   response.end(JSON.stringify(body));
 }
 
+// Heartbeat zadań (#149): chroniony tokenem (Authorization: Bearer <token>),
+// osobny od /health/ready — dla monitora zewnętrznego, nie dla Railway.
+// Brak konfiguracji tokenu = punkt wyłączony (401), żeby nie ujawnić stanu
+// zadań bez jawnej decyzji operacyjnej.
+async function serveJobsHealth(request, response, env, jobsHealth) {
+  const expected = env.HEALTH_JOBS_TOKEN;
+  const header = request.headers.authorization;
+  const provided = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!expected || !tokensMatch(provided, expected)) {
+    response.writeHead(401, { 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ status: 'unauthorized' }));
+    return;
+  }
+  const { ok, failedThresholds } = await jobsHealth(env);
+  response.writeHead(ok ? 200 : 503, {
+    'Cache-Control': 'no-store',
+    'Content-Type': 'application/json; charset=utf-8',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  response.end(JSON.stringify({ status: ok ? 'ok' : 'threshold_exceeded', failedThresholds }));
+}
+
 // bodyLimit(url, method) -> bajty; pozwala podnieść limit wyłącznie dla
 // wskazanych tras (np. POST /api/documents). Domyślnie 1 MiB dla wszystkich.
 export function createNodeHandler({
   distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit, logger = log, metrics = null, readiness = checkReadiness,
-  trustProxy = false,
+  jobsHealth = checkJobsHealth, trustProxy = false,
 } = {}) {
   if (!distRoot) throw new Error('distRoot is required');
   if (typeof fetchHandler !== 'function') throw new Error('fetchHandler is required');
@@ -211,6 +247,10 @@ export function createNodeHandler({
       const url = publicUrl(request, publicBaseUrl);
       if (url.pathname === '/health/ready' && ['GET', 'HEAD'].includes(request.method)) {
         await serveReadiness(response, env, readiness, baseline);
+        return;
+      }
+      if (url.pathname === '/health/jobs' && ['GET', 'HEAD'].includes(request.method)) {
+        await serveJobsHealth(request, response, env, jobsHealth);
         return;
       }
       // Strona startowa: osoby bez sesji trafiają na logowanie; strona publiczna jest pod /site/.
@@ -230,17 +270,37 @@ export function createNodeHandler({
       }
       if (await serveStatic(request, response, url, distRoot, baseline)) return;
       const method = request.method || 'GET';
-      const body = ['GET', 'HEAD'].includes(method) ? undefined : await requestBody(request, limitFor(url, method));
+      // #185: POST /api/documents buforowało całe ciało (do 25 MB) w pamięci
+      // PRZED sprawdzeniem sesji/roli w documents.js — anonimowe żądanie z
+      // dużym Content-Length kosztowało tyle samo pamięci co upload
+      // skarbnika. Dla tej jednej trasy ciało trafia do Request jako
+      // strumień (bez buforowania tutaj); dopiero readLimited (documents.js,
+      // wywoływane PO auth/autoryzacji/walidacji kind) czyta go pod limitem.
+      // Bez ważnej sesji handler kończy się wcześniej i strumień nigdy nie
+      // jest czytany — połączenie jest wtedy zamykane niżej (writeFetchResponse),
+      // żeby nieprzeczytane bajty nie zawisły na współdzielonym gnieździe keep-alive.
+      const streamBody = method === 'POST' && url.pathname === UPLOAD_PATH;
+      let body;
+      if (['GET', 'HEAD'].includes(method)) {
+        body = undefined;
+      } else if (streamBody) {
+        const declared = Number(request.headers['content-length']);
+        const limit = limitFor(url, method);
+        if (Number.isFinite(declared) && declared > limit) throw new RangeError('request_too_large');
+        body = Readable.toWeb(request);
+      } else {
+        body = await requestBody(request, limitFor(url, method));
+      }
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers)) {
         if (value === undefined || name.toLowerCase() === CLIENT_IP_HEADER) continue;
         headers.set(name, Array.isArray(value) ? value.join(', ') : value);
       }
       headers.set(CLIENT_IP_HEADER, clientAddress(request, trustProxy));
-      const webRequest = new Request(url, { method, headers, body });
+      const webRequest = new Request(url, { method, headers, body, ...(streamBody ? { duplex: 'half' } : {}) });
       const webResponse = await fetchHandler(webRequest, env);
       const indexable = url.pathname.startsWith('/api/public/');
-      await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'), baseline, indexable);
+      await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'), baseline, indexable, streamBody);
     } catch (error) {
       const tooLarge = error instanceof RangeError && error.message === 'request_too_large';
       if (!tooLarge) logger.error('http_handler_error', describeError(error));
