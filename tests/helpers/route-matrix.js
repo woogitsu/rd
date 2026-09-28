@@ -632,6 +632,19 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { event: 'opened', email: 'nieznany@example.invalid', id: key, ts_event: 1791187200 },
     }),
   },
+  {
+    // Wypisanie jednym kliknięciem (#110): publiczna, bez Origin, bez sesji.
+    // Macierz nie konfiguruje EMAIL_UNSUBSCRIBE_SECRET, więc token zawsze
+    // odmawia (400) — niezależnie od tożsamości wywołującego (jak webhook).
+    id: 'email.preferences.get', module: 'email', method: 'GET', path: '/api/email/preferences?t=:token', targets: ['-'],
+    allow: 'public', mfa: false, ok: 400, deny: 400, fixture: null,
+    build: () => ({ path: '/api/email/preferences?t=fake-token' }),
+  },
+  {
+    id: 'email.preferences.post', module: 'email', method: 'POST', path: '/api/email/preferences?t=:token', targets: ['-'],
+    allow: 'public', mfa: false, ok: 400, deny: 400, fixture: null,
+    build: () => ({ path: '/api/email/preferences?t=fake-token' }),
+  },
 
   // ---------- news (#14) ----------
   {

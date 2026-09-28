@@ -44,6 +44,10 @@ export function emailConfig(env = {}) {
     breakerUncertain: intFrom(env.EMAIL_BREAKER_UNCERTAIN, 2, { min: 1, max: 50 }),
     allowlist: parseAllowlist(env.EMAIL_TEST_ALLOWLIST),
     sender: { email: env.BREVO_FROM_EMAIL || null, name: env.BREVO_FROM_NAME || 'Rada Rodziców' },
+    // Wypisanie jednym kliknięciem (#110): sekret podpisu tokenu i adres bazowy
+    // do budowy linku publicznego. Brak jednego z nich = brak stopki (bez łamania wysyłki).
+    unsubscribeSecret: env.EMAIL_UNSUBSCRIBE_SECRET || null,
+    publicBaseUrl: env.PUBLIC_BASE_URL || null,
   };
 }
 
@@ -153,6 +157,12 @@ export function createBrevoTransport({
             headers: {
               'X-Mailin-custom': message.outboxId,
               'X-RD-Idempotency-Key': message.idempotencyKey,
+              // RFC 8058 — wypisanie jednym kliknięciem (#110). Obecne tylko,
+              // gdy wiadomość ma stopkę wypisania (unsubscribeUrl ustawiony).
+              ...(message.unsubscribeUrl ? {
+                'List-Unsubscribe': `<${message.unsubscribeUrl}>`,
+                'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+              } : {}),
             },
             tags: ['rd-campaign'],
           }),

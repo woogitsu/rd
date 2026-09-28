@@ -13,5 +13,8 @@ Fundament walidacji sesji opisuje [AUTH.md](AUTH.md). W bazie przechowujemy wył
 ## Operacje
 Szyfrowanie transmisji, prywatne zasoby, kopie i test odtworzenia, ograniczenie prób logowania, skan plików, monitoring i rotacja sekretów. Stosować okres przechowywania uzgodniony z administratorem danych i udokumentowany proces sprostowania lub usunięcia. Dokumenty szkolne archiwizować zgodnie z regulaminem i decyzją szkoły.
 
+## Trasy publiczne zwolnione z kontroli Origin
+`POST /api/email/webhooks/brevo` (wspólny sekret) oraz `GET`/`POST /api/email/preferences?t=…` (wypisanie jednym kliknięciem, #110) nie wymagają zgodnego nagłówka `Origin` — pierwsza, bo wywołuje ją dostawca poczty, druga, bo klika ją klient poczty rodzica, nie przeglądarka z otwartą sesją aplikacji. Bezpieczeństwo trasy preferencji opiera się na tokenie podpisanym HMAC (bez adresu ani czytelnych identyfikatorów w URL), braku skutku dla `GET` i prostym limicie żądań. Ryzyko: enumeracja i CSRF na trasie publicznej — ograniczone przez podpis tokenu, brak stanu po stronie `GET` i limit żądań (patrz `docs/EMAIL.md`, ograniczenia prototypu).
+
 ## Zdjęcia
 Przed publikacją każdej fotografii zidentyfikować autora, źródło i prawo do wykorzystania. Przy rozpoznawalnych dzieciach zweryfikować zakres zgód i szkolne zasady publikowania wizerunku. Fotografia znaleziono na oficjalnej stronie szkoły nie oznacza automatycznie prawa do skopiowania jej do nowego serwisu.

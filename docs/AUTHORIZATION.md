@@ -99,6 +99,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
+| `GET /api/email/preferences?t=:token` | publiczna, bez sesji | nie | — | tylko odczyt kategorii z tokenu, bez skutku; zły/zmieniony token → 400; limit żądań → 429 (#110) |
+| `POST /api/email/preferences?t=:token` | publiczna, bez sesji; zwolniona z `Origin` (jak webhook) | nie | — | wypisanie z kategorii kampanii, idempotentne; zły/zmieniony token → 400; limit żądań → 429 (#110) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
 | `GET /api/news?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wpisy własnej klasy | nie | 403 | |
 | `POST /api/news` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | zarząd z przydziałem klasy: 403 (szkice klasy tylko przedstawiciel) |

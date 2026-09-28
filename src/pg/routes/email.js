@@ -11,6 +11,8 @@
 //   POST /api/email/campaigns/{id}/queue             zakolejkowanie zatwierdzonej kampanii
 //   POST /api/email/campaigns/{id}/cancel            anulowanie (wiersze w kolejce → cancelled)
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
+//   GET  /api/email/preferences?t=…                  publiczna: podgląd wypisania (bez skutku, #110)
+//   POST /api/email/preferences?t=…                  publiczna: wypisanie jednym kliknięciem (bez Origin, #110)
 //
 // Żadna trasa nie wysyła poczty. Wysyła wyłącznie zadanie scripts/email-worker.js.
 // Role (założenie do D-08/D-16/D-17): szkic i lista — board/treasurer z MFA,
@@ -23,16 +25,17 @@ import { insertAuditEvent } from '../audit.js';
 import { effectiveDay } from '../today.js';
 import { emailConfig } from '../../email/brevo.js';
 import {
-  ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
-  parseCampaignContent, recipientsHash, renderMessage, sha256Hex,
+  CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
+  parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
 } from '../../email/content.js';
-import { campaignDailyCap, planDays } from '../../email/worker.js';
+import { campaignDailyCap, planDays, unsubscribeUrlFor } from '../../email/worker.js';
 
 export const name = 'email';
 
 const EDITOR_ROLES = ['board', 'treasurer'];
 const APPROVER_ROLES = ['board'];
 const WEBHOOK_PATH = '/api/email/webhooks/brevo';
+const PREFERENCES_PATH = '/api/email/preferences';
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
@@ -40,11 +43,29 @@ const MAX_BODY_BYTES = 32 * 1024;
 const MAX_WEBHOOK_BYTES = 64 * 1024;
 const MAX_WEBHOOK_EVENTS = 100;
 const RECIPIENT_PAGE = 200;
+// 'unsubscribed' nie jest już globalną blokadą (#110) — obsługiwana osobno,
+// jako preferencja kategorii kampanii (recordWebhookEvent).
 const SUPPRESS_EVENTS = Object.freeze({
   hard_bounce: 'hard_bounce', invalid_email: 'invalid_email', blocked: 'blocked',
-  spam: 'complaint', complaint: 'complaint', unsubscribed: 'unsubscribed',
+  spam: 'complaint', complaint: 'complaint',
 });
 const BOUNCE_EVENTS = new Set(['hard_bounce', 'invalid_email', 'blocked']);
+// Limit prostego, nieporozdzielanego licznika żądań na trasę publiczną (best
+// effort — jeden proces; docelowo wymaga trwałego licznika, patrz docs/EMAIL.md).
+const PREF_RATE_WINDOW_MS = 60_000;
+const PREF_RATE_MAX = 30;
+const prefRateBuckets = new Map();
+
+function prefRateLimited(key) {
+  const now = Date.now();
+  const bucket = prefRateBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    prefRateBuckets.set(key, { count: 1, resetAt: now + PREF_RATE_WINDOW_MS });
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > PREF_RATE_MAX;
+}
 
 class RequestError extends Error {
   constructor(code, status = 400) {
@@ -92,7 +113,7 @@ function requireYear(context, roles, schoolYearId) {
   if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
 }
 
-const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.subject, c.body_text, c.content_hash,
+const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.category, c.subject, c.body_text, c.content_hash,
   c.status, c.recipients_hash, c.recipients_count, c.created_by, c.updated_by, c.snapshot_built_by,
   c.approved_by, c.approved_at, c.approved_content_hash, c.approved_recipients_hash, c.daily_cap,
   c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key`;
@@ -117,6 +138,7 @@ function campaignView(row) {
     schoolYearId: row.school_year_id,
     title: row.title,
     audience: row.audience,
+    category: row.category,
     subject: row.subject,
     bodyText: row.body_text,
     status: row.status,
@@ -202,15 +224,15 @@ async function createCampaign(request, env, json) {
       if (existing) return existing;
       const id = crypto.randomUUID();
       const { rows } = await tx.query(
-        `INSERT INTO email_campaigns (id, school_year_id, title, audience, subject, body_text, content_hash,
+        `INSERT INTO email_campaigns (id, school_year_id, title, audience, category, subject, body_text, content_hash,
                                       created_by, updated_by, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
          RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
-        [id, data.schoolYearId, input.title, input.audience, input.subject, input.bodyText, hash, actorId, key],
+        [id, data.schoolYearId, input.title, input.audience, input.category, input.subject, input.bodyText, hash, actorId, key],
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.created', entityType: 'email_campaign', entityId: id,
-        metadata: { schoolYearId: data.schoolYearId, audience: input.audience, contentHash: hash },
+        metadata: { schoolYearId: data.schoolYearId, audience: input.audience, category: input.category, contentHash: hash },
       });
       return json({ campaign: campaignView(rows[0]) }, 201, { 'Idempotency-Replayed': 'false' });
     });
@@ -241,12 +263,12 @@ async function updateCampaign(request, env, id, json) {
       // i usuwa zatwierdzenie; historia zostaje w audit_events.
       const invalidated = campaign.status === 'approved';
       const { rows } = await tx.query(
-        `UPDATE email_campaigns SET title = $2, audience = $3, subject = $4, body_text = $5, content_hash = $6,
-                updated_by = $7, updated_at = now(), status = 'draft',
+        `UPDATE email_campaigns SET title = $2, audience = $3, category = $4, subject = $5, body_text = $6, content_hash = $7,
+                updated_by = $8, updated_at = now(), status = 'draft',
                 approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL
           WHERE id = $1
           RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
-        [id, input.title, input.audience, input.subject, input.bodyText, hash, actorId],
+        [id, input.title, input.audience, input.category, input.subject, input.bodyText, hash, actorId],
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.updated', entityType: 'email_campaign', entityId: id,
@@ -313,9 +335,18 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     }
   }
   const suppressed = new Set();
+  const optedOut = new Set();
   if (hashes.length) {
     const { rows } = await executor.query('SELECT email_hash FROM email_suppressions WHERE email_hash = ANY($1::text[])', [hashes]);
     for (const row of rows) suppressed.add(row.email_hash);
+    // Ostatnie zdarzenie preferencji per (adres, kategoria) kampanii (#110).
+    const { rows: prefRows } = await executor.query(
+      `SELECT DISTINCT ON (email_hash) email_hash, action FROM email_preferences_events
+        WHERE email_hash = ANY($1::text[]) AND category = $2
+        ORDER BY email_hash, created_at DESC, id DESC`,
+      [hashes, campaign.category],
+    );
+    for (const row of prefRows) if (row.action === 'opt_out') optedOut.add(row.email_hash);
   }
   const recipients = [];
   const exclusions = [];
@@ -327,7 +358,9 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     if (!consenting.length) { exclusions.push({ householdId, reason: 'no_consent' }); continue; }
     const valid = consenting.filter((row) => row.normalized);
     if (!valid.length) { exclusions.push({ householdId, reason: 'no_valid_email' }); continue; }
-    const open = valid.filter((row) => !suppressed.has(row.hash));
+    const notOptedOut = valid.filter((row) => !optedOut.has(row.hash));
+    if (!notOptedOut.length) { exclusions.push({ householdId, reason: 'opted_out' }); continue; }
+    const open = notOptedOut.filter((row) => !suppressed.has(row.hash));
     if (!open.length) { exclusions.push({ householdId, reason: 'suppressed' }); continue; }
     open.sort((a, b) => (Number(b.is_primary) - Number(a.is_primary)) || (a.guardian_id < b.guardian_id ? -1 : 1));
     const chosen = open.find((row) => !used.has(row.hash));
@@ -420,7 +453,9 @@ async function preview(request, env, id, json) {
     [id],
   );
   const sampleHousehold = recipients[0]?.household_id ?? 'PRZYKLAD';
-  const sample = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: sampleHousehold });
+  const sampleEmailHash = recipients[0]?.email_hash ?? emailHash('podglad@example.invalid');
+  const sampleUnsubscribeUrl = unsubscribeUrlFor(config, { campaignId: campaign.id, category: campaign.category, emailHash: sampleEmailHash });
+  const sample = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: sampleHousehold, unsubscribeUrl: sampleUnsubscribeUrl });
   const count = recipients.length;
   const dailyCap = campaign.daily_cap ?? campaignDailyCap(count, config);
   return json({
@@ -464,7 +499,7 @@ async function listRecipients(request, env, id, url, json) {
 
 async function verifyExact(tx, campaign) {
   const content = contentHash({
-    schoolYearId: campaign.school_year_id, audience: campaign.audience,
+    schoolYearId: campaign.school_year_id, audience: campaign.audience, category: campaign.category,
     subject: campaign.subject, bodyText: campaign.body_text,
   });
   if (content !== campaign.content_hash) throw new RequestError('content_hash_mismatch', 409);
@@ -659,8 +694,9 @@ async function recordWebhookEvent(db, event) {
   const dedupeKey = sha256Hex(JSON.stringify([eventName, messageId, event.id ?? null, event.ts_event ?? event.date ?? null, hash]));
   return db.transaction(async (tx) => {
     const { rows: outboxRows } = await tx.query(
-      `SELECT o.id, o.state, o.campaign_id, r.guardian_id, r.email_hash
+      `SELECT o.id, o.state, o.campaign_id, r.guardian_id, r.email_hash, c.category
          FROM email_outbox o JOIN email_campaign_recipients r ON r.id = o.recipient_id
+         JOIN email_campaigns c ON c.id = o.campaign_id
         WHERE ($1::text IS NOT NULL AND o.provider_message_id = $1) OR ($2::text IS NOT NULL AND o.id = $2)
         LIMIT 1 FOR UPDATE OF o`,
       [messageId, custom],
@@ -675,6 +711,22 @@ async function recordWebhookEvent(db, event) {
       [eventId, dedupeKey, eventName, messageId, outbox?.id ?? null, hash ?? outbox?.email_hash ?? null, occurred && !Number.isNaN(occurred.valueOf()) ? occurred.toISOString() : null],
     );
     if (!rows[0]) return { recorded: false };
+    // 'unsubscribed' (#110): preferencja kategorii kampanii, nie blokada
+    // globalna. Bez wiersza kolejki dopasowanego do zdarzenia nie znamy
+    // kategorii — zdarzenie zostaje zapisane, bez żadnej blokady.
+    if (eventName === 'unsubscribed') {
+      if (!outbox) return { recorded: true };
+      await tx.query(
+        `INSERT INTO email_preferences_events (id, email_hash, category, action, source, campaign_id)
+         VALUES ($1, $2, $3, 'opt_out', 'webhook', $4)`,
+        [crypto.randomUUID(), outbox.email_hash, outbox.category, outbox.campaign_id],
+      );
+      await insertAuditEvent(tx, {
+        action: 'email.preference.opt_out', entityType: 'email_outbox', entityId: outbox.id,
+        metadata: { category: outbox.category, source: 'webhook', campaignId: outbox.campaign_id },
+      });
+      return { recorded: true, suppressed: true };
+    }
     const reason = SUPPRESS_EVENTS[eventName];
     const suppressHash = hash ?? outbox?.email_hash ?? null;
     if (!reason || !suppressHash) return { recorded: true };
@@ -696,10 +748,67 @@ async function recordWebhookEvent(db, event) {
   });
 }
 
+// --- Preferencje kontaktu / wypisanie jednym kliknięciem (#110) ------------
+
+function tokenFromRequest(url) {
+  const t = url.searchParams.get('t');
+  return typeof t === 'string' && t.length > 0 && t.length <= 2000 ? t : null;
+}
+
+function clientKeyFrom(request) {
+  // Najlepszy dostępny klucz do prostego limitu żądań (bez adresu w logu).
+  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+}
+
+async function preferencesShow(request, env, url, json) {
+  if (prefRateLimited(clientKeyFrom(request))) return json({ error: 'rate_limited' }, 429);
+  const token = tokenFromRequest(url);
+  const secret = env.EMAIL_UNSUBSCRIBE_SECRET;
+  if (!token || !secret) return json({ error: 'invalid_token' }, 400);
+  const payload = verifyPreferencesToken(secret, token);
+  if (!payload || !CATEGORIES.includes(payload.category)) return json({ error: 'invalid_token' }, 400);
+  // GET nie ma żadnego skutku (skanery linków w skrzynkach) — tylko potwierdzenie treści.
+  return json({ category: payload.category, action: 'opt_out' });
+}
+
+async function preferencesOptOut(request, env, url, json) {
+  if (prefRateLimited(clientKeyFrom(request))) return json({ error: 'rate_limited' }, 429);
+  const token = tokenFromRequest(url);
+  const secret = env.EMAIL_UNSUBSCRIBE_SECRET;
+  if (!token || !secret) return json({ error: 'invalid_token' }, 400);
+  const payload = verifyPreferencesToken(secret, token);
+  if (!payload || !CATEGORIES.includes(payload.category)) return json({ error: 'invalid_token' }, 400);
+  try {
+    return await env.db.transaction(async (tx) => {
+      const { rows: last } = await tx.query(
+        `SELECT action FROM email_preferences_events WHERE email_hash = $1 AND category = $2
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [payload.emailHash, payload.category],
+      );
+      // Idempotencja (#110): już wypisany — bez drugiego zdarzenia.
+      if (last[0]?.action === 'opt_out') return json({ category: payload.category, optedOut: true });
+      await tx.query(
+        `INSERT INTO email_preferences_events (id, email_hash, category, action, source, campaign_id)
+         VALUES ($1, $2, $3, 'opt_out', 'link', $4)`,
+        [crypto.randomUUID(), payload.emailHash, payload.category, payload.campaignId],
+      );
+      await insertAuditEvent(tx, {
+        action: 'email.preference.opt_out', entityType: 'email_campaign', entityId: payload.campaignId,
+        metadata: { category: payload.category, source: 'link' },
+      });
+      return json({ category: payload.category, optedOut: true });
+    });
+  } catch (error) {
+    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    throw error;
+  }
+}
+
 // --- Router ---------------------------------------------------------------
 
 export function allowsCrossOrigin(request, url) {
-  return request.method === 'POST' && url.pathname === WEBHOOK_PATH;
+  return (request.method === 'POST' && url.pathname === WEBHOOK_PATH)
+    || (request.method === 'POST' && url.pathname === PREFERENCES_PATH);
 }
 
 export async function handle(request, env, url, json) {
@@ -709,6 +818,11 @@ export async function handle(request, env, url, json) {
     if (url.pathname === WEBHOOK_PATH) {
       if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
       return await webhook(request, env, json);
+    }
+    if (url.pathname === PREFERENCES_PATH) {
+      if (method === 'GET') return await preferencesShow(request, env, url, json);
+      if (method === 'POST') return await preferencesOptOut(request, env, url, json);
+      return json({ error: 'method_not_allowed' }, 405);
     }
     if (method !== 'GET' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     if (url.pathname === '/api/email/campaigns') {
