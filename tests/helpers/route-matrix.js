@@ -215,7 +215,7 @@ function documentRead(id, path, kind, targets, allow, mfa, suffix) {
 function documentStatus(id, action, kind, targets, allow, mfa) {
   const isSupersede = action === 'supersede';
   return {
-    id, module: 'documents', method: 'POST', path: `/api/documents/:documentId/${action}`,
+    id, module: 'documents', method: 'POST', path: `/api/documents/:${kind}DocumentId/${action}`,
     targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404, fixture: 'fresh',
     object: { kind: isSupersede ? 'documentPair' : 'document', stage: kind },
     build: ({ obj, key }) => ({
@@ -616,7 +616,14 @@ export const ROUTE_MATRIX = Object.freeze([
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
   documentRead('documents.contentClass', '/api/documents/:classDocumentId/content', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, '/content'),
   // Zmiana stanu dokumentu (issue #82): zastąpienie i unieważnienie — te same reguły dostępu
-  // co odczyt (brak wyroczni istnienia dla nieznanego/niedozwolonego identyfikatora).
+  // co odczyt (brak wyroczni istnienia dla nieznanego/niedozwolonego identyfikatora). Kod
+  // (src/pg/routes/documents.js, changeStatus → canAccessDocument) używa DOKŁADNIE tej samej
+  // polityki DOCUMENT_POLICIES co odczyt — zapis nie jest węższy ani szerszy niż odczyt danego
+  // rodzaju, więc macierz lustrzanie powtarza allow/mfa z documentRead dla tego rodzaju.
+  documentStatus('documents.supersedeFinancial', 'supersede', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentStatus('documents.voidFinancial', 'void', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentStatus('documents.supersedeBoard', 'supersede', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentStatus('documents.voidBoard', 'void', 'board', YEAR_TARGETS, DOC_BOARD, false),
   documentStatus('documents.supersedeClass', 'supersede', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
   documentStatus('documents.voidClass', 'void', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
 
