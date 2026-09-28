@@ -59,7 +59,7 @@
   "dependencies": {
     "fflate": "0.8.3",
     "pg": "8.23.0",
-    "qrcode-generator": "1.4.4",
+    "qrcode-generator": "2.0.4",
     "read-excel-file": "9.3.10",
     "sql.js": "1.14.2"
   },
