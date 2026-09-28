@@ -28,8 +28,8 @@ import {
   recordAttendance, setMinutesVisibility, updateMeeting,
 } from '../src/pg/meetings.js';
 import {
-  approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
-  uploadPhotoFile, verifyPhoto,
+  addConsent, approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto,
+  submit as submitNews, uploadPhotoFile, verifyPhoto,
 } from '../src/pg/news.js';
 import { hashSecret } from '../src/auth.js';
 import { emailHash as suppressionEmailHash } from '../src/email/content.js';
@@ -42,7 +42,7 @@ import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSes
 import {
   ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
   campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
-  pngBytes, statementDate, todoReason, visibleScopes, yearDate,
+  pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
 const PAST = '2020-01-01T00:00:00Z';
@@ -527,6 +527,15 @@ const MAKERS = {
     const key = nextKey('fx-photo');
     const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
     return { photoId: photo.id };
+  },
+  // Zgoda do wycofania (#106): zdjęcie bez zidentyfikowanych osób nie wymaga
+  // zgody, ale trasa wycofania działa na dowolnym odwołaniu do dokumentu zgody.
+  consent: async (ctx) => {
+    const key = nextKey('fx-consent');
+    const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
+    const consentDocumentRef = `zgoda-${safeKey(key)}`.slice(0, 120);
+    await addConsent(ctx.db, fxAdmin, { photoId: photo.id, subjectNo: 1, subjectKind: 'adult', consentDocumentRef });
+    return { consentDocumentRef };
   },
   document: async (ctx, target, kind) => {
     const classPart = kind === 'class' ? `&classId=${target.classId}` : '';

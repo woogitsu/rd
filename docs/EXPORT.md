@@ -156,7 +156,10 @@ zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity
 metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), dziennik kopii zapasowych `backup_runs` (0058, dane operacyjne), `data_access_log`, rejestr żądań osób RODO `data_subject_requests` (0068, #100 — rozliczalność wobec osób, nie dane Rady; dostęp i retencja do D-07/D-08/D-09), metadane importów (`import_batches`, D-04),
 dziennik eksportów, kampanie e-mail z odbiorcami, wykluczeniami, kolejką,
 blokadami i zdarzeniami dostawcy (adresy e-mail; zakres i retencja — D-04)
-oraz aktualności i zdjęcia (zgody na wizerunek — osobny zakres), w tym pliki wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres D-04). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
+oraz aktualności i zdjęcia (zgody na wizerunek, w tym rejestr wycofań
+`news_photo_consent_withdrawals` (0083) — osobny zakres, D-04), w tym pliki
+wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres
+D-04). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
 zawierają więc identyfikatory, które w odtworzonej bazie nie mają
 odpowiednika. Pliki dokumentów kopiuje się osobno (patrz
 [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md), backup Storage Bucket).

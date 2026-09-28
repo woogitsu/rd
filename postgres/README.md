@@ -642,6 +642,27 @@ dziś triggerem niezmienności UPDATE/DELETE. Żaden istniejący wiersz nie
 jest zmieniany ani usuwany; zmienia się wyłącznie zachowanie przyszłych
 operacji.
 
+`0083_news_photo_consent_scope.sql` (#106, część) dodaje rejestr zakresu,
+wygaśnięcia i wycofania zgody na wizerunek. `news_photo_consents` dostaje
+kolumny `scope` (lista zamknięta `rada_website`/`print`/`social_media`,
+domyślnie pusty zakres) i `valid_until` (`NULL` = bez terminu). Nowa tabela
+`news_photo_consent_withdrawals` (tylko dopisywanie, ten sam wzorzec
+niezmienności co inne rejestry zdarzeń) zapisuje wycofanie jednej zgody po
+`consent_document_ref` — obejmuje to również rodzeństwo, jeśli ta sama zgoda
+dotyczyła obojga dzieci na tym samym zdjęciu. Widok `public_news`
+(przebudowany od najnowszej definicji z `0071_news_photo_alt_text_required.sql`,
+z zachowanym `CASE WHEN ph.decorative...`) i nowa funkcja
+`news_photo_consents_public_ok` pokazują zdjęcie publicznie tylko, gdy
+wszystkie jego wiersze zgody mają `rada_website` w zakresie, nie wygasły i
+nie zostały wycofane. Skutki dla danych: WARIANT ZACHOWAWCZY wobec braku
+decyzji D-18 — każdy istniejący wiersz `news_photo_consents` dostaje pusty
+`scope`, co wstrzymuje publiczną widoczność powiązanych zdjęć do czasu
+jawnego potwierdzenia zakresu (nowym wpisem zgody); zdjęcia bez wierszy
+zgody (brak zidentyfikowanych osób) się nie zmieniają. Wycofanie: usunąć
+widok `public_news` i przywrócić wersję z `0018_news.sql`, usunąć kolumny
+`scope`/`valid_until` i tabelę `news_photo_consent_withdrawals`; pozostałe
+dane w `news_photo_consents` nie są ruszane.
+
 `0084_news_photo_files.sql` (#96, część) dodaje tabelę `news_photo_files` —
 magazyn wariantów plików zdjęć galerii (`web`, `thumb`) w prywatnym
 Storage Bucket pod osobnym prefiksem `photos/` (oddzielnym od `docs/`
@@ -670,6 +691,18 @@ zostają (trigger działa tylko dla nowych). Wycofanie na bazie bez
 importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
 przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
 importami CODA/CAMT — tylko po kopii zapasowej.
+
+`0112_news_photo_is_public_consent.sql` (#106) dokłada do
+`news_photo_is_public` (0084) ten sam warunek zgody, który `public_news`
+(0083) sprawdza przez `news_photo_consents_public_ok`: po scaleniu z main
+okazało się, że 0084 napisała tę funkcję niezależnie od 0083 i pominęła
+warunek zakresu/wygaśnięcia/wycofania zgody, więc odczyt publiczny pliku
+zdjęcia (`GET` wariantu web/thumb) mógł nadal udostępniać zdjęcie, którego
+jedyna zgoda została wycofana albo wygasła — mimo że `public_news` już je
+ukrywał. Skutki dla danych: żaden wiersz nie jest zmieniany ani usuwany,
+zmienia się wyłącznie wynik funkcji (a więc dostępność pliku dla odczytu
+publicznego). Wycofanie: `CREATE OR REPLACE FUNCTION news_photo_is_public`
+z ciałem sprzed tej migracji (jak w 0084, bez warunku zgody).
 
 `0073_ledger_budget_adoptions.sql` (#107) dodaje preliminarz przez API:
 `ledger_categories.idempotency_key` (klucz żądania tworzenia kategorii),

@@ -1145,6 +1145,13 @@ export const ROUTE_MATRIX = Object.freeze([
   photoAction('news.photoVerify', 'verify', PHOTO_VERIFY, 200, {}),
   photoAction('news.photoRevoke', 'revoke', PHOTO_VERIFY, 200, { reason: 'Cofnięcie zgody (syntetyczne)' }),
   {
+    id: 'news.consentWithdraw', module: 'news', method: 'POST',
+    path: '/api/news-photo-consents/:consentDocumentRef/withdraw', targets: ['-'],
+    allow: PHOTO_VERIFY, mfa: false, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'consent', stage: 'pending' }, visible: () => ['W1'],
+    build: ({ obj }) => ({ path: `/api/news-photo-consents/${obj.consentDocumentRef}/withdraw`, body: {} }),
+  },
+  {
     // Plik obrazu (#96): surowe bajty PNG, nie JSON — Content-Type + Idempotency-Key.
     id: 'news.photoFile', module: 'news', method: 'POST', path: '/api/news-photos/:photoId/file', targets: ['-'],
     allow: PHOTO_REGISTER, mfa: false, ok: 201, deny: 403, fixture: 'fresh',

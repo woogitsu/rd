@@ -6,7 +6,7 @@ import sharp from 'sharp';
 import { handlePgRequest } from '../src/pg/app.js';
 import {
   addConsent, approve, createDraft, getInternal, getPhoto, listInternal, listPublic, publish,
-  registerPhoto, revokePhoto, submit, updateDraft, verifyPhoto, withdraw, PUBLIC_CACHE_SECONDS,
+  registerPhoto, revokePhoto, submit, updateDraft, verifyPhoto, withdraw, withdrawConsent, PUBLIC_CACHE_SECONDS,
   PHOTO_UPLOAD_MAX_BYTES, uploadPhotoFile,
 } from '../src/pg/news.js';
 import { newsItems } from '../site/core.js';
@@ -192,6 +192,76 @@ test('photos with children require a consent reference for each identifiable chi
     // Trigger bazy nie dopuszcza weryfikacji bez zgody także z pominięciem API.
     const { photo: raw } = await registerPhoto(db, admin, photoInput({ depictsChildren: true }));
     await assert.rejects(db.query(`UPDATE news_photos SET rights_status='verified', rights_verified_by='board1', rights_verified_at=now() WHERE id=$1`, [raw.id]), /news_photo_child_consent_required/);
+  } finally { await db.close(); }
+});
+
+// Zakres, ważność i wycofanie jednej zgody (#106, część — patrz PR).
+test('zgoda na wizerunek: zakres, wygaśnięcie i wycofanie (rodzeństwo, dwoje opiekunów)', async () => {
+  const db = await newsDb();
+  try {
+    // Zakres tylko `print` nie trafia na stronę Rady.
+    const { photo: printOnly } = await registerPhoto(db, admin, photoInput({ depictsChildren: true, identifiableChildren: 1 }));
+    await addConsent(db, admin, {
+      photoId: printOnly.id, subjectNo: 1, subjectKind: 'child',
+      consentDocumentRef: 'consent-doc-print-01', scope: ['print'],
+    });
+    await verifyPhoto(db, board1, { photoId: printOnly.id });
+    const printPost = await publishedPost(db, { photoIds: [printOnly.id] });
+    assert.deepEqual((await pub(db)).posts[0].photos, []);
+    await withdraw(db, board1, { postId: printPost.id, revision: 1, reason: 'Sprzątanie po teście' });
+
+    // Zgoda wygasła wczoraj nie jest widoczna publicznie.
+    const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const { photo: expired } = await registerPhoto(db, admin, photoInput({ depictsChildren: true, identifiableChildren: 1 }));
+    await addConsent(db, admin, {
+      photoId: expired.id, subjectNo: 1, subjectKind: 'child',
+      consentDocumentRef: 'consent-doc-expired-01', scope: ['rada_website'], validUntil: yesterday,
+    });
+    await verifyPhoto(db, board1, { photoId: expired.id });
+    const expiredPost = await publishedPost(db, { photoIds: [expired.id] });
+    assert.deepEqual((await pub(db)).posts[0].photos, []);
+    await withdraw(db, board1, { postId: expiredPost.id, revision: 1, reason: 'Sprzątanie po teście' });
+
+    // Rodzeństwo: jedna zgoda (ten sam consentDocumentRef) na dwoje dzieci na
+    // dwóch osobnych zdjęciach — wycofanie ukrywa oba.
+    const ref = 'consent-doc-siblings-01';
+    const { photo: siblingA } = await registerPhoto(db, admin, photoInput({ depictsChildren: true, identifiableChildren: 1 }));
+    await addConsent(db, admin, { photoId: siblingA.id, subjectNo: 1, subjectKind: 'child', consentDocumentRef: ref });
+    await verifyPhoto(db, board1, { photoId: siblingA.id });
+    const { photo: siblingB } = await registerPhoto(db, admin, photoInput({ depictsChildren: true, identifiableChildren: 1 }));
+    await addConsent(db, admin, { photoId: siblingB.id, subjectNo: 1, subjectKind: 'child', consentDocumentRef: ref });
+    await verifyPhoto(db, board1, { photoId: siblingB.id });
+    const siblingsPost = await publishedPost(db, { photoIds: [siblingA.id, siblingB.id] });
+    assert.deepEqual((await pub(db)).posts[0].photos.map((p) => p.id).sort(), [siblingA.id, siblingB.id].sort());
+
+    // Przedstawiciel klasy i skarbnik — brak dostępu do wycofania zgody.
+    await assert.rejects(withdrawConsent(db, rep1A, { consentDocumentRef: ref }), { code: 'forbidden' });
+    await assert.rejects(withdrawConsent(db, treasurer, { consentDocumentRef: ref }), { code: 'forbidden' });
+    await assert.rejects(withdrawConsent(db, board1, { consentDocumentRef: 'consent-doc-brak' }), { code: 'consent_not_found' });
+
+    const result = await withdrawConsent(db, board1, { consentDocumentRef: ref });
+    assert.equal(result.replayed, false);
+    assert.equal(result.affectedPhotos, 2);
+    assert.deepEqual((await pub(db)).posts[0].photos, []);
+
+    // Podwójne kliknięcie wycofania — jedno zdarzenie, bez błędu.
+    const replay = await withdrawConsent(db, board1, { consentDocumentRef: ref });
+    assert.equal(replay.replayed, true);
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS n FROM audit_events WHERE action = 'image_consent.withdrawn' AND entity_id = $1`, [ref],
+    );
+    assert.equal(rows[0].n, 1);
+
+    await withdraw(db, board1, { postId: siblingsPost.id, revision: 1, reason: 'Sprzątanie po teście' });
+
+    // Zakres i data ważności są walidowane.
+    const { photo: badScope } = await registerPhoto(db, admin, photoInput());
+    await assert.rejects(addConsent(db, admin, {
+      photoId: badScope.id, subjectNo: 1, subjectKind: 'adult', consentDocumentRef: 'consent-doc-bad-01', scope: ['nieznany'],
+    }), { code: 'invalid_consent_scope' });
+    await assert.rejects(addConsent(db, admin, {
+      photoId: badScope.id, subjectNo: 1, subjectKind: 'adult', consentDocumentRef: 'consent-doc-bad-02', validUntil: '31-12-2026',
+    }), { code: 'invalid_consent_valid_until' });
   } finally { await db.close(); }
 });
 
@@ -567,6 +637,56 @@ test('plik zdjęcia: EXIF/GPS usunięte, orientacja uwzględniona, publiczny odc
       body: source, // JPEG prawdziwy, zadeklarowany jako PNG
     }), env);
     assert.equal(mismatch.status, 415);
+  } finally { await db.close(); }
+});
+
+// #106 (poprawka po scaleniu z main): 0084 napisała news_photo_is_public
+// niezależnie od 0083 i nie sprawdzała zgody — plik zdjęcia zostawał
+// publicznie odczytywalny mimo wycofanej albo wygasłej zgody, chociaż
+// public_news to samo zdjęcie już ukrywał. 0112 dokłada ten sam warunek.
+test('plik zdjęcia: wycofanie i wygaśnięcie zgody chowają też publiczny odczyt pliku (0112)', async () => {
+  const db = await newsDb();
+  const storage = createMemoryStorage();
+  const env = { db, storage };
+  try {
+    const source = await sharp({ create: { width: 6, height: 6, channels: 3, background: { r: 5, g: 6, b: 7 } } }).jpeg().toBuffer();
+
+    // Zdjęcie z zakresem rada_website — plik i wpis publiczne po publikacji.
+    const { photo: withdrawn } = await registerPhoto(db, admin, photoInput({ depictsChildren: true, identifiableChildren: 1 }));
+    await addConsent(db, admin, {
+      photoId: withdrawn.id, subjectNo: 1, subjectKind: 'child', consentDocumentRef: 'consent-doc-file-withdraw-01',
+    });
+    await uploadPhotoFile(db, storage, admin, { photoId: withdrawn.id, bytes: source, contentType: 'image/jpeg', idempotencyKey: key('file') });
+    await verifyPhoto(db, board1, { photoId: withdrawn.id });
+    await publishedPost(db, { photoIds: [withdrawn.id] });
+
+    const { rows: beforeRows } = await db.query('SELECT news_photo_is_public($1) AS is_public', [withdrawn.id]);
+    assert.equal(beforeRows[0].is_public, true);
+    const beforeResponse = await handlePgRequest(request(`/api/public/news-photos/${withdrawn.id}/web`), env);
+    assert.equal(beforeResponse.status, 200);
+
+    // Wycofanie jedynej zgody -> plik przestaje być publicznie odczytywalny.
+    await withdrawConsent(db, board1, { consentDocumentRef: 'consent-doc-file-withdraw-01' });
+    const { rows: afterWithdrawRows } = await db.query('SELECT news_photo_is_public($1) AS is_public', [withdrawn.id]);
+    assert.equal(afterWithdrawRows[0].is_public, false);
+    const afterWithdrawResponse = await handlePgRequest(request(`/api/public/news-photos/${withdrawn.id}/web`), env);
+    assert.equal(afterWithdrawResponse.status, 404);
+
+    // Zgoda wygasła wczoraj -> plik też niepubliczny, choć nigdy nie wycofana.
+    const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const { photo: expired } = await registerPhoto(db, admin, photoInput({ depictsChildren: true, identifiableChildren: 1 }));
+    await addConsent(db, admin, {
+      photoId: expired.id, subjectNo: 1, subjectKind: 'child',
+      consentDocumentRef: 'consent-doc-file-expired-01', validUntil: yesterday,
+    });
+    await uploadPhotoFile(db, storage, admin, { photoId: expired.id, bytes: source, contentType: 'image/jpeg', idempotencyKey: key('file') });
+    await verifyPhoto(db, board1, { photoId: expired.id });
+    await publishedPost(db, { photoIds: [expired.id] });
+
+    const { rows: expiredRows } = await db.query('SELECT news_photo_is_public($1) AS is_public', [expired.id]);
+    assert.equal(expiredRows[0].is_public, false);
+    const expiredResponse = await handlePgRequest(request(`/api/public/news-photos/${expired.id}/web`), env);
+    assert.equal(expiredResponse.status, 404);
   } finally { await db.close(); }
 });
 

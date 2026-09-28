@@ -75,6 +75,7 @@ wpisów).
 | `confirmation_required` | Potwierdź operację, wpisując wymagany identyfikator. | Nie — popraw dane żądania. |
 | `conflict` | Dane zmieniły się w międzyczasie. Odśwież widok i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `consent_conflict` | Zapis zgody nie zgadza się z danymi zdjęcia. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `consent_not_found` | Nie znaleziono zgody o tym odwołaniu. | Nie — popraw dane żądania. |
 | `consents_locked` | Zgód nie można zmienić w obecnym stanie wpisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `content_hash_mismatch` | Plik uszkodził się podczas przesyłania. Wyślij go ponownie. | Nie — popraw dane żądania. |
 | `correction_exceeds_remaining_amount` | Korekta przekracza kwotę pozostałą po wcześniejszych korektach. | Zależy od kontekstu (patrz moduł trasy). |
@@ -134,6 +135,8 @@ wpisów).
 | `invalid_columns` | Niepoprawne kolumny importu. | Nie — popraw dane żądania. |
 | `invalid_confirmation_note` | Podaj uzasadnienie (od 3 do 1000 znaków). | Nie — popraw dane. |
 | `invalid_consent` | Niepoprawny zapis zgody na publikację. | Nie — popraw dane żądania. |
+| `invalid_consent_scope` | Wybierz zakres zgody z listy (strona Rady, druk, media społecznościowe). | Nie — popraw dane żądania. |
+| `invalid_consent_valid_until` | Niepoprawna data ważności zgody (RRRR-MM-DD). | Nie — popraw dane żądania. |
 | `invalid_content_type` | Serwer nie odczytał formatu danych. | Nie — popraw dane żądania. |
 | `invalid_cost_center` | Wskazane wydarzenie lub klasa nie należy do roku tego wpisu. | Nie — popraw dane żądania. |
 | `invalid_credentials` | Nieprawidłowy adres e-mail lub hasło. | Nie — popraw dane żądania. |

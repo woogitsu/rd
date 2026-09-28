@@ -184,6 +184,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/news-photos/:photoId/consents` | admin, zarząd — przydział bez klasy | nie | 403 | |
 | `POST /api/news-photos/:photoId/verify` | zarząd — przydział bez klasy; inna osoba niż rejestrująca | nie | 403 | |
 | `POST /api/news-photos/:photoId/revoke` | zarząd — przydział bez klasy | nie | 403 | |
+| `POST /api/news-photo-consents/:consentDocumentRef/withdraw` | zarząd — przydział bez klasy | nie | 403 | wycofuje jedną zgodę; ukrywa publicznie każde zdjęcie, które się na nią powołuje (#106) |
 | `POST /api/news-photos/:photoId/file` | admin, zarząd — przydział bez klasy | nie | 403 | plik obrazu (PNG/JPEG); warianty web/thumb bez EXIF/GPS (#96) |
 | `GET /api/admin/users` | wyłącznie admin | tak | 403 | moduł obejmuje konta całej szkoły |
 | `POST /api/admin/users/:userId/disable` | wyłącznie admin | tak | 403 | |

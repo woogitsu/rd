@@ -391,6 +391,9 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  invalid_consent_scope: "Wybierz zakres zgody z listy (strona Rady, druk, media społecznościowe).",
+  invalid_consent_valid_until: "Niepoprawna data ważności zgody (RRRR-MM-DD).",
+  consent_not_found: "Nie znaleziono zgody o tym odwołaniu.",
   rate_limited: "Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę.",
   // --- Plik zdjęcia galerii (#96) ----------------------------------------------------
   empty_photo_file: "Plik zdjęcia jest pusty.",
