@@ -347,9 +347,11 @@ test('#150: sesja bez aktywności dłużej niż limit jest wycofana (idle), z au
   const cookie = await seedUserSession(db, { userId: 'u-idle' });
   const session = await loadSession(request('/api/session', { cookie }), env);
   assert.ok(session, 'sesja świeżo utworzona jest ważna');
-  // Symulacja bezczynności: cofamy last_seen_at i created_at poza domyślny limit (30 min).
+  // Symulacja bezczynności: cofamy last_seen_at poza domyślny limit (30 min). created_at
+  // jest niezmienne po zapisie (0082, session_guard_trigger) i niepotrzebne tutaj — po
+  // pierwszym żądaniu idle liczy się wyłącznie z last_seen_at (COALESCE w src/pg/auth.js).
   await db.query(
-    "UPDATE sessions SET last_seen_at = now() - interval '31 minutes', created_at = now() - interval '31 minutes' WHERE id = $1",
+    "UPDATE sessions SET last_seen_at = now() - interval '31 minutes' WHERE id = $1",
     [session.sessionId],
   );
   assert.equal(await loadSession(request('/api/session', { cookie }), env), null, 'sesja bezczynna dłużej niż limit przestaje działać');
@@ -381,9 +383,15 @@ test('#150: last_seen_at jest aktualizowany najwyżej raz na okno throttlingu, n
 test('#150: rotacja (MFA/zmiana hasła) nie przedłuża absolutnego limitu 24h od pierwszego logowania', async () => withDb(async (db, env) => {
   const cookie = await seedUserSession(db, { userId: 'u-rotchain' });
   const first = await loadSession(request('/api/session', { cookie }), env);
-  // Cofamy created_at PIERWSZEJ sesji, jakby zalogowała się 23h50m temu.
+  // Cofamy created_at PIERWSZEJ sesji, jakby zalogowała się 23h50m temu. created_at jest
+  // niezmienne po zapisie (0082, session_guard_trigger) — dla tego jednego zapisu testowego
+  // wyłączamy triggery (jak w innych testach niezmienności), a nie regułę produkcyjną.
   const almostExpired = new Date(Date.now() - (SESSION_TTL_SECONDS - 10 * 60) * 1000);
-  await db.query('UPDATE sessions SET created_at = $2 WHERE id = $1', [first.sessionId, almostExpired.toISOString()]);
+  await db.exec(`
+    SET session_replication_role = replica;
+    UPDATE sessions SET created_at = '${almostExpired.toISOString()}' WHERE id = '${first.sessionId}';
+    SET session_replication_role = origin;
+  `);
 
   const rotated = await rotateSession(env, first, { mfaVerified: true });
   const rotatedExpires = new Date(rotated.expiresAt).getTime();
