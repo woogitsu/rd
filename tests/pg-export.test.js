@@ -411,3 +411,35 @@ test('representative exports only the roster of their own class, without financi
   assert.equal(audit.rows[0].metadata_json.kind, 'class_roster');
   assert.doesNotMatch(JSON.stringify(audit.rows), /@/);
 });
+
+// --- #132: liste klasy jako CSV (obok kanonicznego JSON) ---------------------
+
+test('class roster as CSV: same access rules, Polish-readable format, no financial or household data', async () => {
+  const rep = await seedUserSession(db, { userId: 'u-rep-csv', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: true });
+  const rosterCsv = (classId, format = 'csv', cookie = rep) =>
+    handlePgRequest(request(`/api/exports/class-roster?classId=${classId}&format=${format}`, { cookie }), { db });
+
+  const own = await rosterCsv('c-1a');
+  assert.equal(own.status, 200);
+  assert.equal(own.headers.get('Content-Type'), 'text/csv; charset=utf-8');
+  assert.match(own.headers.get('Content-Disposition'), /^attachment; filename="lista-klasy-1A-\d{8}\.csv"$/);
+  assert.equal(own.headers.get('Cache-Control'), 'no-store');
+  const csv = await own.text();
+  assert.doesNotMatch(csv, /amount|cents|payment|household|h-1|h-2|s-1|s-3/);
+  const lines = csv.trim().split('\r\n');
+  assert.match(lines[0], /Lista klasy 1A/);
+  assert.equal(lines[1], '');
+  assert.equal(lines[2], 'Lp.;Nazwisko ucznia;Imię ucznia;Opiekun 1;E-mail opiekuna 1 (tylko przy zgodzie na kontakt);Opiekun 2;E-mail opiekuna 2 (tylko przy zgodzie na kontakt);Kontakt główny;Uwagi');
+  // Nazwisko "Pierwszy" przed "Trzeci" alfabetycznie.
+  assert.match(lines[3], /^1;Pierwszy;Uczeń;Opiekun Jeden;g1@example\.invalid;;;Opiekun Jeden;$/);
+  assert.match(lines[4], /^2;Trzeci;Uczeń;Opiekunka Dwa;g2@example\.invalid;Opiekun Trzy;;Opiekunka Dwa;$/, 'opiekun bez zgody na kontakt (g-3) nie ma e-maila w pliku');
+  assert.match(lines.at(-1), /Zawiera dane osobowe/);
+
+  assert.equal((await rosterCsv('c-2b')).status, 403, 'other class, same as JSON');
+  assert.equal((await rosterCsv('c-1a', 'xlsx')).status, 400, 'unsupported format is rejected, not silently ignored');
+
+  const runs = await db.query("SELECT class_id FROM export_runs WHERE kind = 'class_roster' AND requested_by = 'u-rep-csv'");
+  assert.equal(runs.rows.length, 1, 'CSV download is recorded in export_runs like JSON');
+  const audit = await db.query("SELECT metadata_json FROM audit_events WHERE action = 'export.created' AND metadata_json->>'kind' = 'class_roster' AND actor_id = 'u-rep-csv'");
+  assert.equal(audit.rows[0].metadata_json.format, 'csv');
+});

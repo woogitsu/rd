@@ -39,6 +39,26 @@ export function buildLedgerUrl({ schoolYearId, direction = "", cursor = "", limi
   return `/api/ledger?${params}`;
 }
 
+// Zapytanie listy zapamiętywane przy wczytaniu roku (#192); „Wczytaj następne”
+// używa tylko tego zapytania i kursora, nie bieżących pól formularza.
+export function ledgerQuery({ schoolYearId, direction = "" }) {
+  buildLedgerUrl({ schoolYearId, direction });
+  return Object.freeze({ schoolYearId: String(schoolYearId).trim(), direction: String(direction ?? "") });
+}
+
+// Adres następnej strony albo null, gdy nie ma kursora lub zapytania.
+export function buildNextLedgerUrl(query, cursor) {
+  if (!query || typeof cursor !== "string" || cursor === "") return null;
+  return buildLedgerUrl({ ...query, cursor });
+}
+
+// true, gdy pola formularza różnią się od zapytania wyświetlonej księgi.
+export function ledgerFilterChanged(query, current) {
+  if (!query) return false;
+  return String(current?.schoolYearId ?? "").trim() !== query.schoolYearId
+    || String(current?.direction ?? "") !== query.direction;
+}
+
 export function buildOverviewUrl(resource, schoolYearId, direction = "") {
   if (!["categories", "summary", "budget"].includes(resource) || !isValidId(schoolYearId)) {
     throw new Error("Niepoprawne parametry podsumowania.");
