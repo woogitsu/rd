@@ -372,6 +372,31 @@ test('yearly export requires admin or board with MFA in the year scope', async (
   assert.equal(await countRuns(), runsBefore + 1, 'refused requests create no export run');
 });
 
+// #150 (SR-10, krok w górę): eksport roczny wymaga MFA potwierdzonego od
+// niedawna (15 min), nie tylko kiedyś w bieżącej sesji.
+test('yearly export requires FRESH MFA (step-up): stale confirmation is 403 mfa_stale, a new one is 200', async () => {
+  const countRuns = async () => (await db.query('SELECT count(*)::int AS n FROM export_runs')).rows[0].n;
+
+  const fresh10min = await seedUserSession(db, { userId: 'u-board-fresh', roles: [{ role: 'board', schoolYearId: YEAR }], mfa: true });
+  await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '10 minutes' WHERE user_id = 'u-board-fresh'");
+  const runsBefore = await countRuns();
+  assert.equal((await exportRequest(db, fresh10min)).status, 200, 'MFA 10 min temu jest wciąż świeże (próg 15 min)');
+  assert.equal(await countRuns(), runsBefore + 1);
+
+  const stale20min = await seedUserSession(db, { userId: 'u-board-stale', roles: [{ role: 'board', schoolYearId: YEAR }], mfa: true });
+  await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-board-stale'");
+  const stale = await exportRequest(db, stale20min);
+  assert.equal(stale.status, 403);
+  assert.deepEqual(await stale.json(), { error: 'mfa_stale' });
+  assert.equal(await countRuns(), runsBefore + 1, 'odmowa mfa_stale nic nie zapisuje');
+
+  // Po ponownym potwierdzeniu kodu (symulowane: mfa_verified_at znów świeże,
+  // ta sama sesja) żądanie przechodzi.
+  await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-board-stale'");
+  assert.equal((await exportRequest(db, stale20min)).status, 200);
+  assert.equal(await countRuns(), runsBefore + 2);
+});
+
 test('representative exports only the roster of their own class, without financial data', async () => {
   const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: true });
   const roster = (classId, cookie = rep) => handlePgRequest(request(`/api/exports/class-roster?classId=${classId}`, { cookie }), { db });

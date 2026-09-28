@@ -423,6 +423,11 @@ async function transition(db, actor, input, spec) {
     // Out of scope looks like a missing id (SR-07); visible but not allowed is 403.
     if (!canEdit(actor, row)) throw new EventError('event_not_found', 404);
     if (!spec.allowed(actor, row)) throw new EventError('forbidden', 403);
+    // #150 (SR-10): zatwierdzenie i publikacja wymagają jawnie potwierdzonego MFA
+    // na poziomie trasy, niezależnie od bramki routera. Sprawdzane PO roli/zakresie
+    // (SR-07) — sama rola bez MFA nadal dostaje ogólny `forbidden`, jeśli w ogóle
+    // nie ma dostępu; `mfa_required` tylko gdy dostęp jest, brakuje tylko MFA.
+    if (spec.requireMfa && !actor.mfaVerified) throw new EventError('mfa_required', 403);
     if (spec.alreadyDone(row, expected)) return { event: internalEvent(row), replayed: true };
     if (row.status === 'cancelled') throw new EventError('event_cancelled', 409);
     if (row.revision_no !== expected) throw new EventError('revision_conflict', 409);
@@ -456,6 +461,7 @@ export function approve(db, actor, input) {
     action: 'event.approved',
     from: ['submitted'],
     allowed: canReview,
+    requireMfa: true,
     alreadyDone: (row, rev) => row.revision_no === rev && row.approved_revision_no === rev
       && ['approved', 'published'].includes(row.status),
     update: (row, actor) => ({
@@ -470,6 +476,7 @@ export function publish(db, actor, input) {
     action: 'event.published',
     from: ['approved'],
     allowed: canReview,
+    requireMfa: true,
     alreadyDone: (row, rev) => row.revision_no === rev && row.published_revision_no === rev
       && row.status === 'published',
     validate: (_actor, row) => {
