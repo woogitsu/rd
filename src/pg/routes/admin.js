@@ -483,6 +483,12 @@ async function createInvitationRoute(env, actorId, request, json) {
   }
   if (typeof data.email !== 'string') throw new RequestError('invalid_email');
   const email = data.email.trim().toLowerCase();
+  // #146: zaproszenie na WŁASNY adres i jego przyjęcie własnym hasłem nadawało
+  // rolę bez drugiej osoby — to samo samonadanie, które POST /grants odrzuca.
+  // Odrzucamy przed zapisem (bez zaproszenia i zdarzenia audytu); przyjęcie
+  // sprawdza to jeszcze raz (src/pg/auth.js, src/pg/login.js).
+  const { rows: self } = await env.db.query('SELECT 1 FROM users WHERE id = $1 AND lower(email) = $2', [actorId, email]);
+  if (self[0]) throw new RequestError('cannot_grant_self', 409);
   // #176: rola bez żadnej trasy chronionej dziś (`pending_decision`, np. principal)
   // tworzy konto z danymi osobowymi bez celu (D-01/D-06) — odrzucamy, chyba że
   // ALLOW_PENDING_ROLES=true (przygotowanie kont z wyprzedzeniem przed D-09, testy).
