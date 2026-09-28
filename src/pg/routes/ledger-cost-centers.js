@@ -259,7 +259,7 @@ async function createAllocation(request, env, entryId, json) {
       }
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.allocation.created', entityType: 'ledger_entry', entityId: entryId,
-        metadata: { versionId, versionNo, supersedesId: input.supersedesId, itemCount: input.items.length },
+        metadata: { schoolYearId: entry.school_year_id, versionId, versionNo, supersedesId: input.supersedesId, itemCount: input.items.length },
       });
       const entryAfter = await loadEntry(tx, entryId);
       return json({ allocation: allocationView(entryAfter, await loadVersions(tx, entryId)), versionId }, 201,

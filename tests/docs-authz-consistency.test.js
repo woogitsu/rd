@@ -21,6 +21,7 @@ const MODULES = [
   { file: 'src/pg/routes/payments.js', roles: ['admin', 'board', 'treasurer'] },
   { file: 'src/pg/routes/ledger.js', roles: ['admin', 'board', 'treasurer'] },
   { file: 'src/pg/routes/ledger-cash.js', roles: ['admin', 'board', 'treasurer'] },
+  { file: 'src/pg/routes/ledger-cost-centers.js', roles: ['admin', 'board', 'treasurer'] },
   { file: 'src/pg/routes/email.js', roles: ['board', 'treasurer'] },
   { file: 'src/pg/routes/import.js', roles: ['admin', 'board'] },
   { file: 'src/pg/routes/exports.js', roles: ['admin', 'board'] },
