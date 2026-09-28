@@ -189,6 +189,12 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'events', where: () => 'school_year_id = $1' },
   { table: 'event_revisions', requires: ['events'],
     where: () => 'event_id IN (SELECT id FROM events WHERE school_year_id = $1)' },
+  // 0076 (#142): zadania i zapisy wolontariuszy wydarzeń roku.
+  { table: 'event_tasks', requires: ['events'],
+    where: () => 'event_id IN (SELECT id FROM events WHERE school_year_id = $1)' },
+  { table: 'event_task_signups', requires: ['event_tasks', 'events'],
+    where: () => `task_id IN (SELECT t.id FROM event_tasks t JOIN events e ON e.id = t.event_id
+      WHERE e.school_year_id = $1)` },
 
   { table: 'meetings', where: () => 'school_year_id = $1' },
   { table: 'meeting_agenda_items', requires: ['meetings'],

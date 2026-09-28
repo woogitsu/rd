@@ -103,6 +103,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `payment_entries`, `payment_corrections`, `payment_assignments` | wpłaty roku, ich korekty i przypisania |
 | `ledger_*` | kategorie, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku |
 | `events`, `event_revisions` | wydarzenia roku i ich rewizje |
+| `event_tasks`, `event_task_signups` | zadania i zapisy wolontariuszy wydarzeń roku (0076, #142) |
 | `meetings`, `meeting_*`, `resolutions` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały |
 | `student_households`, `guardian_households` | członkostwo uczniów roku (także drugie gospodarstwo przy opiece dzielonej, `is_primary`) i opiekunów z zakresu w gospodarstwach, z historią (0014) |
 | `enrollment_history` | historia przypisań do klas w danym roku (0014) |
