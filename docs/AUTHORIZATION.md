@@ -64,27 +64,27 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/events/:eventId` | jak wyżej | nie | 404 | brak uprawnień nieodróżnialny od braku wydarzenia |
 | `PATCH /api/events/:eventId` | jak wyżej | nie | 404 | wydarzenie spoza zakresu nieodróżnialne od braku (SR-07) |
 | `POST /api/events/:eventId/submit` | jak wyżej | nie | 404 | |
-| `POST /api/events/:eventId/approve` | zarząd — rok 1 | nie | 403 / 404 | 403, gdy aktor widzi wydarzenie (admin, przedstawiciel własnej klasy); 404 poza zakresem podglądu; zasada czterech oczu w bazie |
-| `POST /api/events/:eventId/publish` | zarząd — rok 1 | nie | 403 / 404 | jak przy zatwierdzeniu |
+| `POST /api/events/:eventId/approve` | zarząd — rok 1 | tak (#150) | 403 / 404 | 403, gdy aktor widzi wydarzenie (admin, przedstawiciel własnej klasy); 404 poza zakresem podglądu; zasada czterech oczu w bazie |
+| `POST /api/events/:eventId/publish` | zarząd — rok 1 | tak (#150) | 403 / 404 | jak przy zatwierdzeniu |
 | `POST /api/events/:eventId/cancel` | szkic: admin, zarząd — rok 1; przedstawiciel — własna klasa; opublikowane: tylko zarząd | nie | 404 | macierz testuje szkic; opublikowane wydarzenie własnej klasy: przedstawiciel dostaje 403 |
 | `GET /api/meetings?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — rok 1, tylko zebrania tej klasy | nie | 403 | przedstawiciel: 403 |
-| `POST /api/meetings` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | |
 | `GET /api/meetings/shared-minutes?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; przedstawiciel — rok 1 | nie | 403 | przedstawiciel widzi protokoły ogólne i własnej klasy, nigdy innej klasy |
 | `GET /api/meetings/public-minutes?schoolYearId=:year` | publiczna | nie | — | tylko protokoły o widoczności `public` |
 | `GET /api/meetings/resolutions/lookup?schoolYearId=:year&number=:number` | admin, zarząd, Komisja Rewizyjna, skarbnik — rok 1 | nie | 403 | inny rok: 403 |
 | `GET /api/meetings/:meetingId` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 404 | brak uprawnień nieodróżnialny od braku zebrania (SR-07); przedstawiciel: 404 także dla zebrania własnej klasy |
-| `PATCH /api/meetings/:meetingId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/agenda-items` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/attendance` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak | 403 | #135: zawsze MFA, i zatwierdzający ≠ autor wersji (`403 minutes_four_eyes_required`) |
-| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy `parents`/`public` | 403 | #135: `internal` bez MFA |
-| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy `status: adopted/rejected` | 403 | #135: `draft` bez MFA |
-| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy przejściu do `adopted/rejected` | 403 | #135: edycja projektu bez MFA |
-| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak | 403 | #135: korekta zawsze zapisuje rozstrzygnięcie |
+| `PATCH /api/meetings/:meetingId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy; #171: przedstawiciel-gospodarz własnej klasy | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/agenda-items` | jak wyżej | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/attendance` | jak wyżej | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy; #171: przedstawiciel-gospodarz własnej klasy | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | #135: zatwierdzający ≠ autor wersji (`403 minutes_four_eyes_required`) |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | |
+| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | #135: korekta zawsze zapisuje rozstrzygnięcie |
 | `GET /api/meetings/resolutions?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — tylko uchwały zebrań tej klasy | nie | 403 | #102: rejestr roku; przyjmuje też `status=`, `q=` i `executionStatus=` (filtry, nieujęte w ścieżce macierzy); przedstawiciel: 403; macierz sprawdza tylko granicę roli (pusty rejestr), zakres klasowy ma dedykowany test w `tests/pg-meetings-resolutions.test.js` |
-| `POST /api/meetings/resolutions/:resolutionId/execution` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | #102: dopisywanie zdarzenia wykonania; działa też po zatwierdzeniu protokołu (osobna tabela, nie objęta blokadą zebrania) |
+| `POST /api/meetings/resolutions/:resolutionId/execution` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | #102: dopisywanie zdarzenia wykonania; działa też po zatwierdzeniu protokołu (osobna tabela, nie objęta blokadą zebrania); MFA po scaleniu z #150 — trasa idzie przez `meetingForManage`, które od #150 zawsze wymaga świeżo potwierdzonego MFA |
 | `GET /api/import/options` | admin, zarząd — przydział bez klasy | tak | 403 | tylko lata z przydziału; zarząd z przydziałem klasy: 403 |
 | `POST /api/import/preview` | admin, zarząd — przydział bez klasy obejmujący rok importu | tak | 403 | nic nie zapisuje; inny rok: 403 |
 | `POST /api/import/commit` | jak wyżej | tak | 403 | wymaga podglądu (fingerprint, planDigest) i Idempotency-Key |
@@ -144,8 +144,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/news/:postId` | jak wyżej | nie | 404 | |
 | `PATCH /api/news/:postId` | jak wyżej | nie | 404 | brak uprawnień nieodróżnialny od braku wpisu |
 | `POST /api/news/:postId/submit` | jak wyżej | nie | 404 | |
-| `POST /api/news/:postId/approve` | zarząd — rok 1 | nie | 403 / 404 | 403 dla osoby, która może edytować wpis; 404 dla pozostałych |
-| `POST /api/news/:postId/publish` | zarząd — rok 1 | nie | 403 / 404 | jak wyżej |
+| `POST /api/news/:postId/approve` | zarząd — rok 1 | tak (#150) | 403 / 404 | 403 dla osoby, która może edytować wpis; 404 dla pozostałych |
+| `POST /api/news/:postId/publish` | zarząd — rok 1 | tak (#150) | 403 / 404 | jak wyżej |
 | `POST /api/news/:postId/withdraw` | nieopublikowany: jak edycja; opublikowany: tylko zarząd | nie | 404 | macierz testuje szkic |
 | `GET /api/news-photos` | admin, zarząd — przydział bez klasy | nie | 403 | |
 | `POST /api/news-photos` | admin, zarząd — przydział bez klasy | nie | 403 | metadane praw i zgód |
@@ -187,7 +187,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md). Rola i rok pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `GET /api/reports/annual?schoolYearId=:year&format=json` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | także `format=html`; admin, audit, principal, przedstawiciel: 403 (D-08/D-09, #125); SR-01. Brak MFA przy pasującej roli: `403 mfa_required`/`mfa_enrollment_required` |
 | `GET /api/reports/cash-flow?schoolYearId=:year` | jak wyżej | tak | 403 | przepływy per miesiąc i metoda, saldo kasy (#125); SR-01 |
-| `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195) |
+| `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak, krok w górę: ≤15 min (#150) | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195); MFA starsze niż 15 min → `403 mfa_stale` |
 | `GET /api/exports/class-roster?classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | tak | 403 | Rola i klasa pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `GET /api/classes` | admin, zarząd, skarbnik — klasy roku przydziału; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | Komisja Rewizyjna, dyrekcja: 403 |
 | `GET /api/classes/:classId/students` | jak wyżej | nie | 403 / 404 | rola bez dostępu do rodzin: 403; klasa poza zakresem: 404 |
@@ -204,6 +204,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/mfa/verify` | każdy zalogowany z potwierdzonym czynnikiem | nie | — | |
 | `POST /api/mfa/recovery` | jak wyżej | nie | — | kod odzyskiwania jednorazowy |
 | `POST /api/sessions/revoke-all` | każdy zalogowany (własne sesje) | nie | — | konto z czynnikiem, sesja bez potwierdzonego MFA: wyłącznie bieżąca sesja (#189) |
+| `GET /api/sessions` | każdy zalogowany (wyłącznie własne sesje) | nie | — | id, created_at, last_seen_at, stan MFA, czy bieżąca — bez IP i User-Agent (#150) |
+| `POST /api/sessions/:id/revoke` | każdy zalogowany (wyłącznie własna sesja) | nie | 404 | cudza/nieistniejąca sesja: 404 jak brak obiektu (SR-07); bieżąca sesja: czyści cookie (#150) |
 | `POST /api/login` | publiczna (bez sesji; uwierzytelnia e-mail i hasło) | nie | — | cookie żądania ignorowane; zgodny `Origin`; zwolniona z bramki MFA; sesja bez MFA |
 | `GET /api/auth/state` | każdy zalogowany (stan własnej sesji) | nie | — | zwolniona z bramki MFA |
 | `POST /api/invitations/accept` | publiczna (uwierzytelnia jednorazowy token zaproszenia) | nie | — | zgodny `Origin`; zwolniona z bramki MFA; istniejące konto z hasłem: wymagane jego obecne hasło |

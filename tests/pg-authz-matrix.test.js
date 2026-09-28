@@ -30,6 +30,7 @@ import {
   uploadPhotoFile, verifyPhoto,
 } from '../src/pg/news.js';
 import { hashSecret } from '../src/auth.js';
+import { createSession } from '../src/pg/auth.js';
 import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
@@ -395,6 +396,25 @@ async function makeOwnPassword(ctx, { cookie }) {
   return { password, newPassword: syntheticPassword() };
 }
 
+// #150: druga, jednorazowa sesja TEGO SAMEGO konta (nie ta z caseInfo.cookie, którą
+// dalej wysyła żądanie testowe) — do sprawdzenia, że własną (ale INNĄ) sesję da się
+// cofnąć. Bieżąca sesja przypadku zostaje nietknięta.
+async function makeOwnSession(ctx, { cookie }) {
+  const tokenHash = await hashSecret(cookie.slice(cookie.indexOf('=') + 1));
+  const { rows } = await ctx.db.query('SELECT user_id FROM sessions WHERE token_hash = $1', [tokenHash]);
+  if (!rows[0]) throw new Error('fixture ownSession: brak sesji przypadku');
+  try {
+    const extra = await createSession(ctx.db, { userId: rows[0].user_id });
+    return { sessionId: extra.sessionId };
+  } catch {
+    // Aktorzy odmowy dzielący ten fixture (konto wyłączone/sesja wygasła/cofnięta,
+    // patrz objectFor: obiekt odmowy jest wspólny dla całej trasy) mają user_id
+    // wskazujące na konto, dla którego createSession odmawia (`user_unavailable`).
+    // Żądanie i tak dostanie 401 zanim identyfikator zostanie użyty do czegokolwiek.
+    return { sessionId: 'fx-own-session-unavailable' };
+  }
+}
+
 const MAKERS = {
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
@@ -453,6 +473,7 @@ const MAKERS = {
   invitationToken: (ctx) => makeInvitationToken(ctx),
   passwordResetToken: (ctx) => makePasswordResetToken(ctx),
   ownPassword: (ctx, _target, _stage, caseInfo) => makeOwnPassword(ctx, caseInfo),
+  ownSession: (ctx, _target, _stage, caseInfo) => makeOwnSession(ctx, caseInfo),
   // Kolejna niepotwierdzona pozycja listy kontrolnej (rok 1); odmowy używają dowolnej pozycji.
   checklistItem: async (ctx, target, _stage, { success }) => ({
     item: (target.key === 'W1' && success ? ctx.checklistOpen.shift() : null) ?? CHECKLIST_PREFILLED[0],

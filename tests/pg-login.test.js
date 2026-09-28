@@ -12,6 +12,7 @@ import {
   verifyPasswordOrDummy, withSlot,
 } from '../src/pg/password.js';
 import { LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
+import { freshMfaForbiddenCode, loadAuthorizationContext } from '../src/pg/authorization.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const KEY = randomBytes(32).toString('base64');
@@ -556,6 +557,31 @@ test('zmiana hasła wymaga obecnego hasła, wycofuje inne sesje i rotuje bieżą
   const reasons = await db.query("SELECT revoked_reason FROM sessions WHERE user_id = 'u-login-change' AND revoked_at IS NOT NULL ORDER BY revoked_reason");
   assert.deepEqual(reasons.rows.map((row) => row.revoked_reason), ['password_changed', 'rotated']);
   assert.equal((await auditRows('auth.password_changed')).filter((row) => row.actor_id === 'u-login-change').length, 1);
+});
+
+// #150 (krok w górę): rotacja przy zmianie hasła przenosi MOMENT potwierdzenia
+// MFA, nie ustawia now() — inaczej przejęta sesja ze starym MFA + znane hasło
+// dawały „świeże” MFA bez kodu (np. dla eksportu rocznego, nadania roli).
+test('#150: zmiana hasła nie odświeża świeżości MFA (krok w górę nie jest omijany)', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-stepup' });
+  const cookie = cookieFrom(await login(account));
+  await db.query(
+    "UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-login-stepup' AND revoked_at IS NULL",
+  );
+  const before = (await db.query(
+    "SELECT mfa_verified_at FROM sessions WHERE user_id = 'u-login-stepup' AND revoked_at IS NULL",
+  )).rows[0].mfa_verified_at;
+  const changed = await post('/api/password/change', { currentPassword: account.password, newPassword: newPassword() }, { cookie });
+  assert.equal(changed.status, 200);
+  const rotatedCookie = cookieFrom(changed);
+  const after = (await db.query(
+    "SELECT mfa_verified_at FROM sessions WHERE user_id = 'u-login-stepup' AND revoked_at IS NULL",
+  )).rows;
+  assert.equal(after.length, 1);
+  assert.equal(new Date(after[0].mfa_verified_at).getTime(), new Date(before).getTime(), 'moment MFA przeniesiony, nie now()');
+  const context = await loadAuthorizationContext(request('/api/session', { cookie: rotatedCookie }), env);
+  assert.equal(context.session.mfaVerified, true);
+  assert.equal(freshMfaForbiddenCode(context), 'mfa_stale');
 });
 
 test('reset hasła: token tylko od administratora (admin + MFA), jednorazowy, nowy unieważnia stary', async () => {
