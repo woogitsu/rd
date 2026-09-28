@@ -79,7 +79,13 @@ test('Node server serves built applications and delegates API requests safely', 
     const api = await fetch(`${baseUrl}/api/example`);
     assert.equal(api.status, 200);
     assert.equal(api.headers.get('cache-control'), 'no-store');
+    assert.equal(api.headers.get('x-robots-tag'), 'noindex, nofollow');
     assert.deepEqual(await api.json(), { ok: true });
+
+    // Panel (nie /site/) — noindex, żeby przeglądarki i wyszukiwarki nie
+    // indeksowały ekranów wymagających logowania (#116).
+    assert.equal(html.headers.get('x-robots-tag'), 'noindex, nofollow');
+    assert.equal(asset.headers.get('x-robots-tag'), 'noindex, nofollow');
 
     const beforeLargeRequest = delegated;
     const tooLarge = await fetch(`${baseUrl}/api/example`, {
@@ -89,6 +95,46 @@ test('Node server serves built applications and delegates API requests safely', 
     assert.equal(tooLarge.status, 413);
     assert.deepEqual(await tooLarge.json(), { error: 'request_too_large' });
     assert.equal(delegated, beforeLargeRequest);
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Node server keeps /site/ and /api/public/ indexable and serves robots.txt (#116)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
+  await mkdir(join(root, 'site'), { recursive: true });
+  await writeFile(join(root, 'site', 'index.html'), '<!doctype html><title>Strona RD</title>');
+
+  const fetchHandler = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/api/public/news') {
+      return Response.json({ items: [] }, { headers: { 'Cache-Control': 'public, max-age=60' } });
+    }
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  };
+  const handler = createNodeHandler({ distRoot: root, fetchHandler });
+  const { server, baseUrl } = await listen(handler);
+
+  try {
+    const site = await fetch(`${baseUrl}/site/`);
+    assert.equal(site.status, 200);
+    assert.equal(site.headers.get('x-robots-tag'), null);
+
+    const publicApi = await fetch(`${baseUrl}/api/public/news`);
+    assert.equal(publicApi.status, 200);
+    assert.equal(publicApi.headers.get('x-robots-tag'), null);
+
+    const robots = await fetch(`${baseUrl}/robots.txt`);
+    assert.equal(robots.status, 200);
+    assert.equal(robots.headers.get('content-type'), 'text/plain; charset=utf-8');
+    const body = await robots.text();
+    assert.match(body, /Disallow: \/panel\//);
+    assert.match(body, /Disallow: \/documents\//);
+    assert.match(body, /Disallow: \/api\//);
+    assert.match(body, /Allow: \/api\/public\//);
+    assert.match(body, /Allow: \/site\//);
+    assert.doesNotMatch(body, /Disallow: \/site\//);
   } finally {
     await close(server);
     await rm(root, { recursive: true, force: true });
