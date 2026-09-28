@@ -39,6 +39,23 @@
         <div class="section-heading">
           <div><h2 id="users-title">Konta</h2><p id="users-summary">Wczytywanie…</p></div>
         </div>
+        <div class="token-box" id="reset-token-box" hidden>
+          <p class="token-warning"><strong>Link i kod są widoczne tylko teraz.</strong> Przekaż je osobie osobnym, zaufanym kanałem. Po zamknięciu tej ramki nie da się ich odzyskać — w razie utraty wydaj nowy kod.</p>
+          <p class="hint" id="reset-link-label">Link do przekazania (otwiera od razu widok „Nowe hasło”)</p>
+          <div class="token-row">
+            <code id="reset-link" aria-labelledby="reset-link-label"></code>
+            <button type="button" id="copy-reset-link">Kopiuj link</button>
+          </div>
+          <details>
+            <summary>Sam kod resetu (gdy link nie działa)</summary>
+            <div class="token-row">
+              <code id="reset-token-value"></code>
+              <button type="button" id="copy-reset-token">Kopiuj kod</button>
+            </div>
+          </details>
+          <p class="hint" id="reset-token-meta"></p>
+          <p><button type="button" id="hide-reset-token">Zamknij</button></p>
+        </div>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Konta</caption>
