@@ -15,6 +15,7 @@ import {
   isOwnLastAdminGrant,
   mfaResetConfirmation,
   passwordResetLink,
+  roleNeedsPendingDecisionWarning,
   scopeLabel,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
@@ -284,6 +285,19 @@ async function loadGrants() {
   state.grants = (await api(buildGrantsUrl(filters))).grants;
   renderGrants();
 }
+
+// #176: ostrzeżenie przed rolą bez żadnej trasy dziś (decyzja D-09). Front-end
+// nie blokuje wysyłki — serwer i tak odrzuca 422 role_pending_decision — to
+// tylko wcześniejsza, czytelna informacja zamiast błędu po kliknięciu.
+function wirePendingRoleWarning(formId, warningId) {
+  const form = byId(formId);
+  const warning = byId(warningId);
+  const update = () => { warning.hidden = !roleNeedsPendingDecisionWarning(form.elements.role.value); };
+  form.elements.role.addEventListener("change", update);
+  update();
+}
+wirePendingRoleWarning("grant-form", "grant-pending-warning");
+wirePendingRoleWarning("invitation-form", "invitation-pending-warning");
 
 byId("grant-filters").addEventListener("submit", (event) => {
   event.preventDefault();

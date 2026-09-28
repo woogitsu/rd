@@ -108,7 +108,20 @@ test('access lists only own active grants; expired and revoked grants are ignore
   const response = await handlePgRequest(request('/api/access', { cookie }), env);
   assert.deepEqual(await response.json(), {
     grants: [{ role: 'representative', classId: 'c-1a', schoolYearId: 'y-2026', expiresAt: null }],
+    hasActiveRole: true,
   });
+}));
+
+// #176: hasActiveRole odzwierciedla ROLE_STATUS (src/pg/auth.js), jedno źródło prawdy
+// dla ekranu startowego login/ — konto z samym `principal` nie dostaje listy paneli.
+test('access: hasActiveRole is false for principal alone, true once any other role is granted', async () => withDb(async (db, env) => {
+  const principalOnly = await seedUserSession(db, { userId: 'dir1', roles: [{ role: 'principal' }] });
+  const none = await seedUserSession(db, { userId: 'dir2', roles: [] });
+  const withAudit = await seedUserSession(db, { userId: 'dir3', roles: [{ role: 'principal' }, { role: 'audit' }] });
+  const access = async (cookie) => (await handlePgRequest(request('/api/access', { cookie }), env)).json();
+  assert.equal((await access(principalOnly)).hasActiveRole, false);
+  assert.equal((await access(none)).hasActiveRole, false);
+  assert.equal((await access(withAudit)).hasActiveRole, true, 'audit ma częściowy dostęp (partial), nie pending_decision');
 }));
 
 test('representative cannot reach another class or school year; two representatives of one class both can', async () => withDb(async (db, env) => {
