@@ -30,42 +30,64 @@ jobs:
     # (`services:` kończył się na „Initialize containers”), więc serwer PostgreSQL
     # trzeba zainstalować na runnerach i ustawić te zmienne osobno.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
       - run: npm ci
       - run: node --test --test-concurrency=2 --test-shard=${{ matrix.shard }}/4 tests/*.test.js
 
+  # #153: łańcuch dostaw. Blokuje przy podatnościach high/critical w
+  # zależnościach produkcyjnych, przy podatnościach critical w całym drzewie
+  # i przy braku podpisów rejestru. Osobny job (podział zgodny z #111), żeby
+  # awaria audytu nie mieszała się z testami.
+  audit:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci
+      # Blokujące: podatności high/critical w zależnościach produkcyjnych.
+      - run: npm audit --omit=dev --audit-level=high
+      # Blokujące: podatności critical w całym drzewie (także deweloperskim).
+      - run: npm audit --audit-level=critical
+      # Ostrzeżenie (nie oblewa buildu): pełny raport low/moderate/high jako
+      # artefakt do przeglądu (lista wyjątków, patrz docs/RAILWAY_OPERATIONS.md).
+      - run: npm audit --json > npm-audit-report.json || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-audit-report
+          path: npm-audit-report.json
+          retention-days: 14
+      # Weryfikacja podpisów i atestacji rejestru npm.
+      - run: npm audit signatures
+
   build:
     runs-on: self-hosted
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
       - run: npm ci
-      - run: npm run build:import
-      - run: npm run build:panel
-      - run: npm run build:ledger
-      - run: npm run build:print
-      - run: npm run build:events
-      - run: npm run build:documents
-      - run: npm run build:site
-      - run: npm run build:meetings
-      - run: npm run build:admin
-      - run: npm run build:families
-      - run: npm run build:login
+      # Jeden skrypt buduje wszystkie panele (package.json) — nowa aplikacja
+      # nie wymaga osobnego kroku w CI.
+      - run: npm run build
       - run: test -f dist/import/template.csv
       # #188/#223: zbudowane strony bez inline <style>, style=, skryptów inline (CSP z src/node-app.js).
       - run: REQUIRE_DIST=1 node --test tests/csp-static.test.js
       - run: test -f railway.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
           path: dist/
@@ -76,14 +98,14 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
       - run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist
           path: dist/
@@ -96,7 +118,7 @@ jobs:
   # Jedyny wymagany check: oblewa, gdy którykolwiek z powyższych jobów nie
   # zakończył się sukcesem (włącznie z anulowaniem albo pominięciem).
   ci-ok:
-    needs: [test, build, smoke]
+    needs: [test, audit, build, smoke]
     if: always()
     runs-on: self-hosted
     timeout-minutes: 5
@@ -104,9 +126,11 @@ jobs:
       - name: Wszystkie joby zielone
         run: |
           echo "test: ${{ needs.test.result }}"
+          echo "audit: ${{ needs.audit.result }}"
           echo "build: ${{ needs.build.result }}"
           echo "smoke: ${{ needs.smoke.result }}"
           if [ "${{ needs.test.result }}" != "success" ] ||
+             [ "${{ needs.audit.result }}" != "success" ] ||
              [ "${{ needs.build.result }}" != "success" ] ||
              [ "${{ needs.smoke.result }}" != "success" ]; then
             echo "Co najmniej jeden wymagany job nie zakończył się sukcesem." >&2

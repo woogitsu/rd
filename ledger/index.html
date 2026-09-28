@@ -16,9 +16,14 @@
     </header>
 
     <main id="main">
+      <div class="print-meta" id="print-meta" aria-hidden="true"></div>
       <section class="page-heading">
         <div><p class="eyebrow">Finanse Rady</p><h1>Księga przychodów i wydatków</h1><p>Zapisy są niezmienne, a każda korekta pozostaje w historii.</p></div>
-        <div class="heading-action"><button class="primary" id="open-entry" type="button" aria-describedby="open-entry-hint">Dodaj wpis</button><small id="open-entry-hint">Dostępne po wczytaniu roku szkolnego.</small></div>
+        <div class="heading-action">
+          <button class="primary" id="open-entry" type="button" aria-describedby="open-entry-hint">Dodaj wpis</button>
+          <button id="print-ledger" type="button">Drukuj zestawienie</button>
+          <small id="open-entry-hint">Dostępne po wczytaniu roku szkolnego.</small>
+        </div>
       </section>
 
       <p class="message error" id="access-notice" role="status" hidden>Księgę prowadzą i przeglądają skarbnik, zarząd i administrator. To konto nie ma dostępu do Księgi.</p>

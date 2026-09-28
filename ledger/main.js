@@ -15,15 +15,19 @@ import {
   parseEuroAmount,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
 import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const FILTER_KEYS = ["schoolYearId", "direction"];
-const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null };
+const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -33,6 +37,7 @@ const overview = byId("overview");
 const entriesBody = byId("entries-body");
 const budgetBody = byId("budget-body");
 const loadMore = byId("load-more");
+const printButton = byId("print-ledger");
 
 function localDate() {
   const now = new Date();
@@ -86,6 +91,23 @@ function renderEntries() {
   byId("entries-empty").hidden = count !== 0;
   loadMore.hidden = !state.nextCursor;
   updateControls();
+  updatePrintMeta();
+}
+
+// Blok metadanych wydruku (#151) — niewidoczny na ekranie, wypełniany przed
+// każdym renderowaniem, żeby wydruk zawsze pokazywał rok, filtry i kompletność.
+function updatePrintMeta() {
+  const container = byId("print-meta");
+  if (!container) return;
+  const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
+  const filters = state.query?.direction ? DIRECTION_LABELS[state.query.direction] : null;
+  mountPrintMeta(container, {
+    view: "Księga przychodów i wydatków",
+    schoolYear: yearLabel,
+    filters,
+    printedBy,
+    incompleteCount: state.nextCursor ? state.entries.length : null,
+  });
 }
 
 function renderBudget(lines) {
@@ -127,6 +149,7 @@ function updateControls() {
   hint.hidden = !openEntry.disabled || state.loading;
   loadMore.disabled = state.loading || changed;
   byId("load-more-hint").hidden = !changed || !state.nextCursor;
+  printButton.disabled = state.loading || state.printing || !state.query || changed || state.entries.length === 0;
 }
 
 function setBusy(busy) {
@@ -227,6 +250,29 @@ loadMore.addEventListener("click", async () => {
   finally { setBusy(false); }
 });
 
+// „Drukuj zestawienie” dociąga wszystkie strony bieżącego filtra przed wydrukiem,
+// żeby wydruk nigdy nie ucinał wpisów po jednej stronie (#151). Znacznik
+// state.printing chroni przed podwójnym kliknięciem, tak jak state.loading wyżej.
+printButton.addEventListener("click", async () => {
+  if (state.loading || state.printing || filterChanged() || !state.query) return;
+  state.printing = true;
+  updateControls();
+  try {
+    while (buildNextLedgerUrl(state.query, state.nextCursor)) {
+      await loadEntries({ append: true });
+      renderEntries();
+    }
+    updatePrintMeta();
+    window.print();
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+  } finally {
+    state.printing = false;
+    updateControls();
+  }
+});
+
 // #225: Księgę prowadzą role finansowe. Inne konta widzą jeden komunikat zamiast
 // formularzy. Sesja przed MFA dostaje z /api/access puste grants (brak akcji).
 async function applyAccess() {
@@ -258,7 +304,7 @@ function restoreFocus() {
   target.focus();
 }
 
-function configureDialog(id, prefix, submit, successText) {
+function configureDialog(id, prefix, submit, successText, describeConfirm) {
   const dialog = byId(id);
   const form = dialog.querySelector("form");
   const errorBox = form.querySelector(".form-error");
@@ -266,6 +312,11 @@ function configureDialog(id, prefix, submit, successText) {
     event.preventDefault();
     if (event.submitter?.value === "cancel") { dialog.close(); return; }
     if (!form.reportValidity()) return;
+    // Podsumowanie skutków przed zapisem (issue #136) — zapis jest trwały.
+    if (describeConfirm) {
+      const confirmed = await confirmAction(describeConfirm(new FormData(form)));
+      if (!confirmed) return;
+    }
     const button = event.submitter;
     button.disabled = true;
     errorBox.textContent = "";
@@ -323,7 +374,30 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
       throw error;
     }
   }
-}, "Zapisano wpis w księdze.");
+}, "Zapisano wpis w księdze.", (data) => {
+  const direction = String(data.get("direction"));
+  const category = state.categories.find((c) => c.id === data.get("categoryId"));
+  let amountText = String(data.get("amount") || "");
+  let warning = "";
+  try {
+    const cents = parseEuroAmount(data.get("amount"));
+    amountText = formatCents(cents);
+    if (cents > 100_000) warning = "Kwota jest nietypowo wysoka (ponad 1000 EUR). Sprawdź, zanim zapiszesz.";
+  } catch {
+    // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
+  }
+  return {
+    title: "Zapisać wpis w księdze?",
+    effects: [
+      `Kwota: ${amountText} (${DIRECTION_LABELS[direction] ?? direction})`,
+      `Data: ${data.get("occurredOn")}`,
+      `Kategoria: ${category ? category.name : data.get("categoryId")}`,
+      "Zapis jest trwały; pomyłkę poprawisz korektą widoczną w historii.",
+    ],
+    warning,
+    confirmLabel: "Zapisz wpis",
+  };
+});
 
 const correctionDialog = configureDialog("correction-dialog", "ledger-correction", async (data, key) => {
   const entryId = String(data.get("entryId"));
@@ -331,7 +405,23 @@ const correctionDialog = configureDialog("correction-dialog", "ledger-correction
     method: "POST", headers: { "Idempotency-Key": key },
     body: JSON.stringify({ amountCents: parseEuroAmount(data.get("amount")), reason: String(data.get("reason")) }),
   });
-}, "Dodano korektę.");
+}, "Dodano korektę.", (data) => {
+  let amountText = String(data.get("amount") || "");
+  try {
+    amountText = formatCents(parseEuroAmount(data.get("amount")));
+  } catch {
+    // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
+  }
+  return {
+    title: "Dodać korektę?",
+    effects: [
+      `Kwota pomniejszenia: ${amountText}`,
+      `Powód: ${String(data.get("reason") || "").trim() || "—"}`,
+      "Korekta nie usuwa pierwotnego wpisu — saldo netto zostanie przeliczone, historia zostaje widoczna.",
+    ],
+    confirmLabel: "Dodaj korektę",
+  };
+});
 
 function updateCategories() {
   const direction = entryDialog.form.elements.direction.value;

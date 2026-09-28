@@ -149,6 +149,14 @@ export function buildMeetingsUrl(schoolYearId) {
   return `/api/meetings?${new URLSearchParams({ schoolYearId: schoolYearId.trim() })}`;
 }
 
+// #167: przedstawiciel bez roli z MEETING_READ_ROLES czyta wyłącznie protokoły
+// udostępnione (GET /api/meetings/shared-minutes) — ta sama walidacja identyfikatora,
+// bez wysyłania zapytania, które z góry skończy się 403 (listMeetings).
+export function buildSharedMinutesUrl(schoolYearId) {
+  if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
+  return `/api/meetings/shared-minutes?${new URLSearchParams({ schoolYearId: schoolYearId.trim() })}`;
+}
+
 export function meetingUrl(meetingId, ...rest) {
   if (!isValidId(meetingId)) throw new Error("Niepoprawny identyfikator zebrania.");
   return ["/api/meetings", meetingId, ...rest].map((part, index) => (index === 0 ? part : encodeURIComponent(part))).join("/");
@@ -438,7 +446,25 @@ export function canApproveMinutes(minutesItem, minutes, meeting) {
 // Role jak MANAGE_ROLES w src/pg/meetings.js (test tests/role-policy-parity.test.js pilnuje
 // zgodności). „Nowe zebranie” tylko dla ról zarządzających; serwer i tak autoryzuje (#225).
 export const MEETING_MANAGE_ROLES = Object.freeze(["admin", "board"]);
+// Zgodne z READ_ROLES w src/pg/meetings.js (listMeetings) — jeśli się rozjadą,
+// przedstawiciel znów dostanie 403 na pełnym widoku (#167).
+export const MEETING_READ_ROLES = Object.freeze(["admin", "board", "audit"]);
 
 export function canManageMeetings(grants) {
   return (Array.isArray(grants) ? grants : []).some((grant) => MEETING_MANAGE_ROLES.includes(grant?.role));
+}
+
+export function canReadMeetings(grants) {
+  return (Array.isArray(grants) ? grants : []).some((grant) => MEETING_READ_ROLES.includes(grant?.role));
+}
+
+// Tryb widoku panelu Zebrania (#167): 'full' — role z MEETING_READ_ROLES widzą
+// obecny widok bez zmian; 'shared' — przedstawiciel bez tych ról widzi wyłącznie
+// protokoły udostępnione (GET /api/meetings/shared-minutes); 'none' — konto bez
+// żadnego przydziału (np. sesja przed MFA) nie zna jeszcze swojego zakresu.
+export function meetingsViewMode(grants) {
+  const list = Array.isArray(grants) ? grants : [];
+  if (canReadMeetings(list)) return "full";
+  if (list.some((grant) => grant?.role === "representative")) return "shared";
+  return "none";
 }

@@ -13,6 +13,7 @@ import {
   paymentsQuery,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
 import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
 import {
@@ -25,11 +26,14 @@ import {
 } from "../shared/household-picker.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const FILTER_KEYS = ["schoolYearId", "status"];
-const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null };
+const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -41,6 +45,7 @@ const loading = byId("loading");
 const summary = byId("result-summary");
 const loadMore = byId("load-more");
 const filterHint = byId("filter-hint");
+const printButton = byId("print-payments");
 
 function localDate() {
   const now = new Date();
@@ -107,6 +112,7 @@ function render() {
   message.textContent = count === 0 ? "Brak wpłat dla wybranych filtrów." : "";
   loadMore.hidden = !state.nextCursor;
   updateFilterHint();
+  updatePrintMeta();
 }
 
 function filterChanged() {
@@ -118,6 +124,22 @@ function updateFilterHint() {
   const changed = filterChanged();
   filterHint.hidden = !changed;
   loadMore.disabled = state.loading || changed;
+  printButton.disabled = state.loading || state.printing || changed || !state.query || state.payments.length === 0;
+}
+
+// Blok metadanych wydruku (#151), niewidoczny na ekranie (shared/print.css).
+function updatePrintMeta() {
+  const container = byId("print-meta");
+  if (!container) return;
+  const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
+  const filters = state.query?.status ? STATUS_LABELS[state.query.status] : null;
+  mountPrintMeta(container, {
+    view: "Dobrowolne wpłaty",
+    schoolYear: yearLabel,
+    filters,
+    printedBy,
+    incompleteCount: state.nextCursor ? state.payments.length : null,
+  });
 }
 
 function setBusy(busy) {
@@ -205,6 +227,24 @@ filtersForm.addEventListener("submit", (event) => {
   }
 })();
 loadMore.addEventListener("click", () => loadPayments({ append: true }));
+
+// „Drukuj zestawienie” dociąga wszystkie strony bieżącego filtra przed wydrukiem
+// (#151); state.printing chroni przed podwójnym kliknięciem.
+printButton.addEventListener("click", async () => {
+  if (state.loading || state.printing || filterChanged() || !state.query) return;
+  state.printing = true;
+  updateFilterHint();
+  try {
+    while (buildNextPaymentsUrl(state.query, state.nextCursor)) {
+      await loadPayments({ append: true });
+    }
+    updatePrintMeta();
+    window.print();
+  } finally {
+    state.printing = false;
+    updateFilterHint();
+  }
+});
 yearInput.addEventListener("input", updateFilterHint);
 statusInput.addEventListener("change", updateFilterHint);
 
@@ -217,7 +257,7 @@ function restoreFocus() {
   heading.focus();
 }
 
-function configureDialog(id, prefix, submit, successText) {
+function configureDialog(id, prefix, submit, successText, describeConfirm) {
   const dialog = byId(id);
   const form = dialog.querySelector("form");
   const errorBox = form.querySelector(".form-error");
@@ -230,6 +270,13 @@ function configureDialog(id, prefix, submit, successText) {
       return;
     }
     if (!form.reportValidity()) return;
+
+    // Podsumowanie skutków przed zapisem (issue #136) — zapis jest trwały,
+    // poprawka wymaga nowej korekty widocznej w historii.
+    if (describeConfirm) {
+      const confirmed = await confirmAction(describeConfirm(new FormData(form)));
+      if (!confirmed) return;
+    }
 
     errorBox.textContent = "";
     const submitButton = event.submitter;
@@ -352,7 +399,30 @@ const paymentDialog = configureDialog("payment-dialog", "payment", async (data, 
       ...(householdId ? { householdId } : {}),
     }),
   });
-}, "Zapisano wpłatę.");
+}, "Zapisano wpłatę.", (data) => {
+  const householdId = String(data.get("householdId") || "").trim();
+  let amountText = String(data.get("amount") || "");
+  let warning = "";
+  try {
+    const cents = parseEuroAmount(data.get("amount"));
+    amountText = formatCents(cents);
+    if (cents > 100_000) warning = "Kwota jest nietypowo wysoka (ponad 1000 EUR). Sprawdź, zanim zapiszesz.";
+  } catch {
+    // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
+  }
+  return {
+    title: "Zapisać wpłatę?",
+    effects: [
+      `Kwota: ${amountText}`,
+      `Data wpływu: ${data.get("receivedOn")}`,
+      `Metoda: ${METHOD_LABELS[data.get("method")] ?? data.get("method")}`,
+      householdId ? `Rodzina: ${householdId}` : "Bez przypisania rodziny — wpłata trafi do „Do przypisania”.",
+      "Zapis jest trwały; pomyłkę poprawisz korektą widoczną w historii.",
+    ],
+    warning,
+    confirmLabel: "Zapisz wpłatę",
+  };
+});
 
 const correctionDialog = configureDialog("correction-dialog", "correction", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
@@ -364,7 +434,23 @@ const correctionDialog = configureDialog("correction-dialog", "correction", asyn
       reason: data.get("reason"),
     }),
   });
-}, "Dodano korektę.");
+}, "Dodano korektę.", (data) => {
+  let amountText = String(data.get("amount") || "");
+  try {
+    amountText = formatCents(parseEuroAmount(data.get("amount")));
+  } catch {
+    // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
+  }
+  return {
+    title: "Dodać korektę?",
+    effects: [
+      `Kwota pomniejszenia: ${amountText}`,
+      `Powód: ${String(data.get("reason") || "").trim() || "—"}`,
+      "Korekta nie usuwa pierwotnego zapisu — kwota netto zostanie przeliczona, historia zostaje widoczna.",
+    ],
+    confirmLabel: "Dodaj korektę",
+  };
+});
 
 const assignmentDialog = configureDialog("assignment-dialog", "assignment", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
