@@ -314,7 +314,6 @@ wpisów).
 | `release_reason_not_allowed` | Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”. | Zależy od kontekstu (patrz moduł trasy). |
 | `replacement_target_mismatch` | Przeksięgowanie nie zgadza się z zastępowanym wpisem. Odśwież widok i spróbuj ponownie. | Nie — popraw dane żądania. |
 | `request_already_consumed` | Ten wniosek o zdjęcie blokady został już rozpatrzony. | Zależy od kontekstu (patrz moduł trasy). |
-| `request_not_found` | Nie znaleziono wniosku o zdjęcie blokady. | Nie — popraw dane. |
 | `request_not_found` | Nie znaleziono wniosku. | Nie — popraw dane żądania. |
 | `request_too_large` | Za dużo danych w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_expense_only` | Uchwałę jako upoważnienie można wskazać tylko przy wydatku. | Zależy od kontekstu (patrz moduł trasy). |
