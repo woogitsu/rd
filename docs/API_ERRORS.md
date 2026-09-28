@@ -79,6 +79,7 @@ wpisów).
 | `event_cancelled` | Wydarzenie jest odwołane; odwołanie jest ostateczne. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_not_found` | Nie znaleziono wydarzenia albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
 | `event_not_public` | Publikować można tylko wydarzenie z odbiorcami „Publiczne”. | Zależy od kontekstu (patrz moduł trasy). |
+| `export_in_progress` | Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie. | Tak, po chwili (drugi równoczesny eksport tego samego roku). |
 | `export_too_large` | Eksport jest za duży. Zawęź zakres. | Zależy od kontekstu (patrz moduł trasy). |
 | `fingerprint_mismatch` | Dane różnią się od podglądu. Wyślij podgląd ponownie. | Nie — popraw dane żądania. |
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |

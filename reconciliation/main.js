@@ -145,7 +145,7 @@ function lineRow(line) {
 }
 
 function renderDetail() {
-  const { reconciliation, lines, summary, unmatchedLedgerEntries, inconsistentMatches } = state.detail;
+  const { reconciliation, lines, summary, unmatchedLedgerEntries, unmatchedLedgerEntriesTruncated, inconsistentMatches } = state.detail;
   byId("detail-title").textContent = `Uzgodnienie ${reconciliation.statementDate}`;
   const statusBadge = byId("detail-status");
   statusBadge.textContent = STATUS_LABELS[reconciliation.status] ?? reconciliation.status;
@@ -167,6 +167,7 @@ function renderDetail() {
     return item;
   }));
   byId("unmatched-ledger-box").hidden = unmatchedLedgerEntries.length === 0;
+  byId("unmatched-ledger-truncated").hidden = !unmatchedLedgerEntriesTruncated;
 
   const inconsistent = summarizeInconsistencies(inconsistentMatches);
   const inconsistentList = byId("inconsistent-matches");
@@ -186,10 +187,25 @@ function renderDetail() {
   byId("confirm-inconsistent").hidden = !(draft && canWrite && inconsistent.length > 0);
 }
 
+// Karta pobiera pozycje wyciągu stronami (#218, domyślnie 500 na stronę) i
+// scala je po stronie panelu, żeby widok nie zmienił się dla skarbnika —
+// backend nie zwraca już wszystkich pozycji jednym, nieograniczonym zapytaniem.
+async function fetchFullDetail(id) {
+  let data = await api(reconciliationUrl(id));
+  let lines = data.lines;
+  let cursor = data.nextCursor;
+  while (cursor) {
+    const page = await api(reconciliationUrl(id, cursor));
+    lines = lines.concat(page.lines);
+    cursor = page.nextCursor;
+  }
+  return { ...data, lines, nextCursor: null };
+}
+
 async function openDetail(id) {
   setMessage("");
   try {
-    const data = await api(reconciliationUrl(id));
+    const data = await fetchFullDetail(id);
     state.selectedId = id;
     state.detail = data;
     detailSection.hidden = false;
