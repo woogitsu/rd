@@ -266,6 +266,10 @@ function databaseError(error) {
   const message = String(error?.message ?? '');
   if (DATABASE_CONFLICTS.has(message)) return new MeetingError(message, 409);
   if (message === 'meeting_not_found') return new MeetingError('meeting_not_found', 404);
+  // #205: identyfikator (guardianId/userId spoza klasy/roku zebrania,
+  // amendsResolutionId spoza roku/klasy) — sam kod dla spoza zakresu i
+  // nieistniejącego, żeby odpowiedź nie była wyrocznią istnienia.
+  if (message === 'invalid_reference') return new MeetingError('invalid_reference');
   if (error?.code === '23505') {
     if (error.constraint === 'resolutions_number_per_year_idx') {
       return new MeetingError('resolution_number_taken', 409);
