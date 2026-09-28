@@ -27,7 +27,7 @@ function checkDetails(check) {
     case 'payments_in_ledger':
       return `wpłaty ${m(check.paymentsNetCents)}; ujęte w księdze ${m(check.ledgerLinkedNetCents)}; różnica ${m(check.differenceCents)}; wpłaty bez wpisu księgi: ${escapeHtml(check.paymentsWithoutLedgerEntry)}`;
     case 'reconciliation_matches':
-      return `niezgodne kwotowo: ${escapeHtml(check.amountMismatchCount)}; podwójne ujęcie: ${escapeHtml(check.doubleCountedCount)}; w tym w zatwierdzonych uzgodnieniach (do wyjaśnienia, bez ścieżki poprawy): ${escapeHtml(check.amountMismatchConfirmedCount)}`;
+      return `niezgodne kwotowo: ${escapeHtml(check.amountMismatchCount)}; podwójne ujęcie: ${escapeHtml(check.doubleCountedCount)}; w tym w zatwierdzonych uzgodnieniach (do wyjaśnienia, bez ścieżki poprawy): ${escapeHtml(check.amountMismatchConfirmedCount)}; dopasowania zbiorcze niezgodne: ${escapeHtml(check.groupAmountMismatchCount ?? 0)} (w zatwierdzonych: ${escapeHtml(check.groupAmountMismatchConfirmedCount ?? 0)})`;
     case 'latest_confirmed_reconciliation':
       return check.statementDate
         ? `wyciąg z ${escapeHtml(check.statementDate)}; różnica ${m(check.differenceCents)}; przelewy w księdze po dacie wyciągu: ${escapeHtml(check.bankEntriesAfterStatement)}`
@@ -102,7 +102,7 @@ const e = escapeHtml;
 const money = (cents) => e(formatEur(cents));
 
 const DIRECTION = { income: 'przychód', expense: 'wydatek' };
-const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone' };
+const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone', abandoned: 'porzucone' };
 const RESOLUTION_STATUS = { adopted: 'przyjęta', rejected: 'odrzucona', draft: 'projekt', withdrawn: 'wycofana' };
 
 function table(headers, rows, emptyText) {
@@ -247,7 +247,7 @@ ${adjustmentRows.length ? `<p>Korekty bilansu otwarcia:</p>${table([['Zapisano']
 <h2>5. Uzgodnienia rachunku bankowego</h2>
 ${table([['Data wyciągu'], ['Status'], ['Saldo wyciągu', 'num'], ['Saldo księgi', 'num'], ['Różnica', 'num'], ['Niedopasowane pozycje', 'num'], ['Zatwierdził (id)'], ['Wyjaśnienie']],
     reconciliationRows, 'Brak uzgodnień rachunku w tym roku.')}
-<p class="meta">Zatwierdzone uzgodnienia: ${e(reconciliations.confirmedCount)}; szkice: ${e(reconciliations.draftCount)}. Saldo księgi w szkicu jest wyliczane na bieżąco.</p>
+<p class="meta">Zatwierdzone uzgodnienia: ${e(reconciliations.confirmedCount)}; szkice: ${e(reconciliations.draftCount)}; porzucone szkice: ${e(reconciliations.abandonedCount ?? 0)}. Saldo księgi w szkicu jest wyliczane na bieżąco.</p>
 
 <h2>6. Dowody wydatków</h2>
 <p>Wydatki bez dowodu: ${e(evidence.expensesWithoutEvidence.count)}; suma netto ${money(evidence.expensesWithoutEvidence.netCents)}.</p>

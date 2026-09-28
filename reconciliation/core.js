@@ -11,7 +11,7 @@ const MAX_BALANCE_CENTS = 10_000_000_000; // jak MAX_BALANCE_CENTS w src/pg/rout
 export const WRITE_ROLES = Object.freeze(['admin', 'board', 'treasurer']);
 export const REPORT_ROLES = Object.freeze(['audit', 'board', 'treasurer']);
 
-export const STATUS_LABELS = Object.freeze({ draft: 'Szkic', confirmed: 'Potwierdzone' });
+export const STATUS_LABELS = Object.freeze({ draft: 'Szkic', confirmed: 'Potwierdzone', abandoned: 'Porzucony szkic' });
 
 // Powody z inconsistentMatches (src/pg/routes/reconciliation.js).
 export const INCONSISTENCY_LABELS = Object.freeze({
