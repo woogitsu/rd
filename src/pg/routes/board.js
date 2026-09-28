@@ -80,19 +80,15 @@ export async function handle(request, env, url, json) {
                 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS representative_pending,
             (SELECT count(*) FROM enrollments e
               WHERE e.class_id = c.id AND EXISTS (
-                SELECT 1 FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
+                SELECT 1 FROM student_guardians_current sg JOIN guardians g ON g.id = sg.guardian_id
                  WHERE sg.student_id = e.student_id AND sg.contact_allowed AND g.contact_allowed
                    AND g.email IS NOT NULL
-                   AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
-                   AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
               )) AS contact_count,
             (SELECT count(*) FROM enrollments e
               WHERE e.class_id = c.id AND NOT EXISTS (
-                SELECT 1 FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
+                SELECT 1 FROM student_guardians_current sg JOIN guardians g ON g.id = sg.guardian_id
                  WHERE sg.student_id = e.student_id AND sg.contact_allowed AND g.contact_allowed
                    AND g.email IS NOT NULL
-                   AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
-                   AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
               )) AS no_contact_count,
             ${includePayments ? `(SELECT count(DISTINCT ph.household_id) FROM enrollments e
                JOIN student_primary_household_current ph ON ph.student_id = e.student_id
