@@ -441,6 +441,12 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { householdId: 'hh-2', reason: 'Błędne przypisanie, korekta syntetyczna' },
     }),
   },
+  {
+    // #141: eksport CSV wpisów wpłat i korekt (skarbnik/zarząd/admin).
+    id: 'payments.exportCsv', module: 'payments', method: 'GET', path: '/api/payments/export.csv?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/payments/export.csv?schoolYearId=${target.schoolYearId}` }),
+  },
 
   // ---------- events (#12) ----------
   {
