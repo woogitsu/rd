@@ -11,6 +11,7 @@
 import { fileURLToPath } from 'node:url';
 import { loadMigrations } from './postgres-migrations.js';
 import { describeError, log } from './log.js';
+import { isReadOnly, WRITE_MODE_NORMAL, WRITE_MODE_READ_ONLY } from './write-mode.js';
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 2000;
 const MIGRATIONS_DIR = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
@@ -42,8 +43,10 @@ export async function checkReadiness(env = {}, {
   migrationNames = repositoryMigrationNames,
   logger = log,
 } = {}) {
+  const writeMode = isReadOnly(env) ? WRITE_MODE_READ_ONLY : WRITE_MODE_NORMAL;
+  const withWriteMode = ({ ready, body }) => ({ ready, body: { ...body, write_mode: writeMode } });
   if (!env?.db || typeof env.db.query !== 'function') {
-    return { ready: false, body: { status: 'not_ready', checks: { database: 'not_configured' } } };
+    return withWriteMode({ ready: false, body: { status: 'not_ready', checks: { database: 'not_configured' } } });
   }
   try {
     const expected = await migrationNames();
@@ -63,12 +66,12 @@ export async function checkReadiness(env = {}, {
     };
     if (missing.length) {
       logger.warn('readiness_migrations_pending', { missing_count: missing.length });
-      return { ready: false, body: { status: 'not_ready', checks: { database: 'ok', migrations: 'pending' }, migrations } };
+      return withWriteMode({ ready: false, body: { status: 'not_ready', checks: { database: 'ok', migrations: 'pending' }, migrations } });
     }
-    return { ready: true, body: { status: 'ready', checks: { database: 'ok', migrations: 'ok' }, migrations: { expected: expected.length, applied: expected.length } } };
+    return withWriteMode({ ready: true, body: { status: 'ready', checks: { database: 'ok', migrations: 'ok' }, migrations: { expected: expected.length, applied: expected.length } } });
   } catch (error) {
     const detail = describeError(error);
     logger.error('readiness_database_error', detail);
-    return { ready: false, body: { status: 'not_ready', checks: { database: detail.code === 'timeout' ? 'timeout' : 'error' } } };
+    return withWriteMode({ ready: false, body: { status: 'not_ready', checks: { database: detail.code === 'timeout' ? 'timeout' : 'error' } } });
   }
 }

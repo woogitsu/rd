@@ -800,6 +800,10 @@ test('a correction after matching blocks confirmation with a list of inconsisten
 
     const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
     assert.equal(detail.summary.inconsistentMatchCount, 3);
+    // #165 pkt 4: wszystkie 3 pary są teraz niezgodne kwotowo — żadna nie liczy
+    // się jako poprawnie dopasowana, choć żadna pozycja nie jest "bez pary".
+    assert.equal(detail.summary.matchedLineCount, 0);
+    assert.equal(detail.summary.unmatchedLineCount, 0);
 
     const confirm = (cookie, body = { confirmationNote: 'Sprawdzone z wyciągiem' }) =>
       call(`/api/reconciliations/${draft.id}/confirm`, { method: 'POST', cookie, body });
@@ -862,6 +866,10 @@ test('pre-existing double-counted matches are reported and block confirmation wi
     });
     const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
     assert.equal(detail.summary.inconsistentMatchCount, 2);
+    // #165 pkt 4: powiązania niespójne (tu: podwójne ujęcie) nie liczą się jako
+    // poprawnie dopasowane — mają własną kategorię, nie wchodzą do matchedLineCount.
+    assert.equal(detail.summary.matchedLineCount, 0);
+    assert.equal(detail.summary.unmatchedLineCount, 0);
     assert.ok(detail.inconsistentMatches.every((m) => m.reasons.includes('double_counted') && !m.reasons.includes('amount_mismatch')));
     const refused = await call(`/api/reconciliations/${draft.id}/confirm`, {
       method: 'POST', cookie: cookies.board, body: { confirmationNote: 'Sprawdzone z wyciągiem' },
@@ -869,6 +877,46 @@ test('pre-existing double-counted matches are reported and block confirmation wi
     assert.equal(refused.status, 409);
     assert.deepEqual((await refused.json()).matches.map((m) => m.matchId).sort(), ['m-old-1', 'm-old-2']);
     assert.equal((await db.query('SELECT count(*)::int AS n FROM bank_reconciliation_matches WHERE revoked_at IS NULL')).rows[0].n, 2);
+  } finally {
+    await db.close();
+  }
+});
+
+// #165 pkt 4: matchedLineCount/unmatchedLineCount/inconsistentMatchCount muszą się
+// sumować do lineCount, także przy mieszance wszystkich trzech kategorii naraz.
+test('summary counts split matched, unmatched and inconsistent lines into three disjoint categories', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await seedPayments(db, [
+      ['p-good', 'h-1', 1000, '2026-09-14', 'bank'],
+      ['p-stale', 'h-2', 2000, '2026-09-15', 'bank'],
+    ]);
+    const draft = await draftWithLines(call, cookies, [1000, 2000, 3000]);
+    const okMatch = await matchCall(call, cookies.treasurer, draft.id, { statementLineId: draft.lineIds[0], paymentEntryId: 'p-good' });
+    assert.equal(okMatch.status, 201);
+    const staleMatch = await matchCall(call, cookies.treasurer, draft.id, { statementLineId: draft.lineIds[1], paymentEntryId: 'p-stale' });
+    assert.equal(staleMatch.status, 201);
+    // draft.lineIds[2] (3000) zostaje bez żadnej pary.
+
+    // Stan, który normalny przepływ korekty dziś blokuje (409 active_bank_match,
+    // patrz test wyżej) — odtworzony bezpośrednio w bazie, jak w innych testach
+    // tego pliku (dane sprzed blokady albo zapis z pominięciem triggerów).
+    await db.exec(`
+      SET session_replication_role = replica;
+      INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
+        VALUES ('corr-p-stale', 'p-stale', 500, 'Korekta syntetyczna', 'u-treasurer', 'corr-p-stale-key');
+      SET session_replication_role = origin;
+    `);
+
+    const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(detail.summary.lineCount, 3);
+    assert.equal(detail.summary.matchedLineCount, 1);
+    assert.equal(detail.summary.inconsistentMatchCount, 1);
+    assert.equal(detail.summary.unmatchedLineCount, 1);
+    assert.equal(
+      detail.summary.matchedLineCount + detail.summary.inconsistentMatchCount + detail.summary.unmatchedLineCount,
+      detail.summary.lineCount,
+    );
   } finally {
     await db.close();
   }
