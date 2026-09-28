@@ -448,3 +448,11 @@ czynnika MFA zamiast nadpisywać niezmienny `user_mfa_factors` (trigger
 `0013`) i przenieść nieużyte kody odzyskiwania na nowy czynnik zamiast je
 logicznie unieważniać. Wyłącznie nowa kolumna; bez zmiany istniejących
 wierszy (domyślnie `NULL`).
+
+`0093_resolution_meeting_campaign_revision.sql` (#215) dodaje
+`revision_no` (`DEFAULT 1`) do `resolutions`, `meetings` i
+`email_campaigns` oraz trigger `bump_revision_no()`, który zwiększa numer
+wersji przy każdym `UPDATE` wiersza — niezależnie od tego, czy trasa API
+sprawdza wersję (optimistic concurrency), tak jak już działa dla
+`events`/`news`. Żadne istniejące wiersze nie zmieniają treści, tylko
+dostają numer wersji startowej.
