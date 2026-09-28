@@ -4,6 +4,12 @@
 -- * ledger_entry_insert_guard: wpis księgi z payment_entry_id musi mieć
 --   amount_cents równe bieżącemu netto wpłaty (kwota - korekty - zwroty) w
 --   chwili zapisu wpisu. Inaczej `ledger_payment_amount_mismatch` (API: 422).
+--   Wyjątek wzorem 0027: odtworzenie historycznych danych (import z D1,
+--   src/d1-postgres-migration.js) ustawia w swojej transakcji
+--   SET LOCAL rd.restore = 'on' i przenosi niezgodne historyczne wiersze bez
+--   zmian (D1 nigdy nie miało prawdziwych danych — docs/RAILWAY_MIGRATION.md,
+--   „Stan wyjściowy”); API nigdy tego ustawienia nie włącza, więc normalny
+--   zapis jest sprawdzany zawsze.
 -- * payment_correction_guard: korekta wpłaty powiązanej z wpisem księgi jest
 --   odrzucana (`ledger_correction_required`, API: 409), chyba że wpis księgi
 --   ma już (w tej samej lub wcześniejszej transakcji) korektę sprowadzającą
@@ -82,7 +88,13 @@ BEGIN
       - COALESCE((SELECT sum(amount_cents) FROM payment_corrections WHERE payment_entry_id = linked.id), 0)
       - COALESCE((SELECT sum(amount_cents) FROM payment_refunds WHERE payment_entry_id = linked.id), 0)
       INTO linked_net;
-    IF NEW.amount_cents <> linked_net THEN
+    -- Odtworzenie historycznych danych (import z D1, src/d1-postgres-migration.js)
+    -- ustawia w swojej transakcji SET LOCAL rd.restore = 'on' (wzorem 0027) i
+    -- przenosi wiersze bez zmian, nawet gdy stara wpłata i wpis się rozjeżdżają
+    -- (D1 nigdy nie miało prawdziwych danych — docs/RAILWAY_MIGRATION.md). API
+    -- nigdy tego ustawienia nie włącza, więc normalny zapis nadal jest sprawdzany.
+    IF NEW.amount_cents <> linked_net
+       AND current_setting('rd.restore', true) IS DISTINCT FROM 'on' THEN
       RAISE EXCEPTION 'ledger_payment_amount_mismatch';
     END IF;
   END IF;
