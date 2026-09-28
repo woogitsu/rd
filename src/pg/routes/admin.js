@@ -464,6 +464,12 @@ async function createInvitationRoute(env, actorId, request, json) {
   }
   if (typeof data.email !== 'string') throw new RequestError('invalid_email');
   const email = data.email.trim().toLowerCase();
+  // #146: zaproszenie na WŁASNY adres i jego przyjęcie własnym hasłem nadawało
+  // rolę bez drugiej osoby — to samo samonadanie, które POST /grants odrzuca.
+  // Odrzucamy przed zapisem (bez zaproszenia i zdarzenia audytu); przyjęcie
+  // sprawdza to jeszcze raz (src/pg/auth.js, src/pg/login.js).
+  const { rows: self } = await env.db.query('SELECT 1 FROM users WHERE id = $1 AND lower(email) = $2', [actorId, email]);
+  if (self[0]) throw new RequestError('cannot_grant_self', 409);
   const scope = await resolveScope(env.db, { role: data.role, classId, schoolYearId: schoolYearIdInput });
 
   // Podwójne kliknięcie: drugie zaproszenie o tym samym zakresie dla adresu,
