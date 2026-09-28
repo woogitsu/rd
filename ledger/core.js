@@ -1,3 +1,5 @@
+import { MoneyError, formatEur, parseEurInput } from "../panel/money.js";
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 export const DIRECTION_LABELS = Object.freeze({ income: "Przychód", expense: "Wydatek" });
@@ -7,22 +9,22 @@ export function isValidId(value) {
   return typeof value === "string" && ID_PATTERN.test(value.trim());
 }
 
+// #173: jeden moduł kwot EUR (panel/money.js) dla wszystkich paneli i serwera.
 export function formatCents(value) {
-  const cents = Number(value);
-  if (!Number.isSafeInteger(cents)) return "—";
-  return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "EUR" }).format(cents / 100);
+  return formatEur(value, { style: "screen" });
 }
 
 export function parseEuroAmount(value) {
-  const normalized = String(value ?? "").trim().replace(",", ".");
-  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+  try {
+    return parseEurInput(value);
+  } catch (error) {
+    if (error instanceof MoneyError && error.code === "amount_out_of_range") {
+      throw new Error("Kwota musi mieścić się między 0,01 EUR a 1 000 000 EUR.");
+    }
+    // Treść zgodna z poprzednim komunikatem (tests/ledger-panel-core.test.js) —
+    // maksymalnie dwa miejsca po przecinku to najczęstsza przyczyna błędu formatu.
     throw new Error("Podaj kwotę z maksymalnie dwoma miejscami po przecinku.");
   }
-  const cents = Math.round(Number(normalized) * 100);
-  if (!Number.isSafeInteger(cents) || cents < 1 || cents > 100_000_000) {
-    throw new Error("Kwota musi mieścić się między 0,01 EUR a 1 000 000 EUR.");
-  }
-  return cents;
 }
 
 export function needsResolution(direction, amountCents) {
@@ -96,4 +98,23 @@ export function normalizeEntry(entry) {
 export function makeIdempotencyKey(prefix, randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto)) {
   if (typeof randomUUID !== "function") throw new Error("Ta przeglądarka nie obsługuje bezpiecznych identyfikatorów operacji.");
   return `${prefix}-${randomUUID()}`;
+}
+
+// Role finansowe jak FINANCIAL_ROLES w src/pg/routes/payments.js i ledger.js (test
+// tests/role-policy-parity.test.js pilnuje zgodności). Liczą się tylko przydziały bez klasy
+// (isAuthorizedScoped bez classId). Ukrycie akcji to skrót — serwer i tak autoryzuje (#225).
+export const FINANCIAL_ROLES = Object.freeze(["admin", "board", "treasurer"]);
+
+export function hasFinancialAccess(grants, schoolYearId = "") {
+  return (Array.isArray(grants) ? grants : []).some((grant) => FINANCIAL_ROLES.includes(grant?.role)
+    && !grant.classId
+    && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === String(schoolYearId).trim()));
+}
+
+// Opis błędu HTTP dla osoby korzystającej z panelu: 403 to brak uprawnień, nie awaria.
+export function describeApiError(status, code) {
+  if (status === 401 || code === "unauthenticated") return "Sesja wygasła. Zaloguj się ponownie.";
+  if (code === "mfa_required") return "Potwierdź logowanie drugim składnikiem (MFA), aby korzystać z finansów.";
+  if (status === 403 || code === "forbidden") return "Nie masz uprawnień do tej operacji w wybranym roku szkolnym.";
+  return null;
 }

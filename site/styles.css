@@ -23,7 +23,7 @@ a:hover { color: var(--red-dark); }
 
 .skip-link { position: absolute; left: 1rem; top: -3rem; padding: .5rem .75rem; background: #fff; color: var(--red-dark); border: 1px solid var(--red-dark); }
 .skip-link:focus { top: 1rem; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .site-header {
   display: flex;

@@ -1,3 +1,4 @@
+import { representativeClasses, uploadableKinds } from "./core.js";
 import {
   DEFAULT_MAX_BYTES,
   KIND_HINTS,
@@ -348,3 +349,36 @@ fileInput.addEventListener("change", () => {
 });
 kindSelect.addEventListener("change", syncKindFields);
 syncKindFields();
+
+// #225: rodzaje dokumentów w formularzu według ról konta (/api/access). Sesja przed MFA
+// dostaje puste grants — wtedy formularz przesyłania jest ukryty.
+async function applyAccess() {
+  let grants;
+  try {
+    const access = await getJson("/api/access");
+    grants = Array.isArray(access.grants) ? access.grants : [];
+  } catch {
+    return; // bez informacji o rolach formularz zostaje; serwer i tak autoryzuje
+  }
+  const allowed = new Set(uploadableKinds(grants));
+  for (const option of [...kindSelect.options]) {
+    if (option.value && !allowed.has(option.value)) option.remove();
+  }
+  if (allowed.size === 1) kindSelect.value = [...allowed][0];
+  syncKindFields();
+  const classes = representativeClasses(grants);
+  if (classes.length) {
+    const list = document.createElement("datalist");
+    list.id = "upload-class-list";
+    list.append(...classes.map((id) => Object.assign(document.createElement("option"), { value: id })));
+    uploadForm.append(list);
+    byId("upload-class").setAttribute("list", list.id);
+  }
+  if (allowed.size === 0) {
+    const note = document.createElement("p");
+    note.className = "message";
+    note.textContent = "To konto nie może przesyłać dokumentów.";
+    uploadForm.replaceWith(note);
+  }
+}
+applyAccess();
