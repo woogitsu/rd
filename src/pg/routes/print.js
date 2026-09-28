@@ -1,9 +1,15 @@
 // GET /api/print/cards?schoolYearId=…&classId=… — dane do kartek o dobrowolnej
 // składce (issue #11). Prototyp na PostgreSQL — nie jest wdrożony.
 //
-// Odpowiedź ma kształt wejścia JSON modułu print/core.js (parseInputRows):
-//   { schoolYearId, classId, paymentInfoIncluded, rows: [
+// Odpowiedź ma kształt wejścia JSON modułu print/core.js (parseInputRows) plus
+// zatwierdzoną konfigurację danych do wpłaty (#92, payment_instructions):
+//   { schoolYearId, classId, paymentInfoIncluded, paymentInstructions, rows: [
 //       { householdId, firstName, lastName, className, recordedNetCents? } ] }
+// paymentInstructions: { iban, bic, payeeName, approvedAt } albo null, gdy rok
+// nie ma jeszcze zatwierdzonej wersji (kartka jest wtedy szkicem, bez kodu QR —
+// zob. print/core.js buildCard). Dostępne dla każdej roli uprawnionej do druku
+// (także przedstawiciela klasy) — edycja/zatwierdzanie pozostaje w
+// POST /api/payment-instructions (admin/board).
 // Jeden wiersz na ucznia; rodzeństwo ma ten sam householdId.
 //
 // Zakres (założenie do potwierdzenia w D-08, macierz kompetencji):
@@ -92,6 +98,28 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
   return rows;
 }
 
+// Zatwierdzona na rok konfiguracja danych do wpłaty (#92, payment-instructions.js).
+// Czytana tu dla WSZYSTKICH ról uprawnionych do druku kartek (także przedstawiciela
+// klasy) — to nie jest dana finansowa rodziny, tylko rachunek Rady sam w sobie
+// drukowany na każdej kartce; edycja/zatwierdzanie zostaje ograniczone do
+// admin/board (POST /api/payment-instructions). IBAN/BIC nigdy nie trafiają
+// do audytu (assertNoPii + reguła ręczna w payment-instructions.js).
+async function loadPaymentInstructions(db, schoolYearId) {
+  const { rows } = await db.query(
+    `SELECT iban, bic, payee_name, approved_at FROM payment_instructions
+      WHERE school_year_id = $1 ORDER BY approved_at DESC, id DESC LIMIT 1`,
+    [schoolYearId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    iban: row.iban,
+    bic: row.bic ?? null,
+    payeeName: row.payee_name,
+    approvedAt: new Date(row.approved_at).toISOString(),
+  };
+}
+
 function rowOut(row, paymentInfo) {
   const out = {
     householdId: row.household_id,
@@ -138,6 +166,7 @@ export async function handle(request, env, url, json) {
   if (rows.length > MAX_PRINT_ROWS) return json({ error: 'too_many_rows' }, 413);
 
   const households = new Set(rows.map((row) => row.household_id));
+  const paymentInstructions = await loadPaymentInstructions(env.db, schoolYearId);
   // Wyłącznie liczby i identyfikatory zakresu — bez identyfikatorów rodzin i danych osobowych.
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id,
@@ -149,6 +178,7 @@ export async function handle(request, env, url, json) {
       householdCount: households.size,
       studentCount: rows.length,
       paymentInfoIncluded: scope.paymentInfo,
+      paymentInstructionsApproved: Boolean(paymentInstructions),
     },
   });
   await recordDataAccess(env, {
@@ -159,6 +189,7 @@ export async function handle(request, env, url, json) {
     schoolYearId,
     classId,
     paymentInfoIncluded: scope.paymentInfo,
+    paymentInstructions,
     rows: rows.map((row) => rowOut(row, scope.paymentInfo)),
   });
 }

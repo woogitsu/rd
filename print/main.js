@@ -18,7 +18,10 @@ mountShell();
 
 // Stan wyłącznie w pamięci karty przeglądarki: nic nie jest zapisywane ani wysyłane.
 // Jedyne żądanie sieciowe to odczyt GET /api/print/cards po kliknięciu „Wczytaj z serwera”.
-const state = { households: [], selected: new Set() };
+// paymentInstructions: zatwierdzona na rok konfiguracja danych do wpłaty z
+// GET /api/print/cards (#92), albo null (rok bez zatwierdzonej wersji — kartki
+// zostają szkicem, bez kodu QR). Wypełniana wyłącznie odczytem z serwera.
+const state = { households: [], selected: new Set(), paymentInstructions: null };
 const byId = (id) => document.getElementById(id);
 const configForm = byId("config-form");
 const configError = byId("config-error");
@@ -187,7 +190,7 @@ function renderPreview() {
     return;
   }
   try {
-    const result = renderCardsHtml(state.households, state.selected, readConfig());
+    const result = renderCardsHtml(state.households, state.selected, readConfig(), state.paymentInstructions);
     // HTML powstaje w core.js z escapowaniem każdej wartości (test XSS).
     preview.innerHTML = result.html;
     preview.dataset.layout = result.layout;
@@ -201,9 +204,28 @@ function renderPreview() {
   }
 }
 
+// Pola rachunku/odbiorcy formularza tylko POKAZUJĄ zatwierdzoną konfigurację
+// (#92) — nie da się jej zmienić tutaj, zmiana wymaga nowego zatwierdzenia
+// (POST /api/payment-instructions, poza tym panelem).
+function applyPaymentInstructions(paymentInstructions) {
+  state.paymentInstructions = paymentInstructions;
+  const account = configForm.elements.bankAccount;
+  const recipient = configForm.elements.bankRecipient;
+  if (paymentInstructions) {
+    account.value = paymentInstructions.iban;
+    recipient.value = paymentInstructions.payeeName;
+    account.readOnly = true;
+    recipient.readOnly = true;
+  } else {
+    account.readOnly = false;
+    recipient.readOnly = false;
+  }
+}
+
 function resetData() {
   state.households = [];
   state.selected.clear();
+  applyPaymentInstructions(null);
   fileErrors.hidden = true;
   fileErrors.replaceChildren();
   selectSection.hidden = true;
@@ -289,9 +311,15 @@ async function handleApiLoad() {
   fileMessage.textContent = "Wczytywanie z serwera…";
   try {
     const data = await loadFromApi(schoolYearId, classId);
+    applyPaymentInstructions(data.paymentInstructions ?? null);
     loadParsed(() => parseInputRows(data), "Odpowiedź serwera");
     if (state.households.length && !data.paymentInfoIncluded) {
       fileMessage.textContent += " Informacja o wpisach wpłat nie jest dostępna dla tej roli lub sesji.";
+    }
+    if (state.households.length) {
+      fileMessage.textContent += data.paymentInstructions
+        ? " Dane do wpłaty i kod QR pochodzą z zatwierdzonej konfiguracji roku."
+        : " Rok nie ma jeszcze zatwierdzonej konfiguracji danych do wpłaty — kartki będą szkicem, bez kodu QR.";
     }
   } catch (error) {
     fileMessage.textContent = error.message;

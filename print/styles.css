@@ -87,6 +87,9 @@ td:first-child, th:first-child { width: 3rem; }
 .card-payment { display: grid; grid-template-columns: max-content 1fr; gap: 1mm 5mm; margin: 0 0 4mm; }
 .card-payment dt { color: #444; }
 .card-payment dd { margin: 0; font-variant-numeric: tabular-nums; }
+.card-qr { display: flex; align-items: center; gap: 4mm; margin: 0 0 4mm; }
+.card-qr-svg { width: 28mm; height: 28mm; flex: none; fill: #000; }
+.card-qr-caption { margin: 0; font-size: 8.5pt; color: #444; max-width: 55mm; }
 .card-contact { margin-top: 6mm; }
 .card-ref { margin: 8mm 0 0; color: #666; font-size: 8.5pt; }
 .card-draft { margin: 0 0 4mm; padding: 1.5mm 3mm; border: 1px solid var(--red); color: var(--red-dark); font-size: 9pt; font-weight: 700; letter-spacing: .06em; }
