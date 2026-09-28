@@ -2,7 +2,15 @@
 
 `npm ci`, `npm run dev:import` — lokalna makieta importu. Plik jest parsowany lokalnie w przeglądarce. `npm run build:import` tworzy statyczne `dist/import/`. `npm test` uruchamia testy CSV, syntetycznego XLSX, walidacji oraz API importu na PGlite (`tests/pg-import.test.js`). GitHub Actions wykonuje testy i build po otwarciu PR.
 
-Obsługiwane CSV (kodowanie i separator wykrywane w `import/csv.js`, patrz niżej) i XLSX (pierwszy arkusz). Limit 5 MB, 5000 wierszy i 60 kolumn. Wybór pliku, mapowanie nagłówków, walidacja, możliwe duplikaty, ostrzeżenia o niespójnych danych opiekunów przy tym samym ID rodziny i podgląd 100 pierwszych wierszy. Tabela pokazuje oboje opiekunów, gdy są wpisani. W repo jest fikcyjny `template.csv`.
+Obsługiwane CSV (kodowanie i separator wykrywane w `import/csv.js`, patrz niżej) i XLSX (wybór arkusza — plik bywa wieloarkuszowy, np. arkusz „Instrukcja” przed danymi; domyślnie pierwszy). **.ods (LibreOffice/Calc) nie jest obsługiwane** — patrz niżej. Limit 5 MB, 5000 wierszy i 60 kolumn. Wybór pliku, mapowanie nagłówków, walidacja, możliwe duplikaty, ostrzeżenia o niespójnych danych opiekunów przy tym samym ID rodziny i podgląd 100 pierwszych wierszy. Tabela pokazuje oboje opiekunów, gdy są wpisani. W repo jest fikcyjny `template.csv`.
+
+### XLSX: typy komórek, arkusze, ODS (#88)
+
+- **Kolumny identyfikatorów** (`ID ucznia`, `ID rodziny`): jeśli Excel zapisał komórkę jako liczbę (typowe dla `00123`, które Excel zamienia na `123`), wartość jest zachowywana jako tekst i podgląd dostaje uwagę „zapisany jako liczba — sprawdź zera wiodące; w Excelu ustaw format kolumny na Tekst”. Liczba poza `Number.isSafeInteger` (identyfikator z ponad 15-16 cyframi) jest błędem wiersza, żeby nie ryzykować cichej utraty precyzji.
+- **Komórka typu data** w dowolnym mapowanym polu (Excel czasem zamienia wpis typu `1-2` na datę) jest błędem wiersza z czytelnym komunikatem, zamiast trafić do pola jako `Mon Jan 02 2026 …`.
+- **Wybór arkusza**: po wczytaniu pliku XLSX widoczna jest lista arkuszy z liczbą wierszy; zmiana wyboru przelicza mapowanie i podgląd bez ponownego odczytu pliku (`import/xlsx.js: readXlsxSheets` czyta wszystkie arkusze raz).
+- **Nazwa klasy** jest porównywana z listą klas roku bez rozróżniania wielkości liter i nadmiarowych spacji (`1a`, ` 1A ` i `1A` to ta sama klasa) i zapisywana w pisowni z bazy. Dwie różne klasy roku, które po normalizacji dają ten sam klucz (np. `1a` i `1A` jako osobne klasy), są błędem „niejednoznaczna nazwa klasy” — wymaga poprawki nazw klas w bazie, nie da się rozstrzygnąć automatycznie.
+- **ODS** (LibreOffice/Calc): plik jest odrzucany z instrukcją zapisania jako `.xlsx` albo `.csv`. `read-excel-file` nie czyta ODS; jedyna popularna biblioteka czytająca oba formaty (`xlsx`/SheetJS) ma znane podatności (CVE-2023-30533, CVE-2024-22363) w wersji z rejestru npm, a poprawione wersje są dostępne tylko poza npm — decyzja audytu (#88): najpierw instrukcja, bibliotekę dodać dopiero, gdy szkoła rzeczywiście dostarcza ODS.
 
 ### Zgodność z CSP serwera Node (#188, #223)
 
@@ -18,6 +26,12 @@ Obsługiwane CSV (kodowanie i separator wykrywane w `import/csv.js`, patrz niże
 - Separator `;`, `,` albo tabulator liczony w pierwszej niepustej linii poza cudzysłowami; remis jest sygnalizowany w statusie.
 
 Kroki 1–3 (plik, mapowanie, sprawdzenie) nadal działają wyłącznie lokalnie i niczego nie wysyłają.
+
+### Raport importu i pominięte kolumny (#109)
+
+- **Raport błędów do pobrania** (`import/report.js`, przycisk „Pobierz raport błędów (CSV)” w kroku 3): CSV z kolumnami `Wiersz; Etap; Rodzaj; Komunikat`, generowany w przeglądarce przez wspólny eskaper formuł `src/pg/csv.js` (#206) — obejmuje wszystkie komunikaty walidacji lokalnej i, jeśli wysłano, podglądu serwera (nie tylko pierwsze 40 pokazane na ekranie). **Nie zawiera** imion, nazwisk ani e-maili — tylko numer wiersza źródłowego i treść komunikatu (te same komunikaty co w interfejsie, które już nie zawierają danych osobowych). Można go bezpiecznie przekazać szkole.
+- **Kolumny, które nie zostaną użyte**: po dopasowaniu kolumn (krok 2) lista nagłówków z pliku bez przypisanego pola. Nagłówek pasujący do listy wykluczeń (`PESEL`, `adres`, `telefon`, `oceny`, dane zdrowotne, numer dokumentu) dostaje wyraźne ostrzeżenie „Ten plik zawiera dane, których nie importujemy”. Pokazywane są tylko nazwy nagłówków, nigdy wartości komórek.
+- **Szablon**: `import/public/template.csv` (dane `@example.invalid`) i `import/public/template-instrukcja.txt` — krótka instrukcja PL (pola wymagane, format identyfikatorów jako tekst, czego nie wpisywać, obsługiwane formaty plików).
 
 ## Krok 4: podgląd i zapis na serwerze (prototyp)
 
@@ -42,9 +56,12 @@ Limit ciała żądania wynosi 1 MB — tyle samo co globalny limit `src/node-app
 - Wiersz nowego ucznia bez ID rodziny to konflikt, chyba że zaznaczono „Utwórz osobną rodzinę dla wierszy bez ID rodziny”. Wtedy każdy taki wiersz dostaje osobną rodzinę bez `source_ref`; rodzeństwa nie łączymy.
 - Opiekun jest rozpoznawany tylko w obrębie już ustalonej rodziny, po imieniu i nazwisku oraz e-mailu. **Nigdy nie łączymy rodzin po samym nazwisku lub e-mailu.** Ten sam e-mail w innej rodzinie daje tylko uwagę do ręcznego sprawdzenia.
 - Konflikty (nie są zapisywane): inne imię/nazwisko niż w bazie przy tym samym ID ucznia, inne ID rodziny niż w bazie, inna klasa w tym samym roku. Zmiana klasy lub rodziny wymaga ręcznej decyzji uprawnionej osoby.
+- **Dopasowanie opiekuna jest dwuetapowe (#98).** Pełne dopasowanie (imię + nazwisko + e-mail identyczne z bazą) aktualizuje istniejące powiązanie jak dotąd. Dopasowanie częściowe w obrębie tej samej rodziny — ten sam e-mail przy innej pisowni imienia/nazwiska, albo to samo imię i nazwisko przy innym e-mailu — jest **konfliktem** „Możliwa zmiana danych opiekuna”: import niczego nie tworzy ani nie nadpisuje, wymaga ręcznej, audytowanej korekty poza importem. Dzięki temu poprawka literówki albo zmiana adresu e-mail nie mnoży opiekunów tego samego dziecka.
+- Podgląd zawiera sekcję „W bazie, brak w pliku”: liczbę i identyfikatory źródłowe (`source_ref`) uczniów zapisanych w wybranym roku, których nie ma w przesłanym pliku (choćby w wierszu z błędem). Wyłącznie informacyjnie — import niczego nie usuwa ani nie archiwizuje; bez imion i nazwisk.
 - Aktualizacja istniejącego ucznia: zapis do klasy w nowym roku, nowy opiekun lub nowe powiązanie uczeń–opiekun. Import nie usuwa ani nie nadpisuje istniejących danych.
 - Import nie ustawia zgody na kontakt ani kontaktu głównego (`contact_allowed = false`); zakres tych pól należy do decyzji D-03.
-- Opiekun „Imię Nazwisko” jest dzielony na imię (wszystko przed ostatnim wyrazem) i nazwisko (ostatni wyraz). Jednowyrazowy wpis trafia do imienia.
+- Opiekun „Imię Nazwisko” jest dzielony na imię i nazwisko od ostatniego wyrazu, ale przedrostki nazwisk (np. „de”, „van”, „van der”, „von”) zostają przy nazwisku: „Anna Maria de Smet” → imię „Anna Maria”, nazwisko „de Smet” (#98). Jednowyrazowy wpis trafia do imienia. Wpis z więcej niż dwoma wyrazami dostaje ostrzeżenie „sprawdź podział na imię i nazwisko” — osobne kolumny imienia i nazwiska opiekuna to decyzja D-03.
+- Nazwa klasy jest dopasowywana do listy klas roku bez rozróżniania wielkości liter i spacji (#88) — zapisywana jest pisownia z bazy.
 - Wartości wyglądające jak formuły (`=`, `+`, `-`, `@`) są zapisywane jako zwykły tekst. Przyszły eksport do CSV/XLSX musi je neutralizować.
 
 ### Zatwierdzenie

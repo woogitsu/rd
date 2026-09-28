@@ -18,6 +18,10 @@ const ALIASES = {
   email2: ['email opiekuna 2', 'e-mail opiekuna 2', 'email 2', 'e-mail 2'],
 };
 const normalize = value => String(value ?? '').trim().toLocaleLowerCase('pl-PL').replace(/\s+/g, ' ');
+const normalizeClass = value => String(value ?? '').trim().replace(/\s+/g, ' ').toLocaleUpperCase('pl-PL');
+const FIELD_LABELS = Object.fromEntries(FIELDS);
+// Kolumny identyfikatorów: komórka XLSX sformatowana jako liczba traci zera wiodące (#88).
+const ID_FIELD_KEYS = new Set(['studentId', 'householdId']);
 export function guessMapping(headers) {
   const mapping = {};
   for (const [key] of FIELDS) {
@@ -70,15 +74,46 @@ export function validateRows(matrix, mapping, options = {}) {
   for (const required of ['firstName', 'lastName', 'className']) {
     if (!Number.isInteger(Number(mapping[required])) || mapping[required] === '' || Number(mapping[required]) < 0 || Number(mapping[required]) >= headers.length) throw new Error(`Brakuje mapowania: ${required}.`);
   }
+  // Klasy z bazy: dopasowanie bez rozróżniania wielkości liter i spacji (#88); nazwa
+  // niejednoznaczna po normalizacji (dwie różne klasy dają ten sam klucz) jest błędem.
+  const classCanonical = new Map();
+  const ambiguousClassKeys = new Set();
+  for (const name of allowedClasses) {
+    const key = normalizeClass(name);
+    if (classCanonical.has(key) && classCanonical.get(key) !== name) ambiguousClassKeys.add(key);
+    else classCanonical.set(key, name);
+  }
   const seenId = new Map(), seenName = new Map(), seenHousehold = new Map(), records = [], errors = [], warnings = [];
-  const value = (row, key) => mapping[key] === undefined || mapping[key] === '' ? '' : String(row[Number(mapping[key])] ?? '').trim().replace(/\s+/g, ' ');
+  const rawCell = (row, key) => (mapping[key] === undefined || mapping[key] === '' ? undefined : row[Number(mapping[key])]);
+  const asText = raw => String(raw ?? '').trim().replace(/\s+/g, ' ');
   for (let i = 1; i < matrix.length; i++) {
     const row = matrix[i];
     if (!Array.isArray(row) || !row.some(v => String(v ?? '').trim())) continue;
     const number = i + 1;
     if (row.length > 60) { errors.push({ row: number, message: 'Za dużo kolumn.' }); continue; }
-    const record = Object.fromEntries(FIELDS.map(([key]) => [key, value(row, key)]));
+    const record = {};
     const issues = [];
+    for (const [key] of FIELDS) {
+      const raw = rawCell(row, key);
+      // #88: Excel zamienia niektóre wpisy (np. "1-2") na datę — String(Date) daje
+      // nieczytelny tekst (np. w polu klasy). Traktujemy to jako błąd wiersza.
+      if (raw instanceof Date) {
+        issues.push(`${FIELD_LABELS[key] ?? key}: Excel zamienił wartość na datę — zmień format kolumny na Tekst.`);
+        record[key] = '';
+        continue;
+      }
+      if (ID_FIELD_KEYS.has(key) && typeof raw === 'number') {
+        if (!Number.isSafeInteger(raw)) {
+          issues.push(`${FIELD_LABELS[key] ?? key}: liczba jest zbyt duża do bezpiecznego odczytu — zapisz kolumnę jako Tekst.`);
+          record[key] = '';
+          continue;
+        }
+        record[key] = String(raw);
+        warnings.push({ row: number, message: `${FIELD_LABELS[key] ?? key} zapisany jako liczba (${raw}) — sprawdź zera wiodące; w Excelu ustaw format kolumny na Tekst.` });
+        continue;
+      }
+      record[key] = asText(raw);
+    }
     for (const key of ['firstName', 'lastName', 'className']) if (!record[key]) issues.push(`Brak: ${key}.`);
     for (const key of ['firstName', 'lastName', 'className', 'guardian1', 'guardian2']) if (record[key].length > 120) issues.push(`Za długa wartość: ${key}.`);
     for (const key of ['email1', 'email2']) {
@@ -87,7 +122,12 @@ export function validateRows(matrix, mapping, options = {}) {
     if (record.email1 && !record.guardian1) issues.push('E-mail opiekuna 1 bez nazwiska opiekuna.');
     if (record.email2 && !record.guardian2) issues.push('E-mail opiekuna 2 bez nazwiska opiekuna.');
     if (record.householdId.length > 80 || record.studentId.length > 80) issues.push('Identyfikator ma ponad 80 znaków.');
-    if (allowedClasses.length && record.className && !allowedClasses.includes(record.className)) issues.push('Nieznana klasa.');
+    if (allowedClasses.length && record.className) {
+      const classKey = normalizeClass(record.className);
+      if (ambiguousClassKeys.has(classKey)) issues.push('Niejednoznaczna nazwa klasy po normalizacji wielkości liter/spacji — popraw nazwy klas w bazie.');
+      else if (classCanonical.has(classKey)) record.className = classCanonical.get(classKey);
+      else issues.push('Nieznana klasa.');
+    }
     const idKey = normalize(record.studentId);
     const nameKey = [record.firstName, record.lastName, record.className].map(normalize).join('|');
     if (idKey && seenId.has(idKey)) issues.push(`Powtórzone ID ucznia z wiersza ${seenId.get(idKey)}.`);
@@ -103,6 +143,12 @@ export function validateRows(matrix, mapping, options = {}) {
     if (nameKey && !seenName.has(nameKey)) seenName.set(nameKey, number);
     if (issues.length) errors.push(...issues.map(message => ({ row: number, message })));
     if (!record.guardian1 && !record.guardian2) warnings.push({ row: number, message: 'Brak opiekuna: nie będzie możliwy kontakt e-mail.' });
+    // #98: jedna kolumna "Imię i nazwisko" nie rozróżnia przedrostków ani drugich imion —
+    // przy więcej niż dwóch wyrazach prosimy o ręczne sprawdzenie podziału.
+    for (const [key, label] of [['guardian1', 'Opiekun 1'], ['guardian2', 'Opiekun 2']]) {
+      const words = record[key] ? record[key].split(/\s+/).filter(Boolean) : [];
+      if (words.length > 2) warnings.push({ row: number, message: `${label}: więcej niż dwa wyrazy w imieniu i nazwisku — sprawdź podział na imię i nazwisko.` });
+    }
     records.push({ row: number, ...record, valid: !issues.length });
   }
   if (!records.length) throw new Error('Brak wierszy uczniów.');

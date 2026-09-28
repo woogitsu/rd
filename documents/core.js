@@ -261,3 +261,26 @@ export function metadataRows(rawDoc) {
     ["Dodano", formatDateTime(doc.createdAt)],
   ];
 }
+
+// Role jak DOCUMENT_POLICIES w src/pg/routes/documents.js (test tests/role-policy-parity.test.js
+// pilnuje zgodności). Formularz pokazuje tylko rodzaje, które konto może przesłać; serwer
+// i tak autoryzuje każdy zapis (#225).
+export const DOCUMENT_ROLES = Object.freeze({
+  financial: Object.freeze(["admin", "board", "treasurer"]),
+  board: Object.freeze(["admin", "board"]),
+  class: Object.freeze(["admin", "board", "representative"]),
+});
+
+// Rodzaje dokumentów, które konto może przesłać: rodzaje ogólnoszkolne wymagają przydziału
+// bez klasy, „Materiał klasy” — przydziału ogólnoszkolnego albo przedstawiciela klasy.
+export function uploadableKinds(grants) {
+  const list = Array.isArray(grants) ? grants : [];
+  return Object.keys(DOCUMENT_ROLES).filter((kind) => list.some((grant) => DOCUMENT_ROLES[kind].includes(grant?.role)
+    && (!grant.classId || (kind === "class" && grant.role === "representative"))));
+}
+
+// Klasy przedstawiciela (podpowiedź pola „Klasa”); pusta lista dla przydziałów ogólnoszkolnych.
+export function representativeClasses(grants) {
+  const list = Array.isArray(grants) ? grants : [];
+  return [...new Set(list.filter((g) => g?.role === "representative" && g.classId).map((g) => g.classId))].sort();
+}

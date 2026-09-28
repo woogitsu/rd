@@ -81,7 +81,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .votes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); gap: .75rem; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
 
-.table-wrap { overflow-x: auto; margin: .5rem 0 0; }
+.table-wrap { position: relative; overflow-x: auto; margin: .5rem 0 0; }
 table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 caption { padding: .4rem 0; text-align: left; font-weight: 600; }
 th, td { padding: .55rem .6rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft); }
@@ -110,7 +110,7 @@ dialog h2 { font-family: Georgia, serif; font-weight: 500; }
 .context { padding: .6rem .75rem; background: var(--muted-bg); }
 .minutes-text { margin: 0; max-height: 60vh; overflow: auto; white-space: pre-wrap; font-family: inherit; }
 
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 640px) {
   main { padding-top: 1.25rem; }

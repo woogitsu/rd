@@ -92,6 +92,66 @@ test('quorum is met or not met from eligible present attendees only', async () =
   } finally { await db.close(); }
 });
 
+// #211: puste pola macierzy AGENTS.md dla zebrań — dwoje opiekunów jednego
+// dziecka z prawem głosu, rodzeństwo (nie mnoży osób) i ta sama osoba policzona
+// dwa razy (user_id i guardian_id).
+test('quorum: two guardians of one child both vote; siblings do not inflate the count', async () => {
+  const db = await meetingsDb();
+  try {
+    await db.query(`INSERT INTO guardians (id, household_id, first_name, last_name)
+      VALUES ('guardian-2','household-1','Drugi','Opiekun')`);
+    // Rodzeństwo w tym samym gospodarstwie: dwóch uczniów, ci sami opiekunowie —
+    // liczba obecnych osób zależy od liczby opiekunów, nie od liczby dzieci.
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('student-1','household-1','Uczeń','Jeden'), ('student-2','household-1','Uczeń','Dwa')");
+    // #205: capacity='guardian' wymaga aktywnej relacji z uczniem zapisanym
+    // w roku zebrania — oboje opiekunów, oboje dzieci.
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e-student-1','student-1','class-a','year'), ('e-student-2','student-2','class-a','year')");
+    await db.query(`INSERT INTO student_guardians (student_id, guardian_id, contact_allowed) VALUES
+      ('student-1','guardian-1',true), ('student-1','guardian-2',true),
+      ('student-2','guardian-1',true), ('student-2','guardian-2',true)`);
+    const meeting = await heldMeeting(db, { votingBodySize: 2, quorumMode: 'minimum_count', quorumMinCount: 2 });
+    // Dwoje opiekunów jednego (i drugiego) dziecka, oboje z prawem głosu.
+    // Brak decyzji zarządu co do regulaminu głosowania (docs/DECISIONS.md nie
+    // ma dziś takiego wpisu — najbliższe D-11/D-21 dotyczą czego innego);
+    // test dokumentuje dzisiejsze zachowanie kodu: każdy zapisany opiekun
+    // liczy się osobno, kod nie ogranicza liczby głosów na jedno dziecko.
+    await attend(db, meeting.id, { guardianId: 'guardian-1' }, true, true, 'guardian');
+    await attend(db, meeting.id, { guardianId: 'guardian-2' }, true, true, 'guardian');
+    const check = (await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id })).quorumCheck;
+    assert.equal(check.presentEligible, 2, 'dwoje opiekunów jednego dziecka liczy się dziś osobno — brak decyzji zarządu, patrz PR');
+    assert.equal(check.met, true);
+  } finally { await db.close(); }
+});
+
+// Znana luka (#211, #214): meeting_attendees ma osobną unikalność dla user_id
+// i dla guardian_id (0009_meetings.sql:80-82), a konto nie ma powiązania z
+// opiekunem. Ta sama fizyczna osoba zapisana raz jako user_id i raz jako
+// guardian_id jest dziś liczona dwa razy do quorum — trigger liczy WIERSZE
+// (`count(*) FROM meeting_attendees ... present AND voting_eligible`), nie
+// odrębne osoby. Naprawa wymaga powiązania konta z opiekunem (nowa kolumna =
+// migracja), poza zakresem tej poprawki („Bez migracji”) — opisane w PR.
+// Test dokumentuje dzisiejsze zachowanie, żeby zmiana bez zamierzenia nie
+// przeszła bez zauważenia.
+test('known gap: the same person recorded as both user_id and guardian_id is counted twice (#211, needs a migration — see PR)', async () => {
+  const db = await meetingsDb();
+  try {
+    // #205: capacity='guardian' wymaga aktywnej relacji z uczniem zapisanym
+    // w roku zebrania.
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('student-known-gap','household-1','Uczeń','Testowy')");
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e-student-known-gap','student-known-gap','class-a','year')");
+    await db.query("INSERT INTO student_guardians (student_id, guardian_id, contact_allowed) VALUES ('student-known-gap','guardian-1',true)");
+    const meeting = await heldMeeting(db, { votingBodySize: 2, quorumMode: 'minimum_count', quorumMinCount: 2 });
+    // 'board' jest zarówno kontem (user_id), jak i — z założenia w tym teście —
+    // tą samą fizyczną osobą co 'guardian-1' (np. członek zarządu i opiekun
+    // ucznia jednocześnie). Nic w schemacie tego nie łączy ani nie zabrania.
+    await attend(db, meeting.id, { userId: 'board' }, true, true, 'board_member');
+    await attend(db, meeting.id, { guardianId: 'guardian-1' }, true, true, 'guardian');
+    const check = (await determineQuorum(db, board, { idempotencyKey: key(), meetingId: meeting.id })).quorumCheck;
+    // Dzisiejsze (błędne z punktu widzenia jednej osoby = jeden głos) zachowanie: 2, nie 1.
+    assert.equal(check.presentEligible, 2, 'znana luka: brak powiązania konta z opiekunem pozwala policzyć tę samą osobę dwa razy');
+  } finally { await db.close(); }
+});
+
 test('quorum requires a configured rule and a consistent voting body', async () => {
   const db = await meetingsDb();
   try {
