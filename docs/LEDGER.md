@@ -48,7 +48,8 @@ Interfejs w `ledger/` pokazuje podsumowanie roku, bieżący preliminarz i filtro
 
 - interfejs uzgadniania rachunku,
 - formularze kategorii, wersji preliminarza i przyjęcia w panelu (API: sekcja „Preliminarz przez API”),
-- formularz przesyłania prywatnego dokumentu (API: [DOCUMENTS.md](DOCUMENTS.md)).
+- formularz przesyłania prywatnego dokumentu (API: [DOCUMENTS.md](DOCUMENTS.md)),
+- numer, data i wystawca dowodu oraz uzasadnienie wydatku bez dowodu (#87, wymaga migracji).
 
 Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowania, korekt, uchwał i dostępu przez Radę oraz szkołę.
 
@@ -65,6 +66,7 @@ Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowa
 - **Powiązana wpłata.** Wpis przychodowy z `paymentEntryId` blokuje wiersz wpłaty. Wpłata musi mieć status `recorded` i ten sam rok; druga próba ujęcia tej samej wpłaty (także równoległa, z innym kluczem) kończy się `409 payment_already_linked`. Unikalny indeks w bazie chroni przed podwójnym ujęciem niezależnie od API.
 - **Uchwała.** Wydatek powyżej 3000 EUR (300 000 centów) bez referencji uchwały (co najmniej 3 znaki) kończy się `400 resolution_required`; wydatek dokładnie 3000 EUR jej nie wymaga. Ograniczenie `ledger_large_expense_resolution` obowiązuje też w bazie.
 - **Data w roku szkolnym (#169).** `occurredOn` musi leżeć w `[starts_on, ends_on]` roku wpisu (obie granice włącznie); inaczej `422 date_outside_school_year`, bez zapisu. Regułę egzekwuje trigger `b0_date_within_school_year` (`0027_entry_date_within_school_year.sql`), także przy bezpośrednim `INSERT`; działa po zamrożeniu roku, więc zamknięty rok nadal daje `409 school_year_closed`. Założenie: rok obrachunkowy Rady = rok szkolny (D-21). Istniejące wpisy spoza zakresu nie są zmieniane — raport KR pokazuje je w kontroli `dates_within_school_year` i różnicę w `year_end_balance`; poprawka to korekta i nowy wpis (#144). Stary Worker/D1 tej reguły nie ma.
+- **Dowody (#87).** `sourceDocumentId` (wpis, przeksięgowanie, przeniesienie kasa ↔ rachunek, bilans otwarcia) musi wskazywać dokument `kind = 'financial'` utworzony przez API w tym samym roku szkolnym. Dokument klasowy, zarządu, innego roku, wiersz z D1 (bez roku) i nieistniejący identyfikator dają ten sam `400 invalid_source_document`; rola i rok są sprawdzane wcześniej (`403`), więc kod nie jest wyrocznią istnienia. Kolejne dowody dołącza się przez `POST /api/documents?kind=financial&linkedEntityType=ledger_entry&linkedEntityId=…` (wpis się nie zmienia, zdarzenie `document.uploaded` ma identyfikatory bez nazwy pliku). `GET /api/ledger` zwraca `attachmentIds` (dokument główny + dołączone), a CSV kolumny `liczba_dowodow` i `id_dowodow`. Panel `ledger/` przesyła plik z formularza wpisu po jego zapisaniu (klucz pochodny od klucza wpisu, więc ponowienie dołącza plik raz). Raport KR ma sekcję „Dowody wydatków”: wydatki z netto > 0 bez żadnego dokumentu oraz ten sam plik (sha256) przy kilku wydatkach. Istniejące wiersze nie są zmieniane — reguła dotyczy nowych zapisów. Numer, data i wystawca dowodu (tabela `ledger_entry_evidence`) wymagają osobnej migracji.
 - **Dostęp.** Każda trasa wymaga sesji, MFA i roli `admin`, `board` albo `treasurer` w zakresie roku szkolnego. `representative`, `audit` i `principal` dostają `403`. Zapisy wymagają zgodnego nagłówka `Origin`.
 - **Kolejność błędów.** Przy kilku błędach naraz moduł zwraca ten sam kod co Worker (powiązanie wpłaty, uchwała, dokument, kategoria, ponowne ujęcie wpłaty). Jedyna świadoma różnica: przy korekcie osoba bez roli finansowej lub bez MFA dostaje `403` jeszcze przed wyszukaniem wpisu, więc nie może sprawdzić, czy dany identyfikator istnieje (Worker zwracał wtedy `404`).
 
@@ -85,6 +87,17 @@ Bilans otwarcia (`ledger_opening_balances.amount_cents` = całość) ma część
 - Zamknięcie roku przenosi obie części (docs/YEAR_CLOSE.md). Raport KR i zestawienie przekazania pokazują podział.
 - Założenia (zarząd nic nie zdecydował — wariant zachowawczy): D-13 — jedna kasa, jeden rachunek, „kasa” = wszystko poza rachunkiem; bilans otwarcia i poprawki wyłącznie zarząd (bez admina i skarbnika); zasada czterech oczu dla poprawek (D-12) nie jest wymuszona; ręczny bilans tylko dla pierwszego roku — kolejne lata dostają bilans z zamknięcia.
 - Bilanse przeniesione przed 0028 mają `cash_cents = 0`; jeśli zawierały gotówkę, rozbicie wpisuje zarząd poprawką `{ amountCents: 0, cashCents: <gotówka> }`.
+
+### Sprawozdanie roczne i przepływy środków (issue #125, część)
+
+Moduł `src/pg/annual-report.js`, trasy `src/pg/routes/financial-reports.js`. Bez migracji.
+
+- `GET /api/reports/annual?schoolYearId=&format=json|html` — **projekt** sprawozdania dla zebrania ogólnego z bieżących danych: bilans otwarcia i zamknięcia (z podziałem rachunek/kasa jak `ledger_year_cash_summary`), przychody i wydatki według kategorii z preliminarzem (bieżąca linia `ledger_current_budget`) i różnicą, wynik roku, liczba wpisów i korekt, data ostatniego zatwierdzonego uzgodnienia (bez sald pośrednich). **Nie zawiera** opisów wpisów, powodów korekt, notatek preliminarza, identyfikatorów osób, danych rodzin ani wpłat per klasa. Kategoria bez wpisów i bez preliminarza jest pomijana. HTML A4 z `REPORT_CSS`, bez skryptów, CSP jak raport KR; PDF przez druk przeglądarki; nagłówek „Projekt sprawozdania … nie jest wersją zatwierdzoną”.
+- `GET /api/reports/cash-flow?schoolYearId=&granularity=month` — per miesiąc roku szkolnego i metoda (`bank`, `cash`, `card`, `other`): wpływy i wydatki netto, przeniesienia kasa ↔ rachunek, saldo narastające, saldo kasy (wszystko poza rachunkiem — jak `ledger_non_bank_net_at`) i rachunku. Korekta liczy się w miesiącu korygowanego wpisu (jak `ledger_balance_at`), więc saldo po ostatnim miesiącu = bilans zamknięcia.
+- Sumy obu raportów zgadzają się z `ledger_year_summary` (test).
+- Dostęp: zarząd i skarbnik z MFA w zakresie roku. `admin` (techniczny), `audit`, `principal` i przedstawiciel — `403` (D-08, D-09 nierozstrzygnięte; KR ma raport `/api/reports/audit`). Każde wygenerowanie zapisuje `report.annual.generated` / `report.cash_flow.generated` (rok, format — bez treści) w transakcji odczytu.
+
+Poza zakresem (wymaga migracji i decyzji D-21/D-04): niezmienne migawki `financial_report_snapshots` z SHA-256 i zatwierdzeniem przez drugą osobę, wskazanie migawki w punkcie `financial_report` zamknięcia roku, publikacja zatwierdzonej migawki, sekcja „Wynik wydarzeń” (po #117). Do tego czasu wydruk jest wyłącznie wewnętrznym projektem.
 
 ### Eksport CSV (issue #7)
 

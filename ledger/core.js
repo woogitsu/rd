@@ -88,6 +88,8 @@ export function normalizeEntry(entry) {
     method: Object.hasOwn(METHOD_LABELS, entry?.method) ? entry.method : "other",
     source: entry?.source ? String(entry.source) : "",
     resolutionReference: entry?.resolutionReference ? String(entry.resolutionReference) : "",
+    // #87: liczba dowodów (dokument główny + dołączone); null, gdy API jej nie podaje.
+    attachmentCount: Array.isArray(entry?.attachmentIds) ? entry.attachmentIds.length : null,
     amountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
     correctedCents: Number.isSafeInteger(correctedCents) ? correctedCents : 0,
     netCents: Number.isSafeInteger(Number(entry?.netAmountCents))
