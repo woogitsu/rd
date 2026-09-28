@@ -26,6 +26,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`bank_statement_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`data_access_log`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`data_access_log`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie wpisu z gospodarstwem|nieustalona (D-04)|nie|nie|
+|`document_descriptions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`document_descriptions`|`description`|Osoba trzecia|direct|wolny tekst|opis dokumentu|document_financial|tak|tak|
+|`document_descriptions`|`title`|Osoba trzecia|direct|wolny tekst|tytuł dokumentu|document_financial|tak|tak|
 |`document_uploads`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`documents`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaign_recipients`|`email`|Opiekun|direct|kontakt|migawka adresu w chwili wysyłki|email_snapshot|nie|nie|
@@ -126,7 +129,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **113**, w tym wolnego tekstu: **27** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **116**, w tym wolnego tekstu: **29** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -291,6 +294,20 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `outcome` | none | — | nie |
 | `row_count` | none | — | nie |
 | `school_year_id` | none | — | nie |
+
+### `document_descriptions`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `category` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `description` | direct | third_party | tak |
+| `document_date` | none | — | tak |
+| `document_id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `revision_no` | none | — | tak |
+| `title` | direct | third_party | tak |
 
 ### `document_uploads`
 
@@ -933,6 +950,23 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `recorded_by` | pseudonymous | board_member | nie |
 | `subject_kind` | none | — | nie |
 | `subject_no` | none | — | nie |
+
+### `news_photo_files`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `byte_size` | none | — | nie |
+| `created_at` | none | — | nie |
+| `created_by` | none | — | nie |
+| `height` | none | — | nie |
+| `id` | none | — | nie |
+| `mime_type` | none | — | nie |
+| `object_key` | none | — | nie |
+| `photo_id` | none | — | nie |
+| `sha256` | none | — | nie |
+| `source_sha256` | none | — | nie |
+| `variant` | none | — | nie |
+| `width` | none | — | nie |
 
 ### `news_photos`
 

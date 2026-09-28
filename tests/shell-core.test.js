@@ -12,14 +12,15 @@ test('visiblePanels: brak przydziału → brak paneli', () => {
   assert.deepEqual(visiblePanels(undefined), []);
 });
 
-test('visiblePanels: admin widzi wszystkie panele w stałej kolejności', () => {
+test('visiblePanels: admin widzi wszystkie panele poza kampaniami e-mail (EDITOR_ROLES w email/core.js to wyłącznie zarząd i skarbnik)', () => {
   const ids = visiblePanels([{ role: 'admin' }]).map((p) => p.id);
-  assert.deepEqual(ids, PANEL_IDS);
+  assert.deepEqual(ids, PANEL_IDS.filter((id) => id !== 'email'));
+  assert.ok(!ids.includes('email'));
 });
 
-test('visiblePanels: skarbnik widzi wyłącznie wpłaty, księgę i dokumenty', () => {
+test('visiblePanels: skarbnik widzi wpłaty, księgę, kampanie e-mail, uzgodnienia i dokumenty', () => {
   const ids = visiblePanels([{ role: 'treasurer', schoolYearId: 'y1' }]).map((p) => p.id);
-  assert.deepEqual(ids, ['panel', 'ledger', 'documents']);
+  assert.deepEqual(ids, ['panel', 'ledger', 'email', 'reconciliation', 'documents']);
 });
 
 test('visiblePanels: przedstawiciel 1A nie widzi wpłat, księgi, importu ani kont', () => {
@@ -46,7 +47,20 @@ test('visiblePanels: skarbnik + przedstawiciel — suma uprawnień, stała kolej
     { role: 'representative', classId: '1A', schoolYearId: 'y1' },
   ];
   const ids = visiblePanels(grants).map((p) => p.id);
-  assert.deepEqual(ids, ['families', 'panel', 'ledger', 'print', 'events', 'meetings', 'documents']);
+  assert.deepEqual(ids, ['families', 'panel', 'ledger', 'email', 'reconciliation', 'print', 'events', 'meetings', 'documents']);
+});
+
+test('visiblePanels: kampanie e-mail widoczne dla zarządu i skarbnika, nie dla administratora bez tych ról', () => {
+  assert.ok(visiblePanels([{ role: 'board' }]).some((p) => p.id === 'email'));
+  assert.ok(visiblePanels([{ role: 'treasurer' }]).some((p) => p.id === 'email'));
+  assert.ok(!visiblePanels([{ role: 'representative', classId: '1A' }]).some((p) => p.id === 'email'));
+});
+
+test('visiblePanels: uzgodnienia wyciągu widoczne dla admina, zarządu i skarbnika', () => {
+  assert.ok(visiblePanels([{ role: 'admin' }]).some((p) => p.id === 'reconciliation'));
+  assert.ok(visiblePanels([{ role: 'board' }]).some((p) => p.id === 'reconciliation'));
+  assert.ok(visiblePanels([{ role: 'treasurer' }]).some((p) => p.id === 'reconciliation'));
+  assert.ok(!visiblePanels([{ role: 'audit' }]).some((p) => p.id === 'reconciliation'));
 });
 
 test('visiblePanels: Komisja Rewizyjna (audit) widzi wyłącznie zebrania', () => {

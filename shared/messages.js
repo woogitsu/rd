@@ -263,6 +263,8 @@ export const MESSAGES = Object.freeze({
   document_too_large: "Plik przekracza dozwolony rozmiar.",
   content_hash_mismatch: "Plik uszkodził się podczas przesyłania. Wyślij go ponownie.",
   document_integrity_mismatch: "Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi.",
+  // invalid_title, invalid_category, invalid_description: wspólne z innymi modułami (patrz niżej / „Wpłaty, księga, uzgodnienia”).
+  invalid_document_date: "Niepoprawna data dokumentu.",
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
   upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
@@ -322,6 +324,13 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  // --- Plik zdjęcia galerii (#96) ----------------------------------------------------
+  empty_photo_file: "Plik zdjęcia jest pusty.",
+  photo_file_too_large: "Plik zdjęcia przekracza dozwolony rozmiar.",
+  photo_file_malformed: "Plik zdjęcia odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi.",
+  photo_file_active_content: "Plik zdjęcia odrzucony: zawiera potencjalnie aktywną treść niedozwoloną w zdjęciach galerii.",
+  photo_file_exists: "To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik.",
+  photo_file_integrity_mismatch: "Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi.",
   preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
   preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
   sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
