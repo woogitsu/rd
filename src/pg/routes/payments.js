@@ -865,7 +865,9 @@ async function exportCsv(request, env, url) {
     // Dziennik: kto, kiedy i ile wierszy wyeksportował — bez kwot i treści (#141).
     await insertAuditEvent(tx, {
       actorId, action: 'payment.exported', entityType: 'school_year', entityId: schoolYearId,
-      metadata: { format: 'csv', entryCount: entries.rows.length, correctionCount: corrections.rows.length },
+      metadata: {
+        schoolYearId, format: 'csv', entryCount: entries.rows.length, correctionCount: corrections.rows.length,
+      },
     });
     return { entryRows: entries.rows, correctionRows: corrections.rows };
   });
