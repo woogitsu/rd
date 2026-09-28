@@ -1344,7 +1344,7 @@ async function createAuthorization(request, env, resolutionId, json) {
       // Dziennik bez kwoty (jak inne zapisy finansowe): aktor, czas, uchwała, poprzednia kwota.
       await insertAuditEvent(tx, {
         actorId, action: 'resolution.spending_authorization.recorded', entityType: 'resolution', entityId: resolutionId,
-        metadata: { authorizationId: id, supersedesId: input.supersedesId },
+        metadata: { authorizationId: id, supersedesId: input.supersedesId, schoolYearId: resolution.school_year_id },
       });
       return { authorization: authorizationFromRow(inserted.rows[0]) };
     });
