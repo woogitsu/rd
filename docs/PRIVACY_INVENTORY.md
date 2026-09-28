@@ -112,6 +112,11 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_instructions`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`payment_reassignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_refunds`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`privacy_notice_deliveries`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie ewidencji przekazania z gospodarstwem|nieustalona (D-04)|nie|nie|
+|`privacy_notice_deliveries`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`privacy_notices`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia z osobą (zasada czterech oczu)|nieustalona (D-04)|nie|nie|
+|`privacy_notices`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`privacy_notices`|`published_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie publikacji z osobą|nieustalona (D-04)|nie|nie|
 |`resolution_execution_events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`resolution_execution_events`|`note`|Członek Rady|direct|wolny tekst|notatka o postępie wykonania uchwały|audit_event|tak|tak|
 |`resolution_execution_events`|`responsible_user_id`|Członek Rady|pseudonymous|identyfikacja|wskazanie osoby odpowiedzialnej za wykonanie uchwały|nieustalona (D-04)|nie|tak|
@@ -134,7 +139,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **121**, w tym wolnego tekstu: **30** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **126**, w tym wolnego tekstu: **30** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -685,6 +690,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `idempotency_key` | none | — | nie |
 | `links_created` | none | — | nie |
 | `plan_digest` | none | — | nie |
+| `privacy_notice_id` | none | — | nie |
 | `rows_added` | none | — | nie |
 | `rows_conflict` | none | — | nie |
 | `rows_skipped` | none | — | nie |
@@ -1211,6 +1217,35 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `payment_entry_id` | none | — | tak |
 | `reason` | none | — | tak |
 | `refunded_on` | none | — | tak |
+
+### `privacy_notice_deliveries`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `channel` | none | — | nie |
+| `household_id` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `notice_id` | none | — | nie |
+| `recorded_at` | none | — | nie |
+| `recorded_by` | pseudonymous | board_member | nie |
+
+### `privacy_notices`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `approved_at` | none | — | nie |
+| `approved_by` | pseudonymous | board_member | nie |
+| `body_text` | none | — | nie |
+| `content_hash` | none | — | nie |
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `decision_ref` | none | — | nie |
+| `id` | none | — | nie |
+| `published_at` | none | — | nie |
+| `published_by` | pseudonymous | board_member | nie |
+| `school_year_id` | none | — | nie |
+| `status` | none | — | nie |
+| `version` | none | — | nie |
 
 ### `resolution_execution_events`
 
