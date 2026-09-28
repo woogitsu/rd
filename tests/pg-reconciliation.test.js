@@ -122,6 +122,9 @@ test('draft reconciliation computes the ledger balance and the difference on the
 
     // Reference text is never stored or returned.
     const { rows: stored } = await db.query('SELECT reference_hash FROM bank_statement_lines');
+    assert.equal(stored.length, 3, 'wszystkie 3 zaimportowane pozycje mają wiersz w bank_statement_lines');
+    // #214: kontrola pozytywna — inaczej hashowanie zepsute na NULL przechodziłoby test „poprawny format”.
+    assert.ok(stored.some((row) => row.reference_hash !== null), 'przynajmniej jedna pozycja z referencją ma ustawiony hash');
     assert.ok(stored.every((row) => row.reference_hash === null || /^[0-9a-f]{64}$/.test(row.reference_hash)));
     const detailResponse = await call(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer });
     const detailText = await detailResponse.text();
