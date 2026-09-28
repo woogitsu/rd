@@ -308,6 +308,59 @@ test('disabling a user revokes all their sessions; enable restores login ability
   }
 });
 
+// #256: disabled_at i trwałe wycofanie sesji muszą zatwierdzić się razem.
+// Przed poprawką były dwiema osobnymi transakcjami — awaria drugiej
+// zostawiała disabled_at zapisane, a sesje aktywne w bazie (revoked_at IS
+// NULL); ponowne włączenie konta mogło je potem znów zaakceptować.
+test('#256: disable rolls back entirely when revoking sessions fails (no half-disabled account)', async () => {
+  const { db, admin } = await setup();
+  try {
+    const victim = await seedUserSession(db, { userId: 'u-victim2' });
+
+    let calls = 0;
+    const failingOnce = {
+      // Kontrakt src/db.js: query(text, params) -> { rows }, transaction(fn).
+      query: (text, params) => db.query(text, params),
+      transaction: (fn) => db.transaction((tx) => fn({
+        query: (text, params) => {
+          if (calls === 0 && typeof text === 'string' && text.includes('UPDATE sessions SET revoked_at')) {
+            calls += 1;
+            throw Object.assign(new Error('injected_failure'), { code: '40001' });
+          }
+          return tx.query(text, params);
+        },
+      })),
+    };
+    const env = { db: failingOnce };
+
+    const disabled = await post(env, '/api/admin/users/u-victim2/disable', admin);
+    assert.equal(disabled.status, 503, 'awaria wycofania sesji ujawnia się jako błąd, nie 200');
+    assert.equal(calls, 1);
+
+    // Cała transakcja (disabled_at, audyt, wycofanie sesji) poszła w jednej
+    // paczce, więc awaria wycofania sesji cofa też disabled_at — konto nie
+    // zostaje w stanie „wyłączone, ale z aktywną sesją”.
+    const userRow = (await db.query("SELECT disabled_at FROM users WHERE id = 'u-victim2'")).rows[0];
+    assert.equal(userRow.disabled_at, null, 'disabled_at nie mógł zostać zapisany bez wycofania sesji');
+    const sessionRow = (await db.query("SELECT revoked_at FROM sessions WHERE user_id = 'u-victim2'")).rows[0];
+    assert.equal(sessionRow.revoked_at, null, 'sesja pozostaje aktywna, tak jak disabled_at');
+    assert.equal((await call({ db }, '/api/session', { cookie: victim })).status, 200, 'sesja nadal działa — konto nie jest w cichej połowicznej blokadzie');
+
+    const eventsAfterFailure = await auditRows(db);
+    assert.equal(eventsAfterFailure.filter((row) => row.entity_type === 'user' && row.entity_id === 'u-victim2').length, 0,
+      'audyt user.disabled też nie mógł się zapisać bez wycofania sesji');
+
+    // Ponowienie bez wstrzykniętej awarii jest bezpieczne i kończy się sukcesem.
+    const retried = await post({ db }, '/api/admin/users/u-victim2/disable', admin);
+    assert.equal(retried.status, 200);
+    assert.equal(retried.data.changed, true);
+    assert.equal(retried.data.revokedSessions, 1);
+    assert.equal((await call({ db }, '/api/session', { cookie: victim })).status, 401);
+  } finally {
+    await db.close();
+  }
+});
+
 test('invitations return the token once, block duplicates, can be revoked and never log the address', async () => {
   const { db, env, admin } = await setup();
   try {
