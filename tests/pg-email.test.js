@@ -1338,7 +1338,7 @@ test('Brevo client: connection refused / DNS = not sent (retryable); timeout and
   assert.equal(parseRetryAfter('abc'), null);
   assert.equal(parseRetryAfter('999999999'), 24 * 3600);
   assert.equal(parseRetryAfter(new Date(Date.UTC(2026, 9, 5, 8, 10)).toUTCString(), Date.UTC(2026, 9, 5, 8, 0)), 600);
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
 
 test('Brevo keeps answering 429: one call per run, daily limit untouched, rows stay queued (never failed after 75 min)', async () => {
