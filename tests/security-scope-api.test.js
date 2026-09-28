@@ -251,7 +251,9 @@ function failingDb(db, pattern, message) {
 test('zebrania: minutes_must_start_as_draft i meetings_cannot_be_deleted dają 409', async () => {
   const db = await baseDb();
   try {
-    const actor = { userId: 'u-sc-seed', grants: [{ role: 'board', classId: null, schoolYearId: YEAR }], mfaVerified: false };
+    // #150 (SR-10): tworzenie/aktualizacja zebrania wymaga teraz MFA — ten test
+    // sprawdza reakcję na błąd bazy (409), nie autoryzację, więc aktor zarządza naprawdę.
+    const actor = { userId: 'u-sc-seed', grants: [{ role: 'board', classId: null, schoolYearId: YEAR }], mfaVerified: true };
     const { meeting } = await createMeeting(db, actor, {
       idempotencyKey: 'sc-trigger-meeting-1', schoolYearId: YEAR, kind: 'plenary', title: 'Zebranie',
       scheduledAt: '2026-10-10T17:00:00Z', status: 'scheduled',

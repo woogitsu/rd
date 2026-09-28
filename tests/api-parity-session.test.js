@@ -91,7 +91,16 @@ async function pgBackend() {
     [session.id, session.userId, await hashSecret(session.token), utc(session.createdAt ?? '2026-09-27 07:00:00'),
       utc(session.expiresAt), utc(session.mfa), utc(session.revoked), session.revoked ? 'admin' : null]);
   }
-  const env = { db };
+  // #150 (SR-10): loadSession odrzuca teraz sesję bezczynną dłużej niż
+  // SESSION_IDLE_TIMEOUT_SECONDS (domyślnie 30 min) wg zegara systemowego —
+  // stary Worker (legacy) nie zna tego pojęcia. Fixture ma stałe `createdAt`
+  // ('2026-09-27 07:00:00'), więc przy realnym zegarze test byłby
+  // niedeterministyczny (przechodzi tylko, dopóki data testu jest mniej niż
+  // 30 minut po tej stałej — inaczej PG odrzuca sesję jako `unauthenticated`,
+  // a scenariusz porównuje kontrakt session/access/logout, nie politykę
+  // bezczynności, którą osobno pokrywa tests/pg-auth.test.js). Wyłączamy
+  // limit tylko w tym scenariuszu równoważności.
+  const env = { db, SESSION_IDLE_TIMEOUT_SECONDS: '0' };
   return {
     kind: 'pg',
     fetch: (req) => handlePgRequest(req, env),
@@ -191,6 +200,11 @@ const ALLOWED = {
   'meetings without session': {
     legacy: { status: 404, error: 'not_found' }, pg: { status: 401, error: 'unauthenticated' },
     reason: 'nowa trasa (#13), nieobecna w Workerze',
+  },
+  'sessions typo': {
+    legacy: { status: 404, error: 'not_found' }, pg: { status: 200 },
+    reason: '#150: GET /api/sessions (lista własnych sesji) to nowa trasa, nieobecna w Workerze — '
+      + 'ścieżka nazwana tu "typo" (literówka względem /api/session) zaczęła trafiać w prawdziwą trasę',
   },
   'access representative (only assigned classes, no expired grant)': {
     legacy: { status: 200 }, pg: { status: 200 },
