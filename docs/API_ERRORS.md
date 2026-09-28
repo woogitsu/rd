@@ -187,6 +187,8 @@ wpisów).
 | `invalid_method` | Wybierz sposób wpłaty z listy. | Nie — popraw dane żądania. |
 | `invalid_names` | Podaj nazwy klas (każda do 60 znaków). | Nie — popraw dane żądania. |
 | `invalid_next_school_year` | Niepoprawny następny rok szkolny. | Nie — popraw dane żądania. |
+| `invalid_ogm_base` | Niepoprawna baza referencji płatności. | Nie — popraw dane żądania. |
+| `invalid_ogm_reference` | Niepoprawna referencja płatności (oczekiwano 12 cyfr). | Nie — popraw dane żądania. |
 | `invalid_options` | Niepoprawne ustawienia importu. | Nie — popraw dane żądania. |
 | `invalid_or_expired_link` | Ten link jest nieprawidłowy albo już nieaktywny. | Nie — poproś o nowy link. |
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
@@ -291,6 +293,9 @@ wpisów).
 | `payment_not_found` | Nie znaleziono wpłaty albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
 | `payment_reassignment_household_mismatch` | Nie można przepisać wpłaty na tę rodzinę — powiązany wpis księgi wskazuje inną rodzinę. | Nie — popraw dane żądania. |
 | `payment_reassignment_same_household` | Wpłata jest już przypisana do tej rodziny. | Zależy od kontekstu (patrz moduł trasy). |
+| `payment_reference_already_active` | To gospodarstwo ma już aktywną referencję płatności w tym roku. Najpierw ją unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
+| `payment_reference_already_revoked` | Ta referencja płatności jest już unieważniona. | Zależy od kontekstu (patrz moduł trasy). |
+| `payment_reference_not_found` | Nie znaleziono referencji płatności. | Nie — popraw dane żądania. |
 | `pending_admin_invitation` | Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
 | `photo_file_exists` | To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik. | Nie — popraw dane żądania. |
 | `photo_file_integrity_mismatch` | Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi. | Zależy od kontekstu (patrz moduł trasy). |

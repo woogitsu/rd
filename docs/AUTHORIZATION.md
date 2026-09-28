@@ -57,6 +57,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/payments/:paymentId/assignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | jak wyżej |
 | `POST /api/payments/:paymentId/refunds` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | zwrot jako osobny, niezmienny zapis (#138); powiązanie z księgą o innym netto: 409 `ledger_correction_required` |
 | `POST /api/payments/:paymentId/reassignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | ponowne przypisanie jako osobne zdarzenie zamiast korekty do zera (#138); historia w `payment_reassignments` |
+| `GET /api/payment-references?schoolYearId=:year&householdId=:id` | admin, zarząd, skarbnik — rok 1 | tak | 403 | komunikacja strukturalna OGM-VCS (#83); przedstawiciel zawsze 403 (widoczność ograniczona do własnej klasy jest poza zakresem tego PR — integracja z kartkami #92) |
+| `POST /api/payment-references` | admin, zarząd, skarbnik — rok 1 | tak | 403 | generuje aktywną referencję (12 cyfr, suma kontrolna mod 97); aktywna już istnieje: 409 `payment_reference_already_active` |
+| `POST /api/payment-references/:id/revoke` | admin, zarząd, skarbnik — rok referencji | tak | 403 | unieważnienie jako osobny, niezmienny zapis (`payment_reference_revocations`); już unieważniona: 409 |
 | `GET /api/payments/:paymentId/allocations` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | części wpłaty, suma przypisana i „nieprzypisana część” (#127); przedstawiciel: 403; nieistniejąca: 404 |
 | `POST /api/payments/:paymentId/allocations` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | podział wyłącznie wpłaty nieprzypisanej, suma części ≤ netto (#127); przedstawiciel: 403 |
 | `POST /api/payments/:paymentId/allocations/:allocationId/reversal` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | cofnięcie części jako nowy zapis z powodem (#127) |

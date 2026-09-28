@@ -402,6 +402,12 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  // --- Belgijska referencja płatności OGM-VCS (#83) --------------------------------
+  invalid_ogm_base: "Niepoprawna baza referencji płatności.",
+  invalid_ogm_reference: "Niepoprawna referencja płatności (oczekiwano 12 cyfr).",
+  payment_reference_already_active: "To gospodarstwo ma już aktywną referencję płatności w tym roku. Najpierw ją unieważnij.",
+  payment_reference_already_revoked: "Ta referencja płatności jest już unieważniona.",
+  payment_reference_not_found: "Nie znaleziono referencji płatności.",
   invalid_consent_scope: "Wybierz zakres zgody z listy (strona Rady, druk, media społecznościowe).",
   invalid_consent_valid_until: "Niepoprawna data ważności zgody (RRRR-MM-DD).",
   consent_not_found: "Nie znaleziono zgody o tym odwołaniu.",

@@ -37,6 +37,7 @@ import { createSession } from '../src/pg/auth.js';
 import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
+import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
@@ -111,6 +112,18 @@ async function seedBase(db) {
   );
 }
 
+// `enrollments.class_id` jest NOT NULL: cele bez klasy (np. W1, dane ogólnoszkolne)
+// dostają jednorazową syntetyczną klasę tego roku — sam fixture (żadna trasa jej
+// nie widzi jako "klasę" w odpowiedzi, więc nie przecieka do asercji znaczników).
+async function fallbackClassId(db, schoolYearId) {
+  const id = `cls-fx-${schoolYearId}`;
+  await db.query(
+    `INSERT INTO classes (id, school_year_id, name) VALUES ($1, $2, 'Klasa fixture') ON CONFLICT (id) DO NOTHING`,
+    [id, schoolYearId],
+  );
+  return id;
+}
+
 async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   const guardianId = `${householdId}-g`;
   const studentId = `${householdId}-s`;
@@ -122,8 +135,9 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)',
     [studentId, guardianId]);
   const enrollmentId = `${householdId}-e`;
+  const classId = target.classId ?? await fallbackClassId(db, target.schoolYearId);
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
-    [enrollmentId, studentId, target.classId, target.schoolYearId]);
+    [enrollmentId, studentId, classId, target.schoolYearId]);
   return { householdId, guardianId, studentId, enrollmentId };
 }
 
@@ -254,6 +268,27 @@ async function makePayment(db, target, stage) {
     return { paymentId: id, allocationId };
   }
   return { paymentId: id };
+}
+
+// #83: komunikacja strukturalna na świeżym gospodarstwie; 'revoked' dopisuje
+// od razu zdarzenie unieważnienia (dla przypadków, którym wystarczy historia).
+async function makePaymentReference(db, target, stage) {
+  const householdId = nextKey('fx-hh-ref');
+  await db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+  const id = nextKey('fx-ref');
+  await db.query(
+    `INSERT INTO payment_references (id, school_year_id, household_id, structured_reference, created_by, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, target.schoolYearId, householdId, generateStructuredReference(), fxAdmin.userId, `${id}-key`],
+  );
+  if (stage === 'revoked') {
+    await db.query(
+      `INSERT INTO payment_reference_revocations (id, payment_reference_id, reason, created_by, idempotency_key)
+       VALUES ($1, $2, 'Zamknięcie testowe (macierz)', $3, $4)`,
+      [nextKey('fx-ref-rev'), id, fxAdmin.userId, `${id}-rev-key`],
+    );
+  }
+  return { paymentReferenceId: id, householdId };
 }
 
 async function makeNewsPost(db, target, stage) {
@@ -495,6 +530,18 @@ async function makeOwnPassword(ctx, { cookie }) {
   return { password, newPassword: syntheticPassword() };
 }
 
+// Gospodarstwo bez zapisu (enrollment)/klasy — w odróżnieniu od `household`
+// (niżej, przez makeHousehold) nie woła fallbackClassId. #83: trasa
+// payment-references.create nie zależy od klasy, a każdy target YEAR_TARGETS
+// obejmuje też cel bez classId (W1) — makeHousehold wstawiłby wtedy trwałą
+// "klasę fixture" do bazy współdzielonej z resztą macierzy, zafałszowując
+// listę klas w innych podtestach (families.classes).
+async function makePlainHousehold(db) {
+  const householdId = nextKey('fx-hh-plain');
+  await db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+  return { householdId };
+}
+
 // #150: druga, jednorazowa sesja TEGO SAMEGO konta (nie ta z caseInfo.cookie, którą
 // dalej wysyła żądanie testowe) — do sprawdzenia, że własną (ale INNĄ) sesję da się
 // cofnąć. Bieżąca sesja przypadku zostaje nietknięta.
@@ -514,6 +561,7 @@ async function makeOwnSession(ctx, { cookie }) {
   }
 }
 
+
 const MAKERS = {
   privacyNotice: (ctx, target, stage) => makePrivacyNotice(ctx, target, stage),
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
@@ -521,6 +569,8 @@ const MAKERS = {
   eventTaskSignup: (ctx, target, stage) => makeEventTaskSignup(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
+  paymentReference: (ctx, target, stage) => makePaymentReference(ctx.db, target, stage),
+  plainHousehold: (ctx) => makePlainHousehold(ctx.db),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
   publicPhotoFile: (ctx, target) => makePublicPhotoFile(ctx, target),
   photo: async (ctx) => {
@@ -972,6 +1022,7 @@ test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
 const MODULE_SOURCES = {
   session: ['../src/pg/routes/session.js'],
   payments: ['../src/pg/routes/payments.js'],
+  'payment-references': ['../src/pg/routes/payment-references.js'],
   'payment-instructions': ['../src/pg/routes/payment-instructions.js'],
   events: ['../src/pg/routes/events.js', '../src/pg/events.js'],
   meetings: ['../src/pg/routes/meetings.js', '../src/pg/meetings.js'],

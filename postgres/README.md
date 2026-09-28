@@ -832,3 +832,18 @@ konfiguracja roku = wiersz o najnowszym `approved_at`); trigger
 trafiają do metadanych zdarzeń audytu. Wycofanie: usunięcie tabeli,
 triggera i funkcji (żadna inna tabela nie odwołuje się do
 `payment_instructions`).
+
+`0085_payment_references.sql` (#83) dodaje tabele `payment_references` i
+`payment_reference_revocations`: belgijska komunikacja strukturalna
+OGM-VCS (12 cyfr, suma kontrolna mod 97) jako tytuł przelewu zamiast
+wewnętrznego `household_id`. Baza referencji jest losowana w aplikacji
+(crypto), nie z sekwencji ani danych rodziny/klasy. Najwyżej jedna
+aktywna referencja na gospodarstwo i rok szkolny; unieważnienie to
+osobny, niezmienny zapis (jak przy `payment_assignments`/
+`payment_corrections`), nie nadpisanie wiersza. Integracja z importem
+wyciągu i propozycjami dopasowania po referencji to osobny zakres (patrz
+PR). Skutki dla danych: wyłącznie nowe tabele; `payment_entries.reference`
+i istniejące wpłaty, korekty, przypisania i uzgodnienia pozostają bez
+zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów i
+funkcji; na bazie z wygenerowanymi referencjami — tylko po kopii
+zapasowej (historia referencji zniknie).

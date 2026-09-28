@@ -516,6 +516,40 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/payments/export.csv?schoolYearId=${target.schoolYearId}` }),
   },
 
+  // ---------- payment-references (#83) ----------
+  {
+    id: 'payment-references.list', module: 'payment-references', method: 'GET',
+    path: '/api/payment-references?schoolYearId=:year&householdId=:id',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'paymentReference', stage: 'active' },
+    build: ({ target, obj }) => ({
+      path: `/api/payment-references?schoolYearId=${target.schoolYearId}&householdId=${obj.householdId}`,
+    }),
+  },
+  {
+    id: 'payment-references.create', module: 'payment-references', method: 'POST', path: '/api/payment-references',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    // 'plainHousehold' (nie ogólne 'household'): brak zapisu/klasy — rok W1 w
+    // YEAR_TARGETS nie ma classId, a ogólny fixture wstawiłby trwałą klasę
+    // fixture do współdzielonej bazy macierzy (patrz komentarz przy MAKERS
+    // w tests/pg-authz-matrix.test.js).
+    object: { kind: 'plainHousehold' },
+    build: ({ target, obj, key }) => ({
+      path: '/api/payment-references', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, householdId: obj.householdId },
+    }),
+  },
+  {
+    id: 'payment-references.revoke', module: 'payment-references', method: 'POST',
+    path: '/api/payment-references/:id/revoke',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'paymentReference', stage: 'active' },
+    build: ({ obj, key }) => ({
+      path: `/api/payment-references/${obj.paymentReferenceId}/revoke`, headers: withKey(key),
+      body: { reason: 'Zamknięcie testowe (macierz)' },
+    }),
+  },
+
   // ---------- payment-instructions (#92) ----------
   {
     id: 'payment-instructions.get', module: 'payment-instructions', method: 'GET',

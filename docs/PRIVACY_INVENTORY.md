@@ -145,6 +145,12 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_entries`|`reference`|Opiekun|direct|wolny tekst|tytuł przelewu z wyciągu bankowego|payment_reference|tak|tak|
 |`payment_instructions`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`payment_reassignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`payment_reference_revocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`payment_reference_revocations`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie unieważnienia referencji płatności|payment_reference|tak|nie|
+|`payment_references`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`payment_references`|`revoke_reason`|Opiekun|direct|wolny tekst|uzasadnienie unieważnienia referencji płatności|payment_reference|tak|nie|
+|`payment_references`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`payment_references`|`structured_reference`|Opiekun|pseudonymous|identyfikacja|belgijska referencja płatności OGM-VCS — pseudonim gospodarstwa na tytule przelewu|payment_reference|nie|nie|
 |`payment_refunds`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`privacy_notice_deliveries`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie ewidencji przekazania z gospodarstwem|nieustalona (D-04)|nie|nie|
 |`privacy_notice_deliveries`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -177,7 +183,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **164**, w tym wolnego tekstu: **38** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **170**, w tym wolnego tekstu: **40** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -1421,6 +1427,32 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `old_household_id` | none | — | tak |
 | `payment_entry_id` | none | — | tak |
 | `reason` | none | — | tak |
+
+### `payment_reference_revocations`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `id` | none | — | nie |
+| `idempotency_key` | none | — | nie |
+| `payment_reference_id` | none | — | nie |
+| `reason` | direct | guardian | nie |
+
+### `payment_references`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `household_id` | none | — | nie |
+| `id` | none | — | nie |
+| `idempotency_key` | none | — | nie |
+| `revoke_reason` | direct | guardian | nie |
+| `revoked_at` | none | — | nie |
+| `revoked_by` | pseudonymous | board_member | nie |
+| `school_year_id` | none | — | nie |
+| `structured_reference` | pseudonymous | guardian | nie |
 
 ### `payment_refunds`
 

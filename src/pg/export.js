@@ -318,6 +318,8 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
   news_photo_consents: 'zgody na wizerunek — osobny zakres (D-04)',
+  payment_references: 'belgijska referencja OGM-VCS (#83) — pseudonim gospodarstwa; zakres i retencja do decyzji D-04 (jak payment_entries.reference), wariant zachowawczy do rewizji',
+  payment_reference_revocations: 'jak payment_references — zdarzenie unieważnienia referencji, ten sam zakres D-04',
   payment_instructions: 'IBAN/BIC do generatora EPC (#92) — dane wrażliwe finansowo, niepotrzebne do odtworzenia stanu klasy/gospodarstwa; wariant zachowawczy do rewizji po D-08',
   news_photo_consent_withdrawals: 'wycofania zgód na wizerunek — jak news_photo_consents, osobny zakres (D-04)',
   news_photo_files: 'pliki wariantów zdjęć (#96) — jak news_photos, osobny zakres (D-04); metadane pliku w prywatnym Storage Bucket, nie dane roku',
