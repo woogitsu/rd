@@ -10,11 +10,21 @@ npm run build
 PORT=3000 npm start
 ```
 
-Dostępne ścieżki:
+Dostępne ścieżki (pełna lista `STATIC_PREFIXES` w `src/node-app.js`):
 
 - `/import/` — import uczniów i rodzin,
 - `/panel/` — panel składek,
 - `/ledger/` — księga,
+- `/print/` — kartki o dobrowolnej składce,
+- `/events/` — wydarzenia i kalendarz,
+- `/documents/` — prywatne dokumenty,
+- `/site/` — strona publiczna tylko do odczytu,
+- `/meetings/` — zebrania, protokoły i uchwały,
+- `/admin/` — konta, zaproszenia i przydziały ról,
+- `/families/` — katalog rodzin, uczniów i opiekunów,
+- `/login/` — ekran logowania (`/` przekierowuje tutaj),
+- `/email/` — korespondencja i kampanie,
+- `/reconciliation/` — uzgodnienie z wyciągiem bankowym,
 - `/health` — liveness: wyłącznie techniczny status procesu (`{"status":"ok"}`), bez danych użytkowników i bez zapytań do bazy,
 - `/health/ready` — readiness: stan bazy i migracji (opis niżej); `200` gdy gotowy, `503` gdy nie.
 
@@ -67,6 +77,6 @@ Redakcja jest zabezpieczeniem dodatkowym — kod nadal nie może przekazywać do
 
 ## Granice tego etapu
 
-Serwer statyczny i punkt `/health` są gotowe do testów. Bez `DATABASE_URL` chronione API korzysta z adaptera Worker/D1. Z `DATABASE_URL` działa prototyp routera PostgreSQL z sesjami i rolami (issue #35) oraz trasami wpłat (issue #37) i księgi (issue #38); nie jest wdrożony ani zatwierdzony do pracy na danych rodzin. Z tego powodu ten etap nie uruchamia wdrożenia produkcyjnego ani nie konfiguruje publicznej domeny.
+Serwer statyczny i punkt `/health` są gotowe do testów. Bez `DATABASE_URL` serwer uruchamia stary router Workera (`src/index.js`) bez żadnego bindingu D1 (nie ma adaptera Worker/D1 w Node — `env = {}`): `/health`, sesja i przydziały działają, ale każda chroniona trasa (wpłaty, księga) zwraca `503`, bo nie ma bazy do odpytania. Z `DATABASE_URL` działa router PostgreSQL (`src/pg/app.js`) z sesjami, rolami (issue #35) i 16 modułami tras — wpłaty (#37), księga (#38) i pozostałe wymienione w README; nie jest wdrożony ani zatwierdzony do pracy na danych rodzin. Z tego powodu ten etap nie uruchamia wdrożenia produkcyjnego ani nie konfiguruje publicznej domeny.
 
 Testy HTTP sprawdzają przekierowania, pliki statyczne, nagłówki bezpieczeństwa, brak publikacji map źródłowych, odpowiedzi `404`, brak cache API oraz limit ciała żądania 1 MiB. Wyjątek: `POST /api/documents` ma własny limit `DOCUMENT_MAX_BYTES` (domyślnie 10 MiB), ustawiany przez `bodyLimit` w `createNodeHandler`.
