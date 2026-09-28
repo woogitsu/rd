@@ -19,6 +19,7 @@ import {
   summarizeInconsistencies,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { initialSchoolYearId } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -96,14 +97,15 @@ async function loadList() {
   renderList();
 }
 
-filtersForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const value = yearInput.value.trim();
+// Wczytuje listę dla podanego roku; używane zarówno przy ręcznym „Pokaż”, jak i
+// przy wypełnieniu domyślnym rokiem po wejściu na panel (#128/#UI: puste ekrany).
+async function showYear(value) {
   if (!isValidId(value)) { setMessage("Podaj poprawny identyfikator roku szkolnego.", true); return; }
   setMessage("");
   filtersForm.querySelector("button").disabled = true;
   try {
     state.schoolYearId = value;
+    yearInput.value = value;
     await loadList();
     detailSection.hidden = true;
     state.selectedId = null;
@@ -114,6 +116,11 @@ filtersForm.addEventListener("submit", async (event) => {
   } finally {
     filtersForm.querySelector("button").disabled = false;
   }
+}
+
+filtersForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  showYear(yearInput.value.trim());
 });
 
 // --- szczegóły uzgodnienia ----------------------------------------------------
@@ -189,6 +196,8 @@ function renderDetail() {
   byId("confirm-reconciliation").hidden = !(draft && canWrite) || own || inconsistent.length > 0;
   byId("confirm-waiting").hidden = !(draft && canWrite && own);
   byId("confirm-inconsistent").hidden = !(draft && canWrite && inconsistent.length > 0);
+  const activeMatches = (summary?.matchedLineCount ?? 0) + (summary?.inconsistentMatchCount ?? 0);
+  byId("abandon-reconciliation").hidden = !(draft && canWrite) || activeMatches > 0;
 }
 
 // Karta pobiera pozycje wyciągu stronami (#218, domyślnie 500 na stronę) i
@@ -447,6 +456,38 @@ byId("confirm-form").addEventListener("submit", async (event) => {
 });
 confirmDialog.addEventListener("close", () => { byId("confirm-error").textContent = ""; });
 
+// --- porzucenie szkicu (0107) --------------------------------------------------
+
+const abandonDialog = byId("abandon-dialog");
+
+byId("abandon-reconciliation").addEventListener("click", () => { abandonDialog.showModal(); });
+
+byId("abandon-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") { abandonDialog.close(); return; }
+  const form = abandonDialog.querySelector("form");
+  if (!form.reportValidity()) return;
+  const reason = String(new FormData(form).get("reason") || "").trim();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    await api(reconciliationActionUrl(state.selectedId, "abandon"), {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+    abandonDialog.close();
+    form.reset();
+    await refreshDetail();
+    await loadList();
+    setMessage("Szkic porzucony. Wyciąg można zaimportować do nowego szkicu.");
+  } catch (error) {
+    byId("abandon-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+abandonDialog.addEventListener("close", () => { byId("abandon-error").textContent = ""; });
+
 // --- dostęp -------------------------------------------------------------------
 
 async function applyAccess() {
@@ -460,13 +501,19 @@ async function applyAccess() {
   }
   state.grants = Array.isArray(access.grants) ? access.grants : [];
   state.actorId = session?.user?.id ?? null;
-  if (hasWriteAccess(state.grants)) return;
-  byId("open-create").hidden = true;
-  filtersForm.closest("section").hidden = true;
-  const notice = byId("access-notice");
-  notice.textContent = access.mfaRequired === true
-    ? describeApiError(403, "mfa_required")
-    : describeApiError(403, "forbidden");
-  notice.hidden = false;
+  if (!hasWriteAccess(state.grants)) {
+    byId("open-create").hidden = true;
+    filtersForm.closest("section").hidden = true;
+    const notice = byId("access-notice");
+    notice.textContent = access.mfaRequired === true
+      ? describeApiError(403, "mfa_required")
+      : describeApiError(403, "forbidden");
+    notice.hidden = false;
+    return;
+  }
+  // Rok domyślny (#128/#UI): najnowszy z przydziałów, awaryjnie heurystyka daty
+  // (shared/school-year.js) — panel ładuje dane bez klikania „Pokaż”; użytkownik
+  // nadal może zmienić rok.
+  await showYear(initialSchoolYearId(state.grants));
 }
 applyAccess();

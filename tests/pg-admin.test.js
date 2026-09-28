@@ -39,7 +39,7 @@ test('admin API refuses anonymous, non-admin, admin without MFA and cross-origin
     const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer' }], mfa: true });
     const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-now-1a', schoolYearId: 'y-now' }], mfa: true });
     for (const cookie of [board, treasurer, rep]) {
-      for (const path of ['/api/admin/users', '/api/admin/grants', '/api/admin/invitations', '/api/admin/audit', '/api/admin/school-years']) {
+      for (const path of ['/api/admin/users', '/api/admin/grants', '/api/admin/invitations', '/api/admin/audit', '/api/admin/school-years', '/api/admin/retention/preview']) {
         assert.equal((await call(env, path, { cookie })).status, 403, path);
       }
       const denied = await post(env, '/api/admin/grants', cookie, { userId: 'u-target', role: 'admin' });

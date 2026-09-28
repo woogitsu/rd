@@ -38,6 +38,7 @@ import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
+import { initialSchoolYearId } from "../shared/school-year.js";
 
 let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
@@ -850,7 +851,7 @@ byId("list-section").hidden = true;
 byId("shared-section").hidden = true;
 
 const initial = new URLSearchParams(location.search);
-const hasInitialYear = isValidId(initial.get("rok") ?? "");
+let hasInitialYear = isValidId(initial.get("rok") ?? "");
 if (hasInitialYear) yearInput.value = initial.get("rok");
 
 api("/api/access").then(
@@ -858,6 +859,13 @@ api("/api/access").then(
     const grants = access?.grants;
     state.canManage = canManageMeetings(grants);
     applyViewMode(meetingsViewMode(grants));
+    // Rok domyślny (#128/#UI: puste ekrany): jeśli adres nie wskazuje roku,
+    // wypełnij najnowszym z przydziałów (awaryjnie heurystyka daty) i wczytaj
+    // od razu — tylko gdy panel w ogóle pokazuje listę (viewMode != "none").
+    if (!hasInitialYear && state.viewMode !== "none") {
+      yearInput.value = initialSchoolYearId(grants);
+      hasInitialYear = true;
+    }
     if (!hasInitialYear) return;
     if (state.viewMode === "shared") {
       loadSharedList();

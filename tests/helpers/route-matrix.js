@@ -228,6 +228,25 @@ function documentRead(id, path, kind, targets, allow, mfa, suffix) {
   };
 }
 
+// Zmiana stanu dokumentu (zastąpienie/unieważnienie, issue #82): ta sama zasada 404 jak przy
+// odczycie (brak wyroczni istnienia). Świeży dokument (fixture 'fresh') dla każdego udanego
+// przypadku — powtórna zmiana stanu tego samego dokumentu byłaby konfliktem (409), nie 2xx.
+function documentStatus(id, action, kind, targets, allow, mfa) {
+  const isSupersede = action === 'supersede';
+  return {
+    id, module: 'documents', method: 'POST', path: `/api/documents/:${kind}DocumentId/${action}`,
+    targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404, fixture: 'fresh',
+    object: { kind: isSupersede ? 'documentPair' : 'document', stage: kind },
+    build: ({ obj, key }) => ({
+      path: `/api/documents/${obj.documentId}/${action}`,
+      headers: withKey(key),
+      body: isSupersede
+        ? { reason: 'Zastąpienie dokumentu (test macierzy)', replacementDocumentId: obj.replacementDocumentId }
+        : { reason: 'Unieważnienie dokumentu (test macierzy)' },
+    }),
+  };
+}
+
 // Zapis opisu (tytuł/kategoria — issue #76): te same reguły dostępu co odczyt
 // metadanych dokumentu (canAccessDocument), więc mfaDeny/deny = 404 jak wyżej.
 function documentDescribe(id, path, kind, targets, allow, mfa) {
@@ -509,6 +528,48 @@ export const ROUTE_MATRIX = Object.freeze([
   eventAction('events.publish', 'publish', 'approved', EVENT_REVIEW),
   eventAction('events.cancel', 'cancel', 'draft', EVENT_EDIT, { reason: 'Odwołanie syntetyczne' }),
 
+  // ---------- events: zadania i zapisy wolontariuszy (#142) ----------
+  // Dostęp do zadania/zapisu sprawdza ten sam canEdit(actor, event) co szkic
+  // wydarzenia (src/pg/events.js) — te same zakresy i ta sama odmowa 404/403
+  // (SR-07: wydarzenie spoza zakresu podglądu wygląda jak nieznane).
+  {
+    id: 'events.tasksList', module: 'events', method: 'GET', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
+    allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'static', object: { kind: 'event', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks` }),
+  },
+  {
+    id: 'events.taskCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
+    allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage: 'draft' },
+    build: ({ obj, target, key }) => ({
+      path: `/api/events/${obj.eventId}/tasks`, headers: withKey(key),
+      body: { title: `Zadanie ${marker(target.key)}`, slotsNeeded: 2, isPublic: false },
+    }),
+  },
+  {
+    id: 'events.taskCancel', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks/:taskId/cancel',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTask', stage: 'draft' },
+    build: ({ obj }) => ({
+      path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/cancel`, body: { reason: 'Odwołanie syntetyczne' },
+    }),
+  },
+  {
+    id: 'events.signupCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks/:taskId/signups',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTask', stage: 'draft' },
+    build: ({ obj, key }) => ({
+      path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/signups`, headers: withKey(key),
+      body: { userId: 'u-fx-board' },
+    }),
+  },
+  {
+    id: 'events.signupWithdraw', module: 'events',
+    method: 'POST', path: '/api/events/:eventId/tasks/:taskId/signups/:signupId/withdraw',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTaskSignup', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/signups/${obj.signupId}/withdraw` }),
+  },
+
   // ---------- meetings (#13) ----------
   {
     id: 'meetings.list', module: 'meetings', method: 'GET', path: '/api/meetings?schoolYearId=:year',
@@ -664,6 +725,17 @@ export const ROUTE_MATRIX = Object.freeze([
   documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content'),
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
   documentRead('documents.contentClass', '/api/documents/:classDocumentId/content', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, '/content'),
+  // Zmiana stanu dokumentu (issue #82): zastąpienie i unieważnienie — te same reguły dostępu
+  // co odczyt (brak wyroczni istnienia dla nieznanego/niedozwolonego identyfikatora). Kod
+  // (src/pg/routes/documents.js, changeStatus → canAccessDocument) używa DOKŁADNIE tej samej
+  // polityki DOCUMENT_POLICIES co odczyt — zapis nie jest węższy ani szerszy niż odczyt danego
+  // rodzaju, więc macierz lustrzanie powtarza allow/mfa z documentRead dla tego rodzaju.
+  documentStatus('documents.supersedeFinancial', 'supersede', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentStatus('documents.voidFinancial', 'void', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentStatus('documents.supersedeBoard', 'supersede', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentStatus('documents.voidBoard', 'void', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentStatus('documents.supersedeClass', 'supersede', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
+  documentStatus('documents.voidClass', 'void', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
   documentDescribe('documents.describeFinancial', '/api/documents/:financialDocumentId/description', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
   documentDescribe('documents.describeBoard', '/api/documents/:boardDocumentId/description', 'board', YEAR_TARGETS, DOC_BOARD, false),
   documentDescribe('documents.describeClass', '/api/documents/:classDocumentId/description', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
@@ -999,6 +1071,21 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Rejestr żądań osób (#100): wariant zachowawczy, wyłącznie admin (jak cały moduł).
+  adminRoute('admin.dataRequests', 'GET', '/api/admin/data-requests', {}),
+  adminRoute('admin.dataRequestCreate', 'POST', '/api/admin/data-requests', {
+    ok: 201,
+    build: () => ({
+      path: '/api/admin/data-requests',
+      body: { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' },
+    }),
+  }),
+  adminRoute('admin.dataRequestStatus', 'POST', '/api/admin/data-requests/:requestId/status', {
+    object: 'dataRequest',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/status`, body: { status: 'identity_verified' } }),
+  }),
+  // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
+  adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
   // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
   adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 
@@ -1036,6 +1123,10 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   reconciliationRoute('reconciliation.confirm', 'POST', '/confirm', 'draft', {
     body: () => ({ confirmationNote: 'Różnica wyjaśniona (syntetyczne)' }),
+  }),
+  // Porzucenie szkicu bez aktywnych dopasowań (0107, przegląd #344).
+  reconciliationRoute('reconciliation.abandon', 'POST', '/abandon', 'draft', {
+    body: () => ({ reason: 'Saldo pliku niezgodne (syntetyczne)' }),
   }),
   {
     id: 'reconciliation.auditReport', module: 'reconciliation', method: 'GET', path: '/api/reports/audit?schoolYearId=:year&format=json',

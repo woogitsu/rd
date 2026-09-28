@@ -189,6 +189,12 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'events', where: () => 'school_year_id = $1' },
   { table: 'event_revisions', requires: ['events'],
     where: () => 'event_id IN (SELECT id FROM events WHERE school_year_id = $1)' },
+  // 0076 (#142): zadania i zapisy wolontariuszy wydarzeń roku.
+  { table: 'event_tasks', requires: ['events'],
+    where: () => 'event_id IN (SELECT id FROM events WHERE school_year_id = $1)' },
+  { table: 'event_task_signups', requires: ['event_tasks', 'events'],
+    where: () => `task_id IN (SELECT t.id FROM event_tasks t JOIN events e ON e.id = t.event_id
+      WHERE e.school_year_id = $1)` },
 
   { table: 'meetings', where: () => 'school_year_id = $1' },
   { table: 'meeting_agenda_items', requires: ['meetings'],
@@ -210,6 +216,14 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'resolution_execution_events', requires: ['resolutions'],
     where: () => 'resolution_id IN (SELECT id FROM resolutions WHERE school_year_id = $1)' },
 
+  // 0066 (#82): zastąpienie/unieważnienie dokumentu — dane Rady do odtworzenia,
+  // w odróżnieniu od samego pliku (`documents` zostaje w EXPORT_EXCLUDED_TABLES).
+  // Brak school_year_id — zakres po dacie utworzenia zdarzenia (jak
+  // guardian_contact_changes). document_id/replacement_document_id wskazują na
+  // documents.id, którego w paczce nie ma — po odtworzeniu bez odpowiednika,
+  // jak już istniejące source_document_id w ledger_entries; restoreBundle
+  // działa z wyłączonymi kluczami obcymi (session_replication_role = replica).
+  { table: 'document_status_events', where: () => YEAR_TIME('created_at') },
   // 0065 (#76/#313): tytuł, kategoria, data i opis dokumentu — dane Rady do
   // odtworzenia, w odróżnieniu od samych plików (`documents` zostaje w
   // EXPORT_EXCLUDED_TABLES, bo pliki kopiuje się osobno ze Storage Bucketu).
@@ -250,9 +264,11 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   login_rate_limits: 'limity prób logowania — dane techniczne',
   password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
+  retention_policies: 'rejestr polityk retencji (D-04) — konfiguracja/decyzje zarządu, nie dane roku do odtworzenia (0074, #91)',
   documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',
   document_uploads: 'zamiary uploadu dokumentów (klucz obiektu, skrót) — dane techniczne jak documents (0032)',
   data_access_log: 'dziennik odczytu danych rodzin — rozliczalność dostępu, nie dane Rady do odtworzenia; retencja do decyzji D-04 (0067)',
+  data_subject_requests: 'rejestr żądań osób RODO (dostęp/sprostowanie/usunięcie/...) — rozliczalność wobec osób, nie dane Rady do odtworzenia; kto ma dostęp do rejestru i retencja do decyzji D-07/D-08/D-09 (0068, #100)',
   backup_runs: 'dziennik przebiegów kopii zapasowej i próby odtworzenia — dane operacyjne środowiska, nie danych Rady (0058)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',
   export_runs: 'dziennik eksportów — każdy eksport zmieniałby następny',

@@ -262,7 +262,7 @@ test('same file again (new key, other reconciliation) is refused; same key repla
   const importId = (await db.query("SELECT id FROM bank_statement_imports WHERE reconciliation_id = $1 LIMIT 1", [october])).rows[0].id;
   await assert.rejects(db.query(`INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on,
     amount_cents, bank_transaction_hash, created_by) VALUES ('dup', $1, $2, 99, '2026-10-06', 100, $3, 'u-treasurer')`,
-  [october, importId, hash]), /duplicate key|unique/);
+  [october, importId, hash]), /bank_statement_transaction_already_imported/);
 });
 
 test('double click: two simultaneous imports of one file — one creates, the other replays or is refused', async () => {

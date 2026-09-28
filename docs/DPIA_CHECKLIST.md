@@ -63,6 +63,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `ledger_opening_balance_adjustments.reason` | jw. |
 | `bank_reconciliations.notes` | treść przepisana z wyciągu bankowego |
 | `bank_reconciliations.confirmation_note` | jw. |
+| `bank_reconciliations.abandon_reason` | powód porzucenia szkicu — może przepisywać treść z wyciągu |
 | `bank_reconciliation_matches.revoke_reason` | uzasadnienie cofnięcia dopasowania z wyciągu |
 | `meeting_agenda_items.description` | sprawa konkretnego ucznia w porządku obrad |
 | `meeting_minutes.body` | treść protokołu — może opisywać konkretne dzieci/rodziny |
@@ -81,6 +82,9 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `news_photos.revocation_reason` | powód wycofania zgody, może zawierać dane osoby wycofującej |
 | `email_campaigns.subject` | temat kampanii — do przeglądu przy zatwierdzeniu treści |
 | `email_campaigns.body_text` | treść kampanii — do przeglądu przy zatwierdzeniu treści |
+| `event_tasks.title` | tytuł zadania wolontariackiego może zawierać imię i nazwisko lub okoliczności rodzinne (#142) |
+| `event_tasks.cancellation_reason` | powód odwołania zadania może zawierać imię i nazwisko lub okoliczności rodzinne (#142) |
+| `document_status_events.reason` | powód zastąpienia/unieważnienia dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#82) |
 | `document_descriptions.title` | tytuł dokumentu może zawierać imię i nazwisko (np. „Zwrot dla rodziny Kowalski”) (#76/#313) |
 | `document_descriptions.description` | opis dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#76/#313) |
 
