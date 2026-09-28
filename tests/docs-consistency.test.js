@@ -23,6 +23,20 @@ const MIGRATION_FILES = new Set([
 ]);
 const MIGRATION_NUMBERS = new Set([...MIGRATION_FILES].map((f) => f.slice(0, 4)));
 
+// Only flag numbers referenced like a filename (0017_year_close.sql, `0017`,
+// migracja 0017) — plain prose mentioning a number (e.g. "oba dostępne numery
+// migracji (0060, 0061)", a reserved-but-unused number) is not a claim that
+// the file exists. "0000" is below the lowest real migration (0001) and can
+// never be a migration filename — it shows up as a bank-format detail code
+// (CODA record 21, "szczegółem `0000`" in docs/RECONCILIATION.md) that would
+// otherwise look like a backtick-quoted file reference.
+function looksLikeMigrationFileRef(num, context) {
+  if (num === '0000') return false;
+  return new RegExp(`${num}_[a-z]`).test(context)
+    || new RegExp('`0\\d{3}`').test(context)
+    || new RegExp(`migracj\\w*\\s+${num}\\b`, 'i').test(context);
+}
+
 test('every 00NN migration number referenced in docs/*.md, README.md and postgres/README.md exists in postgres/migrations/ or migrations/', () => {
   const missing = [];
   for (const doc of DOC_FILES) {
@@ -34,18 +48,22 @@ test('every 00NN migration number referenced in docs/*.md, README.md and postgre
       // check numbers that appear in a migration-like context: preceded by
       // "migracj" nearby or directly followed by "_" (file name) or a backtick.
       const context = text.slice(Math.max(0, match.index - 30), match.index + 40);
-      // Only flag numbers referenced like a filename (0017_year_close.sql,
-      // `0017`, migracja 0017) — plain prose mentioning a number (e.g. "oba
-      // dostępne numery migracji (0060, 0061)", a reserved-but-unused
-      // number) is not a claim that the file exists.
-      const looksLikeFileRef = new RegExp(`${num}_[a-z]`).test(context)
-        || new RegExp('`0\\d{3}`').test(context)
-        || new RegExp(`migracj\\w*\\s+${num}\\b`, 'i').test(context);
-      if (!looksLikeFileRef) continue;
+      if (!looksLikeMigrationFileRef(num, context)) continue;
       if (!MIGRATION_NUMBERS.has(num)) missing.push(`${doc}: ${num} (${context.trim()})`);
     }
   }
   assert.deepEqual(missing, [], 'docs reference migration numbers that do not exist');
+});
+
+test('kanarek: looksLikeMigrationFileRef ignoruje kod banku `0000`, ale wciąż wykrywa prawdziwe odwołania do pliku migracji', () => {
+  // Fałszywy alarm z #175: kod szczegółu rekordu CODA, nie numer migracji.
+  assert.equal(looksLikeMigrationFileRef('0000', 'liczy się tylko rekord 21 ze szczegółem `0000`. CAMT'), false);
+  // Prawdziwe odwołania (nazwa pliku, backtick, słowo "migracja") nadal wykryte.
+  assert.equal(looksLikeMigrationFileRef('0999', '`0999_fake_migration.sql` (#1) dodaje'), true);
+  assert.equal(looksLikeMigrationFileRef('0999', 'zobacz `0999` dla szczegółów'), true);
+  assert.equal(looksLikeMigrationFileRef('0999', 'patrz migracja 0999 dla szczegółów'), true);
+  // Zwykła proza z liczbą bez kontekstu pliku — nie jest odwołaniem.
+  assert.equal(looksLikeMigrationFileRef('0999', 'dostępne numery migracji (0060, 0999) do wyboru'), false);
 });
 
 test('every file in postgres/migrations/ is mentioned (by filename) in postgres/README.md', () => {

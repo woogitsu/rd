@@ -537,3 +537,32 @@ trybem kończy się `legacy_publish_restore_only`; (2) nowa funkcja
 dziś triggerem niezmienności UPDATE/DELETE. Żaden istniejący wiersz nie
 jest zmieniany ani usuwany; zmienia się wyłącznie zachowanie przyszłych
 operacji.
+
+`0084_news_photo_files.sql` (#96, część) dodaje tabelę `news_photo_files` —
+magazyn wariantów plików zdjęć galerii (`web`, `thumb`) w prywatnym
+Storage Bucket pod osobnym prefiksem `photos/` (oddzielnym od `docs/`
+dokumentów). Przetwarzanie usuwa metadane EXIF/GPS; wariant `original`
+świadomie nie jest zapisywany (wariant zachowawczy do czasu decyzji
+zarządu D-18/D-04/D-05). Publiczny odczyt tylko dla zweryfikowanych zdjęć
+opublikowanej wersji. Skutki dla danych: nowa, pusta tabela;
+`news_photos.document_id` i istniejące metadane zdjęć bez pliku pozostają
+bez zmian (plik jest opcjonalnym uzupełnieniem). Wycofanie: usunięcie
+tabeli `news_photo_files` (obiekty pod `photos/` w buckecie zostają
+osierocone do ręcznego sprzątania).
+
+`0089_bank_statement_formats.sql` (#105) rozszerza import wyciągu bankowego
+o formaty CODA i CAMT.053: `bank_statement_imports.source` dopuszcza
+`'coda'`/`'camt053'`, dochodzą skrót pliku (`file_hash`, blokada
+podwójnego importu), numer wyciągu i salda z pliku;
+`bank_statement_lines.bank_transaction_hash` (HMAC-SHA256 identyfikatora
+transakcji banku, unikalny globalnie) wykrywa ten sam ruch bankowy w
+każdym uzgodnieniu; nowy trigger pilnuje, by wpłata/wpis księgi nie miały
+aktywnego powiązania w dwóch uzgodnieniach tego samego roku jednocześnie
+(`bank_match_guard` nie jest redefiniowana). Nie zapisujemy treści pliku
+ani numerów rachunków — tylko solone skróty. Skutki dla danych: nowe
+kolumny są `NULL`/`0` dla istniejących wierszy; żaden wiersz nie jest
+zmieniany ani usuwany; istniejące powiązania w kilku uzgodnieniach roku
+zostają (trigger działa tylko dla nowych). Wycofanie na bazie bez
+importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
+przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
+importami CODA/CAMT — tylko po kopii zapasowej.
