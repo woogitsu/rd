@@ -16,8 +16,14 @@ export const MESSAGES = Object.freeze({
   class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
   // --- Zakończenie przypisania do klasy (#86) --------------------------------------
   invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
+  // --- Rejestr uchwał (#102) --------------------------------------------------------
+  invalid_relation_kind: "Wybierz rodzaj powiązania uchwały z listy.",
+  invalid_execution_status: "Wybierz stan wykonania uchwały z listy.",
+  resolution_not_decided: "Stan wykonania można zapisać tylko dla podjętej uchwały.",
   // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
   minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
+  // --- Tryb tylko do odczytu (#143) ------------------------------------------------
+  read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
@@ -77,6 +83,11 @@ export const MESSAGES = Object.freeze({
   invalid_signature: "Niepoprawny podpis żądania.",
   webhook_not_configured: "Powiadomienia zwrotne nie są skonfigurowane na tym środowisku.",
 
+  invalid_domain: "Wybierz obszar dziennika z listy.",
+  invalid_entity_type: "Nieznany rodzaj obiektu w dzienniku.",
+  invalid_from: "Podaj poprawną datę początkową (RRRR-MM-DD).",
+  invalid_to: "Podaj poprawną datę końcową (RRRR-MM-DD).",
+
   // --- Rok szkolny i klasy ---------------------------------------------------------
   invalid_school_year: "Niepoprawny identyfikator roku szkolnego.",
   invalid_school_year_id: "Niepoprawny identyfikator roku szkolnego.",
@@ -112,6 +123,8 @@ export const MESSAGES = Object.freeze({
   admin_exists: "Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne.",
   pending_admin_invitation: "Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij.",
   production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
+  role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji.",
+  class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
 
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
@@ -124,6 +137,8 @@ export const MESSAGES = Object.freeze({
   payment_already_linked: "Wpłata jest już powiązana z innym wpisem.",
   payment_cannot_be_corrected: "Tej wpłaty nie można skorygować w obecnym stanie.",
   correction_exceeds_remaining_amount: "Korekta przekracza kwotę pozostałą po wcześniejszych korektach.",
+  possible_personal_data: "Ten tekst zostanie zapisany na stałe i trafi do eksportu. Usuń dane osobowe albo potwierdź, że to konieczne.",
+  minutes_contain_personal_data: "Protokół zawiera możliwe dane osobowe (imię i nazwisko, e-mail albo IBAN) — publikacja publiczna jest zablokowana.",
   payment_amount_mismatch: "Kwota wpłaty nie zgadza się z powiązanym wpisem księgi. Odśwież widok i sprawdź dane.",
   payment_cannot_be_refunded: "Tej wpłaty nie można zwrócić w obecnym stanie.",
   payment_not_assigned: "Wpłata nie jest przypisana do żadnej rodziny.",
@@ -147,6 +162,7 @@ export const MESSAGES = Object.freeze({
   invalid_effective_on: "Podaj poprawną datę.",
   closing_balance_out_of_range: "Saldo zamknięcia jest poza dozwolonym zakresem.",
   next_year_opening_balance_exists: "Bilans otwarcia następnego roku już istnieje.",
+  category_not_found: "Nie znaleziono kategorii księgi.",
   difference_requires_note: "Różnica wymaga wpisania wyjaśnienia.",
   reconciliation_not_found: "Nie znaleziono uzgodnienia.",
   reconciliation_confirmed: "Uzgodnienie jest już potwierdzone i nie można go zmienić.",
@@ -179,6 +195,8 @@ export const MESSAGES = Object.freeze({
   allocation_exceeds_net: "Suma przypisań przekracza kwotę wpisu po korektach. Najpierw zmień przypisanie.",
   allocation_version_conflict: "Przypisanie tego wpisu zostało w międzyczasie zmienione. Odśwież widok.",
   allocation_reason_required: "Zmiana przypisania wymaga podania powodu.",
+  statement_line_not_found: "Nie znaleziono pozycji wyciągu.",
+  statement_line_not_income: "Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia.",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",
@@ -274,6 +292,8 @@ export const MESSAGES = Object.freeze({
   photo_revoked: "Zgoda na publikację zdjęcia została wycofana.",
   duplicate_photo: "To zdjęcie jest już dodane.",
   invalid_alt_text: "Podaj opis zdjęcia (tekst alternatywny).",
+  alt_text_required: "Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne.",
+  invalid_decorative: "Niepoprawna wartość pola „zdjęcie dekoracyjne”.",
   invalid_taken_on: "Niepoprawna data wykonania zdjęcia.",
   invalid_depicts_children: "Zaznacz, czy zdjęcie przedstawia dzieci.",
   invalid_consent: "Niepoprawny zapis zgody na publikację.",
@@ -287,6 +307,9 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
+  preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
+  sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).

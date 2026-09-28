@@ -209,6 +209,9 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => `minutes_id IN (SELECT mm.id FROM meeting_minutes mm JOIN meetings m ON m.id = mm.meeting_id
       WHERE m.school_year_id = $1)` },
   { table: 'resolutions', where: () => 'school_year_id = $1' },
+  // #102: wykonanie uchwał — historia zdarzeń powiązana z uchwałą roku.
+  { table: 'resolution_execution_events', requires: ['resolutions'],
+    where: () => 'resolution_id IN (SELECT id FROM resolutions WHERE school_year_id = $1)' },
 
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },
@@ -255,6 +258,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_suppressions: 'lista blokad adresów e-mail — D-04',
   email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
   email_worker_runs: 'przebiegi zadania wysyłki — dane techniczne',
+  email_preview_sends: 'dziennik wysyłek testowych kampanii na adresy techniczne Rady — dane operacyjne, nie danych roku (#104, D-04)',
   news_posts: 'aktualności są publiczne i nie należą do roku; archiwum osobno (zgody, D-04)',
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
