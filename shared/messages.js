@@ -224,6 +224,10 @@ export const MESSAGES = Object.freeze({
   document_too_large: "Plik przekracza dozwolony rozmiar.",
   content_hash_mismatch: "Plik uszkodził się podczas przesyłania. Wyślij go ponownie.",
   document_integrity_mismatch: "Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi.",
+  invalid_title: "Tytuł musi mieć od 3 do 200 znaków.",
+  invalid_category: "Wybierz kategorię z listy.",
+  invalid_document_date: "Niepoprawna data dokumentu.",
+  invalid_description: "Opis może mieć najwyżej 1000 znaków.",
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
   upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
