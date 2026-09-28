@@ -118,6 +118,23 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia oznaczone tym rokiem (`schoolYearId`), a bez oznaczenia — z dat roku (Europe/Brussels); bez `export.*` |
 
+Zdarzenia dotyczące obiektu przypisanego do roku (wiersz ma kolumnę
+`school_year_id`) niosą `metadata.schoolYearId` wzięte z TEGO wiersza, nie z
+daty zapisu (#174) — inaczej wpłata dopisana we wrześniu za poprzedni rok
+trafiłaby do eksportu złego roku. `insertAuditEvent` (`src/pg/audit.js`)
+odrzuca (`audit_event_missing_school_year`) zdarzenie z przedrostkiem
+`payment.`/`ledger.`/`reconciliation.` (część 1) albo `email.`/`meeting.`/
+`resolution.`/`event.`/`news_post.` (część 2) bez `schoolYearId` — błąd
+programisty wychodzi w testach, nie po cichu zniekształca eksport. Wyjątki
+świadomie bez tego wymogu: `news_photo.*` (biblioteka zdjęć nie ma kolumny
+`school_year_id` — nie jest przypisana do jednego roku),
+`email.address_suppressed` (dotyczy adresu w `email_suppressions`, bez
+kolumny roku — niezależne od kampanii; `schoolYearId` jest dopisywane, gdy
+zdarzenie dało się powiązać z konkretną wysyłką, ale nie jest wymagane) i
+`email.webhook.previous_secret_used` (rotacja sekretu webhooka Brevo — zdarzenie
+bezpieczeństwa integracji, niezwiązane z żadną konkretną kampanią ani rokiem).
+Sesje, MFA i konta pozostają bez roku, jak dotąd.
+
 Tabele z modułów, których migracji nie ma w bazie, są pomijane (wykrywanie
 przez `information_schema`); tabele rdzenia są wymagane.
 
