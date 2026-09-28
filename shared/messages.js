@@ -113,6 +113,17 @@ export const MESSAGES = Object.freeze({
   pending_admin_invitation: "Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij.",
   production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
 
+  // --- Rejestr żądań osób (RODO, #100) -----------------------------------------------
+  subject_required: "Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie.",
+  invalid_received_on: "Podaj poprawną datę wpłynięcia żądania.",
+  invalid_due_on: "Podaj poprawną datę terminu odpowiedzi.",
+  invalid_decision_note_ref: "Odwołanie do decyzji może mieć od 1 do 200 znaków.",
+  household_not_found: "Nie znaleziono gospodarstwa.",
+  guardian_not_found: "Nie znaleziono opiekuna.",
+  student_not_found: "Nie znaleziono ucznia.",
+  data_request_not_found: "Nie znaleziono żądania.",
+  data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",
+
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
   invalid_cents_value: "Niepoprawna kwota w EUR.",

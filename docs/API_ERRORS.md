@@ -64,6 +64,8 @@ wpisów).
 | `consents_locked` | Zgód nie można zmienić w obecnym stanie wpisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `content_hash_mismatch` | Plik uszkodził się podczas przesyłania. Wyślij go ponownie. | Nie — popraw dane żądania. |
 | `correction_exceeds_remaining_amount` | Korekta przekracza kwotę pozostałą po wcześniejszych korektach. | Zależy od kontekstu (patrz moduł trasy). |
+| `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
+| `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
 | `date_outside_school_year` | Data wpisu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `difference_requires_note` | Różnica wymaga wpisania wyjaśnienia. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_active_content` | Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady. | Zależy od kontekstu (patrz moduł trasy). |
@@ -83,6 +85,8 @@ wpisów).
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `four_eyes_required` | Tę operację musi zatwierdzić inna osoba niż autor. | Nie — popraw dane żądania. |
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
+| `guardian_not_found` | Nie znaleziono opiekuna. | Nie — popraw dane żądania. |
+| `household_not_found` | Nie znaleziono gospodarstwa. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_reused` | Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -112,10 +116,12 @@ wpisów).
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
 | `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_datetime` | Niepoprawna data lub godzina. | Nie — popraw dane żądania. |
+| `invalid_decision_note_ref` | Odwołanie do decyzji może mieć od 1 do 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
+| `invalid_due_on` | Podaj poprawną datę terminu odpowiedzi. | Nie — popraw dane żądania. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
 | `invalid_email` | Podaj poprawny adres e-mail. | Nie — popraw dane żądania. |
 | `invalid_ended_on` | Podaj poprawną datę odejścia (RRRR-MM-DD). | Nie — popraw dane. |
@@ -152,6 +158,7 @@ wpisów).
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
+| `invalid_received_on` | Podaj poprawną datę wpłynięcia żądania. | Nie — popraw dane żądania. |
 | `invalid_reference_text` | Opis wpłaty jest za długi albo zawiera niedozwolone znaki. | Nie — popraw dane żądania. |
 | `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje. | Nie — popraw dane żądania. |
 | `invalid_request` | Serwer odrzucił dane formularza. Sprawdź pola. | Nie — popraw dane żądania. |
@@ -262,6 +269,8 @@ wpisów).
 | `statement_date_outside_school_year` | Data wyciągu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `statement_line_after_statement_date` | Pozycja wyciągu ma datę późniejszą niż data wyciągu. | Zależy od kontekstu (patrz moduł trasy). |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `student_not_found` | Nie znaleziono ucznia. | Nie — popraw dane żądania. |
+| `subject_required` | Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `timeout` | Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `too_many_attempts` | Zbyt wiele prób. Spróbuj ponownie później. | Zależy od kontekstu (patrz moduł trasy). |
 | `too_many_rows` | Za dużo wierszy w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
