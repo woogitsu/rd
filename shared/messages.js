@@ -283,6 +283,9 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
+  preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
+  sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).

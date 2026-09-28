@@ -218,12 +218,13 @@ function ledgerRead(id, path, suffix, contains) {
   };
 }
 
-function emailRoute(id, method, suffix, stage, { fixture = 'fresh', allow = EMAIL_EDIT, body, contains }) {
+function emailRoute(id, method, suffix, stage, { fixture = 'fresh', allow = EMAIL_EDIT, body, contains, ok = 200, withKey: keyed = false }) {
   return {
     id, module: 'email', method, path: `/api/email/campaigns/:campaignId${suffix}`, targets: YEAR_TARGETS,
-    allow, mfa: true, ok: 200, deny: 403, fixture, object: { kind: 'campaign', stage },
-    build: ({ obj, target }) => ({
+    allow, mfa: true, ok, deny: 403, fixture, object: { kind: 'campaign', stage },
+    build: ({ obj, target, key }) => ({
       path: `/api/email/campaigns/${obj.campaignId}${suffix}`,
+      headers: method !== 'GET' && keyed ? withKey(key) : {},
       body: method === 'GET' ? undefined : (body ? body(target, obj) : {}),
     }),
     contains,
@@ -705,6 +706,11 @@ export const ROUTE_MATRIX = Object.freeze([
   emailRoute('email.pause', 'POST', '/pause', 'sending', {}),
   emailRoute('email.resume', 'POST', '/resume', 'paused', {}),
   emailRoute('email.cancel', 'POST', '/cancel', 'draft', {}),
+  // Środowisko macierzy wstrzykuje transport (nigdy nie łączy się z siecią) i
+  // adres z EMAIL_PREVIEW_RECIPIENTS, więc dozwolona osoba dostaje 201.
+  emailRoute('email.testSend', 'POST', '/test-send', 'draft', {
+    ok: 201, withKey: true, body: () => ({ recipientEmail: 'fx-preview@rada.example.invalid' }),
+  }),
   {
     // Webhook Brevo: bez sesji i bez Origin; uwierzytelnia wspólny sekret (brak/zły sekret = 401, test niżej).
     id: 'email.webhook', module: 'email', method: 'POST', path: '/api/email/webhooks/brevo', targets: ['-'],
