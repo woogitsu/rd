@@ -48,7 +48,6 @@ small { display: block; font-size: .82rem; }
 .page-heading { margin-bottom: 1rem; }
 .block { padding: 1.25rem 0; border-top: 1px solid var(--line); }
 .detail { border-top: 2px solid var(--red); }
-.detail:focus { outline: none; }
 .detail-title { font-family: Georgia, serif; font-size: 1.5rem; font-weight: 500; }
 .sub { padding: 1.25rem 0; border-top: 1px solid var(--line-soft); }
 .notice { padding: .75rem 1rem; background: var(--muted-bg); border-left: 3px solid var(--red); }
@@ -67,7 +66,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   outline: 3px solid var(--red-dark); outline-offset: 2px;
 }
 
-button { padding: .5rem .9rem; background: var(--bg); border: 1px solid var(--text); border-radius: 0; cursor: pointer; font-weight: 600; }
+button { padding: .5rem .9rem; min-height: 44px; background: var(--bg); border: 1px solid var(--text); border-radius: 0; cursor: pointer; font-weight: 600; }
 button:hover:not(:disabled) { border-color: var(--red-dark); color: var(--red-dark); }
 button.primary { background: var(--red); border-color: var(--red); color: #fff; }
 button.primary:hover:not(:disabled) { background: var(--red-dark); border-color: var(--red-dark); color: #fff; }
@@ -117,4 +116,8 @@ dialog h2 { font-family: Georgia, serif; font-weight: 500; }
   .page-heading .primary { width: 100%; }
   th, td { padding: .45rem .4rem; }
   .nowrap { white-space: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
