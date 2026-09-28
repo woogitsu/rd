@@ -21,6 +21,7 @@ import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvHeader, csvRow } from '../csv.js';
+import { readSnapshot } from '../db-snapshot.js';
 
 export const name = 'ledger-cost-centers';
 
@@ -107,19 +108,18 @@ async function loadEntry(executor, id, { lock = false } = {}) {
 }
 
 async function loadVersions(executor, entryId) {
-  const [versions, items] = await Promise.all([
-    executor.query(
-      `SELECT id, version_no, supersedes_id, reason, created_by, created_at
-         FROM ledger_allocation_versions WHERE ledger_entry_id = $1 ORDER BY version_no`,
-      [entryId],
-    ),
-    executor.query(
-      `SELECT i.version_id, i.event_id, i.class_id, i.amount_cents
-         FROM ledger_allocation_items i JOIN ledger_allocation_versions v ON v.id = i.version_id
-        WHERE v.ledger_entry_id = $1 ORDER BY i.event_id NULLS LAST, i.class_id NULLS LAST`,
-      [entryId],
-    ),
-  ]);
+  // Kolejno, nie Promise.all: w transakcji to jedno połączenie (src/pg/db-snapshot.js).
+  const versions = await executor.query(
+    `SELECT id, version_no, supersedes_id, reason, created_by, created_at
+       FROM ledger_allocation_versions WHERE ledger_entry_id = $1 ORDER BY version_no`,
+    [entryId],
+  );
+  const items = await executor.query(
+    `SELECT i.version_id, i.event_id, i.class_id, i.amount_cents
+       FROM ledger_allocation_items i JOIN ledger_allocation_versions v ON v.id = i.version_id
+      WHERE v.ledger_entry_id = $1 ORDER BY i.event_id NULLS LAST, i.class_id NULLS LAST`,
+    [entryId],
+  );
   return versions.rows.map((version) => ({
     id: version.id,
     versionNo: version.version_no,
@@ -151,10 +151,13 @@ function allocationView(entry, versions) {
 
 async function getAllocations(request, env, entryId, json) {
   const context = await requireFinancial(request, env);
-  const entry = await loadEntry(env.db, entryId);
-  if (!entry) throw new RequestError('ledger_entry_not_found', 404);
-  requireYear(context, entry.school_year_id);
-  return json({ allocation: allocationView(entry, await loadVersions(env.db, entryId)) });
+  const allocation = await readSnapshot(env.db, async (tx) => {
+    const entry = await loadEntry(tx, entryId);
+    if (!entry) throw new RequestError('ledger_entry_not_found', 404);
+    requireYear(context, entry.school_year_id);
+    return allocationView(entry, await loadVersions(tx, entryId));
+  });
+  return json({ allocation });
 }
 
 function parseAllocationInput(data) {
@@ -229,10 +232,10 @@ async function createAllocation(request, env, entryId, json) {
       }
       const eventIds = input.items.map((item) => item.eventId).filter(Boolean);
       const classIds = input.items.map((item) => item.classId).filter(Boolean);
-      const [events, classes] = await Promise.all([
-        tx.query('SELECT id FROM events WHERE id = ANY($1::text[]) AND school_year_id = $2', [eventIds, entry.school_year_id]),
-        tx.query('SELECT id FROM classes WHERE id = ANY($1::text[]) AND school_year_id = $2', [classIds, entry.school_year_id]),
-      ]);
+      const events = await tx.query('SELECT id FROM events WHERE id = ANY($1::text[]) AND school_year_id = $2',
+        [eventIds, entry.school_year_id]);
+      const classes = await tx.query('SELECT id FROM classes WHERE id = ANY($1::text[]) AND school_year_id = $2',
+        [classIds, entry.school_year_id]);
       if (events.rows.length !== eventIds.length || classes.rows.length !== classIds.length) {
         throw new RequestError('invalid_cost_center');
       }
@@ -279,8 +282,7 @@ async function createAllocation(request, env, entryId, json) {
 // netto wpisów roku, więc suma centrów + ogólne = ledger_year_summary.
 async function costCenterReport(executor, schoolYearId, type) {
   const column = type === 'event' ? 'event_id' : 'class_id';
-  const [centers, summary] = await Promise.all([
-    executor.query(
+  const centers = await executor.query(
       type === 'event'
         ? `SELECT c.id, c.title AS name, c.status,
                   COALESCE(sum(a.amount_cents) FILTER (WHERE e.direction = 'income'), 0) AS income_cents,
@@ -305,9 +307,10 @@ async function costCenterReport(executor, schoolYearId, type) {
            HAVING count(a.ledger_entry_id) > 0
             ORDER BY c.name COLLATE "C", c.id COLLATE "C"`,
       [schoolYearId],
-    ),
-    executor.query('SELECT income_cents, expense_cents FROM ledger_year_summary WHERE school_year_id = $1', [schoolYearId]),
-  ]);
+  );
+  const summary = await executor.query(
+    'SELECT income_cents, expense_cents FROM ledger_year_summary WHERE school_year_id = $1', [schoolYearId],
+  );
   if (!summary.rows[0]) throw new RequestError('school_year_not_found', 404);
   const rows = centers.rows.map((row) => {
     const incomeCents = toSafeInteger(row.income_cents);
@@ -351,7 +354,8 @@ async function readCostCenters(request, env, url, json) {
     throw new RequestError('invalid_request');
   }
   await requireFinancial(request, env, schoolYearId);
-  const report = await costCenterReport(env.db, schoolYearId, type);
+  // Jedna migawka: centra i ledger_year_summary z tej samej chwili (suma = bilans roku).
+  const report = await readSnapshot(env.db, (tx) => costCenterReport(tx, schoolYearId, type));
   if (format === 'json') return json({ report });
   const lines = [
     csvHeader(COST_CENTER_CSV_COLUMNS),
@@ -375,11 +379,11 @@ async function readCostCenters(request, env, url, json) {
 
 async function readEventFinance(request, env, eventId, json) {
   const context = await requireFinancial(request, env);
-  const { rows } = await env.db.query('SELECT id, school_year_id, title, status FROM events WHERE id = $1', [eventId]);
-  const event = rows[0];
-  if (!event) throw new RequestError('event_not_found', 404);
-  requireYear(context, event.school_year_id);
-  const entries = await env.db.query(
+  const { event, entries } = await readSnapshot(env.db, async (tx) => {
+    const { rows } = await tx.query('SELECT id, school_year_id, title, status FROM events WHERE id = $1', [eventId]);
+    if (!rows[0]) throw new RequestError('event_not_found', 404);
+    requireYear(context, rows[0].school_year_id);
+    return { event: rows[0], entries: await tx.query(
     `SELECT a.ledger_entry_id, a.version_id, a.amount_cents, e.direction, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on,
             e.description, e.category_id, c.name AS category_name, n.net_amount_cents
        FROM ledger_current_allocations a
@@ -389,7 +393,8 @@ async function readEventFinance(request, env, eventId, json) {
       WHERE a.event_id = $1
       ORDER BY e.occurred_on, e.id`,
     [eventId],
-  );
+    ) };
+  });
   const items = entries.rows.map((row) => ({
     ledgerEntryId: row.ledger_entry_id,
     versionId: row.version_id,
