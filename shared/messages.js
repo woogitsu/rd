@@ -31,6 +31,9 @@ export const MESSAGES = Object.freeze({
   mfa_unavailable: "Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem.",
   mfa_key_missing: "Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
+  // #150 (SR-10, krok w górę): dla operacji krytycznych (np. eksport roczny)
+  // MFA musi być potwierdzone od niedawna, nie tylko kiedyś w tej sesji.
+  mfa_stale: "Ta operacja wymaga świeżego potwierdzenia kodem — podaj kod jeszcze raz.",
   forbidden: "Brak uprawnień do tej operacji w Twoim zakresie.",
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji.",
   invalid_credentials: "Nieprawidłowy adres e-mail lub hasło.",
@@ -218,6 +221,8 @@ export const MESSAGES = Object.freeze({
   no_recipients: "Wysyłka nie ma odbiorców.",
   invalid_send_not_before: "Podaj poprawną datę i godzinę startu wysyłki.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
+  outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
+  not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
 
   // --- Import -----------------------------------------------------------------------------------
   import_disabled: "Import jest wyłączony na tym środowisku.",
@@ -317,6 +322,7 @@ export const MESSAGES = Object.freeze({
   invalid_consent_scope: "Wybierz zakres zgody z listy (strona Rady, druk, media społecznościowe).",
   invalid_consent_valid_until: "Niepoprawna data ważności zgody (RRRR-MM-DD).",
   consent_not_found: "Nie znaleziono zgody o tym odwołaniu.",
+  rate_limited: "Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę.",
   // --- Plik zdjęcia galerii (#96) ----------------------------------------------------
   empty_photo_file: "Plik zdjęcia jest pusty.",
   photo_file_too_large: "Plik zdjęcia przekracza dozwolony rozmiar.",

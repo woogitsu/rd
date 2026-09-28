@@ -36,6 +36,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_campaigns`|`paused_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`resumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`subject`|Opiekun|direct|wolny tekst|temat kampanii e-mail|email_snapshot|tak|nie|
+|`email_outbox_resolutions`|`resolved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_preferences_events`|`email_hash`|Opiekun|pseudonymous|kontakt|preferencje kontaktu wg kategorii (wypisanie jednym kliknięciem)|email_snapshot|nie|nie|
 |`email_preview_sends`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie wysyłki testowej z osobą|nieustalona (D-04)|nie|nie|
 |`email_preview_sends`|`recipient_hash`|Członek Rady|pseudonymous|kontakt|limit wysyłek testowych na adres techniczny Rady|nieustalona (D-04)|nie|nie|
 |`email_suppressions`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
@@ -123,7 +125,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **110**, w tym wolnego tekstu: **26** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **111**, w tym wolnego tekstu: **26** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -332,6 +334,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `body_text` | direct | guardian | nie |
 | `cancelled_at` | none | — | nie |
 | `cancelled_by` | none | — | nie |
+| `category` | none | — | nie |
 | `completed_at` | none | — | nie |
 | `content_hash` | none | — | nie |
 | `created_at` | none | — | nie |
@@ -378,6 +381,30 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `sent_at` | none | — | nie |
 | `state` | none | — | nie |
 | `updated_at` | none | — | nie |
+
+### `email_outbox_resolutions`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `campaign_id` | none | — | nie |
+| `created_at` | none | — | nie |
+| `evidence_code` | none | — | nie |
+| `id` | none | — | nie |
+| `outbox_id` | none | — | nie |
+| `resolution` | none | — | nie |
+| `resolved_by` | pseudonymous | board_member | nie |
+
+### `email_preferences_events`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `action` | none | — | nie |
+| `campaign_id` | none | — | nie |
+| `category` | none | — | nie |
+| `created_at` | none | — | nie |
+| `email_hash` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `source` | none | — | nie |
 
 ### `email_preview_sends`
 
