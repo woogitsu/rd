@@ -13,6 +13,10 @@ import {
   paymentsQuery,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null };
 const byId = (id) => document.getElementById(id);
