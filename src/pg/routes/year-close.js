@@ -87,16 +87,50 @@ function optionalText(value, min, max, code) {
   return text;
 }
 
+// #212 (dopisek do naprawy zakleszczenia): zamknięcie roku wygasza w tej samej
+// transakcji przydziały zarządu/skarbnika zawężone do zamykanego roku
+// (`role_grant_in_school_year`, patrz niżej w `closeYear`). Gdy dwie osoby
+// (albo podwójne kliknięcie) próbują zamknąć ten sam rok, druga prośba może
+// wejść do `authorize()` PO tym, jak pierwsza już w pełni zatwierdziła swoją
+// transakcję — a wtedy własny przydział drugiej osoby (jeśli był zawężony do
+// TEGO roku, jak `board` roku OLD) jest już wygasły i zwykłe sprawdzenie roli
+// rzuca 403 `forbidden`, zamiast dojść do gałęzi „już zamknięte → replayed:
+// true” niżej w `closeYear`. To nie przeplot testowy — kolejność w kodzie
+// (authorize PRZED odczytem stanu zamknięcia) sprawia, że dowolna druga
+// prośba osoby uprawnionej w chwili wysłania traci uprawnienie w trakcie
+// przetwarzania. `wasAuthorizedAtOwnClosure` rozpoznaje DOKŁADNIE ten
+// przypadek (przydział wygasł w tej samej transakcji, która zamknęła TEN
+// rok — `expires_at` i `closed_at` to ten sam `now()` transakcji, patrz
+// docs/YEAR_CLOSE.md), więc traktujemy taką osobę jak nadal uprawnioną i
+// pozwalamy dojść do idempotentnej odpowiedzi (`replayed: true`), zamiast
+// mylącego 403 dla kogoś, kto miał prawo zamknąć rok w chwili żądania.
+async function wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles) {
+  const { rows } = await env.db.query(
+    `SELECT 1 FROM role_grants g
+       JOIN school_year_closures c
+         ON c.school_year_id = $3 AND c.status = 'closed' AND g.expires_at = c.closed_at
+      WHERE g.user_id = $1 AND g.role = ANY($2::text[]) AND g.class_id IS NULL
+        AND g.school_year_id = $3 AND g.revoked_at IS NULL
+      LIMIT 1`,
+    [actorId, roles, schoolYearId],
+  );
+  return rows.length > 0;
+}
+
 // Przydział z zawężeniem do klasy nie daje prawa do zamknięcia całego roku.
 // `requireFreshMfa` (#150, SR-10, krok w górę): wyłącznie samo zamknięcie
 // roku (operacja nieodwracalna) wymaga MFA potwierdzonego od niedawna, nie
 // tylko kiedyś w sesji — sprawdzane PO roli/zakresie (SR-07).
-async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = false } = {}) {
+async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = false, allowExpiredByOwnClosure = false } = {}) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   const yearWide = { ...context, grants: context.grants.filter((grant) => !grant.classId) };
   if (!isAuthorized(yearWide, { roles, schoolYearId, requireMfa: true })) {
-    throw new RequestError('forbidden', 403);
+    const actorId = context.session.user.id;
+    const rescued = allowExpiredByOwnClosure
+      && context.session.mfaVerified
+      && (await wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles));
+    if (!rescued) throw new RequestError('forbidden', 403);
   }
   if (requireFreshMfa) {
     const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
@@ -340,7 +374,9 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
 }
 
 async function closeYear(request, env, schoolYearId, json) {
-  const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES, { requireFreshMfa: true });
+  const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES, {
+    requireFreshMfa: true, allowExpiredByOwnClosure: true,
+  });
   await readJson(request);
   const year = await requireYear(env.db, schoolYearId);
 

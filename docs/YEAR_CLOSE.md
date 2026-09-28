@@ -42,6 +42,8 @@ Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawien
 
 Zamknięcie jest odrzucane, gdy następny rok ma już bilans otwarcia (`next_year_opening_balance_exists`) — trzeba wyjaśnić rozbieżność, a nie nadpisywać. Ponowne zamknięcie zamkniętego roku (przed rozpoczęciem transakcji albo po niej — druga transakcja widzi już `closed` po zwolnieniu advisory locka przez pierwszą) zwraca stan z `replayed: true` bez nowych zapisów, `200`, bez zakleszczenia (#212).
 
+Krok 5 (wygaszenie przydziałów zawężonych do zamykanego roku) ma skutek uboczny przy dwóch równoległych `/close` (#212, dopisek): jeśli osoba B ma rolę `board` zawężoną WŁAŚNIE do zamykanego roku (jak osoba A, zwykle w tej samej kadencji), a osoba A zamknie rok jako pierwsza, przydział B do tego roku jest już wygaszony, zanim żądanie B dotrze do sprawdzenia roli (`authorize()` w `src/pg/routes/year-close.js` biegnie PRZED transakcją, więc kolejność wejścia do samej autoryzacji nie jest chroniona advisory lockiem). Zwykłe sprawdzenie roli zwróciłoby wtedy mylące `403 forbidden` osobie, która miała prawo zamknąć rok w chwili wysłania żądania. `wasAuthorizedAtOwnClosure` rozpoznaje ten dokładny przypadek — przydział wygasł w TEJ SAMEJ transakcji, która zamknęła TEN rok (`role_grants.expires_at = school_year_closures.closed_at`, oba `now()` tej samej transakcji SQL) — i pozwala dojść do zwykłej gałęzi `replayed: true` zamiast rzucać `forbidden`. Nie dotyczy osoby, która nigdy nie miała odpowiedniej roli, ani przydziału wygasłego z innego powodu (rewokacja, wcześniejsze naturalne wygaśnięcie).
+
 ## Zamrożenie
 
 Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe lub zmieniane rekordy przypisane do zamkniętego roku:
