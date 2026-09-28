@@ -57,6 +57,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/payments/:paymentId/assignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | jak wyżej |
 | `POST /api/payments/:paymentId/refunds` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | zwrot jako osobny, niezmienny zapis (#138); powiązanie z księgą o innym netto: 409 `ledger_correction_required` |
 | `POST /api/payments/:paymentId/reassignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | ponowne przypisanie jako osobne zdarzenie zamiast korekty do zera (#138); historia w `payment_reassignments` |
+| `GET /api/payments/:paymentId/allocations` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | części wpłaty, suma przypisana i „nieprzypisana część” (#127); przedstawiciel: 403; nieistniejąca: 404 |
+| `POST /api/payments/:paymentId/allocations` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | podział wyłącznie wpłaty nieprzypisanej, suma części ≤ netto (#127); przedstawiciel: 403 |
+| `POST /api/payments/:paymentId/allocations/:allocationId/reversal` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | cofnięcie części jako nowy zapis z powodem (#127) |
 | `GET /api/public/events` | publiczna | nie | — | tylko opublikowane rewizje, bez danych klas |
 | `GET /api/events?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wydarzenia własnej klasy | nie | 403 | lista przedstawiciela 1A nie zawiera 1B ani wydarzeń ogólnoszkolnych |
 | `POST /api/events` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | |

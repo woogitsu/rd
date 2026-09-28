@@ -101,6 +101,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `guardians` | opiekunowie z tych relacji oraz opiekunowie odnotowani na zebraniach roku |
 | `households` | gospodarstwa uczniów, opiekunów oraz gospodarstwa z wpłat i przypisań roku |
 | `payment_entries`, `payment_corrections`, `payment_assignments` | wpłaty roku, ich korekty i przypisania |
+| `payment_allocations`, `payment_allocation_reversals` | części wpłat podzielonych na gospodarstwa i ich cofnięcia z powodem (0104, #127) |
 | `ledger_*` | kategorie, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku |
 | `events`, `event_revisions` | wydarzenia roku i ich rewizje |
 | `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102) |

@@ -22,7 +22,7 @@ Zakres: issue #7 (uzgodnienie księgi z wyciągiem bankowym) i przygotowanie rap
 
 Skutki dla danych: migracja wyłącznie dodaje tabele, funkcje, triggery i indeksy; nie zmienia istniejących wierszy księgi, wpłat ani uchwał. Wycofanie na pustej bazie = usunięcie tych obiektów; na bazie z danymi — tylko po kopii zapasowej i decyzji o retencji (D-04).
 
-Ograniczenia: od #105 jedno aktywne powiązanie wpłaty/wpisu w całym roku (nie tylko w uzgodnieniu). Brak dopasowań wiele-do-jednego (np. jeden przelew zbiorczy za kilka wpłat) i dopasowań z różną kwotą — różnicę opisuje się w wyjaśnieniu. Od 0107 szkic bez aktywnych dopasowań można jawnie porzucić (status `abandoned`, sekcja „Porzucenie szkicu” niżej); szkic ani jego pozycje nie są usuwane.
+Ograniczenia: od #105 jedno aktywne powiązanie wpłaty/wpisu w całym roku (nie tylko w uzgodnieniu). Brak dopasowań wiele-do-jednego (np. jeden przelew zbiorczy za kilka wpłat) i dopasowań z różną kwotą — różnicę opisuje się w wyjaśnieniu. Przelew zbiorczy kilku rodzin można zapisać jako jedną wpłatę nieprzypisaną i podzielić ją na gospodarstwa (#127, `docs/PAYMENTS.md`) — wtedy pozycja wyciągu łączy się z nią 1:1. Od 0107 szkic bez aktywnych dopasowań można jawnie porzucić (status `abandoned`, sekcja „Porzucenie szkicu” niżej); szkic ani jego pozycje nie są usuwane.
 
 ## Tytuł przelewu i dane osobowe
 

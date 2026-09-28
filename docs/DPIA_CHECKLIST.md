@@ -58,6 +58,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 |---|---|
 | `payment_entries.reference` | tytuł przelewu z wyciągu, często imię i nazwisko dziecka |
 | `payment_corrections.reason` | opis okoliczności rodzinnych przy zwrocie |
+| `payment_allocation_reversals.reason` | powód cofnięcia części wpłaty, może opisywać rodzinę lub dziecko (#127) |
 | `ledger_entries.description` | nazwisko wystawcy faktury / osoby rozliczanej |
 | `ledger_corrections.reason` | jw. |
 | `ledger_opening_balance_adjustments.reason` | jw. |

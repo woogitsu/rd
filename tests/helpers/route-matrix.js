@@ -426,6 +426,31 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { householdId: 'hh-2', reason: 'Błędne przypisanie, korekta syntetyczna' },
     }),
   },
+  // #127: podział wpłaty nieprzypisanej na gospodarstwa; cofnięcie części jako nowy zapis.
+  {
+    id: 'payments.allocations.list', module: 'payments', method: 'GET', path: '/api/payments/:paymentId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'static',
+    object: { kind: 'payment', stage: 'recorded' },
+    build: ({ obj }) => ({ path: `/api/payments/${obj.paymentId}/allocations` }),
+  },
+  {
+    id: 'payments.allocations.create', module: 'payments', method: 'POST', path: '/api/payments/:paymentId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'payment', stage: 'unmatched' },
+    build: ({ obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/allocations`, headers: withKey(key), body: { householdId: 'hh-1', amountCents: 100 },
+    }),
+  },
+  {
+    id: 'payments.allocations.reversal', module: 'payments', method: 'POST',
+    path: '/api/payments/:paymentId/allocations/:allocationId/reversal',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'payment', stage: 'allocated' },
+    build: ({ obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/allocations/${obj.allocationId}/reversal`, headers: withKey(key),
+      body: { reason: 'Błędna część, korekta syntetyczna' },
+    }),
+  },
 
   // ---------- events (#12) ----------
   {
