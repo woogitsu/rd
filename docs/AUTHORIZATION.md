@@ -105,7 +105,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/snapshot` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/email/campaigns/:campaignId/preview` | jak wyżej | tak | 403 | bez wysyłki; SR-01 |
 | `GET /api/email/campaigns/:campaignId/recipients` | jak wyżej | tak | 403 | odczyt w dzienniku; SR-01 |
-| `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak | 403 | skarbnik: 403; SR-01 |
+| `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak, krok w górę: ≤15 min (#150) | 403 | skarbnik: 403; SR-01; MFA starsze niż 15 min → `403 mfa_stale` |
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
 | `POST /api/email/campaigns/:campaignId/pause` | zarząd, skarbnik — jak wyżej | tak | 403 | wstrzymanie wysyłki (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/resume` | zarząd, skarbnik — jak wyżej | tak | 403 | wznowienie (#130); SR-01 |
@@ -130,10 +130,10 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/users/:userId/disable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/enable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/revoke-sessions` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/users/:userId/password-reset` | wyłącznie admin | tak | 403 | jednorazowy token resetu hasła, zwracany raz; nowy unieważnia poprzedni |
-| `POST /api/admin/users/:userId/mfa-reset` | wyłącznie admin (nie własne konto) | tak | 403 | wymaga `confirm` = id konta; wyłącza czynniki i kody odzyskiwania, wylogowuje konto |
+| `POST /api/admin/users/:userId/password-reset` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | jednorazowy token resetu hasła, zwracany raz; nowy unieważnia poprzedni; MFA starsze niż 15 min → `403 mfa_stale` |
+| `POST /api/admin/users/:userId/mfa-reset` | wyłącznie admin (nie własne konto) | tak, krok w górę: ≤15 min (#150) | 403 | wymaga `confirm` = id konta; wyłącza czynniki i kody odzyskiwania, wylogowuje konto; MFA starsze niż 15 min → `403 mfa_stale` |
 | `GET /api/admin/grants` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/grants` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/grants` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | nadanie roli; MFA starsze niż 15 min → `403 mfa_stale` |
 | `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years/:schoolYearId/expire-grants` | wyłącznie admin | tak | 403 | macierz: zakończony rok syntetyczny |
 | `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
@@ -181,7 +181,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/year-close/:schoolYearId/start` | zarząd — przydział bez klasy, rok 1 | tak | 403 | macierz: zamknięcie rozpoczęte wcześniej, powtórzenie 200 |
 | `POST /api/year-close/:schoolYearId/checklist/:item` | zarząd, skarbnik — jak wyżej | tak | 403 | |
 | `GET /api/year-close/:schoolYearId/handover` | zarząd, skarbnik — jak wyżej | tak | 403 | Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195) |
-| `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak | 403 | osobna baza testowa; wygasza przydziały roku |
+| `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak, krok w górę: ≤15 min (#150) | 403 | osobna baza testowa; wygasza przydziały roku; MFA starsze niż 15 min → `403 mfa_stale` |
 
 Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady. W macierzy trasy publiczne dostają poprawne dane uwierzytelniające (konto z hasłem, świeży token zaproszenia albo resetu) niezależnie od cookie aktora — odpowiedź zależy wyłącznie od hasła lub tokenu; błędne dane, limity prób i CSRF logowania sprawdza `tests/pg-login.test.js`. Trasy administratora `password-reset` i `mfa-reset` są częścią modułu `admin` (wyłącznie admin z MFA).
 

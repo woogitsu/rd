@@ -416,6 +416,52 @@ test('password reset and MFA reset: single valid token, self-reset blocked, disa
   }
 });
 
+// #150 (SR-10, krok w górę): reset hasła, reset MFA i nadanie roli — operacje
+// nieodwracalne na cudzym koncie — wymagają MFA potwierdzonego od niedawna
+// (15 min), nie tylko kiedyś w bieżącej sesji. Sprawdzane PO roli admina
+// (SR-07): konto bez dostępu w ogóle dostaje zwykłe `forbidden` (patrz test
+// wyżej), niezależnie od wieku MFA.
+test('password reset, MFA reset and role grant require FRESH MFA (step-up)', async () => {
+  const { db, env } = await setup();
+  try {
+    const stale = await seedUserSession(db, { userId: 'u-admin-stale', roles: [{ role: 'admin' }], mfa: true });
+    await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-admin-stale'");
+
+    const staleReset = await post(env, '/api/admin/users/u-target/password-reset', stale, {});
+    assert.equal(staleReset.status, 403);
+    assert.equal(staleReset.data.error, 'mfa_stale');
+
+    const staleMfaReset = await post(env, '/api/admin/users/u-target/mfa-reset', stale, { confirm: 'u-target' });
+    assert.equal(staleMfaReset.status, 403);
+    assert.equal(staleMfaReset.data.error, 'mfa_stale');
+
+    const staleGrant = await post(env, '/api/admin/grants', stale, { userId: 'u-target', role: 'board' });
+    assert.equal(staleGrant.status, 403);
+    assert.equal(staleGrant.data.error, 'mfa_stale');
+
+    // Trasy poza zakresem #150 część 2 (lista, wyłączenie/włączenie konta,
+    // cofnięcie sesji, cofnięcie przydziału) nadal działają z MFA "kiedyś w sesji".
+    await seedUser(db, { userId: 'u-other-target' });
+    assert.equal((await call(env, '/api/admin/users', { cookie: stale })).status, 200);
+    assert.equal((await post(env, '/api/admin/users/u-other-target/disable', stale, {})).status, 200);
+
+    assert.equal(
+      (await db.query(
+        "SELECT count(*)::int AS n FROM audit_events WHERE action IN ('auth.password_reset_issued', 'mfa.reset', 'role_grant.created')",
+      )).rows[0].n,
+      0,
+      'odmowa mfa_stale nic nie zapisuje',
+    );
+
+    // Po ponownym potwierdzeniu kodu (mfa_verified_at znów świeże) żądanie przechodzi.
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-admin-stale'");
+    assert.equal((await post(env, '/api/admin/users/u-target/password-reset', stale, {})).status, 201);
+    assert.equal((await post(env, '/api/admin/grants', stale, { userId: 'u-target', role: 'board' })).status, 201);
+  } finally {
+    await db.close();
+  }
+});
+
 test('reference data lists years with finished flag and classes', async () => {
   const { db, env, admin } = await setup();
   try {

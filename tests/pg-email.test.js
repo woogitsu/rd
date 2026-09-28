@@ -281,6 +281,34 @@ test('no send before approval; author and snapshot builder cannot self-approve; 
   } finally { await t.close(); }
 });
 
+// #150 (SR-10, krok w górę): zatwierdzenie kampanii uruchamia rzeczywistą
+// wysyłkę do rodzin — MFA musi być potwierdzone od niedawna (15 min), nie
+// tylko kiedyś w sesji. Sprawdzane PO roli/zakresie (SR-07, campaignFor).
+test('campaign approval requires FRESH MFA (step-up): stale confirmation is 403 mfa_stale', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await createDraft(t);
+    await snapshot(t, campaign.id);
+    await t.db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-bd'");
+
+    const preview = (await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).body;
+    const stale = await t.call(t.board, `/api/email/campaigns/${campaign.id}/approve`, {
+      method: 'POST', body: { contentHash: preview.contentHash, recipientsHash: preview.recipientsHash },
+    });
+    assert.deepEqual(stale, { status: 403, body: { error: 'mfa_stale' } });
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM email_campaigns WHERE id = $1 AND status = 'approved'", [campaign.id]), 0);
+
+    // Podgląd (bez skutku dla stanu) nadal działa z MFA sprzed 20 minut.
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).status, 200);
+
+    await t.db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-bd'");
+    const ok = await approve(t, campaign.id, t.board);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.campaign.status, 'approved');
+  } finally { await t.close(); }
+});
+
 test('any change after approval invalidates it (content or recipient snapshot)', async () => {
   const t = await setup();
   try {
