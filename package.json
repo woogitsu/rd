@@ -57,7 +57,9 @@
     "dev:reconciliation": "vite reconciliation",
     "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir",
     "dev:year-close": "vite year-close",
-    "build:year-close": "vite build year-close --outDir ../dist/year-close --base ./ --emptyOutDir"
+    "build:year-close": "vite build year-close --outDir ../dist/year-close --base ./ --emptyOutDir",
+    "pretest:e2e": "npm run build",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "fflate": "0.8.3",
@@ -68,6 +70,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
+    "@playwright/test": "1.56.1",
     "vite": "^8.3.1",
     "wrangler": "^4.40.0"
   }

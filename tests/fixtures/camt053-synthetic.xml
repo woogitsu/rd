@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>SYNTH-1</MsgId><CreDtTm>2026-09-30T18:00:00</CreDtTm></GrpHdr>
+    <Stmt>
+      <Id>STMT-1</Id><ElctrncSeqNb>1</ElctrncSeqNb>
+      <Acct><Id><IBAN>BE68539007547034</IBAN></Id><Ccy>EUR</Ccy></Acct>
+      <Bal><Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">1000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2026-09-01</Dt></Dt></Bal>
+      <Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">1037.50</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2026-09-30</Dt></Dt></Bal>
+      <Ntry>
+        <NtryRef>N-SYNT-TX-0001</NtryRef>
+        <Amt Ccy="EUR">25.00</Amt><CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-09-14</Dt></BookgDt><ValDt><Dt>2026-09-14</Dt></ValDt>
+        <AcctSvcrRef>SYNT-TX-0001</AcctSvcrRef>
+        <NtryDtls><TxDtls>
+          <RltdPties><Dbtr><Nm>Kontrahent Testowy</Nm></Dbtr><DbtrAcct><Id><IBAN>BE71096123456769</IBAN></Id></DbtrAcct></RltdPties>
+          <RmtInf><Strd><CdtrRefInf><Ref>+++090/9337/55493+++</Ref></CdtrRefInf></Strd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>N-SYNT-TX-0002</NtryRef>
+        <Amt Ccy="EUR">25.00</Amt><CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-09-14</Dt></BookgDt><ValDt><Dt>2026-09-14</Dt></ValDt>
+        <AcctSvcrRef>SYNT-TX-0002</AcctSvcrRef>
+        <NtryDtls><TxDtls>
+          <RltdPties><Dbtr><Nm>Kontrahent Testowy</Nm></Dbtr><DbtrAcct><Id><IBAN>BE71096123456769</IBAN></Id></DbtrAcct></RltdPties>
+          <RmtInf><Ustrd>Skladka Rodzina Testowa &amp; klasa 1A</Ustrd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>N-SYNT-TX-0003</NtryRef>
+        <Amt Ccy="EUR">12.50</Amt><CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-09-20</Dt></BookgDt><ValDt><Dt>2026-09-20</Dt></ValDt>
+        <AcctSvcrRef>SYNT-TX-0003</AcctSvcrRef>
+        <NtryDtls><TxDtls>
+          <RltdPties><Dbtr><Nm>Kontrahent Testowy</Nm></Dbtr><DbtrAcct><Id><IBAN>BE71096123456769</IBAN></Id></DbtrAcct></RltdPties>
+          <RmtInf><Ustrd>Zakup materialow testowych</Ustrd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>N-SYNT-TX-0004</NtryRef>
+        <Amt Ccy="EUR">9.00</Amt><CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>PDNG</Cd></Sts>
+        <BookgDt><Dt>2026-09-29</Dt></BookgDt><ValDt><Dt>2026-09-29</Dt></ValDt>
+        <AcctSvcrRef>SYNT-TX-0004</AcctSvcrRef>
+        <NtryDtls><TxDtls>
+          <RltdPties><Dbtr><Nm>Kontrahent Testowy</Nm></Dbtr><DbtrAcct><Id><IBAN>BE71096123456769</IBAN></Id></DbtrAcct></RltdPties>
+          <RmtInf><Ustrd>Oczekujaca</Ustrd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>
