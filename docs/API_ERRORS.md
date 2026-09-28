@@ -120,13 +120,16 @@ wpisów).
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
+| `invalid_domain` | Wybierz obszar dziennika z listy. | Nie — popraw dane. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
 | `invalid_email` | Podaj poprawny adres e-mail. | Nie — popraw dane żądania. |
 | `invalid_ended_on` | Podaj poprawną datę odejścia (RRRR-MM-DD). | Nie — popraw dane. |
+| `invalid_entity_type` | Nieznany rodzaj obiektu w dzienniku. | Nie — popraw dane. |
 | `invalid_event_id` | Niepoprawny identyfikator wydarzenia. | Nie — popraw dane żądania. |
 | `invalid_expires_at` | Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata). | Nie — popraw dane żądania. |
 | `invalid_explicit_license` | Niepoprawna licencja zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_format` | Wybierz format eksportu z listy (CSV albo JSON). | Nie — popraw dane żądania. |
+| `invalid_from` | Podaj poprawną datę początkową (RRRR-MM-DD). | Nie — popraw dane. |
 | `invalid_id` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
 | `invalid_idempotency_key` | Niepoprawny identyfikator operacji. Zamknij formularz i otwórz go ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `invalid_identifier` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
@@ -176,6 +179,7 @@ wpisów).
 | `invalid_status` | Niepoprawny status. | Nie — popraw dane żądania. |
 | `invalid_taken_on` | Niepoprawna data wykonania zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_title` | Tytuł musi mieć od 3 do 200 znaków. | Nie — popraw dane żądania. |
+| `invalid_to` | Podaj poprawną datę końcową (RRRR-MM-DD). | Nie — popraw dane. |
 | `invalid_token` | Kod jest nieważny, wygasł albo został już użyty. | Nie — popraw dane żądania. |
 | `invalid_transition` | Tego kroku nie można wykonać w obecnym stanie. Odśwież widok. | Nie — popraw dane żądania. |
 | `invalid_ttl` | Ważność zaproszenia: od 1 do 336 godzin. | Nie — popraw dane żądania. |

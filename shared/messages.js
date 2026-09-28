@@ -79,6 +79,11 @@ export const MESSAGES = Object.freeze({
   invalid_signature: "Niepoprawny podpis żądania.",
   webhook_not_configured: "Powiadomienia zwrotne nie są skonfigurowane na tym środowisku.",
 
+  invalid_domain: "Wybierz obszar dziennika z listy.",
+  invalid_entity_type: "Nieznany rodzaj obiektu w dzienniku.",
+  invalid_from: "Podaj poprawną datę początkową (RRRR-MM-DD).",
+  invalid_to: "Podaj poprawną datę końcową (RRRR-MM-DD).",
+
   // --- Rok szkolny i klasy ---------------------------------------------------------
   invalid_school_year: "Niepoprawny identyfikator roku szkolnego.",
   invalid_school_year_id: "Niepoprawny identyfikator roku szkolnego.",
