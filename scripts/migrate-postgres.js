@@ -13,7 +13,8 @@ if (!process.env.DATABASE_URL) {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   try {
     await client.connect();
-    const completed = await applyMigrations(client, await loadMigrations(directory));
+    const allowOutOfOrder = process.argv.includes('--allow-out-of-order');
+    const completed = await applyMigrations(client, await loadMigrations(directory), { allowOutOfOrder });
     console.log(completed.length ? `Applied migrations: ${completed.join(', ')}` : 'No pending migrations.');
   } catch (error) {
     console.error(`Migration failed: ${error.message}`);

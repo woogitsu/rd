@@ -17,7 +17,8 @@ monitoringu z #16. Kontekst: [plan migracji](RAILWAY_MIGRATION.md),
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
 | Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
 | Pierwszy administrator | `npm run auth:bootstrap-admin` (`scripts/bootstrap-admin.js`, `src/pg/bootstrap-admin.js`) | jednorazowe zaproszenie do roli `admin` na pustej bazie (sekcja „Pierwszy administrator (bootstrap)”) |
-| CI | `.github/workflows/ci.yml` | testy, buildy, smoke, lokalne migracje D1 (stara ścieżka pozostaje) |
+| Integralność migracji | `.github/workflows/ci.yml` (job `migrations-order`), `scripts/check-migrations-order.js`, `scripts/generate-migrations-manifest.js` | manifest sum kontrolnych aktualny; PR nie zmienia scalonego pliku migracji ani nie dokłada numeru ≤ maksimum na `main` (sekcja „Numeracja migracji…” w [postgres/README.md](../postgres/README.md)) |
+| CI | `.github/workflows/ci.yml` | testy, buildy, smoke, integralność migracji, lokalne migracje D1 (stara ścieżka pozostaje) |
 
 `railway.json` nie zawiera zmiennych ani nadpisań środowisk; zmienne ustawia
 się wyłącznie w usługach Railway. Migracje PostgreSQL **nie** są uruchamiane

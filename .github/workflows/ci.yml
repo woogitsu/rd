@@ -93,10 +93,32 @@ jobs:
       - run: npm run smoke
       - run: npm run db:migrate:local
 
+  # Integralność i kolejność migracji PostgreSQL (issue #79): manifest sum
+  # kontrolnych aktualny, a PR ani nie zmienia scalonego pliku migracji, ani
+  # nie dokłada nowego z numerem <= maksimum na gałęzi bazowej. Kontrola
+  # numeracji potrzebuje historii gałęzi bazowej — tylko dla pull_request.
+  migrations-order:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run migrations:manifest -- --check
+      - if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1000
+          node scripts/check-migrations-order.js --base origin/${{ github.event.pull_request.base.ref }}
+
   # Jedyny wymagany check: oblewa, gdy którykolwiek z powyższych jobów nie
   # zakończył się sukcesem (włącznie z anulowaniem albo pominięciem).
   ci-ok:
-    needs: [test, build, smoke]
+    needs: [test, build, smoke, migrations-order]
     if: always()
     runs-on: self-hosted
     timeout-minutes: 5
@@ -106,9 +128,11 @@ jobs:
           echo "test: ${{ needs.test.result }}"
           echo "build: ${{ needs.build.result }}"
           echo "smoke: ${{ needs.smoke.result }}"
+          echo "migrations-order: ${{ needs.migrations-order.result }}"
           if [ "${{ needs.test.result }}" != "success" ] ||
              [ "${{ needs.build.result }}" != "success" ] ||
-             [ "${{ needs.smoke.result }}" != "success" ]; then
+             [ "${{ needs.smoke.result }}" != "success" ] ||
+             [ "${{ needs.migrations-order.result }}" != "success" ]; then
             echo "Co najmniej jeden wymagany job nie zakończył się sukcesem." >&2
             exit 1
           fi

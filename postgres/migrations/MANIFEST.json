@@ -1,0 +1,98 @@
+[
+  {
+    "name": "0001_core.sql",
+    "sha256": "99a5d67d5c51d1ed67ffe43b3155baca899b327bd348f918c51f90e0181d984d"
+  },
+  {
+    "name": "0002_payments.sql",
+    "sha256": "00239ba88d085bc926743e3edd467b46f52eee21064070dddaaa7a72e38b13b0"
+  },
+  {
+    "name": "0003_ledger.sql",
+    "sha256": "f7f77280d563ca9a19a5afef7db5cb948344e8d55355d013082d7a4577b2bc75"
+  },
+  {
+    "name": "0004_auth_access.sql",
+    "sha256": "793f107b935b91f51b057b938d80a3c877d073c2ce65a670c958bfdc49bb89c7"
+  },
+  {
+    "name": "0005_import.sql",
+    "sha256": "c9cc00076af71c082db8c183910befabb4cc600d6472b0c366feae0903a7cc2e"
+  },
+  {
+    "name": "0006_documents.sql",
+    "sha256": "576969371fb23358dae6055b8ba7c8ad616fddb512ddf44313823fe4e969ded2"
+  },
+  {
+    "name": "0007_email.sql",
+    "sha256": "a35304de5dfaeab8216694159fe92bdcae8f3522c957975de7b3ddd6419a761b"
+  },
+  {
+    "name": "0008_events.sql",
+    "sha256": "8a8da1aba739297e6743b909b73971558de7ec2528bee81e1c607e2d43422f1a"
+  },
+  {
+    "name": "0009_meetings.sql",
+    "sha256": "f7a481cc53fd3cd936a7608205f86b0d5e90cd6ae94d2c2eb71a38d5a18628f7"
+  },
+  {
+    "name": "0013_mfa.sql",
+    "sha256": "6cb717c6f23e8c3c8df68921f029114da46a73fbddb96807186895b532b114da"
+  },
+  {
+    "name": "0014_households.sql",
+    "sha256": "1958bfc1dc9d1c826fc1ee261799d72107d0142c6996dbf547db60826e51bdf4"
+  },
+  {
+    "name": "0015_reconciliation.sql",
+    "sha256": "faa902e4057652a4fdf9a5308fa7d450c3004133a6e9fdc8d38426662c33e473"
+  },
+  {
+    "name": "0016_exports.sql",
+    "sha256": "6c4d09facd8e2814af3f57c9ee3eb332f58ae3abbad97ae3829edaa5788dc04a"
+  },
+  {
+    "name": "0017_year_close.sql",
+    "sha256": "07bb7393c2ecc040cfc80ec4337cb105c3a6537125a0aa22ca96e4b6c8cc4647"
+  },
+  {
+    "name": "0018_news.sql",
+    "sha256": "fc54265a804c60738c59e757753d59b789ddf6863f98d7ae40dc9baf81e519d4"
+  },
+  {
+    "name": "0020_password_login.sql",
+    "sha256": "112f4a9c616db65af37d814972e53aa6acb67732109ee8598b76ba0c85c1b49e"
+  },
+  {
+    "name": "0021_meetings_integrity.sql",
+    "sha256": "7cd8d33d70ce9ff387bfa5c10d4f62dc73372603582b6baa92511deeec7a8c82"
+  },
+  {
+    "name": "0022_role_grant_class_year.sql",
+    "sha256": "9976db5a9fba447eb6455fae0a3ee0a99453618cff6b01f2a4bae735b276334d"
+  },
+  {
+    "name": "0023_student_primary_household.sql",
+    "sha256": "0a080a2d7f5d26bf592c4e953af0ffc9cf28abb5e8fd4e0e883bc8ab0e883074"
+  },
+  {
+    "name": "0024_reconciliation_match_integrity.sql",
+    "sha256": "010f5a56490b8c753d7a08ebae65388b6fa4667a324a22c9010dc9f34a29fc46"
+  },
+  {
+    "name": "0025_email_send_confirmation.sql",
+    "sha256": "2136f8def1d2b9d97e585718cfe9b9f2888db8d7f8ea1463f947799d69b24658"
+  },
+  {
+    "name": "0026_student_guardian_history.sql",
+    "sha256": "4b0b5f0e0d54910730be2273f9f4cec3c56a42e098ccc20fec9da42eced567a5"
+  },
+  {
+    "name": "0027_entry_date_within_school_year.sql",
+    "sha256": "363af7ac6e0c7a47e5f94aeae4b6b148eea4ed7fa7ba920353efab4928cec733"
+  },
+  {
+    "name": "0032_document_uploads.sql",
+    "sha256": "3f0acdd347c2729312f55894c7cb3523e649eabd18cc0bd6a7560f9dba530791"
+  }
+]

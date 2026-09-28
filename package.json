@@ -25,6 +25,8 @@
     "dev:print": "vite print",
     "build:print": "vite build print --outDir ../dist/print --base ./ --emptyOutDir",
     "db:migrate:postgres": "node scripts/migrate-postgres.js",
+    "migrations:manifest": "node scripts/generate-migrations-manifest.js",
+    "migrations:check-order": "node scripts/check-migrations-order.js",
     "db:snapshot:d1": "node scripts/create-d1-snapshot.js",
     "db:restore:postgres": "node scripts/restore-postgres-snapshot.js",
     "storage:smoke": "node scripts/storage-smoke.js",
