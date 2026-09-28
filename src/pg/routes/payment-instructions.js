@@ -7,9 +7,12 @@
 // Rola zatwierdzająca (D-08) nie jest jeszcze zdecydowana przez zarząd/szkołę:
 // wariant zachowawczy — wyłącznie admin i zarząd (BEZ skarbnika, żeby zmiana
 // rachunku wymagała czterech oczu poza księgowością bieżącą; do rewizji po D-08).
-// Odczyt: te same role co wpłaty (admin/board/treasurer), MFA wymagane. Widoczność
-// dla przedstawiciela klasy (do druku kartek własnej klasy) to integracja z
-// print.js poza zakresem tego PR — dziś przedstawiciel dostaje 403.
+// Odczyt: te same role co wpłaty (admin/board/treasurer), MFA wymagane; ta trasa
+// nadal zwraca przedstawicielowi klasy 403. Widoczność dla przedstawiciela (do
+// druku kartek własnej klasy, bez MFA) jest zrealizowana osobno w
+// src/pg/routes/print.js (#92 część 2) — GET /api/print/cards czyta
+// payment_instructions bezpośrednio, bo to rachunek Rady sam w sobie, a nie
+// dana finansowa rodziny; edycja/zatwierdzanie zostaje wyłącznie tutaj.
 //
 // IBAN/BIC NIGDY nie trafiają do metadanych zdarzenia audytu (assertNoPii łapie
 // klucz "iban", ale nie "bic" — pilnujemy tego tutaj ręcznie też dla BIC).
