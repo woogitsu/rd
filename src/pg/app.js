@@ -39,6 +39,7 @@ import * as yearCloseRoutes from './routes/year-close.js';
 import * as mfaRoutes from './routes/mfa.js';
 import * as loginRoutes from './routes/login.js';
 import * as representativeRoutes from './routes/representative.js';
+import * as privacyNoticeRoutes from './routes/privacy-notice.js';
 import { isMfaGateExempt, mfaGate } from './mfa-policy.js';
 
 export const ROUTES = [
@@ -61,6 +62,7 @@ export const ROUTES = [
   mfaRoutes,
   loginRoutes, // #3: logowanie hasłem, zaproszenia, zmiana i reset hasła
   representativeRoutes, // #118: pulpit przedstawiciela
+  privacyNoticeRoutes, // #145: informacja o przetwarzaniu danych (D-06)
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 

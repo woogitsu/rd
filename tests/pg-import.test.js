@@ -11,12 +11,30 @@ import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.
 const YEAR = 'y-2026';
 const HEADER = 'ID ucznia;Imię ucznia;Nazwisko ucznia;Klasa;ID rodziny;Opiekun 1;E-mail opiekuna 1;Opiekun 2;E-mail opiekuna 2';
 
+// #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu danych.
+// Wstawiana bezpośrednio (poza API) jako naturalny stan tła dla testów, które
+// nie dotyczą tej bramki; test samej bramki (poniżej) używa świeżej bazy bez niej.
+async function seedPublishedPrivacyNotice(db, { id = 'pn-test', createdBy = 'u-privacy-author' } = {}) {
+  await db.query(
+    `INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+    [createdBy, `${createdBy}@example.invalid`, 'Test Autor'],
+  );
+  await db.query(
+    `INSERT INTO privacy_notices (id, body_text, content_hash, decision_ref, status, created_by, approved_by, approved_at, published_by, published_at)
+     VALUES ($1, 'Testowa informacja o przetwarzaniu danych.', repeat('a', 64), 'D-06/test', 'published',
+             $2, 'u-admin', now(), 'u-admin', now())`,
+    [id, createdBy],
+  );
+  return id;
+}
+
 async function withDb(fn) {
   const db = await createTestDb();
   try {
     await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
     await seedClass(db, { id: 'c-2b', schoolYearId: YEAR, name: '2B' });
     const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
+    await seedPublishedPrivacyNotice(db);
     return await fn(db, { db }, admin);
   } finally { await db.close(); }
 }
@@ -362,6 +380,43 @@ test('unknown import subpaths fall through and wrong methods are rejected', asyn
   assert.equal((await handler(request('/api/import/nope', { cookie: admin }), env)).status, 404);
   assert.equal((await handler(request('/api/import/preview', { cookie: admin }), env)).status, 405);
 }));
+
+// --- #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu danych ---
+
+test('#145 commit without a published privacy notice is refused; preview is not blocked', async () => {
+  const db = await createTestDb();
+  try {
+    await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
+    const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
+    const env = { db };
+    const payload = payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;Jan Testowy;jan@example.invalid;;'));
+    const p = await preview(env, admin, payload);
+    assert.equal(p.status, 200, 'podgląd nie zapisuje niczego i nie jest blokowany przez bramkę');
+    const c = await commit(env, admin, payload, p.body, 'key-privacy-0001');
+    assert.equal(c.status, 409);
+    assert.deepEqual(c.body, { error: 'privacy_notice_missing' });
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM import_batches')).rows[0].n, 0);
+
+    // Draft/nieopublikowana wersja nadal blokuje.
+    await db.query(
+      `INSERT INTO privacy_notices (id, body_text, content_hash, decision_ref, status, created_by)
+       VALUES ('pn-draft', 'Szkic.', repeat('b', 64), 'D-06/szkic', 'draft', 'u-admin')`,
+    );
+    const stillMissing = await commit(env, admin, payload, p.body, 'key-privacy-0001');
+    assert.deepEqual(stillMissing.body, { error: 'privacy_notice_missing' });
+
+    // Publikacja odblokowuje; batch zapisuje, która wersja obowiązywała.
+    const noticeId = await seedPublishedPrivacyNotice(db, { id: 'pn-published' });
+    const ok = await commit(env, admin, payload, p.body, 'key-privacy-0001');
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+    assert.equal(
+      (await db.query('SELECT privacy_notice_id FROM import_batches WHERE id = $1', [ok.body.batchId])).rows[0].privacy_notice_id,
+      noticeId,
+    );
+  } finally {
+    await db.close();
+  }
+});
 
 // --- #98: dopasowanie opiekuna, przedrostki nazwisk, raport „brak w pliku" ---
 

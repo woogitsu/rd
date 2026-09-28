@@ -513,6 +513,15 @@ async function commit(env, actorId, payload, idempotencyKey) {
     const same = previous.rows.find((row) => row.fingerprint === fingerprint);
     if (same) return { status: 200, body: batchResult(same, true) };
 
+    // #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu
+    // danych. Sprawdzane dopiero tutaj (nie w preview) — podgląd nie zapisuje
+    // niczego i nie powinien blokować pracy nad mapowaniem przed publikacją.
+    const { rows: noticeRows } = await tx.query(
+      "SELECT id FROM privacy_notices WHERE status = 'published' ORDER BY version DESC LIMIT 1",
+    );
+    if (!noticeRows[0]) throw new ImportError(409, 'privacy_notice_missing');
+    const privacyNoticeId = noticeRows[0].id;
+
     if (plan.planDigest !== payload.planDigest) throw new ImportError(409, 'preview_stale');
     if ((plan.counts.rowsConflict || plan.counts.rowsSkipped) && !payload.skipConflicts) {
       throw new ImportError(422, 'import_has_conflicts');
@@ -522,12 +531,14 @@ async function commit(env, actorId, payload, idempotencyKey) {
     const { rows } = await tx.query(
       `INSERT INTO import_batches (id, actor_id, school_year_id, fingerprint, idempotency_key, plan_digest,
          rows_total, rows_added, rows_updated, rows_unchanged, rows_conflict, rows_skipped,
-         households_created, guardians_created, students_created, enrollments_created, links_created)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         households_created, guardians_created, students_created, enrollments_created, links_created,
+         privacy_notice_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING *`,
       [batchId, actorId, payload.schoolYearId, fingerprint, idempotencyKey, plan.planDigest,
         c.rowsTotal, c.rowsAdded, c.rowsUpdated, c.rowsUnchanged, c.rowsConflict, c.rowsSkipped,
-        c.householdsCreated, c.guardiansCreated, c.studentsCreated, c.enrollmentsCreated, c.linksCreated],
+        c.householdsCreated, c.guardiansCreated, c.studentsCreated, c.enrollmentsCreated, c.linksCreated,
+        privacyNoticeId],
     );
     await bulkInsert(tx, batchId, plan.inserts);
     // Audyt: aktor, rok i liczniki. Bez imion, nazwisk, adresów i identyfikatorów ze źródła.
