@@ -38,7 +38,7 @@ Wszystkie zapisy wymagają sesji, MFA, zgodnego `Origin` i — poza zatwierdzeni
 | --- | --- |
 | `GET /api/reconciliations?schoolYearId=` | lista uzgodnień roku |
 | `POST /api/reconciliations` | szkic: `schoolYearId`, `statementDate`, `statementBalanceCents`, `notes?` |
-| `GET /api/reconciliations/{id}` | szczegóły, pozycje (bez tytułu, tylko `hasReference`), powiązania z historią cofnięć, niedopasowane pozycje i niedopasowane wpisy bankowe księgi do daty wyciągu |
+| `GET /api/reconciliations/{id}?limit=&cursor=` | szczegóły, pozycje wyciągu stroną (bez tytułu, tylko `hasReference`; domyślnie i maksymalnie 500 na stronę, `nextCursor` do kolejnej), powiązania z historią cofnięć i niedopasowane wpisy bankowe księgi do daty wyciągu |
 | `POST /api/reconciliations/{id}/lines` | import: `{ "lines": [{ "bookedOn", "amountCents", "reference?" }] }` albo `{ "csv": "…" }`, do 500 pozycji; odpowiedź podaje `possibleDuplicateCount` |
 | `GET /api/reconciliations/{id}/suggestions?windowDays=7` | propozycje po kwocie i dacie (0–31 dni); **nic nie zatwierdza** |
 | `POST /api/reconciliations/{id}/matches` | zatwierdzenie powiązania: `statementLineId` i `ledgerEntryId` albo `paymentEntryId` |
@@ -47,6 +47,14 @@ Wszystkie zapisy wymagają sesji, MFA, zgodnego `Origin` i — poza zatwierdzeni
 | `GET /api/reports/audit?schoolYearId=&format=json\|html` | raport roczny |
 
 Propozycje obejmują wpisy księgi oraz wpłaty, które nie są jeszcze ujęte w księdze (wpłata ujęta w księdze jest proponowana jako wpis księgi).
+
+### Zmiana kontraktu `GET /api/reconciliations/{id}` (#218)
+
+- `lines` jest teraz stronicowane: `limit` (domyślnie i maksymalnie 500) i kursor `(booked_on, id)` w `nextCursor`. Panel dociąga kolejne strony i scala je po stronie klienta, więc zachowanie widoku się nie zmienia; integracja czytająca odpowiedź bezpośrednio musi podążać za `nextCursor`, aż będzie `null`.
+- Pole `unmatchedLines` zostało usunięte — było dokładnym duplikatem podzbioru `lines` bez pola `match` (panel go nie używał). Niedopasowaną pozycję rozpoznaje `line.match === null`.
+- `summary.lineCount`, `matchedLineCount`, `unmatchedLineCount` i `unmatchedLineTotalCents` liczą wszystkie pozycje uzgodnienia niezależnie od rozmiaru strony `lines` (osobne zapytanie agregujące). Od #165 pkt 4 `matchedLineCount` liczy wyłącznie powiązania zgodne kwotowo (bez podwójnego ujęcia) — pozycja z powiązaniem niezgodnym jest w `inconsistentMatchCount`, nie w `matchedLineCount`; `matchedLineCount + inconsistentMatchCount + unmatchedLineCount = lineCount`.
+- `unmatchedLedgerEntries` ma teraz maksymalnie 1000 wpisów jak dotąd, ale odpowiedź jawnie podaje `unmatchedLedgerEntriesTruncated: true`, gdy lista jest niepełna — wcześniej obcięcie było ciche.
+- Trzy zapytania szczegółów (pozycje, powiązania, niedopasowane wpisy księgi) wykonują się teraz kolejno w jednej transakcji `REPEATABLE READ` na jednym połączeniu zamiast równolegle na trzech, żeby wynik pochodził z jednej migawki (spójne z propozycją dla `…/suggestions`, #158).
 
 ### Spójność powiązań (0024_reconciliation_match_integrity.sql, #162, część #165)
 

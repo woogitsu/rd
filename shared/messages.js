@@ -217,6 +217,7 @@ export const MESSAGES = Object.freeze({
   unsupported_value: "Eksport zawiera nieobsługiwaną wartość.",
   invalid_format: "Wybierz format eksportu z listy (CSV albo JSON).",
   production_restore_requires_allow_production: "Odtworzenie na produkcji wymaga osobnego potwierdzenia.",
+  export_in_progress: "Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie.",
 
   // --- Dokumenty ---------------------------------------------------------------------------------
   invalid_document_id: "Niepoprawny identyfikator dokumentu.",
@@ -227,6 +228,7 @@ export const MESSAGES = Object.freeze({
   content_hash_mismatch: "Plik uszkodził się podczas przesyłania. Wyślij go ponownie.",
   document_integrity_mismatch: "Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi.",
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
+  upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
   // --- Wydarzenia -------------------------------------------------------------------------------
   invalid_event_id: "Niepoprawny identyfikator wydarzenia.",

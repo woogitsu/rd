@@ -78,6 +78,7 @@ wpisów).
 | `event_cancelled` | Wydarzenie jest odwołane; odwołanie jest ostateczne. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_not_found` | Nie znaleziono wydarzenia albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
 | `event_not_public` | Publikować można tylko wydarzenie z odbiorcami „Publiczne”. | Zależy od kontekstu (patrz moduł trasy). |
+| `export_in_progress` | Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie. | Tak, po chwili (drugi równoczesny eksport tego samego roku). |
 | `export_too_large` | Eksport jest za duży. Zawęź zakres. | Zależy od kontekstu (patrz moduł trasy). |
 | `fingerprint_mismatch` | Dane różnią się od podglądu. Wyślij podgląd ponownie. | Nie — popraw dane żądania. |
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
@@ -273,6 +274,7 @@ wpisów).
 | `unsupported_media_type` | Niedozwolony typ danych lub pliku. | Nie — popraw dane żądania. |
 | `unsupported_value` | Eksport zawiera nieobsługiwaną wartość. | Nie — popraw dane żądania. |
 | `unsupported_version` | Nieobsługiwana wersja danych importu. Odśwież stronę. | Nie — popraw dane żądania. |
+| `upload_busy` | Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `user_disabled` | Konto jest wyłączone. | Zależy od kontekstu (patrz moduł trasy). |
 | `user_not_found` | Nie znaleziono konta. | Nie — popraw dane żądania. |
 | `vote_record_required` | Wynik uchwały wymaga wszystkich trzech liczb głosów i ustalenia quorum. | Nie — popraw dane żądania. |

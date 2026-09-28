@@ -10,7 +10,7 @@ Każda chroniona trasa najpierw ładuje aktywną sesję, a następnie aktywne wp
 - Przydziały po expires_at nie są ładowane.
 - Polityka operacji finansowej może wymagać sesji z potwierdzonym MFA.
 
-Przedstawiciel klasy ma w schemacie obowiązkowy class_id, dlatego nie może przejść kontroli dla innej klasy. Zakresy poszczególnych funkcji nadal wymagają zatwierdzenia szkoły; ten moduł nie przypisuje rolom domyślnych zdolności.
+Przedstawiciel klasy ma w schemacie obowiązkowy class_id, dlatego nie może przejść kontroli dla innej klasy. Które role widzą które dane w poszczególnych modułach nadal wymaga zatwierdzenia szkoły (D-08/D-09, docs/DECISIONS.md) — ten dokument opisuje wyłącznie mechanizm sprawdzenia sesji/roli/zakresu, nie listę uprawnień. Same stałe ról (`FINANCIAL_ROLES`, `WIDE_ROLES`, `EDITOR_ROLES`…) są dziś wpisane na stałe w 13 modułach tras (`src/pg/routes/*.js`) jako założenie prototypu — do zatwierdzenia lub odrzucenia wierszami w `docs/PRODUCT.md` i `docs/DECISIONS.md` (#163). Do tego czasu obowiązują te założenia, a nie brak dostępu.
 
 GET /api/access zwraca zalogowanemu użytkownikowi wyłącznie jego własne aktywne przydziały. Nie zwraca danych innych użytkowników.
 
@@ -22,7 +22,7 @@ Moduły tras używają `requireAccess(request, env, { roles, classId, schoolYear
 
 Trasy, dla których rozróżnienie powodu odmowy ma znaczenie dla ekranu logowania — dziś lista klasy (`GET /api/exports/class-roster`) i raport Komisji Rewizyjnej (`GET /api/reports/audit`), bo ich role (`representative`, `audit`) nie są domyślnie na liście `MFA_REQUIRED_ROLES` — używają zamiast ogólnego `403 forbidden` funkcji `mfaAwareForbiddenCode(context, requirement, env)` (`src/pg/authorization.js`): najpierw sprawdza rolę i zakres **bez** `requireMfa` (sama odmowa z powodu roli/zakresu zostaje `forbidden` i nie ujawnia stanu MFA konta ani istnienia zasobu, SR-07), a dopiero gdy to przechodzi, zwraca `403 mfa_required` (czynnik zapisany, sesja bez potwierdzonego kodu) albo `403 mfa_enrollment_required` (konto bez czynnika) — #161. Kolejność sprawdzeń (najpierw zakres) jest bez zmian; zmienia się tylko treść pola `error` w odpowiedzi. Konto z już zapisanym, ale w tej sesji niepotwierdzonym czynnikiem i tak dostanie `mfa_required` wcześniej, na poziomie bramki routera (`mfaGate`, reguła 1 niżej) — dla **dowolnej** chronionej trasy, niezależnie od zakresu.
 
-Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i tylko z przydziałem bez `class_id` (wszystkie klasy) obejmującym wybrany rok. Przydział zarządu ograniczony do klasy nie wystarcza — kontrola jest dodatkowa względem `isAuthorized`, która przy braku `classId` w wymaganiu przepuszcza przydziały klasowe. Zakres ról importu to założenie do decyzji D-08.
+Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i tylko z przydziałem bez `class_id` (wszystkie klasy) obejmującym wybrany rok. Przydział zarządu ograniczony do klasy nie wystarcza. `requireAccess` (bez `classId` w wymaganiu) już odfiltrowuje przydziały klasowe (`isAuthorizedScoped`, SR-02, akapit wyżej) — moduł importu dodatkowo powtarza ten sam filtr wprost (`qualifyingGrants`, `!grant.classId`), zanim policzy, czy przydział obejmuje wybrany rok. To powtórzenie, nie inna reguła: usunięcie go nie zmieniłoby dziś zachowania, zostaje jako obrona w głąb dla modułu przetwarzającego dane importu z plików. Zakres ról importu to założenie do decyzji D-08.
 
 ## Macierz tras API (issue #4) — testy negatywne
 
@@ -145,6 +145,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |
 | `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | |
+| `GET /api/admin/ops-status` | wyłącznie admin | tak | 403 | stan operacyjny: kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści (#149) |
 | `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
 | `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/reconciliations/:reconciliationId` | jak wyżej, rok uzgodnienia | tak | 403 | nieistniejące: 404; SR-01 |
