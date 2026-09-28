@@ -94,6 +94,10 @@ export const MESSAGES = Object.freeze({
   no_classes_in_school_year: "Rok szkolny nie ma zdefiniowanych klas.",
   invalid_reference: "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje.",
   relation_ended: "Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa.",
+  guardian_not_found: "Nie znaleziono opiekuna.",
+  invalid_or_expired_link: "Ten link jest nieprawidłowy albo już nieaktywny.",
+  link_used: "Ten link został już wykorzystany.",
+  request_not_found: "Nie znaleziono wniosku.",
 
   // --- Konta, role i zaproszenia ------------------------------------------------------
   invalid_role: "Wybierz rolę z listy.",

@@ -962,6 +962,59 @@ export const ROUTE_MATRIX = Object.freeze([
     check: ({ actor, json }) => classListCheck(actor, json),
   },
 
+  // ---------- guardian-updates (#140) ----------
+  // Wydanie linku i kolejka: admin/zarząd BEZ przydziału klasowego (SR-01,
+  // jak board.js/#131) — przedstawiciel klasy nie widzi kolejki wniosków
+  // (do decyzji D-08). MFA już wymuszone przez bramkę routera dla admin/
+  // zarząd (mfa-policy.js), stąd mfa: true. Formularz publiczny — bez sesji,
+  // ten sam wynik dla każdego wywołującego.
+  {
+    id: 'guardianUpdates.issueLink', module: 'guardian-updates', method: 'POST', path: '/api/admin/guardian-links',
+    targets: ['W1'], allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    // W1 = dane ogólnoszkolne (classId null) — gospodarstwo fixture pod stałą
+    // klasą A (kind 'guardianOnly'), niezależnie od targetu trasy.
+    fixture: 'fresh', object: { kind: 'guardianOnly' },
+    build: ({ obj }) => ({ path: '/api/admin/guardian-links', body: { guardianId: obj.guardianId } }),
+  },
+  {
+    id: 'guardianUpdates.previewPublic', module: 'guardian-updates', method: 'GET',
+    path: '/api/public/guardian-update?token=:token', targets: ['W1'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'guardianUpdateLink' },
+    // Trasa publiczna, jawnie uwierzytelniona tokenem (nie sesją/rolą): pokazuje
+    // wyłącznie nazwę klasy DZIECKA WŁAŚCICIELA TEGO TOKENU — zawsze klasa A
+    // (fixture guardianUpdateLink). To nie jest wyciek poza zakres aktora, bo
+    // każdy wywołujący z tym tokenem ma to samo uprawnienie (posiadanie linku).
+    visible: () => ['A'],
+    build: ({ obj }) => ({ path: `/api/public/guardian-update?token=${obj.token}` }),
+  },
+  {
+    id: 'guardianUpdates.submitPublic', module: 'guardian-updates', method: 'POST', path: '/api/public/guardian-update',
+    targets: ['W1'], allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'guardianUpdateLink' },
+    build: ({ obj, key }) => ({
+      path: '/api/public/guardian-update', body: { token: obj.token, contactAllowed: true, note: `Wniosek ${key}` },
+    }),
+  },
+  {
+    id: 'guardianUpdates.list', module: 'guardian-updates', method: 'GET', path: '/api/admin/guardian-update-requests',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/admin/guardian-update-requests' }),
+  },
+  {
+    // Decyzja na świeżym wniosku (fixture 'fresh' tworzy link + wniosek pending przez formularz publiczny).
+    id: 'guardianUpdates.approve', module: 'guardian-updates', method: 'POST',
+    path: '/api/admin/guardian-update-requests/:requestId/approve', targets: ['W1'],
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'guardianUpdateRequest' },
+    build: ({ obj }) => ({ path: `/api/admin/guardian-update-requests/${obj.requestId}/approve`, body: {} }),
+  },
+  {
+    id: 'guardianUpdates.reject', module: 'guardian-updates', method: 'POST',
+    path: '/api/admin/guardian-update-requests/:requestId/reject', targets: ['W1'],
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'guardianUpdateRequest' },
+    build: ({ obj }) => ({ path: `/api/admin/guardian-update-requests/${obj.requestId}/reject`, body: {} }),
+  },
+
   // ---------- mfa (#3) ----------
   // Każda sesja (także bez przydziału) zarządza wyłącznie własnym czynnikiem; nowy użytkownik na przypadek.
   mfaRoute('mfa.enroll', '/api/mfa/enroll', 201, null),

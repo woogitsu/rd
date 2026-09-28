@@ -165,6 +165,12 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/students/:studentId/enrollments/:enrollmentId/end` | jak wyżej | nie | 403 / 404 | odejście ze szkoły (#86); po zakończeniu przypisanie niezmienne; ponowienie: `changed: false` |
 | `GET /api/print/cards?schoolYearId=:year&classId=:class` | admin, zarząd, skarbnik — rok 1 (z klasą lub bez); przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 400 / 403 | przydział klasowy bez classId: 400; kwoty wpłat tylko rola finansowa z MFA |
 | `GET /api/representative/overview?schoolYearId=:year` | wyłącznie przedstawiciel (bez decyzji D-08: bez sekcji wpłat) | nie | 400 / 403 | konto bez żadnego przydziału `representative`: 403; przydział innego roku: `classes: []` (#118) |
+| `POST /api/admin/guardian-links` | admin, zarząd — przydział bez klasy (SR-01) | tak (już wymuszone bramką routera) | 403 / 404 | #140; token w treści odpowiedzi tylko raz, w bazie wyłącznie skrót SHA-256; nieistniejący opiekun: 404 |
+| `GET /api/public/guardian-update?token=:token` | publiczna (bez sesji) | nie dotyczy | — | zły/wygasły/zużyty token: 404 `invalid_or_expired_link` (bez wyroczni istnienia); odpowiedź: wyłącznie imię opiekuna i nazwy klas dzieci |
+| `POST /api/public/guardian-update` | publiczna (bez sesji) | nie dotyczy | — | tworzy WNIOSEK (`pending`), nie zmienia `guardians`; token jednorazowy: ponowne użycie → 409 `link_used`, bez drugiego wniosku |
+| `GET /api/admin/guardian-update-requests` | admin, zarząd — przydział bez klasy (SR-01) | tak | 403 | #140; przedstawiciel klasy: 403 (do decyzji D-08) |
+| `POST /api/admin/guardian-update-requests/:requestId/approve` | jak wyżej | tak | 403 / 404 | zatwierdzenie stosuje zmianę przez `rd.change_reason = 'parent_request:{id}'` (ta sama historia co PATCH /api/guardians/:id/contact); już rozstrzygnięty wniosek: 200 bez drugiej zmiany (idempotentne) |
+| `POST /api/admin/guardian-update-requests/:requestId/reject` | jak wyżej | tak | 403 / 404 | odrzucenie nie zmienia `guardians`; już rozstrzygnięty wniosek: 200 (idempotentne) |
 | `POST /api/mfa/enroll` | każdy zalogowany (własny czynnik) | nie | — | |
 | `POST /api/mfa/confirm` | każdy zalogowany | nie | — | rotuje sesję |
 | `POST /api/mfa/verify` | każdy zalogowany z potwierdzonym czynnikiem | nie | — | |
