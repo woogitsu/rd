@@ -3,6 +3,7 @@ import {
   ACTION_LABELS,
   ApiError,
   AUDIENCE_LABELS,
+  ERROR_MESSAGES,
   STATUS_LABELS,
   canDraftEvents,
   buildActionRequest,
@@ -29,6 +30,7 @@ import {
   validateEventForm,
   validateReason,
 } from "./core.js";
+import { api as apiRequest } from "../shared/api.js";
 
 const byId = (id) => document.getElementById(id);
 const state = {
@@ -72,25 +74,17 @@ const cancelSubmit = byId("cancel-submit");
 
 // ---------- HTTP ----------
 
+// Wspólny klient (#99): 401/403 MFA → /login/ z powrotem; kody spoza słownika
+// wydarzeń dostają tekst ze wspólnego słownika (np. mfa_required).
 async function api(request) {
-  let response;
   try {
-    response = await fetch(request.url, {
-      method: request.method || "GET",
-      credentials: "same-origin",
-      headers: request.headers,
-      body: request.body,
-    });
-  } catch {
-    throw new ApiError(null, 0);
-  }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new ApiError(typeof data.error === "string" ? data.error : null, response.status);
+    return await apiRequest(request.url, { method: request.method || "GET", headers: request.headers, body: request.body });
+  } catch (shared) {
+    const error = new ApiError(shared.network ? null : shared.code || null, shared.status);
+    if (!shared.network && !Object.hasOwn(ERROR_MESSAGES, shared.code)) error.message = shared.message;
     if (isUnauthenticated(error)) showLoginRequired();
     throw error;
   }
-  return data;
 }
 
 function showLoginRequired() {
