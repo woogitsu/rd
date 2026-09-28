@@ -996,9 +996,16 @@ export async function buildAuditReport(executor, schoolYearId) {
   const largeExpenses = (await executor.query(
     `SELECT e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.amount_cents, e.net_amount_cents,
             e.description, c.name AS category, e.resolution_reference,
-            ${hasLinks ? 'link.resolution_id' : 'NULL::text AS resolution_id'}
+            ${hasLinks ? 'link.resolution_id' : 'NULL::text AS resolution_id'},
+            le.resolution_id AS explicit_resolution_id, explicit.status AS explicit_status
        FROM ledger_entry_net e
        JOIN ledger_categories c ON c.id = e.category_id
+       JOIN ledger_entries le ON le.id = e.id
+       -- #93: jawne powiązanie (resolution_id) — stan bieżącej rewizji uchwały.
+       LEFT JOIN LATERAL (
+         SELECT rs.status FROM resolution_spending rs
+          WHERE le.resolution_id IN (SELECT resolution_chain_ids(rs.resolution_id)) LIMIT 1
+       ) explicit ON le.resolution_id IS NOT NULL
        ${hasLinks ? 'LEFT JOIN ledger_resolution_links link ON link.ledger_entry_id = e.id' : ''}
       WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.amount_cents > $2
       ORDER BY e.occurred_on, e.id`,
@@ -1011,9 +1018,12 @@ export async function buildAuditReport(executor, schoolYearId) {
     description: row.description,
     category: row.category,
     resolutionReference: row.resolution_reference ?? null,
-    resolutionId: row.resolution_id ?? null,
-    matchesAdoptedResolution: hasLinks ? Boolean(row.resolution_id) : null,
-    flagged: !row.resolution_id,
+    resolutionId: row.explicit_resolution_id ?? row.resolution_id ?? null,
+    // #93: 'explicit' = wskazana przy zapisie (resolution_id), 'text' = dopasowanie po numerze.
+    resolutionLink: row.explicit_resolution_id ? 'explicit' : 'text',
+    matchesAdoptedResolution: row.explicit_resolution_id ? row.explicit_status === 'adopted'
+      : (hasLinks ? Boolean(row.resolution_id) : null),
+    flagged: row.explicit_resolution_id ? row.explicit_status !== 'adopted' : !row.resolution_id,
   }));
 
   const corrections = (await executor.query(
@@ -1027,6 +1037,9 @@ export async function buildAuditReport(executor, schoolYearId) {
     direction: row.direction, amountCents: toSafeInteger(row.amount_cents), reason: row.reason,
     createdBy: row.created_by, createdAt: isoTimestamp(row.created_at),
   }));
+
+  const resolutionExecution = await buildResolutionExecution(executor, schoolYearId);
+  const expenseReviews = await buildExpenseReviews(executor, schoolYearId);
 
   const openingAdjustments = (await executor.query(
     `SELECT a.id, a.amount_cents, a.reason, a.created_by, a.created_at
@@ -1083,6 +1096,8 @@ export async function buildAuditReport(executor, schoolYearId) {
     categories,
     largeExpenseThresholdCents: LARGE_EXPENSE_CENTS,
     largeExpenses,
+    resolutionExecution,
+    expenseReviews,
     corrections,
     openingAdjustments,
     reconciliations: {
@@ -1095,6 +1110,89 @@ export async function buildAuditReport(executor, schoolYearId) {
       items: checks,
       largeExpensesWithoutAdoptedResolution: largeExpenses.filter((item) => item.flagged).length,
     },
+  };
+}
+
+// #93: wykonanie uchwał finansowych — uchwały roku (albo powiązane z wydatkiem
+// tego roku) z kwotą upoważnienia i sumą netto wydatków (po korektach).
+// Oznaczone: uchwała nie jest już przyjęta (np. poprawka zmieniła stan na
+// „odrzucona”) albo suma przekracza kwotę.
+async function buildResolutionExecution(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT rs.resolution_id, rs.school_year_id, rs.number, rs.title, rs.status, rs.authorized_amount_cents,
+            to_char(rs.valid_until, 'YYYY-MM-DD') AS valid_until, rs.spent_net_cents, rs.remaining_cents, rs.entry_count
+       FROM resolution_spending rs
+      WHERE rs.school_year_id = $1 OR EXISTS (
+        SELECT 1 FROM ledger_entries e
+         WHERE e.school_year_id = $1 AND e.resolution_id IN (SELECT resolution_chain_ids(rs.resolution_id)))
+      ORDER BY rs.number COLLATE "C", rs.resolution_id`,
+    [schoolYearId],
+  );
+  return rows.map((row) => {
+    const authorized = row.authorized_amount_cents === null ? null : toSafeInteger(row.authorized_amount_cents);
+    const remaining = authorized === null ? null : toSafeInteger(row.remaining_cents);
+    return {
+      resolutionId: row.resolution_id, schoolYearId: row.school_year_id, number: row.number, title: row.title,
+      status: row.status, authorizedAmountCents: authorized, validUntil: row.valid_until ?? null,
+      spentNetCents: toSafeInteger(row.spent_net_cents), remainingCents: remaining,
+      entryCount: toSafeInteger(row.entry_count),
+      flagged: row.status !== 'adopted' || (remaining !== null && remaining < 0),
+    };
+  });
+}
+
+const SPLIT_WINDOW_DAYS = 30;
+
+// #97: weryfikacja wydatków przez drugą osobę i sygnał możliwego podziału
+// wydatku (kilka wydatków ≤ 3000 EUR w tej samej kategorii w oknie 30 dni,
+// razem > 3000 EUR). Informacja do sprawdzenia, nie zarzut. Liczone są wydatki
+// z netto > 0 (wpis skorygowany do zera nie wymaga weryfikacji).
+async function buildExpenseReviews(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents, e.category_id,
+            c.name AS category, s.review_status
+       FROM ledger_entry_net e
+       JOIN ledger_categories c ON c.id = e.category_id
+       JOIN ledger_entry_review_status s ON s.ledger_entry_id = e.id
+      WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.net_amount_cents > 0
+      ORDER BY e.category_id, e.occurred_on, e.id`,
+    [schoolYearId],
+  );
+  const expenses = rows.map((row) => ({
+    id: row.id, occurredOn: row.occurred_on, netCents: toSafeInteger(row.net_amount_cents),
+    categoryId: row.category_id, category: row.category, reviewStatus: row.review_status,
+  }));
+  const tally = (status) => {
+    const matching = expenses.filter((item) => item.reviewStatus === status);
+    return { count: matching.length, netCents: matching.reduce((sum, item) => sum + item.netCents, 0) };
+  };
+  const day = (text) => Date.parse(`${text}T00:00:00Z`) / 86_400_000;
+  const possibleSplits = [];
+  const small = expenses.filter((item) => item.netCents <= LARGE_EXPENSE_CENTS);
+  let index = 0;
+  while (index < small.length) {
+    const start = small[index];
+    const window = small.filter((item) => item.categoryId === start.categoryId
+      && day(item.occurredOn) >= day(start.occurredOn) && day(item.occurredOn) < day(start.occurredOn) + SPLIT_WINDOW_DAYS);
+    const total = window.reduce((sum, item) => sum + item.netCents, 0);
+    if (window.length > 1 && total > LARGE_EXPENSE_CENTS) {
+      possibleSplits.push({
+        category: start.category, fromDate: start.occurredOn, toDate: window.at(-1).occurredOn,
+        entryCount: window.length, netCents: total, ledgerEntryIds: window.map((item) => item.id),
+      });
+      // Następne okno zaczyna się po ostatnim wpisie tego okna (bez powtórzeń).
+      index = small.indexOf(window.at(-1)) + 1;
+    } else {
+      index += 1;
+    }
+  }
+  return {
+    unverified: tally('unverified'),
+    verified: tally('verified'),
+    questioned: tally('questioned'),
+    questionedEntryIds: expenses.filter((item) => item.reviewStatus === 'questioned').map((item) => item.id),
+    splitWindowDays: SPLIT_WINDOW_DAYS,
+    possibleSplits,
   };
 }
 

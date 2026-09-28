@@ -126,6 +126,17 @@ export const MESSAGES = Object.freeze({
   invalid_source_detail: "Niepoprawny opis źródła.",
   invalid_source_document: "Niepoprawny dokument źródłowy.",
   resolution_required: "Ten wydatek wymaga wskazania uchwały.",
+  // #93: uchwała wskazana jako upoważnienie do wydatku.
+  resolution_not_adopted: "Wskazana uchwała nie jest przyjęta.",
+  resolution_not_current: "Wskazana uchwała ma nowszą wersję (poprawkę). Wybierz aktualną wersję.",
+  resolution_expense_only: "Uchwałę jako upoważnienie można wskazać tylko przy wydatku.",
+  resolution_reference_mismatch: "Referencja uchwały nie zgadza się z numerem wskazanej uchwały.",
+  resolution_amount_exceeded: "Ten wydatek przekracza kwotę upoważnioną uchwałą. Sprawdź pozostałą kwotę albo potrzebną nową uchwałę.",
+  resolution_expired: "Termin upoważnienia z uchwały minął przed datą wydatku.",
+  resolution_repealed: "Wskazana uchwała została uchylona.",
+  authorization_superseded: "Kwota upoważnienia zmieniła się w międzyczasie. Odśwież widok i spróbuj ponownie.",
+  // #97: weryfikacja wydatku przez drugą osobę.
+  review_expense_only: "Weryfikacja drugiej osoby dotyczy wyłącznie wydatków.",
   invalid_effective_on: "Podaj poprawną datę.",
   closing_balance_out_of_range: "Saldo zamknięcia jest poza dozwolonym zakresem.",
   next_year_opening_balance_exists: "Bilans otwarcia następnego roku już istnieje.",

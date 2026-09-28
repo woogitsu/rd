@@ -93,6 +93,10 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
+| `GET /api/ledger/reviews?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #97; stan weryfikacji wydatków, filtr `reviewStatus` |
+| `POST /api/ledger/:ledgerEntryId/reviews` | jak wyżej, rok wpisu; nie autor wpisu | tak | 403 | #97; autor wpisu: 403 `four_eyes_required` (także trigger bazy); przychód: 409 `review_expense_only`; zamknięty rok: 409 |
+| `GET /api/ledger/resolutions?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #93; przyjęte uchwały zebrań ogólnych roku i roku poprzedniego: numer, tytuł, kwoty — bez treści (D-09) |
+| `POST /api/ledger/resolutions/:resolutionId/authorizations` | admin, zarząd — przydział bez klasy w roku uchwały | tak | 403 | #93; skarbnik: 403; uchwała spoza zakresu lub nieistniejąca: 404; zmiana kwoty = nowy wiersz z `supersedesId` (nieaktualny: 409 `authorization_superseded`) |
 | `GET /api/ledger/transfers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #199 |
 | `POST /api/ledger/transfers` | jak wyżej | tak | 403 | #199; przeniesienie kasa ↔ rachunek, storno jako nowy wpis |
 | `GET /api/ledger/opening-balance?schoolYearId=:year` | jak wyżej | tak | 403 | #199 |
