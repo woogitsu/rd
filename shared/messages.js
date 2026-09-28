@@ -12,6 +12,8 @@ export const MESSAGES = Object.freeze({
   invalid_names: "Podaj nazwy klas (każda do 60 znaków).",
   duplicate_name: "Nazwy klas na liście powtarzają się.",
   class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
+  // --- Zakończenie przypisania do klasy (#86) --------------------------------------
+  invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",

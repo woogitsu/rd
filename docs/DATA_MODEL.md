@@ -73,6 +73,14 @@ Zgoda używana przez kampanię (`computeSnapshot`, worker przed wysyłką) i prz
 
 Poza zakresem tej migracji (patrz PR — „Część #78"): kopiowanie struktury klas między latami i masowa promocja uczniów z podglądem (`plan`/`digest`/`apply`) — osobny, większy zakres.
 
+#### Odejście ze szkoły w trakcie roku (0055, issue #86)
+
+`enrollments.ended_on/ended_reason/ended_by/ended_at` zapisują odejście ucznia bez usuwania wiersza. `ended_on` ustawia się raz — trigger `enrollment_guard` blokuje każdą dalszą zmianę wiersza (łącznie ze zmianą klasy) po ustawieniu tej kolumny; ponowienie tego samego żądania (`POST .../enrollments/{id}/end`) zwraca `changed: false` bez drugiego zapisu. `enrollment_history` dostaje wpis `withdrawn` (data = `ended_on`, powód = `ended_reason`), zapisywany automatycznie osobnym triggerem (`enrollments_withdrawal_history`), niezależnym od istniejącego triggera historii zmian klasy.
+
+Widok `enrollments_current` (`ended_on IS NULL OR ended_on > CURRENT_DATE` — ta sama konwencja co `student_households_current`) zastępuje `enrollments` w miejscach liczących/wyświetlających uczniów **dziś**: lista klasy i licznik uczniów (`families.js`), kartki (`print.js`), dobór adresatów kampanii (`computeSnapshot`, `email.js`) i eksport listy klasy dla przedstawiciela (`buildClassRoster`, `export.js`). Data zakończenia może być przyszła — uczeń pozostaje widoczny do tej daty. Wpłaty zapisane wcześniej nie są zmieniane; odejście nie tworzy ani nie usuwa żadnej należności (decyzja o ewentualnym zwrocie — Rada, D-04).
+
+Poza zakresem tej migracji (patrz PR — „Część #86”): zakończenie relacji opiekun–dziecko i zakończenie członkostwa w gospodarstwie przez API (schemat z 0014 to obsługuje; trasy nie istnieją jeszcze), a także ostrzeżenie przy wysyłce kampanii zatwierdzonej przed odejściem.
+
 ### Jednostka ewidencji składki (D-11)
 
 Model nie rozstrzyga, czy składkę ewidencjonujemy na rodzinę czy na dziecko. Wpłaty nadal wskazują `payment_entries.household_id`; nowe tabele nie są powiązane z wpłatami i nie wyznaczają adresata ani wysokości składki. Główne gospodarstwo jest pojęciem organizacyjnym, nie finansowym.
@@ -88,6 +96,7 @@ Model nie rozstrzyga, czy składkę ewidencjonujemy na rodzinę czy na dziecko. 
 | `GET /api/households/{id}` | jw. | tylko gdy co najmniej jeden uczeń gospodarstwa jest w zakresie; rodzeństwo spoza zakresu pomijane |
 | `PATCH /api/guardians/{id}/contact` | admin, board | historia + audyt; wymagany powód |
 | `POST /api/students/{id}/enrollments` | admin, board | przypisanie lub zmiana klasy w roku; historia + audyt |
+| `POST /api/students/{id}/enrollments/{enrollmentId}/end` | admin, board | odejście ze szkoły (#86); wymagany powód i data; ponowienie: `changed: false` |
 
 - Przydział z `class_id` zawęża do tej klasy; admin/board/treasurer bez `class_id` widzą wszystkie klasy (lub klasy roku z `school_year_id`).
 - `audit` i `principal` dostają `403` do czasu decyzji D-09.
