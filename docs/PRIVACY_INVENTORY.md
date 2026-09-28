@@ -64,6 +64,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`ledger_corrections`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie korekty księgowej|document_financial|tak|tak|
 |`ledger_entries`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_entries`|`description`|Osoba trzecia|direct|wolny tekst|opis operacji księgowej|document_financial|tak|tak|
+|`ledger_entry_reviews`|`note`|Osoba trzecia|direct|wolny tekst|uzasadnienie zakwestionowania wydatku|document_financial|tak|tak|
+|`ledger_entry_reviews`|`reviewed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie weryfikacji z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_opening_balance_adjustments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_opening_balance_adjustments`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie korekty bilansu otwarcia|document_financial|tak|tak|
 |`ledger_opening_balances`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -124,7 +126,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **111**, w tym wolnego tekstu: **27** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **113**, w tym wolnego tekstu: **28** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -693,10 +695,24 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `occurred_on` | none | — | tak |
 | `payment_entry_id` | none | — | tak |
 | `replaces_entry_id` | none | — | tak |
+| `resolution_id` | none | — | tak |
 | `resolution_reference` | none | — | tak |
 | `school_year_id` | none | — | tak |
 | `source` | none | — | tak |
 | `source_document_id` | none | — | tak |
+
+### `ledger_entry_reviews`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `decision` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `ledger_entry_id` | none | — | tak |
+| `note` | direct | third_party | tak |
+| `reviewed_at` | none | — | tak |
+| `reviewed_by` | pseudonymous | board_member | tak |
+| `school_year_id` | none | — | tak |
 
 ### `ledger_opening_balance_adjustments`
 
