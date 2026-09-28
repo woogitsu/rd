@@ -199,6 +199,7 @@ wpisów).
 | `mfa_locked` | Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `mfa_required` | Potwierdź logowanie kodem z aplikacji uwierzytelniającej. | Nie — popraw dane żądania. |
 | `mfa_unavailable` | Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `minutes_contain_personal_data` | Protokół zawiera możliwe dane osobowe (imię i nazwisko, e-mail albo IBAN) — publikacja publiczna jest zablokowana. | Nie — popraw dane żądania. |
 | `minutes_four_eyes_required` | Protokół zatwierdza inna osoba niż jego autor. | Zależy od kontekstu (patrz moduł trasy). |
 | `minutes_not_found` | Nie znaleziono wersji protokołu. | Nie — popraw dane żądania. |
 | `next_school_year_not_found` | Nie znaleziono następnego roku szkolnego. | Nie — popraw dane żądania. |
@@ -230,6 +231,7 @@ wpisów).
 | `photo_not_found` | Nie znaleziono zdjęcia. | Nie — popraw dane żądania. |
 | `photo_revoked` | Zgoda na publikację zdjęcia została wycofana. | Zależy od kontekstu (patrz moduł trasy). |
 | `photos_require_school_wide_role` | Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły. | Zależy od kontekstu (patrz moduł trasy). |
+| `possible_personal_data` | Ten tekst zostanie zapisany na stałe i trafi do eksportu. Usuń dane osobowe albo potwierdź, że to konieczne. | Nie — popraw dane żądania. |
 | `post_not_found` | Nie znaleziono wpisu. | Nie — popraw dane żądania. |
 | `post_withdrawn` | Wpis został wycofany. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_required` | Najpierw wyślij podgląd importu. | Nie — popraw dane żądania. |
