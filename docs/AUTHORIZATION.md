@@ -156,7 +156,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years/:schoolYearId/expire-grants` | wyłącznie admin | tak | 403 | macierz: zakończony rok syntetyczny |
 | `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail |
+| `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail; zaproszenie na własny adres: `409 cannot_grant_self`, a zaproszenie wystawione przez to samo konto nie nadaje mu roli przy przyjęciu (#146) |
 | `POST /api/admin/invitations/:invitationId/revoke` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108) |
 | `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |
