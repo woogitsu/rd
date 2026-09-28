@@ -77,7 +77,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 ### D-04. Okresy retencji i usuwanie
 
 - Pytanie: jak długo przechowujemy: dane ucznia i opiekuna po zakończeniu nauki, historię wpłat i księgę, dokumenty źródłowe, dziennik audytu, kampanie e-mail, kopie zapasowe oraz przesłany plik importu?
-- Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania.
+- Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania. #152 proponuje krótszą retencję jawnej referencji wpłaty (`payment_entries.reference`) niż księgi — sama kolumna/hash nie jest wdrożona, czeka na tę decyzję.
 - Warianty w dokumentacji: nie wskazano okresów. Dokumenty Rady archiwizować zgodnie z regulaminem i decyzją szkoły (SECURITY.md).
 - Notatka techniczna (28.09.2026): kilka niescalonych PR wyłączyło zachowawczo nowe tabele z paczki eksportu rocznego (`EXPORT_EXCLUDED_TABLES`, `docs/EXPORT.md`) do czasu tej decyzji — dane nie znikają, tylko nie trafiają do paczki, więc nowa Rada/Komisja Rewizyjna ich stamtąd nie odtworzy: zatwierdzone dane do wpłaty `payment_instructions` w PR #341/#377 (niescalone, #92 — patrz też D-08 niżej, rewizja roli zatwierdzającej), belgijskie referencje płatności OGM-VCS `payment_references`/`payment_reference_revocations` w PR #345 (niescalony, #83), wycofania zgód na wizerunek `news_photo_consent_withdrawals` w PR #337 (niescalony, #106), pliki wariantów zdjęć `news_photo_files` w PR #351 (niescalony, #96), jednorazowy link i wniosek o aktualizację kontaktu opiekuna `guardian_update_links`/`guardian_update_requests` w PR #365 (niescalony, #140), rozstrzygnięcia doręczeń kampanii e-mail `email_outbox_resolutions` w PR #309 (niescalony, #139).
 - Status: otwarta
@@ -136,6 +136,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
   | Eksport roczny / archiwum | roczny: `admin, board`; archiwum kadencji: `board` | `src/pg/routes/exports.js:25,27` | `tests/pg-export-v2.test.js` |
   | Zamknięcie roku | odczyt/checklista: `board, treasurer`; zamknięcie: `board` | `src/pg/routes/year-close.js:35-37` | `tests/pg-year-close.test.js` |
   | Kartki (dowody wpłat) | `admin, board, treasurer` + `representative` (własna klasa) | `src/pg/routes/print.js:30-31` | `tests/pg-print.test.js` |
+  | Sprawozdanie roczne i przepływy (#125) | `board, treasurer`; `admin`, `audit`, `principal`, przedstawiciel — brak dostępu | `src/pg/routes/financial-reports.js:20` | `tests/pg-annual-report.test.js` |
   | Uzgodnienia bankowe | zapis: `admin, board, treasurer`; raport: `audit, board, treasurer`; raport archiwum: `board, treasurer` | `src/pg/routes/reconciliation.js:31-34` | `tests/pg-reconciliation.test.js` |
   | Wydarzenia (#12) | tworzy: `admin, board` + `representative` (własna klasa); zatwierdza/publikuje: wyłącznie `board`, zasada czterech oczu | `src/pg/routes/events.js`, `docs/EVENTS.md` | `tests/pg-events.test.js` |
 
@@ -145,6 +146,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
   sprawdza zgodność `tests/helpers/route-matrix.js` z `ROUTES`, ale nie
   porównuje stałych ról z tą tabelą — rozszerzenie do zrobienia osobno.
 - Notatka techniczna (28.09.2026): dwa dalsze niescalone PR przyjęły warianty zachowawcze w modułach spoza tabeli wyżej. PR #341/#377 (#92, niescalone) ograniczyły zatwierdzanie zatwierdzonych danych do wpłaty (`POST /api/payment-instructions`, IBAN/BIC do kodu QR na kartkach) do ról `admin`/`board`, świadomie bez skarbnika, do czasu tej decyzji; odczyt pozostaje `admin`/`board`/`treasurer` z MFA. PR #329 (#82, niescalony) dodał unieważnienie/zastąpienie dokumentu (`POST /api/documents/:id/supersede`, `/void`) z tymi samymi regułami dostępu co odczyt danego dokumentu (`canAccessDocument`) — dla dokumentu finansowego oznacza to, że skarbnik z MFA może unieważnić lub zastąpić dokument finansowy, mimo że moduł dokumentów w ogóle nie był dotąd ujęty w tabeli wyżej. Skutek: zakres ról dla obu modułów (dane do wpłaty, unieważnianie/zastępowanie dokumentów) czeka na potwierdzenie w tej decyzji.
+- Założenie techniczne do czasu decyzji (#152, PII_CHECK.md): publikacja publiczna protokołu z wykrytym imieniem/nazwiskiem, e-mailem lub IBAN jest dziś blokowana zawsze (`409`), bez wyjątku dla nazwiska członka Rady pełniącego funkcję — wariant zachowawczy, bo brak decyzji, czy takie nazwisko jest dopuszczalne w publicznym protokole. Nie jest to decyzja.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:

@@ -17,6 +17,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
+import { detectPossiblePersonalData } from './pii-check.js';
 import { insertAuditEvent } from './audit.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
@@ -857,11 +858,41 @@ export async function approveMinutes(db, actor, input = {}) {
   return { minutes: minutesFromRow(await loadMinutes(db, minutes.id)), replayed: !changed };
 }
 
+// #152: znane imiona/nazwiska uczniów i opiekunów w zakresie roku szkolnego
+// zebrania — przybliżenie (uczniowie zapisani w tym roku + opiekunowie ich
+// gospodarstw), tylko do wykrywania możliwych danych osobowych w treści
+// protokołu, nigdy do niczego innego.
+async function loadKnownNamesForSchoolYear(db, schoolYearId) {
+  const { rows } = await db.query(
+    `SELECT first_name, last_name FROM students
+      WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
+     UNION
+     SELECT g.first_name, g.last_name FROM guardians g
+      WHERE g.household_id IN (
+        SELECT household_id FROM students
+         WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
+      )`,
+    [schoolYearId],
+  );
+  return rows.map((row) => ({ firstName: row.first_name, lastName: row.last_name }));
+}
+
 export async function setMinutesVisibility(db, actor, input = {}) {
   const key = idempotencyKey(input.idempotencyKey);
   const minutes = await loadMinutes(db, input.minutesId, input.meetingId);
-  await meetingForManage(db, actor, minutes.meeting_id);
+  const meeting = await meetingForManage(db, actor, minutes.meeting_id);
   if (!VISIBILITIES.has(input.visibility)) throw new MeetingError('invalid_request');
+  // #152: publikacja PUBLICZNA (widok /site/, poza Radą) blokowana twardo przy
+  // wykryciu możliwych danych osobowych w treści protokołu — zgodnie z
+  // AGENTS.md „widok publiczny wyłącznie zatwierdzone dane”. Widoczność
+  // wewnętrzna/dla rodziców („internal”/„parents”) dostaje tylko ostrzeżenie
+  // w innych miejscach (#152 zakres tego PR: brak wyjątku z drugim
+  // zatwierdzeniem — wariant zachowawczy, patrz opis w PR).
+  if (input.visibility === 'public') {
+    const knownNames = await loadKnownNamesForSchoolYear(db, meeting.school_year_id);
+    const piiCheck = detectPossiblePersonalData(minutes.body, { knownNames });
+    if (piiCheck.categories.length) throw new MeetingError('minutes_contain_personal_data', 409);
+  }
   const data = {
     minutesId: minutes.id,
     visibility: input.visibility,
