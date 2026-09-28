@@ -171,7 +171,13 @@
       <!-- 7. Po zalogowaniu -->
       <section class="card" id="view-start" aria-labelledby="start-title" hidden>
         <h2 id="start-title">Panele Rady</h2>
-        <p class="hint">Dostęp do każdego panelu zależy od Twojej roli i jest sprawdzany przez serwer.</p>
+        <p class="hint" id="start-hint">Dostęp do każdego panelu zależy od Twojej roli i jest sprawdzany przez serwer.</p>
+        <p class="hint" id="no-access-notice" role="note" hidden>
+          Twoje konto nie ma jeszcze uprawnień do żadnego panelu. Zakres dostępu dla Twojej roli ustala szkoła
+          razem z zarządem Rady Rodziców. Bez logowania dostępna jest
+          <a href="/site/">strona publiczna i protokoły publiczne</a>. W sprawie dostępu skontaktuj się
+          z administratorem Rady.
+        </p>
         <ul class="panel-list" id="panel-list"></ul>
         <div class="account-actions">
           <button type="button" id="open-change">Zmień hasło</button>
