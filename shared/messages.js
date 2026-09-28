@@ -224,6 +224,7 @@ export const MESSAGES = Object.freeze({
   unsupported_value: "Eksport zawiera nieobsługiwaną wartość.",
   invalid_format: "Wybierz format eksportu z listy (CSV albo JSON).",
   production_restore_requires_allow_production: "Odtworzenie na produkcji wymaga osobnego potwierdzenia.",
+  export_in_progress: "Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie.",
 
   // --- Dokumenty ---------------------------------------------------------------------------------
   invalid_document_id: "Niepoprawny identyfikator dokumentu.",

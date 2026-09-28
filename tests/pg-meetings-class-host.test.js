@@ -17,7 +17,7 @@ const ON = { MEETINGS_CLASS_HOST: 'representative' };
 const OFF = {};
 
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
-const board = { userId: 'board', grants: [grant('board')], mfaVerified: false };
+const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
 // Rodzeństwo: przedstawiciel prowadzi 1A i 2B (dwa przydziały klasowe).
 const rep1a = { userId: 'rep-1a', grants: [grant('representative', { classId: 'class-a' })], mfaVerified: true };
 const rep1a2b = {
