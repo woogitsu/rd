@@ -14,8 +14,11 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const byId = (id) => document.getElementById(id);
 const state = { classes: null, canEdit: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
@@ -65,6 +68,7 @@ function setBreadcrumbs(items) {
 
 function showView(name) {
   for (const [key, element] of Object.entries(views)) element.hidden = key !== name;
+  mountPrintMeta(byId("print-meta"), {}); // czyszczone przy każdej zmianie widoku, uzupełniane przez wywołującego
 }
 
 async function loadClasses() {
@@ -141,6 +145,13 @@ async function renderClass(classId) {
   byId("class-year").textContent = `Rok szkolny ${data.class.schoolYearLabel}`;
   renderStudentRows();
   showView("class");
+  // Dane rodzin są poufne (docs), więc każdy wydruk listy klasy dostaje znacznik (#151).
+  mountPrintMeta(byId("print-meta"), {
+    view: `Lista klasy ${data.class.name}`,
+    schoolYear: data.class.schoolYearLabel,
+    printedBy,
+    confidential: true,
+  });
 }
 
 byId("student-search-form").addEventListener("submit", (event) => event.preventDefault());
@@ -148,6 +159,7 @@ byId("student-search").addEventListener("input", (event) => {
   state.studentQuery = event.target.value;
   renderStudentRows();
 });
+byId("print-class").addEventListener("click", () => window.print());
 
 async function renderHousehold(householdId) {
   const data = await api(`/api/households/${encodeURIComponent(householdId)}`);

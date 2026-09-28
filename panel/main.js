@@ -25,11 +25,14 @@ import {
 } from "../shared/household-picker.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const FILTER_KEYS = ["schoolYearId", "status"];
-const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null };
+const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -41,6 +44,7 @@ const loading = byId("loading");
 const summary = byId("result-summary");
 const loadMore = byId("load-more");
 const filterHint = byId("filter-hint");
+const printButton = byId("print-payments");
 
 function localDate() {
   const now = new Date();
@@ -107,6 +111,7 @@ function render() {
   message.textContent = count === 0 ? "Brak wpłat dla wybranych filtrów." : "";
   loadMore.hidden = !state.nextCursor;
   updateFilterHint();
+  updatePrintMeta();
 }
 
 function filterChanged() {
@@ -118,6 +123,22 @@ function updateFilterHint() {
   const changed = filterChanged();
   filterHint.hidden = !changed;
   loadMore.disabled = state.loading || changed;
+  printButton.disabled = state.loading || state.printing || changed || !state.query || state.payments.length === 0;
+}
+
+// Blok metadanych wydruku (#151), niewidoczny na ekranie (shared/print.css).
+function updatePrintMeta() {
+  const container = byId("print-meta");
+  if (!container) return;
+  const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
+  const filters = state.query?.status ? STATUS_LABELS[state.query.status] : null;
+  mountPrintMeta(container, {
+    view: "Dobrowolne wpłaty",
+    schoolYear: yearLabel,
+    filters,
+    printedBy,
+    incompleteCount: state.nextCursor ? state.payments.length : null,
+  });
 }
 
 function setBusy(busy) {
@@ -205,6 +226,24 @@ filtersForm.addEventListener("submit", (event) => {
   }
 })();
 loadMore.addEventListener("click", () => loadPayments({ append: true }));
+
+// „Drukuj zestawienie” dociąga wszystkie strony bieżącego filtra przed wydrukiem
+// (#151); state.printing chroni przed podwójnym kliknięciem.
+printButton.addEventListener("click", async () => {
+  if (state.loading || state.printing || filterChanged() || !state.query) return;
+  state.printing = true;
+  updateFilterHint();
+  try {
+    while (buildNextPaymentsUrl(state.query, state.nextCursor)) {
+      await loadPayments({ append: true });
+    }
+    updatePrintMeta();
+    window.print();
+  } finally {
+    state.printing = false;
+    updateFilterHint();
+  }
+});
 yearInput.addEventListener("input", updateFilterHint);
 statusInput.addEventListener("change", updateFilterHint);
 
