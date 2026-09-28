@@ -38,6 +38,7 @@
     "dev:documents": "vite documents",
     "build:documents": "vite build documents --outDir ../dist/documents --base ./ --emptyOutDir",
     "email:worker": "node scripts/email-worker.js",
+    "email:preflight": "node scripts/email-preflight.js",
     "dev:site": "vite site",
     "build:site": "vite build site --outDir ../dist/site --base ./ --emptyOutDir",
     "dev:meetings": "vite meetings",
@@ -56,17 +57,23 @@
     "dev:reconciliation": "vite reconciliation",
     "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir",
     "dev:year-close": "vite year-close",
-    "build:year-close": "vite build year-close --outDir ../dist/year-close --base ./ --emptyOutDir"
+    "build:year-close": "vite build year-close --outDir ../dist/year-close --base ./ --emptyOutDir",
+    "demo:seed": "node scripts/demo-seed.js",
+    "demo:start": "node scripts/demo-start.js",
+    "pretest:e2e": "npm run build",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "fflate": "0.8.3",
     "pg": "8.23.0",
     "qrcode-generator": "2.0.4",
     "read-excel-file": "9.3.10",
+    "sharp": "0.35.4",
     "sql.js": "1.14.2"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
+    "@playwright/test": "1.56.1",
     "vite": "^8.3.1",
     "wrangler": "^4.40.0"
   }

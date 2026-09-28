@@ -32,7 +32,10 @@ const SCHOOL_YEAR_REQUIRED_PREFIXES = [
 // webhook dostawcy może przyjść dla adresu bez żadnej pasującej wysyłki w
 // toku. Zapisujemy schoolYearId, gdy dało się je odnaleźć przez powiązany
 // wiersz kolejki, ale świadomie tego nie wymagamy (patrz src/pg/routes/email.js).
-const SCHOOL_YEAR_EXEMPT_ACTIONS = new Set(['email.address_suppressed']);
+// 'email.webhook.previous_secret_used' dotyczy ROTACJI SEKRETU webhooka
+// (bezpieczeństwo integracji Brevo), nie jednej kampanii ani jednego roku —
+// nie ma tu żadnego obiektu ze szkoły, z którego dałoby się wziąć rok.
+const SCHOOL_YEAR_EXEMPT_ACTIONS = new Set(['email.address_suppressed', 'email.webhook.previous_secret_used']);
 
 function requiresSchoolYearId(action) {
   return SCHOOL_YEAR_REQUIRED_PREFIXES.some((prefix) => action.startsWith(prefix))

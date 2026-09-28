@@ -506,6 +506,7 @@ async function deliver(db, item, { transport, config, now, runToken, resultRetry
     result = await transport.send({
       to: item.email,
       sender: config.sender,
+      replyTo: config.replyTo,
       subject: item.message.subject,
       text: item.message.text,
       outboxId: item.id,

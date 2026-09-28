@@ -416,9 +416,19 @@ test('representative exports only the roster of their own class, without financi
     seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true }),
     /class_not_in_school_year/,
   );
-  await db.exec('ALTER TABLE role_grants DISABLE TRIGGER a0_year_freeze');
-  const repOldYear = await seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true });
-  await db.exec('ALTER TABLE role_grants ENABLE TRIGGER a0_year_freeze');
+  // Od #198/0081 ten wiersz jest odrzucany nawet z wyłączonym triggerem —
+  // złożony FK role_grants_class_in_year (niezależna gwarancja obok
+  // a0_year_freeze) blokuje go też na poziomie bazy. session_replication_role
+  // = replica wyłącza triggery I sprawdzanie FK na czas jednej transakcji,
+  // żeby odtworzyć wiersz jak sprzed obu zabezpieczeń (np. z importu D1) i
+  // sprawdzić, że autoryzacja i tak go nie uznaje.
+  await db.query("SET session_replication_role = replica");
+  let repOldYear;
+  try {
+    repOldYear = await seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true });
+  } finally {
+    await db.query("SET session_replication_role = origin");
+  }
   assert.equal((await roster('c-1a', repOldYear)).status, 403, 'grant for another year');
   const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer' }], mfa: true });
   assert.equal((await roster('c-1a', treasurer)).status, 403);

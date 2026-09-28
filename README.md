@@ -43,6 +43,8 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Eksport roczny, kopie i test odtworzenia](docs/EXPORT.md)
 - [Zamknięcie roku i przekazanie kadencji](docs/YEAR_CLOSE.md)
 - [Rejestr decyzji zarządu i szkoły](docs/DECISIONS.md)
+- [Stan prototypu — zestawienie na spotkanie zarządu](docs/STATUS.md)
+- [Scenariusz pokazu prototypu dla zarządu](docs/DEMO.md)
 - [Serwer Node.js dla Railway](docs/NODE_SERVER.md)
 - [Równoważność starego (Worker/D1) i nowego (PostgreSQL) API](docs/EQUIVALENCE.md)
 - [Migracja danych z D1 do PostgreSQL](docs/D1_POSTGRES_MIGRATION.md)
@@ -109,6 +111,19 @@ Interfejs administratora (`/admin/`, API na PostgreSQL): konta, zaproszenia z je
 ## Logowanie
 
 Ekran `/login/` (`/` przekierowuje tutaj, strona publiczna jest pod `/site/`): e-mail i hasło, potem kod z aplikacji uwierzytelniającej (Google Authenticator, Microsoft Authenticator lub inna zgodna z TOTP RFC 6238). Konto powstaje wyłącznie z zaproszenia (`/login/#invite=<token>`); reset hasła tylko tokenem od administratora (`/login/#reset=<token>`), bez wiadomości e-mail. Role `admin`, `board` i `treasurer` muszą skonfigurować aplikację przed użyciem paneli (`MFA_REQUIRED_ROLES`). Buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej; `npm run dev:login` samo w sobie nie tworzy sesji. Metodę wskazał użytkownik 2026-09-27; wymaga formalnego potwierdzenia przez zarząd i IOD (D-10). Prototyp na danych syntetycznych, niewdrożony. [Instrukcja ekranu](login/README.md), [przepływ i parametry](docs/AUTH.md).
+
+## Pokaz dla zarządu (dane demo, wyłącznie lokalnie)
+
+Osobny, mały zestaw danych do pokazania panelu zarządowi — nie do mylenia z `scripts/lib/synthetic-seed.js` (ten służy testom wolumenu/wydajności i zostaje bez zmian). `scripts/demo-seed.js` zakłada bazę od zera (domyślnie PGlite trwałe na dysku w `.demo-data/`, poza repo) i przechodzi przez te same trasy API co prawdziwe panele — konta ról, wpłaty, księgę, wydarzenia, zebranie z protokołem i szkic kampanii e-mail:
+
+```bash
+npm ci
+npm run build
+npm run demo:seed     # tworzy bazę demo i wypisuje na konsoli hasła + sekrety TOTP kont ról
+npm run demo:start    # PORT=3000 npm start na tej samej bazie
+```
+
+Skrypt **odmawia działania**, gdy `DATABASE_URL` wskazuje poza `localhost`/`127.0.0.1` (bez `DATABASE_URL` używa PGlite), gdy `NODE_ENV`/`APP_ENV` to `production`, albo gdy w środowisku jest ustawiony `BREVO_API_KEY` — worker e-mail (`scripts/email-worker.js`) nigdy nie jest uruchamiany, więc żadna wiadomość demo nie może wyjść. Dane są wyłącznie syntetyczne: adresy `@example.invalid`, jawnie fikcyjne nazwiska („Przykładowy”), bez zdjęć, bez wymyślonych relacji z przeszłych wydarzeń (wydarzenia to zapowiedzi z datą/miejscem/opisem organizacyjnym) i bez automatycznego statusu „dłużnik” (składki są dobrowolne — AGENTS.md). Hasła i sekrety TOTP kont demo (`admin`, dwie osoby `board`, `treasurer`, `representative` klasy 0-A, `audit`) są wypisywane WYŁĄCZNIE na konsolę przy każdym uruchomieniu `npm run demo:seed` i nigdzie nie są zapisywane — nie używać ich poza lokalnym pokazem. Szkic kampanii e-mail zostaje szkicem: nie jest zatwierdzany ani kolejkowany.
 
 ## Start implementacji
 

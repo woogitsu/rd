@@ -7,13 +7,27 @@
 // Plik zdjęcia leży w prywatnym magazynie dokumentów (document_id); ten moduł
 // nie przechowuje ani nie udostępnia plików.
 //
+// Plik obrazu galerii (#96, osobno od document_id powyżej): POST
+// /api/news-photos/:id/file przyjmuje surowe bajty PNG/JPEG, ponownie
+// koduje je przez `sharp` (odrzuca EXIF/GPS/XMP — sharp domyślnie nie
+// przepisuje metadanych wejścia na wyjście) i zapisuje wyłącznie warianty
+// `web`/`thumb` pod osobnym prefiksem `photos/` w tym samym prywatnym
+// buckecie co dokumenty. WARIANT ZACHOWAWCZY (brak D-18/D-04/D-05): oryginał
+// NIE jest przechowywany. Publiczny odczyt (GET /api/public/news-photos/
+// :id/:variant) działa tylko dla zdjęć zweryfikowanych i należących do
+// opublikowanej wersji niewycofanego wpisu (postgres/migrations/0084).
+//
 // Polityka ról jest ZAŁOŻENIEM do decyzji D-08 i D-18 (docs/DECISIONS.md):
 // - szkic, zmiana, zgłoszenie, podgląd: admin i zarząd (przydział bez klasy)
 //   albo przedstawiciel klasy dla wpisu własnej klasy (bez zdjęć);
 // - zatwierdzenie, publikacja, wycofanie opublikowanego: zarząd;
-// - rejestracja zdjęć: admin i zarząd; weryfikacja i cofnięcie praw: zarząd.
+// - rejestracja zdjęć i przesłanie pliku: admin i zarząd; weryfikacja i
+//   cofnięcie praw: zarząd.
+import sharp from 'sharp';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
+import { declaredType, detectType, readLimited, validateStructure } from '../documents.js';
+import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
 
 export const NEWS_POLICY = Object.freeze({
@@ -28,6 +42,23 @@ export const PHOTO_SOURCES = Object.freeze([
 ]);
 // Publiczna odpowiedź może być buforowana najwyżej tyle sekund.
 export const PUBLIC_CACHE_SECONDS = 60;
+
+// Warianty pliku zdjęcia (#96): maksymalny wymiar (dłuższy bok) i jakość JPEG.
+// Lista zamknięta — nowy wariant wymaga migracji (CHECK w
+// postgres/migrations/0084_news_photo_files.sql).
+export const PHOTO_FILE_VARIANTS = Object.freeze({
+  web: Object.freeze({ maxDimension: 1600, quality: 82 }),
+  thumb: Object.freeze({ maxDimension: 400, quality: 78 }),
+});
+const PHOTO_UPLOAD_TYPES = new Set(['image/png', 'image/jpeg']);
+// Limit pliku ŹRÓDŁOWEGO przed dekodowaniem (niezależny od limitu dokumentów)
+// — ochrona przed „bombami dekompresji” obrazu (issue #96, ryzyko zgłoszone
+// w treści issue: pamięć przy dużych plikach). Eksportowany, bo src/server.js
+// potrzebuje go, by podnieść limit ciała żądania Node tylko dla tej trasy.
+export const PHOTO_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+// Limit wymiarów źródła przed dekodowaniem (megapiksele) — sharp odrzuca
+// obraz większy bez pełnego zdekodowania dzięki `limitInputPixels`.
+const PHOTO_UPLOAD_MAX_PIXELS = 40_000_000;
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
@@ -173,6 +204,9 @@ function parsePhoto(input) {
   if (input.explicitLicenseGranted !== undefined && typeof input.explicitLicenseGranted !== 'boolean') {
     throw new NewsError('invalid_explicit_license');
   }
+  if (input.decorative !== undefined && typeof input.decorative !== 'boolean') {
+    throw new NewsError('invalid_decorative');
+  }
   const photo = {
     documentId: reference(input.documentId, 'invalid_document_id', { required: true }),
     author: text(input.author, { min: 2, max: 200, required: true, code: 'invalid_author' }),
@@ -184,11 +218,17 @@ function parsePhoto(input) {
     licenseDocumentRef: reference(input.licenseDocumentRef, 'invalid_license_document_ref'),
     rightsNote: text(input.rightsNote, { min: 3, max: 1000, code: 'invalid_rights_note', multiline: true }),
     altText: text(input.altText, { min: 3, max: 300, code: 'invalid_alt_text' }),
+    decorative: input.decorative === true,
     depictsChildren: input.depictsChildren,
     identifiableChildren: count(input.identifiableChildren, 'invalid_identifiable_children'),
     identifiableAdults: count(input.identifiableAdults, 'invalid_identifiable_adults'),
   };
   if (photo.identifiableChildren > 0 && !photo.depictsChildren) throw new NewsError('invalid_depicts_children');
+  // #124: opis zastępczy jest niezmienny jak reszta metadanych (poprawka =
+  // nowe zdjęcie), więc musi być podany (albo jawnie zadeklarowane
+  // decorative) już przy rejestracji — inaczej weryfikacja i tak zablokuje
+  // to zdjęcie (ograniczenie bazy news_photo_alt_text_required, 0071).
+  if (!photo.altText && !photo.decorative) throw new NewsError('alt_text_required', 422);
   // Sama publiczna dostępność (np. galeria na stronie szkoły) nie daje prawa do kopiowania.
   if (source === 'public_website_copy' && (!photo.explicitLicenseGranted || !photo.licenseDocumentRef)) {
     throw new NewsError('public_copy_requires_license', 422);
@@ -209,7 +249,7 @@ const POST_COLUMNS = `id, school_year_id, class_id, title, body, photo_ids, stat
   first_published_at, withdrawn_by, withdrawn_at, withdrawal_reason, idempotency_key`;
 
 const PHOTO_COLUMNS = `id, document_id, author, source, source_detail, to_char(taken_on, 'YYYY-MM-DD') AS taken_on, license_text,
-  explicit_license_granted, license_document_ref, rights_note, alt_text, depicts_children,
+  explicit_license_granted, license_document_ref, rights_note, alt_text, decorative, depicts_children,
   identifiable_children, identifiable_adults, uploaded_by, uploaded_at, rights_status,
   rights_verified_by, rights_verified_at, revoked_by, revoked_at, revocation_reason, idempotency_key`;
 
@@ -256,6 +296,7 @@ function internalPhoto(row, consents = null) {
     licenseDocumentRef: row.license_document_ref ?? null,
     rightsNote: row.rights_note ?? null,
     altText: row.alt_text ?? null,
+    decorative: row.decorative,
     depictsChildren: row.depicts_children,
     identifiableChildren: row.identifiable_children,
     identifiableAdults: row.identifiable_adults,
@@ -290,6 +331,7 @@ function publicPost(row) {
       license: p.license,
       takenOn: p.takenOn,
       altText: p.altText ?? null,
+      decorative: p.decorative === true,
     })),
   };
 }
@@ -318,6 +360,7 @@ const DB_ERRORS = [
   ['news_photo_public_copy_requires_license', 'public_copy_requires_license', 422],
   ['news_photo_revoked_is_final', 'photo_revoked', 409],
   ['news_photo_consents_locked', 'consents_locked', 409],
+  ['news_photo_alt_text_required', 'alt_text_required', 422],
 ];
 
 function mapDatabaseError(error) {
@@ -625,13 +668,13 @@ export async function registerPhoto(db, actor, input) {
     return await db.transaction(async (tx) => {
       const { rows } = await tx.query(
         `INSERT INTO news_photos (id, document_id, author, source, source_detail, taken_on, license_text,
-           explicit_license_granted, license_document_ref, rights_note, alt_text, depicts_children,
+           explicit_license_granted, license_document_ref, rights_note, alt_text, decorative, depicts_children,
            identifiable_children, identifiable_adults, uploaded_by, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING ${PHOTO_COLUMNS}`,
         [id, photo.documentId, photo.author, photo.source, photo.sourceDetail, photo.takenOn,
           photo.licenseText, photo.explicitLicenseGranted, photo.licenseDocumentRef, photo.rightsNote,
-          photo.altText, photo.depictsChildren, photo.identifiableChildren, photo.identifiableAdults,
+          photo.altText, photo.decorative, photo.depictsChildren, photo.identifiableChildren, photo.identifiableAdults,
           actor.userId, idempotencyKey],
       );
       await audit(tx, actor.userId, 'news_photo.registered', 'news_photo', id, {
@@ -724,6 +767,175 @@ export async function getPhoto(db, actor, input) {
   return { photo: internalPhoto(rows[0], consents) };
 }
 
+function newPhotoObjectKey() {
+  return `photos/${crypto.randomUUID()}`;
+}
+
+function internalPhotoFile(row) {
+  return {
+    variant: row.variant, mimeType: row.mime_type, width: row.width, height: row.height,
+    byteSize: row.byte_size, sha256: row.sha256, createdAt: iso(row.created_at),
+  };
+}
+
+// Ponownie koduje bajty źródłowe do jednego wariantu JPEG bez metadanych
+// (sharp nie przepisuje EXIF/XMP/ICC na wyjście, chyba że wywołane byłoby
+// .withMetadata() — tu celowo pominięte). `.rotate()` na obrazie źródłowym
+// honoruje orientację EXIF przed jej odrzuceniem, więc wynik ma poprawny
+// obrót mimo braku metadanych.
+async function renderPhotoVariant(source, { maxDimension, quality }) {
+  const { data, info } = await source.clone()
+    .resize({ width: maxDimension, height: maxDimension, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
+  return { bytes: data, width: info.width, height: info.height };
+}
+
+// Przesłanie pliku zarejestrowanego zdjęcia (#96): generuje warianty web/thumb
+// bez EXIF/GPS i zapisuje je do prywatnego magazynu pod prefiksem photos/.
+// Oryginał NIE jest przechowywany (wariant zachowawczy, brak D-18/D-04/D-05).
+export async function uploadPhotoFile(db, storage, actor, input) {
+  requireActor(actor);
+  if (!schoolWide(actor, NEWS_POLICY.photoRegister)) throw new NewsError('forbidden', 403);
+  if (!storage) throw new NewsError('storage_unavailable', 503);
+  const idempotencyKey = input?.idempotencyKey;
+  if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_PATTERN.test(idempotencyKey)) {
+    throw new NewsError('invalid_idempotency_key');
+  }
+  if (!validId(input?.photoId)) throw new NewsError('invalid_photo_id');
+  const declared = declaredType(input?.contentType);
+  if (!PHOTO_UPLOAD_TYPES.has(declared)) throw new NewsError('unsupported_media_type', 415);
+  const bytes = input?.bytes;
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) throw new NewsError('empty_photo_file');
+  if (bytes.length > PHOTO_UPLOAD_MAX_BYTES) throw new NewsError('photo_file_too_large', 413);
+  const detected = detectType(bytes);
+  if (!detected || detected !== declared) throw new NewsError('unsupported_media_type', 415);
+  const structure = validateStructure(bytes, detected);
+  if (!structure.ok) throw new NewsError(structure.code === 'document_malformed' ? 'photo_file_malformed' : 'photo_file_active_content', 415);
+
+  const { rows: photoRows } = await db.query('SELECT id, rights_status FROM news_photos WHERE id = $1', [input.photoId]);
+  const photoRow = photoRows[0];
+  if (!photoRow) throw new NewsError('photo_not_found', 404);
+  if (photoRow.rights_status === 'revoked') throw new NewsError('photo_revoked', 409);
+
+  const sourceSha256 = sha256Hex(bytes);
+  const { rows: existingRows } = await db.query(
+    'SELECT variant, mime_type, width, height, byte_size, sha256, source_sha256, created_at FROM news_photo_files WHERE photo_id = $1 ORDER BY variant',
+    [input.photoId],
+  );
+  if (existingRows.length > 0) {
+    if (existingRows.every((row) => row.source_sha256 === sourceSha256) && existingRows.length === Object.keys(PHOTO_FILE_VARIANTS).length) {
+      return { files: existingRows.map(internalPhotoFile), replayed: true };
+    }
+    throw new NewsError('photo_file_exists', 409);
+  }
+
+  let source;
+  try {
+    source = sharp(bytes, { limitInputPixels: PHOTO_UPLOAD_MAX_PIXELS }).rotate();
+    // Waliduje sygnaturę/strukturę faktycznie dekodując nagłówek — plik
+    // uszkodzony poza tym, co wykrywa validateStructure, kończy się tu 415,
+    // nie 500 (błąd łapany niżej).
+    await source.metadata();
+  } catch {
+    throw new NewsError('photo_file_malformed', 415);
+  }
+
+  const variants = {};
+  const uploadedKeys = [];
+  try {
+    for (const [variant, config] of Object.entries(PHOTO_FILE_VARIANTS)) {
+      const rendered = await renderPhotoVariant(source, config);
+      const objectKey = newPhotoObjectKey();
+      await storage.putObject(objectKey, rendered.bytes, 'image/jpeg');
+      uploadedKeys.push(objectKey);
+      variants[variant] = {
+        objectKey, width: rendered.width, height: rendered.height,
+        byteSize: rendered.bytes.length, sha256: sha256Hex(rendered.bytes),
+      };
+    }
+
+    try {
+      const rows = await db.transaction(async (tx) => {
+        const inserted = [];
+        for (const [variant, file] of Object.entries(variants)) {
+          const { rows: r } = await tx.query(
+            `INSERT INTO news_photo_files
+               (id, photo_id, variant, object_key, mime_type, width, height, byte_size, sha256, source_sha256, created_by)
+             VALUES ($1, $2, $3, $4, 'image/jpeg', $5, $6, $7, $8, $9, $10)
+             RETURNING variant, mime_type, width, height, byte_size, sha256, created_at`,
+            [crypto.randomUUID(), input.photoId, variant, file.objectKey, file.width, file.height,
+              file.byteSize, file.sha256, sourceSha256, actor.userId],
+          );
+          inserted.push(r[0]);
+        }
+        await audit(tx, actor.userId, 'news_photo.file_uploaded', 'news_photo', input.photoId, {
+          variants: Object.fromEntries(Object.entries(variants).map(([v, f]) => (
+            [v, { width: f.width, height: f.height, byteSize: f.byteSize, sha256: f.sha256 }]
+          ))),
+        });
+        return inserted;
+      });
+      return { files: rows.map(internalPhotoFile), replayed: false };
+    } catch (error) {
+      // Podwójne kliknięcie równoległe: druga transakcja przegrała wyścig o
+      // (photo_id, variant) — nasze obiekty w buckecie są zbędne, sprzątamy
+      // best effort i zwracamy istniejący wynik jak przy zwykłym ponowieniu.
+      if (isUniqueViolation(error)) {
+        const { rows: again } = await db.query(
+          'SELECT variant, mime_type, width, height, byte_size, sha256, source_sha256 FROM news_photo_files WHERE photo_id = $1 ORDER BY variant',
+          [input.photoId],
+        );
+        await Promise.all(uploadedKeys.map((key) => storage.deleteObject?.(key).catch(() => {})));
+        if (again.length > 0 && again.every((row) => row.source_sha256 === sourceSha256)) {
+          return { files: again.map(internalPhotoFile), replayed: true };
+        }
+        throw new NewsError('photo_file_exists', 409);
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (!(error instanceof NewsError) || error.code !== 'photo_file_exists') {
+      // Sprzątanie best effort: transakcja się nie powiodła z innego powodu
+      // (np. rok zamknięty nie dotyczy zdjęć, ale sieć/baza mogła paść) —
+      // obiekty bez wiersza w bazie zostają usunięte, żeby nie osierocić
+      // ich w buckecie (kryterium akceptacji #96).
+      await Promise.all(uploadedKeys.map((key) => storage.deleteObject?.(key).catch(() => {})));
+    }
+    if (error instanceof NewsError) throw error;
+    return mapDatabaseError(error);
+  }
+}
+
+// Odczyt publiczny wariantu pliku (#96): tylko dla zdjęcia zweryfikowanego i
+// należącego do opublikowanej wersji niewycofanego wpisu (to samo kryterium
+// co public_news — postgres/migrations/0084 `news_photo_is_public`).
+// Nieznane zdjęcie, wariant bez pliku i zdjęcie niepubliczne dają identyczną
+// odpowiedź „nie znaleziono” (brak wyroczni istnienia).
+export async function getPublicPhotoFile(db, storage, input) {
+  const photoId = input?.photoId;
+  const variant = input?.variant;
+  if (!validId(photoId) || !Object.hasOwn(PHOTO_FILE_VARIANTS, variant ?? '')) throw new NewsError('photo_not_found', 404);
+  if (!storage) throw new NewsError('service_unavailable', 503);
+  const { rows: publicRows } = await db.query('SELECT news_photo_is_public($1) AS is_public', [photoId]);
+  if (!publicRows[0]?.is_public) throw new NewsError('photo_not_found', 404);
+  const { rows } = await db.query(
+    'SELECT object_key, mime_type, sha256 FROM news_photo_files WHERE photo_id = $1 AND variant = $2',
+    [photoId, variant],
+  );
+  const fileRow = rows[0];
+  if (!fileRow) throw new NewsError('photo_not_found', 404);
+  let object;
+  try {
+    object = await storage.getObject(fileRow.object_key);
+  } catch (error) {
+    if (error?.code === 'storage_object_not_found') throw new NewsError('photo_not_found', 404);
+    throw error;
+  }
+  if (sha256Hex(object.body) !== fileRow.sha256) throw new NewsError('photo_file_integrity_mismatch', 409);
+  return { body: object.body, mimeType: fileRow.mime_type };
+}
+
 export async function listPhotos(db, actor, input = {}) {
   requireActor(actor);
   if (!canSeePhotos(actor)) throw new NewsError('forbidden', 403);
@@ -787,16 +999,17 @@ function idempotencyHeader(request) {
 }
 
 const PHOTO_FIELDS = ['documentId', 'author', 'source', 'sourceDetail', 'takenOn', 'licenseText',
-  'explicitLicenseGranted', 'licenseDocumentRef', 'rightsNote', 'altText', 'depictsChildren',
+  'explicitLicenseGranted', 'licenseDocumentRef', 'rightsNote', 'altText', 'decorative', 'depictsChildren',
   'identifiableChildren', 'identifiableAdults', 'consents'];
 
 // Obsługuje /api/public/news, /api/news… i /api/news-photos…; inne ścieżki -> null.
 export async function handle(request, env, url, json) {
   const path = url.pathname;
   const isPublic = path === '/api/public/news';
+  const publicPhotoFile = path.match(/^\/api\/public\/news-photos\/([^/]+)\/(web|thumb)$/);
   const isPosts = path === '/api/news' || path.startsWith('/api/news/');
   const isPhotos = path === '/api/news-photos' || path.startsWith('/api/news-photos/');
-  if (!isPublic && !isPosts && !isPhotos) return null;
+  if (!isPublic && !publicPhotoFile && !isPosts && !isPhotos) return null;
   try {
     if (!env?.db) throw new NewsError('service_unavailable', 503);
     if (isPublic) {
@@ -810,6 +1023,26 @@ export async function handle(request, env, url, json) {
       // Krótkie buforowanie: wycofanie wpisu lub cofnięcie praw do zdjęcia
       // znika z widoku publicznego najpóźniej po PUBLIC_CACHE_SECONDS.
       return json(result, 200, { 'Cache-Control': `public, max-age=${PUBLIC_CACHE_SECONDS}` });
+    }
+    if (publicPhotoFile) {
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+      let photoId;
+      try {
+        photoId = decodeURIComponent(publicPhotoFile[1]);
+      } catch {
+        throw new NewsError('photo_not_found', 404);
+      }
+      const { body, mimeType } = await getPublicPhotoFile(env.db, env.storage, { photoId, variant: publicPhotoFile[2] });
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': mimeType,
+          'Content-Length': String(body.length),
+          'Cache-Control': `public, max-age=${PUBLIC_CACHE_SECONDS}`,
+          'X-Content-Type-Options': 'nosniff',
+          'Cross-Origin-Resource-Policy': 'same-origin',
+        },
+      });
     }
 
     const noStore = { 'Cache-Control': 'no-store' };
@@ -849,7 +1082,7 @@ export async function handle(request, env, url, json) {
     }
 
     const item = path.match(/^\/api\/news-photos\/([^/]+)$/);
-    const action = path.match(/^\/api\/news-photos\/([^/]+)\/(consents|verify|revoke)$/);
+    const action = path.match(/^\/api\/news-photos\/([^/]+)\/(consents|verify|revoke|file)$/);
     const route = path === '/api/news-photos' && request.method === 'GET' ? 'list'
       : path === '/api/news-photos' && request.method === 'POST' ? 'create'
         : item && request.method === 'GET' ? 'get'
@@ -858,6 +1091,22 @@ export async function handle(request, env, url, json) {
     const actor = await loadActor(request, env);
     if (route === 'list') return json(await listPhotos(env.db, actor, { status: url.searchParams.get('status') }), 200, noStore);
     if (route === 'get') return json(await getPhoto(env.db, actor, { photoId: decodeId(item[1], 'invalid_photo_id') }), 200, noStore);
+    if (route === 'action' && action[2] === 'file') {
+      // Bajty surowe, nie JSON — czytane osobno, PRZED jakąkolwiek próbą
+      // odczytu ciała jako JSON (readJson niżej dotyczy tylko innych tras).
+      const photoId = decodeId(action[1], 'invalid_photo_id');
+      const idempotencyKey = idempotencyHeader(request);
+      const contentType = request.headers.get('content-type');
+      let bytes;
+      try {
+        bytes = await readLimited(request, PHOTO_UPLOAD_MAX_BYTES);
+      } catch (error) {
+        if (error instanceof RangeError) throw new NewsError('photo_file_too_large', 413);
+        throw error;
+      }
+      const result = await uploadPhotoFile(env.db, env.storage, actor, { photoId, bytes, contentType, idempotencyKey });
+      return json({ files: result.files }, result.replayed ? 200 : 201, { ...noStore, 'Idempotency-Replayed': String(result.replayed) });
+    }
     const data = await readJson(request);
     if (route === 'create') {
       const result = await registerPhoto(env.db, actor, { ...pick(data, PHOTO_FIELDS), idempotencyKey: idempotencyHeader(request) });

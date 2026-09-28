@@ -111,7 +111,20 @@ test('access lists only own active grants; expired and revoked grants are ignore
   const response = await handlePgRequest(request('/api/access', { cookie }), env);
   assert.deepEqual(await response.json(), {
     grants: [{ role: 'representative', classId: 'c-1a', schoolYearId: 'y-2026', expiresAt: null }],
+    hasActiveRole: true,
   });
+}));
+
+// #176: hasActiveRole odzwierciedla ROLE_STATUS (src/pg/auth.js), jedno źródło prawdy
+// dla ekranu startowego login/ — konto z samym `principal` nie dostaje listy paneli.
+test('access: hasActiveRole is false for principal alone, true once any other role is granted', async () => withDb(async (db, env) => {
+  const principalOnly = await seedUserSession(db, { userId: 'dir1', roles: [{ role: 'principal' }] });
+  const none = await seedUserSession(db, { userId: 'dir2', roles: [] });
+  const withAudit = await seedUserSession(db, { userId: 'dir3', roles: [{ role: 'principal' }, { role: 'audit' }] });
+  const access = async (cookie) => (await handlePgRequest(request('/api/access', { cookie }), env)).json();
+  assert.equal((await access(principalOnly)).hasActiveRole, false);
+  assert.equal((await access(none)).hasActiveRole, false);
+  assert.equal((await access(withAudit)).hasActiveRole, true, 'audit ma częściowy dostęp (partial), nie pending_decision');
 }));
 
 test('representative cannot reach another class or school year; two representatives of one class both can', async () => withDb(async (db, env) => {
@@ -339,4 +352,20 @@ test('server selects PostgreSQL API only when DATABASE_URL is set and never migr
   assert.equal(pgRuntime.fetchHandler, handlePgRequest);
   assert.equal(config.connectionString, 'postgres://synthetic.invalid/rd');
   assert.equal('DATABASE_URL' in pgRuntime.env, false);
+});
+
+test('bodyLimit: POST /api/news-photos/:id/file has its own higher limit, independent of DOCUMENT_MAX_BYTES', async () => {
+  const fakeDb = { query: async () => ({ rows: [] }), transaction: async () => {}, close: async () => {} };
+  const { bodyLimit } = resolveRuntime(
+    { DATABASE_URL: 'postgres://synthetic.invalid/rd', DOCUMENT_MAX_BYTES: String(2 * 1024 * 1024) },
+    { createDatabase: () => fakeDb },
+  );
+  const photoUrl = new URL('https://rd.example.invalid/api/news-photos/abc/file');
+  const docUrl = new URL('https://rd.example.invalid/api/documents');
+  const otherUrl = new URL('https://rd.example.invalid/api/news-photos');
+  assert.equal(bodyLimit(photoUrl, 'POST'), 10 * 1024 * 1024);
+  assert.equal(bodyLimit(docUrl, 'POST'), 2 * 1024 * 1024);
+  assert.notEqual(bodyLimit(otherUrl, 'POST'), 10 * 1024 * 1024);
+  // GET nie zmienia limitu (żadna z tras nie przesyła ciała).
+  assert.notEqual(bodyLimit(photoUrl, 'GET'), 10 * 1024 * 1024);
 });
