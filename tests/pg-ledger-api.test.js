@@ -37,11 +37,19 @@ async function read(response) {
 }
 
 // Wspólne dane syntetyczne obu backendów. `active` różni się typem (0/1 vs boolean).
-function seedSql(falseValue) {
+// #87: w PostgreSQL dowodem może być wyłącznie dokument finansowy z API tego
+// samego roku, więc 'd1' jest tam takim dokumentem; w D1 zostaje wiersz jak dawniej.
+const PG_SOURCE_DOCUMENT_SQL = `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by,
+      school_year_id, sha256, idempotency_key)
+      VALUES ('d1', 'docs/00000000-0000-4000-8000-00000000d001', 'application/pdf', 1200, 'financial', 'u1',
+        'y2026', '${'a'.repeat(64)}', 'seed-document-0001');`;
+const LEGACY_SOURCE_DOCUMENT_SQL = `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by)
+      VALUES ('d1', 'synthetic/source.pdf', 'application/pdf', 1200, 'receipt', 'u1');`;
+
+function seedSql(falseValue, documentSql = LEGACY_SOURCE_DOCUMENT_SQL) {
   return `
     INSERT INTO households (id) VALUES ('h1'), ('h2');
-    INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by)
-      VALUES ('d1', 'synthetic/source.pdf', 'application/pdf', 1200, 'receipt', 'u1');
+    ${documentSql}
     INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by, active) VALUES
       ('income-other', 'y2026', 'income', 'Inne przychody', 'u1', NOT ${falseValue}),
       ('income-fees', 'y2026', 'income', 'Składki dobrowolne', 'u1', NOT ${falseValue}),
@@ -73,7 +81,7 @@ async function pgBackend({ role = 'treasurer', mfa = true, schoolYearId = 'y2026
   await seedSchoolYear(db, 'y2025', { startsOn: '2025-09-01', endsOn: '2026-08-31' });
   await seedSchoolYear(db, 'y2026');
   const cookie = await seedUserSession(db, { userId: 'u1', mfa, roles: [{ role, schoolYearId, classId }] });
-  await db.exec(seedSql('false'));
+  await db.exec(seedSql('false', PG_SOURCE_DOCUMENT_SQL));
   const env = { db };
   return {
     kind: 'pg', db, env, cookie,
@@ -162,7 +170,9 @@ function normalizer() {
     }
     if (Array.isArray(value)) return value.map((item) => visit(item));
     if (value && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, visit(v, k)]));
+      // #87: attachmentIds to rozszerzenie listy tylko w PostgreSQL (Worker go nie zna);
+      // sprawdzane osobnym testem niżej.
+      return Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'attachmentIds').map(([k, v]) => [k, visit(v, k)]));
     }
     return value;
   };
@@ -384,7 +394,8 @@ test('summary balances opening, adjustments, income, expenses and corrections in
   assert.equal(net('income'), income);
   assert.equal(net('expense'), expenses);
   assert.deepEqual(Object.keys(list.body.entries[0]).sort(), [
-    'amountCents', 'categoryId', 'categoryName', 'correctedCents', 'description', 'direction', 'id', 'method',
+    // #87: attachmentIds — wszystkie dowody wpisu (tylko lista w PostgreSQL).
+    'amountCents', 'attachmentIds', 'categoryId', 'categoryName', 'correctedCents', 'description', 'direction', 'id', 'method',
     'netAmountCents', 'occurredOn', 'paymentEntryId', 'resolutionReference', 'schoolYearId', 'source', 'sourceDocumentId',
   ]);
   const corrected = entries.find((e) => e.id === expense.id);
@@ -662,10 +673,10 @@ test('CSV export of a school year is financial-only, injection-safe and audited'
   assert.equal(lines[1], [
     expense.id, '2026-09-10', 'Wydatek', 'Wydarzenia', `"'=HYPERLINK(""http://evil.example"")"`,
     // #144: nowa kolumna „zastepuje_wpis” (replaces_entry_id) między id_dokumentu a kwota_eur; pusta dla zwykłego wpisu.
-    'Przelew', '"\'+48 konto; ""cytat"""', '', '', 'd1', '', '123,45', '0,45', '123,00',
+    'Przelew', '"\'+48 konto; ""cytat"""', '', '', 'd1', '', '123,45', '0,45', '123,00', '1', 'd1',
   ].join(';'));
-  assert.match(lines[2], /;Przychód;Składki dobrowolne;'@SUM\(A1\);Przelew;Konto testowe;;p1;d1;;50,00;0,00;50,00$/);
-  assert.match(lines[3], /;Przychód;Inne przychody;"'-2\+3 wiersz\ndrugi";Karta;Konto testowe;;;d1;;0,07;0,00;0,07$/);
+  assert.match(lines[2], /;Przychód;Składki dobrowolne;'@SUM\(A1\);Przelew;Konto testowe;;p1;d1;;50,00;0,00;50,00;1;d1$/);
+  assert.match(lines[3], /;Przychód;Inne przychody;"'-2\+3 wiersz\ndrugi";Karta;Konto testowe;;;d1;;0,07;0,00;0,07;1;d1$/);
   // Żadna komórka nie zaczyna się od znaku formuły (poza cytowaniem).
   for (const line of lines.slice(1, -1)) {
     for (const cell of line.split(';')) assert.ok(!/^"?[=+\-@]/.test(cell), cell);
@@ -712,7 +723,7 @@ test('ledger CSV line exports negative amounts as numbers and neutralises text (
   });
   assert.equal(line, [
     'le-syn-1', '2026-09-12', 'Przychód', "'=Kategoria", `"'-korekta; ""opis"""`, 'Przelew', "'@konto", "'+U/1",
-    '', '', '', '10,00', '-12,50', '22,50',
+    '', '', '', '10,00', '-12,50', '22,50', '0', '',
   ].join(';'));
   assert.deepEqual(ledgerRoutes.LEDGER_CSV_COLUMNS.filter((column) => column.type === 'amount').map((column) => column.header),
     ['kwota_eur', 'korekty_eur', 'netto_eur']);

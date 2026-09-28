@@ -910,6 +910,9 @@ export const ROUTE_MATRIX = Object.freeze([
     ok: 201, withKey: true,
     body: (target) => ({ lines: [{ bookedOn: yearDate(target, '10-02'), amountCents: 1234, reference: 'Tytuł syntetyczny' }] }),
   }),
+  reconciliationRoute('reconciliation.linePayment', 'POST', '/lines/:lineId/payment', 'withLine', {
+    ok: 201, withKey: true, suffix: (obj) => `/lines/${obj.statementLineId}/payment`, body: () => ({ householdId: null }),
+  }),
   reconciliationRoute('reconciliation.suggestions', 'GET', '/suggestions', 'withLine', { fixture: 'static' }),
   reconciliationRoute('reconciliation.match', 'POST', '/matches', 'withLine', {
     ok: 201, withKey: true, body: (_target, obj) => ({ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }),
@@ -925,6 +928,21 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=json` }),
+  },
+
+  // ---------- sprawozdanie roczne i przepływy (#125) ----------
+  // Zarząd i skarbnik z MFA; admin, audit, principal, przedstawiciel: 403 (D-08/D-09).
+  {
+    id: 'financialReports.annual', module: 'financial-reports', method: 'GET', path: '/api/reports/annual?schoolYearId=:year&format=json',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/annual?schoolYearId=${target.schoolYearId}&format=json` }),
+  },
+  {
+    id: 'financialReports.cashFlow', module: 'financial-reports', method: 'GET', path: '/api/reports/cash-flow?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/cash-flow?schoolYearId=${target.schoolYearId}` }),
   },
 
   // ---------- exports (#9) ----------

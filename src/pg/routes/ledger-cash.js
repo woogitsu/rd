@@ -135,9 +135,15 @@ async function requireSchoolYear(executor, schoolYearId) {
   return rows[0];
 }
 
-async function requireDocument(executor, documentId) {
+// #87: jak w księdze — tylko dokument finansowy z API tego samego roku; każdy
+// inny przypadek (w tym nieistniejący) daje ten sam kod.
+async function requireDocument(executor, documentId, schoolYearId) {
   if (!documentId) return;
-  const { rows } = await executor.query('SELECT 1 FROM documents WHERE id = $1', [documentId]);
+  const { rows } = await executor.query(
+    `SELECT 1 FROM documents
+      WHERE id = $1 AND kind = 'financial' AND school_year_id IS NOT NULL AND school_year_id = $2`,
+    [documentId, schoolYearId],
+  );
   if (!rows.length) throw new RequestError('invalid_source_document');
 }
 
@@ -219,7 +225,7 @@ async function createTransfer(request, env, json) {
       const replay = replayOrConflict(await byKey(tx));
       if (replay) return replay;
       await requireSchoolYear(tx, input.schoolYearId);
-      await requireDocument(tx, input.sourceDocumentId);
+      await requireDocument(tx, input.sourceDocumentId, input.schoolYearId);
       let values = input;
       if (input.reversesId) {
         // Storno: przeciwny kierunek, ta sama kwota i data pierwotnego zapisu.
@@ -358,7 +364,7 @@ async function createOpening(request, env, json) {
         'SELECT 1 FROM school_years WHERE starts_on < $1::date LIMIT 1', [year.starts_on],
       );
       if (earlier.length) throw new RequestError('not_first_school_year', 409);
-      await requireDocument(tx, sourceDocumentId);
+      await requireDocument(tx, sourceDocumentId, schoolYearId);
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_opening_balances (id, school_year_id, amount_cents, cash_cents, source_document_id,
