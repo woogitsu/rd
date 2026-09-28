@@ -463,6 +463,31 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { householdId: 'hh-2', reason: 'Błędne przypisanie, korekta syntetyczna' },
     }),
   },
+  // #127: podział wpłaty nieprzypisanej na gospodarstwa; cofnięcie części jako nowy zapis.
+  {
+    id: 'payments.allocations.list', module: 'payments', method: 'GET', path: '/api/payments/:paymentId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'static',
+    object: { kind: 'payment', stage: 'recorded' },
+    build: ({ obj }) => ({ path: `/api/payments/${obj.paymentId}/allocations` }),
+  },
+  {
+    id: 'payments.allocations.create', module: 'payments', method: 'POST', path: '/api/payments/:paymentId/allocations',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'payment', stage: 'unmatched' },
+    build: ({ obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/allocations`, headers: withKey(key), body: { householdId: 'hh-1', amountCents: 100 },
+    }),
+  },
+  {
+    id: 'payments.allocations.reversal', module: 'payments', method: 'POST',
+    path: '/api/payments/:paymentId/allocations/:allocationId/reversal',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'payment', stage: 'allocated' },
+    build: ({ obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/allocations/${obj.allocationId}/reversal`, headers: withKey(key),
+      body: { reason: 'Błędna część, korekta syntetyczna' },
+    }),
+  },
   {
     // #141: eksport CSV wpisów wpłat i korekt (skarbnik/zarząd/admin).
     id: 'payments.exportCsv', module: 'payments', method: 'GET', path: '/api/payments/export.csv?schoolYearId=:year',
@@ -1033,6 +1058,16 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   reconciliationRoute('reconciliation.matchRevocation', 'POST', '/matches/:matchId/revocation', 'matched', {
     suffix: (obj) => `/matches/${obj.matchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
+  }),
+  // #127 cz. 2: dopasowanie zbiorcze (jedna pozycja ↔ kilka wpłat) i jego cofnięcie.
+  reconciliationRoute('reconciliation.groupMatch', 'POST', '/group-matches', 'groupReady', {
+    ok: 201, withKey: true,
+    body: (_target, obj) => ({
+      statementLineId: obj.statementLineId, items: obj.paymentIds.map((paymentEntryId) => ({ paymentEntryId })),
+    }),
+  }),
+  reconciliationRoute('reconciliation.groupMatchRevocation', 'POST', '/group-matches/:groupMatchId/revocation', 'groupMatched', {
+    suffix: (obj) => `/group-matches/${obj.groupMatchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
   }),
   reconciliationRoute('reconciliation.confirm', 'POST', '/confirm', 'draft', {
     body: () => ({ confirmationNote: 'Różnica wyjaśniona (syntetyczne)' }),

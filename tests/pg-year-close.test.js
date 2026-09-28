@@ -196,7 +196,7 @@ describe('po zamknięciu roku przez drugą osobę z zarządu', () => {
     assert.deepEqual(summary.finance.nextYearOpeningBalance.amountCents, 143500);
     assert.equal(summary.finance.nextYearOpeningBalance.carriedFromClosure, true);
     assert.deepEqual(summary.payments, {
-      recordedCount: 1, recordedNetCents: 2000, unmatchedCount: 1, unmatchedNetCents: 1500, correctionCount: 0,
+      recordedCount: 1, recordedNetCents: 2000, unmatchedCount: 1, unmatchedNetCents: 1500, unmatchedAllocatedCents: 0, correctionCount: 0,
     });
     assert.deepEqual(summary.meetings.byStatus, { draft: 1 });
     assert.equal(summary.checklist.every((entry) => entry.confirmed && entry.confirmedBy && entry.confirmedAt), true);

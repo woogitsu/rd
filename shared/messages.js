@@ -185,6 +185,8 @@ export const MESSAGES = Object.freeze({
   already_matched_via_payment: "Pozycja jest już dopasowana do wpłaty.",
   already_matched_via_ledger: "Pozycja jest już dopasowana do wpisu księgi.",
   inconsistent_matches: "Dopasowania są niespójne. Odśwież widok.",
+  group_match_sum_mismatch: "Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu.",
+  group_match_direction_mismatch: "Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ).",
   invalid_csv: "Nie udało się odczytać pliku CSV.",
   invalid_csv_header: "Plik CSV ma niepoprawny nagłówek.",
   cash_below_zero: "Ta operacja doprowadziłaby saldo kasy poniżej zera.",
@@ -205,6 +207,12 @@ export const MESSAGES = Object.freeze({
   statement_already_imported: "Ten plik wyciągu został już zaimportowany.",
   bank_import_not_configured: "Import wyciągu z pliku banku nie jest skonfigurowany.",
   matched_in_other_reconciliation: "Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku.",
+  // Podział wpłaty na gospodarstwa (#127).
+  payment_allocation_exceeds_net: "Suma części wpłaty przekroczyłaby jej kwotę po korektach i zwrotach. Najpierw cofnij część.",
+  payment_allocation_household_exists: "To gospodarstwo ma już część tej wpłaty. Cofnij ją, jeśli kwota jest błędna.",
+  payment_has_allocations: "Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części.",
+  payment_allocation_not_found: "Nie znaleziono tej części wpłaty.",
+  payment_allocation_already_reversed: "Ta część wpłaty została już cofnięta.",
   statement_line_not_found: "Nie znaleziono pozycji wyciągu.",
   statement_line_not_income: "Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia.",
 

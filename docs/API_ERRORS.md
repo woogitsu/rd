@@ -89,6 +89,8 @@ wpisów).
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `four_eyes_required` | Tę operację musi zatwierdzić inna osoba niż autor. | Nie — popraw dane żądania. |
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
+| `group_match_direction_mismatch` | Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ). | Nie — popraw dane żądania. |
+| `group_match_sum_mismatch` | Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_reused` | Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -234,11 +236,16 @@ wpisów).
 | `password_required` | Podaj hasło. | Nie — popraw dane żądania. |
 | `password_too_long` | Hasło jest za długie. | Zależy od kontekstu (patrz moduł trasy). |
 | `password_unchanged` | Nowe hasło musi być inne niż obecne. | Zależy od kontekstu (patrz moduł trasy). |
+| `payment_allocation_already_reversed` | Ta część wpłaty została już cofnięta. | Nie — popraw dane żądania. |
+| `payment_allocation_exceeds_net` | Suma części wpłaty przekroczyłaby jej kwotę po korektach i zwrotach. Najpierw cofnij część. | Nie — popraw dane żądania. |
+| `payment_allocation_household_exists` | To gospodarstwo ma już część tej wpłaty. Cofnij ją, jeśli kwota jest błędna. | Nie — popraw dane żądania. |
+| `payment_allocation_not_found` | Nie znaleziono tej części wpłaty. | Nie — popraw dane żądania. |
 | `payment_already_assigned` | Wpłata jest już przypisana do rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_already_linked` | Wpłata jest już powiązana z innym wpisem. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_amount_mismatch` | Kwota wpłaty nie zgadza się z powiązanym wpisem księgi. Odśwież widok i sprawdź dane. | Nie — popraw dane żądania. |
 | `payment_cannot_be_corrected` | Tej wpłaty nie można skorygować w obecnym stanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_cannot_be_refunded` | Tej wpłaty nie można zwrócić w obecnym stanie. | Zależy od kontekstu (patrz moduł trasy). |
+| `payment_has_allocations` | Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części. | Nie — popraw dane żądania. |
 | `payment_linked_entry_not_replaceable` | Wpisu powiązanego z wpłatą nie można przeksięgować. Skoryguj albo wpłatę, albo wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_not_assigned` | Wpłata nie jest przypisana do żadnej rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_not_found` | Nie znaleziono wpłaty albo nie masz do niej dostępu. | Nie — popraw dane żądania. |

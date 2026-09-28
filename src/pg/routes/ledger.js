@@ -790,6 +790,11 @@ async function createCorrection(request, env, ledgerEntryId, json) {
         `SELECT r.id AS reconciliation_id FROM bank_reconciliation_matches m
            JOIN bank_reconciliations r ON r.id = m.reconciliation_id
           WHERE m.ledger_entry_id = $1 AND m.revoked_at IS NULL AND r.status = 'draft'
+         UNION ALL
+         -- Pozycja aktywnego dopasowania zbiorczego (#127, 0105) blokuje tak samo.
+         SELECT r.id AS reconciliation_id FROM bank_group_match_items_current i
+           JOIN bank_reconciliations r ON r.id = i.reconciliation_id
+          WHERE i.ledger_entry_id = $1 AND r.status = 'draft'
           LIMIT 1`,
         [ledgerEntryId],
       );
