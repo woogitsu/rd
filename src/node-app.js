@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { checkReadiness } from './health.js';
+import { checkJobsHealth, tokensMatch } from './pg/jobs-health.js';
 import { describeError, log, sanitizePath } from './log.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -152,11 +153,33 @@ async function serveReadiness(response, env, readiness) {
   response.end(JSON.stringify(body));
 }
 
+// Heartbeat zadań (#149): chroniony tokenem (Authorization: Bearer <token>),
+// osobny od /health/ready — dla monitora zewnętrznego, nie dla Railway.
+// Brak konfiguracji tokenu = punkt wyłączony (401), żeby nie ujawnić stanu
+// zadań bez jawnej decyzji operacyjnej.
+async function serveJobsHealth(request, response, env, jobsHealth) {
+  const expected = env.HEALTH_JOBS_TOKEN;
+  const header = request.headers.authorization;
+  const provided = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!expected || !tokensMatch(provided, expected)) {
+    response.writeHead(401, { 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ status: 'unauthorized' }));
+    return;
+  }
+  const { ok, failedThresholds } = await jobsHealth(env);
+  response.writeHead(ok ? 200 : 503, {
+    'Cache-Control': 'no-store',
+    'Content-Type': 'application/json; charset=utf-8',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  response.end(JSON.stringify({ status: ok ? 'ok' : 'threshold_exceeded', failedThresholds }));
+}
+
 // bodyLimit(url, method) -> bajty; pozwala podnieść limit wyłącznie dla
 // wskazanych tras (np. POST /api/documents). Domyślnie 1 MiB dla wszystkich.
 export function createNodeHandler({
   distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit, logger = log, metrics = null, readiness = checkReadiness,
-  trustProxy = false,
+  jobsHealth = checkJobsHealth, trustProxy = false,
 } = {}) {
   if (!distRoot) throw new Error('distRoot is required');
   if (typeof fetchHandler !== 'function') throw new Error('fetchHandler is required');
@@ -171,6 +194,10 @@ export function createNodeHandler({
       const url = publicUrl(request, publicBaseUrl);
       if (url.pathname === '/health/ready' && ['GET', 'HEAD'].includes(request.method)) {
         await serveReadiness(response, env, readiness);
+        return;
+      }
+      if (url.pathname === '/health/jobs' && ['GET', 'HEAD'].includes(request.method)) {
+        await serveJobsHealth(request, response, env, jobsHealth);
         return;
       }
       // Strona startowa: osoby bez sesji trafiają na logowanie; strona publiczna jest pod /site/.
