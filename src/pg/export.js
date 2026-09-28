@@ -207,6 +207,15 @@ export const EXPORT_TABLES = Object.freeze([
       WHERE m.school_year_id = $1)` },
   { table: 'resolutions', where: () => 'school_year_id = $1' },
 
+  // 0066 (#82): zastąpienie/unieważnienie dokumentu — dane Rady do odtworzenia,
+  // w odróżnieniu od samego pliku (`documents` zostaje w EXPORT_EXCLUDED_TABLES).
+  // Brak school_year_id — zakres po dacie utworzenia zdarzenia (jak
+  // guardian_contact_changes). document_id/replacement_document_id wskazują na
+  // documents.id, którego w paczce nie ma — po odtworzeniu bez odpowiednika,
+  // jak już istniejące source_document_id w ledger_entries; restoreBundle
+  // działa z wyłączonymi kluczami obcymi (session_replication_role = replica).
+  { table: 'document_status_events', where: () => YEAR_TIME('created_at') },
+
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },
   { table: 'school_year_closure_checklist', requires: ['school_year_closures'],
