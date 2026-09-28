@@ -800,7 +800,7 @@ export async function handle(request, env, url, json) {
   try {
     if (!env?.db) throw new NewsError('service_unavailable', 503);
     if (isPublic) {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       const limitText = url.searchParams.get('limit');
       if (limitText !== null && !/^\d{1,2}$/.test(limitText)) throw new NewsError('invalid_limit');
       const result = await listPublic(env.db, {

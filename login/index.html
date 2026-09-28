@@ -24,7 +24,7 @@
       <!-- 1. E-mail i hasło -->
       <section class="card" id="view-login" aria-labelledby="login-title" hidden>
         <h2 id="login-title">Zaloguj się</h2>
-        <p class="hint">Konto powstaje wyłącznie z zaproszenia administratora. Po haśle potrzebny będzie kod z aplikacji uwierzytelniającej.</p>
+        <p class="hint">Konto powstaje wyłącznie z zaproszenia administratora. Jeśli Twoja rola tego wymaga, po haśle poprosimy o kod z aplikacji uwierzytelniającej.</p>
         <form id="login-form" novalidate>
           <label for="login-email">Adres e-mail</label>
           <input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" spellcheck="false" required aria-describedby="login-error" />
@@ -37,6 +37,7 @@
           <button class="primary" type="submit">Zaloguj się</button>
         </form>
         <p class="hint">Nie pamiętasz hasła? Poproś administratora Rady o jednorazowy kod resetu, a potem <a href="#reset">ustaw nowe hasło</a>.</p>
+        <p class="hint">Masz kod zaproszenia od administratora? <a href="#invite">Przyjmij zaproszenie</a>.</p>
       </section>
 
       <!-- 2. Kod z aplikacji -->
@@ -65,9 +66,10 @@
       <section class="card" id="view-enroll" aria-labelledby="enroll-title" hidden>
         <h2 id="enroll-title">Skonfiguruj weryfikację dwuetapową</h2>
         <div id="enroll-intro">
-          <p>Twoja rola wymaga drugiego składnika logowania. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP).</p>
+          <p id="enroll-intro-text">Twoja rola wymaga drugiego składnika logowania. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP).</p>
           <button class="primary" type="button" id="enroll-start">Rozpocznij konfigurację</button>
           <p class="form-error" id="enroll-start-error" role="alert"></p>
+          <p><button type="button" id="enroll-back" hidden>Wróć</button></p>
         </div>
         <div id="enroll-scan" hidden>
           <ol class="steps">
@@ -116,8 +118,9 @@
             <input id="invite-password" name="password" type="password" autocomplete="new-password" required aria-describedby="invite-password-hint invite-error" />
             <button type="button" class="toggle-password" data-target="invite-password" aria-pressed="false" aria-controls="invite-password">Pokaż hasło</button>
           </div>
-          <label for="invite-repeat">Powtórz hasło (nowe konto)</label>
-          <input id="invite-repeat" name="repeat" type="password" autocomplete="new-password" aria-describedby="invite-error" />
+          <label for="invite-repeat">Powtórz hasło</label>
+          <p class="hint" id="invite-repeat-hint">Nowe konto: wpisz to samo nowe hasło. Konto już istnieje: wpisz obecne hasło jeszcze raz.</p>
+          <input id="invite-repeat" name="repeat" type="password" autocomplete="new-password" required aria-describedby="invite-repeat-hint invite-error" />
           <p class="form-error" id="invite-error" role="alert"></p>
           <button class="primary" type="submit">Przyjmij zaproszenie</button>
         </form>
@@ -172,6 +175,7 @@
         <ul class="panel-list" id="panel-list"></ul>
         <div class="account-actions">
           <button type="button" id="open-change">Zmień hasło</button>
+          <button type="button" id="enroll-voluntary" hidden>Włącz weryfikację dwuetapową</button>
           <button type="button" class="logout">Wyloguj</button>
           <button type="button" id="logout-all">Wyloguj ze wszystkich urządzeń</button>
         </div>

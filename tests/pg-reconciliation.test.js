@@ -122,6 +122,9 @@ test('draft reconciliation computes the ledger balance and the difference on the
 
     // Reference text is never stored or returned.
     const { rows: stored } = await db.query('SELECT reference_hash FROM bank_statement_lines');
+    assert.equal(stored.length, 3, 'wszystkie 3 zaimportowane pozycje mają wiersz w bank_statement_lines');
+    // #214: kontrola pozytywna — inaczej hashowanie zepsute na NULL przechodziłoby test „poprawny format”.
+    assert.ok(stored.some((row) => row.reference_hash !== null), 'przynajmniej jedna pozycja z referencją ma ustawiony hash');
     assert.ok(stored.every((row) => row.reference_hash === null || /^[0-9a-f]{64}$/.test(row.reference_hash)));
     const detailResponse = await call(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer });
     const detailText = await detailResponse.text();
@@ -369,9 +372,15 @@ test('audit report totals match the ledger and flag large expenses without an ad
     for (const cookie of [cookies.board, cookies.treasurer]) {
       assert.equal((await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie })).status, 200);
     }
-    for (const cookie of [cookies.rep, cookies.auditNoMfa, cookies.admin]) {
-      assert.equal((await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie })).status, 403);
+    for (const cookie of [cookies.rep, cookies.admin]) {
+      const response = await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie });
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), { error: 'forbidden' }, 'rola spoza audit/board/treasurer');
     }
+    // #161: rola i rok pasują, jedyną przeszkodą jest brak zapisanego czynnika.
+    const auditNoMfaResponse = await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie: cookies.auditNoMfa });
+    assert.equal(auditNoMfaResponse.status, 403);
+    assert.deepEqual(await auditNoMfaResponse.json(), { error: 'mfa_enrollment_required' });
     assert.equal((await call(`/api/reports/audit?schoolYearId=${YEAR}`)).status, 401);
     const { rows } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'report.audit.generated'");
     assert.equal(rows[0].n, 3);
@@ -743,10 +752,29 @@ test('a correction after matching blocks confirmation with a list of inconsisten
       method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('corr') },
       body: { amountCents, reason: 'Korekta syntetyczna' },
     });
+    // #165 (reszta): korekta z aktywnym powiązaniem w SZKICU jest teraz zachowawczo
+    // zablokowana (409 active_bank_match) — skarbnik musiałby najpierw cofnąć
+    // powiązanie. Ten test sprawdza inny mechanizm (kontrolę przy ZATWIERDZENIU,
+    // #228/#165 wcześniejsza część) jako niezależny backstop — dla stanu, który
+    // powstał inaczej niż przez API korekty (np. dane sprzed tej migracji albo
+    // bezpośredni zapis z pominięciem triggerów). Odtwarzamy go tu wprost w bazie
+    // (session_replication_role = replica, jak w innych testach tego pliku).
+    const blocked = await correct('/api/payments/p-part/corrections', 1500);
+    assert.equal(blocked.status, 409);
+    const blockedBody = await blocked.json();
+    assert.equal(blockedBody.error, 'active_bank_match');
+    assert.equal(blockedBody.reconciliationId, draft.id);
+
     // Wpłata częściowa: korekta 15 EUR z 40 EUR; wpis 100 EUR skorygowany o 30 EUR; wpis 12 EUR do zera.
-    assert.equal((await correct('/api/payments/p-part/corrections', 1500)).status, 201);
-    assert.equal((await correct('/api/ledger/le-bus/corrections', 3000)).status, 201);
-    assert.equal((await correct('/api/ledger/le-zero/corrections', 1200)).status, 201);
+    await db.exec(`
+      SET session_replication_role = replica;
+      INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
+        VALUES ('corr-p-part', 'p-part', 1500, 'Korekta syntetyczna', 'u-treasurer', 'corr-p-part-key');
+      INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
+        VALUES ('corr-le-bus', 'le-bus', 3000, 'Korekta syntetyczna', 'u-treasurer', 'corr-le-bus-key'),
+               ('corr-le-zero', 'le-zero', 1200, 'Korekta syntetyczna', 'u-treasurer', 'corr-le-zero-key');
+      SET session_replication_role = origin;
+    `);
 
     const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
     assert.equal(detail.summary.inconsistentMatchCount, 3);

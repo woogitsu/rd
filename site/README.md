@@ -15,7 +15,7 @@ npm run build:site    # dist/site, serwowane przez serwer Node pod /site/
 |---|---|---|
 | Najbliższe wydarzenia | `GET /api/public/events?from=RRRR-MM-DD&limit=200` | tylko opublikowane wersje; odwołane oznaczone „odwołane” |
 | Protokoły zebrań | `GET /api/meetings/public-minutes?schoolYearId=` | tylko zatwierdzone z widocznością `public` |
-| Aktualności | `GET /api/public/news` | opcjonalne; przy 404 sekcja pozostaje ukryta |
+| Aktualności | `GET /api/public/news` | odpowiedź `{ posts: [...] }` (`listPublic`); przy 404 sekcja pozostaje ukryta |
 
 Strona nie ma własnego API i nie zmienia danych.
 

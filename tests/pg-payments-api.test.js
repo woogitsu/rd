@@ -162,6 +162,12 @@ async function runContractScenario(backend) {
 
   const pageOne = await step('list recorded page 1', call(cookie, '/api/payments?schoolYearId=y2026&status=recorded&limit=2'));
   await step('list recorded page 2', call(cookie, `/api/payments?schoolYearId=y2026&status=recorded&limit=2&cursor=${pageOne.nextCursor}`));
+  // #192: kursor wiąże rok i filtr zapytania, które go wydało.
+  await step('list cursor other status', call(cookie, `/api/payments?schoolYearId=y2026&status=unmatched&limit=2&cursor=${pageOne.nextCursor}`));
+  await step('list cursor no status', call(cookie, `/api/payments?schoolYearId=y2026&limit=2&cursor=${pageOne.nextCursor}`));
+  await step('list cursor other year', call(cookie, `/api/payments?schoolYearId=y2025&status=recorded&limit=2&cursor=${pageOne.nextCursor}`));
+  const unscoped = btoa(JSON.stringify(['2026-09-22', 'p1'])).replace(/=+$/, '');
+  await step('list cursor without scope', call(cookie, `/api/payments?schoolYearId=y2026&status=recorded&limit=2&cursor=${unscoped}`));
   await step('list unmatched', call(cookie, '/api/payments?schoolYearId=y2026&status=unmatched'));
   await step('list all', call(cookie, '/api/payments?schoolYearId=y2026'));
   await step('list other year', call(cookie, '/api/payments?schoolYearId=y2025'));
@@ -190,6 +196,11 @@ test('PostgreSQL API matches the legacy Worker contract step by step', async () 
     }
     // Scenariusz obejmuje sukcesy i odmowy, nie same błędy.
     assert.ok(expected.some((s) => s.status === 201) && expected.some((s) => s.status === 409));
+    for (const label of ['list cursor other status', 'list cursor no status', 'list cursor other year', 'list cursor without scope']) {
+      const found = actual.find((s) => s.label === label);
+      assert.deepEqual([found.status, found.body], [400, { error: 'invalid_cursor' }], label);
+    }
+    assert.equal(actual.find((s) => s.label === 'list recorded page 2').status, 200);
     assert.equal(await pg.count('payment_entries'), 4);
     assert.equal(await pg.count('payment_corrections'), 3);
     assert.equal(await pg.count('payment_assignments'), 1);
@@ -434,8 +445,24 @@ test('audit events are atomic with the write and carry no amounts, references or
   } finally {
     console.error = original;
   }
+  // #214: kontrola pozytywna — bez niej test przechodzi także wtedy, gdy logger przestaje pisać na console.error.
+  assert.ok(errors.length > 0, 'awaria triggera audytu musi zostać zalogowana przez console.error');
   assert.ok(errors.every((line) => !line.includes('synthetic-reference') && !line.includes('@')));
   assert.equal(await backend.count('payment_entries', "idempotency_key = 'audit-fail-0001'"), 0);
+
+  // #211: ponowienie tym samym kluczem po usunięciu awarii — dokładnie ten krok
+  // wykona przeglądarka skarbnika po 503 (macierz scenariuszy AGENTS.md, wpłaty).
+  await backend.db.exec('DROP TRIGGER fail_payment_audit ON audit_events; DROP FUNCTION fail_payment_audit();');
+  const retried = await createPayment(backend, {}, 'audit-fail-0001');
+  assert.equal(retried.status, 201);
+  assert.equal(retried.replayed, 'false');
+  assert.equal(await backend.count('payment_entries', "idempotency_key = 'audit-fail-0001'"), 1);
+  assert.equal(await backend.count('audit_events', `action = 'payment.created' AND entity_id = '${retried.body.payment.id}'`), 1);
+  const thirdTry = await createPayment(backend, {}, 'audit-fail-0001');
+  assert.equal(thirdTry.status, 200);
+  assert.equal(thirdTry.replayed, 'true');
+  assert.equal(thirdTry.body.payment.id, retried.body.payment.id);
+  assert.equal(await backend.count('payment_entries', "idempotency_key = 'audit-fail-0001'"), 1);
 }));
 
 test('BIGINT aggregates are converted only when safe; route is registered once', () => {
