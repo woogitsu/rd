@@ -187,7 +187,8 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
     body: minutesBody ?? `Protokół ${scopeMarker} — treść syntetyczna.`,
   });
   if (stage === 'draftMinutes') return { ...obj, minutesId: minutes.id };
-  await approveMinutes(db, fxAdmin, { minutesId: minutes.id });
+  // #135: zatwierdzający musi być inną osobą niż autor wersji (fxAdmin powyżej).
+  await approveMinutes(db, fxBoard, { minutesId: minutes.id });
   if (stage === 'approvedMinutes') return { ...obj, minutesId: minutes.id };
   await setMinutesVisibility(db, fxAdmin, { idempotencyKey: nextKey('fx-vis'), minutesId: minutes.id, visibility });
   return { ...obj, minutesId: minutes.id };
@@ -232,6 +233,13 @@ async function makeCampaign(ctx, target, stage) {
   // Zatwierdza inna osoba niż autor migawki (zasada czterech oczu).
   await api(ctx, ctx.fxCookies.board2, 'POST', `/api/email/campaigns/${campaignId}/approve`,
     { contentHash: obj.contentHash, recipientsHash: obj.recipientsHash });
+  if (stage === 'approved') return obj;
+  // #130: harmonogram — sending/paused budowane na zakolejkowanej kampanii.
+  await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/queue`, {});
+  if (stage === 'sending') return obj;
+  if (stage === 'paused') {
+    await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/pause`, {});
+  }
   return obj;
 }
 
