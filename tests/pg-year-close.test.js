@@ -341,6 +341,53 @@ test('ponowne zamknięcie jest idempotentne i nie dubluje bilansu ani audytu', a
   }
 });
 
+test('#212: dwa równoległe „Zamknij rok” (dwie osoby albo podwójne kliknięcie) — bez zakleszczenia, dokładnie jeden bilans otwarcia', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    await startAndConfirm(env, cookies);
+    // Dwóch różnych członków zarządu (żaden nie rozpoczynał — boardA
+    // rozpoczęła) naraz. PGlite serializuje same transakcje, ale obie
+    // odpowiedzi przechodzą przez tę samą ścieżkę kodu co na prawdziwym
+    // PostgreSQL: advisory lock szereguje wejście do transakcji, druga widzi
+    // już rok zamknięty i zwraca replayed:true zamiast błędu.
+    const [a, b] = await Promise.all([
+      post(env, `/api/year-close/${OLD}/close`, cookies.boardB),
+      post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
+    ]);
+    assert.equal(a.status < 300, true, `pierwsza odpowiedź: ${a.status}`);
+    assert.equal(b.status < 300, true, `druga odpowiedź: ${b.status}`);
+    const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
+    const replayedFlags = [bodyA.replayed, bodyB.replayed].sort();
+    assert.deepEqual(replayedFlags, [false, true], 'dokładnie jedna odpowiedź zapisała, druga jest replayed:true');
+
+    const { rows } = await db.query('SELECT count(*)::int AS n FROM ledger_opening_balances WHERE school_year_id = $1', [NEW]);
+    assert.equal(rows[0].n, 1, 'dokładnie jeden bilans otwarcia');
+    assert.equal(await auditCount(db, 'year_close.closed'), 1, 'dokładnie jedno zdarzenie year_close.closed');
+  } finally {
+    await db.close();
+  }
+});
+
+test('#212: podwójne kliknięcie „Zamknij rok” przez tę samą osobę — bez zakleszczenia, drugie replayed:true', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    await startAndConfirm(env, cookies);
+    const [a, b] = await Promise.all([
+      post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
+      post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
+    ]);
+    assert.equal(a.status < 300, true);
+    assert.equal(b.status < 300, true);
+    const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
+    assert.deepEqual([bodyA.replayed, bodyB.replayed].sort(), [false, true]);
+
+    const { rows } = await db.query('SELECT count(*)::int AS n FROM ledger_opening_balances WHERE school_year_id = $1', [NEW]);
+    assert.equal(rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});
+
 test('zamknięcie odmawia, gdy nowy rok ma już bilans otwarcia lub rok następny jest niepoprawny', async () => {
   const { db, env, cookies } = await setup();
   try {

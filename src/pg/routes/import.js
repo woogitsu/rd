@@ -28,6 +28,10 @@ export const name = 'import';
 export const IMPORT_ROLES = Object.freeze(['admin', 'board']);
 export const FIELD_KEYS = Object.freeze(FIELDS.map(([key]) => key));
 export const IMPORT_FORMAT_VERSION = 1;
+// #248: powód zmiany, jaki widzi historia rodzin/przypisań (triggery z 0014/0023
+// czytają rd.change_reason). Stała, kontrolowana wartość — import nie przyjmuje
+// dowolnego tekstu od operatora.
+export const IMPORT_CHANGE_REASON = 'import_csv_xlsx';
 // Ten sam limit co globalny limit ciała żądania w src/node-app.js.
 export const MAX_IMPORT_BODY_BYTES = 1024 * 1024;
 export const MAX_IMPORT_ROWS = 5000;
@@ -451,6 +455,18 @@ function batchResult(row, replayed) {
   };
 }
 
+// #248: bez tego ustawienia triggery historii rodzin (0014/0023 — student_households,
+// guardian_households, enrollment_history) zapisują created_by/changed_by = NULL
+// i source = 'direct', jakby zmianę wykonano bezpośrednim SQL-em, mimo że zapis
+// wykonuje uwierzytelnione API. `true` = ustawienie lokalne dla tej transakcji
+// (nie globalna sesja) — znika automatycznie po COMMIT/ROLLBACK.
+async function setImportChangeContext(tx, actorId) {
+  await tx.query(
+    "SELECT set_config('rd.actor_id', $1, true), set_config('rd.change_reason', $2, true)",
+    [actorId, IMPORT_CHANGE_REASON],
+  );
+}
+
 async function bulkInsert(tx, batchId, inserts) {
   const column = (list, key) => list.map((item) => item[key]);
   if (inserts.households.length) {
@@ -499,6 +515,11 @@ async function bulkInsert(tx, batchId, inserts) {
 }
 
 async function commit(env, actorId, payload, idempotencyKey) {
+  // #248: zapis historii bez aktora nie jest anonimowym zapisem awaryjnym —
+  // to odmowa. requireAccess wyżej w handle() zawsze daje tu ID uwierzytelnionej
+  // sesji; ten warunek jest strażnikiem na wypadek błędu w wywołującym, nie
+  // ścieżką, którą ma przechodzić prawdziwy ruch.
+  if (!actorId) throw new Error('actor_required');
   return env.db.transaction(async (tx) => {
     // Jeden import naraz: podwójne kliknięcie i ponowienie czekają i widzą zapisany wynik.
     await tx.query("SELECT pg_advisory_xact_lock(hashtext('rd_import_commit'))");
@@ -529,6 +550,10 @@ async function commit(env, actorId, payload, idempotencyKey) {
         c.rowsTotal, c.rowsAdded, c.rowsUpdated, c.rowsUnchanged, c.rowsConflict, c.rowsSkipped,
         c.householdsCreated, c.guardiansCreated, c.studentsCreated, c.enrollmentsCreated, c.linksCreated],
     );
+    // #248: aktor musi być ustawiony w tej samej transakcji, PRZED zapisami
+    // domenowymi — triggery historii rodzin (student_households, guardian_households,
+    // enrollment_history) czytają rd.actor_id/rd.change_reason w momencie INSERT-a.
+    await setImportChangeContext(tx, actorId);
     await bulkInsert(tx, batchId, plan.inserts);
     // Audyt: aktor, rok i liczniki. Bez imion, nazwisk, adresów i identyfikatorów ze źródła.
     await insertAuditEvent(tx, {

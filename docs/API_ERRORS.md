@@ -39,6 +39,7 @@ wpisów).
 | `already_matched_via_ledger` | Pozycja jest już dopasowana do wpisu księgi. | Nie — popraw dane żądania. |
 | `already_matched_via_payment` | Pozycja jest już dopasowana do wpłaty. | Nie — popraw dane żądania. |
 | `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
+| `alt_text_required` | Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne. | Zależy od kontekstu (patrz moduł trasy). |
 | `ambiguous_local_time` | Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi. | Zależy od kontekstu (patrz moduł trasy). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -51,6 +52,7 @@ wpisów).
 | `cannot_grant_self` | Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu. | Zależy od kontekstu (patrz moduł trasy). |
 | `cannot_reset_own_mfa` | Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora. | Zależy od kontekstu (patrz moduł trasy). |
 | `cash_below_zero` | Ta operacja doprowadziłaby saldo kasy poniżej zera. | Zależy od kontekstu (patrz moduł trasy). |
+| `category_not_found` | Nie znaleziono kategorii księgi. | Nie — popraw dane żądania. |
 | `checklist_incomplete` | Lista kontrolna nie jest ukończona. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_exists` | Klasa o tej nazwie już istnieje w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_not_found` | Nie znaleziono klasy albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
@@ -114,17 +116,21 @@ wpisów).
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
 | `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_datetime` | Niepoprawna data lub godzina. | Nie — popraw dane żądania. |
+| `invalid_decorative` | Niepoprawna wartość pola „zdjęcie dekoracyjne”. | Nie — popraw dane. |
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
+| `invalid_domain` | Wybierz obszar dziennika z listy. | Nie — popraw dane. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
 | `invalid_email` | Podaj poprawny adres e-mail. | Nie — popraw dane żądania. |
 | `invalid_ended_on` | Podaj poprawną datę odejścia (RRRR-MM-DD). | Nie — popraw dane. |
+| `invalid_entity_type` | Nieznany rodzaj obiektu w dzienniku. | Nie — popraw dane. |
 | `invalid_event_id` | Niepoprawny identyfikator wydarzenia. | Nie — popraw dane żądania. |
 | `invalid_expires_at` | Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata). | Nie — popraw dane żądania. |
 | `invalid_explicit_license` | Niepoprawna licencja zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_format` | Wybierz format eksportu z listy (CSV albo JSON). | Nie — popraw dane żądania. |
+| `invalid_from` | Podaj poprawną datę początkową (RRRR-MM-DD). | Nie — popraw dane. |
 | `invalid_id` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
 | `invalid_idempotency_key` | Niepoprawny identyfikator operacji. Zamknij formularz i otwórz go ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `invalid_identifier` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
@@ -175,6 +181,7 @@ wpisów).
 | `invalid_status` | Niepoprawny status. | Nie — popraw dane żądania. |
 | `invalid_taken_on` | Niepoprawna data wykonania zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_title` | Tytuł musi mieć od 3 do 200 znaków. | Nie — popraw dane żądania. |
+| `invalid_to` | Podaj poprawną datę końcową (RRRR-MM-DD). | Nie — popraw dane. |
 | `invalid_token` | Kod jest nieważny, wygasł albo został już użyty. | Nie — popraw dane żądania. |
 | `invalid_transition` | Tego kroku nie można wykonać w obecnym stanie. Odśwież widok. | Nie — popraw dane żądania. |
 | `invalid_ttl` | Ważność zaproszenia: od 1 do 336 godzin. | Nie — popraw dane żądania. |
@@ -202,6 +209,7 @@ wpisów).
 | `mfa_locked` | Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `mfa_required` | Potwierdź logowanie kodem z aplikacji uwierzytelniającej. | Nie — popraw dane żądania. |
 | `mfa_unavailable` | Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `minutes_contain_personal_data` | Protokół zawiera możliwe dane osobowe (imię i nazwisko, e-mail albo IBAN) — publikacja publiczna jest zablokowana. | Nie — popraw dane żądania. |
 | `minutes_four_eyes_required` | Protokół zatwierdza inna osoba niż jego autor. | Zależy od kontekstu (patrz moduł trasy). |
 | `minutes_not_found` | Nie znaleziono wersji protokołu. | Nie — popraw dane żądania. |
 | `next_school_year_not_found` | Nie znaleziono następnego roku szkolnego. | Nie — popraw dane żądania. |
@@ -233,14 +241,18 @@ wpisów).
 | `photo_not_found` | Nie znaleziono zdjęcia. | Nie — popraw dane żądania. |
 | `photo_revoked` | Zgoda na publikację zdjęcia została wycofana. | Zależy od kontekstu (patrz moduł trasy). |
 | `photos_require_school_wide_role` | Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły. | Zależy od kontekstu (patrz moduł trasy). |
+| `possible_personal_data` | Ten tekst zostanie zapisany na stałe i trafi do eksportu. Usuń dane osobowe albo potwierdź, że to konieczne. | Nie — popraw dane żądania. |
 | `post_not_found` | Nie znaleziono wpisu. | Nie — popraw dane żądania. |
 | `post_withdrawn` | Wpis został wycofany. | Zależy od kontekstu (patrz moduł trasy). |
+| `preview_account_limit` | Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro. | Zależy od kontekstu (patrz moduł trasy). |
+| `preview_campaign_limit` | Wyczerpano limit wiadomości testowych dla tej kampanii. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_required` | Najpierw wyślij podgląd importu. | Nie — popraw dane żądania. |
 | `preview_stale` | Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `production_requires_flag` | Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `production_restore_requires_allow_production` | Odtworzenie na produkcji wymaga osobnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `public_copy_requires_license` | Publiczna kopia wymaga zapisanej licencji lub zgody. | Zależy od kontekstu (patrz moduł trasy). |
 | `quorum_rule_source_required` | Podaj źródło reguły quorum (np. regulamin). | Nie — popraw dane żądania. |
+| `read_only` | Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych. | Zależy od kontekstu (patrz moduł trasy). |
 | `recipients_hash_mismatch` | Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie. | Nie — popraw dane żądania. |
 | `reconciliation_confirmed` | Uzgodnienie jest już potwierdzone i nie można go zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `reconciliation_not_found` | Nie znaleziono uzgodnienia. | Nie — popraw dane żądania. |
@@ -261,6 +273,7 @@ wpisów).
 | `school_year_not_finished` | Rok szkolny jeszcze się nie zakończył. | Zależy od kontekstu (patrz moduł trasy). |
 | `school_year_not_found` | Nie znaleziono roku szkolnego. | Nie — popraw dane żądania. |
 | `self_approval_forbidden` | Nie można zatwierdzić własnego wpisu. Zatwierdzić musi inna osoba. | Zależy od kontekstu (patrz moduł trasy). |
+| `sending_disabled` | Wysyłka e-mail jest wyłączona w tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `service_unavailable` | Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `snapshot_required` | Najpierw utwórz kopię stanu danych. | Nie — popraw dane żądania. |
 | `statement_account_mismatch` | Rachunek w pliku wyciągu nie jest zatwierdzonym rachunkiem Rady. | Nie — popraw dane żądania. |
@@ -270,6 +283,8 @@ wpisów).
 | `statement_currency_unsupported` | Obsługiwane są wyłącznie wyciągi w EUR. | Nie — popraw dane żądania. |
 | `statement_date_outside_school_year` | Data wyciągu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `statement_line_after_statement_date` | Pozycja wyciągu ma datę późniejszą niż data wyciągu. | Zależy od kontekstu (patrz moduł trasy). |
+| `statement_line_not_found` | Nie znaleziono pozycji wyciągu. | Nie — popraw dane żądania. |
+| `statement_line_not_income` | Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia. | Nie — popraw dane żądania. |
 | `statement_multiple_not_supported` | Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno. | Nie — popraw dane żądania. |
 | `statement_transaction_id_missing` | Ruch w wyciągu nie ma identyfikatora transakcji banku. | Nie — popraw dane żądania. |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
@@ -284,6 +299,7 @@ wpisów).
 | `unsupported_media_type` | Niedozwolony typ danych lub pliku. | Nie — popraw dane żądania. |
 | `unsupported_value` | Eksport zawiera nieobsługiwaną wartość. | Nie — popraw dane żądania. |
 | `unsupported_version` | Nieobsługiwana wersja danych importu. Odśwież stronę. | Nie — popraw dane żądania. |
+| `upload_busy` | Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `user_disabled` | Konto jest wyłączone. | Zależy od kontekstu (patrz moduł trasy). |
 | `user_not_found` | Nie znaleziono konta. | Nie — popraw dane żądania. |
 | `vote_record_required` | Wynik uchwały wymaga wszystkich trzech liczb głosów i ustalenia quorum. | Nie — popraw dane żądania. |

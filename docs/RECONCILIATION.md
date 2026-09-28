@@ -40,6 +40,7 @@ Wszystkie zapisy wymagają sesji, MFA, zgodnego `Origin` i — poza zatwierdzeni
 | `POST /api/reconciliations` | szkic: `schoolYearId`, `statementDate`, `statementBalanceCents`, `notes?` |
 | `GET /api/reconciliations/{id}?limit=&cursor=` | szczegóły, pozycje wyciągu stroną (bez tytułu, tylko `hasReference`; domyślnie i maksymalnie 500 na stronę, `nextCursor` do kolejnej), powiązania z historią cofnięć i niedopasowane wpisy bankowe księgi do daty wyciągu |
 | `POST /api/reconciliations/{id}/lines` | import: `{ "lines": [{ "bookedOn", "amountCents", "reference?" }] }`, `{ "csv": "…" }`, `{ "coda": "…" }` albo `{ "camt053": "…" }`, do 500 pozycji; CSV/JSON: `possibleDuplicateCount`; plik: `skippedDuplicates`, `warnings`, `fileBalances` |
+| `POST /api/reconciliations/{id}/lines/{lineId}/payment` | wpłata wprost z pozycji (#115): `{ "householdId": string \| null }`; kwota i data — z pozycji, `method` zawsze `bank`; wpłata i powiązanie w jednej transakcji |
 | `GET /api/reconciliations/{id}/suggestions?windowDays=7` | propozycje po kwocie i dacie (0–31 dni); **nic nie zatwierdza** |
 | `POST /api/reconciliations/{id}/matches` | zatwierdzenie powiązania: `statementLineId` i `ledgerEntryId` albo `paymentEntryId` |
 | `POST /api/reconciliations/{id}/matches/{matchId}/revocation` | cofnięcie powiązania z powodem |
@@ -52,7 +53,7 @@ Propozycje obejmują wpisy księgi oraz wpłaty, które nie są jeszcze ujęte w
 
 - `lines` jest teraz stronicowane: `limit` (domyślnie i maksymalnie 500) i kursor `(booked_on, id)` w `nextCursor`. Panel dociąga kolejne strony i scala je po stronie klienta, więc zachowanie widoku się nie zmienia; integracja czytająca odpowiedź bezpośrednio musi podążać za `nextCursor`, aż będzie `null`.
 - Pole `unmatchedLines` zostało usunięte — było dokładnym duplikatem podzbioru `lines` bez pola `match` (panel go nie używał). Niedopasowaną pozycję rozpoznaje `line.match === null`.
-- `summary.lineCount`, `matchedLineCount`, `unmatchedLineCount` i `unmatchedLineTotalCents` liczą wszystkie pozycje uzgodnienia niezależnie od rozmiaru strony `lines` (osobne zapytanie agregujące).
+- `summary.lineCount`, `matchedLineCount`, `unmatchedLineCount` i `unmatchedLineTotalCents` liczą wszystkie pozycje uzgodnienia niezależnie od rozmiaru strony `lines` (osobne zapytanie agregujące). Od #165 pkt 4 `matchedLineCount` liczy wyłącznie powiązania zgodne kwotowo (bez podwójnego ujęcia) — pozycja z powiązaniem niezgodnym jest w `inconsistentMatchCount`, nie w `matchedLineCount`; `matchedLineCount + inconsistentMatchCount + unmatchedLineCount = lineCount`.
 - `unmatchedLedgerEntries` ma teraz maksymalnie 1000 wpisów jak dotąd, ale odpowiedź jawnie podaje `unmatchedLedgerEntriesTruncated: true`, gdy lista jest niepełna — wcześniej obcięcie było ciche.
 - Trzy zapytania szczegółów (pozycje, powiązania, niedopasowane wpisy księgi) wykonują się teraz kolejno w jednej transakcji `REPEATABLE READ` na jednym połączeniu zamiast równolegle na trzech, żeby wynik pochodził z jednej migawki (spójne z propozycją dla `…/suggestions`, #158).
 
@@ -80,6 +81,14 @@ Propozycje obejmują wpisy księgi oraz wpłaty, które nie są jeszcze ujęte w
 ### Jedno aktywne powiązanie celu w roku (0089, #105 pkt 6)
 
 Wybrany wariant: globalna unikalność w roku (bez „przenoszenia” powiązań). Wpłata, wpis księgi albo wpłata i wpis, który ją ujmuje, mogą mieć aktywne powiązanie tylko w **jednym** uzgodnieniu roku: `409 matched_in_other_reconciliation` z `reconciliationId`. Trigger `bank_match_year_unique_guard` sprawdza to samo pod blokadą doradczą roku (także przy bezpośrednim `INSERT`). Propozycje nie podsuwają celów powiązanych w innym uzgodnieniu roku. Skutek: skarbnik, który chce powiązać cel w nowym uzgodnieniu, najpierw cofa powiązanie w szkicu, w którym jest; powiązanie w uzgodnieniu zatwierdzonym zostaje na stałe (cel jest „rozliczony”). Istniejące podwójne powiązania nie są zmieniane — wykazuje je zapytanie kontrolne z nagłówka migracji.
+### Wpłata wprost z pozycji wyciągu (#115, część 2)
+
+- `POST /api/reconciliations/{id}/lines/{lineId}/payment` łączy w jednej transakcji utworzenie wpłaty i jej powiązanie z pozycją, zamiast dwóch osobnych operacji (`POST /api/payments` + `POST …/matches`). Ciało: `{ "householdId": string | null }`. Kwotę i datę **serwer bierze z pozycji wyciągu** — pola takie jak `amountCents`/`receivedOn` w ciele żądania są ignorowane. Metoda jest zawsze `bank` (pozycja jest z wyciągu bankowego).
+- Tylko dla pozycji z kwotą dodatnią (`400 statement_line_not_income` dla pozycji wydatkowej). Pozycja spoza uzgodnienia albo nieistniejąca: `404 statement_line_not_found`. Pozycja z już aktywnym powiązaniem: `409 already_matched`.
+- `householdId: null` → wpłata `unmatched` (przypisanie później przez istniejące `POST /api/payments/{id}/assignment`, jak przy pozycji bez referencji). `householdId` wskazujące gospodarstwo → wpłata `recorded` od razu.
+- Idempotencja: jeden `Idempotency-Key` chroni **całą** operację (wpłatę i powiązanie razem) — ponowienie/podwójne kliknięcie z tym samym kluczem daje `200` z tym samym `payment.id` i `match.id`, nigdy drugiej wpłaty ani drugiego powiązania. Klucz jest zapisany osobno w `payment_entries.idempotency_key` i `bank_reconciliation_matches.idempotency_key` (różne tabele, więc bez kolizji), ale sprawdzany łącznie — replay wymaga zgodności wpłaty **i** jej aktywnego powiązania.
+- Uzgodnienie zatwierdzone odrzuca operację tak samo jak ręczny `POST …/matches` (`409 reconciliation_confirmed`) — trigger `bank_reconciliation_require_draft` (0015) jest backstopem w bazie.
+- Poza zakresem tej części: propozycje gospodarstw po komunikacji strukturalnej (zależy od #83), zatwierdzanie wsadowe wielu par naraz i widok uzgodnienia w panelu — tylko API.
 
 Ogólny CSV: pierwszy wiersz to nagłówek z kolumnami `date`/`data`, `amount`/`kwota` i opcjonalnie `reference`/`tytuł`/`opis`. Separator `,` albo `;` (wykrywany z nagłówka), pola w cudzysłowach, BOM dopuszczalny. Data `RRRR-MM-DD` lub `DD.MM.RRRR`/`DD/MM/RRRR`; kwota w EUR z kropką lub przecinkiem, np. `-12,50`. Błędny wiersz zwraca `400 invalid_statement_line` z numerem wiersza danych. Używać wyłącznie danych syntetycznych.
 

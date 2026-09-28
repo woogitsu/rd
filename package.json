@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "build": "npm run build:import && npm run build:panel && npm run build:ledger && npm run build:print && npm run build:events && npm run build:documents && npm run build:site && npm run build:meetings && npm run build:admin && npm run build:families && npm run build:login && npm run build:email && npm run build:reconciliation",
+    "build": "npm run build:import && npm run build:panel && npm run build:ledger && npm run build:print && npm run build:events && npm run build:documents && npm run build:site && npm run build:meetings && npm run build:admin && npm run build:families && npm run build:login && npm run build:email && npm run build:reconciliation && npm run build:year-close",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply rd --local",
@@ -38,6 +38,7 @@
     "dev:documents": "vite documents",
     "build:documents": "vite build documents --outDir ../dist/documents --base ./ --emptyOutDir",
     "email:worker": "node scripts/email-worker.js",
+    "email:preflight": "node scripts/email-preflight.js",
     "dev:site": "vite site",
     "build:site": "vite build site --outDir ../dist/site --base ./ --emptyOutDir",
     "dev:meetings": "vite meetings",
@@ -54,18 +55,20 @@
     "dev:email": "vite email",
     "build:email": "vite build email --outDir ../dist/email --base ./ --emptyOutDir",
     "dev:reconciliation": "vite reconciliation",
-    "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir"
+    "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir",
+    "dev:year-close": "vite year-close",
+    "build:year-close": "vite build year-close --outDir ../dist/year-close --base ./ --emptyOutDir"
   },
   "dependencies": {
     "fflate": "0.8.3",
     "pg": "8.23.0",
-    "qrcode-generator": "1.4.4",
+    "qrcode-generator": "2.0.4",
     "read-excel-file": "9.3.10",
     "sql.js": "1.14.2"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
-    "vite": "^7.1.0",
+    "vite": "^8.3.1",
     "wrangler": "^4.40.0"
   }
 }
