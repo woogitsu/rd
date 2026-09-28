@@ -279,6 +279,7 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  rate_limited: "Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).
