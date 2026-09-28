@@ -700,11 +700,10 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   emailRoute('email.queue', 'POST', '/queue', 'approved', {}),
   emailRoute('email.cancel', 'POST', '/cancel', 'draft', {}),
-  // Środowisko macierzy nie ustawia EMAIL_SENDING_ENABLED, więc dozwolona
-  // osoba dostaje 409 sending_disabled (bramka bez sieci) — autoryzacja jest
-  // sprawdzana wcześniej, więc 403 dla ról spoza EMAIL_EDIT nadal obowiązuje.
+  // Środowisko macierzy wstrzykuje transport (nigdy nie łączy się z siecią) i
+  // adres z EMAIL_PREVIEW_RECIPIENTS, więc dozwolona osoba dostaje 201.
   emailRoute('email.testSend', 'POST', '/test-send', 'draft', {
-    ok: 409, withKey: true, body: () => ({ recipientEmail: 'test@rada.example.invalid' }),
+    ok: 201, withKey: true, body: () => ({ recipientEmail: 'fx-preview@rada.example.invalid' }),
   }),
   {
     // Webhook Brevo: bez sesji i bez Origin; uwierzytelnia wspólny sekret (brak/zły sekret = 401, test niżej).
