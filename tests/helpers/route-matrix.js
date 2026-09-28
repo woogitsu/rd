@@ -833,6 +833,61 @@ export const ROUTE_MATRIX = Object.freeze([
     build: () => ({ path: '/api/ledger/categories/copy', body: { fromSchoolYearId: YEAR_2, toSchoolYearId: YEAR_1, dryRun: true } }),
   },
 
+  // ---------- preliminarz i kategorie (#107) ----------
+  // Zapis kategorii i linii: role finansowe z MFA (jak księga); przyjęcie preliminarza: wyłącznie zarząd.
+  //
+  // POST /api/ledger/categories z nagłówkiem Idempotency-Key (jak zawsze
+  // wysyła go moduł ledger-budget.js) to ta sama trasa co ledger.categoryCreate
+  // powyżej — macierz wymaga unikalnej pary metoda+ścieżka, więc granice ról
+  // sprawdza ten jeden wpis; zachowanie specyficzne dla nagłówka (replay,
+  // 409 idempotency_conflict/category_exists) mają testy jednostkowe
+  // tests/pg-ledger-budget.test.js i tests/pg-ledger-categories-api.test.js.
+  {
+    id: 'ledgerBudget.deactivateCategory', module: 'ledger-budget', method: 'POST', path: '/api/ledger/categories/:categoryId/deactivation',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/categories/${obj.categoryId}/deactivation`, headers: withKey(key), body: { reason: 'Wyłączenie syntetyczne' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.createLine', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ target, obj, key }) => ({
+      path: '/api/ledger/budget', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, categoryId: obj.categoryId, plannedCents: 10000 },
+    }),
+  },
+  {
+    id: 'ledgerBudget.reviseLine', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget/:lineId/revisions',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'budgetLine' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/budget/${obj.lineId}/revisions`, headers: withKey(key), body: { plannedCents: 9000, reason: 'Zmiana syntetyczna' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.adopt', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget/adoptions',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target, key }) => ({
+      path: '/api/ledger/budget/adoptions', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, adoptedOn: yearDate(target, '10-15'), note: 'Przyjęcie syntetyczne' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.history', module: 'ledger-budget', method: 'GET', path: '/api/ledger/budget/history?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/ledger/budget/history?schoolYearId=${target.schoolYearId}` }),
+    contains: () => ['W1'],
+  },
+  {
+    id: 'ledgerBudget.execution', module: 'ledger-budget', method: 'GET', path: '/api/ledger/budget/execution?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/ledger/budget/execution?schoolYearId=${target.schoolYearId}` }),
+    contains: () => ['W1'],
+  },
+
   // ---------- weryfikacja wydatku i uchwała jako upoważnienie (#97, #93) ----------
   ledgerRead('ledger.reviews', '/api/ledger/reviews?schoolYearId=:year', '/reviews', []),
   ledgerRead('ledger.resolutions', '/api/ledger/resolutions?schoolYearId=:year', '/resolutions', []),

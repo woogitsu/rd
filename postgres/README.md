@@ -671,6 +671,20 @@ importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
 przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
 importami CODA/CAMT — tylko po kopii zapasowej.
 
+`0073_ledger_budget_adoptions.sql` (#107) dodaje preliminarz przez API:
+`ledger_categories.idempotency_key` (klucz żądania tworzenia kategorii),
+`ledger_category_deactivations` (historia wyłączenia kategorii, tylko
+dopisywanie) oraz `ledger_budget_adoptions` + `ledger_budget_adoption_lines`
+— zamrożoną fotografię preliminarza przyjętego przez zebranie, opcjonalnie
+z uchwałą. Wersjonowane linie `ledger_budget_lines` się nie zmieniają.
+Skutki dla danych: żaden wiersz nie jest zmieniany ani usuwany; istniejące
+linie i wyłączone kategorie nie mają odpowiadającego wpisu historii/
+przyjęcia. Wycofanie: `DROP TABLE ledger_budget_adoption_lines,
+ledger_budget_adoptions, ledger_category_deactivations; DROP FUNCTION
+ledger_budget_adoption_guard(), ledger_budget_adoption_line_guard(),
+ledger_category_deactivation_guard(); ALTER TABLE ledger_categories DROP
+COLUMN idempotency_key`.
+
 `0080_email_suppression_releases.sql` (#94) zmienia klucz główny
 `email_suppressions` z `email_hash` na `id` (nowa kolumna, dotychczasowe
 wiersze dostają wygenerowany UUID), żeby ten sam adres mógł mieć kilka

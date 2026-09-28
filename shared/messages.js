@@ -165,6 +165,13 @@ export const MESSAGES = Object.freeze({
   ledger_correction_required: "Najpierw skoryguj powiązany wpis księgi o tę samą kwotę, dopiero potem powtórz tę operację.",
   invalid_payment_link: "Niepoprawne powiązanie z wpłatą.",
   invalid_category: "Wybierz kategorię z listy.",
+  // #107: kategorie i preliminarz.
+  category_exists: "Kategoria o tej nazwie już istnieje w tym roku.",
+  category_inactive: "Kategoria jest już wyłączona.",
+  budget_line_exists: "Ta kategoria ma już linię preliminarza. Zmień ją nową wersją.",
+  budget_line_not_found: "Nie znaleziono linii preliminarza.",
+  budget_line_superseded: "Ta wersja linii preliminarza została już zmieniona. Odśwież widok i zmień aktualną wersję.",
+  budget_empty: "Preliminarz tego roku nie ma jeszcze żadnej linii.",
   invalid_ledger_entry_id: "Niepoprawny identyfikator wpisu księgi.",
   ledger_entry_not_found: "Nie znaleziono wpisu księgi.",
   active_bank_match: "Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis.",

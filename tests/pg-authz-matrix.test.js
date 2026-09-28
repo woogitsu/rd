@@ -555,16 +555,32 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger-exp')));
     return { ledgerEntryId: json.entry.id };
   },
-  // #207: kategoria świeża per przypadek — do dezaktywacji (nie może być
-  // współdzielonym `cat-in-<year>`, bo tamta jest używana przez inne trasy).
+  // Świeża, aktywna kategoria wydatków wprost w bazie — współdzielona przez
+  // ledger.categoryDeactivate (#207, nie może być `cat-in-<year>`, bo tamta
+  // jest używana przez inne trasy), ledgerBudget.deactivateCategory /
+  // ledgerBudget.createLine (#107, bez linii preliminarza).
   ledgerCategory: async (ctx, target) => {
-    const id = nextKey('fx-ledger-cat');
+    const categoryId = nextKey('fx-cat');
     await ctx.db.query(
-      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
-       VALUES ($1, $2, 'income', $3, 'u-fx-admin')`,
-      [id, target.schoolYearId, `Kat ${marker(target.key)} ${id}`],
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ($1, $2, 'expense', $3, 'u-fx-admin')`,
+      [categoryId, target.schoolYearId, `Kategoria ${marker(target.key)} ${categoryId}`],
     );
-    return { categoryId: id };
+    return { categoryId };
+  },
+  // #107: kategoria z pierwszą wersją linii preliminarza.
+  budgetLine: async (ctx, target) => {
+    const categoryId = nextKey('fx-cat-line');
+    const lineId = nextKey('fx-line');
+    await ctx.db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ($1, $2, 'expense', $3, 'u-fx-admin')`,
+      [categoryId, target.schoolYearId, `Plan ${marker(target.key)} ${categoryId}`],
+    );
+    await ctx.db.query(
+      `INSERT INTO ledger_budget_lines (id, school_year_id, category_id, planned_cents, created_by, idempotency_key)
+       VALUES ($1, $2, $3, 10000, 'u-fx-admin', $4)`,
+      [lineId, target.schoolYearId, categoryId, nextKey('fx-line-key')],
+    );
+    return { lineId, categoryId };
   },
   // Bilans otwarcia roku celu wprost w bazie (#199); trasa poprawki wymaga jego istnienia.
   openingBalance: async (ctx, target) => {
@@ -953,6 +969,7 @@ const MODULE_SOURCES = {
   documents: ['../src/pg/routes/documents.js', '../src/documents.js'],
   ledger: ['../src/pg/routes/ledger.js'],
   'ledger-cash': ['../src/pg/routes/ledger-cash.js'],
+  'ledger-budget': ['../src/pg/routes/ledger-budget.js'],
   'ledger-cost-centers': ['../src/pg/routes/ledger-cost-centers.js'],
   email: ['../src/pg/routes/email.js'],
   news: ['../src/pg/routes/news.js', '../src/pg/news.js'],
