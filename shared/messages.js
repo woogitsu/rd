@@ -273,7 +273,6 @@ export const MESSAGES = Object.freeze({
   invalid_release_reason: "Wybierz jeden z dopuszczalnych powodów zdjęcia blokady.",
   release_reason_not_allowed: "Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”.",
   request_already_consumed: "Ten wniosek o zdjęcie blokady został już rozpatrzony.",
-  request_not_found: "Nie znaleziono wniosku o zdjęcie blokady.",
   suppression_not_active: "Ta blokada nie jest już aktywna.",
   outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
   not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
