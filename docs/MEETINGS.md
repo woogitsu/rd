@@ -105,6 +105,18 @@ Wszystkie mutacje wymagają nagłówka `Origin` zgodnego z serwerem. Odmowy regu
 
 Każda zmiana zapisuje `audit_events` z aktorem, czasem, typem i identyfikatorem obiektu. Metadane zawierają wyłącznie identyfikatory, statusy, numery wersji i wynik quorum — bez treści protokołu, uchwały ani identyfikatorów osób z listy obecności.
 
+- **Zmiana terminu (#113):** `PATCH /api/meetings/:id` ze zmienionym `scheduledAt` zapisuje osobne zdarzenie `meeting.rescheduled` obok `meeting.updated`, z `fromScheduledAt`/`toScheduledAt` jako znacznikami czasu — bez tytułu, miejsca ani innej treści zebrania. Ponowienie tego samego `scheduledAt` (podwójne kliknięcie, ponowienie żądania) nie tworzy drugiego zdarzenia, bo porównanie jest z zapisaną wartością, nie z poprzednim żądaniem.
+
+## Zawiadomienie o zebraniu, odwołanie i zmiana terminu — projekt (#113)
+
+Poniższe wymaga migracji schematu (`meetings.status` z wartością `cancelled`, wersje porządku obrad, nowe `audience` i kolumny w `email_campaigns`) i **nie jest zaimplementowane** w tym PR — w tym zadaniu wykorzystano oba dostępne numery migracji (0060, 0061) na #102 i #135. Zapisane tu jako projekt do wykonania w osobnym PR, żeby nie zgubić ustaleń:
+
+- **Stan `cancelled`** zebrania z `cancellation_reason` (3–500 znaków, wewnętrzny), `cancelled_by`, `cancelled_at`; dozwolone przejście z `draft` i `scheduled`. Odwołane zebranie nie przyjmuje obecności, quorum, protokołu ani uchwał (409). Dziennik: `meeting.cancelled`.
+- **Wersje porządku obrad** (`meeting_agenda_versions`, migawka JSON + hash) zamiast edycji punktów w miejscu, żeby było wiadomo, która wersja porządku trafiła do zawiadomienia. Dziennik: `meeting.agenda_version.created`.
+- **Zawiadomienie jako kampania** w module e-mail: nowe `audience` (`meeting_invitees`, `class_households`), `email_campaigns.meeting_id`/`agenda_version_id`, z jawnym zatwierdzeniem treści i listy odbiorców (jak dziś), kluczem idempotencji `kampania + rodzina`/`kampania + konto`, osobnymi wiadomościami i limitem Brevo. Zmiana terminu lub odwołanie po wysłaniu zawiadomienia tworzy **nową kampanię-projekt** do zatwierdzenia — nic nie wychodzi automatycznie.
+- **Kontrola terminu zawiadomienia** (`notice_min_days`, `notice_rule_source`, jak `quorum_rule_source`): panel ostrzega, serwer tylko odnotowuje, bez blokady.
+- Zależy od D-16 (szablon wiadomości), D-17 (nadawca, jeden czy obaj opiekunowie), D-21 (termin i forma zawiadomienia, kto jest zapraszany), D-08 (kto zatwierdza wysyłkę), D-10 (konta rodziców). Założenie: e-mail do zarządu/przedstawicieli idzie na adres konta `users`, nie opiekuna.
+
 ## Ryzyka i otwarte sprawy
 
 - Reguły quorum i prawa głosu są wpisywane ręcznie; błąd we wpisie da błędny wynik. Przed użyciem na prawdziwych danych potrzebny jest obowiązujący regulamin (D-21).

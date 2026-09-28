@@ -5,7 +5,9 @@ import { checkReadiness } from './health.js';
 import { describeError, log, sanitizePath } from './log.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
-const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation']);
+// Jedyne źródło listy paneli statycznych (issue #119): smoke test i inne
+// narzędzia mają importować ten eksport zamiast wpisywać listę na sztywno.
+export const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation']);
 // Nagłówek z adresem klienta dla limitów logowania (src/pg/login.js). Zawsze
 // nadpisywany przez serwer — wartość wysłana przez klienta jest ignorowana.
 export const CLIENT_IP_HEADER = 'x-rd-client-ip';
@@ -27,6 +29,25 @@ const STATIC_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
 };
+
+// #114 (SR-12): przed tą zmianą tylko pliki statyczne miały nosniff/frame-ancestors/
+// referrer-policy — odpowiedzi API (JSON_HEADERS, src/pg/http.js), przekierowania 308,
+// /health/ready i błędy 413/500 miały co najwyżej Cache-Control i nosniff. HSTS nie było
+// nigdzie. `baselineSecurityHeaders` daje te same podstawowe nagłówki KAŻDEJ odpowiedzi
+// serwera Node; HSTS tylko gdy PUBLIC_BASE_URL zaczyna się od `https://` (na stagingu za
+// TLS proxy Railway; lokalnie/w testach zwykle `http://` albo brak — bez HSTS). Bez
+// `preload` — to decyzja właściciela domeny (docs/AUTH.md).
+export function baselineSecurityHeaders(publicBaseUrl) {
+  const headers = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+  };
+  if (/^https:\/\//i.test(String(publicBaseUrl ?? '').trim())) {
+    headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
+  }
+  return headers;
+}
 
 async function requestBody(request, limit = MAX_BODY_BYTES) {
   const length = Number(request.headers['content-length'] ?? 0);
@@ -83,10 +104,10 @@ function writeHeaders(response, headers) {
   for (const [name, value] of Object.entries(headers)) response.setHeader(name, value);
 }
 
-async function serveStatic(request, response, url, distRoot) {
+async function serveStatic(request, response, url, distRoot, baseline) {
   const first = url.pathname.split('/').filter(Boolean)[0];
   if (STATIC_PREFIXES.has(first) && url.pathname === `/${first}`) {
-    response.writeHead(308, { Location: `/${first}/`, 'Cache-Control': 'no-store' });
+    response.writeHead(308, { ...baseline, Location: `/${first}/`, 'Cache-Control': 'no-store' });
     response.end();
     return true;
   }
@@ -100,6 +121,7 @@ async function serveStatic(request, response, url, distRoot) {
   const type = MIME_TYPES.get(extension);
   if (!type) return false;
   writeHeaders(response, {
+    ...baseline,
     ...STATIC_SECURITY_HEADERS,
     'Content-Type': type,
     'Content-Length': info.size,
@@ -111,7 +133,10 @@ async function serveStatic(request, response, url, distRoot) {
   return true;
 }
 
-async function writeFetchResponse(nodeResponse, webResponse, apiRequest) {
+async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baseline) {
+  // Bazowe nagłówki najpierw: trasa (webResponse) może świadomie nadpisać
+  // którykolwiek z nich (dziś żadna tego nie robi).
+  for (const [name, value] of Object.entries(baseline)) nodeResponse.setHeader(name, value);
   for (const [name, value] of webResponse.headers) {
     if (name.toLowerCase() !== 'set-cookie') nodeResponse.setHeader(name, value);
   }
@@ -142,12 +167,12 @@ function logRequest(logger, metrics, request, response, started) {
   else logger.info('http_request', fields);
 }
 
-async function serveReadiness(response, env, readiness) {
+async function serveReadiness(response, env, readiness, baseline) {
   const { ready, body } = await readiness(env);
   response.writeHead(ready ? 200 : 503, {
+    ...baseline,
     'Cache-Control': 'no-store',
     'Content-Type': 'application/json; charset=utf-8',
-    'X-Content-Type-Options': 'nosniff',
   });
   response.end(JSON.stringify(body));
 }
@@ -164,22 +189,23 @@ export function createNodeHandler({
     const value = typeof bodyLimit === 'function' ? Number(bodyLimit(url, method)) : MAX_BODY_BYTES;
     return Number.isInteger(value) && value > 0 ? value : MAX_BODY_BYTES;
   };
+  const baseline = baselineSecurityHeaders(publicBaseUrl);
   return async (request, response) => {
     const started = process.hrtime.bigint();
     response.once('close', () => logRequest(logger, metrics, request, response, started));
     try {
       const url = publicUrl(request, publicBaseUrl);
       if (url.pathname === '/health/ready' && ['GET', 'HEAD'].includes(request.method)) {
-        await serveReadiness(response, env, readiness);
+        await serveReadiness(response, env, readiness, baseline);
         return;
       }
       // Strona startowa: osoby bez sesji trafiają na logowanie; strona publiczna jest pod /site/.
       if (url.pathname === '/' && ['GET', 'HEAD'].includes(request.method)) {
-        response.writeHead(308, { Location: '/login/', 'Cache-Control': 'no-store' });
+        response.writeHead(308, { ...baseline, Location: '/login/', 'Cache-Control': 'no-store' });
         response.end();
         return;
       }
-      if (await serveStatic(request, response, url, distRoot)) return;
+      if (await serveStatic(request, response, url, distRoot, baseline)) return;
       const method = request.method || 'GET';
       const body = ['GET', 'HEAD'].includes(method) ? undefined : await requestBody(request, limitFor(url, method));
       const headers = new Headers();
@@ -190,14 +216,14 @@ export function createNodeHandler({
       headers.set(CLIENT_IP_HEADER, clientAddress(request, trustProxy));
       const webRequest = new Request(url, { method, headers, body });
       const webResponse = await fetchHandler(webRequest, env);
-      await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'));
+      await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'), baseline);
     } catch (error) {
       const tooLarge = error instanceof RangeError && error.message === 'request_too_large';
       if (!tooLarge) logger.error('http_handler_error', describeError(error));
       response.writeHead(tooLarge ? 413 : 500, {
+        ...baseline,
         'Cache-Control': 'no-store',
         'Content-Type': 'application/json; charset=utf-8',
-        'X-Content-Type-Options': 'nosniff',
       });
       response.end(JSON.stringify({ error: tooLarge ? 'request_too_large' : 'service_unavailable' }));
     }
