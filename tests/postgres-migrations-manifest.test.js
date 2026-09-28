@@ -33,7 +33,11 @@ test('MANIFEST.json in the repository is up to date with postgres/migrations', a
   const existing = await readManifestFile(join(migrationsDir, 'MANIFEST.json'));
   const next = buildManifest(existing, migrations);
   assert.ok(manifestsEqual(existing, next), 'run `npm run migrations:manifest` and commit the result');
-  assert.deepEqual(existing.map((e) => e.name), migrations.map((m) => m.name));
+  // Zbiór plików musi się zgadzać — KOLEJNOŚĆ w manifeście nie musi być alfabetyczna
+  // (to właśnie sedno #79: manifest zapisuje rzeczywistą kolejność historycznego
+  // scalenia, np. plik scalony PÓŹNIEJ przez merge origin/main, ale o niższym
+  // numerze niż plik już obecny na tej gałęzi, ląduje w manifeście PO nim).
+  assert.deepEqual([...existing.map((e) => e.name)].sort(), [...migrations.map((m) => m.name)].sort());
   for (const entry of existing) {
     assert.match(entry.sha256, /^[0-9a-f]{64}$/, `${entry.name}: sha256 in manifest looks malformed`);
   }

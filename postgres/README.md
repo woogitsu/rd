@@ -37,6 +37,20 @@ plik nie zmienił się od czasu scalenia; `/health/ready` zgłasza
 repozytorium różni się od zapisanej w `schema_migrations` przy nałożeniu —
 np. plik ręcznie zmieniony po fakcie na środowisku wdrożeniowym.
 
+**Redefinicje funkcji triggerów (`CREATE OR REPLACE FUNCTION`):** taka
+instrukcja NIE łączy definicji przyrostowo — zastępuje całe ciało funkcji.
+Dwie migracje pisane równolegle, które redefiniują tę samą funkcję
+dyspozytora opartą o `TG_TABLE_NAME`, mogą po cichu zgubić gałąź (tabelę)
+dodaną przez wcześniejszą — dokładnie tak `0038_payment_ledger_consistency.sql`
+nadpisał `0036_year_freeze_finance.sql` (naprawa w #279:
+`0049_year_freeze_union.sql`, suma obu gałęzi). `scripts/check-function-redefinitions.js`
+(`npm run migrations:check-functions`, job `migrations-order` w CI) sprawdza,
+że OSTATNIA (najwyższy numer pliku) definicja każdej takiej funkcji obejmuje
+wszystkie tabele obsłużone przez jej wcześniejsze wersje; jeśli redefiniujesz
+funkcję dyspozytora, zacznij od jej NAJNOWSZEJ wersji na `origin/main`
+(`grep -l "FUNCTION nazwa(" postgres/migrations/*.sql`, ostatni plik wg
+numeru) i dopisz sumę gałęzi, nie samą swoją.
+
 **Skutki dla danych — kolumna `schema_migrations.applied_seq`:** migrator
 dodaje ją przy każdym uruchomieniu (`ALTER TABLE … ADD COLUMN IF NOT EXISTS
 applied_seq INTEGER NOT NULL DEFAULT 0`, bez przerwy w dostępności) i

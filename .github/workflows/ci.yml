@@ -110,6 +110,7 @@ jobs:
           node-version: '22'
       - run: npm ci
       - run: npm run migrations:manifest -- --check
+      - run: npm run migrations:check-functions
       - if: github.event_name == 'pull_request'
         run: |
           git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1000
