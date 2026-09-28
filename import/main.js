@@ -3,6 +3,10 @@ import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from '.
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
 import { buildErrorReportCsv, unusedColumns } from './report.js';
+import { mountShell } from '../shared/shell.js';
+import '../shared/shell.css';
+
+mountShell();
 const fileInput = document.querySelector('#file');
 const unusedColumnsBox = document.querySelector('#unused-columns');
 const downloadReportButton = document.querySelector('#download-report');

@@ -13,7 +13,8 @@ monitoringu z #16. Kontekst: [plan migracji](RAILWAY_MIGRATION.md),
 |---|---|---|
 | Konfiguracja usługi | `railway.json` | build `npm ci && npm run build`, start `node src/server.js` (bezpośrednio, aby SIGTERM trafił do serwera), healthcheck `/health` (liveness), `drainingSeconds: 15`, restart `ON_FAILURE` (maks. 5 prób), region `europe-west4-drams3a` (Amsterdam), bez usypiania |
 | Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE |
-| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`), trzy panele, nagłówki, `404` |
+| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`) i przez prawdziwy HTTP z migracjami (`200`), wszystkich 11 paneli (`STATIC_PREFIXES`), nagłówki, `404` dla ścieżek prywatnych/traversal i brak `*.map`, granice ról na poziomie HTTP |
+| Smoke test zdalny | `npm run smoke:remote` (`scripts/smoke-remote.js`) | wyłącznie `GET`, po deployu stagingu (sekcja „Smoke test po deployu” niżej) |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
 | Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
 | Pierwszy administrator | `npm run auth:bootstrap-admin` (`scripts/bootstrap-admin.js`, `src/pg/bootstrap-admin.js`) | jednorazowe zaproszenie do roli `admin` na pustej bazie (sekcja „Pierwszy administrator (bootstrap)”) |
@@ -104,8 +105,23 @@ wywoływała pętlę restartów, która nie naprawia bazy. Stan bazy sprawdza
 `postgres/migrations`); `503` oznacza brak bazy, błąd lub timeout, brakujące
 migracje albo zamykanie procesu. Odpowiedź zawiera tylko stan techniczny oraz
 liczbę i nazwy brakujących plików migracji. Po każdym deployu i każdej
-migracji sprawdzić ręcznie `/health/ready`; to także warunek listy odbioru.
+migracji uruchomić `npm run smoke:remote` (patrz niżej) zamiast sprawdzać
+`/health/ready` ręcznie; to także warunek listy odbioru.
 Szczegóły: [serwer Node](NODE_SERVER.md#monitoring-logi-i-zamykanie-16-41).
+
+**Smoke test po deployu (`smoke:remote`, issue #119).** Wyłącznie odczyty
+(`GET`), bez żadnych zapisów; te same bezpieczniki co test wydajności
+(sekcja „Test wydajności” niżej): odmawia bez `--i-confirm-staging`, dla
+`http://`, dla `APP_ENV=production` i dla hosta spoza `LOAD_TEST_ALLOWED_HOSTS`
+— odmowa następuje przed pierwszym żądaniem. Sprawdza `/health`, `/health/ready`,
+wszystkie panele (`STATIC_PREFIXES` z `src/node-app.js`, jedno źródło prawdy),
+nagłówki bezpieczeństwa oraz `404` dla ścieżek prywatnych i `*.map`. Wynik
+JSON wkleić do listy odbioru.
+
+```sh
+LOAD_TEST_ALLOWED_HOSTS=rd-staging.up.railway.app APP_ENV=staging \
+  npm run smoke:remote -- --target https://rd-staging.up.railway.app --i-confirm-staging
+```
 
 **Logi.** Serwer zapisuje jedną linię JSON na zdarzenie (`level`, `event`,
 `method`, ścieżka bez query stringu z `:id` zamiast identyfikatorów, `status`,
