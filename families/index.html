@@ -8,12 +8,14 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
       <a class="brand" href="../"><span class="brand-mark" aria-hidden="true">RR</span><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
-      <nav aria-label="Panel"><a href="../panel/">Wpłaty</a><a href="../ledger/">Księga</a><a class="active" href="./" aria-current="page">Rodziny</a></nav>
+      <nav aria-label="Panel"><ul id="shell-nav" aria-live="polite"></ul></nav>
+      <div id="shell-account"></div>
     </header>
 
-    <main>
+    <main id="main">
       <nav class="breadcrumbs" id="breadcrumbs" aria-label="Ścieżka"></nav>
       <div class="message" id="message" role="status"></div>
 

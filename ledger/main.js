@@ -17,6 +17,10 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
 import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const FILTER_KEYS = ["schoolYearId", "direction"];
 const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null };

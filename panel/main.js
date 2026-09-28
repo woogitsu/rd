@@ -23,6 +23,10 @@ import {
   requiresExplicitHouseholdChoice,
   studentOptionsHtml,
 } from "../shared/household-picker.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const FILTER_KEYS = ["schoolYearId", "status"];
 const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null };
