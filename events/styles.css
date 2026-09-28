@@ -74,7 +74,7 @@ button.danger { color: var(--red-dark); border-color: var(--red-dark); }
 button:disabled { cursor: wait; opacity: .6; }
 button.link { padding: 0; color: var(--red-dark); background: none; border: 0; font-weight: 600; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
 
-.table-wrap { margin-top: 1rem; overflow-x: auto; }
+.table-wrap { position: relative; margin-top: 1rem; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 th, td { padding: .7rem .75rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
 th { color: var(--muted); background: var(--muted-bg); font-size: .78rem; font-weight: 600; }
@@ -110,7 +110,7 @@ fieldset { display: grid; gap: .4rem; margin: 0; padding: 0; border: 0; }
 .radio { display: flex; align-items: center; font-weight: 400; }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
 .context { margin: 0; padding: .6rem .75rem; color: var(--muted); background: var(--muted-bg); }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 720px) {
   main { padding-top: 1.5rem; }

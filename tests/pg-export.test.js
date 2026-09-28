@@ -117,6 +117,17 @@ async function exportRequest(db, cookie, schoolYearId = YEAR, options = {}) {
   return handlePgRequest(request('/api/exports', { method: 'POST', cookie, body: { schoolYearId }, ...options }), { db });
 }
 
+// #161: symuluje konto z zapisanym (potwierdzonym) czynnikiem MFA bez przechodzenia
+// przez /api/mfa/enroll+confirm — wartości syntetyczne, spełniają tylko ograniczenia
+// kolumn (0013_mfa.sql); test nie odczytuje sekretu.
+async function markMfaEnrolled(db, userId) {
+  await db.query(
+    `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
+     VALUES ($1, $2, 'totp', 'AAAA', $3, $4, now())`,
+    [crypto.randomUUID(), userId, 'A'.repeat(16), 'A'.repeat(22)],
+  );
+}
+
 async function adminCookie(db, userId = 'u-admin') {
   return seedUserSession(db, { userId, roles: [{ role: 'admin' }], mfa: true });
 }
@@ -361,7 +372,21 @@ test('representative exports only the roster of their own class, without financi
   assert.equal((await roster('c-missing')).status, 403, 'unknown class is indistinguishable for a representative');
   assert.equal((await roster('')).status, 400);
   const repNoMfa = await seedUserSession(db, { userId: 'u-rep-nomfa', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: false });
-  assert.equal((await roster('c-1a', repNoMfa)).status, 403);
+  const noMfaResponse = await roster('c-1a', repNoMfa);
+  assert.equal(noMfaResponse.status, 403);
+  // #161: sam brak MFA (rola i klasa pasują) prowadzi do właściwego widoku
+  // logowania — konto bez czynnika dostaje mfa_enrollment_required, nie forbidden.
+  assert.deepEqual(await noMfaResponse.json(), { error: 'mfa_enrollment_required' });
+
+  await markMfaEnrolled(db, 'u-rep-nomfa');
+  const repFactorNoVerify = await seedUserSession(db, { userId: 'u-rep-nomfa', mfa: false });
+  const factorResponse = await roster('c-1a', repFactorNoVerify);
+  assert.equal(factorResponse.status, 403);
+  // Czynnik jest zapisany, ale ta sesja nie potwierdziła jeszcze kodu; bramka
+  // routera (mfa-policy.js, reguła 1) blokuje każdą chronioną trasę tej sesji
+  // wcześniej niż zakres klasy, więc kod jest ten sam niezależnie od classId.
+  assert.deepEqual(await factorResponse.json(), { error: 'mfa_required' });
+
   // Od 0022 przydział klasy z rokiem innym niż rok klasy jest odrzucany (#201);
   // taki wiersz mógł powstać wcześniej poza API — autoryzacja i tak go nie uznaje.
   await assert.rejects(
@@ -385,4 +410,36 @@ test('representative exports only the roster of their own class, without financi
   assert.equal(audit.rows.length, 1);
   assert.equal(audit.rows[0].metadata_json.kind, 'class_roster');
   assert.doesNotMatch(JSON.stringify(audit.rows), /@/);
+});
+
+// --- #132: liste klasy jako CSV (obok kanonicznego JSON) ---------------------
+
+test('class roster as CSV: same access rules, Polish-readable format, no financial or household data', async () => {
+  const rep = await seedUserSession(db, { userId: 'u-rep-csv', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: true });
+  const rosterCsv = (classId, format = 'csv', cookie = rep) =>
+    handlePgRequest(request(`/api/exports/class-roster?classId=${classId}&format=${format}`, { cookie }), { db });
+
+  const own = await rosterCsv('c-1a');
+  assert.equal(own.status, 200);
+  assert.equal(own.headers.get('Content-Type'), 'text/csv; charset=utf-8');
+  assert.match(own.headers.get('Content-Disposition'), /^attachment; filename="lista-klasy-1A-\d{8}\.csv"$/);
+  assert.equal(own.headers.get('Cache-Control'), 'no-store');
+  const csv = await own.text();
+  assert.doesNotMatch(csv, /amount|cents|payment|household|h-1|h-2|s-1|s-3/);
+  const lines = csv.trim().split('\r\n');
+  assert.match(lines[0], /Lista klasy 1A/);
+  assert.equal(lines[1], '');
+  assert.equal(lines[2], 'Lp.;Nazwisko ucznia;Imię ucznia;Opiekun 1;E-mail opiekuna 1 (tylko przy zgodzie na kontakt);Opiekun 2;E-mail opiekuna 2 (tylko przy zgodzie na kontakt);Kontakt główny;Uwagi');
+  // Nazwisko "Pierwszy" przed "Trzeci" alfabetycznie.
+  assert.match(lines[3], /^1;Pierwszy;Uczeń;Opiekun Jeden;g1@example\.invalid;;;Opiekun Jeden;$/);
+  assert.match(lines[4], /^2;Trzeci;Uczeń;Opiekunka Dwa;g2@example\.invalid;Opiekun Trzy;;Opiekunka Dwa;$/, 'opiekun bez zgody na kontakt (g-3) nie ma e-maila w pliku');
+  assert.match(lines.at(-1), /Zawiera dane osobowe/);
+
+  assert.equal((await rosterCsv('c-2b')).status, 403, 'other class, same as JSON');
+  assert.equal((await rosterCsv('c-1a', 'xlsx')).status, 400, 'unsupported format is rejected, not silently ignored');
+
+  const runs = await db.query("SELECT class_id FROM export_runs WHERE kind = 'class_roster' AND requested_by = 'u-rep-csv'");
+  assert.equal(runs.rows.length, 1, 'CSV download is recorded in export_runs like JSON');
+  const audit = await db.query("SELECT metadata_json FROM audit_events WHERE action = 'export.created' AND metadata_json->>'kind' = 'class_roster' AND actor_id = 'u-rep-csv'");
+  assert.equal(audit.rows[0].metadata_json.format, 'csv');
 });

@@ -5,6 +5,8 @@
 // zawiera skryptów; CSP dopuszcza wyłącznie wbudowany arkusz stylów o znanym
 // skrócie SHA-256.
 
+import { formatEur as formatEurShared } from '../../panel/money.js';
+
 const CHECK_LABEL = {
   year_end_balance: 'Saldo księgi na ostatni dzień roku (wpisy do tej daty) a bilans zamknięcia',
   dates_within_school_year: 'Daty wpisów i wpłat w granicach roku szkolnego',
@@ -25,7 +27,7 @@ function checkDetails(check) {
     case 'payments_in_ledger':
       return `wpłaty ${m(check.paymentsNetCents)}; ujęte w księdze ${m(check.ledgerLinkedNetCents)}; różnica ${m(check.differenceCents)}; wpłaty bez wpisu księgi: ${escapeHtml(check.paymentsWithoutLedgerEntry)}`;
     case 'reconciliation_matches':
-      return `niezgodne kwotowo: ${escapeHtml(check.amountMismatchCount)}; podwójne ujęcie: ${escapeHtml(check.doubleCountedCount)}`;
+      return `niezgodne kwotowo: ${escapeHtml(check.amountMismatchCount)}; podwójne ujęcie: ${escapeHtml(check.doubleCountedCount)}; w tym w zatwierdzonych uzgodnieniach (do wyjaśnienia, bez ścieżki poprawy): ${escapeHtml(check.amountMismatchConfirmedCount)}`;
     case 'latest_confirmed_reconciliation':
       return check.statementDate
         ? `wyciąg z ${escapeHtml(check.statementDate)}; różnica ${m(check.differenceCents)}; przelewy w księdze po dacie wyciągu: ${escapeHtml(check.bankEntriesAfterStatement)}`
@@ -80,14 +82,10 @@ export function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-// 123456 -> "1 234,56 EUR" (spacja nierozdzielająca między tysiącami).
+// #173: jeden moduł kwot EUR (panel/money.js) — 123456 -> "1 234,56 EUR"
+// (spacja nierozdzielająca), brak wartości -> „—” (nigdy „0,00 EUR”).
 export function formatEur(cents) {
-  const value = Number(cents ?? 0);
-  const sign = value < 0 ? '−' : '';
-  const abs = Math.abs(value);
-  const whole = String(Math.trunc(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  const fraction = String(abs % 100).padStart(2, '0');
-  return `${sign}${whole},${fraction} EUR`;
+  return formatEurShared(cents, { style: 'print' });
 }
 
 // "2026-10-20" -> "20.10.2026"; znacznik czasu -> "20.10.2026 14:05 UTC".
@@ -179,7 +177,9 @@ export function renderAuditReportHtml(report) {
 <tr><th>Bilans otwarcia (z korektami)</th><td class="num">${money(balance.openingBalanceCents)}</td></tr>
 <tr><th>Przychody netto</th><td class="num">${money(balance.incomeCents)}</td></tr>
 <tr><th>Wydatki netto</th><td class="num">${money(balance.expenseCents)}</td></tr>
+<tr><th>Bilans otwarcia — rachunek / kasa</th><td class="num">${money(balance.openingBankCents ?? 0)} / ${money(balance.openingCashCents ?? 0)}</td></tr>
 <tr><th>Bilans zamknięcia</th><td class="num">${money(balance.closingBalanceCents)}</td></tr>
+<tr><th>Bilans zamknięcia — rachunek / kasa</th><td class="num">${money(balance.closingBankCents ?? 0)} / ${money(balance.closingCashCents ?? 0)}</td></tr>
 </tbody></table>
 <p class="meta">Kontrole krzyżowe poniżej porównują niezależnie liczone źródła; wynik jest wskaźnikiem do sprawdzenia, nie oceną.</p>
 ${table([['Kontrola'], ['Wynik'], ['Wartości']], checkRows, 'Brak kontroli.')}
