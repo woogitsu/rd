@@ -685,16 +685,18 @@ test('class representative cannot supersede or void a document of another class 
   assert.equal(denied.response.status, 404);
 }));
 
-test('treasurer without MFA cannot void a financial document (global MFA gate, 403 mfa_required)', async () => withEnv(async (db, env) => {
+test('treasurer without MFA cannot void a financial document (global MFA gate, 403 mfa_enrollment_required)', async () => withEnv(async (db, env) => {
   const cookie = await treasurer(db);
   const { data } = await upload(env, { cookie });
   const noMfa = await seedUserSession(db, { userId: 'u-treasurer-no-mfa', roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   const attempt = await changeStatus(env, { cookie: noMfa, id: data.document.id, action: 'void' });
   // Jak reszta API dokumentów (src/pg/app.js: globalna bramka MFA przed
   // dotarciem do trasy) — nie 404, bo to sesja bez potwierdzonego MFA, a nie
-  // nieautoryzowany dostęp do konkretnego dokumentu.
+  // nieautoryzowany dostęp do konkretnego dokumentu. Konto bez zarejestrowanego
+  // czynnika dostaje mfa_enrollment_required (mfa-policy.js), nie mfa_required
+  // (to drugie jest dla czynnika zarejestrowanego, ale niepotwierdzonego w tej sesji).
   assert.equal(attempt.response.status, 403);
-  assert.equal(attempt.data.error, 'mfa_required');
+  assert.equal(attempt.data.error, 'mfa_enrollment_required');
 }));
 
 test('double click on supersede with the same Idempotency-Key reuses the row; different content conflicts', async () => withEnv(async (db, env) => {
