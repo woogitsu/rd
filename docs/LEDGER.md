@@ -87,6 +87,17 @@ Bilans otwarcia (`ledger_opening_balances.amount_cents` = całość) ma część
 - Założenia (zarząd nic nie zdecydował — wariant zachowawczy): D-13 — jedna kasa, jeden rachunek, „kasa” = wszystko poza rachunkiem; bilans otwarcia i poprawki wyłącznie zarząd (bez admina i skarbnika); zasada czterech oczu dla poprawek (D-12) nie jest wymuszona; ręczny bilans tylko dla pierwszego roku — kolejne lata dostają bilans z zamknięcia.
 - Bilanse przeniesione przed 0028 mają `cash_cents = 0`; jeśli zawierały gotówkę, rozbicie wpisuje zarząd poprawką `{ amountCents: 0, cashCents: <gotówka> }`.
 
+### Sprawozdanie roczne i przepływy środków (issue #125, część)
+
+Moduł `src/pg/annual-report.js`, trasy `src/pg/routes/financial-reports.js`. Bez migracji.
+
+- `GET /api/reports/annual?schoolYearId=&format=json|html` — **projekt** sprawozdania dla zebrania ogólnego z bieżących danych: bilans otwarcia i zamknięcia (z podziałem rachunek/kasa jak `ledger_year_cash_summary`), przychody i wydatki według kategorii z preliminarzem (bieżąca linia `ledger_current_budget`) i różnicą, wynik roku, liczba wpisów i korekt, data ostatniego zatwierdzonego uzgodnienia (bez sald pośrednich). **Nie zawiera** opisów wpisów, powodów korekt, notatek preliminarza, identyfikatorów osób, danych rodzin ani wpłat per klasa. Kategoria bez wpisów i bez preliminarza jest pomijana. HTML A4 z `REPORT_CSS`, bez skryptów, CSP jak raport KR; PDF przez druk przeglądarki; nagłówek „Projekt sprawozdania … nie jest wersją zatwierdzoną”.
+- `GET /api/reports/cash-flow?schoolYearId=&granularity=month` — per miesiąc roku szkolnego i metoda (`bank`, `cash`, `card`, `other`): wpływy i wydatki netto, przeniesienia kasa ↔ rachunek, saldo narastające, saldo kasy (wszystko poza rachunkiem — jak `ledger_non_bank_net_at`) i rachunku. Korekta liczy się w miesiącu korygowanego wpisu (jak `ledger_balance_at`), więc saldo po ostatnim miesiącu = bilans zamknięcia.
+- Sumy obu raportów zgadzają się z `ledger_year_summary` (test).
+- Dostęp: zarząd i skarbnik z MFA w zakresie roku. `admin` (techniczny), `audit`, `principal` i przedstawiciel — `403` (D-08, D-09 nierozstrzygnięte; KR ma raport `/api/reports/audit`). Każde wygenerowanie zapisuje `report.annual.generated` / `report.cash_flow.generated` (rok, format — bez treści) w transakcji odczytu.
+
+Poza zakresem (wymaga migracji i decyzji D-21/D-04): niezmienne migawki `financial_report_snapshots` z SHA-256 i zatwierdzeniem przez drugą osobę, wskazanie migawki w punkcie `financial_report` zamknięcia roku, publikacja zatwierdzonej migawki, sekcja „Wynik wydarzeń” (po #117). Do tego czasu wydruk jest wyłącznie wewnętrznym projektem.
+
 ### Eksport CSV (issue #7)
 
 `GET /api/ledger/export.csv?schoolYearId=…` (tylko router PostgreSQL) zwraca wszystkie wpisy roku w kolejności dat, z kwotą pierwotną, sumą korekt i kwotą netto w EUR. Wymaga tych samych ról, MFA i zakresu roku co pozostałe trasy. Plik ma kodowanie UTF-8 z BOM, separator `;` i przecinek dziesiętny (`123,45`), aby otwierał się w arkuszu z polskimi lub belgijskimi ustawieniami — to założenie do potwierdzenia przez skarbnika. Komórki zaczynające się od `=`, `+`, `-`, `@`, tabulatora lub CR dostają prefiks `'`, żeby arkusz nie wykonał ich jako formuły. Eksport ma limit 20 000 wpisów (`413 export_too_large`). Każdy eksport zapisuje zdarzenie `ledger.exported` (osoba, czas, rok, liczba wierszy) bez kwot i treści wpisów. Plik zawiera opisy i źródła wpisane przez skarbnika, więc wolno go przekazywać tylko osobom uprawnionym; zasady przechowywania eksportów wymagają decyzji zarządu.

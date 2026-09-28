@@ -911,6 +911,21 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=json` }),
   },
 
+  // ---------- sprawozdanie roczne i przepływy (#125) ----------
+  // Zarząd i skarbnik z MFA; admin, audit, principal, przedstawiciel: 403 (D-08/D-09).
+  {
+    id: 'financialReports.annual', module: 'financial-reports', method: 'GET', path: '/api/reports/annual?schoolYearId=:year&format=json',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/annual?schoolYearId=${target.schoolYearId}&format=json` }),
+  },
+  {
+    id: 'financialReports.cashFlow', module: 'financial-reports', method: 'GET', path: '/api/reports/cash-flow?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/cash-flow?schoolYearId=${target.schoolYearId}` }),
+  },
+
   // ---------- exports (#9) ----------
   {
     id: 'exports.yearly', module: 'exports', method: 'POST', path: '/api/exports', targets: YEAR_TARGETS,
