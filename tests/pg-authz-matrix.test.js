@@ -772,30 +772,18 @@ function pathSegmentsInSource(source) {
   return segments;
 }
 
-// #142/#330: zadania i zapisy wolontariuszy wydarzeń (/api/events/:id/tasks…,
-// .../signups, .../withdraw) świadomie NIE mają własnych wpisów w macierzy
-// uprawnień — to jednorazowe akcje (utworzenie/odwołanie zadania, zapis/wypisanie
-// się), których dostęp do wydarzenia sprawdza ten sam canEdit()/canView() co już
-// opisane trasy `events.*`. Dopisanie pełnych wpisów tylko po to, by nasycić ten
-// skaner segmentów, powielałoby macierz bez nowej informacji o uprawnieniach.
-const COVERAGE_EXEMPT_SEGMENTS = Object.freeze({
-  events: new Set(['tasks', 'signups', 'withdraw']),
-});
-
 test('meta: każda ścieżka widoczna w kodzie modułu tras jest pokryta macierzą', async () => {
   for (const route of ROUTES) {
     const files = MODULE_SOURCES[route.name];
     assert.ok(files, `Dopisz pliki źródłowe modułu "${route.name}" do MODULE_SOURCES w tym teście`);
     const covered = new Set(ROUTE_MATRIX.filter((entry) => entry.module === route.name)
       .flatMap((entry) => entry.path.split('?')[0].split('/').filter(Boolean)));
-    const exempt = COVERAGE_EXEMPT_SEGMENTS[route.name] ?? new Set();
     let found = 0;
     for (const file of files) {
       const source = await readFile(fileURLToPath(new URL(file, import.meta.url)), 'utf8');
       const segments = pathSegmentsInSource(source);
       found += segments.size;
       for (const segment of segments) {
-        if (exempt.has(segment)) continue;
         assert.ok(covered.has(segment),
           `${file}: segment ścieżki "${segment}" nie występuje w żadnym wpisie macierzy modułu "${route.name}"`);
       }
