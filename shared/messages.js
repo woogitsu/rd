@@ -123,6 +123,8 @@ export const MESSAGES = Object.freeze({
   admin_exists: "Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne.",
   pending_admin_invitation: "Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij.",
   production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
+  role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji.",
+  class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
 
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
