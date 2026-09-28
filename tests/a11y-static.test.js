@@ -1,16 +1,19 @@
-// Statyczny przegląd dostępności (WCAG 2.2 AA) wszystkich aplikacji Vite z panelem.
-// Test nie zastępuje sprawdzenia z czytnikiem ekranu — zob. docs/ACCESSIBILITY.md.
+// Statyczny przegląd dostępności (WCAG 2.2 AA) wszystkich aplikacji statycznych
+// serwowanych przez src/node-app.js (STATIC_PREFIXES) — issue #112. Lista aplikacji
+// jest wyprowadzona z kodu serwera, więc nowa aplikacja bez skip linku itd. nie
+// przejdzie CI, dopóki nie zostanie tam dodana (a bez wpisu w STATIC_PREFIXES i tak
+// nie jest serwowana). Test nie zastępuje sprawdzenia z czytnikiem ekranu —
+// zob. docs/ACCESSIBILITY.md.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const APPS = ['import', 'panel', 'ledger', 'print'];
-// Issue #85: wspólna powłoka. Te aplikacje dostały tę samą nawigację i blok konta,
-// ale nie miały wcześniej pełnego przeglądu WCAG z listy wyżej (osobny zakres audytu) —
-// sprawdzamy tu wyłącznie spójność nawigacji/konta, którą wprowadza ta zmiana.
-const SHELL_APPS = [...APPS, 'families', 'events', 'meetings', 'documents', 'admin'];
+const nodeAppSource = readFileSync(new URL('../src/node-app.js', import.meta.url), 'utf8');
+const staticPrefixesLiteral = nodeAppSource.match(/STATIC_PREFIXES = new Set\(\[([^\]]*)\]\)/)[1];
+const APPS = [...staticPrefixesLiteral.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-const html = Object.fromEntries(SHELL_APPS.map((app) => [app, read(`${app}/index.html`)]));
+const html = Object.fromEntries(APPS.map((app) => [app, read(`${app}/index.html`)]));
 const css = Object.fromEntries(APPS.map((app) => [app, read(`${app}/styles.css`)]));
 
 function tags(source) {
@@ -20,6 +23,36 @@ function tags(source) {
     const attrs = {};
     for (const a of match[3].matchAll(/([a-z-]+)(?:="([^"]*)")?/gi)) attrs[a[1].toLowerCase()] = a[2] ?? '';
     out.push({ close: match[1] === '/', name: match[2].toLowerCase(), attrs });
+  }
+  return out;
+}
+
+// Jak tags(), ale każdy tag niesie też `hidden`: prawda, jeśli on sam albo
+// dowolny przodek ma atrybut `hidden` — [hidden] { display: none !important; }
+// wyklucza go z drzewa dostępności, więc np. kilka <h1> w osobnych, wzajemnie
+// wykluczających się widokach (families/: klasy / klasa / gospodarstwo, tylko
+// jeden bez `hidden` naraz) nie jest naruszeniem „jeden <h1> na stronę”.
+const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+function tagsWithVisibility(source) {
+  const body = source.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<script[\s\S]*?<\/script>/gi, '');
+  const stack = [];
+  const out = [];
+  for (const match of body.matchAll(/<(\/?)([a-z][a-z0-9]*)([^>]*)>/gi)) {
+    const name = match[2].toLowerCase();
+    if (match[1] === '/') {
+      for (let i = stack.length - 1; i >= 0; i -= 1) {
+        if (stack[i].name === name) { stack.length = i; break; }
+      }
+      continue;
+    }
+    const attrs = {};
+    for (const a of match[3].matchAll(/([a-z-]+)(?:="([^"]*)")?/gi)) attrs[a[1].toLowerCase()] = a[2] ?? '';
+    const hiddenHere = Object.hasOwn(attrs, 'hidden');
+    const ancestorHidden = stack.some((frame) => frame.hidden);
+    const hidden = hiddenHere || ancestorHidden;
+    out.push({ name, attrs, hidden });
+    const selfClosing = VOID_ELEMENTS.has(name) || /\/\s*>$/.test(match[0]);
+    if (!selfClosing) stack.push({ name, hidden });
   }
   return out;
 }
@@ -39,11 +72,39 @@ for (const app of APPS) {
   test(`${app}: język, skip link i punkty orientacyjne`, () => {
     assert.match(html[app], /<html lang="pl">/);
     assert.match(html[app], /<a class="skip-link" href="#main">Przejdź do treści<\/a>/);
-    assert.match(html[app], /<main id="main">/);
+    assert.match(html[app], /<main[^>]*\bid="main"/);
     assert.match(html[app], /<header[\s>]/);
-    assert.match(html[app], /<nav aria-label="Panel">/);
     assert.match(html[app], /<h1[\s>]/);
-    assert.equal((html[app].match(/<h1[\s>]/g) || []).length, 1);
+    // Aplikacje z kilkoma wzajemnie wykluczającymi się widokami (np. families/:
+    // klasy / klasa / gospodarstwo) mogą mieć po jednym <h1> w każdym, o ile
+    // każdy jest w elemencie z atrybutem `hidden` (JS pokazuje najwyżej jeden
+    // naraz). Zawsze widoczny (nigdy w `hidden`) <h1> może być tylko jeden.
+    const alwaysVisibleH1 = tagsWithVisibility(html[app]).filter((t) => t.name === 'h1' && !t.hidden).length;
+    assert.ok(alwaysVisibleH1 <= 1, `${app}: więcej niż jeden zawsze widoczny <h1>`);
+  });
+
+  // Nawigacja różni się między aplikacjami: wspólna powłoka (#85) wypełnia
+  // <ul id="shell-nav"> w czasie działania z GET /api/access (visiblePanels,
+  // testowane bez DOM w tests/shell-core.test.js); import/panel/ledger/print
+  // mają jeszcze statyczne linki sprzed tej zmiany; site/ ma inną nawigację
+  // (sekcje strony publicznej); login/ nie ma panelu nawigacji wcale.
+  // Sprawdzamy tu wyłącznie to, co dotyczy każdego wariantu (WCAG 3.2.3: brak
+  // powtórzonych etykiet, co najwyżej jeden aria-current="page").
+  test(`${app}: nawigacja (jeśli istnieje) ma etykietę i spójną strukturę (WCAG 3.2.3)`, () => {
+    const match = html[app].match(/<nav aria-label="([^"]*)">([\s\S]*?)<\/nav>/);
+    if (!match) return; // login/: brak panelu nawigacji, wyłącznie ekran logowania
+    const [, label, inner] = match;
+    assert.ok(label.length > 0, `${app}: nav bez aria-label`);
+    if (/id="shell-nav"/.test(inner)) {
+      // Wspólna powłoka: pusty <ul> wypełniany przez shared/shell.js, plus blok konta.
+      assert.match(inner, /<ul id="shell-nav" aria-live="polite"><\/ul>/);
+      assert.match(html[app], /<div id="shell-account"><\/div>/);
+      return;
+    }
+    const current = (inner.match(/aria-current="page"/g) || []).length;
+    assert.ok(current <= 1, `${app}: więcej niż jeden aria-current w nawigacji`);
+    const labels = [...inner.matchAll(/<a[^>]*>([^<]*)<\/a>/g)].map((m) => m[1].trim()).filter(Boolean);
+    assert.equal(new Set(labels).size, labels.length, `${app}: powtórzone etykiety nawigacji`);
   });
 
   test(`${app}: tabele mają caption i th scope`, () => {
@@ -83,26 +144,15 @@ for (const app of APPS) {
     }
   });
 
-  test(`${app}: widoczny fokus, minimalny rozmiar przycisków, ograniczony ruch`, () => {
+  test(`${app}: widoczny fokus, ograniczony ruch`, () => {
     assert.match(css[app], /:focus-visible\s*\{\s*outline:\s*3px solid/);
     assert.doesNotMatch(css[app], /outline:\s*(none|0)\b/);
-    assert.match(css[app], /button\s*\{[^}]*min-height:\s*44px/);
     assert.match(css[app], /prefers-reduced-motion:\s*reduce/);
   });
-}
 
-for (const app of SHELL_APPS) {
-  test(`${app}: wspólna nawigacja i blok konta (issue #85, WCAG 3.2.3)`, () => {
-    // Nawigacja jest teraz identyczna we wszystkich panelach: jeden pusty <ul>
-    // wypełniany w czasie działania przez shared/shell.js na podstawie GET /api/access
-    // (visiblePanels — testowane bez DOM w tests/shell-core.test.js). Ukrycie linku nie
-    // jest kontrolą dostępu — o tym nadal decyduje wyłącznie serwer (bez zmian tutaj).
-    assert.match(html[app], /<html lang="pl">/);
-    assert.match(html[app], /<a class="skip-link" href="#main">Przejdź do treści<\/a>/);
-    assert.match(html[app], /<main[^>]*\bid="main"/);
-    const nav = html[app].match(/<nav aria-label="Panel">([\s\S]*?)<\/nav>/)[1];
-    assert.match(nav, /<ul id="shell-nav" aria-live="polite"><\/ul>/);
-    assert.match(html[app], /<div id="shell-account"><\/div>/);
+  test(`${app}: minimalny rozmiar przycisków (WCAG 2.5.8)`, () => {
+    if (!/<button[\s>]/.test(html[app])) return; // site/: strona publiczna bez przycisków
+    assert.match(css[app], /button\s*\{[^}]*min-height:\s*44px/);
   });
 }
 
@@ -147,7 +197,7 @@ test('kontrast elementów interfejsu ≥ 3:1 (WCAG 1.4.11)', () => {
 });
 
 test('w CSS nie zostały kolory tekstu poniżej progu', () => {
-  // Kolory wycofane w przeglądzie #16 (za niski kontrast na białym tle).
+  // Kolory wycofane w przeglądzie #16 i #112 (za niski kontrast na białym tle).
   for (const [app, source] of Object.entries(css)) {
     for (const bad of ['#8a817c', '#777;', '#777}', '#f4c8ca', '#bbb3ae', '#acb3b8']) {
       assert.ok(!source.includes(bad), `${app}: niski kontrast ${bad}`);

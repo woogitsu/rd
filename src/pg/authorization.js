@@ -61,10 +61,55 @@ export function isAuthorizedScoped(context, requirement) {
   return isAuthorized(scoped, requirement);
 }
 
+// #184 pkt 1: ślad odmowy 403 dla zalogowanego aktora (anonim/401 — bez
+// zdarzenia, patrz uzasadnienie w issue). Zapis poza transakcją żądania
+// (env.db, autocommit — wyjątek w tests/audit-transaction-boundary.test.js),
+// nigdy nie blokuje ani nie zmienia odpowiedzi 403.
+// Wyłącznie GET: odmowa żądania zmieniającego stan (POST/PUT/PATCH/DELETE) ma
+// pozostać bez żadnego zapisu — to sprawdza już macierz uprawnień
+// (tests/pg-authz-matrix.test.js, WRITE_TABLES obejmuje audit_events). Ślad
+// odmowy przy odczycie jest najprostszym sygnałem powtarzającego się
+// nieuprawnionego przeglądania (patrz #133).
+// Deduplikacja: ten sam aktor + ta sama ścieżka w oknie 5 minut → bez nowego
+// wiersza (audit_events jest tylko do dopisywania — nie ma tu licznika w
+// jednym wierszu; kolejne odmowy w oknie po prostu nie dopisują drugiego
+// zdarzenia, więc widoczne jest zawsze tylko jedno na okno).
+const ACCESS_DENIED_WINDOW_MS = 5 * 60 * 1000;
+
+export async function logAccessDenied(env, context, requirement, request) {
+  try {
+    if (request?.method && request.method !== 'GET') return;
+    const actorId = context?.session?.user?.id;
+    if (!actorId || !env?.db?.query) return;
+    const url = new URL(request.url);
+    const route = url.pathname;
+    const sessionId = context.session.sessionId ?? null;
+    const requiredRole = Array.isArray(requirement?.roles) ? requirement.roles.join(',') : null;
+    const since = new Date(Date.now() - ACCESS_DENIED_WINDOW_MS).toISOString();
+    const { rows } = await env.db.query(
+      `SELECT 1 FROM audit_events
+        WHERE actor_id = $1 AND action = 'access.denied' AND entity_type = 'route' AND entity_id = $2
+          AND occurred_at > $3
+        LIMIT 1`,
+      [actorId, route, since],
+    );
+    if (rows[0]) return;
+    await insertAuditEvent(env.db, {
+      actorId, action: 'access.denied', entityType: 'route', entityId: route,
+      metadata: { requiredRole, sessionId },
+    });
+  } catch {
+    // Ślad audytu nigdy nie może zablokować ani zmienić odpowiedzi 403.
+  }
+}
+
 export async function requireAccess(request, env, requirement, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return { response: json({ error: 'unauthenticated' }, 401) };
-  if (!isAuthorizedScoped(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
+  if (!isAuthorizedScoped(context, requirement)) {
+    await logAccessDenied(env, context, requirement, request);
+    return { response: json({ error: 'forbidden' }, 403) };
+  }
   return { context };
 }
 

@@ -58,8 +58,9 @@
         </div>
         <div class="table-wrap">
           <table>
+            <caption class="sr-only">Konta</caption>
             <thead>
-              <tr><th>E-mail</th><th>Nazwa</th><th>Identyfikator</th><th>Status</th><th class="num">Role</th><th class="num">Sesje</th><th><span class="sr-only">Akcje</span></th></tr>
+              <tr><th scope="col">E-mail</th><th scope="col">Nazwa</th><th scope="col">Identyfikator</th><th scope="col">Status</th><th scope="col" class="num">Role</th><th scope="col" class="num">Sesje</th><th scope="col"><span class="sr-only">Akcje</span></th></tr>
             </thead>
             <tbody id="users-body"></tbody>
           </table>
@@ -87,8 +88,9 @@
         </form>
         <div class="table-wrap">
           <table>
+            <caption class="sr-only">Przydziały ról</caption>
             <thead>
-              <tr><th>Konto</th><th>Rola</th><th>Zakres</th><th>Nadano</th><th>Wygasa</th><th>Status</th><th><span class="sr-only">Akcje</span></th></tr>
+              <tr><th scope="col">Konto</th><th scope="col">Rola</th><th scope="col">Zakres</th><th scope="col">Nadano</th><th scope="col">Wygasa</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Akcje</span></th></tr>
             </thead>
             <tbody id="grants-body"></tbody>
           </table>
@@ -102,7 +104,7 @@
           <label>Klasa <select name="classId" data-classes="none"></select></label>
           <label>Ważny do (opcjonalnie) <input name="expiresOn" type="date" /></label>
           <button class="primary" type="submit">Nadaj</button>
-          <p class="form-error" role="alert"></p>
+          <p class="form-error" id="grant-error" role="alert"></p>
           <p class="hint" id="grant-pending-warning" role="note" hidden>
             Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła).
             Przydział zostanie odrzucony, chyba że serwer ma włączone `ALLOW_PENDING_ROLES`.
@@ -122,7 +124,7 @@
           <label>Klasa <select name="classId" data-classes="none"></select></label>
           <label>Ważność (godziny) <input name="ttlHours" inputmode="numeric" placeholder="72" /></label>
           <button class="primary" type="submit">Utwórz zaproszenie</button>
-          <p class="form-error" role="alert"></p>
+          <p class="form-error" id="invitation-error" role="alert"></p>
           <p class="hint" id="invitation-pending-warning" role="note" hidden>
             Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła).
             Zaproszenie zostanie odrzucone, chyba że serwer ma włączone `ALLOW_PENDING_ROLES`.
@@ -149,8 +151,9 @@
 
         <div class="table-wrap">
           <table>
+            <caption class="sr-only">Zaproszenia</caption>
             <thead>
-              <tr><th>E-mail</th><th>Rola</th><th>Zakres</th><th>Utworzono</th><th>Wygasa</th><th>Status</th><th><span class="sr-only">Akcje</span></th></tr>
+              <tr><th scope="col">E-mail</th><th scope="col">Rola</th><th scope="col">Zakres</th><th scope="col">Utworzono</th><th scope="col">Wygasa</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Akcje</span></th></tr>
             </thead>
             <tbody id="invitations-body"></tbody>
           </table>
@@ -164,7 +167,7 @@
           <label>Zakończony rok <select name="schoolYearId" data-years="finished" required></select></label>
           <label>Potwierdź identyfikator <input name="confirm" autocomplete="off" required /></label>
           <button class="danger" type="submit">Wygaś przydziały</button>
-          <p class="form-error" role="alert"></p>
+          <p class="form-error" id="term-error" role="alert"></p>
         </form>
       </section>
 
@@ -175,7 +178,8 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Czas</th><th>Zdarzenie</th><th>Obiekt</th><th>Szczegóły</th><th>Wykonał</th></tr></thead>
+            <caption class="sr-only">Dziennik zmian kont i ról</caption>
+            <thead><tr><th scope="col">Czas</th><th scope="col">Zdarzenie</th><th scope="col">Obiekt</th><th scope="col">Szczegóły</th><th scope="col">Wykonał</th></tr></thead>
             <tbody id="audit-body"></tbody>
           </table>
         </div>
