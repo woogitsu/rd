@@ -270,6 +270,14 @@ export const MESSAGES = Object.freeze({
   fingerprint_mismatch: "Dane różnią się od podglądu. Wyślij podgląd ponownie.",
   import_has_conflicts: "Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy.",
   idempotency_key_reused: "Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie.",
+  privacy_notice_missing: "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import.",
+
+  // --- Informacja o przetwarzaniu danych (D-06) --------------------------------------------------
+  invalid_body_text: "Podaj treść informacji (1–20000 znaków).",
+  invalid_decision_ref: "Podaj odwołanie do decyzji (np. numer uchwały).",
+  privacy_notice_not_found: "Nie znaleziono tej wersji informacji.",
+  privacy_notice_not_draft: "Tę wersję już zatwierdzono albo opublikowano.",
+  privacy_notice_not_approved: "Najpierw zatwierdź tę wersję (inna osoba niż autor).",
 
   // --- Eksport ----------------------------------------------------------------------------------
   export_too_large: "Eksport jest za duży. Zawęź zakres.",
