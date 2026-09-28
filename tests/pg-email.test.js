@@ -4,18 +4,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createBrevoTransport, emailConfig, EmailTransportError, matchesAllowlist, recipientRefusal } from '../src/email/brevo.js';
+import { createBrevoTransport, emailConfig, EmailTransportError, matchesAllowlist, parseRetryAfter, recipientRefusal } from '../src/email/brevo.js';
 import { normalizeEmail, emailHash, parseCampaignContent } from '../src/email/content.js';
 import { campaignDailyCap, recordOtherSends, runEmailBatch, ResultNotRecordedError } from '../src/email/worker.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
-
-const realFetch = globalThis.fetch;
-let networkCalls = 0;
-globalThis.fetch = async () => {
-  networkCalls += 1;
-  throw new Error('network_forbidden_in_tests');
-};
-test.after(() => { globalThis.fetch = realFetch; });
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+// Pułapka na sieć (#214) jest teraz instalowana globalnie przez
+// tests/helpers/network-guard.js (importowany przez helpers/pg.js), więc
+// ten plik tylko czyta wspólny licznik zamiast utrzymywać własną kopię.
 
 const YEAR = 'y2026';
 const DAY1 = new Date('2026-10-05T08:00:00Z');
@@ -135,7 +130,7 @@ test('real Brevo transport refuses in APP_ENV=test and under node --test without
   assert.ok(process.env.NODE_TEST_CONTEXT, 'node --test sets NODE_TEST_CONTEXT');
   await assert.rejects(underRunner.send({ to: 'a@example.invalid' }), { code: 'transport_disabled_in_test' });
   assert.equal(calls, 0);
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
 
 test('Brevo client sends one recipient per request with api-key header (injected fetch only)', async () => {
@@ -158,7 +153,7 @@ test('Brevo client sends one recipient per request with api-key header (injected
   await assert.rejects(transport.send(message), (e) => e.code === 'delivery_unknown' && e.uncertain && !e.retryable);
   await assert.rejects(transport.send(message), (e) => e.code === 'provider_rejected_400' && !e.retryable);
   await assert.rejects(transport.send({ ...message, to: ['a@example.invalid', 'b@example.invalid'] }), { code: 'single_recipient_required' });
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
 
 test('allowlist guard outside production and configuration defaults', () => {
@@ -212,7 +207,15 @@ test('access: MFA and board/treasurer role required; admin and representative de
     const body = { schoolYearId: YEAR, title: 'Test', audience: 'all_households', subject: 'Składka', bodyText: BODY };
     const post = (cookie, extra = {}) => t.call(cookie, '/api/email/campaigns', { method: 'POST', headers: { 'Idempotency-Key': 'campaign-key-2' }, body, ...extra });
     assert.equal((await post(null)).status, 401);
-    for (const cookie of [noMfa, rep, admin, otherYear]) assert.equal((await post(cookie)).status, 403);
+    // #214: rozróżnij kod błędu — samo status 403 nie odróżnia braku zapisu MFA
+    // (mfa_enrollment_required) od odmowy zakresu/roli (forbidden), a na tym
+    // rozróżnieniu opiera się obsługa w UI (#99).
+    const noMfaResult = await post(noMfa);
+    assert.deepEqual([noMfaResult.status, noMfaResult.body], [403, { error: 'mfa_enrollment_required' }]);
+    for (const cookie of [rep, admin, otherYear]) {
+      const denied = await post(cookie);
+      assert.deepEqual([denied.status, denied.body], [403, { error: 'forbidden' }]);
+    }
     assert.deepEqual((await post(t.treasurer, { origin: 'https://evil.example' })).body, { error: 'invalid_origin' });
     assert.equal((await post(t.treasurer)).status, 201);
     const replay = await post(t.treasurer);
@@ -410,7 +413,9 @@ test('live run sends each message separately; rerun and double queue never dupli
 
     // Audyt bez adresów e-mail.
     const { rows } = await t.db.query("SELECT metadata_json::text AS m FROM audit_events WHERE action LIKE 'email.%'");
-    assert.ok(rows.length >= 6);
+    // #214: liczba dokładna zamiast >= — brak zdarzenia dla jednej z trzech
+    // rodzin (np. email.sent) nie zostałby wykryty przez próg minimalny.
+    assert.equal(rows.length, 8);
     assert.ok(rows.every((row) => !row.m.includes('@')));
   } finally { await t.close(); }
 });
@@ -431,7 +436,9 @@ test('retry: 429 is retried with backoff exactly once; uncertain delivery is nev
     });
     const first = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
     assert.equal(first.retried, 1);
-    assert.equal(first.failed, 1);
+    // Wyłącznik (#180): 429 zatrzymuje przebieg; h2 (jeśli nie przyszła jeszcze
+    // jego kolej) zostaje w kolejce na następny przebieg.
+    assert.equal(first.stoppedReason, 'provider_rate_limited');
     const tooEarly = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60_000) });
     assert.equal(tooEarly.sent, 0);
     const later = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 10 * 60_000) });
@@ -848,7 +855,7 @@ test('webhook: missing or wrong secret is rejected; bounce suppresses the addres
     // Webhook to jedyna trasa bez Origin; pozostałe nadal wymagają zgodnego Origin.
     const foreign = await handlePgRequest(request(`/api/email/campaigns/${next.id}/cancel`, { method: 'POST', cookie: t.treasurer, origin: false }), t.env);
     assert.equal(foreign.status, 403);
-    assert.equal(networkCalls, 0);
+    assert.equal(networkGuardCalls(), 0);
   } finally { await t.close(); }
 });
 
@@ -1228,7 +1235,7 @@ test('Brevo 401/402/403 is account-level: transport error flagged accountLevel, 
     transport.send({ to: 'a@example.invalid', sender: { email: 'rada@example.invalid' }, subject: 'S', text: 'T', outboxId: 'o1', idempotencyKey: 'k' }),
     (e) => e.code === 'provider_rejected_400' && !e.accountLevel,
   );
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
 
 test('Brevo rejects the account (401): one call per run, nothing failed, campaign not done; fixed key sends each family once', async () => {
@@ -1259,7 +1266,7 @@ test('Brevo rejects the account (401): one call per run, nothing failed, campaig
     const delivered = transport.requests.slice(2).map((body) => body.headers['X-RD-Idempotency-Key']);
     assert.equal(new Set(delivered).size, 4);
     assert.equal(await ledgerCount(t), 4);
-    assert.equal(networkCalls, 0);
+    assert.equal(networkGuardCalls(), 0);
   } finally { await t.close(); }
 });
 
@@ -1296,6 +1303,184 @@ test('invalid address at the provider (400) fails only that message; the batch c
   } finally { await t.close(); }
 });
 
+// --- Wyłącznik przy awarii Brevo (#180) --------------------------------------
+
+function brevoResponses(respond) {
+  const requests = [];
+  const fetchImpl = async (url, init) => {
+    requests.push(JSON.parse(init.body));
+    const answer = respond(requests.length, requests.at(-1));
+    if (answer instanceof Error) throw answer;
+    const { status, headers = {} } = typeof answer === 'number' ? { status: answer } : answer;
+    return new Response(status === 201 ? JSON.stringify({ messageId: `<m${requests.length}@example.invalid>` }) : '{}', { status, headers });
+  };
+  const transport = createBrevoTransport({ apiKey: 'synthetic-key', appEnv: 'development', fetchImpl, processEnv: {} });
+  transport.requests = requests;
+  return transport;
+}
+
+const connectionRefused = () => new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) });
+const minutes = (n) => new Date(DAY1.getTime() + n * 60_000);
+
+test('Brevo client: connection refused / DNS = not sent (retryable); timeout and reset stay uncertain; Retry-After parsed', async () => {
+  const message = { to: 'a@example.invalid', sender: { email: 'rada@example.invalid' }, subject: 'S', text: 'T', outboxId: 'o1', idempotencyKey: 'k' };
+  const dns = () => new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }) });
+  const reset = () => new TypeError('fetch failed', { cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) });
+  const timeout = () => new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  const answers = [connectionRefused(), dns(), reset(), timeout(), { status: 429, headers: { 'Retry-After': '120' } }, 429];
+  const transport = brevoResponses((n) => answers[n - 1]);
+  await assert.rejects(transport.send(message), (e) => e.code === 'provider_unreachable' && e.notSent && e.retryable && !e.uncertain);
+  await assert.rejects(transport.send(message), (e) => e.code === 'provider_unreachable' && e.notSent);
+  await assert.rejects(transport.send(message), (e) => e.code === 'delivery_unknown' && e.uncertain && !e.notSent);
+  await assert.rejects(transport.send(message), (e) => e.code === 'delivery_unknown' && e.uncertain && !e.notSent);
+  await assert.rejects(transport.send(message), (e) => e.code === 'provider_rate_limited' && e.retryAfterSeconds === 120);
+  await assert.rejects(transport.send(message), (e) => e.code === 'provider_rate_limited' && e.retryAfterSeconds === null);
+  assert.equal(parseRetryAfter('abc'), null);
+  assert.equal(parseRetryAfter('999999999'), 24 * 3600);
+  assert.equal(parseRetryAfter(new Date(Date.UTC(2026, 9, 5, 8, 10)).toUTCString(), Date.UTC(2026, 9, 5, 8, 0)), 600);
+  assert.equal(networkGuardCalls(), 0);
+});
+
+test('Brevo keeps answering 429: one call per run, daily limit untouched, rows stay queued (never failed after 75 min)', async () => {
+  const t = await setup({ EMAIL_DAILY_LIMIT: '10' });
+  try {
+    for (const id of ['h1', 'h2', 'h3', 'h4']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const transport = brevoResponses(() => 429);
+    const runs = [];
+    for (let i = 0; i <= 12; i += 1) runs.push(await runEmailBatch(t.env, { transport, dryRun: false, now: minutes(i * 10) }));
+    assert.ok(runs.every((run) => run.remainingQuota === 10), JSON.stringify(runs.map((r) => r.remainingQuota)));
+    assert.ok(runs.every((run) => run.retried <= 1 && run.failed === 0));
+    assert.equal(transport.requests.length, 13, 'one provider call per run');
+    assert.equal(runs[0].stoppedReason, 'provider_rate_limited');
+    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'queued' && r.last_error !== 'delivery_unknown'));
+    assert.equal(await t.count('SELECT max(attempts)::int AS n FROM email_outbox'), 0);
+    assert.equal(await ledgerCount(t), 0);
+    assert.equal(await campaignStatus(t, campaign.id), 'sending');
+    const { rows } = await t.db.query("SELECT stopped_reason FROM email_worker_runs WHERE mode = 'live' ORDER BY started_at");
+    assert.ok(rows.every((row) => row.stopped_reason === 'provider_rate_limited'));
+  } finally { await t.close(); }
+});
+
+test('429 with Retry-After: the message is not retried before the pause ends; after it every family gets one message', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    let limited = true;
+    const transport = brevoResponses(() => (limited ? { status: 429, headers: { 'Retry-After': '1200' } } : 201));
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    limited = false;
+    const early = await runEmailBatch(t.env, { transport, dryRun: false, now: minutes(10) });
+    assert.equal(early.planned, 0);
+    assert.equal(transport.requests.length, 1);
+    const after = await runEmailBatch(t.env, { transport, dryRun: false, now: minutes(21) });
+    assert.equal(after.sent, 1);
+    assert.equal(await campaignStatus(t, campaign.id), 'done');
+    assert.equal(transport.requests.length, 2);
+    assert.equal(await ledgerCount(t), 1);
+  } finally { await t.close(); }
+});
+
+test('mixed: two accepted, then 429 → run stops, ledger = 2, rest queued', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3', 'h4']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const transport = brevoResponses((n) => (n <= 2 ? 201 : 429));
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 2);
+    assert.equal(run.retried, 1);
+    assert.equal(run.stoppedReason, 'provider_rate_limited');
+    assert.equal(transport.requests.length, 3);
+    assert.equal(await ledgerCount(t), 2);
+    const states = await outboxStates(t, campaign.id);
+    assert.equal(states.filter((r) => r.state === 'queued').length, 2);
+  } finally { await t.close(); }
+});
+
+test('Brevo 503 for a batch of 50: at most 2 calls, at most 2 delivery_unknown, 48 queued, campaign not done', { timeout: 120_000 }, async () => {
+  const t = await setup();
+  try {
+    for (let i = 1; i <= 50; i += 1) await family(t.db, `h${String(i).padStart(2, '0')}`);
+    const campaign = await readyCampaign(t);
+    const transport = brevoResponses(() => 503);
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.planned, 50);
+    assert.equal(run.stoppedReason, 'provider_unavailable');
+    assert.equal(transport.requests.length, 2);
+    const states = await outboxStates(t, campaign.id);
+    assert.equal(states.filter((r) => r.last_error === 'delivery_unknown').length, 2);
+    assert.equal(states.filter((r) => r.state === 'queued').length, 48);
+    assert.equal(await campaignStatus(t, campaign.id), 'sending');
+    assert.equal(await ledgerCount(t), 2, 'uncertain messages may have left');
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM email_worker_runs WHERE stopped_reason = 'provider_unavailable'"), 1);
+  } finally { await t.close(); }
+});
+
+test('connection refused before the request: message back to queue, not delivery_unknown; sent after recovery', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    let down = true;
+    const transport = brevoResponses(() => (down ? connectionRefused() : 201));
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.stoppedReason, 'provider_unreachable');
+    assert.equal(transport.requests.length, 1);
+    const states = await outboxStates(t, campaign.id);
+    assert.ok(states.every((r) => r.state === 'queued'));
+    assert.ok(states.every((r) => r.last_error === 'provider_unreachable'), 'current and released rows carry the reason');
+    assert.equal(await auditCount(t, 'email.delivery_unknown'), 0);
+    assert.equal(await ledgerCount(t), 0);
+    down = false;
+    const next = await runEmailBatch(t.env, { transport, dryRun: false, now: minutes(6) });
+    assert.equal(next.sent, 2);
+    assert.equal(new Set(transport.requests.slice(1).map((b) => b.headers['X-RD-Idempotency-Key'])).size, 2);
+  } finally { await t.close(); }
+});
+
+test('breaker counts only consecutive uncertain results; invalid address (400) does not open it', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3', 'h4']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const answers = [503, 400, 503, 201];
+    const transport = brevoResponses((n) => answers[n - 1]);
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(transport.requests.length, 4);
+    assert.equal(run.stoppedReason, null);
+    assert.equal(run.sent, 1);
+    assert.equal(run.failed, 3);
+    assert.equal(await campaignStatus(t, campaign.id), 'done');
+  } finally { await t.close(); }
+});
+
+test('no_payment_record: payment recorded during a provider pause → skipped after resume', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2']) await family(t.db, id);
+    const campaign = await readyCampaign(t, { audience: 'no_payment_record' });
+    let limited = true;
+    const transport = brevoResponses(() => (limited ? 429 : 201));
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    const limitedHousehold = transport.requests[0].headers['X-RD-Idempotency-Key'].split(':household:')[1];
+    await t.db.query(
+      `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+       VALUES ('p-pause', $1, $2, 500, '2026-10-05', 'bank', 'recorded', 'u-tr', 'payment-key-pause')`,
+      [limitedHousehold, YEAR],
+    );
+    limited = false;
+    const next = await runEmailBatch(t.env, { transport, dryRun: false, now: minutes(6) });
+    assert.equal(next.sent, 1);
+    assert.equal(next.skipped, 1);
+    const states = Object.fromEntries((await outboxStates(t, campaign.id)).map((r) => [r.household_id, r.state]));
+    assert.equal(states[limitedHousehold], 'skipped');
+    assert.equal(transport.requests.length, 2);
+  } finally { await t.close(); }
+});
+
 test('no test in this file touched the network', () => {
-  assert.equal(networkCalls, 0);
+  assert.equal(networkGuardCalls(), 0);
 });
