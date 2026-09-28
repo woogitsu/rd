@@ -151,7 +151,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 ### D-09. Uprawnienia dyrekcji i Komisji Rewizyjnej
 
 - Pytanie: czy i w jakim zakresie dyrekcja oraz Komisja Rewizyjna mają dostęp do wpłat, księgi, dokumentów i eksportu?
-- Dlaczego: dostęp ról `principal` i `audit` do wpłat i księgi jest wyłączony do czasu decyzji (PAYMENTS.md, LEDGER.md). Dotyczy #4, #6, #7, #35.
+- Dlaczego: dostęp ról `principal` i `audit` do wpłat i księgi jest wyłączony do czasu decyzji (PAYMENTS.md, LEDGER.md). Dotyczy #4, #6, #7, #35, #137 (ścieżka kontroli KR: uwagi, odpowiedzi skarbnika, protokół — zablokowana tą samą decyzją).
 - Warianty w dokumentacji: PRODUCT.md — Komisja Rewizyjna: odczyt wpłat, odczyt i eksport księgi, minimum danych rodzin; dyrekcja: domyślnie brak dostępu do wpłat, raport zbiorczy księgi.
 - Status: otwarta
 - Data decyzji:
@@ -278,6 +278,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Data decyzji:
 - Kto zatwierdził:
 - Uchwała/dokument:
+- Notatka techniczna (28.09.2026, przegląd #42): #42 („usunięcie Workera, D1 i starej konfiguracji") nie ma jeszcze scalonego PR i nie jest realizowany dalej, dopóki ta decyzja jest otwarta — zgodnie z AGENTS.md i opisem issue („nie usuwaj starych ścieżek przed testami równoważności i próbą odtworzenia", „nie wdrażaj produkcyjnie bez osobnej decyzji szkoły"). Stan repo: kod Workera/Cloudflare D1 (`src/index.js` warstwa Workera, `wrangler.toml`, `migrations/*.sql` D1) współistnieje nadal z warstwą Node/PostgreSQL (`src/pg/**`, `postgres/migrations/*.sql`); PR #227 ustalił, że stary stos nigdy nie był wdrożony produkcyjnie ani nie zawierał danych szkoły. Osobne, już scalone PR-y (#353 — audyt npm i CI, #367 — SR-06/SR-05 część, oba niezależne od tej decyzji) zamknęły dwie punktowe luki bezpieczeństwa niezwiązane z samym usunięciem starego stosu. Do czasu przyjęcia D-20 żaden agent nie powinien usuwać `wrangler`, kodu Workera ani migracji D1, ani oznaczać prototypu jako gotowego do wdrożenia.
 
 ### D-21. Aktualny regulamin i dostęp do dokumentów źródłowych
 
