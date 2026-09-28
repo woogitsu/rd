@@ -284,7 +284,7 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
             -- relacja bez zgody nie może podnieść priorytetu opiekuna z inną, niegłówną relacją.
             COALESCE(bool_or(sg.is_primary_contact) FILTER (WHERE sg.contact_allowed), false) AS is_primary
        FROM d
-       CROSS JOIN enrollments e
+       CROSS JOIN enrollments_current e
        JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = e.student_id
        JOIN households h ON h.id = p.household_id AND h.archived_at IS NULL
        LEFT JOIN student_guardians_current_on((SELECT on_date FROM d)) sg ON sg.student_id = e.student_id

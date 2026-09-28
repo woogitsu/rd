@@ -592,6 +592,13 @@ export async function updateMeeting(db, actor, input = {}) {
   }
   const columns = Object.keys(changes);
   if (!columns.length) throw new MeetingError('invalid_request');
+  // #113: termin zmieniony dostaje własne zdarzenie w dzienniku, ze starą i
+  // nową datą jako znaczniki czasu (bez treści zebrania) — dziś nie ma jeszcze
+  // zawiadomienia (kampanii) ani jego wersji porządku, do których to zdarzenie
+  // mogłoby się odnosić (osobny zakres, patrz docs/MEETINGS.md).
+  const reschedule = changes.scheduled_at !== undefined
+    && new Date(changes.scheduled_at).getTime() !== new Date(meeting.scheduled_at).getTime()
+    ? { fromScheduledAt: iso(meeting.scheduled_at), toScheduledAt: iso(changes.scheduled_at) } : null;
   await mutate(db, async tx => {
     const assignments = columns.map((column, index) => `${column} = $${index + 2}`).join(', ');
     await tx.query(`UPDATE meetings SET ${assignments} WHERE id = $1`,
@@ -601,6 +608,9 @@ export async function updateMeeting(db, actor, input = {}) {
       ...(changes.status && changes.status !== meeting.status
         ? { fromStatus: meeting.status, toStatus: changes.status } : {}),
     });
+    if (reschedule) {
+      await audit(tx, actor, 'meeting.rescheduled', 'meeting', meeting.id, reschedule);
+    }
   });
   return { meeting: meetingFromRow(await loadMeeting(db, meeting.id)) };
 }
