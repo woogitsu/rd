@@ -102,8 +102,15 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 
 ## Webhook Brevo
 `POST /api/email/webhooks/brevo`. Brevo nie podpisuje treści HMAC; weryfikacja to wspólny sekret `BREVO_WEBHOOK_SECRET` (min. 32 znaki) przesyłany w nagłówku `Authorization: Bearer <sekret>` (konfiguracja „auth” webhooka Brevo) albo jako hasło Basic Auth. Porównanie w stałym czasie; zły lub brak sekretu → 401, brak konfiguracji → 503. Zapisujemy tylko zweryfikowane zdarzenia, bez adresu (skrót SHA-256), z deduplikacją. `hard_bounce`, `invalid_email`, `blocked`, `spam` dopisują adres do listy wyłączeń globalnych; bounce zmienia stan wiersza na `bounced`. `unsubscribed` zapisuje preferencję kategorii kampanii, nie blokadę globalną (#110). Zdjęcie globalnej blokady nie jest zaimplementowane (wymaga procedury i decyzji, #94).
+- Rotacja sekretu (#139): opcjonalne `BREVO_WEBHOOK_SECRET_PREVIOUS` — przez czas rotacji akceptowane są oba sekrety (zdarzenie z poprzednim loguje się jako `email.webhook.previous_secret_used`, bez treści zdarzenia). Po usunięciu zmiennej stary sekret znów daje 401. Ograniczenie do zakresów IP Brevo (`BREVO_WEBHOOK_ALLOWED_CIDRS`) **nie jest zaimplementowane** w tym PR.
 
 `GET`/`POST /api/email/preferences?t=…` (#110) — patrz „Kategorie komunikatów” wyżej. Te dwie trasy oraz webhook Brevo są jedynymi trasami API zwolnionymi z kontroli `Origin`.
+
+## Raport doręczeń i lista operacyjna (#139)
+- `GET /api/email/campaigns/{id}/report` (board/treasurer, MFA): liczby per stan kolejki (`outbox`), per ostatnie zapisane zdarzenie dostawcy (`lastProviderEvent`, brak zdarzenia = `none`), per rozstrzygnięcie (`resolutions`) i wykluczenia. Wyłącznie agregaty — bez adresów, imion i identyfikatorów rodzin (sprawdzane testem). Eksport CSV i dostęp Komisji Rewizyjnej (D-09) **nie są zaimplementowane**.
+- `GET /api/email/campaigns/{id}/attention` (board/treasurer, MFA, dziennik odczytu): wiersze w stanie `failed` (w tym `delivery_unknown`) i adresy z ≥3 zdarzeniami `soft_bounce`. Adres zawsze maskowany; `outboxId`/`providerMessageId` (= `X-Mailin-custom`) do wyszukania w logach Brevo.
+- `POST /api/email/campaigns/{id}/resolutions` (`{ outboxId, resolution: 'confirmed_delivered'|'confirmed_not_sent', evidenceCode }`), tylko dla wierszy `failed`; tylko dopisywanie (`email_outbox_resolutions`), historia wiersza outbox się nie zmienia. `confirmed_not_sent` wymaga roli `board` (twierdzenie poważniejsze — otwiera możliwość przebiegu uzupełniającego); `confirmed_delivered` — board/treasurer. Podwójne kliknięcie zwraca istniejący zapis zamiast tworzyć drugi. **Pełna zasada czterech oczu (inna osoba niż każdy, kto wcześniej działał na wierszu) nie jest zaimplementowana** — obecnie kontrolą jest tylko silniejsza rola dla `confirmed_not_sent`.
+- **Nie jest częścią tego PR**: przebieg uzupełniający (`followup`) do rodzin `confirmed_not_sent`, skrypt `npm run email:reconcile`, CIDR webhooka.
 
 ## Zmienne środowiskowe
 | Zmienna | Znaczenie |
@@ -128,6 +135,7 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 | `BREVO_FROM_EMAIL`, `BREVO_FROM_NAME` | zweryfikowany nadawca (D-17) |
 | `BREVO_REPLY_TO` | adres odpowiedzi (#148); na produkcji wymagany — brak daje `reply_to_not_configured` |
 | `BREVO_WEBHOOK_SECRET` | wspólny sekret webhooka |
+| `BREVO_WEBHOOK_SECRET_PREVIOUS` | poprzedni sekret, akceptowany dodatkowo na czas rotacji (#139) |
 | `EMAIL_UNSUBSCRIBE_SECRET` | (#110) sekret HMAC do podpisu tokenu wypisania jednym kliknięciem; brak = brak stopki i brak nagłówków `List-Unsubscribe*` |
 | `PUBLIC_BASE_URL` | adres bazowy serwera do budowy linku wypisania (i kontroli `Origin` — już używany gdzie indziej) |
 | `EMAIL_PREFERENCES_RATE_LIMIT` | (#110) limit żądań na `GET`/`POST /api/email/preferences` na proces na minutę (domyślnie 200 — patrz „Ograniczenia” niżej) |

@@ -9,6 +9,9 @@
 //   GET  /api/email/campaigns/{id}/recipients        lista odbiorców do weryfikacji (dziennik odczytu)
 //   POST /api/email/campaigns/{id}/approve           zarząd + MFA, inna osoba niż autor; dokładne skróty
 //   POST /api/email/campaigns/{id}/queue             zakolejkowanie zatwierdzonej kampanii
+//   GET  /api/email/campaigns/{id}/report            raport doręczeń: same liczby i kody (#139)
+//   GET  /api/email/campaigns/{id}/attention         lista operacyjna „do sprawdzenia” (#139, dziennik odczytu)
+//   POST /api/email/campaigns/{id}/resolutions       rozstrzygnięcie delivery_unknown/error (#139, tylko dopisywanie)
 //   POST /api/email/campaigns/{id}/pause             wstrzymanie wysyłki (#130), idempotentne
 //   POST /api/email/campaigns/{id}/resume            wznowienie wysyłki (#130), idempotentne
 //   POST /api/email/campaigns/{id}/cancel            anulowanie (wiersze w kolejce → cancelled)
@@ -854,6 +857,124 @@ async function status(request, env, id, json) {
   });
 }
 
+const RESOLUTIONS = Object.freeze(['confirmed_delivered', 'confirmed_not_sent']);
+const EVIDENCE_CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
+
+// #139: raport tylko z liczb i kodów — bez adresów, imion ani identyfikatorów
+// rodzin. Ostatnie zdarzenie dostawcy per wiersz kolejki (brak zdarzenia = 'none').
+async function report(request, env, id, json) {
+  const { campaign } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const { rows } = await env.db.query(
+    'SELECT state, COUNT(*)::int AS n FROM email_outbox WHERE campaign_id = $1 GROUP BY state ORDER BY state',
+    [id],
+  );
+  const { rows: lastEvent } = await env.db.query(
+    `SELECT COALESCE(last_event.event, 'none') AS event, COUNT(*)::int AS n
+       FROM email_outbox o
+       LEFT JOIN LATERAL (
+         SELECT event FROM email_webhook_events w WHERE w.outbox_id = o.id ORDER BY w.received_at DESC LIMIT 1
+       ) last_event ON true
+      WHERE o.campaign_id = $1
+      GROUP BY COALESCE(last_event.event, 'none') ORDER BY 1`,
+    [id],
+  );
+  const { rows: resolutions } = await env.db.query(
+    'SELECT resolution, COUNT(*)::int AS n FROM email_outbox_resolutions WHERE campaign_id = $1 GROUP BY resolution ORDER BY resolution',
+    [id],
+  );
+  const { rows: exclusions } = await env.db.query(
+    'SELECT reason, COUNT(*)::int AS n FROM email_campaign_exclusions WHERE campaign_id = $1 GROUP BY reason ORDER BY reason',
+    [id],
+  );
+  return json({
+    campaign: campaignView(campaign),
+    outbox: Object.fromEntries(rows.map((row) => [row.state, row.n])),
+    lastProviderEvent: Object.fromEntries(lastEvent.map((row) => [row.event, row.n])),
+    resolutions: Object.fromEntries(resolutions.map((row) => [row.resolution, row.n])),
+    exclusions: Object.fromEntries(exclusions.map((row) => [row.reason, row.n])),
+  });
+}
+
+// #139: lista operacyjna „do sprawdzenia” — wiersze failed (w tym
+// delivery_unknown) i adresy z ≥3 soft_bounce. Adres maskowany; odczyt trafia
+// do dziennika. provider_message_id/id wiersza = X-Mailin-custom do logów Brevo.
+async function attention(request, env, id, json) {
+  const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const { rows } = await env.db.query(
+    `SELECT t.outbox_id, t.state, t.last_error, t.provider_message_id, t.email, t.soft_bounce_count FROM (
+       SELECT o.id AS outbox_id, o.state, o.last_error, o.provider_message_id, r.email,
+              (SELECT COUNT(*)::int FROM email_webhook_events w WHERE w.outbox_id = o.id AND w.event = 'soft_bounce') AS soft_bounce_count
+         FROM email_outbox o JOIN email_campaign_recipients r ON r.id = o.recipient_id
+        WHERE o.campaign_id = $1
+     ) t
+     WHERE t.state = 'failed' OR t.soft_bounce_count >= 3
+     ORDER BY t.outbox_id LIMIT 200`,
+    [id],
+  );
+  await insertAuditEvent(env.db, {
+    actorId: context.session.user.id, action: 'email.attention_list.viewed', entityType: 'email_campaign', entityId: id,
+    metadata: { rows: rows.length },
+  });
+  return json({
+    rows: rows.map((row) => ({
+      outboxId: row.outbox_id, state: row.state, lastError: row.last_error,
+      providerMessageId: row.provider_message_id, email: maskEmail(row.email), softBounceCount: row.soft_bounce_count,
+    })),
+  });
+}
+
+// #139: rozstrzygnięcie delivery_unknown/error bez zmiany historii wiersza —
+// osobny, tylko-dopisujący wpis. Bardziej dotkliwe twierdzenie
+// („na pewno nie wyszło”, otwiera przebieg uzupełniający) wymaga silniejszej
+// roli (board) niż samo potwierdzenie doręczenia; pełna zasada czterech oczu
+// (inna osoba niż ktokolwiek wcześniej działający na wierszu) nie jest tu
+// zaimplementowana — patrz PR.
+async function createResolution(request, env, id, json) {
+  const data = await readJson(request);
+  if (!validId(data.outboxId)) throw new RequestError('invalid_request');
+  if (!RESOLUTIONS.includes(data.resolution)) throw new RequestError('invalid_request');
+  if (typeof data.evidenceCode !== 'string' || !EVIDENCE_CODE_PATTERN.test(data.evidenceCode)) throw new RequestError('invalid_request');
+  const requiredRoles = data.resolution === 'confirmed_not_sent' ? APPROVER_ROLES : EDITOR_ROLES;
+  const { context } = await campaignFor(request, env, id, requiredRoles);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        'SELECT id, state FROM email_outbox WHERE id = $1 AND campaign_id = $2 FOR UPDATE',
+        [data.outboxId, id],
+      );
+      if (!rows[0]) throw new RequestError('outbox_not_found', 404);
+      // Podwójne kliknięcie: wiersz już rozstrzygnięty zwraca istniejący zapis
+      // zamiast tworzyć drugi (append-only, ale bez duplikatu decyzji).
+      // Zmiana rozstrzygnięcia (korekta) nie jest tu obsługiwana — wymaga
+      // osobnej trasy/decyzji, patrz PR.
+      const { rows: existing } = await tx.query(
+        'SELECT id, resolution, evidence_code FROM email_outbox_resolutions WHERE outbox_id = $1 ORDER BY created_at LIMIT 1',
+        [data.outboxId],
+      );
+      if (existing[0]) {
+        return json({
+          resolution: { id: existing[0].id, outboxId: data.outboxId, resolution: existing[0].resolution, evidenceCode: existing[0].evidence_code },
+        }, 200, { 'Idempotency-Replayed': 'true' });
+      }
+      if (rows[0].state !== 'failed') throw new RequestError('not_resolvable', 409);
+      const resolutionId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO email_outbox_resolutions (id, outbox_id, campaign_id, resolution, evidence_code, resolved_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [resolutionId, data.outboxId, id, data.resolution, data.evidenceCode, actorId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'email.outbox.resolved', entityType: 'email_outbox', entityId: data.outboxId,
+        metadata: { campaignId: id, resolution: data.resolution, evidenceCode: data.evidenceCode },
+      });
+      return json({ resolution: { id: resolutionId, outboxId: data.outboxId, resolution: data.resolution, evidenceCode: data.evidenceCode } }, 201);
+    });
+  } catch (error) {
+    return mapDatabaseError(error);
+  }
+}
+
 // --- Webhook Brevo --------------------------------------------------------
 
 function sameSecret(provided, expected) {
@@ -877,11 +998,27 @@ function webhookTokenFrom(request) {
   return null;
 }
 
+// Rotacja sekretu webhooka bez okna odrzuconych zdarzeń (#139): przez czas
+// rotacji akceptowane są oba sekrety. Stary sekret przestaje działać, gdy
+// zmienna BREVO_WEBHOOK_SECRET_PREVIOUS zostanie usunięta.
+function webhookSecrets(env) {
+  return [
+    { secret: typeof env.BREVO_WEBHOOK_SECRET === 'string' ? env.BREVO_WEBHOOK_SECRET : '', previous: false },
+    { secret: typeof env.BREVO_WEBHOOK_SECRET_PREVIOUS === 'string' ? env.BREVO_WEBHOOK_SECRET_PREVIOUS : '', previous: true },
+  ].filter((entry) => entry.secret.length >= 32);
+}
+
 async function webhook(request, env, json) {
-  const secret = typeof env.BREVO_WEBHOOK_SECRET === 'string' ? env.BREVO_WEBHOOK_SECRET : '';
-  if (secret.length < 32) return json({ error: 'webhook_not_configured' }, 503);
+  const candidates = webhookSecrets(env);
+  if (!candidates.length) return json({ error: 'webhook_not_configured' }, 503);
   const token = webhookTokenFrom(request);
-  if (!token || !sameSecret(token, secret)) return json({ error: 'invalid_signature' }, 401);
+  const matched = token ? candidates.find((c) => sameSecret(token, c.secret)) : null;
+  if (!matched) return json({ error: 'invalid_signature' }, 401);
+  if (matched.previous) {
+    await insertAuditEvent(env.db, {
+      action: 'email.webhook.previous_secret_used', entityType: 'email_webhook_event', entityId: 'rotation', metadata: {},
+    });
+  }
   const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
   if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
   const text = await readBody(request, MAX_WEBHOOK_BYTES);
@@ -1035,9 +1172,12 @@ const CAMPAIGN_ACTION_METHODS = Object.freeze({
   null: ['GET', 'PUT'],
   preview: ['GET'],
   recipients: ['GET'],
+  report: ['GET'],
+  attention: ['GET'],
   snapshot: ['POST'],
   approve: ['POST'],
   queue: ['POST'],
+  resolutions: ['POST'],
   pause: ['POST'],
   resume: ['POST'],
   cancel: ['POST'],
@@ -1063,7 +1203,7 @@ export async function handle(request, env, url, json) {
       if (method === 'POST') return await createCampaign(request, env, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
-    const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|approve|queue|pause|resume|cancel|test-send))?$/);
+    const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|report|attention|approve|queue|resolutions|pause|resume|cancel|test-send))?$/);
     if (!match) return null;
     let id;
     try { id = decodeURIComponent(match[1]); } catch { throw new RequestError('invalid_campaign_id'); }
@@ -1072,10 +1212,13 @@ export async function handle(request, env, url, json) {
     if (!action && method === 'PUT') return await updateCampaign(request, env, id, json);
     if (action === 'preview' && method === 'GET') return await preview(request, env, id, json);
     if (action === 'recipients' && method === 'GET') return await listRecipients(request, env, id, url, json);
+    if (action === 'report' && method === 'GET') return await report(request, env, id, json);
+    if (action === 'attention' && method === 'GET') return await attention(request, env, id, json);
     if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
     if (action === 'snapshot') return await buildSnapshot(request, env, id, json);
     if (action === 'approve') return await approve(request, env, id, json);
     if (action === 'queue') return await queue(request, env, id, json);
+    if (action === 'resolutions') return await createResolution(request, env, id, json);
     if (action === 'pause') return await pause(request, env, id, json);
     if (action === 'resume') return await resume(request, env, id, json);
     if (action === 'cancel') return await cancel(request, env, id, json);
