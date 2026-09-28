@@ -44,7 +44,7 @@
 
 import {
   allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions,
-  ROLE_STATUS, ROLES,
+  revokeUserSessionsWith, ROLE_STATUS, ROLES,
 } from '../auth.js';
 import { requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
@@ -230,7 +230,13 @@ async function listUsers(env, json) {
 
 async function setUserDisabled(env, actorId, userId, disabled, json) {
   if (disabled && userId === actorId) throw new RequestError('cannot_disable_self', 409);
-  const changed = await env.db.transaction(async (tx) => {
+  // disabled_at i trwałe wycofanie sesji (revoked_at) muszą zatwierdzić się
+  // razem. Osobna, późniejsza transakcja mogła (#256) zawieść już po
+  // zapisaniu disabled_at: loadSession i tak odrzucał sesję po disabled_at,
+  // więc błąd był niewidoczny — ale sesje zostawały w bazie z
+  // revoked_at IS NULL i po ponownym włączeniu konta znów były akceptowane
+  // aż do wygaśnięcia TTL. Jedna transakcja usuwa to okno.
+  const { changed, revokedSessions } = await env.db.transaction(async (tx) => {
     const { rows: existing } = await tx.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
     if (!existing[0]) throw new Abort('user_not_found', 404);
     const { rows } = await tx.query(
@@ -239,20 +245,15 @@ async function setUserDisabled(env, actorId, userId, disabled, json) {
         : 'UPDATE users SET disabled_at = NULL WHERE id = $1 AND disabled_at IS NOT NULL RETURNING id',
       [userId],
     );
-    if (!rows[0]) return false;
+    if (!rows[0]) return { changed: false, revokedSessions: 0 };
     await insertAuditEvent(tx, {
       actorId, action: disabled ? 'user.disabled' : 'user.enabled', entityType: 'user', entityId: userId,
     });
     // Po ponownym włączeniu konta stary token resetu nie może znów zadziałać (#193).
     if (disabled) await revokePasswordResetTokens(tx, { userId, actorId, reason: 'user_disabled' });
-    return true;
+    const revoked = disabled ? await revokeUserSessionsWith(tx, { userId, actorId, reason: 'user_disabled' }) : 0;
+    return { changed: true, revokedSessions: revoked };
   });
-  // loadSession odrzuca konto z disabled_at, więc sesje przestają działać już
-  // po powyższym COMMIT. Wycofanie (osobna transakcja revokeUserSessions)
-  // zapisuje to trwale z audytem każdej sesji; ponowienie jest bezpieczne.
-  const revokedSessions = disabled
-    ? await revokeUserSessions(env, { userId, actorId, reason: 'user_disabled' })
-    : 0;
   return json({ userId, disabled, changed, revokedSessions });
 }
 
