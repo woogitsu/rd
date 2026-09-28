@@ -19,6 +19,7 @@ import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
+import { readSnapshot } from '../db-snapshot.js';
 
 export const name = 'year-close';
 
@@ -429,61 +430,67 @@ function countsBy(rows, key = 'status') {
 
 async function handover(request, env, schoolYearId, json) {
   await authorizeArchiveRead(request, env, schoolYearId, READ_ROLES, 'year_close.handover');
-  const db = env.db;
-  const year = await requireYear(db, schoolYearId);
-  const status = await statusView(db, schoolYearId);
-
-  const [ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants] = await Promise.all([
-    db.query(
-      `SELECT (SELECT count(*) FROM ledger_entries WHERE school_year_id = $1) AS entries,
+  // #213: zestawienie przekazania jest dokumentem podpisywanym/archiwizowanym
+  // przez zarząd i następcę — jedna migawka REPEATABLE READ dla wszystkich
+  // ośmiu zapytań poniżej (dotąd Promise.all na env.db, każde zapytanie mogło
+  // trafić na inne połączenie z puli i inną chwilę bazy). W transakcji nie ma
+  // sensu Promise.all: jedno połączenie i tak kolejkuje zapytania, więc idą
+  // sekwencyjnie na tx.
+  const { year, status, ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants } =
+    await readSnapshot(env.db, async (tx) => {
+      const year = await requireYear(tx, schoolYearId);
+      const status = await statusView(tx, schoolYearId);
+      const ledgerCounts = await tx.query(
+        `SELECT (SELECT count(*) FROM ledger_entries WHERE school_year_id = $1) AS entries,
               (SELECT count(*) FROM ledger_corrections c JOIN ledger_entries e ON e.id = c.ledger_entry_id
                 WHERE e.school_year_id = $1) AS corrections`,
-      [schoolYearId],
-    ),
-    db.query(
-      `SELECT count(*) FILTER (WHERE status = 'recorded') AS recorded_count,
+        [schoolYearId],
+      );
+      const payments = await tx.query(
+        `SELECT count(*) FILTER (WHERE status = 'recorded') AS recorded_count,
               COALESCE(sum(net_amount_cents) FILTER (WHERE status = 'recorded'), 0) AS recorded_net_cents,
               count(*) FILTER (WHERE status = 'unmatched') AS unmatched_count,
               COALESCE(sum(net_amount_cents) FILTER (WHERE status = 'unmatched'), 0) AS unmatched_net_cents,
               (SELECT count(*) FROM payment_corrections c JOIN payment_entries p ON p.id = c.payment_entry_id
                 WHERE p.school_year_id = $1) AS correction_count
          FROM payment_entry_net WHERE school_year_id = $1`,
-      [schoolYearId],
-    ),
-    db.query('SELECT status, count(*) AS count FROM meetings WHERE school_year_id = $1 GROUP BY status', [schoolYearId]),
-    db.query(
-      `SELECT count(*) AS count FROM meetings m
+        [schoolYearId],
+      );
+      const meetings = await tx.query('SELECT status, count(*) AS count FROM meetings WHERE school_year_id = $1 GROUP BY status', [schoolYearId]);
+      const meetingsWithoutMinutes = await tx.query(
+        `SELECT count(*) AS count FROM meetings m
         WHERE m.school_year_id = $1 AND m.status IN ('held', 'archived')
           AND NOT meeting_has_approved_minutes(m.id)`,
-      [schoolYearId],
-    ),
-    db.query(
-      `SELECT r.status, count(*) AS count FROM resolutions r
+        [schoolYearId],
+      );
+      const resolutions = await tx.query(
+        `SELECT r.status, count(*) AS count FROM resolutions r
         WHERE r.school_year_id = $1
           AND NOT EXISTS (SELECT 1 FROM resolutions newer WHERE newer.corrects_id = r.id)
         GROUP BY r.status`,
-      [schoolYearId],
-    ),
-    db.query('SELECT status, count(*) AS count FROM events WHERE school_year_id = $1 GROUP BY status', [schoolYearId]),
-    status.nextSchoolYearId
-      ? db.query(
-        `SELECT o.id, o.amount_cents, o.cash_cents, COALESCE(sum(a.amount_cents), 0) AS adjustments_cents,
+        [schoolYearId],
+      );
+      const events = await tx.query('SELECT status, count(*) AS count FROM events WHERE school_year_id = $1 GROUP BY status', [schoolYearId]);
+      const nextOpening = status.nextSchoolYearId
+        ? await tx.query(
+          `SELECT o.id, o.amount_cents, o.cash_cents, COALESCE(sum(a.amount_cents), 0) AS adjustments_cents,
                 COALESCE(sum(a.cash_cents), 0) AS cash_adjustments_cents
            FROM ledger_opening_balances o
            LEFT JOIN ledger_opening_balance_adjustments a ON a.opening_balance_id = o.id
           WHERE o.school_year_id = $1 GROUP BY o.id, o.amount_cents, o.cash_cents`,
-        [status.nextSchoolYearId],
-      )
-      : Promise.resolve({ rows: [] }),
-    status.nextSchoolYearId
-      ? db.query(
-        `SELECT role, count(*) AS count FROM role_grants
+          [status.nextSchoolYearId],
+        )
+        : { rows: [] };
+      const nextGrants = status.nextSchoolYearId
+        ? await tx.query(
+          `SELECT role, count(*) AS count FROM role_grants
           WHERE school_year_id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
           GROUP BY role`,
-        [status.nextSchoolYearId],
-      )
-      : Promise.resolve({ rows: [] }),
-  ]);
+          [status.nextSchoolYearId],
+        )
+        : { rows: [] };
+      return { year, status, ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants };
+    });
 
   const ledger = ledgerCounts.rows[0];
   const pay = payments.rows[0];
