@@ -817,6 +817,19 @@ export const ROUTE_MATRIX = Object.freeze([
   emailRoute('email.snapshot', 'POST', '/snapshot', 'draft', {}),
   emailRoute('email.preview', 'GET', '/preview', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
   emailRoute('email.recipients', 'GET', '/recipients', 'snapshot', { fixture: 'static' }),
+  emailRoute('email.report', 'GET', '/report', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
+  emailRoute('email.attention', 'GET', '/attention', 'snapshot', { fixture: 'static' }),
+  {
+    // Rozstrzygnięcie delivery_unknown/error (#139): confirmed_delivered wystarcza board/treasurer;
+    // confirmed_not_sent (silniejsze twierdzenie) wymaga roli board — sprawdzone osobno w pg-email.test.js.
+    id: 'email.resolutions', module: 'email', method: 'POST', path: '/api/email/campaigns/:campaignId/resolutions',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'campaign', stage: 'failed' },
+    build: ({ obj }) => ({
+      path: `/api/email/campaigns/${obj.campaignId}/resolutions`,
+      body: { outboxId: obj.outboxId, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
+    }),
+  },
   emailRoute('email.approve', 'POST', '/approve', 'snapshot', {
     allow: EMAIL_APPROVE, body: (_target, obj) => ({ contentHash: obj.contentHash, recipientsHash: obj.recipientsHash }),
   }),
