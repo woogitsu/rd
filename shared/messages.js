@@ -279,6 +279,9 @@ export const STATUS_MESSAGES = Object.freeze({
   413: MESSAGES.request_too_large,
   415: MESSAGES.unsupported_media_type,
   429: "Zbyt wiele żądań. Odczekaj chwilę i spróbuj ponownie.",
+  // --- Kopie zapasowe (#90) ---------------------------------------------------------
+  backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
+  restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
 });
 
 const CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
