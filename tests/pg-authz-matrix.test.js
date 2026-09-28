@@ -27,8 +27,10 @@ import {
 } from '../src/pg/meetings.js';
 import {
   approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
+  uploadPhotoFile, verifyPhoto,
 } from '../src/pg/news.js';
 import { hashSecret } from '../src/auth.js';
+import { createSession } from '../src/pg/auth.js';
 import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
@@ -37,7 +39,7 @@ import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSes
 import {
   ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
   campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
-  statementDate, todoReason, visibleScopes, yearDate,
+  pngBytes, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
 const PAST = '2020-01-01T00:00:00Z';
@@ -52,6 +54,8 @@ const FX_ACCOUNTS = {
 };
 // Sekret syntetyczny, wyłącznie na potrzeby testu (min. 32 znaki).
 const WEBHOOK_SECRET = `syntetyczny-sekret-webhooka-${randomBytes(12).toString('hex')}`;
+// Sekret podpisu tokenu wypisania (#110), wyłącznie na potrzeby testu.
+const UNSUBSCRIBE_SECRET = `syntetyczny-sekret-wypisania-${randomBytes(12).toString('hex')}`;
 const CHECKLIST_PREFILLED = ['financial_report', 'audit_commission_report', 'minutes_approved', 'resolutions_archived'];
 const CHECKLIST_OPEN = ['reconciliation_confirmed', 'documents_handed_over'];
 // Najniższy dozwolony koszt scrypt (N = 2^15) — szybsze testy tras logowania.
@@ -222,6 +226,27 @@ async function makeNewsPost(db, target, stage) {
   return { postId: post.id };
 }
 
+// Zdjęcie z plikiem (#96), zweryfikowane i opublikowane — jedyna droga, którą
+// trasa publiczna GET /api/public/news-photos/:id/{web|thumb} zwraca 200
+// (macierz sprawdza tu tylko, że wynik jest identyczny dla każdego, nie cały
+// cykl życia pliku — patrz tests/pg-news.test.js).
+async function makePublicPhotoFile(ctx, target) {
+  const key = nextKey('fx-photofile');
+  const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
+  await uploadPhotoFile(ctx.db, ctx.env.storage, fxAdmin, {
+    photoId: photo.id, bytes: pngBytes(), contentType: 'image/png', idempotencyKey: `${key}-file`,
+  });
+  await verifyPhoto(ctx.db, fxBoard, { photoId: photo.id });
+  const { post } = await createNewsDraft(ctx.db, fxAdmin, {
+    schoolYearId: target.schoolYearId, title: `Fotorelacja ${marker('PUBLIC')}`, body: 'Treść syntetyczna.',
+    photoIds: [photo.id], idempotencyKey: nextKey('fx-news-photo'),
+  });
+  await submitNews(ctx.db, fxAdmin, { postId: post.id, revision: 1 });
+  await approveNews(ctx.db, fxBoard, { postId: post.id, revision: 1 });
+  await publishNews(ctx.db, fxBoard, { postId: post.id, revision: 1 });
+  return { photoId: photo.id };
+}
+
 async function makeCampaign(ctx, target, stage) {
   const { json } = await api(ctx, ctx.fxCookies.board, 'POST', '/api/email/campaigns', campaignBody(target), withKey(nextKey('fx-campaign')));
   const campaignId = json.campaign.id;
@@ -238,6 +263,16 @@ async function makeCampaign(ctx, target, stage) {
   if (stage === 'sending') return obj;
   if (stage === 'paused') {
     await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/pause`, {});
+    return obj;
+  }
+  if (stage === 'failed') {
+    // #139: wiersz w stanie końcowym 'failed' do testu trasy resolutions (queued -> failed
+    // jest dozwolonym przejściem bez przechodzenia przez worker/'sending').
+    const { rows: [outboxRow] } = await ctx.db.query(
+      "UPDATE email_outbox SET state = 'failed', last_error = 'delivery_unknown' WHERE campaign_id = $1 RETURNING id",
+      [campaignId],
+    );
+    return { ...obj, outboxId: outboxRow.id };
   }
   return obj;
 }
@@ -361,11 +396,31 @@ async function makeOwnPassword(ctx, { cookie }) {
   return { password, newPassword: syntheticPassword() };
 }
 
+// #150: druga, jednorazowa sesja TEGO SAMEGO konta (nie ta z caseInfo.cookie, którą
+// dalej wysyła żądanie testowe) — do sprawdzenia, że własną (ale INNĄ) sesję da się
+// cofnąć. Bieżąca sesja przypadku zostaje nietknięta.
+async function makeOwnSession(ctx, { cookie }) {
+  const tokenHash = await hashSecret(cookie.slice(cookie.indexOf('=') + 1));
+  const { rows } = await ctx.db.query('SELECT user_id FROM sessions WHERE token_hash = $1', [tokenHash]);
+  if (!rows[0]) throw new Error('fixture ownSession: brak sesji przypadku');
+  try {
+    const extra = await createSession(ctx.db, { userId: rows[0].user_id });
+    return { sessionId: extra.sessionId };
+  } catch {
+    // Aktorzy odmowy dzielący ten fixture (konto wyłączone/sesja wygasła/cofnięta,
+    // patrz objectFor: obiekt odmowy jest wspólny dla całej trasy) mają user_id
+    // wskazujące na konto, dla którego createSession odmawia (`user_unavailable`).
+    // Żądanie i tak dostanie 401 zanim identyfikator zostanie użyty do czegokolwiek.
+    return { sessionId: 'fx-own-session-unavailable' };
+  }
+}
+
 const MAKERS = {
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
+  publicPhotoFile: (ctx, target) => makePublicPhotoFile(ctx, target),
   photo: async (ctx) => {
     const key = nextKey('fx-photo');
     const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
@@ -418,6 +473,7 @@ const MAKERS = {
   invitationToken: (ctx) => makeInvitationToken(ctx),
   passwordResetToken: (ctx) => makePasswordResetToken(ctx),
   ownPassword: (ctx, _target, _stage, caseInfo) => makeOwnPassword(ctx, caseInfo),
+  ownSession: (ctx, _target, _stage, caseInfo) => makeOwnSession(ctx, caseInfo),
   // Kolejna niepotwierdzona pozycja listy kontrolnej (rok 1); odmowy używają dowolnej pozycji.
   checklistItem: async (ctx, target, _stage, { success }) => ({
     item: (target.key === 'W1' && success ? ctx.checklistOpen.shift() : null) ?? CHECKLIST_PREFILLED[0],
@@ -438,7 +494,7 @@ async function staticObject(ctx, kind, stage, targetKey) {
 }
 
 async function seedStatic(ctx) {
-  const fx = { resolutionNumber: { W1: 'UCHW/1/R1', Y2: 'UCHW/1/R2' }, webhookSecret: WEBHOOK_SECRET };
+  const fx = { resolutionNumber: { W1: 'UCHW/1/R1', Y2: 'UCHW/1/R2' }, webhookSecret: WEBHOOK_SECRET, unsubscribeSecret: UNSUBSCRIBE_SECRET };
   for (const key of ['A', 'B', 'W1', 'Y2']) {
     await staticObject(ctx, 'event', 'draft', key);
     ctx.cache.set(`static:meeting:shared:${key}`,
@@ -451,6 +507,10 @@ async function seedStatic(ctx) {
   await makeMeeting(ctx.db, TARGETS.W1, 'shared', {
     title: `Zebranie jawne ${marker('PUBLIC')}`, minutesBody: `Protokół ${marker('PUBLIC')} — treść jawna.`, visibility: 'public',
   });
+  // Kampania istniejąca w bazie (#110): email_preferences_events.campaign_id
+  // ma FK do email_campaigns, więc token wypisania w macierzy musi wskazywać
+  // na prawdziwy wiersz, nie dowolny ciąg znaków.
+  fx.preferencesCampaignId = (await makeCampaign(ctx, TARGETS.W1, 'draft')).campaignId;
   return fx;
 }
 
@@ -487,7 +547,7 @@ const WRITE_TABLES = [
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'ledger_opening_balance_adjustments', 'ledger_transfers',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
-  'email_webhook_events', 'email_suppressions', 'email_preview_sends',
+  'email_webhook_events', 'email_suppressions', 'email_preferences_events', 'email_preview_sends',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
@@ -510,7 +570,7 @@ async function matrixContext(group = 'main') {
       const db = await createTestDb();
       const env = {
         db, storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
-        BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, ...FAST_SCRYPT,
+        BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, EMAIL_UNSUBSCRIBE_SECRET: UNSUBSCRIBE_SECRET, ...FAST_SCRYPT,
         // Wysyłka testowa (#104): bramka bez sieci wyłączona, transport wstrzyknięty
         // (nigdy nie łączy się z siecią), adres z listy technicznej Rady.
         EMAIL_SENDING_ENABLED: 'true', EMAIL_PREVIEW_RECIPIENTS: 'fx-preview@rada.example.invalid',
@@ -518,7 +578,7 @@ async function matrixContext(group = 'main') {
       };
       await seedBase(db);
       const ctx = { db, env, cache: new Map(), fxCookies: await seedFixtureSessions(db), checklistOpen: [...CHECKLIST_OPEN] };
-      ctx.fx = group === 'main' ? await seedStatic(ctx) : { webhookSecret: WEBHOOK_SECRET };
+      ctx.fx = group === 'main' ? await seedStatic(ctx) : { webhookSecret: WEBHOOK_SECRET, unsubscribeSecret: UNSUBSCRIBE_SECRET };
       if (group === 'yearClose') {
         // Zamknięcie roku 1 rozpoczęte przez inną osobę; dwie pozycje listy kontrolnej zostają dla macierzy.
         await api(ctx, ctx.fxCookies.board, 'POST', `/api/year-close/${YEAR_1}/start`, { nextSchoolYearId: YEAR_2 });
