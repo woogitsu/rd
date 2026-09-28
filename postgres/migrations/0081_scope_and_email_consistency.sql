@@ -12,16 +12,27 @@
 --
 -- Skutki dla danych:
 -- * role_grants, invitations, export_runs: nowe złożone FK (class_id,
---   school_year_id) -> classes(id, school_year_id), NOT VALID + VALIDATE od
---   razu (baza jest dziś pusta poza danymi syntetycznymi/testowymi — patrz
---   scripts/check-schema-consistency.mjs). Wiersz z class_id spoza roku
---   school_year_id (możliwy tylko przez zapis poza API, np. odtworzenie D1
---   1:1 albo ręczną poprawkę SQL) będzie odrzucony błędem ograniczenia
---   zamiast cichego zapisania. role_grants ma już od #201/0022 trigger
---   role_grant_year_freeze, który tę samą niezgodność odrzuca (i uzupełnia
---   NULL); FK jest dodatkową gwarancją niezależną od funkcji triggera (którą
---   dowolna przyszła migracja może przez pomyłkę podmienić bez tego
---   zabezpieczenia — patrz uwaga w tests/pg-schema-consistency.test.js).
+--   school_year_id) -> classes(id, school_year_id), NOT VALID. Dla
+--   invitations i export_runs VALIDATE od razu (baza jest dziś pusta poza
+--   danymi syntetycznymi/testowymi — patrz scripts/check-schema-consistency.mjs).
+--   Dla role_grants ŚWIADOMIE bez natychmiastowego VALIDATE: reguła „albo”
+--   z #201/0022 (role_grant_in_school_year) pozwala, żeby przydział klasy
+--   miał school_year_id inny niż rok tej klasy, gdy wiersz powstał poza API
+--   (import D1, ręczna poprawka SQL) — patrz komentarz w 0022 i scenariusz
+--   w tests/pg-year-close-class-grants.test.js (g-mismatch). Natychmiastowe
+--   VALIDATE odrzuciłoby taki, świadomie tolerowany, historyczny wiersz przy
+--   wdrożeniu tej migracji. NOT VALID i tak pilnuje każdego NOWEGO zapisu
+--   (INSERT lub UPDATE zmieniającej class_id/school_year_id) od razu — cel
+--   #198 (odrzucić niespójność przy zapisie zamiast cicho ją zapisać) jest
+--   spełniony dla przyszłych zapisów; tylko istniejące wiersze nie są
+--   skanowane. Administrator może później zweryfikować dane i odpalić
+--   ręcznie `ALTER TABLE role_grants VALIDATE CONSTRAINT
+--   role_grants_class_in_year;` po uporządkowaniu historycznych wpisów
+--   (decyzja poza zakresem tej migracji). role_grants ma już od #201/0022
+--   trigger role_grant_year_freeze, który świeżo wstawiany wiersz bez roku
+--   uzupełnia rokiem klasy (i odrzuca jawną niezgodność); FK jest dodatkową,
+--   niezależną gwarancją dla zapisów spoza API/triggera (np. bezpośredni
+--   SQL) — patrz uwaga w tests/pg-schema-consistency.test.js.
 -- * invitations: dodatkowo CHECK invitation_class_requires_year, analogiczny
 --   do role_grant_class_requires_year (0022) — zaproszenie z klasą musi mieć
 --   rok. createInvitation (src/pg/auth.js) zawsze ustawia oba pola razem, więc
@@ -42,10 +53,12 @@
 -- Wycofanie na pustej/testowej bazie: usunięcie wszystkich obiektów poniżej.
 -- Na bazie z danymi: bezpieczne, żaden wiersz nie jest zmieniany ani usuwany.
 
+-- Bez VALIDATE tutaj (patrz komentarz wyżej): pilnuje każdego nowego zapisu
+-- od razu, ale toleruje istniejące, świadomie niespójne wiersze sprzed tej
+-- migracji (reguła „albo” z #201/0022).
 ALTER TABLE role_grants
   ADD CONSTRAINT role_grants_class_in_year
     FOREIGN KEY (class_id, school_year_id) REFERENCES classes(id, school_year_id) NOT VALID;
-ALTER TABLE role_grants VALIDATE CONSTRAINT role_grants_class_in_year;
 
 ALTER TABLE invitations
   ADD CONSTRAINT invitations_class_in_year
