@@ -1,0 +1,37 @@
+// Pułapka na sieć dla testów (#214): żaden test nie może wykonać prawdziwego
+// żądania HTTP — AGENTS.md zabrania wysyłki do prawdziwego rodzica z zadania
+// testowego. Wcześniej pułapka istniała tylko lokalnie w tests/pg-email.test.js
+// i chroniła jedynie ten plik. Instalacja jest efektem ubocznym importu tego
+// modułu (idempotentna — bezpieczna przy wielokrotnym imporcie w jednym
+// procesie), więc każdy plik, który korzysta z tests/helpers/pg.js, dostaje
+// ochronę automatycznie.
+let installed = false;
+let realFetch;
+let calls = 0;
+
+export function installNetworkGuard() {
+  if (installed) return;
+  installed = true;
+  realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error('network_forbidden_in_tests');
+  };
+}
+
+// Liczba prób sieciowych przechwyconych od startu procesu (wszystkie pliki
+// współdzielą jeden licznik w ramach procesu testowego).
+export function networkGuardCalls() {
+  return calls;
+}
+
+// Tylko do użytku diagnostycznego/testów samej pułapki — produkcyjne testy
+// nie powinny przywracać prawdziwego fetch w trakcie przebiegu.
+export function restoreNetworkGuardForTest() {
+  if (!installed) return;
+  globalThis.fetch = realFetch;
+  installed = false;
+  calls = 0;
+}
+
+installNetworkGuard();
