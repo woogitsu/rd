@@ -583,8 +583,9 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
     ['u1', 'ledger.correction.created', 'ledger_correction'],
   ]);
   assert.equal(events[0].entity_id, entry.id);
-  assert.deepEqual(events[0].metadata_json, {});
-  assert.deepEqual(events[1].metadata_json, { ledgerEntryId: entry.id });
+  // #174: zdarzenia finansowe niosą teraz schoolYearId (eksport roczny).
+  assert.deepEqual(events[0].metadata_json, { schoolYearId: 'y2026' });
+  assert.deepEqual(events[1].metadata_json, { ledgerEntryId: entry.id, schoolYearId: 'y2026' });
   // Identyfikator wpisu (losowy UUID) usuwamy przed szukaniem ciągów — w zapisie szesnastkowym może zawierać np. „d1” lub „321”.
   const metadata = JSON.stringify(events.map((e) => e.metadata_json)).replaceAll(entry.id, '<entry-id>');
   for (const secret of ['4321', '321', 'XYZ', 'UCHWALA', 'Powód', 'd1']) assert.ok(!metadata.includes(secret), secret);
@@ -671,7 +672,8 @@ test('CSV export of a school year is financial-only, injection-safe and audited'
   }
 
   const events = (await backend.db.query("SELECT actor_id, entity_type, entity_id, metadata_json FROM audit_events WHERE action = 'ledger.exported'")).rows;
-  assert.deepEqual(events, [{ actor_id: 'u1', entity_type: 'school_year', entity_id: 'y2026', metadata_json: { format: 'csv', rowCount: 3 } }]);
+  // #174: schoolYearId w metadanych (eksport roczny), oprócz entity_id.
+  assert.deepEqual(events, [{ actor_id: 'u1', entity_type: 'school_year', entity_id: 'y2026', metadata_json: { format: 'csv', rowCount: 3, schoolYearId: 'y2026' } }]);
 
   const other = await read(await backend.fetch(call(backend.cookie, '/api/ledger/export.csv?schoolYearId=y2025')));
   assert.deepEqual([other.status, other.body], [403, { error: 'forbidden' }]);
