@@ -65,6 +65,14 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         // Logowanie hasłem (#3): role z obowiązkowym MFA i koszt scrypt (log2 N).
         MFA_REQUIRED_ROLES: processEnv.MFA_REQUIRED_ROLES,
         SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
+        // Stan systemu i heartbeat zadań (#149) — tylko liczby/kody, żadnych
+        // sekretów oprócz tokenu monitora (nigdy nie zwracanego w odpowiedzi).
+        RAILWAY_GIT_COMMIT_SHA: processEnv.RAILWAY_GIT_COMMIT_SHA,
+        APP_WRITE_MODE: processEnv.APP_WRITE_MODE,
+        HEALTH_JOBS_TOKEN: processEnv.HEALTH_JOBS_TOKEN,
+        BACKUP_MAX_AGE_HOURS: processEnv.BACKUP_MAX_AGE_HOURS,
+        EMAIL_WORKER_MAX_AGE_HOURS: processEnv.EMAIL_WORKER_MAX_AGE_HOURS,
+        EMAIL_QUEUE_MAX_AGE_HOURS: processEnv.EMAIL_QUEUE_MAX_AGE_HOURS,
       },
       fetchHandler: handlePgRequest,
       bodyLimit: bodyLimitFor(documentMaxBytes),
