@@ -161,6 +161,22 @@ describe('pulpit zarządu: statystyki per klasa (#131)', () => {
     assert.doesNotMatch(text, /dłużnik|zaległoś/i);
     assert.deepEqual(result.data.classes.map((c) => c.id), ['c-1a', 'c-1b'], 'sortowanie wyłącznie po nazwie klasy');
 
+    // Część wpłaty nieprzypisanej (#127) przypisana h-5 liczy się jako wpis
+    // gospodarstwa (jak w household_payment_totals); cofnięta część — już nie.
+    await db.query(
+      `INSERT INTO payment_allocations (id, payment_entry_id, school_year_id, household_id, amount_cents, created_by, idempotency_key)
+       VALUES ('alloc-1', 'p-unmatched', $1, 'h-5', 500, 'u-treasurer-seed', 'syn-key-alloc-1')`, [Y],
+    );
+    const withAllocation = await call(env, `/api/board/overview?schoolYearId=${Y}`, { cookie: admin });
+    assert.equal(withAllocation.data.classes.find((c) => c.id === 'c-1a').paymentEntryRatePercent, 60);
+    assert.equal(withAllocation.data.totals.unmatchedPaymentsCount, 1, 'wpłata z częściami nadal jest nieprzypisana');
+    await db.query(
+      `INSERT INTO payment_allocation_reversals (id, allocation_id, school_year_id, reason, created_by, idempotency_key)
+       VALUES ('alloc-rev-1', 'alloc-1', $1, 'Cofnięcie syntetyczne', 'u-treasurer-seed', 'syn-key-alloc-rev-1')`, [Y],
+    );
+    const reversed = await call(env, `/api/board/overview?schoolYearId=${Y}`, { cookie: admin });
+    assert.equal(reversed.data.classes.find((c) => c.id === 'c-1a').paymentEntryRatePercent, 40);
+
     await db.close();
   });
 });

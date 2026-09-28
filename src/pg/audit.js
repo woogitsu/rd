@@ -18,13 +18,28 @@ const CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
 // nieść metadata.schoolYearId, inaczej eksport roczny (src/pg/export.js,
 // AUDIT_SCOPE) przypisuje je do roku wg daty zapisu zamiast roku obiektu
 // (wpłata/korekta zapisana po zamknięciu roku trafia do eksportu złego roku).
-// Zakres przedrostków ograniczony świadomie do tras finansowych i uzgodnień
-// (#174, część S z propozycji issue) — e-mail/zebrania/wydarzenia/aktualności
-// zostają poza tym sprawdzeniem, do osobnego PR.
-const SCHOOL_YEAR_REQUIRED_PREFIXES = ['payment.', 'ledger.', 'reconciliation.'];
+// Część 1 (#174) ograniczyła to do tras finansowych i uzgodnień; część 2
+// dokłada e-mail (kampanie i zdarzenia workera), zebrania/uchwały i wydarzenia
+// — wszystkie oparte na obiekcie ze szkoły z kolumną school_year_id — oraz
+// aktualności, ale wyłącznie 'news_post.' (news_photo NIE ma school_year_id
+// w schemacie: biblioteka zdjęć nie jest przypisana do roku, więc zdarzenia
+// 'news_photo.*' zostają bez wymogu, jak sesje/MFA/konta).
+const SCHOOL_YEAR_REQUIRED_PREFIXES = [
+  'payment.', 'ledger.', 'reconciliation.', 'email.', 'meeting.', 'resolution.', 'event.', 'news_post.',
+];
+// 'email.address_suppressed' dotyczy ADRESU (email_suppressions, bez
+// school_year_id — obowiązuje niezależnie od roku), nie jednej kampanii:
+// webhook dostawcy może przyjść dla adresu bez żadnej pasującej wysyłki w
+// toku. Zapisujemy schoolYearId, gdy dało się je odnaleźć przez powiązany
+// wiersz kolejki, ale świadomie tego nie wymagamy (patrz src/pg/routes/email.js).
+// 'email.webhook.previous_secret_used' dotyczy ROTACJI SEKRETU webhooka
+// (bezpieczeństwo integracji Brevo), nie jednej kampanii ani jednego roku —
+// nie ma tu żadnego obiektu ze szkoły, z którego dałoby się wziąć rok.
+const SCHOOL_YEAR_EXEMPT_ACTIONS = new Set(['email.address_suppressed', 'email.webhook.previous_secret_used']);
 
 function requiresSchoolYearId(action) {
-  return SCHOOL_YEAR_REQUIRED_PREFIXES.some((prefix) => action.startsWith(prefix));
+  return SCHOOL_YEAR_REQUIRED_PREFIXES.some((prefix) => action.startsWith(prefix))
+    && !SCHOOL_YEAR_EXEMPT_ACTIONS.has(action);
 }
 
 export function assertNoPii(metadata) {
