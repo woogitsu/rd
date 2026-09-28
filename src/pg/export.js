@@ -298,6 +298,8 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_outbox_resolutions: 'rozstrzygnięcia doręczeń kampanii (#139) — jak email_outbox, D-04',
   email_send_ledger: 'dziennik wysyłek dostawcy — D-04',
   email_suppressions: 'lista blokad adresów e-mail — D-04',
+  email_suppression_release_requests: 'wnioski o zdjęcie blokady adresu e-mail — D-04',
+  email_suppression_releases: 'zdjęcia blokady adresu e-mail (kto zgłosił/zatwierdził) — D-04',
   email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
   email_worker_runs: 'przebiegi zadania wysyłki — dane techniczne',
   email_preferences_events: 'zdarzenia preferencji kontaktu wg kategorii (wypisanie jednym kliknięciem) — adres tylko jako skrót, D-04 (#110)',

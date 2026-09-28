@@ -51,6 +51,12 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_preferences_events`|`email_hash`|Opiekun|pseudonymous|kontakt|preferencje kontaktu wg kategorii (wypisanie jednym kliknięciem)|email_snapshot|nie|nie|
 |`email_preview_sends`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie wysyłki testowej z osobą|nieustalona (D-04)|nie|nie|
 |`email_preview_sends`|`recipient_hash`|Członek Rady|pseudonymous|kontakt|limit wysyłek testowych na adres techniczny Rady|nieustalona (D-04)|nie|nie|
+|`email_suppression_release_requests`|`consumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_suppression_release_requests`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
+|`email_suppression_release_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_suppression_releases`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_suppression_releases`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
+|`email_suppression_releases`|`released_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_suppressions`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
 |`enrollment_history`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`enrollments`|`ended_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -161,7 +167,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **148**, w tym wolnego tekstu: **34** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **154**, w tym wolnego tekstu: **34** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -538,12 +544,41 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `recorded_at` | none | — | nie |
 | `source` | none | — | nie |
 
+### `email_suppression_release_requests`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `confirmation_note` | none | — | nie |
+| `consumed_at` | none | — | nie |
+| `consumed_by` | pseudonymous | board_member | nie |
+| `created_at` | none | — | nie |
+| `email_hash` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `release_reason` | none | — | nie |
+| `requested_by` | pseudonymous | board_member | nie |
+| `suppression_reason` | none | — | nie |
+
+### `email_suppression_releases`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `approved_by` | pseudonymous | board_member | nie |
+| `confirmation_note` | none | — | nie |
+| `created_at` | none | — | nie |
+| `email_hash` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `release_reason` | none | — | nie |
+| `released_by` | pseudonymous | board_member | nie |
+| `request_id` | none | — | nie |
+| `suppression_reason` | none | — | nie |
+
 ### `email_suppressions`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
 | `created_at` | none | — | nie |
 | `email_hash` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
 | `reason` | none | — | nie |
 | `source_event_id` | none | — | nie |
 

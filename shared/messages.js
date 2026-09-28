@@ -251,6 +251,11 @@ export const MESSAGES = Object.freeze({
   no_recipients: "Wysyłka nie ma odbiorców.",
   invalid_send_not_before: "Podaj poprawną datę i godzinę startu wysyłki.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
+  invalid_confirmation_note: "Podaj uzasadnienie (od 3 do 1000 znaków).",
+  invalid_release_reason: "Wybierz jeden z dopuszczalnych powodów zdjęcia blokady.",
+  release_reason_not_allowed: "Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”.",
+  request_already_consumed: "Ten wniosek o zdjęcie blokady został już rozpatrzony.",
+  suppression_not_active: "Ta blokada nie jest już aktywna.",
   outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
   not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
 

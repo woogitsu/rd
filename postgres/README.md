@@ -654,6 +654,26 @@ importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
 przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
 importami CODA/CAMT — tylko po kopii zapasowej.
 
+`0080_email_suppression_releases.sql` (#94) zmienia klucz główny
+`email_suppressions` z `email_hash` na `id` (nowa kolumna, dotychczasowe
+wiersze dostają wygenerowany UUID), żeby ten sam adres mógł mieć kilka
+zdarzeń blokady w czasie — blokada, zdjęcie blokady, ponowna blokada —
+zamiast nadpisywać jeden wiersz. Dodaje wniosek o zdjęcie blokady
+(`email_suppression_release_requests`, zgłoszenie jednej osoby, wniosek
+jednorazowego użytku) i append-only decyzję (`email_suppression_releases`,
+zatwierdzający ≠ zgłaszający), obie z ograniczeniem: blokadę po skardze
+lub wypisaniu można zdjąć wyłącznie na wyraźną prośbę rodzica
+(`release_reason = 'parent_request'`). Widok `email_active_suppressions`
+wyznacza jedyną „aktywną" blokadę per adres — najnowsze zdarzenie blokady
+nowsze niż najnowsze zdjęcie blokady; migawka kampanii i worker mają
+korzystać wyłącznie z tego widoku, nie z surowej tabeli. Skutki dla
+danych: żaden istniejący wiersz `email_suppressions` nie jest usuwany ani
+zmieniany poza dodaniem identyfikatora; obie nowe tabele startują puste.
+Wycofanie na bazie bez wniosków o zdjęcie blokady: usunięcie widoku, obu
+nowych tabel, przywrócenie `email_hash` jako klucza głównego (wymaga
+unikalności — możliwe tylko, jeśli żaden adres nie miał w międzyczasie
+więcej niż jednego zdarzenia blokady).
+
 `0090_ledger_cost_centers.sql` (#117) dodaje centra kosztów w księdze:
 `ledger_allocation_versions` (wersja przypisania jednego wpisu księgi do
 wydarzeń lub klas, z poprzednią wersją, powodem, aktorem i kluczem
