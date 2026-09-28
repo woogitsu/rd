@@ -927,6 +927,20 @@ export const ROUTE_MATRIX = Object.freeze([
     check: ({ actor, mfa, json }) => printPaymentCheck(actor, mfa, json),
   },
 
+  // ---------- representative (#118) ----------
+  // Pulpit przedstawiciela: wyłącznie rola `representative` (nie zarząd nawet
+  // z przydziałem klasy) — własne przypisane klasy, wyliczone z przydziałów,
+  // bez parametru classId w ścieżce. Trasa nie przyjmuje zakresu w żądaniu
+  // (tylko schoolYearId) — pojedynczy target '-' jak families.classes; zakres
+  // sprawdzamy treścią odpowiedzi (classListCheck), nie odmową per-target.
+  {
+    id: 'representative.overview', module: 'representative', method: 'GET',
+    path: '/api/representative/overview?schoolYearId=:year',
+    targets: ['-'], allow: { repA: ['-'], repB: ['-'] }, mfa: false, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: `/api/representative/overview?schoolYearId=${YEAR_1}` }),
+    check: ({ actor, json }) => classListCheck(actor, json),
+  },
+
   // ---------- mfa (#3) ----------
   // Każda sesja (także bez przydziału) zarządza wyłącznie własnym czynnikiem; nowy użytkownik na przypadek.
   mfaRoute('mfa.enroll', '/api/mfa/enroll', 201, null),
