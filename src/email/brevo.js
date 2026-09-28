@@ -13,6 +13,26 @@
 export const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
 const REQUEST_TIMEOUT_MS = 15_000;
 
+// Domeny darmowych skrzynek pocztowych (adres nadawcy nie może z nich pochodzić
+// na produkcji — issue #148). Lista orientacyjna, do uzupełnienia przy D-17.
+export const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.fr', 'outlook.com', 'hotmail.com',
+  'hotmail.fr', 'live.com', 'live.fr', 'msn.com', 'aol.com', 'icloud.com', 'me.com',
+  'gmx.com', 'gmx.net', 'protonmail.com', 'proton.me', 'mail.com', 'yandex.com',
+  'wp.pl', 'o2.pl', 'interia.pl', 'onet.pl', 'gazeta.pl', 'skynet.be', 'telenet.be',
+  'proximus.be', 'voo.be',
+]);
+
+export function senderDomain(email) {
+  const address = String(email ?? '').toLowerCase();
+  const at = address.lastIndexOf('@');
+  return at >= 0 ? address.slice(at + 1) : '';
+}
+
+export function isFreeEmailDomain(email) {
+  return FREE_EMAIL_DOMAINS.has(senderDomain(email));
+}
+
 function intFrom(value, fallback, { min = 0, max = 100_000 } = {}) {
   if (value === undefined || value === null || value === '') return fallback;
   const number = Number(value);
@@ -25,6 +45,17 @@ export function parseAllowlist(value) {
     .split(',')
     .map((item) => item.trim().toLowerCase())
     .filter((item) => /^(\*|[^\s@*,]+)@[a-z0-9.-]+$/.test(item));
+}
+
+// EMAIL_PREVIEW_RECIPIENTS (#104): pełne adresy skrzynek technicznych Rady,
+// bez wieloznaczników — inaczej niż EMAIL_TEST_ALLOWLIST. Wpis, który nie
+// wygląda na pojedynczy adres, jest odrzucany przy parsowaniu (nigdy nie
+// trafia na listę), więc literówka nie otwiera wysyłki testowej szerzej.
+export function parsePreviewRecipients(value) {
+  return String(value ?? '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => /^[^\s@*,]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(item));
 }
 
 const DEFAULT_QUOTA_TIMEZONE = 'Europe/Brussels';
@@ -109,9 +140,24 @@ export function emailConfig(env = {}) {
     // przebieg się zatrzymuje, a reszta partii zostaje w kolejce.
     breakerUncertain: intFrom(env.EMAIL_BREAKER_UNCERTAIN, 2, { min: 1, max: 50 }),
     allowlist: parseAllowlist(env.EMAIL_TEST_ALLOWLIST),
+    previewRecipients: parsePreviewRecipients(env.EMAIL_PREVIEW_RECIPIENTS),
+    // D-16: czy test jest obowiązkowy przed zatwierdzeniem. Domyślnie wyłączone
+    // (wariant zachowawczy — brak decyzji zarządu).
+    previewRequiredBeforeApproval: env.EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL === 'true',
     sender: { email: env.BREVO_FROM_EMAIL || null, name: env.BREVO_FROM_NAME || 'Rada Rodziców' },
+    // Adres odpowiedzi (#148) — puste pole na produkcji jest odmową (rodzic bez odpowiedzi).
+    replyTo: env.BREVO_REPLY_TO || null,
     sendWindow: sendWindowFrom(env),
   };
+}
+
+// Odmowa wysyłki testowej albo null. `guardianEmails` to zbiór znormalizowanych
+// adresów opiekunów z bazy (ochrona przed pomyłkowym testem na adres rodzica).
+export function previewRecipientRefusal(config, email, guardianEmails) {
+  const address = String(email ?? '').trim().toLowerCase();
+  if (!config.previewRecipients.includes(address)) return 'preview_recipient_not_allowed';
+  if (guardianEmails?.has(address)) return 'preview_recipient_not_allowed';
+  return null;
 }
 
 // #130: czy `now` mieści się w oknie dni/godzin wysyłki. Okno wyłączone
@@ -150,6 +196,10 @@ export function recipientRefusal(config, email) {
 export function liveRunRefusal(config) {
   if (!config.sendingEnabled) return 'sending_disabled';
   if (!config.sender.email) return 'sender_not_configured';
+  // Darmowa domena (prywatna skrzynka) nie przechodzi DMARC/DKIM domeny szkoły/Rady (#148, D-17).
+  if (isFreeEmailDomain(config.sender.email)) return 'sender_free_domain';
+  // Na produkcji odpowiedzi rodzica muszą trafić na obsługiwaną skrzynkę (#148).
+  if (isProduction(config) && !config.replyTo) return 'reply_to_not_configured';
   return null;
 }
 
@@ -230,6 +280,7 @@ export function createBrevoTransport({
           body: JSON.stringify({
             sender: message.sender,
             to: [{ email: message.to }],
+            ...(message.replyTo ? { replyTo: { email: message.replyTo } } : {}),
             subject: message.subject,
             textContent: message.text,
             headers: {

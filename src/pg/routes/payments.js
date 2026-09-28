@@ -23,6 +23,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { detectPossiblePersonalData } from '../pii-check.js';
 import { recordDataAccess } from '../data-access.js';
 
 export const name = 'payments';
@@ -143,7 +144,7 @@ function parsePaymentInput(data) {
 function parseCorrectionInput(data) {
   const reason = textOrNull(data.reason, 500);
   if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
-  return { amountCents: readAmount(data.amountCents), reason };
+  return { amountCents: readAmount(data.amountCents), reason, confirmPersonalData: data.confirmPersonalData === true };
 }
 
 // Zwrot pieniędzy rodzinie (#138): własna data skutku i metoda, jak wpłata.
@@ -267,6 +268,25 @@ async function loadPaymentByKey(executor, key) {
     [key],
   );
   return rows[0] ?? null;
+}
+
+// #152: kandydaci na "znane imię i nazwisko" w zakresie roku szkolnego —
+// uczniowie zapisani w tym roku i opiekunowie ich gospodarstw. Przybliżenie
+// (nie każdy opiekun gospodarstwa musi mieć aktywną relację z dzieckiem w tym
+// roku) — świadomie szersze niż węziej, żeby nie przeoczyć trafienia.
+async function loadKnownNames(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT first_name, last_name FROM students
+      WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
+     UNION
+     SELECT g.first_name, g.last_name FROM guardians g
+      WHERE g.household_id IN (
+        SELECT household_id FROM students
+         WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
+      )`,
+    [schoolYearId],
+  );
+  return rows.map((row) => ({ firstName: row.first_name, lastName: row.last_name }));
 }
 
 async function loadCorrectionByKey(executor, key) {
@@ -543,6 +563,14 @@ async function createCorrection(request, env, paymentEntryId, json) {
       if (toSafeInteger(corrected.rows[0].corrected_cents) + input.amountCents > toSafeInteger(payment.amount_cents)) {
         throw new RequestError('correction_exceeds_remaining_amount', 409);
       }
+      // #152: pole wolnego tekstu w niezmiennej tabeli — ostrzeżenie przed
+      // zapisem, nie twarda blokada. Kategorie i liczby trafień trafiają do
+      // audytu (bez treści); wynik detekcji nigdy nie ujawnia dopasowanego
+      // fragmentu ani nazwiska.
+      const piiCheck = detectPossiblePersonalData(input.reason, { knownNames: await loadKnownNames(tx, payment.school_year_id) });
+      if (piiCheck.categories.length && !input.confirmPersonalData) {
+        throw new RequestError('possible_personal_data', 422, { categories: piiCheck.categories });
+      }
       const correctionId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
@@ -551,7 +579,12 @@ async function createCorrection(request, env, paymentEntryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'payment.correction.created', entityType: 'payment_correction',
-        entityId: correctionId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id },
+        entityId: correctionId,
+        metadata: {
+          paymentEntryId,
+          schoolYearId: payment.school_year_id,
+          ...(piiCheck.categories.length ? { piiConfirmed: true, piiCategories: piiCheck.categories } : {}),
+        },
       });
       return { correction: { id: correctionId, paymentEntryId, amountCents: input.amountCents, reason: input.reason } };
     });

@@ -13,6 +13,13 @@
 // Nowa trasa (#144): przeksięgowanie (storno pełnej pozostałej kwoty + wpis
 // zastępczy), jedna operacja atomowa.
 //   POST /api/ledger/{id}/replacement       (Idempotency-Key)
+// Nowe trasy (#207, część 1: kategorie księgi przez API, bez SQL co roku):
+//   POST /api/ledger/categories                          {schoolYearId, direction, name}
+//   POST /api/ledger/categories/{id}/deactivate
+//   POST /api/ledger/categories/copy                     {fromSchoolYearId, toSchoolYearId, dryRun?}
+// Zamrożenie roku (INSERT/UPDATE na ledger_categories w zamkniętym roku) pilnuje
+// już trigger a0_year_freeze z 0017_year_close.sql — te trasy nie dodają nowego
+// mechanizmu, tylko API nad istniejącą tabelą i triggerami. Bez migracji.
 //
 // Każdy zapis i jego zdarzenie audytu powstają w jednej transakcji. Korekta
 // blokuje wiersz wpisu (SELECT … FOR UPDATE), a wpis powiązany z wpłatą
@@ -150,6 +157,26 @@ function parseEntryInput(data) {
   };
 }
 
+function parseCategoryInput(data) {
+  const name = textOrNull(data.name, 100);
+  if (!validId(data.schoolYearId) || !DIRECTIONS.has(data.direction) || !name || name.length < 2) {
+    throw new RequestError('invalid_request');
+  }
+  return { schoolYearId: data.schoolYearId, direction: data.direction, name };
+}
+
+function parseCopyInput(data) {
+  if (!validId(data.fromSchoolYearId) || !validId(data.toSchoolYearId)
+    || data.fromSchoolYearId === data.toSchoolYearId) {
+    throw new RequestError('invalid_request');
+  }
+  return { fromSchoolYearId: data.fromSchoolYearId, toSchoolYearId: data.toSchoolYearId, dryRun: data.dryRun === true };
+}
+
+function categoryFromRow(row) {
+  return { id: row.id, schoolYearId: row.school_year_id, direction: row.direction, name: row.name, active: row.active };
+}
+
 function parseCorrectionInput(data) {
   const reason = textOrNull(data.reason, 500);
   if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
@@ -196,10 +223,26 @@ function entryFromRow(row) {
   // przeksięgowania) ma dokładnie ten sam kształt odpowiedzi co przed #144
   // (kontrakt ze starym Workerem, tests/pg-ledger-api.test.js, bez zmian).
   if (row.replaces_entry_id) entry.replacesEntryId = row.replaces_entry_id;
+  // #87: wszystkie dowody wpisu (dokument główny source_document_id oraz
+  // dokumenty dołączone później przez POST /api/documents z linkedEntity*),
+  // tylko na liście — odtworzenie po kluczu zachowuje dawny kształt.
+  if (row.linked_document_ids !== undefined) entry.attachmentIds = attachmentIds(row);
   if (row.corrected_cents !== undefined) entry.correctedCents = toSafeInteger(row.corrected_cents);
   if (row.net_amount_cents !== undefined) entry.netAmountCents = toSafeInteger(row.net_amount_cents);
   return entry;
 }
+
+// Identyfikatory dowodów wpisu bez powtórzeń: najpierw dokument główny,
+// potem dołączone (created_at, id).
+function attachmentIds(row) {
+  const ids = [row.source_document_id, ...(row.linked_document_ids ?? [])].filter(Boolean);
+  return [...new Set(ids)];
+}
+
+// Podzapytanie: dokumenty powiązane z wpisem przez documents.linked_entity_*.
+const LINKED_DOCUMENTS_SQL = `ARRAY(SELECT d.id FROM documents d
+              WHERE d.linked_entity_type = 'ledger_entry' AND d.linked_entity_id = entry.id
+              ORDER BY d.created_at, d.id COLLATE "C") AS linked_document_ids`;
 
 function correctionFromRow(row) {
   return {
@@ -369,7 +412,8 @@ async function listEntries(request, env, url, json) {
             entry.category_id, category.name AS category_name, entry.description,
             to_char(entry.occurred_on, 'YYYY-MM-DD') AS occurred_on,
             entry.payment_entry_id, entry.source_document_id, entry.method, entry.source,
-            entry.resolution_reference, entry.replaces_entry_id, entry.corrected_cents, entry.net_amount_cents
+            entry.resolution_reference, entry.replaces_entry_id, entry.corrected_cents, entry.net_amount_cents,
+            ${LINKED_DOCUMENTS_SQL}
        FROM ledger_entry_net entry
        JOIN ledger_categories category ON category.id = entry.category_id
       WHERE ${conditions.join(' AND ')}
@@ -411,6 +455,150 @@ async function listCategories(request, env, url, json) {
     values,
   );
   return json({ categories: rows.map((row) => ({ id: row.id, direction: row.direction, name: row.name })) });
+}
+
+// #207: kategorie księgi przez API (dotąd tylko SQL). Podwójne kliknięcie
+// z tą samą nazwą/kierunkiem/rokiem nie tworzy drugiej kategorii — trafia
+// w UNIQUE(school_year_id, direction, name) i odtwarza istniejący wiersz
+// (200, nie 201), tak jak reszta modułu traktuje ponowienie.
+async function createCategory(request, env, json) {
+  const input = parseCategoryInput(await readJson(request));
+  const context = await requireFinancialContext(request, env, input.schoolYearId);
+  const actorId = context.session.user.id;
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      const inserted = await tx.query(
+        `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, school_year_id, direction, name, active`,
+        [crypto.randomUUID(), input.schoolYearId, input.direction, input.name, actorId],
+      );
+      const row = inserted.rows[0];
+      await insertAuditEvent(tx, {
+        actorId, action: 'ledger_category.created', entityType: 'ledger_category', entityId: row.id,
+      });
+      return { created: true, row };
+    });
+  } catch (error) {
+    if (!isUniqueError(error)) mapDatabaseError(error);
+    // Jedyny INSERT tej funkcji: konflikt może pochodzić wyłącznie z
+    // UNIQUE(school_year_id, direction, name) — id jest losowym UUID. Błąd
+    // przerywa transakcję (25P02 przy kolejnym zapytaniu na tym samym tx),
+    // więc odczyt istniejącego wiersza idzie NOWYM zapytaniem, poza transakcją,
+    // tak jak replay po kolizji Idempotency-Key w createEntry powyżej.
+    const existing = await env.db.query(
+      `SELECT id, school_year_id, direction, name, active FROM ledger_categories
+        WHERE school_year_id = $1 AND direction = $2 AND name = $3`,
+      [input.schoolYearId, input.direction, input.name],
+    );
+    if (!existing.rows[0]) throw error;
+    result = { created: false, row: existing.rows[0] };
+  }
+  return json({ category: categoryFromRow(result.row) }, result.created ? 201 : 200);
+}
+
+// Idempotentne: dezaktywacja już nieaktywnej kategorii zwraca ten sam wynik
+// (200) zamiast błędu — podwójne kliknięcie nie jest zdarzeniem audytu dwa razy.
+async function deactivateCategory(request, env, categoryId, json) {
+  if (!validId(categoryId)) throw new RequestError('invalid_request');
+  const context = await requireFinancialContext(request, env);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        'SELECT id, school_year_id, direction, name, active FROM ledger_categories WHERE id = $1 FOR UPDATE',
+        [categoryId],
+      );
+      const category = rows[0];
+      if (!category) throw new RequestError('category_not_found', 404);
+      requireYear(context, category.school_year_id);
+      if (!category.active) return json({ category: categoryFromRow(category) });
+      const updated = await tx.query(
+        `UPDATE ledger_categories SET active = false WHERE id = $1
+         RETURNING id, school_year_id, direction, name, active`,
+        [categoryId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'ledger_category.deactivated', entityType: 'ledger_category', entityId: categoryId,
+      });
+      return json({ category: categoryFromRow(updated.rows[0]) });
+    });
+  } catch (error) {
+    mapDatabaseError(error);
+  }
+  return undefined;
+}
+
+// Kopiowanie kategorii do nowego roku (#207, krok 7/19 audytu cyklu roku):
+// wymaga dostępu finansowego do roku DOCELOWEGO (SR-01 — zarząd przydzielony
+// do jednego roku nie skopiuje do roku spoza własnego przydziału). Rok
+// źródłowy nie wymaga osobnego dostępu — kopiowane są wyłącznie NAZWY i
+// KIERUNKI kategorii (bez kwot i innych danych), czyli ten sam poziom
+// wrażliwości co przydział kategorii przy tworzeniu wpisu księgi. `dryRun`
+// daje podgląd bez zapisu. Zapis jest jednym wielowierszowym INSERTem z
+// ON CONFLICT DO NOTHING — idempotentny (podwójne kliknięcie nie duplikuje
+// kategorii) i nie zostawia transakcji w stanie błędu przy częściowym konflikcie.
+async function copyCategories(request, env, json) {
+  const input = parseCopyInput(await readJson(request));
+  const context = await requireFinancialContext(request, env);
+  requireYear(context, input.toSchoolYearId);
+  const actorId = context.session.user.id;
+
+  const source = await env.db.query(
+    `SELECT direction, name FROM ledger_categories WHERE school_year_id = $1 AND active
+      ORDER BY direction, name COLLATE "C"`,
+    [input.fromSchoolYearId],
+  );
+  if (!source.rows.length) return json({ dryRun: input.dryRun, copied: [], skipped: [] });
+
+  if (input.dryRun) {
+    const existing = await env.db.query(
+      'SELECT direction, name FROM ledger_categories WHERE school_year_id = $1',
+      [input.toSchoolYearId],
+    );
+    const existingKeys = new Set(existing.rows.map((row) => `${row.direction}:${row.name}`));
+    const copied = [];
+    const skipped = [];
+    for (const row of source.rows) {
+      const target = existingKeys.has(`${row.direction}:${row.name}`) ? skipped : copied;
+      target.push({ direction: row.direction, name: row.name });
+    }
+    return json({ dryRun: true, copied, skipped });
+  }
+
+  const values = [];
+  const placeholders = source.rows.map((row, index) => {
+    const base = index * 5;
+    values.push(crypto.randomUUID(), input.toSchoolYearId, row.direction, row.name, actorId);
+    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`;
+  });
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (school_year_id, direction, name) DO NOTHING
+         RETURNING id, direction, name`,
+        values,
+      );
+      if (rows.length) {
+        await insertAuditEvent(tx, {
+          actorId, action: 'ledger_category.copied', entityType: 'school_year', entityId: input.toSchoolYearId,
+          metadata: { from: input.fromSchoolYearId, count: rows.length },
+        });
+      }
+      return json({
+        dryRun: false,
+        copied: rows.map((row) => ({ id: row.id, direction: row.direction, name: row.name })),
+        skippedCount: source.rows.length - rows.length,
+      });
+    });
+  } catch (error) {
+    mapDatabaseError(error);
+  }
+  return undefined;
 }
 
 async function readSummary(request, env, url, json) {
@@ -481,8 +669,16 @@ async function validateEntryReferences(tx, input, payment) {
     && (input.resolutionReference ?? '').length < 3) {
     throw new RequestError('resolution_required');
   }
+  // #87: dowodem może być wyłącznie dokument finansowy z API tego samego roku
+  // (wiersze z D1 mają school_year_id IS NULL). Dokument klasowy, zarządu,
+  // innego roku, bez roku i nieistniejący dają ten sam kod — bez wyroczni
+  // istnienia (uprawnienia do roku sprawdzono wcześniej, requireFinancialContext).
   if (input.sourceDocumentId) {
-    const { rows } = await tx.query('SELECT 1 FROM documents WHERE id = $1', [input.sourceDocumentId]);
+    const { rows } = await tx.query(
+      `SELECT 1 FROM documents
+        WHERE id = $1 AND kind = 'financial' AND school_year_id IS NOT NULL AND school_year_id = $2`,
+      [input.sourceDocumentId, input.schoolYearId],
+    );
     if (!rows.length) throw new RequestError('invalid_source_document');
   }
   const category = await tx.query(
@@ -739,6 +935,8 @@ export const LEDGER_CSV_COLUMNS = [
   ['metoda', 'text'], ['zrodlo', 'text'], ['referencja_uchwaly', 'text'], ['id_wplaty', 'text'],
   ['id_dokumentu', 'text'], ['zastepuje_wpis', 'text'], ['kwota_eur', 'amount'], ['korekty_eur', 'amount'],
   ['netto_eur', 'amount'],
+  // #87: liczba i identyfikatory wszystkich dowodów (dokument główny + dołączone).
+  ['liczba_dowodow', 'text'], ['id_dowodow', 'text'],
 ].map(([header, type]) => ({ header, type }));
 
 export { csvCell, formatEuro };
@@ -748,6 +946,7 @@ export function ledgerCsvLine(row) {
     row.id, row.occurred_on, DIRECTION_LABELS[row.direction], row.category_name, row.description,
     METHOD_LABELS[row.method], row.source, row.resolution_reference, row.payment_entry_id,
     row.source_document_id, row.replaces_entry_id, row.amount_cents, row.corrected_cents, row.net_amount_cents,
+    String(attachmentIds(row).length), attachmentIds(row).join(' '),
   ]);
 }
 
@@ -762,7 +961,8 @@ async function exportCsv(request, env, url) {
       `SELECT entry.id, to_char(entry.occurred_on, 'YYYY-MM-DD') AS occurred_on, entry.direction,
               category.name AS category_name, entry.description, entry.method, entry.source,
               entry.resolution_reference, entry.payment_entry_id, entry.source_document_id,
-              entry.replaces_entry_id, entry.amount_cents, entry.corrected_cents, entry.net_amount_cents
+              entry.replaces_entry_id, entry.amount_cents, entry.corrected_cents, entry.net_amount_cents,
+              ${LINKED_DOCUMENTS_SQL}
          FROM ledger_entry_net entry
          JOIN ledger_categories category ON category.id = entry.category_id
         WHERE entry.school_year_id = $1
@@ -794,13 +994,17 @@ async function exportCsv(request, env, url) {
 export async function handle(request, env, url, json) {
   const correctionMatch = url.pathname.match(/^\/api\/ledger\/([^/]+)\/corrections$/);
   const replacementMatch = url.pathname.match(/^\/api\/ledger\/([^/]+)\/replacement$/);
+  const categoryDeactivateMatch = url.pathname.match(/^\/api\/ledger\/categories\/([^/]+)\/deactivate$/);
   const isEntryRoute = url.pathname === '/api/ledger';
   const isList = request.method === 'GET' && isEntryRoute;
   const isCategories = request.method === 'GET' && url.pathname === '/api/ledger/categories';
+  const isCategoryCreate = request.method === 'POST' && url.pathname === '/api/ledger/categories';
+  const isCategoryCopy = request.method === 'POST' && url.pathname === '/api/ledger/categories/copy';
   const isSummary = request.method === 'GET' && url.pathname === '/api/ledger/summary';
   const isBudget = request.method === 'GET' && url.pathname === '/api/ledger/budget';
   const isExport = request.method === 'GET' && url.pathname === '/api/ledger/export.csv';
-  const isMutation = request.method === 'POST' && (isEntryRoute || correctionMatch || replacementMatch);
+  const isMutation = request.method === 'POST' && (isEntryRoute || correctionMatch || replacementMatch
+    || isCategoryCreate || isCategoryCopy || categoryDeactivateMatch);
   if (!isList && !isCategories && !isSummary && !isBudget && !isExport && !isMutation) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.
   if (isMutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
@@ -811,6 +1015,9 @@ export async function handle(request, env, url, json) {
     if (isSummary) return await readSummary(request, env, url, json);
     if (isBudget) return await listBudget(request, env, url, json);
     if (isExport) return await exportCsv(request, env, url);
+    if (isCategoryCreate) return await createCategory(request, env, json);
+    if (isCategoryCopy) return await copyCategories(request, env, json);
+    if (categoryDeactivateMatch) return await deactivateCategory(request, env, decodeId(categoryDeactivateMatch[1]), json);
     if (isEntryRoute) return await createEntry(request, env, json);
     if (replacementMatch) return await createReplacement(request, env, decodeId(replacementMatch[1]), json);
     return await createCorrection(request, env, decodeId(correctionMatch[1]), json);

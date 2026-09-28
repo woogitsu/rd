@@ -170,6 +170,7 @@ test('wpłata częściowo podzielona: reszta jako „nieprzypisana część”; 
     VALUES ('pa-year', $1, $2, 'h-c', 1, 'u-treasurer', 'pa-year-key')`, [paymentId, OTHER]), /payment_allocation_year_mismatch|school_year/);
   await assert.rejects(db.query("UPDATE payment_allocations SET amount_cents = 1"), /payment_allocations_cannot_be_changed/);
   await assert.rejects(db.query('DELETE FROM payment_allocations'), /payment_allocations_cannot_be_changed/);
+  await assert.rejects(db.query('TRUNCATE payment_allocations CASCADE'), /truncate_not_allowed/);
 });
 
 test('podwójne kliknięcie: ten sam klucz powtarza odpowiedź; nowy klucz dla tego samego gospodarstwa — 409; równoległe przekroczenie — jedno odrzucone', async () => {
@@ -247,6 +248,7 @@ test('korekta po podziale: nie schodzi poniżej części; błąd = cofnięcie cz
   assert.equal(events.rows.length, 1);
   assert.equal(events.rows[0].metadata_json.schoolYearId, YEAR);
   await assert.rejects(db.query('DELETE FROM payment_allocation_reversals'), /payment_allocation_reversals_cannot_be_changed/);
+  await assert.rejects(db.query('TRUNCATE payment_allocation_reversals'), /truncate_not_allowed/);
 
   // Po cofnięciu wszystkich części wpłata może dostać jedno gospodarstwo.
   const current = (await db.query('SELECT id FROM payment_allocations_current WHERE payment_entry_id = $1', [paymentId])).rows;

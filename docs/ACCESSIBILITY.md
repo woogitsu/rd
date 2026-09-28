@@ -141,6 +141,18 @@ Wykonać przed pracą na danych rodzin, na danych syntetycznych, w konfiguracjac
 8. Import: po wyborze pliku czytany jest komunikat o liczbie wierszy lub błędzie; po „Sprawdź dane” fokus trafia na „3. Wynik sprawdzenia”, a podsumowanie jest czytane.
 9. Powiększenie 200% i 400% w przeglądarce (nie tylko szerokość okna) oraz tryb wysokiego kontrastu Windows (`forced-colors`) — obrys fokusu i obramowania pól muszą pozostać widoczne.
 
+## Strona publiczna (`site/`) i galeria zdjęć — #124
+
+Rozszerzenie testu statycznego na `site/` (i `documents/`, `events/`, `meetings/`) jest zrobione w osobnym PR dla #112, żeby nie dublować pracy — lista `APPS` tam jest wyprowadzona automatycznie z `STATIC_PREFIXES`, więc obejmuje `site/` bez zmian w tym PR.
+
+Zmiany w tym PR (#124):
+- `site/main.js`: komunikaty błędów wczytywania (wydarzenia, protokoły, aktualności) dostają `role="alert"` zamiast dzielić `role="status"` ze stanem pustym/informacyjnym — błąd jest teraz ogłaszany asertywnie czytnikowi ekranu.
+- Pozycja „Aktualności” w nawigacji i sama sekcja są teraz **zawsze widoczne** (bez `hidden` do czasu wczytania) — brak trasy API (starsze wdrożenie) i brak opublikowanych wpisów wyglądają tak samo: pusty stan, a nie znikająca/pojawiająca się nawigacja (WCAG 3.2.3).
+- `news_photos.alt_text` jest teraz obowiązkowy przy rejestracji zdjęcia (albo jawne `decorative = true`) — patrz `docs/NEWS.md` i migracja `0071_news_photo_alt_text_required.sql`. Publiczny JSON zwraca `altText: ""` (nie `null`) dla zdjęć dekoracyjnych.
+- Szkic deklaracji dostępności strony publicznej: `docs/ACCESSIBILITY_DECLARATION_DRAFT.md` — tekst do zatwierdzenia przez zarząd/szkołę, bez twierdzeń o zgodności.
+
+**Poza zakresem tego PR** (patrz #124, propozycja pkt. 3): `<figure>`/`<figcaption>` dla zdjęć z autorem i licencją nie jest jeszcze potrzebne — `site/` nie renderuje jeszcze żadnych zdjęć (wyświetlanie galerii, #96, nie jest zaimplementowane); model danych (`altText`/`decorative`) jest już gotowy na tę chwilę. Kontrast `site/styles.css` i `prefers-reduced-motion` — patrz PR dla #112 (ten sam plik, żeby uniknąć nakładania się zmian).
+
 ## Rozszerzenie przeglądu na wszystkie aplikacje statyczne (#112)
 
 `tests/a11y-static.test.js` obejmował wcześniej tylko `import`, `panel`, `ledger`, `print` (na sztywno w kodzie testu). Lista `APPS` jest teraz wyprowadzana z `STATIC_PREFIXES` w `src/node-app.js`, więc obejmuje automatycznie każdą aplikację serwowaną przez serwer — dodanie nowej bez skip linku, `main#main`, `:focus-visible`, `prefers-reduced-motion` czy `caption`/`th[scope]` nie przejdzie CI.
