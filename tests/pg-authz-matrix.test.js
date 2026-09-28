@@ -753,6 +753,7 @@ const MODULE_SOURCES = {
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
   representative: ['../src/pg/routes/representative.js'],
+  board: ['../src/pg/routes/board.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń
