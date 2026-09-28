@@ -63,6 +63,14 @@ Serwer odrzuca słownictwo sugerujące zadłużenie (ten sam słownik co kartki 
 - Przebieg zatrzymuje się po awarii bazy, po sygnale `SIGTERM`/`SIGINT` (redeploy lub zatrzymanie usługi Railway; bieżąca wiadomość jest kończona, następna nie jest zaczynana, `stopped_reason = 'shutdown'`) oraz po odmowie konta przez Brevo. Wiersze przejęte przez przebieg, których wysyłka się nie rozpoczęła, od razu wracają do `queued` bez zużycia próby (`email.requeued`). Jeśli baza jest wtedy niedostępna, zrobi to `recoverStale` po wygaśnięciu dzierżawy (`lease_expired`), a nie `delivery_unknown`.
 - 401, 402 i 403 z Brevo (zły lub obrócony klucz, brak kredytów, nieuprawniony nadawca lub IP) dotyczą konta, nie odbiorcy. Przebieg kończy się po pierwszej takiej odpowiedzi z `stopped_reason = 'provider_account_rejected'`. Wiadomość wraca do kolejki bez zużycia próby. Na kampanii powstaje zdarzenie `email.campaign.provider_rejected`. Kampania nie przechodzi w `done`. Każdy kolejny przebieg wykonuje najwyżej jedno takie wywołanie, dopóki konfiguracja nie zostanie poprawiona. Trwała pauza zdejmowana jawnie przez zarząd nie jest jeszcze zaimplementowana. 400 (błędny adres) nadal dotyczy tylko jednej wiadomości.
 
+## Harmonogram startu, wstrzymanie i wznowienie (#130)
+- `send_not_before` (opcjonalne) odracza start wysyłki kampanii już zakolejkowanej (`sending`); zadanie pomija taką kampanię, dopóki termin nie nadejdzie. Pole jest traktowane jak treść: zmienia się tylko w szkicu/przed zatwierdzeniem i każda zmiana cofa kampanię do szkicu (`PUT …` z `sendNotBefore`), więc nie da się przesunąć startu po zatwierdzeniu bez wiedzy zatwierdzającego.
+- `POST …/pause` (board/treasurer, MFA) wstrzymuje wysyłkę: kampania `sending → paused`. Nie rusza wiersza, którego wysyłka już trwa (`send_started_at` ustawione) — ten kończy się normalnie (`sent`/`failed`); zatrzymuje tylko przejmowanie kolejnych wierszy. Idempotentne — druga pauza jest no-opem (200, bez nowego zdarzenia audytu).
+- `POST …/resume` (board/treasurer, MFA) wraca do `sending`. Nie wymaga ponownego zatwierdzenia — treść i lista odbiorców są niezmienne przez cały czas `sending`/`paused`. Idempotentne jak pauza.
+- `paused → cancelled` jest dozwolone (`POST …/cancel`), tak jak z `sending`. Wstrzymanie tygodniowe kampanii „brak wpisu wpłaty” i wpłata w tym czasie: po wznowieniu rodzina, która zapłaciła, dostaje `skipped` (`payment_recorded`) — recheck dzieje się przy każdym przejęciu wiersza, niezależnie od pauzy.
+- Opcjonalne okno dni/godzin wysyłki (`EMAIL_SEND_WINDOW_*`, patrz zmienne środowiskowe) jest wyłączone domyślnie — termin i godziny ustala zarząd (D-16). Włączone, poza oknem przebieg kończy się `stopped_reason = 'outside_send_window'` bez zmian w kolejce (sprawdzane przed dotknięciem czegokolwiek, także w dry-run).
+- **Nie jest częścią tego PR** (issue #130 pozostaje częściowo otwarte): konfiguracja usługi cron jako kod (`railway.email-worker.json`), `GET /api/email/campaigns/{id}/worker-status` i alarm „brak przebiegów”, oraz `EMAIL_BLACKOUT_DATES` (ferie). Cron pozostaje opisany tylko w `docs/RAILWAY_MIGRATION.md`/tym pliku, nie jest wdrożony.
+
 ## Dzienny limit
 - Dziennik `email_send_ledger` (dzień UTC, tylko dopisywanie) liczy wiadomości kampanii, które **mogły wyjść** (przyjęte przez dostawcę albo z wynikiem niepewnym), oraz inne wiadomości konta (`source = 'other'`, funkcja `recordOtherSends`). Wpis powstaje razem z wynikiem, nie przy przejęciu. Jawna odmowa dostawcy (np. 400, 401/403), wiersze zwrócone do kolejki i zatrzymany przebieg nie zużywają limitu. Wiadomości w locie (`sending` bez wpisu) są liczone do puli, więc równoległe przebiegi jej nie przekroczą (#172).
 - Pula dnia = `EMAIL_DAILY_LIMIT` (domyślnie 300) − `EMAIL_DAILY_RESERVED` (rezerwa na inne wiadomości konta, np. zaproszenia, wysyłki ręczne z panelu Brevo) − wszystkie wpisy dnia.
@@ -96,6 +104,10 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 | `EMAIL_BATCH_SIZE` | wiersze na jeden przebieg (domyślnie 50) |
 | `EMAIL_MAX_ATTEMPTS` | maks. prób przy odmowie z możliwością ponowienia (domyślnie 5; 429 i brak połączenia nie zużywają próby) |
 | `EMAIL_BREAKER_UNCERTAIN` | liczba kolejnych wyników niepewnych (5xx, timeout), po której przebieg się zatrzymuje (domyślnie 2) |
+| `EMAIL_SEND_WINDOW_ENABLED` | `true` włącza okno dni/godzin wysyłki (#130); domyślnie wyłączone — termin ustala zarząd (D-16) |
+| `EMAIL_SEND_WINDOW_TIMEZONE` | strefa okna wysyłki (domyślnie `Europe/Brussels`) |
+| `EMAIL_SEND_WINDOW_DAYS` | dni tygodnia ISO, 1=poniedziałek…7=niedziela (domyślnie `1-5`) |
+| `EMAIL_SEND_WINDOW_START` / `EMAIL_SEND_WINDOW_END` | godziny okna `HH:MM` w strefie okna (domyślnie `09:00`–`18:00`) |
 | `BREVO_API_KEY` | sekret usługi zadania; nigdy w repo ani frontendzie |
 | `BREVO_FROM_EMAIL`, `BREVO_FROM_NAME` | zweryfikowany nadawca (D-17) |
 | `BREVO_WEBHOOK_SECRET` | wspólny sekret webhooka |

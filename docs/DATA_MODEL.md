@@ -10,6 +10,35 @@ Migracja 0003 oddziela relację dziecko–opiekun od przynależności do jednego
 
 Pole household_id przy uczniu pozostaje na razie głównym przypisaniem organizacyjnym. Nie wolno na jego podstawie automatycznie ustalać obowiązku, wysokości ani adresata dobrowolnej składki. Zasady wpłat dla opieki dzielonej wymagają decyzji Rady i szkoły.
 
+## Relacja "aktualna" (issue #157)
+
+Jedyna definicja tego, czy relacja `student_guardians` obowiązuje w danym dniu, to
+widok `student_guardians_current` i funkcja `student_guardians_current_on(as_of)`
+(`postgres/migrations/0035_student_guardians_current.sql`). Semantyka przedziału to
+`[starts_on, ends_on]`: **oba końce włącznie** (`NULL` = odpowiednio „od początku
+ewidencji” / „relacja nadal trwa”; dzień PO `ends_on` relacja jest już zakończona).
+Dzień odniesienia to `rd_today()` (Europe/Brussels, migracja 0023), nie
+`CURRENT_DATE` serwera bazy. To **inna** semantyka niż `[starts_on, ends_on)` w
+`0014_households.sql` (`student_households`/`guardian_households`) — te dwie
+tabele mają odrębne, ustalone już wcześniej konwencje; ta migracja ich nie
+ujednolica, tylko ujednolica trzy moduły czytające `student_guardians`.
+
+`src/pg/routes/families.js` (karta gospodarstwa), `src/pg/routes/email.js`
+(migawka adresatów kampanii) i `src/pg/export.js` (lista klasy dla przedstawiciela)
+oraz worker wysyłki (`src/email/worker.js`, kontrola zgody tuż przed wysyłką)
+czytają wyłącznie z tego widoku/funkcji — żaden z nich nie powtarza warunku
+`starts_on`/`ends_on` samodzielnie (pilnuje tego test statyczny w
+`tests/pg-routes-wiring.test.js`, obejmuje `src/pg` i `src/email`). W migawce
+kampanii priorytet „kontakt główny” liczy się wyłącznie z relacji bieżącej ze
+zgodą (`contact_allowed`): wygasła, przyszła lub pozbawiona zgody relacja
+`is_primary_contact` nie podnosi priorytetu opiekuna (założenie do D-17). Wcześniej te trzy moduły liczyły "aktualność"
+inaczej (patrz issue #157): `email.js`/`export.js` już liczyły `ends_on` włącznie
+(zgodnie z tą migracją — brak zmiany zachowania), `families.js` liczył `ends_on`
+wyłącznie. Ujednolicenie do wariantu włącznego (zgodnego z
+`tests/pg-primary-household.test.js`, #194) przesuwa widoczność na karcie
+gospodarstwa o jeden dzień w dniu granicznym `ends_on` — bez regresji w
+istniejących testach (żaden nie sprawdzał tam dnia granicznego).
+
 Migracja zachowuje stare dane deweloperskie, tworząc relacje pomiędzy uczniami i opiekunami z tego samego gospodarstwa. Przed migracją jakichkolwiek danych produkcyjnych taki podgląd musi zostać ręcznie sprawdzony — wspólny household_id nie dowodzi uprawnienia do kontaktu w sprawie każdego dziecka.
 
 ## Klasa i rok szkolny
@@ -73,6 +102,14 @@ Zgoda używana przez kampanię (`computeSnapshot`, worker przed wysyłką) i prz
 
 Poza zakresem tej migracji (patrz PR — „Część #78"): kopiowanie struktury klas między latami i masowa promocja uczniów z podglądem (`plan`/`digest`/`apply`) — osobny, większy zakres.
 
+#### Odejście ze szkoły w trakcie roku (0055, issue #86)
+
+`enrollments.ended_on/ended_reason/ended_by/ended_at` zapisują odejście ucznia bez usuwania wiersza. `ended_on` ustawia się raz — trigger `enrollment_guard` blokuje każdą dalszą zmianę wiersza (łącznie ze zmianą klasy) po ustawieniu tej kolumny; ponowienie tego samego żądania (`POST .../enrollments/{id}/end`) zwraca `changed: false` bez drugiego zapisu. `enrollment_history` dostaje wpis `withdrawn` (data = `ended_on`, powód = `ended_reason`), zapisywany automatycznie osobnym triggerem (`enrollments_withdrawal_history`), niezależnym od istniejącego triggera historii zmian klasy.
+
+Widok `enrollments_current` (`ended_on IS NULL OR ended_on > CURRENT_DATE` — ta sama konwencja co `student_households_current`) zastępuje `enrollments` w miejscach liczących/wyświetlających uczniów **dziś**: lista klasy i licznik uczniów (`families.js`), kartki (`print.js`), dobór adresatów kampanii (`computeSnapshot`, `email.js`) i eksport listy klasy dla przedstawiciela (`buildClassRoster`, `export.js`). Data zakończenia może być przyszła — uczeń pozostaje widoczny do tej daty. Wpłaty zapisane wcześniej nie są zmieniane; odejście nie tworzy ani nie usuwa żadnej należności (decyzja o ewentualnym zwrocie — Rada, D-04).
+
+Poza zakresem tej migracji (patrz PR — „Część #86”): zakończenie relacji opiekun–dziecko i zakończenie członkostwa w gospodarstwie przez API (schemat z 0014 to obsługuje; trasy nie istnieją jeszcze), a także ostrzeżenie przy wysyłce kampanii zatwierdzonej przed odejściem.
+
 ### Jednostka ewidencji składki (D-11)
 
 Model nie rozstrzyga, czy składkę ewidencjonujemy na rodzinę czy na dziecko. Wpłaty nadal wskazują `payment_entries.household_id`; nowe tabele nie są powiązane z wpłatami i nie wyznaczają adresata ani wysokości składki. Główne gospodarstwo jest pojęciem organizacyjnym, nie finansowym.
@@ -88,6 +125,7 @@ Model nie rozstrzyga, czy składkę ewidencjonujemy na rodzinę czy na dziecko. 
 | `GET /api/households/{id}` | jw. | tylko gdy co najmniej jeden uczeń gospodarstwa jest w zakresie; rodzeństwo spoza zakresu pomijane |
 | `PATCH /api/guardians/{id}/contact` | admin, board | historia + audyt; wymagany powód |
 | `POST /api/students/{id}/enrollments` | admin, board | przypisanie lub zmiana klasy w roku; historia + audyt |
+| `POST /api/students/{id}/enrollments/{enrollmentId}/end` | admin, board | odejście ze szkoły (#86); wymagany powód i data; ponowienie: `changed: false` |
 
 - Przydział z `class_id` zawęża do tej klasy; admin/board/treasurer bez `class_id` widzą wszystkie klasy (lub klasy roku z `school_year_id`).
 - `audit` i `principal` dostają `403` do czasu decyzji D-09.
