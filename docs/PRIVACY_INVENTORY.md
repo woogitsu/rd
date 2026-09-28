@@ -961,6 +961,23 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `subject_kind` | none | — | nie |
 | `subject_no` | none | — | nie |
 
+### `news_photo_files`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `byte_size` | none | — | nie |
+| `created_at` | none | — | nie |
+| `created_by` | none | — | nie |
+| `height` | none | — | nie |
+| `id` | none | — | nie |
+| `mime_type` | none | — | nie |
+| `object_key` | none | — | nie |
+| `photo_id` | none | — | nie |
+| `sha256` | none | — | nie |
+| `source_sha256` | none | — | nie |
+| `variant` | none | — | nie |
+| `width` | none | — | nie |
+
 ### `news_photos`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |

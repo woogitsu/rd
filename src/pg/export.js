@@ -280,6 +280,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
   news_photo_consents: 'zgody na wizerunek — osobny zakres (D-04)',
+  news_photo_files: 'pliki wariantów zdjęć (#96) — jak news_photos, osobny zakres (D-04); metadane pliku w prywatnym Storage Bucket, nie dane roku',
 });
 
 // ---------------------------------------------------------------------------
