@@ -608,3 +608,15 @@ zostają (trigger działa tylko dla nowych). Wycofanie na bazie bez
 importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
 przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
 importami CODA/CAMT — tylko po kopii zapasowej.
+
+`0112_news_photo_is_public_consent.sql` (#106) dokłada do
+`news_photo_is_public` (0084) ten sam warunek zgody, który `public_news`
+(0083) sprawdza przez `news_photo_consents_public_ok`: po scaleniu z main
+okazało się, że 0084 napisała tę funkcję niezależnie od 0083 i pominęła
+warunek zakresu/wygaśnięcia/wycofania zgody, więc odczyt publiczny pliku
+zdjęcia (`GET` wariantu web/thumb) mógł nadal udostępniać zdjęcie, którego
+jedyna zgoda została wycofana albo wygasła — mimo że `public_news` już je
+ukrywał. Skutki dla danych: żaden wiersz nie jest zmieniany ani usuwany,
+zmienia się wyłącznie wynik funkcji (a więc dostępność pliku dla odczytu
+publicznego). Wycofanie: `CREATE OR REPLACE FUNCTION news_photo_is_public`
+z ciałem sprzed tej migracji (jak w 0084, bez warunku zgody).
