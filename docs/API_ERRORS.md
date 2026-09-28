@@ -78,6 +78,7 @@ wpisów).
 | `duplicate_name` | Nazwy klas na liście powtarzają się. | Nie — popraw dane żądania. |
 | `duplicate_photo` | To zdjęcie jest już dodane. | Nie — popraw dane żądania. |
 | `empty_document` | Plik jest pusty. | Zależy od kontekstu (patrz moduł trasy). |
+| `empty_photo_file` | Plik zdjęcia jest pusty. | Nie — popraw dane żądania. |
 | `ends_before_start` | Koniec nie może być wcześniej niż początek. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_cancelled` | Wydarzenie jest odwołane; odwołanie jest ostateczne. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_not_found` | Nie znaleziono wydarzenia albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
@@ -224,9 +225,11 @@ wpisów).
 | `nonexistent_local_time` | Ta godzina nie istnieje w Brukseli (zmiana czasu z zimowego na letni). Wybierz inną godzinę. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_first_school_year` | Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_found` | Nie znaleziono zasobu albo nie masz do niego dostępu. | Zależy od kontekstu (patrz moduł trasy). |
+| `not_resolvable` | Tej wiadomości nie można jeszcze rozstrzygnąć. | Nie — popraw dane żądania. |
 | `offset_not_valid_in_europe_brussels` | Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_exists` | Bilans otwarcia dla tego roku szkolnego już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_not_found` | Nie znaleziono bilansu otwarcia dla tego roku szkolnego. | Nie — popraw dane żądania. |
+| `outbox_not_found` | Nie znaleziono tej wiadomości w kolejce. | Nie — popraw dane żądania. |
 | `password_mismatch` | Hasła nie są takie same. | Nie — popraw dane żądania. |
 | `password_required` | Podaj hasło. | Nie — popraw dane żądania. |
 | `password_too_long` | Hasło jest za długie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -242,6 +245,10 @@ wpisów).
 | `payment_reassignment_household_mismatch` | Nie można przepisać wpłaty na tę rodzinę — powiązany wpis księgi wskazuje inną rodzinę. | Nie — popraw dane żądania. |
 | `payment_reassignment_same_household` | Wpłata jest już przypisana do tej rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `pending_admin_invitation` | Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
+| `photo_file_exists` | To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik. | Nie — popraw dane żądania. |
+| `photo_file_integrity_mismatch` | Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi. | Zależy od kontekstu (patrz moduł trasy). |
+| `photo_file_malformed` | Plik zdjęcia odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi. | Nie — popraw dane żądania. |
+| `photo_file_too_large` | Plik zdjęcia przekracza dozwolony rozmiar. | Nie — popraw dane żądania. |
 | `photo_not_found` | Nie znaleziono zdjęcia. | Nie — popraw dane żądania. |
 | `photo_revoked` | Zgoda na publikację zdjęcia została wycofana. | Zależy od kontekstu (patrz moduł trasy). |
 | `photos_require_school_wide_role` | Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły. | Zależy od kontekstu (patrz moduł trasy). |

@@ -261,6 +261,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_campaign_recipients: 'odbiorcy kampanii zawierają adresy e-mail — D-04',
   email_campaign_exclusions: 'wykluczenia z kampanii — D-04',
   email_outbox: 'kolejka wysyłki z adresami e-mail — D-04',
+  email_outbox_resolutions: 'rozstrzygnięcia doręczeń kampanii (#139) — jak email_outbox, D-04',
   email_send_ledger: 'dziennik wysyłek dostawcy — D-04',
   email_suppressions: 'lista blokad adresów e-mail — D-04',
   email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
@@ -270,6 +271,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
   news_photo_consents: 'zgody na wizerunek — osobny zakres (D-04)',
+  news_photo_files: 'pliki wariantów zdjęć (#96) — jak news_photos, osobny zakres (D-04); metadane pliku w prywatnym Storage Bucket, nie dane roku',
 });
 
 // ---------------------------------------------------------------------------

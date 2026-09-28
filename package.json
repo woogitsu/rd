@@ -58,6 +58,8 @@
     "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir",
     "dev:year-close": "vite year-close",
     "build:year-close": "vite build year-close --outDir ../dist/year-close --base ./ --emptyOutDir",
+    "demo:seed": "node scripts/demo-seed.js",
+    "demo:start": "node scripts/demo-start.js",
     "pretest:e2e": "npm run build",
     "test:e2e": "playwright test"
   },
@@ -66,6 +68,7 @@
     "pg": "8.23.0",
     "qrcode-generator": "2.0.4",
     "read-excel-file": "9.3.10",
+    "sharp": "0.35.4",
     "sql.js": "1.14.2"
   },
   "devDependencies": {

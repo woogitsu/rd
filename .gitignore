@@ -14,6 +14,9 @@ private-data/
 exports/
 rd-snapshot*.json
 d1-export*.sql
+# Lokalna baza demo (scripts/demo-seed.js) i klucz MFA demo — dane syntetyczne,
+# ale nie mają trafiać do repo (są regenerowane przy każdym `npm run demo:seed`).
+.demo-data/
 # Playwright (tests/e2e): dane logowania syntetyczne generowane przy starcie
 # serwera testowego, wyniki i raporty lokalne — nie commitujemy.
 tests/e2e/support/.runtime.json
