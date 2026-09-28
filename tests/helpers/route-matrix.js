@@ -635,6 +635,35 @@ export const ROUTE_MATRIX = Object.freeze([
       },
     }),
   },
+  {
+    // #207: kategorie przez API zamiast SQL. Bez Idempotency-Key — dedup przez
+    // UNIQUE(school_year_id, direction, name); `key` (unikalny na przypadek testu)
+    // jako nazwa, żeby równoległe przypadki się nie zderzały.
+    id: 'ledger.categoryCreate', module: 'ledger', method: 'POST', path: '/api/ledger/categories',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/ledger/categories',
+      body: { schoolYearId: target.schoolYearId, direction: 'expense', name: `Kat ${key}` },
+    }),
+  },
+  {
+    id: 'ledger.categoryDeactivate', module: 'ledger', method: 'POST',
+    path: '/api/ledger/categories/:categoryId/deactivate', targets: YEAR_TARGETS,
+    allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ obj }) => ({ path: `/api/ledger/categories/${obj.categoryId}/deactivate` }),
+  },
+  {
+    // Kopiowanie wymaga przydziału bez klasy wyłącznie w roku DOCELOWYM
+    // (rok źródłowy — tu YEAR_2 — nie wymaga dostępu: kopiowane są tylko
+    // nazwy/kierunki kategorii, bez kwot).
+    id: 'ledger.categoryCopy', module: 'ledger', method: 'POST', path: '/api/ledger/categories/copy',
+    targets: ['W1'], allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    // Podgląd celowo zawiera NAZWY kategorii roku źródłowego (Y2), nawet gdy
+    // aktor nie ma przydziału do tego roku — to nie kwoty ani dane rodzin,
+    // patrz komentarz przy copyCategories w ledger.js.
+    visible: (actor) => [...actor.scopes, 'Y2'],
+    build: () => ({ path: '/api/ledger/categories/copy', body: { fromSchoolYearId: YEAR_2, toSchoolYearId: YEAR_1, dryRun: true } }),
+  },
 
   // ---------- kasa i rachunek (#199) ----------
   // Przeniesienia i odczyt: admin/zarząd/skarbnik z MFA, przydział bez klasy w roku (jak księga).

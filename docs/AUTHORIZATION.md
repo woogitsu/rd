@@ -98,6 +98,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/opening-balance?schoolYearId=:year` | jak wyżej | tak | 403 | #199 |
 | `POST /api/ledger/opening-balance` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #199; admin i skarbnik: 403; tylko pierwszy rok (409 `not_first_school_year`) |
 | `POST /api/ledger/opening-balance/adjustments` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #199; admin i skarbnik: 403; zamknięty rok: 409 |
+| `POST /api/ledger/categories` | admin, zarząd, skarbnik — przydział bez klasy, rok kategorii | tak | 403 | SR-01; ta sama nazwa+kierunek+rok co istniejąca kategoria: 200 z istniejącym wierszem (podwójne kliknięcie), nie 201; zamknięty rok: 409 `school_year_closed` (trigger a0_year_freeze z 0017, bez zmian w #207) |
+| `POST /api/ledger/categories/:categoryId/deactivate` | jak wyżej, rok kategorii (sprawdzany po odczycie wiersza) | tak | 403 / 404 | już nieaktywna: 200 bez drugiego zdarzenia audytu (idempotentne) |
+| `POST /api/ledger/categories/copy` | jak wyżej, przydział bez klasy w roku DOCELOWYM (rok źródłowy nie wymaga osobnego dostępu — kopiowane są wyłącznie nazwy i kierunki kategorii, bez kwot) | tak | 403 | #207; `dryRun: true` — podgląd bez zapisu; zapis: jeden wielowierszowy INSERT z `ON CONFLICT … DO NOTHING`, nie duplikuje przy ponowieniu; zamknięty rok docelowy: 409 `school_year_closed` |
 | `GET /api/email/campaigns?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin techniczny: 403; SR-01 |
 | `POST /api/email/campaigns` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/email/campaigns/:campaignId` | jak wyżej, rok kampanii | tak | 403 | SR-01 |
