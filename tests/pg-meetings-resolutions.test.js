@@ -18,6 +18,9 @@ const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
 const auditor = { userId: 'auditor', grants: [grant('audit')], mfaVerified: true };
 const rep = { userId: 'rep', grants: [grant('representative', { classId: 'class-a' })], mfaVerified: true };
 const boardA = { userId: 'board-a', grants: [grant('board', { classId: 'class-a' })], mfaVerified: true };
+// Drugi członek zarządu bez przydziału klasy: potrzebny do zasady czterech oczu
+// (#135) — zatwierdzający musi być inną osobą niż autor wersji protokołu.
+const board2 = { userId: 'board-2', grants: [grant('board')], mfaVerified: true };
 
 let keySeq = 0;
 const key = () => `res-test-key-${++keySeq}`;
@@ -29,7 +32,7 @@ async function resolutionsDb({ pattern = null } = {}) {
     VALUES ('year','2026/27','2026-09-01','2027-08-31', $1),
            ('other','2027/28','2027-09-01','2028-08-31', NULL)`, [pattern]);
   await db.query("INSERT INTO classes (id, school_year_id, name) VALUES ('class-a','year','1A'), ('class-b','year','1B')");
-  for (const id of ['board', 'board-a', 'auditor', 'rep', 'u1', 'u2', 'u3']) {
+  for (const id of ['board', 'board-a', 'board-2', 'auditor', 'rep', 'u1', 'u2', 'u3']) {
     await db.query('INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)',
       [id, `${id}@example.invalid`, `Synthetic ${id}`]);
   }
@@ -200,7 +203,7 @@ test('a cross-year amendment is refused without the explicit flag (409)', async 
 
     // 'board' is scoped to schoolYearId 'year' only; year 2's meeting needs its
     // own grant (a board member serving across both school years).
-    const boardAnyYear = { userId: 'board', grants: [grant('board', { schoolYearId: null })] };
+    const boardAnyYear = { userId: 'board', grants: [grant('board', { schoolYearId: null })], mfaVerified: true };
     const { meeting: meetingYear2 } = await createMeeting(db, boardAnyYear, {
       idempotencyKey: key(), schoolYearId: 'other', kind: 'plenary', title: 'Zebranie roku 2',
       scheduledAt: '2027-10-10T17:00:00Z', status: 'scheduled',
@@ -356,7 +359,8 @@ test('execution can be recorded even after the minutes are approved (meeting loc
     const minutes = (await createMinutesVersion(db, board, {
       idempotencyKey: key(), meetingId: meeting.id, body: 'Protokół syntetyczny, kompletny.',
     })).minutes;
-    await approveMinutes(db, board, { minutesId: minutes.id });
+    // #135: zatwierdzający musi być inną osobą niż autor wersji protokołu.
+    await approveMinutes(db, board2, { minutesId: minutes.id });
     // The meeting itself is now locked (cannot add a new resolution), but
     // execution tracking is a separate table and still accepts writes.
     await assert.rejects(createResolution(db, board, {
