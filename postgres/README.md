@@ -365,6 +365,25 @@ wyjść od najnowszej wersji tej funkcji na `main` i nie powtórzyć incydentu z
 #279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch funkcji. Opis:
 [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
 
+`0075_privacy_notices.sql` (issue #145, D-06) dodaje `privacy_notices` —
+wersjonowany rejestr informacji o przetwarzaniu danych: stan
+`draft → approved → published → superseded` pilnowany triggerem (identyczność
+i treść niezmienne po INSERT; `approved_by` różny od `created_by` — cztery
+oczy). Najwyżej jedna wersja `published` naraz (unikalny indeks częściowy) —
+publikacja nowej przenosi poprzednią do `superseded` w tej samej transakcji.
+Dodaje też `privacy_notice_deliveries` (opcjonalna ewidencja przekazania per
+gospodarstwo i kanał, tylko dopisywanie — dziś bez żadnej trasy zapisującej)
+oraz nullable `import_batches.privacy_notice_id` (migawka obowiązującej wersji
+w chwili commitu). Skutki dla danych: dwie nowe, puste tabele; istniejące
+wiersze `import_batches` dostają `privacy_notice_id = NULL` (importy sprzed
+tej migracji nie miały i nie mogły mieć powiązanej wersji). Bramka
+`409 privacy_notice_missing` na `POST /api/import/commit` — **świadomie NIE
+obejmuje** kampanii e-mail ani wydruku kartek w tym PR (kolizja z równoległymi
+PR-ami na `src/pg/routes/email.js`/`print/core.js`, patrz opis w PR i
+`docs/PRIVACY_NOTICE.md`). Wycofanie na pustej bazie: `DROP TABLE
+privacy_notice_deliveries, privacy_notices`, `DROP COLUMN import_batches.privacy_notice_id`
+i funkcji guard. Opis: [`docs/PRIVACY_NOTICE.md`](../docs/PRIVACY_NOTICE.md).
+
 `0082_immutability_hardening.sql` (issue #204, część: punkty 1, 2 i 5 z
 propozycji) zamyka trzy furtki, przez które kilka faktów traktowanych jako
 trwałe dało się zmienić albo sfałszować mimo istniejących triggerów
