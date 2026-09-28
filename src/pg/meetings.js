@@ -17,6 +17,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
+import { insertAuditEvent } from './audit.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
 export const READ_ROLES = Object.freeze(['admin', 'board', 'audit']);
@@ -271,12 +272,9 @@ async function one(db, sql, params) {
   return rows[0] ?? null;
 }
 
+// #184: przechodzi przez insertAuditEvent (assertNoPii), nie własny INSERT.
 async function audit(tx, actor, action, entityType, entityId, metadata = {}) {
-  await tx.query(
-    `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-    [randomUUID(), actor.userId, action, entityType, entityId, JSON.stringify(metadata)],
-  );
+  await insertAuditEvent(tx, { actorId: actor.userId, action, entityType, entityId, metadata });
 }
 
 function databaseError(error) {
