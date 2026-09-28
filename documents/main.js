@@ -1,3 +1,4 @@
+import { representativeClasses, uploadableKinds } from "./core.js";
 import {
   DEFAULT_MAX_BYTES,
   ERROR_MESSAGES,
@@ -35,7 +36,7 @@ function apiErrorText(status, body) {
 }
 
 const byId = (id) => document.getElementById(id);
-const state = { documents: [], query: null, offset: 0, pending: null, uploading: false };
+const state = { documents: [], query: null, offset: 0, pending: null, uploading: false, detailsRequest: null };
 
 const filtersForm = byId("filters-form");
 const listBody = byId("documents-body");
@@ -172,7 +173,11 @@ async function loadList({ append = false } = {}) {
 async function showDetails(id, trigger) {
   details.hidden = false;
   detailsList.replaceChildren();
+  // Link pobierania nigdy nie wskazuje poprzedniego dokumentu (#192).
   detailsDownload.hidden = true;
+  detailsDownload.removeAttribute("href");
+  const request = Symbol(id);
+  state.detailsRequest = request;
   const status = document.createElement("p");
   status.setAttribute("role", "status");
   status.textContent = "Wczytywanie metadanych…";
@@ -181,6 +186,7 @@ async function showDetails(id, trigger) {
   details.focus();
   try {
     const result = await getJson(metadataUrl(id));
+    if (state.detailsRequest !== request) return;
     const rows = metadataRows(result.document).flatMap(([label, value]) => {
       const dt = document.createElement("dt");
       dt.textContent = label;
@@ -192,6 +198,7 @@ async function showDetails(id, trigger) {
     detailsDownload.href = contentUrl(result.document.id);
     detailsDownload.hidden = false;
   } catch (error) {
+    if (state.detailsRequest !== request) return;
     status.className = "message error";
     status.textContent = error.message;
   }
@@ -353,3 +360,36 @@ fileInput.addEventListener("change", () => {
 });
 kindSelect.addEventListener("change", syncKindFields);
 syncKindFields();
+
+// #225: rodzaje dokumentów w formularzu według ról konta (/api/access). Sesja przed MFA
+// dostaje puste grants — wtedy formularz przesyłania jest ukryty.
+async function applyAccess() {
+  let grants;
+  try {
+    const access = await getJson("/api/access");
+    grants = Array.isArray(access.grants) ? access.grants : [];
+  } catch {
+    return; // bez informacji o rolach formularz zostaje; serwer i tak autoryzuje
+  }
+  const allowed = new Set(uploadableKinds(grants));
+  for (const option of [...kindSelect.options]) {
+    if (option.value && !allowed.has(option.value)) option.remove();
+  }
+  if (allowed.size === 1) kindSelect.value = [...allowed][0];
+  syncKindFields();
+  const classes = representativeClasses(grants);
+  if (classes.length) {
+    const list = document.createElement("datalist");
+    list.id = "upload-class-list";
+    list.append(...classes.map((id) => Object.assign(document.createElement("option"), { value: id })));
+    uploadForm.append(list);
+    byId("upload-class").setAttribute("list", list.id);
+  }
+  if (allowed.size === 0) {
+    const note = document.createElement("p");
+    note.className = "message";
+    note.textContent = "To konto nie może przesyłać dokumentów.";
+    uploadForm.replaceWith(note);
+  }
+}
+applyAccess();

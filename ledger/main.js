@@ -1,10 +1,14 @@
+import { describeApiError, hasFinancialAccess } from "./core.js";
 import {
   DIRECTION_LABELS,
   METHOD_LABELS,
   buildLedgerUrl,
+  buildNextLedgerUrl,
   buildOverviewUrl,
   formatCents,
   isValidId,
+  ledgerFilterChanged,
+  ledgerQuery,
   makeIdempotencyKey,
   needsResolution,
   normalizeEntry,
@@ -12,7 +16,7 @@ import {
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 
-const state = { entries: [], categories: [], nextCursor: null, requestKey: null };
+const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -73,6 +77,7 @@ function renderEntries() {
   byId("entries-table").hidden = count === 0;
   byId("entries-empty").hidden = count !== 0;
   loadMore.hidden = !state.nextCursor;
+  updateControls();
 }
 
 function renderBudget(lines) {
@@ -97,38 +102,68 @@ function renderSummary(summary) {
   byId("closing-balance").textContent = formatCents(summary.closingBalanceCents);
 }
 
-function setBusy(busy) {
-  filtersForm.querySelector("button").disabled = busy;
-  byId("open-entry").disabled = busy || !isValidId(yearInput.value);
-  byId("open-entry-hint").hidden = !byId("open-entry").disabled;
-  loadMore.disabled = busy;
+const OPEN_ENTRY_HINT = "Dostępne po wczytaniu roku szkolnego.";
+const FILTER_CHANGED_HINT = "Zmieniono filtr. Kliknij „Pokaż”, aby wczytać księgę dla nowego filtra.";
+
+function filterChanged() {
+  return ledgerFilterChanged(state.query, { schoolYearId: yearInput.value, direction: directionInput.value });
 }
 
-async function loadEntries({ append = false } = {}) {
-  const data = await api(buildLedgerUrl({
-    schoolYearId: yearInput.value,
-    direction: directionInput.value,
-    cursor: append ? state.nextCursor : "",
-  }));
+// „Dodaj wpis” i „Wczytaj następne” działają tylko dla zatwierdzonego (wczytanego) zapytania (#192).
+function updateControls() {
+  const changed = filterChanged();
+  const openEntry = byId("open-entry");
+  const hint = byId("open-entry-hint");
+  openEntry.disabled = state.loading || !state.query || changed;
+  hint.textContent = changed ? FILTER_CHANGED_HINT : OPEN_ENTRY_HINT;
+  hint.hidden = !openEntry.disabled || state.loading;
+  loadMore.disabled = state.loading || changed;
+  byId("load-more-hint").hidden = !changed || !state.nextCursor;
+}
+
+function setBusy(busy) {
+  state.loading = busy;
+  filtersForm.querySelector("button").disabled = busy;
+  updateControls();
+}
+
+// Pierwsza strona dla podanego zapytania albo (append) następna strona zapamiętanego zapytania.
+async function loadEntries({ append = false, query = state.query } = {}) {
+  const url = append ? buildNextLedgerUrl(state.query, state.nextCursor) : buildLedgerUrl(query);
+  if (!url) return;
+  const data = await api(url);
   const items = Array.isArray(data.entries) ? data.entries : [];
   state.entries = append ? [...state.entries, ...items] : items;
   state.nextCursor = data.nextCursor || null;
   renderEntries();
 }
 
-async function loadOverview() {
+async function loadOverview({ reload = false } = {}) {
+  if (state.loading) return;
+  let query;
+  try {
+    query = reload && state.query
+      ? state.query
+      : ledgerQuery({ schoolYearId: yearInput.value, direction: directionInput.value });
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+    return;
+  }
   message.textContent = "";
   message.className = "message";
   overview.hidden = true;
+  state.query = null;
   setBusy(true);
   try {
-    const year = yearInput.value;
+    const year = query.schoolYearId;
     const [summaryData, budgetData, categoriesData] = await Promise.all([
       api(buildOverviewUrl("summary", year)),
       api(buildOverviewUrl("budget", year)),
       api(buildOverviewUrl("categories", year)),
-      loadEntries(),
+      loadEntries({ query }),
     ]);
+    state.query = query;
     state.categories = Array.isArray(categoriesData.categories) ? categoriesData.categories : [];
     renderSummary(summaryData.summary ?? {});
     renderBudget(Array.isArray(budgetData.budget) ? budgetData.budget : []);
@@ -145,11 +180,34 @@ async function loadOverview() {
 
 filtersForm.addEventListener("submit", (event) => { event.preventDefault(); loadOverview(); });
 loadMore.addEventListener("click", async () => {
+  if (state.loading || filterChanged() || !buildNextLedgerUrl(state.query, state.nextCursor)) return;
   setBusy(true);
   try { await loadEntries({ append: true }); }
   catch (error) { message.className = "message error"; message.textContent = error.message; }
   finally { setBusy(false); }
 });
+
+// #225: Księgę prowadzą role finansowe. Inne konta widzą jeden komunikat zamiast
+// formularzy. Sesja przed MFA dostaje z /api/access puste grants (brak akcji).
+async function applyAccess() {
+  let access;
+  try {
+    access = await api("/api/access");
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+    return;
+  }
+  const grants = Array.isArray(access.grants) ? access.grants : [];
+  if (hasFinancialAccess(grants)) return;
+  byId("open-entry").hidden = true;
+  byId("open-entry-hint").hidden = true;
+  filtersForm.closest("section").hidden = true;
+  const notice = byId("access-notice");
+  if (access.mfaRequired === true) notice.textContent = describeApiError(403, "mfa_required");
+  notice.hidden = false;
+}
+applyAccess();
 
 // Po zapisie tabela jest renderowana od nowa; gdy przycisk otwierający okno zniknie,
 // fokus trafia na nagłówek listy zapisów zamiast na <body> (WCAG 2.4.3).
@@ -177,7 +235,7 @@ function configureDialog(id, prefix, submit, successText) {
       state.requestKey = null;
       dialog.close();
       form.reset();
-      await loadOverview();
+      await loadOverview({ reload: true });
       if (!message.classList.contains("error")) message.textContent = successText;
       restoreFocus();
     } catch (error) {
@@ -241,7 +299,8 @@ function updateResolutionField() {
 entryDialog.form.elements.direction.addEventListener("change", () => { updateCategories(); updateResolutionField(); });
 entryDialog.form.elements.amount.addEventListener("input", updateResolutionField);
 byId("open-entry").addEventListener("click", () => {
-  entryDialog.form.elements.schoolYearId.value = yearInput.value.trim();
+  if (!state.query || filterChanged()) return;
+  entryDialog.form.elements.schoolYearId.value = state.query.schoolYearId;
   entryDialog.form.elements.occurredOn.value = localDate();
   updateCategories(); updateResolutionField(); entryDialog.dialog.showModal();
 });
@@ -255,5 +314,6 @@ entriesBody.addEventListener("click", (event) => {
   correctionDialog.dialog.showModal();
 });
 
-byId("open-entry").disabled = true;
-byId("open-entry-hint").hidden = false;
+yearInput.addEventListener("input", updateControls);
+directionInput.addEventListener("change", updateControls);
+updateControls();

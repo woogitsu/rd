@@ -618,7 +618,7 @@ export async function handle(request, env, url, json) {
   try {
     if (!env?.db) throw new EventError('service_unavailable', 503);
     if (isPublic) {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       const limitText = url.searchParams.get('limit');
       if (limitText !== null && !/^\d{1,3}$/.test(limitText)) throw new EventError('invalid_limit');
       const from = url.searchParams.get('from');

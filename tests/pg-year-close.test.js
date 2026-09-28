@@ -207,6 +207,8 @@ describe('po zamknięciu roku przez drugą osobę z zarządu', () => {
     assert.equal(liveBefore.status, 'open');
     assert.deepEqual(liveBefore.balance, {
       source: 'live', openingBalanceCents: 48500, incomeCents: 120000, expenseCents: 25000, closingBalanceCents: 143500,
+      // Podział rachunek/kasa (#199): wszystkie wpisy przelewem, kasa 0.
+      openingCashCents: 0, closingCashCents: 0, closingBankCents: 143500,
     });
 
     assert.equal(closedStatus, 200);

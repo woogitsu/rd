@@ -36,3 +36,17 @@ test("normalizacja wylicza netto, gdy API nie zwróci go wprost", () => {
 test("klucz idempotencji jest stabilnie prefiksowany", () => {
   assert.equal(makeIdempotencyKey("ledger", () => "uuid"), "ledger-uuid");
 });
+
+// #192: rok A wczytany, pole zmienione na rok B bez „Pokaż” — dociągnięcie dotyczy roku A.
+test("dociągnięcie księgi używa zapamiętanego zapytania", async () => {
+  const { ledgerQuery, buildNextLedgerUrl, ledgerFilterChanged } = await import("../ledger/core.js");
+  const query = ledgerQuery({ schoolYearId: "y2026", direction: "" });
+  const current = { schoolYearId: "y2027", direction: "" };
+  assert.equal(ledgerFilterChanged(query, current), true);
+  assert.equal(buildNextLedgerUrl(query, "abc"), "/api/ledger?schoolYearId=y2026&limit=50&cursor=abc");
+  assert.equal(buildNextLedgerUrl(query, null), null);
+  assert.equal(buildNextLedgerUrl(null, "abc"), null);
+  assert.equal(ledgerFilterChanged(query, { schoolYearId: "y2026", direction: "expense" }), true);
+  assert.equal(ledgerFilterChanged(query, { schoolYearId: " y2026", direction: "" }), false);
+  assert.throws(() => ledgerQuery({ schoolYearId: "y2026", direction: "transfer" }));
+});
