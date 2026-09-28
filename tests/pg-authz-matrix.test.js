@@ -231,7 +231,15 @@ async function makeCampaign(ctx, target, stage) {
   // Zatwierdza inna osoba niż autor migawki (zasada czterech oczu).
   await api(ctx, ctx.fxCookies.board2, 'POST', `/api/email/campaigns/${campaignId}/approve`,
     { contentHash: obj.contentHash, recipientsHash: obj.recipientsHash });
-  return obj;
+  if (stage === 'approved') return obj;
+  // #139: wiersz w stanie końcowym 'failed' do testu trasy resolutions (queued -> failed
+  // jest dozwolonym przejściem bez przechodzenia przez worker/'sending').
+  await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/queue`, {});
+  const { rows: [outboxRow] } = await ctx.db.query(
+    "UPDATE email_outbox SET state = 'failed', last_error = 'delivery_unknown' WHERE campaign_id = $1 RETURNING id",
+    [campaignId],
+  );
+  return { ...obj, outboxId: outboxRow.id };
 }
 
 async function makeReconciliation(ctx, target, stage) {
