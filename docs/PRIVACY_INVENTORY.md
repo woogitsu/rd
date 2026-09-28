@@ -321,6 +321,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `recipients_hash` | none | — | nie |
 | `resumed_at` | none | — | nie |
 | `resumed_by` | pseudonymous | board_member | nie |
+| `revision_no` | none | — | tak |
 | `school_year_id` | none | — | nie |
 | `send_not_before` | none | — | nie |
 | `snapshot_built_at` | none | — | nie |
@@ -822,6 +823,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `quorum_mode` | none | — | tak |
 | `quorum_numerator` | none | — | tak |
 | `quorum_rule_source` | none | — | tak |
+| `revision_no` | none | — | tak |
 | `scheduled_at` | none | — | tak |
 | `school_year_id` | none | — | tak |
 | `status` | none | — | tak |
@@ -1046,6 +1048,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `relation_cross_year` | none | — | tak |
 | `relation_kind` | none | — | tak |
 | `revision` | none | — | tak |
+| `revision_no` | none | — | tak |
 | `school_year_id` | none | — | tak |
 | `status` | none | — | tak |
 | `title` | none | — | tak |
