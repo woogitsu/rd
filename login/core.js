@@ -117,6 +117,20 @@ export function nextView(state) {
   return state.mustChangePassword ? "change" : "start";
 }
 
+// #161: dowolne zalogowane konto bez potwierdzonego czynnika może dobrowolnie
+// włączyć weryfikację dwuetapową z widoku startowego, niezależnie od roli.
+export function canOfferVoluntaryMfaEnrollment(state) {
+  return Boolean(state && state.authenticated !== false && !state.mfaEnrolled);
+}
+
+// Treść widoku konfiguracji: inna, gdy rola jej wymaga (nie można pominąć),
+// niż gdy konto włącza ją z własnej inicjatywy (można wrócić do paneli).
+export function enrollIntroText(forced) {
+  return forced
+    ? "Twoja rola wymaga drugiego składnika logowania. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP)."
+    : "Dodaj drugi składnik logowania dla własnego bezpieczeństwa. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP).";
+}
+
 // Klucz ręczny w grupach po 4 znaki (łatwiej przepisać do aplikacji).
 export function formatSecret(secret) {
   return String(secret ?? "").replace(/\s+/g, "").match(/.{1,4}/g)?.join(" ") ?? "";
