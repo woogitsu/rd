@@ -4,7 +4,7 @@ Docelowo: czytelny panel administracyjny i skromna strona informacyjna. Kolory n
 
 ## Paleta i użycie
 - Biel #FFFFFF — tło główne, dużo oddechu.
-- Neutralny jasny #F5F5F4 — nawigacja i wybrane obszary.
+- Neutralny jasny #F5F5F4 — wybrane obszary (np. nagłówki tabel), nie pasek nawigacji.
 - Grafit #282C2F — tekst.
 - Czerwień #B3262D — aktywna zakładka, link, data wydarzenia i cienka linia sekcji.
 - Ciemniejsza czerwień #8E2026 — focus i hover, sprawdzić kontrast.
@@ -18,7 +18,7 @@ Sekcja „Z życia szkoły”: 2–3 kadry z rzeczywistych wydarzeń, krótkie p
 
 ## Widoki
 Publiczny: informacja o Radzie, najbliższe wydarzenia, sekcja archiwalna, kontakt i zatwierdzone dokumenty.
-Panel: nawigacja boczna, nagłówek roku szkolnego, płaskie listy i tabele; na telefonie przewijana nawigacja.
+Panel: nawigacja boczna, nagłówek roku szkolnego, płaskie listy i tabele; na telefonie przewijana nawigacja. Pasek nagłówka (`.site-header`) jest biały we wszystkich panelach — zgodnie z „białe tło” (AGENTS.md).
 
 ## Dostępność
 Kontrast, fokus, rozmiar celów i reflow: [ACCESSIBILITY.md](ACCESSIBILITY.md). Czerwień `#B3262D` na białym tle ma 6,5:1, a `#8E2026` (fokus, hover) 8,8:1 — obie spełniają WCAG AA dla tekstu.

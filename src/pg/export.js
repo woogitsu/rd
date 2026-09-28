@@ -206,6 +206,9 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => `minutes_id IN (SELECT mm.id FROM meeting_minutes mm JOIN meetings m ON m.id = mm.meeting_id
       WHERE m.school_year_id = $1)` },
   { table: 'resolutions', where: () => 'school_year_id = $1' },
+  // #102: wykonanie uchwał — historia zdarzeń powiązana z uchwałą roku.
+  { table: 'resolution_execution_events', requires: ['resolutions'],
+    where: () => 'resolution_id IN (SELECT id FROM resolutions WHERE school_year_id = $1)' },
 
   // 0066 (#82): zastąpienie/unieważnienie dokumentu — dane Rady do odtworzenia,
   // w odróżnieniu od samego pliku (`documents` zostaje w EXPORT_EXCLUDED_TABLES).

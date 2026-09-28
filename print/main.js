@@ -18,7 +18,7 @@ mountShell();
 
 // Stan wyłącznie w pamięci karty przeglądarki: nic nie jest zapisywane ani wysyłane.
 // Jedyne żądanie sieciowe to odczyt GET /api/print/cards po kliknięciu „Wczytaj z serwera”.
-const state = { households: [], selected: new Set() };
+const state = { households: [], selected: new Set(), configTouched: false };
 const byId = (id) => document.getElementById(id);
 const configForm = byId("config-form");
 const configError = byId("config-error");
@@ -169,11 +169,20 @@ function updateSummary() {
   renderPreview();
 }
 
+// Błędy walidacji konfiguracji kartki są ogłaszane (i pola oznaczane aria-invalid)
+// dopiero po tym, jak użytkownik dotknął formularza konfiguracji albo spróbował
+// wydrukować — inaczej pierwszy widok strony to czerwony komunikat błędu, zanim
+// ktokolwiek cokolwiek wpisał (przegląd UI przed pokazem dla zarządu).
 function renderPreview() {
   previewSection.hidden = state.households.length === 0;
   const { errors } = normalizeConfig(readConfig());
-  setText(configError, errors.join(" "));
-  markInvalid(errors);
+  if (state.configTouched) {
+    setText(configError, errors.join(" "));
+    markInvalid(errors);
+  } else {
+    setText(configError, "");
+    markInvalid([]);
+  }
   if (errors.length) {
     preview.replaceChildren();
     setText(previewMessage, "Uzupełnij treść kartki, aby zobaczyć podgląd.");
@@ -307,7 +316,10 @@ fileInput.addEventListener("change", () => handleFile(fileInput.files?.[0]));
 fileEncoding.addEventListener("change", () => {
   if (fileInput.files?.[0]) handleFile(fileInput.files[0]);
 });
-configForm.addEventListener("input", updateSummary);
+configForm.addEventListener("input", () => {
+  state.configTouched = true;
+  updateSummary();
+});
 configForm.addEventListener("submit", (event) => event.preventDefault());
 classFilter.addEventListener("change", renderTable);
 hideRecorded.addEventListener("change", renderTable);
@@ -335,6 +347,7 @@ confirmBox.addEventListener("change", () => {
 });
 
 printButton.addEventListener("click", () => {
+  state.configTouched = true;
   if (!confirmBox.checked || !state.selected.size) return;
   renderPreview();
   window.print();

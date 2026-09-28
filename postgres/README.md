@@ -304,6 +304,30 @@ Wycofanie na pustej bazie: usunięcie trzech tabel, funkcji
 `password_reset_token_guard` i przywrócenie poprzedniego ograniczenia; na
 bazie z kontami — tylko po kopii zapasowej (wszyscy stracą hasła). Okres
 przechowywania skrótów haseł wyłączonych kont i tokenów zależy od D-04.
+
+`0081_scope_and_email_consistency.sql` (issue #198, część 1) dodaje trzy
+złożone klucze obce `(class_id, school_year_id) -> classes(id, school_year_id)`
+(`role_grants`, `invitations`, `export_runs` — dotąd pilnowane tylko przez
+walidację API albo, dla `role_grants`, przez trigger `role_grant_year_freeze`
+z #201/0022) oraz unikalny indeks na `lower(btrim(email))` i CHECK wymuszający
+tę samą postać na `users.email` i `invitations.email` (dotąd `UNIQUE`
+rozróżniał wielkość liter — dwa konta różniące się tylko wielkością liter były
+możliwe, a logowanie po `lower(email)` po cichu wybierało starsze z nich).
+Skutki dla danych: migracja tylko dodaje ograniczenia (`NOT VALID` +
+`VALIDATE` w tej samej migracji, bo baza docelowa nie ma jeszcze prawdziwych
+danych rodzin — patrz `docs/RAILWAY_MIGRATION.md`); nie zmienia i nie usuwa
+żadnego wiersza. Przed zastosowaniem na bazie z realnymi danymi uruchom
+**tylko do odczytu** `DATABASE_URL=... node scripts/check-schema-consistency.mjs`
+— wypisuje liczby naruszeń każdej reguły bez identyfikatorów ani e-maili.
+Naruszenie (klasa spoza roku, duplikat konta po wielkości liter) rozstrzyga
+administrator PRZED migracją: duplikat e-maila — wyłączenie jednego konta
+(`disabled_at`) i przeniesienie przydziałów ról nowymi wierszami (0004 nie
+pozwala zmienić `user_id`); niespójna klasa/rok — poprawka danych albo
+cofnięcie wiersza. Bez tego `CREATE UNIQUE INDEX` i `VALIDATE CONSTRAINT`
+zatrzymają migrację czytelnym błędem zamiast cichego zapisania niespójności
+(spójnie z #179). Świadomie poza zakresem tej migracji: `news_photos.document_id`
+(#198, punkt 5) — wymaga rodzaju dokumentu przeznaczonego dla galerii, decyzja
+i zakres #96; osobna migracja i PR.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
 
 `0066_document_status_events.sql` (issue #82) dodaje wersje dokumentu i

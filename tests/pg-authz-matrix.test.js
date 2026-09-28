@@ -763,6 +763,7 @@ const MODULE_SOURCES = {
   news: ['../src/pg/routes/news.js', '../src/pg/news.js'],
   admin: ['../src/pg/routes/admin.js'],
   reconciliation: ['../src/pg/routes/reconciliation.js'],
+  'financial-reports': ['../src/pg/routes/financial-reports.js'],
   exports: ['../src/pg/routes/exports.js'],
   families: ['../src/pg/routes/families.js'],
   print: ['../src/pg/routes/print.js'],
