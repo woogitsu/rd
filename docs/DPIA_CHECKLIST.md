@@ -84,6 +84,8 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `news_photos.revocation_reason` | powód wycofania zgody, może zawierać dane osoby wycofującej |
 | `email_campaigns.subject` | temat kampanii — do przeglądu przy zatwierdzeniu treści |
 | `email_campaigns.body_text` | treść kampanii — do przeglądu przy zatwierdzeniu treści |
+| `document_descriptions.title` | tytuł dokumentu może zawierać imię i nazwisko (np. „Zwrot dla rodziny Kowalski”) (#76/#313) |
+| `document_descriptions.description` | opis dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#76/#313) |
 
 ## Środki już istniejące (do odwołania w DPIA)
 

@@ -91,6 +91,18 @@ export async function createSession(executor, { userId, mfaVerified = false, ttl
   const ttl = Math.max(60, Math.min(Number(ttlSeconds) || SESSION_TTL_SECONDS, SESSION_TTL_SECONDS));
   const { secret, tokenHash } = await createSessionSecret();
   const sessionId = crypto.randomUUID();
+  // #256: blokada wiersza konta (FOR SHARE) przed wstawieniem sesji. Wyłączenie
+  // konta trzyma FOR UPDATE na tym wierszu aż do COMMIT: bez tej blokady
+  // INSERT … SELECT niżej widział jeszcze disabled_at = NULL (migawka sprzed
+  // COMMIT wyłączenia) i wstawiał sesję, której UPDATE sessions wyłączenia już
+  // nie wycofał — po ponownym włączeniu konta znów działała. Z blokadą czekamy
+  // na COMMIT i ponownie sprawdzamy disabled_at; w odwrotnej kolejności
+  // wyłączenie czeka na nasz COMMIT i wycofuje także tę sesję.
+  const { rows: account } = await executor.query(
+    'SELECT id FROM users WHERE id = $1 AND disabled_at IS NULL FOR SHARE',
+    [userId],
+  );
+  if (!account[0]) throw new Error('user_unavailable');
   const { rows } = await executor.query(
     `INSERT INTO sessions (id, user_id, token_hash, expires_at, mfa_verified_at, rotated_from)
      SELECT $1, u.id, $3, now() + make_interval(secs => $4), CASE WHEN $5::boolean THEN now() END, $6
@@ -249,6 +261,21 @@ export async function grantInvitation(tx, invitation, userId) {
   return grantId;
 }
 
+// #146: zaproszenie wystawione przez to samo konto, które je przyjmuje (admin
+// zaprosił własny adres), nie nadaje mu roli — to samonadanie z pominięciem
+// drugiej osoby, które POST /api/admin/grants odrzuca (`cannot_grant_self`).
+// Wyjątek: zaproszenie pierwszego administratora (scripts/bootstrap-admin.js)
+// ma created_by = zapraszany (FK na users), a wystawia je aktor techniczny —
+// rozpoznawane po zdarzeniu `auth.bootstrap_issued` tego zaproszenia.
+export async function isSelfInvitation(tx, invitation, userId) {
+  if (invitation.created_by !== userId) return false;
+  const { rows } = await tx.query(
+    "SELECT 1 FROM audit_events WHERE action = 'auth.bootstrap_issued' AND entity_type = 'invitation' AND entity_id = $1 LIMIT 1",
+    [invitation.id],
+  );
+  return !rows[0];
+}
+
 export const INVITATION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 // Akceptacja przez już uwierzytelnionego użytkownika. Adres konta musi
@@ -272,6 +299,7 @@ export async function acceptInvitation(env, { token, userId }) {
     )).rows[0];
     if (!user || user.disabled_at) return deny('user_unavailable');
     if (user.email !== String(invitation.email).toLowerCase()) return deny('email_mismatch');
+    if (await isSelfInvitation(tx, invitation, userId)) return deny('self_invitation');
     const grantId = await grantInvitation(tx, invitation, userId);
     return { ok: true, grantId };
   });
