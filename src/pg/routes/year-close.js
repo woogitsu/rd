@@ -4,7 +4,7 @@
 //   GET  /api/year-close/{schoolYearId}                    stan, lista kontrolna, bilans
 //   POST /api/year-close/{schoolYearId}/start              { nextSchoolYearId }
 //   POST /api/year-close/{schoolYearId}/checklist/{item}   { note?, documentId? }
-//   POST /api/year-close/{schoolYearId}/close              zarząd + MFA, inna osoba niż rozpoczynająca
+//   POST /api/year-close/{schoolYearId}/close              zarząd + MFA, inna osoba niż rozpoczynająca; krok w górę MFA (#150)
 //   GET  /api/year-close/{schoolYearId}/handover           zestawienie przekazania (JSON, bez danych osobowych)
 //
 // Uprawnienia sprawdzane po stronie serwera. Każda trasa wymaga MFA i przydziału
@@ -15,7 +15,7 @@
 // Zapis i jego zdarzenie audytu powstają w jednej transakcji. Powtórzenie
 // zakończonej operacji zwraca stan bez nowego zapisu (replayed: true).
 
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { freshMfaForbiddenCode, isAuthorized, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
@@ -88,12 +88,19 @@ function optionalText(value, min, max, code) {
 }
 
 // Przydział z zawężeniem do klasy nie daje prawa do zamknięcia całego roku.
-async function authorize(request, env, schoolYearId, roles) {
+// `requireFreshMfa` (#150, SR-10, krok w górę): wyłącznie samo zamknięcie
+// roku (operacja nieodwracalna) wymaga MFA potwierdzonego od niedawna, nie
+// tylko kiedyś w sesji — sprawdzane PO roli/zakresie (SR-07).
+async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = false } = {}) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   const yearWide = { ...context, grants: context.grants.filter((grant) => !grant.classId) };
   if (!isAuthorized(yearWide, { roles, schoolYearId, requireMfa: true })) {
     throw new RequestError('forbidden', 403);
+  }
+  if (requireFreshMfa) {
+    const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+    if (staleCode) throw new RequestError(staleCode, 403);
   }
   return context.session.user.id;
 }
@@ -333,7 +340,7 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
 }
 
 async function closeYear(request, env, schoolYearId, json) {
-  const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES);
+  const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES, { requireFreshMfa: true });
   await readJson(request);
   const year = await requireYear(env.db, schoolYearId);
 

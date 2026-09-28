@@ -7,7 +7,7 @@
 //   POST /api/email/campaigns/{id}/snapshot          migawka odbiorców → szkic
 //   GET  /api/email/campaigns/{id}/preview           podgląd: próbka, liczby, wykluczenia, plan dni (bez wysyłki)
 //   GET  /api/email/campaigns/{id}/recipients        lista odbiorców do weryfikacji (dziennik odczytu)
-//   POST /api/email/campaigns/{id}/approve           zarząd + MFA, inna osoba niż autor; dokładne skróty
+//   POST /api/email/campaigns/{id}/approve           zarząd + MFA, inna osoba niż autor; dokładne skróty; krok w górę MFA (#150)
 //   POST /api/email/campaigns/{id}/queue             zakolejkowanie zatwierdzonej kampanii
 //   GET  /api/email/campaigns/{id}/report            raport doręczeń: same liczby i kody (#139)
 //   GET  /api/email/campaigns/{id}/attention         lista operacyjna „do sprawdzenia” (#139, dziennik odczytu)
@@ -27,7 +27,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
@@ -579,6 +579,11 @@ async function approve(request, env, id, json) {
   }
   const { context } = await campaignFor(request, env, id, APPROVER_ROLES);
   const actorId = context.session.user.id;
+  // #150 (SR-10, krok w górę): zatwierdzenie kampanii uruchamia rzeczywistą
+  // wysyłkę do rodzin — MFA musi być potwierdzone od niedawna, nie tylko
+  // kiedyś w tej sesji. Sprawdzane PO roli/zakresie (SR-07, campaignFor wyżej).
+  const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+  if (staleCode) throw new RequestError(staleCode, 403);
   try {
     return await env.db.transaction(async (tx) => {
       const campaign = await loadCampaign(tx, id, { lock: true });

@@ -409,3 +409,29 @@ test('zamknięcie odmawia, gdy nowy rok ma już bilans otwarcia lub rok następn
     await db.close();
   }
 });
+
+// #150 (SR-10, krok w górę): samo zamknięcie roku (operacja nieodwracalna)
+// wymaga MFA potwierdzonego od niedawna (15 min), nie tylko kiedyś w sesji.
+// Rozpoczęcie i checklista zostają przy MFA "kiedyś w sesji" — poza zakresem.
+test('zamknięcie roku wymaga ŚWIEŻEGO MFA (krok w górę): stare potwierdzenie to 403 mfa_stale', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    await startAndConfirm(env, cookies);
+    await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-board-b'");
+
+    const stale = await post(env, `/api/year-close/${OLD}/close`, cookies.boardB);
+    assert.equal(stale.status, 403);
+    assert.equal((await stale.json()).error, 'mfa_stale');
+    assert.equal(await auditCount(db, 'year_close.closed'), 0, 'odmowa mfa_stale nic nie zapisuje');
+
+    // Rozpoczęcie i checklista dalej działają z MFA sprzed 20 minut (poza zakresem #150 część 2).
+    assert.equal((await get(env, `/api/year-close/${OLD}`, cookies.boardB)).status, 200);
+
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-board-b'");
+    const closed = await post(env, `/api/year-close/${OLD}/close`, cookies.boardB);
+    assert.equal(closed.status, 200);
+    assert.equal(await auditCount(db, 'year_close.closed'), 1);
+  } finally {
+    await db.close();
+  }
+});
