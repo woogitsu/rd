@@ -232,20 +232,26 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
+| `closing_balance_cents` | none | — | tak |
 | `created_at` | none | — | tak |
 | `created_by` | pseudonymous | board_member | tak |
+| `file_hash` | none | — | tak |
 | `id` | none | — | tak |
 | `idempotency_key` | none | — | tak |
 | `line_count` | none | — | tak |
+| `opening_balance_cents` | none | — | tak |
 | `reconciliation_id` | none | — | tak |
 | `request_hash` | none | — | tak |
+| `skipped_duplicate_count` | none | — | tak |
 | `source` | none | — | tak |
+| `statement_number` | none | — | tak |
 
 ### `bank_statement_lines`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
 | `amount_cents` | none | — | tak |
+| `bank_transaction_hash` | none | — | tak |
 | `booked_on` | none | — | tak |
 | `created_at` | none | — | tak |
 | `created_by` | pseudonymous | board_member | tak |
