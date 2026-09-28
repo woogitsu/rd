@@ -100,6 +100,12 @@ async function seedBase(db) {
     await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
       [`en-sib-${key}`, `st-sib-${key}`, TARGETS[key].classId, YEAR_1]);
   }
+  // #145 (D-06): import.commit wymaga opublikowanej informacji o przetwarzaniu
+  // danych — poza zakresem tej macierzy (osobne testy w tests/pg-privacy-notice.test.js).
+  await db.query(
+    `INSERT INTO privacy_notices (id, body_text, content_hash, decision_ref, status, created_by, approved_by, approved_at, published_by, published_at)
+     VALUES ('pn-fx', 'Informacja testowa.', repeat('a', 64), 'D-06/fx', 'published', 'u-fx-admin', 'u-fx-board', now(), 'u-fx-board', now())`,
+  );
 }
 
 async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
@@ -255,6 +261,21 @@ async function makePublicPhotoFile(ctx, target) {
   await approveNews(ctx.db, fxBoard, { postId: post.id, revision: 1 });
   await publishNews(ctx.db, fxBoard, { postId: post.id, revision: 1 });
   return { photoId: photo.id };
+}
+
+// #145 (D-06): draft utworzony przez board2 (poza aktorami macierzy),
+// zatwierdzony przez fxAdmin — inna osoba niż autor (cztery oczy), co nadal
+// pozwala aktorom admin/board macierzy wywoływać kolejny krok bez konfliktu
+// z ich własnym tożsamością.
+async function makePrivacyNotice(ctx, _target, stage) {
+  const created = await api(ctx, ctx.fxCookies.board2, 'POST', '/api/admin/privacy-notices',
+    { bodyText: `Informacja testowa (macierz uprawnień, ${nextKey('fx-notice')}).`, decisionRef: 'D-06/fx-macierz' });
+  const noticeId = created.json.notice.id;
+  if (stage === 'draft') return { noticeId };
+  await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/privacy-notices/${noticeId}/approve`, {});
+  if (stage === 'approved') return { noticeId };
+  await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/privacy-notices/${noticeId}/publish`, {});
+  return { noticeId };
 }
 
 async function makeCampaign(ctx, target, stage) {
@@ -447,6 +468,7 @@ async function makeOwnSession(ctx, { cookie }) {
 }
 
 const MAKERS = {
+  privacyNotice: (ctx, target, stage) => makePrivacyNotice(ctx, target, stage),
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
@@ -860,6 +882,7 @@ const MODULE_SOURCES = {
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
   representative: ['../src/pg/routes/representative.js'],
+  'privacy-notice': ['../src/pg/routes/privacy-notice.js'],
   board: ['../src/pg/routes/board.js'],
 };
 
