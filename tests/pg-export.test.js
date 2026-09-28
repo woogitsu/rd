@@ -117,6 +117,17 @@ async function exportRequest(db, cookie, schoolYearId = YEAR, options = {}) {
   return handlePgRequest(request('/api/exports', { method: 'POST', cookie, body: { schoolYearId }, ...options }), { db });
 }
 
+// #161: symuluje konto z zapisanym (potwierdzonym) czynnikiem MFA bez przechodzenia
+// przez /api/mfa/enroll+confirm — wartości syntetyczne, spełniają tylko ograniczenia
+// kolumn (0013_mfa.sql); test nie odczytuje sekretu.
+async function markMfaEnrolled(db, userId) {
+  await db.query(
+    `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
+     VALUES ($1, $2, 'totp', 'AAAA', $3, $4, now())`,
+    [crypto.randomUUID(), userId, 'A'.repeat(16), 'A'.repeat(22)],
+  );
+}
+
 async function adminCookie(db, userId = 'u-admin') {
   return seedUserSession(db, { userId, roles: [{ role: 'admin' }], mfa: true });
 }
@@ -361,7 +372,21 @@ test('representative exports only the roster of their own class, without financi
   assert.equal((await roster('c-missing')).status, 403, 'unknown class is indistinguishable for a representative');
   assert.equal((await roster('')).status, 400);
   const repNoMfa = await seedUserSession(db, { userId: 'u-rep-nomfa', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: false });
-  assert.equal((await roster('c-1a', repNoMfa)).status, 403);
+  const noMfaResponse = await roster('c-1a', repNoMfa);
+  assert.equal(noMfaResponse.status, 403);
+  // #161: sam brak MFA (rola i klasa pasują) prowadzi do właściwego widoku
+  // logowania — konto bez czynnika dostaje mfa_enrollment_required, nie forbidden.
+  assert.deepEqual(await noMfaResponse.json(), { error: 'mfa_enrollment_required' });
+
+  await markMfaEnrolled(db, 'u-rep-nomfa');
+  const repFactorNoVerify = await seedUserSession(db, { userId: 'u-rep-nomfa', mfa: false });
+  const factorResponse = await roster('c-1a', repFactorNoVerify);
+  assert.equal(factorResponse.status, 403);
+  // Czynnik jest zapisany, ale ta sesja nie potwierdziła jeszcze kodu; bramka
+  // routera (mfa-policy.js, reguła 1) blokuje każdą chronioną trasę tej sesji
+  // wcześniej niż zakres klasy, więc kod jest ten sam niezależnie od classId.
+  assert.deepEqual(await factorResponse.json(), { error: 'mfa_required' });
+
   // Od 0022 przydział klasy z rokiem innym niż rok klasy jest odrzucany (#201);
   // taki wiersz mógł powstać wcześniej poza API — autoryzacja i tak go nie uznaje.
   await assert.rejects(
