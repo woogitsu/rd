@@ -79,6 +79,9 @@ dialog { width: min(540px, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem);
 dialog::backdrop { background: rgb(35 27 24 / 48%); }
 dialog form { display: grid; gap: 1rem; padding: 1.5rem; }
 .dialog-heading h2 { font-family: Georgia, serif; font-size: 1.65rem; font-weight: 500; }
+.household-picker { display: grid; gap: .6rem; border: 1px solid #e2ddd8; border-radius: 6px; padding: .9rem; margin: 0; }
+.household-picker legend { font-size: .82rem; font-weight: 650; color: #49433f; padding: 0 .3rem; }
+.household-picker details summary { cursor: pointer; font-size: .82rem; color: #6e6864; }
 .icon-button { min-width: 44px; padding: .15rem .55rem; border: 0; font-size: 1.8rem; line-height: 1; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .35rem; }

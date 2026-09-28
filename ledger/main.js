@@ -11,7 +11,10 @@ import {
   parseEuroAmount,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
+import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
 
+const FILTER_KEYS = ["schoolYearId", "direction"];
 const state = { entries: [], categories: [], nextCursor: null, requestKey: null };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
@@ -143,7 +146,39 @@ async function loadOverview() {
   }
 }
 
-filtersForm.addEventListener("submit", (event) => { event.preventDefault(); loadOverview(); });
+function syncFiltersToUrl() {
+  const query = filtersToQuery({ schoolYearId: yearInput.value, direction: directionInput.value });
+  const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
+  window.history.replaceState(null, "", url);
+}
+
+filtersForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  syncFiltersToUrl();
+  loadOverview();
+});
+
+// Wybór roku z listy zamiast wpisywania identyfikatora (issue #128); filtry odtwarzane
+// z adresu (query string), nie z localStorage.
+(async function initFilters() {
+  const restored = filtersFromQuery(window.location.search, FILTER_KEYS);
+  let years = [];
+  try {
+    const access = await api("/api/access");
+    years = yearsFromGrants(access && access.grants);
+  } catch {
+    years = [];
+  }
+  const year = defaultYear(years, restored.schoolYearId);
+  yearInput.innerHTML = yearOptionsHtml(years, year);
+  if (restored.direction && [...directionInput.options].some((o) => o.value === restored.direction)) {
+    directionInput.value = restored.direction;
+  }
+  if (year) {
+    syncFiltersToUrl();
+    loadOverview();
+  }
+})();
 loadMore.addEventListener("click", async () => {
   setBusy(true);
   try { await loadEntries({ append: true }); }

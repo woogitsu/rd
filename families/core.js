@@ -60,6 +60,31 @@ export function canEditFamilies(grants) {
   return Array.isArray(grants) && grants.some((grant) => grant.role === "admin" || grant.role === "board");
 }
 
+// Wyszukiwanie po imieniu/nazwisku na już wczytanej liście uczniów klasy (issue #128).
+// Filtr działa po stronie klienta — dane są już w przeglądarce, więc nie potrzeba
+// nowej trasy API. Dopasowanie jest bez rozróżniania wielkości liter i polskich
+// diakrytyków (NFD), tak by "Kowalski" znajdował też "kowalski" czy "Nowicka".
+function foldDiacritics(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
+export function filterStudentsByName(students, query) {
+  const list = Array.isArray(students) ? students : [];
+  const needle = foldDiacritics(query).trim();
+  if (!needle) return list;
+  return list.filter((student) => foldDiacritics(fullName(student)).includes(needle));
+}
+
+// Sortowanie alfabetyczne po nazwisku, potem imieniu (locale pl).
+export function sortStudentsByName(students) {
+  return [...(Array.isArray(students) ? students : [])].sort((a, b) =>
+    fullName(a).localeCompare(fullName(b), "pl", { sensitivity: "base" })
+  );
+}
+
 export function formatCents(cents) {
   return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "EUR" }).format((Number(cents) || 0) / 100);
 }
