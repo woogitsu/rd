@@ -101,6 +101,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `guardians` | opiekunowie z tych relacji oraz opiekunowie odnotowani na zebraniach roku |
 | `households` | gospodarstwa uczniów, opiekunów oraz gospodarstwa z wpłat i przypisań roku |
 | `payment_entries`, `payment_corrections`, `payment_assignments` | wpłaty roku, ich korekty i przypisania |
+| `payment_allocations`, `payment_allocation_reversals` | części wpłat podzielonych na gospodarstwa i ich cofnięcia z powodem (0104, #127) |
 | `ledger_*` | kategorie, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku |
 | `events`, `event_revisions` | wydarzenia roku i ich rewizje |
 | `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102) |
@@ -109,12 +110,31 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
 | `student_guardian_changes` | historia relacji opiekun–dziecko uczniów roku (zgoda, kontakt główny, daty) z dat roku — bez treści powodu (0026, D-03) |
 | `ledger_transfers` | przeniesienia kasa ↔ rachunek roku (0028) |
+| `ledger_allocation_versions`, `ledger_allocation_items` | wersje przypisania wpisów księgi roku do wydarzeń i klas (centra kosztów, 0090, #117) |
 | `bank_reconciliations`, `bank_statement_imports`, `bank_statement_lines`, `bank_reconciliation_matches` | uzgodnienia roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami, także cofniętymi z powodem (0015/0024) |
+| `bank_reconciliation_group_matches`, `bank_reconciliation_group_match_items`, `bank_reconciliation_group_match_revocations` | dopasowania zbiorcze (jedna pozycja wyciągu ↔ kilka wpłat/wpisów), ich pozycje i cofnięcia z powodem (0105, #127) |
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
 | `document_status_events` | zastąpienie/unieważnienie dokumentu z powodem, wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id`/`replacement_document_id` po odtworzeniu nie mają odpowiednika, jak `source_document_id` (0066, #82) |
 | `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia oznaczone tym rokiem (`schoolYearId`), a bez oznaczenia — z dat roku (Europe/Brussels); bez `export.*` |
+
+Zdarzenia dotyczące obiektu przypisanego do roku (wiersz ma kolumnę
+`school_year_id`) niosą `metadata.schoolYearId` wzięte z TEGO wiersza, nie z
+daty zapisu (#174) — inaczej wpłata dopisana we wrześniu za poprzedni rok
+trafiłaby do eksportu złego roku. `insertAuditEvent` (`src/pg/audit.js`)
+odrzuca (`audit_event_missing_school_year`) zdarzenie z przedrostkiem
+`payment.`/`ledger.`/`reconciliation.` (część 1) albo `email.`/`meeting.`/
+`resolution.`/`event.`/`news_post.` (część 2) bez `schoolYearId` — błąd
+programisty wychodzi w testach, nie po cichu zniekształca eksport. Wyjątki
+świadomie bez tego wymogu: `news_photo.*` (biblioteka zdjęć nie ma kolumny
+`school_year_id` — nie jest przypisana do jednego roku),
+`email.address_suppressed` (dotyczy adresu w `email_suppressions`, bez
+kolumny roku — niezależne od kampanii; `schoolYearId` jest dopisywane, gdy
+zdarzenie dało się powiązać z konkretną wysyłką, ale nie jest wymagane) i
+`email.webhook.previous_secret_used` (rotacja sekretu webhooka Brevo — zdarzenie
+bezpieczeństwa integracji, niezwiązane z żadną konkretną kampanią ani rokiem).
+Sesje, MFA i konta pozostają bez roku, jak dotąd.
 
 Tabele z modułów, których migracji nie ma w bazie, są pomijane (wykrywanie
 przez `information_schema`); tabele rdzenia są wymagane.

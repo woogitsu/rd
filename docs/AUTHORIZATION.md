@@ -57,6 +57,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/payments/:paymentId/assignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | jak wyżej |
 | `POST /api/payments/:paymentId/refunds` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | zwrot jako osobny, niezmienny zapis (#138); powiązanie z księgą o innym netto: 409 `ledger_correction_required` |
 | `POST /api/payments/:paymentId/reassignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | ponowne przypisanie jako osobne zdarzenie zamiast korekty do zera (#138); historia w `payment_reassignments` |
+| `GET /api/payments/:paymentId/allocations` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | części wpłaty, suma przypisana i „nieprzypisana część” (#127); przedstawiciel: 403; nieistniejąca: 404 |
+| `POST /api/payments/:paymentId/allocations` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | podział wyłącznie wpłaty nieprzypisanej, suma części ≤ netto (#127); przedstawiciel: 403 |
+| `POST /api/payments/:paymentId/allocations/:allocationId/reversal` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | cofnięcie części jako nowy zapis z powodem (#127) |
 | `GET /api/payments/export.csv?schoolYearId=:year` | admin, zarząd, skarbnik — rok 1 | tak | 403 | eksport CSV (#141): wpisy wpłat + korekty w jednym pliku (`typ_wiersza`); bez imion/nazwisk, bez statusu „dłużnik”; limit `MAX_EXPORT_ROWS`: 413 `export_too_large` |
 | `GET /api/public/events` | publiczna | nie | — | tylko opublikowane rewizje, bez danych klas |
 | `GET /api/events?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wydarzenia własnej klasy | nie | 403 | lista przedstawiciela 1A nie zawiera 1B ani wydarzeń ogólnoszkolnych |
@@ -115,6 +118,10 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
+| `GET /api/ledger/cost-centers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01; centra kosztów (#117), `type=event\|class`, `format=json\|csv`: wynik per wydarzenie/klasa + „ogólne”; przedstawiciel, audit, principal 403 (D-08/D-09) |
+| `GET /api/ledger/:ledgerEntryId/allocations` | jak wyżej, rok wpisu | tak | 403 | SR-01; historia wersji przypisania (#117) |
+| `POST /api/ledger/:ledgerEntryId/allocations` | jak wyżej, rok wpisu | tak | 403 | SR-01; nowa wersja przypisania (#117); nieaktualna `supersedesId`: 409 `allocation_version_conflict` |
+| `GET /api/ledger/cost-centers/events/:eventId` | jak wyżej, rok wydarzenia | tak | 403 | SR-01; rozliczenie wydarzenia (#117); nieistniejące: 404 |
 | `GET /api/ledger/transfers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #199 |
 | `POST /api/ledger/transfers` | jak wyżej | tak | 403 | #199; przeniesienie kasa ↔ rachunek, storno jako nowy wpis |
 | `GET /api/ledger/opening-balance?schoolYearId=:year` | jak wyżej | tak | 403 | #199 |
@@ -132,7 +139,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/email/campaigns/:campaignId/recipients` | jak wyżej | tak | 403 | odczyt w dzienniku; SR-01 |
 | `GET /api/email/campaigns/:campaignId/report` | jak wyżej | tak | 403 | wyłącznie agregaty, bez adresów/imion/identyfikatorów rodzin (#139) |
 | `GET /api/email/campaigns/:campaignId/attention` | jak wyżej | tak | 403 | adres maskowany, odczyt w dzienniku (`email.attention_list.viewed`, #139) |
-| `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak | 403 | skarbnik: 403; SR-01 |
+| `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak, krok w górę: ≤15 min (#150) | 403 | skarbnik: 403; SR-01; MFA starsze niż 15 min → `403 mfa_stale` |
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
 | `POST /api/email/campaigns/:campaignId/resolutions` | zarząd, skarbnik — jak wyżej | tak | 403 | `confirmed_not_sent` wymaga zarządu; podwójne kliknięcie zwraca istniejący zapis (#139) |
 | `POST /api/email/campaigns/:campaignId/pause` | zarząd, skarbnik — jak wyżej | tak | 403 | wstrzymanie wysyłki (#130); SR-01 |
@@ -164,16 +171,16 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/users/:userId/disable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/enable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/revoke-sessions` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/users/:userId/password-reset` | wyłącznie admin | tak | 403 | jednorazowy token resetu hasła, zwracany raz; nowy unieważnia poprzedni |
-| `POST /api/admin/users/:userId/mfa-reset` | wyłącznie admin (nie własne konto) | tak | 403 | wymaga `confirm` = id konta; wyłącza czynniki i kody odzyskiwania, wylogowuje konto |
+| `POST /api/admin/users/:userId/password-reset` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | jednorazowy token resetu hasła, zwracany raz; nowy unieważnia poprzedni; MFA starsze niż 15 min → `403 mfa_stale` |
+| `POST /api/admin/users/:userId/mfa-reset` | wyłącznie admin (nie własne konto) | tak, krok w górę: ≤15 min (#150) | 403 | wymaga `confirm` = id konta; wyłącza czynniki i kody odzyskiwania, wylogowuje konto; MFA starsze niż 15 min → `403 mfa_stale` |
 | `GET /api/admin/grants` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/grants` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/grants` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | nadanie roli; MFA starsze niż 15 min → `403 mfa_stale` |
 | `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years/:schoolYearId/expire-grants` | wyłącznie admin | tak | 403 | macierz: zakończony rok syntetyczny |
 | `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail; zaproszenie na własny adres: `409 cannot_grant_self`, a zaproszenie wystawione przez to samo konto nie nadaje mu roli przy przyjęciu (#146) |
+| `POST /api/admin/invitations` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | token zwracany raz; bez wysyłki e-mail; nadaje rolę przy przyjęciu, więc MFA starsze niż 15 min → `403 mfa_stale`; zaproszenie na własny adres: `409 cannot_grant_self`, a zaproszenie wystawione przez to samo konto nie nadaje mu roli przy przyjęciu (#146) |
 | `POST /api/admin/invitations/:invitationId/revoke` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108) |
+| `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108); MFA starsze niż 15 min → `403 mfa_stale` |
 | `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years` | wyłącznie admin | tak | 403 | nowy rok szkolny (#78); zły zakres dat: 400; duplikat id/etykiety: 409 |
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |
@@ -193,6 +200,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/reconciliations/:reconciliationId/suggestions` | jak wyżej | tak | 403 | tylko propozycje; SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/reconciliations/:reconciliationId/group-matches` | jak wyżej | tak | 403 | przelew zbiorczy (#127); SR-01 |
+| `POST /api/reconciliations/:reconciliationId/group-matches/:groupMatchId/revocation` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/confirm` | jak wyżej; inna osoba niż autor | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/abandon` | jak wyżej (także autor szkicu) | tak | 403 | tylko szkic bez aktywnych dopasowań; rok zamknięty: 409; SR-01 |
 | `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md). Rola i rok pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
@@ -226,7 +235,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/year-close/:schoolYearId/start` | zarząd — przydział bez klasy, rok 1 | tak | 403 | macierz: zamknięcie rozpoczęte wcześniej, powtórzenie 200 |
 | `POST /api/year-close/:schoolYearId/checklist/:item` | zarząd, skarbnik — jak wyżej | tak | 403 | |
 | `GET /api/year-close/:schoolYearId/handover` | zarząd, skarbnik — jak wyżej | tak | 403 | Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195) |
-| `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak | 403 | osobna baza testowa; wygasza przydziały roku |
+| `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak, krok w górę: ≤15 min (#150) | 403 | osobna baza testowa; wygasza przydziały roku; MFA starsze niż 15 min → `403 mfa_stale` |
 
 Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady. W macierzy trasy publiczne dostają poprawne dane uwierzytelniające (konto z hasłem, świeży token zaproszenia albo resetu) niezależnie od cookie aktora — odpowiedź zależy wyłącznie od hasła lub tokenu; błędne dane, limity prób i CSRF logowania sprawdza `tests/pg-login.test.js`. Trasy administratora `password-reset` i `mfa-reset` są częścią modułu `admin` (wyłącznie admin z MFA).
 
