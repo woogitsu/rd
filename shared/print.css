@@ -1,0 +1,54 @@
+/* Wspólny arkusz wydruku (#151). Ładowany przez ledger/, panel/, meetings/
+   i families/ obok shell.css. Ukrywa nawigację, akcje i okna dialogowe na
+   wydruku, zostawia tabele w całości i dopisuje blok metadanych wydruku
+   (shared/print-meta.js), który na ekranie jest niewidoczny. */
+
+.print-meta { display: none; }
+
+/* Sekcje oznaczone .print-only (np. protokół zebrania, #167) istnieją cały czas w
+   DOM, ale renderują się wyłącznie w trybie druku i tylko gdy JS ustawi znacznik
+   na <body> tuż przed window.print() — patrz meetings/main.js. Rozwiązuje to
+   niezawodność wydruku <dialog> (drukowała się strona pod spodem albo tylko
+   widoczna część, #151). */
+.print-only { display: none; }
+
+@page { size: A4; margin: 15mm; }
+
+@media print {
+  .skip-link,
+  header.site-header,
+  nav,
+  #shell-account,
+  .toolbar,
+  .filters,
+  #filters-form,
+  .row-actions,
+  .load-more,
+  #load-more-hint,
+  dialog,
+  button { display: none !important; }
+
+  .print-meta { display: block; margin: 0 0 1.5rem; padding: 0 0 .6rem; border-bottom: 1px solid #000; color: #000; font-size: 9pt; }
+  .print-meta p { margin: 0 0 .2rem; }
+  .print-meta .confidential { font-weight: 700; }
+
+  body { color: #000; background: #fff; }
+  main { width: auto; padding: 0; margin: 0; }
+  a { color: #000; text-decoration: none; }
+
+  .table-wrap { overflow: visible !important; height: auto !important; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  th, td { border-bottom: 1px solid #999; }
+
+  .card { border: 0; break-inside: avoid; page-break-inside: avoid; }
+
+  /* Wydruk pojedynczego dokumentu (np. protokołu): ukryj resztę <main>, pokaż
+     tylko sekcję .print-only wskazaną przez data-print-target. */
+  body[data-print-target] main > *:not(.print-only) { display: none !important; }
+  body[data-print-target="minutes"] #print-minutes { display: block !important; }
+  .minutes-text { white-space: pre-wrap; word-break: break-word; }
+  .print-draft-mark { padding: 1.5mm 3mm; border: 1px solid #000; font-weight: 700; letter-spacing: .06em; }
+}

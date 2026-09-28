@@ -67,11 +67,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/meetings/:meetingId/attendance` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
 | `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
 | `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak | 403 | #135: zawsze MFA, i zatwierdzający ≠ autor wersji (`403 minutes_four_eyes_required`) |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy `parents`/`public` | 403 | #135: `internal` bez MFA |
+| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy `status: adopted/rejected` | 403 | #135: `draft` bez MFA |
+| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy przejściu do `adopted/rejected` | 403 | #135: edycja projektu bez MFA |
+| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak | 403 | #135: korekta zawsze zapisuje rozstrzygnięcie |
 | `GET /api/import/options` | admin, zarząd — przydział bez klasy | tak | 403 | tylko lata z przydziału; zarząd z przydziałem klasy: 403 |
 | `POST /api/import/preview` | admin, zarząd — przydział bez klasy obejmujący rok importu | tak | 403 | nic nie zapisuje; inny rok: 403 |
 | `POST /api/import/commit` | jak wyżej | tak | 403 | wymaga podglądu (fingerprint, planDigest) i Idempotency-Key |
@@ -107,6 +107,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/email/campaigns/:campaignId/recipients` | jak wyżej | tak | 403 | odczyt w dzienniku; SR-01 |
 | `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak | 403 | skarbnik: 403; SR-01 |
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
+| `POST /api/email/campaigns/:campaignId/pause` | zarząd, skarbnik — jak wyżej | tak | 403 | wstrzymanie wysyłki (#130); SR-01 |
+| `POST /api/email/campaigns/:campaignId/resume` | zarząd, skarbnik — jak wyżej | tak | 403 | wznowienie (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
@@ -137,9 +139,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail |
 | `POST /api/admin/invitations/:invitationId/revoke` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108) |
 | `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years` | wyłącznie admin | tak | 403 | nowy rok szkolny (#78); zły zakres dat: 400; duplikat id/etykiety: 409 |
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |
+| `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | |
 | `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
 | `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
@@ -179,7 +183,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 
 Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady. W macierzy trasy publiczne dostają poprawne dane uwierzytelniające (konto z hasłem, świeży token zaproszenia albo resetu) niezależnie od cookie aktora — odpowiedź zależy wyłącznie od hasła lub tokenu; błędne dane, limity prób i CSRF logowania sprawdza `tests/pg-login.test.js`. Trasy administratora `password-reset` i `mfa-reset` są częścią modułu `admin` (wyłącznie admin z MFA).
 
-Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają na poziomie trasy MFA (dla admina, zarządu i skarbnika wymusza je bramka MFA routera), także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
+Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia nie wymagają na poziomie trasy MFA (dla admina, zarządu i skarbnika wymusza je bramka MFA routera), także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
+
+**Zebrania — MFA na poziomie usługi (#135, SR-10):** niezależnie od bramki MFA routera, `src/pg/meetings.js` sam sprawdza `actor.mfaVerified` dla rozstrzygnięcia uchwały, jej korekty, zatwierdzenia protokołu i udostępnienia go rodzicom/publicznie (lista `MFA_REQUIRED_ACTIONS`, opis w docs/MEETINGS.md). Odmowa: `403 mfa_required`, bez zapisu. Zatwierdzenie protokołu wymaga dodatkowo, by zatwierdzający nie był autorem zatwierdzanej wersji (`403 minutes_four_eyes_required` w serwisie, `409` z tym samym kodem w triggerze bazy przy bezpośrednim `UPDATE`). To sprawdzenie działa również wtedy, gdy trasa wywoływana jest bezpośrednio (np. w testach usługi z pominięciem routera) — dlatego kolumna MFA niżej dla tych tras pokazuje wymóg trasy, osobny od bramki routera.
 
 ## Akcje w panelach (issue #225)
 

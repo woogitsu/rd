@@ -45,6 +45,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: kto jest administratorem danych uczniów i opiekunów przetwarzanych w panelu i kto w jego imieniu upoważnia osoby z Rady do dostępu?
 - Dlaczego: od tego zależą upoważnienia, umowy z dostawcami, obowiązek informacyjny i odpowiedzialność za incydenty. Blokuje import (#2, #36) i produkcję (#41).
 - Warianty w dokumentacji: nie wskazano. SECURITY.md i README wymagają ustalenia z dyrekcją i IOD. Polski status szkoły nie wyłącza RODO.
+- Materiał techniczny: [`docs/PRIVACY_INVENTORY.md`](PRIVACY_INVENTORY.md) (spis kolumn z danymi osobowymi), [`docs/PROCESSORS.md`](PROCESSORS.md) (dostawcy), [`docs/DPIA_CHECKLIST.md`](DPIA_CHECKLIST.md) — projekty, nie rozstrzygnięcia (#123).
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -55,6 +56,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: w jakich celach panel przetwarza dane (ewidencja dobrowolnych wpłat, kontakt z opiekunami, organizacja klas) i na jakiej podstawie; jaki zakres danych szkoła udostępnia Radzie?
 - Dlaczego: cel wyznacza dopuszczalne pola (D-03), retencję (D-04) i treść informacji dla rodziców (D-06). Blokuje #2, #36.
 - Warianty w dokumentacji: nie wskazano. Cele produktu opisuje PRODUCT.md; nie rozstrzyga podstawy prawnej.
+- Materiał techniczny: pole „cel” w [`docs/PRIVACY_INVENTORY.md`](PRIVACY_INVENTORY.md) czeka na wartości z tej decyzji (#123).
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -85,6 +87,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: czy administrator akceptuje Railway (aplikacja, PostgreSQL, Storage Bucket) i Brevo (e-mail) jako podmioty przetwarzające; kto zawiera i przechowuje umowy powierzenia; czy wymagany region UE jest wystarczający?
 - Dlaczego: warunek produkcji (#31, #41) i wysyłki (#40). Ustawienie regionu nie zastępuje oceny prawnej ani umowy.
 - Warianty w dokumentacji: RAILWAY_MIGRATION.md zakłada region UE (Amsterdam), weryfikowany osobno dla aplikacji, bazy i bucketu. EMAIL.md: przed produkcją sprawdzić regulamin Brevo i warunki przetwarzania danych.
+- Materiał techniczny: [`docs/PROCESSORS.md`](PROCESSORS.md) (#123) — lista usług, region, odwołanie do DPA, status per dostawca; do weryfikacji i uzupełnienia przez IOD.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
