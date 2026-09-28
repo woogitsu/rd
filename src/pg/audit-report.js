@@ -103,6 +103,7 @@ const money = (cents) => e(formatEur(cents));
 
 const DIRECTION = { income: 'przychód', expense: 'wydatek' };
 const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone', abandoned: 'porzucone' };
+const RESOLUTION_STATUS = { adopted: 'przyjęta', rejected: 'odrzucona', draft: 'projekt', withdrawn: 'wycofana' };
 
 function table(headers, rows, emptyText) {
   if (!rows.length) return `<p class="empty">${e(emptyText)}</p>`;
@@ -125,10 +126,26 @@ export function renderAuditReportHtml(report) {
   const largeRows = largeExpenses.map((item) => row([
     [e(formatDate(item.occurredOn))], [e(item.category)], [e(item.description)],
     [money(item.amountCents), 'num'], [money(item.netAmountCents), 'num'],
-    [e(item.resolutionReference ?? '—')],
+    [`${e(item.resolutionReference ?? '—')}${item.resolutionLink === 'text' && item.resolutionReference ? ' <span class="meta">(powiązanie tekstowe)</span>' : ''}`],
     [item.matchesAdoptedResolution === true ? 'tak'
       : item.matchesAdoptedResolution === false ? '<span class="flag">brak zgodnej przyjętej uchwały</span>'
         : 'nie sprawdzono'],
+  ]));
+
+  // #93/#97: raporty sprzed migracji 0072 (np. z archiwum) nie mają tych sekcji.
+  const resolutionExecution = report.resolutionExecution ?? [];
+  const reviews = report.expenseReviews ?? null;
+  const executionRows = resolutionExecution.map((item) => row([
+    [e(item.number)], [e(item.title)],
+    [item.status === 'adopted' ? 'przyjęta' : `<span class="flag">${e(RESOLUTION_STATUS[item.status] ?? item.status)}</span>`],
+    [item.authorizedAmountCents === null ? 'bez kwoty' : money(item.authorizedAmountCents), 'num'],
+    [money(item.spentNetCents), 'num'],
+    [item.remainingCents === null ? '—' : item.remainingCents < 0 ? `<span class="flag">${money(item.remainingCents)}</span>` : money(item.remainingCents), 'num'],
+    [e(item.entryCount), 'num'],
+  ]));
+  const splitRows = (reviews?.possibleSplits ?? []).map((item) => row([
+    [e(item.category)], [`${e(formatDate(item.fromDate))}–${e(formatDate(item.toDate))}`], [e(item.entryCount), 'num'],
+    [money(item.netCents), 'num'], [item.ledgerEntryIds.map(e).join('<br>')],
   ]));
 
   const correctionRows = corrections.map((item) => row([
@@ -196,10 +213,31 @@ ${table([['Kontrola'], ['Wynik'], ['Wartości']], checkRows, 'Brak kontroli.')}
 <h2>2. Przychody i wydatki według kategorii</h2>
 ${table([['Rodzaj'], ['Kategoria'], ['Wpisy', 'num'], ['Kwota pierwotna', 'num'], ['Korekty', 'num'], ['Netto', 'num']],
     categoryRows, 'Brak kategorii w tym roku.')}
+${report.budgetExecution ? `
+<h2>2a. Preliminarz a wykonanie</h2>
+<p>${adoptionText(report.budgetExecution.adoption)}</p>
+${budgetExecutionTable(report.budgetExecution)}
+<p class="meta">Wykonanie to suma netto wpisów (po korektach); „poza planem” — kategoria z wpisami bez linii preliminarza.</p>
+` : ''}
 
 <h2>3. Wydatki powyżej 3000 EUR</h2>
 ${table([['Data'], ['Kategoria'], ['Opis'], ['Kwota', 'num'], ['Netto', 'num'], ['Uchwała'], ['Zgodność z przyjętą uchwałą']],
     largeRows, 'Brak wydatków powyżej 3000 EUR.')}
+
+<h2>3a. Wykonanie uchwał finansowych</h2>
+${table([['Uchwała'], ['Tytuł'], ['Stan'], ['Kwota upoważnienia', 'num'], ['Wydatki netto', 'num'], ['Pozostało', 'num'], ['Wpisy', 'num']],
+    executionRows, 'Brak wydatków powiązanych z uchwałą przez jej wskazanie.')}
+<p class="meta">Wydatki powiązane wyłącznie numerem w tekście nie są tu liczone (sekcja 3: „powiązanie tekstowe”).</p>
+${reviews ? `
+<h2>3b. Weryfikacja wydatków przez drugą osobę</h2>
+<table><tbody>
+<tr><th>Niezweryfikowane</th><td class="num">${e(reviews.unverified.count)}</td><td class="num">${money(reviews.unverified.netCents)}</td></tr>
+<tr><th>Zakwestionowane</th><td class="num">${e(reviews.questioned.count)}</td><td class="num">${money(reviews.questioned.netCents)}</td></tr>
+<tr><th>Zweryfikowane</th><td class="num">${e(reviews.verified.count)}</td><td class="num">${money(reviews.verified.netCents)}</td></tr>
+</tbody></table>
+<p>Kilka wydatków do 3000 EUR w tej samej kategorii w ciągu ${e(reviews.splitWindowDays)} dni, razem powyżej 3000 EUR (informacja do sprawdzenia, nie zarzut):</p>
+${table([['Kategoria'], ['Okres'], ['Wpisy', 'num'], ['Razem netto', 'num'], ['Wpisy księgi']], splitRows, 'Brak takich zestawień.')}
+` : ''}
 
 <h2>4. Korekty</h2>
 ${table([['Zapisano'], ['Wpis księgi'], ['Data wpisu'], ['Rodzaj'], ['Kwota korekty', 'num'], ['Powód'], ['Autor (id)']],
@@ -224,4 +262,38 @@ ${table([['Dokument'], ['Wpisy księgi']], duplicateEvidenceRows, 'Brak powtórz
 </body>
 </html>
 `;
+}
+
+// --- Preliminarz a wykonanie (#107): wspólne dla raportu KR (sekcja 2a) i wydruku
+// src/pg/budget-report.js. Brak planu to „—”, nie „0,00 EUR”.
+
+const optionalMoney = (cents) => (cents === null || cents === undefined ? '—' : e(formatEur(cents)));
+
+function percentText(value) {
+  return value === null || value === undefined ? '—' : `${e(String(value).replace('.', ','))}%`;
+}
+
+// Wiersze tabeli: kategoria, plan przyjęty, plan bieżący, wykonanie, różnica, %.
+export function budgetExecutionRows(items) {
+  return items.map((item) => {
+    const flag = item.overBudget ? ' class="flag"' : '';
+    const name = `${e(item.categoryName)}${item.active ? '' : ' <span class="meta">(wyłączona)</span>'}${item.outsidePlan ? ' <span class="flag">poza planem</span>' : ''}`;
+    return `<tr><td>${e(DIRECTION[item.direction] ?? item.direction)}</td><td>${name}</td>`
+      + `<td class="num">${optionalMoney(item.adoptedPlanCents)}</td><td class="num">${optionalMoney(item.currentPlanCents)}</td>`
+      + `<td class="num"><span${flag}>${optionalMoney(item.executedNetCents)}</span></td>`
+      + `<td class="num">${optionalMoney(item.differenceCents)}</td><td class="num">${percentText(item.executionPercent)}</td></tr>`;
+  });
+}
+
+export function budgetExecutionTable(execution) {
+  const rows = budgetExecutionRows(execution.items);
+  if (!rows.length) return '<p class="empty">Brak preliminarza i wpisów w tym roku.</p>';
+  return `<table><thead><tr><th>Rodzaj</th><th>Kategoria</th><th class="num">Plan przyjęty</th><th class="num">Plan bieżący</th>`
+    + `<th class="num">Wykonanie netto</th><th class="num">Różnica</th><th class="num">%</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+}
+
+export function adoptionText(adoption) {
+  if (!adoption) return 'Preliminarz nie został jeszcze zapisany jako przyjęty przez zebranie.';
+  const resolution = adoption.resolutionNumber ? `, uchwała ${e(adoption.resolutionNumber)}` : ', bez uchwały w systemie';
+  return `Plan przyjęty: ${e(formatDate(adoption.adoptedOn))}${resolution}.`;
 }
