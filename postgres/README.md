@@ -469,6 +469,15 @@ adresy techniczne Rady: rozszerza `CHECK` dziennika limitu dostawcy
 `email_outbox`), tak by wysyłka testowa liczyła się do dziennego limitu
 konta. Bez nowej tabeli ani zmiany istniejących wierszy.
 
+`0057_email_preferences.sql` (#110) dodaje kategorię kampanii
+(`email_campaigns.category`, domyślnie `contribution_reminder` — wszystkie
+dotychczasowe kampanie to przypomnienia o składce, bez zmiany istniejących
+wierszy poza tym uzupełnieniem) i tabelę append-only
+`email_preferences_events` — wypisanie/zapisanie się z kategorii komunikatów
+jednym kliknięciem, bez identyfikatora rodziny/opiekuna (adres jest jedynym
+kluczem, jak w `email_suppressions`). Rozszerza też `CHECK` powodu wykluczenia
+kampanii o `opted_out`.
+
 `0058_backup_runs.sql` (#90) dodaje tabelę append-only `backup_runs` —
 dziennik przebiegów kopii zapasowej PostgreSQL i próbnego odtworzenia (jak
 `email_worker_runs` w `0007`), obejmujący też `storage_backup` (kopia
@@ -497,6 +506,12 @@ funkcji `meeting_minutes_change_guard()`: zatwierdzenie protokołu przez tę
 samą osobę, która go napisała, kończy się `minutes_four_eyes_required` — też
 przy bezpośrednim `UPDATE` z pominięciem API. Bez zmiany danych.
 
+`0064_email_outbox_resolutions.sql` (#139) dodaje tabelę append-only
+`email_outbox_resolutions` — rozstrzyganie `delivery_unknown`/soft bounce bez
+zmiany historii wiersza `email_outbox`, wypełnianą wyłącznie przez
+`POST /api/email/campaigns/{id}/resolutions`. Nowa tabela; bez zmian w
+istniejących.
+
 `0067_data_access_log.sql` (#133) dodaje osobną (nie `audit_events`) tabelę
 `data_access_log` — dziennik odczytu danych dzieci i opiekunów (lista
 klasy, karta gospodarstwa, kartki, lista wpłat). Nowa tabela; brak historii
@@ -510,6 +525,12 @@ czynnika MFA zamiast nadpisywać niezmienny `user_mfa_factors` (trigger
 `0013`) i przenieść nieużyte kody odzyskiwania na nowy czynnik zamiast je
 logicznie unieważniać. Wyłącznie nowa kolumna; bez zmiany istniejących
 wierszy (domyślnie `NULL`).
+
+`0070_session_idle_revoke_reason.sql` (#150) rozszerza wyłącznie listę
+dozwolonych powodów wycofania sesji (`sessions_revoked_reason_check`) o
+`idle` — sesja bez aktywności dłużej niż limit jest odtąd jawnie wycofywana
+(`session.revoked`) zamiast tylko przestać działać po cichu. Żaden istniejący
+wiersz się nie zmienia.
 
 `0071_news_photo_alt_text_required.sql` (#124) dodaje
 `news_photos.decorative` (domyślnie `false`) i ograniczenie
