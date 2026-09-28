@@ -283,6 +283,16 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
     const closure = await loadClosure(tx, schoolYearId, { lock: true });
     if (!closure) throw new RequestError('year_close_not_started', 409);
     if (closure.status === 'closed') throw new RequestError('school_year_closed', 409);
+    if (documentId) {
+      // #205: dokument spoza roku zamykanego albo rodzaju 'class' nie może
+      // potwierdzać punktu listy kontrolnej — nieistniejący i spoza zakresu
+      // dają ten sam kod, żeby odpowiedź nie była wyrocznią istnienia.
+      const { rows: docRows } = await tx.query('SELECT kind, school_year_id FROM documents WHERE id = $1', [documentId]);
+      const doc = docRows[0];
+      if (!doc || doc.school_year_id !== schoolYearId || !['board', 'financial'].includes(doc.kind)) {
+        throw new RequestError('invalid_document_id');
+      }
+    }
     const { rows } = await tx.query(
       'SELECT 1 FROM school_year_closure_checklist WHERE closure_id = $1 AND item = $2',
       [closure.id, item],
