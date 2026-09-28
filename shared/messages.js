@@ -165,6 +165,12 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  // --- Komunikacja strukturalna wpłat (#83) ----------------------------------------
+  payment_reference_already_active: "Gospodarstwo ma już aktywną komunikację strukturalną na ten rok. Najpierw ją unieważnij.",
+  payment_reference_already_revoked: "Ta komunikacja strukturalna została już unieważniona.",
+  payment_reference_not_found: "Nie znaleziono komunikacji strukturalnej albo nie masz do niej dostępu.",
+  invalid_ogm_reference: "Niepoprawny format komunikacji strukturalnej.",
+  invalid_ogm_base: "Niepoprawna baza komunikacji strukturalnej.",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",

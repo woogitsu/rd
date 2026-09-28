@@ -426,6 +426,36 @@ export const ROUTE_MATRIX = Object.freeze([
     }),
   },
 
+  // ---------- payment-references (#83) ----------
+  {
+    id: 'payment-references.list', module: 'payment-references', method: 'GET',
+    path: '/api/payment-references?schoolYearId=:year&householdId=:id',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'paymentReference', stage: 'active' },
+    build: ({ target, obj }) => ({
+      path: `/api/payment-references?schoolYearId=${target.schoolYearId}&householdId=${obj.householdId}`,
+    }),
+  },
+  {
+    id: 'payment-references.create', module: 'payment-references', method: 'POST', path: '/api/payment-references',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'household' },
+    build: ({ target, obj, key }) => ({
+      path: '/api/payment-references', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, householdId: obj.householdId },
+    }),
+  },
+  {
+    id: 'payment-references.revoke', module: 'payment-references', method: 'POST',
+    path: '/api/payment-references/:id/revoke',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'paymentReference', stage: 'active' },
+    build: ({ obj, key }) => ({
+      path: `/api/payment-references/${obj.paymentReferenceId}/revoke`, headers: withKey(key),
+      body: { reason: 'Zamknięcie testowe (macierz)' },
+    }),
+  },
+
   // ---------- events (#12) ----------
   {
     id: 'events.public', module: 'events', method: 'GET', path: '/api/public/events', targets: ['-'],

@@ -22,6 +22,7 @@ import { json, logRouteError, UNSAFE_METHODS } from './http.js';
 import { classifyDbError } from './db-errors.js';
 import * as sessionRoutes from './routes/session.js';
 import * as paymentsRoutes from './routes/payments.js';
+import * as paymentReferencesRoutes from './routes/payment-references.js';
 import * as eventsRoutes from './routes/events.js';
 import * as meetingsRoutes from './routes/meetings.js';
 import * as importRoutes from './routes/import.js';
@@ -44,6 +45,7 @@ import { isMfaGateExempt, mfaGate } from './mfa-policy.js';
 export const ROUTES = [
   sessionRoutes,
   paymentsRoutes,
+  paymentReferencesRoutes, // #83: komunikacja strukturalna OGM-VCS na gospodarstwo/rok
   eventsRoutes,
   meetingsRoutes,
   importRoutes,

@@ -32,6 +32,7 @@ import { hashSecret } from '../src/auth.js';
 import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
+import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
@@ -205,6 +206,27 @@ async function makePayment(db, target, stage) {
   return { paymentId: id };
 }
 
+// #83: komunikacja strukturalna na świeżym gospodarstwie; 'revoked' dopisuje
+// od razu zdarzenie unieważnienia (dla przypadków, którym wystarczy historia).
+async function makePaymentReference(db, target, stage) {
+  const householdId = nextKey('fx-hh-ref');
+  await db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+  const id = nextKey('fx-ref');
+  await db.query(
+    `INSERT INTO payment_references (id, school_year_id, household_id, structured_reference, created_by, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, target.schoolYearId, householdId, generateStructuredReference(), fxAdmin.userId, `${id}-key`],
+  );
+  if (stage === 'revoked') {
+    await db.query(
+      `INSERT INTO payment_reference_revocations (id, payment_reference_id, reason, created_by, idempotency_key)
+       VALUES ($1, $2, 'Zamknięcie testowe (macierz)', $3, $4)`,
+      [nextKey('fx-ref-rev'), id, fxAdmin.userId, `${id}-rev-key`],
+    );
+  }
+  return { paymentReferenceId: id, householdId };
+}
+
 async function makeNewsPost(db, target, stage) {
   const published = stage === 'published';
   const { post } = await createNewsDraft(db, fxAdmin, {
@@ -357,6 +379,7 @@ const MAKERS = {
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
+  paymentReference: (ctx, target, stage) => makePaymentReference(ctx.db, target, stage),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
   photo: async (ctx) => {
     const key = nextKey('fx-photo');
@@ -724,6 +747,7 @@ test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
 const MODULE_SOURCES = {
   session: ['../src/pg/routes/session.js'],
   payments: ['../src/pg/routes/payments.js'],
+  'payment-references': ['../src/pg/routes/payment-references.js'],
   events: ['../src/pg/routes/events.js', '../src/pg/events.js'],
   meetings: ['../src/pg/routes/meetings.js', '../src/pg/meetings.js'],
   import: ['../src/pg/routes/import.js'],
