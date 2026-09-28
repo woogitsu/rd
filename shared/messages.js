@@ -19,6 +19,7 @@ export const MESSAGES = Object.freeze({
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
   mfa_enrollment_required: "Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą.",
   mfa_unavailable: "Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem.",
+  mfa_key_missing: "Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
   forbidden: "Brak uprawnień do tej operacji w Twoim zakresie.",
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji.",
