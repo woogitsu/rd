@@ -168,6 +168,16 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  // --- Dane do wpłaty i kod QR EPC (#92) --------------------------------------------
+  invalid_iban: "Numer rachunku (IBAN) jest niepoprawny — sprawdź sumę kontrolną.",
+  invalid_bic: "Numer BIC jest niepoprawny (8 albo 11 znaków).",
+  invalid_payee_name: "Podaj nazwę odbiorcy (maksymalnie 70 znaków).",
+  invalid_name: "Nazwa odbiorcy jest niepoprawna albo za długa (maksymalnie 70 znaków).",
+  invalid_info: "Informacja dla płatnika jest za długa (maksymalnie 70 znaków).",
+  invalid_remittance_both: "Podaj wyłącznie referencję strukturalną albo tytuł przelewu, nie oba naraz.",
+  invalid_structured_reference: "Niepoprawny format komunikacji strukturalnej (12 cyfr).",
+  invalid_unstructured_text: "Tytuł przelewu jest za długi (maksymalnie 140 znaków).",
+  epc_payload_too_large: "Dane do kodu QR są za długie (limit specyfikacji EPC).",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",
