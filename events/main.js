@@ -1,16 +1,16 @@
 import {
+  permittedEventActions,
   ACTION_LABELS,
   ApiError,
   AUDIENCE_LABELS,
   ERROR_MESSAGES,
   STATUS_LABELS,
-  availableActions,
+  canDraftEvents,
   buildActionRequest,
   buildCreateRequest,
   buildEventUrl,
   buildListUrl,
   buildUpdateRequest,
-  canEditEvent,
   changedFields,
   classifyBrusselsLocal,
   countByStatus,
@@ -41,6 +41,8 @@ const state = {
   schoolYearId: "",
   events: [],
   detail: null, // { event, revisions }
+  grants: [], // z /api/access; tylko do ukrywania akcji, serwer i tak autoryzuje
+  userId: null,
   editing: null, // event being edited, null = create
   busy: false,
 };
@@ -116,12 +118,15 @@ function fillDatalist(id, values) {
 async function start() {
   try {
     const access = await api({ url: "/api/access" });
+    // Sesja przed MFA dostaje { grants: [], mfaRequired: true } — wtedy brak akcji.
     const grants = Array.isArray(access.grants) ? access.grants : [];
+    state.grants = grants;
+    state.userId = grants.length ? await api({ url: "/api/session" }).then((s) => s?.user?.id ?? null, () => null) : null;
     const years = grants.map((g) => g.schoolYearId).filter(isValidId);
     fillDatalist("school-years", years);
     fillDatalist("class-ids", grants.map((g) => g.classId).filter(isValidId));
     app.hidden = false;
-    openCreate.hidden = false;
+    openCreate.hidden = !canDraftEvents(grants);
     const unique = [...new Set(years)];
     if (unique.length === 1) {
       yearInput.value = unique[0];
@@ -260,11 +265,18 @@ function renderDetail() {
   detailFacts.replaceChildren(...facts);
 
   const buttons = [];
-  if (canEditEvent(event)) buttons.push(actionButton("Edytuj", "edit"));
-  for (const action of availableActions(event)) {
+  const permitted = permittedEventActions(event, { grants: state.grants, userId: state.userId, revisions });
+  if (permitted.edit) buttons.push(actionButton("Edytuj", "edit"));
+  for (const action of permitted.actions) {
     buttons.push(actionButton(ACTION_LABELS[action], action, action === "cancel" ? "danger" : "primary"));
   }
   detailActions.replaceChildren(...buttons);
+  for (const text of permitted.notes) {
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent = text;
+    detailActions.append(note);
+  }
   if (event.status === "approved" && event.audience !== "public") {
     const note = document.createElement("p");
     note.className = "hint";

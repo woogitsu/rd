@@ -33,6 +33,8 @@
         Składka Rady Rodziców jest dobrowolna. Panel pokazuje wyłącznie zarejestrowane wpłaty, nie tworzy zadłużenia rodziny.
       </aside>
 
+      <p class="message error" id="access-notice" role="status" hidden>Wpłaty rejestrują i przeglądają skarbnik, zarząd i administrator. To konto nie ma dostępu do Wpłat.</p>
+
       <section class="card filters" aria-labelledby="filters-title">
         <h2 id="filters-title">Widok wpłat</h2>
         <form id="filters-form">
@@ -80,6 +82,7 @@
             <tbody id="payments-body"></tbody>
           </table>
         </div>
+        <p class="message" id="filter-hint" hidden>Zmieniono filtr. Kliknij „Pokaż”, aby wczytać wyniki dla nowego filtra.</p>
         <button class="load-more" id="load-more" type="button" hidden>Wczytaj następne</button>
       </section>
     </main>

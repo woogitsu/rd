@@ -21,6 +21,7 @@
         <div class="heading-action"><button class="primary" id="open-entry" type="button" aria-describedby="open-entry-hint">Dodaj wpis</button><small id="open-entry-hint">Dostępne po wczytaniu roku szkolnego.</small></div>
       </section>
 
+      <p class="message error" id="access-notice" role="status" hidden>Księgę prowadzą i przeglądają skarbnik, zarząd i administrator. To konto nie ma dostępu do Księgi.</p>
       <section class="card filters" aria-labelledby="filters-title">
         <h2 id="filters-title">Widok roku</h2>
         <form id="filters-form">
@@ -50,6 +51,7 @@
           <div class="section-heading"><div><p class="eyebrow">Ewidencja</p><h2 id="entries-title">Zapisy księgi</h2></div><span id="result-summary" aria-live="polite"></span></div>
           <div class="table-wrap" id="entries-table" role="region" aria-labelledby="entries-title" tabindex="0"><table><caption class="sr-only">Zapisy księgi w wybranym roku</caption><thead><tr><th scope="col">Data</th><th scope="col">Opis</th><th scope="col">Kategoria</th><th scope="col">Metoda</th><th scope="col">Rodzaj</th><th scope="col" class="amount">Netto</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="entries-body"></tbody></table></div>
           <p class="empty" id="entries-empty" hidden>Brak wpisów dla wybranych filtrów.</p>
+          <p class="message" id="load-more-hint" hidden>Zmieniono filtr. Kliknij „Pokaż”, aby wczytać księgę dla nowego filtra.</p>
           <button class="load-more" id="load-more" type="button" hidden>Wczytaj następne</button>
         </section>
       </section>

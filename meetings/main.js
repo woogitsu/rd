@@ -1,3 +1,4 @@
+import { canManageMeetings } from "./core.js";
 import {
   CAPACITY_LABELS,
   KIND_LABELS,
@@ -732,3 +733,10 @@ if (isValidId(initial.get("rok") ?? "")) {
     if (meetingId && isValidId(meetingId)) openDetail(meetingId);
   });
 }
+
+// #225: „Nowe zebranie” tylko dla ról zarządzających (sesja przed MFA: puste grants).
+byId("open-meeting").hidden = true;
+api("/api/access").then(
+  (access) => { byId("open-meeting").hidden = !canManageMeetings(access?.grants); },
+  () => { byId("open-meeting").hidden = false; },
+);

@@ -1,12 +1,16 @@
+import { describeApiError, hasFinancialAccess } from "./core.js";
 import {
   METHOD_LABELS,
   STATUS_LABELS,
+  buildNextPaymentsUrl,
   buildPaymentsUrl,
   formatCents,
   isValidId,
   makeIdempotencyKey,
   normalizePayment,
   parseEuroAmount,
+  paymentsFilterChanged,
+  paymentsQuery,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
@@ -14,7 +18,7 @@ import "../shared/shell.css";
 
 mountShell();
 
-const state = { payments: [], nextCursor: null, requestKey: null };
+const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -25,6 +29,7 @@ const tableWrap = byId("table-wrap");
 const loading = byId("loading");
 const summary = byId("result-summary");
 const loadMore = byId("load-more");
+const filterHint = byId("filter-hint");
 
 function localDate() {
   const now = new Date();
@@ -90,25 +95,52 @@ function render() {
   message.className = "message";
   message.textContent = count === 0 ? "Brak wpłat dla wybranych filtrów." : "";
   loadMore.hidden = !state.nextCursor;
+  updateFilterHint();
+}
+
+function filterChanged() {
+  return paymentsFilterChanged(state.query, { schoolYearId: yearInput.value, status: statusInput.value });
+}
+
+// Zmienione, niezatwierdzone pola filtra blokują dociąganie strony (#192).
+function updateFilterHint() {
+  const changed = filterChanged();
+  filterHint.hidden = !changed;
+  loadMore.disabled = state.loading || changed;
 }
 
 function setBusy(busy) {
+  state.loading = busy;
   loading.hidden = !busy;
   filtersForm.querySelector("button").disabled = busy;
-  loadMore.disabled = busy;
+  updateFilterHint();
 }
 
-async function loadPayments({ append = false } = {}) {
+// append: następna strona zapamiętanego zapytania; bez append: pierwsza strona
+// z pól formularza albo (reload) ponownie zapamiętane zapytanie po zapisie.
+async function loadPayments({ append = false, reload = false } = {}) {
+  if (state.loading) return;
+  let url;
+  let query = state.query;
+  try {
+    if (append) {
+      url = buildNextPaymentsUrl(state.query, state.nextCursor);
+      if (!url || filterChanged()) return;
+    } else {
+      if (!reload || !query) query = paymentsQuery({ schoolYearId: yearInput.value, status: statusInput.value });
+      url = buildPaymentsUrl(query);
+    }
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+    return;
+  }
   message.textContent = "";
   message.className = "message";
   setBusy(true);
   try {
-    const url = buildPaymentsUrl({
-      schoolYearId: yearInput.value,
-      status: statusInput.value,
-      cursor: append ? state.nextCursor : "",
-    });
     const result = await api(url);
+    if (!append) state.query = query;
     const items = Array.isArray(result.payments) ? result.payments : [];
     state.payments = append ? [...state.payments, ...items] : items;
     state.nextCursor = result.nextCursor || null;
@@ -119,6 +151,7 @@ async function loadPayments({ append = false } = {}) {
     if (!append) {
       state.payments = [];
       state.nextCursor = null;
+      state.query = null;
       tableWrap.hidden = true;
       summary.textContent = "Nie udało się pobrać danych.";
     }
@@ -132,6 +165,8 @@ filtersForm.addEventListener("submit", (event) => {
   loadPayments();
 });
 loadMore.addEventListener("click", () => loadPayments({ append: true }));
+yearInput.addEventListener("input", updateFilterHint);
+statusInput.addEventListener("change", updateFilterHint);
 
 // Po zapisie tabela jest renderowana od nowa, więc przycisk otwierający okno może zniknąć.
 // Wtedy przenosimy fokus na nagłówek listy, aby nie spadł na <body> (WCAG 2.4.3).
@@ -165,7 +200,7 @@ function configureDialog(id, prefix, submit, successText) {
       state.requestKey = null;
       dialog.close();
       form.reset();
-      await loadPayments();
+      await loadPayments({ reload: true });
       if (!message.classList.contains("error")) message.textContent = successText;
       restoreFocus();
     } catch (error) {
@@ -225,7 +260,7 @@ const assignmentDialog = configureDialog("assignment-dialog", "assignment", asyn
 }, "Przypisano rodzinę.");
 
 byId("open-payment").addEventListener("click", () => {
-  paymentDialog.form.elements.schoolYearId.value = yearInput.value;
+  paymentDialog.form.elements.schoolYearId.value = state.query?.schoolYearId ?? yearInput.value;
   paymentDialog.form.elements.receivedOn.value = localDate();
   paymentDialog.dialog.showModal();
 });
@@ -245,4 +280,31 @@ body.addEventListener("click", (event) => {
     assignmentDialog.form.querySelector(".context").textContent = `${payment.receivedOn} · ${payment.reference || "Bez opisu"} · ${formatCents(payment.netCents)}`;
     assignmentDialog.dialog.showModal();
   }
+});
+
+// #225: Wpłaty prowadzą role finansowe. Inne konta (np. przedstawiciel klasy) nie widzą
+// formularzy, tylko jeden komunikat. Sesja przed MFA dostaje z /api/access puste grants.
+const financeSections = [filtersForm.closest("section"), body.closest("section")];
+async function applyAccess() {
+  let grants = [];
+  let mfaRequired = false;
+  try {
+    const access = await api("/api/access");
+    grants = Array.isArray(access.grants) ? access.grants : [];
+    mfaRequired = access.mfaRequired === true;
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+    return;
+  }
+  if (hasFinancialAccess(grants)) return;
+  byId("open-payment").hidden = true;
+  for (const section of financeSections) section.hidden = true;
+  const notice = byId("access-notice");
+  if (mfaRequired) notice.textContent = describeApiError(403, "mfa_required");
+  notice.hidden = false;
+}
+byId("open-payment").hidden = true;
+applyAccess().then(() => {
+  if (!financeSections[0].hidden) byId("open-payment").hidden = false;
 });

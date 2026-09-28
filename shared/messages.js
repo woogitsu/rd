@@ -32,6 +32,8 @@ export const MESSAGES = Object.freeze({
   unsupported_media_type: "Niedozwolony typ danych lub pliku.",
   request_too_large: "Za dużo danych w jednym żądaniu.",
   service_unavailable: "Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę.",
+  retry_later: "Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę.",
+  timeout: "Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres.",
   storage_unavailable: "Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone.",
   conflict: "Dane zmieniły się w międzyczasie. Odśwież widok i spróbuj ponownie.",
   concurrent_version: "Ktoś inny zapisał zmianę w tym samym czasie. Odśwież widok.",
@@ -133,6 +135,13 @@ export const MESSAGES = Object.freeze({
   inconsistent_matches: "Dopasowania są niespójne. Odśwież widok.",
   invalid_csv: "Nie udało się odczytać pliku CSV.",
   invalid_csv_header: "Plik CSV ma niepoprawny nagłówek.",
+  cash_below_zero: "Ta operacja doprowadziłaby saldo kasy poniżej zera.",
+  invalid_reversal: "Tego przeniesienia nie można cofnąć w obecnym stanie.",
+  transfer_not_found: "Nie znaleziono przeniesienia kasa ↔ rachunek.",
+  transfer_already_reversed: "To przeniesienie zostało już cofnięte.",
+  opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
+  opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
+  not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",
@@ -171,6 +180,7 @@ export const MESSAGES = Object.freeze({
   non_finite_number: "Eksport zawiera niepoprawną liczbę.",
   unsafe_integer: "Eksport zawiera liczbę spoza obsługiwanego zakresu.",
   unsupported_value: "Eksport zawiera nieobsługiwaną wartość.",
+  invalid_format: "Wybierz format eksportu z listy (CSV albo JSON).",
   production_restore_requires_allow_production: "Odtworzenie na produkcji wymaga osobnego potwierdzenia.",
 
   // --- Dokumenty ---------------------------------------------------------------------------------
