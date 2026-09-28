@@ -20,16 +20,19 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { handlePgRequest, ROUTES } from '../src/pg/app.js';
-import { approve, createDraft, publish, submit } from '../src/pg/events.js';
+import {
+  approve, cancelTask, createDraft, createSignup, createTask, publish, submit, withdrawSignup,
+} from '../src/pg/events.js';
 import {
   approveMinutes, createMeeting, createMinutesVersion, createResolution, determineQuorum,
   recordAttendance, setMinutesVisibility, updateMeeting,
 } from '../src/pg/meetings.js';
 import {
-  approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
-  uploadPhotoFile, verifyPhoto,
+  addConsent, approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto,
+  submit as submitNews, uploadPhotoFile, verifyPhoto,
 } from '../src/pg/news.js';
 import { hashSecret } from '../src/auth.js';
+import { emailHash as suppressionEmailHash } from '../src/email/content.js';
 import { createSession } from '../src/pg/auth.js';
 import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
@@ -39,7 +42,7 @@ import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSes
 import {
   ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
   campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
-  pngBytes, statementDate, todoReason, visibleScopes, yearDate,
+  pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
 const PAST = '2020-01-01T00:00:00Z';
@@ -160,6 +163,31 @@ async function makeEvent(db, target, stage, { audience = 'internal', title } = {
   return { eventId: event.id };
 }
 
+// Zadanie wolontariatu (#142, #330): dostęp sprawdza ten sam canEdit(actor, event)
+// co szkic wydarzenia (EVENT_EDIT), więc fixture reużywa makeEvent w stanie 'draft'.
+async function makeEventTask(db, target, stage) {
+  const { eventId } = await makeEvent(db, target, 'draft');
+  const { task } = await createTask(db, fxAdmin, {
+    eventId, title: `Zadanie ${marker(target.key)}`, slotsNeeded: 3, isPublic: false,
+    idempotencyKey: nextKey('fx-task'),
+  });
+  if (stage === 'cancelled') {
+    await cancelTask(db, fxAdmin, { eventId, taskId: task.id, reason: 'Odwołanie syntetyczne (fixture)' });
+  }
+  return { eventId, taskId: task.id };
+}
+
+async function makeEventTaskSignup(db, target, stage) {
+  const { eventId, taskId } = await makeEventTask(db, target, 'draft');
+  const { signup } = await createSignup(db, fxAdmin, {
+    eventId, taskId, userId: fxBoard.userId, idempotencyKey: nextKey('fx-signup'),
+  });
+  if (stage === 'withdrawn') {
+    await withdrawSignup(db, fxAdmin, { eventId, taskId, signupId: signup.id });
+  }
+  return { eventId, taskId, signupId: signup.id };
+}
+
 async function makeMeeting(db, target, stage, { title, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
   const scopeMarker = marker(target.key);
   const { meeting } = await createMeeting(db, fxAdmin, {
@@ -179,6 +207,8 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
     });
     return { ...obj, resolutionId: resolution.id };
   }
+  // #93: przyjęta uchwała zebrania ogólnego (numer generowany) — kwota upoważnienia do wydatku.
+  if (stage === 'adoptedResolution' && !resolutionNumber) resolutionNumber = nextKey('UCHW-FX');
   if (stage === 'finalResolution' || resolutionNumber) {
     await recordAttendance(db, fxAdmin, {
       meetingId: meeting.id, userId: fxBoard.userId, capacity: 'board_member', votingEligible: true, present: true,
@@ -189,7 +219,7 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
       status: resolutionNumber ? 'adopted' : 'rejected', number: resolutionNumber,
       votesFor: resolutionNumber ? 1 : 0, votesAgainst: 0, votesAbstain: 0, quorumCheckId: quorumCheck.id,
     });
-    if (stage === 'finalResolution') return { ...obj, resolutionId: resolution.id };
+    if (stage === 'finalResolution' || stage === 'adoptedResolution') return { ...obj, resolutionId: resolution.id };
   }
   const { minutes } = await createMinutesVersion(db, fxAdmin, {
     idempotencyKey: nextKey('fx-minutes'), meetingId: meeting.id,
@@ -308,6 +338,23 @@ async function makeCampaign(ctx, target, stage) {
   return obj;
 }
 
+// Blokada aktywna (#94), do zdjęcia w macierzy uprawnień. Adres syntetyczny
+// świeży za każdym razem (webhook to jedyna droga zapisu — bez surowego INSERT).
+async function makeSuppression(ctx, _target, stage) {
+  const email = `${nextKey('fx-suppr')}@example.invalid`;
+  const emailHashValue = suppressionEmailHash(email);
+  await api(ctx, undefined, 'POST', '/api/email/webhooks/brevo',
+    { event: 'hard_bounce', email, id: nextKey('fx-suppr-evt'), ts_event: 1791187200 },
+    { Authorization: `Bearer ${ctx.fx.webhookSecret}` });
+  if (stage === 'active') return { emailHash: emailHashValue };
+  // Wniosek zgłoszony przez inną osobę niż każdy z testowanych aktorów
+  // (fxCookies.board = konto stałe 'u-fx-board', nigdy nie testowane w macierzy),
+  // żeby zatwierdzenie (release) dawało sukces niezależnie od tego, kto go zatwierdza.
+  const { json } = await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/suppressions/${emailHashValue}/release-request`,
+    { schoolYearId: YEAR_1, releaseReason: 'address_corrected' });
+  return { emailHash: emailHashValue, requestId: json.requestId };
+}
+
 async function makeReconciliation(ctx, target, stage) {
   const cookie = ctx.fxCookies.treasurer;
   const { json } = await api(ctx, cookie, 'POST', '/api/reconciliations', {
@@ -383,6 +430,12 @@ async function makeAdminTarget(ctx, stage) {
     const schoolYearId = nextKey('y-pusty');
     await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
     return { schoolYearId };
+  }
+  if (stage === 'dataRequest') {
+    // Rejestr żądań osób (#100) — cel dla przejścia stanu; gospodarstwo ogólnoszkolne (hh-1).
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',
+      { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' });
+    return { requestId: json.request.id };
   }
   throw new Error(`unknown admin fixture ${stage}`);
 }
@@ -464,6 +517,8 @@ async function makeOwnSession(ctx, { cookie }) {
 const MAKERS = {
   privacyNotice: (ctx, target, stage) => makePrivacyNotice(ctx, target, stage),
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
+  eventTask: (ctx, target, stage) => makeEventTask(ctx.db, target, stage),
+  eventTaskSignup: (ctx, target, stage) => makeEventTaskSignup(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
@@ -473,11 +528,26 @@ const MAKERS = {
     const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
     return { photoId: photo.id };
   },
+  // Zgoda do wycofania (#106): zdjęcie bez zidentyfikowanych osób nie wymaga
+  // zgody, ale trasa wycofania działa na dowolnym odwołaniu do dokumentu zgody.
+  consent: async (ctx) => {
+    const key = nextKey('fx-consent');
+    const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
+    const consentDocumentRef = `zgoda-${safeKey(key)}`.slice(0, 120);
+    await addConsent(ctx.db, fxAdmin, { photoId: photo.id, subjectNo: 1, subjectKind: 'adult', consentDocumentRef });
+    return { consentDocumentRef };
+  },
   document: async (ctx, target, kind) => {
     const classPart = kind === 'class' ? `&classId=${target.classId}` : '';
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', `/api/documents?kind=${kind}&schoolYearId=${target.schoolYearId}${classPart}`,
       pdfBytes(target.key), { 'Content-Type': 'application/pdf', 'Idempotency-Key': nextKey('fx-doc') });
     return { documentId: json.document.id };
+  },
+  // Para dokumentów tego samego rodzaju/roku/klasy — cel zastąpienia (issue #82).
+  documentPair: async (ctx, target, kind) => {
+    const original = await MAKERS.document(ctx, target, kind);
+    const replacement = await MAKERS.document(ctx, target, kind);
+    return { documentId: original.documentId, replacementDocumentId: replacement.documentId };
   },
   ledgerEntry: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
@@ -486,16 +556,40 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
-  // #207: kategoria świeża per przypadek — do dezaktywacji (nie może być
-  // współdzielonym `cat-in-<year>`, bo tamta jest używana przez inne trasy).
+  // #97: wydatek zapisany przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  ledgerExpense: async (ctx, target) => {
+    const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
+      schoolYearId: target.schoolYearId, direction: 'expense', amountCents: 1000, categoryId: `cat-out-${target.schoolYearId}`,
+      description: `Wydatek ${marker(target.key)}`, occurredOn: yearDate(target, '10-02'), method: 'bank',
+    }, withKey(nextKey('fx-ledger-exp')));
+    return { ledgerEntryId: json.entry.id };
+  },
+  // Świeża, aktywna kategoria wydatków wprost w bazie — współdzielona przez
+  // ledger.categoryDeactivate (#207, nie może być `cat-in-<year>`, bo tamta
+  // jest używana przez inne trasy), ledgerBudget.deactivateCategory /
+  // ledgerBudget.createLine (#107, bez linii preliminarza).
   ledgerCategory: async (ctx, target) => {
-    const id = nextKey('fx-ledger-cat');
+    const categoryId = nextKey('fx-cat');
     await ctx.db.query(
-      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
-       VALUES ($1, $2, 'income', $3, 'u-fx-admin')`,
-      [id, target.schoolYearId, `Kat ${marker(target.key)} ${id}`],
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ($1, $2, 'expense', $3, 'u-fx-admin')`,
+      [categoryId, target.schoolYearId, `Kategoria ${marker(target.key)} ${categoryId}`],
     );
-    return { categoryId: id };
+    return { categoryId };
+  },
+  // #107: kategoria z pierwszą wersją linii preliminarza.
+  budgetLine: async (ctx, target) => {
+    const categoryId = nextKey('fx-cat-line');
+    const lineId = nextKey('fx-line');
+    await ctx.db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ($1, $2, 'expense', $3, 'u-fx-admin')`,
+      [categoryId, target.schoolYearId, `Plan ${marker(target.key)} ${categoryId}`],
+    );
+    await ctx.db.query(
+      `INSERT INTO ledger_budget_lines (id, school_year_id, category_id, planned_cents, created_by, idempotency_key)
+       VALUES ($1, $2, $3, 10000, 'u-fx-admin', $4)`,
+      [lineId, target.schoolYearId, categoryId, nextKey('fx-line-key')],
+    );
+    return { lineId, categoryId };
   },
   // Bilans otwarcia roku celu wprost w bazie (#199); trasa poprawki wymaga jego istnienia.
   openingBalance: async (ctx, target) => {
@@ -507,8 +601,28 @@ const MAKERS = {
     return {};
   },
   campaign: makeCampaign,
+  suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
+  // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
+  // pod TARGETS.A, niezależnie od przekazanego targetu.
+  guardianOnly: (ctx) => makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guh')),
+  // Gospodarstwo świeże + jednorazowy link (token w treści odpowiedzi tylko
+  // przy wydaniu — do testu podglądu/formularza publicznego).
+  guardianUpdateLink: async (ctx) => {
+    const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guh'));
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+    return { token: json.token, linkId: json.linkId, guardianId };
+  },
+  // Wniosek `pending` świeży na przypadek — do zatwierdzenia/odrzucenia.
+  guardianUpdateRequest: async (ctx) => {
+    const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-gur'));
+    const { json: link } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+    const { json: submitted } = await api(ctx, null, 'POST', '/api/public/guardian-update',
+      { token: link.token, contactAllowed: true });
+    return { requestId: submitted.requestId, guardianId };
+  },
   adminTarget: (ctx, _target, stage) => makeAdminTarget(ctx, stage),
   importPlan: async (ctx, target) => {
     const payload = importPayload(target, nextKey('fximp'));
@@ -595,7 +709,8 @@ const WRITE_TABLES = [
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'ledger_opening_balance_adjustments', 'ledger_transfers',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
-  'email_webhook_events', 'email_suppressions', 'email_preferences_events', 'email_preview_sends',
+  'email_webhook_events', 'email_suppressions', 'email_suppression_release_requests', 'email_suppression_releases',
+  'email_preferences_events', 'email_preview_sends',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
   'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
@@ -864,6 +979,7 @@ const MODULE_SOURCES = {
   documents: ['../src/pg/routes/documents.js', '../src/documents.js'],
   ledger: ['../src/pg/routes/ledger.js'],
   'ledger-cash': ['../src/pg/routes/ledger-cash.js'],
+  'ledger-budget': ['../src/pg/routes/ledger-budget.js'],
   'ledger-cost-centers': ['../src/pg/routes/ledger-cost-centers.js'],
   email: ['../src/pg/routes/email.js'],
   news: ['../src/pg/routes/news.js', '../src/pg/news.js'],
@@ -877,6 +993,7 @@ const MODULE_SOURCES = {
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
   representative: ['../src/pg/routes/representative.js'],
+  'guardian-updates': ['../src/pg/routes/guardian-updates.js'],
   'privacy-notice': ['../src/pg/routes/privacy-notice.js'],
   board: ['../src/pg/routes/board.js'],
 };

@@ -239,7 +239,23 @@ async function statusView(executor, schoolYearId) {
     checklist,
     missingChecklistItems: checklist.filter((entry) => !entry.confirmed).map((entry) => entry.item),
     balance: balanceView(closure, live),
+    // #97: informacja przed zamknięciem roku — wydatki bez weryfikacji drugiej
+    // osoby lub zakwestionowane. Nie blokuje zamknięcia (D-08).
+    expenseReviews: await expenseReviewSummary(executor, schoolYearId),
   };
+}
+
+async function expenseReviewSummary(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT s.review_status, count(*) AS entry_count, COALESCE(sum(e.net_amount_cents), 0) AS net_cents
+       FROM ledger_entry_review_status s JOIN ledger_entry_net e ON e.id = s.ledger_entry_id
+      WHERE s.school_year_id = $1 AND e.net_amount_cents > 0 AND s.review_status <> 'verified'
+      GROUP BY s.review_status`,
+    [schoolYearId],
+  );
+  const pick = (status) => rows.find((row) => row.review_status === status);
+  const view = (row) => ({ count: toSafeInteger(row?.entry_count ?? 0), netCents: toSafeInteger(row?.net_cents ?? 0) });
+  return { unverified: view(pick('unverified')), questioned: view(pick('questioned')) };
 }
 
 async function requireYear(executor, schoolYearId) {
