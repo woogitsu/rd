@@ -66,6 +66,13 @@ async function legacyDb() {
     'SELECT count(*)::int AS n FROM role_grants WHERE class_id IS NOT NULL AND school_year_id IS NULL',
   )).rows[0].n;
   await db.exec(migrations.find((item) => item.name === BACKFILL).sql);
+  // Ten test odtwarza stan „przed 0022” tylko na czas wstawiania danych
+  // legacy (klasa bez roku) i samej migracji 0022. API pod testem (zebrania,
+  // families.js, export.js…) ma działać na PEŁNYM, bieżącym schemacie — więc
+  // dopinamy migracje nowsze niż 0022 (np. 0035_student_guardians_current.sql,
+  // #157), inaczej trasy zależne od nowszych widoków/funkcji dostają 42P01
+  // (undefined_table) niezwiązane z tym, co ten test faktycznie sprawdza.
+  for (const migration of migrations.filter((item) => item.name > BACKFILL)) await db.exec(migration.sql);
   return { db, env: { db }, cookies, nullBefore };
 }
 
