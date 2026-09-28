@@ -13,6 +13,10 @@ export const PANELS = Object.freeze([
   { id: "families", href: "/families/", label: "Rodziny", roles: ["admin", "board", "representative"] },
   { id: "panel", href: "/panel/", label: "Wpłaty", roles: ["admin", "board", "treasurer"] },
   { id: "ledger", href: "/ledger/", label: "Księga", roles: ["admin", "board", "treasurer"] },
+  // Role z EDITOR_ROLES w email/core.js (i src/pg/routes/email.js): zarząd + skarbnik.
+  { id: "email", href: "/email/", label: "Kampanie e-mail", roles: ["board", "treasurer"] },
+  // Role z WRITE_ROLES w reconciliation/core.js (i src/pg/routes/reconciliation.js).
+  { id: "reconciliation", href: "/reconciliation/", label: "Uzgodnienia wyciągu", roles: ["admin", "board", "treasurer"] },
   { id: "print", href: "/print/", label: "Kartki", roles: ["admin", "board", "representative"] },
   { id: "events", href: "/events/", label: "Wydarzenia", roles: ["admin", "board", "representative"] },
   { id: "meetings", href: "/meetings/", label: "Zebrania", roles: ["admin", "board", "audit", "representative"] },
