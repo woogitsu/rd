@@ -187,6 +187,12 @@ ${table([['Kontrola'], ['Wynik'], ['Wartości']], checkRows, 'Brak kontroli.')}
 <h2>2. Przychody i wydatki według kategorii</h2>
 ${table([['Rodzaj'], ['Kategoria'], ['Wpisy', 'num'], ['Kwota pierwotna', 'num'], ['Korekty', 'num'], ['Netto', 'num']],
     categoryRows, 'Brak kategorii w tym roku.')}
+${report.budgetExecution ? `
+<h2>2a. Preliminarz a wykonanie</h2>
+<p>${adoptionText(report.budgetExecution.adoption)}</p>
+${budgetExecutionTable(report.budgetExecution)}
+<p class="meta">Wykonanie to suma netto wpisów (po korektach); „poza planem” — kategoria z wpisami bez linii preliminarza.</p>
+` : ''}
 
 <h2>3. Wydatki powyżej 3000 EUR</h2>
 ${table([['Data'], ['Kategoria'], ['Opis'], ['Kwota', 'num'], ['Netto', 'num'], ['Uchwała'], ['Zgodność z przyjętą uchwałą']],
@@ -208,4 +214,38 @@ ${table([['Data wyciągu'], ['Status'], ['Saldo wyciągu', 'num'], ['Saldo księ
 </body>
 </html>
 `;
+}
+
+// --- Preliminarz a wykonanie (#107): wspólne dla raportu KR (sekcja 2a) i wydruku
+// src/pg/budget-report.js. Brak planu to „—”, nie „0,00 EUR”.
+
+const optionalMoney = (cents) => (cents === null || cents === undefined ? '—' : e(formatEur(cents)));
+
+function percentText(value) {
+  return value === null || value === undefined ? '—' : `${e(String(value).replace('.', ','))}%`;
+}
+
+// Wiersze tabeli: kategoria, plan przyjęty, plan bieżący, wykonanie, różnica, %.
+export function budgetExecutionRows(items) {
+  return items.map((item) => {
+    const flag = item.overBudget ? ' class="flag"' : '';
+    const name = `${e(item.categoryName)}${item.active ? '' : ' <span class="meta">(wyłączona)</span>'}${item.outsidePlan ? ' <span class="flag">poza planem</span>' : ''}`;
+    return `<tr><td>${e(DIRECTION[item.direction] ?? item.direction)}</td><td>${name}</td>`
+      + `<td class="num">${optionalMoney(item.adoptedPlanCents)}</td><td class="num">${optionalMoney(item.currentPlanCents)}</td>`
+      + `<td class="num"><span${flag}>${optionalMoney(item.executedNetCents)}</span></td>`
+      + `<td class="num">${optionalMoney(item.differenceCents)}</td><td class="num">${percentText(item.executionPercent)}</td></tr>`;
+  });
+}
+
+export function budgetExecutionTable(execution) {
+  const rows = budgetExecutionRows(execution.items);
+  if (!rows.length) return '<p class="empty">Brak preliminarza i wpisów w tym roku.</p>';
+  return `<table><thead><tr><th>Rodzaj</th><th>Kategoria</th><th class="num">Plan przyjęty</th><th class="num">Plan bieżący</th>`
+    + `<th class="num">Wykonanie netto</th><th class="num">Różnica</th><th class="num">%</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+}
+
+export function adoptionText(adoption) {
+  if (!adoption) return 'Preliminarz nie został jeszcze zapisany jako przyjęty przez zebranie.';
+  const resolution = adoption.resolutionNumber ? `, uchwała ${e(adoption.resolutionNumber)}` : ', bez uchwały w systemie';
+  return `Plan przyjęty: ${e(formatDate(adoption.adoptedOn))}${resolution}.`;
 }

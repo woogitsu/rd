@@ -631,6 +631,62 @@ export const ROUTE_MATRIX = Object.freeze([
     }),
   },
 
+  // ---------- preliminarz i kategorie (#107) ----------
+  // Zapis kategorii i linii: role finansowe z MFA (jak księga); przyjęcie preliminarza: wyłącznie zarząd.
+  {
+    id: 'ledgerBudget.createCategory', module: 'ledger-budget', method: 'POST', path: '/api/ledger/categories',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/ledger/categories', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, direction: 'expense', name: `Kat ${safeKey(key).slice(-60)}` },
+    }),
+  },
+  {
+    id: 'ledgerBudget.deactivateCategory', module: 'ledger-budget', method: 'POST', path: '/api/ledger/categories/:categoryId/deactivation',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/categories/${obj.categoryId}/deactivation`, headers: withKey(key), body: { reason: 'Wyłączenie syntetyczne' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.createLine', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },
+    build: ({ target, obj, key }) => ({
+      path: '/api/ledger/budget', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, categoryId: obj.categoryId, plannedCents: 10000 },
+    }),
+  },
+  {
+    id: 'ledgerBudget.reviseLine', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget/:lineId/revisions',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'budgetLine' },
+    build: ({ obj, key }) => ({
+      path: `/api/ledger/budget/${obj.lineId}/revisions`, headers: withKey(key), body: { plannedCents: 9000, reason: 'Zmiana syntetyczna' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.adopt', module: 'ledger-budget', method: 'POST', path: '/api/ledger/budget/adoptions',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target, key }) => ({
+      path: '/api/ledger/budget/adoptions', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, adoptedOn: yearDate(target, '10-15'), note: 'Przyjęcie syntetyczne' },
+    }),
+  },
+  {
+    id: 'ledgerBudget.history', module: 'ledger-budget', method: 'GET', path: '/api/ledger/budget/history?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/ledger/budget/history?schoolYearId=${target.schoolYearId}` }),
+    contains: () => ['W1'],
+  },
+  {
+    id: 'ledgerBudget.execution', module: 'ledger-budget', method: 'GET', path: '/api/ledger/budget/execution?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    needs: [['budgetLine', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/ledger/budget/execution?schoolYearId=${target.schoolYearId}` }),
+    contains: () => ['W1'],
+  },
+
   // ---------- kasa i rachunek (#199) ----------
   // Przeniesienia i odczyt: admin/zarząd/skarbnik z MFA, przydział bez klasy w roku (jak księga).
   // Bilans otwarcia i jego poprawki: wyłącznie zarząd z MFA (docs/LEDGER.md).

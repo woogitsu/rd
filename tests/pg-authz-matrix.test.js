@@ -375,6 +375,30 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // #107: świeża, aktywna kategoria wydatków (bez linii preliminarza) wprost w bazie.
+  ledgerCategory: async (ctx, target) => {
+    const categoryId = nextKey('fx-cat');
+    await ctx.db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ($1, $2, 'expense', $3, 'u-fx-admin')`,
+      [categoryId, target.schoolYearId, `Kategoria ${marker(target.key)} ${categoryId}`],
+    );
+    return { categoryId };
+  },
+  // #107: kategoria z pierwszą wersją linii preliminarza.
+  budgetLine: async (ctx, target) => {
+    const categoryId = nextKey('fx-cat-line');
+    const lineId = nextKey('fx-line');
+    await ctx.db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ($1, $2, 'expense', $3, 'u-fx-admin')`,
+      [categoryId, target.schoolYearId, `Plan ${marker(target.key)} ${categoryId}`],
+    );
+    await ctx.db.query(
+      `INSERT INTO ledger_budget_lines (id, school_year_id, category_id, planned_cents, created_by, idempotency_key)
+       VALUES ($1, $2, $3, 10000, 'u-fx-admin', $4)`,
+      [lineId, target.schoolYearId, categoryId, nextKey('fx-line-key')],
+    );
+    return { lineId, categoryId };
+  },
   // Bilans otwarcia roku celu wprost w bazie (#199); trasa poprawki wymaga jego istnienia.
   openingBalance: async (ctx, target) => {
     await ctx.db.query(
@@ -729,6 +753,7 @@ const MODULE_SOURCES = {
   documents: ['../src/pg/routes/documents.js', '../src/documents.js'],
   ledger: ['../src/pg/routes/ledger.js'],
   'ledger-cash': ['../src/pg/routes/ledger-cash.js'],
+  'ledger-budget': ['../src/pg/routes/ledger-budget.js'],
   email: ['../src/pg/routes/email.js'],
   news: ['../src/pg/routes/news.js', '../src/pg/news.js'],
   admin: ['../src/pg/routes/admin.js'],

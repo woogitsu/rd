@@ -4,6 +4,7 @@ import {
   METHOD_LABELS,
   buildLedgerUrl,
   buildNextLedgerUrl,
+  budgetExecutionRow,
   buildOverviewUrl,
   formatCents,
   isValidId,
@@ -87,13 +88,17 @@ function renderEntries() {
   updateControls();
 }
 
+// #107: preliminarz bieżący a wykonanie netto (GET /api/ledger/budget/execution).
 function renderBudget(lines) {
-  const rows = lines.map((line) => {
+  const rows = lines.map((item) => {
+    const view = budgetExecutionRow(item);
     const row = document.createElement("tr");
-    row.append(textCell(String(line.categoryName ?? "Bez kategorii")));
-    const type = textCell(DIRECTION_LABELS[line.direction] ?? "—");
-    type.className = line.direction === "expense" ? "expense" : "income";
-    row.append(type, textCell(String(line.note ?? "—")), textCell(formatCents(line.plannedCents), "amount"));
+    row.append(textCell(view.categoryName));
+    const type = textCell(DIRECTION_LABELS[view.direction] ?? "—");
+    type.className = view.direction === "expense" ? "expense" : "income";
+    row.append(type, textCell(view.planned, "amount"),
+      textCell(view.executed, view.overBudget ? "amount over-budget" : "amount"), textCell(view.percent, "amount"),
+      textCell(view.note || "—"));
     return row;
   });
   budgetBody.replaceChildren(...rows);
@@ -166,14 +171,14 @@ async function loadOverview({ reload = false } = {}) {
     const year = query.schoolYearId;
     const [summaryData, budgetData, categoriesData] = await Promise.all([
       api(buildOverviewUrl("summary", year)),
-      api(buildOverviewUrl("budget", year)),
+      api(buildOverviewUrl("budget/execution", year)),
       api(buildOverviewUrl("categories", year)),
       loadEntries({ query }),
     ]);
     state.query = query;
     state.categories = Array.isArray(categoriesData.categories) ? categoriesData.categories : [];
     renderSummary(summaryData.summary ?? {});
-    renderBudget(Array.isArray(budgetData.budget) ? budgetData.budget : []);
+    renderBudget(Array.isArray(budgetData.execution?.items) ? budgetData.execution.items : []);
     overview.hidden = false;
   } catch (error) {
     state.entries = [];

@@ -24,6 +24,7 @@ import { toSafeInteger } from './payments.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
+import { buildBudgetExecution } from './ledger-budget.js';
 
 export const name = 'reconciliation';
 
@@ -990,6 +991,9 @@ export async function buildAuditReport(executor, schoolYearId) {
     netCents: toSafeInteger(row.net_cents),
   }));
 
+  // #107: preliminarz (przyjęty i bieżący) a wykonanie netto per kategoria.
+  const budgetExecution = await buildBudgetExecution(executor, schoolYearId);
+
   // Widok z 0009_meetings.sql; bez niego zgodność z uchwałą pozostaje niesprawdzona.
   const linksView = (await executor.query("SELECT to_regclass('ledger_resolution_links') IS NOT NULL AS present")).rows[0];
   const hasLinks = Boolean(linksView?.present);
@@ -1081,6 +1085,7 @@ export async function buildAuditReport(executor, schoolYearId) {
     generatedAt: new Date().toISOString(),
     balance,
     categories,
+    budgetExecution,
     largeExpenseThresholdCents: LARGE_EXPENSE_CENTS,
     largeExpenses,
     corrections,

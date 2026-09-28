@@ -93,6 +93,13 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
+| `POST /api/ledger/categories` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #107; nazwa zajęta: 409 `category_exists` |
+| `POST /api/ledger/categories/:categoryId/deactivation` | jak wyżej, rok kategorii | tak | 403 | #107; wpis historii z powodem; już wyłączona: 409 `category_inactive` |
+| `POST /api/ledger/budget` | jak wyżej | tak | 403 | #107; pierwsza wersja linii; kolejna: 409 `budget_line_exists` |
+| `POST /api/ledger/budget/:lineId/revisions` | jak wyżej, rok linii | tak | 403 | #107; nowa wersja z `supersedes_id`; nieaktualna wersja lub równoległa rewizja: 409 `budget_line_superseded` |
+| `POST /api/ledger/budget/adoptions` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #107; admin i skarbnik: 403; fotografia bieżących wersji linii, opcjonalnie z uchwałą zebrania ogólnego |
+| `GET /api/ledger/budget/history?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #107; wszystkie wersje linii i przyjęcia |
+| `GET /api/ledger/budget/execution?schoolYearId=:year` | jak wyżej | tak | 403 | #107; plan vs wykonanie, `format` = json, csv albo html; KR widzi zestawienie w raporcie (D-09) |
 | `GET /api/ledger/transfers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #199 |
 | `POST /api/ledger/transfers` | jak wyżej | tak | 403 | #199; przeniesienie kasa ↔ rachunek, storno jako nowy wpis |
 | `GET /api/ledger/opening-balance?schoolYearId=:year` | jak wyżej | tak | 403 | #199 |
