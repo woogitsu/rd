@@ -6,8 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { unzipSync, zipSync, strToU8 } from 'fflate';
-import { readSheet } from 'read-excel-file/node';
-import { readXlsxRows, repackXlsxStored, XlsxReadError } from '../import/xlsx.js';
+import readXlsxFileNode, { readSheet } from 'read-excel-file/node';
+import { readXlsxRows, readXlsxSheets, repackXlsxStored, XlsxReadError } from '../import/xlsx.js';
 
 const WORKER_THRESHOLD = 524288; // fflate: su < 524288 → inflateSync, inaczej worker
 const HEADER = ['Uczeń', 'Klasa', 'Opiekun 1', 'E-mail 1', 'Opiekun 2', 'E-mail 2', 'ID rodziny', 'Uwagi'];
@@ -52,6 +52,26 @@ function buildXlsx(rows, { sharedStrings = false } = {}) {
   if (sharedStrings) {
     files['xl/sharedStrings.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">${strings.map((s) => `<si><t>${escapeXml(s)}</t></si>`).join('')}</sst>`);
   }
+  const zipped = zipSync(files, { level: 6 });
+  return zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength);
+}
+
+// Skoroszyt z kilkoma arkuszami (#88: „Instrukcja” przed danymi uczniów).
+function buildXlsxMultiSheet(sheets) {
+  const inlineRows = (rows) => rows.map((row, r) =>
+    `<row r="${r + 1}">${row.map((value, c) => (value === '' ? '' : `<c r="${column(c)}${r + 1}" t="inlineStr"><is><t>${escapeXml(String(value))}</t></is></c>`)).join('')}</row>`).join('');
+  const sheetEntries = sheets.map((_, i) => `<sheet name="${escapeXml(sheets[i].name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('');
+  const relEntries = sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('');
+  const typeOverrides = sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
+  const files = {
+    '[Content_Types].xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${typeOverrides}</Types>`),
+    '_rels/.rels': strToU8('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
+    'xl/workbook.xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetEntries}</sheets></workbook>`),
+    'xl/_rels/workbook.xml.rels': strToU8(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relEntries}</Relationships>`),
+  };
+  sheets.forEach((sheet, i) => {
+    files[`xl/worksheets/sheet${i + 1}.xml`] = strToU8(`<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${inlineRows(sheet.rows)}</sheetData></worksheet>`);
+  });
   const zipped = zipSync(files, { level: 6 });
   return zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength);
 }
@@ -124,4 +144,28 @@ test('uszkodzony plik daje polski komunikat zamiast wyjątku biblioteki', async 
   });
   const noSheet = zipSync({ 'a.xml': strToU8('<a/>') }, { level: 0 });
   await assert.rejects(readXlsxRows(noSheet.buffer), /Nie udało się odczytać arkusza \.xlsx/);
+});
+
+// --- #88: wybór arkusza — plik może mieć arkusz „Instrukcja” przed danymi ---
+
+test('readXlsxSheets lists every sheet with its own rows, in workbook order', async () => {
+  const original = buildXlsxMultiSheet([
+    { name: 'Instrukcja', rows: [['Nie wypełniaj tego arkusza'], ['Dane uczniów są w arkuszu „Uczniowie 1A”.']] },
+    { name: 'Uczniowie 1A', rows: [HEADER.slice(0, 6), ['Ala Testowa', '1A', 'Anna Testowa', 'anna@example.invalid', '', '']] },
+    { name: 'Uczniowie 2B', rows: [HEADER.slice(0, 6), ['Jan Testowy', '2B', 'Piotr Testowy', 'piotr@example.invalid', '', '']] },
+  ]);
+  const sheets = await readXlsxSheets(original, (buf) => readXlsxFileNode(Buffer.from(buf)));
+  assert.deepEqual(sheets.map((s) => s.name), ['Instrukcja', 'Uczniowie 1A', 'Uczniowie 2B']);
+  assert.equal(sheets[1].rows[1][0], 'Ala Testowa');
+  assert.equal(sheets[2].rows[1][0], 'Jan Testowy');
+  // Wybór drugiego arkusza używa danych już wczytanych — bez ponownego odczytu pliku.
+  assert.notEqual(sheets[1].rows, sheets[2].rows);
+});
+
+test('readXlsxSheets on a single-sheet file returns exactly one entry', async () => {
+  const original = buildXlsx(syntheticRows(3));
+  const sheets = await readXlsxSheets(original, (buf) => readXlsxFileNode(Buffer.from(buf)));
+  assert.equal(sheets.length, 1);
+  assert.equal(sheets[0].name, 'Uczniowie');
+  assert.equal(sheets[0].rows.length, 4);
 });
