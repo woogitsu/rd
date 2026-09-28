@@ -108,9 +108,10 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
     [studentId, householdId, `Uczennica ${marker(target.key)}`]);
   await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)',
     [studentId, guardianId]);
+  const enrollmentId = `${householdId}-e`;
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
-    [`${householdId}-e`, studentId, target.classId, target.schoolYearId]);
-  return { householdId, guardianId, studentId };
+    [enrollmentId, studentId, target.classId, target.schoolYearId]);
+  return { householdId, guardianId, studentId, enrollmentId };
 }
 
 async function seedFixtureSessions(db) {
@@ -294,6 +295,12 @@ async function makeAdminTarget(ctx, stage) {
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations',
       { email: `${userId}@example.invalid`, role: 'board', schoolYearId: YEAR_1 });
     return { invitationId: json.invitation.id };
+  }
+  if (stage === 'emptySchoolYear') {
+    // Rok bez klas (#78) — cel dla tworzenia klas; nigdy rok 1 aktorów macierzy.
+    const schoolYearId = nextKey('y-pusty');
+    await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
+    return { schoolYearId };
   }
   throw new Error(`unknown admin fixture ${stage}`);
 }
@@ -740,6 +747,7 @@ const MODULE_SOURCES = {
   'year-close': ['../src/pg/routes/year-close.js'],
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
+  representative: ['../src/pg/routes/representative.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń
