@@ -18,6 +18,8 @@ export const MESSAGES = Object.freeze({
   invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
   // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
   minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
+  // --- Tryb tylko do odczytu (#143) ------------------------------------------------
+  read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
@@ -147,6 +149,7 @@ export const MESSAGES = Object.freeze({
   invalid_effective_on: "Podaj poprawną datę.",
   closing_balance_out_of_range: "Saldo zamknięcia jest poza dozwolonym zakresem.",
   next_year_opening_balance_exists: "Bilans otwarcia następnego roku już istnieje.",
+  category_not_found: "Nie znaleziono kategorii księgi.",
   difference_requires_note: "Różnica wymaga wpisania wyjaśnienia.",
   reconciliation_not_found: "Nie znaleziono uzgodnienia.",
   reconciliation_confirmed: "Uzgodnienie jest już potwierdzone i nie można go zmienić.",
@@ -230,6 +233,7 @@ export const MESSAGES = Object.freeze({
   invalid_replacement_document: "Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę.",
   document_status_replacement_not_active: "Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny.",
   document_status_conflict: "Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok.",
+  upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
   // --- Wydarzenia -------------------------------------------------------------------------------
   invalid_event_id: "Niepoprawny identyfikator wydarzenia.",
@@ -285,6 +289,9 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
+  preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
+  sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).

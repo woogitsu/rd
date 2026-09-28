@@ -390,6 +390,17 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // #207: kategoria świeża per przypadek — do dezaktywacji (nie może być
+  // współdzielonym `cat-in-<year>`, bo tamta jest używana przez inne trasy).
+  ledgerCategory: async (ctx, target) => {
+    const id = nextKey('fx-ledger-cat');
+    await ctx.db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+       VALUES ($1, $2, 'income', $3, 'u-fx-admin')`,
+      [id, target.schoolYearId, `Kat ${marker(target.key)} ${id}`],
+    );
+    return { categoryId: id };
+  },
   // Bilans otwarcia roku celu wprost w bazie (#199); trasa poprawki wymaga jego istnienia.
   openingBalance: async (ctx, target) => {
     await ctx.db.query(
@@ -482,7 +493,7 @@ const WRITE_TABLES = [
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'ledger_opening_balance_adjustments', 'ledger_transfers',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
-  'email_webhook_events', 'email_suppressions',
+  'email_webhook_events', 'email_suppressions', 'email_preview_sends',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
@@ -506,6 +517,10 @@ async function matrixContext(group = 'main') {
       const env = {
         db, storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
         BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, ...FAST_SCRYPT,
+        // Wysyłka testowa (#104): bramka bez sieci wyłączona, transport wstrzyknięty
+        // (nigdy nie łączy się z siecią), adres z listy technicznej Rady.
+        EMAIL_SENDING_ENABLED: 'true', EMAIL_PREVIEW_RECIPIENTS: 'fx-preview@rada.example.invalid',
+        emailTransport: { send: async () => ({ messageId: 'fx-preview-message' }) },
       };
       await seedBase(db);
       const ctx = { db, env, cache: new Map(), fxCookies: await seedFixtureSessions(db), checklistOpen: [...CHECKLIST_OPEN] };
@@ -755,6 +770,7 @@ const MODULE_SOURCES = {
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
   representative: ['../src/pg/routes/representative.js'],
+  board: ['../src/pg/routes/board.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń

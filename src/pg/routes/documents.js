@@ -20,8 +20,8 @@ import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { sha256Hex } from '../../storage.js';
 import {
-  ALLOWED_TYPES, declaredType, detectType, downloadFilename, maxUploadBytes, newObjectKey, readLimited, UPLOAD_PATH,
-  validateStructure,
+  ALLOWED_TYPES, declaredType, detectType, downloadFilename, maxUploadBytes, newObjectKey, readLimited,
+  tryAcquireUploadSlot, UPLOAD_PATH, validateStructure,
 } from '../../documents.js';
 
 const MAX_STATUS_BODY_BYTES = 4096;
@@ -273,6 +273,23 @@ async function upload(request, env, url, json) {
   if (!canAccessDocument(context, target)) return json({ error: 'forbidden' }, 403);
   if (!env.storage) return json({ error: 'storage_unavailable' }, 503);
 
+  // #185 pkt 3: limit współbieżnych uploadów NA PROCES, sprawdzony PRZED
+  // odczytem ciała (readLimited niżej) — piąty i kolejny równoczesny upload
+  // dostaje 503 od razu, bez buforowania jego bajtów.
+  const release = tryAcquireUploadSlot(env.maxConcurrentUploads);
+  if (!release) return json({ error: 'upload_busy' }, 503, { 'Retry-After': '2' });
+  try {
+    return await uploadBody(request, env, url, json, {
+      context, kind, schoolYearId, classId, linkedEntityType, linkedEntityId, idempotencyKey, target,
+    });
+  } finally {
+    release();
+  }
+}
+
+async function uploadBody(request, env, url, json, {
+  context, kind, schoolYearId, classId, linkedEntityType, linkedEntityId, idempotencyKey, target,
+}) {
   const limit = maxUploadBytes(env.documentMaxBytes);
   const declared = declaredType(request.headers.get('content-type'));
   if (!ALLOWED_TYPES[declared]) {
