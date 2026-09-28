@@ -219,19 +219,22 @@ async function loadAssignmentByKey(executor, key) {
   return rows[0] ?? null;
 }
 
-function encodeCursor(row) {
-  return btoa(JSON.stringify([row.received_on, row.id]))
+// Kursor wiąże rok szkolny i filtr zapytania, które go wydało (#192): dociągnięcie
+// strony z innym rokiem lub filtrem kończy się 400 invalid_cursor zamiast mieszać wiersze.
+function encodeCursor(row, scope) {
+  return btoa(JSON.stringify([row.received_on, row.id, scope.schoolYearId, scope.filter]))
     .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
-function decodeCursor(value) {
+function decodeCursor(value, scope) {
   if (!value) return null;
   if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new RequestError('invalid_cursor');
   try {
     const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
     const padding = '='.repeat((4 - (base64.length % 4)) % 4);
     const decoded = JSON.parse(atob(base64 + padding));
-    if (!Array.isArray(decoded) || decoded.length !== 2 || !validDate(decoded[0]) || !validId(decoded[1])) {
+    if (!Array.isArray(decoded) || decoded.length !== 4 || !validDate(decoded[0]) || !validId(decoded[1])
+      || decoded[2] !== scope.schoolYearId || decoded[3] !== scope.filter) {
       throw new Error();
     }
     return { receivedOn: decoded[0], id: decoded[1] };
@@ -293,7 +296,8 @@ async function listPayments(request, env, url, json) {
   if (!/^\d{1,3}$/.test(limitText)) throw new RequestError('invalid_limit');
   const limit = Number(limitText);
   if (limit < 1 || limit > 100) throw new RequestError('invalid_limit');
-  const cursor = decodeCursor(url.searchParams.get('cursor'));
+  const cursorScope = { schoolYearId, filter: status ?? '' };
+  const cursor = decodeCursor(url.searchParams.get('cursor'), cursorScope);
   await requireFinancialContext(request, env, schoolYearId);
 
   const values = [schoolYearId];
@@ -323,7 +327,7 @@ async function listPayments(request, env, url, json) {
   );
   const visibleRows = rows.slice(0, limit);
   const nextCursor = rows.length > limit && visibleRows.length
-    ? encodeCursor(visibleRows[visibleRows.length - 1])
+    ? encodeCursor(visibleRows[visibleRows.length - 1], cursorScope)
     : null;
   return json({ payments: visibleRows.map(paymentListItem), nextCursor });
 }

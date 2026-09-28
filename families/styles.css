@@ -1,3 +1,5 @@
+/* Atrybut hidden zawsze ukrywa element, także gdy reguła autora ustawia display (#192). */
+[hidden] { display: none !important; }
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#202124;background:#fff;font-synthesis:none}
 *{box-sizing:border-box}
 body{margin:0;background:#fff}
