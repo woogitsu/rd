@@ -192,6 +192,18 @@ const ALLOWED = {
     legacy: { status: 404, error: 'not_found' }, pg: { status: 401, error: 'unauthenticated' },
     reason: 'nowa trasa (#13), nieobecna w Workerze',
   },
+  'access representative (only assigned classes, no expired grant)': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: PostgreSQL dodaje pole hasActiveRole (ROLE_STATUS) do GET /api/access, nieobecne w Workerze',
+  },
+  'access admin': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: jak wyżej — hasActiveRole',
+  },
+  'access without grants': {
+    legacy: { status: 200 }, pg: { status: 200 },
+    reason: '#176: jak wyżej — hasActiveRole',
+  },
 };
 
 // #143: /api/session na PostgreSQL dokłada writeMode (tryb tylko do odczytu) —
