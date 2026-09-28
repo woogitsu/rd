@@ -304,7 +304,51 @@ Wycofanie na pustej bazie: usunięcie trzech tabel, funkcji
 `password_reset_token_guard` i przywrócenie poprzedniego ograniczenia; na
 bazie z kontami — tylko po kopii zapasowej (wszyscy stracą hasła). Okres
 przechowywania skrótów haseł wyłączonych kont i tokenów zależy od D-04.
+
+`0081_scope_and_email_consistency.sql` (issue #198, część 1) dodaje trzy
+złożone klucze obce `(class_id, school_year_id) -> classes(id, school_year_id)`
+(`role_grants`, `invitations`, `export_runs` — dotąd pilnowane tylko przez
+walidację API albo, dla `role_grants`, przez trigger `role_grant_year_freeze`
+z #201/0022) oraz unikalny indeks na `lower(btrim(email))` i CHECK wymuszający
+tę samą postać na `users.email` i `invitations.email` (dotąd `UNIQUE`
+rozróżniał wielkość liter — dwa konta różniące się tylko wielkością liter były
+możliwe, a logowanie po `lower(email)` po cichu wybierało starsze z nich).
+Skutki dla danych: migracja tylko dodaje ograniczenia (`NOT VALID` +
+`VALIDATE` w tej samej migracji, bo baza docelowa nie ma jeszcze prawdziwych
+danych rodzin — patrz `docs/RAILWAY_MIGRATION.md`); nie zmienia i nie usuwa
+żadnego wiersza. Przed zastosowaniem na bazie z realnymi danymi uruchom
+**tylko do odczytu** `DATABASE_URL=... node scripts/check-schema-consistency.mjs`
+— wypisuje liczby naruszeń każdej reguły bez identyfikatorów ani e-maili.
+Naruszenie (klasa spoza roku, duplikat konta po wielkości liter) rozstrzyga
+administrator PRZED migracją: duplikat e-maila — wyłączenie jednego konta
+(`disabled_at`) i przeniesienie przydziałów ról nowymi wierszami (0004 nie
+pozwala zmienić `user_id`); niespójna klasa/rok — poprawka danych albo
+cofnięcie wiersza. Bez tego `CREATE UNIQUE INDEX` i `VALIDATE CONSTRAINT`
+zatrzymają migrację czytelnym błędem zamiast cichego zapisania niespójności
+(spójnie z #179). Świadomie poza zakresem tej migracji: `news_photos.document_id`
+(#198, punkt 5) — wymaga rodzaju dokumentu przeznaczonego dla galerii, decyzja
+i zakres #96; osobna migracja i PR.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
+
+`0065_document_descriptions.sql` (issue #76) dodaje tytuł, kategorię, datę
+dokumentu i opcjonalny opis dla wpisów `documents` (samych `documents` nie
+rusza — pozostaje niezmienne, 0006). Nowa tabela `document_descriptions` jest
+dopisywana: zmiana tytułu/kategorii to zawsze NOWY wiersz (kolejny
+`revision_no`), nigdy edycja poprzedniego; trigger blokuje `UPDATE`/`DELETE`,
+a drugi trigger pilnuje, że `revision_no` jest kolejnym numerem po
+najnowszym istniejącym dla danego dokumentu. Kategoria to lista zamknięta
+(`faktura`, `potwierdzenie_przelewu`, `wyciag`, `protokol`, `uchwala`,
+`umowa`, `regulamin`, `sprawozdanie_rewizyjne`, `inne`) — założenie
+techniczne do zatwierdzenia przez zarząd i skarbnika, niezależne od `kind`
+dokumentu. Skutki dla danych: nowa, pusta tabela; istniejące dokumenty nie
+dostają wpisu opisu i panel pokazuje dla nich „Bez tytułu” (brak wpisu, nie
+błąd). **Poza zakresem tej migracji:** tabela nie ma jeszcze triggera
+zamrożenia roku szkolnego (`a0_year_freeze`/0036) — dodanie opisu do
+dokumentu z zamkniętego roku jest dziś możliwe; rozszerzenie
+`year_freeze_via_parent` na tę tabelę to osobny, świadomie odłożony PR (żeby
+wyjść od najnowszej wersji tej funkcji na `main` i nie powtórzyć incydentu z
+#279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch funkcji. Opis:
+[`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
 
 `0082_immutability_hardening.sql` (issue #204, część: punkty 1, 2 i 5 z
 propozycji) zamyka trzy furtki, przez które kilka faktów traktowanych jako

@@ -22,6 +22,23 @@ const skip = ADMIN_URL ? false : 'brak RD_TEST_PG_URL (wymaga prawdziwego Postgr
 let seq = 0;
 const key = (prefix) => `${prefix}-race-${++seq}-${Date.now()}`;
 
+// Odcina wszystkie połączenia do testowej bazy przed DROP DATABASE. Bez tego
+// jedno "zawieszone" połączenie (np. z openTransaction poniżej, jeśli błąd
+// zapytania nie zamknął klienta) zostawia sesję w stanie „idle in transaction
+// (aborted)”, DROP DATABASE czeka w nieskończoność na jej zakończenie, a za
+// nim cały proces `node --test` wisi bez końca. Limit czasu na samo
+// odcinanie, żeby błąd w tym kroku też nie zawiesił runnera.
+async function terminateOtherConnections(admin, name) {
+  await Promise.race([
+    admin.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+        WHERE datname = $1 AND pid <> pg_backend_pid()`,
+      [name],
+    ),
+    sleep(5000),
+  ]);
+}
+
 async function withDatabase(fn) {
   const name = `rd_race_${process.pid}_${Date.now()}`;
   const admin = new pg.Client({ connectionString: ADMIN_URL });
@@ -38,6 +55,11 @@ async function withDatabase(fn) {
     await fn(db, url.toString());
   } finally {
     await db.close();
+    try {
+      await terminateOtherConnections(admin, name);
+    } catch {
+      // Sprzątanie nie może zablokować DROP DATABASE poniżej — próbujemy mimo błędu.
+    }
     await admin.query(`DROP DATABASE IF EXISTS ${name}`);
     await admin.end();
   }
@@ -85,8 +107,16 @@ async function insertPayment(db, id, cents) {
 async function openTransaction(url, sql, params) {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
-  await client.query('BEGIN');
-  await client.query(sql, params);
+  try {
+    await client.query('BEGIN');
+    await client.query(sql, params);
+  } catch (error) {
+    // Zapytanie w transakcji się nie powiodło: połączenie zostaje w stanie
+    // „idle in transaction (aborted)”, jeśli go nie zamkniemy. Taki klient
+    // blokuje DROP DATABASE w withDatabase() i wiesza cały runner testów.
+    await client.end();
+    throw error;
+  }
   return {
     async commit() { await client.query('COMMIT'); await client.end(); },
   };
@@ -158,7 +188,29 @@ test('matching a ledger entry waits for an uncommitted match of its payment and 
   });
 });
 
-test('confirmation waits for an uncommitted correction of a matched entry and is refused', { skip }, async () => {
+// Poprzednia wersja tego testu zakładała, że bezpośredni INSERT korekty celu
+// z aktywnym powiązaniem w szkicu się powiedzie, a dopiero potwierdzenie
+// (confirm) wykryje niespójność i poczeka na niezatwierdzoną korektę. To się
+// nie zgadza z 0039 (postgres/migrations/0039_reconciliation_correction_guard.sql,
+// ledger_correction_guard/payment_correction_guard): trigger sprawdza aktywne
+// powiązanie w SZKICU zaraz po zablokowaniu wiersza celu (FOR UPDATE) i
+// odrzuca korektę natychmiast (`active_bank_match`), zanim jakikolwiek drugi
+// przebieg (np. confirm) w ogóle mógłby zobaczyć niezatwierdzony wiersz.
+// Innymi słowy: skoro powiązanie już istnieje i jest zatwierdzone (commit),
+// każda następna próba korekty tego samego celu — przez trasę (ledger.js:601,
+// payments.js:528) i przez bezpośredni INSERT — kończy się odmową w tej samej
+// transakcji, więc confirm() (src/pg/routes/reconciliation.js, funkcja
+// confirmReconciliation) nigdy nie może "czekać" na taką korektę: nie ma jak
+// jej otworzyć i zostawić otwartej. Rzeczywisty przeplot, przed którym broni
+// 0039, to więc odmowa korekty W MIEJSCU (bez oczekiwania) — sprawdzamy to tu
+// bezpośrednim INSERT-em z pominięciem trasy (jak w teście powyżej), żeby
+// kontrola triggera była dowiedziona niezależnie od trasy. Przeplot "drugi
+// zapis czeka na niezatwierdzoną korektę celu, a potem porównuje nowe netto"
+// jest już sprawdzony osobno w pierwszym teście tego pliku (na etapie
+// TWORZENIA powiązania, jedynym miejscu, w którym taki wyścig jest w ogóle
+// osiągalny) — nie osłabiamy więc tamtej asercji o odmowie, tylko przenosimy
+// ją tam, gdzie naprawdę występuje.
+test('correction of an actively matched entry is refused immediately by the trigger, so confirmation never races an in-flight one', { skip }, async () => {
   await withDatabase(async (db, url) => {
     const { cookie, board } = await seed(db);
     const call = (path, options = {}) => handlePgRequest(request(path, { cookie, ...options }), { db });
@@ -168,17 +220,22 @@ test('confirmation waits for an uncommitted correction of a matched entry and is
       method: 'POST', headers: { 'Idempotency-Key': key('m') }, body: { statementLineId: draft.lineId, ledgerEntryId: 'le-c' },
     });
     assert.equal(matched.status, 201);
-    const holder = await openTransaction(url, `INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason,
-      created_by, idempotency_key) VALUES ('corr-c', 'le-c', 2000, 'Korekta syntetyczna', 'u-treasurer', $1)`, [key('c')]);
-    const pending = call(`/api/reconciliations/${draft.id}/confirm`, {
+    // Bezpośredni INSERT, z pominięciem blokady w trasie: kontrola musi być w triggerze,
+    // a odmowa musi nastąpić bez oczekiwania na cokolwiek (brak drugiego przebiegu w locie).
+    await assert.rejects(
+      db.query(`INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
+        VALUES ('corr-c', 'le-c', 2000, 'Korekta syntetyczna', 'u-treasurer', $1)`, [key('c')]),
+      /active_bank_match/,
+    );
+    // Skoro korekta nigdy nie doszła do skutku, potwierdzenie nie ma na co czekać
+    // ani czego odmawiać: powiązanie zostaje spójne i confirm przechodzi normalnie.
+    const confirm = await call(`/api/reconciliations/${draft.id}/confirm`, {
       method: 'POST', cookie: board, body: { confirmationNote: 'Sprawdzone syntetycznie' },
     });
-    assert.equal(await waitsThenCommits(holder, pending), 'waiting');
-    const confirm = await pending;
-    assert.equal(confirm.status, 409);
+    assert.equal(confirm.status, 200);
     const body = await confirm.json();
-    assert.equal(body.error, 'inconsistent_matches');
-    assert.deepEqual(body.matches.map((m) => [m.lineAmountCents, m.targetNetCents]), [[5000, 3000]]);
-    assert.equal((await db.query('SELECT status FROM bank_reconciliations WHERE id = $1', [draft.id])).rows[0].status, 'draft');
+    assert.equal(body.reconciliation.status, 'confirmed');
+    assert.equal(
+      (await db.query('SELECT amount_cents FROM ledger_entries WHERE id = $1', ['le-c'])).rows[0].amount_cents, 5000);
   });
 });

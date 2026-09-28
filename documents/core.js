@@ -24,6 +24,20 @@ export const KIND_HINTS = Object.freeze({
   class: "Materiał jednej klasy. Wymaga identyfikatora klasy.",
 });
 
+// Lista zamknięta — zgodna z DOCUMENT_CATEGORIES w src/pg/routes/documents.js
+// (założenie techniczne do zatwierdzenia przez zarząd i skarbnika, issue #76).
+export const CATEGORY_LABELS = Object.freeze({
+  faktura: "Faktura",
+  potwierdzenie_przelewu: "Potwierdzenie przelewu",
+  wyciag: "Wyciąg bankowy",
+  protokol: "Protokół",
+  uchwala: "Uchwała",
+  umowa: "Umowa",
+  regulamin: "Regulamin",
+  sprawozdanie_rewizyjne: "Sprawozdanie dla Komisji Rewizyjnej",
+  inne: "Inne",
+});
+
 export const LINK_LABELS = Object.freeze({
   ledger_entry: "Wpis księgi",
   payment_entry: "Wpłata",
@@ -186,17 +200,22 @@ export function buildUploadRequest(meta, mime, idempotencyKey) {
   };
 }
 
-export function buildListUrl({ schoolYearId, kind = "", classId = "", limit = LIST_LIMIT, offset = 0 }) {
+export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", limit = LIST_LIMIT, offset = 0 }) {
   const year = String(schoolYearId ?? "").trim();
   if (!isSafeId(year)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
   if (kind && !Object.hasOwn(KIND_LABELS, kind)) throw new Error("Nieznany rodzaj dokumentu.");
   const cls = String(classId ?? "").trim();
   if (cls && !isSafeId(cls)) throw new Error("Niepoprawny identyfikator klasy.");
+  if (category && !Object.hasOwn(CATEGORY_LABELS, category)) throw new Error("Nieznana kategoria.");
+  const query = String(q ?? "").trim();
+  if (query.length > 200) throw new Error("Fraza wyszukiwania jest za długa.");
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Niepoprawny limit wyników.");
   if (!Number.isInteger(offset) || offset < 0) throw new Error("Niepoprawne przesunięcie listy.");
   const params = new URLSearchParams({ schoolYearId: year });
   if (kind) params.set("kind", kind);
   if (cls) params.set("classId", cls);
+  if (category) params.set("category", category);
+  if (query) params.set("q", query);
   params.set("limit", String(limit));
   if (offset) params.set("offset", String(offset));
   return `/api/documents?${params.toString()}`;
@@ -209,6 +228,36 @@ export function metadataUrl(id) {
 
 export function contentUrl(id) {
   return `${metadataUrl(id)}/content`;
+}
+
+export function descriptionUrl(id) {
+  return `${metadataUrl(id)}/description`;
+}
+
+function isValidCalendarDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+// Walidacja formularza opisu (issue #76). Zwraca { ok, value | error }.
+export function validateDescriptionInput(input) {
+  const title = String(input?.title ?? "").trim();
+  if (title.length < 3 || title.length > 200) return { ok: false, error: "Tytuł musi mieć od 3 do 200 znaków." };
+  const category = String(input?.category ?? "");
+  if (!Object.hasOwn(CATEGORY_LABELS, category)) return { ok: false, error: "Wybierz kategorię z listy." };
+  const documentDate = String(input?.documentDate ?? "").trim();
+  if (documentDate && !isValidCalendarDate(documentDate)) return { ok: false, error: "Niepoprawna data dokumentu." };
+  const description = String(input?.description ?? "").trim();
+  if (description.length > 1000) return { ok: false, error: "Opis może mieć najwyżej 1000 znaków." };
+  return { ok: true, value: { title, category, documentDate: documentDate || null, description: description || null } };
+}
+
+export function buildDescriptionRequest(id, meta, idempotencyKey) {
+  if (typeof idempotencyKey !== "string" || idempotencyKey.length < 8 || idempotencyKey.length > 128) {
+    throw new Error("Niepoprawny identyfikator operacji.");
+  }
+  return { method: "POST", url: descriptionUrl(id), body: meta, idempotencyKey };
 }
 
 export function makeIdempotencyKey(randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto)) {
@@ -239,7 +288,19 @@ export function normalizeDocument(doc) {
     linkedEntityId: doc?.linkedEntityId ? String(doc.linkedEntityId) : null,
     createdBy: doc?.createdBy ? String(doc.createdBy) : null,
     createdAt: doc?.createdAt ? String(doc.createdAt) : null,
+    // Tytuł/kategoria najnowszej wersji opisu (issue #76); null = brak wpisu.
+    title: doc?.title ? String(doc.title) : null,
+    category: Object.hasOwn(CATEGORY_LABELS, doc?.category) ? doc.category : null,
+    documentDate: doc?.documentDate ? String(doc.documentDate) : null,
   };
+}
+
+export function titleLabel(doc) {
+  return doc.title ?? "Bez tytułu";
+}
+
+export function categoryLabel(doc) {
+  return doc.category ? CATEGORY_LABELS[doc.category] : "—";
 }
 
 export function linkLabel(doc) {
@@ -259,6 +320,9 @@ export function metadataRows(rawDoc) {
     ["Rozmiar", doc.byteSize === null ? "—" : formatBytes(doc.byteSize)],
     ["SHA-256", doc.sha256 ?? "—"],
     ["Powiązanie", linkLabel(doc)],
+    ["Tytuł", titleLabel(doc)],
+    ["Kategoria", categoryLabel(doc)],
+    ["Data dokumentu", doc.documentDate ?? "—"],
     ["Dodał(a)", doc.createdBy ?? "—"],
     ["Dodano", formatDateTime(doc.createdAt)],
   ];
