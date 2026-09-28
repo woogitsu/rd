@@ -43,6 +43,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/payments` | admin, zarząd, skarbnik — rok 1 | tak | 403 | walidacja klucza i treści przed sprawdzeniem sesji |
 | `POST /api/payments/:paymentId/corrections` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | wpłata z innego roku: 403; nieistniejąca: 404 |
 | `POST /api/payments/:paymentId/assignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | jak wyżej |
+| `POST /api/payments/:paymentId/refunds` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | zwrot jako osobny, niezmienny zapis (#138); powiązanie z księgą o innym netto: 409 `ledger_correction_required` |
+| `POST /api/payments/:paymentId/reassignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | ponowne przypisanie jako osobne zdarzenie zamiast korekty do zera (#138); historia w `payment_reassignments` |
 | `GET /api/public/events` | publiczna | nie | — | tylko opublikowane rewizje, bez danych klas |
 | `GET /api/events?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wydarzenia własnej klasy | nie | 403 | lista przedstawiciela 1A nie zawiera 1B ani wydarzeń ogólnoszkolnych |
 | `POST /api/events` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | |
@@ -88,6 +90,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
+| `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
 | `GET /api/ledger/transfers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #199 |
 | `POST /api/ledger/transfers` | jak wyżej | tak | 403 | #199; przeniesienie kasa ↔ rachunek, storno jako nowy wpis |
 | `GET /api/ledger/opening-balance?schoolYearId=:year` | jak wyżej | tak | 403 | #199 |
