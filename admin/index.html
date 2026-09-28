@@ -122,13 +122,21 @@
         </form>
 
         <div class="token-box" id="token-box" hidden>
-          <p class="token-warning"><strong>Token jest widoczny tylko teraz.</strong> Przekaż go osobie zapraszanej osobnym, zaufanym kanałem. Nie wklejaj go do zgłoszeń ani czatów grupowych. Po zamknięciu tej ramki nie da się go odzyskać — w razie utraty wycofaj zaproszenie i utwórz nowe.</p>
+          <p class="token-warning"><strong>Link jest widoczny tylko teraz.</strong> Przekaż go osobie zapraszanej osobnym, zaufanym kanałem. Nie wklejaj go do zgłoszeń ani czatów grupowych. Po zamknięciu tej ramki nie da się go odzyskać — w razie utraty wycofaj zaproszenie i utwórz nowe.</p>
+          <p class="hint" id="invite-link-label">Link do przekazania (otwiera od razu widok przyjęcia zaproszenia)</p>
           <div class="token-row">
-            <code id="token-value"></code>
-            <button type="button" id="copy-token">Kopiuj</button>
-            <button type="button" id="hide-token">Zamknij</button>
+            <code id="invite-link" aria-labelledby="invite-link-label"></code>
+            <button type="button" id="copy-link">Kopiuj link</button>
           </div>
+          <details>
+            <summary>Sam kod zaproszenia (gdy link nie działa)</summary>
+            <div class="token-row">
+              <code id="token-value"></code>
+              <button type="button" id="copy-token">Kopiuj kod</button>
+            </div>
+          </details>
           <p class="hint" id="token-meta"></p>
+          <p><button type="button" id="hide-token">Zamknij</button></p>
         </div>
 
         <div class="table-wrap">

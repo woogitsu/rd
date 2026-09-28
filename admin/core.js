@@ -144,6 +144,14 @@ export function invitationPayload({ email, role, schoolYearId, classId, ttlHours
   return payload;
 }
 
+// #164: link gotowy do wklejenia zamiast samego tokenu — admin nie musi
+// ręcznie składać adresu ekranu logowania. Token trafia wyłącznie w część
+// „#…” (nigdy do zapytania), więc nie idzie do logów serwera ani historii
+// przeglądarki po wczytaniu (login/main.js usuwa go z paska adresu).
+export function invitationLink(token, origin) {
+  return `${origin}/login/#invite=${token}`;
+}
+
 // Indeks klas: id -> { name, schoolYearId, yearLabel } z odpowiedzi /api/admin/school-years.
 export function indexClasses(schoolYears = []) {
   const map = new Map();

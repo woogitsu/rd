@@ -77,8 +77,11 @@ async function route(request, env, url, json) {
     const data = await readJson(request);
     const token = stringField(data, 'token', 64);
     const password = passwordField(data, 'password');
+    // #164: powtórzenie jest opcjonalne w API (zgodność wsteczna), ale wymagane
+    // przez acceptInvitationWithPassword przy tworzeniu nowego konta.
+    const passwordRepeat = typeof data.passwordRepeat === 'string' ? data.passwordRepeat : undefined;
     const payload = await acceptInvitationWithPassword(env, {
-      token, password, displayName: data.displayName, clientIp: clientIp(request),
+      token, password, passwordRepeat, displayName: data.displayName, clientIp: clientIp(request),
     });
     return loginResponse(json, { session: payload.session, mfaRequired: payload.mfaRequired, mfaEnrolled: payload.mfaEnrolled, mfaRequiredByRole: payload.mfaRequiredByRole, created: payload.created }, 201);
   }

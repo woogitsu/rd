@@ -404,6 +404,27 @@ export const ROUTE_MATRIX = Object.freeze([
       path: `/api/payments/${obj.paymentId}/assignment`, headers: withKey(key), body: { householdId: 'hh-1' },
     }),
   },
+  {
+    // #138: zwrot pieniędzy rodzinie — osobny, niezmienny zapis (nie korekta).
+    id: 'payments.refund', module: 'payments', method: 'POST', path: '/api/payments/:paymentId/refunds',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'static',
+    object: { kind: 'payment', stage: 'recorded' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/refunds`, headers: withKey(key),
+      body: { amountCents: 1, refundedOn: yearDate(target, '10-02'), method: 'bank', reason: 'Zwrot syntetyczny' },
+    }),
+  },
+  {
+    // #138: ponowne przypisanie do gospodarstwa — niezmienne zdarzenie zamiast korekty do zera.
+    // fixture 'fresh': każda próba przenosi hh-1 -> hh-2, więc dzielony obiekt nie może się powtórzyć.
+    id: 'payments.reassignment', module: 'payments', method: 'POST', path: '/api/payments/:paymentId/reassignment',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'payment', stage: 'recorded' },
+    build: ({ obj, key }) => ({
+      path: `/api/payments/${obj.paymentId}/reassignment`, headers: withKey(key),
+      body: { householdId: 'hh-2', reason: 'Błędne przypisanie, korekta syntetyczna' },
+    }),
+  },
 
   // ---------- events (#12) ----------
   {
@@ -593,6 +614,20 @@ export const ROUTE_MATRIX = Object.freeze([
     object: { kind: 'ledgerEntry' },
     build: ({ obj, key }) => ({
       path: `/api/ledger/${obj.ledgerEntryId}/corrections`, headers: withKey(key), body: { amountCents: 1, reason: 'Korekta syntetyczna' },
+    }),
+  },
+  {
+    // #144: przeksięgowanie (storno + wpis zastępczy) — jednorazowe na wpis, więc fixture 'fresh'.
+    id: 'ledger.replacement', module: 'ledger', method: 'POST', path: '/api/ledger/:ledgerEntryId/replacement',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'ledgerEntry' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/ledger/${obj.ledgerEntryId}/replacement`, headers: withKey(key),
+      body: {
+        schoolYearId: target.schoolYearId, direction: 'income', amountCents: 100000, categoryId: ledgerCategory(target),
+        description: `Wpis zastępczy ${marker(target.key)}`, occurredOn: yearDate(target, '10-06'), method: 'bank',
+        reason: 'Zła kategoria, korekta syntetyczna',
+      },
     }),
   },
 
@@ -905,7 +940,8 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'login.invitationAccept', module: 'login', method: 'POST', path: '/api/invitations/accept', targets: ['-'],
     allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'invitationToken' },
-    build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password } }),
+    // #164: nowe konto wymaga zgodnego powtórzenia hasła (bez niego: 400 password_mismatch).
+    build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password, passwordRepeat: obj.password } }),
   },
   {
     id: 'login.passwordReset', module: 'login', method: 'POST', path: '/api/password/reset', targets: ['-'],

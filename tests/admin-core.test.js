@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildGrantsUrl, confirmationText, dateToExpiresAt, describeAuditEvent, errorMessage, grantPayload,
-  indexClasses, invitationPayload, isOwnLastAdminGrant, mfaResetConfirmation, passwordResetLink, scopeLabel,
+  indexClasses, invitationLink, invitationPayload, isOwnLastAdminGrant, mfaResetConfirmation, passwordResetLink,
+  scopeLabel,
 } from '../admin/core.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
@@ -37,6 +38,12 @@ test('invitationPayload normalises e-mail and validates ttl', () => {
   assert.throws(() => invitationPayload({ email: 'nope', role: 'board' }), /e-mail/);
   assert.throws(() => invitationPayload({ email: 'a@example.invalid', role: 'representative' }), /klasy/);
   assert.throws(() => invitationPayload({ email: 'a@example.invalid', role: 'board', ttlHours: '1000' }), /336/);
+});
+
+test('invitationLink (#164): gotowy link do widoku przyjęcia, token wyłącznie w części „#”', () => {
+  const link = invitationLink('A'.repeat(43), 'https://rd.example.invalid');
+  assert.equal(link, `https://rd.example.invalid/login/#invite=${'A'.repeat(43)}`);
+  assert.doesNotMatch(link, /\?/, 'token nie trafia do części zapytania (nie idzie do logów serwera)');
 });
 
 test('isOwnLastAdminGrant mirrors the server lockout rule', () => {
