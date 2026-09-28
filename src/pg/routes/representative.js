@@ -17,11 +17,10 @@
 // skarbnik, Komisja Rewizyjna, dyrekcja) dostaje 403 — to pulpit tej roli,
 // nie ogólny raport klas (ten już istnieje w families.js).
 //
-// Liczy po `enrollments` wprost (nie po widoku `enrollments_current`), bo ten
-// widok istnieje dopiero po migracji 0045 z osobnego, jeszcze niescalonego
-// PR (#86 — odejście ze szkoły). Po scaleniu #86 te trzy podzapytania warto
-// przełączyć na `enrollments_current`, żeby uczeń po odejściu również znikał
-// z tego pulpitu — patrz opis w PR.
+// Liczy po widoku `enrollments_current` (#86/#285), nie po `enrollments`
+// wprost — uczeń, który odszedł ze szkoły (ended_on w przeszłości), znika
+// z liczników i z listy „do kartki papierowej” tego pulpitu, tak samo jak
+// z listy klasy #95 i migawki kampanii. Follow-up po #294.
 
 import { loadAuthorizationContext } from '../authorization.js';
 
@@ -60,11 +59,11 @@ export async function handle(request, env, url, json) {
 
   const { rows } = await env.db.query(
     `SELECT c.id, c.name,
-            (SELECT count(*) FROM enrollments e WHERE e.class_id = c.id) AS student_count,
-            (SELECT count(DISTINCT sh.household_id) FROM enrollments e
+            (SELECT count(*) FROM enrollments_current e WHERE e.class_id = c.id) AS student_count,
+            (SELECT count(DISTINCT sh.household_id) FROM enrollments_current e
                JOIN student_households_current sh ON sh.student_id = e.student_id
               WHERE e.class_id = c.id) AS household_count,
-            (SELECT count(*) FROM enrollments e
+            (SELECT count(*) FROM enrollments_current e
               WHERE e.class_id = c.id AND NOT EXISTS (
                 SELECT 1 FROM student_guardians_current sg JOIN guardians g ON g.id = sg.guardian_id
                  WHERE sg.student_id = e.student_id AND sg.contact_allowed AND g.contact_allowed
