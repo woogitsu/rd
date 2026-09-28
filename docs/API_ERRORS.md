@@ -279,6 +279,7 @@ wpisów).
 | `unsupported_media_type` | Niedozwolony typ danych lub pliku. | Nie — popraw dane żądania. |
 | `unsupported_value` | Eksport zawiera nieobsługiwaną wartość. | Nie — popraw dane żądania. |
 | `unsupported_version` | Nieobsługiwana wersja danych importu. Odśwież stronę. | Nie — popraw dane żądania. |
+| `upload_busy` | Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `user_disabled` | Konto jest wyłączone. | Zależy od kontekstu (patrz moduł trasy). |
 | `user_not_found` | Nie znaleziono konta. | Nie — popraw dane żądania. |
 | `vote_record_required` | Wynik uchwały wymaga wszystkich trzech liczb głosów i ustalenia quorum. | Nie — popraw dane żądania. |

@@ -149,6 +149,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |
 | `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | |
+| `GET /api/admin/ops-status` | wyłącznie admin | tak | 403 | stan operacyjny: kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści (#149) |
 | `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
 | `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/reconciliations/:reconciliationId` | jak wyżej, rok uzgodnienia | tak | 403 | nieistniejące: 404; SR-01 |

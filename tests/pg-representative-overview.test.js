@@ -100,6 +100,38 @@ describe('pulpit przedstawiciela (#118)', () => {
     await db.close();
   });
 
+  test('uczeń, który odszedł (enrollments_current, #86/#285), nie jest liczony', async () => {
+    const db = await createTestDb();
+    await seedClass(db, { id: 'c-1a', schoolYearId: Y, name: '1A' });
+    const env = { db };
+    const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y }] });
+    await db.exec(`
+      INSERT INTO households (id) VALUES ('h-1'), ('h-2');
+      INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES
+        ('g-1', 'h-1', 'Anna', 'Testowa', 'g1@example.invalid', true),
+        ('g-2', 'h-2', 'Piotr', 'Testowy', NULL, true);
+      -- s-1: zostaje w klasie. s-2: odszedł (ended_on w przeszłości) -> nie liczy się nigdzie.
+      INSERT INTO students (id, household_id, first_name, last_name) VALUES
+        ('s-1', 'h-1', 'Ola', 'Testowa'),
+        ('s-2', 'h-2', 'Kuba', 'Inny');
+      INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES
+        ('s-1', 'g-1', true, true), ('s-2', 'g-2', true, true);
+      INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES
+        ('e-1', 's-1', 'c-1a', '${Y}'), ('e-2', 's-2', 'c-1a', '${Y}');
+      UPDATE enrollments SET ended_on = '2020-01-01', ended_reason = 'zmiana szkoły', ended_at = now()
+        WHERE id = 'e-2';
+    `);
+    const result = await call(env, `/api/representative/overview?schoolYearId=${Y}`, { cookie: rep });
+    assert.equal(result.status, 200);
+    const [klass] = result.data.classes;
+    // Tylko s-1 (w klasie): s-2 (opiekun bez e-maila) wpadłby do needsPaperCardCount,
+    // gdyby liczyło po `enrollments` wprost zamiast po `enrollments_current`.
+    assert.equal(klass.studentCount, 1, 's-2 odszedł — nie liczony');
+    assert.equal(klass.householdCount, 1, 'tylko h-1 (s-1)');
+    assert.equal(klass.needsPaperCardCount, 0, 's-2 (bez e-maila) odszedł — nie trafia do kartki');
+    await db.close();
+  });
+
   test('nieprawidłowy schoolYearId — 400', async () => {
     const db = await createTestDb();
     const env = { db };
