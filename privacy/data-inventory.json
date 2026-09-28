@@ -3217,6 +3217,219 @@
       "data_type": "date"
     }
   },
+  "guardian_update_links": {
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "guardian_id": {
+      "personal": "pseudonymous",
+      "subject": "guardian",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "token_hash": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "expires_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "used_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    }
+  },
+  "guardian_update_requests": {
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "link_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "guardian_id": {
+      "personal": "pseudonymous",
+      "subject": "guardian",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "proposed_email": {
+      "personal": "direct",
+      "subject": "guardian",
+      "category": "kontakt",
+      "purpose": "wniosek o zmianę adresu kontaktowego",
+      "retention_category": "guardian_contact",
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "proposed_email_set": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "boolean"
+    },
+    "proposed_contact_allowed": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "boolean"
+    },
+    "proposed_contact_allowed_set": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "boolean"
+    },
+    "note": {
+      "personal": "direct",
+      "subject": "guardian",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie wniosku o zmianę kontaktu",
+      "retention_category": "guardian_contact",
+      "visible_to": [],
+      "free_text": true,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "status": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "decided_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "decided_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    }
+  },
   "guardians": {
     "contact_allowed": {
       "personal": "pseudonymous",

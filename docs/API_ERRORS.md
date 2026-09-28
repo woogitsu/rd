@@ -84,6 +84,7 @@ wpisów).
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `four_eyes_required` | Tę operację musi zatwierdzić inna osoba niż autor. | Nie — popraw dane żądania. |
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
+| `guardian_not_found` | Nie znaleziono opiekuna. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_reused` | Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -143,6 +144,7 @@ wpisów).
 | `invalid_names` | Podaj nazwy klas (każda do 60 znaków). | Nie — popraw dane żądania. |
 | `invalid_next_school_year` | Niepoprawny następny rok szkolny. | Nie — popraw dane żądania. |
 | `invalid_options` | Niepoprawne ustawienia importu. | Nie — popraw dane żądania. |
+| `invalid_or_expired_link` | Ten link jest nieprawidłowy albo już nieaktywny. | Nie — poproś o nowy link. |
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_origin` | Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji. | Nie — popraw dane żądania. |
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
@@ -187,6 +189,7 @@ wpisów).
 | `ledger_entry_already_corrected_to_zero` | Wpis jest już w pełni skorygowany do zera. Nie można go przeksięgować. | Zależy od kontekstu (patrz moduł trasy). |
 | `ledger_entry_already_replaced` | Ten wpis został już przeksięgowany. | Zależy od kontekstu (patrz moduł trasy). |
 | `ledger_entry_not_found` | Nie znaleziono wpisu księgi. | Nie — popraw dane żądania. |
+| `link_used` | Ten link został już wykorzystany. | Nie — link jest jednorazowy, poproś o nowy. |
 | `login_busy` | Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund. | Tak — po chwili. |
 | `match_already_revoked` | Dopasowanie zostało już wycofane. | Zależy od kontekstu (patrz moduł trasy). |
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
@@ -244,6 +247,7 @@ wpisów).
 | `refund_exceeds_remaining_amount` | Zwrot przekracza kwotę pozostałą po wcześniejszych korektach i zwrotach. | Zależy od kontekstu (patrz moduł trasy). |
 | `relation_ended` | Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa. | Zależy od kontekstu (patrz moduł trasy). |
 | `replacement_target_mismatch` | Przeksięgowanie nie zgadza się z zastępowanym wpisem. Odśwież widok i spróbuj ponownie. | Nie — popraw dane żądania. |
+| `request_not_found` | Nie znaleziono wniosku. | Nie — popraw dane żądania. |
 | `request_too_large` | Za dużo danych w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_final_immutable` | Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_found` | Nie znaleziono uchwały. | Nie — popraw dane żądania. |

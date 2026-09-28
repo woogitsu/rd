@@ -256,6 +256,10 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
   news_photo_consents: 'zgody na wizerunek — osobny zakres (D-04)',
+  // 0087: wniosek rodzica o aktualizację kontaktu przez jednorazowy link (#140).
+  guardian_update_links: 'jednorazowy token linku do aktualizacji kontaktu (token_hash) — sekret, nigdy w paczce',
+  guardian_update_requests: 'wniosek niesie proponowany e-mail rodzica — jak guardian_contact_changes (D-03) dane '
+    + 'przed decyzją zarządu o zakresie retencji; wariant zachowawczy do czasu decyzji (D-04)',
 });
 
 // ---------------------------------------------------------------------------

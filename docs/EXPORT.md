@@ -208,6 +208,10 @@ wersję (`rd-eksport-<rok>-v2.json`).
   syntetycznych i stagingu.
 - Wynik testu odtworzenia wpisać do tabeli w
   [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md) (bez danych osobowych).
+- 0087 (#140): `guardian_update_links` (token jednorazowego linku) i
+  `guardian_update_requests` (wniosek rodzica o zmianę kontaktu, z proponowanym
+  e-mailem) są poza paczką roku — wariant zachowawczy do czasu decyzji zarządu
+  o retencji wniosków (D-04), jak `guardian_contact_changes` (D-03).
 
 ## Ryzyka i ograniczenia
 
