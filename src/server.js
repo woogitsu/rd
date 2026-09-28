@@ -12,6 +12,30 @@ import { resolveWriteMode } from './write-mode.js';
 
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
+// #126: bez TRUST_PROXY za proxy Railway `clientAddress` (src/node-app.js) bierze
+// adres gniazda (adres proxy), więc limit logowań na IP jest wspólny dla całej
+// szkoły — 20 błędnych prób od kogokolwiek blokuje logowanie wszystkim. Poza
+// development/test (domyślne, bez APP_ENV — lokalnie i w testach) i wprost
+// oznaczonym staging/production wymagamy jawnego TRUST_PROXY. Konwencja nazw
+// zgodna z `isProductionEnv` (src/pg/bootstrap-admin.js): nierozpoznana wartość
+// APP_ENV NIE jest traktowana jak produkcja (nie blokuje startu po cichu),
+// ale `staging`/`production`/`prod` wprost tego wymagają — literówka w APP_ENV
+// nie ma więc być jedynym zabezpieczeniem produkcji (założenie do potwierdzenia).
+const PROXY_REQUIRED_ENVS = new Set(['staging', 'production', 'prod']);
+
+export function trustProxyRequired(appEnv) {
+  return PROXY_REQUIRED_ENVS.has(String(appEnv ?? '').trim().toLowerCase());
+}
+
+export function assertTrustProxyConfigured(processEnv = process.env) {
+  if (!trustProxyRequired(processEnv.APP_ENV)) return;
+  if (processEnv.TRUST_PROXY === '1' || processEnv.TRUST_PROXY === 'true') return;
+  throw new Error(
+    `TRUST_PROXY musi być ustawione (1 lub true) gdy APP_ENV=${processEnv.APP_ENV} — inaczej licznik prób logowania `
+    + 'na adres IP jest wspólny dla całej szkoły (#126, docs/AUTH.md).',
+  );
+}
+
 // Wybór warstwy API. Z DATABASE_URL: nowe API na PostgreSQL (env.db).
 // Bez niej: dotychczasowy router Workera (bez D1 chronione trasy zwracają 503).
 // Migracje NIE są uruchamiane przy starcie — wyłącznie `npm run db:migrate:postgres`.
@@ -122,6 +146,7 @@ function positiveMs(value, fallback) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  assertTrustProxyConfigured();
   const runtime = resolveRuntime();
   const metrics = createRequestMetrics();
   let draining = false;
