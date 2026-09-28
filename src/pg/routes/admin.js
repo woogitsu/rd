@@ -18,6 +18,16 @@
 //   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
 //   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
 //   GET  /api/admin/audit?limit=                dziennik zmian kont i ról
+//   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
+//   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
+//   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
+//
+// #100 wariant zachowawczy: wyłącznie rejestr żądań i przejścia stanu (bez
+// cofania, bez usuwania — patrz migracja 0068). Eksport danych jednej rodziny,
+// sprostowanie identyfikacyjne i ograniczenie przetwarzania (kampanie/kartki)
+// NIE są tu zaimplementowane — zależą od D-07 (kto przyjmuje, weryfikacja
+// tożsamości, termin) i D-08/D-09 (kto czyta rejestr); do tego czasu odczyt i
+// zapis są wyłącznie dla admina, jak reszta modułu.
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
 // Założenie do decyzji D-08/D-09: zarząd nie ma tu nawet odczytu, dopóki
@@ -632,6 +642,116 @@ async function listAudit(env, url, json) {
   });
 }
 
+// --- Rejestr żądań osób (RODO, #100) ---------------------------------------
+
+const DATA_REQUEST_KINDS = new Set(['access', 'rectification', 'erasure', 'restriction', 'objection', 'portability']);
+const DATA_REQUEST_STATUSES = ['received', 'identity_verified', 'in_progress', 'answered', 'rejected'];
+const DATA_REQUEST_STATUS_RANK = { received: 0, identity_verified: 1, in_progress: 2, answered: 3, rejected: 3 };
+const DATA_REQUEST_COLUMNS = `id, kind, household_id, guardian_id, student_id, received_on, due_on, status,
+  handled_by, decision_note_ref, created_by, created_at, updated_at`;
+
+function dataRequestFromRow(row) {
+  return {
+    id: row.id, kind: row.kind,
+    householdId: row.household_id, guardianId: row.guardian_id, studentId: row.student_id,
+    receivedOn: row.received_on, dueOn: row.due_on, status: row.status,
+    handledBy: row.handled_by, decisionNoteRef: row.decision_note_ref,
+    createdBy: row.created_by, createdAt: isoTimestamp(row.created_at), updatedAt: isoTimestamp(row.updated_at),
+  };
+}
+
+async function listDataRequests(env, url, json) {
+  const status = url.searchParams.get('status');
+  const kind = url.searchParams.get('kind');
+  if (status !== null && !DATA_REQUEST_STATUSES.includes(status)) throw new RequestError('invalid_status');
+  if (kind !== null && !DATA_REQUEST_KINDS.has(kind)) throw new RequestError('invalid_kind');
+  const conditions = [];
+  const values = [];
+  if (status) { values.push(status); conditions.push(`status = $${values.length}`); }
+  if (kind) { values.push(kind); conditions.push(`kind = $${values.length}`); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const { rows } = await env.db.query(
+    `SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests ${where} ORDER BY received_on, created_at`,
+    values,
+  );
+  return json({ requests: rows.map(dataRequestFromRow) });
+}
+
+async function createDataRequest(env, actorId, request, json) {
+  const data = await readJson(request);
+  if (!DATA_REQUEST_KINDS.has(data.kind)) throw new RequestError('invalid_kind');
+  const householdId = optionalId(data.householdId, 'invalid_household_id');
+  const guardianId = optionalId(data.guardianId, 'invalid_guardian_id');
+  const studentId = optionalId(data.studentId, 'invalid_student_id');
+  if (!householdId && !guardianId && !studentId) throw new RequestError('subject_required');
+  if (!validDate(data.receivedOn)) throw new RequestError('invalid_received_on');
+  const dueOn = data.dueOn === undefined || data.dueOn === null || data.dueOn === '' ? null : data.dueOn;
+  if (dueOn !== null && !validDate(dueOn)) throw new RequestError('invalid_due_on');
+
+  const result = await env.db.transaction(async (tx) => {
+    if (householdId) {
+      const { rows } = await tx.query('SELECT 1 FROM households WHERE id = $1', [householdId]);
+      if (!rows.length) throw new Abort('household_not_found', 404);
+    }
+    if (guardianId) {
+      const { rows } = await tx.query('SELECT 1 FROM guardians WHERE id = $1', [guardianId]);
+      if (!rows.length) throw new Abort('guardian_not_found', 404);
+    }
+    if (studentId) {
+      const { rows } = await tx.query('SELECT 1 FROM students WHERE id = $1', [studentId]);
+      if (!rows.length) throw new Abort('student_not_found', 404);
+    }
+    const id = crypto.randomUUID();
+    await tx.query(
+      `INSERT INTO data_subject_requests (id, kind, household_id, guardian_id, student_id, received_on, due_on, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, data.kind, householdId, guardianId, studentId, data.receivedOn, dueOn, actorId],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'data_subject_request.created', entityType: 'data_subject_request', entityId: id,
+      metadata: { kind: data.kind },
+    });
+    const { rows } = await tx.query(`SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests WHERE id = $1`, [id]);
+    return dataRequestFromRow(rows[0]);
+  });
+  return json({ request: result }, 201);
+}
+
+async function setDataRequestStatus(env, actorId, requestId, request, json) {
+  const data = await readJson(request);
+  if (!DATA_REQUEST_STATUSES.includes(data.status)) throw new RequestError('invalid_status');
+  const decisionNoteRef = data.decisionNoteRef === undefined || data.decisionNoteRef === null || data.decisionNoteRef === ''
+    ? null
+    : String(data.decisionNoteRef);
+  if (decisionNoteRef !== null && (decisionNoteRef.length < 1 || decisionNoteRef.length > 200)) {
+    throw new RequestError('invalid_decision_note_ref');
+  }
+  const result = await env.db.transaction(async (tx) => {
+    const { rows } = await tx.query(`SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests WHERE id = $1 FOR UPDATE`, [requestId]);
+    if (!rows[0]) throw new Abort('data_request_not_found', 404);
+    const current = rows[0];
+    // Podwójne kliknięcie / ponowienie: to samo docelowe przejście nic nie zmienia i nie audytuje ponownie.
+    if (current.status === data.status) return { request: dataRequestFromRow(current), changed: false };
+    if (DATA_REQUEST_STATUS_RANK[data.status] < DATA_REQUEST_STATUS_RANK[current.status]
+        || ['answered', 'rejected'].includes(current.status)) {
+      throw new Abort('data_request_status_cannot_go_back', 409);
+    }
+    const { rows: updated } = await tx.query(
+      `UPDATE data_subject_requests SET status = $2, handled_by = $3,
+              decision_note_ref = COALESCE($4, decision_note_ref), updated_at = now()
+        WHERE id = $1
+        RETURNING ${DATA_REQUEST_COLUMNS}`,
+      [requestId, data.status, actorId, decisionNoteRef],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'data_subject_request.status_changed', entityType: 'data_subject_request', entityId: requestId,
+      metadata: { status: data.status },
+    });
+    return { request: dataRequestFromRow(updated[0]), changed: true };
+  });
+  return json(result);
+}
+
 // --- Router ----------------------------------------------------------------
 
 // Zwraca dozwolone metody dla ROZPOZNANEGO kształtu ścieżki (#156, RFC 9110
@@ -659,6 +779,11 @@ function allowedMethodsFor(section, pathLength, action) {
     return null;
   }
   if (section === 'audit' && pathLength === 1) return ['GET'];
+  if (section === 'data-requests') {
+    if (pathLength === 1) return ['GET', 'POST'];
+    if (pathLength === 3 && action === 'status') return ['POST'];
+    return null;
+  }
   return null;
 }
 
@@ -700,10 +825,17 @@ async function route(request, env, url, json, actorId) {
     }
   }
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json);
+  if (section === 'data-requests') {
+    if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);
+    if (path.length === 1 && method === 'POST') return createDataRequest(env, actorId, request, json);
+    if (path.length === 3 && action === 'status' && method === 'POST') {
+      return setDataRequestStatus(env, actorId, decodeId(rawId), request, json);
+    }
+  }
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'audit']);
+const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'audit', 'data-requests']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
