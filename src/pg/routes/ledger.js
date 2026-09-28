@@ -27,7 +27,7 @@
 
 import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
@@ -366,12 +366,19 @@ function hasFinancialAccess(context, schoolYearId) {
 async function requireFinancialContext(request, env, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!hasFinancialAccess(context, schoolYearId)) throw new RequestError('forbidden', 403);
+  if (!hasFinancialAccess(context, schoolYearId)) {
+    await logAccessDenied(env, context, { roles: FINANCIAL_ROLES }, request);
+    throw new RequestError('forbidden', 403);
+  }
   return context;
 }
 
+// #184: bez śladu access.denied tutaj — wywoływana wyłącznie po POST (korekta);
+// logAccessDenied loguje tylko GET (patrz authorization.js).
 function requireYear(context, schoolYearId) {
-  if (!hasFinancialAccess(context, schoolYearId)) throw new RequestError('forbidden', 403);
+  if (!hasFinancialAccess(context, schoolYearId)) {
+    throw new RequestError('forbidden', 403);
+  }
 }
 
 async function listEntries(request, env, url, json) {

@@ -101,10 +101,10 @@ const json = (body) => body;
 const withKey = (key) => ({ 'Idempotency-Key': key });
 const everyY1 = () => Y1_ALL;
 
-function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft', body, create = false }) {
+function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft', body, create = false, mfa = false }) {
   return {
     id, module: 'meetings', method, path: template, targets: CLASS_TARGETS,
-    allow: MEETING_MANAGE, mfa: false, ok, deny: 403, fixture: 'fresh',
+    allow: MEETING_MANAGE, mfa, ok, deny: 403, fixture: 'fresh',
     object: { kind: 'meeting', stage },
     build: ({ obj, key, target }) => ({
       path: `/api/meetings/${obj.meetingId}${suffix(obj)}`,
@@ -530,8 +530,10 @@ export const ROUTE_MATRIX = Object.freeze([
   meetingRoute('meetings.minutes', 'POST', '/api/meetings/:meetingId/minutes', () => '/minutes', {
     ok: 201, create: true, stage: 'held', body: (target) => ({ body: `Protokół roboczy ${marker(target.key)}` }),
   }),
+  // #135: zawsze wymaga MFA (rozstrzyga o przyjęciu dokumentu zebrania).
   meetingRoute('meetings.minutesApproval', 'POST', '/api/meetings/:meetingId/minutes/:minutesId/approval',
-    (obj) => `/minutes/${obj.minutesId}/approval`, { stage: 'draftMinutes', body: () => ({}) }),
+    (obj) => `/minutes/${obj.minutesId}/approval`, { stage: 'draftMinutes', body: () => ({}), mfa: true }),
+  // #135: fixture udostępnia `internal` (bez MFA); `parents`/`public` wymagają MFA (nietestowane tu wprost).
   meetingRoute('meetings.minutesVisibility', 'POST', '/api/meetings/:meetingId/minutes/:minutesId/visibility',
     (obj) => `/minutes/${obj.minutesId}/visibility`, {
       ok: 201, create: true, stage: 'approvedMinutes', body: () => ({ visibility: 'internal' }),
@@ -544,9 +546,11 @@ export const ROUTE_MATRIX = Object.freeze([
     (obj) => `/resolutions/${obj.resolutionId}`, {
       stage: 'draftResolution', body: (target) => ({ title: `Poprawiony tytuł ${marker(target.key)}` }),
     }),
+  // #135: korekta zawsze zapisuje rozstrzygnięcie (adopted/rejected) — zawsze wymaga MFA.
   meetingRoute('meetings.resolutionCorrection', 'POST', '/api/meetings/:meetingId/resolutions/:resolutionId/corrections',
     (obj) => `/resolutions/${obj.resolutionId}/corrections`, {
       ok: 201, create: true, stage: 'finalResolution', body: () => ({ reason: 'Pomyłka w zapisie głosów', votesAgainst: 1 }),
+      mfa: true,
     }),
   // ---------- import (#36) ----------
   // admin i zarząd z MFA, wyłącznie przydział bez klasy obejmujący rok importu.
@@ -722,6 +726,8 @@ export const ROUTE_MATRIX = Object.freeze([
     allow: EMAIL_APPROVE, body: (_target, obj) => ({ contentHash: obj.contentHash, recipientsHash: obj.recipientsHash }),
   }),
   emailRoute('email.queue', 'POST', '/queue', 'approved', {}),
+  emailRoute('email.pause', 'POST', '/pause', 'sending', {}),
+  emailRoute('email.resume', 'POST', '/resume', 'paused', {}),
   emailRoute('email.cancel', 'POST', '/cancel', 'draft', {}),
   {
     // Webhook Brevo: bez sesji i bez Origin; uwierzytelnia wspólny sekret (brak/zły sekret = 401, test niżej).
@@ -829,7 +835,13 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.invitationRevoke', 'POST', '/api/admin/invitations/:invitationId/revoke', {
     object: 'invitation', build: ({ obj }) => ({ path: `/api/admin/invitations/${obj.invitationId}/revoke`, body: {} }),
   }),
+  adminRoute('admin.invitationReissue', 'POST', '/api/admin/invitations/:invitationId/reissue', {
+    ok: 201, object: 'invitation', build: ({ obj }) => ({ path: `/api/admin/invitations/${obj.invitationId}/reissue`, body: {} }),
+  }),
   adminRoute('admin.schoolYears', 'GET', '/api/admin/school-years', {}),
+  adminRoute('admin.classCoverage', 'GET', '/api/admin/class-coverage?schoolYearId=:year', {
+    build: () => ({ path: `/api/admin/class-coverage?schoolYearId=${YEAR_1}` }),
+  }),
   // Konfiguracja roku i klas (#78): wyłącznie admin z MFA, jak cały moduł.
   adminRoute('admin.schoolYearCreate', 'POST', '/api/admin/school-years', {
     ok: 201,
