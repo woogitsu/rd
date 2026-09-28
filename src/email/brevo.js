@@ -39,6 +39,9 @@ export function emailConfig(env = {}) {
     minDailyCap: intFrom(env.EMAIL_CAMPAIGN_MIN_DAILY, 50, { min: 1, max: 10_000 }),
     batchSize: intFrom(env.EMAIL_BATCH_SIZE, 50, { min: 1, max: 500 }),
     maxAttempts: intFrom(env.EMAIL_MAX_ATTEMPTS, 5, { min: 1, max: 20 }),
+    // Wyłącznik (#180): po tylu kolejnych wynikach niepewnych (5xx, timeout)
+    // przebieg się zatrzymuje, a reszta partii zostaje w kolejce.
+    breakerUncertain: intFrom(env.EMAIL_BREAKER_UNCERTAIN, 2, { min: 1, max: 50 }),
     allowlist: parseAllowlist(env.EMAIL_TEST_ALLOWLIST),
     sender: { email: env.BREVO_FROM_EMAIL || null, name: env.BREVO_FROM_NAME || 'Rada Rodziców' },
   };
@@ -74,13 +77,50 @@ export class EmailTransportError extends Error {
   // accountLevel: dostawca odrzucił konto, nie odbiorcę (401/402/403: zły lub
   //   obrócony klucz, brak kredytów, nieuprawniony nadawca/IP) — wiadomość nie
   //   wyszła; przebieg się zatrzymuje, wiersz wraca do kolejki (#209).
-  constructor(code, { retryable = false, uncertain = false, accountLevel = false } = {}) {
+  // notSent: żądanie na pewno nie dotarło do dostawcy (błąd połączenia przed
+  //   wysłaniem: odmowa połączenia, DNS, TLS) — to nie jest „nie wiadomo” (#180).
+  // retryAfterSeconds: z nagłówka Retry-After (429), jeśli podany.
+  constructor(code, { retryable = false, uncertain = false, accountLevel = false, notSent = false, retryAfterSeconds = null } = {}) {
     super(code);
     this.code = code;
     this.retryable = retryable;
     this.uncertain = uncertain;
     this.accountLevel = accountLevel;
+    this.notSent = notSent;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+// Błędy połączenia, przy których żądanie HTTP nie zostało wysłane: brak
+// połączenia TCP, nieznany host, nieudany handshake TLS. Reset połączenia,
+// zamknięcie gniazda i timeout mogą nastąpić po wysłaniu treści — te pozostają
+// niepewne.
+const NOT_SENT_CODES = new Set([
+  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT',
+  'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
+
+export function connectionNotEstablished(error) {
+  for (let current = error, depth = 0; current && depth < 4; current = current.cause, depth += 1) {
+    if (typeof current.code === 'string' && NOT_SENT_CODES.has(current.code)) return true;
+  }
+  return false;
+}
+
+const MAX_RETRY_AFTER_SECONDS = 24 * 3600;
+
+export function parseRetryAfter(value, now = Date.now()) {
+  if (!value) return null;
+  const text = String(value).trim();
+  let seconds = null;
+  if (/^\d{1,9}$/.test(text)) seconds = Number(text);
+  else {
+    const at = Date.parse(text);
+    if (Number.isFinite(at)) seconds = Math.ceil((at - now) / 1000);
+  }
+  if (seconds === null || seconds < 0) return null;
+  return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
 }
 
 function underTestRunner(processEnv) {
@@ -118,11 +158,17 @@ export function createBrevoTransport({
           }),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
-      } catch {
+      } catch (error) {
+        // Połączenie nie powstało — żądanie nie wyszło, można ponowić.
+        if (connectionNotEstablished(error)) throw new EmailTransportError('provider_unreachable', { retryable: true, notSent: true });
         // Przerwane połączenie/timeout: nie wiemy, czy Brevo przyjęło wiadomość.
         throw new EmailTransportError('delivery_unknown', { uncertain: true });
       }
-      if (response.status === 429) throw new EmailTransportError('provider_rate_limited', { retryable: true });
+      if (response.status === 429) {
+        throw new EmailTransportError('provider_rate_limited', {
+          retryable: true, retryAfterSeconds: parseRetryAfter(response.headers?.get?.('retry-after')),
+        });
+      }
       if (response.status >= 500) throw new EmailTransportError('delivery_unknown', { uncertain: true });
       if ([401, 402, 403].includes(response.status)) {
         throw new EmailTransportError(`provider_rejected_${response.status}`, { accountLevel: true });
