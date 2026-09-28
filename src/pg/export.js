@@ -266,6 +266,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   login_rate_limits: 'limity prób logowania — dane techniczne',
   password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
+  retention_policies: 'rejestr polityk retencji (D-04) — konfiguracja/decyzje zarządu, nie dane roku do odtworzenia (0074, #91)',
   privacy_notices: 'wersjonowana informacja o przetwarzaniu danych (D-06) — dokument organizacji, nie zawsze przypisany do jednego roku (school_year_id nullable); zakres i retencja do decyzji D-06 (0075, #145)',
   privacy_notice_deliveries: 'ewidencja przekazania informacji o przetwarzaniu per gospodarstwo/kanał — jak wyżej, zależy od privacy_notices (0075, #145)',
   documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',

@@ -1051,6 +1051,8 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
+  adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
   // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
   adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 
