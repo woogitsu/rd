@@ -5,6 +5,13 @@
 // Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
 
 export const MESSAGES = Object.freeze({
+  // --- Konfiguracja roku szkolnego i klas (#78) -------------------------------------
+  invalid_label: "Podaj nazwę roku szkolnego (maksymalnie 200 znaków).",
+  invalid_date_range: "Data końca nie może być wcześniejsza niż data początku.",
+  school_year_exists: "Taki rok szkolny już istnieje.",
+  invalid_names: "Podaj nazwy klas (każda do 60 znaków).",
+  duplicate_name: "Nazwy klas na liście powtarzają się.",
+  class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
