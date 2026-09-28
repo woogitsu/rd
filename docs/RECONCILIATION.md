@@ -52,7 +52,7 @@ Propozycje obejmują wpisy księgi oraz wpłaty, które nie są jeszcze ujęte w
 
 - `lines` jest teraz stronicowane: `limit` (domyślnie i maksymalnie 500) i kursor `(booked_on, id)` w `nextCursor`. Panel dociąga kolejne strony i scala je po stronie klienta, więc zachowanie widoku się nie zmienia; integracja czytająca odpowiedź bezpośrednio musi podążać za `nextCursor`, aż będzie `null`.
 - Pole `unmatchedLines` zostało usunięte — było dokładnym duplikatem podzbioru `lines` bez pola `match` (panel go nie używał). Niedopasowaną pozycję rozpoznaje `line.match === null`.
-- `summary.lineCount`, `matchedLineCount`, `unmatchedLineCount` i `unmatchedLineTotalCents` liczą wszystkie pozycje uzgodnienia niezależnie od rozmiaru strony `lines` (osobne zapytanie agregujące).
+- `summary.lineCount`, `matchedLineCount`, `unmatchedLineCount` i `unmatchedLineTotalCents` liczą wszystkie pozycje uzgodnienia niezależnie od rozmiaru strony `lines` (osobne zapytanie agregujące). Od #165 pkt 4 `matchedLineCount` liczy wyłącznie powiązania zgodne kwotowo (bez podwójnego ujęcia) — pozycja z powiązaniem niezgodnym jest w `inconsistentMatchCount`, nie w `matchedLineCount`; `matchedLineCount + inconsistentMatchCount + unmatchedLineCount = lineCount`.
 - `unmatchedLedgerEntries` ma teraz maksymalnie 1000 wpisów jak dotąd, ale odpowiedź jawnie podaje `unmatchedLedgerEntriesTruncated: true`, gdy lista jest niepełna — wcześniej obcięcie było ciche.
 - Trzy zapytania szczegółów (pozycje, powiązania, niedopasowane wpisy księgi) wykonują się teraz kolejno w jednej transakcji `REPEATABLE READ` na jednym połączeniu zamiast równolegle na trzech, żeby wynik pochodził z jednej migawki (spójne z propozycją dla `…/suggestions`, #158).
 
