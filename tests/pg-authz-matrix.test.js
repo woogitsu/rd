@@ -99,6 +99,18 @@ async function seedBase(db) {
   }
 }
 
+// `enrollments.class_id` jest NOT NULL: cele bez klasy (np. W1, dane ogólnoszkolne)
+// dostają jednorazową syntetyczną klasę tego roku — sam fixture (żadna trasa jej
+// nie widzi jako "klasę" w odpowiedzi, więc nie przecieka do asercji znaczników).
+async function fallbackClassId(db, schoolYearId) {
+  const id = `cls-fx-${schoolYearId}`;
+  await db.query(
+    `INSERT INTO classes (id, school_year_id, name) VALUES ($1, $2, 'Klasa fixture') ON CONFLICT (id) DO NOTHING`,
+    [id, schoolYearId],
+  );
+  return id;
+}
+
 async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   const guardianId = `${householdId}-g`;
   const studentId = `${householdId}-s`;
@@ -110,8 +122,9 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)',
     [studentId, guardianId]);
   const enrollmentId = `${householdId}-e`;
+  const classId = target.classId ?? await fallbackClassId(db, target.schoolYearId);
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
-    [enrollmentId, studentId, target.classId, target.schoolYearId]);
+    [enrollmentId, studentId, classId, target.schoolYearId]);
   return { householdId, guardianId, studentId, enrollmentId };
 }
 
