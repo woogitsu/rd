@@ -50,17 +50,9 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      - run: npm run build:import
-      - run: npm run build:panel
-      - run: npm run build:ledger
-      - run: npm run build:print
-      - run: npm run build:events
-      - run: npm run build:documents
-      - run: npm run build:site
-      - run: npm run build:meetings
-      - run: npm run build:admin
-      - run: npm run build:families
-      - run: npm run build:login
+      # Jeden skrypt buduje wszystkie panele (package.json) — nowa aplikacja
+      # nie wymaga osobnego kroku w CI.
+      - run: npm run build
       - run: test -f dist/import/template.csv
       # #188/#223: zbudowane strony bez inline <style>, style=, skryptów inline (CSP z src/node-app.js).
       - run: REQUIRE_DIST=1 node --test tests/csp-static.test.js

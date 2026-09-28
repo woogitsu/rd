@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
+import { insertAuditEvent } from './audit.js';
 
 export const EVENT_TIMEZONE = 'Europe/Brussels';
 export const EVENT_POLICY = Object.freeze({
@@ -276,13 +277,9 @@ function publicEvent(row) {
   };
 }
 
+// #184: przechodzi przez insertAuditEvent (assertNoPii), nie własny INSERT.
 async function audit(tx, actorId, action, eventId, metadata) {
-  // Metadata carries only workflow numbers, never titles, reasons or personal data.
-  await tx.query(
-    `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
-     VALUES ($1, $2, $3, 'event', $4, $5::jsonb)`,
-    [crypto.randomUUID(), actorId, action, eventId, JSON.stringify(metadata)],
-  );
+  await insertAuditEvent(tx, { actorId, action, entityType: 'event', entityId: eventId, metadata });
 }
 
 async function lockEvent(tx, eventId) {

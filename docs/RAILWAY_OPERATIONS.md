@@ -13,7 +13,8 @@ monitoringu z #16. Kontekst: [plan migracji](RAILWAY_MIGRATION.md),
 |---|---|---|
 | Konfiguracja usługi | `railway.json` | build `npm ci && npm run build`, start `node src/server.js` (bezpośrednio, aby SIGTERM trafił do serwera), healthcheck `/health` (liveness), `drainingSeconds: 15`, restart `ON_FAILURE` (maks. 5 prób), region `europe-west4-drams3a` (Amsterdam), bez usypiania |
 | Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE |
-| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`), trzy panele, nagłówki, `404` |
+| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`) i przez prawdziwy HTTP z migracjami (`200`), wszystkich 11 paneli (`STATIC_PREFIXES`), nagłówki, `404` dla ścieżek prywatnych/traversal i brak `*.map`, granice ról na poziomie HTTP |
+| Smoke test zdalny | `npm run smoke:remote` (`scripts/smoke-remote.js`) | wyłącznie `GET`, po deployu stagingu (sekcja „Smoke test po deployu” niżej) |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
 | Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
 | Pierwszy administrator | `npm run auth:bootstrap-admin` (`scripts/bootstrap-admin.js`, `src/pg/bootstrap-admin.js`) | jednorazowe zaproszenie do roli `admin` na pustej bazie (sekcja „Pierwszy administrator (bootstrap)”) |
@@ -104,8 +105,23 @@ wywoływała pętlę restartów, która nie naprawia bazy. Stan bazy sprawdza
 `postgres/migrations`); `503` oznacza brak bazy, błąd lub timeout, brakujące
 migracje albo zamykanie procesu. Odpowiedź zawiera tylko stan techniczny oraz
 liczbę i nazwy brakujących plików migracji. Po każdym deployu i każdej
-migracji sprawdzić ręcznie `/health/ready`; to także warunek listy odbioru.
+migracji uruchomić `npm run smoke:remote` (patrz niżej) zamiast sprawdzać
+`/health/ready` ręcznie; to także warunek listy odbioru.
 Szczegóły: [serwer Node](NODE_SERVER.md#monitoring-logi-i-zamykanie-16-41).
+
+**Smoke test po deployu (`smoke:remote`, issue #119).** Wyłącznie odczyty
+(`GET`), bez żadnych zapisów; te same bezpieczniki co test wydajności
+(sekcja „Test wydajności” niżej): odmawia bez `--i-confirm-staging`, dla
+`http://`, dla `APP_ENV=production` i dla hosta spoza `LOAD_TEST_ALLOWED_HOSTS`
+— odmowa następuje przed pierwszym żądaniem. Sprawdza `/health`, `/health/ready`,
+wszystkie panele (`STATIC_PREFIXES` z `src/node-app.js`, jedno źródło prawdy),
+nagłówki bezpieczeństwa oraz `404` dla ścieżek prywatnych i `*.map`. Wynik
+JSON wkleić do listy odbioru.
+
+```sh
+LOAD_TEST_ALLOWED_HOSTS=rd-staging.up.railway.app APP_ENV=staging \
+  npm run smoke:remote -- --target https://rd-staging.up.railway.app --i-confirm-staging
+```
 
 **Logi.** Serwer zapisuje jedną linię JSON na zdarzenie (`level`, `event`,
 `method`, ścieżka bez query stringu z `:id` zamiast identyfikatorów, `status`,
@@ -278,6 +294,45 @@ DATABASE_URL=<referencja z Railway> APP_ENV=staging \
 - Jeśli token zaginął, poczekać do wygaśnięcia zaproszenia i uruchomić
   skrypt ponownie (poprzedniego zaproszenia bez administratora nie da się
   cofnąć przez API).
+
+## Rotacja klucza szyfrowania MFA (`MFA_ENCRYPTION_KEY(S)`, #134)
+
+Klucz szyfruje sekrety TOTP (`user_mfa_factors.secret_ciphertext`), nigdy nie
+jest w repozytorium — tylko jako sekret usługi Railway. Wiersz czynnika jest
+niezmienny (trigger), więc rotacja nie nadpisuje szyfrogramu w miejscu: nowy
+wiersz na nowym kluczu, stary wyłączony (`disabled_at`). Szczegóły techniczne
+i format `MFA_ENCRYPTION_KEYS`: `docs/AUTH.md`.
+
+**Rotacja planowa** (np. cykliczna, bez podejrzenia wycieku):
+1. Wygenerować nowy klucz (32 losowe bajty, np. `openssl rand -hex 32`).
+2. Ustawić w zmiennych usługi Railway pierścień z OBOMA kluczami, nowym jako
+   wyższa wersja: `MFA_ENCRYPTION_KEYS=2:<nowy>,1:<stary>` (usunąć osobne
+   `MFA_ENCRYPTION_KEY`, jeśli była ustawiona — pierścień ją zastępuje).
+   Redeploy usługi.
+3. Tryb próbny: `DATABASE_URL=<referencja> MFA_ENCRYPTION_KEYS=2:<nowy>,1:<stary> npm run mfa:rotate-key`
+   — sprawdzić liczbę kont do rotacji i `missing key` (musi być 0).
+4. Zapis: to samo z `-- --apply`. Skrypt jest idempotentny — bezpiecznie
+   uruchomić ponownie, gdyby coś przerwało pierwsze uruchomienie.
+5. Po potwierdzeniu, że raport pokazuje 0 kont na starej wersji (kolejne
+   uruchomienie skryptu, `rotated: 0`), usunąć stary klucz z pierścienia
+   (`MFA_ENCRYPTION_KEYS=2:<nowy>` albo z powrotem `MFA_ENCRYPTION_KEY=<nowy>`)
+   i zrobić redeploy.
+6. Dziennik: `mfa.key_rotated` na koncie (identyfikatory czynników i wersje,
+   bez sekretów) plus wynik skryptu na stdout (wyłącznie liczby).
+
+**Rotacja po incydencie** (podejrzenie wycieku klucza): jak wyżej, ale krok 5
+(usunięcie starego klucza z pierścienia) wykonać NATYCHMIAST po kroku 4, bez
+czekania — ryzyko jest w tym, że stary klucz nadal działa, dopóki jest
+w pierścieniu. Poinformować zarząd/IOD zgodnie z `docs/SECURITY.md`.
+
+**Utrata klucza** (zmienna skasowana, brak kopii): nie da się odzyskać
+istniejących czynników — `MFA_ENCRYPTION_KEYS`/`MFA_ENCRYPTION_KEY` bez
+starej wersji daje `mfa_key_missing` (503) zamiast cichego błędu przy próbie
+weryfikacji. Jedyne wyjście to reset MFA każdego dotkniętego konta
+(`POST /api/admin/users/{id}/mfa-reset`, panel admina, gałąź logowania) —
+każda osoba zapisuje czynnik ponownie po zalogowaniu. Komunikacja z rodzinami
+o masowym resecie MFA to decyzja zarządu (szablon, kanał — D-16/D-17, jak
+przy innych wysyłkach).
 
 ## Backup PostgreSQL
 

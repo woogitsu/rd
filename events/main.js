@@ -31,6 +31,11 @@ import {
   validateReason,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const byId = (id) => document.getElementById(id);
 const state = {
@@ -359,6 +364,23 @@ detailActions.addEventListener("click", async (event) => {
   const action = button.dataset.action;
   if (action === "edit") return openEdit(state.detail.event);
   if (action === "cancel") return openCancel(state.detail.event);
+  if (action === "publish") {
+    // Podgląd dokładnie tego, co zobaczy site/ (issue #136) — tytuł, termin w
+    // Europe/Brussels, miejsce, odbiorcy.
+    const ev = state.detail.event;
+    const confirmed = await confirmAction({
+      title: "Opublikować wydarzenie?",
+      effects: [
+        ev.title,
+        `Termin: ${formatRange(ev.startsAtUtc, ev.endsAtUtc)}`,
+        ev.location ? `Miejsce: ${ev.location}` : null,
+        `Odbiorcy: ${AUDIENCE_LABELS[ev.audience] ?? ev.audience}`,
+        "Strona publiczna pokaże tę wersję w ciągu ok. 60 s.",
+      ],
+      confirmLabel: "Opublikuj",
+    });
+    if (!confirmed) return;
+  }
   state.busy = true;
   const buttons = [...detailActions.querySelectorAll("button")];
   buttons.forEach((b) => { b.disabled = true; });

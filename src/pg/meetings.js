@@ -17,6 +17,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
+import { insertAuditEvent } from './audit.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
 export const READ_ROLES = Object.freeze(['admin', 'board', 'audit']);
@@ -50,7 +51,25 @@ const DATABASE_CONFLICTS = new Set([
   'minutes_must_start_as_draft', 'meetings_cannot_be_deleted',
   // Rok zamknięty (0017_year_close.sql, triggery a0_year_freeze).
   'school_year_closed',
+  // #135: zasada czterech oczu w triggerze (bezpośredni UPDATE z pominięciem
+  // serwisu, który tę samą regułę zwraca jako 403 — zob. approveMinutes).
+  'minutes_four_eyes_required',
 ]);
+
+// #135 (SR-10): operacje, które uzasadniają wydatek powyżej 3000 EUR albo
+// nieodwracalnie ustalają dokument zebrania, wymagają sesji z potwierdzonym
+// MFA (403 mfa_required, zgodnie z obsługą w panelu, zob. #99). Jedna lista,
+// udokumentowana w docs/AUTHORIZATION.md; szkic uchwały i porządek obrad
+// nadal działają bez MFA.
+export const MFA_REQUIRED_ACTIONS = Object.freeze([
+  'resolution.decide', // createResolution/updateResolution -> adopted|rejected, correctResolution
+  'meeting.minutes.approve', // approveMinutes
+  'meeting.minutes.publish', // setMinutesVisibility -> parents|public
+]);
+
+function requireMfaVerified(actor) {
+  if (!actor?.mfaVerified) throw new MeetingError('mfa_required', 403);
+}
 
 export class MeetingError extends Error {
   constructor(code, status = 400) {
@@ -226,6 +245,67 @@ function actorClassIds(actor, schoolYearId) {
       { roles: ['representative'], schoolYearId, classId }));
 }
 
+// #171 (D-08, wariant najbardziej zachowawczy do czasu decyzji zarządu): flaga
+// domyślnie wyłączona. Włączona wartością dokładnie 'representative' (zgodnie
+// z propozycją issue) pozwala przedstawicielowi klasy prowadzić WYŁĄCZNIE
+// zebrania kind='class' własnej klasy — nigdy ogólne ani zarządu, nigdy inną
+// klasę. Nie rozszerza to zatwierdzania protokołu, widoczności, ustalania
+// quorum ani uchwał: te trasy zostają MANAGE_ROLES-only bez zmian (patrz
+// meetingForManage, niżej), co samo w sobie realizuje kryterium akceptacji
+// „przedstawiciel nie zatwierdza protokołu, który sam utworzył”.
+function classHostEnabled(env) {
+  const raw = env && Object.hasOwn(env, 'MEETINGS_CLASS_HOST') ? env.MEETINGS_CLASS_HOST : process.env.MEETINGS_CLASS_HOST;
+  return raw === 'representative';
+}
+
+function isClassHost(actor, env, { schoolYearId, classId, kind }) {
+  if (!classHostEnabled(env) || kind !== 'class' || !classId) return false;
+  return isAuthorized(contextFor(actor, classId), { roles: ['representative'], schoolYearId, classId });
+}
+
+function hasManageRole(actor, { schoolYearId, classId }) {
+  try {
+    authorize(actor, MANAGE_ROLES, { schoolYearId, classId });
+    return true;
+  } catch (error) {
+    if (error instanceof MeetingError && error.status === 403) return false;
+    throw error;
+  }
+}
+
+// Wpisy obecności/porządku/protokołu zebrania klasowego prowadzonego przez
+// przedstawiciela (flaga włączona). Ustalanie quorum, zatwierdzanie protokołu,
+// widoczność i uchwały NIE korzystają z tej funkcji — zostają przy
+// meetingForManage (admin/board), świadome zawężenie zakresu (patrz PR #171).
+async function meetingForManageOrClassHost(db, actor, meetingId, env) {
+  const meeting = await loadMeeting(db, meetingId);
+  const scope = { schoolYearId: meeting.school_year_id, classId: meeting.class_id };
+  // SR-07: sprawdzenie zakresu/roli zawsze pierwsze — brak dostępu daje ten sam
+  // `forbidden`, niezależnie od stanu MFA (#150, jak w authorize() niżej).
+  let viaClassHost;
+  if (hasManageRole(actor, scope)) viaClassHost = false;
+  else if (isClassHost(actor, env, { ...scope, kind: meeting.kind })) viaClassHost = true;
+  else throw new MeetingError('forbidden', 403);
+  // #150 (SR-10): zarządzanie zebraniem wymaga jawnie potwierdzonego MFA,
+  // niezależnie od bramki routera — również dla #171 (przedstawiciel-gospodarz).
+  requireMfaVerified(actor);
+  return { meeting, viaClassHost };
+}
+
+// Opiekun należący do klasy zebrania (dla ograniczenia listy obecności prowadzonej
+// przez przedstawiciela do własnej klasy — #171, minimalizacja jak w families/).
+async function guardianInClass(db, guardianId, classId, schoolYearId) {
+  const row = await one(db,
+    `SELECT 1 FROM student_guardians sg
+       JOIN enrollments e ON e.student_id = sg.student_id
+      WHERE sg.guardian_id = $1 AND e.class_id = $2 AND e.school_year_id = $3
+        AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
+        AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
+      LIMIT 1`,
+    [guardianId, classId, schoolYearId]);
+  return Boolean(row);
+}
+
 // ---------- database helpers ----------
 
 async function inTransaction(db, work) {
@@ -260,12 +340,9 @@ async function one(db, sql, params) {
   return rows[0] ?? null;
 }
 
+// #184: przechodzi przez insertAuditEvent (assertNoPii), nie własny INSERT.
 async function audit(tx, actor, action, entityType, entityId, metadata = {}) {
-  await tx.query(
-    `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-    [randomUUID(), actor.userId, action, entityType, entityId, JSON.stringify(metadata)],
-  );
+  await insertAuditEvent(tx, { actorId: actor.userId, action, entityType, entityId, metadata });
 }
 
 function databaseError(error) {
@@ -505,14 +582,17 @@ export async function listMeetings(db, actor, input = {}) {
   return { meetings: visible.map(meetingFromRow) };
 }
 
-export async function getMeeting(db, actor, input = {}) {
+export async function getMeeting(db, actor, input = {}, env) {
   const meeting = await loadMeeting(db, input.meetingId);
   try {
     authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
   } catch (error) {
-    // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
-    if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
-    throw error;
+    if (!(error instanceof MeetingError) || error.status !== 403
+        || !isClassHost(actor, env, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, kind: meeting.kind })) {
+      // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
+      if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
+      throw error;
+    }
   }
   const [agenda, attendees, checks, minutes, resolutions] = await Promise.all([
     db.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]),
@@ -534,7 +614,7 @@ export async function getMeeting(db, actor, input = {}) {
   };
 }
 
-export async function createMeeting(db, actor, input = {}) {
+export async function createMeeting(db, actor, input = {}, env) {
   const key = idempotencyKey(input.idempotencyKey);
   const schoolYearId = requireId(input.schoolYearId);
   if (!KINDS.has(input.kind)) throw new MeetingError('invalid_request');
@@ -552,7 +632,14 @@ export async function createMeeting(db, actor, input = {}) {
     status,
     ...parseQuorumRule(input),
   };
-  authorize(actor, MANAGE_ROLES, { schoolYearId, classId, requireMfa: true });
+  // #150 (SR-10): tworzenie zebrania to zarządzanie — wymaga MFA niezależnie
+  // od tego, czy aktor wchodzi przez rolę zarządu, czy przez #171 (przedstawiciel
+  // prowadzący WYŁĄCZNIE zebranie klasowe własnej klasy).
+  if (!hasManageRole(actor, { schoolYearId, classId })
+      && !isClassHost(actor, env, { schoolYearId, classId, kind: input.kind })) {
+    throw new MeetingError('forbidden', 403);
+  }
+  requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'meeting.create', data, async tx => {
     const id = randomUUID();
     await tx.query(
@@ -569,8 +656,8 @@ export async function createMeeting(db, actor, input = {}) {
   return { meeting: meetingFromRow(await loadMeeting(db, result.entityId)), replayed: result.replayed };
 }
 
-export async function updateMeeting(db, actor, input = {}) {
-  const meeting = await meetingForManage(db, actor, input.meetingId);
+export async function updateMeeting(db, actor, input = {}, env) {
+  const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
   const changes = {};
   if (input.title !== undefined) changes.title = text(input.title, 3, 200);
   if (input.scheduledAt !== undefined) changes.scheduled_at = timestamp(input.scheduledAt);
@@ -599,6 +686,13 @@ export async function updateMeeting(db, actor, input = {}) {
   }
   const columns = Object.keys(changes);
   if (!columns.length) throw new MeetingError('invalid_request');
+  // #113: termin zmieniony dostaje własne zdarzenie w dzienniku, ze starą i
+  // nową datą jako znaczniki czasu (bez treści zebrania) — dziś nie ma jeszcze
+  // zawiadomienia (kampanii) ani jego wersji porządku, do których to zdarzenie
+  // mogłoby się odnosić (osobny zakres, patrz docs/MEETINGS.md).
+  const reschedule = changes.scheduled_at !== undefined
+    && new Date(changes.scheduled_at).getTime() !== new Date(meeting.scheduled_at).getTime()
+    ? { fromScheduledAt: iso(meeting.scheduled_at), toScheduledAt: iso(changes.scheduled_at) } : null;
   await mutate(db, async tx => {
     const assignments = columns.map((column, index) => `${column} = $${index + 2}`).join(', ');
     await tx.query(`UPDATE meetings SET ${assignments} WHERE id = $1`,
@@ -608,13 +702,16 @@ export async function updateMeeting(db, actor, input = {}) {
       ...(changes.status && changes.status !== meeting.status
         ? { fromStatus: meeting.status, toStatus: changes.status } : {}),
     });
+    if (reschedule) {
+      await audit(tx, actor, 'meeting.rescheduled', 'meeting', meeting.id, reschedule);
+    }
   });
   return { meeting: meetingFromRow(await loadMeeting(db, meeting.id)) };
 }
 
-export async function addAgendaItem(db, actor, input = {}) {
+export async function addAgendaItem(db, actor, input = {}, env) {
   const key = idempotencyKey(input.idempotencyKey);
-  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
   const data = {
     meetingId: meeting.id,
     title: text(input.title, 3, 300),
@@ -637,12 +734,21 @@ export async function addAgendaItem(db, actor, input = {}) {
 }
 
 // Records or corrects one attendee (upsert by person reference, naturally idempotent).
-export async function recordAttendance(db, actor, input = {}) {
-  const meeting = await meetingForManage(db, actor, input.meetingId);
+export async function recordAttendance(db, actor, input = {}, env) {
+  const { meeting, viaClassHost } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
   const userId = optionalId(input.userId);
   const guardianId = optionalId(input.guardianId);
   if (Boolean(userId) === Boolean(guardianId)) throw new MeetingError('invalid_request');
   if (!CAPACITIES.has(input.capacity)) throw new MeetingError('invalid_request');
+  // Przedstawiciel prowadzący zebranie klasowe zapisuje wyłącznie siebie (userId)
+  // albo opiekuna z tej samej klasy (#171) — lista obecności nie ujawnia opiekunów
+  // spoza klasy, tak samo jak minimalizacja w families/.
+  if (viaClassHost) {
+    if (userId && userId !== actor.userId) throw new MeetingError('forbidden', 403);
+    if (guardianId && !(await guardianInClass(db, guardianId, meeting.class_id, meeting.school_year_id))) {
+      throw new MeetingError('invalid_reference');
+    }
+  }
   const votingEligible = bool(input.votingEligible);
   const present = bool(input.present);
   const row = await mutate(db, async tx => {
@@ -696,9 +802,9 @@ export async function determineQuorum(db, actor, input = {}) {
 
 // ---------- minutes ----------
 
-export async function createMinutesVersion(db, actor, input = {}) {
+export async function createMinutesVersion(db, actor, input = {}, env) {
   const key = idempotencyKey(input.idempotencyKey);
-  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
   const data = {
     meetingId: meeting.id,
     body: text(input.body, 10, 200000),
@@ -726,6 +832,10 @@ export async function approveMinutes(db, actor, input = {}) {
   await meetingForManage(db, actor, minutes.meeting_id);
   const approvalNote = text(input.approvalNote, 3, 500, { optional: true });
   if (minutes.status === 'approved') return { minutes: minutesFromRow(minutes), replayed: true };
+  requireMfaVerified(actor);
+  // #135: zasada czterech oczu — zatwierdzający musi być inną osobą niż autor
+  // tej wersji protokołu. Ta sama reguła w triggerze (0042) chroni bezpośredni UPDATE.
+  if (minutes.created_by === actor.userId) throw new MeetingError('minutes_four_eyes_required', 403);
   const changed = await mutate(db, async tx => {
     const { rows } = await tx.query(
       `UPDATE meeting_minutes SET status = 'approved', approved_by = $2, approved_at = now(), approval_note = $3
@@ -748,6 +858,10 @@ export async function setMinutesVisibility(db, actor, input = {}) {
     visibility: input.visibility,
     reason: text(input.reason, 3, 500, { optional: true }),
   };
+  // #135: udostępnienie rodzicom lub publicznie wymaga MFA (treść protokołu
+  // nie jest automatycznie sprawdzana pod kątem danych osobowych); widoczność
+  // wyłącznie wewnętrzna nadal działa bez MFA.
+  if (data.visibility === 'parents' || data.visibility === 'public') requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'meeting.minutes.visibility', data, async tx => {
     const id = randomUUID();
     await tx.query(
@@ -839,6 +953,8 @@ export async function createResolution(db, actor, input = {}) {
   };
   if (status === 'adopted' && !data.number) throw new MeetingError('resolution_number_required');
   requireFinalVotes(status, data, data.quorumCheckId);
+  // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; projekt (draft) nie.
+  if (status === 'adopted' || status === 'rejected') requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'resolution.create', data, async tx => {
     const id = randomUUID();
     await tx.query(
@@ -874,6 +990,8 @@ export async function updateResolution(db, actor, input = {}) {
   if (!RESOLUTION_STATUSES.has(next.status)) throw new MeetingError('invalid_request');
   if (next.status === 'adopted' && !next.number) throw new MeetingError('resolution_number_required');
   requireFinalVotes(next.status, next, next.quorumCheckId);
+  // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; edycja projektu nie.
+  if (next.status === 'adopted' || next.status === 'rejected') requireMfaVerified(actor);
   await mutate(db, async tx => {
     const { rows } = await tx.query(
       `UPDATE resolutions SET number = $2, title = $3, body = $4, status = $5, votes_for = $6,
@@ -913,6 +1031,8 @@ export async function correctResolution(db, actor, input = {}) {
   };
   if (status === 'adopted' && !previous.number) throw new MeetingError('resolution_number_required');
   requireFinalVotes(status, data, data.quorumCheckId);
+  // #135: korekta zawsze zapisuje rozstrzygnięcie (adopted/rejected) — zawsze wymaga MFA.
+  requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'resolution.correct', data, async tx => {
     const id = randomUUID();
     await tx.query(
@@ -1066,7 +1186,7 @@ export async function handle(request, env, url, json) {
           schoolYearId: query.get('schoolYearId'), number: query.get('number'),
         }));
       }
-      return json(await getMeeting(db, actor, { meetingId: target.meetingId }));
+      return json(await getMeeting(db, actor, { meetingId: target.meetingId }, env));
     }
 
     const body = await readJson(request);
@@ -1075,12 +1195,12 @@ export async function handle(request, env, url, json) {
     if (target.create) input.idempotencyKey = request.headers.get('Idempotency-Key')?.trim();
 
     const handlers = {
-      create: () => createMeeting(db, actor, input),
-      update: () => updateMeeting(db, actor, input),
-      agenda: () => addAgendaItem(db, actor, input),
-      attendance: () => recordAttendance(db, actor, input),
+      create: () => createMeeting(db, actor, input, env),
+      update: () => updateMeeting(db, actor, input, env),
+      agenda: () => addAgendaItem(db, actor, input, env),
+      attendance: () => recordAttendance(db, actor, input, env),
       quorum: () => determineQuorum(db, actor, input),
-      minutes: () => createMinutesVersion(db, actor, input),
+      minutes: () => createMinutesVersion(db, actor, input, env),
       approve: () => approveMinutes(db, actor, input),
       visibility: () => setMinutesVisibility(db, actor, input),
       resolution: () => createResolution(db, actor, input),

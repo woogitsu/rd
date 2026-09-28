@@ -45,7 +45,7 @@
 // przejścia stanów pilnowane triggerem, a wysyłany jest tylko wiersz przejęty
 // z „queued” do „sending” w tej samej transakcji.
 
-import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal } from './brevo.js';
+import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
 import { contentHash, renderMessage } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { brusselsDay } from '../pg/today.js';
@@ -57,6 +57,16 @@ const BACKOFF_MAX_MINUTES = 6 * 60;
 
 export function utcDay(now) {
   return now.toISOString().slice(0, 10);
+}
+
+// Doba limitu w strefie konta Brevo (#84; domyślnie Europe/Brussels — patrz
+// emailConfig/quotaTimezone). Osobna od brusselsDay() w pg/today.js, która
+// liczy dobę obowiązywania członkostw i jest zawsze w Brukseli, niezależnie
+// od tej konfiguracji.
+export function accountDay(now, timezone) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
 }
 
 export function backoffMinutes(attempts) {
@@ -94,11 +104,24 @@ const IN_FLIGHT = `SELECT COUNT(*)::int FROM email_outbox o
    WHERE o.state = 'sending'
      AND NOT EXISTS (SELECT 1 FROM email_send_ledger l WHERE l.outbox_id = o.id AND l.attempt = o.attempts)`;
 
-export async function remainingQuota(executor, day, config) {
+// Pula pozostała liczona ostrożnie (#84): dziennik `email_send_ledger.day` jest
+// zawsze dobą UTC, ale konto Brevo może resetować limit w swojej strefie
+// (domyślnie Europe/Brussels — `config.quotaTimezone`). Bierzemy WIĘKSZE
+// z dwóch zużyć — dnia UTC (kolumna `day`) i doby konta (`recorded_at`
+// przeliczone do jego strefy) — więc żadna z dwóch dób nie zostaje przekroczona.
+// Gdy obie doby się pokrywają (quotaTimezone = UTC), wynik jest identyczny jak
+// wcześniej.
+export async function remainingQuota(executor, now, config) {
+  const utc = utcDay(now);
+  const account = accountDay(now, config.quotaTimezone);
   const { rows } = await executor.query(
-    `SELECT (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger WHERE day = $1)
-          + (${IN_FLIGHT}) AS used`,
-    [day],
+    `SELECT GREATEST(
+        (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger WHERE day = $1),
+        (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger
+           WHERE (recorded_at AT TIME ZONE $3) >= $2::date
+             AND (recorded_at AT TIME ZONE $3) < $2::date + 1)
+     ) + (${IN_FLIGHT}) AS used`,
+    [utc, account, config.quotaTimezone],
   );
   return Math.max(0, config.dailyLimit - config.dailyReserved - Number(rows[0].used));
 }
@@ -131,13 +154,11 @@ async function recheckRow(tx, campaign, row, config) {
   const consent = await tx.query(
     `SELECT 1
        FROM guardians g
-       JOIN student_guardians sg ON sg.guardian_id = g.id
+       JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
        JOIN student_primary_household_on($4::date) p ON p.student_id = sg.student_id
       WHERE g.id = $1 AND p.household_id = $2
         AND g.contact_allowed AND sg.contact_allowed
         AND lower(btrim(g.email)) = $3
-        AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
-        AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date)
       LIMIT 1`,
     [row.guardian_id, row.household_id, row.email, row.memberDay],
   );
@@ -214,7 +235,7 @@ async function recoverStale(db, now) {
 async function claim(db, { config, now, day, dryRun, run, runToken }) {
   return db.transaction(async (tx) => {
     await tx.query('SELECT pg_advisory_xact_lock($1)', [QUOTA_LOCK_ID]);
-    let remaining = await remainingQuota(tx, day, config);
+    let remaining = await remainingQuota(tx, now, config);
     run.remainingQuota = remaining;
     let batchLeft = config.batchSize;
     const claimed = [];
@@ -225,10 +246,10 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
               (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id)
                 + (${IN_FLIGHT} AND o.campaign_id = c.id) AS sent_today
          FROM email_campaigns c JOIN school_years y ON y.id = c.school_year_id
-        WHERE c.status = 'sending'
+        WHERE c.status = 'sending' AND (c.send_not_before IS NULL OR c.send_not_before <= $2::timestamptz)
         ORDER BY c.queued_at, c.id
         FOR UPDATE OF c`,
-      [day],
+      [day, now.toISOString()],
     );
     for (const campaign of campaigns) {
       if (remaining <= 0 || batchLeft <= 0) break;
@@ -317,13 +338,11 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
             SELECT 1
               FROM email_campaign_recipients r
               JOIN guardians g ON g.id = r.guardian_id
-              JOIN student_guardians sg ON sg.guardian_id = g.id
+              JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
               JOIN students s ON s.id = sg.student_id
              WHERE r.id = o.recipient_id AND s.household_id = o.household_id
                AND g.contact_allowed AND sg.contact_allowed
-               AND lower(btrim(g.email)) = r.email
-               AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
-               AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date))
+               AND lower(btrim(g.email)) = r.email)
         RETURNING o.id`,
       [item.id, runToken, sendAt.toISOString(), item.day],
     );
@@ -602,11 +621,20 @@ export async function runEmailBatch(env, {
     planned: 0, sent: 0, retried: 0, failed: 0, skipped: 0, suppressed: 0, stoppedReason: null, sample: null,
     requeued: 0, unrecorded: [],
   };
+  // Okno godzin wysyłki (#130): sprawdzane przed dotknięciem kolejki, żeby
+  // przebieg poza oknem nie zmieniał niczego (kryterium akceptacji). Dotyczy
+  // też dry-run, żeby podgląd przebiegu zgadzał się z rzeczywistym.
+  if (!withinSendWindow(now, config.sendWindow)) {
+    run.stoppedReason = 'outside_send_window';
+    run.remainingQuota = await remainingQuota(db, now, config);
+    await recordRun(db, run);
+    return run;
+  }
   if (!dryRun) {
     const refusal = liveRunRefusal(config) ?? (transport ? null : 'transport_missing');
     if (refusal) {
       run.stoppedReason = refusal;
-      run.remainingQuota = await remainingQuota(db, day, config);
+      run.remainingQuota = await remainingQuota(db, now, config);
       await recordRun(db, run);
       return run;
     }

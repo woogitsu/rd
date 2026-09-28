@@ -3,16 +3,25 @@ import {
   canEditFamilies,
   classHref,
   ERROR_MESSAGES,
+  filterStudentsByName,
   formatCents,
   fullName,
   groupClassesByYear,
   householdHref,
   parseRoute,
+  sortStudentsByName,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
+
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const byId = (id) => document.getElementById(id);
-const state = { classes: null, canEdit: false, currentClass: null, currentHousehold: null };
+const state = { classes: null, canEdit: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
 const views = { classes: byId("classes-view"), class: byId("class-view"), household: byId("household-view") };
 const message = byId("message");
 const breadcrumbs = byId("breadcrumbs");
@@ -22,9 +31,12 @@ const enrollmentDialog = byId("enrollment-dialog");
 // Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
 const api = (url, options = {}) => apiRequest(url, { ...options, messages: ERROR_MESSAGES });
 
+// #112: błąd krytyczny (np. brak uprawnień) musi być ogłoszony asertywnie
+// (role="alert"), nie tylko "status" jak zwykły komunikat informacyjny.
 function showMessage(text, isError = false) {
   message.textContent = text;
   message.classList.toggle("error", isError);
+  message.setAttribute("role", isError ? "alert" : "status");
 }
 
 function cell(content, className = "") {
@@ -59,6 +71,7 @@ function setBreadcrumbs(items) {
 
 function showView(name) {
   for (const [key, element] of Object.entries(views)) element.hidden = key !== name;
+  mountPrintMeta(byId("print-meta"), {}); // czyszczone przy każdej zmianie widoku, uzupełniane przez wywołującego
 }
 
 async function loadClasses() {
@@ -104,22 +117,52 @@ function householdLinks(households) {
   return fragment;
 }
 
-async function renderClass(classId) {
-  const data = await api(`/api/classes/${encodeURIComponent(classId)}/students`);
-  state.currentClass = data.class;
-  setBreadcrumbs([{ text: "Klasy", href: "#/" }, { text: data.class.name }]);
-  byId("class-title").textContent = `Klasa ${data.class.name}`;
-  byId("class-year").textContent = `Rok szkolny ${data.class.schoolYearLabel}`;
-  byId("students-body").replaceChildren(...data.students.map((student) => {
+function renderStudentRows() {
+  const filtered = filterStudentsByName(state.classStudents, state.studentQuery);
+  byId("students-body").replaceChildren(...filtered.map((student) => {
     const row = document.createElement("tr");
     const actions = cell("", "row-actions");
-    if (state.canEdit) actions.append(button("Zmień klasę", () => openEnrollment(student, data.class)));
+    if (state.canEdit) actions.append(button("Zmień klasę", () => openEnrollment(student, state.currentClass)));
     row.append(cell(fullName(student)), cell(householdLinks(student.households)), actions);
     return row;
   }));
-  byId("students-empty").hidden = data.students.length > 0;
-  showView("class");
+  const total = state.classStudents.length;
+  byId("students-empty").hidden = filtered.length > 0;
+  if (filtered.length === 0 && state.studentQuery) {
+    byId("students-empty").textContent = `Brak uczniów pasujących do „${state.studentQuery}”.`;
+  } else {
+    byId("students-empty").textContent = "Brak uczniów przypisanych do tej klasy.";
+  }
+  byId("student-search-count").textContent =
+    state.studentQuery ? `${filtered.length} z ${total} uczniów` : `${total} uczniów`;
 }
+
+async function renderClass(classId) {
+  const data = await api(`/api/classes/${encodeURIComponent(classId)}/students`);
+  state.currentClass = data.class;
+  state.classStudents = sortStudentsByName(data.students);
+  state.studentQuery = "";
+  byId("student-search").value = "";
+  setBreadcrumbs([{ text: "Klasy", href: "#/" }, { text: data.class.name }]);
+  byId("class-title").textContent = `Klasa ${data.class.name}`;
+  byId("class-year").textContent = `Rok szkolny ${data.class.schoolYearLabel}`;
+  renderStudentRows();
+  showView("class");
+  // Dane rodzin są poufne (docs), więc każdy wydruk listy klasy dostaje znacznik (#151).
+  mountPrintMeta(byId("print-meta"), {
+    view: `Lista klasy ${data.class.name}`,
+    schoolYear: data.class.schoolYearLabel,
+    printedBy,
+    confidential: true,
+  });
+}
+
+byId("student-search-form").addEventListener("submit", (event) => event.preventDefault());
+byId("student-search").addEventListener("input", (event) => {
+  state.studentQuery = event.target.value;
+  renderStudentRows();
+});
+byId("print-class").addEventListener("click", () => window.print());
 
 async function renderHousehold(householdId) {
   const data = await api(`/api/households/${encodeURIComponent(householdId)}`);

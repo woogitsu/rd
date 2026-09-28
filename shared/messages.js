@@ -5,11 +5,25 @@
 // Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
 
 export const MESSAGES = Object.freeze({
+  // --- Ponowne wysłanie zaproszenia (#108) ---------------------------------------
+  invitation_not_pending: "To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie.",
+  // --- Konfiguracja roku szkolnego i klas (#78) -------------------------------------
+  invalid_label: "Podaj nazwę roku szkolnego (maksymalnie 200 znaków).",
+  invalid_date_range: "Data końca nie może być wcześniejsza niż data początku.",
+  school_year_exists: "Taki rok szkolny już istnieje.",
+  invalid_names: "Podaj nazwy klas (każda do 60 znaków).",
+  duplicate_name: "Nazwy klas na liście powtarzają się.",
+  class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
+  // --- Zakończenie przypisania do klasy (#86) --------------------------------------
+  invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
+  // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
+  minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
   mfa_enrollment_required: "Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą.",
   mfa_unavailable: "Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem.",
+  mfa_key_missing: "Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
   forbidden: "Brak uprawnień do tej operacji w Twoim zakresie.",
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji.",
@@ -19,6 +33,7 @@ export const MESSAGES = Object.freeze({
   invalid_token: "Kod jest nieważny, wygasł albo został już użyty.",
   invalid_invitation: "Zaproszenie jest nieważne, wygasło albo zostało już wykorzystane.",
   too_many_attempts: "Zbyt wiele prób. Spróbuj ponownie później.",
+  login_busy: "Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund.",
   user_disabled: "Konto jest wyłączone.",
   password_mismatch: "Hasła nie są takie same.",
   password_required: "Podaj hasło.",
@@ -31,6 +46,8 @@ export const MESSAGES = Object.freeze({
   invalid_json: "Serwer nie odczytał danych formularza.",
   invalid_content_type: "Serwer nie odczytał formatu danych.",
   unsupported_media_type: "Niedozwolony typ danych lub pliku.",
+  document_active_content: "Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady.",
+  document_malformed: "Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane).",
   request_too_large: "Za dużo danych w jednym żądaniu.",
   service_unavailable: "Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę.",
   retry_later: "Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę.",
@@ -85,6 +102,7 @@ export const MESSAGES = Object.freeze({
   grant_not_found: "Nie znaleziono przydziału.",
   last_admin_grant: "Nie można odebrać sobie ostatniego aktywnego przydziału administratora.",
   cannot_disable_self: "Nie można wyłączyć własnego konta.",
+  cannot_grant_self: "Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu.",
   cannot_reset_own_mfa: "Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora.",
   invalid_expires_at: "Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata).",
   invalid_ttl: "Ważność zaproszenia: od 1 do 336 godzin.",
@@ -169,6 +187,7 @@ export const MESSAGES = Object.freeze({
   campaign_not_draft: "Wysyłkę można zmieniać tylko jako szkic.",
   campaign_locked: "Wysyłka jest zablokowana i nie można jej zmienić.",
   no_recipients: "Wysyłka nie ma odbiorców.",
+  invalid_send_not_before: "Podaj poprawną datę i godzinę startu wysyłki.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
 
   // --- Import -----------------------------------------------------------------------------------
@@ -204,7 +223,7 @@ export const MESSAGES = Object.freeze({
   document_too_large: "Plik przekracza dozwolony rozmiar.",
   content_hash_mismatch: "Plik uszkodził się podczas przesyłania. Wyślij go ponownie.",
   document_integrity_mismatch: "Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi.",
-  document_content_missing: "Plik nie dotarł do magazynu dokumentów. Prześlij go ponownie.",
+  document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
 
   // --- Wydarzenia -------------------------------------------------------------------------------
   invalid_event_id: "Niepoprawny identyfikator wydarzenia.",
@@ -257,6 +276,9 @@ export const MESSAGES = Object.freeze({
   invalid_rights_note: "Niepoprawna notatka o prawach.",
   public_copy_requires_license: "Publiczna kopia wymaga zapisanej licencji lub zgody.",
   photos_require_school_wide_role: "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
+  // --- Kopie zapasowe (#90) ---------------------------------------------------------
+  backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
+  restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).
@@ -269,7 +291,7 @@ export const STATUS_MESSAGES = Object.freeze({
   405: MESSAGES.method_not_allowed,
   409: MESSAGES.conflict,
   413: MESSAGES.request_too_large,
-  415: MESSAGES.unsupported_media_type,
+  415: MESSAGES.unsupported_media_type, // document_active_content i document_malformed mają własne komunikaty (mapa wyżej)
   429: "Zbyt wiele żądań. Odczekaj chwilę i spróbuj ponownie.",
 });
 

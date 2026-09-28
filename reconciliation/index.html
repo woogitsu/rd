@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Uzgodnienia wyciągu — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../"><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
+      <nav aria-label="Panel">
+        <a href="../panel/">Wpłaty</a>
+        <a href="../ledger/">Księga</a>
+        <a class="active" href="./" aria-current="page">Uzgodnienia wyciągu</a>
+        <a href="../import/">Import uczniów</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">Finanse Rady</p>
+          <h1>Uzgodnienie rachunku bankowego</h1>
+          <p>Dopasowania są wyłącznie propozycjami — zatwierdzenie i potwierdzenie są ręczne.</p>
+        </div>
+        <div class="heading-action"><button class="primary" id="open-create" type="button">Nowe uzgodnienie</button></div>
+      </section>
+
+      <p class="message error" id="access-notice" role="status" hidden>Uzgodnienia prowadzą administrator, zarząd i skarbnik (z MFA). To konto nie ma dostępu do tego ekranu.</p>
+
+      <section class="card filters" aria-labelledby="filters-title">
+        <h2 id="filters-title">Rok szkolny</h2>
+        <form id="filters-form">
+          <label>Rok szkolny <input id="school-year-id" name="schoolYearId" required autocomplete="off" placeholder="np. 2026-2027" /></label>
+          <button type="submit">Pokaż</button>
+        </form>
+        <p id="audit-report-box" hidden><a id="audit-report-link" href="#">Raport dla Komisji Rewizyjnej (otwiera nową kartę)</a></p>
+      </section>
+
+      <div class="message" id="message" role="status"></div>
+
+      <section class="card" aria-labelledby="reconciliations-title">
+        <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="reconciliations-title">Uzgodnienia</h2></div><span id="reconciliations-count" aria-live="polite"></span></div>
+        <div class="table-wrap" id="reconciliations-table" role="region" aria-labelledby="reconciliations-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Uzgodnienia wyciągu wybranego roku</caption>
+            <thead><tr><th scope="col">Data wyciągu</th><th scope="col">Stan</th><th scope="col" class="amount">Saldo wyciągu</th><th scope="col" class="amount">Saldo księgi</th><th scope="col" class="amount">Różnica</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="reconciliations-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="reconciliations-empty" hidden>Brak uzgodnień dla wybranego roku.</p>
+      </section>
+
+      <section class="card" id="detail" aria-labelledby="detail-title" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Uzgodnienie</p><h2 id="detail-title">—</h2></div>
+          <span id="detail-status" class="badge"></span>
+        </div>
+        <div class="summary-grid three">
+          <div><span>Saldo wyciągu</span><strong id="detail-statement-balance">—</strong></div>
+          <div><span>Saldo księgi (rachunek)</span><strong id="detail-ledger-balance">—</strong></div>
+          <div><span>Różnica</span><strong id="detail-difference">—</strong></div>
+        </div>
+        <p class="context">Notatka: <span id="detail-notes">—</span></p>
+        <p id="detail-summary-counts" aria-live="polite"></p>
+
+        <div id="import-lines-box" hidden>
+          <h3>Wgraj pozycje wyciągu (CSV)</h3>
+          <form id="import-lines-form">
+            <label>Wklej CSV (kolumny: data, kwota, tytuł) <textarea id="import-csv" rows="5" required placeholder="data;kwota;tytul&#10;2026-01-15;150,00;skladka 1a"></textarea></label>
+            <div class="form-error" id="import-error" role="alert"></div>
+            <button class="primary" type="submit">Wgraj linie</button>
+          </form>
+        </div>
+
+        <h3>Pozycje wyciągu</h3>
+        <div class="table-wrap" role="region" aria-labelledby="detail-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Pozycje wyciągu tego uzgodnienia</caption>
+            <thead><tr><th scope="col">Data</th><th scope="col">Rodzaj</th><th scope="col" class="amount">Kwota</th><th scope="col">Źródło</th><th scope="col">Stan</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="lines-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="lines-empty" hidden>Brak wgranych pozycji.</p>
+
+        <div id="unmatched-ledger-box" hidden>
+          <h3>Wpisy księgi bez dopasowanej pozycji wyciągu</h3>
+          <ul id="unmatched-ledger-entries"></ul>
+        </div>
+
+        <div class="message error" id="inconsistent-box" hidden>
+          <h3>Niespójne dopasowania</h3>
+          <ul id="inconsistent-matches"></ul>
+        </div>
+
+        <div class="dialog-actions detail-actions">
+          <button id="confirm-reconciliation" type="button" class="primary" hidden>Potwierdź uzgodnienie</button>
+        </div>
+        <p class="message" id="confirm-waiting" hidden>Czeka na drugą osobę — kto utworzył uzgodnienie, nie może go potwierdzić.</p>
+        <p class="message error" id="confirm-inconsistent" hidden>Są niespójne dopasowania — popraw je, zanim potwierdzisz.</p>
+      </section>
+    </main>
+
+    <dialog id="create-dialog" aria-labelledby="create-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Nowe uzgodnienie</p><h2 id="create-dialog-title">Dodaj wyciąg</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <label>Data wyciągu <input name="statementDate" type="date" required autofocus /></label>
+      <label>Saldo z wyciągu (EUR) <input name="statementBalance" inputmode="decimal" required placeholder="np. 1234,56 albo -50,00" /></label>
+      <label>Notatka <textarea name="notes" rows="2" maxlength="1000" placeholder="Opcjonalnie"></textarea></label>
+      <div class="form-error" id="create-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="create-error">Utwórz</button></div>
+    </form></dialog>
+
+    <dialog id="match-dialog" aria-labelledby="match-dialog-title"><form id="match-form" method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Wyłącznie propozycja</p><h2 id="match-dialog-title">Dopasuj pozycję</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <div id="match-candidates" class="candidates"></div>
+      <div class="form-error" id="match-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="match-error">Potwierdź dopasowanie</button></div>
+    </form></dialog>
+
+    <dialog id="revoke-dialog" aria-labelledby="revoke-dialog-title"><form id="revoke-form" method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Historia zmian</p><h2 id="revoke-dialog-title">Cofnij dopasowanie</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="500" required autofocus></textarea></label>
+      <div class="form-error" id="revoke-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="revoke-error">Cofnij</button></div>
+    </form></dialog>
+
+    <dialog id="confirm-dialog" aria-labelledby="confirm-dialog-title"><form id="confirm-form" method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Zasada czterech oczu</p><h2 id="confirm-dialog-title">Potwierdź uzgodnienie</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context" id="confirm-summary"></p>
+      <p>Po potwierdzeniu uzgodnienia nie można już zmienić — to zapis trwały (niezmienny).</p>
+      <label id="confirm-note-field" hidden>Wyjaśnienie różnicy <textarea name="confirmationNote" rows="3" minlength="3" maxlength="1000"></textarea></label>
+      <div class="form-error" id="confirm-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="confirm-error">Potwierdź</button></div>
+    </form></dialog>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

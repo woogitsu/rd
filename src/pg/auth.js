@@ -242,7 +242,7 @@ export function normalizeEmail(email) {
   return value;
 }
 
-export async function createInvitation(env, { actorId, email, role, classId = null, schoolYearId = null, ttlSeconds = INVITATION_DEFAULT_TTL_SECONDS }) {
+export async function createInvitation(env, { actorId, email, role, classId = null, schoolYearId = null, ttlSeconds = INVITATION_DEFAULT_TTL_SECONDS, replacesInvitationId = null }) {
   if (!actorId) throw new Error('actor_required');
   if (!ROLES.includes(role)) throw new Error('invalid_role');
   if (role === 'representative' && !classId) throw new Error('class_required');
@@ -265,6 +265,13 @@ export async function createInvitation(env, { actorId, email, role, classId = nu
       actorId, action: 'invitation.created', entityType: 'invitation', entityId: invitationId,
       metadata: { role, classId, schoolYearId },
     });
+    // „Wyślij ponownie” (#108): zdarzenie w tej samej transakcji co nowe zaproszenie.
+    if (replacesInvitationId) {
+      await insertAuditEvent(tx, {
+        actorId, action: 'invitation.reissued', entityType: 'invitation', entityId: invitationId,
+        metadata: { replacesInvitationId },
+      });
+    }
     return { invitationId, secret, expiresAt: isoTimestamp(rows[0].expires_at) };
   });
 }

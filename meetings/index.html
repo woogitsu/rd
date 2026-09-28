@@ -12,14 +12,13 @@
     <header class="site-header">
       <a class="brand" href="../">Rada Rodziców <small>Szkoła Polska w Brukseli</small></a>
       <nav aria-label="Panel">
-        <a href="../panel/">Wpłaty</a>
-        <a href="../ledger/">Księga</a>
-        <a class="active" href="./" aria-current="page">Zebrania</a>
-        <a href="../import/">Import uczniów</a>
+        <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
+      <div id="shell-account"></div>
     </header>
 
     <main id="main">
+      <div class="print-meta" id="print-meta" aria-hidden="true"></div>
       <section class="page-heading">
         <div>
           <h1>Zebrania Rady</h1>
@@ -43,7 +42,7 @@
         </form>
       </section>
 
-      <section class="block" aria-labelledby="list-title">
+      <section class="block" id="list-section" aria-labelledby="list-title">
         <div class="section-heading">
           <h2 id="list-title">Zebrania</h2>
           <span class="loading" id="list-loading" hidden>Wczytywanie…</span>
@@ -54,6 +53,24 @@
             <caption class="sr-only">Zebrania w wybranym roku szkolnym</caption>
             <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Tytuł</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
             <tbody id="list-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- #167: przedstawiciel bez roli zarządzającej/audytu widzi wyłącznie
+           protokoły udostępnione (parents/public), bez obecności, quorum,
+           projektów uchwał ani protokołów wewnętrznych. -->
+      <section class="block" id="shared-section" aria-labelledby="shared-title" hidden>
+        <div class="section-heading">
+          <h2 id="shared-title">Protokoły udostępnione</h2>
+          <span class="loading" id="shared-loading" hidden>Wczytywanie…</span>
+        </div>
+        <p class="message" id="shared-message" role="status">Wybierz rok szkolny, aby pobrać udostępnione protokoły.</p>
+        <div class="table-wrap" id="shared-wrap" hidden>
+          <table>
+            <caption class="sr-only">Protokoły udostępnione w wybranym roku szkolnym</caption>
+            <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Klasa</th><th scope="col">Tytuł</th><th scope="col">Wersja</th><th scope="col">Zatwierdzono</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="shared-body"></tbody>
           </table>
         </div>
       </section>
@@ -82,7 +99,7 @@
             <fieldset class="quorum-fields" data-quorum-fields>
               <legend>Reguła quorum</legend>
             </fieldset>
-            <p class="form-error" role="alert"></p>
+            <p class="form-error" id="detail-error" role="alert"></p>
             <div><button class="primary" type="submit">Zapisz dane zebrania</button></div>
           </form>
           <form id="status-form" class="inline-form">
@@ -90,7 +107,7 @@
               <select name="status" required></select>
             </label>
             <button type="submit">Zmień status</button>
-            <p class="form-error" role="alert"></p>
+            <p class="form-error" id="status-error" role="alert"></p>
           </form>
         </section>
 
@@ -109,7 +126,7 @@
               <label>Pozycja (opcjonalnie) <input name="position" inputmode="numeric" pattern="[0-9]*" maxlength="3" /></label>
             </div>
             <label>Opis (opcjonalnie) <textarea name="description" rows="2" maxlength="2000"></textarea></label>
-            <p class="form-error" role="alert"></p>
+            <p class="form-error" id="agenda-error" role="alert"></p>
             <div><button type="submit">Dodaj punkt</button></div>
           </form>
         </section>
@@ -149,7 +166,7 @@
                 <label class="inline"><input type="radio" name="votingEligible" value="false" /> nie</label>
               </fieldset>
             </div>
-            <p class="form-error" role="alert"></p>
+            <p class="form-error" id="attendee-error" role="alert"></p>
             <div class="actions"><button type="submit">Zapisz wpis obecności</button><button type="reset">Wyczyść</button></div>
           </form>
         </section>
@@ -184,7 +201,7 @@
               <textarea name="body" rows="14" minlength="10" maxlength="200000" required></textarea>
             </label>
             <label>Opis zmiany (opcjonalnie) <input name="changeNote" maxlength="500" /></label>
-            <p class="form-error" role="alert"></p>
+            <p class="form-error" id="minutes-error" role="alert"></p>
             <div><button type="submit">Zapisz nową wersję</button></div>
           </form>
         </section>
@@ -203,6 +220,21 @@
             </table>
           </div>
         </section>
+      </section>
+
+      <section id="print-minutes" class="print-only" aria-hidden="true">
+        <div class="print-meta" id="print-minutes-meta"></div>
+        <h2 id="print-minutes-title"></h2>
+        <p id="print-minutes-info" class="muted"></p>
+        <h3>Lista obecności</h3>
+        <table>
+          <caption class="sr-only">Lista obecności — wersja do druku</caption>
+          <thead><tr><th scope="col">Funkcja</th><th scope="col">Obecność</th><th scope="col">Prawo głosu</th><th scope="col">Podpis</th></tr></thead>
+          <tbody id="print-attendance-body"></tbody>
+        </table>
+        <p id="print-quorum-result"></p>
+        <h3>Treść protokołu</h3>
+        <div id="print-minutes-body" class="minutes-text"></div>
       </section>
     </main>
 
@@ -233,7 +265,7 @@
           <legend>Reguła quorum</legend>
         </fieldset>
         <p class="muted">Status „zaplanowane” niczego nie wysyła. Zawiadomienia przejdą przez moduł wiadomości z osobnym zatwierdzeniem.</p>
-        <p class="form-error" role="alert"></p>
+        <p class="form-error" id="meeting-form-error" role="alert"></p>
         <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Utwórz zebranie</button></div>
       </form>
     </dialog>
@@ -268,7 +300,7 @@
         </fieldset>
         <label data-amends>Zmienia uchwałę nr (opcjonalnie, ten sam rok szkolny) <input name="amendsNumber" maxlength="64" autocomplete="off" /></label>
         <label data-reason hidden>Powód poprawki zapisu <textarea name="reason" rows="2" minlength="3" maxlength="500"></textarea></label>
-        <p class="form-error" role="alert"></p>
+        <p class="form-error" id="resolution-error" role="alert"></p>
         <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zapisz uchwałę</button></div>
       </form>
     </dialog>
@@ -280,7 +312,7 @@
         <p class="context"></p>
         <p>Pierwsze zatwierdzenie blokuje zebranie: listę obecności, porządek obrad, quorum, uchwały i dane zebrania. Zatwierdzonej wersji nie można zmienić.</p>
         <label>Uwaga o trybie przyjęcia (opcjonalnie) <input name="approvalNote" maxlength="500" /></label>
-        <p class="form-error" role="alert"></p>
+        <p class="form-error" id="approve-minutes-error" role="alert"></p>
         <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zatwierdź</button></div>
       </form>
     </dialog>
@@ -299,7 +331,7 @@
         </label>
         <label>Powód (opcjonalnie) <input name="reason" maxlength="500" /></label>
         <p class="muted">„Publiczny” oznacza dostęp bez logowania. Upewnij się, że treść nie zawiera danych osobowych.</p>
-        <p class="form-error" role="alert"></p>
+        <p class="form-error" id="visibility-error" role="alert"></p>
         <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zapisz widoczność</button></div>
       </form>
     </dialog>
@@ -308,7 +340,10 @@
       <div class="stack">
         <h2 id="minutes-view-title">Protokół</h2>
         <pre class="minutes-text" id="minutes-view-body"></pre>
-        <div class="actions"><button type="button" data-close>Zamknij</button></div>
+        <div class="actions">
+          <button type="button" data-close>Zamknij</button>
+          <button type="button" id="print-minutes-button">Drukuj / zapisz jako PDF</button>
+        </div>
       </div>
     </dialog>
 
