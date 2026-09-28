@@ -5,7 +5,7 @@ Logowanie: adres e-mail i hasło, a następnie kod z aplikacji uwierzytelniając
 ## Zasady
 
 - Sekret sesji ma 256 bitów losowości i trafia do przeglądarki w cookie HttpOnly, Secure, SameSite=Lax.
-- D1 przechowuje wyłącznie SHA-256 sekretu. Surowy sekret nie może znaleźć się w bazie, logach ani dzienniku audytu.
+- Baza (D1 w starym Workerze, PostgreSQL w prototypie na `src/pg/auth.js` — sekcja niżej) przechowuje wyłącznie SHA-256 sekretu. Surowy sekret nie może znaleźć się w bazie, logach ani dzienniku audytu.
 - Sesja jest ważna najwyżej 24 godziny (limit absolutny, liczony od pierwszego logowania — patrz niżej) i wygasa też po bezczynności (patrz „Limit bezczynności i sesje własne”, #150). Zapytanie odrzuca sesję wygasłą, wycofaną i konto wyłączone.
 - GET /api/session zwraca minimum danych bieżącego użytkownika i stan potwierdzenia MFA.
 - POST /api/logout wymaga zgodnego nagłówka Origin, wycofuje sesję i zapisuje zdarzenie audytowe.

@@ -14,7 +14,7 @@ Korekty są osobnymi, niezmiennymi rekordami w `payment_corrections`. Zawierają
 
 Widok `household_payment_totals` sumuje zarejestrowane wpłaty pomniejszone o korekty dla gospodarstwa i roku szkolnego. Pomija wpłaty nierozpoznane i starsze wpisy ze statusem `reversed`. Widok nie porównuje sumy z sugerowaną składką.
 
-Przed udostępnieniem funkcji produkcyjnej trzeba uzgodnić z Radą zasady korekt oraz uprawnienia do ich zatwierdzania. API i interfejs powstaną w osobnym zakresie po wdrożeniu autoryzacji serwerowej.
+Przed udostępnieniem funkcji produkcyjnej trzeba uzgodnić z Radą zasady korekt oraz uprawnienia do ich zatwierdzania. API (`src/pg/routes/payments.js`, sekcja niżej) i interfejs (`panel/`) już istnieją jako prototyp na danych syntetycznych — status: API na PostgreSQL, panel; nie wdrożone na Railway ani zatwierdzone do pracy na danych rodzin.
 
 ## API zapisu
 
