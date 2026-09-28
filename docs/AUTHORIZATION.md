@@ -241,6 +241,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/year-close/:schoolYearId/checklist/:item` | zarząd, skarbnik — jak wyżej | tak | 403 | |
 | `GET /api/year-close/:schoolYearId/handover` | zarząd, skarbnik — jak wyżej | tak | 403 | Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195) |
 | `POST /api/year-close/:schoolYearId/close` | zarząd — jak wyżej; inna osoba niż rozpoczynająca | tak, krok w górę: ≤15 min (#150) | 403 | osobna baza testowa; wygasza przydziały roku; MFA starsze niż 15 min → `403 mfa_stale` |
+| `GET /api/public/privacy-notice` | publiczna | nie | — | tylko opublikowana wersja; szkic/zatwierdzona niewidoczna (404) (#145, D-06) |
+| `GET /api/admin/privacy-notices` | admin, zarząd | tak | 403 | wszystkie wersje, bez zakresu roku (#145) |
+| `POST /api/admin/privacy-notices` | admin, zarząd | tak | 403 | nowy szkic; treść i `decisionRef` bez wartości domyślnej |
+| `POST /api/admin/privacy-notices/:id/approve` | admin, zarząd; inna osoba niż autor | tak | 403 | autor własnej wersji: 403 i trigger bazy |
+| `POST /api/admin/privacy-notices/:id/publish` | admin, zarząd | tak | 403 | wymaga zatwierdzenia; idempotentne (druga publikacja: `Idempotency-Replayed`); poprzednia opublikowana wersja przechodzi w `superseded` |
 
 Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady. W macierzy trasy publiczne dostają poprawne dane uwierzytelniające (konto z hasłem, świeży token zaproszenia albo resetu) niezależnie od cookie aktora — odpowiedź zależy wyłącznie od hasła lub tokenu; błędne dane, limity prób i CSRF logowania sprawdza `tests/pg-login.test.js`. Trasy administratora `password-reset` i `mfa-reset` są częścią modułu `admin` (wyłącznie admin z MFA).
 
