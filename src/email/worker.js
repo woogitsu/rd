@@ -154,13 +154,11 @@ async function recheckRow(tx, campaign, row, config) {
   const consent = await tx.query(
     `SELECT 1
        FROM guardians g
-       JOIN student_guardians sg ON sg.guardian_id = g.id
+       JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
        JOIN student_primary_household_on($4::date) p ON p.student_id = sg.student_id
       WHERE g.id = $1 AND p.household_id = $2
         AND g.contact_allowed AND sg.contact_allowed
         AND lower(btrim(g.email)) = $3
-        AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
-        AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date)
       LIMIT 1`,
     [row.guardian_id, row.household_id, row.email, row.memberDay],
   );
@@ -340,13 +338,11 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
             SELECT 1
               FROM email_campaign_recipients r
               JOIN guardians g ON g.id = r.guardian_id
-              JOIN student_guardians sg ON sg.guardian_id = g.id
+              JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
               JOIN students s ON s.id = sg.student_id
              WHERE r.id = o.recipient_id AND s.household_id = o.household_id
                AND g.contact_allowed AND sg.contact_allowed
-               AND lower(btrim(g.email)) = r.email
-               AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
-               AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date))
+               AND lower(btrim(g.email)) = r.email)
         RETURNING o.id`,
       [item.id, runToken, sendAt.toISOString(), item.day],
     );
