@@ -1306,6 +1306,36 @@ export const ROUTE_MATRIX = Object.freeze([
   yearCloseRoute('yearClose.close', 'POST', '/api/year-close/:schoolYearId/close', '/close', YEAR_CLOSE_BOARD, 200, {
     body: () => ({}),
   }),
+
+  // ---------- privacy-notice (#145, D-06) ----------
+  {
+    id: 'privacyNotice.public', module: 'privacy-notice', method: 'GET', path: '/api/public/privacy-notice', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null, needs: [['privacyNotice', 'published', ['-']]],
+    build: () => ({ path: '/api/public/privacy-notice' }),
+  },
+  {
+    id: 'privacyNotice.list', module: 'privacy-notice', method: 'GET', path: '/api/admin/privacy-notices', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/admin/privacy-notices' }),
+  },
+  {
+    id: 'privacyNotice.create', module: 'privacy-notice', method: 'POST', path: '/api/admin/privacy-notices', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: () => ({
+      path: '/api/admin/privacy-notices',
+      body: { bodyText: 'Treść informacji o przetwarzaniu danych (macierz uprawnień).', decisionRef: 'D-06/macierz' },
+    }),
+  },
+  {
+    id: 'privacyNotice.approve', module: 'privacy-notice', method: 'POST', path: '/api/admin/privacy-notices/:id/approve', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: true, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'privacyNotice', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/admin/privacy-notices/${obj.noticeId}/approve` }),
+  },
+  {
+    id: 'privacyNotice.publish', module: 'privacy-notice', method: 'POST', path: '/api/admin/privacy-notices/:id/publish', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: true, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'privacyNotice', stage: 'approved' },
+    build: ({ obj }) => ({ path: `/api/admin/privacy-notices/${obj.noticeId}/publish` }),
+  },
 ].map((route) => Object.freeze(route)));
 
 export function requiresMfa(route, actor) {

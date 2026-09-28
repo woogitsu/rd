@@ -102,6 +102,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: kto, kiedy i jaką treścią informuje opiekunów o przetwarzaniu ich danych i danych dzieci w panelu?
 - Dlaczego: wymagane przed importem (#2) i przed pierwszą wiadomością (#10).
 - Warianty w dokumentacji: nie wskazano.
+- Mechanizm techniczny (bez treści): [`docs/PRIVACY_NOTICE.md`](PRIVACY_NOTICE.md) — wersjonowany rejestr `privacy_notices` (#145), bramka `409 privacy_notice_missing` na commit importu, publiczna trasa `GET /api/public/privacy-notice`. Bramki dla kampanii e-mail i wydruku kartek są świadomie poza zakresem #145 w obecnym PR (kolizja z równoległymi PR-ami na `src/pg/routes/email.js`/`print/core.js`) — patrz dokument.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
