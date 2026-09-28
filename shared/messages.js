@@ -119,6 +119,8 @@ export const MESSAGES = Object.freeze({
   payment_already_linked: "Wpłata jest już powiązana z innym wpisem.",
   payment_cannot_be_corrected: "Tej wpłaty nie można skorygować w obecnym stanie.",
   correction_exceeds_remaining_amount: "Korekta przekracza kwotę pozostałą po wcześniejszych korektach.",
+  possible_personal_data: "Ten tekst zostanie zapisany na stałe i trafi do eksportu. Usuń dane osobowe albo potwierdź, że to konieczne.",
+  minutes_contain_personal_data: "Protokół zawiera możliwe dane osobowe (imię i nazwisko, e-mail albo IBAN) — publikacja publiczna jest zablokowana.",
   payment_amount_mismatch: "Kwota wpłaty nie zgadza się z powiązanym wpisem księgi. Odśwież widok i sprawdź dane.",
   payment_cannot_be_refunded: "Tej wpłaty nie można zwrócić w obecnym stanie.",
   payment_not_assigned: "Wpłata nie jest przypisana do żadnej rodziny.",

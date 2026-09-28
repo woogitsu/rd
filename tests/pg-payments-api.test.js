@@ -465,6 +465,75 @@ test('audit events are atomic with the write and carry no amounts, references or
   assert.equal(await backend.count('payment_entries', "idempotency_key = 'audit-fail-0001'"), 1);
 }));
 
+// --- #152: ostrzeżenie o możliwych danych osobowych w korekcie wpłaty ------
+
+async function seedSiblingsForPii(backend) {
+  await backend.db.query("INSERT INTO classes (id, school_year_id, name) VALUES ('c-pii', 'y2026', '1A')");
+  await backend.db.query(`
+    INSERT INTO students (id, household_id, first_name, last_name) VALUES
+      ('st-pii-1', 'h1', 'Anna', 'Testowy'), ('st-pii-2', 'h1', 'Piotr', 'Testowy');
+    INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES
+      ('en-pii-1', 'st-pii-1', 'c-pii', 'y2026'), ('en-pii-2', 'st-pii-2', 'c-pii', 'y2026');
+  `);
+}
+
+test('#152 correction reason with a known sibling pair requires confirmation; confirmed write records categories without content', async () => withPg({}, async (backend) => {
+  await seedSiblingsForPii(backend);
+  const payment = (await createPayment(backend, {}, 'pii-key-0001')).body.payment;
+  const path = `/api/payments/${payment.id}/corrections`;
+
+  const blocked = await read(await backend.fetch(call(backend.cookie, path,
+    { body: { amountCents: 100, reason: 'Zwrot dla Anna i Piotr Testowy' }, key: 'pii-corr-0001' })));
+  assert.equal(blocked.status, 422);
+  assert.equal(blocked.body.error, 'possible_personal_data');
+  assert.deepEqual(new Set(blocked.body.categories), new Set(['known_name']));
+  assert.equal(await backend.count('payment_corrections'), 0);
+
+  const confirmed = await read(await backend.fetch(call(backend.cookie, path, {
+    body: { amountCents: 100, reason: 'Zwrot dla Anna i Piotr Testowy', confirmPersonalData: true }, key: 'pii-corr-0001',
+  })));
+  assert.equal(confirmed.status, 201, JSON.stringify(confirmed.body));
+  assert.equal(await backend.count('payment_corrections'), 1);
+  const [event] = (await backend.db.query(
+    "SELECT metadata_json FROM audit_events WHERE action = 'payment.correction.created' ORDER BY occurred_at DESC LIMIT 1",
+  )).rows;
+  const metadata = typeof event.metadata_json === 'string' ? JSON.parse(event.metadata_json) : event.metadata_json;
+  assert.equal(metadata.piiConfirmed, true);
+  assert.deepEqual(new Set(metadata.piiCategories), new Set(['known_name']));
+  assert.ok(!JSON.stringify(metadata).includes('Anna') && !JSON.stringify(metadata).includes('Testowy'));
+
+  // Podwójne kliknięcie z tym samym kluczem i potwierdzeniem -> jeden wpis.
+  const retried = await read(await backend.fetch(call(backend.cookie, path, {
+    body: { amountCents: 100, reason: 'Zwrot dla Anna i Piotr Testowy', confirmPersonalData: true }, key: 'pii-corr-0001',
+  })));
+  assert.equal(retried.status, 200);
+  assert.equal(retried.replayed, 'true');
+  assert.equal(await backend.count('payment_corrections'), 1);
+}));
+
+test('#152 correction reason with an e-mail address is refused without confirmation', async () => withPg({}, async (backend) => {
+  const payment = (await createPayment(backend, {}, 'pii-key-0002')).body.payment;
+  const path = `/api/payments/${payment.id}/corrections`;
+  const res = await read(await backend.fetch(call(backend.cookie, path,
+    { body: { amountCents: 50, reason: 'Prosba od rodzic@example.invalid o zwrot' }, key: 'pii-corr-0002' })));
+  assert.equal(res.status, 422);
+  assert.deepEqual(res.body.categories, ['email']);
+  assert.equal(await backend.count('payment_corrections'), 0);
+}));
+
+test('#152 correction reason without personal data is written without any pii metadata', async () => withPg({}, async (backend) => {
+  const payment = (await createPayment(backend, {}, 'pii-key-0003')).body.payment;
+  const path = `/api/payments/${payment.id}/corrections`;
+  const res = await read(await backend.fetch(call(backend.cookie, path,
+    { body: { amountCents: 50, reason: 'Zwrot kosztów materiałów plastycznych' }, key: 'pii-corr-0003' })));
+  assert.equal(res.status, 201);
+  const [event] = (await backend.db.query(
+    "SELECT metadata_json FROM audit_events WHERE action = 'payment.correction.created' ORDER BY occurred_at DESC LIMIT 1",
+  )).rows;
+  const metadata = typeof event.metadata_json === 'string' ? JSON.parse(event.metadata_json) : event.metadata_json;
+  assert.equal(metadata.piiConfirmed, undefined);
+}));
+
 test('BIGINT aggregates are converted only when safe; route is registered once', () => {
   assert.equal(paymentsRoutes.toSafeInteger('9007199254740991'), Number.MAX_SAFE_INTEGER);
   assert.equal(paymentsRoutes.toSafeInteger(null), 0);
