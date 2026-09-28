@@ -55,7 +55,7 @@ test('changing scheduledAt logs meeting.rescheduled with old/new timestamps, no 
     assert.equal(event.metadata_json.fromScheduledAt, '2026-10-10T17:00:00.000Z');
     assert.equal(event.metadata_json.toScheduledAt, '2026-10-17T17:00:00.000Z');
     // No meeting title, location, or other content leaks into the audit metadata.
-    assert.deepEqual(Object.keys(event.metadata_json).sort(), ['fromScheduledAt', 'toScheduledAt']);
+    assert.deepEqual(Object.keys(event.metadata_json).sort(), ['fromScheduledAt', 'schoolYearId', 'toScheduledAt']);
 
     // Re-sending the same scheduledAt (double click / retry) does not log a second event.
     await updateMeeting(db, board, { meetingId: meeting.id, scheduledAt: '2026-10-17T17:00:00Z' });

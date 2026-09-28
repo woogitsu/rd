@@ -20,6 +20,7 @@ import { api as apiRequest } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
+import { initialSchoolYearId } from "../shared/school-year.js";
 
 mountShell();
 
@@ -104,11 +105,14 @@ function setBusy(busy) {
   filtersForm.querySelector("button").disabled = busy;
 }
 
-filtersForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const value = yearInput.value.trim();
+// Wczytuje listę dla podanego roku; używane zarówno przy ręcznym „Pokaż”, jak i
+// przy wypełnieniu domyślnym rokiem po wejściu na panel (puste ekrany bez akcji).
+// Wczytuje wyłącznie listę już zaplanowanych/wysłanych kampanii — nic tu nie
+// wysyła żadnej wiadomości.
+async function showYear(value) {
   if (!isValidId(value)) { setMessage("Podaj poprawny identyfikator roku szkolnego.", true); return; }
   setMessage("");
+  yearInput.value = value;
   setBusy(true);
   try {
     state.schoolYearId = value;
@@ -120,6 +124,11 @@ filtersForm.addEventListener("submit", async (event) => {
   } finally {
     setBusy(false);
   }
+}
+
+filtersForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  showYear(yearInput.value.trim());
 });
 
 // --- szczegóły kampanii -----------------------------------------------------
@@ -426,13 +435,18 @@ async function applyAccess() {
   }
   state.grants = Array.isArray(access.grants) ? access.grants : [];
   state.actorId = session?.user?.id ?? null;
-  if (hasEditorAccess(state.grants)) return;
-  byId("open-create").hidden = true;
-  filtersForm.closest("section").hidden = true;
-  const notice = byId("access-notice");
-  notice.textContent = access.mfaRequired === true
-    ? describeApiError(403, "mfa_required")
-    : describeApiError(403, "forbidden");
-  notice.hidden = false;
+  if (!hasEditorAccess(state.grants)) {
+    byId("open-create").hidden = true;
+    filtersForm.closest("section").hidden = true;
+    const notice = byId("access-notice");
+    notice.textContent = access.mfaRequired === true
+      ? describeApiError(403, "mfa_required")
+      : describeApiError(403, "forbidden");
+    notice.hidden = false;
+    return;
+  }
+  // Rok domyślny: najnowszy z przydziałów, awaryjnie heurystyka daty
+  // (shared/school-year.js) — panel ładuje listę bez klikania „Pokaż”.
+  await showYear(initialSchoolYearId(state.grants));
 }
 applyAccess();

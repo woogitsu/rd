@@ -34,6 +34,7 @@ import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { initialSchoolYearId } from "../shared/school-year.js";
 
 mountShell();
 
@@ -128,9 +129,11 @@ async function start() {
     fillDatalist("class-ids", grants.map((g) => g.classId).filter(isValidId));
     app.hidden = false;
     openCreate.hidden = !canDraftEvents(grants);
-    const unique = [...new Set(years)];
-    if (unique.length === 1) {
-      yearInput.value = unique[0];
+    // Rok domyślny (puste ekrany bez klikania): najnowszy z przydziałów, awaryjnie
+    // heurystyka daty (shared/school-year.js). Użytkownik nadal może zmienić rok.
+    const year = initialSchoolYearId(grants);
+    if (year) {
+      yearInput.value = year;
       await loadList();
     }
   } catch (error) {

@@ -1,7 +1,13 @@
 // Testy czystych funkcji wyboru roku szkolnego z listy (issue #128).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultYear, yearOptionsHtml, yearsFromGrants } from '../shared/school-year.js';
+import {
+  defaultYear,
+  heuristicSchoolYearId,
+  initialSchoolYearId,
+  yearOptionsHtml,
+  yearsFromGrants,
+} from '../shared/school-year.js';
 import { filtersFromQuery, filtersToQuery } from '../shared/query-filters.js';
 
 test('yearsFromGrants: unikalne lata, malejąco, pomija przydziały bez roku', () => {
@@ -46,4 +52,31 @@ test('filtersToQuery: pomija puste wartości, koduje resztę', () => {
 test('filtersFromQuery: odczytuje tylko znane pola, ignoruje resztę adresu', () => {
   assert.deepEqual(filtersFromQuery('?schoolYearId=2026-2027&evil=<script>', ['schoolYearId', 'status']),
     { schoolYearId: '2026-2027' });
+});
+
+// Panele: puste ekrany dopóki użytkownik nie wpisze roku i nie kliknie „Pokaż” —
+// domyślny rok ma się ładować od razu. Ta sama heurystyka co site/core.js
+// #defaultSchoolYearId (patrz tests/site-core.test.js), wspólna funkcja w shared/.
+test('heuristicSchoolYearId: rok zaczyna się 1 września (Europe/Brussels)', () => {
+  assert.equal(heuristicSchoolYearId(new Date('2026-09-01T00:00:00Z')), '2026-2027');
+  assert.equal(heuristicSchoolYearId(new Date('2026-08-31T12:00:00Z')), '2025-2026');
+  // 1.09 lokalnie w Brukseli (UTC+2 latem), mimo że UTC to jeszcze 31.08.
+  assert.equal(heuristicSchoolYearId(new Date('2026-08-31T22:30:00Z')), '2026-2027');
+});
+
+test('initialSchoolYearId: zachowuje przekazany rok, jeśli nadal w zakresie przydziałów', () => {
+  const grants = [{ role: 'treasurer', schoolYearId: '2025-2026' }, { role: 'treasurer', schoolYearId: '2026-2027' }];
+  assert.equal(initialSchoolYearId(grants, { previous: '2025-2026' }), '2025-2026');
+});
+
+test('initialSchoolYearId: bez poprzedniego roku bierze najnowszy z przydziałów', () => {
+  const grants = [{ role: 'treasurer', schoolYearId: '2025-2026' }, { role: 'treasurer', schoolYearId: '2026-2027' }];
+  assert.equal(initialSchoolYearId(grants), '2026-2027');
+});
+
+test('initialSchoolYearId: brak lat w przydziałach (np. rola globalna admin/board) → heurystyka daty', () => {
+  const now = new Date('2026-10-01T00:00:00Z');
+  assert.equal(initialSchoolYearId([{ role: 'admin' }], { now }), '2026-2027');
+  assert.equal(initialSchoolYearId([], { now }), '2026-2027');
+  assert.equal(initialSchoolYearId(undefined, { now }), '2026-2027');
 });

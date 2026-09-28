@@ -2,6 +2,8 @@
 // here is testable in Node. Values from the API are treated as untrusted text;
 // callers render them with textContent only.
 
+import { heuristicSchoolYearId } from "../shared/school-year.js";
+
 export const RADA_NAME = "Rada Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli";
 export const TIMEZONE = "Europe/Brussels";
 
@@ -198,11 +200,10 @@ export function newsItems(payload) {
 
 // ASSUMPTION: school year identifiers look like "2026-2027" and a year starts
 // on 1 September (Brussels). `?rok=` overrides it. Replace with a public list
-// of school years once the API provides one.
+// of school years once the API provides one. Logika w shared/school-year.js —
+// panele autoryzowane korzystają z niej też jako wartości awaryjnej (bez kopii).
 export function defaultSchoolYearId(now = new Date()) {
-  const [year, month] = brusselsDate(now).split("-").map(Number);
-  const start = month >= 9 ? year : year - 1;
-  return `${start}-${start + 1}`;
+  return heuristicSchoolYearId(now);
 }
 
 export function schoolYearFromSearch(search, now = new Date()) {
