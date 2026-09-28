@@ -6,7 +6,13 @@
 //   PATCH /api/guardians/{id}/contact              zmiana e-maila / zgody na kontakt (admin, zarząd)
 //   PATCH /api/guardians/{id}/students/{studentId} zgoda na kontakt w relacji z dzieckiem (admin, zarząd; #190)
 //   POST  /api/students/{id}/enrollments           przypisanie lub zmiana klasy w roku (admin, zarząd)
+//   POST  /api/students/{id}/enrollments/{eid}/end zakończenie przypisania — odejście ze szkoły (admin, zarząd; #86)
 //
+// Listy klasy, kartka gospodarstwa i licznik uczniów pokazują wyłącznie
+// bieżące przypisania (enrollments_current, #86) — uczeń po odejściu znika
+// z listy klasy i z karty gospodarstwa dla ról klasowych, ale zostaje
+// widoczny w zakresie (STUDENT_IN_SCOPE) dla ról administracyjnych, żeby
+// zakończenie dało się skorygować/przejrzeć historię.
 // Zakres (założenie do decyzji D-08/D-09, opisane w docs/DATA_MODEL.md):
 // * admin, board, treasurer — wszystkie klasy (lub klasy roku z przydziału),
 // * representative — wyłącznie klasy z przydziałów,
@@ -19,6 +25,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { recordDataAccess } from '../data-access.js';
 
 export const name = 'families';
 
@@ -113,9 +120,10 @@ const scopeParams = (scope) => [scope.allYears, scope.years, scope.classIds, sco
 const CLASS_IN_SCOPE = (alias) => `($1::boolean OR ${alias}.school_year_id = ANY($2::text[])
   OR EXISTS (SELECT 1 FROM unnest($3::text[], $4::text[]) AS g(class_id, school_year_id)
               WHERE g.class_id = ${alias}.id AND (g.school_year_id IS NULL OR g.school_year_id = ${alias}.school_year_id)))`;
-// Aktywna relacja opiekun–uczeń w przedziale [starts_on, ends_on).
-const RELATION_ACTIVE = (alias) => `(${alias}.starts_on IS NULL OR ${alias}.starts_on <= CURRENT_DATE)
-  AND (${alias}.ends_on IS NULL OR ${alias}.ends_on > CURRENT_DATE)`;
+// Aktywna relacja opiekun–uczeń: jedyne źródło prawdy to widok
+// student_guardians_current (#157) — dlatego wszystkie odwołania do
+// `student_guardians` poniżej, które mają liczyć się jako "aktualne",
+// czytają z tego widoku zamiast powtarzać warunek starts_on/ends_on.
 // Gospodarstwo kontaktowe ucznia (#95, założenie do D-08/D-11): należy do niego
 // opiekun z aktywną relacją do tego ucznia i obiema zgodami na kontakt (relacji
 // i opiekuna) — ta sama reguła co e-mail w liście klasy (buildClassRoster).
@@ -123,9 +131,9 @@ const RELATION_ACTIVE = (alias) => `(${alias}.starts_on IS NULL OR ${alias}.star
 const CONTACT_HOUSEHOLD = (householdExpr, studentExpr) => `EXISTS (
   SELECT 1 FROM guardian_households_current ch
     JOIN guardians cg ON cg.id = ch.guardian_id
-    JOIN student_guardians csg ON csg.guardian_id = cg.id
+    JOIN student_guardians_current csg ON csg.guardian_id = cg.id
    WHERE ch.household_id = ${householdExpr} AND csg.student_id = ${studentExpr}
-     AND csg.contact_allowed AND cg.contact_allowed AND ${RELATION_ACTIVE('csg')})`;
+     AND csg.contact_allowed AND cg.contact_allowed)`;
 // Zakres wyłącznie klasowy (przedstawiciel, także zarząd z przydziałem klasy).
 const isClassScoped = (scope) => !(scope.allYears || scope.years.length > 0);
 const STUDENT_IN_SCOPE = (studentExpr) => `($1::boolean OR EXISTS (
@@ -147,7 +155,7 @@ async function listClasses(request, env, url, json) {
   const { rows } = await env.db.query(
     `SELECT c.id, c.name, c.school_year_id, y.label AS school_year_label,
             to_char(y.starts_on, 'YYYY-MM-DD') AS starts_on,
-            (SELECT count(*) FROM enrollments e WHERE e.class_id = c.id) AS student_count
+            (SELECT count(*) FROM enrollments_current e WHERE e.class_id = c.id) AS student_count
        FROM classes c JOIN school_years y ON y.id = c.school_year_id
       WHERE ${CLASS_IN_SCOPE('c')} AND ($5::text IS NULL OR c.school_year_id = $5)
       ORDER BY y.starts_on DESC, c.name, c.id`,
@@ -175,9 +183,13 @@ async function loadVisibleClass(executor, scope, classId) {
 }
 
 async function listClassStudents(request, env, classId, json) {
-  const { scope } = await requireReadContext(request, env);
+  const { context, scope } = await requireReadContext(request, env);
+  const actorId = context.session.user.id;
   const klass = await loadVisibleClass(env.db, scope, classId);
-  if (!klass) throw notFound();
+  if (!klass) {
+    await recordDataAccess(env, { actorId, accessKind: 'class_students', classId, outcome: 'not_found' });
+    throw notFound();
+  }
   // Zakres klasowy: tylko gospodarstwa kontaktowe, bez oznaczenia głównego.
   const households = isClassScoped(scope)
     ? `SELECT json_agg(json_build_object('householdId', m.household_id) ORDER BY m.household_id)
@@ -188,11 +200,14 @@ async function listClassStudents(request, env, classId, json) {
   const { rows } = await env.db.query(
     `SELECT s.id, s.first_name, s.last_name,
             COALESCE((${households}), '[]'::json) AS households
-       FROM enrollments e JOIN students s ON s.id = e.student_id
+       FROM enrollments_current e JOIN students s ON s.id = e.student_id
       WHERE e.class_id = $1
       ORDER BY s.last_name, s.first_name, s.id`,
     [classId],
   );
+  await recordDataAccess(env, {
+    actorId, accessKind: 'class_students', schoolYearId: klass.school_year_id, classId, outcome: 'ok', rowCount: rows.length,
+  });
   return json({
     class: { id: klass.id, name: klass.name, schoolYearId: klass.school_year_id, schoolYearLabel: klass.school_year_label },
     students: rows.map((row) => ({
@@ -226,7 +241,7 @@ async function getHousehold(request, env, householdId, json) {
             COALESCE((
               SELECT json_agg(json_build_object('classId', c.id, 'className', c.name, 'schoolYearId', c.school_year_id)
                               ORDER BY y.starts_on DESC, c.name)
-                FROM enrollments e JOIN classes c ON c.id = e.class_id JOIN school_years y ON y.id = c.school_year_id
+                FROM enrollments_current e JOIN classes c ON c.id = e.class_id JOIN school_years y ON y.id = c.school_year_id
                WHERE e.student_id = s.id AND ${CLASS_IN_SCOPE('c')}
             ), '[]'::json) AS classes,
             COALESCE((${otherHouseholds}), '[]'::json) AS other_households
@@ -236,7 +251,11 @@ async function getHousehold(request, env, householdId, json) {
       ORDER BY s.last_name, s.first_name, s.id`,
     params,
   );
-  if (!students.rows.length) throw notFound();
+  const actorId = context.session.user.id;
+  if (!students.rows.length) {
+    await recordDataAccess(env, { actorId, accessKind: 'household_card', householdId, outcome: 'not_found' });
+    throw notFound();
+  }
   const visibleStudentIds = students.rows.map((row) => row.id);
 
   const household = await env.db.query('SELECT id, archived_at FROM households WHERE id = $1', [householdId]);
@@ -245,23 +264,20 @@ async function getHousehold(request, env, householdId, json) {
   const guardians = await env.db.query(
     `SELECT g.id, g.first_name, g.last_name, g.email, g.contact_allowed,
             EXISTS (
-              SELECT 1 FROM student_guardians sg
+              SELECT 1 FROM student_guardians_current sg
                WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
-                 AND sg.contact_allowed AND ${RELATION_ACTIVE('sg')}
+                 AND sg.contact_allowed
             ) AS relation_contact_allowed,
             COALESCE((
               SELECT json_agg(json_build_object('studentId', sg.student_id, 'contactAllowed', sg.contact_allowed,
                                                 'isPrimaryContact', sg.is_primary_contact) ORDER BY sg.student_id)
-                FROM student_guardians sg
+                FROM student_guardians_current sg
                WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
-                 AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
-                 ${classScoped ? 'AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)' : ''}
             ), '[]'::json) AS relations
        FROM guardian_households_current gh JOIN guardians g ON g.id = gh.guardian_id
       WHERE gh.household_id = $1
-        ${classScoped ? `AND EXISTS (SELECT 1 FROM student_guardians sg
-                                     WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
-                                       AND ${RELATION_ACTIVE('sg')})` : ''}
+        ${classScoped ? `AND EXISTS (SELECT 1 FROM student_guardians_current sg
+                                     WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[]))` : ''}
       ORDER BY g.last_name, g.first_name, g.id`,
     [householdId, visibleStudentIds],
   );
@@ -306,6 +322,7 @@ async function getHousehold(request, env, householdId, json) {
       paymentCount: toSafeInteger(row.payment_count),
     }));
   }
+  await recordDataAccess(env, { actorId, accessKind: 'household_card', householdId, outcome: 'ok', rowCount: students.rows.length });
   return json(body);
 }
 
@@ -313,14 +330,14 @@ const GUARDIAN_IN_SCOPE = `($1::boolean OR EXISTS (
     SELECT 1 FROM guardian_households_current gh JOIN student_households_current sh ON sh.household_id = gh.household_id
      WHERE gh.guardian_id = g.id AND ${STUDENT_IN_SCOPE('sh.student_id')})
   OR EXISTS (
-    SELECT 1 FROM student_guardians sg
-     WHERE sg.guardian_id = g.id AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
+    SELECT 1 FROM student_guardians_current sg
+     WHERE sg.guardian_id = g.id
        AND ${STUDENT_IN_SCOPE('sg.student_id')}))`;
 // Zakres klasowy (#200): opiekun tylko przez aktywną relację z uczniem z zakresu,
 // nie przez wspólne gospodarstwo — ta sama reguła co karta gospodarstwa (#95).
 const GUARDIAN_RELATED_IN_SCOPE = `EXISTS (
-    SELECT 1 FROM student_guardians sg
-     WHERE sg.guardian_id = g.id AND ${RELATION_ACTIVE('sg')}
+    SELECT 1 FROM student_guardians_current sg
+     WHERE sg.guardian_id = g.id
        AND ${STUDENT_IN_SCOPE('sg.student_id')})`;
 
 function parseContactInput(data) {
@@ -402,10 +419,12 @@ async function updateRelationContact(request, env, guardianId, studentId, json) 
     // Blokada wiersza relacji serializuje podwójne kliknięcie i ponowienie.
     const { rows } = await tx.query(
       `SELECT sg.contact_allowed, g.contact_allowed AS guardian_contact_allowed,
-              (sg.ends_on IS NOT NULL AND sg.ends_on <= CURRENT_DATE) AS ended
+              student_guardian_relation_ended(sg.guardian_id, sg.student_id) AS ended
          FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
         WHERE sg.guardian_id = $5 AND sg.student_id = $6 AND ${STUDENT_IN_SCOPE('sg.student_id')}
-          ${isClassScoped(scope) ? `AND ${RELATION_ACTIVE('sg')}` : ''}
+          ${isClassScoped(scope) ? `AND EXISTS (
+              SELECT 1 FROM student_guardians_current sgc
+               WHERE sgc.guardian_id = sg.guardian_id AND sgc.student_id = sg.student_id)` : ''}
         FOR UPDATE OF sg`,
       [...scopeParams(scope), guardianId, studentId],
     );
@@ -491,12 +510,56 @@ async function changeEnrollment(request, env, studentId, json) {
   }, result.status);
 }
 
+// Zakończenie przypisania (#86) — odejście ze szkoły w trakcie roku. Data
+// może być przyszła (uczeń widoczny do tej daty); ponowienie tej samej
+// operacji nie tworzy drugiego wpisu historii (enrollment_guard blokuje
+// dalsze zmiany po ustawieniu ended_on, więc powtórka zwraca changed: false).
+// Wpłaty zapisane wcześniej nie są zmieniane; odejście nie tworzy żadnej
+// należności ani zwrotu (decyzja o ewentualnym zwrocie — Rada, D-04).
+function parseEndEnrollmentInput(data) {
+  if (!validDate(data.endedOn)) throw new RequestError('invalid_ended_on');
+  return { endedOn: data.endedOn, reason: readReason(data.reason) };
+}
+
+async function endEnrollment(request, env, studentId, enrollmentId, json) {
+  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const input = parseEndEnrollmentInput(await readJson(request));
+  const actorId = context.session.user.id;
+  const result = await env.db.transaction(async (tx) => {
+    // Blokada wiersza serializuje podwójne kliknięcie i ponowienie.
+    const { rows } = await tx.query(
+      `SELECT e.id, to_char(e.ended_on, 'YYYY-MM-DD') AS ended_on
+         FROM enrollments e
+        WHERE e.id = $5 AND e.student_id = $6 AND ${STUDENT_IN_SCOPE('e.student_id')}
+        FOR UPDATE OF e`,
+      [...scopeParams(scope), enrollmentId, studentId],
+    );
+    const enrollment = rows[0];
+    if (!enrollment) throw notFound();
+    if (enrollment.ended_on) return { changed: false, endedOn: enrollment.ended_on };
+    await tx.query(
+      'UPDATE enrollments SET ended_on = $2, ended_reason = $3, ended_by = $4, ended_at = now() WHERE id = $1',
+      [enrollmentId, input.endedOn, input.reason, actorId],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'enrollment.withdrawn', entityType: 'enrollment', entityId: enrollmentId,
+      metadata: { studentId, endedOn: input.endedOn },
+    });
+    return { changed: true, endedOn: input.endedOn };
+  });
+  return json({
+    enrollment: { id: enrollmentId, studentId, endedOn: result.endedOn },
+    changed: result.changed,
+  });
+}
+
 export async function handle(request, env, url, json) {
   const path = url.pathname;
   const studentsMatch = path.match(/^\/api\/classes\/([^/]+)\/students$/);
   const householdMatch = path.match(/^\/api\/households\/([^/]+)$/);
   const contactMatch = path.match(/^\/api\/guardians\/([^/]+)\/contact$/);
   const relationMatch = path.match(/^\/api\/guardians\/([^/]+)\/students\/([^/]+)$/);
+  const enrollmentEndMatch = path.match(/^\/api\/students\/([^/]+)\/enrollments\/([^/]+)\/end$/);
   const enrollmentMatch = path.match(/^\/api\/students\/([^/]+)\/enrollments$/);
   const method = request.method;
   let action = null;
@@ -506,6 +569,9 @@ export async function handle(request, env, url, json) {
   else if (method === 'PATCH' && contactMatch) action = () => updateGuardianContact(request, env, decodeId(contactMatch[1]), json);
   else if (method === 'PATCH' && relationMatch) {
     action = () => updateRelationContact(request, env, decodeId(relationMatch[1]), decodeId(relationMatch[2]), json);
+  }
+  else if (method === 'POST' && enrollmentEndMatch) {
+    action = () => endEnrollment(request, env, decodeId(enrollmentEndMatch[1]), decodeId(enrollmentEndMatch[2]), json);
   }
   else if (method === 'POST' && enrollmentMatch) action = () => changeEnrollment(request, env, decodeId(enrollmentMatch[1]), json);
   if (!action) return null;

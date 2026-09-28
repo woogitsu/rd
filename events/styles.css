@@ -66,7 +66,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="
 .field-error { color: var(--red-dark); font-size: .84rem; }
 .field-error:empty { display: none; }
 
-button { padding: .6rem .95rem; color: var(--text); background: var(--bg); border: 1px solid #9a9ea1; border-radius: 0; font-weight: 600; }
+button { padding: .6rem .95rem; min-height: 44px; color: var(--text); background: var(--bg); border: 1px solid #9a9ea1; border-radius: 0; font-weight: 600; }
 button:hover { border-color: var(--text); }
 button.primary { color: #fff; background: var(--red); border-color: var(--red); }
 button.primary:hover { background: var(--red-dark); border-color: var(--red-dark); }
@@ -130,4 +130,8 @@ fieldset { display: grid; gap: .4rem; margin: 0; padding: 0; border: 0; }
   td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-size: .8rem; }
   dialog form { padding: 1rem; }
   .dialog-actions button { flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }

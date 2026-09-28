@@ -37,6 +37,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 | D-19 | Głosowanie elektroniczne | #13 | otwarta |
 | D-20 | Zgoda na produkcję na Railway | #31, #41, #42 | otwarta |
 | D-21 | Aktualny regulamin i dostęp do dokumentów źródłowych | #13, #15 | otwarta |
+| D-22 | Wersje językowe strony publicznej | #129 | otwarta |
 
 ## Dane osobowe
 
@@ -45,6 +46,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: kto jest administratorem danych uczniów i opiekunów przetwarzanych w panelu i kto w jego imieniu upoważnia osoby z Rady do dostępu?
 - Dlaczego: od tego zależą upoważnienia, umowy z dostawcami, obowiązek informacyjny i odpowiedzialność za incydenty. Blokuje import (#2, #36) i produkcję (#41).
 - Warianty w dokumentacji: nie wskazano. SECURITY.md i README wymagają ustalenia z dyrekcją i IOD. Polski status szkoły nie wyłącza RODO.
+- Materiał techniczny: [`docs/PRIVACY_INVENTORY.md`](PRIVACY_INVENTORY.md) (spis kolumn z danymi osobowymi), [`docs/PROCESSORS.md`](PROCESSORS.md) (dostawcy), [`docs/DPIA_CHECKLIST.md`](DPIA_CHECKLIST.md) — projekty, nie rozstrzygnięcia (#123).
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -55,6 +57,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: w jakich celach panel przetwarza dane (ewidencja dobrowolnych wpłat, kontakt z opiekunami, organizacja klas) i na jakiej podstawie; jaki zakres danych szkoła udostępnia Radzie?
 - Dlaczego: cel wyznacza dopuszczalne pola (D-03), retencję (D-04) i treść informacji dla rodziców (D-06). Blokuje #2, #36.
 - Warianty w dokumentacji: nie wskazano. Cele produktu opisuje PRODUCT.md; nie rozstrzyga podstawy prawnej.
+- Materiał techniczny: pole „cel” w [`docs/PRIVACY_INVENTORY.md`](PRIVACY_INVENTORY.md) czeka na wartości z tej decyzji (#123).
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -85,6 +88,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: czy administrator akceptuje Railway (aplikacja, PostgreSQL, Storage Bucket) i Brevo (e-mail) jako podmioty przetwarzające; kto zawiera i przechowuje umowy powierzenia; czy wymagany region UE jest wystarczający?
 - Dlaczego: warunek produkcji (#31, #41) i wysyłki (#40). Ustawienie regionu nie zastępuje oceny prawnej ani umowy.
 - Warianty w dokumentacji: RAILWAY_MIGRATION.md zakłada region UE (Amsterdam), weryfikowany osobno dla aplikacji, bazy i bucketu. EMAIL.md: przed produkcją sprawdzić regulamin Brevo i warunki przetwarzania danych.
+- Materiał techniczny: [`docs/PROCESSORS.md`](PROCESSORS.md) (#123) — lista usług, region, odwołanie do DPA, status per dostawca; do weryfikacji i uzupełnienia przez IOD.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -115,9 +119,29 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 ### D-08. Role i macierz kompetencji
 
 - Pytanie: czy szkoła zatwierdza macierz dostępu z PRODUCT.md (zarząd, skarbnik, przedstawiciel klasy, Komisja Rewizyjna, dyrekcja, admin techniczny) i w jakim zakresie danych rodzin każda rola pracuje?
-- Dlaczego: kod nie przypisuje rolom domyślnych zdolności (AUTHORIZATION.md). Blokuje zamknięcie #4 i pełny zakres #35.
-- Warianty w dokumentacji: projekt macierzy w PRODUCT.md, oznaczony „do zatwierdzenia”. Stałe założenie AGENTS.md: przedstawiciel klasy wyłącznie dla przypisanych klas.
-- Założenie techniczne do czasu decyzji (#12, EVENTS.md): wydarzenia tworzą admin i zarząd oraz przedstawiciel klasy dla własnej klasy; zatwierdza i publikuje wyłącznie zarząd, z zasadą czterech oczu. Nie jest to decyzja.
+- Dlaczego: mechanizm autoryzacji (`requireAccess`/`isAuthorized*`, AUTHORIZATION.md) sam nie ustala, które role widzą które dane — to ustalają stałe ról wpisane na stałe w każdym module tras. Te stałe są dziś założeniem prototypu, nie zatwierdzoną kompetencją. Blokuje zamknięcie #4 i pełny zakres #35.
+- Warianty w dokumentacji: projekt macierzy w PRODUCT.md, oznaczony „do zatwierdzenia”, z kolumną „stan prototypu w kodzie” (#163). Stałe założenie AGENTS.md: przedstawiciel klasy wyłącznie dla przypisanych klas.
+- Założenia techniczne obecne w kodzie (do czasu decyzji; #163 — pełna lista, wcześniej wymienione było tylko #12/EVENTS.md poniżej):
+
+  | Moduł | Role (stałe w kodzie) | Plik | Test |
+  |---|---|---|---|
+  | Rodziny | odczyt: `admin, board, treasurer, representative` (representative — własna klasa); edycja: `admin, board`; finanse/e-mail rodziny: `admin, board, treasurer` (e-mail widoczny bez względu na zgodę dla ostatniej trójki) | `src/pg/routes/families.js:32-35` | `tests/pg-families.test.js` |
+  | Wpłaty | `admin, board, treasurer` | `src/pg/routes/payments.js:26` | `tests/pg-payments-api.test.js` |
+  | Księga | `admin, board, treasurer` | `src/pg/routes/ledger.js:31` | `tests/pg-ledger-api.test.js` |
+  | Kasa (przelewy, bilans otwarcia) | transfer/odczyt: `admin, board, treasurer`; otwarcie: `board` | `src/pg/routes/ledger-cash.js:34-36` | `tests/pg-ledger-cash.test.js` |
+  | Korespondencja | edycja/kampanie: `board, treasurer`; zatwierdzenie: `board` | `src/pg/routes/email.js:35-36` | `tests/pg-email.test.js` |
+  | Import uczniów | `admin, board` (bez `class_id`) | `src/pg/routes/import.js:28` | `tests/pg-import.test.js` |
+  | Eksport roczny / archiwum | roczny: `admin, board`; archiwum kadencji: `board` | `src/pg/routes/exports.js:25,27` | `tests/pg-export-v2.test.js` |
+  | Zamknięcie roku | odczyt/checklista: `board, treasurer`; zamknięcie: `board` | `src/pg/routes/year-close.js:35-37` | `tests/pg-year-close.test.js` |
+  | Kartki (dowody wpłat) | `admin, board, treasurer` + `representative` (własna klasa) | `src/pg/routes/print.js:30-31` | `tests/pg-print.test.js` |
+  | Uzgodnienia bankowe | zapis: `admin, board, treasurer`; raport: `audit, board, treasurer`; raport archiwum: `board, treasurer` | `src/pg/routes/reconciliation.js:31-34` | `tests/pg-reconciliation.test.js` |
+  | Wydarzenia (#12) | tworzy: `admin, board` + `representative` (własna klasa); zatwierdza/publikuje: wyłącznie `board`, zasada czterech oczu | `src/pg/routes/events.js`, `docs/EVENTS.md` | `tests/pg-events.test.js` |
+
+  Zarząd nie zatwierdził żadnego z powyższych wierszy — kod działa na tych
+  założeniach wyłącznie dlatego, że trzeba było wybrać jakąś politykę, żeby
+  moduły w ogóle działały na danych syntetycznych. Test `tests/pg-authz-matrix.test.js`
+  sprawdza zgodność `tests/helpers/route-matrix.js` z `ROUTES`, ale nie
+  porównuje stałych ról z tą tabelą — rozszerzenie do zrobienia osobno.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -259,6 +283,17 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: która wersja regulaminu Rady i programu jest obowiązująca oraz kto może mieć do nich dostęp w panelu lub repozytorium?
 - Dlaczego: README zabrania umieszczania tych dokumentów w repo bez decyzji. Dotyczy #13 i #15.
 - Warianty w dokumentacji: nie wskazano.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-22. Wersje językowe strony publicznej
+
+- Pytanie: czy strona publiczna Rady ma mieć wersje językowe poza polską (np. FR/NL/EN dla opiekunów, którzy nie czytają po polsku, pracowników szkoły goszczącej lub sponsorów wydarzeń w Brukseli), w jakich językach, i kto tłumaczy oraz zatwierdza tłumaczenie każdego wpisu?
+- Dlaczego: blokuje #129. Bez tej decyzji nie wdrażamy warstwy i18n ani tłumaczenia treści — polska wersja pozostaje jedyną. Ta pozycja jest wprost proponowana w treści #129 („Nowa decyzja zarządu... Bez niej nie implementować”), nie założeniem zespołu technicznego.
+- Warianty w dokumentacji: propozycja z #129 — tłumaczenie wiązane z konkretną opublikowaną wersją polską (numer wersji), przechodzące to samo „cztery oczy” co treść polska (autor tłumaczenia ≠ zatwierdzający), automatyczne ukrycie tłumaczenia po zmianie wersji polskiej do czasu ponownego zatwierdzenia, polska wersja pozostaje nadrzędna i wiążąca. Bez tłumaczenia maszynowego publikowanego automatycznie.
+- Do ustalenia razem z decyzją: które języki (FR/NL/EN czy inny zestaw), kto ma uprawnienia tłumacza i zatwierdzającego (czy to musi być zarząd, czy może być osoba spoza zarządu ze znajomością języka), czy dotyczy też wydarzeń (tytuł/opis/miejsce) czy tylko aktualności w pierwszym etapie, i czy podpisy licencji/zgód pod zdjęciami (#96, #106) pozostają wyłącznie po polsku.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:

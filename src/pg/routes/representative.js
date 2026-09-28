@@ -66,11 +66,9 @@ export async function handle(request, env, url, json) {
               WHERE e.class_id = c.id) AS household_count,
             (SELECT count(*) FROM enrollments e
               WHERE e.class_id = c.id AND NOT EXISTS (
-                SELECT 1 FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
+                SELECT 1 FROM student_guardians_current sg JOIN guardians g ON g.id = sg.guardian_id
                  WHERE sg.student_id = e.student_id AND sg.contact_allowed AND g.contact_allowed
                    AND g.email IS NOT NULL
-                   AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
-                   AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
               )) AS needs_paper_card_count,
             (SELECT count(*) FROM events ev WHERE ev.class_id = c.id AND ev.status = 'draft') AS draft_event_count,
             (SELECT count(*) FROM events ev WHERE ev.class_id = c.id AND ev.status = 'submitted') AS submitted_event_count
