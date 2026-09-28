@@ -115,6 +115,30 @@ jobs:
       - run: npm run smoke
       - run: npm run db:migrate:local
 
+  # Integralność i kolejność migracji PostgreSQL (issue #79): manifest sum
+  # kontrolnych aktualny, a PR ani nie zmienia scalonego pliku migracji, ani
+  # nie dokłada nowego z numerem <= maksimum na gałęzi bazowej. Kontrola
+  # numeracji potrzebuje historii gałęzi bazowej — tylko dla pull_request.
+  migrations-order:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run migrations:manifest -- --check
+      - run: npm run migrations:check-functions
+      - if: github.event_name == 'pull_request'
+        # fetch-depth: 0 pobiera już origin/<base>; osobny git fetch nie ma
+        # poświadczeń (persist-credentials: false).
+        run: |
+          node scripts/check-migrations-order.js --base origin/${{ github.event.pull_request.base.ref }}
+
   # Pierwsze testy przeglądarkowe (Playwright) kluczowych ścieżek: logowanie
   # admina z MFA (TOTP liczony w teście) i wejście do admin/, granica ról
   # przedstawiciela w families/, zapis wpłaty przez skarbnika w panel/, oraz
@@ -155,7 +179,7 @@ jobs:
   # zakończył się sukcesem (włącznie z anulowaniem albo pominięciem). `e2e`
   # jest CELOWO poza tą listą (patrz komentarz przy tym jobie).
   ci-ok:
-    needs: [test, audit, build, smoke]
+    needs: [test, audit, build, smoke, migrations-order]
     if: always()
     runs-on: self-hosted
     timeout-minutes: 5
@@ -166,10 +190,12 @@ jobs:
           echo "audit: ${{ needs.audit.result }}"
           echo "build: ${{ needs.build.result }}"
           echo "smoke: ${{ needs.smoke.result }}"
+          echo "migrations-order: ${{ needs.migrations-order.result }}"
           if [ "${{ needs.test.result }}" != "success" ] ||
              [ "${{ needs.audit.result }}" != "success" ] ||
              [ "${{ needs.build.result }}" != "success" ] ||
-             [ "${{ needs.smoke.result }}" != "success" ]; then
+             [ "${{ needs.smoke.result }}" != "success" ] ||
+             [ "${{ needs.migrations-order.result }}" != "success" ]; then
             echo "Co najmniej jeden wymagany job nie zakończył się sukcesem." >&2
             exit 1
           fi

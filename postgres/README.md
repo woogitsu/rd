@@ -1,5 +1,64 @@
 # PostgreSQL na Railway — etap przygotowawczy
 
+## Numeracja migracji, kolejność nałożenia i integralność (issue #79)
+
+Numer w nazwie pliku (`0018_news.sql`) to kolejność, w jakiej PR **powstał**,
+nie kolejność, w jakiej trafi do `main` — gałęzie równoległe (np. kolejka
+MFA/monitoringu i logowanie hasłem) mogą scalić się w innej kolejności niż
+sugerują numery; niżej opisane `0013_mfa.sql` i `0020_password_login.sql`
+trafiły do `main` już po `0018_news.sql`. Migrator (`src/postgres-migrations.js`)
+nakłada pliki w kolejności alfabetycznej nazw z katalogu, ale pilnuje, żeby
+**na danej bazie** nie nałożyć pliku z numerem niższym lub równym numerowi już
+tam nałożonemu — taki przypadek („out-of-order”) rzuca błąd
+`Out-of-order migration: …` zamiast cicho zmienić schemat zależnie od
+historii tej konkretnej bazy. Świadome obejście (np. migracja niezależna od
+kolejności) wymaga jawnego `applyMigrations(client, migrations, { allowOutOfOrder: true })`
+albo `npm run db:migrate:postgres -- --allow-out-of-order` — to decyzja
+operatora do opisania w protokole/PR, nie coś do włączania rutynowo.
+
+Numery **0010–0012** nie odpowiadają żadnemu plikowi w repozytorium.
+Założenie (brak innego zapisu): PR-y, które je rezerwowały, zostały porzucone
+przed scaleniem. Nie przydzielać tych numerów ponownie — trwała luka jest
+tańsza niż kolizja z gałęzią, która mogła je zarezerwować, ale jeszcze nie
+scaliła. Nowy plik dostaje zawsze numer większy niż maksimum obecne na
+`main` w chwili tworzenia PR; kolizję numerów (dwie równoległe gałęzie
+wybrały ten sam) rozwiązuje przenumerowanie PRZED scaleniem, nie po —
+`scripts/check-migrations-order.js` (job `migrations-order` w CI) oblewa PR,
+który dokłada plik z numerem ≤ maksimum na gałęzi bazowej, oraz PR, który
+zmienia lub usuwa plik migracji już obecny na tej gałęzi (scalony plik jest
+ostateczny; poprawka to nowy numer).
+
+**Manifest** `postgres/migrations/MANIFEST.json` (`{name, sha256}`, w
+kolejności rzeczywistego historycznego scalenia — generowany przez
+`npm run migrations:manifest`, sprawdzany w CI przez
+`npm run migrations:manifest -- --check`) jest źródłem prawdy o tym, że dany
+plik nie zmienił się od czasu scalenia; `/health/ready` zgłasza
+`checks.migrations: 'checksum_mismatch'` (503), gdy suma kontrolna pliku w
+repozytorium różni się od zapisanej w `schema_migrations` przy nałożeniu —
+np. plik ręcznie zmieniony po fakcie na środowisku wdrożeniowym.
+
+**Redefinicje funkcji triggerów (`CREATE OR REPLACE FUNCTION`):** taka
+instrukcja NIE łączy definicji przyrostowo — zastępuje całe ciało funkcji.
+Dwie migracje pisane równolegle, które redefiniują tę samą funkcję
+dyspozytora opartą o `TG_TABLE_NAME`, mogą po cichu zgubić gałąź (tabelę)
+dodaną przez wcześniejszą — dokładnie tak `0038_payment_ledger_consistency.sql`
+nadpisał `0036_year_freeze_finance.sql` (naprawa w #279:
+`0049_year_freeze_union.sql`, suma obu gałęzi). `scripts/check-function-redefinitions.js`
+(`npm run migrations:check-functions`, job `migrations-order` w CI) sprawdza,
+że OSTATNIA (najwyższy numer pliku) definicja każdej takiej funkcji obejmuje
+wszystkie tabele obsłużone przez jej wcześniejsze wersje; jeśli redefiniujesz
+funkcję dyspozytora, zacznij od jej NAJNOWSZEJ wersji na `origin/main`
+(`grep -l "FUNCTION nazwa(" postgres/migrations/*.sql`, ostatni plik wg
+numeru) i dopisz sumę gałęzi, nie samą swoją.
+
+**Skutki dla danych — kolumna `schema_migrations.applied_seq`:** migrator
+dodaje ją przy każdym uruchomieniu (`ALTER TABLE … ADD COLUMN IF NOT EXISTS
+applied_seq INTEGER NOT NULL DEFAULT 0`, bez przerwy w dostępności) i
+jednorazowo wypełnia istniejące wiersze kolejnością wg `applied_at`
+(`UPDATE … WHERE applied_seq = 0` — no-op po pierwszym uruchomieniu na danej
+bazie). Nie zmienia i nie usuwa żadnego innego wiersza; wycofanie to zwykły
+`ALTER TABLE schema_migrations DROP COLUMN applied_seq`.
+
 `0001_core.sql` tworzy nowy schemat dla lat i klas, rodzin, uczniów i opiekunów,
 kont użytkowników, zakresów ról, zaproszeń, sesji, metadanych dokumentów,
 wydarzeń i audytu. `0002_payments.sql` dodaje fakty dobrowolnych wpłat,

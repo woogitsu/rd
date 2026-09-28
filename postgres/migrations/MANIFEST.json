@@ -1,0 +1,286 @@
+[
+  {
+    "name": "0001_core.sql",
+    "sha256": "99a5d67d5c51d1ed67ffe43b3155baca899b327bd348f918c51f90e0181d984d"
+  },
+  {
+    "name": "0002_payments.sql",
+    "sha256": "00239ba88d085bc926743e3edd467b46f52eee21064070dddaaa7a72e38b13b0"
+  },
+  {
+    "name": "0003_ledger.sql",
+    "sha256": "f7f77280d563ca9a19a5afef7db5cb948344e8d55355d013082d7a4577b2bc75"
+  },
+  {
+    "name": "0004_auth_access.sql",
+    "sha256": "793f107b935b91f51b057b938d80a3c877d073c2ce65a670c958bfdc49bb89c7"
+  },
+  {
+    "name": "0005_import.sql",
+    "sha256": "c9cc00076af71c082db8c183910befabb4cc600d6472b0c366feae0903a7cc2e"
+  },
+  {
+    "name": "0006_documents.sql",
+    "sha256": "576969371fb23358dae6055b8ba7c8ad616fddb512ddf44313823fe4e969ded2"
+  },
+  {
+    "name": "0007_email.sql",
+    "sha256": "a35304de5dfaeab8216694159fe92bdcae8f3522c957975de7b3ddd6419a761b"
+  },
+  {
+    "name": "0008_events.sql",
+    "sha256": "8a8da1aba739297e6743b909b73971558de7ec2528bee81e1c607e2d43422f1a"
+  },
+  {
+    "name": "0009_meetings.sql",
+    "sha256": "f7a481cc53fd3cd936a7608205f86b0d5e90cd6ae94d2c2eb71a38d5a18628f7"
+  },
+  {
+    "name": "0013_mfa.sql",
+    "sha256": "6cb717c6f23e8c3c8df68921f029114da46a73fbddb96807186895b532b114da"
+  },
+  {
+    "name": "0014_households.sql",
+    "sha256": "1958bfc1dc9d1c826fc1ee261799d72107d0142c6996dbf547db60826e51bdf4"
+  },
+  {
+    "name": "0015_reconciliation.sql",
+    "sha256": "faa902e4057652a4fdf9a5308fa7d450c3004133a6e9fdc8d38426662c33e473"
+  },
+  {
+    "name": "0016_exports.sql",
+    "sha256": "6c4d09facd8e2814af3f57c9ee3eb332f58ae3abbad97ae3829edaa5788dc04a"
+  },
+  {
+    "name": "0017_year_close.sql",
+    "sha256": "07bb7393c2ecc040cfc80ec4337cb105c3a6537125a0aa22ca96e4b6c8cc4647"
+  },
+  {
+    "name": "0018_news.sql",
+    "sha256": "fc54265a804c60738c59e757753d59b789ddf6863f98d7ae40dc9baf81e519d4"
+  },
+  {
+    "name": "0020_password_login.sql",
+    "sha256": "112f4a9c616db65af37d814972e53aa6acb67732109ee8598b76ba0c85c1b49e"
+  },
+  {
+    "name": "0021_meetings_integrity.sql",
+    "sha256": "7cd8d33d70ce9ff387bfa5c10d4f62dc73372603582b6baa92511deeec7a8c82"
+  },
+  {
+    "name": "0022_role_grant_class_year.sql",
+    "sha256": "9976db5a9fba447eb6455fae0a3ee0a99453618cff6b01f2a4bae735b276334d"
+  },
+  {
+    "name": "0023_student_primary_household.sql",
+    "sha256": "0a080a2d7f5d26bf592c4e953af0ffc9cf28abb5e8fd4e0e883bc8ab0e883074"
+  },
+  {
+    "name": "0024_reconciliation_match_integrity.sql",
+    "sha256": "010f5a56490b8c753d7a08ebae65388b6fa4667a324a22c9010dc9f34a29fc46"
+  },
+  {
+    "name": "0025_email_send_confirmation.sql",
+    "sha256": "2136f8def1d2b9d97e585718cfe9b9f2888db8d7f8ea1463f947799d69b24658"
+  },
+  {
+    "name": "0026_student_guardian_history.sql",
+    "sha256": "4b0b5f0e0d54910730be2273f9f4cec3c56a42e098ccc20fec9da42eced567a5"
+  },
+  {
+    "name": "0027_entry_date_within_school_year.sql",
+    "sha256": "363af7ac6e0c7a47e5f94aeae4b6b148eea4ed7fa7ba920353efab4928cec733"
+  },
+  {
+    "name": "0032_document_uploads.sql",
+    "sha256": "3f0acdd347c2729312f55894c7cb3523e649eabd18cc0bd6a7560f9dba530791"
+  },
+  {
+    "name": "0028_cash_opening_and_transfers.sql",
+    "sha256": "4677e923bc40390c0167fdce7206dcff22a3bccec92de383c3ae35c6739e9164"
+  },
+  {
+    "name": "0036_year_freeze_finance.sql",
+    "sha256": "4c7d3b62b31c8df71fce1d624641a38f027c074f80c027b303ef3a9e3c9b7baf"
+  },
+  {
+    "name": "0037_scope_reference_checks.sql",
+    "sha256": "6c233ddaef253b3df87c7df5002732011900a70500eaa1b646ea5f44ac988fc3"
+  },
+  {
+    "name": "0038_payment_ledger_consistency.sql",
+    "sha256": "5dadf4edea4de0a4146e54c8815eb6af6b93c9a16a23cb92b051a2e37e455ba4"
+  },
+  {
+    "name": "0039_reconciliation_correction_guard.sql",
+    "sha256": "380d7511ebb0ac08ce1dde25b0991a13faea5b888724588fe221bd75f1d042a8"
+  },
+  {
+    "name": "0040_ledger_replacement.sql",
+    "sha256": "067e7d11889dcee61fca1521953d58632a04ece42dd81073861666e407235fcd"
+  },
+  {
+    "name": "0049_year_freeze_union.sql",
+    "sha256": "257d740e01880f68d7455be9bca46ff8a257705018db8fe698d88b82fbfd745c"
+  },
+  {
+    "name": "0035_student_guardians_current.sql",
+    "sha256": "eb7749cce3e7e6e2726ba92f4656a623e8a03d9f57ae7c6903c13a078e00d2e9"
+  },
+  {
+    "name": "0054_enrollment_freeze.sql",
+    "sha256": "e7cc6c832d07bbfcde5ea33f977e1687b2c1ab5e84869d5cb551ab09a85306ea"
+  },
+  {
+    "name": "0055_enrollment_end.sql",
+    "sha256": "7e1c6eab0195b490f6ee28d48b0b7dd6bed09b2a74bae0e66efc753087dc6d9b"
+  },
+  {
+    "name": "0056_email_preview_sends.sql",
+    "sha256": "26e5170044faef975cb121bdb85586c684d91f5c1f11ec8d931dd0923ced682e"
+  },
+  {
+    "name": "0057_email_preferences.sql",
+    "sha256": "80e82c20395d2295476d0edab7b5a6e8d3bac5752b503e73c70ab5d17f336090"
+  },
+  {
+    "name": "0058_backup_runs.sql",
+    "sha256": "a042b995b34b986572c21cd63c7c8e19fa10e0368fe9aba304c6551c2c1f5830"
+  },
+  {
+    "name": "0059_list_indexes.sql",
+    "sha256": "5f52df452c065aaef9b39e2fc0d899490f242b702554ef51c662b7cda5dc3615"
+  },
+  {
+    "name": "0060_resolution_register.sql",
+    "sha256": "a81433b9091537e899bedf89f3c3f05a7d3d49ff94176f3236a7d3321575fc0c"
+  },
+  {
+    "name": "0061_meetings_mfa_four_eyes.sql",
+    "sha256": "1526e92360a47ae113edb3993dd12a21ab42e3fd818ae6db94568bb244eeb1fd"
+  },
+  {
+    "name": "0063_email_campaign_schedule_pause.sql",
+    "sha256": "7b20147ed5a28aefa0fb9fabb3e861236bbe18064a36ab28fa066db00c67526d"
+  },
+  {
+    "name": "0064_email_outbox_resolutions.sql",
+    "sha256": "19248d3ad173ca9f4d205381b935a94f7b08d1dc8fdee7ebdd5cf7ad0c092348"
+  },
+  {
+    "name": "0065_document_descriptions.sql",
+    "sha256": "76c0c49b7fbd1bc62c3af82d1fe891634d8d31e01b4cdd9764ff7c5284613997"
+  },
+  {
+    "name": "0066_document_status_events.sql",
+    "sha256": "ef06901b8ad169a462e8ed972796cada03063a1a1e8f032e2616e3c23fcf0862"
+  },
+  {
+    "name": "0067_data_access_log.sql",
+    "sha256": "a663f708dc5e3de9e5fe84288890262b13be92306eeafa6185620d33e091a6f6"
+  },
+  {
+    "name": "0068_data_subject_requests.sql",
+    "sha256": "fed1029d096464d8de61ea876f988bc98de18c63ed098a464e6da8772a0e67a7"
+  },
+  {
+    "name": "0069_mfa_key_rotation.sql",
+    "sha256": "4c4c391d7a5c8b93b0c7a4b55b8602b87d46a4b5cedc74422f6651da135aa006"
+  },
+  {
+    "name": "0070_session_idle_revoke_reason.sql",
+    "sha256": "12e90e44c69d2453292e1d1209f4ee69065ee8c79807fbd60ba5b2c57bd82749"
+  },
+  {
+    "name": "0071_news_photo_alt_text_required.sql",
+    "sha256": "c8f03013157a5ece796422325458331645fe02ca42af56daadb717387d112c39"
+  },
+  {
+    "name": "0072_ledger_review_resolution_link.sql",
+    "sha256": "49c91626e588bfb5c9f0ef60cf5b79c49c8f8e889418176ef186226ae9490758"
+  },
+  {
+    "name": "0073_ledger_budget_adoptions.sql",
+    "sha256": "1ef2e869221b5bb4ddf743524d1432c4ed31ac377bddffff744c7b7d763ffd1a"
+  },
+  {
+    "name": "0074_retention_policies.sql",
+    "sha256": "037e739376b6af3e7f3f06a4d6d39ab2caff4c4a22bce0123875c87461ef00d5"
+  },
+  {
+    "name": "0075_privacy_notices.sql",
+    "sha256": "8765f6b3a3e7ad0338b721dd7083337f8cc1e7c84bf4da012b7dd42fb7a37d6c"
+  },
+  {
+    "name": "0076_event_volunteering.sql",
+    "sha256": "44a5a76906520a7f407d87a8a8cda0da6d10bcc1c56e5cf638e22d79fbfd4bcc"
+  },
+  {
+    "name": "0080_email_suppression_releases.sql",
+    "sha256": "1a0fc45197c46b7641b04874377d3e42bf52b4edb8148b26bcdb75c9b195ee7e"
+  },
+  {
+    "name": "0081_scope_and_email_consistency.sql",
+    "sha256": "9723321855f8103cd96f8793f7c11bac8c5ffa671ff7cfd396e0aef4d4150633"
+  },
+  {
+    "name": "0082_immutability_hardening.sql",
+    "sha256": "7fcfd37fa67050f20abff8ffe58f8ce43c746096c409093408e28b39f78a5f72"
+  },
+  {
+    "name": "0083_news_photo_consent_scope.sql",
+    "sha256": "876908ddd7c02b5688042776ed59f286bad264cf9251677ff9cbf23f8dc452d1"
+  },
+  {
+    "name": "0084_news_photo_files.sql",
+    "sha256": "efd1c41fc8b0968d6182369ee73973d6f08466754bd8e6e42308b2ace6944feb"
+  },
+  {
+    "name": "0085_payment_references.sql",
+    "sha256": "9594ac57dd8eb726f2005bfcd03b36fedb3b63bb8c40d0d8ad39271cc57d79f7"
+  },
+  {
+    "name": "0086_payment_instructions.sql",
+    "sha256": "c49b1af34bd3727e4334446294be080b8240f744d78ef027c7e532e3d2f95883"
+  },
+  {
+    "name": "0087_guardian_update_links.sql",
+    "sha256": "b069bf4976f976b70307ce52c3c61d4344bb23c0676f097a40b24b6f9c38702a"
+  },
+  {
+    "name": "0089_bank_statement_formats.sql",
+    "sha256": "1ee38af57634fbf9a5f51a091cab33548f149ad027950b517603a5858430058c"
+  },
+  {
+    "name": "0090_ledger_cost_centers.sql",
+    "sha256": "f2371db76858cd707bdd798f6232e29562e32dd65f0fda37770788552e3b96fc"
+  },
+  {
+    "name": "0093_resolution_meeting_campaign_revision.sql",
+    "sha256": "04a401d30f59abd788040d466d234abad528ee147feb9621b55b06b6ca17939d"
+  },
+  {
+    "name": "0095_close_legacy_d1_and_truncate_guard.sql",
+    "sha256": "eea6b14f742f37a2cec9ecec715e0d825f26edf539f18fdd1111f2a9119cd511"
+  },
+  {
+    "name": "0104_payment_allocations.sql",
+    "sha256": "a678746a9dc7481b877e72c9749443caec6d12403b1d8dd433864bfea531fa5f"
+  },
+  {
+    "name": "0105_reconciliation_group_matches.sql",
+    "sha256": "6e6fade08c73eb69c38b9ac6c9cd6faac82e41eed2987a59d8bffa779b94df69"
+  },
+  {
+    "name": "0106_document_descriptions_year_freeze.sql",
+    "sha256": "7d944d50cce55347fb34e095196aa2abdb557c4e2a4b8c8c7fd4f61aa61e90ba"
+  },
+  {
+    "name": "0107_reconciliation_abandon.sql",
+    "sha256": "7fd7c22fb3780cce1f24919ee7c68e48d7864e211c950b4d7e1d59176b77142a"
+  },
+  {
+    "name": "0112_news_photo_is_public_consent.sql",
+    "sha256": "106255c7077b63bb9e46e8093e61d49c79017c9cfbecc9ac6753c7db27a04bf9"
+  }
+]

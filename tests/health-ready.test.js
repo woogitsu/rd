@@ -96,6 +96,32 @@ test('503 with only the count and names of missing migrations', async () => {
   }
 });
 
+// #79: plik scalonej migracji zmieniony po fakcie — readiness musi odmówić,
+// zamiast porównywać wyłącznie nazwy.
+test('503 checksum_mismatch when an applied migration file no longer matches its recorded checksum', async () => {
+  const db = await migratedDb();
+  const target = names[0];
+  try {
+    await db.query("UPDATE schema_migrations SET checksum = repeat('f', 64) WHERE name = $1", [target]);
+    const { logger, lines } = quietLogger();
+    const result = await checkReadiness({ db }, { logger });
+    assert.equal(result.ready, false);
+    assert.equal(result.body.status, 'not_ready');
+    assert.deepEqual(result.body.checks, { database: 'ok', migrations: 'checksum_mismatch' });
+    assert.deepEqual(result.body.migrations.mismatched, [target]);
+    assert.equal(result.body.migrations.mismatched_count, 1);
+    assert.equal(JSON.parse(lines[0]).event, 'readiness_migrations_checksum_mismatch');
+    await withHttp({ db }, async (base) => {
+      const response = await fetch(`${base}/health/ready`);
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).checks.migrations, 'checksum_mismatch');
+    });
+  } finally {
+    const original = migrations.find((m) => m.name === target);
+    await db.query('UPDATE schema_migrations SET checksum = $2 WHERE name = $1', [target, original.checksum]);
+  }
+});
+
 test('503 when schema_migrations does not exist yet (fresh database)', async () => {
   const db = await migratedDb();
   await db.query('ALTER TABLE schema_migrations RENAME TO schema_migrations_hidden');
