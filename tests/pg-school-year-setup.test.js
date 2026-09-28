@@ -62,6 +62,9 @@ describe('konfiguracja roku szkolnego (#78): tworzenie roku i klas', () => {
     assert.equal(created.status, 201);
     assert.deepEqual(created.data.classes.map((c) => c.name), ['1A', '2B']);
 
+    const deleteAttempt = await call(env, '/api/admin/school-years/y-2027/classes', { method: 'DELETE', cookie: admin });
+    assert.notEqual(deleteAttempt.status, 200);
+
     const duplicate = await post(env, '/api/admin/school-years/y-2027/classes', admin, { names: ['1A'] });
     assert.equal(duplicate.status, 409);
 
@@ -70,7 +73,17 @@ describe('konfiguracja roku szkolnego (#78): tworzenie roku i klas', () => {
     const audit = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'class.created'");
     assert.equal(audit.rows[0].n, 2);
 
-    await assert.rejects(db.query(`DELETE FROM classes WHERE school_year_id = 'y-2027'`), /foreign key|violates/);
+    // AC #78: brak drogi do usunięcia klasy z przypisaniami — z przypisaniem
+    // usunięcie odrzuca istniejące ograniczenie FK (enrollments.class_id);
+    // klasa bez przypisań nie ma tej ochrony (poza zakresem tego zadania —
+    // korekta pustej, błędnie utworzonej klasy zostaje wyjątkiem ręcznym).
+    const classId = (await db.query("SELECT id FROM classes WHERE school_year_id = 'y-2027' AND name = '1A'")).rows[0].id;
+    await db.exec(`
+      INSERT INTO households (id) VALUES ('h-2027');
+      INSERT INTO students (id, household_id, first_name, last_name) VALUES ('s-2027', 'h-2027', 'Ola', 'Testowa');
+      INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e-2027', 's-2027', '${classId}', 'y-2027');
+    `);
+    await assert.rejects(db.query(`DELETE FROM classes WHERE id = '${classId}'`), /foreign key|violates/);
   });
 });
 
