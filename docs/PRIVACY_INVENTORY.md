@@ -12,6 +12,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Tabela | Kolumna | Podmiot | Rodzaj | Kategoria | Cel | Retencja (kategoria) | Wolny tekst | Eksport roczny |
 |---|---|---|---|---|---|---|---|---|
+|`bank_reconciliation_group_match_revocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`bank_reconciliation_group_match_revocations`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania zbiorczego|document_financial|tak|tak|
+|`bank_reconciliation_group_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_matches`|`revoke_reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania|document_financial|tak|tak|
 |`bank_reconciliation_matches`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -82,6 +85,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`guardians`|`last_name`|Opiekun|direct|identyfikacja|identyfikacja opiekuna|guardian_contact|nie|tak|
 |`invitations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`invitations`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`ledger_allocation_versions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`ledger_allocation_versions`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie zmiany przypisania wpisu do centrum kosztów|document_financial|tak|tak|
 |`ledger_budget_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_categories`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_corrections`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -117,6 +122,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`news_posts`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`password_reset_tokens`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`password_reset_tokens`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`payment_allocation_reversals`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`payment_allocation_reversals`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie cofnięcia części wpłaty|payment_reference|tak|tak|
+|`payment_allocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_assignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_corrections`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_corrections`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie korekty wpłaty|payment_reference|tak|tak|
@@ -148,7 +156,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **135**, w tym wolnego tekstu: **31** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **143**, w tym wolnego tekstu: **34** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -180,6 +188,42 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `size_bytes` | none | — | nie |
 | `started_at` | none | — | nie |
 | `sums` | none | — | nie |
+
+### `bank_reconciliation_group_match_items`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `amount_cents` | none | — | tak |
+| `group_match_id` | none | — | tak |
+| `id` | none | — | tak |
+| `ledger_entry_id` | none | — | tak |
+| `payment_entry_id` | none | — | tak |
+| `reconciliation_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+
+### `bank_reconciliation_group_match_revocations`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `group_match_id` | none | — | tak |
+| `id` | none | — | tak |
+| `reason` | direct | third_party | tak |
+| `reconciliation_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+
+### `bank_reconciliation_group_matches`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `reconciliation_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `statement_line_id` | none | — | tak |
 
 ### `bank_reconciliation_matches`
 
@@ -783,6 +827,31 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `school_year_id` | none | — | nie |
 | `token_hash` | none | — | nie |
 
+### `ledger_allocation_items`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `amount_cents` | none | — | tak |
+| `class_id` | none | — | tak |
+| `event_id` | none | — | tak |
+| `id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `version_id` | none | — | tak |
+
+### `ledger_allocation_versions`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `ledger_entry_id` | none | — | tak |
+| `reason` | direct | third_party | tak |
+| `school_year_id` | none | — | tak |
+| `supersedes_id` | none | — | tak |
+| `version_no` | none | — | tak |
+
 ### `ledger_budget_lines`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
@@ -1152,6 +1221,31 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `token_hash` | none | — | nie |
 | `used_at` | none | — | nie |
 | `user_id` | pseudonymous | board_member | nie |
+
+### `payment_allocation_reversals`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `allocation_id` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `reason` | direct | guardian | tak |
+| `school_year_id` | none | — | tak |
+
+### `payment_allocations`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `amount_cents` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `household_id` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `payment_entry_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
 
 ### `payment_assignments`
 

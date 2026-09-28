@@ -136,7 +136,10 @@ function lineRow(line) {
   const status = document.createElement("td");
   const actions = document.createElement("td");
   actions.className = "row-actions";
-  if (line.match) {
+  if (line.groupMatch) {
+    // Przelew zbiorczy (#127): tworzenie i cofnięcie na razie tylko przez API.
+    status.textContent = `Dopasowana zbiorczo (${line.groupMatch.itemCount} poz.)`;
+  } else if (line.match) {
     status.textContent = "Dopasowana";
     const button = document.createElement("button");
     button.type = "button";
