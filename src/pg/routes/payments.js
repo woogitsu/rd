@@ -17,8 +17,9 @@
 // salda „do zapłaty” ani statusu dłużnika.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { recordDataAccess } from '../data-access.js';
 
 export const name = 'payments';
 
@@ -368,11 +369,15 @@ async function requireFinancialContext(request, env, schoolYearId) {
   // Wpłaty dotyczą rodzin, nie klas: przydział z class_id nie daje tu dostępu
   // (isAuthorizedScoped bez classId pomija przydziały klasowe).
   if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true })) {
+    await logAccessDenied(env, context, { roles: FINANCIAL_ROLES }, request);
     throw new RequestError('forbidden', 403);
   }
   return context;
 }
 
+// #184: bez śladu access.denied tutaj — wywoływana wyłącznie po POST (korekta,
+// przypisanie, zwrot, przeksięgowanie); logAccessDenied loguje tylko GET (patrz
+// authorization.js), więc dodanie go tu byłoby martwym kodem.
 function requireYear(context, schoolYearId) {
   if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true })) {
     throw new RequestError('forbidden', 403);
@@ -391,7 +396,7 @@ async function listPayments(request, env, url, json) {
   if (limit < 1 || limit > 100) throw new RequestError('invalid_limit');
   const cursorScope = { schoolYearId, filter: status ?? '' };
   const cursor = decodeCursor(url.searchParams.get('cursor'), cursorScope);
-  await requireFinancialContext(request, env, schoolYearId);
+  const context = await requireFinancialContext(request, env, schoolYearId);
 
   const values = [schoolYearId];
   const conditions = ["p.status IN ('recorded', 'unmatched')", 'p.school_year_id = $1'];
@@ -425,6 +430,9 @@ async function listPayments(request, env, url, json) {
   const nextCursor = rows.length > limit && visibleRows.length
     ? encodeCursor(visibleRows[visibleRows.length - 1], cursorScope)
     : null;
+  await recordDataAccess(env, {
+    actorId: context.session.user.id, accessKind: 'payment_list', schoolYearId, outcome: 'ok', rowCount: visibleRows.length,
+  });
   return json({ payments: visibleRows.map(paymentListItem), nextCursor });
 }
 

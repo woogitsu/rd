@@ -41,6 +41,10 @@ class RequestError extends Error {
 async function readJson(request) {
   const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
   if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
+  // #154: deklarowany Content-Length sprawdzamy przed odczytem ciała (tak jak
+  // families.js/email.js) — zawyżony nagłówek nie może udawać małego żądania.
+  const declaredLength = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
   const text = await request.text();
   if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
   try {

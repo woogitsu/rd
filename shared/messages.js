@@ -5,6 +5,8 @@
 // Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
 
 export const MESSAGES = Object.freeze({
+  // --- Ponowne wysłanie zaproszenia (#108) ---------------------------------------
+  invitation_not_pending: "To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie.",
   // --- Konfiguracja roku szkolnego i klas (#78) -------------------------------------
   invalid_label: "Podaj nazwę roku szkolnego (maksymalnie 200 znaków).",
   invalid_date_range: "Data końca nie może być wcześniejsza niż data początku.",
@@ -14,6 +16,8 @@ export const MESSAGES = Object.freeze({
   class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
   // --- Zakończenie przypisania do klasy (#86) --------------------------------------
   invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
+  // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
+  minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
   // --- Tryb tylko do odczytu (#143) ------------------------------------------------
   read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
@@ -21,6 +25,7 @@ export const MESSAGES = Object.freeze({
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
   mfa_enrollment_required: "Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą.",
   mfa_unavailable: "Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem.",
+  mfa_key_missing: "Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
   forbidden: "Brak uprawnień do tej operacji w Twoim zakresie.",
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji.",
@@ -184,6 +189,7 @@ export const MESSAGES = Object.freeze({
   campaign_not_draft: "Wysyłkę można zmieniać tylko jako szkic.",
   campaign_locked: "Wysyłka jest zablokowana i nie można jej zmienić.",
   no_recipients: "Wysyłka nie ma odbiorców.",
+  invalid_send_not_before: "Podaj poprawną datę i godzinę startu wysyłki.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
 
   // --- Import -----------------------------------------------------------------------------------
@@ -272,6 +278,9 @@ export const MESSAGES = Object.freeze({
   invalid_rights_note: "Niepoprawna notatka o prawach.",
   public_copy_requires_license: "Publiczna kopia wymaga zapisanej licencji lub zgody.",
   photos_require_school_wide_role: "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
+  // --- Kopie zapasowe (#90) ---------------------------------------------------------
+  backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
+  restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).

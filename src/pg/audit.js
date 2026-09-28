@@ -7,6 +7,12 @@
 
 const FORBIDDEN_KEY = /(e-?mail|first_?name|last_?name|display_?name|full_?name|phone|telefon|address|adres|iban|secret|password|haslo|^token$)/i;
 const EMAIL_LIKE = /[^\s@]+@[^\s@]+/;
+// #184 pkt 3: pola, które w praktyce zawsze niosą kod, nigdy dowolny tekst
+// (np. powód zdarzenia workera/loginu — nie treść wpisaną przez człowieka).
+// Wolny tekst (np. powód korekty zapisany przez skarbnika) należy trzymać
+// wyłącznie w tabeli biznesowej, nie w metadanych audytu.
+const CODE_ONLY_KEYS = new Set(['reason', 'code', 'status', 'event']);
+const CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
 
 export function assertNoPii(metadata) {
   const visit = (value, path) => {
@@ -19,6 +25,9 @@ export function assertNoPii(metadata) {
     if (typeof value === 'object') {
       for (const [key, item] of Object.entries(value)) {
         if (FORBIDDEN_KEY.test(key)) throw new Error(`audit_metadata_pii:${path}.${key}`);
+        if (CODE_ONLY_KEYS.has(key) && typeof item === 'string' && !CODE_PATTERN.test(item)) {
+          throw new Error(`audit_metadata_pii:${path}.${key}`);
+        }
         visit(item, `${path}.${key}`);
       }
     }
