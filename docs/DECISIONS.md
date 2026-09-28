@@ -76,7 +76,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 ### D-04. Okresy retencji i usuwanie
 
 - Pytanie: jak długo przechowujemy: dane ucznia i opiekuna po zakończeniu nauki, historię wpłat i księgę, dokumenty źródłowe, dziennik audytu, kampanie e-mail, kopie zapasowe oraz przesłany plik importu?
-- Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania.
+- Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania. #152 proponuje krótszą retencję jawnej referencji wpłaty (`payment_entries.reference`) niż księgi — sama kolumna/hash nie jest wdrożona, czeka na tę decyzję.
 - Warianty w dokumentacji: nie wskazano okresów. Dokumenty Rady archiwizować zgodnie z regulaminem i decyzją szkoły (SECURITY.md).
 - Status: otwarta
 - Data decyzji:
@@ -142,6 +142,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
   moduły w ogóle działały na danych syntetycznych. Test `tests/pg-authz-matrix.test.js`
   sprawdza zgodność `tests/helpers/route-matrix.js` z `ROUTES`, ale nie
   porównuje stałych ról z tą tabelą — rozszerzenie do zrobienia osobno.
+- Założenie techniczne do czasu decyzji (#152, PII_CHECK.md): publikacja publiczna protokołu z wykrytym imieniem/nazwiskiem, e-mailem lub IBAN jest dziś blokowana zawsze (`409`), bez wyjątku dla nazwiska członka Rady pełniącego funkcję — wariant zachowawczy, bo brak decyzji, czy takie nazwisko jest dopuszczalne w publicznym protokole. Nie jest to decyzja.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
