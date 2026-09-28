@@ -127,6 +127,35 @@ test('grant creation validates scope, blocks duplicates and is audited without P
   }
 });
 
+// #146: samonadanie roli omijałoby zasadę czterech oczu (admin nadaje sobie
+// treasurer/board bez udziału drugiej osoby).
+test('an admin cannot grant themselves a role, but another admin can grant it to them', async () => {
+  const { db, env, admin } = await setup();
+  try {
+    const selfGrant = await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'treasurer' });
+    assert.equal(selfGrant.status, 409);
+    assert.equal(selfGrant.data.error, 'cannot_grant_self');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM role_grants WHERE user_id = 'u-admin' AND role = 'treasurer'")).rows[0].n, 0);
+    assert.equal((await auditRows(db)).filter((row) => row.action === 'role_grant.created').length, 0);
+
+    // Podwójne kliknięcie tego samego (odrzuconego) żądania: nadal 409, nic nie powstaje.
+    const repeat = await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'treasurer' });
+    assert.equal(repeat.status, 409);
+    assert.equal(repeat.data.error, 'cannot_grant_self');
+
+    // Samonadanie własnej roli reprezentanta (nie tylko ról merytorycznych) jest tak samo odrzucane.
+    assert.equal((await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'representative', classId: 'c-now-1a' })).data.error, 'cannot_grant_self');
+
+    // Druga osoba z rolą admina może nadać przydział pierwszej.
+    const second = await seedUserSession(db, { userId: 'u-admin2', roles: [{ role: 'admin' }], mfa: true });
+    const granted = await post(env, '/api/admin/grants', second, { userId: 'u-admin', role: 'treasurer' });
+    assert.equal(granted.status, 201);
+    assert.equal(granted.data.grant.grantedBy, 'u-admin2');
+  } finally {
+    await db.close();
+  }
+});
+
 test('revoking grants keeps history and an admin cannot remove their own last admin grant', async () => {
   const { db, env, admin } = await setup();
   try {
@@ -140,8 +169,10 @@ test('revoking grants keeps history and an admin cannot remove their own last ad
 
     assert.equal((await post(env, '/api/admin/users/u-admin/disable', admin)).data.error, 'cannot_disable_self');
 
-    // Z drugim przydziałem admina wycofanie pierwszego jest dozwolone.
-    const second = await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'admin', schoolYearId: 'y-now' });
+    // Z drugim przydziałem admina wycofanie pierwszego jest dozwolone. Samonadanie jest
+    // zabronione (#146), więc drugi przydział wydaje inny administrator.
+    const grantor = await seedUserSession(db, { userId: 'u-admin-grantor', roles: [{ role: 'admin' }], mfa: true });
+    const second = await post(env, '/api/admin/grants', grantor, { userId: 'u-admin', role: 'admin', schoolYearId: 'y-now' });
     assert.equal(second.status, 201);
     const ok = await post(env, `/api/admin/grants/${own[0].id}/revoke`, admin);
     assert.equal(ok.status, 200);

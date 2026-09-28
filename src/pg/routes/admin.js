@@ -302,6 +302,10 @@ async function listGrants(env, url, json) {
 async function createGrant(env, actorId, request, json) {
   const data = await readJson(request);
   if (!validId(data.userId)) throw new RequestError('invalid_user_id');
+  // #146: samonadanie roli (np. admin nadaje sobie treasurer/board) omija zasadę
+  // czterech oczu wymaganą wszędzie indziej dla ważnych decyzji. Odrzucamy przed
+  // transakcją: żaden wiersz nie powstaje, żadne zdarzenie audytu się nie zapisuje.
+  if (data.userId === actorId) throw new RequestError('cannot_grant_self', 409);
   const role = data.role;
   const classId = optionalId(data.classId, 'invalid_class_id');
   const schoolYearIdInput = optionalId(data.schoolYearId, 'invalid_school_year_id');
