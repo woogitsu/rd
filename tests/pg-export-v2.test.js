@@ -51,6 +51,11 @@ async function seedSource(db) {
       new_contact_allowed, reason, source, changed_at) VALUES
     ('gcc-in', 'g-2', 'stary@example.invalid', 'g2@example.invalid', true, true, 'Zmiana adresu', 'direct', '2026-10-05T10:00:00Z'),
     ('gcc-old', 'g-2', 'dawny@example.invalid', 'stary@example.invalid', true, true, 'Dawna zmiana', 'direct', '2025-10-05T10:00:00Z')`);
+  // Historia relacji opiekun–dziecko (0026): zmiana w roku w paczce (bez powodu), sprzed roku poza paczką.
+  await db.query(`INSERT INTO student_guardian_changes (id, student_id, guardian_id, previous_contact_allowed, new_contact_allowed,
+      previous_is_primary_contact, new_is_primary_contact, reason, source, changed_at) VALUES
+    ('sgc-in', 's-3', 'g-3', false, true, false, false, 'Zgoda opiekuna', 'direct', '2026-10-06T10:00:00Z'),
+    ('sgc-old', 's-3', 'g-3', true, false, false, false, 'Dawna zmiana', 'direct', '2025-10-06T10:00:00Z')`);
 
   await db.query(`INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES
     ('cat-in', '${YEAR}', 'income', 'Dobrowolne wpłaty', 'u-seed')`);
@@ -186,6 +191,9 @@ test('paczka v2 zawiera gospodarstwa, historię, uzgodnienia i zamknięcie; bez 
   assert.deepEqual(contact.map((row) => row.id), ['gcc-in']);
   assert.deepEqual(Object.keys(contact[0]).sort(),
     ['changed_at', 'changed_by', 'guardian_id', 'id', 'new_contact_allowed', 'previous_contact_allowed', 'source']);
+  const relation = linesOf(bundle, 'student_guardian_changes');
+  assert.deepEqual(relation.map((row) => row.id), ['sgc-in']);
+  assert.equal(relation[0].reason, undefined, 'bez treści powodu (D-03)');
   const matches = linesOf(bundle, 'bank_reconciliation_matches');
   assert.equal(matches.length, 2);
   assert.ok(matches.some((row) => row.revoke_reason === 'Powiązanie do sprawdzenia'), 'cofnięcie z powodem w paczce');
@@ -199,7 +207,8 @@ test('paczka v2 zawiera gospodarstwa, historię, uzgodnienia i zamknięcie; bez 
     if (path === 'guardians.jsonl') continue;
     assert.doesNotMatch(content, /@example\.invalid/, path);
   }
-  for (const table of ['users', 'sessions', 'user_mfa_factors', 'mfa_recovery_codes', 'email_campaign_recipients', 'email_outbox']) {
+  for (const table of ['users', 'sessions', 'user_mfa_factors', 'mfa_recovery_codes', 'user_passwords', 'password_reset_tokens',
+    'email_campaign_recipients', 'email_outbox']) {
     assert.equal(bundle.files[`${table}.jsonl`], undefined, table);
   }
   // Podwójny eksport daje ten sam skrót (determinizm dla nowych tabel).

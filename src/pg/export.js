@@ -142,6 +142,13 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'guardian_contact_changes', requires: ['guardians'],
     columns: ['id', 'guardian_id', 'previous_contact_allowed', 'new_contact_allowed', 'source', 'changed_by', 'changed_at'],
     where: (has) => `guardian_id IN (SELECT id FROM guardians WHERE ${guardianScope(has)}) AND ${YEAR_TIME('changed_at')}` },
+  // 0026: historia relacji opiekun–dziecko (zgoda, kontakt główny, daty) z tego roku,
+  // jak wyżej bez treści powodu (D-03).
+  { table: 'student_guardian_changes', requires: ['student_guardians'],
+    columns: ['id', 'student_id', 'guardian_id', 'previous_contact_allowed', 'new_contact_allowed',
+      'previous_is_primary_contact', 'new_is_primary_contact', 'previous_starts_on', 'new_starts_on',
+      'previous_ends_on', 'new_ends_on', 'source', 'changed_by', 'changed_at'],
+    where: () => `student_id IN (${YEAR_STUDENTS}) AND ${YEAR_TIME('changed_at')}` },
 
   { table: 'payment_entries', where: () => 'school_year_id = $1' },
   { table: 'payment_corrections', requires: ['payment_entries'],
@@ -202,7 +209,7 @@ const KNOWN_TABLES = new Set(EXPORT_TABLES.map((spec) => spec.table));
 // Tabele dodane w wersji 2 — w paczce wersji 1 ich brak (ostrzeżenie „paczka niepełna”).
 export const TABLES_ADDED_IN_V2 = Object.freeze([
   'student_households', 'guardian_households', 'enrollment_history', 'guardian_contact_changes',
-  'ledger_transfers', 'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines',
+  'student_guardian_changes', 'ledger_transfers', 'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines',
   'bank_reconciliation_matches', 'meeting_attendance_state', 'school_year_closures', 'school_year_closure_checklist',
 ]);
 
@@ -215,6 +222,9 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   user_mfa_factors: 'sekrety MFA — nigdy w paczce',
   mfa_recovery_codes: 'kody odzyskiwania MFA — nigdy w paczce',
   mfa_rate_limits: 'limity prób MFA — dane techniczne',
+  user_passwords: 'skróty haseł kont — sekrety, nigdy w paczce',
+  login_rate_limits: 'limity prób logowania — dane techniczne',
+  password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
   documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',

@@ -92,6 +92,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `student_households`, `guardian_households` | członkostwo uczniów roku (także drugie gospodarstwo przy opiece dzielonej, `is_primary`) i opiekunów z zakresu w gospodarstwach, z historią (0014) |
 | `enrollment_history` | historia przypisań do klas w danym roku (0014) |
 | `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
+| `student_guardian_changes` | historia relacji opiekun–dziecko uczniów roku (zgoda, kontakt główny, daty) z dat roku — bez treści powodu (0026, D-03) |
 | `ledger_transfers` | przeniesienia kasa ↔ rachunek roku (0028) |
 | `bank_reconciliations`, `bank_statement_imports`, `bank_statement_lines`, `bank_reconciliation_matches` | uzgodnienia roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami, także cofniętymi z powodem (0015/0024) |
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
@@ -111,7 +112,7 @@ Nie są eksportowane (jawna lista `EXPORT_EXCLUDED_TABLES` w
 `src/pg/export.js`, każda z uzasadnieniem; test kompletności w
 `tests/pg-export-v2.test.js` zawodzi, gdy nowa tabela nie jest ani w eksporcie,
 ani na tej liście): konta użytkowników (`users`: e-mail, nazwa), sesje,
-zaproszenia, sekrety i limity MFA, przydziały ról, klucze idempotencji zebrań,
+zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity logowania (0020), przydziały ról, klucze idempotencji zebrań,
 metadane i pliki dokumentów, metadane importów (`import_batches`, D-04),
 dziennik eksportów, kampanie e-mail z odbiorcami, wykluczeniami, kolejką,
 blokadami i zdarzeniami dostawcy (adresy e-mail; zakres i retencja — D-04)
