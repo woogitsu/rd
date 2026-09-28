@@ -107,6 +107,16 @@ Elektroniczne lub zdalne głosowanie zarządu między zebraniami (np. pilna zgod
 - **Jawność lub tajność głosu — do decyzji.** Tajność wymaga oddzielenia tożsamości głosującego od treści głosu (osobna tabela potwierdzeń „kto głosował” bez powiązania z „jak głosował”); przy tajnym głosowaniu `user_id` nie jest przechowywany przy samym głosie.
 - **Rozstrzygnięcie trafia do rejestru uchwał** (#102) **i do protokołu najbliższego zebrania** — tak samo jak uchwała przyjęta na zebraniu, żeby rejestr pozostał jednym źródłem prawdy.
 
+## Panel `meetings/` — co widzi przedstawiciel (#167)
+
+Panel sprawdza `GET /api/access` **przed** pierwszym żądaniem listy i wybiera jeden z dwóch widoków (`meetings/core.js`, `meetingsViewMode`):
+
+- role z listy wyżej z dostępem do `GET /api/meetings` (`admin`, `board`, `audit`) → obecny widok bez zmian (lista zebrań, szczegóły, obecność, quorum, protokoły, uchwały);
+- sam `representative` (bez żadnej z tych ról) → widok „Protokoły udostępnione” z `GET /api/meetings/shared-minutes`: data, rodzaj, klasa, tytuł, wersja, data zatwierdzenia i podgląd treści tylko do odczytu (bez listy obecności, quorum i projektów uchwał). Panel nigdy nie woła `GET /api/meetings` dla tej roli, więc nie ma odmowy 403 na starcie.
+- inne role bez żadnej z powyższych (np. sam `principal`) → obie sekcje ukryte, tak jak dziś (403 przy próbie odczytu, bez zmiany funkcji tego PR).
+
+Widoczność `parents` w widoku przedstawiciela oznacza, że wolno przekazać treść rodzicom klasy; wydruk/PDF tego widoku korzysta ze wspólnego arkusza druku (#151).
+
 ## API
 
 Wszystkie mutacje wymagają nagłówka `Origin` zgodnego z serwerem. Odmowy reguł bazy (np. zablokowane zebranie, `minutes_must_start_as_draft`, `meetings_cannot_be_deleted`, zapis w zamkniętym roku — `school_year_closed`) dają `409` z kodem reguły, nie `503`. Trasy zarządzania zebraniem nadal odpowiadają `403` dla zebrania spoza zakresu (SR-07 w docs/SECURITY_REVIEW.md). Tworzenie wymaga `Idempotency-Key` (8–128 znaków); powtórzenie tego samego żądania zwraca pierwotny obiekt z `Idempotency-Replayed: true`, a inne dane z tym samym kluczem dają `409 idempotency_conflict`.
