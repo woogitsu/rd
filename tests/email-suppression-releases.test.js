@@ -105,6 +105,17 @@ test('release requires two different people (four eyes); same person is refused'
     assert.equal(reused.body.error, 'request_already_consumed');
     const listAfter = await t.call(t.treasurer, `/api/email/suppressions?schoolYearId=${YEAR}`);
     assert.equal(listAfter.body.suppressions.length, 0, 'blokada zdjęta — adres nie jest już aktywnie zablokowany');
+    // #387: każde zdarzenie audytu email.* dotyczące roku ma metadata.schoolYearId.
+    const { rows: events } = await t.db.query(
+      `SELECT action, metadata_json FROM audit_events
+        WHERE action IN ('email.suppressions.viewed', 'email.suppression.release_requested', 'email.suppression.released')
+        ORDER BY occurred_at`,
+    );
+    assert.ok(events.length >= 3, 'oczekiwano co najmniej po jednym zdarzeniu każdego typu');
+    for (const row of events) {
+      const metadata = typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : row.metadata_json;
+      assert.equal(metadata.schoolYearId, YEAR, `${row.action} powinno mieć metadata.schoolYearId`);
+    }
   } finally { await t.close(); }
 });
 
