@@ -889,7 +889,7 @@ async function createReview(request, env, ledgerEntryId, json) {
       // Dziennik: aktor, czas, identyfikator wpisu i decyzja — bez kwoty, opisu i uwagi.
       await insertAuditEvent(tx, {
         actorId, action: `ledger.entry.${input.decision}`, entityType: 'ledger_entry', entityId: ledgerEntryId,
-        metadata: { reviewId: id },
+        metadata: { reviewId: id, schoolYearId: entry.school_year_id },
       });
       return { review: reviewFromRow(inserted.rows[0]) };
     });

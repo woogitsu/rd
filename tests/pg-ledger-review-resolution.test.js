@@ -114,7 +114,10 @@ test('#97: autor nie weryfikuje własnego wydatku; druga osoba weryfikuje; podw�
 
     // Dziennik: aktor, czas, id wpisu — bez kwoty i opisu.
     const events = (await db.query("SELECT actor_id, entity_id, metadata_json FROM audit_events WHERE action = 'ledger.entry.verified'")).rows;
-    assert.deepEqual(events, [{ actor_id: 'u-board', entity_id: entry.id, metadata_json: { reviewId: verified.body.review.id } }]);
+    assert.deepEqual(events, [{
+      actor_id: 'u-board', entity_id: entry.id,
+      metadata_json: { reviewId: verified.body.review.id, schoolYearId: YEAR },
+    }]);
 
     // Ta sama osoba z rolą skarbnika i zarządu jest nadal autorem.
     const dualEntry = (await createExpense(call, cookies.dual)).body.entry;
@@ -234,7 +237,7 @@ test('#93: resolutionId przyjmuje tylko bieżącą, przyjętą uchwałę zebrani
     assert.equal(replay.body.entry.id, created.body.entry.id);
     assert.equal(await count('ledger_entries'), 1);
     const [event] = (await db.query("SELECT actor_id, metadata_json FROM audit_events WHERE action = 'ledger.entry.created'")).rows;
-    assert.deepEqual(event, { actor_id: 'u-treasurer', metadata_json: { resolutionId: adopted.id } });
+    assert.deepEqual(event, { actor_id: 'u-treasurer', metadata_json: { resolutionId: adopted.id, schoolYearId: YEAR } });
 
     // Uchwała budżetowa z poprzedniego roku upoważnia wydatek bieżącego roku — także skarbnikowi bez przydziału w roku poprzednim.
     const crossYear = await createExpense(call, cookies.treasurerYear, { amountCents: 120000, resolutionId: previousYear.id });
