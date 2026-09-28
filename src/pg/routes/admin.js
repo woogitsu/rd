@@ -29,7 +29,10 @@
 // przydziałów admina są serializowane blokadą doradczą, aby dwie równoległe
 // operacje nie odebrały sobie nawzajem ostatniego dostępu administratora.
 
-import { createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions, ROLES } from '../auth.js';
+import {
+  allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions,
+  ROLE_STATUS, ROLES,
+} from '../auth.js';
 import { requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import {
@@ -160,6 +163,11 @@ async function assertActorStillAdmin(tx, actorId) {
 async function resolveScope(executor, { role, classId, schoolYearId }) {
   if (!ROLES.includes(role)) throw new RequestError('invalid_role');
   if (role === 'representative' && !classId) throw new RequestError('class_required');
+  // #176: przydział klasowy dla roli bez żadnej trasy klasowej jest dziś ciche
+  // „nic” (isAuthorizedScoped odfiltrowuje przydziały klasowe na trasach
+  // ogólnoszkolnych, a klasowej trasy te role nie mają) — odrzucamy zamiast
+  // milcząco zapisywać przydział, który niczego nie da.
+  if (classId && !CLASS_SCOPE_ROLES.includes(role)) throw new RequestError('class_scope_not_supported', 422);
   let yearId = schoolYearId;
   if (classId) {
     const { rows } = await executor.query('SELECT school_year_id FROM classes WHERE id = $1', [classId]);
@@ -461,6 +469,12 @@ async function createInvitationRoute(env, actorId, request, json) {
   }
   if (typeof data.email !== 'string') throw new RequestError('invalid_email');
   const email = data.email.trim().toLowerCase();
+  // #176: rola bez żadnej trasy chronionej dziś (`pending_decision`, np. principal)
+  // tworzy konto z danymi osobowymi bez celu (D-01/D-06) — odrzucamy, chyba że
+  // ALLOW_PENDING_ROLES=true (przygotowanie kont z wyprzedzeniem przed D-09, testy).
+  if (ROLE_STATUS[data.role] === 'pending_decision' && !allowPendingRoles(env)) {
+    throw new RequestError('role_pending_decision', 422);
+  }
   const scope = await resolveScope(env.db, { role: data.role, classId, schoolYearId: schoolYearIdInput });
 
   // Podwójne kliknięcie: drugie zaproszenie o tym samym zakresie dla adresu,

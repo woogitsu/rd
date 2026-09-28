@@ -10,6 +10,39 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24;
 export const INVITATION_DEFAULT_TTL_SECONDS = 60 * 60 * 72;
 export const INVITATION_MAX_TTL_SECONDS = 60 * 60 * 24 * 14;
 export const ROLES = Object.freeze(['admin', 'board', 'treasurer', 'representative', 'audit', 'principal']);
+
+// #176: stan roli w kodzie, nie tylko w komentarzach — źródło dla admin/ (formularz
+// zaproszenia i nadania roli), ekranu startowego i tests/pg-authz-matrix.test.js.
+// 'active'          — rola ma dziś co najmniej jedną trasę chronioną.
+// 'partial'         — rola ma dziś część tras (np. audit: tylko GET /api/reports/audit,
+//                      reszta czeka na D-09 — zob. docs/LEDGER.md, issue #137).
+// 'pending_decision' — rola nie ma dziś ŻADNEJ trasy chronionej (docs/AUTHORIZATION.md:
+//                      "Rola `principal` nie ma dziś dostępu do żadnej trasy chronionej").
+// Zmiana tej mapy bez zmiany faktycznych tras w modułach byłaby fałszywą obietnicą
+// (AGENTS.md: „widok publiczny/komunikaty nie mogą obiecywać funkcji, których nie ma”).
+export const ROLE_STATUS = Object.freeze({
+  admin: 'active',
+  board: 'active',
+  treasurer: 'active',
+  representative: 'active',
+  audit: 'partial',
+  principal: 'pending_decision',
+});
+
+// Zaproszenie/nadanie roli 'pending_decision' jest domyślnie odrzucane (422
+// role_pending_decision) — konto bez żadnej funkcji to dane osobowe bez celu
+// (D-01/D-06). ALLOW_PENDING_ROLES=true wyłącza tę blokadę, np. do przygotowania
+// kont z wyprzedzeniem przed decyzją D-09 albo do testów.
+export function allowPendingRoles(env) {
+  const raw = env && Object.hasOwn(env, 'ALLOW_PENDING_ROLES') ? env.ALLOW_PENDING_ROLES : process.env.ALLOW_PENDING_ROLES;
+  return raw === 'true';
+}
+
+// Role bez żadnej trasy klasowej (docs/AUTHORIZATION.md) — przydział z classId
+// dla tych ról jest dziś ciche „nic”: żadna trasa ogólnoszkolna go nie używa
+// (isAuthorizedScoped odfiltrowuje przydziały klasowe), a klasowej dla tych ról
+// nie ma. Tylko `representative` używa classId; inne role go dziś nie obsługują.
+export const CLASS_SCOPE_ROLES = Object.freeze(['representative']);
 const REVOKE_REASONS = new Set(['logout', 'rotated', 'admin', 'user_disabled', 'password_changed', 'password_reset', 'mfa_reset']);
 
 export function isoTimestamp(value) {
