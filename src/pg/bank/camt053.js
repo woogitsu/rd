@@ -9,7 +9,7 @@
 //     Bal: Tp/CdOrPrtry/Cd = OPBD (albo PRCD) — saldo początkowe, CLBD — końcowe;
 //          Amt, CdtDbtInd (CRDT/DBIT), Dt/Dt
 //     Ntry: Amt (Ccy="EUR"), CdtDbtInd, Sts (BOOK; inne pomijane), BookgDt/Dt,
-//           AcctSvcrRef albo NtryRef (identyfikator transakcji banku),
+//           AcctSvcrRef albo Stmt/Id + NtryRef (identyfikator transakcji banku),
 //           NtryDtls/TxDtls/RmtInf/Strd/CdtrRefInf/Ref albo RmtInf/Ustrd (tytuł)
 // Rekord w błędach = numer kolejny elementu Ntry (albo Bal) w pliku.
 
@@ -137,6 +137,7 @@ export function parseCamt053(text) {
 
   const statementNumber = textOf(child(statement, 'ElctrncSeqNb')) ?? textOf(child(statement, 'LglSeqNb'))
     ?? textOf(child(statement, 'Id'));
+  const statementScope = textOf(child(statement, 'Id')) || statementNumber;
   const entries = children(statement, 'Ntry');
   const movements = [];
   entries.forEach((entry, index) => {
@@ -144,7 +145,13 @@ export function parseCamt053(text) {
     if (entryStatus(entry) !== 'BOOK') return;
     const amountCents = camtAmount(child(entry, 'Amt'), child(entry, 'CdtDbtInd'), record, MAX_MOVEMENT_CENTS);
     if (amountCents === 0) throw new StatementFileError('invalid_statement_line', record);
-    const bankId = textOf(child(entry, 'AcctSvcrRef')) || textOf(child(entry, 'NtryRef'));
+    // AcctSvcrRef = referencja banku (unikalna dla rachunku). NtryRef bywa tylko
+    // numerem kolejnym w wyciągu („1”, „2”…), więc bez AcctSvcrRef zawężamy go do
+    // wyciągu (Stmt/Id) — inaczej ruch z kolejnego wyciągu z tym samym NtryRef
+    // zostałby pominięty jako „już zaimportowany”.
+    const servicerRef = textOf(child(entry, 'AcctSvcrRef'));
+    const entryRef = textOf(child(entry, 'NtryRef'));
+    const bankId = servicerRef || (entryRef && statementScope ? `ntry:${statementScope}:${entryRef}` : null);
     if (!bankId) throw new StatementFileError('statement_transaction_id_missing', record);
     movements.push({
       record,

@@ -59,7 +59,7 @@ const indicator = (cents) => (cents < 0 ? 'DBIT' : 'CRDT');
 
 /**
  * @param {object} o
- * @param {Array<{ref:string|null, cents:number, bookedOn:string, ustrd?:string, strd?:string, status?:string}>} o.movements
+ * @param {Array<{ref:string|null, ntryRefOnly?:string, cents:number, bookedOn:string, ustrd?:string, strd?:string, status?:string}>} o.movements
  */
 export function camtFile({
   iban = RADA_IBAN, sequence = '1', openingCents = 100000, openingDate = '2026-09-01',
@@ -72,7 +72,7 @@ export function camtFile({
         <Amt Ccy="EUR">${eur(cents)}</Amt><CdtDbtInd>${indicator(cents)}</CdtDbtInd><Dt><Dt>${date}</Dt></Dt></Bal>`;
   const entries = movements.map((m) => `
       <Ntry>
-        ${m.ref ? `<NtryRef>N-${m.ref}</NtryRef>` : ''}
+        ${m.ref ? `<NtryRef>N-${m.ref}</NtryRef>` : ''}${m.ntryRefOnly ? `<NtryRef>${m.ntryRefOnly}</NtryRef>` : ''}
         <Amt Ccy="EUR">${eur(m.cents)}</Amt><CdtDbtInd>${indicator(m.cents)}</CdtDbtInd>
         <Sts><Cd>${m.status ?? 'BOOK'}</Cd></Sts>
         <BookgDt><Dt>${m.bookedOn}</Dt></BookgDt><ValDt><Dt>${m.bookedOn}</Dt></ValDt>

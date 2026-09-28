@@ -96,6 +96,36 @@ test('CODA: globalised detail records are not counted twice; a debit balance is 
   assert.deepEqual(statement.movements.map((m) => m.amountCents), [5000]);
 });
 
+test('CAMT bez AcctSvcrRef: ten sam NtryRef w dwóch wyciągach to dwa różne ruchy (#105)', () => {
+  // NtryRef bywa numerem kolejnym w wyciągu — nie może zderzyć się między wyciągami.
+  const first = parseCamt053(camtFile({ sequence: '7', movements: [{ ntryRefOnly: '1', cents: 2500, bookedOn: '2026-09-10' }] }));
+  const second = parseCamt053(camtFile({ sequence: '8', movements: [{ ntryRefOnly: '1', cents: 2500, bookedOn: '2026-09-11' }] }));
+  assert.notEqual(first.movements[0].transactionId, second.movements[0].transactionId);
+  // Ten sam wyciąg (to samo Stmt/Id) daje ten sam identyfikator — ponowny import dalej jest wykrywany.
+  const again = parseCamt053(camtFile({ sequence: '7', movements: [{ ntryRefOnly: '1', cents: 2500, bookedOn: '2026-09-10' }] }));
+  assert.equal(again.movements[0].transactionId, first.movements[0].transactionId);
+  // AcctSvcrRef ma pierwszeństwo i nie zależy od wyciągu.
+  const a = parseCamt053(camtFile({ sequence: '7', movements: [{ ref: 'BANKREF-1', cents: 2500, bookedOn: '2026-09-10' }] }));
+  const b = parseCamt053(camtFile({ sequence: '8', movements: [{ ref: 'BANKREF-1', cents: 2500, bookedOn: '2026-09-10' }] }));
+  assert.equal(a.movements[0].transactionId, b.movements[0].transactionId);
+});
+
+test('API: kolejny wyciąg CAMT z tym samym NtryRef (bez AcctSvcrRef) importuje ruch, nie pomija go', async () => {
+  const { cookies, call } = await setup();
+  const september = await draft(call, cookies.treasurer, { statementDate: '2026-09-30', statementBalanceCents: 102500 });
+  const first = await importFile(call, cookies.treasurer, september, { camt053: camtFile({
+    sequence: '7', closingDate: '2026-09-30', movements: [{ ntryRefOnly: '1', cents: 2500, bookedOn: '2026-09-10' }] }) });
+  assert.equal(first.status, 201);
+  const october = await draft(call, cookies.treasurer, { statementDate: '2026-10-31', statementBalanceCents: 105000 });
+  const second = await importFile(call, cookies.treasurer, october, { camt053: camtFile({
+    sequence: '8', openingCents: 102500, openingDate: '2026-10-01', closingDate: '2026-10-31',
+    movements: [{ ntryRefOnly: '1', cents: 2500, bookedOn: '2026-10-10' }] }) });
+  const body = await second.json();
+  assert.equal(second.status, 201, JSON.stringify(body));
+  assert.equal(body.import.lineCount, 1);
+  assert.equal(body.skippedDuplicateCount, 0);
+});
+
 test('CODA and CAMT errors carry only a record number, never file content', () => {
   const broken = CODA_FIXTURE.split('\r\n');
   broken[2] = `${broken[2]}NADMIAR-Rodzina-Testowa`;
