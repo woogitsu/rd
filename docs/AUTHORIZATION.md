@@ -70,6 +70,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/events/:eventId/approve` | zarząd — rok 1 | tak (#150) | 403 / 404 | 403, gdy aktor widzi wydarzenie (admin, przedstawiciel własnej klasy); 404 poza zakresem podglądu; zasada czterech oczu w bazie |
 | `POST /api/events/:eventId/publish` | zarząd — rok 1 | tak (#150) | 403 / 404 | jak przy zatwierdzeniu |
 | `POST /api/events/:eventId/cancel` | szkic: admin, zarząd — rok 1; przedstawiciel — własna klasa; opublikowane: tylko zarząd | nie | 404 | macierz testuje szkic; opublikowane wydarzenie własnej klasy: przedstawiciel dostaje 403 |
+| `GET /api/events/:eventId/tasks` | jak `PATCH /api/events/:eventId` (ten sam canEdit) | nie | 404 | zadania i zapisy wolontariuszy wydarzenia (#142); wydarzenie spoza zakresu nieodróżnialne od braku (SR-07) |
+| `POST /api/events/:eventId/tasks` | jak wyżej | nie | 404 | nowe zadanie wolontariatu |
+| `POST /api/events/:eventId/tasks/:taskId/cancel` | jak wyżej | nie | 404 | odwołanie zadania |
+| `POST /api/events/:eventId/tasks/:taskId/signups` | jak wyżej | nie | 404 | zapis opiekuna/konta na zadanie |
+| `POST /api/events/:eventId/tasks/:taskId/signups/:signupId/withdraw` | jak wyżej | nie | 404 | wypisanie się z zadania |
 | `GET /api/meetings?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — rok 1, tylko zebrania tej klasy | nie | 403 | przedstawiciel: 403 |
 | `POST /api/meetings` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | |
 | `GET /api/meetings/shared-minutes?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; przedstawiciel — rok 1 | nie | 403 | przedstawiciel widzi protokoły ogólne i własnej klasy, nigdy innej klasy |

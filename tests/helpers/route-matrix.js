@@ -553,6 +553,48 @@ export const ROUTE_MATRIX = Object.freeze([
   eventAction('events.publish', 'publish', 'approved', EVENT_REVIEW),
   eventAction('events.cancel', 'cancel', 'draft', EVENT_EDIT, { reason: 'Odwołanie syntetyczne' }),
 
+  // ---------- events: zadania i zapisy wolontariuszy (#142) ----------
+  // Dostęp do zadania/zapisu sprawdza ten sam canEdit(actor, event) co szkic
+  // wydarzenia (src/pg/events.js) — te same zakresy i ta sama odmowa 404/403
+  // (SR-07: wydarzenie spoza zakresu podglądu wygląda jak nieznane).
+  {
+    id: 'events.tasksList', module: 'events', method: 'GET', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
+    allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'static', object: { kind: 'event', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks` }),
+  },
+  {
+    id: 'events.taskCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
+    allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage: 'draft' },
+    build: ({ obj, target, key }) => ({
+      path: `/api/events/${obj.eventId}/tasks`, headers: withKey(key),
+      body: { title: `Zadanie ${marker(target.key)}`, slotsNeeded: 2, isPublic: false },
+    }),
+  },
+  {
+    id: 'events.taskCancel', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks/:taskId/cancel',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTask', stage: 'draft' },
+    build: ({ obj }) => ({
+      path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/cancel`, body: { reason: 'Odwołanie syntetyczne' },
+    }),
+  },
+  {
+    id: 'events.signupCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks/:taskId/signups',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTask', stage: 'draft' },
+    build: ({ obj, key }) => ({
+      path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/signups`, headers: withKey(key),
+      body: { userId: 'u-fx-board' },
+    }),
+  },
+  {
+    id: 'events.signupWithdraw', module: 'events',
+    method: 'POST', path: '/api/events/:eventId/tasks/:taskId/signups/:signupId/withdraw',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'eventTaskSignup', stage: 'draft' },
+    build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks/${obj.taskId}/signups/${obj.signupId}/withdraw` }),
+  },
+
   // ---------- meetings (#13) ----------
   {
     id: 'meetings.list', module: 'meetings', method: 'GET', path: '/api/meetings?schoolYearId=:year',

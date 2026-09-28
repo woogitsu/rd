@@ -90,6 +90,9 @@ wpisów).
 | `event_cancelled` | Wydarzenie jest odwołane; odwołanie jest ostateczne. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_not_found` | Nie znaleziono wydarzenia albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
 | `event_not_public` | Publikować można tylko wydarzenie z odbiorcami „Publiczne”. | Zależy od kontekstu (patrz moduł trasy). |
+| `event_task_already_cancelled` | To zadanie zostało już odwołane. | Zależy od kontekstu (patrz moduł trasy). |
+| `event_task_not_found` | Nie znaleziono zadania albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
+| `event_task_signup_not_found` | Nie znaleziono zapisu. | Nie — popraw dane żądania. |
 | `export_in_progress` | Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie. | Tak, po chwili (drugi równoczesny eksport tego samego roku). |
 | `export_too_large` | Eksport jest za duży. Zawęź zakres. | Zależy od kontekstu (patrz moduł trasy). |
 | `fingerprint_mismatch` | Dane różnią się od podglądu. Wyślij podgląd ponownie. | Nie — popraw dane żądania. |
@@ -99,6 +102,7 @@ wpisów).
 | `group_match_direction_mismatch` | Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ). | Nie — popraw dane żądania. |
 | `group_match_sum_mismatch` | Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu. | Nie — popraw dane żądania. |
 | `guardian_not_found` | Nie znaleziono opiekuna. | Nie — popraw dane żądania. |
+| `guardian_outside_class` | Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku. | Zależy od kontekstu (patrz moduł trasy). |
 | `household_not_found` | Nie znaleziono gospodarstwa. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -197,6 +201,8 @@ wpisów).
 | `invalid_school_year` | Niepoprawny identyfikator roku szkolnego. | Nie — popraw dane żądania. |
 | `invalid_send_not_before` | Podaj poprawną datę i godzinę startu wysyłki. | Nie — popraw dane. |
 | `invalid_signature` | Niepoprawny podpis żądania. | Nie — popraw dane żądania. |
+| `invalid_signup_target` | Wskaż dokładnie jedną osobę: opiekuna albo konto. | Nie — popraw dane żądania. |
+| `invalid_slots_needed` | Liczba potrzebnych miejsc musi być od 1 do 200. | Nie — popraw dane żądania. |
 | `invalid_source_detail` | Niepoprawny opis źródła. | Nie — popraw dane żądania. |
 | `invalid_source_document` | Niepoprawny dokument źródłowy. | Nie — popraw dane żądania. |
 | `invalid_source` | Niepoprawne źródło wpisu. | Nie — popraw dane żądania. |
@@ -334,6 +340,8 @@ wpisów).
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `student_not_found` | Nie znaleziono ucznia. | Nie — popraw dane żądania. |
 | `subject_required` | Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie. | Zależy od kontekstu (patrz moduł trasy). |
+| `task_full` | Brak wolnych miejsc w tym zadaniu. Odśwież listę. | Zależy od kontekstu (patrz moduł trasy). |
+| `task_time_outside_event` | Czas zadania musi mieścić się w czasie wydarzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `timeout` | Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `too_many_attempts` | Zbyt wiele prób. Spróbuj ponownie później. | Zależy od kontekstu (patrz moduł trasy). |
 | `too_many_rows` | Za dużo wierszy w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |

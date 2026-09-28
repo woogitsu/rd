@@ -20,7 +20,9 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { handlePgRequest, ROUTES } from '../src/pg/app.js';
-import { approve, createDraft, publish, submit } from '../src/pg/events.js';
+import {
+  approve, cancelTask, createDraft, createSignup, createTask, publish, submit, withdrawSignup,
+} from '../src/pg/events.js';
 import {
   approveMinutes, createMeeting, createMinutesVersion, createResolution, determineQuorum,
   recordAttendance, setMinutesVisibility, updateMeeting,
@@ -158,6 +160,31 @@ async function makeEvent(db, target, stage, { audience = 'internal', title } = {
   if (stage === 'approved') return { eventId: event.id };
   await publish(db, fxBoard, { eventId: event.id, revision: 1 });
   return { eventId: event.id };
+}
+
+// Zadanie wolontariatu (#142, #330): dostęp sprawdza ten sam canEdit(actor, event)
+// co szkic wydarzenia (EVENT_EDIT), więc fixture reużywa makeEvent w stanie 'draft'.
+async function makeEventTask(db, target, stage) {
+  const { eventId } = await makeEvent(db, target, 'draft');
+  const { task } = await createTask(db, fxAdmin, {
+    eventId, title: `Zadanie ${marker(target.key)}`, slotsNeeded: 3, isPublic: false,
+    idempotencyKey: nextKey('fx-task'),
+  });
+  if (stage === 'cancelled') {
+    await cancelTask(db, fxAdmin, { eventId, taskId: task.id, reason: 'Odwołanie syntetyczne (fixture)' });
+  }
+  return { eventId, taskId: task.id };
+}
+
+async function makeEventTaskSignup(db, target, stage) {
+  const { eventId, taskId } = await makeEventTask(db, target, 'draft');
+  const { signup } = await createSignup(db, fxAdmin, {
+    eventId, taskId, userId: fxBoard.userId, idempotencyKey: nextKey('fx-signup'),
+  });
+  if (stage === 'withdrawn') {
+    await withdrawSignup(db, fxAdmin, { eventId, taskId, signupId: signup.id });
+  }
+  return { eventId, taskId, signupId: signup.id };
 }
 
 async function makeMeeting(db, target, stage, { title, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
@@ -470,6 +497,8 @@ async function makeOwnSession(ctx, { cookie }) {
 const MAKERS = {
   privacyNotice: (ctx, target, stage) => makePrivacyNotice(ctx, target, stage),
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
+  eventTask: (ctx, target, stage) => makeEventTask(ctx.db, target, stage),
+  eventTaskSignup: (ctx, target, stage) => makeEventTaskSignup(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
