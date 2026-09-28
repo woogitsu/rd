@@ -24,7 +24,9 @@ import {
   createSession, grantInvitation, INVITATION_TOKEN_PATTERN, isoTimestamp, lockInvitation, revokeUserSessionsWith, rotateSession,
 } from './auth.js';
 import { mfaStatus } from './mfa-policy.js';
-import { checkPasswordPolicy, hashPassword, needsRehash, verifyPasswordOrDummy } from './password.js';
+import {
+  checkPasswordPolicy, hashPassword, needsRehash, ScryptQueueBusyError, verifyPasswordOrDummy,
+} from './password.js';
 
 // Założenia do potwierdzenia (D-10).
 export const LOGIN_POLICY = Object.freeze({
@@ -155,6 +157,11 @@ async function withAttempt(env, scopes, fn) {
   try {
     return await fn();
   } catch (error) {
+    // #203: kolejka scrypt pełna albo przekroczony czas oczekiwania — to nie jest
+    // błędne hasło (żaden scrypt się nie policzył), więc NIE liczy się jako próba
+    // (rezerwacja jest zwalniana niżej) i NIE trafia do dziennika audytu (patrz
+    // failAttempt) — inaczej sam zalew żądań pełniłby rolę ataku na licznik.
+    if (error instanceof ScryptQueueBusyError) throw new LoginError('login_busy', 503, { retryAfter: 5 });
     counted = error instanceof LoginError && Boolean(error.extra?.counted);
     throw error;
   } finally {

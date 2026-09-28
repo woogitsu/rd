@@ -43,5 +43,19 @@
 - Monitoring błędów i limitów, aktualizacje, przegląd dostępów po wyborach, test odtworzenia, retencja danych.
 - Raport roczny i przekazanie dokumentacji zgodnie z regulaminem.
 
+## Stan ekranów modułów (issue #147)
+Część modułów ma kompletne trasy API, ale do niedawna żadna aplikacja ich nie wywoływała — administrowanie odbywało się „ręcznie” narzędziami deweloperskimi, co podważa zasadę czterech oczu i czytelność dla osób nietechnicznych (zarząd, KR, przedstawiciele).
+
+| Moduł | Trasy | Ekran |
+|---|---|---|
+| Kampanie e-mail | `src/pg/routes/email.js` | **prototyp** — `email/` (ta zmiana) |
+| Uzgodnienie wyciągu i raport KR | `src/pg/routes/reconciliation.js` | **prototyp** — `reconciliation/` (ta zmiana) |
+| Zamknięcie roku | `src/pg/routes/year-close.js` | brak — poza zakresem tej partii (issue #147, kolejna partia) |
+| Aktualności i galeria | `src/pg/routes/news.js` | brak — poza zakresem tej partii (issue #147, kolejna partia) |
+| Eksport roczny i lista klasy | `src/pg/routes/exports.js` | brak — poza zakresem tej partii (issue #147, kolejna partia) |
+| Preliminarz | `GET /api/ledger/budget` | gotowy — widoczny w `ledger/` |
+
+„Prototyp” oznacza tu: żaden przycisk nie wysyła poczty ani nie zmienia stanu produkcyjnie sam z siebie — panel tylko woła istniejące, autoryzowane trasy; zasady dostępu i cztery oczy egzekwuje wyłącznie serwer.
+
 ### Kolejność
 Fazy 0, 0.5 oraz 1–3 przed pełnym wdrożeniem; faza 4 może rozwijać publiczny kalendarz wcześniej, jeśli szkoła zatwierdzi treść. Zadania dzielić na małe issues z mierzalnym wynikiem.
