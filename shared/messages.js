@@ -271,6 +271,8 @@ export const MESSAGES = Object.freeze({
   photo_revoked: "Zgoda na publikację zdjęcia została wycofana.",
   duplicate_photo: "To zdjęcie jest już dodane.",
   invalid_alt_text: "Podaj opis zdjęcia (tekst alternatywny).",
+  alt_text_required: "Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne.",
+  invalid_decorative: "Niepoprawna wartość pola „zdjęcie dekoracyjne”.",
   invalid_taken_on: "Niepoprawna data wykonania zdjęcia.",
   invalid_depicts_children: "Zaznacz, czy zdjęcie przedstawia dzieci.",
   invalid_consent: "Niepoprawny zapis zgody na publikację.",

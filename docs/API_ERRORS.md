@@ -39,6 +39,7 @@ wpisów).
 | `already_matched_via_ledger` | Pozycja jest już dopasowana do wpisu księgi. | Nie — popraw dane żądania. |
 | `already_matched_via_payment` | Pozycja jest już dopasowana do wpłaty. | Nie — popraw dane żądania. |
 | `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
+| `alt_text_required` | Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne. | Zależy od kontekstu (patrz moduł trasy). |
 | `ambiguous_local_time` | Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi. | Zależy od kontekstu (patrz moduł trasy). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -114,6 +115,7 @@ wpisów).
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
 | `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_datetime` | Niepoprawna data lub godzina. | Nie — popraw dane żądania. |
+| `invalid_decorative` | Niepoprawna wartość pola „zdjęcie dekoracyjne”. | Nie — popraw dane. |
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |

@@ -40,10 +40,14 @@ function el(tag, text, className) {
   return node;
 }
 
-function setStatus(id, text) {
+// #124: rozróżnienie stanu pustego/informacyjnego (role="status", grzeczne)
+// od błędu wczytywania (role="alert", ogłaszane od razu) — dotąd oba stany
+// dzieliły ten sam element z rolą "status", więc błąd nie był ogłaszany asertywnie.
+function setStatus(id, text, isError = false) {
   const node = byId(id);
   node.textContent = text;
   node.hidden = !text;
+  node.setAttribute("role", isError ? "alert" : "status");
 }
 
 function done(sectionId) {
@@ -145,7 +149,7 @@ async function loadEvents() {
     const data = await getJson(eventsUrl());
     renderEvents(upcomingEvents(data?.events));
   } catch {
-    setStatus("events-status", "Nie udało się wczytać wydarzeń. Spróbuj ponownie później.");
+    setStatus("events-status", "Nie udało się wczytać wydarzeń. Spróbuj ponownie później.", true);
   } finally {
     done("wydarzenia");
   }
@@ -160,23 +164,27 @@ async function loadMinutes() {
   } catch (error) {
     // An unknown school year yields 400/404: nothing published for it.
     if (error instanceof HttpError && (error.status === 400 || error.status === 404)) renderMinutes([]);
-    else setStatus("minutes-status", "Nie udało się wczytać protokołów. Spróbuj ponownie później.");
+    else setStatus("minutes-status", "Nie udało się wczytać protokołów. Spróbuj ponownie później.", true);
   } finally {
     done("protokoly");
   }
 }
 
-// Optional: the news API may not exist yet. On 404 (or 405) the section stays hidden.
+// #124: pozycja "Aktualności" jest teraz zawsze widoczna w nawigacji i na
+// stronie (WCAG 3.2.3 — nawigacja nie zmienia się po załadowaniu). Brak
+// trasy API (404/405 — starsze wdrożenie bez tego modułu) i brak
+// opublikowanych wpisów wyglądają dla odwiedzającego tak samo: pusty stan,
+// nie zniknięcie sekcji.
 async function loadNews() {
   try {
     const data = await getJson(NEWS_URL);
     renderNews(newsItems(data));
   } catch (error) {
-    if (error instanceof HttpError && (error.status === 404 || error.status === 405)) return;
-    setStatus("news-status", "Nie udało się wczytać aktualności. Spróbuj ponownie później.");
+    if (error instanceof HttpError && (error.status === 404 || error.status === 405)) renderNews([]);
+    else setStatus("news-status", "Nie udało się wczytać aktualności. Spróbuj ponownie później.", true);
+  } finally {
+    done("aktualnosci");
   }
-  byId("aktualnosci").hidden = false;
-  byId("news-nav").hidden = false;
 }
 
 // Closed <details> hide minutes on paper: open them for printing, then restore.

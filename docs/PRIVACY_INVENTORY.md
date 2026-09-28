@@ -885,6 +885,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |---|---|---|---|
 | `alt_text` | direct | third_party | nie |
 | `author` | direct | third_party | nie |
+| `decorative` | none | — | nie |
 | `depicts_children` | none | — | nie |
 | `document_id` | none | — | nie |
 | `explicit_license_granted` | none | — | nie |
