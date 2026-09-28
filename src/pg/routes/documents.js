@@ -341,6 +341,19 @@ async function upload(request, env, url, json) {
         return again.conflict ? json({ error: 'idempotency_conflict' }, 409) : json({ document: again.doc, replayed: true }, 200);
       }
     }
+    // Rok zamknięty (0017_year_close.sql, trigger a0_year_freeze, rozszerzony
+    // w #80 na documents) — stan, nie awaria bazy (#156). Jednoznaczne: trigger
+    // odrzuca INSERT przed zatwierdzeniem, więc transakcja na pewno się
+    // wycofała — bez niejednoznaczności, którą rozstrzyga blok #168 niżej.
+    if (String(error?.message ?? '').includes('school_year_closed')) {
+      await env.storage.deleteObject?.(objectKey).catch(() => {});
+      await env.db.query(
+        `UPDATE document_uploads SET state = 'abandoned', resolved_at = now(), resolution = 'school_year_closed'
+           WHERE id = $1 AND state = 'pending'`,
+        [uploadId],
+      ).catch(() => {});
+      return json({ error: 'school_year_closed' }, 409);
+    }
     // Utracone potwierdzenie COMMIT (#168): błąd z transakcji nie znaczy, że
     // się wycofała — połączenie mogło zerwać się PO zatwierdzeniu. Zanim
     // usuniemy obiekt, świeżym zapytaniem sprawdzamy, czy wiersz jednak
