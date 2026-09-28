@@ -8,7 +8,8 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { createInvitation } from '../src/pg/auth.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import {
-  checkPasswordPolicy, hashPassword, needsRehash, parseHash, verifyPassword, verifyPasswordOrDummy,
+  checkPasswordPolicy, hashPassword, MAX_CONCURRENT, MAX_WAITING, needsRehash, parseHash, verifyPassword,
+  verifyPasswordOrDummy, withSlot,
 } from '../src/pg/password.js';
 import { LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
@@ -96,6 +97,15 @@ test('hash scrypt: format z parametrami, poprawne i błędne hasło, unikalna s�
   assert.equal(needsRehash(hash, {}), true, 'domyślny koszt 2^17 wymaga przeliczenia');
   assert.equal(parseHash('scrypt$1024$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), null, 'zbyt słaby koszt odrzucony');
   assert.equal(parseHash('md5$abc'), null);
+  // #203: N=2^20, r=16 z bazy (dopuszczone samym zakresem log2/r wcześniej) dają
+  // 128·N·r ≈ 2 GiB na jedno obliczenie — traktowane jak nieprawidłowy hash
+  // (fikcyjna weryfikacja niżej), bez próby alokacji tej pamięci.
+  assert.equal(
+    parseHash('scrypt$1048576$16$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+    null,
+    'koszt pamięciowy 128·N·r > budżetu jest odrzucony',
+  );
+  assert.equal(await verifyPasswordOrDummy('cokolwiek', 'scrypt$1048576$16$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', FAST), false);
   assert.equal(await verifyPasswordOrDummy('cokolwiek dluzszego', null, FAST), false);
 });
 
@@ -797,4 +807,33 @@ test('#193: udany reset unieważnia pozostałe otwarte tokeny konta', async () =
   );
   assert.equal((await post('/api/password/reset', { token, newPassword: newPassword() }, { ip: nextIp() })).status, 200);
   assert.equal((await post('/api/password/reset', { token: secret, newPassword: newPassword() }, { ip: nextIp() })).status, 400);
+});
+
+// #203: kolejka scrypt pełna (np. zalew żądań logowania z jednego IP) — /api/login
+// odpowiada 503 login_busy z Retry-After, BEZ liczenia scrypt dla tego żądania,
+// bez wpisu do licznika prób (login_rate_limits) i bez zdarzenia audytu.
+test('#203: pełna kolejka scrypt daje 503 login_busy z Retry-After, bez wpływu na licznik prób i audyt', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-203busy' });
+  const ip = nextIp();
+  // Zajmujemy wszystkie trwające i oczekujące miejsca atrapą, która czeka aż test ją zwolni.
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const occupied = Array.from({ length: MAX_CONCURRENT + MAX_WAITING }, () => withSlot(() => held).catch(() => {}));
+  try {
+    const busy = await login(account, { ip });
+    assert.equal(busy.status, 503);
+    assert.equal((await busy.json()).error, 'login_busy');
+    assert.equal(busy.headers.get('Retry-After'), '5');
+    // Rezerwacja jest tworzona i od razu zwalniana (GREATEST(-1, 0) na świeżym wierszu
+    // zostaje przy 0) — licznik prób nie rośnie, tak jak przy udanym logowaniu.
+    const after = (await db.query(
+      "SELECT failure_count FROM login_rate_limits WHERE scope_type = 'ip' AND scope_hash = $1",
+      [scopeHash('ip', ip)],
+    )).rows;
+    assert.deepEqual(after.map((r) => r.failure_count), [0], 'login_busy nie liczy się jako próba');
+    assert.equal((await auditRows('auth.login_failed')).filter((row) => JSON.stringify(row).includes(ip)).length, 0);
+  } finally {
+    release();
+    await Promise.all(occupied);
+  }
 });
