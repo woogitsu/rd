@@ -27,6 +27,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`data_subject_requests`|`handled_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie żądania z osobą obsługującą|nieustalona (D-04)|nie|nie|
 |`data_subject_requests`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie żądania z gospodarstwem|nieustalona (D-04)|nie|nie|
 |`data_subject_requests`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie żądania z uczniem|nieustalona (D-04)|nie|nie|
+|`document_descriptions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`document_descriptions`|`description`|Osoba trzecia|direct|wolny tekst|opis dokumentu|document_financial|tak|tak|
+|`document_descriptions`|`title`|Osoba trzecia|direct|wolny tekst|tytuł dokumentu|document_financial|tak|tak|
 |`document_uploads`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`documents`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaign_recipients`|`email`|Opiekun|direct|kontakt|migawka adresu w chwili wysyłki|email_snapshot|nie|nie|
@@ -102,6 +105,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_entries`|`reference`|Opiekun|direct|wolny tekst|tytuł przelewu z wyciągu bankowego|payment_reference|tak|tak|
 |`payment_reassignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_refunds`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`resolution_execution_events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`resolution_execution_events`|`note`|Członek Rady|direct|wolny tekst|notatka o postępie wykonania uchwały|audit_event|tak|tak|
+|`resolution_execution_events`|`responsible_user_id`|Członek Rady|pseudonymous|identyfikacja|wskazanie osoby odpowiedzialnej za wykonanie uchwały|nieustalona (D-04)|nie|tak|
 |`resolutions`|`body`|Członek Rady|direct|wolny tekst|treść uchwały|audit_event|tak|tak|
 |`resolutions`|`correction_reason`|Członek Rady|direct|wolny tekst|uzasadnienie korekty uchwały|audit_event|tak|tak|
 |`resolutions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -121,7 +127,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **108**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **114**, w tym wolnego tekstu: **26** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -195,20 +201,26 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
+| `closing_balance_cents` | none | — | tak |
 | `created_at` | none | — | tak |
 | `created_by` | pseudonymous | board_member | tak |
+| `file_hash` | none | — | tak |
 | `id` | none | — | tak |
 | `idempotency_key` | none | — | tak |
 | `line_count` | none | — | tak |
+| `opening_balance_cents` | none | — | tak |
 | `reconciliation_id` | none | — | tak |
 | `request_hash` | none | — | tak |
+| `skipped_duplicate_count` | none | — | tak |
 | `source` | none | — | tak |
+| `statement_number` | none | — | tak |
 
 ### `bank_statement_lines`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
 | `amount_cents` | none | — | tak |
+| `bank_transaction_hash` | none | — | tak |
 | `booked_on` | none | — | tak |
 | `created_at` | none | — | tak |
 | `created_by` | pseudonymous | board_member | tak |
@@ -259,6 +271,20 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `status` | none | — | nie |
 | `student_id` | pseudonymous | student | nie |
 | `updated_at` | none | — | nie |
+
+### `document_descriptions`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `category` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `description` | direct | third_party | tak |
+| `document_date` | none | — | tak |
+| `document_id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `revision_no` | none | — | tak |
+| `title` | direct | third_party | tak |
 
 ### `document_uploads`
 
@@ -1053,6 +1079,19 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `reason` | none | — | tak |
 | `refunded_on` | none | — | tak |
 
+### `resolution_execution_events`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `due_on` | none | — | tak |
+| `id` | none | — | tak |
+| `note` | direct | board_member | tak |
+| `resolution_id` | none | — | tak |
+| `responsible_user_id` | pseudonymous | board_member | tak |
+| `status` | none | — | tak |
+
 ### `resolutions`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
@@ -1068,6 +1107,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `meeting_id` | none | — | tak |
 | `number` | none | — | tak |
 | `quorum_check_id` | none | — | tak |
+| `relation_cross_year` | none | — | tak |
+| `relation_kind` | none | — | tak |
 | `revision` | none | — | tak |
 | `revision_no` | none | — | tak |
 | `school_year_id` | none | — | tak |
@@ -1133,6 +1174,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `ends_on` | none | — | tak |
 | `id` | none | — | tak |
 | `label` | none | — | tak |
+| `resolution_number_pattern` | none | — | tak |
 | `starts_on` | none | — | tak |
 
 ### `sessions`
