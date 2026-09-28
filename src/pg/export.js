@@ -252,6 +252,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_suppressions: 'lista blokad adresów e-mail — D-04',
   email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
   email_worker_runs: 'przebiegi zadania wysyłki — dane techniczne',
+  email_preferences_events: 'zdarzenia preferencji kontaktu wg kategorii (wypisanie jednym kliknięciem) — adres tylko jako skrót, D-04 (#110)',
   news_posts: 'aktualności są publiczne i nie należą do roku; archiwum osobno (zgody, D-04)',
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
