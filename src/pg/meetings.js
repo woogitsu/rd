@@ -234,11 +234,18 @@ function contextFor(actor, classId) {
   };
 }
 
-function authorize(actor, roles, { schoolYearId, classId = null }) {
+// #150 (SR-10): zarządzanie zebraniami, protokołami i uchwałami (MANAGE_ROLES)
+// wymaga jawnie potwierdzonego MFA na poziomie trasy, niezależnie od bramki
+// routera (mfa-policy.js) — uchwały uzasadniają wydatki > 3000 EUR (D-15).
+// Sprawdzenie zakresu/roli jest ZAWSZE pierwsze (SR-07): ktoś bez roli albo
+// spoza klasy dostaje ten sam ogólny `forbidden`, niezależnie od stanu MFA —
+// `mfa_required` nie ujawnia nic osobie, która i tak nie ma dostępu.
+function authorize(actor, roles, { schoolYearId, classId = null, requireMfa = false } = {}) {
   const context = contextFor(actor, classId);
   const requirement = { roles: [...roles], schoolYearId };
   if (classId) requirement.classId = classId;
   if (!isAuthorized(context, requirement)) throw new MeetingError('forbidden', 403);
+  if (requireMfa && !context.session.mfaVerified) throw new MeetingError('mfa_required', 403);
 }
 
 function actorClassIds(actor, schoolYearId) {
@@ -286,9 +293,16 @@ function hasManageRole(actor, { schoolYearId, classId }) {
 async function meetingForManageOrClassHost(db, actor, meetingId, env) {
   const meeting = await loadMeeting(db, meetingId);
   const scope = { schoolYearId: meeting.school_year_id, classId: meeting.class_id };
-  if (hasManageRole(actor, scope)) return { meeting, viaClassHost: false };
-  if (isClassHost(actor, env, { ...scope, kind: meeting.kind })) return { meeting, viaClassHost: true };
-  throw new MeetingError('forbidden', 403);
+  // SR-07: sprawdzenie zakresu/roli zawsze pierwsze — brak dostępu daje ten sam
+  // `forbidden`, niezależnie od stanu MFA (#150, jak w authorize() niżej).
+  let viaClassHost;
+  if (hasManageRole(actor, scope)) viaClassHost = false;
+  else if (isClassHost(actor, env, { ...scope, kind: meeting.kind })) viaClassHost = true;
+  else throw new MeetingError('forbidden', 403);
+  // #150 (SR-10): zarządzanie zebraniem wymaga jawnie potwierdzonego MFA,
+  // niezależnie od bramki routera — również dla #171 (przedstawiciel-gospodarz).
+  requireMfaVerified(actor);
+  return { meeting, viaClassHost };
 }
 
 // Opiekun należący do klasy zebrania (dla ograniczenia listy obecności prowadzonej
@@ -545,7 +559,7 @@ async function loadMeeting(db, meetingId) {
 
 async function meetingForManage(db, actor, meetingId) {
   const meeting = await loadMeeting(db, meetingId);
-  authorize(actor, MANAGE_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
+  authorize(actor, MANAGE_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, requireMfa: true });
   return meeting;
 }
 
@@ -638,10 +652,14 @@ export async function createMeeting(db, actor, input = {}, env) {
     status,
     ...parseQuorumRule(input),
   };
+  // #150 (SR-10): tworzenie zebrania to zarządzanie — wymaga MFA niezależnie
+  // od tego, czy aktor wchodzi przez rolę zarządu, czy przez #171 (przedstawiciel
+  // prowadzący WYŁĄCZNIE zebranie klasowe własnej klasy).
   if (!hasManageRole(actor, { schoolYearId, classId })
       && !isClassHost(actor, env, { schoolYearId, classId, kind: input.kind })) {
     throw new MeetingError('forbidden', 403);
   }
+  requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'meeting.create', data, async tx => {
     const id = randomUUID();
     await tx.query(
