@@ -33,6 +33,7 @@ Przedstawiciel nie tworzy wydarzeń ogólnoszkolnych i nie widzi wydarzeń innyc
 ## API
 
 - `GET /api/public/events?schoolYearId=&from=RRRR-MM-DD&limit=` — bez logowania. Tylko opublikowane wersje: tytuł, opis, miejsce, organizator, czas, status `scheduled`/`cancelled`. Bez autorów, klas, numerów wersji i powodu odwołania.
+- `GET /api/public/events.ics?schoolYearId=&from=RRRR-MM-DD&limit=` i `GET /api/public/events/:id.ics` (#122) — kanał iCalendar (RFC 5545) z tych samych danych co `listPublic`, do subskrypcji w kalendarzu telefonu (`text/calendar`, `ETag`, `Cache-Control: public, max-age=60`, `If-None-Match` → `304`). `UID` jest stały (`event-<id>@<domena>`, zmienna `ICAL_UID_DOMAIN` do decyzji D-20), `SEQUENCE` rośnie dopiero po ponownej publikacji (nie przy oczekującej, niezatwierdzonej zmianie), odwołane wydarzenie ma `STATUS:CANCELLED` bez powodu. Strefa `Europe/Brussels` jako `VTIMEZONE`, nie UTC. Bez pola `ORGANIZER` (wymagałoby adresu e-mail jako `CAL-ADDRESS`) — tekst organizatora trafia do `CONTACT`. Wspólny moduł formatujący, bez dostępu do bazy: `src/ical.js`.
 - `GET /api/events?schoolYearId=` — lista wewnętrzna.
 - `POST /api/events` — nowy szkic; wymaga nagłówka `Idempotency-Key` (ponowne kliknięcie zwraca ten sam szkic).
 - `GET /api/events/:id` — szczegóły z historią wersji.
@@ -47,4 +48,6 @@ Każdy krok zapisuje `audit_events` (aktor, czas, `entity_type='event'`, identyf
 
 ## Do decyzji
 
-D-08 (kto tworzy, zatwierdza i publikuje), D-09 (dostęp dyrekcji i Komisji Rewizyjnej), ewentualna publikacja powodu odwołania oraz czas przechowywania historii wersji (D-04).
+D-08 (kto tworzy, zatwierdza i publikuje), D-09 (dostęp dyrekcji i Komisji Rewizyjnej), ewentualna publikacja powodu odwołania oraz czas przechowywania historii wersji (D-04), D-20 (domena produkcyjna do `UID` kalendarza iCal).
+
+**Poza zakresem (#122):** prywatny kanał iCal wewnętrzny (wydarzenia klasowe, zebrania) z tokenem w adresie. Token w URL wycieka przez historię przeglądarki i udostępnianie, więc wymaga osobnej decyzji o unieważnianiu tokenów i zakresie dostępu (D-08) — nie jest tu implementowany.
