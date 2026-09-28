@@ -1,0 +1,297 @@
+// Wspólny słownik komunikatów błędów API (issue #99).
+// Serwer zwraca błędy jako { "error": "<kod>" }. Użytkownik widzi tekst po polsku;
+// surowy kod pojawia się wyłącznie jako dopisek techniczny przy kodzie spoza słownika.
+// Test tests/shared-api.test.js sprawdza, że każdy kod z src/pg ma tu wpis.
+// Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
+
+export const MESSAGES = Object.freeze({
+  // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
+  unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
+  mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
+  mfa_enrollment_required: "Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą.",
+  mfa_unavailable: "Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem.",
+  mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
+  forbidden: "Brak uprawnień do tej operacji w Twoim zakresie.",
+  invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji.",
+  invalid_credentials: "Nieprawidłowy adres e-mail lub hasło.",
+  invalid_current_password: "Obecne hasło jest nieprawidłowe.",
+  invalid_code: "Kod jest nieprawidłowy. Sprawdź aplikację i wpisz aktualny kod.",
+  invalid_token: "Kod jest nieważny, wygasł albo został już użyty.",
+  invalid_invitation: "Zaproszenie jest nieważne, wygasło albo zostało już wykorzystane.",
+  too_many_attempts: "Zbyt wiele prób. Spróbuj ponownie później.",
+  user_disabled: "Konto jest wyłączone.",
+  password_mismatch: "Hasła nie są takie same.",
+  password_required: "Podaj hasło.",
+  password_too_long: "Hasło jest za długie.",
+  password_unchanged: "Nowe hasło musi być inne niż obecne.",
+  invalid_display_name: "Nazwa wyświetlana może mieć najwyżej 100 znaków.",
+  not_found: "Nie znaleziono zasobu albo nie masz do niego dostępu.",
+  method_not_allowed: "Ta operacja jest niedostępna.",
+  invalid_request: "Serwer odrzucił dane formularza. Sprawdź pola.",
+  invalid_json: "Serwer nie odczytał danych formularza.",
+  invalid_content_type: "Serwer nie odczytał formatu danych.",
+  unsupported_media_type: "Niedozwolony typ danych lub pliku.",
+  request_too_large: "Za dużo danych w jednym żądaniu.",
+  service_unavailable: "Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę.",
+  retry_later: "Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę.",
+  timeout: "Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres.",
+  storage_unavailable: "Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone.",
+  conflict: "Dane zmieniły się w międzyczasie. Odśwież widok i spróbuj ponownie.",
+  concurrent_version: "Ktoś inny zapisał zmianę w tym samym czasie. Odśwież widok.",
+  revision_conflict: "Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację.",
+  idempotency_conflict: "Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie.",
+  idempotency_key_required: "Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie.",
+  invalid_idempotency_key: "Niepoprawny identyfikator operacji. Zamknij formularz i otwórz go ponownie.",
+  invalid_cursor: "Nie udało się wczytać kolejnej strony wyników. Odśwież listę.",
+  invalid_limit: "Niepoprawna liczba wyników na stronę.",
+  invalid_id: "Niepoprawny identyfikator.",
+  invalid_identifier: "Niepoprawny identyfikator.",
+  invalid_date: "Niepoprawna data.",
+  invalid_datetime: "Niepoprawna data lub godzina.",
+  invalid_window: "Niepoprawny zakres dat.",
+  invalid_status: "Niepoprawny status.",
+  invalid_reason: "Podaj powód (3–500 znaków).",
+  invalid_email: "Podaj poprawny adres e-mail.",
+  confirmation_required: "Potwierdź operację, wpisując wymagany identyfikator.",
+  four_eyes_required: "Tę operację musi zatwierdzić inna osoba niż autor.",
+  self_approval_forbidden: "Nie można zatwierdzić własnego wpisu. Zatwierdzić musi inna osoba.",
+  approval_required: "Operacja wymaga wcześniejszego zatwierdzenia.",
+  approval_stale: "Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie.",
+  invalid_signature: "Niepoprawny podpis żądania.",
+  webhook_not_configured: "Powiadomienia zwrotne nie są skonfigurowane na tym środowisku.",
+
+  // --- Rok szkolny i klasy ---------------------------------------------------------
+  invalid_school_year: "Niepoprawny identyfikator roku szkolnego.",
+  invalid_school_year_id: "Niepoprawny identyfikator roku szkolnego.",
+  school_year_not_found: "Nie znaleziono roku szkolnego.",
+  school_year_closed: "Rok szkolny jest zamknięty. Zmiany nie są możliwe.",
+  school_year_not_finished: "Rok szkolny jeszcze się nie zakończył.",
+  unknown_school_year: "Nie znaleziono roku szkolnego.",
+  invalid_next_school_year: "Niepoprawny następny rok szkolny.",
+  next_school_year_not_found: "Nie znaleziono następnego roku szkolnego.",
+  invalid_class: "Niepoprawny identyfikator klasy.",
+  class_required: "Wskaż klasę.",
+  class_not_found: "Nie znaleziono klasy albo nie masz do niej dostępu.",
+  class_not_in_school_year: "Klasa nie należy do wskazanego roku szkolnego.",
+  class_year_mismatch: "Klasa należy do innego roku szkolnego.",
+  no_classes_in_school_year: "Rok szkolny nie ma zdefiniowanych klas.",
+  invalid_reference: "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje.",
+  relation_ended: "Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa.",
+
+  // --- Konta, role i zaproszenia ------------------------------------------------------
+  invalid_role: "Wybierz rolę z listy.",
+  invalid_user_id: "Niepoprawny identyfikator konta.",
+  user_not_found: "Nie znaleziono konta.",
+  grant_not_found: "Nie znaleziono przydziału.",
+  last_admin_grant: "Nie można odebrać sobie ostatniego aktywnego przydziału administratora.",
+  cannot_disable_self: "Nie można wyłączyć własnego konta.",
+  cannot_reset_own_mfa: "Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora.",
+  invalid_expires_at: "Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata).",
+  invalid_ttl: "Ważność zaproszenia: od 1 do 336 godzin.",
+  invitation_pending: "Dla tego adresu i zakresu istnieje już oczekujące zaproszenie.",
+  invitation_not_found: "Nie znaleziono zaproszenia.",
+  invitation_already_accepted: "Zaproszenie zostało już przyjęte.",
+  admin_exists: "Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne.",
+  pending_admin_invitation: "Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij.",
+  production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
+
+  // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
+  invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
+  invalid_cents_value: "Niepoprawna kwota w EUR.",
+  invalid_method: "Wybierz sposób wpłaty z listy.",
+  invalid_reference_text: "Opis wpłaty jest za długi albo zawiera niedozwolone znaki.",
+  invalid_payment_id: "Niepoprawny identyfikator wpłaty.",
+  payment_not_found: "Nie znaleziono wpłaty albo nie masz do niej dostępu.",
+  payment_already_assigned: "Wpłata jest już przypisana do rodziny.",
+  payment_already_linked: "Wpłata jest już powiązana z innym wpisem.",
+  payment_cannot_be_corrected: "Tej wpłaty nie można skorygować w obecnym stanie.",
+  correction_exceeds_remaining_amount: "Korekta przekracza kwotę pozostałą po wcześniejszych korektach.",
+  payment_amount_mismatch: "Kwota wpłaty nie zgadza się z powiązanym wpisem księgi. Odśwież widok i sprawdź dane.",
+  payment_cannot_be_refunded: "Tej wpłaty nie można zwrócić w obecnym stanie.",
+  payment_not_assigned: "Wpłata nie jest przypisana do żadnej rodziny.",
+  payment_reassignment_household_mismatch: "Nie można przepisać wpłaty na tę rodzinę — powiązany wpis księgi wskazuje inną rodzinę.",
+  payment_reassignment_same_household: "Wpłata jest już przypisana do tej rodziny.",
+  refund_exceeds_remaining_amount: "Zwrot przekracza kwotę pozostałą po wcześniejszych korektach i zwrotach.",
+  ledger_correction_required: "Najpierw skoryguj powiązany wpis księgi o tę samą kwotę, dopiero potem powtórz tę operację.",
+  invalid_payment_link: "Niepoprawne powiązanie z wpłatą.",
+  invalid_category: "Wybierz kategorię z listy.",
+  invalid_ledger_entry_id: "Niepoprawny identyfikator wpisu księgi.",
+  ledger_entry_not_found: "Nie znaleziono wpisu księgi.",
+  active_bank_match: "Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis.",
+  payment_linked_entry_not_replaceable: "Wpisu powiązanego z wpłatą nie można przeksięgować. Skoryguj albo wpłatę, albo wpis.",
+  ledger_entry_already_replaced: "Ten wpis został już przeksięgowany.",
+  ledger_entry_already_corrected_to_zero: "Wpis jest już w pełni skorygowany do zera. Nie można go przeksięgować.",
+  replacement_target_mismatch: "Przeksięgowanie nie zgadza się z zastępowanym wpisem. Odśwież widok i spróbuj ponownie.",
+  invalid_source: "Niepoprawne źródło wpisu.",
+  invalid_source_detail: "Niepoprawny opis źródła.",
+  invalid_source_document: "Niepoprawny dokument źródłowy.",
+  resolution_required: "Ten wydatek wymaga wskazania uchwały.",
+  invalid_effective_on: "Podaj poprawną datę.",
+  closing_balance_out_of_range: "Saldo zamknięcia jest poza dozwolonym zakresem.",
+  next_year_opening_balance_exists: "Bilans otwarcia następnego roku już istnieje.",
+  difference_requires_note: "Różnica wymaga wpisania wyjaśnienia.",
+  reconciliation_not_found: "Nie znaleziono uzgodnienia.",
+  reconciliation_confirmed: "Uzgodnienie jest już potwierdzone i nie można go zmienić.",
+  invalid_statement_line: "Niepoprawna pozycja wyciągu.",
+  invalid_line_count: "Niepoprawna liczba pozycji wyciągu.",
+  statement_line_after_statement_date: "Pozycja wyciągu ma datę późniejszą niż data wyciągu.",
+  statement_date_outside_school_year: "Data wyciągu jest poza rokiem szkolnym.",
+  date_outside_school_year: "Data wpisu jest poza rokiem szkolnym.",
+  invalid_match_target: "Niepoprawny cel dopasowania.",
+  match_not_found: "Nie znaleziono dopasowania.",
+  match_already_revoked: "Dopasowanie zostało już wycofane.",
+  match_amount_mismatch: "Kwoty dopasowania się nie zgadzają.",
+  match_method_mismatch: "Sposób wpłaty nie pasuje do pozycji wyciągu.",
+  already_matched: "Pozycja jest już dopasowana.",
+  already_matched_via_payment: "Pozycja jest już dopasowana do wpłaty.",
+  already_matched_via_ledger: "Pozycja jest już dopasowana do wpisu księgi.",
+  inconsistent_matches: "Dopasowania są niespójne. Odśwież widok.",
+  invalid_csv: "Nie udało się odczytać pliku CSV.",
+  invalid_csv_header: "Plik CSV ma niepoprawny nagłówek.",
+  cash_below_zero: "Ta operacja doprowadziłaby saldo kasy poniżej zera.",
+  invalid_reversal: "Tego przeniesienia nie można cofnąć w obecnym stanie.",
+  transfer_not_found: "Nie znaleziono przeniesienia kasa ↔ rachunek.",
+  transfer_already_reversed: "To przeniesienie zostało już cofnięte.",
+  opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
+  opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
+  not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+
+  // --- Zamknięcie roku ----------------------------------------------------------------------
+  year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",
+  year_close_already_started: "Zamknięcie roku zostało już rozpoczęte.",
+  checklist_incomplete: "Lista kontrolna nie jest ukończona.",
+  invalid_checklist_item: "Niepoprawny punkt listy kontrolnej.",
+  snapshot_required: "Najpierw utwórz kopię stanu danych.",
+
+  // --- Wysyłki e-mail --------------------------------------------------------------------------
+  invalid_campaign_id: "Niepoprawny identyfikator wysyłki.",
+  campaign_not_found: "Nie znaleziono wysyłki.",
+  campaign_not_draft: "Wysyłkę można zmieniać tylko jako szkic.",
+  campaign_locked: "Wysyłka jest zablokowana i nie można jej zmienić.",
+  no_recipients: "Wysyłka nie ma odbiorców.",
+  recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
+
+  // --- Import -----------------------------------------------------------------------------------
+  import_disabled: "Import jest wyłączony na tym środowisku.",
+  too_many_rows: "Za dużo wierszy w jednym żądaniu.",
+  invalid_import: "Niepoprawne dane importu.",
+  invalid_payload: "Niepoprawne dane importu.",
+  invalid_options: "Niepoprawne ustawienia importu.",
+  invalid_rows: "Niepoprawne wiersze importu.",
+  invalid_row_numbers: "Niepoprawne numery wierszy.",
+  invalid_columns: "Niepoprawne kolumny importu.",
+  invalid_cell: "Niepoprawna wartość komórki.",
+  unsupported_version: "Nieobsługiwana wersja danych importu. Odśwież stronę.",
+  preview_required: "Najpierw wyślij podgląd importu.",
+  preview_stale: "Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie.",
+  fingerprint_mismatch: "Dane różnią się od podglądu. Wyślij podgląd ponownie.",
+  import_has_conflicts: "Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy.",
+  idempotency_key_reused: "Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie.",
+
+  // --- Eksport ----------------------------------------------------------------------------------
+  export_too_large: "Eksport jest za duży. Zawęź zakres.",
+  non_finite_number: "Eksport zawiera niepoprawną liczbę.",
+  unsafe_integer: "Eksport zawiera liczbę spoza obsługiwanego zakresu.",
+  unsupported_value: "Eksport zawiera nieobsługiwaną wartość.",
+  invalid_format: "Wybierz format eksportu z listy (CSV albo JSON).",
+  production_restore_requires_allow_production: "Odtworzenie na produkcji wymaga osobnego potwierdzenia.",
+
+  // --- Dokumenty ---------------------------------------------------------------------------------
+  invalid_document_id: "Niepoprawny identyfikator dokumentu.",
+  invalid_kind: "Nieznany rodzaj dokumentu.",
+  invalid_link: "Niepoprawne powiązanie dokumentu.",
+  empty_document: "Plik jest pusty.",
+  document_too_large: "Plik przekracza dozwolony rozmiar.",
+  content_hash_mismatch: "Plik uszkodził się podczas przesyłania. Wyślij go ponownie.",
+  document_integrity_mismatch: "Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi.",
+  document_content_missing: "Plik nie dotarł do magazynu dokumentów. Prześlij go ponownie.",
+
+  // --- Wydarzenia -------------------------------------------------------------------------------
+  invalid_event_id: "Niepoprawny identyfikator wydarzenia.",
+  event_not_found: "Nie znaleziono wydarzenia albo nie masz do niego dostępu.",
+  event_cancelled: "Wydarzenie jest odwołane; odwołanie jest ostateczne.",
+  event_not_public: "Publikować można tylko wydarzenie z odbiorcami „Publiczne”.",
+  invalid_title: "Tytuł musi mieć od 3 do 200 znaków.",
+  invalid_description: "Opis jest za długi.",
+  invalid_location: "Miejsce może mieć najwyżej 200 znaków.",
+  invalid_organizer: "Organizator może mieć najwyżej 200 znaków.",
+  invalid_audience: "Wybierz odbiorców.",
+  invalid_revision: "Brak numeru wersji. Odśwież widok.",
+  invalid_transition: "Tego kroku nie można wykonać w obecnym stanie. Odśwież widok.",
+  ends_before_start: "Koniec nie może być wcześniej niż początek.",
+  ambiguous_local_time: "Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi.",
+  nonexistent_local_time: "Ta godzina nie istnieje w Brukseli (zmiana czasu z zimowego na letni). Wybierz inną godzinę.",
+  offset_not_valid_in_europe_brussels: "Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli.",
+
+  // --- Zebrania i uchwały -----------------------------------------------------------------------
+  meeting_not_found: "Nie znaleziono zebrania.",
+  minutes_not_found: "Nie znaleziono wersji protokołu.",
+  resolution_not_found: "Nie znaleziono uchwały.",
+  invalid_quorum_rule: "Niepoprawna reguła quorum.",
+  quorum_rule_source_required: "Podaj źródło reguły quorum (np. regulamin).",
+  resolution_final_immutable: "Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu.",
+  resolution_number_required: "Uchwała przyjęta wymaga numeru.",
+  resolution_number_taken: "Ten numer uchwały jest już zajęty w tym roku szkolnym.",
+  vote_record_required: "Wynik uchwały wymaga wszystkich trzech liczb głosów i ustalenia quorum.",
+  agenda_position_taken: "Ta pozycja porządku obrad jest już zajęta.",
+
+  // --- Aktualności i zdjęcia ---------------------------------------------------------------------
+  invalid_post_id: "Niepoprawny identyfikator wpisu.",
+  post_not_found: "Nie znaleziono wpisu.",
+  post_withdrawn: "Wpis został wycofany.",
+  invalid_body: "Treść jest pusta albo za długa.",
+  invalid_author: "Niepoprawny autor.",
+  invalid_photo_id: "Niepoprawny identyfikator zdjęcia.",
+  invalid_photos: "Niepoprawna lista zdjęć.",
+  photo_not_found: "Nie znaleziono zdjęcia.",
+  photo_revoked: "Zgoda na publikację zdjęcia została wycofana.",
+  duplicate_photo: "To zdjęcie jest już dodane.",
+  invalid_alt_text: "Podaj opis zdjęcia (tekst alternatywny).",
+  invalid_taken_on: "Niepoprawna data wykonania zdjęcia.",
+  invalid_depicts_children: "Zaznacz, czy zdjęcie przedstawia dzieci.",
+  invalid_consent: "Niepoprawny zapis zgody na publikację.",
+  consent_conflict: "Zapis zgody nie zgadza się z danymi zdjęcia.",
+  consents_locked: "Zgód nie można zmienić w obecnym stanie wpisu.",
+  invalid_explicit_license: "Niepoprawna licencja zdjęcia.",
+  invalid_license_text: "Niepoprawna treść licencji.",
+  invalid_rights_note: "Niepoprawna notatka o prawach.",
+  public_copy_requires_license: "Publiczna kopia wymaga zapisanej licencji lub zgody.",
+  photos_require_school_wide_role: "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
+});
+
+// Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).
+export const STATUS_MESSAGES = Object.freeze({
+  0: "Brak połączenia z serwerem. Sprawdź połączenie i spróbuj ponownie.",
+  400: "Serwer odrzucił dane. Sprawdź pola formularza.",
+  401: MESSAGES.unauthenticated,
+  403: MESSAGES.forbidden,
+  404: MESSAGES.not_found,
+  405: MESSAGES.method_not_allowed,
+  409: MESSAGES.conflict,
+  413: MESSAGES.request_too_large,
+  415: MESSAGES.unsupported_media_type,
+  429: "Zbyt wiele żądań. Odczekaj chwilę i spróbuj ponownie.",
+});
+
+const CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+
+// Poprawny kod błędu (napis z { error }) albo "".
+export function errorCode(value) {
+  return typeof value === "string" && CODE_PATTERN.test(value) ? value : "";
+}
+
+export function statusMessage(status) {
+  if (Object.hasOwn(STATUS_MESSAGES, status)) return STATUS_MESSAGES[status];
+  if (status >= 500) return MESSAGES.service_unavailable;
+  return "Nie udało się wykonać operacji. Spróbuj ponownie.";
+}
+
+// Polski komunikat dla kodu i statusu. `overrides` — słownik panelu (pierwszeństwo).
+// Kod spoza słowników: tekst według statusu + dopisek techniczny z kodem.
+export function errorMessage(code, status, overrides = null) {
+  const key = errorCode(code);
+  if (key && overrides && Object.hasOwn(overrides, key)) return overrides[key];
+  if (key && Object.hasOwn(MESSAGES, key)) return MESSAGES[key];
+  const base = statusMessage(status);
+  return key ? `${base} (kod techniczny: ${key})` : base;
+}
