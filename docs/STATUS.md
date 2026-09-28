@@ -1,6 +1,6 @@
 # Stan prototypu — zestawienie dla zarządu Rady
 
-Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commit #401. Dokument opisuje wyłącznie to, co potwierdza kod, scalone PR-y i dokumentacja w `docs/`. Nie zawiera prognoz ani deklaracji gotowości. Dziś scalono do `main` kolejną falę PR‑ów (rząd kilkudziesięciu) — poniższe zestawienie zostało zweryfikowane wyłącznie względem tego, co jest w kodzie na `main`, nie względem otwartych PR czy opisów zadań; funkcja opisana jako w przygotowaniu, a jeszcze nie scalona, jest oznaczona jako „w przygotowaniu (PR #N, niescalony)”.
+Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commit #406. Dokument opisuje wyłącznie to, co potwierdza kod, scalone PR-y i dokumentacja w `docs/`. Nie zawiera prognoz ani deklaracji gotowości. Dziś scalono do `main` kolejną falę PR‑ów (rząd kilkudziesięciu) — poniższe zestawienie zostało zweryfikowane wyłącznie względem tego, co jest w kodzie na `main`, nie względem otwartych PR czy opisów zadań; funkcja opisana jako w przygotowaniu, a jeszcze nie scalona, jest oznaczona jako „w przygotowaniu (PR #N, niescalony)”.
 
 ## Zastrzeżenia (dotyczą całości poniższego zestawienia)
 
@@ -21,12 +21,12 @@ Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commi
 | Import CSV/XLSX | działa, bez zapisu produkcyjnych danych | — | D‑01–D‑03 |
 | Wpłaty | działa (ewidencja i korekty) | tak (OGM‑VCS, EPC/QR, eksport CSV) | D‑11–D‑14 |
 | Księga | działa (wpisy, korekty, bilans, dowody, projekt sprawozdania) | tak (preliminarz, cztery oczy przy wydatkach) | D‑15, D‑21 |
-| Uzgodnienia wyciągu | działa + ekran prototypowy | tak (import CODA/CAMT.053) | D‑13 |
+| Uzgodnienia wyciągu | działa + ekran prototypowy + import CODA/CAMT.053 | tak (porzucenie szkicu) | D‑13 |
 | Zamknięcie roku | działa (API) + ekran prototypowy | — | — |
 | Eksport roczny / kopie | działa (+ projekt sprawozdania, przepływy kasa/bank) | — | D‑04, D‑21 (migawki sprawozdań) |
 | E‑mail | działa jako kolejka/worker + ekran prototypowy | tak (follow‑up okna anulowania) | D‑16, D‑17 |
 | Zebrania / uchwały | działa (w tym zebranie klasowe) | — | D‑15, D‑19, D‑21 |
-| Dokumenty | działa (panel, kontrola struktury pliku) | tak (tytuł/kategoria/wyszukiwanie, wersje/unieważnienie, limit uploadów) | D‑04, D‑05, D‑08, D‑09 |
+| Dokumenty | działa (panel, kontrola struktury pliku, tytuł/kategoria/wyszukiwanie) | tak (wersje/unieważnienie, limit uploadów) | D‑04, D‑05, D‑08, D‑09 |
 | Wydarzenia / wolontariat | działa | tak (Etap 1 wolontariatu) | — |
 | Strona publiczna | działa (odczyt, galeria) | tak (magazyn plików zdjęć) | D‑18, D‑22 |
 | RODO | rejestry i mechanizmy cząstkowe | tak (rejestr żądań, retencja, informacja o przetwarzaniu, zgody na wizerunek) | D‑01, D‑02, D‑04, D‑06, D‑07 |
@@ -35,7 +35,7 @@ Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commi
 
 ## Konta, logowanie, MFA
 
-**Na main:** konta wyłącznie z zaproszenia, role i przydziały z zakresem rok/klasa, wygaszanie kadencji i audyt (#70); logowanie e‑mail + hasło + TOTP, bramka MFA, ekran `login/` (#238, #3, D‑10); limity prób logowania i cofanie sesji (#233); autoryzacja z zakresem klasowym (SR‑01b), 404 poza zakresem, macierz uprawnień (#235, #4); bootstrap pierwszego administratora na pustej bazie (`npm run auth:bootstrap-admin`, #241); reset hasła i reset MFA jako akcje w panelu admina (#282, #224); administrator nie może nadać roli samemu sobie (#286, #146); link zaproszenia w panelu admina, wymagane powtórzenie hasła (#278, #164); tabela obsady klas i ponowne wysłanie zaproszenia (#293, #108); polityka haseł uwzględniająca polskie znaki diakrytyczne (#299); rotacja `MFA_ENCRYPTION_KEY` z pierścieniem kluczy (#314); dobrowolny zapis MFA i dokładniejsza odmowa 403 (#274, #161).
+**Na main:** konta wyłącznie z zaproszenia, role i przydziały z zakresem rok/klasa, wygaszanie kadencji i audyt (#70); logowanie e‑mail + hasło + TOTP, bramka MFA, ekran `login/` (#238, #3, D‑10); limity prób logowania i cofanie sesji (#233); autoryzacja z zakresem klasowym (SR‑01b), 404 poza zakresem, macierz uprawnień (#235, #4); bootstrap pierwszego administratora na pustej bazie (`npm run auth:bootstrap-admin`, #241); reset hasła i reset MFA jako akcje w panelu admina (#282, #224); administrator nie może nadać roli samemu sobie (#286, #146); link zaproszenia w panelu admina, wymagane powtórzenie hasła (#278, #164); tabela obsady klas i ponowne wysłanie zaproszenia (#293, #108); polityka haseł uwzględniająca polskie znaki diakrytyczne (#299); rotacja `MFA_ENCRYPTION_KEY` z pierścieniem kluczy (#314); dobrowolny zapis MFA i dokładniejsza odmowa 403 (#274, #161); zaproszenie na własny adres e-mail nie może już nadać roli (#402, #146).
 
 **W przygotowaniu (niescalone):** #369 — limit bezczynności sesji, absolutny limit rotacji, MFA na trasach zarządzania, krok w górę dla eksportu (#150, SR‑10); #384 — rozszerzenie kroku w górę (świeże MFA) na zamknięcie roku, zatwierdzenie kampanii e‑mail, nadanie roli i resety hasła/MFA (część 2 #150); nie obejmuje kroku w górę dla przyjęcia uchwały >3000 EUR — czeka na D‑15.
 
@@ -43,7 +43,7 @@ Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commi
 
 ## Rodziny i uczniowie
 
-**Na main:** wiele gospodarstw na ucznia, serwerowe API z zakresem klasy (#73, #5); konfiguracja roku szkolnego i klas, zamrożenie `enrollments` (#284, #78); zakończenie przypisania do klasy w trakcie roku — odejście ze szkoły (#285, #86); relacja opiekun–dziecko ze strażnikiem, historią zgody i trasą PATCH zgody (#246, #190); jedna definicja „aktualnej” relacji opiekun–uczeń — widok `student_guardians_current` (#250, #157); kampanie, worker, kartki i import czytają bieżące gospodarstwo ze `student_households`, nie z `students.household_id` (#232, #194); kontakt opiekuna dostępny dla zarządu z przydziałem klasy wyłącznie przez relację z uczniem tej klasy (#230, #200); karta gospodarstwa: przedstawiciel widzi wyłącznie opiekunów swojej klasy, e‑mail widoczny przy obu zgodach (#221, #95); wybór roku/klasy/gospodarstwa z listy zamiast wpisywania identyfikatorów (#275); dziennik odczytu danych rodzin (#320); złożone klucze obce klasa/rok i unikalny e‑mail bez rozróżniania wielkości liter (#347, #198); liczniki pulpitu przedstawiciela wg widoku `enrollments_current` (#368).
+**Na main:** wiele gospodarstw na ucznia, serwerowe API z zakresem klasy (#73, #5); konfiguracja roku szkolnego i klas, zamrożenie `enrollments` (#284, #78); zakończenie przypisania do klasy w trakcie roku — odejście ze szkoły (#285, #86); relacja opiekun–dziecko ze strażnikiem, historią zgody i trasą PATCH zgody (#246, #190); jedna definicja „aktualnej” relacji opiekun–uczeń — widok `student_guardians_current` (#250, #157); kampanie, worker, kartki i import czytają bieżące gospodarstwo ze `student_households`, nie z `students.household_id` (#232, #194); kontakt opiekuna dostępny dla zarządu z przydziałem klasy wyłącznie przez relację z uczniem tej klasy (#230, #200); karta gospodarstwa: przedstawiciel widzi wyłącznie opiekunów swojej klasy, e‑mail widoczny przy obu zgodach (#221, #95); wybór roku/klasy/gospodarstwa z listy zamiast wpisywania identyfikatorów (#275); dziennik odczytu danych rodzin (#320); złożone klucze obce klasa/rok i unikalny e‑mail bez rozróżniania wielkości liter (#347, #198); liczniki pulpitu przedstawiciela wg widoku `enrollments_current` (#368); nagłówek `/families/` ujednolicony z pozostałymi panelami, usunięta plakietka „RR” (#399).
 
 **W przygotowaniu (niescalone):** #365 — wniosek rodzica o aktualizację kontaktu przez jednorazowy link (#140).
 
@@ -59,7 +59,7 @@ Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commi
 
 ## Wpłaty
 
-**Na main:** ewidencja wpłat i korekt na PostgreSQL (#54, #37); spójność wpłata↔księga — kontrola kwoty, zwroty, ponowne przypisanie (#260, #138); blokada korekty z aktywnym powiązaniem w szkicu uzgodnienia (#259, #165); kartki o dobrowolnej składce z serwera (#74, #11).
+**Na main:** ewidencja wpłat i korekt na PostgreSQL (#54, #37); spójność wpłata↔księga — kontrola kwoty, zwroty, ponowne przypisanie (#260, #138); blokada korekty z aktywnym powiązaniem w szkicu uzgodnienia (#259, #165); kartki o dobrowolnej składce z serwera (#74, #11); `/print/` nie pokazuje już błędów walidacji przed interakcją użytkownika (#397).
 
 **W przygotowaniu (niescalone):** #345 — belgijska komunikacja strukturalna (OGM‑VCS) na wpłatach (#83); #341 — zatwierdzone dane do wpłaty i generator EPC/QR, częściowo (#92); #377 — integracja kartek z zatwierdzonymi danymi do wpłaty i kodem QR EPC, część 2 (#92, zależy od #341); #340 — eksport CSV wpisów wpłat i korekt, częściowo (#141).
 
@@ -75,9 +75,9 @@ Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commi
 
 ## Uzgodnienia wyciągu bankowego
 
-**Na main:** uzgodnienie rachunku i raport dla Komisji Rewizyjnej na PostgreSQL (#71, #7); wpłata gotówkowa nie jest proponowana ani wiązana z pozycją wyciągu (#219); blokada podwójnego ujęcia wpłaty i ponowna kontrola kwot przy zatwierdzeniu (#228); jedna migawka REPEATABLE READ dla raportu KR i widoku uzgodnienia (#348, #213); jedna migawka i limit propozycji dopasowań w SQL (#349); zbiorczy import pozycji, stronicowanie i pełne podsumowanie karty (#355); ekran prototypowy uzgodnień (część #147, #298) — moduł działa przez interfejs, nie tylko przez wywołania API.
+**Na main:** uzgodnienie rachunku i raport dla Komisji Rewizyjnej na PostgreSQL (#71, #7); wpłata gotówkowa nie jest proponowana ani wiązana z pozycją wyciągu (#219); blokada podwójnego ujęcia wpłaty i ponowna kontrola kwot przy zatwierdzeniu (#228); jedna migawka REPEATABLE READ dla raportu KR i widoku uzgodnienia (#348, #213); jedna migawka i limit propozycji dopasowań w SQL (#349); zbiorczy import pozycji, stronicowanie i pełne podsumowanie karty (#355); ekran prototypowy uzgodnień (część #147, #298) — moduł działa przez interfejs, nie tylko przez wywołania API; import wyciągu CODA i CAMT.053 z identyfikatorem transakcji banku i blokadą podwójnego importu (#344, część #105).
 
-**W przygotowaniu (niescalone):** #344 — import wyciągu CODA i CAMT.053 z identyfikatorem transakcji banku i blokadą podwójnego importu, część (#105); #395 — porzucenie szkicu uzgodnienia i ponowny import tego samego pliku, zależny od #344 (część #105). Założenie w #395: porzucenie szkicu może wykonać sam autor, bez zasady czterech oczu — do potwierdzenia w D‑13.
+**W przygotowaniu (niescalone):** #395 — porzucenie szkicu uzgodnienia i ponowny import tego samego pliku, zależny od #344 (część #105). Założenie w #395: porzucenie szkicu może wykonać sam autor, bez zasady czterech oczu — do potwierdzenia w D‑13.
 
 **Czeka na zarząd:** D‑13 (rachunek, gotówka, częstotliwość i sposób uzgadniania).
 
@@ -99,7 +99,7 @@ Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commi
 
 ## E‑mail
 
-**Na main:** kolejka Brevo, zatwierdzanie kampanii i dzienny limit na Railway/Node (#64, #40); potwierdzenie każdej wiadomości przed wysyłką i token dzierżawy przebiegu (#231, #210/#177); worker e‑mail — zakończenie kampanii i audyt w jednej transakcji (#240, #178); worker e‑mail odporny na awarię bazy, SIGTERM i odmowę konta Brevo (#243, #172/#209); wyłącznik przy awarii Brevo — 429 i brak połączenia nie zużywają limitu ani próby (#251, #180); dzienny limit liczony w strefie czasowej konta Brevo, nie tylko UTC (#295, #84); słownik zakazanych sformułowań o zadłużeniu rozszerzony na FR/NL (#303, #120); wysyłka testowa kampanii wyłącznie na adresy techniczne Rady (#305, #104); harmonogram startu, wstrzymanie/wznowienie kampanii, okno wysyłki (#306, #130); checklista domeny nadawcy, `npm run email:preflight` (#308, #148); ekran kampanii e‑mail (#298, część #147) — moduł ma interfejs; anulowanie kampanii przez wspólne okno potwierdzenia (#372, follow‑up #298); utwardzenie niezmienności — zatwierdzenie kampanii, odwołanie sesji, wstawienie do kolejki, częściowo (#350, #204).
+**Na main:** kolejka Brevo, zatwierdzanie kampanii i dzienny limit na Railway/Node (#64, #40); potwierdzenie każdej wiadomości przed wysyłką i token dzierżawy przebiegu (#231, #210/#177); worker e‑mail — zakończenie kampanii i audyt w jednej transakcji (#240, #178); worker e‑mail odporny na awarię bazy, SIGTERM i odmowę konta Brevo (#243, #172/#209); wyłącznik przy awarii Brevo — 429 i brak połączenia nie zużywają limitu ani próby (#251, #180); dzienny limit liczony w strefie czasowej konta Brevo, nie tylko UTC (#295, #84); słownik zakazanych sformułowań o zadłużeniu rozszerzony na FR/NL (#303, #120); wysyłka testowa kampanii wyłącznie na adresy techniczne Rady (#305, #104); harmonogram startu, wstrzymanie/wznowienie kampanii, okno wysyłki (#306, #130); checklista domeny nadawcy, `npm run email:preflight` (#308, #148); ekran kampanii e‑mail (#298, część #147) — moduł ma interfejs; anulowanie kampanii przez wspólne okno potwierdzenia (#372, follow‑up #298); utwardzenie niezmienności — zatwierdzenie kampanii, odwołanie sesji, wstawienie do kolejki, częściowo (#350, #204); poprawka widoczności zamkniętych okien dialogowych w `/email/` i `/year-close/` (#396).
 
 **W przygotowaniu (niescalone):** #307 — kategorie komunikatów i wypisanie jednym kliknięciem (#110); #309 — raport doręczeń i rozstrzyganie `delivery_unknown` (#139); #326 — lista wyłączeń: przegląd i zdjęcie blokady jako nowy zapis, nie nadpisanie (#94).
 
@@ -117,7 +117,9 @@ Stan na 28.09.2026 (wieczór), gałąź `main` repozytorium `woogitsu/rd`, commi
 
 **Na main:** panel dokumentów prywatnych (#63, #39/#8); prywatne dokumenty w docelowym Storage Bucket (#58, #39); kontrola struktury pliku PDF/PNG/JPEG przed zapisem do bucketu (#301, #89); poprawka na utraconą potwierdzenie COMMIT przy uploadzie, które nie usuwało osieroconego obiektu z bucketu (#252, #168).
 
-**W przygotowaniu (niescalone):** #313 — tytuł, kategoria i wyszukiwanie dokumentów (#76); #329 — wersje dokumentu i unieważnienie bez usuwania historii (#82); dotyczy m.in. tego, czy uprawnienie do unieważnienia/zastąpienia dokumentu ma być tożsame z uprawnieniem do odczytu (np. skarbnik z MFA unieważnia dokumenty finansowe) — zakres do potwierdzenia, patrz sekcja „Założenia techniczne”; #370 — sesja sprawdzana przed ciałem żądania i limit współbieżnych uploadów (#185).
+**Na main (dodatkowo):** tytuł, kategoria i wyszukiwanie dokumentów (#313, #76); nagłówek `/documents/` ujednolicony do białego tła jak w pozostałych panelach (#401).
+
+**W przygotowaniu (niescalone):** #329 — wersje dokumentu i unieważnienie bez usuwania historii (#82); dotyczy m.in. tego, czy uprawnienie do unieważnienia/zastąpienia dokumentu ma być tożsame z uprawnieniem do odczytu (np. skarbnik z MFA unieważnia dokumenty finansowe) — zakres do potwierdzenia, patrz sekcja „Założenia techniczne”; #370 — sesja sprawdzana przed ciałem żądania i limit współbieżnych uploadów (#185).
 
 **Czeka na zarząd:** D‑04 (retencja dokumentów), D‑05 (dostawca bucketu jako podmiot przetwarzający), D‑08/D‑09 (kto z ról widzi i unieważnia które dokumenty).
 
@@ -162,9 +164,11 @@ Poniższe to konkretne wybory przyjęte w kodzie (na main albo w niescalonych PR
 ## Poza podziałem na moduły (przekrojowe)
 
 - **Autoryzacja i granice ról:** każda trasa API sprawdza sesję i uprawnienia po stronie serwera (SR‑01b, zakres klasowy, macierz 16 modułów — #235, #4); ukrycie przycisku w interfejsie nigdy nie jest jedyną kontrolą dostępu.
-- **Monitoring i CI:** `/health/ready`, logi JSON z redakcją, łagodne zamykanie (#234, #16/#41); testy równoległe z shardingiem i bazą PostgreSQL do testów wyścigów (#249); audyt npm, Dependabot, akcje przypięte do SHA (#353, #153).
-- **Dostępność:** przegląd WCAG 2.2 AA i widoku mobilnego (#65, #16); rozszerzenie przeglądu na `admin/`, `families/` i test na wszystkie aplikacje (#310, #112).
+- **Monitoring i CI:** `/health/ready`, logi JSON z redakcją, łagodne zamykanie (#234, #16/#41); testy równoległe z shardingiem i bazą PostgreSQL do testów wyścigów (#249); audyt npm, Dependabot, akcje przypięte do SHA (#353, #153); `/health/ready` ogranicza równoległe zapytania do puli przez single-flight (#388, #244); test wykrywający zduplikowane klucze w literałach źródłowych — `shared/messages.js`, inwentarz prywatności, katalog błędów (#398, #329); pierwsze testy Playwright kluczowych ścieżek w CI (#381); naprawiony wiszący test wyścigów uzgodnienia `pg-reconciliation-race.test.js` (#403).
+- **Dostępność:** przegląd WCAG 2.2 AA i widoku mobilnego (#65, #16); rozszerzenie przeglądu na `admin/`, `families/` i test na wszystkie aplikacje (#310, #112); poprawka poziomego scrolla strony na telefonie w nawigacji paneli ze wspólną powłoką (#400, #182).
 - **Tryb tylko do odczytu:** `APP_WRITE_MODE=read_only` do bezpiecznych demonstracji bez ryzyka zapisu (#289, #143).
+- **Wspólna nawigacja paneli:** `reconciliation/` i `email/` przełączone na wzorzec wspólnej powłoki `shared/shell.js` używany przez pozostałe panele, zamiast osobnego, statycznego paska (#374, follow-up #298); ekran startowy panelu pokazuje stan roli zamiast listy 10 modułów kończących się odmową dla ról bez dostępu (#342, #176).
+- **Dokumentacja pokazu:** scenariusz demonstracji prototypu dla zarządu — `docs/DEMO.md` (#406).
 
 ---
 
