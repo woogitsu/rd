@@ -132,7 +132,7 @@ zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity
 metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), dziennik kopii zapasowych `backup_runs` (0058, dane operacyjne), `data_access_log`, metadane importów (`import_batches`, D-04),
 dziennik eksportów, kampanie e-mail z odbiorcami, wykluczeniami, kolejką,
 blokadami i zdarzeniami dostawcy (adresy e-mail; zakres i retencja — D-04)
-oraz aktualności i zdjęcia (zgody na wizerunek — osobny zakres), a także belgijskie referencje płatności OGM-VCS `payment_references`/`payment_reference_revocations` (#83 — pseudonim gospodarstwa jak `payment_entries.reference`; zakres i retencja do decyzji D-04, wariant zachowawczy do rewizji). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
+oraz aktualności i zdjęcia (zgody na wizerunek — osobny zakres), w tym pliki wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres D-04), a także belgijskie referencje płatności OGM-VCS `payment_references`/`payment_reference_revocations` (#83 — pseudonim gospodarstwa jak `payment_entries.reference`; zakres i retencja do decyzji D-04, wariant zachowawczy do rewizji). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
 zawierają więc identyfikatory, które w odtworzonej bazie nie mają
 odpowiednika. Pliki dokumentów kopiuje się osobno (patrz
 [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md), backup Storage Bucket).
