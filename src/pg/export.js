@@ -167,6 +167,11 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'payment_reassignments', requires: ['payment_entries'],
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
 
+  // 0086: zatwierdzona konfiguracja rachunku (IBAN/BIC/odbiorca) do kodu QR na
+  // kartkach danego roku — potrzebna nowej Radzie i Komisji Rewizyjnej, by
+  // zweryfikować, na jaki rachunek proszono o wpłaty (ciągłość audytu roku).
+  { table: 'payment_instructions', where: () => 'school_year_id = $1' },
+
   { table: 'ledger_categories', where: () => 'school_year_id = $1' },
   { table: 'ledger_opening_balances', where: () => 'school_year_id = $1' },
   { table: 'ledger_opening_balance_adjustments', requires: ['ledger_opening_balances'],

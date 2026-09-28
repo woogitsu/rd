@@ -93,6 +93,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_corrections`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie korekty wpłaty|payment_reference|tak|tak|
 |`payment_entries`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_entries`|`reference`|Opiekun|direct|wolny tekst|tytuł przelewu z wyciągu bankowego|payment_reference|tak|tak|
+|`payment_instructions`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą zatwierdzającą|nieustalona (D-04)|nie|tak|
 |`payment_reassignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_refunds`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`resolutions`|`body`|Członek Rady|direct|wolny tekst|treść uchwały|audit_event|tak|tak|
@@ -114,7 +115,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **101**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **102**, w tym wolnego tekstu: **23** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -986,6 +987,19 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `reference` | direct | guardian | tak |
 | `school_year_id` | none | — | tak |
 | `status` | none | — | tak |
+
+### `payment_instructions`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `approved_at` | none | — | tak |
+| `approved_by` | pseudonymous | board_member | tak |
+| `bic` | none | — | tak |
+| `iban` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `payee_name` | none | — | tak |
+| `school_year_id` | none | — | tak |
 
 ### `payment_reassignments`
 

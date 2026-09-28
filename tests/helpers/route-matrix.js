@@ -966,6 +966,13 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: CLASS_TARGETS, allow: PRINT, mfa: false, ok: 200, deny: printDeny, fixture: null,
     build: ({ target }) => ({ path: `/api/print/cards?schoolYearId=${target.schoolYearId}${target.classId ? `&classId=${target.classId}` : ''}` }),
     contains: (_actor, target) => (target.classId ? [target.key] : ['A', 'B']),
+    // Zatwierdzona konfiguracja rachunku do QR (#92, payment_instructions) jest
+    // ogólnoszkolna (W1) i celowo trafia na każdą kartkę, także przy druku
+    // wyłącznie własnej klasy — to nie jest wyciek poza zakres.
+    visible: (actor) => {
+      const own = actor.ownClass ?? actor.classBoard;
+      return own ? [own, 'W1'] : actor.scopes;
+    },
     check: ({ actor, mfa, json }) => printPaymentCheck(actor, mfa, json),
   },
 

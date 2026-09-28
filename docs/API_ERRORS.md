@@ -94,6 +94,7 @@ wpisów).
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
 | `invalid_audience` | Wybierz odbiorców. | Nie — popraw dane żądania. |
 | `invalid_author` | Niepoprawny autor. | Nie — popraw dane żądania. |
+| `invalid_bic` | Numer BIC jest niepoprawny (8 albo 11 znaków). | Nie — popraw dane żądania. |
 | `invalid_body` | Treść jest pusta albo za długa. | Nie — popraw dane żądania. |
 | `invalid_campaign_id` | Niepoprawny identyfikator wysyłki. | Nie — popraw dane żądania. |
 | `invalid_category` | Wybierz kategorię z listy. | Nie — popraw dane żądania. |
@@ -124,6 +125,7 @@ wpisów).
 | `invalid_expires_at` | Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata). | Nie — popraw dane żądania. |
 | `invalid_explicit_license` | Niepoprawna licencja zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_format` | Wybierz format eksportu z listy (CSV albo JSON). | Nie — popraw dane żądania. |
+| `invalid_iban` | Numer rachunku (IBAN) jest niepoprawny — sprawdź sumę kontrolną. | Nie — popraw dane żądania. |
 | `invalid_id` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
 | `invalid_idempotency_key` | Niepoprawny identyfikator operacji. Zamknij formularz i otwórz go ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `invalid_identifier` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
@@ -146,6 +148,7 @@ wpisów).
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_origin` | Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji. | Nie — popraw dane żądania. |
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
+| `invalid_payee_name` | Podaj nazwę odbiorcy (maksymalnie 70 znaków). | Nie — popraw dane żądania. |
 | `invalid_payment_id` | Niepoprawny identyfikator wpłaty. | Nie — popraw dane żądania. |
 | `invalid_payment_link` | Niepoprawne powiązanie z wpłatą. | Nie — popraw dane żądania. |
 | `invalid_photo_id` | Niepoprawny identyfikator zdjęcia. | Nie — popraw dane żądania. |
