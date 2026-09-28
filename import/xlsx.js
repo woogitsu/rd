@@ -7,7 +7,7 @@
 // bez kompresji (metoda „stored”). Pozycje stored fflate zwraca od razu, bez workera,
 // a parser biblioteki dostaje te same pliki XML co wcześniej. CSP pozostaje bez zmian.
 import { unzipSync, zipSync } from 'fflate';
-import { readSheet } from 'read-excel-file/browser';
+import readXlsxFile, { readSheet } from 'read-excel-file/browser';
 
 // Te same pozycje, które czyta read-excel-file (filterZipArchiveEntry): XML i relacje.
 const isSheetPart = (name) => name.endsWith('.xml') || name.endsWith('.xml.rels');
@@ -25,12 +25,28 @@ export function repackXlsxStored(arrayBuffer) {
   return stored.buffer.slice(stored.byteOffset, stored.byteOffset + stored.byteLength);
 }
 
-// Zwraca wiersze pierwszego arkusza (tablica tablic), jak readSheet(file).
-export async function readXlsxRows(arrayBuffer, read = readSheet) {
+// Zwraca wiersze wskazanego arkusza (tablica tablic), domyślnie pierwszego —
+// jak readSheet(file). `sheet` to nazwa albo numer od 1 (jak w read-excel-file).
+export async function readXlsxRows(arrayBuffer, sheet, read = readSheet) {
   const stored = repackXlsxStored(arrayBuffer);
   try {
-    return await read(stored);
+    return await read(stored, sheet);
   } catch {
     throw new XlsxReadError('Nie udało się odczytać arkusza .xlsx. Zapisz go ponownie w Excelu albo jako CSV.');
   }
+}
+
+// Lista arkuszy z danymi (#88: wybór arkusza przed mapowaniem — plik może mieć
+// arkusz „Instrukcja” przed danymi uczniów). Czyta wszystkie arkusze naraz, w
+// granicach tych samych limitów rozmiaru pliku (5 MB) co pojedynczy odczyt.
+export async function readXlsxSheets(arrayBuffer, readAll = readXlsxFile) {
+  const stored = repackXlsxStored(arrayBuffer);
+  let sheets;
+  try {
+    sheets = await readAll(stored);
+  } catch {
+    throw new XlsxReadError('Nie udało się odczytać arkusza .xlsx. Zapisz go ponownie w Excelu albo jako CSV.');
+  }
+  if (!sheets.length) throw new XlsxReadError('Plik nie zawiera żadnego arkusza.');
+  return sheets.map((sheet) => ({ name: sheet.sheet, rows: sheet.data }));
 }

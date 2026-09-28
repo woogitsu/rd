@@ -18,6 +18,7 @@ import {
   currentResolutions,
   describeQuorumCheck,
   describeQuorumRule,
+  ERROR_MESSAGES,
   errorMessage,
   formatBrussels,
   formatVotes,
@@ -31,6 +32,11 @@ import {
   summarizeAttendance,
   validateVotes,
 } from "./core.js";
+import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const byId = (id) => document.getElementById(id);
 const state = { schoolYearId: "", meetings: [], detail: null, keys: new Map() };
@@ -44,25 +50,17 @@ class ApiError extends Error {
   }
 }
 
+// Wspólny klient (#99): 401/403 MFA → /login/ z powrotem; kody spoza słownika
+// zebrań dostają tekst ze wspólnego słownika (np. mfa_required).
 async function api(url, { method = "GET", body, idempotencyKey } = {}) {
-  let response;
   try {
-    response = await fetch(url, {
-      method,
-      credentials: "same-origin",
-      headers: {
-        Accept: "application/json",
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
-  } catch {
-    throw new ApiError("network", 0, true);
+    return await apiRequest(url, { method, body, idempotencyKey });
+  } catch (shared) {
+    if (shared.network) throw new ApiError("network", 0, true);
+    const error = new ApiError(shared.code, shared.status);
+    if (!Object.hasOwn(ERROR_MESSAGES, shared.code)) error.message = shared.message;
+    throw error;
   }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ApiError(typeof data.error === "string" ? data.error : "", response.status);
-  return data;
 }
 
 // Tworzenie: jeden klucz na próbę wysłania formularza. Klucz zostaje przy błędzie

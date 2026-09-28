@@ -59,6 +59,16 @@ export function utcDay(now) {
   return now.toISOString().slice(0, 10);
 }
 
+// Doba limitu w strefie konta Brevo (#84; domyślnie Europe/Brussels — patrz
+// emailConfig/quotaTimezone). Osobna od brusselsDay() w pg/today.js, która
+// liczy dobę obowiązywania członkostw i jest zawsze w Brukseli, niezależnie
+// od tej konfiguracji.
+export function accountDay(now, timezone) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
+}
+
 export function backoffMinutes(attempts) {
   return Math.min(BACKOFF_MAX_MINUTES, BACKOFF_BASE_MINUTES * 2 ** Math.max(0, attempts - 1));
 }
@@ -94,11 +104,24 @@ const IN_FLIGHT = `SELECT COUNT(*)::int FROM email_outbox o
    WHERE o.state = 'sending'
      AND NOT EXISTS (SELECT 1 FROM email_send_ledger l WHERE l.outbox_id = o.id AND l.attempt = o.attempts)`;
 
-export async function remainingQuota(executor, day, config) {
+// Pula pozostała liczona ostrożnie (#84): dziennik `email_send_ledger.day` jest
+// zawsze dobą UTC, ale konto Brevo może resetować limit w swojej strefie
+// (domyślnie Europe/Brussels — `config.quotaTimezone`). Bierzemy WIĘKSZE
+// z dwóch zużyć — dnia UTC (kolumna `day`) i doby konta (`recorded_at`
+// przeliczone do jego strefy) — więc żadna z dwóch dób nie zostaje przekroczona.
+// Gdy obie doby się pokrywają (quotaTimezone = UTC), wynik jest identyczny jak
+// wcześniej.
+export async function remainingQuota(executor, now, config) {
+  const utc = utcDay(now);
+  const account = accountDay(now, config.quotaTimezone);
   const { rows } = await executor.query(
-    `SELECT (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger WHERE day = $1)
-          + (${IN_FLIGHT}) AS used`,
-    [day],
+    `SELECT GREATEST(
+        (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger WHERE day = $1),
+        (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger
+           WHERE (recorded_at AT TIME ZONE $3) >= $2::date
+             AND (recorded_at AT TIME ZONE $3) < $2::date + 1)
+     ) + (${IN_FLIGHT}) AS used`,
+    [utc, account, config.quotaTimezone],
   );
   return Math.max(0, config.dailyLimit - config.dailyReserved - Number(rows[0].used));
 }
@@ -216,7 +239,7 @@ async function recoverStale(db, now) {
 async function claim(db, { config, now, day, dryRun, run, runToken }) {
   return db.transaction(async (tx) => {
     await tx.query('SELECT pg_advisory_xact_lock($1)', [QUOTA_LOCK_ID]);
-    let remaining = await remainingQuota(tx, day, config);
+    let remaining = await remainingQuota(tx, now, config);
     run.remainingQuota = remaining;
     let batchLeft = config.batchSize;
     const claimed = [];
@@ -608,7 +631,7 @@ export async function runEmailBatch(env, {
     const refusal = liveRunRefusal(config) ?? (transport ? null : 'transport_missing');
     if (refusal) {
       run.stoppedReason = refusal;
-      run.remainingQuota = await remainingQuota(db, day, config);
+      run.remainingQuota = await remainingQuota(db, now, config);
       await recordRun(db, run);
       return run;
     }
