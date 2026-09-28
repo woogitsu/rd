@@ -28,6 +28,12 @@
       <section id="class-view" hidden>
         <div class="page-heading"><div><p class="eyebrow" id="class-year"></p><h1 id="class-title">Klasa</h1><p>Lista uczniów i ich gospodarstw. Dane rodzin są poufne.</p></div></div>
         <section class="card">
+          <form id="student-search-form" role="search" novalidate>
+            <label for="student-search">Szukaj ucznia
+              <input id="student-search" name="q" type="search" autocomplete="off" placeholder="Imię lub nazwisko" aria-describedby="student-search-count" />
+            </label>
+          </form>
+          <p id="student-search-count" role="status" aria-live="polite"></p>
           <div class="table-wrap"><table><caption class="sr-only">Uczniowie klasy</caption><thead><tr><th scope="col">Uczeń</th><th scope="col">Gospodarstwa</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="students-body"></tbody></table></div>
           <p class="empty" id="students-empty" hidden>Brak uczniów przypisanych do tej klasy.</p>
         </section>

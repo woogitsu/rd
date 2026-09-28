@@ -96,6 +96,13 @@ test("słowa sugerujące dług w konfiguracji są odrzucane, nazwiska i ulice ni
   assert.equal(findForbiddenWording("brak długu"), "długu");
   assert.equal(findForbiddenWording("ul. Długa 5"), null);
   assert.equal(findForbiddenWording("Jan Długosz"), null);
+  // #120: szkoła jest w Belgii — te same słowa po francusku i niderlandzku.
+  assert.equal(findForbiddenWording("Merci de régler votre dette avant la fin du mois."), "dette");
+  assert.equal(findForbiddenWording("Vous êtes en mise en demeure de payer."), "mise en demeure");
+  assert.equal(findForbiddenWording("Gelieve uw achterstallige bijdrage te betalen."), "achterstallige");
+  assert.equal(findForbiddenWording("Lijst van wanbetalers."), "wanbetalers");
+  assert.equal(findForbiddenWording("Cotisation volontaire pour l'année scolaire."), null);
+  assert.equal(findForbiddenWording("Vrijwillige bijdrage voor het schooljaar."), null);
   const { errors } = normalizeConfig({ ...CONFIG, contact: "w sprawie zaległości: rada@example.test" });
   assert.equal(errors.length, 1);
   assert.throws(() => renderCardsHtml(households(), ["H-1"], { ...CONFIG, contact: "dług" }));

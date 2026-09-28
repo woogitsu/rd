@@ -917,6 +917,15 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { schoolYearId: target.schoolYearId, classId: target.classId, effectiveOn: yearDate(target, '10-01'), reason: 'Korekta przydziału (syntetyczne)' },
     }),
   },
+  {
+    id: 'families.enrollmentEnd', module: 'families', method: 'POST', path: '/api/students/:studentId/enrollments/:enrollmentId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    // Odejście ze szkoły (#86) — data w przeszłości, żeby uczeń zniknął z bieżących list od razu.
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/enrollments/${obj.enrollmentId}/end`,
+      body: { endedOn: '2020-01-01', reason: 'Odejście ze szkoły (syntetyczne)' },
+    }),
+  },
 
   // ---------- print (#11) ----------
   {
@@ -925,6 +934,20 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/print/cards?schoolYearId=${target.schoolYearId}${target.classId ? `&classId=${target.classId}` : ''}` }),
     contains: (_actor, target) => (target.classId ? [target.key] : ['A', 'B']),
     check: ({ actor, mfa, json }) => printPaymentCheck(actor, mfa, json),
+  },
+
+  // ---------- representative (#118) ----------
+  // Pulpit przedstawiciela: wyłącznie rola `representative` (nie zarząd nawet
+  // z przydziałem klasy) — własne przypisane klasy, wyliczone z przydziałów,
+  // bez parametru classId w ścieżce. Trasa nie przyjmuje zakresu w żądaniu
+  // (tylko schoolYearId) — pojedynczy target '-' jak families.classes; zakres
+  // sprawdzamy treścią odpowiedzi (classListCheck), nie odmową per-target.
+  {
+    id: 'representative.overview', module: 'representative', method: 'GET',
+    path: '/api/representative/overview?schoolYearId=:year',
+    targets: ['-'], allow: { repA: ['-'], repB: ['-'] }, mfa: false, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: `/api/representative/overview?schoolYearId=${YEAR_1}` }),
+    check: ({ actor, json }) => classListCheck(actor, json),
   },
 
   // ---------- mfa (#3) ----------
