@@ -17,7 +17,7 @@
 // salda „do zapłaty” ani statusu dłużnika.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 
 export const name = 'payments';
@@ -368,11 +368,15 @@ async function requireFinancialContext(request, env, schoolYearId) {
   // Wpłaty dotyczą rodzin, nie klas: przydział z class_id nie daje tu dostępu
   // (isAuthorizedScoped bez classId pomija przydziały klasowe).
   if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true })) {
+    await logAccessDenied(env, context, { roles: FINANCIAL_ROLES }, request);
     throw new RequestError('forbidden', 403);
   }
   return context;
 }
 
+// #184: bez śladu access.denied tutaj — wywoływana wyłącznie po POST (korekta,
+// przypisanie, zwrot, przeksięgowanie); logAccessDenied loguje tylko GET (patrz
+// authorization.js), więc dodanie go tu byłoby martwym kodem.
 function requireYear(context, schoolYearId) {
   if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true })) {
     throw new RequestError('forbidden', 403);
