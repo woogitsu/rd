@@ -209,6 +209,21 @@ function documentRead(id, path, kind, targets, allow, mfa, suffix) {
   };
 }
 
+// Zapis opisu (tytuł/kategoria — issue #76): te same reguły dostępu co odczyt
+// metadanych dokumentu (canAccessDocument), więc mfaDeny/deny = 404 jak wyżej.
+function documentDescribe(id, path, kind, targets, allow, mfa) {
+  return {
+    id, module: 'documents', method: 'POST', path,
+    targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404,
+    fixture: 'static', object: { kind: 'document', stage: kind },
+    build: ({ obj, target, key }) => ({
+      path: `/api/documents/${obj.documentId}/description`, headers: withKey(key),
+      body: { title: `Opis ${marker(target.key)}`, category: 'inne' },
+    }),
+    contains: (_actor, target) => [target.key],
+  };
+}
+
 function ledgerRead(id, path, suffix, contains) {
   return {
     id, module: 'ledger', method: 'GET', path, targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403,
@@ -578,6 +593,30 @@ export const ROUTE_MATRIX = Object.freeze([
       ok: 201, create: true, stage: 'finalResolution', body: () => ({ reason: 'Pomyłka w zapisie głosów', votesAgainst: 1 }),
       mfa: true,
     }),
+  // #102: rejestr uchwał roku. Bez fixture (brak innych tras tworzy uchwały
+  // domyślnie), więc odpowiedź 2xx jest pustą listą — trasa sprawdza tu
+  // wyłącznie granicę roli/MFA; zakres klasowy i treść rejestru ma własny,
+  // dedykowany test w tests/pg-meetings-resolutions.test.js.
+  {
+    id: 'meetings.resolutionRegister', module: 'meetings', method: 'GET',
+    path: '/api/meetings/resolutions?schoolYearId=:year', targets: YEAR_TARGETS,
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, boardA: SCHOOL_Y1 },
+    mfa: false, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/meetings/resolutions?schoolYearId=${target.schoolYearId}` }),
+  },
+  // #102: śledzenie wykonania uchwały — nie zagnieżdżone pod /:meetingId, więc
+  // budowane ręcznie (nie przez meetingRoute), ale z tym samym fixture uchwały
+  // przyjętej (stage 'finalResolution') co korekta wyżej.
+  {
+    id: 'meetings.resolutionExecution', module: 'meetings', method: 'POST',
+    path: '/api/meetings/resolutions/:resolutionId/execution', targets: CLASS_TARGETS,
+    allow: MEETING_MANAGE, mfa: false, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'meeting', stage: 'finalResolution' },
+    build: ({ obj, key }) => ({
+      path: `/api/meetings/resolutions/${obj.resolutionId}/execution`,
+      body: json({ status: 'not_started' }), headers: withKey(key),
+    }),
+  },
   // ---------- import (#36) ----------
   // admin i zarząd z MFA, wyłącznie przydział bez klasy obejmujący rok importu.
   {
@@ -621,6 +660,9 @@ export const ROUTE_MATRIX = Object.freeze([
   documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content'),
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
   documentRead('documents.contentClass', '/api/documents/:classDocumentId/content', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, '/content'),
+  documentDescribe('documents.describeFinancial', '/api/documents/:financialDocumentId/description', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentDescribe('documents.describeBoard', '/api/documents/:boardDocumentId/description', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentDescribe('documents.describeClass', '/api/documents/:classDocumentId/description', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
 
   // ---------- ledger (#38) ----------
   // admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu (docs/LEDGER.md).
