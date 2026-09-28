@@ -357,6 +357,77 @@ test('audit event records actor and counts only, without PII', async () => withD
   await assert.rejects(db.query('DELETE FROM import_batches'), /append_only/);
 }));
 
+// #248: bez set_config('rd.actor_id', …, true) przed bulkInsert, triggery historii
+// rodzin (0014/0023) zapisywały created_by/changed_by = NULL i source = 'direct',
+// jakby import był bezpośrednim SQL-em, mimo że audit_events i import_batches
+// poprawnie wskazywały operatora. Sprawdza nowego ucznia, nowego opiekuna,
+// rodzeństwo we wspólnej rodzinie i istniejącego ucznia bez przypisania w wybranym
+// roku, a także że podwójne kliknięcie/ponowienie nie dopisuje kolejnych wierszy.
+test('#248: import stamps the actor on student_households/guardian_households/enrollment_history, not just audit_events', async () => withDb(async (db, env, admin) => {
+  await seedClass(db, { id: 'c-2a-27', schoolYearId: 'y-2027', name: '2A' });
+
+  // Nowy uczeń, nowy opiekun, rodzeństwo we wspólnej rodzinie (S1+S2 -> R1), uczeń bez opiekunów (S3).
+  const first = await previewAndCommit(env, admin, payloadFromCsv(BASIC), 'key-hist-0001');
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+
+  const sh = await db.query('SELECT created_by, source FROM student_households');
+  assert.equal(sh.rows.length, 3);
+  for (const row of sh.rows) {
+    assert.equal(row.created_by, 'u-admin', JSON.stringify(row));
+    assert.equal(row.source, 'student_insert');
+  }
+  const gh = await db.query('SELECT created_by, source FROM guardian_households');
+  assert.equal(gh.rows.length, 3);
+  for (const row of gh.rows) {
+    assert.equal(row.created_by, 'u-admin', JSON.stringify(row));
+    assert.equal(row.source, 'guardian_insert');
+  }
+  const eh = await db.query("SELECT changed_by, source, reason FROM enrollment_history WHERE kind = 'enrolled' AND school_year_id = $1", [YEAR]);
+  assert.equal(eh.rows.length, 3);
+  for (const row of eh.rows) {
+    assert.equal(row.changed_by, 'u-admin', JSON.stringify(row));
+    assert.equal(row.source, 'api');
+    assert.equal(row.reason, 'import_csv_xlsx');
+  }
+
+  // Istniejący uczeń (S1) bez przypisania w nowo wybranym roku szkolnym: nowy
+  // wpis enrollment_history typu 'enrolled', bez tworzenia drugiej rodziny/opiekunów.
+  const nextYearPayload = payloadFromCsv(csvOf('S1;Ala;Testowa;2A;R1;;;;'), {}, 'y-2027');
+  const nextYear = await previewAndCommit(env, admin, nextYearPayload, 'key-hist-0002');
+  assert.equal(nextYear.status, 201, JSON.stringify(nextYear.body));
+  const enrolled2027 = await db.query("SELECT changed_by, source, reason FROM enrollment_history WHERE school_year_id = 'y-2027'");
+  assert.equal(enrolled2027.rows.length, 1);
+  assert.equal(enrolled2027.rows[0].changed_by, 'u-admin');
+  assert.equal(enrolled2027.rows[0].source, 'api');
+  assert.equal(enrolled2027.rows[0].reason, 'import_csv_xlsx');
+  // Ten import nie dotknął gospodarstw ani opiekunów — liczba wierszy bez zmian.
+  assert.equal(await count(db, 'student_households'), 3);
+  assert.equal(await count(db, 'guardian_households'), 3);
+
+  // Podwójne kliknięcie (ten sam klucz idempotencji) tej samej pierwszej partii:
+  // wynik z cache, żadnych dodatkowych wierszy historii.
+  const shBefore = await count(db, 'student_households');
+  const ghBefore = await count(db, 'guardian_households');
+  const ehBefore = await count(db, 'enrollment_history');
+  const doubleClick = await commit(env, admin, payloadFromCsv(BASIC), first.preview, 'key-hist-0001');
+  assert.equal(doubleClick.status, 200);
+  assert.equal(doubleClick.body.replayed, true);
+  assert.equal(doubleClick.body.batchId, first.body.batchId);
+  assert.equal(await count(db, 'student_households'), shBefore);
+  assert.equal(await count(db, 'guardian_households'), ghBefore);
+  assert.equal(await count(db, 'enrollment_history'), ehBefore);
+
+  // Ponowienie tej samej partii z nowym kluczem idempotencji (ale ten sam
+  // fingerprint danych) — ten sam batch, wciąż żadnych nowych wierszy historii.
+  const secondPreview = await preview(env, admin, payloadFromCsv(BASIC));
+  const retry = await commit(env, admin, payloadFromCsv(BASIC), secondPreview.body, 'key-hist-0003');
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.batchId, first.body.batchId);
+  assert.equal(await count(db, 'student_households'), shBefore);
+  assert.equal(await count(db, 'guardian_households'), ghBefore);
+  assert.equal(await count(db, 'enrollment_history'), ehBefore);
+}));
+
 test('unknown import subpaths fall through and wrong methods are rejected', async () => withDb(async (db, env, admin) => {
   const handler = createPgHandler(ROUTES);
   assert.equal((await handler(request('/api/import/nope', { cookie: admin }), env)).status, 404);
