@@ -402,6 +402,60 @@ export function availableActions(event) {
   }
 }
 
+// Role jak EVENT_POLICY w src/pg/events.js (test tests/role-policy-parity.test.js pilnuje zgodności).
+// Ukrycie przycisku to tylko skrót — serwer i tak sprawdza rolę (AGENTS.md).
+export const EVENT_ROLES = Object.freeze({
+  draftSchoolWide: Object.freeze(["admin", "board"]),
+  draftClass: Object.freeze(["representative"]),
+  review: Object.freeze(["board"]),
+});
+
+const grantList = (grants) => (Array.isArray(grants) ? grants : []);
+const yearMatches = (grant, schoolYearId) => !schoolYearId || !grant?.schoolYearId || grant.schoolYearId === schoolYearId;
+
+// Przydział ogólnoszkolny (bez klasy) jednej z ról — jak schoolWide() na serwerze.
+function schoolWideGrant(grants, roles, schoolYearId) {
+  return grantList(grants).some((g) => roles.includes(g?.role) && !g.classId && yearMatches(g, schoolYearId));
+}
+
+function classGrant(grants, classId, schoolYearId) {
+  return Boolean(classId) && grantList(grants).some((g) => EVENT_ROLES.draftClass.includes(g?.role)
+    && g.classId === classId && yearMatches(g, schoolYearId));
+}
+
+// Czy konto może w ogóle tworzyć szkice (przycisk „Nowy szkic”).
+export function canDraftEvents(grants) {
+  return grantList(grants).some((g) => EVENT_ROLES.draftSchoolWide.includes(g?.role) && !g.classId)
+    || grantList(grants).some((g) => EVENT_ROLES.draftClass.includes(g?.role) && g.classId);
+}
+
+// Kroki dostępne dla tej osoby: stan wydarzenia (availableActions) zawężony rolą i zasadą
+// czterech oczu. notes wyjaśnia, dlaczego krok jest niedostępny.
+export function permittedEventActions(event, { grants, userId = null, revisions = [] } = {}) {
+  if (!event) return { edit: false, actions: [], notes: [] };
+  const edit = schoolWideGrant(grants, EVENT_ROLES.draftSchoolWide, event.schoolYearId)
+    || classGrant(grants, event.classId, event.schoolYearId);
+  const review = schoolWideGrant(grants, EVENT_ROLES.review, event.schoolYearId);
+  const notes = [];
+  const actions = availableActions(event).filter((action) => {
+    if (action === "submit") return edit;
+    if (action === "publish") return review;
+    if (action === "cancel") return review || (!Number.isSafeInteger(event.publishedRevision) && edit);
+    if (action === "approve") {
+      if (!review) return false;
+      const current = (Array.isArray(revisions) ? revisions : []).find((r) => r?.revision === event.revision);
+      if (userId && (userId === event.createdBy || userId === current?.createdBy)) {
+        notes.push("Zatwierdza inna osoba z zarządu niż autor wydarzenia i bieżącej wersji (zasada czterech oczu).");
+        return false;
+      }
+      return true;
+    }
+    return false;
+  });
+  if (event.status === "submitted" && !review && edit) notes.push("Wydarzenie czeka na zatwierdzenie przez zarząd.");
+  return { edit: edit && canEditEvent(event), actions, notes };
+}
+
 export function canEditEvent(event) {
   return Boolean(event) && event.status !== "cancelled";
 }

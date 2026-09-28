@@ -19,6 +19,12 @@ Obsługiwane CSV (kodowanie i separator wykrywane w `import/csv.js`, patrz niże
 
 Kroki 1–3 (plik, mapowanie, sprawdzenie) nadal działają wyłącznie lokalnie i niczego nie wysyłają.
 
+### Raport importu i pominięte kolumny (#109)
+
+- **Raport błędów do pobrania** (`import/report.js`, przycisk „Pobierz raport błędów (CSV)” w kroku 3): CSV z kolumnami `Wiersz; Etap; Rodzaj; Komunikat`, generowany w przeglądarce przez wspólny eskaper formuł `src/pg/csv.js` (#206) — obejmuje wszystkie komunikaty walidacji lokalnej i, jeśli wysłano, podglądu serwera (nie tylko pierwsze 40 pokazane na ekranie). **Nie zawiera** imion, nazwisk ani e-maili — tylko numer wiersza źródłowego i treść komunikatu (te same komunikaty co w interfejsie, które już nie zawierają danych osobowych). Można go bezpiecznie przekazać szkole.
+- **Kolumny, które nie zostaną użyte**: po dopasowaniu kolumn (krok 2) lista nagłówków z pliku bez przypisanego pola. Nagłówek pasujący do listy wykluczeń (`PESEL`, `adres`, `telefon`, `oceny`, dane zdrowotne, numer dokumentu) dostaje wyraźne ostrzeżenie „Ten plik zawiera dane, których nie importujemy”. Pokazywane są tylko nazwy nagłówków, nigdy wartości komórek.
+- **Szablon**: `import/public/template.csv` (dane `@example.invalid`) i `import/public/template-instrukcja.txt` — krótka instrukcja PL (pola wymagane, format identyfikatorów jako tekst, czego nie wpisywać, obsługiwane formaty plików).
+
 ## Krok 4: podgląd i zapis na serwerze (prototyp)
 
 Opcjonalny, dostępny tylko w nowym API na PostgreSQL (`src/pg/routes/import.js`). **To nie jest zgoda na import danych rodzin** — do czasu decyzji D-01–D-06 w [rejestrze decyzji](../docs/DECISIONS.md) używamy wyłącznie danych fikcyjnych. Na środowisku `APP_ENV=production` trasy zwracają `403 import_disabled`, dopóki administrator nie ustawi `IMPORT_ENABLED=true` po decyzji szkoły.
@@ -42,9 +48,11 @@ Limit ciała żądania wynosi 1 MB — tyle samo co globalny limit `src/node-app
 - Wiersz nowego ucznia bez ID rodziny to konflikt, chyba że zaznaczono „Utwórz osobną rodzinę dla wierszy bez ID rodziny”. Wtedy każdy taki wiersz dostaje osobną rodzinę bez `source_ref`; rodzeństwa nie łączymy.
 - Opiekun jest rozpoznawany tylko w obrębie już ustalonej rodziny, po imieniu i nazwisku oraz e-mailu. **Nigdy nie łączymy rodzin po samym nazwisku lub e-mailu.** Ten sam e-mail w innej rodzinie daje tylko uwagę do ręcznego sprawdzenia.
 - Konflikty (nie są zapisywane): inne imię/nazwisko niż w bazie przy tym samym ID ucznia, inne ID rodziny niż w bazie, inna klasa w tym samym roku. Zmiana klasy lub rodziny wymaga ręcznej decyzji uprawnionej osoby.
+- **Dopasowanie opiekuna jest dwuetapowe (#98).** Pełne dopasowanie (imię + nazwisko + e-mail identyczne z bazą) aktualizuje istniejące powiązanie jak dotąd. Dopasowanie częściowe w obrębie tej samej rodziny — ten sam e-mail przy innej pisowni imienia/nazwiska, albo to samo imię i nazwisko przy innym e-mailu — jest **konfliktem** „Możliwa zmiana danych opiekuna”: import niczego nie tworzy ani nie nadpisuje, wymaga ręcznej, audytowanej korekty poza importem. Dzięki temu poprawka literówki albo zmiana adresu e-mail nie mnoży opiekunów tego samego dziecka.
+- Podgląd zawiera sekcję „W bazie, brak w pliku”: liczbę i identyfikatory źródłowe (`source_ref`) uczniów zapisanych w wybranym roku, których nie ma w przesłanym pliku (choćby w wierszu z błędem). Wyłącznie informacyjnie — import niczego nie usuwa ani nie archiwizuje; bez imion i nazwisk.
 - Aktualizacja istniejącego ucznia: zapis do klasy w nowym roku, nowy opiekun lub nowe powiązanie uczeń–opiekun. Import nie usuwa ani nie nadpisuje istniejących danych.
 - Import nie ustawia zgody na kontakt ani kontaktu głównego (`contact_allowed = false`); zakres tych pól należy do decyzji D-03.
-- Opiekun „Imię Nazwisko” jest dzielony na imię (wszystko przed ostatnim wyrazem) i nazwisko (ostatni wyraz). Jednowyrazowy wpis trafia do imienia.
+- Opiekun „Imię Nazwisko” jest dzielony na imię i nazwisko od ostatniego wyrazu, ale przedrostki nazwisk (np. „de”, „van”, „van der”, „von”) zostają przy nazwisku: „Anna Maria de Smet” → imię „Anna Maria”, nazwisko „de Smet” (#98). Jednowyrazowy wpis trafia do imienia. Wpis z więcej niż dwoma wyrazami dostaje ostrzeżenie „sprawdź podział na imię i nazwisko” — osobne kolumny imienia i nazwiska opiekuna to decyzja D-03.
 - Wartości wyglądające jak formuły (`=`, `+`, `-`, `@`) są zapisywane jako zwykły tekst. Przyszły eksport do CSV/XLSX musi je neutralizować.
 
 ### Zatwierdzenie

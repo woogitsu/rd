@@ -1,3 +1,5 @@
+/* Atrybut hidden zawsze ukrywa element, także gdy reguła autora ustawia display (#192). */
+[hidden] { display: none !important; }
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#202124;background:#fff;font-synthesis:none}
 *{box-sizing:border-box}
 body{margin:0;background:#fff}
@@ -18,7 +20,7 @@ main{max-width:1180px;margin:auto;padding:28px 24px 70px}
 .card{margin-top:18px;padding:22px;background:#fff;border:1px solid #e0ddd9;border-radius:6px}
 h2{margin:0;font-size:1.1rem}
 .note{color:#666;font-size:.85rem;margin:8px 0 0}
-.table-wrap{overflow:auto;margin-top:14px}
+.table-wrap{position:relative;overflow:auto;margin-top:14px}
 table{width:100%;border-collapse:collapse;font-size:.9rem}
 th,td{padding:10px;border-bottom:1px solid #eceae7;text-align:left;vertical-align:top}
 th{color:#6b6661;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
@@ -40,7 +42,7 @@ button:disabled{opacity:.6;cursor:wait}
 .empty,.message{color:#68635e}
 .message.error,.form-error{color:#a11e2a}
 .message:not(:empty){margin:0 0 16px;padding:12px;background:#fff;border:1px solid #e0ddd9;border-left:3px solid #b52330}
-.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 dialog{width:min(560px,calc(100vw - 28px));padding:0;border:1px solid #ddd;border-radius:6px}
 dialog::backdrop{background:rgba(20,18,16,.4)}
 dialog form{display:grid;gap:15px;padding:24px}
