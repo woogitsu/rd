@@ -4,11 +4,15 @@ Interfejs do chronionego API prywatnych dokumentów (`/api/documents`, issue #39
 
 ## Uruchomienie
 
+Worker/D1 (`npm run dev`) **nie ma** tras `/api/documents` — API istnieje wyłącznie na PostgreSQL. Buduj i uruchamiaj razem z API według „Uruchomienie lokalne” w [README głównym](../README.md):
+
 ```bash
-npm run dev            # API
-npm run dev:documents  # interfejs (Vite)
-npm run build:documents
+npm ci && npm run build
+DATABASE_URL=postgres://… npm run db:migrate:postgres
+DATABASE_URL=postgres://… PORT=3000 npm start
 ```
+
+`npm run dev:documents` (Vite, bez proxy `/api`) pokazuje sam interfejs, bez API.
 
 Po zbudowaniu serwer Node udostępnia panel pod `/documents/` z tego samego originu co API; żądania używają ciasteczka sesji.
 

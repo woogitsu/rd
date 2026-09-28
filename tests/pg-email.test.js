@@ -281,6 +281,54 @@ test('no send before approval; author and snapshot builder cannot self-approve; 
   } finally { await t.close(); }
 });
 
+// #215: PUT zastępowało treść bez wersji — druga osoba, która wczytała tę
+// samą bazową wersję, po cichu nadpisywała poprawkę pierwszej. `revision`
+// opcjonalnie w treści żądania: niezgodność z bieżącym revisionNo daje
+// 409 revision_conflict zamiast cichego nadpisania.
+test('two board members editing the same campaign: treasurer 200, board 409 on stale revision, nothing lost', async () => {
+  const t = await setup();
+  try {
+    const campaign = await createDraft(t);
+    assert.equal(campaign.revisionNo, 1);
+
+    const putTreasurer = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT',
+      body: {
+        title: campaign.title, audience: 'all_households', bodyText: campaign.bodyText, revision: 1,
+        subject: 'Składka – rok szkolny 2026/27 (poprawiony temat skarbnika)',
+      },
+    });
+    assert.equal(putTreasurer.status, 200);
+    assert.equal(putTreasurer.body.campaign.revisionNo, 2);
+
+    // Członek zarządu wczytał tę samą wersję 1 i poprawia treść — konflikt, temat skarbnika nie ginie.
+    const putBoard = await t.call(t.board, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT',
+      body: {
+        title: campaign.title, audience: 'all_households', subject: campaign.subject, revision: 1,
+        bodyText: 'Inna treść od członka zarządu, wystarczająco długa na walidację.',
+      },
+    });
+    assert.equal(putBoard.status, 409);
+    assert.equal(putBoard.body.error, 'revision_conflict');
+
+    const reread = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`);
+    assert.equal(reread.body.campaign.subject, 'Składka – rok szkolny 2026/27 (poprawiony temat skarbnika)');
+
+    // Powtórzenie tej samej edycji skarbnika (np. podwójne kliknięcie) z tą samą bazową wersją
+    // odtwarza wynik bez błędu, bo treść już jest zapisana — nie podnosi wersji drugi raz.
+    const replay = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT',
+      body: {
+        title: campaign.title, audience: 'all_households', bodyText: campaign.bodyText, revision: 1,
+        subject: 'Składka – rok szkolny 2026/27 (poprawiony temat skarbnika)',
+      },
+    });
+    assert.equal(replay.status, 200);
+    assert.equal(replay.body.campaign.revisionNo, 2);
+  } finally { await t.close(); }
+});
+
 test('any change after approval invalidates it (content or recipient snapshot)', async () => {
   const t = await setup();
   try {
