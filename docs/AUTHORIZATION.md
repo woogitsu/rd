@@ -148,6 +148,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: wariant zachowawczy — zakres do D-08/D-09 |
 | `POST /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: rejestr żądania, bez eksportu danych rodziny |
 | `POST /api/admin/data-requests/:requestId/status` | wyłącznie admin | tak | 403 | #100: przejście stanu bez cofania; nieistniejące żądanie: 404 |
+| `GET /api/admin/ops-status` | wyłącznie admin | tak | 403 | stan operacyjny: kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści (#149) |
 | `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
 | `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/reconciliations/:reconciliationId` | jak wyżej, rok uzgodnienia | tak | 403 | nieistniejące: 404; SR-01 |

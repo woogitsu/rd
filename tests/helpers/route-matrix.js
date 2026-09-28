@@ -844,6 +844,8 @@ export const ROUTE_MATRIX = Object.freeze([
     object: 'dataRequest',
     build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/status`, body: { status: 'identity_verified' } }),
   }),
+  // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
+  adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 
   // ---------- reconciliation (#7, #15) ----------
   // Uzgodnienia: admin/zarząd/skarbnik z MFA w roku uzgodnienia; raport: Komisja Rewizyjna/zarząd/skarbnik z MFA.
