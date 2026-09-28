@@ -73,10 +73,13 @@ test('valid session returns the same JSON contract as the Worker', async () => w
   const response = await handlePgRequest(request('/api/session', { cookie }), env);
   assert.equal(response.status, 200);
   const data = await response.json();
-  assert.deepEqual(Object.keys(data).sort(), ['expiresAt', 'mfaVerified', 'sessionId', 'user']);
+  assert.deepEqual(Object.keys(data).sort(), ['expiresAt', 'mfaVerified', 'sessionId', 'user', 'writeMode']);
   assert.equal(data.mfaVerified, true);
   assert.deepEqual(data.user, { id: 'u1', email: 'u1@example.invalid', displayName: 'Test u1' });
   assert.match(data.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+  // #143: writeMode informuje panele o trybie tylko do odczytu; poza tym testem
+  // (bez APP_WRITE_MODE=read_only) system działa normalnie.
+  assert.equal(data.writeMode, 'normal');
 }));
 
 test('missing, malformed, unknown, expired, revoked and disabled sessions are rejected', async () => withDb(async (db, env) => {

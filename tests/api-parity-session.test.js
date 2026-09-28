@@ -208,8 +208,18 @@ const ALLOWED = {
   },
 };
 
+// #143: /api/session na PostgreSQL dokłada writeMode (tryb tylko do odczytu) —
+// pole nieobecne w starym Workerze z zasady, nie luka równoważności. Testowane
+// osobno w tests/write-mode.test.js.
+function stripWriteMode(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body) || !('writeMode' in body)) return body;
+  const { writeMode, ...rest } = body;
+  return rest;
+}
+
 async function run(backend) {
-  const normalize = createNormalizer({ cursorKeys: [], timestampKeys: ['expiresAt'] });
+  const baseNormalize = createNormalizer({ cursorKeys: [], timestampKeys: ['expiresAt'] });
+  const normalize = (body) => stripWriteMode(baseNormalize(body));
   const steps = [];
   for (const [label, req] of SCENARIO) {
     const response = await backend.fetch(req.clone());
@@ -274,7 +284,7 @@ test('session, access, logout, health and 404 match the legacy Worker step by st
     const [oldBody, newBody] = [await readSession(legacy), await readSession(pg)];
     assert.equal(oldBody.expiresAt, '2099-01-01 00:00:00');
     assert.equal(newBody.expiresAt, '2099-01-01T00:00:00.000Z');
-    assert.deepEqual({ ...oldBody, expiresAt: null }, { ...newBody, expiresAt: null });
+    assert.deepEqual({ ...oldBody, expiresAt: null }, stripWriteMode({ ...newBody, expiresAt: null }));
 
     // Różnica danych (nie odpowiedzi): PostgreSQL zapisuje powód wycofania.
     assert.equal((await pg.one("SELECT revoked_reason FROM sessions WHERE id = ?", 's-logout')).revoked_reason, 'logout');
