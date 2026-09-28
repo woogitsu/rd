@@ -15,9 +15,20 @@
 //   POST /api/admin/invitations                 { email, role, classId?, schoolYearId?, ttlHours? }
 //   POST /api/admin/invitations/{id}/revoke
 //   GET  /api/admin/school-years                lata i klasy do formularzy
-//   GET  /api/admin/audit?limit=                dziennik zmian kont i ról
+//   GET  /api/admin/audit?limit=&domain=&actorId=&from=&to=&schoolYearId=
+//        dziennik zdarzeń; bez `domain` — jak dotąd (zmiany kont i ról).
+//        Z `domain` (finance|email|access|security|documents|year_close) — akcje
+//        tej domeny (#181). `schoolYearId` filtruje tylko zdarzenia, które mają
+//        ten identyfikator w metadanych — część zdarzeń go jeszcze nie ma (#174).
+//   GET  /api/admin/audit/entity/{entityType}/{entityId}
+//        historia jednego obiektu (#181): payment_entry, ledger_entry,
+//        reconciliation, email_campaign. 404, gdy obiekt nie istnieje.
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
+// #181: docelowo domeny finance/email mają też role zarządu/skarbnika/kampanii
+// (nie tylko admina) — zostaje to do decyzji D-08/D-09 (kto z zarządu i
+// Komisji Rewizyjnej czyta które domeny); do tego czasu odczyt dziennika
+// (listing i historia obiektu) jest wariantem zachowawczym: wyłącznie admin.
 // Założenie do decyzji D-08/D-09: zarząd nie ma tu nawet odczytu, dopóki
 // szkoła nie zatwierdzi macierzy kompetencji. Przyjęcie zaproszenia z hasłem:
 // POST /api/invitations/accept (src/pg/routes/login.js).
@@ -521,22 +532,118 @@ const AUDIT_ACTIONS = [
   'auth.password_changed', 'mfa.reset',
 ];
 
-async function listAudit(env, url, json) {
+// #181: domeny mapowane na przedrostki action. Wariant zachowawczy — odczyt
+// zostaje wyłącznie dla admina (D-08/D-09 nie ustaliły jeszcze ról zarządu/KR
+// per domena), zmienia się tylko zakres akcji, jaki admin może przefiltrować.
+const DOMAIN_ACTION_PREFIXES = {
+  access: ['role_grant.', 'invitation.', 'user.', 'session.', 'school_year.grants_expired', 'access.denied'],
+  finance: ['payment.', 'ledger.', 'reconciliation.', 'report.audit.'],
+  email: ['email.'],
+  security: ['mfa.', 'auth.'],
+  documents: ['document.', 'export.', 'print.'],
+  year_close: ['year_close.', 'ledger_opening_balance.'],
+};
+
+function parseAuditFilters(url) {
+  const domain = url.searchParams.get('domain');
+  if (domain !== null && !Object.hasOwn(DOMAIN_ACTION_PREFIXES, domain)) throw new RequestError('invalid_domain');
+  const actorId = optionalId(url.searchParams.get('actorId'), 'invalid_actor_id');
+  const schoolYearId = optionalId(url.searchParams.get('schoolYearId'), 'invalid_school_year_id');
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  if (from !== null && Number.isNaN(Date.parse(from))) throw new RequestError('invalid_from');
+  if (to !== null && Number.isNaN(Date.parse(to))) throw new RequestError('invalid_to');
+  return { domain, actorId, schoolYearId, from, to };
+}
+
+async function listAudit(env, url, json, actorId) {
   const limitParam = url.searchParams.get('limit');
   const limit = limitParam === null ? 100 : Number(limitParam);
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST) throw new RequestError('invalid_limit');
+  const filters = parseAuditFilters(url);
+  const values = [];
+  const conditions = [];
+  if (filters.domain) {
+    conditions.push(`(${DOMAIN_ACTION_PREFIXES[filters.domain].map((prefix) => {
+      values.push(`${prefix}%`);
+      return `action LIKE $${values.length}`;
+    }).join(' OR ')})`);
+  } else {
+    values.push(AUDIT_ACTIONS);
+    conditions.push(`action = ANY($${values.length}::text[])`);
+  }
+  if (filters.actorId) { values.push(filters.actorId); conditions.push(`actor_id = $${values.length}`); }
+  if (filters.from) { values.push(filters.from); conditions.push(`occurred_at >= $${values.length}`); }
+  if (filters.to) { values.push(filters.to); conditions.push(`occurred_at <= $${values.length}`); }
+  if (filters.schoolYearId) {
+    values.push(filters.schoolYearId);
+    conditions.push(`metadata_json ->> 'schoolYearId' = $${values.length}`);
+  }
+  values.push(limit);
   const { rows } = await env.db.query(
     `SELECT id, actor_id, action, entity_type, entity_id, occurred_at, metadata_json
        FROM audit_events
-      WHERE action = ANY($1::text[])
+      WHERE ${conditions.join(' AND ')}
       ORDER BY occurred_at DESC, id
-      LIMIT $2`,
-    [AUDIT_ACTIONS, limit],
+      LIMIT $${values.length}`,
+    values,
   );
+  // #181 pkt 4: odczyt dziennika sam zapisuje zdarzenie, bez parametrów zapytania.
+  await insertAuditEvent(env.db, {
+    actorId, action: 'audit.viewed', entityType: 'audit_log', entityId: filters.domain ?? 'access',
+    metadata: {},
+  });
   return json({
     events: rows.map((row) => ({
       id: row.id, actorId: row.actor_id ?? null, action: row.action, entityType: row.entity_type,
       entityId: row.entity_id, occurredAt: isoTimestamp(row.occurred_at),
+      metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
+    })),
+  });
+}
+
+// #181: historia jednego obiektu. Wariant zachowawczy — tylko admin (jak cały
+// moduł); role finansowe/kampanii własnego zakresu (skarbnik widzi historię
+// swojej wpłaty) zostają do decyzji D-08/D-09, kiedy dojdzie osobna trasa
+// spoza /api/admin z ich autoryzacją. Etykieta roli aktora w chwili zdarzenia
+// (z issue) nie jest tu liczona — wymagałaby złączenia z historią przydziałów
+// ról po czasie; odłożone jako osobne rozszerzenie.
+const ENTITY_TABLES = {
+  payment_entry: 'payment_entries',
+  ledger_entry: 'ledger_entries',
+  reconciliation: 'bank_reconciliations',
+  email_campaign: 'email_campaigns',
+};
+// Zdarzenia powiązane (korekta, przypisanie, zwrot, dopasowanie…) mają własny
+// entity_type/entity_id, a odniesienie do obiektu głównego trzymają w
+// metadanych pod tym kluczem (konwencja już istniejąca w routes/payments.js,
+// ledger.js, reconciliation.js — patrz ich insertAuditEvent).
+const RELATED_METADATA_KEY = {
+  payment_entry: 'paymentEntryId',
+  ledger_entry: 'ledgerEntryId',
+  reconciliation: 'reconciliationId',
+  email_campaign: 'campaignId',
+};
+
+async function entityAudit(env, entityType, entityId, json, actorId) {
+  const table = ENTITY_TABLES[entityType];
+  if (!table) throw new RequestError('invalid_entity_type');
+  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
+  if (!exists.length) throw new RequestError('not_found', 404);
+  const { rows } = await env.db.query(
+    `SELECT id, actor_id, action, occurred_at, metadata_json
+       FROM audit_events
+      WHERE (entity_type = $1 AND entity_id = $2) OR metadata_json ->> $3 = $2
+      ORDER BY occurred_at, id`,
+    [entityType, entityId, RELATED_METADATA_KEY[entityType]],
+  );
+  await insertAuditEvent(env.db, {
+    actorId, action: 'audit.viewed', entityType, entityId, metadata: {},
+  });
+  return json({
+    entityType, entityId,
+    events: rows.map((row) => ({
+      id: row.id, actorId: row.actor_id ?? null, action: row.action, occurredAt: isoTimestamp(row.occurred_at),
       metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
     })),
   });
@@ -576,6 +683,11 @@ async function route(request, env, url, json, actorId) {
   const path = url.pathname.slice(PREFIX.length).split('/');
   const method = request.method;
   const [section, rawId, action, ...rest] = path;
+  // GET /api/admin/audit/entity/{entityType}/{entityId} (#181): jedyna trasa
+  // z czterema segmentami, więc obsługiwana przed ogólnym `if (rest.length)`.
+  if (section === 'audit' && rawId === 'entity' && rest.length === 1 && method === 'GET') {
+    return entityAudit(env, action, decodeId(rest[0]), json, actorId);
+  }
   if (rest.length) return null;
 
   if (section === 'users') {
@@ -605,7 +717,7 @@ async function route(request, env, url, json, actorId) {
       return expireSchoolYear(env, actorId, decodeId(rawId), request, json);
     }
   }
-  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json);
+  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId);
   return undefined;
 }
 
