@@ -11,6 +11,7 @@
 // Separator pól: średnik (Excel PL/BE), przecinek dziesiętny.
 
 import { toSafeInteger } from './routes/payments.js';
+import { formatEur } from '../../panel/money.js';
 
 const FORMULA_START = /^[\t\r]|^\s*[=+\-@＝＋－＠]/;
 
@@ -19,12 +20,12 @@ function quote(text) {
   return text;
 }
 
-// Centy EUR -> „1234,56” (przecinek dziesiętny, bez separatora tysięcy).
+// Centy EUR -> „1234,56” (przecinek dziesiętny, bez separatora tysięcy — patrz
+// docs/EXPORT.md). #173: formatowanie samo pochodzi z panel/money.js; ten
+// wrapper zachowuje wcześniejszy błąd techniczny (zamiast cichej utraty
+// precyzji) dla BIGINT poza zakresem bezpiecznych liczb całkowitych.
 export function formatEuro(cents) {
-  const value = toSafeInteger(cents);
-  const sign = value < 0 ? '-' : '';
-  const abs = Math.abs(value);
-  return `${sign}${Math.trunc(abs / 100)},${String(abs % 100).padStart(2, '0')}`;
+  return formatEur(toSafeInteger(cents), { style: 'csv' });
 }
 
 export function csvCell(value, type = 'text') {

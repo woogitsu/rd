@@ -21,6 +21,7 @@ import { isoTimestamp } from '../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
+import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 
@@ -179,12 +180,19 @@ function parseCsvDate(value) {
   return null;
 }
 
+// #173: jeden moduł kwot (panel/money.js) — akceptuje też „1 234,56”, „1.234,56”
+// (zapis belgijski) i „12,50 €”; komunikat rozróżnia format od limitu kwoty.
 function parseCsvAmount(value) {
-  const text = value.replace(/[\s ]/g, '').replace(/EUR$/i, '');
-  const match = text.match(/^([+-]?)(\d{1,7})(?:[.,](\d{1,2}))?$/);
-  if (!match) return null;
-  const cents = Number(match[2]) * 100 + Number((match[3] ?? '0').padEnd(2, '0'));
-  return match[1] === '-' ? -cents : cents;
+  try {
+    const cents = parseStatementAmount(value, { max: MAX_LINE_CENTS });
+    if (cents === 0) return { error: 'invalid_statement_line' };
+    return { cents };
+  } catch (error) {
+    if (error instanceof MoneyError) {
+      return { error: error.code === 'amount_out_of_range' ? 'statement_amount_out_of_range' : 'invalid_statement_line' };
+    }
+    throw error;
+  }
 }
 
 export function parseStatementCsv(text) {
@@ -195,11 +203,11 @@ export function parseStatementCsv(text) {
   if (column('date') < 0 || column('amount') < 0) throw new RequestError('invalid_csv_header');
   return rows.map((cells, index) => {
     const bookedOn = parseCsvDate(cells[column('date')] ?? '');
-    const amountCents = parseCsvAmount(cells[column('amount')] ?? '');
-    if (!bookedOn || amountCents === null) {
-      throw new RequestError('invalid_statement_line', 400, { line: index + 1 });
+    const amount = parseCsvAmount(cells[column('amount')] ?? '');
+    if (!bookedOn || amount.error) {
+      throw new RequestError(amount?.error ?? 'invalid_statement_line', 400, { line: index + 1 });
     }
-    return { bookedOn, amountCents, reference: column('reference') >= 0 ? cells[column('reference')] ?? null : null };
+    return { bookedOn, amountCents: amount.cents, reference: column('reference') >= 0 ? cells[column('reference')] ?? null : null };
   });
 }
 
