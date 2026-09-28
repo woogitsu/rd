@@ -64,6 +64,7 @@ test('labels, scope and audit descriptions are Polish and contain identifiers on
   assert.equal(scopeLabel({ classId: 'c-1a', schoolYearId: 'y-2026' }, classes, yearMap), 'klasa 1A, rok 2026/27');
   assert.equal(scopeLabel({}, classes, yearMap), 'cała Rada');
   assert.equal(errorMessage('last_admin_grant'), 'Nie można odebrać sobie ostatniego aktywnego przydziału administratora.');
+  assert.match(errorMessage('cannot_grant_self'), /Nie można nadać roli własnemu kontu/);
   assert.match(errorMessage(undefined, 503), /niedostępna/);
   assert.match(errorMessage('weird', 400), /weird/);
   assert.match(confirmationText('disable', 'u-1'), /sesje zostaną wycofane/);

@@ -92,6 +92,7 @@ export const MESSAGES = Object.freeze({
   grant_not_found: "Nie znaleziono przydziału.",
   last_admin_grant: "Nie można odebrać sobie ostatniego aktywnego przydziału administratora.",
   cannot_disable_self: "Nie można wyłączyć własnego konta.",
+  cannot_grant_self: "Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu.",
   cannot_reset_own_mfa: "Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora.",
   invalid_expires_at: "Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata).",
   invalid_ttl: "Ważność zaproszenia: od 1 do 336 godzin.",
