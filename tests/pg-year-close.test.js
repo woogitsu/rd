@@ -345,6 +345,18 @@ test('#212: dwa równoległe „Zamknij rok” (dwie osoby albo podwójne klikni
   const { db, env, cookies } = await setup();
   try {
     await startAndConfirm(env, cookies);
+    // Świeże MFA TUŻ PRZED zamknięciem (nie tylko przy seedUserSession w setup()):
+    // `seedUserSession` zapisuje mfa_verified_at jako zegar ścienny Node.js w
+    // chwili tworzenia sesji (na początku testu). `startAndConfirm` wykonuje
+    // jeszcze 7 żądań z własnymi transakcjami — pod obciążeniem (współdzielony
+    // runner CI, kilka ciężkich instancji PGlite naraz) czas ścienny między
+    // seedUserSession a tym miejscem bywał na tyle długi, że przekraczał próg
+    // świeżości MFA (15 min, #384/MFA_STEP_UP_MAX_AGE_SECONDS) i `/close`
+    // odpowiadał 403 `mfa_stale` zamiast <300 — stąd niestabilność testu.
+    // Test dwóch równoległych zamknięć ma sprawdzać wyścig w year-close.js, nie
+    // upływ czasu w fixture, więc odświeżamy MFA obu aktorów bezpośrednio przed
+    // wywołaniem, niezależnie od tego, ile wcześniej trwał `startAndConfirm`.
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id IN ('u-board-b', 'u-board-global')");
     // Dwóch różnych członków zarządu (żaden nie rozpoczynał — boardA
     // rozpoczęła) naraz. PGlite serializuje same transakcje, ale obie
     // odpowiedzi przechodzą przez tę samą ścieżkę kodu co na prawdziwym
@@ -372,6 +384,10 @@ test('#212: podwójne kliknięcie „Zamknij rok” przez tę samą osobę — b
   const { db, env, cookies } = await setup();
   try {
     await startAndConfirm(env, cookies);
+    // Ta sama przyczyna niestabilności jak w teście wyżej (zob. komentarz tam):
+    // świeże MFA tuż przed żądaniem, niezależnie od czasu ściennego zużytego
+    // przez `startAndConfirm` pod obciążeniem.
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-board-global'");
     const [a, b] = await Promise.all([
       post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
       post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
