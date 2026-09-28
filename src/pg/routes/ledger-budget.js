@@ -1,12 +1,19 @@
 // Preliminarz i kategorie księgi przez API (#107). Prototyp — nie jest wdrożony.
 //
-//   POST /api/ledger/categories                          (Idempotency-Key) { schoolYearId, direction, name }
 //   POST /api/ledger/categories/{id}/deactivation        (Idempotency-Key) { reason }
 //   POST /api/ledger/budget                              (Idempotency-Key) { schoolYearId, categoryId, plannedCents, note? }
 //   POST /api/ledger/budget/{lineId}/revisions           (Idempotency-Key) { plannedCents, reason }
 //   POST /api/ledger/budget/adoptions                    (Idempotency-Key) { schoolYearId, adoptedOn, note, resolutionId? }
 //   GET  /api/ledger/budget/history?schoolYearId=…       wszystkie wersje linii i przyjęcia
 //   GET  /api/ledger/budget/execution?schoolYearId=…[&asOf=RRRR-MM-DD][&format=json|csv|html]
+//
+// Tworzenie kategorii (POST /api/ledger/categories) obsługuje ledger.js
+// (#207) — ta sama trasa, z opcjonalnym nagłówkiem Idempotency-Key, którego
+// ten moduł zawsze używa (patrz komentarz przy createCategory w ledger.js).
+// Uniknięcie dwóch tras pod tym samym adresem (kolizja #107/#207 wykryta przy
+// scaleniu z main: registerowany jako pierwszy moduł ledger.js zawsze
+// przechwytywał POST /api/ledger/categories, więc trasa poniżej nigdy nie była
+// wywoływana — klucz idempotencji nie trafiał do bazy).
 //
 // Bilans otwarcia i jego poprawki mają już trasy w ledger-cash.js (#199).
 // Wszystkie zapisy są niezmienne: nowa wersja linii wskazuje poprzednią
@@ -190,39 +197,6 @@ function respond(json, outcome) {
 
 function categoryFromRow(row) {
   return { id: row.id, schoolYearId: row.school_year_id, direction: row.direction, name: row.name, active: row.active };
-}
-
-async function createCategory(request, env, json) {
-  const key = readIdempotencyKey(request);
-  const data = await readJson(request);
-  if (!validId(data.schoolYearId) || !DIRECTIONS.has(data.direction)) throw new RequestError('invalid_request');
-  const input = { schoolYearId: data.schoolYearId, direction: data.direction, name: text(data.name, 2, 100) };
-  const context = await requireAccess(request, env, FINANCIAL_ROLES, input.schoolYearId);
-  const actorId = context.session.user.id;
-  const outcome = await idempotentWrite(env, {
-    loadByKey: async (executor) => (await executor.query(
-      'SELECT id, school_year_id, direction, name, active, created_by FROM ledger_categories WHERE idempotency_key = $1', [key],
-    )).rows[0] ?? null,
-    matches: (row) => row.created_by === actorId && row.school_year_id === input.schoolYearId
-      && row.direction === input.direction && row.name === input.name,
-    toBody: (row) => ({ category: categoryFromRow(row) }),
-    write: async (tx) => {
-      const year = await tx.query('SELECT 1 FROM school_years WHERE id = $1', [input.schoolYearId]);
-      if (!year.rows.length) throw new RequestError('school_year_not_found', 404);
-      const id = crypto.randomUUID();
-      const { rows } = await tx.query(
-        `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, school_year_id, direction, name, active`,
-        [id, input.schoolYearId, input.direction, input.name, actorId, key],
-      );
-      await insertAuditEvent(tx, {
-        actorId, action: 'ledger.category.created', entityType: 'ledger_category', entityId: id,
-        metadata: { schoolYearId: input.schoolYearId },
-      });
-      return { category: categoryFromRow(rows[0]) };
-    },
-  });
-  return respond(json, outcome);
 }
 
 async function deactivateCategory(request, env, categoryId, json) {
@@ -632,14 +606,13 @@ async function execution(request, env, url, json) {
 export async function handle(request, env, url, json) {
   const path = url.pathname;
   const method = request.method;
-  const isCategories = path === '/api/ledger/categories' && method === 'POST';
   const deactivation = path.match(/^\/api\/ledger\/categories\/([^/]+)\/deactivation$/);
   const isBudget = path === '/api/ledger/budget' && method === 'POST';
   const revision = path.match(/^\/api\/ledger\/budget\/([^/]+)\/revisions$/);
   const isAdoptions = path === '/api/ledger/budget/adoptions';
   const isHistory = path === '/api/ledger/budget/history';
   const isExecution = path === '/api/ledger/budget/execution';
-  if (!isCategories && !deactivation && !isBudget && !revision && !isAdoptions && !isHistory && !isExecution) return null;
+  if (!deactivation && !isBudget && !revision && !isAdoptions && !isHistory && !isExecution) return null;
   if (method === 'POST' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
   try {
     if (isHistory || isExecution) {
@@ -647,7 +620,6 @@ export async function handle(request, env, url, json) {
       return isHistory ? await history(request, env, url, json) : await execution(request, env, url, json);
     }
     if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
-    if (isCategories) return await createCategory(request, env, json);
     if (deactivation) return await deactivateCategory(request, env, decodeId(deactivation[1]), json);
     if (isBudget) return await createLine(request, env, json);
     if (isAdoptions) return await createAdoption(request, env, json);

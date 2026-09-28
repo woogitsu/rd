@@ -667,14 +667,13 @@ export const ROUTE_MATRIX = Object.freeze([
 
   // ---------- preliminarz i kategorie (#107) ----------
   // Zapis kategorii i linii: role finansowe z MFA (jak księga); przyjęcie preliminarza: wyłącznie zarząd.
-  {
-    id: 'ledgerBudget.createCategory', module: 'ledger-budget', method: 'POST', path: '/api/ledger/categories',
-    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
-    build: ({ target, key }) => ({
-      path: '/api/ledger/categories', headers: withKey(key),
-      body: { schoolYearId: target.schoolYearId, direction: 'expense', name: `Kat ${safeKey(key).slice(-60)}` },
-    }),
-  },
+  //
+  // POST /api/ledger/categories z nagłówkiem Idempotency-Key (jak zawsze
+  // wysyła go moduł ledger-budget.js) to ta sama trasa co ledger.categoryCreate
+  // powyżej — macierz wymaga unikalnej pary metoda+ścieżka, więc granice ról
+  // sprawdza ten jeden wpis; zachowanie specyficzne dla nagłówka (replay,
+  // 409 idempotency_conflict/category_exists) mają testy jednostkowe
+  // tests/pg-ledger-budget.test.js i tests/pg-ledger-categories-api.test.js.
   {
     id: 'ledgerBudget.deactivateCategory', module: 'ledger-budget', method: 'POST', path: '/api/ledger/categories/:categoryId/deactivation',
     targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh', object: { kind: 'ledgerCategory' },

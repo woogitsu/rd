@@ -440,32 +440,77 @@ async function listCategories(request, env, url, json) {
   return json({ categories: rows.map((row) => ({ id: row.id, direction: row.direction, name: row.name })) });
 }
 
-// #207: kategorie księgi przez API (dotąd tylko SQL). Podwójne kliknięcie
-// z tą samą nazwą/kierunkiem/rokiem nie tworzy drugiej kategorii — trafia
-// w UNIQUE(school_year_id, direction, name) i odtwarza istniejący wiersz
-// (200, nie 201), tak jak reszta modułu traktuje ponowienie.
+function readOptionalIdempotencyKey(request) {
+  const key = request.headers.get('Idempotency-Key')?.trim();
+  if (!key) return null;
+  if (!IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
+  return key;
+}
+
+function categoryRowMatches(row, actorId, input) {
+  return row.created_by === actorId && row.school_year_id === input.schoolYearId
+    && row.direction === input.direction && row.name === input.name;
+}
+
+// #207/#107: kategorie księgi przez API. Nagłówek Idempotency-Key jest
+// opcjonalny (moduł ledger-budget.js — preliminarz, #107 — woła tę samą
+// trasę i zawsze go wysyła):
+// * bez nagłówka — zachowanie #207: podwójne kliknięcie z tą samą
+//   nazwą/kierunkiem/rokiem nie tworzy drugiej kategorii, trafia w
+//   UNIQUE(school_year_id, direction, name) i odtwarza istniejący wiersz
+//   (200, nie 201);
+// * z nagłówkiem — ten sam klucz i ta sama treść odtwarza wiersz (200); ten
+//   sam klucz z INNĄ treścią to 409 idempotency_conflict (ktoś inny albo
+//   inne żądanie już go użyło); nowy, nieużyty klucz trafiający w
+//   UNIQUE(school_year_id, direction, name) istniejącej kategorii to 409
+//   category_exists — nie ma czego odtworzyć, to inne żądanie.
 async function createCategory(request, env, json) {
+  const key = readOptionalIdempotencyKey(request);
   const input = parseCategoryInput(await readJson(request));
   const context = await requireFinancialContext(request, env, input.schoolYearId);
   const actorId = context.session.user.id;
+  if (key) {
+    const { rows } = await env.db.query(
+      'SELECT id, school_year_id, direction, name, active, created_by FROM ledger_categories WHERE idempotency_key = $1',
+      [key],
+    );
+    if (rows[0]) {
+      if (!categoryRowMatches(rows[0], actorId, input)) throw new RequestError('idempotency_conflict', 409);
+      return json({ category: categoryFromRow(rows[0]) }, 200);
+    }
+  }
   let result;
   try {
     result = await env.db.transaction(async (tx) => {
       const inserted = await tx.query(
-        `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, school_year_id, direction, name, active`,
-        [crypto.randomUUID(), input.schoolYearId, input.direction, input.name, actorId],
+        [crypto.randomUUID(), input.schoolYearId, input.direction, input.name, actorId, key],
       );
       const row = inserted.rows[0];
       await insertAuditEvent(tx, {
-        actorId, action: 'ledger_category.created', entityType: 'ledger_category', entityId: row.id,
+        actorId, action: 'ledger.category.created', entityType: 'ledger_category', entityId: row.id,
+        metadata: { schoolYearId: input.schoolYearId },
       });
       return { created: true, row };
     });
   } catch (error) {
     if (!isUniqueError(error)) mapDatabaseError(error);
-    // Jedyny INSERT tej funkcji: konflikt może pochodzić wyłącznie z
+    if (key && error?.constraint === 'ledger_categories_idempotency_key_key') {
+      // Równoległe podwójne kliknięcie z tym samym kluczem: ktoś inny właśnie
+      // wstawił wiersz — odczyt NOWYM zapytaniem, poza przerwaną transakcją.
+      const raced = await env.db.query(
+        'SELECT id, school_year_id, direction, name, active, created_by FROM ledger_categories WHERE idempotency_key = $1',
+        [key],
+      );
+      if (raced.rows[0] && categoryRowMatches(raced.rows[0], actorId, input)) {
+        return json({ category: categoryFromRow(raced.rows[0]) }, 200);
+      }
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    if (key) throw new RequestError('category_exists', 409);
+    // Jedyny inny INSERT tej funkcji: konflikt może pochodzić wyłącznie z
     // UNIQUE(school_year_id, direction, name) — id jest losowym UUID. Błąd
     // przerywa transakcję (25P02 przy kolejnym zapytaniu na tym samym tx),
     // więc odczyt istniejącego wiersza idzie NOWYM zapytaniem, poza transakcją,

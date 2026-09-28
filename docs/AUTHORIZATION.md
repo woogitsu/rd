@@ -93,7 +93,6 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
-| `POST /api/ledger/categories` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #107; nazwa zajęta: 409 `category_exists` |
 | `POST /api/ledger/categories/:categoryId/deactivation` | jak wyżej, rok kategorii | tak | 403 | #107; wpis historii z powodem; już wyłączona: 409 `category_inactive` |
 | `POST /api/ledger/budget` | jak wyżej | tak | 403 | #107; pierwsza wersja linii; kolejna: 409 `budget_line_exists` |
 | `POST /api/ledger/budget/:lineId/revisions` | jak wyżej, rok linii | tak | 403 | #107; nowa wersja z `supersedes_id`; nieaktualna wersja lub równoległa rewizja: 409 `budget_line_superseded` |
@@ -105,7 +104,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/opening-balance?schoolYearId=:year` | jak wyżej | tak | 403 | #199 |
 | `POST /api/ledger/opening-balance` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #199; admin i skarbnik: 403; tylko pierwszy rok (409 `not_first_school_year`) |
 | `POST /api/ledger/opening-balance/adjustments` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #199; admin i skarbnik: 403; zamknięty rok: 409 |
-| `POST /api/ledger/categories` | admin, zarząd, skarbnik — przydział bez klasy, rok kategorii | tak | 403 | SR-01; ta sama nazwa+kierunek+rok co istniejąca kategoria: 200 z istniejącym wierszem (podwójne kliknięcie), nie 201; zamknięty rok: 409 `school_year_closed` (trigger a0_year_freeze z 0017, bez zmian w #207) |
+| `POST /api/ledger/categories` | admin, zarząd, skarbnik — przydział bez klasy, rok kategorii | tak | 403 | SR-01; nagłówek `Idempotency-Key` opcjonalny (#207 bez niego, #107/ledger-budget.js z nim zawsze) — bez klucza: ta sama nazwa+kierunek+rok co istniejąca kategoria zwraca 200 z istniejącym wierszem (podwójne kliknięcie), nie 201; z kluczem: ten sam klucz i treść — 200 (replay); ten sam klucz, inna treść — 409 `idempotency_conflict`; nowy klucz na zajętą nazwę+kierunek+rok — 409 `category_exists`; zamknięty rok: 409 `school_year_closed` (trigger a0_year_freeze z 0017, bez zmian w #207) |
 | `POST /api/ledger/categories/:categoryId/deactivate` | jak wyżej, rok kategorii (sprawdzany po odczycie wiersza) | tak | 403 / 404 | już nieaktywna: 200 bez drugiego zdarzenia audytu (idempotentne) |
 | `POST /api/ledger/categories/copy` | jak wyżej, przydział bez klasy w roku DOCELOWYM (rok źródłowy nie wymaga osobnego dostępu — kopiowane są wyłącznie nazwy i kierunki kategorii, bez kwot) | tak | 403 | #207; `dryRun: true` — podgląd bez zapisu; zapis: jeden wielowierszowy INSERT z `ON CONFLICT … DO NOTHING`, nie duplikuje przy ponowieniu; zamknięty rok docelowy: 409 `school_year_closed` |
 | `GET /api/email/campaigns?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin techniczny: 403; SR-01 |
