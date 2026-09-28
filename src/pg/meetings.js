@@ -219,6 +219,60 @@ function actorClassIds(actor, schoolYearId) {
       { roles: ['representative'], schoolYearId, classId }));
 }
 
+// #171 (D-08, wariant najbardziej zachowawczy do czasu decyzji zarządu): flaga
+// domyślnie wyłączona. Włączona wartością dokładnie 'representative' (zgodnie
+// z propozycją issue) pozwala przedstawicielowi klasy prowadzić WYŁĄCZNIE
+// zebrania kind='class' własnej klasy — nigdy ogólne ani zarządu, nigdy inną
+// klasę. Nie rozszerza to zatwierdzania protokołu, widoczności, ustalania
+// quorum ani uchwał: te trasy zostają MANAGE_ROLES-only bez zmian (patrz
+// meetingForManage, niżej), co samo w sobie realizuje kryterium akceptacji
+// „przedstawiciel nie zatwierdza protokołu, który sam utworzył”.
+function classHostEnabled(env) {
+  const raw = env && Object.hasOwn(env, 'MEETINGS_CLASS_HOST') ? env.MEETINGS_CLASS_HOST : process.env.MEETINGS_CLASS_HOST;
+  return raw === 'representative';
+}
+
+function isClassHost(actor, env, { schoolYearId, classId, kind }) {
+  if (!classHostEnabled(env) || kind !== 'class' || !classId) return false;
+  return isAuthorized(contextFor(actor, classId), { roles: ['representative'], schoolYearId, classId });
+}
+
+function hasManageRole(actor, { schoolYearId, classId }) {
+  try {
+    authorize(actor, MANAGE_ROLES, { schoolYearId, classId });
+    return true;
+  } catch (error) {
+    if (error instanceof MeetingError && error.status === 403) return false;
+    throw error;
+  }
+}
+
+// Wpisy obecności/porządku/protokołu zebrania klasowego prowadzonego przez
+// przedstawiciela (flaga włączona). Ustalanie quorum, zatwierdzanie protokołu,
+// widoczność i uchwały NIE korzystają z tej funkcji — zostają przy
+// meetingForManage (admin/board), świadome zawężenie zakresu (patrz PR #171).
+async function meetingForManageOrClassHost(db, actor, meetingId, env) {
+  const meeting = await loadMeeting(db, meetingId);
+  const scope = { schoolYearId: meeting.school_year_id, classId: meeting.class_id };
+  if (hasManageRole(actor, scope)) return { meeting, viaClassHost: false };
+  if (isClassHost(actor, env, { ...scope, kind: meeting.kind })) return { meeting, viaClassHost: true };
+  throw new MeetingError('forbidden', 403);
+}
+
+// Opiekun należący do klasy zebrania (dla ograniczenia listy obecności prowadzonej
+// przez przedstawiciela do własnej klasy — #171, minimalizacja jak w families/).
+async function guardianInClass(db, guardianId, classId, schoolYearId) {
+  const row = await one(db,
+    `SELECT 1 FROM student_guardians sg
+       JOIN enrollments e ON e.student_id = sg.student_id
+      WHERE sg.guardian_id = $1 AND e.class_id = $2 AND e.school_year_id = $3
+        AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
+        AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
+      LIMIT 1`,
+    [guardianId, classId, schoolYearId]);
+  return Boolean(row);
+}
+
 // ---------- database helpers ----------
 
 async function inTransaction(db, work) {
@@ -498,14 +552,17 @@ export async function listMeetings(db, actor, input = {}) {
   return { meetings: visible.map(meetingFromRow) };
 }
 
-export async function getMeeting(db, actor, input = {}) {
+export async function getMeeting(db, actor, input = {}, env) {
   const meeting = await loadMeeting(db, input.meetingId);
   try {
     authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
   } catch (error) {
-    // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
-    if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
-    throw error;
+    if (!(error instanceof MeetingError) || error.status !== 403
+        || !isClassHost(actor, env, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, kind: meeting.kind })) {
+      // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
+      if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
+      throw error;
+    }
   }
   const [agenda, attendees, checks, minutes, resolutions] = await Promise.all([
     db.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]),
@@ -527,7 +584,7 @@ export async function getMeeting(db, actor, input = {}) {
   };
 }
 
-export async function createMeeting(db, actor, input = {}) {
+export async function createMeeting(db, actor, input = {}, env) {
   const key = idempotencyKey(input.idempotencyKey);
   const schoolYearId = requireId(input.schoolYearId);
   if (!KINDS.has(input.kind)) throw new MeetingError('invalid_request');
@@ -545,7 +602,10 @@ export async function createMeeting(db, actor, input = {}) {
     status,
     ...parseQuorumRule(input),
   };
-  authorize(actor, MANAGE_ROLES, { schoolYearId, classId });
+  if (!hasManageRole(actor, { schoolYearId, classId })
+      && !isClassHost(actor, env, { schoolYearId, classId, kind: input.kind })) {
+    throw new MeetingError('forbidden', 403);
+  }
   const result = await idempotent(db, actor, key, 'meeting.create', data, async tx => {
     const id = randomUUID();
     await tx.query(
@@ -562,8 +622,8 @@ export async function createMeeting(db, actor, input = {}) {
   return { meeting: meetingFromRow(await loadMeeting(db, result.entityId)), replayed: result.replayed };
 }
 
-export async function updateMeeting(db, actor, input = {}) {
-  const meeting = await meetingForManage(db, actor, input.meetingId);
+export async function updateMeeting(db, actor, input = {}, env) {
+  const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
   const changes = {};
   if (input.title !== undefined) changes.title = text(input.title, 3, 200);
   if (input.scheduledAt !== undefined) changes.scheduled_at = timestamp(input.scheduledAt);
@@ -615,9 +675,9 @@ export async function updateMeeting(db, actor, input = {}) {
   return { meeting: meetingFromRow(await loadMeeting(db, meeting.id)) };
 }
 
-export async function addAgendaItem(db, actor, input = {}) {
+export async function addAgendaItem(db, actor, input = {}, env) {
   const key = idempotencyKey(input.idempotencyKey);
-  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
   const data = {
     meetingId: meeting.id,
     title: text(input.title, 3, 300),
@@ -640,12 +700,21 @@ export async function addAgendaItem(db, actor, input = {}) {
 }
 
 // Records or corrects one attendee (upsert by person reference, naturally idempotent).
-export async function recordAttendance(db, actor, input = {}) {
-  const meeting = await meetingForManage(db, actor, input.meetingId);
+export async function recordAttendance(db, actor, input = {}, env) {
+  const { meeting, viaClassHost } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
   const userId = optionalId(input.userId);
   const guardianId = optionalId(input.guardianId);
   if (Boolean(userId) === Boolean(guardianId)) throw new MeetingError('invalid_request');
   if (!CAPACITIES.has(input.capacity)) throw new MeetingError('invalid_request');
+  // Przedstawiciel prowadzący zebranie klasowe zapisuje wyłącznie siebie (userId)
+  // albo opiekuna z tej samej klasy (#171) — lista obecności nie ujawnia opiekunów
+  // spoza klasy, tak samo jak minimalizacja w families/.
+  if (viaClassHost) {
+    if (userId && userId !== actor.userId) throw new MeetingError('forbidden', 403);
+    if (guardianId && !(await guardianInClass(db, guardianId, meeting.class_id, meeting.school_year_id))) {
+      throw new MeetingError('invalid_reference');
+    }
+  }
   const votingEligible = bool(input.votingEligible);
   const present = bool(input.present);
   const row = await mutate(db, async tx => {
@@ -699,9 +768,9 @@ export async function determineQuorum(db, actor, input = {}) {
 
 // ---------- minutes ----------
 
-export async function createMinutesVersion(db, actor, input = {}) {
+export async function createMinutesVersion(db, actor, input = {}, env) {
   const key = idempotencyKey(input.idempotencyKey);
-  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
   const data = {
     meetingId: meeting.id,
     body: text(input.body, 10, 200000),
@@ -1069,7 +1138,7 @@ export async function handle(request, env, url, json) {
           schoolYearId: query.get('schoolYearId'), number: query.get('number'),
         }));
       }
-      return json(await getMeeting(db, actor, { meetingId: target.meetingId }));
+      return json(await getMeeting(db, actor, { meetingId: target.meetingId }, env));
     }
 
     const body = await readJson(request);
@@ -1078,12 +1147,12 @@ export async function handle(request, env, url, json) {
     if (target.create) input.idempotencyKey = request.headers.get('Idempotency-Key')?.trim();
 
     const handlers = {
-      create: () => createMeeting(db, actor, input),
-      update: () => updateMeeting(db, actor, input),
-      agenda: () => addAgendaItem(db, actor, input),
-      attendance: () => recordAttendance(db, actor, input),
+      create: () => createMeeting(db, actor, input, env),
+      update: () => updateMeeting(db, actor, input, env),
+      agenda: () => addAgendaItem(db, actor, input, env),
+      attendance: () => recordAttendance(db, actor, input, env),
       quorum: () => determineQuorum(db, actor, input),
-      minutes: () => createMinutesVersion(db, actor, input),
+      minutes: () => createMinutesVersion(db, actor, input, env),
       approve: () => approveMinutes(db, actor, input),
       visibility: () => setMinutesVisibility(db, actor, input),
       resolution: () => createResolution(db, actor, input),
