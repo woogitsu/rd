@@ -187,6 +187,17 @@ test('enrollment stores the secret encrypted only and confirmation rotates the s
   assert.deepEqual(await replace.json(), { error: 'mfa_required' });
   const allowed = await handlePgRequest(post('/api/mfa/enroll', newCookie), env);
   assert.equal(allowed.status, 201);
+
+  // #150 (krok w górę): wymiana czynnika na sesji z MFA potwierdzonym dawno
+  // (przejęta sesja) — 403 mfa_stale, bez nowego czynnika; świeży kod odblokowuje.
+  await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-enroll' AND revoked_at IS NULL");
+  const pendingBefore = (await db.query("SELECT count(*)::int AS n FROM user_mfa_factors WHERE user_id = 'u-enroll'")).rows[0].n;
+  const stale = await handlePgRequest(post('/api/mfa/enroll', newCookie), env);
+  assert.equal(stale.status, 403);
+  assert.deepEqual(await stale.json(), { error: 'mfa_stale' });
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM user_mfa_factors WHERE user_id = 'u-enroll'")).rows[0].n, pendingBefore);
+  await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-enroll' AND revoked_at IS NULL");
+  assert.equal((await handlePgRequest(post('/api/mfa/enroll', newCookie), env)).status, 201);
 }));
 
 test('verify sets MFA only on the calling session and refuses a replayed step', async () => withDb(async (db, env) => {
