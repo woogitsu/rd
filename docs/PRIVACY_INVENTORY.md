@@ -12,14 +12,16 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Tabela | Kolumna | Podmiot | Rodzaj | Kategoria | Cel | Retencja (kategoria) | Wolny tekst | Eksport roczny |
 |---|---|---|---|---|---|---|---|---|
-|`bank_reconciliation_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`bank_reconciliation_matches`|`revoke_reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania|document_financial|tak|nie|
-|`bank_reconciliation_matches`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`bank_reconciliations`|`confirmation_note`|Osoba trzecia|direct|wolny tekst|notatka potwierdzenia uzgodnienia|document_financial|tak|nie|
-|`bank_reconciliations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`bank_reconciliations`|`notes`|Osoba trzecia|direct|wolny tekst|notatka uzgodnienia banku|document_financial|tak|nie|
-|`bank_statement_imports`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`bank_statement_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`bank_reconciliation_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`bank_reconciliation_matches`|`revoke_reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania|document_financial|tak|tak|
+|`bank_reconciliation_matches`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`bank_reconciliations`|`confirmation_note`|Osoba trzecia|direct|wolny tekst|notatka potwierdzenia uzgodnienia|document_financial|tak|tak|
+|`bank_reconciliations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`bank_reconciliations`|`notes`|Osoba trzecia|direct|wolny tekst|notatka uzgodnienia banku|document_financial|tak|tak|
+|`bank_statement_imports`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`bank_statement_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`data_access_log`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`data_access_log`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie wpisu z gospodarstwem|nieustalona (D-04)|nie|nie|
 |`document_uploads`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`documents`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaign_recipients`|`email`|Opiekun|direct|kontakt|migawka adresu w chwili wysyłki|email_snapshot|nie|nie|
@@ -28,19 +30,23 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_campaigns`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`body_text`|Opiekun|direct|wolny tekst|treść kampanii e-mail|email_snapshot|tak|nie|
 |`email_campaigns`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_campaigns`|`paused_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_campaigns`|`resumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`subject`|Opiekun|direct|wolny tekst|temat kampanii e-mail|email_snapshot|tak|nie|
 |`email_suppressions`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
-|`enrollment_history`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`enrollment_history`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`enrollments`|`ended_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`enrollments`|`ended_reason`|Uczeń|direct|wolny tekst|uzasadnienie zmiany|nieustalona (D-04)|tak|tak|
 |`enrollments`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`event_revisions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`events`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
-|`guardian_contact_changes`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`guardian_contact_changes`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`guardian_contact_changes`|`new_email`|Opiekun|direct|kontakt|historia zmian kontaktu|guardian_contact|nie|nie|
 |`guardian_contact_changes`|`previous_email`|Opiekun|direct|kontakt|historia zmian kontaktu|guardian_contact|nie|nie|
 |`guardian_contact_changes`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie zmiany kontaktu|guardian_contact|tak|nie|
-|`guardian_households`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`guardian_households`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`guardian_households`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`guardian_households`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`guardians`|`contact_allowed`|Opiekun|pseudonymous|zgoda|zgoda na kontakt|nieustalona (D-04)|nie|tak|
 |`guardians`|`email`|Opiekun|direct|kontakt|kontakt z opiekunem|guardian_contact|nie|tak|
 |`guardians`|`first_name`|Opiekun|direct|identyfikacja|identyfikacja opiekuna|guardian_contact|nie|tak|
@@ -56,7 +62,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`ledger_opening_balance_adjustments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_opening_balance_adjustments`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie korekty bilansu otwarcia|document_financial|tak|tak|
 |`ledger_opening_balances`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
-|`ledger_transfers`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`ledger_transfers`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meeting_agenda_items`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meeting_agenda_items`|`description`|Członek Rady|direct|wolny tekst|punkt porządku obrad|audit_event|tak|tak|
 |`meeting_attendees`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie opiekuna z zebraniem|audit_event|nie|tak|
@@ -95,12 +101,12 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`role_grants`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`sessions`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`student_guardian_changes`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`student_guardian_changes`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`student_guardian_changes`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`student_guardian_changes`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`student_guardians`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`student_guardians`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
-|`student_households`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`student_households`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`student_households`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`student_households`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`students`|`first_name`|Uczeń|direct|identyfikacja|identyfikacja ucznia|student_identity|nie|tak|
 |`students`|`last_name`|Uczeń|direct|identyfikacja|identyfikacja ucznia|student_identity|nie|tak|
 |`user_mfa_factors`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -108,7 +114,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **95**, w tym wolnego tekstu: **22** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **101**, w tym wolnego tekstu: **23** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -124,69 +130,86 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `metadata_json` | none | — | tak |
 | `occurred_at` | none | — | tak |
 
+### `backup_runs`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `environment` | none | — | nie |
+| `error_code` | none | — | nie |
+| `finished_at` | none | — | nie |
+| `id` | none | — | nie |
+| `kind` | none | — | nie |
+| `object_key` | none | — | nie |
+| `result` | none | — | nie |
+| `row_counts` | none | — | nie |
+| `sha256` | none | — | nie |
+| `size_bytes` | none | — | nie |
+| `started_at` | none | — | nie |
+| `sums` | none | — | nie |
+
 ### `bank_reconciliation_matches`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `created_at` | none | — | nie |
-| `created_by` | pseudonymous | board_member | nie |
-| `id` | none | — | nie |
-| `idempotency_key` | none | — | nie |
-| `ledger_entry_id` | none | — | nie |
-| `payment_entry_id` | none | — | nie |
-| `reconciliation_id` | none | — | nie |
-| `revoke_reason` | direct | third_party | nie |
-| `revoked_at` | none | — | nie |
-| `revoked_by` | pseudonymous | board_member | nie |
-| `statement_line_id` | none | — | nie |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `ledger_entry_id` | none | — | tak |
+| `payment_entry_id` | none | — | tak |
+| `reconciliation_id` | none | — | tak |
+| `revoke_reason` | direct | third_party | tak |
+| `revoked_at` | none | — | tak |
+| `revoked_by` | pseudonymous | board_member | tak |
+| `statement_line_id` | none | — | tak |
 
 ### `bank_reconciliations`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `confirmation_note` | direct | third_party | nie |
-| `confirmed_at` | none | — | nie |
-| `confirmed_by` | none | — | nie |
-| `created_at` | none | — | nie |
-| `created_by` | pseudonymous | board_member | nie |
-| `difference_cents` | none | — | nie |
-| `id` | none | — | nie |
-| `idempotency_key` | none | — | nie |
-| `ledger_balance_cents` | none | — | nie |
-| `ledger_non_bank_cents` | none | — | nie |
-| `notes` | direct | third_party | nie |
-| `reference_salt` | none | — | nie |
-| `school_year_id` | none | — | nie |
-| `statement_balance_cents` | none | — | nie |
-| `statement_date` | none | — | nie |
-| `status` | none | — | nie |
+| `confirmation_note` | direct | third_party | tak |
+| `confirmed_at` | none | — | tak |
+| `confirmed_by` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `difference_cents` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `ledger_balance_cents` | none | — | tak |
+| `ledger_non_bank_cents` | none | — | tak |
+| `notes` | direct | third_party | tak |
+| `reference_salt` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `statement_balance_cents` | none | — | tak |
+| `statement_date` | none | — | tak |
+| `status` | none | — | tak |
 
 ### `bank_statement_imports`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `created_at` | none | — | nie |
-| `created_by` | pseudonymous | board_member | nie |
-| `id` | none | — | nie |
-| `idempotency_key` | none | — | nie |
-| `line_count` | none | — | nie |
-| `reconciliation_id` | none | — | nie |
-| `request_hash` | none | — | nie |
-| `source` | none | — | nie |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `line_count` | none | — | tak |
+| `reconciliation_id` | none | — | tak |
+| `request_hash` | none | — | tak |
+| `source` | none | — | tak |
 
 ### `bank_statement_lines`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `amount_cents` | none | — | nie |
-| `booked_on` | none | — | nie |
-| `created_at` | none | — | nie |
-| `created_by` | pseudonymous | board_member | nie |
-| `id` | none | — | nie |
-| `import_id` | none | — | nie |
-| `line_no` | none | — | nie |
-| `reconciliation_id` | none | — | nie |
-| `reference_hash` | none | — | nie |
+| `amount_cents` | none | — | tak |
+| `booked_on` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `import_id` | none | — | tak |
+| `line_no` | none | — | tak |
+| `reconciliation_id` | none | — | tak |
+| `reference_hash` | none | — | tak |
 
 ### `classes`
 
@@ -195,6 +218,22 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `id` | none | — | tak |
 | `name` | none | — | tak |
 | `school_year_id` | none | — | tak |
+
+### `data_access_log`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `access_kind` | none | — | nie |
+| `actor_id` | pseudonymous | board_member | nie |
+| `class_id` | none | — | nie |
+| `hit_count` | none | — | nie |
+| `household_id` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `last_seen_at` | none | — | nie |
+| `occurred_at` | none | — | nie |
+| `outcome` | none | — | nie |
+| `row_count` | none | — | nie |
+| `school_year_id` | none | — | nie |
 
 ### `document_uploads`
 
@@ -271,12 +310,17 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `daily_cap` | none | — | nie |
 | `id` | none | — | nie |
 | `idempotency_key` | none | — | nie |
+| `paused_at` | none | — | nie |
+| `paused_by` | pseudonymous | board_member | nie |
 | `queued_at` | none | — | nie |
 | `queued_by` | none | — | nie |
 | `recipients_count` | none | — | nie |
 | `recipients_hash` | none | — | nie |
+| `resumed_at` | none | — | nie |
+| `resumed_by` | pseudonymous | board_member | nie |
 | `revision_no` | none | — | tak |
 | `school_year_id` | none | — | nie |
+| `send_not_before` | none | — | nie |
 | `snapshot_built_at` | none | — | nie |
 | `snapshot_built_by` | none | — | nie |
 | `status` | none | — | nie |
@@ -364,24 +408,28 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `changed_at` | none | — | nie |
-| `changed_by` | none | — | nie |
-| `effective_on` | none | — | nie |
-| `enrollment_id` | none | — | nie |
-| `from_class_id` | none | — | nie |
-| `id` | none | — | nie |
-| `kind` | none | — | nie |
-| `reason` | none | — | nie |
-| `school_year_id` | none | — | nie |
-| `source` | none | — | nie |
-| `student_id` | pseudonymous | student | nie |
-| `to_class_id` | none | — | nie |
+| `changed_at` | none | — | tak |
+| `changed_by` | none | — | tak |
+| `effective_on` | none | — | tak |
+| `enrollment_id` | none | — | tak |
+| `from_class_id` | none | — | tak |
+| `id` | none | — | tak |
+| `kind` | none | — | tak |
+| `reason` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `source` | none | — | tak |
+| `student_id` | pseudonymous | student | tak |
+| `to_class_id` | none | — | tak |
 
 ### `enrollments`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
 | `class_id` | none | — | tak |
+| `ended_at` | none | — | tak |
+| `ended_by` | pseudonymous | board_member | tak |
+| `ended_on` | none | — | tak |
+| `ended_reason` | direct | student | tak |
 | `id` | none | — | tak |
 | `school_year_id` | none | — | tak |
 | `student_id` | pseudonymous | student | tak |
@@ -458,31 +506,31 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `changed_at` | none | — | nie |
-| `changed_by` | none | — | nie |
-| `guardian_id` | pseudonymous | guardian | nie |
-| `id` | none | — | nie |
-| `new_contact_allowed` | none | — | nie |
+| `changed_at` | none | — | tak |
+| `changed_by` | none | — | tak |
+| `guardian_id` | pseudonymous | guardian | tak |
+| `id` | none | — | tak |
+| `new_contact_allowed` | none | — | tak |
 | `new_email` | direct | guardian | nie |
-| `previous_contact_allowed` | none | — | nie |
+| `previous_contact_allowed` | none | — | tak |
 | `previous_email` | direct | guardian | nie |
 | `reason` | direct | guardian | nie |
-| `source` | none | — | nie |
+| `source` | none | — | tak |
 
 ### `guardian_households`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `created_at` | none | — | nie |
-| `created_by` | pseudonymous | board_member | nie |
-| `ended_at` | none | — | nie |
-| `ended_by` | none | — | nie |
-| `ends_on` | none | — | nie |
-| `guardian_id` | pseudonymous | guardian | nie |
-| `household_id` | none | — | nie |
-| `id` | none | — | nie |
-| `source` | none | — | nie |
-| `starts_on` | none | — | nie |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `ended_at` | none | — | tak |
+| `ended_by` | none | — | tak |
+| `ends_on` | none | — | tak |
+| `guardian_id` | pseudonymous | guardian | tak |
+| `household_id` | none | — | tak |
+| `id` | none | — | tak |
+| `source` | none | — | tak |
+| `starts_on` | none | — | tak |
 
 ### `guardians`
 
@@ -638,17 +686,17 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `amount_cents` | none | — | nie |
-| `created_at` | none | — | nie |
-| `created_by` | pseudonymous | board_member | nie |
-| `description` | none | — | nie |
-| `direction` | none | — | nie |
-| `id` | none | — | nie |
-| `idempotency_key` | none | — | nie |
-| `reverses_id` | none | — | nie |
-| `school_year_id` | none | — | nie |
-| `source_document_id` | none | — | nie |
-| `transferred_on` | none | — | nie |
+| `amount_cents` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `description` | none | — | tak |
+| `direction` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `reverses_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `source_document_id` | none | — | tak |
+| `transferred_on` | none | — | tak |
 
 ### `login_rate_limits`
 
@@ -677,8 +725,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `meeting_id` | none | — | nie |
-| `revision` | none | — | nie |
+| `meeting_id` | none | — | tak |
+| `revision` | none | — | tak |
 
 ### `meeting_attendees`
 
@@ -800,6 +848,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `factor_id` | none | — | nie |
 | `id` | none | — | nie |
 | `invalidated_at` | none | — | nie |
+| `rotated_to_factor_id` | none | — | nie |
 | `used_at` | none | — | nie |
 | `used_session_id` | none | — | nie |
 | `user_id` | pseudonymous | board_member | nie |
@@ -1010,33 +1059,33 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `closure_id` | none | — | nie |
-| `confirmed_at` | none | — | nie |
-| `confirmed_by` | none | — | nie |
-| `document_id` | none | — | nie |
-| `item` | none | — | nie |
-| `note` | none | — | nie |
+| `closure_id` | none | — | tak |
+| `confirmed_at` | none | — | tak |
+| `confirmed_by` | none | — | tak |
+| `document_id` | none | — | tak |
+| `item` | none | — | tak |
+| `note` | none | — | tak |
 
 ### `school_year_closures`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `carried_opening_balance_id` | none | — | nie |
-| `closed_at` | none | — | nie |
-| `closed_by` | none | — | nie |
-| `closing_balance_cents` | none | — | nie |
-| `closing_cash_cents` | none | — | nie |
-| `expense_cents` | none | — | nie |
-| `expired_grant_count` | none | — | nie |
-| `id` | none | — | nie |
-| `income_cents` | none | — | nie |
-| `initiated_at` | none | — | nie |
-| `initiated_by` | none | — | nie |
-| `next_school_year_id` | none | — | nie |
-| `opening_balance_cents` | none | — | nie |
-| `opening_cash_cents` | none | — | nie |
-| `school_year_id` | none | — | nie |
-| `status` | none | — | nie |
+| `carried_opening_balance_id` | none | — | tak |
+| `closed_at` | none | — | tak |
+| `closed_by` | none | — | tak |
+| `closing_balance_cents` | none | — | tak |
+| `closing_cash_cents` | none | — | tak |
+| `expense_cents` | none | — | tak |
+| `expired_grant_count` | none | — | tak |
+| `id` | none | — | tak |
+| `income_cents` | none | — | tak |
+| `initiated_at` | none | — | tak |
+| `initiated_by` | none | — | tak |
+| `next_school_year_id` | none | — | tak |
+| `opening_balance_cents` | none | — | tak |
+| `opening_cash_cents` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `status` | none | — | tak |
 
 ### `school_years`
 
@@ -1066,21 +1115,21 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `changed_at` | none | — | nie |
-| `changed_by` | none | — | nie |
-| `guardian_id` | pseudonymous | guardian | nie |
-| `id` | none | — | nie |
-| `new_contact_allowed` | none | — | nie |
-| `new_ends_on` | none | — | nie |
-| `new_is_primary_contact` | none | — | nie |
-| `new_starts_on` | none | — | nie |
-| `previous_contact_allowed` | none | — | nie |
-| `previous_ends_on` | none | — | nie |
-| `previous_is_primary_contact` | none | — | nie |
-| `previous_starts_on` | none | — | nie |
+| `changed_at` | none | — | tak |
+| `changed_by` | none | — | tak |
+| `guardian_id` | pseudonymous | guardian | tak |
+| `id` | none | — | tak |
+| `new_contact_allowed` | none | — | tak |
+| `new_ends_on` | none | — | tak |
+| `new_is_primary_contact` | none | — | tak |
+| `new_starts_on` | none | — | tak |
+| `previous_contact_allowed` | none | — | tak |
+| `previous_ends_on` | none | — | tak |
+| `previous_is_primary_contact` | none | — | tak |
+| `previous_starts_on` | none | — | tak |
 | `reason` | none | — | nie |
-| `source` | none | — | nie |
-| `student_id` | pseudonymous | student | nie |
+| `source` | none | — | tak |
+| `student_id` | pseudonymous | student | tak |
 
 ### `student_guardians`
 
@@ -1098,17 +1147,17 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
-| `created_at` | none | — | nie |
-| `created_by` | pseudonymous | board_member | nie |
-| `ended_at` | none | — | nie |
-| `ended_by` | none | — | nie |
-| `ends_on` | none | — | nie |
-| `household_id` | none | — | nie |
-| `id` | none | — | nie |
-| `is_primary` | none | — | nie |
-| `source` | none | — | nie |
-| `starts_on` | none | — | nie |
-| `student_id` | pseudonymous | student | nie |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `ended_at` | none | — | tak |
+| `ended_by` | none | — | tak |
+| `ends_on` | none | — | tak |
+| `household_id` | none | — | tak |
+| `id` | none | — | tak |
+| `is_primary` | none | — | tak |
+| `source` | none | — | tak |
+| `starts_on` | none | — | tak |
+| `student_id` | pseudonymous | student | tak |
 
 ### `students`
 

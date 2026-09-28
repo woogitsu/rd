@@ -78,29 +78,7 @@
       "data_type": "timestamp with time zone"
     }
   },
-  "bank_reconciliation_matches": {
-    "created_at": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "timestamp with time zone"
-    },
-    "created_by": {
-      "personal": "pseudonymous",
-      "subject": "board_member",
-      "category": "identyfikacja",
-      "purpose": "powiązanie rekordu z osobą",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
+  "backup_runs": {
     "id": {
       "personal": "none",
       "subject": null,
@@ -112,7 +90,7 @@
       "exportable": false,
       "data_type": "text"
     },
-    "idempotency_key": {
+    "kind": {
       "personal": "none",
       "subject": null,
       "category": null,
@@ -121,6 +99,162 @@
       "visible_to": [],
       "free_text": false,
       "exportable": false,
+      "data_type": "text"
+    },
+    "environment": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "started_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
+    },
+    "finished_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
+    },
+    "result": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "object_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "size_bytes": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "bigint"
+    },
+    "sha256": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "row_counts": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "jsonb"
+    },
+    "sums": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "jsonb"
+    },
+    "error_code": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    }
+  },
+  "bank_reconciliation_matches": {
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "idempotency_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
       "data_type": "text"
     },
     "ledger_entry_id": {
@@ -131,7 +265,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "payment_entry_id": {
@@ -142,7 +276,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "reconciliation_id": {
@@ -153,7 +287,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "revoke_reason": {
@@ -164,7 +298,7 @@
       "retention_category": "document_financial",
       "visible_to": [],
       "free_text": true,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "revoked_at": {
@@ -175,7 +309,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "revoked_by": {
@@ -186,7 +320,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "statement_line_id": {
@@ -197,7 +331,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -210,7 +344,7 @@
       "retention_category": "document_financial",
       "visible_to": [],
       "free_text": true,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "confirmed_at": {
@@ -221,7 +355,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "confirmed_by": {
@@ -232,7 +366,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "created_at": {
@@ -243,7 +377,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "created_by": {
@@ -254,7 +388,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "difference_cents": {
@@ -265,7 +399,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "id": {
@@ -276,7 +410,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "idempotency_key": {
@@ -287,7 +421,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "ledger_balance_cents": {
@@ -298,7 +432,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "ledger_non_bank_cents": {
@@ -309,7 +443,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "notes": {
@@ -320,7 +454,7 @@
       "retention_category": "document_financial",
       "visible_to": [],
       "free_text": true,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "reference_salt": {
@@ -331,7 +465,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "school_year_id": {
@@ -342,7 +476,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "statement_balance_cents": {
@@ -353,7 +487,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "statement_date": {
@@ -364,7 +498,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "status": {
@@ -375,7 +509,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -388,7 +522,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "created_by": {
@@ -399,7 +533,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -410,7 +544,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "idempotency_key": {
@@ -421,7 +555,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "line_count": {
@@ -432,7 +566,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "integer"
     },
     "reconciliation_id": {
@@ -443,7 +577,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "request_hash": {
@@ -454,7 +588,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "source": {
@@ -465,7 +599,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -478,7 +612,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "booked_on": {
@@ -489,7 +623,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "created_at": {
@@ -500,7 +634,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "created_by": {
@@ -511,7 +645,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -522,7 +656,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "import_id": {
@@ -533,7 +667,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "line_no": {
@@ -544,7 +678,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "integer"
     },
     "reconciliation_id": {
@@ -555,7 +689,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "reference_hash": {
@@ -566,7 +700,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -602,6 +736,129 @@
       "visible_to": [],
       "free_text": false,
       "exportable": true,
+      "data_type": "text"
+    }
+  },
+  "data_access_log": {
+    "access_kind": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "actor_id": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "class_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "hit_count": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "household_id": {
+      "personal": "pseudonymous",
+      "subject": "guardian",
+      "category": "identyfikacja",
+      "purpose": "powiązanie wpisu z gospodarstwem",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "last_seen_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
+    },
+    "occurred_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
+    },
+    "outcome": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "row_count": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
       "data_type": "text"
     }
   },
@@ -1317,6 +1574,61 @@
       "free_text": false,
       "exportable": false,
       "data_type": "text"
+    },
+    "paused_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
+    },
+    "paused_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "resumed_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
+    },
+    "resumed_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "send_not_before": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamptz"
     }
   },
   "email_outbox": {
@@ -1888,7 +2200,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "changed_by": {
@@ -1899,7 +2211,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "effective_on": {
@@ -1910,7 +2222,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "enrollment_id": {
@@ -1921,7 +2233,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "from_class_id": {
@@ -1932,7 +2244,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -1943,7 +2255,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "kind": {
@@ -1954,7 +2266,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "reason": {
@@ -1965,7 +2277,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "school_year_id": {
@@ -1976,7 +2288,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "source": {
@@ -1987,7 +2299,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "student_id": {
@@ -1998,7 +2310,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "to_class_id": {
@@ -2009,7 +2321,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -2055,6 +2367,50 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "ended_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamptz"
+    },
+    "ended_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "ended_on": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "date"
+    },
+    "ended_reason": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     }
@@ -2657,7 +3013,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "changed_by": {
@@ -2668,7 +3024,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "guardian_id": {
@@ -2679,7 +3035,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -2690,7 +3046,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "new_contact_allowed": {
@@ -2701,7 +3057,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "boolean"
     },
     "new_email": {
@@ -2723,7 +3079,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "boolean"
     },
     "previous_email": {
@@ -2756,7 +3112,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -2769,7 +3125,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "created_by": {
@@ -2780,7 +3136,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "ended_at": {
@@ -2791,7 +3147,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "ended_by": {
@@ -2802,7 +3158,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "ends_on": {
@@ -2813,7 +3169,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "guardian_id": {
@@ -2824,7 +3180,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "household_id": {
@@ -2835,7 +3191,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -2846,7 +3202,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "source": {
@@ -2857,7 +3213,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "starts_on": {
@@ -2868,7 +3224,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     }
   },
@@ -4005,7 +4361,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "integer"
     },
     "created_at": {
@@ -4016,7 +4372,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "created_by": {
@@ -4027,7 +4383,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "description": {
@@ -4038,7 +4394,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "direction": {
@@ -4049,7 +4405,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -4060,7 +4416,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "idempotency_key": {
@@ -4071,7 +4427,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "reverses_id": {
@@ -4082,7 +4438,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "school_year_id": {
@@ -4093,7 +4449,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "source_document_id": {
@@ -4104,7 +4460,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "transferred_on": {
@@ -4115,7 +4471,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     }
   },
@@ -4275,7 +4631,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "revision": {
@@ -4286,7 +4642,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     }
   },
@@ -5223,6 +5579,17 @@
       "subject": "board_member",
       "category": "identyfikacja",
       "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "rotated_to_factor_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
@@ -6825,7 +7192,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "confirmed_at": {
@@ -6836,7 +7203,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "confirmed_by": {
@@ -6847,7 +7214,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "document_id": {
@@ -6858,7 +7225,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "item": {
@@ -6869,7 +7236,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "note": {
@@ -6880,7 +7247,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -6893,7 +7260,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "closed_at": {
@@ -6904,7 +7271,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "closed_by": {
@@ -6915,7 +7282,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "closing_balance_cents": {
@@ -6926,7 +7293,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "closing_cash_cents": {
@@ -6937,7 +7304,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "expense_cents": {
@@ -6948,7 +7315,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "expired_grant_count": {
@@ -6959,7 +7326,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "integer"
     },
     "id": {
@@ -6970,7 +7337,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "income_cents": {
@@ -6981,7 +7348,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "initiated_at": {
@@ -6992,7 +7359,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "initiated_by": {
@@ -7003,7 +7370,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "next_school_year_id": {
@@ -7014,7 +7381,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "opening_balance_cents": {
@@ -7025,7 +7392,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "opening_cash_cents": {
@@ -7036,7 +7403,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "bigint"
     },
     "school_year_id": {
@@ -7047,7 +7414,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "status": {
@@ -7058,7 +7425,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -7229,7 +7596,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "changed_by": {
@@ -7240,7 +7607,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "guardian_id": {
@@ -7251,7 +7618,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -7262,7 +7629,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "new_contact_allowed": {
@@ -7273,7 +7640,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "boolean"
     },
     "new_ends_on": {
@@ -7284,7 +7651,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "new_is_primary_contact": {
@@ -7295,7 +7662,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "boolean"
     },
     "new_starts_on": {
@@ -7306,7 +7673,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "previous_contact_allowed": {
@@ -7317,7 +7684,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "boolean"
     },
     "previous_ends_on": {
@@ -7328,7 +7695,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "previous_is_primary_contact": {
@@ -7339,7 +7706,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "boolean"
     },
     "previous_starts_on": {
@@ -7350,7 +7717,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "reason": {
@@ -7372,7 +7739,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "student_id": {
@@ -7383,7 +7750,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
@@ -7475,7 +7842,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "created_by": {
@@ -7486,7 +7853,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "ended_at": {
@@ -7497,7 +7864,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "ended_by": {
@@ -7508,7 +7875,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "ends_on": {
@@ -7519,7 +7886,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "household_id": {
@@ -7530,7 +7897,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -7541,7 +7908,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "is_primary": {
@@ -7552,7 +7919,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "boolean"
     },
     "source": {
@@ -7563,7 +7930,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "starts_on": {
@@ -7574,7 +7941,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "date"
     },
     "student_id": {
@@ -7585,7 +7952,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
