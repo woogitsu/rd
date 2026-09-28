@@ -18,7 +18,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - Brevo API: pojedyncze wiadomości do rodziców po zatwierdzeniu kampanii.
 - Frontend dostępny na telefonie i komputerze; WCAG 2.2 AA jako cel projektowy.
 
-[Decyzja i etapy migracji](docs/RAILWAY_MIGRATION.md) są zapisane osobno, a [procedury środowisk, backupu, monitoringu i odbioru](docs/RAILWAY_OPERATIONS.md) — w osobnym dokumencie; `railway.json` zawiera wyłącznie konfigurację buildu i startu, bez sekretów. Obecny kod serwera i migracje nadal korzystają z Cloudflare Workers/D1; **nie jest to gotowy deployment Railway**. Nie dodawać poświadczeń dostawców do repo.
+[Decyzja i etapy migracji](docs/RAILWAY_MIGRATION.md) są zapisane osobno, a [procedury środowisk, backupu, monitoringu i odbioru](docs/RAILWAY_OPERATIONS.md) — w osobnym dokumencie; `railway.json` zawiera wyłącznie konfigurację buildu i startu, bez sekretów. Serwer Node.js (`src/server.js`, [docs/NODE_SERVER.md](docs/NODE_SERVER.md)) i większość API (`src/pg/app.js`, 16 modułów tras) działają dziś wyłącznie na PostgreSQL; oryginalny Cloudflare Worker/D1 (`src/index.js`) ma tylko 5 tras (sesja, przydziały, wpłaty, księga, wylogowanie) i służy jako kontrakt równoważności przy migracji ([docs/EQUIVALENCE.md](docs/EQUIVALENCE.md)), nie jako produkcyjna ścieżka — D1 nigdy nie miało danych szkoły. **To nadal nie jest gotowy deployment Railway** — patrz „Stan prac” wyżej i lista odbioru w [docs/RAILWAY_OPERATIONS.md](docs/RAILWAY_OPERATIONS.md). Nie dodawać poświadczeń dostawców do repo.
 
 ## Dokumentacja
 
@@ -43,27 +43,40 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Eksport roczny, kopie i test odtworzenia](docs/EXPORT.md)
 - [Zamknięcie roku i przekazanie kadencji](docs/YEAR_CLOSE.md)
 - [Rejestr decyzji zarządu i szkoły](docs/DECISIONS.md)
+- [Serwer Node.js dla Railway](docs/NODE_SERVER.md)
+- [Równoważność starego (Worker/D1) i nowego (PostgreSQL) API](docs/EQUIVALENCE.md)
+- [Migracja danych z D1 do PostgreSQL](docs/D1_POSTGRES_MIGRATION.md)
+- [Przegląd bezpieczeństwa](docs/SECURITY_REVIEW.md)
+- [Zasady projektowe interfejsu](docs/DESIGN.md)
+- [Dostępność (WCAG 2.2 AA)](docs/ACCESSIBILITY.md)
 - [Zasady pracy agentów](AGENTS.md)
 
 ## Źródła wymagań
 
 Regulamin Rady Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli i Program Wychowawczo-Profilaktyczny 2026/2027 przekazane przez użytkownika. Nie umieszczać tych dokumentów w repo bez decyzji o zasadach dostępu i aktualności wersji.
 
-## Uruchomienie obecnego prototypu lokalnie
+## Uruchomienie lokalne
 
-Do czasu zakończenia migracji lokalne testy starego API używają `npm ci`, `npm run db:migrate:local` i `npm run dev` z emulatorem Workera. To nie jest instrukcja deploymentu. Nie uruchamiać migracji produkcyjnej; nowy serwer i PostgreSQL będą dostarczane w osobnych PR-ach.
+Jedyna droga, która dziś daje działający panel (dane wyłącznie syntetyczne, `@example.invalid`; AGENTS.md):
+
+1. `npm ci && npm run build` — buduje wszystkich 12 paneli Vite (`import`, `panel`, `ledger`, `print`, `events`, `documents`, `site`, `meetings`, `admin`, `families`, `login`, `email`, `reconciliation` — pełna lista poleceń w `package.json`).
+2. Lokalny PostgreSQL (albo dowolny serwer zgodny z wersją z `docs/RAILWAY_OPERATIONS.md`) i `DATABASE_URL=postgres://… npm run db:migrate:postgres`.
+3. `DATABASE_URL=postgres://… PORT=3000 npm start` — jeden proces Node.js udostępnia API (`src/pg/app.js`) i wszystkie panele pod wspólnym originem (`/panel/`, `/ledger/`, `/admin/`, `/families/`, …, pełna lista w [docs/NODE_SERVER.md](docs/NODE_SERVER.md)).
+4. Sesję trzeba dziś utworzyć poza publicznym API (`docs/ACCOUNTS.md`): brak zaproszeń nie ma skryptu operatorskiego do tworzenia konta testowego (#170) — do czasu jego dodania sesję zakłada się ręcznym zapisem do PostgreSQL (`users`, `sessions`, `role_grants`) na tej samej bazie, danymi syntetycznymi.
+
+**Polecenia `npm run dev:<panel>` (Vite, np. `npm run dev:panel`) nie łączą się dziś z żadnym API** — repozytorium nie ma `vite.config.*` ani proxy `/api`, więc wywołania trafiają do serwera Vite, a nie do API. Osobne uruchomienie `npm run dev` (emulator starego Workera/D1, `wrangler dev`) obsługuje wyłącznie 5 tras (`/health`, `/api/session`, `/api/access`, `/api/payments*`, `/api/ledger*`, `/api/logout`) i nie ma tras dla pozostałych modułów (dokumenty, rodziny, import, admin, e-mail, zebrania, wydarzenia…) — nawet dla wpłat i księgi wywołanie z Vite pod innym portem jest zapytaniem cross-origin bez ciasteczka sesji. `npm run dev:<panel>` nadaje się dziś wyłącznie do pracy nad samym HTML/CSS/JS panelu bez API. Nie uruchamiać migracji produkcyjnej.
 
 ## Import CSV/XLSX
 
-Pierwszy etap działa lokalnie: `npm ci`, `npm run dev:import` i `npm test`. [Instrukcja importu](import/README.md). Plik jest odczytywany w przeglądarce, pokazuje mapowanie i raport; nie zapisuje danych w bazie. Prototyp zapisu w PostgreSQL (#36) przyjmuje z przeglądarki wyłącznie znormalizowane wiersze, pokazuje serwerowy raport konfliktów i zatwierdza import w jednej transakcji; wymaga roli z MFA i nie jest przeznaczony do danych rodzin przed decyzjami D-01–D-06.
+Podgląd samego mapowania kolumn i walidacji działa bez API: `npm ci`, `npm run dev:import` i `npm test`. [Instrukcja importu](import/README.md). Plik jest odczytywany w przeglądarce, pokazuje mapowanie i raport; nie zapisuje danych w bazie. Zapis w PostgreSQL (#36, `src/pg/routes/import.js`) wymaga uruchomienia z „Uruchomienie lokalne” wyżej: przyjmuje z przeglądarki wyłącznie znormalizowane wiersze, pokazuje serwerowy raport konfliktów i zatwierdza import w jednej transakcji; wymaga roli `admin`/`board` z MFA i nie jest przeznaczony do danych rodzin przed decyzjami D-01–D-06.
 
 ## Panel wpłat
 
-Chroniony interfejs ewidencji można uruchomić poleceniem `npm run dev:panel`; API działa równolegle przez `npm run dev`. Panel obsługuje listę, rejestrację, korekty i jednokrotne przypisanie wpłaty do rodziny. [Instrukcja panelu](panel/README.md). Nie zawiera danych demonstracyjnych ani obejścia logowania.
+Chroniony interfejs ewidencji: buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej (`/panel/` pod serwerem Node z `DATABASE_URL`). Panel obsługuje listę, rejestrację, korekty i jednokrotne przypisanie wpłaty do rodziny. [Instrukcja panelu](panel/README.md). Router Workera/D1 (`src/index.js`) ma równoważne trasy `/api/payments*` (kontrakt równoważności, [docs/EQUIVALENCE.md](docs/EQUIVALENCE.md)), ale `npm run dev:panel` + `npm run dev` nie łączy ich dziś ze sobą (brak proxy Vite, patrz wyżej). Nie zawiera danych demonstracyjnych ani obejścia logowania.
 
 ## Panel księgi
 
-Chroniony interfejs księgi można uruchomić poleceniem `npm run dev:ledger`; API działa równolegle przez `npm run dev`. Panel pokazuje bilans, preliminarz i wpisy oraz pozwala dodawać wpisy i audytowalne korekty. [Instrukcja panelu](ledger/README.md). Nie zawiera danych demonstracyjnych ani obejścia logowania.
+Chroniony interfejs księgi: buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej (`/ledger/` pod serwerem Node z `DATABASE_URL`). Panel pokazuje bilans, preliminarz i wpisy oraz pozwala dodawać wpisy i audytowalne korekty. [Instrukcja panelu](ledger/README.md). Tak jak w panelu wpłat, `npm run dev:ledger` + `npm run dev` nie są dziś połączone (brak proxy Vite). Nie zawiera danych demonstracyjnych ani obejścia logowania.
 
 ## Panel wydarzeń
 
@@ -71,27 +84,31 @@ Wewnętrzny interfejs wydarzeń (#12) buduje polecenie `npm run build:events`; s
 
 ## Kartki o dobrowolnej składce
 
-Lokalny moduł wydruku: `npm run dev:print`. Operator wczytuje plik CSV/JSON w przeglądarce, ręcznie wybiera rodziny, sprawdza podgląd i drukuje jedną dyskretną kartkę na rodzinę (PDF przez „Drukuj → Zapisz jako PDF”). Kwota sugerowana i dane rachunku czekają na decyzje D-13, D-14 i D-16. [Instrukcja wydruku](print/README.md).
+Lokalny moduł wydruku: wczytanie pliku CSV/JSON z dysku działa samym `npm run dev:print`, bez API. Przycisk „Wczytaj z serwera” (`/api/print`, `src/pg/routes/print.js`) wymaga uruchomienia z „Uruchomienie lokalne” wyżej — tego samego originu co API. Operator ręcznie wybiera rodziny, sprawdza podgląd i drukuje jedną dyskretną kartkę na rodzinę (PDF przez „Drukuj → Zapisz jako PDF”). Kwota sugerowana i dane rachunku czekają na decyzje D-13, D-14 i D-16. [Instrukcja wydruku](print/README.md).
 
 ## Dokumenty prywatne
 
-Chroniony panel dokumentów: `npm run dev:documents` (API przez `npm run dev` lub serwer Node). Lista dokumentów dostępnych według roli, metadane, pobranie przez serwer i przesłanie PDF/PNG/JPEG z kluczem idempotencji. Prototyp — nie do pracy na prawdziwych dokumentach przed decyzjami D-04, D-05, D-08 i D-09. [Instrukcja panelu](documents/README.md), [zasady](docs/DOCUMENTS.md).
+Chroniony panel dokumentów: buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej (`/documents/`; Worker/D1 **nie ma** tras `/api/documents`, więc `npm run dev` go nie obsługuje). Lista dokumentów dostępnych według roli, metadane, pobranie przez serwer i przesłanie PDF/PNG/JPEG z kluczem idempotencji. Prototyp — nie do pracy na prawdziwych dokumentach przed decyzjami D-04, D-05, D-08 i D-09. [Instrukcja panelu](documents/README.md), [zasady](docs/DOCUMENTS.md).
 
 ## Strona publiczna
 
-Prototyp strony tylko do odczytu pod `/site/`: `npm run dev:site`. Pokazuje wyłącznie opublikowane wydarzenia (#12), protokoły udostępnione publicznie (#13) i opcjonalnie aktualności. Bez logowania i plików cookie. [Opis strony](site/README.md).
+Prototyp strony tylko do odczytu pod `/site/`: buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej (`npm run dev:site` sam pokaże układ, ale bez działających sekcji — strona woła publiczne GET `/api/public/*`, patrz [Opis strony](site/README.md)). Pokazuje wyłącznie opublikowane wydarzenia (#12), protokoły udostępnione publicznie (#13) i opcjonalnie aktualności. Bez logowania i plików cookie.
 
 ## Zebrania Rady
 
-Chroniony panel zebrań (#13): `npm run build:meetings`, a następnie serwer Node z `DATABASE_URL` (`PORT=3000 npm start`, ścieżka `/meetings/`); podczas pracy nad interfejsem `npm run dev:meetings`. Porządek obrad, lista obecności z jawnym prawem głosu, ustalenie quorum z ręcznie wpisanej reguły, wersje protokołu z zatwierdzeniem i widocznością oraz uchwały z liczbami głosów wpisanymi przez sekretarza — bez głosowania elektronicznego. Prototyp, bez danych demonstracyjnych ani obejścia logowania. [Instrukcja panelu](meetings/README.md).
+Chroniony panel zebrań (#13): buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej (`PORT=3000 npm start`, ścieżka `/meetings/`); `npm run dev:meetings` samo w sobie pokaże wyłącznie układ, bez API. Porządek obrad, lista obecności z jawnym prawem głosu, ustalenie quorum z ręcznie wpisanej reguły, wersje protokołu z zatwierdzeniem i widocznością oraz uchwały z liczbami głosów wpisanymi przez sekretarza — bez głosowania elektronicznego. Prototyp, bez danych demonstracyjnych ani obejścia logowania. [Instrukcja panelu](meetings/README.md).
+
+## Panel rodzin
+
+Chroniony katalog rodzin, uczniów i opiekunów (`/families/`, API na PostgreSQL, `src/pg/routes/families.js`): odczyt zakresu zależnego od roli (`admin`/`board`/`treasurer` — wszystkie klasy; `representative` — własna klasa), rodzeństwo w wielu klasach, dwoje opiekunów na dziecko, e-mail opiekuna widoczny zgodnie ze zgodą kontaktową poza rolami z szerokim zakresem (`docs/AUTHORIZATION.md`, `docs/PRODUCT.md`). Buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej. [Instrukcja panelu](families/README.md), [model danych](docs/DATA_MODEL.md).
 
 ## Panel kont i ról
 
-Interfejs administratora (`npm run dev:admin`, API na PostgreSQL): konta, zaproszenia z jednorazowym tokenem, przydziały ról z zakresem roku/klasy, wygaszenie kadencji i dziennik zmian. Wymaga roli administratora z MFA. [Instrukcja panelu](admin/README.md), [zasady](docs/ACCOUNTS.md). Tokeny resetu hasła i reset MFA są na razie dostępne przez API (`/api/admin/users/{id}/password-reset`, `/mfa-reset`).
+Interfejs administratora (`/admin/`, API na PostgreSQL): konta, zaproszenia z jednorazowym tokenem, przydziały ról z zakresem roku/klasy, wygaszenie kadencji i dziennik zmian. Wymaga roli administratora z MFA. Buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej; `npm run dev:admin` samo nie łączy się z API. [Instrukcja panelu](admin/README.md), [zasady](docs/ACCOUNTS.md). Tokeny resetu hasła i reset MFA są na razie dostępne przez API (`/api/admin/users/{id}/password-reset`, `/mfa-reset`).
 
 ## Logowanie
 
-Ekran `/login/` (`npm run dev:login`; `/` przekierowuje tutaj, strona publiczna jest pod `/site/`): e-mail i hasło, potem kod z aplikacji uwierzytelniającej (Google Authenticator, Microsoft Authenticator lub inna zgodna z TOTP RFC 6238). Konto powstaje wyłącznie z zaproszenia (`/login/#invite=<token>`); reset hasła tylko tokenem od administratora (`/login/#reset=<token>`), bez wiadomości e-mail. Role `admin`, `board` i `treasurer` muszą skonfigurować aplikację przed użyciem paneli (`MFA_REQUIRED_ROLES`). Metodę wskazał użytkownik 2026-09-27; wymaga formalnego potwierdzenia przez zarząd i IOD (D-10). Prototyp na danych syntetycznych, niewdrożony. [Instrukcja ekranu](login/README.md), [przepływ i parametry](docs/AUTH.md).
+Ekran `/login/` (`/` przekierowuje tutaj, strona publiczna jest pod `/site/`): e-mail i hasło, potem kod z aplikacji uwierzytelniającej (Google Authenticator, Microsoft Authenticator lub inna zgodna z TOTP RFC 6238). Konto powstaje wyłącznie z zaproszenia (`/login/#invite=<token>`); reset hasła tylko tokenem od administratora (`/login/#reset=<token>`), bez wiadomości e-mail. Role `admin`, `board` i `treasurer` muszą skonfigurować aplikację przed użyciem paneli (`MFA_REQUIRED_ROLES`). Buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej; `npm run dev:login` samo w sobie nie tworzy sesji. Metodę wskazał użytkownik 2026-09-27; wymaga formalnego potwierdzenia przez zarząd i IOD (D-10). Prototyp na danych syntetycznych, niewdrożony. [Instrukcja ekranu](login/README.md), [przepływ i parametry](docs/AUTH.md).
 
 ## Start implementacji
 
