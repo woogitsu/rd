@@ -76,6 +76,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `resolutions.correction_reason` | uzasadnienie korekty uchwały |
 | `resolution_execution_events.note` | notatka o postępie wykonania uchwały — może opisywać sytuację konkretnej rodziny (#102) |
 | `guardian_contact_changes.reason` | opis sytuacji rodzinnej przy zmianie kontaktu |
+| `guardian_update_requests.note` | uzasadnienie wniosku rodzica o zmianę kontaktu przez jednorazowy link (#140), może opisywać sytuację rodzinną |
 | `enrollments.ended_reason` | powód odejścia ucznia ze szkoły, może opisywać sytuację rodzinną (#86) |
 | `news_photos.author` | imię i nazwisko autora zdjęcia |
 | `news_photos.rights_note` | treść zgody/licencji, może zawierać imię i nazwisko |
@@ -84,6 +85,9 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `news_photos.revocation_reason` | powód wycofania zgody, może zawierać dane osoby wycofującej |
 | `email_campaigns.subject` | temat kampanii — do przeglądu przy zatwierdzeniu treści |
 | `email_campaigns.body_text` | treść kampanii — do przeglądu przy zatwierdzeniu treści |
+| `event_tasks.title` | tytuł zadania wolontariackiego może zawierać imię i nazwisko lub okoliczności rodzinne (#142) |
+| `event_tasks.cancellation_reason` | powód odwołania zadania może zawierać imię i nazwisko lub okoliczności rodzinne (#142) |
+| `document_status_events.reason` | powód zastąpienia/unieważnienia dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#82) |
 | `document_descriptions.title` | tytuł dokumentu może zawierać imię i nazwisko (np. „Zwrot dla rodziny Kowalski”) (#76/#313) |
 | `document_descriptions.description` | opis dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#76/#313) |
 

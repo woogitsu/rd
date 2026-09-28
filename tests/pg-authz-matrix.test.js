@@ -20,7 +20,9 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { handlePgRequest, ROUTES } from '../src/pg/app.js';
-import { approve, createDraft, publish, submit } from '../src/pg/events.js';
+import {
+  approve, cancelTask, createDraft, createSignup, createTask, publish, submit, withdrawSignup,
+} from '../src/pg/events.js';
 import {
   approveMinutes, createMeeting, createMinutesVersion, createResolution, determineQuorum,
   recordAttendance, setMinutesVisibility, updateMeeting,
@@ -159,6 +161,31 @@ async function makeEvent(db, target, stage, { audience = 'internal', title } = {
   if (stage === 'approved') return { eventId: event.id };
   await publish(db, fxBoard, { eventId: event.id, revision: 1 });
   return { eventId: event.id };
+}
+
+// Zadanie wolontariatu (#142, #330): dostęp sprawdza ten sam canEdit(actor, event)
+// co szkic wydarzenia (EVENT_EDIT), więc fixture reużywa makeEvent w stanie 'draft'.
+async function makeEventTask(db, target, stage) {
+  const { eventId } = await makeEvent(db, target, 'draft');
+  const { task } = await createTask(db, fxAdmin, {
+    eventId, title: `Zadanie ${marker(target.key)}`, slotsNeeded: 3, isPublic: false,
+    idempotencyKey: nextKey('fx-task'),
+  });
+  if (stage === 'cancelled') {
+    await cancelTask(db, fxAdmin, { eventId, taskId: task.id, reason: 'Odwołanie syntetyczne (fixture)' });
+  }
+  return { eventId, taskId: task.id };
+}
+
+async function makeEventTaskSignup(db, target, stage) {
+  const { eventId, taskId } = await makeEventTask(db, target, 'draft');
+  const { signup } = await createSignup(db, fxAdmin, {
+    eventId, taskId, userId: fxBoard.userId, idempotencyKey: nextKey('fx-signup'),
+  });
+  if (stage === 'withdrawn') {
+    await withdrawSignup(db, fxAdmin, { eventId, taskId, signupId: signup.id });
+  }
+  return { eventId, taskId, signupId: signup.id };
 }
 
 async function makeMeeting(db, target, stage, { title, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
@@ -402,6 +429,12 @@ async function makeAdminTarget(ctx, stage) {
     await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
     return { schoolYearId };
   }
+  if (stage === 'dataRequest') {
+    // Rejestr żądań osób (#100) — cel dla przejścia stanu; gospodarstwo ogólnoszkolne (hh-1).
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',
+      { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' });
+    return { requestId: json.request.id };
+  }
   throw new Error(`unknown admin fixture ${stage}`);
 }
 
@@ -482,6 +515,8 @@ async function makeOwnSession(ctx, { cookie }) {
 const MAKERS = {
   privacyNotice: (ctx, target, stage) => makePrivacyNotice(ctx, target, stage),
   event: (ctx, target, stage) => makeEvent(ctx.db, target, stage),
+  eventTask: (ctx, target, stage) => makeEventTask(ctx.db, target, stage),
+  eventTaskSignup: (ctx, target, stage) => makeEventTaskSignup(ctx.db, target, stage),
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
@@ -496,6 +531,12 @@ const MAKERS = {
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', `/api/documents?kind=${kind}&schoolYearId=${target.schoolYearId}${classPart}`,
       pdfBytes(target.key), { 'Content-Type': 'application/pdf', 'Idempotency-Key': nextKey('fx-doc') });
     return { documentId: json.document.id };
+  },
+  // Para dokumentów tego samego rodzaju/roku/klasy — cel zastąpienia (issue #82).
+  documentPair: async (ctx, target, kind) => {
+    const original = await MAKERS.document(ctx, target, kind);
+    const replacement = await MAKERS.document(ctx, target, kind);
+    return { documentId: original.documentId, replacementDocumentId: replacement.documentId };
   },
   ledgerEntry: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
@@ -528,6 +569,25 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
+  // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
+  // pod TARGETS.A, niezależnie od przekazanego targetu.
+  guardianOnly: (ctx) => makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guh')),
+  // Gospodarstwo świeże + jednorazowy link (token w treści odpowiedzi tylko
+  // przy wydaniu — do testu podglądu/formularza publicznego).
+  guardianUpdateLink: async (ctx) => {
+    const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guh'));
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+    return { token: json.token, linkId: json.linkId, guardianId };
+  },
+  // Wniosek `pending` świeży na przypadek — do zatwierdzenia/odrzucenia.
+  guardianUpdateRequest: async (ctx) => {
+    const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-gur'));
+    const { json: link } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+    const { json: submitted } = await api(ctx, null, 'POST', '/api/public/guardian-update',
+      { token: link.token, contactAllowed: true });
+    return { requestId: submitted.requestId, guardianId };
+  },
   adminTarget: (ctx, _target, stage) => makeAdminTarget(ctx, stage),
   importPlan: async (ctx, target) => {
     const payload = importPayload(target, nextKey('fximp'));
@@ -896,6 +956,7 @@ const MODULE_SOURCES = {
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
   representative: ['../src/pg/routes/representative.js'],
+  'guardian-updates': ['../src/pg/routes/guardian-updates.js'],
   'privacy-notice': ['../src/pg/routes/privacy-notice.js'],
   board: ['../src/pg/routes/board.js'],
 };
