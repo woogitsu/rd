@@ -71,6 +71,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `resolutions.body` | treść uchwały — może dotyczyć konkretnego ucznia |
 | `resolutions.correction_reason` | uzasadnienie korekty uchwały |
 | `guardian_contact_changes.reason` | opis sytuacji rodzinnej przy zmianie kontaktu |
+| `enrollments.ended_reason` | powód odejścia ucznia ze szkoły, może opisywać sytuację rodzinną (#86) |
 | `news_photos.author` | imię i nazwisko autora zdjęcia |
 | `news_photos.rights_note` | treść zgody/licencji, może zawierać imię i nazwisko |
 | `news_photos.license_text` | jw. |

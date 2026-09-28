@@ -487,6 +487,7 @@ async function createPayment(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'payment.created', entityType: 'payment_entry', entityId: paymentId,
+        metadata: { schoolYearId: input.schoolYearId },
       });
       return { payment: { id: paymentId, ...input } };
     });
@@ -572,6 +573,7 @@ async function createCorrection(request, env, paymentEntryId, json) {
         entityId: correctionId,
         metadata: {
           paymentEntryId,
+          schoolYearId: payment.school_year_id,
           ...(piiCheck.categories.length ? { piiConfirmed: true, piiCategories: piiCheck.categories } : {}),
         },
       });
@@ -631,7 +633,7 @@ async function assignPayment(request, env, paymentEntryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'payment.assigned', entityType: 'payment_assignment',
-        entityId: assignmentId, metadata: { paymentEntryId },
+        entityId: assignmentId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id },
       });
       return { assignment: { id: assignmentId, paymentEntryId, householdId } };
     });
@@ -701,7 +703,7 @@ async function createRefund(request, env, paymentEntryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'payment.refund.created', entityType: 'payment_refund',
-        entityId: refundId, metadata: { paymentEntryId },
+        entityId: refundId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id },
       });
       return { refund: {
         id: refundId, paymentEntryId, amountCents: input.amountCents,
@@ -770,7 +772,7 @@ async function reassignPayment(request, env, paymentEntryId, json) {
       // Dziennik bez identyfikatorów gospodarstw w metadanych, jak przy przypisaniu.
       await insertAuditEvent(tx, {
         actorId, action: 'payment.reassigned', entityType: 'payment_reassignment',
-        entityId: reassignmentId, metadata: { paymentEntryId },
+        entityId: reassignmentId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id },
       });
       return { reassignment: {
         id: reassignmentId, paymentEntryId, oldHouseholdId, newHouseholdId: input.householdId, reason: input.reason,
