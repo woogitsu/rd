@@ -24,6 +24,7 @@ import { toSafeInteger } from './payments.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
+import { readSnapshot } from '../db-snapshot.js';
 
 export const name = 'reconciliation';
 
@@ -440,10 +441,19 @@ async function loadAuthorizedReconciliation(request, env, id, executor = env.db,
 }
 
 async function getReconciliation(request, env, id, json) {
-  const { row } = await loadAuthorizedReconciliation(request, env, id);
-  const reconciliation = reconciliationFromRow(row);
-  const [lines, matches, entries, inconsistent] = await Promise.all([
-    env.db.query(
+  // Autoryzacja poza migawką (nie czyta danych uzgodnienia poza row.school_year_id
+  // z loadReconciliation poniżej — patrz requireContext), ale sam odczyt
+  // uzgodnienia i wszystkie zapytania pochodne muszą widzieć tę samą chwilę
+  // (#213): dotąd Promise.all na env.db (pula) mógł trafić na inne połączenia
+  // i inne migawki READ COMMITTED niż loadReconciliation, więc pozycja mogła
+  // być pokazana jako niedopasowana razem z dopasowaniem, którego już nie
+  // widać na liście.
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const { reconciliation, lineItems, matches, entries, inconsistent } = await readSnapshot(env.db, async (tx) => {
+    const row = await loadReconciliation(tx, id);
+    if (!row) throw new RequestError('reconciliation_not_found', 404);
+    requireYear(context, WRITE_ROLES, row.school_year_id);
+    const lines = await tx.query(
       `SELECT l.id, l.import_id, i.source, l.line_no, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on,
               l.amount_cents, l.reference_hash IS NOT NULL AS has_reference,
               m.id AS match_id, m.ledger_entry_id, m.payment_entry_id
@@ -453,12 +463,12 @@ async function getReconciliation(request, env, id, json) {
         WHERE l.reconciliation_id = $1
         ORDER BY l.booked_on, i.created_at, l.line_no`,
       [id],
-    ),
-    env.db.query(
+    );
+    const matches = await tx.query(
       `SELECT * FROM bank_reconciliation_matches WHERE reconciliation_id = $1 ORDER BY created_at, id`, [id],
-    ),
+    );
     // Wpisy bankowe księgi do daty wyciągu, których nie powiązano z żadną pozycją.
-    env.db.query(
+    const entries = await tx.query(
       `SELECT e.id, e.direction, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
               e.category_id, e.description
          FROM ledger_entry_net e
@@ -475,26 +485,27 @@ async function getReconciliation(request, env, id, json) {
         ORDER BY e.occurred_on, e.id
         LIMIT 1000`,
       [row.school_year_id, row.statement_date, id],
-    ),
-    inconsistentMatches(env.db, id),
-  ]);
-  const lineItems = lines.rows.map((line) => ({
-    id: line.id,
-    importId: line.import_id,
-    source: line.source,
-    lineNo: line.line_no,
-    bookedOn: line.booked_on,
-    amountCents: toSafeInteger(line.amount_cents),
-    hasReference: Boolean(line.has_reference),
-    match: line.match_id
-      ? { id: line.match_id, ledgerEntryId: line.ledger_entry_id ?? null, paymentEntryId: line.payment_entry_id ?? null }
-      : null,
-  }));
+    );
+    const inconsistent = await inconsistentMatches(tx, id);
+    const lineItems = lines.rows.map((line) => ({
+      id: line.id,
+      importId: line.import_id,
+      source: line.source,
+      lineNo: line.line_no,
+      bookedOn: line.booked_on,
+      amountCents: toSafeInteger(line.amount_cents),
+      hasReference: Boolean(line.has_reference),
+      match: line.match_id
+        ? { id: line.match_id, ledgerEntryId: line.ledger_entry_id ?? null, paymentEntryId: line.payment_entry_id ?? null }
+        : null,
+    }));
+    return { reconciliation: reconciliationFromRow(row), lineItems, matches: matches.rows, entries: entries.rows, inconsistent };
+  });
   const unmatchedLines = lineItems.filter((line) => !line.match);
   return json({
     reconciliation,
     lines: lineItems,
-    matches: matches.rows.map(matchFromRow),
+    matches: matches.map(matchFromRow),
     summary: {
       lineCount: lineItems.length,
       matchedLineCount: lineItems.length - unmatchedLines.length,
@@ -504,7 +515,7 @@ async function getReconciliation(request, env, id, json) {
     },
     unmatchedLines,
     inconsistentMatches: inconsistent,
-    unmatchedLedgerEntries: entries.rows.map((entry) => ({
+    unmatchedLedgerEntries: entries.map((entry) => ({
       id: entry.id,
       direction: entry.direction,
       occurredOn: entry.occurred_on,
@@ -958,6 +969,10 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
 }
 
 export async function buildAuditReport(executor, schoolYearId) {
+  // #213: chwila migawki z now() TEJ transakcji (stała przez cały
+  // REPEATABLE READ), nie z zegara procesu Node — raport i jego "asOf"
+  // zawsze opisują dokładnie te dane, które poniżej odczytał.
+  const asOf = (await executor.query('SELECT now() AS now')).rows[0].now;
   const year = (await executor.query(
     `SELECT id, label, to_char(starts_on, 'YYYY-MM-DD') AS starts_on, to_char(ends_on, 'YYYY-MM-DD') AS ends_on
        FROM school_years WHERE id = $1`, [schoolYearId],
@@ -1078,7 +1093,7 @@ export async function buildAuditReport(executor, schoolYearId) {
 
   return {
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },
-    generatedAt: new Date().toISOString(),
+    generatedAt: isoTimestamp(asOf),
     balance,
     categories,
     largeExpenseThresholdCents: LARGE_EXPENSE_CENTS,
@@ -1116,11 +1131,16 @@ async function auditReport(request, env, url, json) {
       actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route: 'reports.audit',
     });
   }
-  const report = await buildAuditReport(env.db, schoolYearId);
+  // #213: jedna migawka REPEATABLE READ dla całego raportu — inaczej równoległy
+  // zapis między którymikolwiek z zapytań buildAuditReport (bilans, kategorie,
+  // korekty, uzgodnienia...) na osobnych połączeniach z puli daje wewnętrznie
+  // sprzeczny wynik (patrz opis w issue: "sumy kategorii nie są zgodne z
+  // bilansem" mimo poprawnej księgi).
+  const report = await readSnapshot(env.db, (tx) => buildAuditReport(tx, schoolYearId));
   if (!report) throw new RequestError('school_year_not_found', 404);
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'report.audit.generated', entityType: 'school_year',
-    entityId: schoolYearId, metadata: { format },
+    entityId: schoolYearId, metadata: { format, asOf: report.generatedAt },
   });
   if (format === 'json') return json({ report });
   return new Response(renderAuditReportHtml(report), {
