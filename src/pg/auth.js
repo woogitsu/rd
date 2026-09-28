@@ -99,18 +99,23 @@ export async function loadSession(request, env) {
 // wyłącznie po to, by ustawić cookie; w bazie zostaje tylko SHA-256.
 // Wywoływana po poprawnym haśle (POST /api/login) lub przyjęciu zaproszenia
 // (POST /api/invitations/accept) — src/pg/routes/login.js.
-export async function createSession(executor, { userId, mfaVerified = false, ttlSeconds = SESSION_TTL_SECONDS, rotatedFrom = null }) {
+// `mfaVerifiedAt` (#150, krok w górę): przy rotacji nowa sesja dziedziczy
+// MOMENT potwierdzenia MFA ze starej, zamiast dostać now() — inaczej każda
+// rotacja (np. zmiana hasła) odświeżałaby świeżość MFA bez podania kodu.
+export async function createSession(executor, {
+  userId, mfaVerified = false, mfaVerifiedAt = null, ttlSeconds = SESSION_TTL_SECONDS, rotatedFrom = null,
+}) {
   if (!userId) throw new Error('user_required');
   const ttl = Math.max(60, Math.min(Number(ttlSeconds) || SESSION_TTL_SECONDS, SESSION_TTL_SECONDS));
   const { secret, tokenHash } = await createSessionSecret();
   const sessionId = crypto.randomUUID();
   const { rows } = await executor.query(
     `INSERT INTO sessions (id, user_id, token_hash, expires_at, mfa_verified_at, rotated_from)
-     SELECT $1, u.id, $3, now() + make_interval(secs => $4), CASE WHEN $5::boolean THEN now() END, $6
+     SELECT $1, u.id, $3, now() + make_interval(secs => $4), CASE WHEN $5::boolean THEN COALESCE($7::timestamptz, now()) END, $6
        FROM users u
       WHERE u.id = $2 AND u.disabled_at IS NULL
      RETURNING id, expires_at`,
-    [sessionId, userId, tokenHash, ttl, Boolean(mfaVerified), rotatedFrom],
+    [sessionId, userId, tokenHash, ttl, Boolean(mfaVerified), rotatedFrom, mfaVerifiedAt],
   );
   if (!rows[0]) throw new Error('user_unavailable');
   await insertAuditEvent(executor, {
@@ -165,6 +170,11 @@ async function rootSessionCreatedAt(tx, sessionId) {
 export async function rotateSession(env, session, { mfaVerified = session.mfaVerified } = {}) {
   return database(env).transaction(async (tx) => {
     const rootCreatedAt = await rootSessionCreatedAt(tx, session.sessionId);
+    // #150 (krok w górę): moment potwierdzenia MFA czytany z bazy w tej
+    // transakcji — /api/mfa/verify ustawia go na now() tuż przed rotacją,
+    // a zmiana hasła przenosi dotychczasowy (nie odświeża świeżości MFA).
+    const { rows: current } = await tx.query('SELECT mfa_verified_at FROM sessions WHERE id = $1', [session.sessionId]);
+    const mfaVerifiedAt = current[0]?.mfa_verified_at ?? null;
     const revoked = await revokeSessionWith(tx, session.sessionId, { reason: 'rotated', actorId: session.user.id });
     if (!revoked) throw new Error('session_not_active');
     // Nigdy 0 (patrz createSession: `Number(ttlSeconds) || SESSION_TTL_SECONDS`
@@ -173,7 +183,10 @@ export async function rotateSession(env, session, { mfaVerified = session.mfaVer
     const remainingSeconds = rootCreatedAt
       ? Math.max(1, Math.floor((new Date(rootCreatedAt).getTime() + SESSION_TTL_SECONDS * 1000 - Date.now()) / 1000))
       : SESSION_TTL_SECONDS;
-    return createSession(tx, { userId: session.user.id, mfaVerified, rotatedFrom: session.sessionId, ttlSeconds: remainingSeconds });
+    return createSession(tx, {
+      userId: session.user.id, mfaVerified, mfaVerifiedAt: mfaVerified ? mfaVerifiedAt : null,
+      rotatedFrom: session.sessionId, ttlSeconds: remainingSeconds,
+    });
   });
 }
 
