@@ -432,6 +432,31 @@ async function inconsistentMatches(executor, id) {
   }));
 }
 
+// Kursor pozycji wyciągu wiąże uzgodnienie, które go wydało (#218, wzorzec z
+// listPayments w payments.js): dociągnięcie strony innego uzgodnienia kończy
+// się 400 invalid_cursor zamiast mieszać wiersze.
+function encodeLinesCursor(row, reconciliationId) {
+  return btoa(JSON.stringify([row.booked_on, row.id, reconciliationId]))
+    .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+function decodeLinesCursor(value, reconciliationId) {
+  if (!value) return null;
+  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new RequestError('invalid_cursor');
+  try {
+    const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const decoded = JSON.parse(atob(base64 + padding));
+    if (!Array.isArray(decoded) || decoded.length !== 3 || !validDate(decoded[0]) || !validId(decoded[1])
+      || decoded[2] !== reconciliationId) {
+      throw new Error();
+    }
+    return { bookedOn: decoded[0], id: decoded[1] };
+  } catch {
+    throw new RequestError('invalid_cursor');
+  }
+}
+
 async function loadAuthorizedReconciliation(request, env, id, executor = env.db, lock = false) {
   const context = await requireContext(request, env, WRITE_ROLES);
   const row = await loadReconciliation(executor, id, { lock });
@@ -440,35 +465,58 @@ async function loadAuthorizedReconciliation(request, env, id, executor = env.db,
   return { context, row };
 }
 
-async function getReconciliation(request, env, id, json) {
+const LINES_PAGE_DEFAULT = 500;
+const LINES_PAGE_MAX = 500;
+
+async function getReconciliation(request, env, id, url, json) {
   // Autoryzacja poza migawką (nie czyta danych uzgodnienia poza row.school_year_id
   // z loadReconciliation poniżej — patrz requireContext), ale sam odczyt
   // uzgodnienia i wszystkie zapytania pochodne muszą widzieć tę samą chwilę
   // (#213): dotąd Promise.all na env.db (pula) mógł trafić na inne połączenia
   // i inne migawki READ COMMITTED niż loadReconciliation, więc pozycja mogła
   // być pokazana jako niedopasowana razem z dopasowaniem, którego już nie
-  // widać na liście.
+  // widać na liście. Ta sama migawka obejmuje teraz też stronicowane pozycje
+  // i podsumowanie (#218).
   const context = await requireContext(request, env, WRITE_ROLES);
-  const { reconciliation, lineItems, matches, entries, inconsistent } = await readSnapshot(env.db, async (tx) => {
+
+  const limitText = url.searchParams.get('limit') ?? String(LINES_PAGE_DEFAULT);
+  if (!/^\d{1,3}$/.test(limitText)) throw new RequestError('invalid_limit');
+  const limit = Number(limitText);
+  if (limit < 1 || limit > LINES_PAGE_MAX) throw new RequestError('invalid_limit');
+  const cursor = decodeLinesCursor(url.searchParams.get('cursor'), id);
+
+  const lineValues = [id];
+  const lineConditions = ['l.reconciliation_id = $1'];
+  if (cursor) {
+    lineValues.push(cursor.bookedOn, cursor.id);
+    const dateParam = `$${lineValues.length - 1}::date`;
+    const idParam = `$${lineValues.length}`;
+    lineConditions.push(`(l.booked_on > ${dateParam} OR (l.booked_on = ${dateParam} AND l.id > ${idParam}))`);
+  }
+  lineValues.push(limit + 1);
+
+  const { reconciliation, lines, matches, entries, inconsistent, summaryRow } = await readSnapshot(env.db, async (tx) => {
     const row = await loadReconciliation(tx, id);
     if (!row) throw new RequestError('reconciliation_not_found', 404);
     requireYear(context, WRITE_ROLES, row.school_year_id);
-    const lines = await tx.query(
+    const linesResult = await tx.query(
       `SELECT l.id, l.import_id, i.source, l.line_no, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on,
               l.amount_cents, l.reference_hash IS NOT NULL AS has_reference,
               m.id AS match_id, m.ledger_entry_id, m.payment_entry_id
          FROM bank_statement_lines l
          JOIN bank_statement_imports i ON i.id = l.import_id
          LEFT JOIN bank_reconciliation_matches m ON m.statement_line_id = l.id AND m.revoked_at IS NULL
-        WHERE l.reconciliation_id = $1
-        ORDER BY l.booked_on, i.created_at, l.line_no`,
-      [id],
+        WHERE ${lineConditions.join(' AND ')}
+        ORDER BY l.booked_on, l.id
+        LIMIT $${lineValues.length}`,
+      lineValues,
     );
-    const matches = await tx.query(
+    const matchesResult = await tx.query(
       `SELECT * FROM bank_reconciliation_matches WHERE reconciliation_id = $1 ORDER BY created_at, id`, [id],
     );
     // Wpisy bankowe księgi do daty wyciągu, których nie powiązano z żadną pozycją.
-    const entries = await tx.query(
+    // Pobrane 1001, żeby stwierdzić obcięcie bez osobnego zapytania COUNT.
+    const entriesResult = await tx.query(
       `SELECT e.id, e.direction, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
               e.category_id, e.description
          FROM ledger_entry_net e
@@ -483,39 +531,59 @@ async function getReconciliation(request, env, id, json) {
              WHERE m.reconciliation_id = $3 AND e.payment_entry_id IS NOT NULL
                AND m.payment_entry_id = e.payment_entry_id AND m.revoked_at IS NULL)
         ORDER BY e.occurred_on, e.id
-        LIMIT 1000`,
+        LIMIT 1001`,
       [row.school_year_id, row.statement_date, id],
     );
-    const inconsistent = await inconsistentMatches(tx, id);
-    const lineItems = lines.rows.map((line) => ({
-      id: line.id,
-      importId: line.import_id,
-      source: line.source,
-      lineNo: line.line_no,
-      bookedOn: line.booked_on,
-      amountCents: toSafeInteger(line.amount_cents),
-      hasReference: Boolean(line.has_reference),
-      match: line.match_id
-        ? { id: line.match_id, ledgerEntryId: line.ledger_entry_id ?? null, paymentEntryId: line.payment_entry_id ?? null }
-        : null,
-    }));
-    return { reconciliation: reconciliationFromRow(row), lineItems, matches: matches.rows, entries: entries.rows, inconsistent };
+    const inconsistentResult = await inconsistentMatches(tx, id);
+    // Podsumowanie liczone niezależnie od stronicowania `lines` (#218): stronicowanie
+    // pokazuje tylko jedną stronę pozycji, ale liczby w summary muszą objąć wszystkie.
+    const summaryResult = await tx.query(
+      `SELECT count(*) AS line_count, count(m.id) AS matched_line_count,
+              COALESCE(sum(l.amount_cents) FILTER (WHERE m.id IS NULL), 0) AS unmatched_line_total_cents
+         FROM bank_statement_lines l
+         LEFT JOIN bank_reconciliation_matches m ON m.statement_line_id = l.id AND m.revoked_at IS NULL
+        WHERE l.reconciliation_id = $1`,
+      [id],
+    );
+    return {
+      reconciliation: reconciliationFromRow(row), lines: linesResult, matches: matchesResult,
+      entries: entriesResult, inconsistent: inconsistentResult, summaryRow: summaryResult,
+    };
   });
-  const unmatchedLines = lineItems.filter((line) => !line.match);
+
+  const visibleLineRows = lines.rows.slice(0, limit);
+  const nextCursor = lines.rows.length > limit && visibleLineRows.length
+    ? encodeLinesCursor(visibleLineRows[visibleLineRows.length - 1], id)
+    : null;
+  const lineItems = visibleLineRows.map((line) => ({
+    id: line.id,
+    importId: line.import_id,
+    source: line.source,
+    lineNo: line.line_no,
+    bookedOn: line.booked_on,
+    amountCents: toSafeInteger(line.amount_cents),
+    hasReference: Boolean(line.has_reference),
+    match: line.match_id
+      ? { id: line.match_id, ledgerEntryId: line.ledger_entry_id ?? null, paymentEntryId: line.payment_entry_id ?? null }
+      : null,
+  }));
+  const summary = summaryRow.rows[0];
+  const lineCount = toSafeInteger(summary.line_count);
+  const matchedLineCount = toSafeInteger(summary.matched_line_count);
   return json({
     reconciliation,
     lines: lineItems,
-    matches: matches.map(matchFromRow),
+    nextCursor,
+    matches: matches.rows.map(matchFromRow),
     summary: {
-      lineCount: lineItems.length,
-      matchedLineCount: lineItems.length - unmatchedLines.length,
-      unmatchedLineCount: unmatchedLines.length,
-      unmatchedLineTotalCents: unmatchedLines.reduce((sum, line) => sum + line.amountCents, 0),
+      lineCount,
+      matchedLineCount,
+      unmatchedLineCount: lineCount - matchedLineCount,
+      unmatchedLineTotalCents: toSafeInteger(summary.unmatched_line_total_cents),
       inconsistentMatchCount: inconsistent.length,
     },
-    unmatchedLines,
     inconsistentMatches: inconsistent,
-    unmatchedLedgerEntries: entries.map((entry) => ({
+    unmatchedLedgerEntries: entries.rows.slice(0, 1000).map((entry) => ({
       id: entry.id,
       direction: entry.direction,
       occurredOn: entry.occurred_on,
@@ -523,6 +591,7 @@ async function getReconciliation(request, env, id, json) {
       categoryId: entry.category_id,
       description: entry.description,
     })),
+    unmatchedLedgerEntriesTruncated: entries.rows.length > 1000,
   });
 }
 
@@ -566,11 +635,23 @@ async function importLines(request, env, id, json) {
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [importId, id, input.source, hashed.length, requestHash, actorId, idempotencyKey],
       );
-      for (const [index, line] of hashed.entries()) {
+      // Jeden INSERT … SELECT FROM unnest(...) zamiast 500 osobnych zapytań w
+      // pętli (#218): tyle samo aktywacji triggera bank_statement_line_guard,
+      // ale jedna podróż do bazy zamiast MAX_LINES. Kolejność z tablic JS
+      // (tożsama z kolejnością w pliku, `index + 1`) jest zachowana przez
+      // unnest na równoległych tablicach — bez polegania na WITH ORDINALITY.
+      if (hashed.length > 0) {
         await tx.query(
           `INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents, reference_hash, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [crypto.randomUUID(), id, importId, index + 1, line.bookedOn, line.amountCents, line.referenceHash, actorId],
+           SELECT t.id, $1, $2, t.line_no, t.booked_on, t.amount_cents, t.reference_hash, $3
+             FROM unnest($4::text[], $5::int[], $6::date[], $7::bigint[], $8::text[])
+                  AS t(id, line_no, booked_on, amount_cents, reference_hash)`,
+          [id, importId, actorId,
+            hashed.map(() => crypto.randomUUID()),
+            hashed.map((_, index) => index + 1),
+            hashed.map((line) => line.bookedOn),
+            hashed.map((line) => line.amountCents),
+            hashed.map((line) => line.referenceHash)],
         );
       }
       // Możliwe duplikaty z wcześniejszych importów (ta sama data, kwota i skrót tytułu).
@@ -585,7 +666,7 @@ async function importLines(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.lines.imported', entityType: 'bank_statement_import', entityId: importId,
-        metadata: { reconciliationId: id, source: input.source, lineCount: hashed.length },
+        metadata: { reconciliationId: id, source: input.source, lineCount: hashed.length, schoolYearId: row.school_year_id },
       });
       return json({
         import: { id: importId, reconciliationId: id, source: input.source, lineCount: hashed.length },
@@ -775,7 +856,10 @@ async function confirmMatch(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.confirmed', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id, statementLineId: data.statementLineId, ledgerEntryId, paymentEntryId },
+        metadata: {
+          reconciliationId: id, statementLineId: data.statementLineId, ledgerEntryId, paymentEntryId,
+          schoolYearId: row.school_year_id,
+        },
       });
       const { rows } = await tx.query('SELECT * FROM bank_reconciliation_matches WHERE id = $1', [matchId]);
       return json({ match: matchFromRow(rows[0]) }, 201, CREATED);
@@ -820,7 +904,7 @@ async function revokeMatch(request, env, id, matchId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.revoked', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id },
+        metadata: { reconciliationId: id, schoolYearId: row.school_year_id },
       });
       return json({ match: matchFromRow(updated.rows[0]) }, 200, CREATED);
     });
@@ -1203,7 +1287,7 @@ export async function handle(request, env, url, json) {
     const id = decodeId(match[1]);
     const action = match[2] ?? null;
     if (match[3] && action !== 'matches') return null;
-    if (!action && method === 'GET') return await getReconciliation(request, env, id, json);
+    if (!action && method === 'GET') return await getReconciliation(request, env, id, url, json);
     if (action === 'suggestions' && method === 'GET') return await suggestMatches(request, env, id, url, json);
     if (method !== 'POST') {
       // GET, HEAD i inne — jedyne trasy tej ścieżki bez akcji/z 'suggestions' dopuszczają GET,
