@@ -129,8 +129,8 @@ Nie są eksportowane (jawna lista `EXPORT_EXCLUDED_TABLES` w
 `src/pg/export.js`, każda z uzasadnieniem; test kompletności w
 `tests/pg-export-v2.test.js` zawodzi, gdy nowa tabela nie jest ani w eksporcie,
 ani na tej liście): konta użytkowników (`users`: e-mail, nazwa), sesje,
-zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity logowania (0020), przydziały ról, klucze idempotencji zebrań,
-metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), dziennik kopii zapasowych `backup_runs` (0058, dane operacyjne), `data_access_log`, metadane importów (`import_batches`, D-04),
+zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity logowania (0020), przydziały ról, rejestr polityk retencji `retention_policies` (0074, #91, D-04 — konfiguracja/decyzje zarządu, nie dane roku), klucze idempotencji zebrań,
+metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), dziennik kopii zapasowych `backup_runs` (0058, dane operacyjne), `data_access_log`, rejestr żądań osób RODO `data_subject_requests` (0068, #100 — rozliczalność wobec osób, nie dane Rady; dostęp i retencja do D-07/D-08/D-09), metadane importów (`import_batches`, D-04),
 dziennik eksportów, kampanie e-mail z odbiorcami, wykluczeniami, kolejką,
 blokadami i zdarzeniami dostawcy (adresy e-mail; zakres i retencja — D-04)
 oraz aktualności i zdjęcia (zgody na wizerunek — osobny zakres), w tym pliki wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres D-04). Kolumny `created_by`, `actor_id`, `source_document_id` itp.

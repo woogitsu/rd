@@ -15,6 +15,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`bank_reconciliation_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_matches`|`revoke_reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania|document_financial|tak|tak|
 |`bank_reconciliation_matches`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`bank_reconciliations`|`abandon_reason`|Osoba trzecia|direct|wolny tekst|powód porzucenia szkicu uzgodnienia|document_financial|tak|tak|
 |`bank_reconciliations`|`confirmation_note`|Osoba trzecia|direct|wolny tekst|notatka potwierdzenia uzgodnienia|document_financial|tak|tak|
 |`bank_reconciliations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliations`|`notes`|Osoba trzecia|direct|wolny tekst|notatka uzgodnienia banku|document_financial|tak|tak|
@@ -22,6 +23,11 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`bank_statement_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`data_access_log`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`data_access_log`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie wpisu z gospodarstwem|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie żądania z opiekunem|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`handled_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie żądania z osobą obsługującą|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie żądania z gospodarstwem|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie żądania z uczniem|nieustalona (D-04)|nie|nie|
 |`document_descriptions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`document_descriptions`|`description`|Osoba trzecia|direct|wolny tekst|opis dokumentu|document_financial|tak|tak|
 |`document_descriptions`|`title`|Osoba trzecia|direct|wolny tekst|tytuł dokumentu|document_financial|tak|tak|
@@ -110,6 +116,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`resolutions`|`body`|Członek Rady|direct|wolny tekst|treść uchwały|audit_event|tak|tak|
 |`resolutions`|`correction_reason`|Członek Rady|direct|wolny tekst|uzasadnienie korekty uchwały|audit_event|tak|tak|
 |`resolutions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`retention_policies`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia polityki z osobą (zasada czterech oczu)|nieustalona (D-04)|nie|nie|
+|`retention_policies`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`sessions`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -126,7 +134,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **113**, w tym wolnego tekstu: **27** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **121**, w tym wolnego tekstu: **28** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -179,6 +187,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
+| `abandon_reason` | direct | third_party | tak |
+| `abandoned_at` | none | — | tak |
+| `abandoned_by` | none | — | tak |
 | `confirmation_note` | direct | third_party | tak |
 | `confirmed_at` | none | — | tak |
 | `confirmed_by` | none | — | tak |
@@ -252,6 +263,24 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `outcome` | none | — | nie |
 | `row_count` | none | — | nie |
 | `school_year_id` | none | — | nie |
+
+### `data_subject_requests`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `decision_note_ref` | none | — | nie |
+| `due_on` | none | — | nie |
+| `guardian_id` | pseudonymous | guardian | nie |
+| `handled_by` | pseudonymous | board_member | nie |
+| `household_id` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `kind` | none | — | nie |
+| `received_on` | none | — | nie |
+| `status` | none | — | nie |
+| `student_id` | pseudonymous | student | nie |
+| `updated_at` | none | — | nie |
 
 ### `document_descriptions`
 
@@ -1154,6 +1183,20 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `votes_abstain` | none | — | tak |
 | `votes_against` | none | — | tak |
 | `votes_for` | none | — | tak |
+
+### `retention_policies`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `approved_by` | pseudonymous | board_member | nie |
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `data_category` | none | — | nie |
+| `decision_ref` | none | — | nie |
+| `effective_from` | none | — | nie |
+| `id` | none | — | nie |
+| `retain_for` | none | — | nie |
+| `retain_until_rule` | none | — | nie |
 
 ### `role_grants`
 

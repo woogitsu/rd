@@ -63,6 +63,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `ledger_opening_balance_adjustments.reason` | jw. |
 | `bank_reconciliations.notes` | treść przepisana z wyciągu bankowego |
 | `bank_reconciliations.confirmation_note` | jw. |
+| `bank_reconciliations.abandon_reason` | powód porzucenia szkicu — może przepisywać treść z wyciągu |
 | `bank_reconciliation_matches.revoke_reason` | uzasadnienie cofnięcia dopasowania z wyciągu |
 | `meeting_agenda_items.description` | sprawa konkretnego ucznia w porządku obrad |
 | `meeting_minutes.body` | treść protokołu — może opisywać konkretne dzieci/rodziny |
