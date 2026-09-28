@@ -18,6 +18,7 @@ import {
 } from "./core.js";
 import { formatEur } from "../panel/money.js";
 import { api as apiRequest } from "../shared/api.js";
+import { initialSchoolYearId } from "../shared/school-year.js";
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
@@ -128,16 +129,22 @@ function textCell(value) {
   return cell;
 }
 
-filtersForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const value = yearInput.value.trim();
+// Wczytuje stan dla podanego roku; używane zarówno przy ręcznym „Pokaż”, jak i
+// przy wypełnieniu domyślnym rokiem po wejściu na panel (puste ekrany bez akcji).
+async function showYear(value) {
   if (!isValidId(value)) { setMessage("Podaj poprawny identyfikator roku szkolnego.", true); return; }
   setMessage("");
+  yearInput.value = value;
   try {
     await loadStatus(value);
   } catch (error) {
     setMessage(`Nie udało się pobrać stanu zamknięcia: ${error.message}`, true);
   }
+}
+
+filtersForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  showYear(yearInput.value.trim());
 });
 
 async function refreshStatus() {
@@ -273,12 +280,17 @@ async function applyAccess() {
   }
   state.grants = Array.isArray(access.grants) ? access.grants : [];
   state.actorId = session?.user?.id ?? null;
-  if (hasReadAccess(state.grants)) return;
-  filtersForm.closest("section").hidden = true;
-  const notice = byId("access-notice");
-  notice.textContent = access.mfaRequired === true
-    ? describeApiError(403, "mfa_required")
-    : describeApiError(403, "forbidden");
-  notice.hidden = false;
+  if (!hasReadAccess(state.grants)) {
+    filtersForm.closest("section").hidden = true;
+    const notice = byId("access-notice");
+    notice.textContent = access.mfaRequired === true
+      ? describeApiError(403, "mfa_required")
+      : describeApiError(403, "forbidden");
+    notice.hidden = false;
+    return;
+  }
+  // Rok domyślny: najnowszy z przydziałów, awaryjnie heurystyka daty
+  // (shared/school-year.js) — panel ładuje dane bez klikania „Pokaż”.
+  await showYear(initialSchoolYearId(state.grants));
 }
 applyAccess();
