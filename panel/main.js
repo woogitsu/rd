@@ -12,6 +12,11 @@ import {
   paymentsFilterChanged,
   paymentsQuery,
 } from "./core.js";
+import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null };
 const byId = (id) => document.getElementById(id);
@@ -31,20 +36,8 @@ function localDate() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
 }
 
-async function api(url, options = {}) {
-  const response = await fetch(url, {
-    credentials: "same-origin",
-    ...options,
-    headers: { "Content-Type": "application/json", ...options.headers },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const code = typeof data.error === "string" ? data.error : null;
-    throw new Error(describeApiError(response.status, code)
-      || data.error?.message || data.message || `Błąd serwera (${response.status}).`);
-  }
-  return data;
-}
+// Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
+const api = apiRequest;
 
 function textCell(value, className = "") {
   const cell = document.createElement("td");
@@ -211,7 +204,9 @@ function configureDialog(id, prefix, submit, successText) {
       if (!message.classList.contains("error")) message.textContent = successText;
       restoreFocus();
     } catch (error) {
-      errorBox.textContent = `${error.message} Jeśli chcesz zmienić dane operacji, anuluj formularz i otwórz go ponownie.`;
+      errorBox.textContent = error.code === "idempotency_conflict"
+        ? `${error.message} Jeśli chcesz zmienić dane operacji, anuluj formularz i otwórz go ponownie.`
+        : error.message;
     } finally {
       submitButton.disabled = false;
     }
