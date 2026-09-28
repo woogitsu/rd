@@ -20,6 +20,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { insertAuditEvent } from './audit.js';
 import { rotateSession } from './auth.js';
+import { freshMfaForbiddenCode } from './authorization.js';
 
 // Założenia do potwierdzenia (D-10): 5 błędów w 15 min → blokada 15 min, 10 kodów odzyskiwania.
 // maxFailures dotyczy sesji; userMaxFailures to wyższy sufit dla konta (#189): błędne kody
@@ -322,6 +323,14 @@ export async function enrollFactor(env, session, { method = DEFAULT_MFA_METHOD }
     await lockUser(tx, session.user.id);
     const factors = await activeFactors(tx, session.user.id);
     if (factors.confirmed && !session.mfaVerified) throw new MfaError('mfa_required', 403);
+    // #150 (krok w górę): wymiana potwierdzonego czynnika na nowy (np. przez
+    // osobę z przejętą sesją) kończy się świeżym MFA i odcina właściciela od
+    // jego aplikacji — wymaga więc MFA potwierdzonego od niedawna, nie tylko
+    // kiedyś w tej sesji. Pierwszy zapis czynnika (brak potwierdzonego) bez zmian.
+    if (factors.confirmed) {
+      const staleCode = freshMfaForbiddenCode({ session });
+      if (staleCode) throw new MfaError(staleCode, 403);
+    }
     if (factors.pending) {
       await tx.query('UPDATE user_mfa_factors SET disabled_at = now() WHERE id = $1', [factors.pending.id]);
     }
