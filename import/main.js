@@ -1,4 +1,4 @@
-import { readXlsxRows } from './xlsx.js';
+import { readXlsxSheets } from './xlsx.js';
 import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
@@ -15,6 +15,8 @@ const status = document.querySelector('#file-status');
 const mappingSection = document.querySelector('#mapping-section');
 const resultSection = document.querySelector('#result-section');
 const mapArea = document.querySelector('#mapping');
+const sheetField = document.querySelector('#sheet-field');
+const sheetSelect = document.querySelector('#sheet');
 const serverSection = document.querySelector('#server-section');
 const serverYear = document.querySelector('#server-year');
 const serverStatus = document.querySelector('#server-status');
@@ -26,7 +28,9 @@ const skipConflicts = document.querySelector('#skip-conflicts');
 // Stan kroku 4. Klucz idempotencji jest nowy dla każdego podglądu i ten sam przy ponowieniu zatwierdzenia.
 let serverPreview = null, serverPayload = null, idempotencyKey = null, busy = false;
 let matrix = null;
+let xlsxSheets = null; // #88: wszystkie arkusze XLSX naraz — zmiana wyboru nie czyta pliku ponownie.
 let lastResult = null;
+let currentFileName = '';
 // #109: raport do pobrania — wszystkie komunikaty z walidacji lokalnej i (jeśli
 // wysłano) podglądu serwera. Tylko numer wiersza, etap, rodzaj i komunikat —
 // bez imion, nazwisk i e-maili.
@@ -34,38 +38,69 @@ let reportEntries = [];
 function updateReportButton() { downloadReportButton.disabled = reportEntries.length === 0; }
 function showError(message) { status.className = 'status error'; status.textContent = message; fileInput.setAttribute('aria-invalid', 'true'); }
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+// Buduje sekcję mapowania kolumn dla aktualnego `matrix` — wywoływane po wczytaniu
+// pliku i przy zmianie arkusza XLSX (bez ponownego odczytu pliku).
+function applyMatrix(note = '') {
+  mapArea.replaceChildren();
+  if (matrix.length < 2 || matrix.length > 5001) throw new Error('Plik musi zawierać od 1 do 5000 wierszy danych.');
+  if (!Array.isArray(matrix[0]) || matrix[0].length > 60) throw new Error('Nagłówek ma więcej niż 60 kolumn.');
+  const headers = matrix[0].map(v => String(v ?? '').trim());
+  const suggested = guessMapping(headers);
+  for (const [field, label] of FIELDS) {
+    const wrapper = document.createElement('label'); wrapper.textContent = label;
+    const select = document.createElement('select'); select.dataset.field = field;
+    const empty = new Option('— pomiń —', ''); select.add(empty);
+    headers.forEach((header, index) => select.add(new Option(`${index + 1}. ${header || '(bez nazwy)'}`, String(index))));
+    if (suggested[field] !== undefined) select.value = String(suggested[field]);
+    wrapper.append(select); mapArea.append(wrapper);
+  }
+  mappingSection.hidden = false;
+  status.className = 'status muted';
+  status.textContent = `Odczytano ${matrix.length - 1} wierszy z pliku ${currentFileName}.${note}`;
+}
 async function readSelectedFile() {
-  matrix = null; lastResult = null; resetServer(); mapArea.replaceChildren(); mappingSection.hidden = true; resultSection.hidden = true; serverSection.hidden = true;
+  matrix = null; xlsxSheets = null; lastResult = null; resetServer();
+  mapArea.replaceChildren(); mappingSection.hidden = true; resultSection.hidden = true; serverSection.hidden = true;
+  sheetField.hidden = true; sheetSelect.replaceChildren();
   const file = fileInput.files?.[0]; if (!file) return;
+  currentFileName = file.name;
   if (file.size > 5 * 1024 * 1024) return showError('Plik przekracza 5 MB.');
+  // #88: ODS (LibreOffice/Calc) nie jest obsługiwane — brak biblioteki bez znanych podatności
+  // w rejestrze npm. Instrukcja zamiast cichego odrzucenia (decyzja opisana w PR).
+  if (/\.ods$/i.test(file.name)) {
+    return showError('Format .ods nie jest obsługiwany. W LibreOffice/Calc: Plik → Zapisz jako → wybierz „Excel 2007-365 (.xlsx)” albo „Tekst CSV (.csv)” — i wczytaj zapisany plik ponownie.');
+  }
   if (!/\.(csv|xlsx)$/i.test(file.name)) return showError('Wybierz plik .csv lub .xlsx.');
   status.className = 'status muted'; status.textContent = 'Odczyt pliku…'; fileInput.removeAttribute('aria-invalid');
-  let source = '', warnings = [];
   try {
     if (/\.csv$/i.test(file.name)) {
       // #77: wykrycie kodowania (UTF-8/BOM, Windows-1250) i separatora; ręczny wybór nadpisuje wykrycie.
       const decoded = decodeCsvBytes(await file.arrayBuffer(), { encoding: encodingSelect.value });
-      source = describeSource(decoded, detectDelimiter(decoded.text)); warnings = decoded.warnings;
+      const source = describeSource(decoded, detectDelimiter(decoded.text));
       matrix = parseCsv(decoded.text);
-    } else matrix = await readXlsxRows(await file.arrayBuffer());
-    if (matrix.length < 2 || matrix.length > 5001) throw new Error('Plik musi zawierać od 1 do 5000 wierszy danych.');
-    if (!Array.isArray(matrix[0]) || matrix[0].length > 60) throw new Error('Nagłówek ma więcej niż 60 kolumn.');
-    const headers = matrix[0].map(v => String(v ?? '').trim());
-    const suggested = guessMapping(headers);
-    for (const [field, label] of FIELDS) {
-      const wrapper = document.createElement('label'); wrapper.textContent = label;
-      const select = document.createElement('select'); select.dataset.field = field;
-      const empty = new Option('— pomiń —', ''); select.add(empty);
-      headers.forEach((header, index) => select.add(new Option(`${index + 1}. ${header || '(bez nazwy)'}`, String(index))));
-      if (suggested[field] !== undefined) select.value = String(suggested[field]);
-      wrapper.append(select); mapArea.append(wrapper);
+      applyMatrix(`${source ? ` (${source})` : ''}${decoded.warnings.length ? ` Uwaga: ${decoded.warnings.join(' ')}` : ''}`);
+    } else {
+      // #88: wybór arkusza — plik bywa wieloarkuszowy (np. arkusz „Instrukcja” przed danymi).
+      xlsxSheets = await readXlsxSheets(await file.arrayBuffer());
+      sheetSelect.replaceChildren();
+      xlsxSheets.forEach((sheet, index) => sheetSelect.add(new Option(`${sheet.name} (${Math.max(sheet.rows.length - 1, 0)} wierszy)`, String(index))));
+      sheetField.hidden = xlsxSheets.length < 2;
+      sheetSelect.value = '0';
+      matrix = xlsxSheets[0].rows;
+      applyMatrix(xlsxSheets.length > 1 ? ` Arkusz: ${xlsxSheets[0].name}.` : '');
     }
-    mappingSection.hidden = false;
-    status.textContent = `Odczytano ${matrix.length - 1} wierszy z pliku ${file.name}${source ? ` (${source})` : ''}.${warnings.length ? ` Uwaga: ${warnings.join(' ')}` : ''}`;
-  } catch (error) { matrix = null; showError(`Nie udało się odczytać pliku: ${error.message}`); }
+  } catch (error) { matrix = null; xlsxSheets = null; showError(`Nie udało się odczytać pliku: ${error.message}`); }
 }
 fileInput.addEventListener('change', readSelectedFile);
 encodingSelect.addEventListener('change', readSelectedFile);
+sheetSelect.addEventListener('change', () => {
+  if (!xlsxSheets) return;
+  const sheet = xlsxSheets[Number(sheetSelect.value)]; if (!sheet) return;
+  lastResult = null; resetServer(); resultSection.hidden = true; serverSection.hidden = true;
+  matrix = sheet.rows;
+  try { applyMatrix(` Arkusz: ${sheet.name}.`); }
+  catch (error) { matrix = null; mappingSection.hidden = true; showError(error.message); }
+});
 document.querySelector('#preview').addEventListener('click', () => {
   if (!matrix) return;
   const mapping = Object.fromEntries(Array.from(mapArea.querySelectorAll('select')).map(el => [el.dataset.field, el.value]));
