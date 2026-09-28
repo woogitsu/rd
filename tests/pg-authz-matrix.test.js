@@ -108,9 +108,10 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
     [studentId, householdId, `Uczennica ${marker(target.key)}`]);
   await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)',
     [studentId, guardianId]);
+  const enrollmentId = `${householdId}-e`;
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
-    [`${householdId}-e`, studentId, target.classId, target.schoolYearId]);
-  return { householdId, guardianId, studentId };
+    [enrollmentId, studentId, target.classId, target.schoolYearId]);
+  return { householdId, guardianId, studentId, enrollmentId };
 }
 
 async function seedFixtureSessions(db) {
@@ -739,6 +740,7 @@ const MODULE_SOURCES = {
   'year-close': ['../src/pg/routes/year-close.js'],
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
+  representative: ['../src/pg/routes/representative.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń

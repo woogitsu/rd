@@ -7,6 +7,8 @@
 //   storage.deleteObject(key)                  -> Promise<void>  // wyłącznie sprzątanie obiektu,
 //                                                               // do którego nie powstał wpis w bazie,
 //                                                               // i test smoke; dokumentów nie usuwamy (D-04)
+//   storage.listObjects(prefix, continuationToken) -> Promise<{ keys, nextContinuationToken, isTruncated }>
+//                                                               // do kontroli zgodności bez dostępu do bazy (#103)
 //
 // Implementacja S3 podpisuje żądania AWS Signature V4 (node:crypto + fetch),
 // bez dodatkowych zależności. Railway Storage Bucket jest zawsze prywatny;
@@ -20,6 +22,7 @@ import { createHash, createHmac } from 'node:crypto';
 
 const OBJECT_KEY = /^[a-z]+\/[A-Za-z0-9-]{8,64}$/;
 const DEFAULT_TIMEOUT_MS = 15_000;
+const LIST_PAGE_SIZE = 1000;
 
 function storageError(code) {
   const error = new Error(code);
@@ -57,6 +60,16 @@ export function createMemoryStorage() {
     async deleteObject(key) {
       assertObjectKey(key);
       objects.delete(key);
+    },
+    // Strona kluczy w porządku leksykograficznym (jak ListObjectsV2), po
+    // maks. 1000 na stronę. `continuationToken` to indeks strony (nieprzezroczysty
+    // dla wywołującego — jak prawdziwy token S3, nie zakładać formatu).
+    async listObjects(prefix = '', continuationToken) {
+      const all = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort();
+      const start = continuationToken ? Number(continuationToken) : 0;
+      const page = all.slice(start, start + LIST_PAGE_SIZE);
+      const isTruncated = start + LIST_PAGE_SIZE < all.length;
+      return { keys: page, isTruncated, nextContinuationToken: isTruncated ? String(start + LIST_PAGE_SIZE) : null };
     },
     // Tylko do testów: lista kluczy i bezpośredni dostęp do zawartości.
     keys: () => [...objects.keys()],
@@ -133,6 +146,12 @@ export function createS3Storage({
       : `${base.protocol}//${bucket}.${base.host}/${path}`;
   }
 
+  function bucketUrl() {
+    return urlStyle === 'path'
+      ? `${base.protocol}//${base.host}/${bucket}`
+      : `${base.protocol}//${bucket}.${base.host}/`;
+  }
+
   async function send(method, key, { body, contentType } = {}) {
     const url = objectUrl(key);
     const payloadHash = body ? sha256Hex(body) : sha256Hex('');
@@ -172,7 +191,41 @@ export function createS3Storage({
       await response.arrayBuffer().catch(() => {});
       if (!response.ok && response.status !== 404) throw storageError(`storage_delete_${response.status}`);
     },
+    // ListObjectsV2 (#103). Bez zależności na parser XML — odpowiedź jest
+    // wystarczająco prosta (elementy <Key>/<IsTruncated>/<NextContinuationToken>
+    // nigdy nie zawierają zagnieżdżonych elementów o tej samej nazwie).
+    async listObjects(prefix = '', continuationToken) {
+      const url = new URL(bucketUrl());
+      url.searchParams.set('list-type', '2');
+      url.searchParams.set('max-keys', String(LIST_PAGE_SIZE));
+      if (prefix) url.searchParams.set('prefix', prefix);
+      if (continuationToken) url.searchParams.set('continuation-token', continuationToken);
+      const payloadHash = sha256Hex('');
+      const { headers } = signRequest({ method: 'GET', url: url.toString(), payloadHash, accessKeyId, secretAccessKey, region, now: now() });
+      delete headers.host;
+      let response;
+      try {
+        response = await fetchImpl(url.toString(), { method: 'GET', headers, signal: AbortSignal.timeout(timeoutMs) });
+      } catch {
+        throw storageError('storage_unreachable');
+      }
+      const body = await response.text().catch(() => '');
+      if (!response.ok) throw storageError(`storage_list_${response.status}`);
+      return parseListObjectsV2(body);
+    },
   };
+}
+
+function xmlTagValue(xml, tag) {
+  const match = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`));
+  return match ? match[1] : null;
+}
+
+function parseListObjectsV2(xml) {
+  const keys = [...xml.matchAll(/<Key>([^<]*)<\/Key>/g)].map((match) => match[1]);
+  const isTruncated = xmlTagValue(xml, 'IsTruncated') === 'true';
+  const nextContinuationToken = isTruncated ? xmlTagValue(xml, 'NextContinuationToken') : null;
+  return { keys, isTruncated, nextContinuationToken };
 }
 
 // Konfiguracja wyłącznie ze zmiennych środowiskowych (sekrety Railway).
