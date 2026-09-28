@@ -16,6 +16,10 @@ export const MESSAGES = Object.freeze({
   class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
   // --- Zakończenie przypisania do klasy (#86) --------------------------------------
   invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
+  // --- Rejestr uchwał (#102) --------------------------------------------------------
+  invalid_relation_kind: "Wybierz rodzaj powiązania uchwały z listy.",
+  invalid_execution_status: "Wybierz stan wykonania uchwały z listy.",
+  resolution_not_decided: "Stan wykonania można zapisać tylko dla podjętej uchwały.",
   // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
   minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
   // --- Tryb tylko do odczytu (#143) ------------------------------------------------
@@ -79,6 +83,11 @@ export const MESSAGES = Object.freeze({
   invalid_signature: "Niepoprawny podpis żądania.",
   webhook_not_configured: "Powiadomienia zwrotne nie są skonfigurowane na tym środowisku.",
 
+  invalid_domain: "Wybierz obszar dziennika z listy.",
+  invalid_entity_type: "Nieznany rodzaj obiektu w dzienniku.",
+  invalid_from: "Podaj poprawną datę początkową (RRRR-MM-DD).",
+  invalid_to: "Podaj poprawną datę końcową (RRRR-MM-DD).",
+
   // --- Rok szkolny i klasy ---------------------------------------------------------
   invalid_school_year: "Niepoprawny identyfikator roku szkolnego.",
   invalid_school_year_id: "Niepoprawny identyfikator roku szkolnego.",
@@ -114,6 +123,8 @@ export const MESSAGES = Object.freeze({
   admin_exists: "Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne.",
   pending_admin_invitation: "Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij.",
   production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
+  role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji.",
+  class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
 
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
@@ -126,6 +137,8 @@ export const MESSAGES = Object.freeze({
   payment_already_linked: "Wpłata jest już powiązana z innym wpisem.",
   payment_cannot_be_corrected: "Tej wpłaty nie można skorygować w obecnym stanie.",
   correction_exceeds_remaining_amount: "Korekta przekracza kwotę pozostałą po wcześniejszych korektach.",
+  possible_personal_data: "Ten tekst zostanie zapisany na stałe i trafi do eksportu. Usuń dane osobowe albo potwierdź, że to konieczne.",
+  minutes_contain_personal_data: "Protokół zawiera możliwe dane osobowe (imię i nazwisko, e-mail albo IBAN) — publikacja publiczna jest zablokowana.",
   payment_amount_mismatch: "Kwota wpłaty nie zgadza się z powiązanym wpisem księgi. Odśwież widok i sprawdź dane.",
   payment_cannot_be_refunded: "Tej wpłaty nie można zwrócić w obecnym stanie.",
   payment_not_assigned: "Wpłata nie jest przypisana do żadnej rodziny.",
@@ -176,6 +189,8 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  statement_line_not_found: "Nie znaleziono pozycji wyciągu.",
+  statement_line_not_income: "Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia.",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",
@@ -277,6 +292,8 @@ export const MESSAGES = Object.freeze({
   photo_revoked: "Zgoda na publikację zdjęcia została wycofana.",
   duplicate_photo: "To zdjęcie jest już dodane.",
   invalid_alt_text: "Podaj opis zdjęcia (tekst alternatywny).",
+  alt_text_required: "Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne.",
+  invalid_decorative: "Niepoprawna wartość pola „zdjęcie dekoracyjne”.",
   invalid_taken_on: "Niepoprawna data wykonania zdjęcia.",
   invalid_depicts_children: "Zaznacz, czy zdjęcie przedstawia dzieci.",
   invalid_consent: "Niepoprawny zapis zgody na publikację.",

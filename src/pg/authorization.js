@@ -2,11 +2,19 @@
 // ze starym modułem src/authorization.js; tu zmienia się tylko źródło danych.
 
 import { isAuthorized } from '../authorization.js';
-import { isoTimestamp, loadSession } from './auth.js';
+import { isoTimestamp, loadSession, ROLE_STATUS } from './auth.js';
 import { insertAuditEvent } from './audit.js';
 import { mfaStatus } from './mfa-policy.js';
 
 export { isAuthorized };
+
+// #176: konto może mieć rolę bez żadnej trasy chronionej dziś (np. `principal`,
+// ROLE_STATUS 'pending_decision'). Serwer — nie front-end — rozstrzyga, czy
+// przydziały dają cokolwiek: jedno źródło prawdy (ROLE_STATUS), żeby ekran
+// startowy nie musiał duplikować tej wiedzy ani zgadywać.
+export function hasActiveRole(grants) {
+  return Array.isArray(grants) && grants.some((grant) => ROLE_STATUS[grant.role] !== 'pending_decision');
+}
 
 export async function loadActiveGrants(env, userId) {
   const { rows } = await env.db.query(

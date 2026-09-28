@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createBrevoTransport, emailConfig, EmailTransportError, matchesAllowlist, parseRetryAfter, recipientRefusal } from '../src/email/brevo.js';
+import { createBrevoTransport, emailConfig, EmailTransportError, isFreeEmailDomain, liveRunRefusal, matchesAllowlist, parseRetryAfter, recipientRefusal } from '../src/email/brevo.js';
 import { normalizeEmail, emailHash, parseCampaignContent } from '../src/email/content.js';
 import {
   accountDay, campaignDailyCap, recordOtherSends, remainingQuota, runEmailBatch, ResultNotRecordedError,
@@ -150,12 +150,24 @@ test('Brevo client sends one recipient per request with api-key header (injected
   assert.equal(requests[0].init.headers['api-key'], 'synthetic-key');
   assert.deepEqual(sent.to, [{ email: 'a@example.invalid' }]);
   assert.equal(sent.headers['X-RD-Idempotency-Key'], 'campaign:c:household:h');
+  assert.equal(sent.replyTo, undefined, 'brak replyTo w wiadomości nie dodaje pola');
   assert.equal(sent.headers['X-Mailin-custom'], 'o1');
   await assert.rejects(transport.send(message), (e) => e instanceof EmailTransportError && e.retryable && !e.uncertain);
   await assert.rejects(transport.send(message), (e) => e.code === 'delivery_unknown' && e.uncertain && !e.retryable);
   await assert.rejects(transport.send(message), (e) => e.code === 'provider_rejected_400' && !e.retryable);
   await assert.rejects(transport.send({ ...message, to: ['a@example.invalid', 'b@example.invalid'] }), { code: 'single_recipient_required' });
   assert.equal(networkGuardCalls(), 0);
+});
+
+test('Brevo client passes replyTo when configured (#148)', async () => {
+  const requests = [];
+  const spy = async (url, init) => { requests.push(JSON.parse(init.body)); return new Response(JSON.stringify({ messageId: '<m@example.invalid>' }), { status: 201 }); };
+  const transport = createBrevoTransport({ apiKey: 'synthetic-key', appEnv: 'development', fetchImpl: spy, processEnv: {} });
+  await transport.send({
+    to: 'a@example.invalid', sender: { email: 'rada@example.invalid', name: 'Rada' }, replyTo: 'kontakt@example.invalid',
+    subject: 'S', text: 'T', outboxId: 'o1', idempotencyKey: 'campaign:c:household:h',
+  });
+  assert.deepEqual(requests[0].replyTo, { email: 'kontakt@example.invalid' });
 });
 
 test('allowlist guard outside production and configuration defaults', () => {
@@ -178,6 +190,18 @@ test('allowlist guard outside production and configuration defaults', () => {
   assert.equal(emailConfig({ EMAIL_QUOTA_TIMEZONE: 'UTC' }).quotaTimezone, 'UTC');
   // Nieznana strefa (literówka w env) nie wywraca konfiguracji — wraca do domyślnej.
   assert.equal(emailConfig({ EMAIL_QUOTA_TIMEZONE: 'Nie/Istnieje' }).quotaTimezone, 'Europe/Brussels');
+});
+
+test('sender readiness (#148): free domain and missing reply-to on production', () => {
+  const base = { EMAIL_SENDING_ENABLED: 'true', BREVO_FROM_EMAIL: 'rada@example.invalid' };
+  assert.equal(liveRunRefusal(emailConfig({ ...base, BREVO_FROM_EMAIL: '' })), 'sender_not_configured');
+  assert.equal(liveRunRefusal(emailConfig({ ...base, BREVO_FROM_EMAIL: 'ktos@gmail.com' })), 'sender_free_domain');
+  assert.ok(isFreeEmailDomain('ktos@gmail.com'));
+  assert.ok(!isFreeEmailDomain('rada@example.invalid'));
+  // Poza produkcją brak replyTo nie blokuje przebiegu.
+  assert.equal(liveRunRefusal(emailConfig({ ...base, APP_ENV: 'staging' })), null);
+  assert.equal(liveRunRefusal(emailConfig({ ...base, APP_ENV: 'production' })), 'reply_to_not_configured');
+  assert.equal(liveRunRefusal(emailConfig({ ...base, APP_ENV: 'production', BREVO_REPLY_TO: 'kontakt@example.invalid' })), null);
 });
 
 test('content validation rejects debt wording, unknown placeholders and invalid e-mails', async () => {

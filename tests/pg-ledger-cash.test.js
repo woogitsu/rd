@@ -259,3 +259,33 @@ test('przeniesienie: data poza rokiem 422, przedstawiciel i KR 403, bez MFA 403;
     await db.close();
   }
 });
+
+test('#87: przeniesienie i bilans otwarcia przyjmują tylko dokument finansowy tego samego roku', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const insertDoc = (id, kind, schoolYearId) => db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+       VALUES ($1, $2, 'application/pdf', 10, $3, 'u-admin', $4, $5, $6)`,
+      [id, `docs/00000000-0000-4000-8000-${id.padStart(12, '0').slice(-12)}`, kind, schoolYearId, 'b'.repeat(64), `seed-${id}-key`],
+    );
+    await insertDoc('0000000000a1', 'financial', OLD);
+    await insertDoc('0000000000a2', 'financial', NEW);
+    await insertDoc('0000000000a3', 'board', OLD);
+    await db.query(`INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by)
+      VALUES ('legacy-doc', 'synthetic/legacy.pdf', 'application/pdf', 10, 'financial', 'u-admin')`);
+    const body = { schoolYearId: OLD, direction: 'bank_to_cash', amountCents: 2000, transferredOn: '2027-01-10', description: 'Wypłata do kasy' };
+    for (const sourceDocumentId of ['0000000000a2', '0000000000a3', 'legacy-doc', 'doc-missing']) {
+      const refused = await call('POST', '/api/ledger/transfers', cookies.treasurer, { ...body, sourceDocumentId }, key('tr'));
+      assert.deepEqual([refused.status, refused.body.error], [400, 'invalid_source_document'], sourceDocumentId);
+      const opening = await call('POST', '/api/ledger/opening-balance', cookies.boardA,
+        { schoolYearId: OLD, bankCents: BANK, cashCents: CASH, note: 'Bilans syntetyczny', sourceDocumentId }, key('ob'));
+      assert.deepEqual([opening.status, opening.body.error], [400, 'invalid_source_document'], sourceDocumentId);
+    }
+    assert.equal(await count(db, 'ledger_transfers'), 0);
+    assert.equal(await count(db, 'ledger_opening_balances'), 0);
+    const ok = await call('POST', '/api/ledger/transfers', cookies.treasurer, { ...body, sourceDocumentId: '0000000000a1' }, key('tr'));
+    assert.equal(ok.status, 201);
+  } finally {
+    await db.close();
+  }
+});
