@@ -794,7 +794,10 @@ async function testSend(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.preview.sent', entityType: 'email_campaign', entityId: id,
-        metadata: { contentHash: campaign.content_hash, recipientIndex, ok: !transportError, transportError: transportError?.code ?? null },
+        metadata: {
+          schoolYearId: campaign.school_year_id, contentHash: campaign.content_hash, recipientIndex,
+          ok: !transportError, transportError: transportError?.code ?? null,
+        },
       });
     });
   } catch (error) {
