@@ -1,4 +1,5 @@
 // Czyste funkcje widoku rodzin (bez DOM), aby dało się je testować w Node.
+import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
 
 import { formatEur } from "../panel/money.js";
 
@@ -19,7 +20,7 @@ export const ERROR_MESSAGES = {
 };
 
 export function errorMessage(code, status) {
-  return ERROR_MESSAGES[code] ?? `Błąd serwera (${status}).`;
+  return ERROR_MESSAGES[code] ?? sharedErrorMessage(code, status);
 }
 
 export function isValidId(value) {

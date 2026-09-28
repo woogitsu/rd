@@ -2,6 +2,7 @@
 // Bez DOM i bez sieci — main.js odpowiada za widoki i wywołania API.
 
 import qrcode from "qrcode-generator";
+import { safeNextPath } from "../shared/api.js";
 
 export const PASSWORD_MIN = 12;
 export const PASSWORD_MAX = 128;
@@ -32,6 +33,7 @@ const MESSAGES = {
   password_common: "To hasło jest zbyt popularne lub przewidywalne. Wybierz inne, np. kilka niezwiązanych słów.",
   password_contains_email: "Hasło nie może zawierać adresu e-mail.",
   password_unchanged: "Nowe hasło musi być inne niż obecne.",
+  password_mismatch: "Hasła nie są takie same.",
   invalid_display_name: "Nazwa wyświetlana może mieć najwyżej 100 znaków.",
   invalid_code: "Kod jest nieprawidłowy. Sprawdź aplikację i wpisz aktualny kod.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
@@ -106,6 +108,13 @@ export function parseFragment(hash) {
   if (params.has("reset")) return { view: "reset", token: token("reset") };
   if (params.has("change")) return { view: "change" };
   return { view: null };
+}
+
+// Powrót do panelu po zalogowaniu (#99): „#next=/panel/”. Tylko ścieżka względna
+// tego samego origin (zaczyna się od „/”, nie od „//”), inaczej null.
+export function nextFromFragment(hash) {
+  const params = new URLSearchParams(String(hash ?? "").replace(/^#/, ""));
+  return safeNextPath(params.get("next"));
 }
 
 // Następny widok po zalogowaniu lub odczycie stanu sesji.
