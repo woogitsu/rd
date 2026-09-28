@@ -109,6 +109,8 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
 | `student_guardian_changes` | historia relacji opiekun–dziecko uczniów roku (zgoda, kontakt główny, daty) z dat roku — bez treści powodu (0026, D-03) |
 | `ledger_transfers` | przeniesienia kasa ↔ rachunek roku (0028) |
+| `ledger_entry_reviews` | weryfikacja wydatku przez drugą osobę (decyzja, uwaga przy zakwestionowaniu) roku (0072, #97) |
+| `resolution_spending_authorizations` | kwota upoważnienia z uchwały do wydatku i jej historia (0072, #93) roku |
 | `bank_reconciliations`, `bank_statement_imports`, `bank_statement_lines`, `bank_reconciliation_matches` | uzgodnienia roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami, także cofniętymi z powodem (0015/0024) |
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |

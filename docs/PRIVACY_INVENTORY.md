@@ -59,6 +59,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`ledger_corrections`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie korekty księgowej|document_financial|tak|tak|
 |`ledger_entries`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_entries`|`description`|Osoba trzecia|direct|wolny tekst|opis operacji księgowej|document_financial|tak|tak|
+|`ledger_entry_reviews`|`note`|Osoba trzecia|direct|wolny tekst|uzasadnienie zakwestionowania wydatku|document_financial|tak|tak|
+|`ledger_entry_reviews`|`reviewed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie weryfikacji z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_opening_balance_adjustments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_opening_balance_adjustments`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie korekty bilansu otwarcia|document_financial|tak|tak|
 |`ledger_opening_balances`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -95,6 +97,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_entries`|`reference`|Opiekun|direct|wolny tekst|tytuł przelewu z wyciągu bankowego|payment_reference|tak|tak|
 |`payment_reassignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_refunds`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`resolution_spending_authorizations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`resolution_spending_authorizations`|`note`|Osoba trzecia|direct|wolny tekst|uzasadnienie kwoty upoważnienia wydatku|document_financial|tak|tak|
 |`resolutions`|`body`|Członek Rady|direct|wolny tekst|treść uchwały|audit_event|tak|tak|
 |`resolutions`|`correction_reason`|Członek Rady|direct|wolny tekst|uzasadnienie korekty uchwały|audit_event|tak|tak|
 |`resolutions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -114,7 +118,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **101**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **105**, w tym wolnego tekstu: **25** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -649,10 +653,24 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `occurred_on` | none | — | tak |
 | `payment_entry_id` | none | — | tak |
 | `replaces_entry_id` | none | — | tak |
+| `resolution_id` | none | — | tak |
 | `resolution_reference` | none | — | tak |
 | `school_year_id` | none | — | tak |
 | `source` | none | — | tak |
 | `source_document_id` | none | — | tak |
+
+### `ledger_entry_reviews`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `decision` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `ledger_entry_id` | none | — | tak |
+| `note` | direct | third_party | tak |
+| `reviewed_at` | none | — | tak |
+| `reviewed_by` | pseudonymous | board_member | tak |
+| `school_year_id` | none | — | tak |
 
 ### `ledger_opening_balance_adjustments`
 
@@ -1011,6 +1029,21 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `payment_entry_id` | none | — | tak |
 | `reason` | none | — | tak |
 | `refunded_on` | none | — | tak |
+
+### `resolution_spending_authorizations`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `authorized_amount_cents` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `note` | direct | third_party | tak |
+| `resolution_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `supersedes_id` | none | — | tak |
+| `valid_until` | none | — | tak |
 
 ### `resolutions`
 

@@ -174,6 +174,10 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'ledger_entries', where: () => 'school_year_id = $1' },
   { table: 'ledger_corrections', requires: ['ledger_entries'],
     where: () => 'ledger_entry_id IN (SELECT id FROM ledger_entries WHERE school_year_id = $1)' },
+  // 0072 (#97/#93): weryfikacja wydatku przez drugą osobę i kwota upoważnienia
+  // z uchwały — dane Rady do odtworzenia, mają własny school_year_id.
+  { table: 'ledger_entry_reviews', where: () => 'school_year_id = $1' },
+  { table: 'resolution_spending_authorizations', where: () => 'school_year_id = $1' },
   { table: 'ledger_budget_lines', where: () => 'school_year_id = $1' },
   { table: 'ledger_transfers', where: () => 'school_year_id = $1' },
 
