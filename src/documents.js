@@ -44,6 +44,77 @@ export function downloadFilename(id, mime) {
   return `dokument-${id}.${ALLOWED_TYPES[mime]?.extension ?? 'bin'}`;
 }
 
+// Kontrola struktury pliku (issue #89): heurystyka, NIE zastępuje skanu
+// antywirusowego. Sprawdzamy surowe bajty pliku — strumienie PDF mogą być
+// skompresowane (FlateDecode), więc słowo kluczowe wewnątrz skompresowanego
+// strumienia nie zostanie wykryte. To znana granica tej kontroli (DOCUMENTS.md).
+//
+// Zwraca { ok: true } albo { ok: false, code: 'document_active_content' | 'document_malformed' }.
+
+function bytesIndexOf(haystack, needle, fromEnd) {
+  const start = fromEnd == null ? 0 : Math.max(0, haystack.length - fromEnd);
+  outer: for (let i = start; i <= haystack.length - needle.length; i += 1) {
+    for (let j = 0; j < needle.length; j += 1) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+function asciiBytes(text) {
+  return Uint8Array.from(text, (ch) => ch.charCodeAt(0));
+}
+
+// Klucze PDF, których obecność (nawet nieskompresowana) traktujemy jako
+// potencjalnie aktywną treść albo szyfrowanie uniemożliwiające dalszą kontrolę.
+// Lista do przeglądu (issue #89) — heurystyka, nie parser PDF.
+const PDF_DANGEROUS_KEYS = ['/JavaScript', '/JS', '/Launch', '/EmbeddedFile', '/RichMedia', '/XFA', '/Encrypt']
+  .map(asciiBytes);
+const PDF_EOF = asciiBytes('%%EOF');
+const PNG_SIGNATURE_LENGTH = 8;
+const PNG_IEND = asciiBytes('IEND');
+
+function validatePdfStructure(bytes) {
+  for (const key of PDF_DANGEROUS_KEYS) {
+    if (bytesIndexOf(bytes, key) !== -1) return { ok: false, code: 'document_active_content' };
+  }
+  // %%EOF musi wystąpić blisko końca pliku; jego brak (albo dane doklejone
+  // dalej, np. poliglota PDF+ZIP) traktujemy jako uszkodzoną/podejrzaną strukturę.
+  if (bytesIndexOf(bytes, PDF_EOF, 1024) === -1) return { ok: false, code: 'document_malformed' };
+  return { ok: true };
+}
+
+function validatePngStructure(bytes) {
+  let offset = PNG_SIGNATURE_LENGTH;
+  for (;;) {
+    if (offset + 8 > bytes.length) return { ok: false, code: 'document_malformed' };
+    const length = (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0;
+    const typeOffset = offset + 4;
+    const isIend = PNG_IEND.every((byte, index) => bytes[typeOffset + index] === byte);
+    const chunkEnd = typeOffset + 4 + length + 4; // typ + dane + CRC
+    if (chunkEnd > bytes.length) return { ok: false, code: 'document_malformed' };
+    if (isIend) return chunkEnd === bytes.length ? { ok: true } : { ok: false, code: 'document_malformed' };
+    offset = chunkEnd;
+  }
+}
+
+function validateJpegStructure(bytes) {
+  // Tolerancja na dopełnienie zerami na końcu pliku, ale nie na inne dołożone dane.
+  let end = bytes.length;
+  while (end > 0 && bytes[end - 1] === 0x00) end -= 1;
+  if (end < 2 || bytes[end - 2] !== 0xff || bytes[end - 1] !== 0xd9) return { ok: false, code: 'document_malformed' };
+  return { ok: true };
+}
+
+export function validateStructure(bytes, mime) {
+  if (!(bytes instanceof Uint8Array)) return { ok: false, code: 'document_malformed' };
+  if (mime === 'application/pdf') return validatePdfStructure(bytes);
+  if (mime === 'image/png') return validatePngStructure(bytes);
+  if (mime === 'image/jpeg') return validateJpegStructure(bytes);
+  return { ok: false, code: 'document_malformed' };
+}
+
 // Limit ciała żądania dla serwera Node: wyższy tylko dla POST /api/documents.
 export function bodyLimitFor(uploadLimit = DEFAULT_MAX_UPLOAD_BYTES) {
   const limit = maxUploadBytes(uploadLimit);
