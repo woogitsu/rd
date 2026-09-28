@@ -138,6 +138,15 @@ test('porzucenie szkicu i ponowny import tego samego pliku do nowego szkicu', as
   });
   assert.equal(confirm.status, 409);
   assert.equal((await confirm.json()).error, 'reconciliation_abandoned');
+  // Wpłata wprost z pozycji porzuconego szkicu (#115) też jest odrzucona.
+  const abandonedLine = (await db.query(
+    "SELECT id FROM bank_statement_lines WHERE reconciliation_id = $1 AND amount_cents > 0 ORDER BY id LIMIT 1", [first])).rows[0];
+  assert.ok(abandonedLine);
+  const fromLine = await call(`/api/reconciliations/${first}/lines/${abandonedLine.id}/payment`, {
+    method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('pay') }, body: { householdId: null },
+  });
+  assert.equal(fromLine.status, 409);
+  assert.equal((await fromLine.json()).error, 'reconciliation_abandoned');
   await assert.rejects(db.query("UPDATE bank_reconciliations SET status = 'draft', abandoned_by = NULL, abandoned_at = NULL, abandon_reason = NULL WHERE id = $1", [first]),
     /bank_reconciliation_abandoned/);
   await assert.rejects(db.query('DELETE FROM bank_reconciliations WHERE id = $1', [first]), /cannot_be_deleted/);
