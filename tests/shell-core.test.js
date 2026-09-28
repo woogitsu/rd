@@ -12,23 +12,29 @@ test('visiblePanels: brak przydziału → brak paneli', () => {
   assert.deepEqual(visiblePanels(undefined), []);
 });
 
-test('visiblePanels: admin widzi wszystkie panele w stałej kolejności', () => {
+test('visiblePanels: admin widzi wszystkie panele poza Kampaniami e-mail i Zamknięciem roku (EDITOR_ROLES/READ_ROLES bez admina), w stałej kolejności', () => {
+  // src/pg/routes/email.js EDITOR_ROLES i src/pg/routes/year-close.js READ_ROLES
+  // celowo nie wpuszczają admina — to nie luka w PANELS, tylko odzwierciedlenie
+  // docs/AUTHORIZATION.md ("admin techniczny: 403").
   const ids = visiblePanels([{ role: 'admin' }]).map((p) => p.id);
-  assert.deepEqual(ids, PANEL_IDS);
+  assert.deepEqual(ids, PANEL_IDS.filter((id) => id !== 'email' && id !== 'year-close'));
 });
 
-test('visiblePanels: skarbnik widzi wyłącznie wpłaty, księgę i dokumenty', () => {
+test('visiblePanels: skarbnik widzi rodziny, wpłaty, księgę, uzgodnienia, kartki, dokumenty, kampanie e-mail i zamknięcie roku', () => {
   const ids = visiblePanels([{ role: 'treasurer', schoolYearId: 'y1' }]).map((p) => p.id);
-  assert.deepEqual(ids, ['panel', 'ledger', 'documents']);
+  assert.deepEqual(ids, ['families', 'panel', 'ledger', 'reconciliation', 'print', 'documents', 'email', 'year-close']);
 });
 
-test('visiblePanels: przedstawiciel 1A nie widzi wpłat, księgi, importu ani kont', () => {
+test('visiblePanels: przedstawiciel 1A nie widzi wpłat, księgi, uzgodnień, importu, e-maili, zamknięcia roku ani kont', () => {
   const ids = visiblePanels([{ role: 'representative', classId: '1A', schoolYearId: 'y1' }]).map((p) => p.id);
   assert.deepEqual(ids, ['families', 'print', 'events', 'meetings', 'documents']);
   assert.ok(!ids.includes('panel'));
   assert.ok(!ids.includes('ledger'));
+  assert.ok(!ids.includes('reconciliation'));
   assert.ok(!ids.includes('import'));
   assert.ok(!ids.includes('admin'));
+  assert.ok(!ids.includes('email'));
+  assert.ok(!ids.includes('year-close'));
 });
 
 test('visiblePanels: dwa przydziały (przedstawiciel 1A i 2B) — suma linków, bez duplikatów', () => {
@@ -46,7 +52,7 @@ test('visiblePanels: skarbnik + przedstawiciel — suma uprawnień, stała kolej
     { role: 'representative', classId: '1A', schoolYearId: 'y1' },
   ];
   const ids = visiblePanels(grants).map((p) => p.id);
-  assert.deepEqual(ids, ['families', 'panel', 'ledger', 'print', 'events', 'meetings', 'documents']);
+  assert.deepEqual(ids, ['families', 'panel', 'ledger', 'reconciliation', 'print', 'events', 'meetings', 'documents', 'email', 'year-close']);
 });
 
 test('visiblePanels: Komisja Rewizyjna (audit) widzi wyłącznie zebrania', () => {

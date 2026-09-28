@@ -5,19 +5,42 @@
 
 import { api as apiRequest } from "./api.js";
 
-// Kolejność stała dla wszystkich paneli (patrz issue #85, propozycja p.3).
+// Kolejność stała dla wszystkich paneli (patrz issue #85, propozycja p.3; rozszerzone
+// o #226 — uzgodnienia, kampanie e-mail i zamknięcie roku miały wcześniej własne,
+// niepełne paski nawigacji zamiast tej listy).
 // `roles` to WYŁĄCZNIE wskazówka UI — ukrycie linku nie jest kontrolą dostępu;
-// każde API sprawdza uprawnienia niezależnie (docs/AUTHORIZATION.md). Zakresy ról są
-// założeniem odwzorowującym tests/helpers/route-matrix.js do czasu decyzji D-08/D-09.
+// każde API sprawdza uprawnienia niezależnie (docs/AUTHORIZATION.md). Lista ról każdego
+// panelu odwzorowuje stałe modułu tras odpowiedzialnego za dane API (patrz komentarz
+// przy każdym wpisie) i jest sprawdzana testem tests/shell-panels-authz.test.js. Zakresy
+// ról pozostają założeniem prototypu do czasu decyzji D-08/D-09 (docs/DECISIONS.md) —
+// tu jedynie odwzorowujemy to, co już wdrożono po stronie serwera, nie dopowiadamy nic
+// ponad to.
 export const PANELS = Object.freeze([
-  { id: "families", href: "/families/", label: "Rodziny", roles: ["admin", "board", "representative"] },
+  // src/pg/routes/families.js READ_ROLES (klasy/uczniowie/gospodarstwa).
+  { id: "families", href: "/families/", label: "Rodziny", roles: ["admin", "board", "treasurer", "representative"] },
+  // src/pg/routes/payments.js FINANCIAL_ROLES.
   { id: "panel", href: "/panel/", label: "Wpłaty", roles: ["admin", "board", "treasurer"] },
+  // src/pg/routes/ledger.js FINANCIAL_ROLES.
   { id: "ledger", href: "/ledger/", label: "Księga", roles: ["admin", "board", "treasurer"] },
-  { id: "print", href: "/print/", label: "Kartki", roles: ["admin", "board", "representative"] },
+  // src/pg/routes/reconciliation.js WRITE_ROLES (widok tylko-do-odczytu Komisji
+  // Rewizyjnej — REPORT_ROLES — nie ma dziś osobnego ekranu, patrz reconciliation/core.js).
+  { id: "reconciliation", href: "/reconciliation/", label: "Uzgodnienia wyciągu", roles: ["admin", "board", "treasurer"] },
+  // src/pg/routes/print.js PRINT_ROLES (FINANCIAL_ROLES + representative).
+  { id: "print", href: "/print/", label: "Kartki", roles: ["admin", "board", "treasurer", "representative"] },
+  // src/pg/events.js EVENT_POLICY (suma ról ze wszystkich akcji).
   { id: "events", href: "/events/", label: "Wydarzenia", roles: ["admin", "board", "representative"] },
+  // src/pg/meetings.js — admin/board/audit widzą pełne zebrania; representative wyłącznie
+  // udostępnione protokoły (meetings/core.js dostosowuje widok do zakresu).
   { id: "meetings", href: "/meetings/", label: "Zebrania", roles: ["admin", "board", "audit", "representative"] },
+  // src/pg/routes/documents.js DOCUMENT_POLICIES (suma ról wszystkich rodzajów dokumentów).
   { id: "documents", href: "/documents/", label: "Dokumenty", roles: ["admin", "board", "treasurer", "representative"] },
+  // src/pg/routes/email.js EDITOR_ROLES (admin nie ma dostępu do kampanii e-mail).
+  { id: "email", href: "/email/", label: "Kampanie e-mail", roles: ["board", "treasurer"] },
+  // src/pg/routes/import.js IMPORT_ROLES.
   { id: "import", href: "/import/", label: "Import uczniów", roles: ["admin", "board"] },
+  // src/pg/routes/year-close.js READ_ROLES (admin i Komisja Rewizyjna bez dostępu).
+  { id: "year-close", href: "/year-close/", label: "Zamknięcie roku", roles: ["board", "treasurer"] },
+  // wyłącznie admin (docs/AUTHORIZATION.md: „wyłącznie admin”).
   { id: "admin", href: "/admin/", label: "Konta i role", roles: ["admin"] },
 ]);
 
