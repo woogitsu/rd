@@ -944,8 +944,11 @@ export async function buildAuditReport(executor, schoolYearId) {
   if (!year) return null;
 
   const summary = (await executor.query(
-    `SELECT opening_balance_cents, income_cents, expense_cents, closing_balance_cents
-       FROM ledger_year_summary WHERE school_year_id = $1`, [schoolYearId],
+    `SELECT s.opening_balance_cents, s.income_cents, s.expense_cents, s.closing_balance_cents,
+            c.opening_cash_cents, c.closing_cash_cents
+       FROM ledger_year_summary s
+       JOIN ledger_year_cash_summary c ON c.school_year_id = s.school_year_id
+      WHERE s.school_year_id = $1`, [schoolYearId],
   )).rows[0];
 
   const categories = (await executor.query(
@@ -1044,7 +1047,12 @@ export async function buildAuditReport(executor, schoolYearId) {
     incomeCents: toSafeInteger(summary?.income_cents),
     expenseCents: toSafeInteger(summary?.expense_cents),
     closingBalanceCents: toSafeInteger(summary?.closing_balance_cents),
+    // Podział rachunek/kasa (#199): kasa = środki poza rachunkiem.
+    openingCashCents: toSafeInteger(summary?.opening_cash_cents),
+    closingCashCents: toSafeInteger(summary?.closing_cash_cents),
   };
+  balance.openingBankCents = balance.openingBalanceCents - balance.openingCashCents;
+  balance.closingBankCents = balance.closingBalanceCents - balance.closingCashCents;
   const checks = await buildCrossChecks(executor, year, balance, confirmed.at(-1) ?? null);
 
   return {
