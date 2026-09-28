@@ -45,6 +45,7 @@ wpisów).
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `authorization_superseded` | Kwota upoważnienia zmieniła się w międzyczasie. Odśwież widok i spróbuj ponownie. | Zależy od kontekstu (patrz moduł trasy). |
 | `backup_failed` | Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
+| `bank_import_not_configured` | Import wyciągu z pliku banku nie jest skonfigurowany. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
@@ -58,6 +59,7 @@ wpisów).
 | `class_not_found` | Nie znaleziono klasy albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
 | `class_not_in_school_year` | Klasa nie należy do wskazanego roku szkolnego. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_required` | Wskaż klasę. | Nie — popraw dane żądania. |
+| `class_scope_not_supported` | Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste. | Nie — popraw dane żądania. |
 | `class_year_mismatch` | Klasa należy do innego roku szkolnego. | Nie — popraw dane żądania. |
 | `closing_balance_out_of_range` | Saldo zamknięcia jest poza dozwolonym zakresem. | Zależy od kontekstu (patrz moduł trasy). |
 | `concurrent_version` | Ktoś inny zapisał zmianę w tym samym czasie. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
@@ -120,6 +122,7 @@ wpisów).
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |
+| `invalid_document_date` | Niepoprawna data dokumentu. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
 | `invalid_domain` | Wybierz obszar dziennika z listy. | Nie — popraw dane. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
@@ -127,6 +130,7 @@ wpisów).
 | `invalid_ended_on` | Podaj poprawną datę odejścia (RRRR-MM-DD). | Nie — popraw dane. |
 | `invalid_entity_type` | Nieznany rodzaj obiektu w dzienniku. | Nie — popraw dane. |
 | `invalid_event_id` | Niepoprawny identyfikator wydarzenia. | Nie — popraw dane żądania. |
+| `invalid_execution_status` | Wybierz stan wykonania uchwały z listy. | Nie — popraw dane. |
 | `invalid_expires_at` | Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata). | Nie — popraw dane żądania. |
 | `invalid_explicit_license` | Niepoprawna licencja zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_format` | Wybierz format eksportu z listy (CSV albo JSON). | Nie — popraw dane żądania. |
@@ -162,6 +166,7 @@ wpisów).
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
 | `invalid_reference_text` | Opis wpłaty jest za długi albo zawiera niedozwolone znaki. | Nie — popraw dane żądania. |
 | `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje. | Nie — popraw dane żądania. |
+| `invalid_relation_kind` | Wybierz rodzaj powiązania uchwały z listy. | Nie — popraw dane. |
 | `invalid_request` | Serwer odrzucił dane formularza. Sprawdź pola. | Nie — popraw dane żądania. |
 | `invalid_reversal` | Tego przeniesienia nie można cofnąć w obecnym stanie. | Nie — popraw dane żądania. |
 | `invalid_revision` | Brak numeru wersji. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -176,6 +181,7 @@ wpisów).
 | `invalid_source_detail` | Niepoprawny opis źródła. | Nie — popraw dane żądania. |
 | `invalid_source_document` | Niepoprawny dokument źródłowy. | Nie — popraw dane żądania. |
 | `invalid_source` | Niepoprawne źródło wpisu. | Nie — popraw dane żądania. |
+| `invalid_statement_file` | Nie udało się odczytać pliku wyciągu. Sprawdź format pliku. | Nie — popraw dane żądania. |
 | `invalid_statement_line` | Niepoprawna pozycja wyciągu. | Nie — popraw dane żądania. |
 | `invalid_status` | Niepoprawny status. | Nie — popraw dane żądania. |
 | `invalid_taken_on` | Niepoprawna data wykonania zdjęcia. | Nie — popraw dane żądania. |
@@ -200,6 +206,7 @@ wpisów).
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
 | `match_method_mismatch` | Sposób wpłaty nie pasuje do pozycji wyciągu. | Nie — popraw dane żądania. |
 | `match_not_found` | Nie znaleziono dopasowania. | Nie — popraw dane żądania. |
+| `matched_in_other_reconciliation` | Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku. | Nie — popraw dane żądania. |
 | `meeting_not_found` | Nie znaleziono zebrania. | Nie — popraw dane żądania. |
 | `method_not_allowed` | Ta operacja jest niedostępna. | Zależy od kontekstu (patrz moduł trasy). |
 | `mfa_enrollment_required` | Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą. | Nie — popraw dane żądania. |
@@ -262,6 +269,7 @@ wpisów).
 | `resolution_final_immutable` | Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_adopted` | Wskazana uchwała nie jest przyjęta. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_current` | Wskazana uchwała ma nowszą wersję (poprawkę). Wybierz aktualną wersję. | Zależy od kontekstu (patrz moduł trasy). |
+| `resolution_not_decided` | Stan wykonania można zapisać tylko dla podjętej uchwały. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_found` | Nie znaleziono uchwały. | Nie — popraw dane żądania. |
 | `resolution_number_required` | Uchwała przyjęta wymaga numeru. | Nie — popraw dane żądania. |
 | `resolution_number_taken` | Ten numer uchwały jest już zajęty w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
@@ -271,6 +279,7 @@ wpisów).
 | `retry_later` | Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `review_expense_only` | Weryfikacja drugiej osoby dotyczy wyłącznie wydatków. | Zależy od kontekstu (patrz moduł trasy). |
 | `revision_conflict` | Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `role_pending_decision` | Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji. | Nie — popraw dane żądania. |
 | `school_year_closed` | Rok szkolny jest zamknięty. Zmiany nie są możliwe. | Zależy od kontekstu (patrz moduł trasy). |
 | `school_year_exists` | Taki rok szkolny już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `school_year_not_finished` | Rok szkolny jeszcze się nie zakończył. | Zależy od kontekstu (patrz moduł trasy). |
@@ -279,10 +288,17 @@ wpisów).
 | `sending_disabled` | Wysyłka e-mail jest wyłączona w tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `service_unavailable` | Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `snapshot_required` | Najpierw utwórz kopię stanu danych. | Nie — popraw dane żądania. |
+| `statement_account_mismatch` | Rachunek w pliku wyciągu nie jest zatwierdzonym rachunkiem Rady. | Nie — popraw dane żądania. |
+| `statement_account_unsupported` | Ten rodzaj numeru rachunku w wyciągu nie jest obsługiwany. | Nie — popraw dane żądania. |
+| `statement_already_imported` | Ten plik wyciągu został już zaimportowany. | Nie — popraw dane żądania. |
+| `statement_amount_out_of_range` | Kwota w wyciągu przekracza dozwolony zakres. | Nie — popraw dane żądania. |
+| `statement_currency_unsupported` | Obsługiwane są wyłącznie wyciągi w EUR. | Nie — popraw dane żądania. |
 | `statement_date_outside_school_year` | Data wyciągu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `statement_line_after_statement_date` | Pozycja wyciągu ma datę późniejszą niż data wyciągu. | Zależy od kontekstu (patrz moduł trasy). |
 | `statement_line_not_found` | Nie znaleziono pozycji wyciągu. | Nie — popraw dane żądania. |
 | `statement_line_not_income` | Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia. | Nie — popraw dane żądania. |
+| `statement_multiple_not_supported` | Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno. | Nie — popraw dane żądania. |
+| `statement_transaction_id_missing` | Ruch w wyciągu nie ma identyfikatora transakcji banku. | Nie — popraw dane żądania. |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `timeout` | Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `too_many_attempts` | Zbyt wiele prób. Spróbuj ponownie później. | Zależy od kontekstu (patrz moduł trasy). |
