@@ -105,6 +105,10 @@
           <label>Ważny do (opcjonalnie) <input name="expiresOn" type="date" /></label>
           <button class="primary" type="submit">Nadaj</button>
           <p class="form-error" id="grant-error" role="alert"></p>
+          <p class="hint" id="grant-pending-warning" role="note" hidden>
+            Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła).
+            Przydział zostanie odrzucony, chyba że serwer ma włączone `ALLOW_PENDING_ROLES`.
+          </p>
         </form>
         <p class="hint">Przedstawiciel klasy wymaga klasy; rok zostanie przejęty z klasy. Nowy zakres to nowy przydział — istniejącego nie da się zmienić.</p>
       </section>
@@ -121,6 +125,10 @@
           <label>Ważność (godziny) <input name="ttlHours" inputmode="numeric" placeholder="72" /></label>
           <button class="primary" type="submit">Utwórz zaproszenie</button>
           <p class="form-error" id="invitation-error" role="alert"></p>
+          <p class="hint" id="invitation-pending-warning" role="note" hidden>
+            Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła).
+            Zaproszenie zostanie odrzucone, chyba że serwer ma włączone `ALLOW_PENDING_ROLES`.
+          </p>
         </form>
 
         <div class="token-box" id="token-box" hidden>
