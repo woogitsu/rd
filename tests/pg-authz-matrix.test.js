@@ -377,6 +377,12 @@ const MAKERS = {
       pdfBytes(target.key), { 'Content-Type': 'application/pdf', 'Idempotency-Key': nextKey('fx-doc') });
     return { documentId: json.document.id };
   },
+  // Para dokumentów tego samego rodzaju/roku/klasy — cel zastąpienia (issue #82).
+  documentPair: async (ctx, target, kind) => {
+    const original = await MAKERS.document(ctx, target, kind);
+    const replacement = await MAKERS.document(ctx, target, kind);
+    return { documentId: original.documentId, replacementDocumentId: replacement.documentId };
+  },
   ledgerEntry: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
       schoolYearId: target.schoolYearId, direction: 'income', amountCents: 100000, categoryId: ledgerCategory(target),

@@ -209,6 +209,25 @@ function documentRead(id, path, kind, targets, allow, mfa, suffix) {
   };
 }
 
+// Zmiana stanu dokumentu (zastąpienie/unieważnienie, issue #82): ta sama zasada 404 jak przy
+// odczycie (brak wyroczni istnienia). Świeży dokument (fixture 'fresh') dla każdego udanego
+// przypadku — powtórna zmiana stanu tego samego dokumentu byłaby konfliktem (409), nie 2xx.
+function documentStatus(id, action, kind, targets, allow, mfa) {
+  const isSupersede = action === 'supersede';
+  return {
+    id, module: 'documents', method: 'POST', path: `/api/documents/:documentId/${action}`,
+    targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404, fixture: 'fresh',
+    object: { kind: isSupersede ? 'documentPair' : 'document', stage: kind },
+    build: ({ obj, key }) => ({
+      path: `/api/documents/${obj.documentId}/${action}`,
+      headers: withKey(key),
+      body: isSupersede
+        ? { reason: 'Zastąpienie dokumentu (test macierzy)', replacementDocumentId: obj.replacementDocumentId }
+        : { reason: 'Unieważnienie dokumentu (test macierzy)' },
+    }),
+  };
+}
+
 function ledgerRead(id, path, suffix, contains) {
   return {
     id, module: 'ledger', method: 'GET', path, targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403,
@@ -595,6 +614,10 @@ export const ROUTE_MATRIX = Object.freeze([
   documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content'),
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
   documentRead('documents.contentClass', '/api/documents/:classDocumentId/content', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, '/content'),
+  // Zmiana stanu dokumentu (issue #82): zastąpienie i unieważnienie — te same reguły dostępu
+  // co odczyt (brak wyroczni istnienia dla nieznanego/niedozwolonego identyfikatora).
+  documentStatus('documents.supersedeClass', 'supersede', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
+  documentStatus('documents.voidClass', 'void', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
 
   // ---------- ledger (#38) ----------
   // admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu (docs/LEDGER.md).
