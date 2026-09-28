@@ -108,6 +108,10 @@ export const MESSAGES = Object.freeze({
   no_classes_in_school_year: "Rok szkolny nie ma zdefiniowanych klas.",
   invalid_reference: "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje.",
   relation_ended: "Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa.",
+  guardian_not_found: "Nie znaleziono opiekuna.",
+  invalid_or_expired_link: "Ten link jest nieprawidłowy albo już nieaktywny.",
+  link_used: "Ten link został już wykorzystany.",
+  request_not_found: "Nie znaleziono wniosku.",
 
   // --- Konta, role i zaproszenia ------------------------------------------------------
   invalid_role: "Wybierz rolę z listy.",
@@ -135,7 +139,6 @@ export const MESSAGES = Object.freeze({
   invalid_due_on: "Podaj poprawną datę terminu odpowiedzi.",
   invalid_decision_note_ref: "Odwołanie do decyzji może mieć od 1 do 200 znaków.",
   household_not_found: "Nie znaleziono gospodarstwa.",
-  guardian_not_found: "Nie znaleziono opiekuna.",
   student_not_found: "Nie znaleziono ucznia.",
   data_request_not_found: "Nie znaleziono żądania.",
   data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",

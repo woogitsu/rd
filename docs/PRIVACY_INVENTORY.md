@@ -73,6 +73,12 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`guardian_contact_changes`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie zmiany kontaktu|guardian_contact|tak|nie|
 |`guardian_households`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`guardian_households`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`guardian_update_links`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`guardian_update_links`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`guardian_update_requests`|`decided_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`guardian_update_requests`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`guardian_update_requests`|`note`|Opiekun|direct|wolny tekst|uzasadnienie wniosku o zmianę kontaktu|guardian_contact|tak|nie|
+|`guardian_update_requests`|`proposed_email`|Opiekun|direct|kontakt|wniosek o zmianę adresu kontaktowego|guardian_contact|nie|nie|
 |`guardians`|`contact_allowed`|Opiekun|pseudonymous|zgoda|zgoda na kontakt|nieustalona (D-04)|nie|tak|
 |`guardians`|`email`|Opiekun|direct|kontakt|kontakt z opiekunem|guardian_contact|nie|tak|
 |`guardians`|`first_name`|Opiekun|direct|identyfikacja|identyfikacja opiekuna|guardian_contact|nie|tak|
@@ -155,7 +161,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **142**, w tym wolnego tekstu: **33** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **148**, w tym wolnego tekstu: **34** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -732,6 +738,35 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `id` | none | — | tak |
 | `source` | none | — | tak |
 | `starts_on` | none | — | tak |
+
+### `guardian_update_links`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `expires_at` | none | — | nie |
+| `guardian_id` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `token_hash` | none | — | nie |
+| `used_at` | none | — | nie |
+
+### `guardian_update_requests`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | nie |
+| `decided_at` | none | — | nie |
+| `decided_by` | pseudonymous | board_member | nie |
+| `guardian_id` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `link_id` | none | — | nie |
+| `note` | direct | guardian | nie |
+| `proposed_contact_allowed` | none | — | nie |
+| `proposed_contact_allowed_set` | none | — | nie |
+| `proposed_email` | direct | guardian | nie |
+| `proposed_email_set` | none | — | nie |
+| `status` | none | — | nie |
 
 ### `guardians`
 

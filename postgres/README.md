@@ -725,3 +725,16 @@ i odwołanie `decision_note_ref`. Skutki dla danych: nowa, pusta tabela bez
 wstecznego wypełnienia; wiersz nigdy nie jest usuwany. Wycofanie na pustej
 bazie: usunięcie tabeli, triggera i funkcji; z wpisami — tylko po kopii
 zapasowej (rejestr służy rozliczalności wobec osób).
+
+`0087_guardian_update_links.sql` (#140) dodaje wniosek rodzica o
+aktualizację kontaktu przez jednorazowy link: `guardian_update_links` (token
+dla konkretnego opiekuna, przechowywany wyłącznie jako skrót SHA-256,
+jednorazowy i z terminem ważności) i `guardian_update_requests` (wniosek,
+nie zmiana: `pending → approved | rejected`, tylko dopisywanie). Zatwierdzenie
+wykonuje istniejącą ścieżkę zmiany kontaktu opiekuna, więc historia
+(`guardian_contact_changes`, 0014) i audyt opisują to samo zdarzenie.
+Wariant zachowawczy do decyzji D-01/D-06/D-07/D-08/D-16/D-17: każdy wniosek,
+także wycofanie zgody, czeka na zatwierdzenie przez człowieka; kolejkę widzą
+tylko admin i zarząd. Skutki dla danych: dwie nowe, puste tabele, istniejące
+dane bez zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów
+i funkcji; z wnioskami — tylko po kopii zapasowej.

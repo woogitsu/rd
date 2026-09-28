@@ -550,6 +550,25 @@ const MAKERS = {
   campaign: makeCampaign,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
+  // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
+  // pod TARGETS.A, niezależnie od przekazanego targetu.
+  guardianOnly: (ctx) => makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guh')),
+  // Gospodarstwo świeże + jednorazowy link (token w treści odpowiedzi tylko
+  // przy wydaniu — do testu podglądu/formularza publicznego).
+  guardianUpdateLink: async (ctx) => {
+    const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guh'));
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+    return { token: json.token, linkId: json.linkId, guardianId };
+  },
+  // Wniosek `pending` świeży na przypadek — do zatwierdzenia/odrzucenia.
+  guardianUpdateRequest: async (ctx) => {
+    const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-gur'));
+    const { json: link } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+    const { json: submitted } = await api(ctx, null, 'POST', '/api/public/guardian-update',
+      { token: link.token, contactAllowed: true });
+    return { requestId: submitted.requestId, guardianId };
+  },
   adminTarget: (ctx, _target, stage) => makeAdminTarget(ctx, stage),
   importPlan: async (ctx, target) => {
     const payload = importPayload(target, nextKey('fximp'));
@@ -917,6 +936,7 @@ const MODULE_SOURCES = {
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
   representative: ['../src/pg/routes/representative.js'],
+  'guardian-updates': ['../src/pg/routes/guardian-updates.js'],
   'privacy-notice': ['../src/pg/routes/privacy-notice.js'],
   board: ['../src/pg/routes/board.js'],
 };
