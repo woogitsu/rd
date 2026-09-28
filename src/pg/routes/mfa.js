@@ -1,9 +1,9 @@
-// /api/mfa/* i /api/sessions/revoke-all (issue #3). Prototyp — nie jest wdrożony.
+// /api/mfa/*, /api/sessions* (issue #3, #150). Prototyp — nie jest wdrożony.
 // Metoda MFA (TOTP) jest proponowaną wartością domyślną do decyzji D-10.
 // Zgodność Origin sprawdza wcześniej handlePgRequest; sesję sprawdza każda trasa.
 
 import { clearSessionCookie } from '../../auth.js';
-import { loadSession } from '../auth.js';
+import { listOwnSessions, loadSession, revokeOwnSession } from '../auth.js';
 import { attemptFactor, enrollFactor, MfaError, revokeAllOwnSessions } from '../mfa.js';
 
 export const name = 'mfa';
@@ -14,6 +14,9 @@ const ATTEMPT_ROUTES = new Map([
   ['/api/mfa/verify', 'verify'],
   ['/api/mfa/recovery', 'recovery'],
 ]);
+// #150: GET /api/sessions (lista własnych sesji) i POST /api/sessions/{id}/revoke
+// (cofnięcie jednej własnej sesji — inne urządzenie albo bieżące, jak „Wyloguj”).
+const SESSION_REVOKE_PATTERN = /^\/api\/sessions\/([^/]+)\/revoke$/;
 
 async function readCode(request) {
   const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
@@ -37,13 +40,30 @@ export async function handle(request, env, url, json) {
   const isEnroll = url.pathname === '/api/mfa/enroll';
   const attemptKind = ATTEMPT_ROUTES.get(url.pathname);
   const isRevokeAll = url.pathname === '/api/sessions/revoke-all';
-  if (!isEnroll && !attemptKind && !isRevokeAll) return null;
-  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+  const isListSessions = url.pathname === '/api/sessions';
+  const revokeMatch = SESSION_REVOKE_PATTERN.exec(url.pathname);
+  if (!isEnroll && !attemptKind && !isRevokeAll && !isListSessions && !revokeMatch) return null;
+  if (isListSessions) {
+    if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+  } else if (request.method !== 'POST') {
+    return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+  }
 
   const session = await loadSession(request, env);
   if (!session) return json({ error: 'unauthenticated' }, 401);
 
   try {
+    if (isListSessions) {
+      return json({ sessions: await listOwnSessions(env, session) });
+    }
+    if (revokeMatch) {
+      const revoked = await revokeOwnSession(env, session, revokeMatch[1]);
+      if (!revoked) return json({ error: 'not_found' }, 404);
+      // Cofnięcie BIEŻĄCEJ sesji od razu czyści cookie (jak /api/logout); inne
+      // urządzenie zostaje wycofane w bazie, cookie tego żądania jest bez zmian.
+      const headers = revokeMatch[1] === session.sessionId ? { 'Set-Cookie': clearSessionCookie() } : {};
+      return json({ revoked: true }, 200, headers);
+    }
     if (isRevokeAll) {
       const { revoked, scope } = await revokeAllOwnSessions(env, session);
       return json({ revoked, scope }, 200, { 'Set-Cookie': clearSessionCookie() });
