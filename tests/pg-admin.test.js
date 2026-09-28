@@ -147,6 +147,28 @@ test('an admin cannot grant themselves a role, but another admin can grant it to
     // Samonadanie własnej roli reprezentanta (nie tylko ról merytorycznych) jest tak samo odrzucane.
     assert.equal((await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'representative', classId: 'c-now-1a' })).data.error, 'cannot_grant_self');
 
+    // Obejście przez zaproszenie na własny adres: odrzucone przy tworzeniu (bez
+    // wiersza i zdarzenia) — także z inną wielkością liter i spacjami.
+    const selfInvite = await post(env, '/api/admin/invitations', admin, { email: ' U-Admin@Example.invalid ', role: 'treasurer' });
+    assert.equal(selfInvite.status, 409);
+    assert.equal(selfInvite.data.error, 'cannot_grant_self');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM invitations WHERE lower(email) = 'u-admin@example.invalid'")).rows[0].n, 0);
+    assert.equal((await auditRows(db)).filter((row) => row.action === 'invitation.created').length, 0);
+
+    // Zaproszenie wystawione przez to samo konto innym sposobem (np. zapis
+    // sprzed poprawki) nie nadaje roli przy przyjęciu.
+    const { hashSecret } = await import('../src/auth.js');
+    const token = 'S'.repeat(43);
+    await db.query(
+      `INSERT INTO invitations (id, email, token_hash, role, created_by, expires_at)
+       VALUES ('inv-self', 'u-admin@example.invalid', $1, 'treasurer', 'u-admin', now() + interval '1 hour')`,
+      [await hashSecret(token)],
+    );
+    const accepted = await acceptInvitation(env, { token, userId: 'u-admin' });
+    assert.equal(accepted.ok, false);
+    assert.equal(accepted.reason, 'self_invitation');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM role_grants WHERE user_id = 'u-admin' AND role = 'treasurer'")).rows[0].n, 0);
+
     // Druga osoba z rolą admina może nadać przydział pierwszej.
     const second = await seedUserSession(db, { userId: 'u-admin2', roles: [{ role: 'admin' }], mfa: true });
     const granted = await post(env, '/api/admin/grants', second, { userId: 'u-admin', role: 'treasurer' });
@@ -281,6 +303,59 @@ test('disabling a user revokes all their sessions; enable restores login ability
       assert.equal(event.actor_id, 'u-admin');
       assert.doesNotMatch(event.metadata, /@/);
     }
+  } finally {
+    await db.close();
+  }
+});
+
+// #256: disabled_at i trwałe wycofanie sesji muszą zatwierdzić się razem.
+// Przed poprawką były dwiema osobnymi transakcjami — awaria drugiej
+// zostawiała disabled_at zapisane, a sesje aktywne w bazie (revoked_at IS
+// NULL); ponowne włączenie konta mogło je potem znów zaakceptować.
+test('#256: disable rolls back entirely when revoking sessions fails (no half-disabled account)', async () => {
+  const { db, admin } = await setup();
+  try {
+    const victim = await seedUserSession(db, { userId: 'u-victim2' });
+
+    let calls = 0;
+    const failingOnce = {
+      // Kontrakt src/db.js: query(text, params) -> { rows }, transaction(fn).
+      query: (text, params) => db.query(text, params),
+      transaction: (fn) => db.transaction((tx) => fn({
+        query: (text, params) => {
+          if (calls === 0 && typeof text === 'string' && text.includes('UPDATE sessions SET revoked_at')) {
+            calls += 1;
+            throw Object.assign(new Error('injected_failure'), { code: '40001' });
+          }
+          return tx.query(text, params);
+        },
+      })),
+    };
+    const env = { db: failingOnce };
+
+    const disabled = await post(env, '/api/admin/users/u-victim2/disable', admin);
+    assert.equal(disabled.status, 503, 'awaria wycofania sesji ujawnia się jako błąd, nie 200');
+    assert.equal(calls, 1);
+
+    // Cała transakcja (disabled_at, audyt, wycofanie sesji) poszła w jednej
+    // paczce, więc awaria wycofania sesji cofa też disabled_at — konto nie
+    // zostaje w stanie „wyłączone, ale z aktywną sesją”.
+    const userRow = (await db.query("SELECT disabled_at FROM users WHERE id = 'u-victim2'")).rows[0];
+    assert.equal(userRow.disabled_at, null, 'disabled_at nie mógł zostać zapisany bez wycofania sesji');
+    const sessionRow = (await db.query("SELECT revoked_at FROM sessions WHERE user_id = 'u-victim2'")).rows[0];
+    assert.equal(sessionRow.revoked_at, null, 'sesja pozostaje aktywna, tak jak disabled_at');
+    assert.equal((await call({ db }, '/api/session', { cookie: victim })).status, 200, 'sesja nadal działa — konto nie jest w cichej połowicznej blokadzie');
+
+    const eventsAfterFailure = await auditRows(db);
+    assert.equal(eventsAfterFailure.filter((row) => row.entity_type === 'user' && row.entity_id === 'u-victim2').length, 0,
+      'audyt user.disabled też nie mógł się zapisać bez wycofania sesji');
+
+    // Ponowienie bez wstrzykniętej awarii jest bezpieczne i kończy się sukcesem.
+    const retried = await post({ db }, '/api/admin/users/u-victim2/disable', admin);
+    assert.equal(retried.status, 200);
+    assert.equal(retried.data.changed, true);
+    assert.equal(retried.data.revokedSessions, 1);
+    assert.equal((await call({ db }, '/api/session', { cookie: victim })).status, 401);
   } finally {
     await db.close();
   }

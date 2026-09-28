@@ -111,6 +111,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `ledger_transfers` | przeniesienia kasa ↔ rachunek roku (0028) |
 | `bank_reconciliations`, `bank_statement_imports`, `bank_statement_lines`, `bank_reconciliation_matches` | uzgodnienia roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami, także cofniętymi z powodem (0015/0024) |
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
+| `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia oznaczone tym rokiem (`schoolYearId`), a bez oznaczenia — z dat roku (Europe/Brussels); bez `export.*` |
 
@@ -131,7 +132,7 @@ zaproszenia, sekrety i limity MFA, skróty haseł, tokeny resetu hasła i limity
 metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), dziennik kopii zapasowych `backup_runs` (0058, dane operacyjne), `data_access_log`, metadane importów (`import_batches`, D-04),
 dziennik eksportów, kampanie e-mail z odbiorcami, wykluczeniami, kolejką,
 blokadami i zdarzeniami dostawcy (adresy e-mail; zakres i retencja — D-04)
-oraz aktualności i zdjęcia (zgody na wizerunek — osobny zakres). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
+oraz aktualności i zdjęcia (zgody na wizerunek — osobny zakres), w tym pliki wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres D-04). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
 zawierają więc identyfikatory, które w odtworzonej bazie nie mają
 odpowiednika. Pliki dokumentów kopiuje się osobno (patrz
 [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md), backup Storage Bucket).

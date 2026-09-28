@@ -189,6 +189,17 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  // Import wyciągu CODA / CAMT.053 (#105).
+  invalid_statement_file: "Nie udało się odczytać pliku wyciągu. Sprawdź format pliku.",
+  statement_account_mismatch: "Rachunek w pliku wyciągu nie jest zatwierdzonym rachunkiem Rady.",
+  statement_account_unsupported: "Ten rodzaj numeru rachunku w wyciągu nie jest obsługiwany.",
+  statement_currency_unsupported: "Obsługiwane są wyłącznie wyciągi w EUR.",
+  statement_multiple_not_supported: "Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno.",
+  statement_transaction_id_missing: "Ruch w wyciągu nie ma identyfikatora transakcji banku.",
+  statement_amount_out_of_range: "Kwota w wyciągu przekracza dozwolony zakres.",
+  statement_already_imported: "Ten plik wyciągu został już zaimportowany.",
+  bank_import_not_configured: "Import wyciągu z pliku banku nie jest skonfigurowany.",
+  matched_in_other_reconciliation: "Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku.",
   statement_line_not_found: "Nie znaleziono pozycji wyciągu.",
   statement_line_not_income: "Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia.",
 
@@ -248,6 +259,8 @@ export const MESSAGES = Object.freeze({
   document_too_large: "Plik przekracza dozwolony rozmiar.",
   content_hash_mismatch: "Plik uszkodził się podczas przesyłania. Wyślij go ponownie.",
   document_integrity_mismatch: "Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi.",
+  // invalid_title, invalid_category, invalid_description: wspólne z innymi modułami (patrz niżej / „Wpłaty, księga, uzgodnienia”).
+  invalid_document_date: "Niepoprawna data dokumentu.",
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
   upload_busy: "Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę.",
 
@@ -307,6 +320,13 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  // --- Plik zdjęcia galerii (#96) ----------------------------------------------------
+  empty_photo_file: "Plik zdjęcia jest pusty.",
+  photo_file_too_large: "Plik zdjęcia przekracza dozwolony rozmiar.",
+  photo_file_malformed: "Plik zdjęcia odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi.",
+  photo_file_active_content: "Plik zdjęcia odrzucony: zawiera potencjalnie aktywną treść niedozwoloną w zdjęciach galerii.",
+  photo_file_exists: "To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik.",
+  photo_file_integrity_mismatch: "Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi.",
   preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
   preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
   sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",

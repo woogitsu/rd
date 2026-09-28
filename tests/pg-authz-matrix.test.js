@@ -27,6 +27,7 @@ import {
 } from '../src/pg/meetings.js';
 import {
   approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
+  uploadPhotoFile, verifyPhoto,
 } from '../src/pg/news.js';
 import { hashSecret } from '../src/auth.js';
 import { emailHash as suppressionEmailHash } from '../src/email/content.js';
@@ -38,7 +39,7 @@ import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSes
 import {
   ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
   campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
-  statementDate, todoReason, visibleScopes, yearDate,
+  pngBytes, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
 const PAST = '2020-01-01T00:00:00Z';
@@ -223,6 +224,27 @@ async function makeNewsPost(db, target, stage) {
   return { postId: post.id };
 }
 
+// Zdjęcie z plikiem (#96), zweryfikowane i opublikowane — jedyna droga, którą
+// trasa publiczna GET /api/public/news-photos/:id/{web|thumb} zwraca 200
+// (macierz sprawdza tu tylko, że wynik jest identyczny dla każdego, nie cały
+// cykl życia pliku — patrz tests/pg-news.test.js).
+async function makePublicPhotoFile(ctx, target) {
+  const key = nextKey('fx-photofile');
+  const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
+  await uploadPhotoFile(ctx.db, ctx.env.storage, fxAdmin, {
+    photoId: photo.id, bytes: pngBytes(), contentType: 'image/png', idempotencyKey: `${key}-file`,
+  });
+  await verifyPhoto(ctx.db, fxBoard, { photoId: photo.id });
+  const { post } = await createNewsDraft(ctx.db, fxAdmin, {
+    schoolYearId: target.schoolYearId, title: `Fotorelacja ${marker('PUBLIC')}`, body: 'Treść syntetyczna.',
+    photoIds: [photo.id], idempotencyKey: nextKey('fx-news-photo'),
+  });
+  await submitNews(ctx.db, fxAdmin, { postId: post.id, revision: 1 });
+  await approveNews(ctx.db, fxBoard, { postId: post.id, revision: 1 });
+  await publishNews(ctx.db, fxBoard, { postId: post.id, revision: 1 });
+  return { photoId: photo.id };
+}
+
 async function makeCampaign(ctx, target, stage) {
   const { json } = await api(ctx, ctx.fxCookies.board, 'POST', '/api/email/campaigns', campaignBody(target), withKey(nextKey('fx-campaign')));
   const campaignId = json.campaign.id;
@@ -384,6 +406,7 @@ const MAKERS = {
   meeting: (ctx, target, stage) => makeMeeting(ctx.db, target, stage),
   payment: (ctx, target, stage) => makePayment(ctx.db, target, stage),
   newsPost: (ctx, target, stage) => makeNewsPost(ctx.db, target, stage),
+  publicPhotoFile: (ctx, target) => makePublicPhotoFile(ctx, target),
   photo: async (ctx) => {
     const key = nextKey('fx-photo');
     const { photo } = await registerPhoto(ctx.db, fxAdmin, { ...photoBody(key), idempotencyKey: key });
