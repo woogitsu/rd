@@ -37,6 +37,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 | D-19 | Głosowanie elektroniczne | #13 | otwarta |
 | D-20 | Zgoda na produkcję na Railway | #31, #41, #42 | otwarta |
 | D-21 | Aktualny regulamin i dostęp do dokumentów źródłowych | #13, #15 | otwarta |
+| D-22 | Wersje językowe strony publicznej | #129 | otwarta |
 
 ## Dane osobowe
 
@@ -45,6 +46,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: kto jest administratorem danych uczniów i opiekunów przetwarzanych w panelu i kto w jego imieniu upoważnia osoby z Rady do dostępu?
 - Dlaczego: od tego zależą upoważnienia, umowy z dostawcami, obowiązek informacyjny i odpowiedzialność za incydenty. Blokuje import (#2, #36) i produkcję (#41).
 - Warianty w dokumentacji: nie wskazano. SECURITY.md i README wymagają ustalenia z dyrekcją i IOD. Polski status szkoły nie wyłącza RODO.
+- Materiał techniczny: [`docs/PRIVACY_INVENTORY.md`](PRIVACY_INVENTORY.md) (spis kolumn z danymi osobowymi), [`docs/PROCESSORS.md`](PROCESSORS.md) (dostawcy), [`docs/DPIA_CHECKLIST.md`](DPIA_CHECKLIST.md) — projekty, nie rozstrzygnięcia (#123).
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -55,6 +57,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: w jakich celach panel przetwarza dane (ewidencja dobrowolnych wpłat, kontakt z opiekunami, organizacja klas) i na jakiej podstawie; jaki zakres danych szkoła udostępnia Radzie?
 - Dlaczego: cel wyznacza dopuszczalne pola (D-03), retencję (D-04) i treść informacji dla rodziców (D-06). Blokuje #2, #36.
 - Warianty w dokumentacji: nie wskazano. Cele produktu opisuje PRODUCT.md; nie rozstrzyga podstawy prawnej.
+- Materiał techniczny: pole „cel” w [`docs/PRIVACY_INVENTORY.md`](PRIVACY_INVENTORY.md) czeka na wartości z tej decyzji (#123).
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -85,6 +88,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: czy administrator akceptuje Railway (aplikacja, PostgreSQL, Storage Bucket) i Brevo (e-mail) jako podmioty przetwarzające; kto zawiera i przechowuje umowy powierzenia; czy wymagany region UE jest wystarczający?
 - Dlaczego: warunek produkcji (#31, #41) i wysyłki (#40). Ustawienie regionu nie zastępuje oceny prawnej ani umowy.
 - Warianty w dokumentacji: RAILWAY_MIGRATION.md zakłada region UE (Amsterdam), weryfikowany osobno dla aplikacji, bazy i bucketu. EMAIL.md: przed produkcją sprawdzić regulamin Brevo i warunki przetwarzania danych.
+- Materiał techniczny: [`docs/PROCESSORS.md`](PROCESSORS.md) (#123) — lista usług, region, odwołanie do DPA, status per dostawca; do weryfikacji i uzupełnienia przez IOD.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -259,6 +263,17 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: która wersja regulaminu Rady i programu jest obowiązująca oraz kto może mieć do nich dostęp w panelu lub repozytorium?
 - Dlaczego: README zabrania umieszczania tych dokumentów w repo bez decyzji. Dotyczy #13 i #15.
 - Warianty w dokumentacji: nie wskazano.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-22. Wersje językowe strony publicznej
+
+- Pytanie: czy strona publiczna Rady ma mieć wersje językowe poza polską (np. FR/NL/EN dla opiekunów, którzy nie czytają po polsku, pracowników szkoły goszczącej lub sponsorów wydarzeń w Brukseli), w jakich językach, i kto tłumaczy oraz zatwierdza tłumaczenie każdego wpisu?
+- Dlaczego: blokuje #129. Bez tej decyzji nie wdrażamy warstwy i18n ani tłumaczenia treści — polska wersja pozostaje jedyną. Ta pozycja jest wprost proponowana w treści #129 („Nowa decyzja zarządu... Bez niej nie implementować”), nie założeniem zespołu technicznego.
+- Warianty w dokumentacji: propozycja z #129 — tłumaczenie wiązane z konkretną opublikowaną wersją polską (numer wersji), przechodzące to samo „cztery oczy” co treść polska (autor tłumaczenia ≠ zatwierdzający), automatyczne ukrycie tłumaczenia po zmianie wersji polskiej do czasu ponownego zatwierdzenia, polska wersja pozostaje nadrzędna i wiążąca. Bez tłumaczenia maszynowego publikowanego automatycznie.
+- Do ustalenia razem z decyzją: które języki (FR/NL/EN czy inny zestaw), kto ma uprawnienia tłumacza i zatwierdzającego (czy to musi być zarząd, czy może być osoba spoza zarządu ze znajomością języka), czy dotyczy też wydarzeń (tytuł/opis/miejsce) czy tylko aktualności w pierwszym etapie, i czy podpisy licencji/zgód pod zdjęciami (#96, #106) pozostają wyłącznie po polsku.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:

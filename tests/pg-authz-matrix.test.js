@@ -108,9 +108,10 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
     [studentId, householdId, `Uczennica ${marker(target.key)}`]);
   await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)',
     [studentId, guardianId]);
+  const enrollmentId = `${householdId}-e`;
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
-    [`${householdId}-e`, studentId, target.classId, target.schoolYearId]);
-  return { householdId, guardianId, studentId };
+    [enrollmentId, studentId, target.classId, target.schoolYearId]);
+  return { householdId, guardianId, studentId, enrollmentId };
 }
 
 async function seedFixtureSessions(db) {
@@ -185,7 +186,8 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
     body: minutesBody ?? `Protokół ${scopeMarker} — treść syntetyczna.`,
   });
   if (stage === 'draftMinutes') return { ...obj, minutesId: minutes.id };
-  await approveMinutes(db, fxAdmin, { minutesId: minutes.id });
+  // #135: zatwierdzający musi być inną osobą niż autor wersji (fxAdmin powyżej).
+  await approveMinutes(db, fxBoard, { minutesId: minutes.id });
   if (stage === 'approvedMinutes') return { ...obj, minutesId: minutes.id };
   await setMinutesVisibility(db, fxAdmin, { idempotencyKey: nextKey('fx-vis'), minutesId: minutes.id, visibility });
   return { ...obj, minutesId: minutes.id };
@@ -230,6 +232,13 @@ async function makeCampaign(ctx, target, stage) {
   // Zatwierdza inna osoba niż autor migawki (zasada czterech oczu).
   await api(ctx, ctx.fxCookies.board2, 'POST', `/api/email/campaigns/${campaignId}/approve`,
     { contentHash: obj.contentHash, recipientsHash: obj.recipientsHash });
+  if (stage === 'approved') return obj;
+  // #130: harmonogram — sending/paused budowane na zakolejkowanej kampanii.
+  await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/queue`, {});
+  if (stage === 'sending') return obj;
+  if (stage === 'paused') {
+    await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/pause`, {});
+  }
   return obj;
 }
 
@@ -745,6 +754,7 @@ const MODULE_SOURCES = {
   'year-close': ['../src/pg/routes/year-close.js'],
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
+  representative: ['../src/pg/routes/representative.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń

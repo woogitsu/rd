@@ -20,13 +20,17 @@
     </header>
 
     <main id="main">
+      <div class="print-meta" id="print-meta" aria-hidden="true"></div>
       <section class="page-heading">
         <div>
           <p class="eyebrow">Ewidencja</p>
           <h1>Dobrowolne wpłaty</h1>
           <p>Rejestruj wpływy i ich korekty. Widoczna kwota netto zawsze uwzględnia historię zmian.</p>
         </div>
-        <button class="primary" id="open-payment" type="button">Dodaj wpłatę</button>
+        <div class="heading-action">
+          <button class="primary" id="open-payment" type="button">Dodaj wpłatę</button>
+          <button id="print-payments" type="button">Drukuj zestawienie</button>
+        </div>
       </section>
 
       <aside class="notice" role="note">
@@ -40,7 +44,7 @@
         <form id="filters-form">
           <label>
             Rok szkolny
-            <input id="school-year-id" name="schoolYearId" autocomplete="off" required placeholder="np. 2026-2027" />
+            <select id="school-year-id" name="schoolYearId" required></select>
           </label>
           <label>
             Status
@@ -102,7 +106,17 @@
           <select name="method"><option value="bank">Przelew</option><option value="cash">Gotówka</option><option value="other">Inna</option></select>
         </label>
         <label>Opis / referencja <input name="reference" maxlength="200" required placeholder="np. składka roczna" /></label>
-        <label>Identyfikator rodziny <input name="householdId" autocomplete="off" placeholder="Zostaw puste, jeśli wpłata wymaga przypisania" /></label>
+        <fieldset class="household-picker">
+          <legend>Rodzina (opcjonalnie — zostaw puste, jeśli wpłata wymaga przypisania)</legend>
+          <label>Klasa <select id="payment-class"></select></label>
+          <label>Uczeń <select id="payment-student" disabled></select></label>
+          <label>Gospodarstwo <select id="payment-household" disabled></select></label>
+          <p id="payment-household-summary" role="status" aria-live="polite"></p>
+          <details>
+            <summary>Zaawansowane: wpisz identyfikator ręcznie</summary>
+            <label>Identyfikator rodziny <input id="payment-household-id" name="householdId" autocomplete="off" /></label>
+          </details>
+        </fieldset>
         <div class="form-error" id="payment-error" role="alert"></div>
         <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="payment-error">Zapisz wpłatę</button></div>
       </form>
@@ -125,7 +139,17 @@
         <div class="dialog-heading"><div><p class="eyebrow">Wpłata nierozpoznana</p><h2 id="assignment-dialog-title">Przypisz rodzinę</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
         <input type="hidden" name="paymentId" />
         <p class="context" id="assignment-context"></p>
-        <label>Identyfikator rodziny <input name="householdId" autocomplete="off" required autofocus /></label>
+        <fieldset class="household-picker">
+          <legend>Rodzina</legend>
+          <label>Klasa <select id="assignment-class" autofocus></select></label>
+          <label>Uczeń <select id="assignment-student" disabled></select></label>
+          <label>Gospodarstwo <select id="assignment-household" disabled></select></label>
+          <p id="assignment-household-summary" role="status" aria-live="polite"></p>
+          <details>
+            <summary>Zaawansowane: wpisz identyfikator ręcznie</summary>
+            <label>Identyfikator rodziny <input id="assignment-household-id" name="householdId" autocomplete="off" /></label>
+          </details>
+        </fieldset>
         <div class="form-error" id="assignment-error" role="alert"></div>
         <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="assignment-error">Przypisz</button></div>
       </form>
