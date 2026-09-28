@@ -6,11 +6,29 @@ import { createSessionSecret, hashSecret, readSessionToken, sessionCookie } from
 import { insertAuditEvent } from './audit.js';
 
 export const SESSION_TTL_SECONDS = 60 * 60 * 24;
+// #150 (SR-10, założenie do D-10): brak limitu bezczynności pozwalał sesji
+// zapomnianej na wspólnym komputerze (pokój nauczycielski, laptop Rady) działać
+// do pełnych 24 h. Wariant zachowawczy: JEDEN próg dla wszystkich ról (issue
+// proponuje różne progi wg roli finansowej — to wymagałoby ładowania ról przy
+// KAŻDYM żądaniu w loadSession, kosztowne i osobna decyzja D-10 o zakresie ról;
+// tu wybieramy krótszy, bezpieczniejszy próg dla wszystkich). Konfigurowalne
+// przez SESSION_IDLE_TIMEOUT_SECONDS (0 wyłącza — tylko do testów/lokalnie).
+export const DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 30 * 60;
+// `last_seen_at` jest zapisywany najwyżej raz na tyle sekund — bez tego każde
+// żądanie pisałoby do bazy (issue: „aktualizacja najwyżej raz na N minut”).
+const LAST_SEEN_THROTTLE_SECONDS = 5 * 60;
 // Założenie do potwierdzenia przez zarząd/szkołę: zaproszenie ważne 72 h, najwyżej 14 dni.
 export const INVITATION_DEFAULT_TTL_SECONDS = 60 * 60 * 72;
 export const INVITATION_MAX_TTL_SECONDS = 60 * 60 * 24 * 14;
 export const ROLES = Object.freeze(['admin', 'board', 'treasurer', 'representative', 'audit', 'principal']);
-const REVOKE_REASONS = new Set(['logout', 'rotated', 'admin', 'user_disabled', 'password_changed', 'password_reset', 'mfa_reset']);
+const REVOKE_REASONS = new Set(['logout', 'rotated', 'admin', 'user_disabled', 'password_changed', 'password_reset', 'mfa_reset', 'idle']);
+
+export function sessionIdleTimeoutSeconds(env) {
+  const raw = env && Object.hasOwn(env, 'SESSION_IDLE_TIMEOUT_SECONDS') ? env.SESSION_IDLE_TIMEOUT_SECONDS : process.env.SESSION_IDLE_TIMEOUT_SECONDS;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS;
+}
 
 export function isoTimestamp(value) {
   if (value === null || value === undefined) return null;
@@ -27,8 +45,9 @@ export async function loadSession(request, env) {
   const token = readSessionToken(request);
   if (!token) return null;
   const tokenHash = await hashSecret(token);
-  const { rows } = await database(env).query(
-    `SELECT s.id AS session_id, s.expires_at, s.mfa_verified_at,
+  const db = database(env);
+  const { rows } = await db.query(
+    `SELECT s.id AS session_id, s.created_at, s.expires_at, s.last_seen_at, s.mfa_verified_at,
             u.id AS user_id, u.email, u.display_name
        FROM sessions s
        JOIN users u ON u.id = s.user_id
@@ -41,6 +60,28 @@ export async function loadSession(request, env) {
   );
   const row = rows[0];
   if (!row) return null;
+
+  // #150: bezczynność dłuższa niż limit wycofuje sesję (zdarzenie w audycie,
+  // jak przy każdym innym powodzie — bez zacierania historii), niezależnie od
+  // `expires_at`. Ostatnia aktywność to `last_seen_at`, a przed pierwszym
+  // zapisem (tuż po utworzeniu) — `created_at`, żeby świeża sesja nie wygasała
+  // natychmiast z powodu opóźnionego pierwszego zapisu (throttling niżej).
+  const idleTimeout = sessionIdleTimeoutSeconds(env);
+  if (idleTimeout > 0) {
+    const lastActivity = new Date(row.last_seen_at ?? row.created_at).getTime();
+    if (Number.isFinite(lastActivity) && (Date.now() - lastActivity) / 1000 > idleTimeout) {
+      await db.transaction((tx) => revokeSessionWith(tx, row.session_id, { reason: 'idle', actorId: row.user_id }));
+      return null;
+    }
+  }
+  // Throttling: zapis najwyżej raz na LAST_SEEN_THROTTLE_SECONDS, nie przy
+  // każdym żądaniu (issue: ochrona przed nadmiarem zapisów w bazie).
+  await db.query(
+    `UPDATE sessions SET last_seen_at = now()
+      WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < now() - make_interval(secs => $2))`,
+    [row.session_id, LAST_SEEN_THROTTLE_SECONDS],
+  );
+
   return {
     sessionId: row.session_id,
     expiresAt: isoTimestamp(row.expires_at),
@@ -98,11 +139,36 @@ async function revokeSessionWith(tx, sessionId, { reason, actorId }) {
 
 // Rotacja po zmianie uprawnień lub potwierdzeniu MFA: stara sesja zostaje
 // wycofana, nowa wskazuje ją w rotated_from. Wszystko w jednej transakcji.
+// Znajduje created_at PIERWSZEJ sesji łańcucha rotacji (idąc wstecz po
+// rotated_from). Używane, żeby rotacja (MFA, zmiana hasła) nie przedłużała
+// absolutnego limitu 24 h ponad moment pierwszego logowania (#150) — bez tego
+// kod TOTP podany wieczorem pozwalał następnego dnia zapisywać wpłaty z pełnym
+// nowym oknem 24 h od potwierdzenia MFA.
+async function rootSessionCreatedAt(tx, sessionId) {
+  const { rows } = await tx.query(
+    `WITH RECURSIVE chain(id, created_at, rotated_from) AS (
+       SELECT id, created_at, rotated_from FROM sessions WHERE id = $1
+       UNION ALL
+       SELECT s.id, s.created_at, s.rotated_from FROM sessions s JOIN chain c ON s.id = c.rotated_from
+     )
+     SELECT created_at FROM chain ORDER BY created_at ASC LIMIT 1`,
+    [sessionId],
+  );
+  return rows[0]?.created_at ?? null;
+}
+
 export async function rotateSession(env, session, { mfaVerified = session.mfaVerified } = {}) {
   return database(env).transaction(async (tx) => {
+    const rootCreatedAt = await rootSessionCreatedAt(tx, session.sessionId);
     const revoked = await revokeSessionWith(tx, session.sessionId, { reason: 'rotated', actorId: session.user.id });
     if (!revoked) throw new Error('session_not_active');
-    return createSession(tx, { userId: session.user.id, mfaVerified, rotatedFrom: session.sessionId });
+    // Nigdy 0 (patrz createSession: `Number(ttlSeconds) || SESSION_TTL_SECONDS`
+    // traktuje 0 jako "brak wartości" i wróciłby do pełnych 24 h) — najwyżej
+    // sekunda, po której `expires_at` i tak jest w przeszłości.
+    const remainingSeconds = rootCreatedAt
+      ? Math.max(1, Math.floor((new Date(rootCreatedAt).getTime() + SESSION_TTL_SECONDS * 1000 - Date.now()) / 1000))
+      : SESSION_TTL_SECONDS;
+    return createSession(tx, { userId: session.user.id, mfaVerified, rotatedFrom: session.sessionId, ttlSeconds: remainingSeconds });
   });
 }
 
@@ -125,6 +191,44 @@ export async function revokeUserSessionsWith(tx, { userId, actorId, reason = 'ad
     await insertAuditEvent(tx, { actorId, action: 'session.revoked', entityType: 'session', entityId: row.id, metadata: { reason } });
   }
   return rows.length;
+}
+
+// #150: osoba widzi WYŁĄCZNIE własne sesje — bez adresu IP ani User-Agent
+// (nie są dziś zapisywane; minimalizacja danych). Tylko aktywne (nie
+// wygasłe/wycofane) — historia sesji nie jest tu ujawniana.
+export async function listOwnSessions(env, session) {
+  const { rows } = await database(env).query(
+    `SELECT id, created_at, last_seen_at, mfa_verified_at
+       FROM sessions
+      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+      ORDER BY created_at DESC`,
+    [session.user.id],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    createdAt: isoTimestamp(row.created_at),
+    lastSeenAt: isoTimestamp(row.last_seen_at),
+    mfaVerified: Boolean(row.mfa_verified_at),
+    current: row.id === session.sessionId,
+  }));
+}
+
+// Cofnięcie JEDNEJ WŁASNEJ sesji (inne urządzenie albo bieżąca — jak „Wyloguj”).
+// Cudza sesja (inne konto) daje `false` -> trasa odpowiada 404, tak jak brak
+// obiektu (SR-07): nie ujawnia, czy taki identyfikator w ogóle istnieje.
+// Powód 'logout' dla bieżącej sesji (spójne z POST /api/logout), 'user_revoke_all'
+// dla innego urządzenia (to nadal działanie samej osoby, nie administratora).
+export async function revokeOwnSession(env, session, targetSessionId) {
+  if (typeof targetSessionId !== 'string' || !targetSessionId) return false;
+  const reason = targetSessionId === session.sessionId ? 'logout' : 'user_revoke_all';
+  return database(env).transaction(async (tx) => {
+    const { rows } = await tx.query(
+      'SELECT id FROM sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE',
+      [targetSessionId, session.user.id],
+    );
+    if (!rows[0]) return false;
+    return revokeSessionWith(tx, targetSessionId, { reason, actorId: session.user.id });
+  });
 }
 
 // --- Zaproszenia -----------------------------------------------------------

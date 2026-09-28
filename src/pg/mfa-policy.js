@@ -28,12 +28,15 @@ export function mfaRequiredRoles(env) {
 }
 
 export const MFA_GATE_EXEMPT_EXACT = Object.freeze([
-  '/api/session', '/api/access', '/api/logout', '/api/sessions/revoke-all',
+  '/api/session', '/api/access', '/api/logout', '/api/sessions', '/api/sessions/revoke-all',
   '/api/login', '/api/auth/state', '/api/invitations/accept', '/api/password/reset',
   // Trasy publiczne i webhook: działają bez sesji, więc cookie niczego tu nie zmienia.
   '/api/meetings/public-minutes', '/api/email/webhooks/brevo',
 ]);
-export const MFA_GATE_EXEMPT_PREFIXES = Object.freeze(['/api/mfa/', '/api/public/']);
+// #150: lista i cofnięcie WŁASNEJ sesji (GET /api/sessions, POST /api/sessions/{id}/revoke)
+// muszą działać tak samo jak /api/sessions/revoke-all — sesja bez potwierdzonego MFA musi
+// móc zobaczyć swoje sesje i się z nich wylogować, inaczej mfa_required blokowałby wyjście.
+export const MFA_GATE_EXEMPT_PREFIXES = Object.freeze(['/api/mfa/', '/api/public/', '/api/sessions/']);
 const EXEMPT_EXACT = new Set(MFA_GATE_EXEMPT_EXACT);
 
 export function isMfaGateExempt(pathname) {

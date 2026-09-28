@@ -13,13 +13,17 @@ import {
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
-const board = { userId: 'board', grants: [grant('board')], mfaVerified: false };
+// #150 (SR-10): zarządzanie zebraniami/protokołami/uchwałami wymaga teraz jawnie
+// potwierdzonego MFA (MANAGE_ROLES = admin, board) — board i classBoard dostają
+// mfaVerified: true, tak jak pozostali aktorzy tego pliku, którzy naprawdę
+// zarządzają (rep, principal, treasurer są tu wyłącznie do testów odmowy).
+const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
 const admin = { userId: 'admin', grants: [grant('admin', { schoolYearId: null })], mfaVerified: true };
 const auditor = { userId: 'auditor', grants: [grant('audit')], mfaVerified: false };
 const rep = { userId: 'rep', grants: [grant('representative', { classId: 'class-a' })], mfaVerified: true };
 const principal = { userId: 'principal', grants: [grant('principal')], mfaVerified: true };
 const treasurer = { userId: 'treasurer', grants: [grant('treasurer')], mfaVerified: true };
-const classBoard = { userId: 'class-board', grants: [grant('board', { classId: 'class-a' })] };
+const classBoard = { userId: 'class-board', grants: [grant('board', { classId: 'class-a' })], mfaVerified: true };
 
 let keySeq = 0;
 const key = () => `test-key-${++keySeq}`;

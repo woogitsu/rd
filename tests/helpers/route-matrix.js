@@ -101,10 +101,13 @@ const json = (body) => body;
 const withKey = (key) => ({ 'Idempotency-Key': key });
 const everyY1 = () => Y1_ALL;
 
+// #150 (SR-10): zarządzanie zebraniami, protokołami i uchwałami wymaga jawnie
+// potwierdzonego MFA (src/pg/meetings.js, meetingForManage/createMeeting) —
+// stąd mfa: true dla każdej trasy zbudowanej tym helperem.
 function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft', body, create = false }) {
   return {
     id, module: 'meetings', method, path: template, targets: CLASS_TARGETS,
-    allow: MEETING_MANAGE, mfa: false, ok, deny: 403, fixture: 'fresh',
+    allow: MEETING_MANAGE, mfa: true, ok, deny: 403, fixture: 'fresh',
     object: { kind: 'meeting', stage },
     build: ({ obj, key, target }) => ({
       path: `/api/meetings/${obj.meetingId}${suffix(obj)}`,
@@ -118,10 +121,13 @@ function meetingRoute(id, method, template, suffix, { ok = 200, stage = 'draft',
 // widoczne, ale bez prawa do kroku (np. zatwierdzenie przez przedstawiciela) — 403.
 const eventDeny = (actor, targetKey) => ((EVENT_EDIT[actor.key] ?? []).includes(targetKey) ? 403 : 404);
 
+// #150 (SR-10): zatwierdzenie i publikacja (src/pg/events.js, approve/publish)
+// wymagają jawnie potwierdzonego MFA; szkic/zgłoszenie/odwołanie — nie.
 function eventAction(id, action, stage, allow, body = {}) {
   return {
     id, module: 'events', method: 'POST', path: `/api/events/:eventId/${action}`, targets: CLASS_TARGETS,
-    allow, mfa: false, ok: 200, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage },
+    allow, mfa: action === 'approve' || action === 'publish', ok: 200, deny: eventDeny, fixture: 'fresh',
+    object: { kind: 'event', stage },
     build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/${action}`, body: { revision: 1, ...body } }),
   };
 }
@@ -235,10 +241,13 @@ function newsReviewDeny(actor, targetKey) {
   return (EVENT_EDIT[actor.key] ?? []).includes(targetKey) ? 403 : 404;
 }
 
+// #150 (SR-10): zatwierdzenie i publikacja (src/pg/news.js, approve/publish)
+// wymagają jawnie potwierdzonego MFA; szkic/zgłoszenie/wycofanie — nie.
 function newsAction(id, action, stage, allow, deny, extra = {}) {
   return {
     id, module: 'news', method: 'POST', path: `/api/news/:postId/${action}`, targets: CLASS_TARGETS,
-    allow, mfa: false, ok: 200, deny, fixture: 'fresh', object: { kind: 'newsPost', stage },
+    allow, mfa: action === 'approve' || action === 'publish', ok: 200, deny, fixture: 'fresh',
+    object: { kind: 'newsPost', stage },
     build: ({ obj }) => ({ path: `/api/news/${obj.postId}/${action}`, body: { revision: 1, ...extra } }),
   };
 }
@@ -476,7 +485,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'meetings.create', module: 'meetings', method: 'POST', path: '/api/meetings', targets: CLASS_TARGETS,
-    allow: MEETING_MANAGE, mfa: false, ok: 201, deny: 403, fixture: null,
+    allow: MEETING_MANAGE, mfa: true, ok: 201, deny: 403, fixture: null,
     build: ({ target, key }) => ({
       path: '/api/meetings', headers: withKey(key),
       body: { schoolYearId: target.schoolYearId, kind: target.classId ? 'class' : 'plenary', classId: target.classId,
@@ -922,6 +931,22 @@ export const ROUTE_MATRIX = Object.freeze([
   mfaRoute('mfa.verify', '/api/mfa/verify', 200, 'confirmed'),
   mfaRoute('mfa.recovery', '/api/mfa/recovery', 200, 'confirmed'),
   mfaRoute('mfa.revokeAll', '/api/sessions/revoke-all', 200, null),
+  // #150: lista własnych sesji — każda sesja widzi wyłącznie swoje (bez ról/zakresu, jak revoke-all).
+  {
+    id: 'sessions.list', module: 'mfa', method: 'GET', path: '/api/sessions', targets: ['-'],
+    allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/sessions' }),
+  },
+  // Cofnięcie WŁASNEJ (ale innej niż bieżąca — fixture ownSession) sesji: każdy
+  // uwierzytelniony aktor może to zrobić dla siebie. Cudza/nieistniejąca sesja
+  // (404, zakres "tylko własne", SR-07) i cofnięcie BIEŻĄCEJ sesji (czyści cookie)
+  // są poza macierzą ról — sprawdzone w tests/pg-sessions.test.js.
+  {
+    id: 'sessions.revokeOne', module: 'mfa', method: 'POST', path: '/api/sessions/:id/revoke', targets: ['-'],
+    allow: 'authenticated', mfa: false, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'ownSession' },
+    build: ({ obj }) => ({ path: `/api/sessions/${obj.sessionId}/revoke`, body: {} }),
+  },
 
   // ---------- login (#3, D-10) ----------
   // Logowanie, przyjęcie zaproszenia i reset hasła działają bez sesji (cookie jest ignorowane) —
@@ -1014,6 +1039,8 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
   '/api/mfa/': 'zapis i potwierdzenie MFA; limity błędów per sesja, wyższy sufit per konto (#189)',
   '/api/public/': 'publiczne dane zatwierdzone',
+  '/api/sessions': 'lista WYŁĄCZNIE własnych sesji (id, czas, stan MFA) — jak /api/session (#150)',
+  '/api/sessions/': 'cofnięcie własnej sesji (dowolne urządzenie) — jak /api/sessions/revoke-all (#150)',
 });
 
 // Oczekiwany status dla (trasa, aktor, MFA, zakres) — zamierzona polityka, nie stan kodu.

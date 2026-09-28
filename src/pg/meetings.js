@@ -202,11 +202,18 @@ function contextFor(actor, classId) {
   };
 }
 
-function authorize(actor, roles, { schoolYearId, classId = null }) {
+// #150 (SR-10): zarządzanie zebraniami, protokołami i uchwałami (MANAGE_ROLES)
+// wymaga jawnie potwierdzonego MFA na poziomie trasy, niezależnie od bramki
+// routera (mfa-policy.js) — uchwały uzasadniają wydatki > 3000 EUR (D-15).
+// Sprawdzenie zakresu/roli jest ZAWSZE pierwsze (SR-07): ktoś bez roli albo
+// spoza klasy dostaje ten sam ogólny `forbidden`, niezależnie od stanu MFA —
+// `mfa_required` nie ujawnia nic osobie, która i tak nie ma dostępu.
+function authorize(actor, roles, { schoolYearId, classId = null, requireMfa = false } = {}) {
   const context = contextFor(actor, classId);
   const requirement = { roles: [...roles], schoolYearId };
   if (classId) requirement.classId = classId;
   if (!isAuthorized(context, requirement)) throw new MeetingError('forbidden', 403);
+  if (requireMfa && !context.session.mfaVerified) throw new MeetingError('mfa_required', 403);
 }
 
 function actorClassIds(actor, schoolYearId) {
@@ -455,7 +462,7 @@ async function loadMeeting(db, meetingId) {
 
 async function meetingForManage(db, actor, meetingId) {
   const meeting = await loadMeeting(db, meetingId);
-  authorize(actor, MANAGE_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
+  authorize(actor, MANAGE_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, requireMfa: true });
   return meeting;
 }
 
@@ -545,7 +552,7 @@ export async function createMeeting(db, actor, input = {}) {
     status,
     ...parseQuorumRule(input),
   };
-  authorize(actor, MANAGE_ROLES, { schoolYearId, classId });
+  authorize(actor, MANAGE_ROLES, { schoolYearId, classId, requireMfa: true });
   const result = await idempotent(db, actor, key, 'meeting.create', data, async tx => {
     const id = randomUUID();
     await tx.query(

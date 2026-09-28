@@ -6,7 +6,7 @@ Logowanie: adres e-mail i hasło, a następnie kod z aplikacji uwierzytelniając
 
 - Sekret sesji ma 256 bitów losowości i trafia do przeglądarki w cookie HttpOnly, Secure, SameSite=Lax.
 - D1 przechowuje wyłącznie SHA-256 sekretu. Surowy sekret nie może znaleźć się w bazie, logach ani dzienniku audytu.
-- Sesja jest ważna najwyżej 24 godziny. Zapytanie odrzuca sesję wygasłą, wycofaną i konto wyłączone.
+- Sesja jest ważna najwyżej 24 godziny (limit absolutny, liczony od pierwszego logowania — patrz niżej) i wygasa też po bezczynności (patrz „Limit bezczynności i sesje własne”, #150). Zapytanie odrzuca sesję wygasłą, wycofaną i konto wyłączone.
 - GET /api/session zwraca minimum danych bieżącego użytkownika i stan potwierdzenia MFA.
 - POST /api/logout wymaga zgodnego nagłówka Origin, wycofuje sesję i zapisuje zdarzenie audytowe.
 - Tabele invitations i sessions tworzy migracja 0002_auth_sessions.sql. Migracji zdalnej nie uruchamiać bez przeglądu.
@@ -42,6 +42,16 @@ Trasy (wszystkie POST, wymagają aktywnej sesji i zgodnego nagłówka `Origin`; 
 - `POST /api/mfa/verify` z `{ "code": "123456" }` — ustawia `sessions.mfa_verified_at` wyłącznie dla **bieżącej** sesji, po czym od razu ją rotuje (`rotateSession`): stara sesja dostaje `revoked_reason='rotated'`, nowy sekret trafia tylko do cookie (ochrona przed utrwaleniem sesji). Inne sesje tego samego konta pozostają bez MFA.
 - `POST /api/mfa/recovery` z `{ "code": "XXXX-XXXX-XXXX-XXXX" }` — zamiast kodu TOTP; kod odzyskiwania jest jednorazowy. Wielkość liter, spacje i myślniki nie mają znaczenia.
 - `POST /api/sessions/revoke-all` — wycofuje wszystkie aktywne sesje **własnego** konta, także bieżącą (`revoked_reason='user_revoke_all'`), czyści cookie i zwraca `{ "revoked": n, "scope": "all" }`. Nie dotyka sesji innych kont. Konto z potwierdzonym czynnikiem: sesja bez potwierdzonego MFA (samo hasło) wycofuje wyłącznie siebie (`"scope": "current"`, #189) — sama znajomość hasła nie wystarcza, by wylogować właściciela.
+
+### Limit bezczynności i sesje własne (#150)
+
+- **Bezczynność:** `SESSION_IDLE_TIMEOUT_SECONDS` (domyślnie 1800 s = 30 min; `0` wyłącza sprawdzenie — tylko do testów/lokalnie). `loadSession` porównuje z `sessions.last_seen_at` (albo `created_at`, dopóki `last_seen_at` jest jeszcze puste) i po przekroczeniu limitu **jawnie wycofuje** sesję (`revoked_reason='idle'`, zdarzenie `session.revoked` w audycie — bez zacierania historii) zamiast po cichu przestać działać. Wariant zachowawczy (jeden próg dla wszystkich ról, nie różne progi wg roli finansowej jak w pierwotnej propozycji issue) — do potwierdzenia D-10. `last_seen_at` jest zapisywany najwyżej raz na 5 minut (nie przy każdym żądaniu), żeby nie zwiększać liczby zapisów w bazie.
+- **Absolutny limit przy rotacji:** `rotateSession` (potwierdzenie MFA, zmiana hasła) NIE przedłuża limitu 24 h ponad moment PIERWSZEGO logowania — nowa sesja dziedziczy `expires_at` z `created_at` najstarszej sesji w łańcuchu `rotated_from` (`WITH RECURSIVE`). Kod TOTP podany wieczorem nie daje więc pełnych kolejnych 24 h następnego dnia.
+- **Własne sesje:** `GET /api/sessions` zwraca WYŁĄCZNIE sesje wołającego — `id`, `createdAt`, `lastSeenAt`, `mfaVerified`, `current` (bez adresu IP i User-Agent — nie są dziś zapisywane, minimalizacja danych). `POST /api/sessions/{id}/revoke` cofa jedną własną sesję (inne urządzenie albo bieżące, jak „Wyloguj”); cudza albo nieistniejąca sesja daje `404` (zakres „tylko własne”, SR-07 — nie ujawnia jej istnienia); cofnięcie bieżącej sesji czyści cookie. Obie trasy są zwolnione z bramki MFA (`MFA_GATE_EXEMPT_PREFIXES`), tak jak `/api/sessions/revoke-all` — sesja bez potwierdzonego MFA musi móc zobaczyć swoje sesje i się wylogować.
+
+### SR-10: MFA na trasach zarządzania (#150)
+
+Zarządzanie zebraniami, protokołami i uchwałami (`src/pg/meetings.js`, `MANAGE_ROLES` = admin, board) oraz zatwierdzenie i publikacja wydarzeń i aktualności (`src/pg/events.js`, `src/pg/news.js`) wymagają teraz **jawnie potwierdzonego MFA na poziomie trasy** (`403 mfa_required`), niezależnie od bramki routera opisanej niżej — uchwały uzasadniają wydatki > 3000 EUR (D-15). Sprawdzenie jest zawsze PO roli/zakresie (SR-07): brak roli albo zakresu daje ten sam ogólny `forbidden`, `mfa_required` tylko gdy dostęp jest, brakuje tylko MFA. Macierz uprawnień (`tests/helpers/route-matrix.js`) to wymusza.
 
 Ochrona:
 

@@ -450,6 +450,10 @@ async function transition(db, actor, input, spec) {
     const row = await lockPost(tx, input.postId);
     if (!canEdit(actor, row) && !canReview(actor, row)) throw new NewsError('post_not_found', 404);
     if (!spec.allowed(actor, row)) throw new NewsError('forbidden', 403);
+    // #150 (SR-10): zatwierdzenie i publikacja wymagają jawnie potwierdzonego
+    // MFA na poziomie trasy, niezależnie od bramki routera — sprawdzane PO
+    // roli/zakresie (SR-07).
+    if (spec.requireMfa && !actor.mfaVerified) throw new NewsError('mfa_required', 403);
     if (spec.alreadyDone(row, expected)) return { post: internalPost(row), replayed: true };
     if (row.status === 'withdrawn') throw new NewsError('post_withdrawn', 409);
     if (row.revision_no !== expected) throw new NewsError('revision_conflict', 409);
@@ -483,6 +487,7 @@ export function approve(db, actor, input) {
     action: 'news_post.approved',
     from: ['submitted'],
     allowed: canReview,
+    requireMfa: true,
     alreadyDone: (row, rev) => row.revision_no === rev && row.approved_revision_no === rev
       && ['approved', 'published'].includes(row.status),
     update: (row, a) => ({
@@ -497,6 +502,7 @@ export function publish(db, actor, input) {
     action: 'news_post.published',
     from: ['approved'],
     allowed: canReview,
+    requireMfa: true,
     alreadyDone: (row, rev) => row.revision_no === rev && row.published_revision_no === rev
       && row.status === 'published',
     update: (row, a) => ({
