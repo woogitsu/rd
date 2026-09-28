@@ -139,7 +139,6 @@ export const MESSAGES = Object.freeze({
   invalid_due_on: "Podaj poprawną datę terminu odpowiedzi.",
   invalid_decision_note_ref: "Odwołanie do decyzji może mieć od 1 do 200 znaków.",
   household_not_found: "Nie znaleziono gospodarstwa.",
-  guardian_not_found: "Nie znaleziono opiekuna.",
   student_not_found: "Nie znaleziono ucznia.",
   data_request_not_found: "Nie znaleziono żądania.",
   data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",
