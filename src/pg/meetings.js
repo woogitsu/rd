@@ -47,6 +47,8 @@ const DATABASE_CONFLICTS = new Set([
   'resolution_quorum_check_required', 'resolution_votes_exceed_present_voters',
   // 0021_meetings_integrity.sql (#81)
   'minutes_open_resolutions', 'resolution_quorum_check_stale',
+  // 0060_resolution_register.sql (#102)
+  'resolution_amends_cross_year_requires_flag',
   // Zwykle nieosiągalne z API (moduł wstawia projekt i nie usuwa zebrań), ale to
   // odmowa reguły danych, nie awaria — 409 zamiast 503.
   'minutes_must_start_as_draft', 'meetings_cannot_be_deleted',
@@ -73,10 +75,13 @@ function requireMfaVerified(actor) {
 }
 
 export class MeetingError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, details = undefined) {
     super(code);
     this.code = code;
     this.status = status;
+    // #102: pole dodatkowe do odpowiedzi błędu (np. świeża podpowiedź numeru
+    // po kolizji resolution_number_taken). Nigdy treść uchwały ani protokołu.
+    this.details = details;
   }
 }
 
@@ -117,6 +122,13 @@ function integer(value, min, max, { optional = false } = {}) {
 
 function bool(value) {
   if (typeof value !== 'boolean') throw new MeetingError('invalid_request');
+  return value;
+}
+
+const RELATION_KINDS = new Set(['amends', 'repeals']);
+// #102: relationKind jest wymagane razem z amendsResolutionId (oba albo żadne).
+function oneOfRelationKind(value) {
+  if (!RELATION_KINDS.has(value)) throw new MeetingError('invalid_relation_kind');
   return value;
 }
 
@@ -508,6 +520,8 @@ function resolutionFromRow(row) {
     correctsId: row.corrects_id ?? null,
     correctionReason: row.correction_reason ?? null,
     amendsResolutionId: row.amends_resolution_id ?? null,
+    relationKind: row.relation_kind ?? null,
+    relationCrossYear: Boolean(row.relation_cross_year),
     title: row.title,
     body: row.body,
     status: row.status,
@@ -516,6 +530,8 @@ function resolutionFromRow(row) {
     votesAbstain: row.votes_abstain ?? null,
     quorumCheckId: row.quorum_check_id ?? null,
     decidedAt: iso(row.decided_at),
+    // #102: obecne wyłącznie, gdy zapytanie dołączyło resolution_effective_status.
+    ...(row.effective_status !== undefined ? { effectiveStatus: row.effective_status } : {}),
   };
 }
 
@@ -976,11 +992,29 @@ export async function listPublicMinutes(db, input = {}) {
 
 // ---------- resolutions ----------
 
+// #102: podpowiedź następnego numeru z resolution_number_pattern roku
+// ('{seq}' i '{year}' — rok kalendarzowy początku roku szkolnego). Bez
+// ustawionego wzorca (domyślnie, do decyzji D-15) zwraca null: nic nie jest
+// narzucane. Tylko podpowiedź — unikalność nadal pilnuje istniejący indeks.
+async function suggestResolutionNumber(executor, schoolYearId) {
+  const year = await one(executor,
+    'SELECT resolution_number_pattern, starts_on FROM school_years WHERE id = $1', [schoolYearId]);
+  if (!year?.resolution_number_pattern) return null;
+  const { rows } = await executor.query(
+    `SELECT count(*)::int AS n FROM resolutions
+      WHERE school_year_id = $1 AND corrects_id IS NULL AND number IS NOT NULL`, [schoolYearId]);
+  const seq = rows[0].n + 1;
+  const yearNumber = new Date(year.starts_on).getUTCFullYear();
+  return year.resolution_number_pattern.replace('{seq}', String(seq)).replace('{year}', String(yearNumber));
+}
+
 export async function createResolution(db, actor, input = {}) {
   const key = idempotencyKey(input.idempotencyKey);
   const meeting = await meetingForManage(db, actor, input.meetingId);
   const status = input.status ?? 'draft';
   if (!RESOLUTION_STATUSES.has(status)) throw new MeetingError('invalid_request');
+  const relationKind = input.amendsResolutionId !== undefined && input.amendsResolutionId !== null
+    ? oneOfRelationKind(input.relationKind) : null;
   const data = {
     meetingId: meeting.id,
     number: text(input.number, 3, 64, { optional: true }),
@@ -990,24 +1024,43 @@ export async function createResolution(db, actor, input = {}) {
     ...parseVotes(input),
     quorumCheckId: optionalId(input.quorumCheckId),
     amendsResolutionId: optionalId(input.amendsResolutionId),
+    relationKind,
+    relationCrossYear: Boolean(input.relationCrossYear),
   };
   if (status === 'adopted' && !data.number) throw new MeetingError('resolution_number_required');
   requireFinalVotes(status, data, data.quorumCheckId);
   // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; projekt (draft) nie.
   if (status === 'adopted' || status === 'rejected') requireMfaVerified(actor);
-  const result = await idempotent(db, actor, key, 'resolution.create', data, async tx => {
-    const id = randomUUID();
-    await tx.query(
-      `INSERT INTO resolutions (id, school_year_id, meeting_id, number, title, body, status,
-         votes_for, votes_against, votes_abstain, quorum_check_id, amends_resolution_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [id, meeting.school_year_id, meeting.id, data.number, data.title, data.body, data.status,
-        data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId,
-        data.amendsResolutionId, actor.userId]);
-    await audit(tx, actor, 'resolution.created', 'resolution', id, { meetingId: meeting.id, status });
-    return { entityType: 'resolution', entityId: id };
-  });
-  return { resolution: resolutionFromRow(await loadResolution(db, result.entityId)), replayed: result.replayed };
+  const suggestedNumber = await suggestResolutionNumber(db, meeting.school_year_id);
+  let result;
+  try {
+    result = await idempotent(db, actor, key, 'resolution.create', data, async tx => {
+      const id = randomUUID();
+      await tx.query(
+        `INSERT INTO resolutions (id, school_year_id, meeting_id, number, title, body, status,
+           votes_for, votes_against, votes_abstain, quorum_check_id, amends_resolution_id,
+           relation_kind, relation_cross_year, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [id, meeting.school_year_id, meeting.id, data.number, data.title, data.body, data.status,
+          data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId,
+          data.amendsResolutionId, data.relationKind, data.relationCrossYear, actor.userId]);
+      await audit(tx, actor, 'resolution.created', 'resolution', id, { meetingId: meeting.id, status });
+      return { entityType: 'resolution', entityId: id };
+    });
+  } catch (error) {
+    // #102: kolizja podpowiedzi numeru między dwoma równoległymi projektami —
+    // odpowiedź niesie świeżą podpowiedź, żeby drugi sekretarz mógł spróbować dalej.
+    if (error instanceof MeetingError && error.code === 'resolution_number_taken') {
+      const fresh = await suggestResolutionNumber(db, meeting.school_year_id);
+      throw new MeetingError('resolution_number_taken', 409, { suggestedNumber: fresh });
+    }
+    throw error;
+  }
+  return {
+    resolution: resolutionFromRow(await loadResolution(db, result.entityId)),
+    replayed: result.replayed,
+    suggestedNumber,
+  };
 }
 
 // Edits a draft or records its final outcome. Final resolutions are immutable.
@@ -1107,11 +1160,12 @@ export async function correctResolution(db, actor, input = {}) {
     const id = randomUUID();
     await tx.query(
       `INSERT INTO resolutions (id, school_year_id, meeting_id, number, revision, corrects_id,
-         correction_reason, amends_resolution_id, title, body, status, votes_for, votes_against,
-         votes_abstain, quorum_check_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         correction_reason, amends_resolution_id, relation_kind, relation_cross_year, title, body,
+         status, votes_for, votes_against, votes_abstain, quorum_check_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [id, previous.school_year_id, previous.meeting_id, previous.number, previous.revision + 1,
-        previous.id, data.reason, previous.amends_resolution_id, data.title, data.body, data.status,
+        previous.id, data.reason, previous.amends_resolution_id, previous.relation_kind,
+        previous.relation_cross_year, data.title, data.body, data.status,
         data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId, actor.userId]);
     await audit(tx, actor, 'resolution.corrected', 'resolution', id,
       { meetingId: previous.meeting_id, correctsId: previous.id, revision: previous.revision + 1, status });
@@ -1126,11 +1180,172 @@ export async function findAdoptedResolution(db, actor, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
   const number = text(input.number, 3, 64);
   authorize(actor, RESOLUTION_LOOKUP_ROLES, { schoolYearId });
+  // #102: dołącza effective_status, żeby wyszukiwarka pokazała uchylenie/zmianę
+  // zamiast milcząco traktować uchwałę jak nadal obowiązującą.
   const row = await one(db,
-    `SELECT * FROM resolution_current
-      WHERE school_year_id = $1 AND number = $2 AND status = 'adopted'`, [schoolYearId, number]);
+    `SELECT rc.*, es.effective_status FROM resolution_current rc
+       JOIN resolution_effective_status es ON es.id = rc.id
+      WHERE rc.school_year_id = $1 AND rc.number = $2 AND rc.status = 'adopted'`, [schoolYearId, number]);
   if (!row) throw new MeetingError('resolution_not_found', 404);
   return { resolution: resolutionFromRow(row) };
+}
+
+// ---------- resolution register (#102) ----------
+
+const EXECUTION_STATUSES = new Set(['not_started', 'in_progress', 'done', 'will_not_be_done']);
+
+function oneOfExecutionStatus(value) {
+  if (!EXECUTION_STATUSES.has(value)) throw new MeetingError('invalid_execution_status');
+  return value;
+}
+
+function dateOnly(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)
+      || Number.isNaN(new Date(`${value}T00:00:00Z`).valueOf())) {
+    throw new MeetingError('invalid_request');
+  }
+  return value;
+}
+
+// DATE wraca z pg/PGlite jako Date (północ UTC); zawsze oddajemy zwykły
+// 'RRRR-MM-DD', niezależnie od tego, czy zapytanie użyło to_char().
+function dateOnlyOut(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value.slice(0, 10);
+  return (value instanceof Date ? value : new Date(value)).toISOString().slice(0, 10);
+}
+
+const REGISTER_SELECT = `
+  SELECT rc.id, rc.number, rc.title, rc.status, rc.revision, rc.votes_for, rc.votes_against,
+         rc.votes_abstain, rc.decided_at, rc.meeting_id, rc.amends_resolution_id, rc.relation_kind,
+         rc.relation_cross_year, m.class_id, m.scheduled_at AS meeting_scheduled_at, m.title AS meeting_title,
+         es.effective_status,
+         amender.id AS amended_by_id, amender.number AS amended_by_number,
+         repealer.id AS repealed_by_id, repealer.number AS repealed_by_number,
+         exec.status AS execution_status, exec.due_on AS execution_due_on,
+         exec.responsible_user_id AS execution_responsible_user_id, exec.created_at AS execution_recorded_at
+    FROM resolution_current rc
+    JOIN meetings m ON m.id = rc.meeting_id
+    JOIN resolution_effective_status es ON es.id = rc.id
+    LEFT JOIN resolution_current amender
+      ON amender.amends_resolution_id = rc.id AND amender.relation_kind = 'amends' AND amender.status = 'adopted'
+    LEFT JOIN resolution_current repealer
+      ON repealer.amends_resolution_id = rc.id AND repealer.relation_kind = 'repeals' AND repealer.status = 'adopted'
+    LEFT JOIN LATERAL (
+      SELECT status, due_on, responsible_user_id, created_at FROM resolution_execution_events
+       WHERE resolution_id = rc.id ORDER BY created_at DESC LIMIT 1
+    ) exec ON true`;
+
+function registerRowToApi(row) {
+  return {
+    id: row.id,
+    number: row.number ?? null,
+    title: row.title,
+    status: row.status,
+    effectiveStatus: row.effective_status,
+    revision: row.revision,
+    votesFor: row.votes_for ?? null,
+    votesAgainst: row.votes_against ?? null,
+    votesAbstain: row.votes_abstain ?? null,
+    decidedAt: iso(row.decided_at),
+    meetingId: row.meeting_id,
+    meetingTitle: row.meeting_title,
+    meetingScheduledAt: iso(row.meeting_scheduled_at),
+    amendsResolutionId: row.amends_resolution_id ?? null,
+    relationKind: row.relation_kind ?? null,
+    relationCrossYear: Boolean(row.relation_cross_year),
+    amendedBy: row.amended_by_id ? { id: row.amended_by_id, number: row.amended_by_number ?? null } : null,
+    repealedBy: row.repealed_by_id ? { id: row.repealed_by_id, number: row.repealed_by_number ?? null } : null,
+    execution: {
+      status: row.execution_status ?? null,
+      dueOn: dateOnlyOut(row.execution_due_on),
+      responsibleUserId: row.execution_responsible_user_id ?? null,
+      recordedAt: iso(row.execution_recorded_at),
+    },
+  };
+}
+
+// Rejestr uchwał roku z filtrami. Dostęp: role odczytu (admin, zarząd, Komisja
+// Rewizyjna); przydział klasowy widzi wyłącznie uchwały zebrań tej klasy.
+// Uchwała uchylona (`effectiveStatus: 'repealed'`) zostaje w rejestrze — nie
+// jest traktowana jako obowiązująca, ale nie znika z historii.
+export async function listResolutionRegister(db, actor, input = {}) {
+  const schoolYearId = requireId(input.schoolYearId);
+  const context = contextFor(actor, null);
+  context.grants = actor.grants ?? [];
+  if (!isAuthorized(context, { roles: [...READ_ROLES], schoolYearId })) throw new MeetingError('forbidden', 403);
+  const status = input.status ? (RESOLUTION_STATUSES.has(input.status) ? input.status
+    : (() => { throw new MeetingError('invalid_request'); })()) : null;
+  const executionStatus = input.executionStatus
+    ? (input.executionStatus === 'none' || EXECUTION_STATUSES.has(input.executionStatus) ? input.executionStatus
+      : (() => { throw new MeetingError('invalid_request'); })())
+    : null;
+  const q = input.q ? text(input.q, 1, 200) : null;
+  const { rows } = await db.query(
+    `${REGISTER_SELECT}
+      WHERE rc.school_year_id = $1
+        AND ($2::text IS NULL OR rc.status = $2)
+        AND ($3::text IS NULL OR rc.title ILIKE '%' || $3 || '%' OR rc.number ILIKE '%' || $3 || '%')
+        AND ($4::text IS NULL
+             OR ($4 = 'none' AND exec.status IS NULL)
+             OR exec.status = $4)
+      ORDER BY m.scheduled_at DESC, rc.number NULLS LAST, rc.id`,
+    [schoolYearId, status, q, executionStatus]);
+  const visible = rows.filter((row) => {
+    try {
+      authorize(actor, READ_ROLES, { schoolYearId, classId: row.class_id });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return { resolutions: visible.map(registerRowToApi) };
+}
+
+function executionEventFromRow(row) {
+  return {
+    id: row.id,
+    resolutionId: row.resolution_id,
+    status: row.status,
+    responsibleUserId: row.responsible_user_id ?? null,
+    dueOn: dateOnlyOut(row.due_on),
+    note: row.note ?? null,
+    createdBy: row.created_by,
+    createdAt: iso(row.created_at),
+  };
+}
+
+// Zapisuje zdarzenie wykonania uchwały (tylko dopisywanie — bieżący stan to
+// ostatnie zdarzenie). Dozwolone także po zatwierdzeniu protokołu: tabela nie
+// jest objęta blokadą zebrania (meeting_assert_editable dotyczy tylko samej
+// uchwały, obecności i protokołu).
+export async function recordResolutionExecution(db, actor, input = {}) {
+  const key = idempotencyKey(input.idempotencyKey);
+  const resolution = await loadResolution(db, input.resolutionId, input.meetingId);
+  await meetingForManage(db, actor, resolution.meeting_id);
+  if (resolution.status !== 'adopted' && resolution.status !== 'rejected') {
+    throw new MeetingError('resolution_not_decided', 409);
+  }
+  const data = {
+    resolutionId: resolution.id,
+    status: oneOfExecutionStatus(input.status),
+    responsibleUserId: input.responsibleUserId !== undefined ? optionalId(input.responsibleUserId) : null,
+    dueOn: input.dueOn !== undefined && input.dueOn !== null ? dateOnly(input.dueOn) : null,
+    note: text(input.note, 3, 500, { optional: true }),
+  };
+  const result = await idempotent(db, actor, key, 'resolution.execution', data, async tx => {
+    const id = randomUUID();
+    await tx.query(
+      `INSERT INTO resolution_execution_events
+         (id, resolution_id, status, responsible_user_id, due_on, note, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, data.resolutionId, data.status, data.responsibleUserId, data.dueOn, data.note, actor.userId]);
+    await audit(tx, actor, 'resolution.execution.recorded', 'resolution_execution_event', id,
+      { resolutionId: resolution.id, status: data.status });
+    return { entityType: 'resolution_execution_event', entityId: id };
+  });
+  const { rows } = await db.query('SELECT * FROM resolution_execution_events WHERE id = $1', [result.entityId]);
+  return { execution: executionEventFromRow(rows[0]), replayed: result.replayed };
 }
 
 // ---------- HTTP ----------
@@ -1189,6 +1404,12 @@ function route(method, pathname) {
   }
   if (n === 2 && a === 'resolutions' && b === 'lookup') {
     return method === 'GET' ? { name: 'lookup' } : { name: 'method', allowed: ['GET'] };
+  }
+  // #102: rejestr uchwał roku i śledzenie wykonania — nie zebranie, więc
+  // rozpoznawane przed traktowaniem `a` jako meetingId poniżej.
+  if (n === 1 && a === 'resolutions') return method === 'GET' ? { name: 'resolutionRegister' } : { name: 'method' };
+  if (n === 3 && a === 'resolutions' && c === 'execution') {
+    return method === 'POST' ? { name: 'resolutionExecution', resolutionId: b, create: true } : { name: 'method' };
   }
   const meetingId = a;
   if (n === 1) {
@@ -1256,6 +1477,12 @@ export async function handle(request, env, url, json) {
           schoolYearId: query.get('schoolYearId'), number: query.get('number'),
         }));
       }
+      if (target.name === 'resolutionRegister') {
+        return json(await listResolutionRegister(db, actor, {
+          schoolYearId: query.get('schoolYearId'), status: query.get('status') || undefined,
+          q: query.get('q') || undefined, executionStatus: query.get('executionStatus') || undefined,
+        }));
+      }
       return json(await getMeeting(db, actor, { meetingId: target.meetingId }, env));
     }
 
@@ -1276,12 +1503,15 @@ export async function handle(request, env, url, json) {
       resolution: () => createResolution(db, actor, input),
       resolutionUpdate: () => updateResolution(db, actor, input),
       resolutionCorrect: () => correctResolution(db, actor, input),
+      resolutionExecution: () => recordResolutionExecution(db, actor, input),
     };
     const { replayed, ...result } = await handlers[target.name]();
     if (!target.create) return json(result);
     return json(result, replayed ? 200 : 201, { 'Idempotency-Replayed': replayed ? 'true' : 'false' });
   } catch (error) {
-    if (error instanceof MeetingError) return json({ error: error.code }, error.status);
+    if (error instanceof MeetingError) {
+      return json({ error: error.code, ...(error.details ?? {}) }, error.status);
+    }
     throw error;
   }
 }
