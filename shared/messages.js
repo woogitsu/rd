@@ -166,6 +166,7 @@ export const MESSAGES = Object.freeze({
   inconsistent_matches: "Dopasowania są niespójne. Odśwież widok.",
   group_match_sum_mismatch: "Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu.",
   group_match_direction_mismatch: "Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ).",
+  matched_in_other_reconciliation: "Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku.",
   invalid_csv: "Nie udało się odczytać pliku CSV.",
   invalid_csv_header: "Plik CSV ma niepoprawny nagłówek.",
   cash_below_zero: "Ta operacja doprowadziłaby saldo kasy poniżej zera.",

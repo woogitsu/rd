@@ -344,6 +344,8 @@ function mapDatabaseError(error) {
   if (message.includes('bank_group_match_sum_mismatch')) throw new RequestError('group_match_sum_mismatch', 409);
   if (message.includes('bank_group_match_too_few_items')) throw new RequestError('invalid_request');
   if (message.includes('bank_group_match_direction_mismatch')) throw new RequestError('group_match_direction_mismatch', 409);
+  // #105/#127: cel aktywnie dopasowany w innym uzgodnieniu tego roku (0089 dla 1:1, 0105 dla zbiorczych).
+  if (message.includes('bank_match_in_other_reconciliation')) throw new RequestError('matched_in_other_reconciliation', 409);
   if (message.includes('bank_match_already_revoked')) throw new RequestError('match_already_revoked', 409);
   if (message.includes('bank_reconciliation_four_eyes')) throw new RequestError('four_eyes_required', 403);
   if (error?.code === '23503') throw new RequestError('invalid_reference');
@@ -1201,6 +1203,18 @@ async function confirmGroupMatch(request, env, id, json) {
         [id, entryPaymentIds],
       );
       if (viaPayment.rows.length) throw new RequestError('already_matched_via_payment', 409);
+      // Jedno aktywne dopasowanie celu w roku (#105): ten sam cel (albo para wpłata–wpis)
+      // nie może być dopasowany w innym uzgodnieniu tego roku. Trigger sprawdza to samo
+      // pod blokadą doradczą roku.
+      for (const item of resolved) {
+        const { rows: [elsewhere] } = await tx.query(
+          'SELECT bank_target_matched_elsewhere_in_year($1, $2, $3, $4, true) AS reconciliation_id',
+          [row.school_year_id, id, item.ledgerEntryId ?? null, item.paymentEntryId ?? null],
+        );
+        if (elsewhere?.reconciliation_id) {
+          throw new RequestError('matched_in_other_reconciliation', 409, { reconciliationId: elsewhere.reconciliation_id });
+        }
+      }
 
       const itemsTotalCents = resolved.reduce((sum, item) => sum + item.amountCents, 0);
       if (itemsTotalCents !== lineAmount) {

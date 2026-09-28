@@ -34,6 +34,13 @@
 --     zbiorczym (bank_group_match_target_taken);
 --   - wpłata i wpis księgi z jej payment_entry_id to te same pieniądze:
 --     bank_match_already_matched_via_ledger / …_via_payment jak w 0024.
+--   - w ROKU (#105 pkt 6): wpłata/wpis (także para wpłata–wpis, #162) aktywnie
+--     w dopasowaniu zbiorczym jednego uzgodnienia nie może być aktywnie
+--     dopasowana (1:1 ani zbiorczo) w INNYM uzgodnieniu tego roku
+--     (bank_match_in_other_reconciliation), pod blokadą doradczą roku tą samą
+--     co bank_match_year_unique_guard z 0089 — bez tego dopasowanie zbiorcze
+--     omijałoby unikalność w roku i ta sama wpłata liczyłaby się w dwóch
+--     uzgodnieniach. 1:1 ↔ 1:1 w różnych uzgodnieniach pilnuje 0089.
 --   Dla dopasowań 1:1 dochodzi OSOBNY trigger bank_matches_z_group_guard
 --   (po bank_matches_guard_insert, kolejność alfabetyczna) — bank_match_guard
 --   z 0024 NIE jest redefiniowany, a istniejące dopasowania 1:1 zostają bez
@@ -69,7 +76,8 @@
 -- bank_matches_z_group_guard, bank_reconciliations_z_group_guard,
 -- payment_corrections_z_group_match_guard, ledger_corrections_z_group_match_guard,
 -- DROP VIEW bank_group_match_consistency, bank_reconciliation_group_matches_current,
--- DROP TABLE (revocations, items, group_matches) i funkcji poniżej. Na bazie
+-- DROP TABLE (revocations, items, group_matches) i funkcji poniżej (w tym
+-- bank_target_matched_elsewhere_in_year). Na bazie
 -- z dopasowaniami zbiorczymi — tylko po kopii zapasowej i decyzji o retencji
 -- (D-04): pozycje wyciągu wrócą do stanu „niedopasowana”.
 
@@ -178,6 +186,38 @@ RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
   );
 $$;
 
+-- Uzgodnienie INNE niż p_reconciliation_id w tym samym roku, w którym cel jest
+-- aktywnie dopasowany (#105 pkt 6). Cel = wpis księgi albo wpłata; wpłata i wpis,
+-- który ją ujmuje, to te same pieniądze (#162). p_include_simple: także
+-- dopasowania 1:1 (dla nowej pozycji zbiorczej); dla nowego 1:1 tylko zbiorcze.
+CREATE FUNCTION bank_target_matched_elsewhere_in_year(
+  p_school_year_id TEXT, p_reconciliation_id TEXT, p_ledger_entry_id TEXT, p_payment_entry_id TEXT,
+  p_include_simple BOOLEAN
+) RETURNS TEXT LANGUAGE sql STABLE AS $$
+  WITH target AS (
+    SELECT COALESCE(p_payment_entry_id,
+      (SELECT payment_entry_id FROM ledger_entries WHERE id = p_ledger_entry_id)) AS payment_id
+  )
+  SELECT found.reconciliation_id FROM (
+    SELECT m.reconciliation_id FROM bank_reconciliation_matches m
+      JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+      LEFT JOIN ledger_entries le ON le.id = m.ledger_entry_id
+      CROSS JOIN target t
+     WHERE p_include_simple AND r.school_year_id = p_school_year_id
+       AND m.reconciliation_id <> p_reconciliation_id AND m.revoked_at IS NULL
+       AND ((p_ledger_entry_id IS NOT NULL AND m.ledger_entry_id = p_ledger_entry_id)
+         OR (t.payment_id IS NOT NULL AND (m.payment_entry_id = t.payment_id OR le.payment_entry_id = t.payment_id)))
+    UNION ALL
+    SELECT i.reconciliation_id FROM bank_group_match_items_current i
+      LEFT JOIN ledger_entries le ON le.id = i.ledger_entry_id
+      CROSS JOIN target t
+     WHERE i.school_year_id = p_school_year_id AND i.reconciliation_id <> p_reconciliation_id
+       AND ((p_ledger_entry_id IS NOT NULL AND i.ledger_entry_id = p_ledger_entry_id)
+         OR (t.payment_id IS NOT NULL AND (i.payment_entry_id = t.payment_id OR le.payment_entry_id = t.payment_id)))
+  ) found
+  LIMIT 1;
+$$;
+
 CREATE FUNCTION bank_group_match_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE v_parent bank_reconciliations%ROWTYPE;
 DECLARE v_line bank_statement_lines%ROWTYPE;
@@ -232,6 +272,12 @@ BEGIN
   END IF;
   IF bank_reconciliation_target_taken(NEW.reconciliation_id, NEW.ledger_entry_id, NEW.payment_entry_id, NEW.group_match_id) THEN
     RAISE EXCEPTION 'bank_group_match_target_taken';
+  END IF;
+  -- Jedno aktywne dopasowanie celu w roku (#105): blokada doradcza roku jak w 0089.
+  PERFORM pg_advisory_xact_lock(hashtext('bank_match_year:' || v_parent.school_year_id));
+  IF bank_target_matched_elsewhere_in_year(v_parent.school_year_id, NEW.reconciliation_id,
+       NEW.ledger_entry_id, NEW.payment_entry_id, true) IS NOT NULL THEN
+    RAISE EXCEPTION 'bank_match_in_other_reconciliation';
   END IF;
   IF NEW.ledger_entry_id IS NOT NULL THEN
     PERFORM 1 FROM ledger_entries WHERE id = NEW.ledger_entry_id FOR SHARE;
@@ -324,7 +370,17 @@ CREATE TRIGGER bank_group_match_revocations_no_change BEFORE UPDATE OR DELETE ON
 -- bank_matches_guard_insert (0024), który już zablokował wiersz uzgodnienia.
 CREATE FUNCTION bank_match_group_exclusive_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE v_payment_of_entry TEXT;
+DECLARE v_year TEXT;
 BEGIN
+  -- Cel dopasowany zbiorczo w INNYM uzgodnieniu tego roku (#105): pod blokadą roku.
+  SELECT school_year_id INTO v_year FROM bank_reconciliations WHERE id = NEW.reconciliation_id;
+  IF v_year IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtext('bank_match_year:' || v_year));
+    IF bank_target_matched_elsewhere_in_year(v_year, NEW.reconciliation_id,
+         NEW.ledger_entry_id, NEW.payment_entry_id, false) IS NOT NULL THEN
+      RAISE EXCEPTION 'bank_match_in_other_reconciliation';
+    END IF;
+  END IF;
   IF EXISTS (SELECT 1 FROM bank_reconciliation_group_matches_current g
               WHERE g.statement_line_id = NEW.statement_line_id) THEN
     RAISE EXCEPTION 'bank_group_match_line_taken';

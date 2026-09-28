@@ -643,3 +643,53 @@ test('migracja 0105 na bazie z danymi: istniejące dopasowania 1:1 i zatwierdzon
   });
   assert.equal(confirmedRevoke.status, 409);
 });
+
+test('jedno aktywne dopasowanie celu w roku (#105): zbiorcze ↔ 1:1 i zbiorcze ↔ zbiorcze w dwóch uzgodnieniach, także para wpłata–wpis', async () => {
+  const { db, cookies, call } = await setup();
+  const pa = await createPayment(call, cookies.treasurer, { amountCents: 2500, householdId: 'h-a' });
+  const pb = await createPayment(call, cookies.treasurer, { amountCents: 2500, householdId: 'h-b' });
+  const pc = await createPayment(call, cookies.treasurer, { amountCents: 2500, householdId: 'h-c' });
+  await db.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description,
+      occurred_on, method, payment_entry_id, created_by, idempotency_key)
+    VALUES ('le-pc', $1, 'income', 2500, 'cat-dues', 'Wpis syntetyczny le-pc', '2026-10-01', 'bank', $2, 'u-treasurer', 'le-key-le-pc')`,
+  [YEAR, pc]);
+  const match1 = (rec, statementLineId, target) => call(`/api/reconciliations/${rec}/matches`, {
+    cookie: cookies.treasurer, idempotencyKey: key('m'), body: { statementLineId, ...target },
+  });
+
+  // Uzgodnienie A: pa dopasowana 1:1, pb + wpis le-pc (wpłata pc) zbiorczo.
+  const recA = await createDraft(call, cookies.treasurer);
+  const [a1, a2] = await importLines(call, cookies.treasurer, recA, [2500, 5000]);
+  assert.equal((await match1(recA, a1, { paymentEntryId: pa })).status, 201);
+  const groupA = await groupMatch(call, cookies.treasurer, recA, a2, [{ paymentEntryId: pb }, { ledgerEntryId: 'le-pc' }]);
+  assert.equal(groupA.status, 201, JSON.stringify(groupA.body));
+
+  // Uzgodnienie B tego roku: żadna z tych wpłat nie może zostać dopasowana drugi raz.
+  const recB = await createDraft(call, cookies.treasurer);
+  const [b1, b2, b3] = await importLines(call, cookies.treasurer, recB, [5000, 2500, 2500]);
+  const viaSimple = await groupMatch(call, cookies.treasurer, recB, b1, payments(pa, pb));
+  assert.equal(viaSimple.status, 409, JSON.stringify(viaSimple.body));
+  assert.equal(viaSimple.body.error, 'matched_in_other_reconciliation');
+  assert.equal(viaSimple.body.reconciliationId, recA);
+  const viaGroup = await match1(recB, b2, { paymentEntryId: pb });
+  assert.equal(viaGroup.status, 409, JSON.stringify(viaGroup.body));
+  assert.equal(viaGroup.body.error, 'matched_in_other_reconciliation');
+  // Para wpłata–wpis: wpłata pc, której wpis le-pc jest w dopasowaniu zbiorczym A.
+  const viaPair = await match1(recB, b3, { paymentEntryId: pc });
+  assert.equal(viaPair.status, 409, JSON.stringify(viaPair.body));
+  assert.equal(viaPair.body.error, 'matched_in_other_reconciliation');
+  // Bezpośredni INSERT z pominięciem API: trigger odrzuca to samo.
+  await assert.rejects(db.transaction(async (tx) => {
+    await tx.query(`INSERT INTO bank_reconciliation_group_matches (id, reconciliation_id, school_year_id, statement_line_id,
+      created_by, idempotency_key) VALUES ('g-direct', $1, $2, $3, 'u-treasurer', 'g-direct-key-1')`, [recB, YEAR, b1]);
+    await tx.query(`INSERT INTO bank_reconciliation_group_match_items (id, group_match_id, reconciliation_id, school_year_id,
+      payment_entry_id, amount_cents) VALUES ('gi-1', 'g-direct', $1, $2, $3, 2500), ('gi-2', 'g-direct', $1, $2, $4, 2500)`,
+    [recB, YEAR, pa, pb]);
+  }), /bank_match_in_other_reconciliation/);
+
+  // Po cofnięciu dopasowania zbiorczego w A cele są wolne w B.
+  const revoked = await revokeGroup(call, cookies.treasurer, recA, groupA.body.groupMatch.id);
+  assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
+  assert.equal((await match1(recB, b2, { paymentEntryId: pb })).status, 201);
+  assert.equal((await match1(recB, b3, { paymentEntryId: pc })).status, 201);
+});
