@@ -20,6 +20,7 @@ import { isoTimestamp } from '../auth.js';
 import { sha256Hex } from '../../storage.js';
 import {
   ALLOWED_TYPES, declaredType, detectType, downloadFilename, maxUploadBytes, newObjectKey, readLimited, UPLOAD_PATH,
+  validateStructure,
 } from '../../documents.js';
 
 // Lista zamknięta — założenie techniczne do zatwierdzenia przez zarząd i
@@ -316,6 +317,10 @@ async function upload(request, env, url, json) {
   if (!bytes.length) return json({ error: 'empty_document' }, 400);
   const detected = detectType(bytes);
   if (!detected || detected !== declared) return json({ error: 'unsupported_media_type' }, 415);
+  // Kontrola struktury (issue #89): heurystyka przed zapisem do bucketu —
+  // walidacja odrzuca plik zanim putObject zostanie wywołane.
+  const structure = validateStructure(bytes, detected);
+  if (!structure.ok) return json({ error: structure.code }, 415);
   const sha256 = sha256Hex(bytes);
   const actorId = context.session.user.id;
 
