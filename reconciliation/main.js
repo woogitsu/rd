@@ -189,6 +189,8 @@ function renderDetail() {
   byId("confirm-reconciliation").hidden = !(draft && canWrite) || own || inconsistent.length > 0;
   byId("confirm-waiting").hidden = !(draft && canWrite && own);
   byId("confirm-inconsistent").hidden = !(draft && canWrite && inconsistent.length > 0);
+  const activeMatches = (summary?.matchedLineCount ?? 0) + (summary?.inconsistentMatchCount ?? 0);
+  byId("abandon-reconciliation").hidden = !(draft && canWrite) || activeMatches > 0;
 }
 
 // Karta pobiera pozycje wyciągu stronami (#218, domyślnie 500 na stronę) i
@@ -446,6 +448,38 @@ byId("confirm-form").addEventListener("submit", async (event) => {
   }
 });
 confirmDialog.addEventListener("close", () => { byId("confirm-error").textContent = ""; });
+
+// --- porzucenie szkicu (0107) --------------------------------------------------
+
+const abandonDialog = byId("abandon-dialog");
+
+byId("abandon-reconciliation").addEventListener("click", () => { abandonDialog.showModal(); });
+
+byId("abandon-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") { abandonDialog.close(); return; }
+  const form = abandonDialog.querySelector("form");
+  if (!form.reportValidity()) return;
+  const reason = String(new FormData(form).get("reason") || "").trim();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    await api(reconciliationActionUrl(state.selectedId, "abandon"), {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+    abandonDialog.close();
+    form.reset();
+    await refreshDetail();
+    await loadList();
+    setMessage("Szkic porzucony. Wyciąg można zaimportować do nowego szkicu.");
+  } catch (error) {
+    byId("abandon-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+abandonDialog.addEventListener("close", () => { byId("abandon-error").textContent = ""; });
 
 // --- dostęp -------------------------------------------------------------------
 
