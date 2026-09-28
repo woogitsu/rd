@@ -670,7 +670,8 @@ export async function createMeeting(db, actor, input = {}, env) {
       [id, data.schoolYearId, data.kind, data.classId, data.title, data.scheduledAt, data.location, data.status,
         data.quorumMode, data.quorumNumerator, data.quorumDenominator, data.quorumInclusive,
         data.quorumMinCount, data.votingBodySize, data.quorumRuleSource, actor.userId]);
-    await audit(tx, actor, 'meeting.created', 'meeting', id, { kind: data.kind, status: data.status });
+    await audit(tx, actor, 'meeting.created', 'meeting', id,
+      { schoolYearId: data.schoolYearId, kind: data.kind, status: data.status });
     return { entityType: 'meeting', entityId: id };
   });
   return { meeting: meetingFromRow(await loadMeeting(db, result.entityId)), replayed: result.replayed };
@@ -741,13 +742,15 @@ export async function updateMeeting(db, actor, input = {}, env) {
     const { rows } = await tx.query(`UPDATE meetings SET ${assignments} WHERE id = $1 RETURNING revision_no`,
       [meeting.id, ...columns.map(column => changes[column])]);
     await audit(tx, actor, 'meeting.updated', 'meeting', meeting.id, {
+      schoolYearId: meeting.school_year_id,
       fields: columns,
       fromRevision: locked.revision_no, toRevision: rows[0].revision_no,
       ...(changes.status && changes.status !== locked.status
         ? { fromStatus: locked.status, toStatus: changes.status } : {}),
     });
     if (reschedule) {
-      await audit(tx, actor, 'meeting.rescheduled', 'meeting', meeting.id, reschedule);
+      await audit(tx, actor, 'meeting.rescheduled', 'meeting', meeting.id,
+        { schoolYearId: meeting.school_year_id, ...reschedule });
     }
   });
   return { meeting: meetingFromRow(await loadMeeting(db, meeting.id)) };
@@ -770,7 +773,8 @@ export async function addAgendaItem(db, actor, input = {}, env) {
          (SELECT COALESCE(max(position), 0) + 1 FROM meeting_agenda_items WHERE meeting_id = $2)),
          $4, $5, $6)`,
       [id, data.meetingId, data.position, data.title, data.description, actor.userId]);
-    await audit(tx, actor, 'meeting.agenda_item.added', 'meeting_agenda_item', id, { meetingId: meeting.id });
+    await audit(tx, actor, 'meeting.agenda_item.added', 'meeting_agenda_item', id,
+      { meetingId: meeting.id, schoolYearId: meeting.school_year_id });
     return { entityType: 'meeting_agenda_item', entityId: id };
   });
   const row = await one(db, 'SELECT * FROM meeting_agenda_items WHERE id = $1', [result.entityId]);
@@ -819,7 +823,7 @@ export async function recordAttendance(db, actor, input = {}, env) {
       if (!inserted) throw new MeetingError('concurrent_version', 409);
     }
     await audit(tx, actor, existing ? 'meeting.attendance.corrected' : 'meeting.attendance.recorded',
-      'meeting_attendee', id, { meetingId: meeting.id, votingEligible, present });
+      'meeting_attendee', id, { meetingId: meeting.id, schoolYearId: meeting.school_year_id, votingEligible, present });
     return one(tx, 'SELECT * FROM meeting_attendees WHERE id = $1', [id]);
   });
   return { attendee: attendeeFromRow(row) };
@@ -835,8 +839,8 @@ export async function determineQuorum(db, actor, input = {}) {
         `INSERT INTO meeting_quorum_checks (id, meeting_id, determined_by) VALUES ($1, $2, $3)
          RETURNING met, present_eligible, required_count`, [id, meeting.id, actor.userId]);
       await audit(tx, actor, 'meeting.quorum.determined', 'meeting_quorum_check', id, {
-        meetingId: meeting.id, met: row.met, presentEligible: row.present_eligible,
-        requiredCount: row.required_count,
+        meetingId: meeting.id, schoolYearId: meeting.school_year_id, met: row.met,
+        presentEligible: row.present_eligible, requiredCount: row.required_count,
       });
       return { entityType: 'meeting_quorum_check', entityId: id };
     });
@@ -865,7 +869,7 @@ export async function createMinutesVersion(db, actor, input = {}, env) {
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [id, meeting.id, version, latest?.id ?? null, data.body, data.changeNote, actor.userId]);
     await audit(tx, actor, 'meeting.minutes.version_created', 'meeting_minutes', id,
-      { meetingId: meeting.id, version });
+      { meetingId: meeting.id, schoolYearId: meeting.school_year_id, version });
     return { entityType: 'meeting_minutes', entityId: id };
   });
   return { minutes: minutesFromRow(await loadMinutes(db, result.entityId)), replayed: result.replayed };
@@ -873,7 +877,7 @@ export async function createMinutesVersion(db, actor, input = {}, env) {
 
 export async function approveMinutes(db, actor, input = {}) {
   const minutes = await loadMinutes(db, input.minutesId, input.meetingId);
-  await meetingForManage(db, actor, minutes.meeting_id);
+  const meeting = await meetingForManage(db, actor, minutes.meeting_id);
   const approvalNote = text(input.approvalNote, 3, 500, { optional: true });
   if (minutes.status === 'approved') return { minutes: minutesFromRow(minutes), replayed: true };
   requireMfaVerified(actor);
@@ -886,7 +890,7 @@ export async function approveMinutes(db, actor, input = {}) {
         WHERE id = $1 AND status = 'draft' RETURNING id`, [minutes.id, actor.userId, approvalNote]);
     if (!rows.length) return false;
     await audit(tx, actor, 'meeting.minutes.approved', 'meeting_minutes', minutes.id,
-      { meetingId: minutes.meeting_id, version: minutes.version });
+      { meetingId: minutes.meeting_id, schoolYearId: meeting.school_year_id, version: minutes.version });
     return true;
   });
   return { minutes: minutesFromRow(await loadMinutes(db, minutes.id)), replayed: !changed };
@@ -942,7 +946,7 @@ export async function setMinutesVisibility(db, actor, input = {}) {
       `INSERT INTO meeting_minutes_publications (id, minutes_id, visibility, reason, created_by)
        VALUES ($1, $2, $3, $4, $5)`, [id, data.minutesId, data.visibility, data.reason, actor.userId]);
     await audit(tx, actor, 'meeting.minutes.visibility_set', 'meeting_minutes', minutes.id,
-      { meetingId: minutes.meeting_id, visibility: data.visibility, publicationId: id });
+      { meetingId: minutes.meeting_id, schoolYearId: meeting.school_year_id, visibility: data.visibility, publicationId: id });
     return { entityType: 'meeting_minutes_publication', entityId: id };
   });
   return { minutes: minutesFromRow(await loadMinutes(db, minutes.id)), replayed: result.replayed };
@@ -1062,7 +1066,8 @@ export async function createResolution(db, actor, input = {}) {
         [id, meeting.school_year_id, meeting.id, data.number, data.title, data.body, data.status,
           data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId,
           data.amendsResolutionId, data.relationKind, data.relationCrossYear, actor.userId]);
-      await audit(tx, actor, 'resolution.created', 'resolution', id, { meetingId: meeting.id, status });
+      await audit(tx, actor, 'resolution.created', 'resolution', id,
+        { meetingId: meeting.id, schoolYearId: meeting.school_year_id, status });
       return { entityType: 'resolution', entityId: id };
     });
   } catch (error) {
@@ -1140,7 +1145,8 @@ export async function updateResolution(db, actor, input = {}) {
         next.votesAgainst, next.votesAbstain, next.quorumCheckId]);
     if (!rows.length) throw new MeetingError('resolution_final_immutable', 409);
     await audit(tx, actor, 'resolution.updated', 'resolution', resolution.id, {
-      meetingId: resolution.meeting_id, fromStatus: locked.status, toStatus: next.status,
+      meetingId: resolution.meeting_id, schoolYearId: resolution.school_year_id,
+      fromStatus: locked.status, toStatus: next.status,
       fromRevision: locked.revision_no, toRevision: rows[0].revision_no,
     });
   });
@@ -1186,7 +1192,8 @@ export async function correctResolution(db, actor, input = {}) {
         previous.relation_cross_year, data.title, data.body, data.status,
         data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId, actor.userId]);
     await audit(tx, actor, 'resolution.corrected', 'resolution', id,
-      { meetingId: previous.meeting_id, correctsId: previous.id, revision: previous.revision + 1, status });
+      { meetingId: previous.meeting_id, schoolYearId: previous.school_year_id, correctsId: previous.id,
+        revision: previous.revision + 1, status });
     return { entityType: 'resolution', entityId: id };
   });
   return { resolution: resolutionFromRow(await loadResolution(db, result.entityId)), replayed: result.replayed };
@@ -1359,7 +1366,7 @@ export async function recordResolutionExecution(db, actor, input = {}) {
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [id, data.resolutionId, data.status, data.responsibleUserId, data.dueOn, data.note, actor.userId]);
     await audit(tx, actor, 'resolution.execution.recorded', 'resolution_execution_event', id,
-      { resolutionId: resolution.id, status: data.status });
+      { resolutionId: resolution.id, schoolYearId: resolution.school_year_id, status: data.status });
     return { entityType: 'resolution_execution_event', entityId: id };
   });
   const { rows } = await db.query('SELECT * FROM resolution_execution_events WHERE id = $1', [result.entityId]);

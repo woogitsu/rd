@@ -5,7 +5,7 @@ Logowanie: adres e-mail i hasło, a następnie kod z aplikacji uwierzytelniając
 ## Zasady
 
 - Sekret sesji ma 256 bitów losowości i trafia do przeglądarki w cookie HttpOnly, Secure, SameSite=Lax.
-- D1 przechowuje wyłącznie SHA-256 sekretu. Surowy sekret nie może znaleźć się w bazie, logach ani dzienniku audytu.
+- Baza (D1 w starym Workerze, PostgreSQL w prototypie na `src/pg/auth.js` — sekcja niżej) przechowuje wyłącznie SHA-256 sekretu. Surowy sekret nie może znaleźć się w bazie, logach ani dzienniku audytu.
 - Sesja jest ważna najwyżej 24 godziny (limit absolutny, liczony od pierwszego logowania — patrz niżej) i wygasa też po bezczynności (patrz „Limit bezczynności i sesje własne”, #150). Zapytanie odrzuca sesję wygasłą, wycofaną i konto wyłączone.
 - GET /api/session zwraca minimum danych bieżącego użytkownika i stan potwierdzenia MFA.
 - POST /api/logout wymaga zgodnego nagłówka Origin, wycofuje sesję i zapisuje zdarzenie audytowe.
@@ -59,7 +59,7 @@ Zarządzanie zebraniami, protokołami i uchwałami (`src/pg/meetings.js`, `MANAG
 
 Rotacja sesji (potwierdzenie MFA, zmiana hasła) przenosi na nową sesję **moment** potwierdzenia MFA ze starej (`createSession({ mfaVerifiedAt })`), a nie `now()` — zmiana hasła nie odświeża więc świeżości MFA bez podania kodu. Świeże MFA daje wyłącznie `POST /api/mfa/verify`, `/api/mfa/recovery` lub `/api/mfa/confirm`.
 
-Wdrożone dziś: **eksport roczny** (`POST /api/exports`, `src/pg/routes/exports.js`) — jedyna operacja z testem step-up wprost wskazanym w issue #150. Mechanizm jest ogólny (`requireAccess`/`freshMfaForbiddenCode`); pozostałe operacje wymienione w issue jako kandydaci (zamknięcie roku, zatwierdzenie kampanii e-mail, nadanie roli, reset hasła/MFA, przyjęcie uchwały) **NIE mają jeszcze** wymogu świeżości — dziś mają tylko `requireMfa: true` (kiedykolwiek w sesji), co jest zgodne z resztą kryteriów SR-10, ale nie z krokiem w górę. Rozszerzenie na te trasy zostaje do osobnego PR (patrz opis w PR #150).
+Wdrożone (#150 część 1 i 2): **eksport roczny** (`POST /api/exports`), **zamknięcie roku** (`POST /api/year-close/:id/close`), **zatwierdzenie kampanii e-mail** (`POST /api/email/campaigns/:id/approve`), **nadanie roli** (`POST /api/admin/grants` oraz utworzenie i ponowne wydanie zaproszenia — `POST /api/admin/invitations`, `…/:id/reissue`, bo zaproszenie nadaje rolę przy przyjęciu) i **reset hasła/MFA** (`POST /api/admin/users/:id/password-reset`, `…/mfa-reset`). Otwarte: przyjęcie uchwały > 3000 EUR (D-15).
 
 Ochrona:
 

@@ -103,6 +103,10 @@ function householdScope(has) {
       parts.push(`id IN (SELECT pr.new_household_id FROM payment_reassignments pr
         JOIN payment_entries p ON p.id = pr.payment_entry_id WHERE p.school_year_id = $1)`);
     }
+    // #127: gospodarstwa z częściami podzielonych wpłat roku.
+    if (has.has('payment_allocations')) {
+      parts.push('id IN (SELECT household_id FROM payment_allocations WHERE school_year_id = $1)');
+    }
   }
   return `(${parts.join(' OR ')})`;
 }
@@ -166,6 +170,9 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
   { table: 'payment_reassignments', requires: ['payment_entries'],
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
+  // 0104 (#127): części podzielonych wpłat i ich cofnięcia (własna kolumna school_year_id).
+  { table: 'payment_allocations', requires: ['payment_entries'], where: () => 'school_year_id = $1' },
+  { table: 'payment_allocation_reversals', requires: ['payment_allocations'], where: () => 'school_year_id = $1' },
 
   { table: 'ledger_categories', where: () => 'school_year_id = $1' },
   { table: 'ledger_opening_balances', where: () => 'school_year_id = $1' },
@@ -185,6 +192,12 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
   { table: 'bank_reconciliation_matches', requires: ['bank_reconciliations'],
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
+  // 0105 (#127): dopasowania zbiorcze, ich pozycje i cofnięcia (własna kolumna school_year_id).
+  { table: 'bank_reconciliation_group_matches', requires: ['bank_reconciliations'], where: () => 'school_year_id = $1' },
+  { table: 'bank_reconciliation_group_match_items', requires: ['bank_reconciliation_group_matches'],
+    where: () => 'school_year_id = $1' },
+  { table: 'bank_reconciliation_group_match_revocations', requires: ['bank_reconciliation_group_matches'],
+    where: () => 'school_year_id = $1' },
 
   { table: 'events', where: () => 'school_year_id = $1' },
   { table: 'event_revisions', requires: ['events'],
@@ -195,6 +208,9 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'event_task_signups', requires: ['event_tasks', 'events'],
     where: () => `task_id IN (SELECT t.id FROM event_tasks t JOIN events e ON e.id = t.event_id
       WHERE e.school_year_id = $1)` },
+  // 0090 (#117): przypisania wpisów księgi do wydarzeń i klas (po events i ledger_entries — klucze obce).
+  { table: 'ledger_allocation_versions', requires: ['ledger_entries'], where: () => 'school_year_id = $1' },
+  { table: 'ledger_allocation_items', requires: ['ledger_allocation_versions'], where: () => 'school_year_id = $1' },
 
   { table: 'meetings', where: () => 'school_year_id = $1' },
   { table: 'meeting_agenda_items', requires: ['meetings'],

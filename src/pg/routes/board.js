@@ -32,7 +32,7 @@ const FINANCIAL_ROLES = ['admin', 'board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MIN_HOUSEHOLDS_FOR_PAYMENT_RATE = 5;
 const NOTE = 'Składka jest dobrowolna. Odsetek opisuje odnotowane wpisy, nie zobowiązania; '
-  + 'wpłaty nieprzypisane nie są w nim ujęte.';
+  + 'wpłaty nieprzypisane nie są w nim ujęte (poza częściami przypisanymi gospodarstwom).';
 
 function toSafeInteger(value) {
   const number = Number(value ?? 0);
@@ -93,9 +93,9 @@ export async function handle(request, env, url, json) {
             ${includePayments ? `(SELECT count(DISTINCT ph.household_id) FROM enrollments e
                JOIN student_primary_household_current ph ON ph.student_id = e.student_id
               WHERE e.class_id = c.id AND EXISTS (
-                SELECT 1 FROM payment_entry_net pen
-                 WHERE pen.household_id = ph.household_id AND pen.school_year_id = c.school_year_id
-                   AND pen.status = 'recorded' AND pen.net_amount_cents > 0
+                SELECT 1 FROM household_payment_totals t
+                 WHERE t.household_id = ph.household_id AND t.school_year_id = c.school_year_id
+                   AND t.net_amount_cents > 0
               )) AS households_with_entry` : 'NULL AS households_with_entry'}
        FROM classes c
       WHERE c.school_year_id = $1
@@ -136,9 +136,9 @@ export async function handle(request, env, url, json) {
                JOIN classes c ON c.id = e.class_id
                JOIN student_primary_household_current ph ON ph.student_id = e.student_id
               WHERE c.school_year_id = $1 AND EXISTS (
-                SELECT 1 FROM payment_entry_net pen
-                 WHERE pen.household_id = ph.household_id AND pen.school_year_id = $1
-                   AND pen.status = 'recorded' AND pen.net_amount_cents > 0
+                SELECT 1 FROM household_payment_totals t
+                 WHERE t.household_id = ph.household_id AND t.school_year_id = $1
+                   AND t.net_amount_cents > 0
               )) AS households_with_entry,
              (SELECT count(*) FROM payment_entries pe WHERE pe.school_year_id = $1 AND pe.status = 'unmatched') AS unmatched_count`
               : 'NULL AS households_with_entry, NULL AS unmatched_count'}`,
