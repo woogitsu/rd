@@ -37,7 +37,7 @@ Zmiana kategorii, daty, metody lub kierunku wpisu (najczęstsze pomyłki skarbni
 - `GET /api/ledger` i eksport CSV pokazują `replacesEntryId` / kolumnę `zastepuje_wpis`; odwrotny kierunek („zastąpiony przez”) nie jest jeszcze wyliczany po stronie API — panel może go wyprowadzić z listy wpisów po stronie klienta (dalsza praca).
 - Zasada czterech oczu dla dużych przeksięgowań (jak w #97) nie jest częścią tego PR — nie ma dziś progu ani decyzji zarządu; do rozważenia osobno.
 
-Dostęp dla dyrekcji i Komisji Rewizyjnej pozostaje wyłączony do zatwierdzenia macierzy kompetencji przez szkołę.
+Dostęp dla dyrekcji i Komisji Rewizyjnej pozostaje wyłączony do zatwierdzenia macierzy kompetencji przez szkołę — dotyczy wszystkich tras tego dokumentu (`GET/POST /api/ledger*`, `export.csv`, przeksięgowanie). Jedyny dziś wyjątek: Komisja Rewizyjna (`audit`) ma odczyt zbiorczego raportu rocznego, osobna trasa `GET /api/reports/audit` opisana w docs/RECONCILIATION.md — bez dostępu do pojedynczych wpisów księgi ani dowodów, więc nie może samodzielnie zweryfikować pozycji raportu. Ten stan (raport tak, wpis i dowód nie) oraz brak ścieżki uwag/ustaleń kontroli to zakres issue #137, zależny od decyzji D-09.
 
 ## Dalsze etapy
 
