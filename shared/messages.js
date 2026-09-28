@@ -5,6 +5,8 @@
 // Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
 
 export const MESSAGES = Object.freeze({
+  // --- Ponowne wysłanie zaproszenia (#108) ---------------------------------------
+  invitation_not_pending: "To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie.",
   // --- Konfiguracja roku szkolnego i klas (#78) -------------------------------------
   invalid_label: "Podaj nazwę roku szkolnego (maksymalnie 200 znaków).",
   invalid_date_range: "Data końca nie może być wcześniejsza niż data początku.",
