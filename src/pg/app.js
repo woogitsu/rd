@@ -47,6 +47,7 @@ import * as mfaRoutes from './routes/mfa.js';
 import * as loginRoutes from './routes/login.js';
 import * as representativeRoutes from './routes/representative.js';
 import * as privacyNoticeRoutes from './routes/privacy-notice.js';
+import * as financialReportRoutes from './routes/financial-reports.js';
 import * as boardRoutes from './routes/board.js';
 import { isMfaGateExempt, mfaGate } from './mfa-policy.js';
 
@@ -71,6 +72,7 @@ export const ROUTES = [
   loginRoutes, // #3: logowanie hasłem, zaproszenia, zmiana i reset hasła
   representativeRoutes, // #118: pulpit przedstawiciela
   privacyNoticeRoutes, // #145: informacja o przetwarzaniu danych (D-06)
+  financialReportRoutes, // #125: sprawozdanie roczne i przepływy środków
   boardRoutes, // #131: pulpit zarządu — statystyki per klasa
   // Kolejne moduły dopisują tu po jednej linii.
 ];

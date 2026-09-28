@@ -38,6 +38,7 @@
     "dev:documents": "vite documents",
     "build:documents": "vite build documents --outDir ../dist/documents --base ./ --emptyOutDir",
     "email:worker": "node scripts/email-worker.js",
+    "email:preflight": "node scripts/email-preflight.js",
     "dev:site": "vite site",
     "build:site": "vite build site --outDir ../dist/site --base ./ --emptyOutDir",
     "dev:meetings": "vite meetings",
