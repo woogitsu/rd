@@ -2,6 +2,7 @@ import { readXlsxRows } from './xlsx.js';
 import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
+import { confirmAction } from '../shared/confirm-dialog.js';
 const fileInput = document.querySelector('#file');
 const encodingSelect = document.querySelector('#encoding');
 const status = document.querySelector('#file-status');
@@ -192,7 +193,17 @@ previewButton.addEventListener('click', async () => {
 commitButton.addEventListener('click', async () => {
   if (!serverPreview || busy) return;
   const c = serverPreview.counts;
-  if (!window.confirm(`Zapisać w bazie: nowe ${c.rowsAdded}, aktualizacje ${c.rowsUpdated}? Pominięte wiersze: ${c.rowsConflict + c.rowsSkipped}.`)) return;
+  const confirmed = await confirmAction({
+    title: 'Zapisać import w bazie?',
+    effects: [
+      `Nowi uczniowie: ${c.rowsAdded}.`,
+      `Aktualizacje istniejących: ${c.rowsUpdated}.`,
+      `Pominięte wiersze (konflikt lub błąd): ${c.rowsConflict + c.rowsSkipped}.`,
+      'Zapis jest jedną transakcją; błędny wiersz nie blokuje pozostałych zgodnie z podglądem.',
+    ],
+    confirmLabel: 'Zapisz w bazie',
+  });
+  if (!confirmed) return;
   busy = true; updateButtons(); setServerStatus('Zapisywanie w jednej transakcji…');
   const body = { ...serverPayload, fingerprint: serverPreview.fingerprint, planDigest: serverPreview.planDigest,
     options: { ...serverPayload.options, skipConflicts: skipConflicts.checked } };
