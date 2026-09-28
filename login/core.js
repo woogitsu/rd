@@ -32,6 +32,7 @@ const MESSAGES = {
   password_common: "To hasło jest zbyt popularne lub przewidywalne. Wybierz inne, np. kilka niezwiązanych słów.",
   password_contains_email: "Hasło nie może zawierać adresu e-mail.",
   password_unchanged: "Nowe hasło musi być inne niż obecne.",
+  password_mismatch: "Hasła nie są takie same.",
   invalid_display_name: "Nazwa wyświetlana może mieć najwyżej 100 znaków.",
   invalid_code: "Kod jest nieprawidłowy. Sprawdź aplikację i wpisz aktualny kod.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
