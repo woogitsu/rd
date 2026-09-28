@@ -160,14 +160,16 @@ test('runStorageBackup: resumes after interruption in the middle of the list (co
   }
 });
 
-test('recordStorageBackupRun: no-ops when backup_runs does not exist yet (issue #90 not merged on this branch)', async () => {
+test('recordStorageBackupRun: zapisuje przebieg w backup_runs (#90 scalony — tabela istnieje)', async () => {
   const db = await createTestDb();
   try {
-    assert.equal(await backupRunsTableExists(db), false);
+    assert.equal(await backupRunsTableExists(db), true);
     const outcome = await recordStorageBackupRun(db, {
       environment: 'test', result: 'success', report: { copied: 1 }, startedAt: new Date(),
     });
-    assert.equal(outcome.recorded, false);
+    assert.equal(outcome.recorded, true);
+    const { rows } = await db.query("SELECT kind, result FROM backup_runs WHERE kind = 'storage_backup'");
+    assert.deepEqual(rows.map((row) => [row.kind, row.result]), [['storage_backup', 'success']]);
   } finally {
     await db.close();
   }
