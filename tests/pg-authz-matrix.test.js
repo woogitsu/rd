@@ -29,6 +29,7 @@ import {
   approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto, submit as submitNews,
 } from '../src/pg/news.js';
 import { hashSecret } from '../src/auth.js';
+import { emailHash as suppressionEmailHash } from '../src/email/content.js';
 import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
@@ -233,6 +234,23 @@ async function makeCampaign(ctx, target, stage) {
   return obj;
 }
 
+// Blokada aktywna (#94), do zdjęcia w macierzy uprawnień. Adres syntetyczny
+// świeży za każdym razem (webhook to jedyna droga zapisu — bez surowego INSERT).
+async function makeSuppression(ctx, _target, stage) {
+  const email = `${nextKey('fx-suppr')}@example.invalid`;
+  const emailHashValue = suppressionEmailHash(email);
+  await api(ctx, undefined, 'POST', '/api/email/webhooks/brevo',
+    { event: 'hard_bounce', email, id: nextKey('fx-suppr-evt'), ts_event: 1791187200 },
+    { Authorization: `Bearer ${ctx.fx.webhookSecret}` });
+  if (stage === 'active') return { emailHash: emailHashValue };
+  // Wniosek zgłoszony przez inną osobę niż każdy z testowanych aktorów
+  // (fxCookies.board = konto stałe 'u-fx-board', nigdy nie testowane w macierzy),
+  // żeby zatwierdzenie (release) dawało sukces niezależnie od tego, kto go zatwierdza.
+  const { json } = await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/suppressions/${emailHashValue}/release-request`,
+    { schoolYearId: YEAR_1, releaseReason: 'address_corrected' });
+  return { emailHash: emailHashValue, requestId: json.requestId };
+}
+
 async function makeReconciliation(ctx, target, stage) {
   const cookie = ctx.fxCookies.treasurer;
   const { json } = await api(ctx, cookie, 'POST', '/api/reconciliations', {
@@ -379,6 +397,7 @@ const MAKERS = {
     return {};
   },
   campaign: makeCampaign,
+  suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
   adminTarget: (ctx, _target, stage) => makeAdminTarget(ctx, stage),
@@ -461,7 +480,7 @@ const WRITE_TABLES = [
   'ledger_entries', 'ledger_corrections', 'ledger_opening_balances',
   'ledger_opening_balance_adjustments', 'ledger_transfers',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
-  'email_webhook_events', 'email_suppressions',
+  'email_webhook_events', 'email_suppressions', 'email_suppression_release_requests', 'email_suppression_releases',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',

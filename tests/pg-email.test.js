@@ -721,7 +721,9 @@ test('address suppressed during a batch is not sent', async () => {
     let target;
     const transport = interleavingTransport(async (message) => {
       target = otherThan(message, ['h1', 'h2']);
-      await t.db.query("INSERT INTO email_suppressions (email_hash, reason) VALUES ($1, 'hard_bounce')", [emailHash(`${target}-g1@example.invalid`)]);
+      // email_suppressions.id (#94): klucz główny zmieniony z email_hash na id,
+      // żeby ten sam adres mógł mieć kilka zdarzeń blokady w czasie.
+      await t.db.query("INSERT INTO email_suppressions (id, email_hash, reason) VALUES ($1, $2, 'hard_bounce')", [crypto.randomUUID(), emailHash(`${target}-g1@example.invalid`)]);
     });
     const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
     assert.equal(run.sent, 1);

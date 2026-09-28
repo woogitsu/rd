@@ -715,24 +715,28 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/email/suppressions?schoolYearId=${target.schoolYearId}` }),
   },
   {
-    // Zgłoszenie zdjęcia blokady na nieistniejący (nieaktywny) skrót: dozwolona
-    // rola dochodzi do logiki biznesowej (404 suppression_not_active), rola
-    // spoza EMAIL_EDIT jest zatrzymana wcześniej przez autoryzację (403).
+    // Blokada świeża per przypadek (fixture 'fresh'): każda próba zgłasza
+    // zdjęcie osobnego, aktywnego zdarzenia (#94).
     id: 'email.suppressions.releaseRequest', module: 'email', method: 'POST',
     path: '/api/email/suppressions/:emailHash/release-request', targets: YEAR_TARGETS,
-    allow: EMAIL_EDIT, mfa: true, ok: 404, deny: 403, fixture: null,
-    build: ({ target }) => ({
-      path: `/api/email/suppressions/${'0'.repeat(64)}/release-request`,
+    allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'suppression', stage: 'active' },
+    build: ({ obj, target }) => ({
+      path: `/api/email/suppressions/${obj.emailHash}/release-request`,
       body: { schoolYearId: target.schoolYearId, releaseReason: 'address_corrected' },
     }),
   },
   {
+    // Wniosek zgłoszony przez stałe konto fxCookies.board (nigdy nie testowane
+    // w macierzy), więc zatwierdzenie przez dowolnego dozwolonego aktora nie
+    // trafia w self_approval_forbidden (#94).
     id: 'email.suppressions.release', module: 'email', method: 'POST',
     path: '/api/email/suppressions/:emailHash/release', targets: YEAR_TARGETS,
-    allow: EMAIL_EDIT, mfa: true, ok: 404, deny: 403, fixture: null,
-    build: ({ target }) => ({
-      path: `/api/email/suppressions/${'0'.repeat(64)}/release`,
-      body: { schoolYearId: target.schoolYearId, requestId: '00000000-0000-0000-0000-000000000000' },
+    allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'suppression', stage: 'releaseRequested' },
+    build: ({ obj, target }) => ({
+      path: `/api/email/suppressions/${obj.emailHash}/release`,
+      body: { schoolYearId: target.schoolYearId, requestId: obj.requestId },
     }),
   },
 
