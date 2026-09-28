@@ -18,7 +18,7 @@ export const GUARDIANS = 2000; // 400 rodzin z 3 kontaktami, 400 z 2
 export const USERS = 50;
 
 export const pad = (n) => String(n).padStart(4, '0');
-const q = (value) => (value === null ? 'NULL' : `'${String(value).replaceAll("'", "''")}'`);
+export const q = (value) => (value === null ? 'NULL' : `'${String(value).replaceAll("'", "''")}'`);
 
 // Wstawia wiersze wsadowo przez db.exec (bez parametrów; wartości są syntetyczne i cytowane).
 export async function insertRows(db, table, columns, rows, chunk = 500) {

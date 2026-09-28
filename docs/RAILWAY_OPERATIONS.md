@@ -244,15 +244,62 @@ klikających w panelu.
 
 Wynik lokalny to **PGlite (WASM, jeden proces, jedno połączenie, zapytania
 szeregowane) — niereprezentatywny** dla PostgreSQL na Railway. Pokazuje
-jedynie, że mieszanka działa bez błędów przy 50 równoczesnych użytkownikach
-i że żadna trasa nie ma rażąco złego planu zapytań. Kryterium odbioru
-spełnia dopiero pomiar na stagingu.
+jedynie, że mieszanka działa bez błędów przy 50 równoczesnych użytkownikach.
+Trasy faktycznie zmierzone tym scenariuszem to wyłącznie te z tabeli operacji
+wyżej (`GET /api/session`, `/api/access`, `/api/public/events`, `/api/events`,
+`/api/meetings`, `/api/payments`, `POST /api/payments`, `POST /api/events`) —
+żadna z nich nie ma rażąco złego planu zapytań, ale scenariusz **nie**
+obejmuje kart z sumami wielu lat, kartek dla całej szkoły, eksportów,
+uzgodnień rachunku ani kampanii e-mail (patrz scenariusz „heavy” niżej,
+#217). Kryterium odbioru spełnia dopiero pomiar na stagingu.
 
 | Data | Środowisko | Kto | Użytkownicy / czas | Zapisy | Żądania | Przepustowość | p50 | p95 | p99 | Błędy | Progi | Wynik / uwagi |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 27.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny) | agent (Claude) | 50 / 30 s, bez pauz | tak | 4560 | 151,7 req/s | 300 ms | 537 ms | 1315 ms | 0 (0%) | domyślne | zaliczony; max 3230 ms; kontener 4 vCPU współdzielony z innymi procesami (load average ~60), przygotowanie danych 16 s |
 | do wykonania | staging | | 50 / 60 s | nie | | | | | | | | |
 | do wykonania | staging | | 50 / 60 s | tak (`--allow-writes`) | | | | | | | | |
+
+### Scenariusz „heavy” (#217): trasy pominięte przez scenariusz domyślny
+
+`npm run load:test -- --scenario heavy` mierzy osobno, sekwencyjnie, trasy
+najbardziej obciążające bazę i serwer, których koszt rośnie z **wiekiem
+systemu** (historia lat, `audit_events`, korekty, uzgodnienia) — seed
+jednego roku ze scenariusza domyślnego tego nie pokazuje:
+
+`GET /api/classes`, `GET /api/classes/{id}/students`,
+`GET /api/households/{id}`, `GET /api/print/cards`,
+`GET /api/ledger/export.csv`, `GET /api/reports/audit`,
+`GET /api/reconciliations`, `POST /api/reconciliations/{id}/lines`,
+`GET /api/reconciliations/{id}`, `GET /api/reconciliations/{id}/suggestions`.
+
+Dane: `scripts/lib/heavy-scenario.js` (`buildHistoricalData`) — kilka lat
+syntetycznej historii zamiast jednego roku: kilka klas na rok, rodzeństwo w
+różnych klasach, dwoje opiekunów na gospodarstwo, wpłaty częściowe i korekty
+w każdym roku, kilka wpisów księgi i jeden szkic uzgodnienia w najnowszym
+roku, zdarzenia audytu wstawiane `generate_series` po stronie bazy. Domyślna
+skala (`--heavy-years 2 --heavy-classes 5 --heavy-students 40
+--heavy-audit-events 3000`) jest **celowo mniejsza** niż baseline z opisu
+issue #217 (5 lat, 50 klas/rok, 100 000 zdarzeń audytu) — pełny seed trwa
+dziesiątki sekund i spowalnia PR-y; pełną skalę odtwarza się na żądanie tymi
+samymi flagami (nocny przebieg, #111), nie jest to wymagane na PR.
+
+Wynik: dla każdej trasy `p50`/`max` opóźnienia, rozmiar odpowiedzi (bajty),
+liczba błędów, oraz dla całego przebiegu szczyt `heapUsed` (MB) i maks.
+opóźnienie pętli zdarzeń (`monitorEventLoopDelay`, ms). Budżety
+(`HEAVY_ROUTE_BUDGETS_MS` w `scripts/lib/heavy-scenario.js`) są orientacyjne
+i luźniejsze niż docelowe dla Railway — kontener testowy jest współdzielony i
+przeciążony (patrz zasady pracy nad poprawkami), więc łapią tylko rażącą
+regresję, nie mikroopóźnienia. Przekroczenie budżetu którejkolwiek trasy albo
+błędna odpowiedź dają kod wyjścia `1` z nazwą trasy w komunikacie. Scenariusz
+zapisuje dane (import wyciągu, #217 pkt 4) — **wyłącznie lokalnie**; tryb
+zdalny (tylko odczyt, tylko staging) nie jest jeszcze zaimplementowany.
+Scenariusz nie wywołuje żadnej trasy e-mail/`…/queue` (test sprawdza brak
+wierszy `email_outbox` po przebiegu).
+
+| Data | Środowisko | Skala | Wynik / uwagi |
+|---|---|---|---|
+| 28.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny) | domyślna (2 lata, 5 klas/rok, 40 uczniów/rok, 3000 zdarzeń audytu) | zaliczony, bez naruszeń budżetu; zob. `tests/load-heavy-smoke.test.js` dla wariantu skróconego uruchamianego w CI |
+| do wykonania | staging (tylko odczyt) | pełna (5 lat, 50 klas/rok, 100 000 zdarzeń audytu) | tryb zdalny sceny „heavy” do zaimplementowania |
 
 ## Pierwszy administrator (bootstrap, #187)
 
