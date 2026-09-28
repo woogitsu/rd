@@ -26,6 +26,17 @@ Panel może pobrać aktywne kategorie przez `GET /api/ledger/categories`, bilans
 
 `POST /api/ledger` tworzy wpis, a `POST /api/ledger/{id}/corrections` dopisuje korektę. Operacje wymagają aktywnej sesji, potwierdzonego MFA, roli `admin`, `board` albo `treasurer`, zgodnego roku szkolnego, same-origin i nagłówka `Idempotency-Key`. Zapis wpisu lub korekty i odpowiadającego mu zdarzenia audytowego odbywa się atomowo. Audyt nie kopiuje kwoty, opisu ani identyfikatora dokumentu.
 
+### Przeksięgowanie: storno + wpis zastępczy (#144, migracja `0040`)
+
+Zmiana kategorii, daty, metody lub kierunku wpisu (najczęstsze pomyłki skarbnika) nie jest korektą kwoty — to przeksięgowanie. `POST /api/ledger/{id}/replacement` (`Idempotency-Key`; treść jak `POST /api/ledger` plus `reason`) wykonuje w jednej transakcji: **storno** pełnej pozostałej kwoty wpisu (nowy wiersz w `ledger_corrections`, powód „Przeksięgowanie: …”) i **wpis zastępczy** z polem `replacesEntryId` wskazującym wpis pierwotny. Oba zapisy i zdarzenie audytu `ledger.entry.replaced` powstają atomowo — błąd wycofuje wszystko.
+
+- **Bilans bez zmian.** Gdy zmienia się tylko kategoria/data/metoda (ta sama kwota i kierunek), bilans roku przed i po jest identyczny: storno zeruje netto wpisu pierwotnego, wpis zastępczy dodaje tę samą kwotę w tym samym kierunku.
+- **Jednorazowość.** Wpis może zostać zastąpiony co najwyżej raz (`ledger_entries_replaces_idx`); druga próba to `409 ledger_entry_already_replaced`. Wpis zastępczy może sam zostać zastąpiony (łańcuch przeksięgowań widoczny przez `replacesEntryId`).
+- **Wpis powiązany z wpłatą (`payment_entry_id`) nie może być przeksięgowany tą operacją** — `409 payment_linked_entry_not_replaceable`. Przeniesienie powiązania wpłaty na wpis zastępczy wymagałoby zmiany unikalnego indeksu `ledger_entries_payment_entry_idx` na regułę uwzględniającą netto wpisu, co zazębia się z kontrolą kwoty wpłata↔księga (#138); to świadomie osobna, przyszła zmiana.
+- **Rok zamknięty** → `409 school_year_closed` (te same triggery zamrożenia co inne zapisy księgi).
+- `GET /api/ledger` i eksport CSV pokazują `replacesEntryId` / kolumnę `zastepuje_wpis`; odwrotny kierunek („zastąpiony przez”) nie jest jeszcze wyliczany po stronie API — panel może go wyprowadzić z listy wpisów po stronie klienta (dalsza praca).
+- Zasada czterech oczu dla dużych przeksięgowań (jak w #97) nie jest częścią tego PR — nie ma dziś progu ani decyzji zarządu; do rozważenia osobno.
+
 Dostęp dla dyrekcji i Komisji Rewizyjnej pozostaje wyłączony do zatwierdzenia macierzy kompetencji przez szkołę.
 
 ## Dalsze etapy
