@@ -5,6 +5,8 @@
 // Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
 
 export const MESSAGES = Object.freeze({
+  // --- Zakończenie przypisania do klasy (#86) --------------------------------------
+  invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
