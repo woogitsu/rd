@@ -921,6 +921,15 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { schoolYearId: target.schoolYearId, classId: target.classId, effectiveOn: yearDate(target, '10-01'), reason: 'Korekta przydziału (syntetyczne)' },
     }),
   },
+  {
+    id: 'families.enrollmentEnd', module: 'families', method: 'POST', path: '/api/students/:studentId/enrollments/:enrollmentId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    // Odejście ze szkoły (#86) — data w przeszłości, żeby uczeń zniknął z bieżących list od razu.
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/enrollments/${obj.enrollmentId}/end`,
+      body: { endedOn: '2020-01-01', reason: 'Odejście ze szkoły (syntetyczne)' },
+    }),
+  },
 
   // ---------- print (#11) ----------
   {
