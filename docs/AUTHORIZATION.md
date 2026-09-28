@@ -24,6 +24,16 @@ Trasy, dla których rozróżnienie powodu odmowy ma znaczenie dla ekranu logowan
 
 Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i tylko z przydziałem bez `class_id` (wszystkie klasy) obejmującym wybrany rok. Przydział zarządu ograniczony do klasy nie wystarcza. `requireAccess` (bez `classId` w wymaganiu) już odfiltrowuje przydziały klasowe (`isAuthorizedScoped`, SR-02, akapit wyżej) — moduł importu dodatkowo powtarza ten sam filtr wprost (`qualifyingGrants`, `!grant.classId`), zanim policzy, czy przydział obejmuje wybrany rok. To powtórzenie, nie inna reguła: usunięcie go nie zmieniłoby dziś zachowania, zostaje jako obrona w głąb dla modułu przetwarzającego dane importu z plików. Zakres ról importu to założenie do decyzji D-08.
 
+## Stan roli i konto bez funkcji (#176)
+
+Nadanie roli, która dziś nie daje żadnej trasy chronionej (np. `principal`, decyzja D-09 nierozstrzygnięta — docs/DECISIONS.md), tworzy konto z danymi osobowymi bez celu (D-01/D-06). `ROLE_STATUS` w `src/pg/auth.js` jest jedynym źródłem prawdy o tym, co rola dziś potrafi — `'active'` (co najmniej jedna trasa), `'partial'` (`audit`: tylko raport Komisji Rewizyjnej — #137), `'pending_decision'` (`principal`: żadna trasa). Z tego wynikają trzy zachowania:
+
+- `POST /api/admin/invitations` i `POST /api/admin/grants` odrzucają rolę `pending_decision` kodem `422 role_pending_decision`, chyba że `ALLOW_PENDING_ROLES=true` (przygotowanie kont z wyprzedzeniem przed D-09, testy).
+- `resolveScope` (`src/pg/routes/admin.js`) odrzuca `classId` dla roli bez tras klasowych (`CLASS_SCOPE_ROLES` — dziś tylko `representative`) kodem `422 class_scope_not_supported`; dotychczas taki przydział zapisywał się i po cichu nie robił niczego.
+- `GET /api/access` zwraca dodatkowo `hasActiveRole` (`false`, gdy żaden aktywny przydział konta nie ma statusu innego niż `pending_decision`). Ekran startowy `login/` pokazuje wtedy komunikat o braku uprawnień zamiast listy 10 paneli kończących się odmową; treść komunikatu (kontakt, dokładne sformułowanie) czeka na zatwierdzenie przez zarząd, dziś jest robocza i nie obiecuje funkcji, których nie ma (AGENTS.md).
+
+Istniejące przed tą zmianą przydziały klasowe dla ról spoza `CLASS_SCOPE_ROLES` (jeśli takie powstały) nie są usuwane ani migrowane — nowa reguła działa tylko dla przyszłych zaproszeń/nadań. Przegląd takich wierszy (`SELECT * FROM role_grants WHERE role NOT IN ('representative') AND class_id IS NOT NULL`) zostawiamy administratorowi jako zapytanie, nie migrację danych.
+
 ## Macierz tras API (issue #4) — testy negatywne
 
 Tabela opisuje **zamierzoną** politykę tras routera PostgreSQL (`src/pg/app.js`, `ROUTES`) wynikającą z dokumentacji modułów, a nie zatwierdzone przez szkołę kompetencje. Zakresy ról zarządu, przedstawiciela, dyrekcji i Komisji Rewizyjnej to nadal założenia do decyzji D-08/D-09 (docs/DECISIONS.md). Źródłem prawdy dla testów jest `tests/helpers/route-matrix.js`; `tests/pg-authz-matrix.test.js` wykonuje każdą trasę dla wszystkich aktorów, MFA wł./wył. i każdego zakresu, a meta-test nie przepuści modułu z `ROUTES` ani ścieżki z kodu modułu bez wpisu w macierzy i wiersza w tej tabeli. Gdzie kod odbiega od zamierzonej polityki, przypadki są oznaczone w macierzy jako `todo`: nadal się wykonują, ale ich rozbieżność trafia do osobnego testu „znana luka”, więc CI jest zielone, a luka pozostaje widoczna (sekcja „Znane luki” niżej).
@@ -77,6 +87,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy `status: adopted/rejected` | 403 | #135: `draft` bez MFA |
 | `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy przejściu do `adopted/rejected` | 403 | #135: edycja projektu bez MFA |
 | `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak | 403 | #135: korekta zawsze zapisuje rozstrzygnięcie |
+| `GET /api/meetings/resolutions?schoolYearId=:year` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — tylko uchwały zebrań tej klasy | nie | 403 | #102: rejestr roku; przyjmuje też `status=`, `q=` i `executionStatus=` (filtry, nieujęte w ścieżce macierzy); przedstawiciel: 403; macierz sprawdza tylko granicę roli (pusty rejestr), zakres klasowy ma dedykowany test w `tests/pg-meetings-resolutions.test.js` |
+| `POST /api/meetings/resolutions/:resolutionId/execution` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | #102: dopisywanie zdarzenia wykonania; działa też po zatwierdzeniu protokołu (osobna tabela, nie objęta blokadą zebrania) |
 | `GET /api/import/options` | admin, zarząd — przydział bez klasy | tak | 403 | tylko lata z przydziału; zarząd z przydziałem klasy: 403 |
 | `POST /api/import/preview` | admin, zarząd — przydział bez klasy obejmujący rok importu | tak | 403 | nic nie zapisuje; inny rok: 403 |
 | `POST /api/import/commit` | jak wyżej | tak | 403 | wymaga podglądu (fingerprint, planDigest) i Idempotency-Key |
@@ -153,17 +165,21 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/school-years` | wyłącznie admin | tak | 403 | nowy rok szkolny (#78); zły zakres dat: 400; duplikat id/etykiety: 409 |
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |
 | `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
-| `GET /api/admin/audit` | wyłącznie admin | tak | 403 | |
+| `GET /api/admin/audit` | wyłącznie admin | tak | 403 | #181: filtry `domain`/`actorId`/`from`/`to`/`schoolYearId`; sam zapisuje `audit.viewed` |
+| `GET /api/admin/audit/entity/:entityType/:entityId` | wyłącznie admin | tak | 403 | #181: wariant zachowawczy — role finansowe/kampanii własnego zakresu do D-08/D-09; nieistniejący obiekt: 404 |
 | `GET /api/admin/ops-status` | wyłącznie admin | tak | 403 | stan operacyjny: kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści (#149) |
 | `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
 | `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/reconciliations/:reconciliationId` | jak wyżej, rok uzgodnienia | tak | 403 | nieistniejące: 404; SR-01 |
 | `POST /api/reconciliations/:reconciliationId/lines` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/reconciliations/:reconciliationId/lines/:lineId/payment` | jak wyżej | tak | 403 | wpłata z pozycji wyciągu i jej powiązanie w jednej transakcji (#115); SR-01 |
 | `GET /api/reconciliations/:reconciliationId/suggestions` | jak wyżej | tak | 403 | tylko propozycje; SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/confirm` | jak wyżej; inna osoba niż autor | tak | 403 | SR-01 |
 | `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md). Rola i rok pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
+| `GET /api/reports/annual?schoolYearId=:year&format=json` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | także `format=html`; admin, audit, principal, przedstawiciel: 403 (D-08/D-09, #125); SR-01. Brak MFA przy pasującej roli: `403 mfa_required`/`mfa_enrollment_required` |
+| `GET /api/reports/cash-flow?schoolYearId=:year` | jak wyżej | tak | 403 | przepływy per miesiąc i metoda, saldo kasy (#125); SR-01 |
 | `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195) |
 | `GET /api/exports/class-roster?classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | tak | 403 | Rola i klasa pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `GET /api/classes` | admin, zarząd, skarbnik — klasy roku przydziału; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | Komisja Rewizyjna, dyrekcja: 403 |
