@@ -33,6 +33,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_campaigns`|`paused_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`resumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`subject`|Opiekun|direct|wolny tekst|temat kampanii e-mail|email_snapshot|tak|nie|
+|`email_preview_sends`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie wysyłki testowej z osobą|nieustalona (D-04)|nie|nie|
+|`email_preview_sends`|`recipient_hash`|Członek Rady|pseudonymous|kontakt|limit wysyłek testowych na adres techniczny Rady|nieustalona (D-04)|nie|nie|
 |`email_suppressions`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
 |`enrollment_history`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`enrollments`|`ended_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -115,7 +117,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **102**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **104**, w tym wolnego tekstu: **23** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -350,6 +352,19 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `sent_at` | none | — | nie |
 | `state` | none | — | nie |
 | `updated_at` | none | — | nie |
+
+### `email_preview_sends`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `actor_id` | pseudonymous | board_member | nie |
+| `campaign_id` | none | — | nie |
+| `content_hash` | none | — | nie |
+| `created_at` | none | — | nie |
+| `id` | none | — | nie |
+| `idempotency_key` | none | — | nie |
+| `provider_message_id` | none | — | nie |
+| `recipient_hash` | pseudonymous | board_member | nie |
 
 ### `email_send_ledger`
 

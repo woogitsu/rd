@@ -18,6 +18,8 @@ export const MESSAGES = Object.freeze({
   invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
   // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
   minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
+  // --- Tryb tylko do odczytu (#143) ------------------------------------------------
+  read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
@@ -147,6 +149,7 @@ export const MESSAGES = Object.freeze({
   invalid_effective_on: "Podaj poprawną datę.",
   closing_balance_out_of_range: "Saldo zamknięcia jest poza dozwolonym zakresem.",
   next_year_opening_balance_exists: "Bilans otwarcia następnego roku już istnieje.",
+  category_not_found: "Nie znaleziono kategorii księgi.",
   difference_requires_note: "Różnica wymaga wpisania wyjaśnienia.",
   reconciliation_not_found: "Nie znaleziono uzgodnienia.",
   reconciliation_confirmed: "Uzgodnienie jest już potwierdzone i nie można go zmienić.",
@@ -284,6 +287,9 @@ export const MESSAGES = Object.freeze({
   invalid_consent_scope: "Wybierz zakres zgody z listy (strona Rady, druk, media społecznościowe).",
   invalid_consent_valid_until: "Niepoprawna data ważności zgody (RRRR-MM-DD).",
   consent_not_found: "Nie znaleziono zgody o tym odwołaniu.",
+  preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
+  preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
+  sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).
