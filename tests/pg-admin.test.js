@@ -147,6 +147,28 @@ test('an admin cannot grant themselves a role, but another admin can grant it to
     // Samonadanie własnej roli reprezentanta (nie tylko ról merytorycznych) jest tak samo odrzucane.
     assert.equal((await post(env, '/api/admin/grants', admin, { userId: 'u-admin', role: 'representative', classId: 'c-now-1a' })).data.error, 'cannot_grant_self');
 
+    // Obejście przez zaproszenie na własny adres: odrzucone przy tworzeniu (bez
+    // wiersza i zdarzenia) — także z inną wielkością liter i spacjami.
+    const selfInvite = await post(env, '/api/admin/invitations', admin, { email: ' U-Admin@Example.invalid ', role: 'treasurer' });
+    assert.equal(selfInvite.status, 409);
+    assert.equal(selfInvite.data.error, 'cannot_grant_self');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM invitations WHERE lower(email) = 'u-admin@example.invalid'")).rows[0].n, 0);
+    assert.equal((await auditRows(db)).filter((row) => row.action === 'invitation.created').length, 0);
+
+    // Zaproszenie wystawione przez to samo konto innym sposobem (np. zapis
+    // sprzed poprawki) nie nadaje roli przy przyjęciu.
+    const { hashSecret } = await import('../src/auth.js');
+    const token = 'S'.repeat(43);
+    await db.query(
+      `INSERT INTO invitations (id, email, token_hash, role, created_by, expires_at)
+       VALUES ('inv-self', 'u-admin@example.invalid', $1, 'treasurer', 'u-admin', now() + interval '1 hour')`,
+      [await hashSecret(token)],
+    );
+    const accepted = await acceptInvitation(env, { token, userId: 'u-admin' });
+    assert.equal(accepted.ok, false);
+    assert.equal(accepted.reason, 'self_invitation');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM role_grants WHERE user_id = 'u-admin' AND role = 'treasurer'")).rows[0].n, 0);
+
     // Druga osoba z rolą admina może nadać przydział pierwszej.
     const second = await seedUserSession(db, { userId: 'u-admin2', roles: [{ role: 'admin' }], mfa: true });
     const granted = await post(env, '/api/admin/grants', second, { userId: 'u-admin', role: 'treasurer' });
