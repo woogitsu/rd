@@ -192,6 +192,12 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
   { table: 'bank_reconciliation_matches', requires: ['bank_reconciliations'],
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
+  // 0105 (#127): dopasowania zbiorcze, ich pozycje i cofnięcia (własna kolumna school_year_id).
+  { table: 'bank_reconciliation_group_matches', requires: ['bank_reconciliations'], where: () => 'school_year_id = $1' },
+  { table: 'bank_reconciliation_group_match_items', requires: ['bank_reconciliation_group_matches'],
+    where: () => 'school_year_id = $1' },
+  { table: 'bank_reconciliation_group_match_revocations', requires: ['bank_reconciliation_group_matches'],
+    where: () => 'school_year_id = $1' },
 
   { table: 'events', where: () => 'school_year_id = $1' },
   { table: 'event_revisions', requires: ['events'],

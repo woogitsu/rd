@@ -950,6 +950,16 @@ export const ROUTE_MATRIX = Object.freeze([
   reconciliationRoute('reconciliation.matchRevocation', 'POST', '/matches/:matchId/revocation', 'matched', {
     suffix: (obj) => `/matches/${obj.matchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
   }),
+  // #127 cz. 2: dopasowanie zbiorcze (jedna pozycja ↔ kilka wpłat) i jego cofnięcie.
+  reconciliationRoute('reconciliation.groupMatch', 'POST', '/group-matches', 'groupReady', {
+    ok: 201, withKey: true,
+    body: (_target, obj) => ({
+      statementLineId: obj.statementLineId, items: obj.paymentIds.map((paymentEntryId) => ({ paymentEntryId })),
+    }),
+  }),
+  reconciliationRoute('reconciliation.groupMatchRevocation', 'POST', '/group-matches/:groupMatchId/revocation', 'groupMatched', {
+    suffix: (obj) => `/group-matches/${obj.groupMatchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
+  }),
   reconciliationRoute('reconciliation.confirm', 'POST', '/confirm', 'draft', {
     body: () => ({ confirmationNote: 'Różnica wyjaśniona (syntetyczne)' }),
   }),

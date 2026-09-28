@@ -260,6 +260,21 @@ async function makeReconciliation(ctx, target, stage) {
   }, withKey(nextKey('fx-rec')));
   const reconciliationId = json.reconciliation.id;
   if (stage === 'draft') return { reconciliationId };
+  if (stage === 'groupReady' || stage === 'groupMatched') {
+    // #127 cz. 2: przelew zbiorczy — jedna pozycja 2000 EUR ↔ dwie wpłaty po 1000 EUR.
+    const first = await makePayment(ctx.db, target, 'recorded');
+    const second = await makePayment(ctx.db, target, 'recorded');
+    await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/lines`, {
+      lines: [{ bookedOn: yearDate(target, '10-01'), amountCents: 200000, reference: 'Przelew zbiorczy syntetyczny' }],
+    }, withKey(nextKey('fx-lines')));
+    const detail = await api(ctx, cookie, 'GET', `/api/reconciliations/${reconciliationId}`);
+    const obj = { reconciliationId, statementLineId: detail.json.lines[0].id, paymentIds: [first.paymentId, second.paymentId] };
+    if (stage === 'groupReady') return obj;
+    const group = await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/group-matches`, {
+      statementLineId: obj.statementLineId, items: obj.paymentIds.map((paymentEntryId) => ({ paymentEntryId })),
+    }, withKey(nextKey('fx-group')));
+    return { ...obj, groupMatchId: group.json.groupMatch.id };
+  }
   const { paymentId } = await makePayment(ctx.db, target, 'recorded');
   await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/lines`, {
     lines: [{ bookedOn: yearDate(target, '10-01'), amountCents: 100000, reference: 'Tytuł syntetyczny' }],
@@ -501,6 +516,8 @@ const WRITE_TABLES = [
   'email_webhook_events', 'email_suppressions', 'email_preview_sends',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
+  'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
+  'bank_reconciliation_group_match_revocations',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
   'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
