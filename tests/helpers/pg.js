@@ -78,7 +78,7 @@ export async function seedUser(db, { userId, email = `${String(userId).toLowerCa
  * @returns {Promise<string>} wartość nagłówka Cookie, np. `rd_session=…`
  */
 export async function seedUserSession(db, {
-  userId, email, displayName, roles = [], mfa = false, expiresAt, revoked = false, disabled = false,
+  userId, email, displayName, roles = [], mfa = false, expiresAt, revoked = false, disabled = false, createdAt,
 }) {
   if (!userId) throw new Error('seedUserSession: userId is required');
   await seedUser(db, { userId, email, displayName, disabled });
@@ -94,7 +94,11 @@ export async function seedUserSession(db, {
   }
   const { secret, tokenHash } = await createSessionSecret();
   const expires = expiresAt ? new Date(expiresAt) : new Date(Date.now() + 60 * 60 * 1000);
-  const created = new Date(Math.min(Date.now(), expires.getTime() - 60 * 1000));
+  // #150 (SR-10, migracja 0082 — session_guard_trigger): `created_at` sesji
+  // jest niezmienne po zapisie (identity_immutable), więc symulacja "logowania
+  // dawno temu" (absolutny limit rotacji, bezczynność) musi ustawić created_at
+  // przy INSERT, nie przez UPDATE po fakcie — stąd jawny `createdAt`.
+  const created = createdAt ? new Date(createdAt) : new Date(Math.min(Date.now(), expires.getTime() - 60 * 1000));
   await db.query(
     `INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, mfa_verified_at, revoked_at, revoked_reason)
      VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::boolean THEN $4::timestamptz END,

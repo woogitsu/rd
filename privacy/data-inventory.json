@@ -212,6 +212,243 @@
       "data_type": "jsonb"
     }
   },
+  "bank_reconciliation_group_match_items": {
+    "amount_cents": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "bigint"
+    },
+    "group_match_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "ledger_entry_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "payment_entry_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "reconciliation_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    }
+  },
+  "bank_reconciliation_group_match_revocations": {
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "group_match_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "reason": {
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie cofnięcia dopasowania zbiorczego",
+      "retention_category": "document_financial",
+      "visible_to": [],
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "reconciliation_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    }
+  },
+  "bank_reconciliation_group_matches": {
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "idempotency_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "reconciliation_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "statement_line_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    }
+  },
   "bank_reconciliation_matches": {
     "created_at": {
       "personal": "none",
@@ -336,6 +573,39 @@
     }
   },
   "bank_reconciliations": {
+    "abandon_reason": {
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "powód porzucenia szkicu uzgodnienia",
+      "retention_category": "document_financial",
+      "visible_to": [],
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "abandoned_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "abandoned_by": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
     "confirmation_note": {
       "personal": "direct",
       "subject": "third_party",
@@ -4363,6 +4633,175 @@
       "data_type": "text"
     }
   },
+  "ledger_allocation_items": {
+    "amount_cents": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    },
+    "class_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "event_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "version_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    }
+  },
+  "ledger_allocation_versions": {
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "idempotency_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "ledger_entry_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "reason": {
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany przypisania wpisu do centrum kosztów",
+      "retention_category": "document_financial",
+      "visible_to": [],
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "supersedes_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "version_no": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    }
+  },
   "ledger_budget_lines": {
     "category_id": {
       "personal": "none",
@@ -7024,6 +7463,175 @@
       "visible_to": [],
       "free_text": false,
       "exportable": false,
+      "data_type": "text"
+    }
+  },
+  "payment_allocation_reversals": {
+    "allocation_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "idempotency_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "reason": {
+      "personal": "direct",
+      "subject": "guardian",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie cofnięcia części wpłaty",
+      "retention_category": "payment_reference",
+      "visible_to": [],
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    }
+  },
+  "payment_allocations": {
+    "amount_cents": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "household_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "idempotency_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "payment_entry_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
       "data_type": "text"
     }
   },
