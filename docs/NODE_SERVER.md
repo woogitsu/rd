@@ -43,6 +43,9 @@ Brakujący plik zwraca odpowiedź `404`; serwer nie zastępuje go plikiem `index
 | `LOG_LEVEL` | opcjonalna | `debug`, `info` (domyślnie), `warn`, `error` lub `silent` |
 | `SHUTDOWN_TIMEOUT_MS` | opcjonalna | Maksymalny czas łagodnego zamknięcia po SIGTERM (domyślnie 10000 ms); musi być krótszy niż `drainingSeconds` w `railway.json` |
 | `METRICS_LOG_INTERVAL_MS` | opcjonalna | Co ile zapisywać liczniki żądań do logu (domyślnie 300000 ms = 5 min) |
+| `DOCUMENT_MAX_CONCURRENT_UPLOADS` | opcjonalna | Limit równoczesnych `POST /api/documents` na proces (domyślnie 4) — [DOCUMENTS.md](DOCUMENTS.md) |
+
+**Limity połączenia (#185).** `server.requestTimeout` (120 s) i `server.headersTimeout` (60 s) są ustawiane na stałe w `startServer` (`src/server.js`, `DEFAULT_REQUEST_TIMEOUT_MS`/`DEFAULT_HEADERS_TIMEOUT_MS`) — bez tego wolny albo złośliwy klient trzymałby bufor żądania (i gniazdo) bez ograniczenia czasowego. Bez osobnej zmiennej środowiskowej na razie; do zmiany bezpośrednio w kodzie, jeśli okaże się to za krótkie/za długie na stagingu.
 
 Sekrety i `DATABASE_URL` nie są potrzebne do testu samego serwera. Serwer **nie** uruchamia migracji przy starcie; schemat nakłada się ręcznie (`npm run db:migrate:postgres`).
 
