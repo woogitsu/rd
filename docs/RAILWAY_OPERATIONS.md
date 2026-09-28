@@ -467,6 +467,47 @@ bez potrzeby dostępu do Railway:
 - Narzędzie monitora zewnętrznego, jego adresaci i dyżur/zastępstwa — do
   decyzji zarządu (nierozstrzygnięte tutaj).
 
+## CI i runner self-hosted (#153)
+
+- **Kto zarządza runnerem i organizacją GitHub**: ustalenie zespołu
+  technicznego (oddzielenie dostępu technicznego od roli skarbnika —
+  `docs/SECURITY.md`, sekcja „Dostęp”). Nie jest to decyzja zarządu.
+- **Stan dziś (do potwierdzenia przez administratora runnera, brak dostępu
+  do konfiguracji maszyny z tego repozytorium)**: 17 runnerów self-hosted
+  współdzielonych między agentami (`.github/workflows/ci.yml`, komentarz o
+  `concurrency`, #111). Runner wykonuje `npm ci` i skrypty z każdego PR,
+  także z forka w organizacji (repozytorium ma widoczność `internal`).
+  `permissions: contents: read` i `persist-credentials: false` są ustawione
+  na wszystkich krokach `checkout`.
+- **Wymagane docelowo** (do potwierdzenia/wdrożenia przez administratora
+  runnera — poza zakresem tego repozytorium):
+  - runner efemeryczny (nowa maszyna/kontener na job) albo czyszczony po
+    każdym jobie (workspace, `~/.npmrc`, zmienne środowiskowe);
+  - brak sekretów Railway i Brevo na runnerze — CI nie ma i nie powinno mieć
+    dostępu do `DATABASE_URL`, kluczy Brevo ani `MFA_ENCRYPTION_KEY(S)`
+    (żaden krok w `ci.yml` ich nie odczytuje: testy używają PGlite, e-mail
+    nie jest wysyłany w CI);
+  - brak dostępu do sieci lokalnej szkoły;
+  - w ustawieniach repozytorium: „Require approval for all outside
+    collaborators” (uruchomienie CI dla PR spoza zaufanych współpracowników
+    wymaga ręcznego zatwierdzenia).
+- **Higiena zależności**:
+  - job `audit` (`ci.yml`) uruchamia `npm audit --omit=dev --audit-level=high`
+    (blokujący dla zależności produkcyjnych), `npm audit --audit-level=critical`
+    (blokujący dla całego drzewa) i `npm audit signatures`; pełny raport trafia
+    jako artefakt `npm-audit-report` (14 dni);
+  - `.github/dependabot.yml`: `npm` co tydzień (zależności deweloperskie w
+    jednej grupie, produkcyjne osobno) i `github-actions` co miesiąc — bez
+    automatycznego scalania, każdy PR przechodzi pełne CI;
+  - **wyjątki od blokady audytu** (podatność bez dostępnej poprawki):
+    zapisać tutaj z datą wpisu, numerem CVE/advisory, uzasadnieniem i datą
+    przeglądu (maks. 90 dni); dziś lista jest pusta (`npm audit
+    --package-lock-only`, 2026-09-27: 0 podatności, 177 pakietów);
+  - akcje GitHub w `ci.yml` przypięte do pełnego SHA (komentarz z numerem
+    wersji obok); Dependabot aktualizuje SHA automatycznie.
+  - po zamknięciu starej ścieżki Worker/D1 (#42): usunięcie `wrangler` z
+    `devDependencies` zmniejszy powierzchnię audytu.
+
 ## Lista odbioru (#31, #41, #16)
 
 | Kryterium | Dowód | Stan |

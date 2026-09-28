@@ -427,8 +427,10 @@ test('audit events are atomic with the write and carry no amounts, references or
   // Identyfikator wpłaty (losowy UUID) usuwamy przed szukaniem ciągów — w zapisie szesnastkowym może zawierać np. „321”.
   const metadata = JSON.stringify(events.map((e) => e.metadata_json)).replaceAll(payment.id, '<payment-id>');
   for (const secret of ['REF-SYNTH-123', '4321', '321', 'h3', 'Powód']) assert.ok(!metadata.includes(secret), secret);
-  assert.deepEqual(events[0].metadata_json, {});
-  assert.deepEqual(events[2].metadata_json, { paymentEntryId: payment.id });
+  // #174: zdarzenia finansowe niosą teraz schoolYearId, żeby eksport roczny
+  // (AUDIT_SCOPE) przypisywał je do roku obiektu, nie do roku daty zapisu.
+  assert.deepEqual(events[0].metadata_json, { schoolYearId: 'y2026' });
+  assert.deepEqual(events[2].metadata_json, { paymentEntryId: payment.id, schoolYearId: 'y2026' });
 
   // Gdy zapis audytu zawiedzie, wpłata nie powstaje (jedna transakcja).
   await backend.db.exec(`
