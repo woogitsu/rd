@@ -275,6 +275,9 @@ export const MESSAGES = Object.freeze({
   invalid_rights_note: "Niepoprawna notatka o prawach.",
   public_copy_requires_license: "Publiczna kopia wymaga zapisanej licencji lub zgody.",
   photos_require_school_wide_role: "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
+  // --- Kopie zapasowe (#90) ---------------------------------------------------------
+  backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
+  restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).

@@ -31,6 +31,8 @@
     "storage:smoke": "node scripts/storage-smoke.js",
     "backup:storage": "node scripts/backup-storage.js",
     "cleanup:document-uploads": "node scripts/document-uploads-cleanup.js",
+    "backup:postgres": "node scripts/backup-postgres.js",
+    "restore:drill": "node scripts/restore-drill.js",
     "dev:events": "vite events",
     "build:events": "vite build events --outDir ../dist/events --base ./ --emptyOutDir",
     "dev:documents": "vite documents",
