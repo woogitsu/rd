@@ -37,6 +37,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 | D-19 | Głosowanie elektroniczne | #13 | otwarta |
 | D-20 | Zgoda na produkcję na Railway | #31, #41, #42 | otwarta |
 | D-21 | Aktualny regulamin i dostęp do dokumentów źródłowych | #13, #15 | otwarta |
+| D-22 | Wersje językowe strony publicznej | #129 | otwarta |
 
 ## Dane osobowe
 
@@ -263,6 +264,17 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: która wersja regulaminu Rady i programu jest obowiązująca oraz kto może mieć do nich dostęp w panelu lub repozytorium?
 - Dlaczego: README zabrania umieszczania tych dokumentów w repo bez decyzji. Dotyczy #13 i #15.
 - Warianty w dokumentacji: nie wskazano.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-22. Wersje językowe strony publicznej
+
+- Pytanie: czy strona publiczna Rady ma mieć wersje językowe poza polską (np. FR/NL/EN dla opiekunów, którzy nie czytają po polsku, pracowników szkoły goszczącej lub sponsorów wydarzeń w Brukseli), w jakich językach, i kto tłumaczy oraz zatwierdza tłumaczenie każdego wpisu?
+- Dlaczego: blokuje #129. Bez tej decyzji nie wdrażamy warstwy i18n ani tłumaczenia treści — polska wersja pozostaje jedyną. Ta pozycja jest wprost proponowana w treści #129 („Nowa decyzja zarządu... Bez niej nie implementować”), nie założeniem zespołu technicznego.
+- Warianty w dokumentacji: propozycja z #129 — tłumaczenie wiązane z konkretną opublikowaną wersją polską (numer wersji), przechodzące to samo „cztery oczy” co treść polska (autor tłumaczenia ≠ zatwierdzający), automatyczne ukrycie tłumaczenia po zmianie wersji polskiej do czasu ponownego zatwierdzenia, polska wersja pozostaje nadrzędna i wiążąca. Bez tłumaczenia maszynowego publikowanego automatycznie.
+- Do ustalenia razem z decyzją: które języki (FR/NL/EN czy inny zestaw), kto ma uprawnienia tłumacza i zatwierdzającego (czy to musi być zarząd, czy może być osoba spoza zarządu ze znajomością języka), czy dotyczy też wydarzeń (tytuł/opis/miejsce) czy tylko aktualności w pierwszym etapie, i czy podpisy licencji/zgód pod zdjęciami (#96, #106) pozostają wyłącznie po polsku.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
