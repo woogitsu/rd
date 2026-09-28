@@ -103,7 +103,7 @@ Wariant zachowawczy do czasu decyzji D-08/D-09 (zarząd jeszcze nie zdecydował)
 
 - Zasada czterech oczu przy zamknięciu (inna osoba niż rozpoczynająca) — założenie, nie przepis regulaminu (D-21).
 - Rozpoczyna i zamyka zarząd; skarbnik tylko potwierdza punkty listy. Komisja Rewizyjna, dyrekcja i admin techniczny nie mają dostępu do czasu D-08/D-09 — z wyjątkiem odczytu archiwum zamkniętego roku przez admina (#195).
-- Wygaszane są przydziały z `school_year_id` zamykanego roku oraz przydziały klas tego roku (#201). Przydziały bez zakresu roku (np. admin techniczny) nie wygasają automatycznie — obsługuje je zarządzanie rolami (0012).
+- Wygaszane są przydziały z `school_year_id` zamykanego roku oraz przydziały klas tego roku (#201). Przydziały bez zakresu roku (np. admin techniczny) nie wygasają automatycznie — obsługuje je zarządzanie rolami (`src/pg/routes/admin.js`, `POST /api/admin/grants/:id/revoke`, `docs/ACCOUNTS.md`; nie ma osobnej migracji dla samego zarządzania rolami).
 - Następny rok musi zaczynać się później niż zamykany i nie może mieć rozpoczętego zamknięcia.
 - Bilans liczony jest z księgi, nie z wpłat; wpłata wpływa na bilans dopiero przez wpis przychodu.
 
