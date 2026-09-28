@@ -103,6 +103,12 @@ test('quorum: two guardians of one child both vote; siblings do not inflate the 
     // Rodzeństwo w tym samym gospodarstwie: dwóch uczniów, ci sami opiekunowie —
     // liczba obecnych osób zależy od liczby opiekunów, nie od liczby dzieci.
     await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('student-1','household-1','Uczeń','Jeden'), ('student-2','household-1','Uczeń','Dwa')");
+    // #205: capacity='guardian' wymaga aktywnej relacji z uczniem zapisanym
+    // w roku zebrania — oboje opiekunów, oboje dzieci.
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e-student-1','student-1','class-a','year'), ('e-student-2','student-2','class-a','year')");
+    await db.query(`INSERT INTO student_guardians (student_id, guardian_id, contact_allowed) VALUES
+      ('student-1','guardian-1',true), ('student-1','guardian-2',true),
+      ('student-2','guardian-1',true), ('student-2','guardian-2',true)`);
     const meeting = await heldMeeting(db, { votingBodySize: 2, quorumMode: 'minimum_count', quorumMinCount: 2 });
     // Dwoje opiekunów jednego (i drugiego) dziecka, oboje z prawem głosu.
     // Brak decyzji zarządu co do regulaminu głosowania (docs/DECISIONS.md nie
@@ -129,6 +135,11 @@ test('quorum: two guardians of one child both vote; siblings do not inflate the 
 test('known gap: the same person recorded as both user_id and guardian_id is counted twice (#211, needs a migration — see PR)', async () => {
   const db = await meetingsDb();
   try {
+    // #205: capacity='guardian' wymaga aktywnej relacji z uczniem zapisanym
+    // w roku zebrania.
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('student-known-gap','household-1','Uczeń','Testowy')");
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e-student-known-gap','student-known-gap','class-a','year')");
+    await db.query("INSERT INTO student_guardians (student_id, guardian_id, contact_allowed) VALUES ('student-known-gap','guardian-1',true)");
     const meeting = await heldMeeting(db, { votingBodySize: 2, quorumMode: 'minimum_count', quorumMinCount: 2 });
     // 'board' jest zarówno kontem (user_id), jak i — z założenia w tym teście —
     // tą samą fizyczną osobą co 'guardian-1' (np. członek zarządu i opiekun

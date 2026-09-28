@@ -172,3 +172,18 @@ test("JSON z polami rows i kwotą w centach", () => {
   assert.deepEqual(parsed.errors, []);
   assert.equal(buildHouseholds(parsed.rows).households[0].paymentEntry, "none");
 });
+
+test("#173: kolumna centów odrzuca 1e3, 0x10 i 25.0 (bez separatorów)", () => {
+  for (const value of ["1e3", "0x10", "25.0", "-5", "12,50"]) {
+    const parsed = parseInputText(JSON.stringify({ rows: [
+      { householdId: "H-1", firstName: "Ala", lastName: "Testowa", className: "3a", recordedNetCents: value },
+    ] }), "dane.json");
+    assert.equal(parsed.errors.length, 1, `wartość: ${value}`);
+    assert.match(parsed.errors[0].message, /centach/);
+  }
+  const ok = parseInputText(JSON.stringify({ rows: [
+    { householdId: "H-1", firstName: "Ala", lastName: "Testowa", className: "3a", recordedNetCents: "2500" },
+  ] }), "dane.json");
+  assert.deepEqual(ok.errors, []);
+  assert.equal(ok.rows[0].recordedNetCents, 2500);
+});
