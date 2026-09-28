@@ -25,9 +25,13 @@ ujednolica, tylko ujednolica trzy moduły czytające `student_guardians`.
 
 `src/pg/routes/families.js` (karta gospodarstwa), `src/pg/routes/email.js`
 (migawka adresatów kampanii) i `src/pg/export.js` (lista klasy dla przedstawiciela)
+oraz worker wysyłki (`src/email/worker.js`, kontrola zgody tuż przed wysyłką)
 czytają wyłącznie z tego widoku/funkcji — żaden z nich nie powtarza warunku
 `starts_on`/`ends_on` samodzielnie (pilnuje tego test statyczny w
-`tests/pg-routes-wiring.test.js`). Wcześniej te trzy moduły liczyły "aktualność"
+`tests/pg-routes-wiring.test.js`, obejmuje `src/pg` i `src/email`). W migawce
+kampanii priorytet „kontakt główny” liczy się wyłącznie z relacji bieżącej ze
+zgodą (`contact_allowed`): wygasła, przyszła lub pozbawiona zgody relacja
+`is_primary_contact` nie podnosi priorytetu opiekuna (założenie do D-17). Wcześniej te trzy moduły liczyły "aktualność"
 inaczej (patrz issue #157): `email.js`/`export.js` już liczyły `ends_on` włącznie
 (zgodnie z tą migracją — brak zmiany zachowania), `families.js` liczył `ends_on`
 wyłącznie. Ujednolicenie do wariantu włącznego (zgodnego z

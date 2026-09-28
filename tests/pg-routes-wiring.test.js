@@ -36,7 +36,7 @@ test('events and meetings are served by the PostgreSQL router with server-side s
 // #157: student_guardians_current (postgres/migrations/0035) jest jedynym
 // dozwolonym miejscem sprawdzania, czy relacja opiekun-uczeń jest "aktualna".
 // Ponowne wpisanie warunku starts_on/ends_on gdziekolwiek w src/pg psuje ten test.
-test('src/pg/** nie powtarza warunku aktualności student_guardians poza widokiem', () => {
+test('src/pg/** i src/email/** nie powtarzają warunku aktualności student_guardians poza widokiem', () => {
   const srcDir = fileURLToPath(new URL('../src/pg', import.meta.url));
   const offenders = [];
   const walk = (dir) => {
@@ -57,5 +57,7 @@ test('src/pg/** nie powtarza warunku aktualności student_guardians poza widokie
     }
   };
   walk(srcDir);
+  // Worker e-mail (src/email) sprawdza relację przed wysyłką — ta sama definicja.
+  walk(fileURLToPath(new URL('../src/email', import.meta.url)));
   assert.deepEqual(offenders, []);
 });
