@@ -764,6 +764,13 @@ export const ROUTE_MATRIX = Object.freeze([
   photoAction('news.photoConsent', 'consents', PHOTO_REGISTER, 201, { subjectNo: 1, subjectKind: 'adult', consentDocumentRef: 'zgoda-syntetyczna-1' }),
   photoAction('news.photoVerify', 'verify', PHOTO_VERIFY, 200, {}),
   photoAction('news.photoRevoke', 'revoke', PHOTO_VERIFY, 200, { reason: 'Cofnięcie zgody (syntetyczne)' }),
+  {
+    id: 'news.consentWithdraw', module: 'news', method: 'POST',
+    path: '/api/news-photo-consents/:consentDocumentRef/withdraw', targets: ['-'],
+    allow: PHOTO_VERIFY, mfa: false, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'consent', stage: 'pending' }, visible: () => ['W1'],
+    build: ({ obj }) => ({ path: `/api/news-photo-consents/${obj.consentDocumentRef}/withdraw`, body: {} }),
+  },
 
   // ---------- admin (#3, #4, #9) ----------
   // Wyłącznie admin z MFA, także odczyt. Moduł obejmuje konta całej szkoły, więc odpowiedź 2xx

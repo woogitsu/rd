@@ -26,6 +26,9 @@ export const NEWS_POLICY = Object.freeze({
 export const PHOTO_SOURCES = Object.freeze([
   'own_work', 'school_provided', 'parent_provided', 'licensed_third_party', 'public_website_copy',
 ]);
+// Zakres zgody na wizerunek (#106). Lista zamknięta — nowa wartość wymaga
+// migracji (CHECK w postgres/migrations/0083_news_photo_consent_scope.sql).
+export const CONSENT_SCOPES = Object.freeze(['rada_website', 'print', 'social_media']);
 // Publiczna odpowiedź może być buforowana najwyżej tyle sekund.
 export const PUBLIC_CACHE_SECONDS = 60;
 
@@ -148,6 +151,31 @@ function sameContent(row, content) {
     && JSON.stringify(row.photo_ids ?? []) === JSON.stringify(content.photoIds);
 }
 
+// Zakres domyślny: brak wskazania scope przez wywołującego oznacza dziś taki
+// sam zasięg publikacji jak przed #106 (strona Rady). Zawężenie albo termin
+// ważności trzeba podać jawnie. Istniejące (sprzed migracji 0083) wiersze
+// dostają scope='{}' wprost w migracji — nie tutaj — więc wymagają ponownego
+// potwierdzenia zakresu zanim zdjęcie wróci na stronę publiczną.
+function parseConsentScope(value) {
+  if (value === undefined) return [...CONSENT_SCOPES.slice(0, 1)];
+  if (!Array.isArray(value) || value.length === 0 || value.length > CONSENT_SCOPES.length) {
+    throw new NewsError('invalid_consent_scope');
+  }
+  if (!value.every((entry) => CONSENT_SCOPES.includes(entry))) throw new NewsError('invalid_consent_scope');
+  if (new Set(value).size !== value.length) throw new NewsError('invalid_consent_scope');
+  return [...value];
+}
+
+function parseConsentValidUntil(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)
+    || Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+    || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) {
+    throw new NewsError('invalid_consent_valid_until');
+  }
+  return value;
+}
+
 function parseConsent(input, index) {
   if (!input || typeof input !== 'object') throw new NewsError('invalid_consent');
   const subjectNo = input.subjectNo ?? index + 1;
@@ -157,6 +185,8 @@ function parseConsent(input, index) {
     subjectNo,
     subjectKind: input.subjectKind,
     consentDocumentRef: reference(input.consentDocumentRef, 'invalid_consent', { required: true }),
+    scope: parseConsentScope(input.scope),
+    validUntil: parseConsentValidUntil(input.validUntil),
   };
 }
 
@@ -271,6 +301,7 @@ function internalPhoto(row, consents = null) {
     photo.consents = consents.map((c) => ({
       subjectNo: c.subject_no, subjectKind: c.subject_kind, consentDocumentRef: c.consent_document_ref,
       recordedBy: c.recorded_by, recordedAt: iso(c.recorded_at),
+      scope: c.scope ?? [], validUntil: c.valid_until ?? null,
     }));
   }
   return photo;
@@ -590,12 +621,14 @@ export async function listPublic(db, input = {}) {
 async function insertConsents(tx, actor, photoId, consents) {
   for (const consent of consents) {
     await tx.query(
-      `INSERT INTO news_photo_consents (photo_id, subject_no, subject_kind, consent_document_ref, recorded_by)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [photoId, consent.subjectNo, consent.subjectKind, consent.consentDocumentRef, actor.userId],
+      `INSERT INTO news_photo_consents
+         (photo_id, subject_no, subject_kind, consent_document_ref, recorded_by, scope, valid_until)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::date)`,
+      [photoId, consent.subjectNo, consent.subjectKind, consent.consentDocumentRef, actor.userId,
+        consent.scope, consent.validUntil],
     );
     await audit(tx, actor.userId, 'news_photo.consent_recorded', 'news_photo', photoId,
-      { subjectNo: consent.subjectNo, subjectKind: consent.subjectKind });
+      { subjectNo: consent.subjectNo, subjectKind: consent.subjectKind, scope: consent.scope });
   }
 }
 
@@ -659,14 +692,17 @@ export async function addConsent(db, actor, input) {
   return run(db, async (tx) => {
     const row = await lockPhoto(tx, input.photoId);
     const { rows: existing } = await tx.query(
-      'SELECT subject_kind, consent_document_ref FROM news_photo_consents WHERE photo_id = $1 AND subject_no = $2',
+      `SELECT subject_kind, consent_document_ref, scope, to_char(valid_until, 'YYYY-MM-DD') AS valid_until
+         FROM news_photo_consents WHERE photo_id = $1 AND subject_no = $2`,
       [row.id, consent.subjectNo],
     );
     if (existing[0]) {
       // Podwójne kliknięcie: ten sam wpis to powtórka, inny — konflikt.
-      if (existing[0].subject_kind === consent.subjectKind && existing[0].consent_document_ref === consent.consentDocumentRef) {
-        return { replayed: true };
-      }
+      const same = existing[0].subject_kind === consent.subjectKind
+        && existing[0].consent_document_ref === consent.consentDocumentRef
+        && JSON.stringify([...existing[0].scope].sort()) === JSON.stringify([...consent.scope].sort())
+        && (existing[0].valid_until ?? null) === (consent.validUntil ?? null);
+      if (same) return { replayed: true };
       throw new NewsError('consent_conflict', 409);
     }
     if (row.rights_status !== 'pending') throw new NewsError('consents_locked', 409);
@@ -712,6 +748,33 @@ export async function revokePhoto(db, actor, input) {
   });
 }
 
+// Wycofanie jednej zgody (po odwołaniu do dokumentu zgody): ukrywa z widoku
+// publicznego każde zdjęcie, które ma choć jeden wiersz zgody z tym
+// odwołaniem — obejmuje to również rodzeństwo, jeśli jedna zgoda obejmowała
+// więcej niż jedną osobę na tym samym zdjęciu. Dziennik bez treści zgody i
+// bez nazwisk — tylko liczba dotkniętych zdjęć (#106).
+export async function withdrawConsent(db, actor, input) {
+  requireActor(actor);
+  if (!schoolWide(actor, NEWS_POLICY.photoVerify)) throw new NewsError('forbidden', 403);
+  const consentDocumentRef = reference(input?.consentDocumentRef, 'invalid_consent', { required: true });
+  return run(db, async (tx) => {
+    const { rows: affected } = await tx.query(
+      'SELECT DISTINCT photo_id FROM news_photo_consents WHERE consent_document_ref = $1',
+      [consentDocumentRef],
+    );
+    if (affected.length === 0) throw new NewsError('consent_not_found', 404);
+    const { rowCount } = await tx.query(
+      `INSERT INTO news_photo_consent_withdrawals (consent_document_ref, recorded_by)
+       VALUES ($1, $2) ON CONFLICT (consent_document_ref) DO NOTHING`,
+      [consentDocumentRef, actor.userId],
+    );
+    if (rowCount === 0) return { replayed: true, affectedPhotos: affected.length };
+    await audit(tx, actor.userId, 'image_consent.withdrawn', 'news_photo_consent', consentDocumentRef,
+      { affectedPhotos: affected.length });
+    return { replayed: false, affectedPhotos: affected.length };
+  });
+}
+
 export async function getPhoto(db, actor, input) {
   requireActor(actor);
   if (!canSeePhotos(actor)) throw new NewsError('forbidden', 403);
@@ -719,7 +782,9 @@ export async function getPhoto(db, actor, input) {
   const { rows } = await db.query(`SELECT ${PHOTO_COLUMNS} FROM news_photos WHERE id = $1`, [input.photoId]);
   if (!rows[0]) throw new NewsError('photo_not_found', 404);
   const { rows: consents } = await db.query(
-    'SELECT * FROM news_photo_consents WHERE photo_id = $1 ORDER BY subject_no', [input.photoId],
+    `SELECT subject_no, subject_kind, consent_document_ref, recorded_by, recorded_at, scope,
+       to_char(valid_until, 'YYYY-MM-DD') AS valid_until
+       FROM news_photo_consents WHERE photo_id = $1 ORDER BY subject_no`, [input.photoId],
   );
   return { photo: internalPhoto(rows[0], consents) };
 }
@@ -796,9 +861,18 @@ export async function handle(request, env, url, json) {
   const isPublic = path === '/api/public/news';
   const isPosts = path === '/api/news' || path.startsWith('/api/news/');
   const isPhotos = path === '/api/news-photos' || path.startsWith('/api/news-photos/');
-  if (!isPublic && !isPosts && !isPhotos) return null;
+  const consentWithdraw = path.match(/^\/api\/news-photo-consents\/([^/]+)\/withdraw$/);
+  if (!isPublic && !isPosts && !isPhotos && !consentWithdraw) return null;
   try {
     if (!env?.db) throw new NewsError('service_unavailable', 503);
+    if (consentWithdraw) {
+      if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+      if (!isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
+      const actor = await loadActor(request, env);
+      const result = await withdrawConsent(env.db, actor,
+        { consentDocumentRef: decodeId(consentWithdraw[1], 'invalid_consent') });
+      return json({ replayed: result.replayed, affectedPhotos: result.affectedPhotos }, 200, { 'Cache-Control': 'no-store' });
+    }
     if (isPublic) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       const limitText = url.searchParams.get('limit');
@@ -865,7 +939,8 @@ export async function handle(request, env, url, json) {
     }
     const photoId = decodeId(action[1], 'invalid_photo_id');
     if (action[2] === 'consents') {
-      const result = await addConsent(env.db, actor, { ...pick(data, ['subjectNo', 'subjectKind', 'consentDocumentRef']), photoId });
+      const result = await addConsent(env.db, actor,
+        { ...pick(data, ['subjectNo', 'subjectKind', 'consentDocumentRef', 'scope', 'validUntil']), photoId });
       return json({ replayed: result.replayed }, result.replayed ? 200 : 201, noStore);
     }
     const result = action[2] === 'verify'

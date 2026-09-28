@@ -267,6 +267,9 @@ export const MESSAGES = Object.freeze({
   invalid_rights_note: "Niepoprawna notatka o prawach.",
   public_copy_requires_license: "Publiczna kopia wymaga zapisanej licencji lub zgody.",
   photos_require_school_wide_role: "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
+  invalid_consent_scope: "Wybierz zakres zgody z listy (strona Rady, druk, media społecznościowe).",
+  invalid_consent_valid_until: "Niepoprawna data ważności zgody (RRRR-MM-DD).",
+  consent_not_found: "Nie znaleziono zgody o tym odwołaniu.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).
