@@ -87,7 +87,13 @@ td.empty { color: var(--muted); text-align: center; padding: 1.4rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 640px) {
-  .site-header { flex-direction: column; align-items: flex-start; padding: .8rem 16px; gap: .6rem; }
+  /* #182: align-items:flex-start zostawiał <nav> (i #shell-nav) sam sobie —
+     nierozciągnięty do szerokości nagłówka nav nie ma się do czego skurczyć,
+     8–9 linków renderuje się w jednej linii szerszej niż ekran (poziomy
+     scroll całej strony). align-items:stretch (wartość domyślna) rozciąga
+     nav na pełną szerokość, więc przewijana lista linków (shared/shell.css)
+     mieści się w ekranie. */
+  .site-header { flex-direction: column; align-items: stretch; padding: .8rem 16px; gap: .6rem; }
   main { width: auto; padding: 1.5rem 16px 4rem; }
 }
 

@@ -17,8 +17,12 @@ import {
   maskEmail,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { initialSchoolYearId } from "../shared/school-year.js";
+
+mountShell();
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
