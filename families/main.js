@@ -28,9 +28,12 @@ const enrollmentDialog = byId("enrollment-dialog");
 // Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
 const api = (url, options = {}) => apiRequest(url, { ...options, messages: ERROR_MESSAGES });
 
+// #112: błąd krytyczny (np. brak uprawnień) musi być ogłoszony asertywnie
+// (role="alert"), nie tylko "status" jak zwykły komunikat informacyjny.
 function showMessage(text, isError = false) {
   message.textContent = text;
   message.classList.toggle("error", isError);
+  message.setAttribute("role", isError ? "alert" : "status");
 }
 
 function cell(content, className = "") {

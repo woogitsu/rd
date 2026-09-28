@@ -43,39 +43,39 @@
         <div class="page-heading"><div><p class="eyebrow">Karta gospodarstwa</p><h1 id="household-title">Gospodarstwo</h1><p>Rodzeństwo spoza Twojego zakresu klas nie jest pokazywane.</p></div></div>
         <section class="card">
           <h2>Uczniowie</h2>
-          <div class="table-wrap"><table><thead><tr><th>Uczeń</th><th>Klasa</th><th>To gospodarstwo</th><th>Inne gospodarstwa</th></tr></thead><tbody id="household-students"></tbody></table></div>
+          <div class="table-wrap"><table><caption class="sr-only">Uczniowie gospodarstwa</caption><thead><tr><th scope="col">Uczeń</th><th scope="col">Klasa</th><th scope="col">To gospodarstwo</th><th scope="col">Inne gospodarstwa</th></tr></thead><tbody id="household-students"></tbody></table></div>
         </section>
         <section class="card">
           <h2>Opiekunowie</h2>
-          <div class="table-wrap"><table><thead><tr><th>Opiekun</th><th>E-mail</th><th>Zgoda na kontakt</th><th><span class="sr-only">Akcje</span></th></tr></thead><tbody id="household-guardians"></tbody></table></div>
+          <div class="table-wrap"><table><caption class="sr-only">Opiekunowie gospodarstwa</caption><thead><tr><th scope="col">Opiekun</th><th scope="col">E-mail</th><th scope="col">Zgoda na kontakt</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="household-guardians"></tbody></table></div>
           <p class="empty" id="guardians-empty" hidden>Brak opiekunów w tym gospodarstwie.</p>
         </section>
         <section class="card" id="payments-card" hidden>
           <h2>Wpłaty dobrowolne (netto)</h2>
           <p class="note">Suma zarejestrowanych wpłat pomniejszona o korekty. Składka jest dobrowolna, a ewidencja może być nieaktualna.</p>
-          <div class="table-wrap"><table><thead><tr><th>Rok szkolny</th><th class="amount">Liczba wpłat</th><th class="amount">Netto</th></tr></thead><tbody id="payments-body"></tbody></table></div>
+          <div class="table-wrap"><table><caption class="sr-only">Wpłaty dobrowolne netto</caption><thead><tr><th scope="col">Rok szkolny</th><th scope="col" class="amount">Liczba wpłat</th><th scope="col" class="amount">Netto</th></tr></thead><tbody id="payments-body"></tbody></table></div>
           <p class="empty" id="payments-empty" hidden>Brak zarejestrowanych wpłat.</p>
         </section>
       </section>
     </main>
 
-    <dialog id="contact-dialog"><form method="dialog">
-      <div class="dialog-heading"><div><p class="eyebrow">Zmiana zapisywana w historii</p><h2>Kontakt opiekuna</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+    <dialog id="contact-dialog" aria-labelledby="contact-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Zmiana zapisywana w historii</p><h2 id="contact-dialog-title">Kontakt opiekuna</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
       <input type="hidden" name="guardianId" /><p class="context"></p>
       <label>E-mail <input name="email" type="email" maxlength="254" autocomplete="off" /></label>
       <label class="checkbox"><input name="contactAllowed" type="checkbox" /> Zgoda na kontakt</label>
       <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
-      <div class="form-error" role="alert"></div>
+      <div class="form-error" id="contact-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz</button></div>
     </form></dialog>
 
-    <dialog id="enrollment-dialog"><form method="dialog">
-      <div class="dialog-heading"><div><p class="eyebrow">Zmiana zapisywana w historii</p><h2>Zmiana klasy</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+    <dialog id="enrollment-dialog" aria-labelledby="enrollment-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Zmiana zapisywana w historii</p><h2 id="enrollment-dialog-title">Zmiana klasy</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
       <input type="hidden" name="studentId" /><input type="hidden" name="schoolYearId" /><p class="context"></p>
       <label>Nowa klasa <select name="classId" required></select></label>
       <label>Data zmiany <input name="effectiveOn" type="date" required /></label>
       <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
-      <div class="form-error" role="alert"></div>
+      <div class="form-error" id="enrollment-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz</button></div>
     </form></dialog>
     <script type="module" src="/main.js"></script>
