@@ -18,7 +18,7 @@
 
 import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { toSafeInteger } from './payments.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
@@ -1106,7 +1106,12 @@ async function auditReport(request, env, url, json) {
   if (!context) throw new RequestError('unauthenticated', 401);
   if (!isAuthorizedScoped(context, { roles: REPORT_ROLES, schoolYearId, requireMfa: true })) {
     const via = await archiveReadVia(env.db, context, schoolYearId, ARCHIVE_REPORT_ROLES);
-    if (!via) throw new RequestError('forbidden', 403);
+    if (!via) {
+      // #161: sam brak MFA (rola audit/board/treasurer i rok pasują) zwraca
+      // mfa_required/mfa_enrollment_required zamiast ogólnego forbidden.
+      const code = await mfaAwareForbiddenCode(context, { roles: REPORT_ROLES, schoolYearId, requireMfa: true }, env);
+      throw new RequestError(code, 403);
+    }
     await recordArchiveRead(env.db, {
       actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route: 'reports.audit',
     });

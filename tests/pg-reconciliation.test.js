@@ -372,9 +372,15 @@ test('audit report totals match the ledger and flag large expenses without an ad
     for (const cookie of [cookies.board, cookies.treasurer]) {
       assert.equal((await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie })).status, 200);
     }
-    for (const cookie of [cookies.rep, cookies.auditNoMfa, cookies.admin]) {
-      assert.equal((await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie })).status, 403);
+    for (const cookie of [cookies.rep, cookies.admin]) {
+      const response = await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie });
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), { error: 'forbidden' }, 'rola spoza audit/board/treasurer');
     }
+    // #161: rola i rok pasują, jedyną przeszkodą jest brak zapisanego czynnika.
+    const auditNoMfaResponse = await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie: cookies.auditNoMfa });
+    assert.equal(auditNoMfaResponse.status, 403);
+    assert.deepEqual(await auditNoMfaResponse.json(), { error: 'mfa_enrollment_required' });
     assert.equal((await call(`/api/reports/audit?schoolYearId=${YEAR}`)).status, 401);
     const { rows } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'report.audit.generated'");
     assert.equal(rows[0].n, 3);

@@ -11,7 +11,7 @@
 // oraz zdarzenie audytu `export.created` w tej samej transakcji.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorized, isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorized, isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import {
@@ -73,7 +73,13 @@ async function authorize(request, env, requirement, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return { response: json({ error: 'unauthenticated' }, 401) };
   // Eksport roczny (bez classId) wymaga przydziału bez class_id; lista klasy — przydziału tej klasy.
-  if (!isAuthorizedScoped(context, requirement)) return { response: json({ error: 'forbidden' }, 403) };
+  if (!isAuthorizedScoped(context, requirement)) {
+    // #161: sam brak MFA (rola i zakres klasy pasują) zwraca mfa_required/
+    // mfa_enrollment_required zamiast ogólnego forbidden, by ekran logowania
+    // mógł poprowadzić przedstawiciela do zapisania czynnika.
+    const code = await mfaAwareForbiddenCode(context, requirement, env);
+    return { response: json({ error: code }, 403) };
+  }
   return { context };
 }
 
