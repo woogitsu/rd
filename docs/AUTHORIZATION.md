@@ -152,6 +152,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `PATCH /api/guardians/:guardianId/students/:studentId` | jak wyżej; zakres klasowy — tylko aktywna relacja z uczniem własnej klasy | nie | 403 / 404 | zgoda na kontakt w relacji (#190); relacja poza zakresem lub nieistniejąca: 404; zakończona: 409 |
 | `POST /api/students/:studentId/enrollments` | jak wyżej | nie | 403 / 404 | macierz: przypisanie do tej samej klasy (200) |
 | `GET /api/print/cards?schoolYearId=:year&classId=:class` | admin, zarząd, skarbnik — rok 1 (z klasą lub bez); przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 400 / 403 | przydział klasowy bez classId: 400; kwoty wpłat tylko rola finansowa z MFA |
+| `GET /api/representative/overview?schoolYearId=:year` | wyłącznie przedstawiciel (bez decyzji D-08: bez sekcji wpłat) | nie | 400 / 403 | konto bez żadnego przydziału `representative`: 403; przydział innego roku: `classes: []` (#118) |
 | `POST /api/mfa/enroll` | każdy zalogowany (własny czynnik) | nie | — | |
 | `POST /api/mfa/confirm` | każdy zalogowany | nie | — | rotuje sesję |
 | `POST /api/mfa/verify` | każdy zalogowany z potwierdzonym czynnikiem | nie | — | |
