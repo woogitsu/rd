@@ -54,7 +54,9 @@
     "dev:email": "vite email",
     "build:email": "vite build email --outDir ../dist/email --base ./ --emptyOutDir",
     "dev:reconciliation": "vite reconciliation",
-    "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir"
+    "build:reconciliation": "vite build reconciliation --outDir ../dist/reconciliation --base ./ --emptyOutDir",
+    "pretest:e2e": "npm run build",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "fflate": "0.8.3",
@@ -65,6 +67,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
+    "@playwright/test": "1.56.1",
     "vite": "^7.1.0",
     "wrangler": "^4.40.0"
   }
