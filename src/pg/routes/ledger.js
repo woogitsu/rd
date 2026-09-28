@@ -712,6 +712,7 @@ async function createEntry(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.entry.created', entityType: 'ledger_entry', entityId: entryId,
+        metadata: { schoolYearId: input.schoolYearId },
       });
       return { entry: { id: entryId, ...input } };
     });
@@ -785,7 +786,7 @@ async function createCorrection(request, env, ledgerEntryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.correction.created', entityType: 'ledger_correction',
-        entityId: correctionId, metadata: { ledgerEntryId },
+        entityId: correctionId, metadata: { ledgerEntryId, schoolYearId: entry.school_year_id },
       });
       return { correction: { id: correctionId, ledgerEntryId, amountCents: input.amountCents, reason: input.reason } };
     });
@@ -879,7 +880,7 @@ async function createReplacement(request, env, ledgerEntryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.entry.replaced', entityType: 'ledger_entry', entityId: entryId,
-        metadata: { replacesEntryId: ledgerEntryId, correctionId },
+        metadata: { replacesEntryId: ledgerEntryId, correctionId, schoolYearId: input.schoolYearId },
       });
       return { entry: { id: entryId, replacesEntryId: ledgerEntryId, ...input } };
     });
@@ -944,7 +945,7 @@ async function exportCsv(request, env, url) {
     // Dziennik: kto i kiedy wyeksportował który rok; bez kwot i treści wpisów.
     await insertAuditEvent(tx, {
       actorId, action: 'ledger.exported', entityType: 'school_year', entityId: schoolYearId,
-      metadata: { format: 'csv', rowCount: result.rows.length },
+      metadata: { format: 'csv', rowCount: result.rows.length, schoolYearId },
     });
     return result.rows;
   });
