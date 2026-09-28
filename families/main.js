@@ -2,13 +2,18 @@ import {
   buildContactPatch,
   canEditFamilies,
   classHref,
-  errorMessage,
+  ERROR_MESSAGES,
   formatCents,
   fullName,
   groupClassesByYear,
   householdHref,
   parseRoute,
 } from "./core.js";
+import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const byId = (id) => document.getElementById(id);
 const state = { classes: null, canEdit: false, currentClass: null, currentHousehold: null };
@@ -18,18 +23,8 @@ const breadcrumbs = byId("breadcrumbs");
 const contactDialog = byId("contact-dialog");
 const enrollmentDialog = byId("enrollment-dialog");
 
-class ApiError extends Error {}
-
-async function api(url, options = {}) {
-  const response = await fetch(url, {
-    credentials: "same-origin",
-    ...options,
-    headers: { "Content-Type": "application/json", ...options.headers },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ApiError(errorMessage(data.error, response.status));
-  return data;
-}
+// Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
+const api = (url, options = {}) => apiRequest(url, { ...options, messages: ERROR_MESSAGES });
 
 function showMessage(text, isError = false) {
   message.textContent = text;
