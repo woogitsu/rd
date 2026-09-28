@@ -32,6 +32,7 @@ const MESSAGES = {
   password_common: "To hasło jest zbyt popularne lub przewidywalne. Wybierz inne, np. kilka niezwiązanych słów.",
   password_contains_email: "Hasło nie może zawierać adresu e-mail.",
   password_unchanged: "Nowe hasło musi być inne niż obecne.",
+  password_mismatch: "Hasła nie są takie same.",
   invalid_display_name: "Nazwa wyświetlana może mieć najwyżej 100 znaków.",
   invalid_code: "Kod jest nieprawidłowy. Sprawdź aplikację i wpisz aktualny kod.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
@@ -115,6 +116,20 @@ export function nextView(state) {
   if (state.mfaEnrolled) return "mfa";
   if (state.mfaRequiredByRole || state.mfaRequired) return "enroll";
   return state.mustChangePassword ? "change" : "start";
+}
+
+// #161: dowolne zalogowane konto bez potwierdzonego czynnika może dobrowolnie
+// włączyć weryfikację dwuetapową z widoku startowego, niezależnie od roli.
+export function canOfferVoluntaryMfaEnrollment(state) {
+  return Boolean(state && state.authenticated !== false && !state.mfaEnrolled);
+}
+
+// Treść widoku konfiguracji: inna, gdy rola jej wymaga (nie można pominąć),
+// niż gdy konto włącza ją z własnej inicjatywy (można wrócić do paneli).
+export function enrollIntroText(forced) {
+  return forced
+    ? "Twoja rola wymaga drugiego składnika logowania. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP)."
+    : "Dodaj drugi składnik logowania dla własnego bezpieczeństwa. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP).";
 }
 
 // Klucz ręczny w grupach po 4 znaki (łatwiej przepisać do aplikacji).

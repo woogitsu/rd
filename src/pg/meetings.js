@@ -266,6 +266,10 @@ function databaseError(error) {
   const message = String(error?.message ?? '');
   if (DATABASE_CONFLICTS.has(message)) return new MeetingError(message, 409);
   if (message === 'meeting_not_found') return new MeetingError('meeting_not_found', 404);
+  // #205: identyfikator (guardianId/userId spoza klasy/roku zebrania,
+  // amendsResolutionId spoza roku/klasy) — sam kod dla spoza zakresu i
+  // nieistniejącego, żeby odpowiedź nie była wyrocznią istnienia.
+  if (message === 'invalid_reference') return new MeetingError('invalid_reference');
   if (error?.code === '23505') {
     if (error.constraint === 'resolutions_number_per_year_idx') {
       return new MeetingError('resolution_number_taken', 409);
@@ -969,6 +973,8 @@ async function loadActor(request, env) {
   };
 }
 
+// { name: 'method', allowed } niesie dozwolone metody dla tej ścieżki (#156,
+// RFC 9110 §15.5.6 wymaga nagłówka Allow przy 405) — handle() go odczytuje.
 function route(method, pathname) {
   const parts = pathname.split('/').filter(Boolean).slice(2).map(decode);
   const [a, b, c, d, e] = parts;
@@ -976,36 +982,50 @@ function route(method, pathname) {
   if (n === 0) {
     if (method === 'GET') return { name: 'list' };
     if (method === 'POST') return { name: 'create', create: true };
-    return { name: 'method' };
+    return { name: 'method', allowed: ['GET', 'POST'] };
   }
-  if (n === 1 && a === 'shared-minutes') return method === 'GET' ? { name: 'shared' } : { name: 'method' };
-  if (n === 1 && a === 'public-minutes') return method === 'GET' ? { name: 'public' } : { name: 'method' };
+  if (n === 1 && a === 'shared-minutes') {
+    return method === 'GET' ? { name: 'shared' } : { name: 'method', allowed: ['GET'] };
+  }
+  if (n === 1 && a === 'public-minutes') {
+    return method === 'GET' ? { name: 'public' } : { name: 'method', allowed: ['GET'] };
+  }
   if (n === 2 && a === 'resolutions' && b === 'lookup') {
-    return method === 'GET' ? { name: 'lookup' } : { name: 'method' };
+    return method === 'GET' ? { name: 'lookup' } : { name: 'method', allowed: ['GET'] };
   }
   const meetingId = a;
   if (n === 1) {
     if (method === 'GET') return { name: 'get', meetingId };
     if (method === 'PATCH') return { name: 'update', meetingId };
-    return { name: 'method' };
+    return { name: 'method', allowed: ['GET', 'PATCH'] };
   }
   const post = method === 'POST';
-  if (n === 2 && b === 'agenda-items') return post ? { name: 'agenda', meetingId, create: true } : { name: 'method' };
-  if (n === 2 && b === 'attendance') return post ? { name: 'attendance', meetingId } : { name: 'method' };
-  if (n === 2 && b === 'quorum-checks') return post ? { name: 'quorum', meetingId, create: true } : { name: 'method' };
-  if (n === 2 && b === 'minutes') return post ? { name: 'minutes', meetingId, create: true } : { name: 'method' };
+  if (n === 2 && b === 'agenda-items') {
+    return post ? { name: 'agenda', meetingId, create: true } : { name: 'method', allowed: ['POST'] };
+  }
+  if (n === 2 && b === 'attendance') {
+    return post ? { name: 'attendance', meetingId } : { name: 'method', allowed: ['POST'] };
+  }
+  if (n === 2 && b === 'quorum-checks') {
+    return post ? { name: 'quorum', meetingId, create: true } : { name: 'method', allowed: ['POST'] };
+  }
+  if (n === 2 && b === 'minutes') {
+    return post ? { name: 'minutes', meetingId, create: true } : { name: 'method', allowed: ['POST'] };
+  }
   if (n === 4 && b === 'minutes' && d === 'approval') {
-    return post ? { name: 'approve', meetingId, minutesId: c } : { name: 'method' };
+    return post ? { name: 'approve', meetingId, minutesId: c } : { name: 'method', allowed: ['POST'] };
   }
   if (n === 4 && b === 'minutes' && d === 'visibility') {
-    return post ? { name: 'visibility', meetingId, minutesId: c, create: true } : { name: 'method' };
+    return post ? { name: 'visibility', meetingId, minutesId: c, create: true } : { name: 'method', allowed: ['POST'] };
   }
-  if (n === 2 && b === 'resolutions') return post ? { name: 'resolution', meetingId, create: true } : { name: 'method' };
+  if (n === 2 && b === 'resolutions') {
+    return post ? { name: 'resolution', meetingId, create: true } : { name: 'method', allowed: ['POST'] };
+  }
   if (n === 3 && b === 'resolutions') {
-    return method === 'PATCH' ? { name: 'resolutionUpdate', meetingId, resolutionId: c } : { name: 'method' };
+    return method === 'PATCH' ? { name: 'resolutionUpdate', meetingId, resolutionId: c } : { name: 'method', allowed: ['PATCH'] };
   }
   if (n === 4 && b === 'resolutions' && d === 'corrections' && e === undefined) {
-    return post ? { name: 'resolutionCorrect', meetingId, resolutionId: c, create: true } : { name: 'method' };
+    return post ? { name: 'resolutionCorrect', meetingId, resolutionId: c, create: true } : { name: 'method', allowed: ['POST'] };
   }
   return null;
 }
@@ -1017,7 +1037,7 @@ export async function handle(request, env, url, json) {
   try {
     const target = route(request.method, url.pathname);
     if (!target) return json({ error: 'not_found' }, 404);
-    if (target.name === 'method') return json({ error: 'method_not_allowed' }, 405);
+    if (target.name === 'method') return json({ error: 'method_not_allowed' }, 405, { Allow: target.allowed.join(', ') });
     const mutation = request.method !== 'GET' && request.method !== 'HEAD';
     if (mutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     const db = env?.db;

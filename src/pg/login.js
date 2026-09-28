@@ -320,7 +320,7 @@ function cleanDisplayName(value, email) {
 // Tworzy konto (jeśli nie istnieje) z adresem z zaproszenia, ustawia hasło,
 // nadaje rolę i tworzy sesję. Gdy konto z tym adresem ma już hasło, pole
 // `password` musi być jego obecnym hasłem (zaproszenie nie może przejąć konta).
-export async function acceptInvitationWithPassword(env, { token, password, displayName, clientIp }) {
+export async function acceptInvitationWithPassword(env, { token, password, passwordRepeat, displayName, clientIp }) {
   const ipScopes = loginScopes({ ip: clientIp });
   const invalid = (reason) => failAttempt(env, {
     scopes: ipScopes, action: 'auth.invitation_accept_failed', reason, code: 'invalid_invitation', status: 400,
@@ -353,6 +353,10 @@ export async function acceptInvitationWithPassword(env, { token, password, displ
       }
     });
   } else {
+    // #164: nowe konto nie powstaje bez dwukrotnie zgodnego hasła — literówka
+    // wpisana raz, na telefonie, kończyła się zablokowanym kontem i resetem
+    // przez admina. Sprawdzone także tu, nie tylko w kliencie (login/main.js).
+    if (typeof passwordRepeat !== 'string' || passwordRepeat !== password) throw new LoginError('password_mismatch', 400);
     const policyError = checkPasswordPolicy(password, { email });
     if (policyError) throw new LoginError(policyError, 400);
     newHash = await hashPassword(password, { env });

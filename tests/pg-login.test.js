@@ -445,12 +445,21 @@ async function invite(email, role = 'board', extra = {}) {
 test('przyjęcie zaproszenia: nowe konto z adresem z zaproszenia, rola, sesja; jednorazowe', async () => {
   const email = 'nowa.osoba@example.invalid';
   const { secret, invitationId } = await invite(email);
-  const weak = await post('/api/invitations/accept', { token: secret, password: 'krotkie' });
+  // #164: nowe konto wymaga zgodnego powtórzenia — sprawdzane przed polityką hasła.
+  const mismatch = await post('/api/invitations/accept', { token: secret, password: 'krotkie', passwordRepeat: 'inne haslo' });
+  assert.equal(mismatch.status, 400);
+  assert.deepEqual(await mismatch.json(), { error: 'password_mismatch' });
+  const noRepeat = await post('/api/invitations/accept', { token: secret, password: 'krotkie' });
+  assert.equal(noRepeat.status, 400);
+  assert.deepEqual(await noRepeat.json(), { error: 'password_mismatch' }, 'brak powtórzenia też jest odrzucany');
+
+  const weak = await post('/api/invitations/accept', { token: secret, password: 'krotkie', passwordRepeat: 'krotkie' });
   assert.equal(weak.status, 400);
   assert.deepEqual(await weak.json(), { error: 'password_too_short' });
 
   const password = newPassword();
-  const accepted = await post('/api/invitations/accept', { token: secret, password, displayName: 'Nowa Osoba' });
+  const accepted = await post('/api/invitations/accept',
+    { token: secret, password, passwordRepeat: password, displayName: 'Nowa Osoba' });
   assert.equal(accepted.status, 201);
   const body = await accepted.json();
   assert.equal(body.created, true);

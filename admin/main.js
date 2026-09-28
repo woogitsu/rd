@@ -10,6 +10,7 @@ import {
   formatDateTime,
   grantPayload,
   indexClasses,
+  invitationLink,
   invitationPayload,
   isOwnLastAdminGrant,
   scopeLabel,
@@ -272,12 +273,22 @@ async function loadInvitations() {
 }
 
 function hideToken() {
+  byId("invite-link").textContent = "";
   byId("token-value").textContent = "";
   byId("token-meta").textContent = "";
   byId("token-box").hidden = true;
 }
 
 byId("hide-token").addEventListener("click", hideToken);
+byId("copy-link").addEventListener("click", async (event) => {
+  const link = byId("invite-link").textContent;
+  try {
+    await navigator.clipboard.writeText(link);
+    event.currentTarget.textContent = "Skopiowano";
+  } catch {
+    showMessage("Nie udało się skopiować. Zaznacz link i skopiuj ręcznie.", true);
+  }
+});
 byId("copy-token").addEventListener("click", async (event) => {
   const token = byId("token-value").textContent;
   try {
@@ -305,9 +316,11 @@ byId("invitation-form").addEventListener("submit", async (event) => {
   submit.disabled = true;
   try {
     const result = await api("/api/admin/invitations", { method: "POST", body: payload });
+    byId("invite-link").textContent = invitationLink(result.token, window.location.origin);
     byId("token-value").textContent = result.token;
     byId("token-meta").textContent = `${ROLE_LABELS[result.invitation.role]} · ${scopeLabel(result.invitation, state.classes, state.yearMap)} · ważne do ${formatDateTime(result.invitation.expiresAt)}`;
-    byId("copy-token").textContent = "Kopiuj";
+    byId("copy-link").textContent = "Kopiuj link";
+    byId("copy-token").textContent = "Kopiuj kod";
     byId("token-box").hidden = false;
     form.reset();
     await Promise.all([loadInvitations(), loadAudit()]);
