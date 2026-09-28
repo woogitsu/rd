@@ -666,7 +666,7 @@ async function importLines(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.lines.imported', entityType: 'bank_statement_import', entityId: importId,
-        metadata: { reconciliationId: id, source: input.source, lineCount: hashed.length },
+        metadata: { reconciliationId: id, source: input.source, lineCount: hashed.length, schoolYearId: row.school_year_id },
       });
       return json({
         import: { id: importId, reconciliationId: id, source: input.source, lineCount: hashed.length },
@@ -856,7 +856,10 @@ async function confirmMatch(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.confirmed', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id, statementLineId: data.statementLineId, ledgerEntryId, paymentEntryId },
+        metadata: {
+          reconciliationId: id, statementLineId: data.statementLineId, ledgerEntryId, paymentEntryId,
+          schoolYearId: row.school_year_id,
+        },
       });
       const { rows } = await tx.query('SELECT * FROM bank_reconciliation_matches WHERE id = $1', [matchId]);
       return json({ match: matchFromRow(rows[0]) }, 201, CREATED);
@@ -901,7 +904,7 @@ async function revokeMatch(request, env, id, matchId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.revoked', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id },
+        metadata: { reconciliationId: id, schoolYearId: row.school_year_id },
       });
       return json({ match: matchFromRow(updated.rows[0]) }, 200, CREATED);
     });
