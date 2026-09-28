@@ -1,4 +1,5 @@
 // Czyste funkcje panelu administracji kont (bez DOM i sieci) — testowane w tests/admin-core.test.js.
+import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -26,6 +27,9 @@ export const INVITATION_STATUS_LABELS = Object.freeze({
 });
 
 export const ACTION_LABELS = Object.freeze({
+  "auth.password_reset_issued": "Wydanie kodu resetu hasła",
+  "auth.password_reset_revoked": "Unieważnienie kodu resetu hasła",
+  "mfa.reset": "Reset weryfikacji dwuetapowej",
   "role_grant.created": "Nadanie roli",
   "role_grant.revoked": "Wycofanie roli",
   "role_grant.expired": "Wygaszenie roli",
@@ -38,7 +42,7 @@ export const ACTION_LABELS = Object.freeze({
   "session.revoked": "Wycofanie sesji",
 });
 
-const ERROR_MESSAGES = Object.freeze({
+export const ERROR_MESSAGES = Object.freeze({
   unauthenticated: "Sesja wygasła. Zaloguj się ponownie.",
   forbidden: "Brak uprawnień. Panel wymaga roli administratora i potwierdzonego MFA.",
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony.",
@@ -49,7 +53,8 @@ const ERROR_MESSAGES = Object.freeze({
   school_year_not_found: "Wskazany rok szkolny nie istnieje.",
   class_not_in_school_year: "Klasa nie należy do wskazanego roku szkolnego.",
   school_year_not_finished: "Rok szkolny jeszcze się nie zakończył.",
-  confirmation_required: "Potwierdź identyfikator roku szkolnego.",
+  confirmation_required: "Potwierdź identyfikator (konta albo roku szkolnego).",
+  cannot_reset_own_mfa: "Nie można zresetować weryfikacji dwuetapowej własnego konta.",
   invitation_pending: "Dla tego adresu i zakresu istnieje już oczekujące zaproszenie.",
   invitation_already_accepted: "Zaproszenie zostało już przyjęte.",
   user_disabled: "Konto jest wyłączone.",
@@ -63,8 +68,7 @@ const ERROR_MESSAGES = Object.freeze({
 
 export function errorMessage(code, status) {
   if (code && Object.hasOwn(ERROR_MESSAGES, code)) return ERROR_MESSAGES[code];
-  if (status >= 500) return "Usługa chwilowo niedostępna. Spróbuj ponownie.";
-  return code ? `Operacja odrzucona (${code}).` : `Błąd serwera (${status ?? "?"}).`;
+  return sharedErrorMessage(code, status);
 }
 
 export function isValidId(value) {
@@ -186,8 +190,24 @@ export function confirmationText(action, subject) {
     case "disable": return `Wyłączyć konto ${subject}? Wszystkie sesje zostaną wycofane.`;
     case "enable": return `Włączyć konto ${subject}? Przydziały ról pozostają bez zmian.`;
     case "revoke-sessions": return `Wylogować ${subject} ze wszystkich urządzeń?`;
+    case "password-reset": return `Wydać nowy kod resetu hasła dla ${subject}? Poprzedni nieużyty kod przestanie działać.`;
     default: return "Potwierdzić operację?";
   }
+}
+
+// #224: reset MFA wyłącza czynnik i kody odzyskiwania konta — wymaga wpisania
+// identyfikatora konta (kontrakt POST /api/admin/users/{id}/mfa-reset), żeby
+// nie wykasować cudzego dostępu jednym kliknięciem. `typed` to surowa wartość
+// z okna przeglądarki: null = anulowano (Escape/Anuluj), string = wpisano.
+export function mfaResetConfirmation(typed, userId) {
+  if (typed === null) return { cancelled: true, ok: false };
+  return { cancelled: false, ok: typed.trim() === userId };
+}
+
+// #224: link gotowy do wklejenia zamiast samego kodu resetu — patrz #164,
+// gdzie ten sam brak dotyczy zaproszeń. Token wyłącznie w części „#…”.
+export function passwordResetLink(token, origin) {
+  return `${origin}/login/#reset=${token}`;
 }
 
 export function describeAuditEvent(event) {
