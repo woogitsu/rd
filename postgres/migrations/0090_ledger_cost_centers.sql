@@ -122,7 +122,8 @@ BEGIN
   SELECT net_amount_cents INTO v_net FROM ledger_entry_net WHERE id = NEW.ledger_entry_id;
   SELECT COALESCE(sum(amount_cents), 0) INTO v_allocated
     FROM ledger_current_allocations WHERE ledger_entry_id = NEW.ledger_entry_id;
-  IF v_allocated > COALESCE(v_net, 0) - NEW.amount_cents THEN
+  -- Bez przypisania nic tu nie sprawdzamy (przekroczenie kwoty wpisu zgłasza ledger_correction_guard).
+  IF v_allocated > 0 AND v_allocated > COALESCE(v_net, 0) - NEW.amount_cents THEN
     RAISE EXCEPTION 'ledger_allocation_exceeds_net';
   END IF;
   RETURN NEW;

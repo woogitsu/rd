@@ -93,7 +93,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
-| `GET /api/ledger/cost-centers?schoolYearId=:year&type=event\|class&format=json\|csv` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01; centra kosztów (#117): wynik per wydarzenie/klasa + „ogólne”; przedstawiciel, audit, principal 403 (D-08/D-09) |
+| `GET /api/ledger/cost-centers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01; centra kosztów (#117), `type=event\|class`, `format=json\|csv`: wynik per wydarzenie/klasa + „ogólne”; przedstawiciel, audit, principal 403 (D-08/D-09) |
 | `GET /api/ledger/:ledgerEntryId/allocations` | jak wyżej, rok wpisu | tak | 403 | SR-01; historia wersji przypisania (#117) |
 | `POST /api/ledger/:ledgerEntryId/allocations` | jak wyżej, rok wpisu | tak | 403 | SR-01; nowa wersja przypisania (#117); nieaktualna `supersedesId`: 409 `allocation_version_conflict` |
 | `GET /api/ledger/cost-centers/events/:eventId` | jak wyżej, rok wydarzenia | tak | 403 | SR-01; rozliczenie wydarzenia (#117); nieistniejące: 404 |
