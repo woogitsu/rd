@@ -101,6 +101,12 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded` |
 | `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
 | `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |
+| `POST /api/documents/:financialDocumentId/supersede` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | issue #82: te same reguły dostępu co odczyt dokumentu finansowego (canAccessDocument); zastąpienie tylko dokumentem tego samego rodzaju/roku/klasy; powtórka tym samym kluczem — `replayed:true` |
+| `POST /api/documents/:boardDocumentId/supersede` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | issue #82: te same reguły dostępu co odczyt dokumentu zarządu; skarbnik, przedstawiciel — 404 |
+| `POST /api/documents/:classDocumentId/supersede` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | issue #82: zastąpienie tylko dokumentem tego samego rodzaju/roku/klasy; powtórka tym samym kluczem — `replayed:true` |
+| `POST /api/documents/:financialDocumentId/void` | jak wyżej (supersede, dokument finansowy) | tak | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
+| `POST /api/documents/:boardDocumentId/void` | jak wyżej (supersede, dokument zarządu) | nie | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
+| `POST /api/documents/:classDocumentId/void` | jak wyżej (supersede, dokument klasy) | nie | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
 | `POST /api/documents/:financialDocumentId/description` | jak metadane dokumentu finansowego | tak | 404 | tytuł/kategoria (#76); dopisuje wersję, `documents` niezmienne |
 | `POST /api/documents/:boardDocumentId/description` | jak metadane dokumentu zarządu | nie | 404 | #76 |
 | `POST /api/documents/:classDocumentId/description` | jak metadane dokumentu klasy | nie | 404 | #76 |

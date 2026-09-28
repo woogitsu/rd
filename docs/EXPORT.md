@@ -114,6 +114,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `bank_reconciliations`, `bank_statement_imports`, `bank_statement_lines`, `bank_reconciliation_matches` | uzgodnienia roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami, także cofniętymi z powodem (0015/0024) |
 | `bank_reconciliation_group_matches`, `bank_reconciliation_group_match_items`, `bank_reconciliation_group_match_revocations` | dopasowania zbiorcze (jedna pozycja wyciągu ↔ kilka wpłat/wpisów), ich pozycje i cofnięcia z powodem (0105, #127) |
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
+| `document_status_events` | zastąpienie/unieważnienie dokumentu z powodem, wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id`/`replacement_document_id` po odtworzeniu nie mają odpowiednika, jak `source_document_id` (0066, #82) |
 | `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia oznaczone tym rokiem (`schoolYearId`), a bez oznaczenia — z dat roku (Europe/Brussels); bez `export.*` |

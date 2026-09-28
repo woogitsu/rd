@@ -345,6 +345,20 @@ zatrzymają migrację czytelnym błędem zamiast cichego zapisania niespójnośc
 i zakres #96; osobna migracja i PR.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
 
+`0066_document_status_events.sql` (issue #82) dodaje wersje dokumentu i
+unieważnienie bez usuwania. `documents` pozostaje niezmienne (0006) — plik
+w buckecie i wpis metadanych nie znikają. Nowa, dopisywana tabela
+`document_status_events` zapisuje co najwyżej JEDNO zdarzenie na dokument
+(unikalny indeks na `document_id`): `superseded` (z `replacement_document_id`
+tego samego rodzaju/roku/klasy) albo `voided`. Trigger `BEFORE INSERT`
+odrzuca zastępstwo dokumentem, który sam już ma zdarzenie stanu — to samo w
+sobie wyklucza cykl A→B→A (po kroku „A zastąpiony przez B” dokument A nie
+jest już aktywny). Widok `document_current_status` wylicza stan
+(`active`/`superseded`/`voided`) bez zmiany `documents`. Skutki dla danych:
+nowa, pusta tabela; istniejące dokumenty są `active` (brak wiersza = active).
+Wycofanie na pustej bazie: usunięcie widoku, tabeli i dwóch funkcji. Opis:
+[`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
+
 `0065_document_descriptions.sql` (issue #76) dodaje tytuł, kategorię, datę
 dokumentu i opcjonalny opis dla wpisów `documents` (samych `documents` nie
 rusza — pozostaje niezmienne, 0006). Nowa tabela `document_descriptions` jest

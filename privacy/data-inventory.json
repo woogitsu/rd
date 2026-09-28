@@ -1198,7 +1198,18 @@
       "data_type": "text"
     }
   },
-  "data_subject_requests": {
+  "document_status_events": {
+    "action": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
     "created_at": {
       "personal": "none",
       "subject": null,
@@ -1207,7 +1218,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "timestamp with time zone"
     },
     "created_by": {
@@ -1218,10 +1229,10 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
-    "decision_note_ref": {
+    "document_id": {
       "personal": "none",
       "subject": null,
       "category": null,
@@ -1229,51 +1240,7 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "due_on": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "date"
-    },
-    "guardian_id": {
-      "personal": "pseudonymous",
-      "subject": "guardian",
-      "category": "identyfikacja",
-      "purpose": "powiązanie żądania z opiekunem",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "handled_by": {
-      "personal": "pseudonymous",
-      "subject": "board_member",
-      "category": "identyfikacja",
-      "purpose": "powiązanie żądania z osobą obsługującą",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "household_id": {
-      "personal": "pseudonymous",
-      "subject": "guardian",
-      "category": "identyfikacja",
-      "purpose": "powiązanie żądania z gospodarstwem",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
     "id": {
@@ -1284,10 +1251,10 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
-    "kind": {
+    "idempotency_key": {
       "personal": "none",
       "subject": null,
       "category": null,
@@ -1295,10 +1262,21 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
     },
-    "received_on": {
+    "reason": {
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zastąpienia/unieważnienia dokumentu",
+      "retention_category": "document_financial",
+      "visible_to": [],
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "replacement_document_id": {
       "personal": "none",
       "subject": null,
       "category": null,
@@ -1306,41 +1284,8 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": false,
-      "data_type": "date"
-    },
-    "status": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
+      "exportable": true,
       "data_type": "text"
-    },
-    "student_id": {
-      "personal": "pseudonymous",
-      "subject": "student",
-      "category": "identyfikacja",
-      "purpose": "powiązanie żądania z uczniem",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "updated_at": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "timestamp with time zone"
     }
   },
   "document_descriptions": {
@@ -8586,107 +8531,6 @@
       "data_type": "integer"
     }
   },
-  "retention_policies": {
-    "approved_by": {
-      "personal": "pseudonymous",
-      "subject": "board_member",
-      "category": "identyfikacja",
-      "purpose": "powiązanie zatwierdzenia polityki z osobą (zasada czterech oczu)",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "created_at": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "timestamp with time zone"
-    },
-    "created_by": {
-      "personal": "pseudonymous",
-      "subject": "board_member",
-      "category": "identyfikacja",
-      "purpose": "powiązanie rekordu z osobą",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "data_category": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "decision_ref": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "effective_from": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "timestamp with time zone"
-    },
-    "id": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    },
-    "retain_for": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "interval"
-    },
-    "retain_until_rule": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": false,
-      "exportable": false,
-      "data_type": "text"
-    }
-  },
   "role_grants": {
     "class_id": {
       "personal": "none",
@@ -10031,6 +9875,252 @@
       "free_text": false,
       "exportable": false,
       "data_type": "timestamp with time zone"
+    }
+  },
+  "data_subject_requests": {
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "decision_note_ref": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "due_on": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "date"
+    },
+    "guardian_id": {
+      "personal": "pseudonymous",
+      "subject": "guardian",
+      "category": "identyfikacja",
+      "purpose": "powiązanie żądania z opiekunem",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "handled_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie żądania z osobą obsługującą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "household_id": {
+      "personal": "pseudonymous",
+      "subject": "guardian",
+      "category": "identyfikacja",
+      "purpose": "powiązanie żądania z gospodarstwem",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "kind": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "received_on": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "date"
+    },
+    "status": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "student_id": {
+      "personal": "pseudonymous",
+      "subject": "student",
+      "category": "identyfikacja",
+      "purpose": "powiązanie żądania z uczniem",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "updated_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    }
+  },
+  "retention_policies": {
+    "approved_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie zatwierdzenia polityki z osobą (zasada czterech oczu)",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "data_category": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "decision_ref": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "effective_from": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "retain_for": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "interval"
+    },
+    "retain_until_rule": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
     }
   }
 }

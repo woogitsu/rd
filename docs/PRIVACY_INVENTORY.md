@@ -34,6 +34,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`document_descriptions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`document_descriptions`|`description`|Osoba trzecia|direct|wolny tekst|opis dokumentu|document_financial|tak|tak|
 |`document_descriptions`|`title`|Osoba trzecia|direct|wolny tekst|tytuł dokumentu|document_financial|tak|tak|
+|`document_status_events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`document_status_events`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie zastąpienia/unieważnienia dokumentu|document_financial|tak|tak|
 |`document_uploads`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`documents`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaign_recipients`|`email`|Opiekun|direct|kontakt|migawka adresu w chwili wysyłki|email_snapshot|nie|nie|
@@ -145,7 +147,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **132**, w tym wolnego tekstu: **30** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **134**, w tym wolnego tekstu: **31** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -342,6 +344,19 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `idempotency_key` | none | — | tak |
 | `revision_no` | none | — | tak |
 | `title` | direct | third_party | tak |
+
+### `document_status_events`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `action` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `document_id` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `reason` | direct | third_party | tak |
+| `replacement_document_id` | none | — | tak |
 
 ### `document_uploads`
 
