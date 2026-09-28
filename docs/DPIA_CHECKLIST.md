@@ -58,12 +58,16 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 |---|---|
 | `payment_entries.reference` | tytuł przelewu z wyciągu, często imię i nazwisko dziecka |
 | `payment_corrections.reason` | opis okoliczności rodzinnych przy zwrocie |
+| `payment_allocation_reversals.reason` | powód cofnięcia części wpłaty, może opisywać rodzinę lub dziecko (#127) |
 | `ledger_entries.description` | nazwisko wystawcy faktury / osoby rozliczanej |
 | `ledger_corrections.reason` | jw. |
+| `ledger_allocation_versions.reason` | jw. (powód zmiany przypisania do centrum kosztów, #117) |
 | `ledger_opening_balance_adjustments.reason` | jw. |
 | `bank_reconciliations.notes` | treść przepisana z wyciągu bankowego |
 | `bank_reconciliations.confirmation_note` | jw. |
+| `bank_reconciliations.abandon_reason` | powód porzucenia szkicu — może przepisywać treść z wyciągu |
 | `bank_reconciliation_matches.revoke_reason` | uzasadnienie cofnięcia dopasowania z wyciągu |
+| `bank_reconciliation_group_match_revocations.reason` | uzasadnienie cofnięcia dopasowania zbiorczego (przelew kilku rodzin, #127) |
 | `meeting_agenda_items.description` | sprawa konkretnego ucznia w porządku obrad |
 | `meeting_minutes.body` | treść protokołu — może opisywać konkretne dzieci/rodziny |
 | `meeting_minutes.change_note` | jw., przy poprawce protokołu |

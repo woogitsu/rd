@@ -373,6 +373,8 @@ function mapDatabaseError(error) {
     throw new RequestError('payment_linked_entry_not_replaceable', 409);
   }
   if (message.includes('ledger_replacement_mismatch')) throw new RequestError('replacement_target_mismatch', 409);
+  // #117: korekta poniżej sumy przypisania do centrów kosztów — najpierw nowa wersja przypisania.
+  if (message.includes('ledger_allocation_exceeds_net')) throw new RequestError('allocation_exceeds_net', 409);
   if (error?.code === '23505' && error?.constraint === 'ledger_entries_replaces_idx') {
     throw new RequestError('ledger_entry_already_replaced', 409);
   }
@@ -871,6 +873,11 @@ async function createCorrection(request, env, ledgerEntryId, json) {
         `SELECT r.id AS reconciliation_id FROM bank_reconciliation_matches m
            JOIN bank_reconciliations r ON r.id = m.reconciliation_id
           WHERE m.ledger_entry_id = $1 AND m.revoked_at IS NULL AND r.status = 'draft'
+         UNION ALL
+         -- Pozycja aktywnego dopasowania zbiorczego (#127, 0105) blokuje tak samo.
+         SELECT r.id AS reconciliation_id FROM bank_group_match_items_current i
+           JOIN bank_reconciliations r ON r.id = i.reconciliation_id
+          WHERE i.ledger_entry_id = $1 AND r.status = 'draft'
           LIMIT 1`,
         [ledgerEntryId],
       );
@@ -1292,7 +1299,7 @@ async function createAuthorization(request, env, resolutionId, json) {
       // Dziennik bez kwoty (jak inne zapisy finansowe): aktor, czas, uchwała, poprzednia kwota.
       await insertAuditEvent(tx, {
         actorId, action: 'resolution.spending_authorization.recorded', entityType: 'resolution', entityId: resolutionId,
-        metadata: { authorizationId: id, supersedesId: input.supersedesId },
+        metadata: { schoolYearId: resolution.school_year_id, authorizationId: id, supersedesId: input.supersedesId },
       });
       return { authorization: authorizationFromRow(inserted.rows[0]) };
     });
