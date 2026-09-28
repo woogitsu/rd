@@ -12,9 +12,21 @@ export const LAYOUTS = Object.freeze({
   a5x2: "Dwie kartki na stronę A4 z linią cięcia",
 });
 
-// Słowa, których kartka nie może zawierać: składka jest dobrowolna (AGENTS.md).
-// „dług” tylko w formach rzeczownika, aby nie odrzucać nazwisk (Długosz) ani ulic (Długa).
-const FORBIDDEN_PATTERN = /(^|[^\p{L}])(zaległ\p{L}*|dług(?:u|iem|owi|i|ów|ami|ach|om)?|dłużn\p{L}*|zadłuż\p{L}*|windyk\p{L}*|należnoś\p{L}*|monit(?:u|y|ów)?|wezwani\p{L}*)(?![\p{L}])/iu;
+// Słowa, których kartka lub wiadomość nie może zawierać: składka jest
+// dobrowolna (AGENTS.md). „dług” tylko w formach rzeczownika, aby nie odrzucać
+// nazwisk (Długosz) ani ulic (Długa).
+const FORBIDDEN_PL = "zaległ\\p{L}*|dług(?:u|iem|owi|i|ów|ami|ach|om)?|dłużn\\p{L}*|zadłuż\\p{L}*|windyk\\p{L}*|należnoś\\p{L}*|monit(?:u|y|ów)?|wezwani\\p{L}*";
+// Szkoła działa w Belgii (#120): treść kampanii/kartki nie ma jeszcze pola
+// języka (jedna wersja tekstu — pełne wersje FR/NL to osobna funkcja,
+// wymagająca migracji), więc sprawdzamy też francuskie i niderlandzkie
+// sformułowania sugerujące zadłużenie, niezależnie od tego, w jakim języku
+// napisano treść. Przykłady z issue: „votre dette”, „achterstallige
+// bijdrage” odrzucone; „cotisation volontaire”, „vrijwillige bijdrage” dozwolone.
+const FORBIDDEN_FR = "dette\\p{L}*|créanc\\p{L}*|débit(?:eur|rice)\\p{L}*|mise en demeure";
+const FORBIDDEN_NL = "schuld\\p{L}*|achterstand\\p{L}*|achterstallig\\p{L}*|aanmaning\\p{L}*|wanbetal\\p{L}*";
+const FORBIDDEN_PATTERN = new RegExp(
+  `(^|[^\\p{L}])(${FORBIDDEN_PL}|${FORBIDDEN_FR}|${FORBIDDEN_NL})(?![\\p{L}])`, "iu",
+);
 
 export function findForbiddenWording(text) {
   const match = FORBIDDEN_PATTERN.exec(String(text ?? ""));
