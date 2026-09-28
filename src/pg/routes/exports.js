@@ -11,7 +11,10 @@
 // oraz zdarzenie audytu `export.created` w tej samej transakcji.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorized, isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode } from '../authorization.js';
+import {
+  freshMfaForbiddenCode, isAuthorized, isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode,
+  MFA_STEP_UP_MAX_AGE_SECONDS,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import {
@@ -120,6 +123,12 @@ async function createYearlyExport(request, env, json) {
     archiveVia = await archiveReadVia(env.db, context, schoolYearId, ARCHIVE_EXPORT_ROLES);
     if (!archiveVia) return json({ error: 'forbidden' }, 403);
   }
+  // #150 (SR-10, krok w górę): eksport roczny ujawnia pełne dane rodzin i
+  // finansowe — rola/zakres dają dostęp, ale MFA musi być potwierdzone od
+  // niedawna (nie tylko kiedyś w tej sesji). Sprawdzane PO roli/zakresie
+  // (SR-07): brak dostępu to zawsze `forbidden`, niezależnie od wieku MFA.
+  const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+  if (staleCode) return json({ error: staleCode }, 403);
 
   let result;
   try {
