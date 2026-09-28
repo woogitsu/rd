@@ -261,6 +261,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_campaign_recipients: 'odbiorcy kampanii zawierają adresy e-mail — D-04',
   email_campaign_exclusions: 'wykluczenia z kampanii — D-04',
   email_outbox: 'kolejka wysyłki z adresami e-mail — D-04',
+  email_outbox_resolutions: 'rozstrzygnięcia doręczeń kampanii (#139) — jak email_outbox, D-04',
   email_send_ledger: 'dziennik wysyłek dostawcy — D-04',
   email_suppressions: 'lista blokad adresów e-mail — D-04',
   email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
