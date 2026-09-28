@@ -125,7 +125,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **111**, w tym wolnego tekstu: **26** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **112**, w tym wolnego tekstu: **26** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
