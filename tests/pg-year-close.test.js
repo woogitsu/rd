@@ -348,17 +348,30 @@ test('#212: dwa równoległe „Zamknij rok” (dwie osoby albo podwójne klikni
     // Dwóch różnych członków zarządu (żaden nie rozpoczynał — boardA
     // rozpoczęła) naraz. PGlite serializuje same transakcje, ale obie
     // odpowiedzi przechodzą przez tę samą ścieżkę kodu co na prawdziwym
-    // PostgreSQL: advisory lock szereguje wejście do transakcji, druga widzi
-    // już rok zamknięty i zwraca replayed:true zamiast błędu.
+    // PostgreSQL: advisory lock szereguje wejście do transakcji.
+    // boardB ma rolę board ZAWĘŻONĄ do roku OLD — jeśli boardGlobal zamknie
+    // rok jako pierwszy, zanim żądanie boardB dotrze do własnego
+    // `authorize()`, własny przydział boardB jest już wygaszony przez to
+    // zamknięcie: dostaje wtedy `409 school_year_closed` (wariant
+    // zachowawczy — bez ujawniania bilansu komuś, kto już nie ma roli w tym
+    // roku), a nie `403 forbidden` ani pełny `replayed:true`. boardGlobal ma
+    // rolę BEZ zawężenia do roku — jego przydział nigdy nie wygasa przez to
+    // zamknięcie, więc zawsze dostaje 200 (replayed:true albo false).
     const [a, b] = await Promise.all([
       post(env, `/api/year-close/${OLD}/close`, cookies.boardB),
       post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal),
     ]);
-    assert.equal(a.status < 300, true, `pierwsza odpowiedź: ${a.status}`);
-    assert.equal(b.status < 300, true, `druga odpowiedź: ${b.status}`);
     const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
-    const replayedFlags = [bodyA.replayed, bodyB.replayed].sort();
-    assert.deepEqual(replayedFlags, [false, true], 'dokładnie jedna odpowiedź zapisała, druga jest replayed:true');
+    assert.equal(b.status, 200, `boardGlobal (rola bez zawężenia do roku) zawsze 200: ${b.status}`);
+    assert.equal(
+      a.status === 200 || (a.status === 409 && bodyA.error === 'school_year_closed'),
+      true,
+      `boardB: 200 albo 409 school_year_closed, dostał ${a.status} ${JSON.stringify(bodyA)}`,
+    );
+    if (a.status === 409) assert.equal('balance' in bodyA, false, '409 school_year_closed nie ujawnia bilansu');
+
+    const writers = [a.status === 200 ? bodyA.replayed : null, bodyB.replayed].filter((v) => v === false);
+    assert.equal(writers.length, 1, 'dokładnie jedna odpowiedź 200 zapisała (replayed:false)');
 
     const { rows } = await db.query('SELECT count(*)::int AS n FROM ledger_opening_balances WHERE school_year_id = $1', [NEW]);
     assert.equal(rows[0].n, 1, 'dokładnie jeden bilans otwarcia');
@@ -368,7 +381,7 @@ test('#212: dwa równoległe „Zamknij rok” (dwie osoby albo podwójne klikni
   }
 });
 
-test('#212: zamknięcie roku wygasza WŁASNY przydział drugiej osoby zarządu — mimo to replayed:true, nie 403', async () => {
+test('#212: zamknięcie roku wygasza WŁASNY przydział drugiej osoby zarządu — 409 school_year_closed bez bilansu, nie 403', async () => {
   // Deterministyczna wersja przyczyny niestabilności #212 (bez zależności od
   // realnego przeplotu Promise.all): zamknięcie wygasza w tej samej
   // transakcji przydziały zarządu zawężone do zamykanego roku
@@ -379,9 +392,24 @@ test('#212: zamknięcie roku wygasza WŁASNY przydział drugiej osoby zarządu �
   // `wasAuthorizedAtOwnClosure`), własny przydział boardB jest już wygasły,
   // gdy jego żądanie w końcu trafia do serwera. Sekwencyjnie odtwarza to
   // dokładnie ten sam stan bez potrzeby wygrywania realnego wyścigu.
+  //
+  // Wariant zachowawczy (najmniej uprawnień): boardB nie dostaje pełnej
+  // odpowiedzi replay (bilans, identyfikatory) — jego przydział do tego roku
+  // już nie istnieje, więc nie ma dziś prawa tych danych czytać. Dostaje
+  // sam fakt "rok zamknięty" (409, kod używany też przez `start`), bez
+  // wymogu świeżego MFA i bez nowego zdarzenia audytu.
   const { db, env, cookies } = await setup();
   try {
     await startAndConfirm(env, cookies);
+    // Rola board zawężona do roku OLD, ale COFNIĘTA (revoked_at) — zasiana
+    // PRZED zamknięciem, bo trigger zamrożenia (0017) odrzuca nowe przydziały
+    // dla już zamkniętego roku. To zwykły brak uprawnień (nigdy nie miała
+    // prawa zamknąć), a nie skutek uboczny TEGO zamknięcia.
+    const boardRevoked = await seedUserSession(db, {
+      userId: 'u-board-revoked', roles: [{ role: 'board', schoolYearId: OLD, revoked: true }], mfa: true,
+    });
+
+    const auditBefore = await auditCount(db, 'year_close.closed');
     const first = await post(env, `/api/year-close/${OLD}/close`, cookies.boardGlobal);
     assert.equal(first.status, 200);
     assert.equal((await first.json()).replayed, false);
@@ -391,8 +419,19 @@ test('#212: zamknięcie roku wygasza WŁASNY przydział drugiej osoby zarządu �
     assert.notEqual(rows[0]?.expires_at, null, 'przydział boardB do roku OLD jest wygaszony przez zamknięcie');
 
     const second = await post(env, `/api/year-close/${OLD}/close`, cookies.boardB);
-    assert.equal(second.status < 300, true, `boardB miał prawo zamknąć w chwili żądania: ${second.status}`);
-    assert.equal((await second.json()).replayed, true);
+    assert.equal(second.status, 409, `boardB stracił własny przydział przez to zamknięcie: ${second.status}`);
+    const secondBody = await second.json();
+    assert.equal(secondBody.error, 'school_year_closed');
+    assert.equal('balance' in secondBody, false, 'bez bilansu');
+    assert.equal('carriedOpeningBalanceId' in secondBody, false, 'bez identyfikatora bilansu otwarcia');
+    assert.equal('replayed' in secondBody, false, 'bez replayed — to nie jest odpowiedź zamknięcia');
+    assert.equal(await auditCount(db, 'year_close.closed'), auditBefore + 1, 'brak nowego zdarzenia audytu przy 409');
+
+    // boardNew: rola board zawężona do INNEGO roku (NEW) — przydział nie
+    // został i nie mógł zostać wygaszony przez zamknięcie roku OLD, więc to
+    // zwykły brak uprawnień, nie "właśnie zamknięte przeze mnie".
+    assert.equal((await post(env, `/api/year-close/${OLD}/close`, cookies.boardNew)).status, 403);
+    assert.equal((await post(env, `/api/year-close/${OLD}/close`, boardRevoked)).status, 403);
   } finally {
     await db.close();
   }

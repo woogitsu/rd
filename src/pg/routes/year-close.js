@@ -94,16 +94,23 @@ function optionalText(value, min, max, code) {
 // wejść do `authorize()` PO tym, jak pierwsza już w pełni zatwierdziła swoją
 // transakcję — a wtedy własny przydział drugiej osoby (jeśli był zawężony do
 // TEGO roku, jak `board` roku OLD) jest już wygasły i zwykłe sprawdzenie roli
-// rzuca 403 `forbidden`, zamiast dojść do gałęzi „już zamknięte → replayed:
-// true” niżej w `closeYear`. To nie przeplot testowy — kolejność w kodzie
+// rzuca 403 `forbidden`. To nie przeplot testowy — kolejność w kodzie
 // (authorize PRZED odczytem stanu zamknięcia) sprawia, że dowolna druga
 // prośba osoby uprawnionej w chwili wysłania traci uprawnienie w trakcie
 // przetwarzania. `wasAuthorizedAtOwnClosure` rozpoznaje DOKŁADNIE ten
 // przypadek (przydział wygasł w tej samej transakcji, która zamknęła TEN
 // rok — `expires_at` i `closed_at` to ten sam `now()` transakcji, patrz
-// docs/YEAR_CLOSE.md), więc traktujemy taką osobę jak nadal uprawnioną i
-// pozwalamy dojść do idempotentnej odpowiedzi (`replayed: true`), zamiast
-// mylącego 403 dla kogoś, kto miał prawo zamknąć rok w chwili żądania.
+// docs/YEAR_CLOSE.md).
+//
+// WAŻNE (najmniej uprawnień — nie pełny replay): rozpoznanie tego przypadku
+// NIE wpuszcza aktora do pełnej odpowiedzi `replayed: true` z bilansem i
+// identyfikatorami zamknięcia — jego przydział do tego roku już nie istnieje,
+// więc nie ma dziś prawa czytać tych danych. Zamiast tego `closeYear` zwraca
+// zwykłe `409 school_year_closed` (ten sam kod, którego już używa `start` po
+// zamknięciu) — informacja „rok jest zamknięty” nie wykracza poza to, co ta
+// osoba i tak wie (sama próbowała go zamknąć). Bez wymogu świeżego MFA (nic
+// się nie zmienia w tej gałęzi) i bez zdarzenia audytu (stan bazy się nie
+// zmienia — to czysty odczyt uprawnień, nie zapis).
 async function wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles) {
   const { rows } = await env.db.query(
     `SELECT 1 FROM role_grants g
@@ -127,10 +134,11 @@ async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = 
   const yearWide = { ...context, grants: context.grants.filter((grant) => !grant.classId) };
   if (!isAuthorized(yearWide, { roles, schoolYearId, requireMfa: true })) {
     const actorId = context.session.user.id;
-    const rescued = allowExpiredByOwnClosure
-      && context.session.mfaVerified
-      && (await wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles));
-    if (!rescued) throw new RequestError('forbidden', 403);
+    if (allowExpiredByOwnClosure && context.session.mfaVerified
+      && (await wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles))) {
+      throw new RequestError('school_year_closed', 409);
+    }
+    throw new RequestError('forbidden', 403);
   }
   if (requireFreshMfa) {
     const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
