@@ -1618,6 +1618,9 @@ test('#139 webhook secret rotation: previous secret still accepted, logged; remo
     assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.webhook.previous_secret_used'`), 1);
     // Sekret usunięty z env: stary klucz znowu jest zwykłym złym sekretem.
     const withoutPrevious = await handlePgRequest(webhookRequest({ ...event, id: 2 }, `Bearer ${WEBHOOK_SECRET}`), { ...t.env, BREVO_WEBHOOK_SECRET: 'n'.repeat(48) });
+    assert.deepEqual(await withoutPrevious.json(), { error: 'invalid_signature' });
+  } finally { await t.close(); }
+});
 
 test('#130 pause/resume: role boundaries, invalid transitions, idempotent double click', async () => {
   const t = await setup();
@@ -1767,6 +1770,7 @@ test('#130 EMAIL_SEND_WINDOW: a run outside the configured window stops without 
     assert.equal(outside.sent, 0);
     assert.equal(transport.calls.length, 1, 'druga próba nie dotyka kolejki');
   } finally { await t.close(); }
+});
 
 test('no test in this file touched the network', () => {
   assert.equal(networkGuardCalls(), 0);
