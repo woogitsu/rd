@@ -659,9 +659,11 @@ test('publishing minutes as public is blocked when the body contains a known nam
     await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('en-pii','student-pii','class-a','year')");
 
     const meeting = await heldMeeting(db);
+    // Autor i zatwierdzający muszą być różnymi osobami (zasada czterech oczu,
+    // #135) — protokół tworzy board, zatwierdza admin.
     const withName = (await createMinutesVersion(db, board,
       { idempotencyKey: key(), meetingId: meeting.id, body: 'Omówiono sprawę Kuba Testowanski i jego nieobecności.' })).minutes;
-    await approveMinutes(db, board, { minutesId: withName.id });
+    await approveMinutes(db, admin, { minutesId: withName.id });
     await assert.rejects(
       setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withName.id, visibility: 'public' }),
       { code: 'minutes_contain_personal_data', status: 409 },
@@ -674,7 +676,7 @@ test('publishing minutes as public is blocked when the body contains a known nam
 
     const withEmail = (await createMinutesVersion(db, board,
       { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: ktos@example.invalid, do ustalenia.' })).minutes;
-    await approveMinutes(db, board, { minutesId: withEmail.id });
+    await approveMinutes(db, admin, { minutesId: withEmail.id });
     await assert.rejects(
       setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withEmail.id, visibility: 'public' }),
       { code: 'minutes_contain_personal_data' },
@@ -682,7 +684,7 @@ test('publishing minutes as public is blocked when the body contains a known nam
 
     const clean = (await createMinutesVersion(db, board,
       { idempotencyKey: key(), meetingId: meeting.id, body: 'Protokół bez żadnych danych osobowych, wyłącznie sprawy ogólne.' })).minutes;
-    await approveMinutes(db, board, { minutesId: clean.id });
+    await approveMinutes(db, admin, { minutesId: clean.id });
     const published = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: clean.id, visibility: 'public' });
     assert.equal(published.replayed, false);
     assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.minutesId), [clean.id]);
