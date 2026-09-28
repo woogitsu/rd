@@ -5,6 +5,13 @@
 // Panele mogą przekazać własne, bardziej konkretne teksty (`messages` w kliencie API).
 
 export const MESSAGES = Object.freeze({
+  // --- Konfiguracja roku szkolnego i klas (#78) -------------------------------------
+  invalid_label: "Podaj nazwę roku szkolnego (maksymalnie 200 znaków).",
+  invalid_date_range: "Data końca nie może być wcześniejsza niż data początku.",
+  school_year_exists: "Taki rok szkolny już istnieje.",
+  invalid_names: "Podaj nazwy klas (każda do 60 znaków).",
+  duplicate_name: "Nazwy klas na liście powtarzają się.",
+  class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
   // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
   minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
@@ -87,6 +94,7 @@ export const MESSAGES = Object.freeze({
   grant_not_found: "Nie znaleziono przydziału.",
   last_admin_grant: "Nie można odebrać sobie ostatniego aktywnego przydziału administratora.",
   cannot_disable_self: "Nie można wyłączyć własnego konta.",
+  cannot_grant_self: "Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu.",
   cannot_reset_own_mfa: "Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora.",
   invalid_expires_at: "Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata).",
   invalid_ttl: "Ważność zaproszenia: od 1 do 336 godzin.",
