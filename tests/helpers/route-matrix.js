@@ -831,6 +831,8 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
+  adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
 
   // ---------- reconciliation (#7, #15) ----------
   // Uzgodnienia: admin/zarząd/skarbnik z MFA w roku uzgodnienia; raport: Komisja Rewizyjna/zarząd/skarbnik z MFA.

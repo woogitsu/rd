@@ -98,6 +98,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`resolutions`|`body`|Członek Rady|direct|wolny tekst|treść uchwały|audit_event|tak|tak|
 |`resolutions`|`correction_reason`|Członek Rady|direct|wolny tekst|uzasadnienie korekty uchwały|audit_event|tak|tak|
 |`resolutions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`retention_policies`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia polityki z osobą (zasada czterech oczu)|nieustalona (D-04)|nie|nie|
+|`retention_policies`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`sessions`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -114,7 +116,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **101**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **103**, w tym wolnego tekstu: **23** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -1035,6 +1037,20 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `votes_abstain` | none | — | tak |
 | `votes_against` | none | — | tak |
 | `votes_for` | none | — | tak |
+
+### `retention_policies`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `approved_by` | pseudonymous | board_member | nie |
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `data_category` | none | — | nie |
+| `decision_ref` | none | — | nie |
+| `effective_from` | none | — | nie |
+| `id` | none | — | nie |
+| `retain_for` | none | — | nie |
+| `retain_until_rule` | none | — | nie |
 
 ### `role_grants`
 
