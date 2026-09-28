@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Zamknięcie roku szkolnego — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../"><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
+      <nav aria-label="Panel">
+        <a href="../panel/">Wpłaty</a>
+        <a href="../ledger/">Księga</a>
+        <a class="active" href="./" aria-current="page">Zamknięcie roku</a>
+        <a href="../import/">Import uczniów</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">Zarząd</p>
+          <h1>Zamknięcie roku szkolnego</h1>
+          <p>Lista kontrolna, bilans i zestawienie przekazania dla nowej Rady. Zamknięcie jest nieodwracalne i wymaga innej osoby niż ta, która je rozpoczęła.</p>
+        </div>
+      </section>
+
+      <p class="message error" id="access-notice" role="status" hidden>Zamknięcie roku prowadzi zarząd (z MFA). To konto nie ma dostępu do tego ekranu.</p>
+
+      <section class="card filters" aria-labelledby="filters-title">
+        <h2 id="filters-title">Rok szkolny</h2>
+        <form id="filters-form">
+          <label>Rok szkolny do zamknięcia <input id="school-year-id" name="schoolYearId" required autocomplete="off" placeholder="np. 2026-2027" /></label>
+          <button type="submit">Pokaż stan</button>
+        </form>
+      </section>
+
+      <div class="message" id="message" role="status"></div>
+
+      <section class="card" id="status-section" aria-labelledby="status-title" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Stan</p><h2 id="status-title">Zamknięcie roku</h2></div>
+          <span id="status-badge" class="badge"></span>
+        </div>
+        <dl class="detail-grid">
+          <div><dt>Rozpoczęte przez</dt><dd id="initiated-by">—</dd></div>
+          <div><dt>Data rozpoczęcia</dt><dd id="initiated-at">—</dd></div>
+          <div><dt>Zamknięte przez</dt><dd id="closed-by">—</dd></div>
+          <div><dt>Data zamknięcia</dt><dd id="closed-at">—</dd></div>
+          <div><dt>Docelowy rok szkolny</dt><dd id="next-year">—</dd></div>
+        </dl>
+
+        <h3>Bilans (<span id="balance-source">bieżący</span>)</h3>
+        <div class="summary-grid two">
+          <div><span>Bilans otwarcia</span><strong id="bal-opening">—</strong></div>
+          <div><span>Przychody</span><strong id="bal-income">—</strong></div>
+          <div><span>Wydatki</span><strong id="bal-expense">—</strong></div>
+          <div><span>Bilans zamknięcia</span><strong id="bal-closing">—</strong></div>
+          <div><span>W tym kasa (zamknięcie)</span><strong id="bal-cash">—</strong></div>
+          <div><span>W tym rachunek (zamknięcie)</span><strong id="bal-bank">—</strong></div>
+        </div>
+
+        <h3>Lista kontrolna (<span id="checklist-progress">0/6</span>)</h3>
+        <div class="table-wrap" role="region" aria-labelledby="status-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Punkty listy kontrolnej zamknięcia roku</caption>
+            <thead><tr><th scope="col">Punkt</th><th scope="col">Stan</th><th scope="col">Potwierdził(a)</th><th scope="col">Notatka</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="checklist-body"></tbody>
+          </table>
+        </div>
+
+        <div class="dialog-actions detail-actions">
+          <button id="open-start" type="button">Rozpocznij zamknięcie</button>
+          <button id="open-close" type="button" class="primary" aria-describedby="close-hint">Zamknij rok</button>
+          <button id="open-handover" type="button">Zestawienie przekazania</button>
+        </div>
+        <p class="message" id="close-waiting" hidden>Czeka na drugą osobę — kto rozpoczął zamknięcie roku, nie może go zamknąć.</p>
+        <p class="empty" id="close-hint">Zamknięcie jest aktywne dopiero po potwierdzeniu wszystkich punktów listy kontrolnej.</p>
+      </section>
+    </main>
+
+    <dialog id="start-dialog" aria-labelledby="start-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Nieodwracalne</p><h2 id="start-dialog-title">Rozpocznij zamknięcie roku</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context">Wskaż kolejny rok szkolny, do którego zostanie przeniesiony bilans zamknięcia. Rozpoczęcia nie da się cofnąć z tego ekranu.</p>
+      <label>Docelowy rok szkolny <input name="nextSchoolYearId" required autofocus placeholder="np. 2027-2028" /></label>
+      <div class="form-error" id="start-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="start-error">Rozpocznij</button></div>
+    </form></dialog>
+
+    <dialog id="checklist-dialog" aria-labelledby="checklist-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Lista kontrolna</p><h2 id="checklist-dialog-title">Potwierdź punkt</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context" id="checklist-dialog-item"></p>
+      <label>Notatka (opcjonalnie) <textarea name="note" rows="3" minlength="3" maxlength="500" placeholder="Bez danych osobowych uczniów i rodzin"></textarea></label>
+      <label>Identyfikator dokumentu (opcjonalnie) <input name="documentId" autocomplete="off" placeholder="np. doc-1" /></label>
+      <div class="form-error" id="checklist-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="checklist-error">Potwierdź punkt</button></div>
+    </form></dialog>
+
+    <dialog id="close-dialog" aria-labelledby="close-dialog-title">
+      <div class="dialog-heading"><div><p class="eyebrow">Nieodwracalne</p><h2 id="close-dialog-title">Zamknij rok szkolny</h2></div><button class="icon-button" id="close-dialog-cancel" type="button" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context">Zamknięcie jest ostateczne: nowe wpłaty, wpisy księgi, wydarzenia, zebrania i uchwały tego roku przestaną być możliwe do dodania, a bilans zamknięcia zostanie przeniesiony jako bilans otwarcia kolejnego roku. Tej operacji nie da się cofnąć z tego ekranu.</p>
+      <p><strong>Rok szkolny:</strong> <span id="close-dialog-year"></span></p>
+      <p><strong>Bilans zamknięcia (bieżący):</strong> <span id="close-dialog-balance"></span></p>
+      <div class="form-error" id="close-error" role="alert"></div>
+      <div class="dialog-actions"><button id="close-dialog-cancel-2" type="button">Anuluj</button><button class="primary" id="close-dialog-confirm" type="button">Tak, zamknij rok</button></div>
+    </dialog>
+
+    <dialog id="handover-dialog" aria-labelledby="handover-dialog-title">
+      <div class="dialog-heading"><div><p class="eyebrow">Przekazanie</p><h2 id="handover-dialog-title">Zestawienie przekazania</h2></div><button class="icon-button" id="handover-close" type="button" aria-label="Zamknij">×</button></div>
+      <p class="context">Bez danych osobowych — wyłącznie liczby i statusy, do wydruku dla nowej Rady.</p>
+      <pre id="handover-content" class="body-preview"></pre>
+      <div class="dialog-actions"><button id="handover-print" type="button">Drukuj</button></div>
+    </dialog>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
