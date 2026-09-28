@@ -10,6 +10,11 @@ import {
   renderCardsHtml,
 } from "./core.js";
 import { describeSource } from "../import/csv.js";
+import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 // Stan wyłącznie w pamięci karty przeglądarki: nic nie jest zapisywane ani wysyłane.
 // Jedyne żądanie sieciowe to odczyt GET /api/print/cards po kliknięciu „Wczytaj z serwera”.
@@ -74,18 +79,8 @@ function createApiControls() {
 async function loadFromApi(schoolYearId, classId) {
   const params = new URLSearchParams({ schoolYearId });
   if (classId) params.set("classId", classId);
-  const response = await fetch(`/api/print/cards?${params}`, {
-    credentials: "include",
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-  });
-  let data = null;
-  try {
-    data = await response.json();
-  } catch {
-    // Odpowiedź bez JSON — komunikat ogólny poniżej.
-  }
-  if (!response.ok) throw new Error(API_ERRORS[data?.error] ?? `Serwer odrzucił żądanie (${response.status}).`);
+  // Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
+  const data = await apiRequest(`/api/print/cards?${params}`, { cache: "no-store", messages: API_ERRORS });
   if (!data || !Array.isArray(data.rows)) throw new Error("Niepoprawna odpowiedź serwera.");
   return data;
 }
