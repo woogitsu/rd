@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildGrantsUrl, confirmationText, dateToExpiresAt, describeAuditEvent, errorMessage, grantPayload,
-  indexClasses, invitationLink, invitationPayload, isOwnLastAdminGrant, scopeLabel,
+  indexClasses, invitationLink, invitationPayload, isOwnLastAdminGrant, mfaResetConfirmation, passwordResetLink,
+  scopeLabel,
 } from '../admin/core.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
@@ -69,4 +70,22 @@ test('labels, scope and audit descriptions are Polish and contain identifiers on
   const described = describeAuditEvent({ action: 'role_grant.expired', metadata: { role: 'board', userId: 'u-1', schoolYearId: 'y-2026', reason: 'term_closed' } });
   assert.equal(described.label, 'Wygaszenie roli');
   assert.equal(described.details, 'Zarząd, konto u-1, rok y-2026, powód: term_closed');
+});
+
+// #224: pole potwierdzenia resetu MFA musi dokładnie odpowiadać identyfikatorowi
+// konta (kontrakt POST /api/admin/users/{id}/mfa-reset) i rozróżniać anulowanie
+// okna (Escape/Anuluj -> null) od wpisania złego tekstu.
+test('mfaResetConfirmation requires an exact account id and distinguishes cancel from a wrong answer', () => {
+  assert.deepEqual(mfaResetConfirmation(null, 'u-target'), { cancelled: true, ok: false });
+  assert.deepEqual(mfaResetConfirmation('', 'u-target'), { cancelled: false, ok: false });
+  assert.deepEqual(mfaResetConfirmation('u-inny', 'u-target'), { cancelled: false, ok: false });
+  assert.deepEqual(mfaResetConfirmation(' u-target ', 'u-target'), { cancelled: false, ok: true });
+  assert.deepEqual(mfaResetConfirmation('u-target', 'u-target'), { cancelled: false, ok: true });
+});
+
+test('passwordResetLink builds a /login/#reset= link carrying the token only in the fragment', () => {
+  assert.equal(
+    passwordResetLink('abc123', 'https://rd.example.invalid'),
+    'https://rd.example.invalid/login/#reset=abc123',
+  );
 });

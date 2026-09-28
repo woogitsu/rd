@@ -185,7 +185,9 @@ async function listUsers(env, json) {
               WHERE g.user_id = u.id AND g.revoked_at IS NULL
                 AND (g.expires_at IS NULL OR g.expires_at > now())) AS active_grants,
             (SELECT count(*)::int FROM sessions s
-              WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions
+              WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions,
+            EXISTS (SELECT 1 FROM user_mfa_factors f
+                     WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL AND f.disabled_at IS NULL) AS mfa_enrolled
        FROM users u
       ORDER BY lower(u.email)
       LIMIT ${MAX_LIST}`,
@@ -197,6 +199,7 @@ async function listUsers(env, json) {
       displayName: row.display_name,
       disabledAt: isoTimestamp(row.disabled_at),
       createdAt: isoTimestamp(row.created_at),
+      mfaEnrolled: Boolean(row.mfa_enrolled),
       activeGrants: Number(row.active_grants),
       activeSessions: Number(row.active_sessions),
     })),
