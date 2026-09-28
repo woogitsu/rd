@@ -16,6 +16,10 @@ export const MESSAGES = Object.freeze({
   class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
   // --- Zakończenie przypisania do klasy (#86) --------------------------------------
   invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
+  // --- Rejestr uchwał (#102) --------------------------------------------------------
+  invalid_relation_kind: "Wybierz rodzaj powiązania uchwały z listy.",
+  invalid_execution_status: "Wybierz stan wykonania uchwały z listy.",
+  resolution_not_decided: "Stan wykonania można zapisać tylko dla podjętej uchwały.",
   // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
   minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
   // --- Tryb tylko do odczytu (#143) ------------------------------------------------
