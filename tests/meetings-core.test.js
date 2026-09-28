@@ -12,7 +12,10 @@ import {
   buildAttendancePayload,
   buildMeetingsUrl,
   buildQuorumRule,
+  buildSharedMinutesUrl,
   canApproveMinutes,
+  canManageMeetings,
+  canReadMeetings,
   currentResolutions,
   describeQuorumCheck,
   describeQuorumRule,
@@ -22,6 +25,7 @@ import {
   isMeetingLocked,
   isoToBrusselsLocal,
   makeIdempotencyKey,
+  meetingsViewMode,
   meetingUrl,
   requiredCountForRule,
   resolutionActions,
@@ -38,6 +42,37 @@ test("etykiety po polsku dla rodzajów, widoczności, statusów uchwał i głos�
   // Te same funkcje co w API (src/pg/meetings.js CAPACITIES).
   assert.deepEqual(Object.keys(CAPACITY_LABELS).sort(),
     ["audit_member", "board_member", "guardian", "guest", "other", "principal", "representative", "teacher"]);
+});
+
+// #167: przedstawiciel bez roli z READ_ROLES nie może wołać GET /api/meetings
+// (403 w src/pg/meetings.js) — panel musi rozpoznać to WCZEŚNIEJ i przejść na
+// widok "Protokoły udostępnione" zamiast wysyłać zapytanie z góry skazane na odmowę.
+test("meetingsViewMode: role zarządzające/audytu → 'full', sam przedstawiciel → 'shared', reszta/brak → 'none'", () => {
+  assert.equal(meetingsViewMode([{ role: "admin" }]), "full");
+  assert.equal(meetingsViewMode([{ role: "board" }]), "full");
+  assert.equal(meetingsViewMode([{ role: "audit", schoolYearId: "2026-2027" }]), "full");
+  assert.equal(meetingsViewMode([{ role: "representative", classId: "1A" }]), "shared");
+  // Rodzeństwo w dwóch klasach — nadal tryb 'shared' (lista i tak filtruje po obu klasach po stronie API).
+  assert.equal(meetingsViewMode([{ role: "representative", classId: "1A" }, { role: "representative", classId: "2B" }]), "shared");
+  assert.equal(meetingsViewMode([{ role: "principal" }]), "none");
+  assert.equal(meetingsViewMode([{ role: "treasurer" }]), "none");
+  assert.equal(meetingsViewMode([]), "none");
+  assert.equal(meetingsViewMode(undefined), "none");
+  // Przedstawiciel, który jest też np. skarbnikiem: ma dostęp do pełnego widoku.
+  assert.equal(meetingsViewMode([{ role: "representative" }, { role: "board" }]), "full");
+});
+
+test("canReadMeetings / canManageMeetings: zgodne z READ_ROLES/MANAGE_ROLES z src/pg/meetings.js", () => {
+  assert.equal(canReadMeetings([{ role: "audit" }]), true);
+  assert.equal(canReadMeetings([{ role: "representative" }]), false);
+  assert.equal(canManageMeetings([{ role: "audit" }]), false);
+  assert.equal(canManageMeetings([{ role: "board" }]), true);
+});
+
+test("buildSharedMinutesUrl: waliduje identyfikator roku jak buildMeetingsUrl", () => {
+  assert.equal(buildSharedMinutesUrl("2026-2027"), "/api/meetings/shared-minutes?schoolYearId=2026-2027");
+  assert.throws(() => buildSharedMinutesUrl(""), /roku szkolnego/);
+  assert.throws(() => buildSharedMinutesUrl("../etc"), /roku szkolnego/);
 });
 
 test("czas zebrania jest interpretowany w strefie Europe/Brussels", () => {

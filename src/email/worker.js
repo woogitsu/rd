@@ -45,7 +45,7 @@
 // przejścia stanów pilnowane triggerem, a wysyłany jest tylko wiersz przejęty
 // z „queued” do „sending” w tej samej transakcji.
 
-import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal } from './brevo.js';
+import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
 import { contentHash, renderMessage } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { brusselsDay } from '../pg/today.js';
@@ -156,13 +156,11 @@ async function recheckRow(tx, campaign, row, config) {
   const consent = await tx.query(
     `SELECT 1
        FROM guardians g
-       JOIN student_guardians sg ON sg.guardian_id = g.id
+       JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
        JOIN student_primary_household_on($4::date) p ON p.student_id = sg.student_id
       WHERE g.id = $1 AND p.household_id = $2
         AND g.contact_allowed AND sg.contact_allowed
         AND lower(btrim(g.email)) = $3
-        AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
-        AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date)
       LIMIT 1`,
     [row.guardian_id, row.household_id, row.email, row.memberDay],
   );
@@ -250,10 +248,10 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
               (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id)
                 + (${IN_FLIGHT} AND o.campaign_id = c.id) AS sent_today
          FROM email_campaigns c JOIN school_years y ON y.id = c.school_year_id
-        WHERE c.status = 'sending'
+        WHERE c.status = 'sending' AND (c.send_not_before IS NULL OR c.send_not_before <= $2::timestamptz)
         ORDER BY c.queued_at, c.id
         FOR UPDATE OF c`,
-      [day],
+      [day, now.toISOString()],
     );
     for (const campaign of campaigns) {
       if (remaining <= 0 || batchLeft <= 0) break;
@@ -342,13 +340,11 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
             SELECT 1
               FROM email_campaign_recipients r
               JOIN guardians g ON g.id = r.guardian_id
-              JOIN student_guardians sg ON sg.guardian_id = g.id
+              JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
               JOIN students s ON s.id = sg.student_id
              WHERE r.id = o.recipient_id AND s.household_id = o.household_id
                AND g.contact_allowed AND sg.contact_allowed
-               AND lower(btrim(g.email)) = r.email
-               AND (sg.starts_on IS NULL OR sg.starts_on <= $4::date)
-               AND (sg.ends_on IS NULL OR sg.ends_on >= $4::date))
+               AND lower(btrim(g.email)) = r.email)
         RETURNING o.id`,
       [item.id, runToken, sendAt.toISOString(), item.day],
     );
@@ -627,6 +623,15 @@ export async function runEmailBatch(env, {
     planned: 0, sent: 0, retried: 0, failed: 0, skipped: 0, suppressed: 0, stoppedReason: null, sample: null,
     requeued: 0, unrecorded: [],
   };
+  // Okno godzin wysyłki (#130): sprawdzane przed dotknięciem kolejki, żeby
+  // przebieg poza oknem nie zmieniał niczego (kryterium akceptacji). Dotyczy
+  // też dry-run, żeby podgląd przebiegu zgadzał się z rzeczywistym.
+  if (!withinSendWindow(now, config.sendWindow)) {
+    run.stoppedReason = 'outside_send_window';
+    run.remainingQuota = await remainingQuota(db, now, config);
+    await recordRun(db, run);
+    return run;
+  }
   if (!dryRun) {
     const refusal = liveRunRefusal(config) ?? (transport ? null : 'transport_missing');
     if (refusal) {

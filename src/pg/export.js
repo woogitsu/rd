@@ -16,7 +16,12 @@ import { createHash } from 'node:crypto';
 import { csvHeader, csvRow } from './csv.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
-export const EXPORT_FORMAT_VERSION = 1;
+// Wersja 2 (#202): gospodarstwa i ich historia (0014), uzgodnienia rachunku
+// (0015/0024), zamknięcie roku (0017), przeniesienia kasa ↔ rachunek (0028),
+// stan obecności zebrań (0021). Wersja 1 jest nadal przyjmowana do weryfikacji
+// i odtworzenia z ostrzeżeniem „paczka niepełna” (docs/EXPORT.md).
+export const EXPORT_FORMAT_VERSION = 2;
+export const SUPPORTED_FORMAT_VERSIONS = Object.freeze([1, 2]);
 export const ROSTER_FORMAT = 'rd-class-roster';
 export const ROSTER_FORMAT_VERSION = 1;
 
@@ -78,6 +83,14 @@ function householdScope(has) {
     `id IN (SELECT household_id FROM students WHERE id IN (${YEAR_STUDENTS}))`,
     `id IN (SELECT household_id FROM guardians WHERE ${guardianScope(has)})`,
   ];
+  // Drugie gospodarstwo dziecka (opieka dzielona) i gospodarstwa opiekunów z historii członkostwa.
+  if (has.has('student_households')) {
+    parts.push(`id IN (SELECT household_id FROM student_households WHERE student_id IN (${YEAR_STUDENTS}))`);
+  }
+  if (has.has('guardian_households')) {
+    parts.push(`id IN (SELECT household_id FROM guardian_households WHERE guardian_id IN (
+      SELECT id FROM guardians WHERE ${guardianScope(has)}))`);
+  }
   if (has.has('payment_entries')) {
     parts.push('id IN (SELECT household_id FROM payment_entries WHERE school_year_id = $1 AND household_id IS NOT NULL)');
     if (has.has('payment_assignments')) {
@@ -93,6 +106,11 @@ function householdScope(has) {
   }
   return `(${parts.join(' OR ')})`;
 }
+
+// Przedział czasu roku szkolnego (Europe/Brussels), jak w zakresie audytu.
+const YEAR_TIME = (column) => `${column} >= (SELECT (starts_on::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)
+      AND ${column} < (SELECT ((ends_on + 1)::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)`;
+const YEAR_RECONCILIATIONS = 'SELECT id FROM bank_reconciliations WHERE school_year_id = $1';
 
 // Zakres audytu: zdarzenia jawnie oznaczone tym rokiem w metadanych
 // (schoolYearId), a bez oznaczenia — z dat roku szkolnego (Europe/Brussels). Zdarzenia eksportu (`export.*`) są
@@ -120,6 +138,24 @@ export const EXPORT_TABLES = Object.freeze([
     columns: ['student_id', 'guardian_id', 'contact_allowed', 'is_primary_contact', 'starts_on', 'ends_on', 'created_at'],
     where: () => `student_id IN (${YEAR_STUDENTS})` },
   { table: 'enrollments', required: true, where: () => 'school_year_id = $1' },
+  // 0014: członkostwo w gospodarstwach wypełniają triggery — przy odtworzeniu
+  // (triggery wyłączone) muszą przyjść z paczki, inaczej karta rodziny daje 404.
+  { table: 'student_households', where: () => `student_id IN (${YEAR_STUDENTS})` },
+  { table: 'guardian_households', requires: ['guardians'],
+    where: (has) => `guardian_id IN (SELECT id FROM guardians WHERE ${guardianScope(has)})` },
+  { table: 'enrollment_history', where: () => 'school_year_id = $1' },
+  // Historia kontaktu: do decyzji D-03 tylko identyfikatory, flagi zgody i czas —
+  // bez poprzedniego i nowego e-maila oraz bez treści powodu. Zmiany z tego roku.
+  { table: 'guardian_contact_changes', requires: ['guardians'],
+    columns: ['id', 'guardian_id', 'previous_contact_allowed', 'new_contact_allowed', 'source', 'changed_by', 'changed_at'],
+    where: (has) => `guardian_id IN (SELECT id FROM guardians WHERE ${guardianScope(has)}) AND ${YEAR_TIME('changed_at')}` },
+  // 0026: historia relacji opiekun–dziecko (zgoda, kontakt główny, daty) z tego roku,
+  // jak wyżej bez treści powodu (D-03).
+  { table: 'student_guardian_changes', requires: ['student_guardians'],
+    columns: ['id', 'student_id', 'guardian_id', 'previous_contact_allowed', 'new_contact_allowed',
+      'previous_is_primary_contact', 'new_is_primary_contact', 'previous_starts_on', 'new_starts_on',
+      'previous_ends_on', 'new_ends_on', 'source', 'changed_by', 'changed_at'],
+    where: () => `student_id IN (${YEAR_STUDENTS}) AND ${YEAR_TIME('changed_at')}` },
 
   { table: 'payment_entries', where: () => 'school_year_id = $1' },
   { table: 'payment_corrections', requires: ['payment_entries'],
@@ -139,6 +175,16 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'ledger_corrections', requires: ['ledger_entries'],
     where: () => 'ledger_entry_id IN (SELECT id FROM ledger_entries WHERE school_year_id = $1)' },
   { table: 'ledger_budget_lines', where: () => 'school_year_id = $1' },
+  { table: 'ledger_transfers', where: () => 'school_year_id = $1' },
+
+  // 0015/0024: uzgodnienia rachunku roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami.
+  { table: 'bank_reconciliations', where: () => 'school_year_id = $1' },
+  { table: 'bank_statement_imports', requires: ['bank_reconciliations'],
+    where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
+  { table: 'bank_statement_lines', requires: ['bank_reconciliations'],
+    where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
+  { table: 'bank_reconciliation_matches', requires: ['bank_reconciliations'],
+    where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
 
   { table: 'events', where: () => 'school_year_id = $1' },
   { table: 'event_revisions', requires: ['events'],
@@ -149,6 +195,9 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => 'meeting_id IN (SELECT id FROM meetings WHERE school_year_id = $1)' },
   { table: 'meeting_attendees', requires: ['meetings'],
     where: () => 'meeting_id IN (SELECT id FROM meetings WHERE school_year_id = $1)' },
+  // 0021: licznik rewizji obecności (wypełnia trigger); bez niego kworum wygląda na nieaktualne.
+  { table: 'meeting_attendance_state', requires: ['meetings'],
+    where: () => 'meeting_id IN (SELECT id FROM meetings WHERE school_year_id = $1)' },
   { table: 'meeting_quorum_checks', requires: ['meetings'],
     where: () => 'meeting_id IN (SELECT id FROM meetings WHERE school_year_id = $1)' },
   { table: 'meeting_minutes', requires: ['meetings'],
@@ -158,10 +207,58 @@ export const EXPORT_TABLES = Object.freeze([
       WHERE m.school_year_id = $1)` },
   { table: 'resolutions', where: () => 'school_year_id = $1' },
 
+  // 0017: stan zamknięcia roku i lista kontrolna.
+  { table: 'school_year_closures', where: () => 'school_year_id = $1' },
+  { table: 'school_year_closure_checklist', requires: ['school_year_closures'],
+    where: () => 'closure_id IN (SELECT id FROM school_year_closures WHERE school_year_id = $1)' },
+
   { table: 'audit_events', where: () => AUDIT_SCOPE },
 ]);
 
 const KNOWN_TABLES = new Set(EXPORT_TABLES.map((spec) => spec.table));
+
+// Tabele dodane w wersji 2 — w paczce wersji 1 ich brak (ostrzeżenie „paczka niepełna”).
+export const TABLES_ADDED_IN_V2 = Object.freeze([
+  'student_households', 'guardian_households', 'enrollment_history', 'guardian_contact_changes',
+  'student_guardian_changes', 'ledger_transfers', 'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines',
+  'bank_reconciliation_matches', 'meeting_attendance_state', 'school_year_closures', 'school_year_closure_checklist',
+]);
+
+// Tabele bazowe świadomie poza paczką roku, z uzasadnieniem. Test kompletności
+// (tests/pg-export.test.js) wymaga, by każda tabela była w EXPORT_TABLES albo tu.
+export const EXPORT_EXCLUDED_TABLES = Object.freeze({
+  users: 'konta (e-mail, nazwa) — nie są danymi roku; identyfikatory w created_by zostają bez odpowiednika',
+  sessions: 'sesje logowania — dane techniczne i sekrety',
+  invitations: 'zaproszenia do kont — sekrety i adresy e-mail',
+  user_mfa_factors: 'sekrety MFA — nigdy w paczce',
+  mfa_recovery_codes: 'kody odzyskiwania MFA — nigdy w paczce',
+  mfa_rate_limits: 'limity prób MFA — dane techniczne',
+  user_passwords: 'skróty haseł kont — sekrety, nigdy w paczce',
+  login_rate_limits: 'limity prób logowania — dane techniczne',
+  password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
+  role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
+  documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',
+  document_uploads: 'zamiary uploadu dokumentów (klucz obiektu, skrót) — dane techniczne jak documents (0032)',
+  data_access_log: 'dziennik odczytu danych rodzin — rozliczalność dostępu, nie dane Rady do odtworzenia; retencja do decyzji D-04 (0067)',
+  backup_runs: 'dziennik przebiegów kopii zapasowej i próby odtworzenia — dane operacyjne środowiska, nie danych Rady (0058)',
+  import_batches: 'metadane importów — zakres i retencja do decyzji D-04',
+  export_runs: 'dziennik eksportów — każdy eksport zmieniałby następny',
+  meeting_request_keys: 'klucze idempotencji żądań — dane techniczne',
+  email_campaigns: 'kampanie e-mail — zakres i retencja do decyzji D-04 (adresy odbiorców)',
+  email_campaign_recipients: 'odbiorcy kampanii zawierają adresy e-mail — D-04',
+  email_campaign_exclusions: 'wykluczenia z kampanii — D-04',
+  email_outbox: 'kolejka wysyłki z adresami e-mail — D-04',
+  email_send_ledger: 'dziennik wysyłek dostawcy — D-04',
+  email_suppressions: 'lista blokad adresów e-mail — D-04',
+  email_suppression_release_requests: 'wnioski o zdjęcie blokady adresu e-mail — D-04',
+  email_suppression_releases: 'zdjęcia blokady adresu e-mail (kto zgłosił/zatwierdził) — D-04',
+  email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
+  email_worker_runs: 'przebiegi zadania wysyłki — dane techniczne',
+  news_posts: 'aktualności są publiczne i nie należą do roku; archiwum osobno (zgody, D-04)',
+  news_post_revisions: 'jak news_posts',
+  news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
+  news_photo_consents: 'zgody na wizerunek — osobny zakres (D-04)',
+});
 
 // ---------------------------------------------------------------------------
 // Introspekcja schematu (bez składania SQL z danych wejściowych)
@@ -181,7 +278,7 @@ async function relationExists(executor, name) {
 
 async function tableColumns(executor, table) {
   const { rows } = await executor.query(
-    `SELECT column_name, data_type, is_identity, identity_generation
+    `SELECT column_name, data_type, is_identity, identity_generation, is_generated
        FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = $1
       ORDER BY ordinal_position`,
@@ -192,6 +289,9 @@ async function tableColumns(executor, table) {
     type: row.data_type,
     identityAlways: row.is_identity === 'YES' && row.identity_generation === 'ALWAYS',
     identity: row.is_identity === 'YES',
+    // Kolumna GENERATED ALWAYS AS (…) STORED (np. bank_reconciliations.difference_cents):
+    // jest w paczce do odczytu, ale przy odtworzeniu baza wylicza ją sama.
+    generated: row.is_generated === 'ALWAYS',
   }));
 }
 
@@ -368,6 +468,13 @@ export async function buildYearlyExport(executor, schoolYearId) {
       sha256: sha256Hex(content),
       sums: centsSums(columnNames, records),
     });
+    // #216: oddaje pętlę zdarzeń między tabelami, żeby długi eksport (np.
+    // audit_events roku z ~200 tys. wierszy) nie blokował innych żądań
+    // (także /health/ready) przez cały czas budowania paczki. Nie dzieli
+    // jeszcze przetwarzania JEDNEJ dużej tabeli na partie — pełne
+    // strumieniowanie (format v2, kursor, licząca się przyrostowo suma
+    // kontrolna) zostaje do osobnego PR, patrz opis PR i issue #216 pkt 1.
+    await new Promise((resolve) => { setImmediate(resolve); });
   }
 
   const manifest = {
@@ -413,12 +520,12 @@ export function parseJsonLines(content, path) {
 export function verifyBundle(bundle) {
   if (!isPlainObject(bundle)) fail('invalid_bundle');
   if (bundle.format !== EXPORT_FORMAT) fail('unsupported_format');
-  if (bundle.formatVersion !== EXPORT_FORMAT_VERSION) fail('unsupported_format_version');
+  if (!SUPPORTED_FORMAT_VERSIONS.includes(bundle.formatVersion)) fail('unsupported_format_version');
   const { manifest } = bundle;
   if (!isPlainObject(manifest) || !isPlainObject(bundle.files)) fail('invalid_bundle');
   if (typeof bundle.manifestSha256 !== 'string' || !SHA256_PATTERN.test(bundle.manifestSha256)) fail('invalid_manifest_sha256');
   if (sha256Hex(canonicalJson(manifest)) !== bundle.manifestSha256) fail('manifest_hash_mismatch');
-  if (manifest.format !== EXPORT_FORMAT || manifest.formatVersion !== EXPORT_FORMAT_VERSION) fail('manifest_format_mismatch');
+  if (manifest.format !== EXPORT_FORMAT || manifest.formatVersion !== bundle.formatVersion) fail('manifest_format_mismatch');
   if (typeof manifest.schoolYearId !== 'string' || !manifest.schoolYearId) fail('invalid_manifest');
   if (!Array.isArray(manifest.files)) fail('invalid_manifest');
 
@@ -438,6 +545,7 @@ export function verifyBundle(bundle) {
       fail(`invalid_columns:${entry.path}`);
     }
     const spec = EXPORT_TABLES[position];
+    if (bundle.formatVersion < 2 && TABLES_ADDED_IN_V2.includes(entry.table)) fail(`table_not_in_format_version:${entry.path}`);
     if (spec.columns && entry.columns.some((name) => !spec.columns.includes(name))) fail(`column_not_allowed:${entry.path}`);
 
     const content = bundle.files[entry.path];
@@ -457,10 +565,14 @@ export function verifyBundle(bundle) {
   }
   for (const path of Object.keys(bundle.files)) if (!listed.has(path)) fail(`unlisted_file:${path}`);
 
+  // Paczka wersji 1 nie ma tabel z 0014/0015/0017/0021/0028 — jest niepełna.
+  const warnings = bundle.formatVersion < 2 ? ['bundle_incomplete'] : [];
   return {
     schoolYearId: manifest.schoolYearId,
     formatVersion: manifest.formatVersion,
     manifestSha256: bundle.manifestSha256,
+    warnings,
+    ...(warnings.length ? { missingTables: [...TABLES_ADDED_IN_V2] } : {}),
     tables: report,
     totals: manifest.totals ?? {},
   };
@@ -491,20 +603,81 @@ function insertValue(column, value) {
   return value;
 }
 
+// Pełna liczność i sumy *_cents tabeli w bazie docelowej. Baza była pusta, więc
+// muszą być równe liczbom z manifestu paczki (niezależnie od zakresu eksportu).
+async function tableTotals(tx, table, columns) {
+  const cents = columns.filter((name) => name.endsWith('_cents'));
+  const { rows } = await tx.query(
+    `SELECT count(*)::text AS n${cents.map((name, index) => `, COALESCE(sum(${quoteIdent(name)}), 0)::text AS s${index}`).join('')}
+       FROM ${quoteIdent(table)}`,
+  );
+  const sums = {};
+  cents.forEach((name, index) => { sums[name] = toSafeNumber(rows[0][`s${index}`]); });
+  return { rows: toSafeNumber(rows[0].n), sums };
+}
+
+// Paczka wersji 1 nie ma członkostwa w gospodarstwach. Odtwarzamy je z kolumn
+// zgodności tak jak backfill migracji 0014 (source 'legacy_backfill'), żeby
+// karta rodziny i lista klasy działały. Zwraca liczby dopisanych wierszy.
+async function backfillHouseholdsFromV1(tx, existing) {
+  const result = { studentHouseholds: 0, guardianHouseholds: 0 };
+  if (existing.has('student_households')) {
+    const { rows } = await tx.query(`INSERT INTO student_households (id, student_id, household_id, is_primary, source)
+      SELECT 'sh-legacy-' || s.id, s.id, s.household_id, true, 'legacy_backfill' FROM students s
+      RETURNING id`);
+    result.studentHouseholds = rows.length;
+  }
+  if (existing.has('guardian_households')) {
+    const { rows } = await tx.query(`INSERT INTO guardian_households (id, guardian_id, household_id, source)
+      SELECT 'gh-legacy-' || g.id, g.id, g.household_id, 'legacy_backfill' FROM guardians g
+      RETURNING id`);
+    result.guardianHouseholds = rows.length;
+  }
+  return result;
+}
+
+// Kontrola danych, które w działającej bazie tworzą triggery: po odtworzeniu
+// z wyłączonymi triggerami muszą przyjść z paczki (albo z backfillu v1).
+async function derivedRowsCheck(tx, existing) {
+  const checks = [
+    ['student_households', `SELECT count(*)::int AS n FROM students s
+      WHERE NOT EXISTS (SELECT 1 FROM student_households sh WHERE sh.student_id = s.id)`],
+    ['guardian_households', `SELECT count(*)::int AS n FROM guardians g
+      WHERE NOT EXISTS (SELECT 1 FROM guardian_households gh WHERE gh.guardian_id = g.id)`],
+  ];
+  for (const [table, sql] of checks) {
+    if (!existing.has(table)) continue;
+    const { rows } = await tx.query(sql);
+    if (rows[0].n > 0) fail(`restore_verification_failed:derived:${table}`);
+  }
+}
+
 /**
  * Odtwarza zweryfikowaną paczkę do PUSTEJ bazy z aktualnym schematem
  * (po npm run db:migrate:postgres). Jedna transakcja; pierwszy błąd wycofuje
  * całość. Triggery i klucze obce są wyłączone na czas transakcji
  * (session_replication_role = replica, wymaga roli z uprawnieniem
  * superużytkownika), bo paczka odtwarza stan końcowy, a nie przebieg operacji.
+ *
+ * Wyłączenie triggerów nie może gubić danych (#202): wszystko, co w działającej
+ * bazie wypełniają triggery (członkostwo w gospodarstwach, historia klas,
+ * licznik obecności zebrań), jest w paczce wersji 2. Przed zatwierdzeniem
+ * transakcja sprawdza: (1) liczność i sumy *_cents każdej tabeli w bazie
+ * docelowej = manifest, (2) tabele spoza paczki pozostały puste, (3) dane
+ * pochodne triggerów istnieją. Paczka wersji 1 jest przyjmowana z ostrzeżeniem;
+ * członkostwo w gospodarstwach jest wtedy odtwarzane jak backfill 0014.
  * Po zatwierdzeniu wykonuje ponowny eksport i porównuje pliki oraz sumy.
  */
 export async function restoreBundle(db, bundle) {
   const verified = verifyBundle(bundle);
   const { manifest } = bundle;
+  const warnings = [...verified.warnings];
+  let backfilled = null;
 
   await db.transaction(async (tx) => {
     await tx.query("SET LOCAL session_replication_role = 'replica'");
+    // Triggery z własnym warunkiem odtworzenia (0027/0028: daty w roku) — i tak wyłączone.
+    await tx.query("SET LOCAL rd.restore = 'on'");
     const existing = await assertEmptyTarget(tx);
     for (const entry of manifest.files) {
       if (!existing.has(entry.table)) fail(`target_table_missing:${entry.table}`);
@@ -513,7 +686,7 @@ export async function restoreBundle(db, bundle) {
         const column = targetColumns.find((item) => item.name === name);
         if (!column) fail(`target_column_missing:${entry.table}.${name}`);
         return column;
-      });
+      }).filter((column) => !column.generated);
       const override = columns.some((column) => column.identityAlways) ? ' OVERRIDING SYSTEM VALUE' : '';
       const records = parseJsonLines(bundle.files[entry.path], entry.path);
       for (let start = 0; start < records.length; start += INSERT_BATCH_ROWS) {
@@ -537,6 +710,28 @@ export async function restoreBundle(db, bundle) {
         );
       }
     }
+
+    // (1) Liczności i sumy z paczki = stan bazy docelowej.
+    for (const entry of manifest.files) {
+      const actual = await tableTotals(tx, entry.table, entry.columns);
+      if (actual.rows !== entry.rows) fail(`restore_verification_failed:rows:${entry.table}`);
+      if (canonicalJson(actual.sums) !== canonicalJson(entry.sums ?? {})) fail(`restore_verification_failed:sums:${entry.table}`);
+    }
+    // (2) Nic poza paczką (np. wiersz dopisany przez trigger).
+    const listed = new Set(manifest.files.map((entry) => entry.table));
+    let v1Backfill = new Set();
+    if (bundle.formatVersion < 2) {
+      backfilled = await backfillHouseholdsFromV1(tx, existing);
+      v1Backfill = new Set(['student_households', 'guardian_households']);
+      warnings.push('households_backfilled_from_v1');
+    }
+    for (const table of [...existing].sort()) {
+      if (listed.has(table) || v1Backfill.has(table) || !IDENTIFIER.test(table)) continue;
+      const { rows } = await tx.query(`SELECT EXISTS (SELECT 1 FROM ${quoteIdent(table)}) AS present`);
+      if (rows[0]?.present) fail(`restore_unexpected_rows:${table}`);
+    }
+    // (3) Dane pochodne triggerów.
+    await derivedRowsCheck(tx, existing);
   });
 
   // Kontrola po odtworzeniu: ten sam eksport z odtworzonej bazy.
@@ -546,10 +741,16 @@ export async function restoreBundle(db, bundle) {
     .filter((entry) => manifest.files.some((item) => item.path === entry.path))
     .map(({ path, rows, sha256, sums }) => ({ path, rows, sha256, sums }));
   const filesMatch = canonicalJson(expected) === canonicalJson(actual);
-  const totalsMatch = canonicalJson(manifest.totals ?? {}) === canonicalJson(again.manifest.totals);
+  // Sumy porównujemy dla kluczy obecnych w paczce (paczka v1 może mieć ich mniej).
+  const manifestTotals = manifest.totals ?? {};
+  const againTotals = Object.fromEntries(Object.keys(manifestTotals).map((name) => [name, again.manifest.totals[name]]));
+  const totalsMatch = canonicalJson(manifestTotals) === canonicalJson(againTotals);
   if (!filesMatch) fail('restore_verification_failed:files');
   if (!totalsMatch) fail('restore_verification_failed:totals');
-  return { ...verified, restored: true, reexportFilesMatch: filesMatch, reexportTotalsMatch: totalsMatch };
+  return {
+    ...verified, warnings, ...(backfilled ? { backfilled } : {}),
+    restored: true, reexportFilesMatch: filesMatch, reexportTotalsMatch: totalsMatch, countsMatch: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -564,7 +765,7 @@ export async function buildClassRoster(executor, classId) {
   if (!klass) throw new ExportError('class_not_found');
   const { rows: students } = await executor.query(
     `SELECT s.id, s.first_name, s.last_name
-       FROM enrollments e JOIN students s ON s.id = e.student_id
+       FROM enrollments_current e JOIN students s ON s.id = e.student_id
       WHERE e.class_id = $1 AND e.school_year_id = $2
       ORDER BY s.last_name COLLATE "C", s.first_name COLLATE "C", s.id COLLATE "C"`,
     [klass.id, klass.school_year_id],
@@ -575,10 +776,8 @@ export async function buildClassRoster(executor, classId) {
     `SELECT sg.student_id, g.id, g.first_name, g.last_name,
             CASE WHEN sg.contact_allowed AND g.contact_allowed THEN g.email END AS email,
             sg.is_primary_contact
-       FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
-      WHERE sg.student_id IN (SELECT student_id FROM enrollments WHERE class_id = $1 AND school_year_id = $2)
-        AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
-        AND (sg.ends_on IS NULL OR sg.ends_on >= CURRENT_DATE)
+       FROM student_guardians_current sg JOIN guardians g ON g.id = sg.guardian_id
+      WHERE sg.student_id IN (SELECT student_id FROM enrollments_current WHERE class_id = $1 AND school_year_id = $2)
       ORDER BY sg.student_id COLLATE "C", g.last_name COLLATE "C", g.first_name COLLATE "C", g.id COLLATE "C"`,
     [klass.id, klass.school_year_id],
   );
