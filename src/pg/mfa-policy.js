@@ -32,6 +32,9 @@ export const MFA_GATE_EXEMPT_EXACT = Object.freeze([
   '/api/login', '/api/auth/state', '/api/invitations/accept', '/api/password/reset',
   // Trasy publiczne i webhook: działają bez sesji, więc cookie niczego tu nie zmienia.
   '/api/meetings/public-minutes', '/api/email/webhooks/brevo',
+  // Wypisanie jednym kliknięciem (#110): klika je klient poczty rodzica, nie
+  // przeglądarka z sesją; token HMAC jest jedynym zabezpieczeniem.
+  '/api/email/preferences',
 ]);
 export const MFA_GATE_EXEMPT_PREFIXES = Object.freeze(['/api/mfa/', '/api/public/']);
 const EXEMPT_EXACT = new Set(MFA_GATE_EXEMPT_EXACT);
