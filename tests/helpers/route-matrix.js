@@ -698,6 +698,8 @@ export const ROUTE_MATRIX = Object.freeze([
     allow: EMAIL_APPROVE, body: (_target, obj) => ({ contentHash: obj.contentHash, recipientsHash: obj.recipientsHash }),
   }),
   emailRoute('email.queue', 'POST', '/queue', 'approved', {}),
+  emailRoute('email.pause', 'POST', '/pause', 'sending', {}),
+  emailRoute('email.resume', 'POST', '/resume', 'paused', {}),
   emailRoute('email.cancel', 'POST', '/cancel', 'draft', {}),
   {
     // Webhook Brevo: bez sesji i bez Origin; uwierzytelnia wspólny sekret (brak/zły sekret = 401, test niżej).

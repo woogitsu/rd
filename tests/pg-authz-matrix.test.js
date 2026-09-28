@@ -230,6 +230,13 @@ async function makeCampaign(ctx, target, stage) {
   // Zatwierdza inna osoba niż autor migawki (zasada czterech oczu).
   await api(ctx, ctx.fxCookies.board2, 'POST', `/api/email/campaigns/${campaignId}/approve`,
     { contentHash: obj.contentHash, recipientsHash: obj.recipientsHash });
+  if (stage === 'approved') return obj;
+  // #130: harmonogram — sending/paused budowane na zakolejkowanej kampanii.
+  await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/queue`, {});
+  if (stage === 'sending') return obj;
+  if (stage === 'paused') {
+    await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/pause`, {});
+  }
   return obj;
 }
 

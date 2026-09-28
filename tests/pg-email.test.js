@@ -1481,6 +1481,158 @@ test('no_payment_record: payment recorded during a provider pause → skipped af
   } finally { await t.close(); }
 });
 
+// --- #130: harmonogram startu, wstrzymanie/wznowienie ----------------------
+
+test('#130 pause/resume: role boundaries, invalid transitions, idempotent double click', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    const rep = await seedUserSession(t.db, { userId: 'u-rep130', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    const admin = await seedUserSession(t.db, { userId: 'u-adm130', mfa: true, roles: [{ role: 'admin' }] });
+    const classTreasurer = await seedUserSession(t.db, { userId: 'u-ctr130', mfa: true, roles: [{ role: 'treasurer', classId: 'c1', schoolYearId: YEAR }] });
+    for (const cookie of [rep, admin]) {
+      const denied = await t.call(cookie, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+      assert.deepEqual([denied.status, denied.body], [403, { error: 'forbidden' }]);
+    }
+    // Trasy kampanii dotyczą całej szkoły — przydział klasowy ich nie otwiera.
+    assert.equal((await t.call(classTreasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' })).status, 403);
+
+    const draft = await createDraft(t, { key: crypto.randomUUID() });
+    assert.deepEqual((await t.call(t.treasurer, `/api/email/campaigns/${draft.id}/pause`, { method: 'POST' })).body, { error: 'campaign_locked' });
+    assert.deepEqual((await t.call(t.treasurer, `/api/email/campaigns/${draft.id}/resume`, { method: 'POST' })).body, { error: 'campaign_locked' });
+    // Wznowienie kampanii, która już wysyła, jest no-opem (idempotencja), nie błędem.
+    const noopResume = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    assert.equal(noopResume.status, 200);
+    assert.equal(noopResume.body.campaign.status, 'sending');
+
+    const paused1 = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    assert.equal(paused1.status, 200);
+    assert.equal(paused1.body.campaign.status, 'paused');
+    assert.ok(paused1.body.campaign.pausedBy);
+    const paused2 = await t.call(t.board, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    assert.equal(paused2.status, 200, 'druga pauza jest no-opem, nie błędem');
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.campaign.paused' AND entity_id = $1`, [campaign.id]), 1);
+
+    const resumed1 = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    assert.equal(resumed1.status, 200);
+    assert.equal(resumed1.body.campaign.status, 'sending');
+    assert.ok(resumed1.body.campaign.resumedBy);
+    // Wznowienie nie wymaga ponownego zatwierdzenia (treść/lista niezmienne).
+    assert.equal(resumed1.body.campaign.approvedBy, campaign.approvedBy ?? resumed1.body.campaign.approvedBy);
+    const resumed2 = await t.call(t.board, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    assert.equal(resumed2.status, 200, 'drugie wznowienie jest no-opem');
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.campaign.resumed' AND entity_id = $1`, [campaign.id]), 1);
+
+    // paused -> cancelled dozwolone.
+    await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    const cancelled = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' });
+    assert.equal(cancelled.status, 200);
+    assert.equal(cancelled.body.campaign.status, 'cancelled');
+  } finally { await t.close(); }
+});
+
+test('#130 worker skips paused campaigns entirely; queue is untouched while paused', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    const transport = fakeTransport();
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 0);
+    assert.equal(transport.calls.length, 0);
+    assert.deepEqual((await outboxStates(t, campaign.id)).map((r) => r.state), ['queued', 'queued']);
+
+    const resumed = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    assert.equal(resumed.status, 200);
+    const after = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(after.sent, 2);
+  } finally { await t.close(); }
+});
+
+test('#130 no_payment_record: payment recorded while campaign is paused → skipped after resume', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t, { audience: 'no_payment_record' });
+    await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    await t.db.query(
+      `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+       VALUES ('p-pause130', 'h1', $1, 500, '2026-10-05', 'bank', 'recorded', 'u-tr', 'payment-key-pause130')`,
+      [YEAR],
+    );
+    await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' });
+    const transport = fakeTransport();
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 0);
+    assert.equal(run.skipped, 1);
+    assert.equal((await outboxStates(t, campaign.id))[0].state, 'skipped');
+  } finally { await t.close(); }
+});
+
+test('#130 send_not_before delays the run; changing it after approval requires reapproval', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await createDraft(t);
+    await snapshot(t, campaign.id);
+    const future = new Date(DAY1.getTime() + 24 * 3600_000).toISOString();
+    const updated = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT', body: { title: campaign.title, subject: campaign.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
+    });
+    assert.equal(updated.status, 200, JSON.stringify(updated.body));
+    assert.equal(updated.body.campaign.sendNotBefore, future);
+    await snapshot(t, campaign.id);
+    const approved = await approve(t, campaign.id);
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    const queued = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/queue`, { method: 'POST' });
+    assert.equal(queued.status, 200);
+
+    const transport = fakeTransport();
+    const early = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(early.sent, 0, 'termin startu jeszcze nie nadszedł');
+    assert.equal(transport.calls.length, 0);
+
+    const onTime = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 25 * 3600_000) });
+    assert.equal(onTime.sent, 1);
+
+    // Zmiana terminu po zatwierdzeniu cofa do szkicu (jak treść).
+    const draft2 = await createDraft(t, { key: crypto.randomUUID() });
+    await snapshot(t, draft2.id);
+    const approved2 = await approve(t, draft2.id);
+    assert.equal(approved2.status, 200);
+    const changed = await t.call(t.treasurer, `/api/email/campaigns/${draft2.id}`, {
+      method: 'PUT', body: { title: draft2.title, subject: draft2.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
+    });
+    assert.equal(changed.status, 200);
+    assert.equal(changed.body.campaign.status, 'draft');
+    assert.equal(changed.body.approvalInvalidated, true);
+  } finally { await t.close(); }
+});
+
+test('#130 EMAIL_SEND_WINDOW: a run outside the configured window stops without touching the queue', async () => {
+  const t = await setup({
+    EMAIL_SEND_WINDOW_ENABLED: 'true', EMAIL_SEND_WINDOW_TIMEZONE: 'Europe/Brussels',
+    EMAIL_SEND_WINDOW_DAYS: '1-5', EMAIL_SEND_WINDOW_START: '09:00', EMAIL_SEND_WINDOW_END: '18:00',
+  });
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport();
+    // DAY1 = 2026-10-05T08:00Z = 10:00 w Brukseli (CEST) — poniedziałek, w oknie.
+    const inWindow = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(inWindow.stoppedReason, null);
+    assert.equal(inWindow.sent, 1);
+    // 20:30 w Brukseli tego samego dnia — poza oknem.
+    const outside = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date('2026-10-05T18:30:00Z') });
+    assert.equal(outside.stoppedReason, 'outside_send_window');
+    assert.equal(outside.sent, 0);
+    assert.equal(transport.calls.length, 1, 'druga próba nie dotyka kolejki');
+  } finally { await t.close(); }
+});
+
 test('no test in this file touched the network', () => {
   assert.equal(networkGuardCalls(), 0);
 });

@@ -169,6 +169,7 @@ export const MESSAGES = Object.freeze({
   campaign_not_draft: "Wysyłkę można zmieniać tylko jako szkic.",
   campaign_locked: "Wysyłka jest zablokowana i nie można jej zmienić.",
   no_recipients: "Wysyłka nie ma odbiorców.",
+  invalid_send_not_before: "Podaj poprawną datę i godzinę startu wysyłki.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
 
   // --- Import -----------------------------------------------------------------------------------
