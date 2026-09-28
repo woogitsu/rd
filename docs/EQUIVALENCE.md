@@ -39,7 +39,7 @@ kontraktem referencyjnym, nie wdrożeniem Railway.
 | `GET /api/session` — ważna sesja (z MFA i bez), cookie wśród innych, zduplikowane cookie (wygrywa pierwsze) | zgodne | treść identyczna po normalizacji `expiresAt` |
 | `GET /api/session` — zapis `expiresAt` | uzasadniona różnica | D1 zwraca tekst zapisany w bazie (np. `2099-01-01 00:00:00`), PostgreSQL ISO 8601 (`2099-01-01T00:00:00.000Z`). Ta sama chwila; żaden panel nie czyta tego pola |
 | `GET /api/access` — brak sesji, wygasła, wyłączone konto | zgodne | `401 unauthenticated` |
-| `GET /api/access` — admin, przedstawiciel, konto bez ról | zgodne | przedstawiciel widzi tylko przypisane klasy; wygasły przydział pominięty; ta sama kolejność |
+| `GET /api/access` — admin, przedstawiciel, konto bez ról | uzasadniona różnica | przedstawiciel widzi tylko przypisane klasy; wygasły przydział pominięty; ta sama kolejność. Nowy dodaje pole `hasActiveRole` (#176, ROLE_STATUS — src/pg/auth.js): ekran startowy `login/` pokazuje komunikat zamiast listy paneli, gdy konto nie ma żadnej roli z aktywnymi trasami (np. samo `principal`). Worker tego pola nie ma |
 | `PUT /api/access`, `POST /api/session` ze zgodnym Origin | zgodne | `404 not_found` |
 | `POST /api/session` bez Origin | uzasadniona różnica | stary: `404 not_found`; nowy: `403 invalid_origin`. Router PostgreSQL sprawdza Origin dla każdej metody zmieniającej stan pod `/api/` przed wyborem trasy (ostrzejsza ochrona CSRF) |
 | `POST /api/logout` — brak Origin, obcy Origin, `null`, inny schemat | zgodne | `403 invalid_origin`, sesja pozostaje ważna, brak wpisu audytu |

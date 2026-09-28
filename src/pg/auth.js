@@ -21,6 +21,39 @@ const LAST_SEEN_THROTTLE_SECONDS = 5 * 60;
 export const INVITATION_DEFAULT_TTL_SECONDS = 60 * 60 * 72;
 export const INVITATION_MAX_TTL_SECONDS = 60 * 60 * 24 * 14;
 export const ROLES = Object.freeze(['admin', 'board', 'treasurer', 'representative', 'audit', 'principal']);
+
+// #176: stan roli w kodzie, nie tylko w komentarzach — źródło dla admin/ (formularz
+// zaproszenia i nadania roli), ekranu startowego i tests/pg-authz-matrix.test.js.
+// 'active'          — rola ma dziś co najmniej jedną trasę chronioną.
+// 'partial'         — rola ma dziś część tras (np. audit: tylko GET /api/reports/audit,
+//                      reszta czeka na D-09 — zob. docs/LEDGER.md, issue #137).
+// 'pending_decision' — rola nie ma dziś ŻADNEJ trasy chronionej (docs/AUTHORIZATION.md:
+//                      "Rola `principal` nie ma dziś dostępu do żadnej trasy chronionej").
+// Zmiana tej mapy bez zmiany faktycznych tras w modułach byłaby fałszywą obietnicą
+// (AGENTS.md: „widok publiczny/komunikaty nie mogą obiecywać funkcji, których nie ma”).
+export const ROLE_STATUS = Object.freeze({
+  admin: 'active',
+  board: 'active',
+  treasurer: 'active',
+  representative: 'active',
+  audit: 'partial',
+  principal: 'pending_decision',
+});
+
+// Zaproszenie/nadanie roli 'pending_decision' jest domyślnie odrzucane (422
+// role_pending_decision) — konto bez żadnej funkcji to dane osobowe bez celu
+// (D-01/D-06). ALLOW_PENDING_ROLES=true wyłącza tę blokadę, np. do przygotowania
+// kont z wyprzedzeniem przed decyzją D-09 albo do testów.
+export function allowPendingRoles(env) {
+  const raw = env && Object.hasOwn(env, 'ALLOW_PENDING_ROLES') ? env.ALLOW_PENDING_ROLES : process.env.ALLOW_PENDING_ROLES;
+  return raw === 'true';
+}
+
+// Role bez żadnej trasy klasowej (docs/AUTHORIZATION.md) — przydział z classId
+// dla tych ról jest dziś ciche „nic”: żadna trasa ogólnoszkolna go nie używa
+// (isAuthorizedScoped odfiltrowuje przydziały klasowe), a klasowej dla tych ról
+// nie ma. Tylko `representative` używa classId; inne role go dziś nie obsługują.
+export const CLASS_SCOPE_ROLES = Object.freeze(['representative']);
 const REVOKE_REASONS = new Set(['logout', 'rotated', 'admin', 'user_disabled', 'password_changed', 'password_reset', 'mfa_reset', 'idle']);
 
 export function sessionIdleTimeoutSeconds(env) {
@@ -338,6 +371,21 @@ export async function grantInvitation(tx, invitation, userId) {
   return grantId;
 }
 
+// #146: zaproszenie wystawione przez to samo konto, które je przyjmuje (admin
+// zaprosił własny adres), nie nadaje mu roli — to samonadanie z pominięciem
+// drugiej osoby, które POST /api/admin/grants odrzuca (`cannot_grant_self`).
+// Wyjątek: zaproszenie pierwszego administratora (scripts/bootstrap-admin.js)
+// ma created_by = zapraszany (FK na users), a wystawia je aktor techniczny —
+// rozpoznawane po zdarzeniu `auth.bootstrap_issued` tego zaproszenia.
+export async function isSelfInvitation(tx, invitation, userId) {
+  if (invitation.created_by !== userId) return false;
+  const { rows } = await tx.query(
+    "SELECT 1 FROM audit_events WHERE action = 'auth.bootstrap_issued' AND entity_type = 'invitation' AND entity_id = $1 LIMIT 1",
+    [invitation.id],
+  );
+  return !rows[0];
+}
+
 export const INVITATION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 // Akceptacja przez już uwierzytelnionego użytkownika. Adres konta musi
@@ -361,6 +409,7 @@ export async function acceptInvitation(env, { token, userId }) {
     )).rows[0];
     if (!user || user.disabled_at) return deny('user_unavailable');
     if (user.email !== String(invitation.email).toLowerCase()) return deny('email_mismatch');
+    if (await isSelfInvitation(tx, invitation, userId)) return deny('self_invitation');
     const grantId = await grantInvitation(tx, invitation, userId);
     return { ok: true, grantId };
   });

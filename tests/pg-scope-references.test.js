@@ -137,7 +137,7 @@ describe('#205: amendsResolutionId poza rokiem/klasą', () => {
       await assert.rejects(
         createResolution(db, board, {
           idempotencyKey: key(), meetingId: m1a.id, number: '1/2026-a', title: 'Zmiana', body: 'Zmienia uchwałę innej klasy.',
-          status: 'draft', amendsResolutionId: adopted.id,
+          status: 'draft', amendsResolutionId: adopted.id, relationKind: 'amends',
         }),
         { code: 'invalid_reference' },
       );

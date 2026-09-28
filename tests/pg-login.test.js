@@ -514,6 +514,23 @@ test('przyjęcie zaproszenia: wygasłe odrzucone; istniejące konto wymaga obecn
   assert.deepEqual(grants.rows.map((row) => row.role), ['representative']);
 });
 
+// #146: admin zaprasza WŁASNY adres i przyjmuje zaproszenie własnym hasłem —
+// samonadanie roli z pominięciem drugiej osoby. Przyjęcie jest odrzucane
+// (invalid_invitation), rola nie powstaje, zaproszenie zostaje nieprzyjęte.
+test('#146: zaproszenie wystawione przez to samo konto nie nadaje mu roli (HTTP)', async () => {
+  const self = await seedPasswordUser({ userId: 'u-login-selfinv', roles: [{ role: 'admin' }] });
+  const { secret, invitationId } = await createInvitation(env, {
+    actorId: self.userId, email: self.email, role: 'treasurer', schoolYearId: 'y-test',
+  });
+  const accept = await post('/api/invitations/accept', { token: secret, password: self.password });
+  assert.equal(accept.status, 400);
+  assert.deepEqual(await accept.json(), { error: 'invalid_invitation' });
+  const grants = await db.query("SELECT role FROM role_grants WHERE user_id = 'u-login-selfinv' AND role = 'treasurer'");
+  assert.equal(grants.rows.length, 0);
+  const invitation = await db.query('SELECT accepted_at FROM invitations WHERE id = $1', [invitationId]);
+  assert.equal(invitation.rows[0].accepted_at, null);
+});
+
 // --- Zmiana i reset hasła ---------------------------------------------------------------
 
 test('zmiana hasła wymaga obecnego hasła, wycofuje inne sesje i rotuje bieżącą', async () => {
