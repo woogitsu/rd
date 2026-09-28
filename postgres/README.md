@@ -460,6 +460,18 @@ kursorem (m.in. `audit_events(occurred_at DESC, id)`). Bez nowych kolumn,
 tabel ani zmiany danych; zapis robi nieco więcej pracy (utrzymanie
 indeksów), zaniedbywalne przy obecnej skali.
 
+`0060_resolution_register.sql` (#102) dodaje rejestr uchwał: relacje
+„zmienia”/„uchyla” (`resolutions.relation_kind` + `amends_resolution_id`,
+wymagane razem), zgodę na powiązanie z innym rokiem
+(`relation_cross_year`), widok `resolution_effective_status`
+(`in_force`/`amended`/`repealed`, liczony z relacji, nic nie nadpisuje),
+tabelę append-only `resolution_execution_events` (historia wykonania) i
+opcjonalną podpowiedź numeru uchwały
+(`school_years.resolution_number_pattern`, puste domyślnie — decyzja
+D-15). Istniejące wiersze z `amends_resolution_id` bez rodzaju relacji
+dostają NULL (nie jest znany wstecznie); trigger odtąd wymaga rodzaju
+przy nowych powiązaniach.
+
 `0061_meetings_mfa_four_eyes.sql` (#135, SR-10) aktualizuje wyłącznie ciało
 funkcji `meeting_minutes_change_guard()`: zatwierdzenie protokołu przez tę
 samą osobę, która go napisała, kończy się `minutes_four_eyes_required` — też
