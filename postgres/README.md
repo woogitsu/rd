@@ -671,19 +671,6 @@ importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
 przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
 importami CODA/CAMT — tylko po kopii zapasowej.
 
-`0072_ledger_review_resolution_link.sql` (#97, część #93) dodaje zasadę
-czterech oczu przy wydatkach i jawne powiązanie wpisu księgi z uchwałą:
-`ledger_entries.resolution_id`, trigger sprawdzający uchwałę (bieżąca
-rewizja, przyjęta, z zebrania ogólnego, w limicie kwoty upoważnienia),
-tabelę `resolution_spending_authorizations` (tylko dopisywanie, kwota
-upoważnienia jako nowy wiersz z `supersedes_id`) oraz widok
-`resolution_spending`. Skutki dla danych: nowa kolumna jest `NULL` dla
-istniejących wpisów, nowe tabele puste; żaden istniejący wiersz nie jest
-zmieniany. Wycofanie na pustej bazie: usunięcie triggera/funkcji, widoku,
-tabeli `resolution_spending_authorizations` i kolumny
-`ledger_entries.resolution_id`; na bazie z danymi — bezpieczne, dopóki
-żaden wpis nie ma ustawionego powiązania.
-
 `0073_ledger_budget_adoptions.sql` (#107) dodaje preliminarz przez API:
 `ledger_categories.idempotency_key` (klucz żądania tworzenia kategorii),
 `ledger_category_deactivations` (historia wyłączenia kategorii, tylko
