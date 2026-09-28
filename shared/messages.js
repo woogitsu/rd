@@ -14,6 +14,8 @@ export const MESSAGES = Object.freeze({
   class_exists: "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
   // --- Zakończenie przypisania do klasy (#86) --------------------------------------
   invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
+  // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
+  minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",

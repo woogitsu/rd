@@ -186,7 +186,8 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
     body: minutesBody ?? `Protokół ${scopeMarker} — treść syntetyczna.`,
   });
   if (stage === 'draftMinutes') return { ...obj, minutesId: minutes.id };
-  await approveMinutes(db, fxAdmin, { minutesId: minutes.id });
+  // #135: zatwierdzający musi być inną osobą niż autor wersji (fxAdmin powyżej).
+  await approveMinutes(db, fxBoard, { minutesId: minutes.id });
   if (stage === 'approvedMinutes') return { ...obj, minutesId: minutes.id };
   await setMinutesVisibility(db, fxAdmin, { idempotencyKey: nextKey('fx-vis'), minutesId: minutes.id, visibility });
   return { ...obj, minutesId: minutes.id };

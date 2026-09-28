@@ -42,13 +42,14 @@ Ustalenie quorum (`determineQuorum`) oblicza baza danych z reguły i listy obecn
 - Każda treść to nowa, niezmienna wersja (1, 2, 3…), wskazująca poprzednią. Edycja projektu także tworzy nową wersję.
 - Zatwierdzić można tylko najnowszą wersję. Zatwierdzona wersja jest niezmienna (trigger w bazie).
 - Pierwsze zatwierdzenie **blokuje zebranie**: listę obecności, porządek obrad, ustalenia quorum, uchwały i dane zebrania. Dalej można dodać wersję poprawioną protokołu i ją zatwierdzić oraz zmienić widoczność.
+- **Zatwierdzenie wymaga sesji z MFA i innej osoby niż autor wersji** (#135, SR-10): `approveMinutes` sprawdza `actor.mfaVerified` (`403 mfa_required`) i to, że zatwierdzający nie jest autorem zatwierdzanej wersji (`403 minutes_four_eyes_required`). Ta sama reguła czterech oczu działa w triggerze bazy (`0061_meetings_mfa_four_eyes.sql`) i chroni przed bezpośrednim `UPDATE` z pominięciem serwisu — tam odmowa to `409` (kod jak wyżej). Reguła jest **założeniem** do decyzji D-08; nie jest dziś konfigurowalna (włączona na stałe), bo synchronizacja przełącznika między serwisem a triggerem wymagałaby dodatkowej migracji.
 - **Zatwierdzenie wymaga rozstrzygnięcia wszystkich projektów uchwał** (#81, migracja `0021_meetings_integrity.sql`). Dopóki zebranie ma uchwałę w stanie `draft`, zatwierdzenie daje `409 minutes_open_resolutions` — także przy bezpośrednim `UPDATE` w bazie (trigger). Projekt trzeba przyjąć, odrzucić albo wycofać (`PATCH …/resolutions/:id` ze `status: "withdrawn"`; wiersz zostaje w rejestrze, zmiana trafia do dziennika zdarzeń jako `resolution.updated`). Podwójne kliknięcie „Zatwierdź” przy otwartym projekcie daje dwie odmowy i nie zmienia danych.
 - Po archiwizacji nie powstają nowe wersje.
 - Zatwierdzenie w systemie odnotowuje fakt przyjęcia protokołu; kto i w jakim trybie przyjmuje protokół wynika z regulaminu i można to opisać w `approvalNote`.
 
 ## Widoczność protokołów
 
-Widoczność ustala się jawnie dla zatwierdzonej wersji: `internal` (domyślnie), `parents`, `public`. Każda zmiana to nowy zapis z autorem i czasem. Projekt protokołu nie może zostać udostępniony (trigger w bazie).
+Widoczność ustala się jawnie dla zatwierdzonej wersji: `internal` (domyślnie), `parents`, `public`. Każda zmiana to nowy zapis z autorem i czasem. Projekt protokołu nie może zostać udostępniony (trigger w bazie). Ustawienie widoczności `parents` lub `public` wymaga sesji z MFA (#135); `internal` — nie.
 
 Udostępniana jest wyłącznie **najnowsza zatwierdzona wersja** zebrania. Nowa zatwierdzona poprawka startuje jako `internal`, więc do czasu ponownego udostępnienia rodzice nie widzą żadnej wersji tego protokołu — wybór ostrożniejszy od automatycznego przeniesienia widoczności.
 
@@ -61,6 +62,7 @@ Rodzice widzą protokoły zebrań ogólnych i zarządu udostępnione rodzicom or
 - **Ustalenie quorum musi być aktualne** (#81). Każdy wpis lub poprawka obecności podbija licznik zmian listy obecności zebrania (`meeting_attendance_state`); ustalenie quorum zapisuje stan licznika (`attendance_revision`). Przyjęcie lub odrzucenie uchwały na ustaleniu sprzed późniejszej zmiany obecności baza odrzuca kodem `409 resolution_quorum_check_stale` — trzeba ponownie ustalić quorum. Wyjątek: poprawka zapisu (`correctResolution`) może zachować ustalenie poprawianej rewizji, bo opisuje to samo głosowanie. Ustalenia sprzed migracji mają stan nieznany i liczą się jako nieaktualne. `GET /api/meetings/:id` zwraca przy ustaleniu `current: true|false`; panel opisuje nieaktualne ustalenie. **Założenie (D-21 otwarte):** nieaktualne ustalenie blokuje rozstrzygnięcie, a nie tylko ostrzega — wariant ostrożniejszy do czasu decyzji regulaminowej.
 - **Aplikacja nie wymaga, by quorum było osiągnięte**, ani nie ocenia większości głosów — to zasady regulaminu. Wynik quorum jest widoczny przy uchwale.
 - Uchwała przyjęta lub odrzucona jest niezmienna. Pomyłkę w zapisie (np. liczbie głosów) poprawia się nową rewizją z tym samym numerem i powodem (`correctResolution`) — tylko przed zatwierdzeniem protokołu. Później zmiana wymaga nowej uchwały zmieniającej (`amendsResolutionId`).
+- **Rozstrzygnięcie wymaga MFA** (#135, SR-10): zapis uchwały ze statusem `adopted` lub `rejected` (`createResolution`, `updateResolution`) oraz każda korekta (`correctResolution`, zawsze zapisuje rozstrzygnięcie) wymagają `actor.mfaVerified` (`403 mfa_required`). Projekt (`draft`) i jego edycja nie wymagają MFA.
 
 ## Związek z księgą
 
@@ -76,7 +78,34 @@ Wydatek powyżej 3000 EUR wymaga w `ledger_entries.resolution_reference` tekstow
 | representative | wyłącznie udostępnione rodzicom zatwierdzone protokoły: zebrania ogólne i zarządu oraz własnej klasy |
 | principal | brak dostępu do decyzji D-09 |
 
-Przydział z `classId` działa tylko dla zebrań tej klasy; nigdy dla zebrań ogólnych lub zarządu. Przydział z `schoolYearId` działa tylko w swoim roku. MFA nie jest wymagane, bo moduł nie wykonuje operacji finansowych; szkoła może to zmienić.
+Przydział z `classId` działa tylko dla zebrań tej klasy; nigdy dla zebrań ogólnych lub zarządu. Przydział z `schoolYearId` działa tylko w swoim roku. Zarządzanie zebraniem (dane, obecność, porządek obrad, ustalenie quorum, projekt uchwały) nie wymaga MFA; rozstrzygnięcie uchwały, zatwierdzenie protokołu i jego udostępnienie rodzicom/publicznie wymagają sesji z MFA (#135, sekcja niżej). **Założenie do D-08:** `admin` (techniczny) ma dziś te same uprawnienia zarządzania co `board`, choć PRODUCT.md mówi, że admin techniczny nie publikuje — nie zawężono tego w tym PR, wymaga osobnej decyzji.
+
+## MFA i zasada czterech oczu (#135, SR-10)
+
+Lista operacji wymagających sesji z potwierdzonym MFA jest w jednym miejscu: `MFA_REQUIRED_ACTIONS` w `src/pg/meetings.js` (dokumentacja macierzy: docs/AUTHORIZATION.md). Odmowa bez MFA to `403 mfa_required`, tak jak obsługuje to panel (#99), i nie zapisuje nic w bazie ani w dzienniku.
+
+| Operacja | Wymóg |
+|---|---|
+| `createResolution`, `updateResolution` ze statusem `adopted`/`rejected` | MFA |
+| `correctResolution` | zawsze MFA (zawsze zapisuje rozstrzygnięcie) |
+| `approveMinutes` | MFA **i** zatwierdzający ≠ autor zatwierdzanej wersji |
+| `setMinutesVisibility` z `parents` lub `public` | MFA |
+| projekt uchwały, edycja porządku obrad, obecność, ustalenie quorum, `setMinutesVisibility` z `internal` | bez MFA |
+
+Kolejność sprawdzeń jest ustalona i testowana: najpierw uprawnienia i zakres (rola, klasa, rok — `403`/`404`), potem MFA (`403 mfa_required`) i zasada czterech oczu (`403 minutes_four_eyes_required`), dopiero na końcu reguły bazy sprawdzane w transakcji (np. `409 school_year_closed`, `409 resolution_quorum_check_stale`). Odmowa na każdym z tych kroków nie zapisuje nic w bazie.
+
+## Głosowanie obiegowe — wymagania do D-19 (projekt, nie decyzja)
+
+Elektroniczne lub zdalne głosowanie zarządu między zebraniami (np. pilna zgoda na wydatek) **nie istnieje** i czeka na decyzję D-19. Poniższe wymagania minimalne są projektem do tej decyzji, żeby po jej podjęciu nie przebudowywać modelu danych:
+
+- **Zamknięta lista uprawnionych jako migawka**, ustalona w chwili otwarcia głosowania (jak lista obecności przy quorum) — nie zmienia się w trakcie głosowania.
+- **Jeden głos na osobę**: unikalność `(vote_round_id, user_id)`.
+- **Głos oddany tylko w sesji z potwierdzonym MFA** — ta sama reguła co przy rozstrzygnięciu uchwały na zebraniu.
+- **Termin zamknięcia** w strefie `Europe/Brussels`; głos po terminie jest odrzucany.
+- **Quorum liczone z oddanych głosów** według reguły z `quorumRuleSource` zebrania/roku, tak jak dziś przy zebraniu stacjonarnym.
+- **Wynik jako niezmienna migawka**, tak jak `resolutions` i `meeting_quorum_checks` — bez nadpisywania.
+- **Jawność lub tajność głosu — do decyzji.** Tajność wymaga oddzielenia tożsamości głosującego od treści głosu (osobna tabela potwierdzeń „kto głosował” bez powiązania z „jak głosował”); przy tajnym głosowaniu `user_id` nie jest przechowywany przy samym głosie.
+- **Rozstrzygnięcie trafia do rejestru uchwał** (#102) **i do protokołu najbliższego zebrania** — tak samo jak uchwała przyjęta na zebraniu, żeby rejestr pozostał jednym źródłem prawdy.
 
 ## API
 
