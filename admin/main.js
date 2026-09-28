@@ -18,6 +18,7 @@ import {
   scopeLabel,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -80,9 +81,19 @@ function actionsCell(buttons) {
 }
 
 // Blokada przycisku na czas żądania chroni przed podwójnym kliknięciem;
-// serwer i tak traktuje powtórzenie idempotentnie.
+// serwer i tak traktuje powtórzenie idempotentnie. Okno potwierdzenia (issue #136)
+// zastępuje natywne okno przeglądarki; akcje tutaj są nieodwracalne inaczej niż
+// nowym zapisem, więc fokus startuje na „Anuluj” (destructive: true).
 async function runAction(element, confirmText, fn) {
-  if (confirmText && !window.confirm(confirmText)) return;
+  if (confirmText) {
+    const confirmed = await confirmAction({
+      title: "Potwierdź operację",
+      effects: [confirmText],
+      confirmLabel: "Potwierdź",
+      destructive: true,
+    });
+    if (!confirmed) return;
+  }
   element.disabled = true;
   try {
     await fn();
@@ -415,7 +426,17 @@ byId("term-form").addEventListener("submit", async (event) => {
   const { schoolYearId, confirm } = Object.fromEntries(new FormData(form));
   if (!schoolYearId) { errorBox.textContent = "Brak zakończonych lat szkolnych."; return; }
   if (confirm.trim() !== schoolYearId) { errorBox.textContent = "Wpisany identyfikator nie zgadza się z wybranym rokiem."; return; }
-  if (!window.confirm(`Wygasić wszystkie aktywne przydziały roku ${schoolYearId}?`)) return;
+  const confirmed = await confirmAction({
+    title: "Potwierdź wygaszenie kadencji",
+    effects: [
+      `Wygaszone zostaną wszystkie aktywne przydziały ról roku ${schoolYearId}.`,
+      "Osoby z przydziałem tylko tego roku stracą dostęp do paneli od następnego żądania.",
+      "Cofnięcie jest widoczne w dzienniku zdarzeń; przywrócenie wymaga nowego przydziału.",
+    ],
+    confirmLabel: "Wygaś przydziały",
+    destructive: true,
+  });
+  if (!confirmed) return;
   submit.disabled = true;
   try {
     const result = await api(`/api/admin/school-years/${encodeURIComponent(schoolYearId)}/expire-grants`, { method: "POST", body: { confirm: schoolYearId } });

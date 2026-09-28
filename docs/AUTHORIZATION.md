@@ -10,7 +10,7 @@ Każda chroniona trasa najpierw ładuje aktywną sesję, a następnie aktywne wp
 - Przydziały po expires_at nie są ładowane.
 - Polityka operacji finansowej może wymagać sesji z potwierdzonym MFA.
 
-Przedstawiciel klasy ma w schemacie obowiązkowy class_id, dlatego nie może przejść kontroli dla innej klasy. Zakresy poszczególnych funkcji nadal wymagają zatwierdzenia szkoły; ten moduł nie przypisuje rolom domyślnych zdolności.
+Przedstawiciel klasy ma w schemacie obowiązkowy class_id, dlatego nie może przejść kontroli dla innej klasy. Które role widzą które dane w poszczególnych modułach nadal wymaga zatwierdzenia szkoły (D-08/D-09, docs/DECISIONS.md) — ten dokument opisuje wyłącznie mechanizm sprawdzenia sesji/roli/zakresu, nie listę uprawnień. Same stałe ról (`FINANCIAL_ROLES`, `WIDE_ROLES`, `EDITOR_ROLES`…) są dziś wpisane na stałe w 13 modułach tras (`src/pg/routes/*.js`) jako założenie prototypu — do zatwierdzenia lub odrzucenia wierszami w `docs/PRODUCT.md` i `docs/DECISIONS.md` (#163). Do tego czasu obowiązują te założenia, a nie brak dostępu.
 
 GET /api/access zwraca zalogowanemu użytkownikowi wyłącznie jego własne aktywne przydziały. Nie zwraca danych innych użytkowników.
 
@@ -22,7 +22,7 @@ Moduły tras używają `requireAccess(request, env, { roles, classId, schoolYear
 
 Trasy, dla których rozróżnienie powodu odmowy ma znaczenie dla ekranu logowania — dziś lista klasy (`GET /api/exports/class-roster`) i raport Komisji Rewizyjnej (`GET /api/reports/audit`), bo ich role (`representative`, `audit`) nie są domyślnie na liście `MFA_REQUIRED_ROLES` — używają zamiast ogólnego `403 forbidden` funkcji `mfaAwareForbiddenCode(context, requirement, env)` (`src/pg/authorization.js`): najpierw sprawdza rolę i zakres **bez** `requireMfa` (sama odmowa z powodu roli/zakresu zostaje `forbidden` i nie ujawnia stanu MFA konta ani istnienia zasobu, SR-07), a dopiero gdy to przechodzi, zwraca `403 mfa_required` (czynnik zapisany, sesja bez potwierdzonego kodu) albo `403 mfa_enrollment_required` (konto bez czynnika) — #161. Kolejność sprawdzeń (najpierw zakres) jest bez zmian; zmienia się tylko treść pola `error` w odpowiedzi. Konto z już zapisanym, ale w tej sesji niepotwierdzonym czynnikiem i tak dostanie `mfa_required` wcześniej, na poziomie bramki routera (`mfaGate`, reguła 1 niżej) — dla **dowolnej** chronionej trasy, niezależnie od zakresu.
 
-Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i tylko z przydziałem bez `class_id` (wszystkie klasy) obejmującym wybrany rok. Przydział zarządu ograniczony do klasy nie wystarcza — kontrola jest dodatkowa względem `isAuthorized`, która przy braku `classId` w wymaganiu przepuszcza przydziały klasowe. Zakres ról importu to założenie do decyzji D-08.
+Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i tylko z przydziałem bez `class_id` (wszystkie klasy) obejmującym wybrany rok. Przydział zarządu ograniczony do klasy nie wystarcza. `requireAccess` (bez `classId` w wymaganiu) już odfiltrowuje przydziały klasowe (`isAuthorizedScoped`, SR-02, akapit wyżej) — moduł importu dodatkowo powtarza ten sam filtr wprost (`qualifyingGrants`, `!grant.classId`), zanim policzy, czy przydział obejmuje wybrany rok. To powtórzenie, nie inna reguła: usunięcie go nie zmieniłoby dziś zachowania, zostaje jako obrona w głąb dla modułu przetwarzającego dane importu z plików. Zakres ról importu to założenie do decyzji D-08.
 
 ## Macierz tras API (issue #4) — testy negatywne
 
@@ -67,11 +67,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/meetings/:meetingId/attendance` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
 | `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
 | `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
-| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 403 | |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/approval` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak | 403 | #135: zawsze MFA, i zatwierdzający ≠ autor wersji (`403 minutes_four_eyes_required`) |
+| `POST /api/meetings/:meetingId/minutes/:minutesId/visibility` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy `parents`/`public` | 403 | #135: `internal` bez MFA |
+| `POST /api/meetings/:meetingId/resolutions` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy `status: adopted/rejected` | 403 | #135: `draft` bez MFA |
+| `PATCH /api/meetings/:meetingId/resolutions/:resolutionId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | przy przejściu do `adopted/rejected` | 403 | #135: edycja projektu bez MFA |
+| `POST /api/meetings/:meetingId/resolutions/:resolutionId/corrections` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak | 403 | #135: korekta zawsze zapisuje rozstrzygnięcie |
 | `GET /api/import/options` | admin, zarząd — przydział bez klasy | tak | 403 | tylko lata z przydziału; zarząd z przydziałem klasy: 403 |
 | `POST /api/import/preview` | admin, zarząd — przydział bez klasy obejmujący rok importu | tak | 403 | nic nie zapisuje; inny rok: 403 |
 | `POST /api/import/commit` | jak wyżej | tak | 403 | wymaga podglądu (fingerprint, planDigest) i Idempotency-Key |
@@ -107,6 +107,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/email/campaigns/:campaignId/recipients` | jak wyżej | tak | 403 | odczyt w dzienniku; SR-01 |
 | `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak | 403 | skarbnik: 403; SR-01 |
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
+| `POST /api/email/campaigns/:campaignId/pause` | zarząd, skarbnik — jak wyżej | tak | 403 | wstrzymanie wysyłki (#130); SR-01 |
+| `POST /api/email/campaigns/:campaignId/resume` | zarząd, skarbnik — jak wyżej | tak | 403 | wznowienie (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
@@ -137,9 +139,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail |
 | `POST /api/admin/invitations/:invitationId/revoke` | wyłącznie admin | tak | 403 | |
+| `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108) |
 | `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years` | wyłącznie admin | tak | 403 | nowy rok szkolny (#78); zły zakres dat: 400; duplikat id/etykiety: 409 |
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |
+| `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | |
 | `GET /api/reconciliations?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01 |
 | `POST /api/reconciliations` | jak wyżej | tak | 403 | SR-01 |
@@ -158,7 +162,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `PATCH /api/guardians/:guardianId/contact` | admin, zarząd — klasy roku 1; zarząd z przydziałem klasy — własna klasa | nie | 403 / 404 | rola bez prawa edycji: 403; opiekun poza zakresem: 404 |
 | `PATCH /api/guardians/:guardianId/students/:studentId` | jak wyżej; zakres klasowy — tylko aktywna relacja z uczniem własnej klasy | nie | 403 / 404 | zgoda na kontakt w relacji (#190); relacja poza zakresem lub nieistniejąca: 404; zakończona: 409 |
 | `POST /api/students/:studentId/enrollments` | jak wyżej | nie | 403 / 404 | macierz: przypisanie do tej samej klasy (200) |
+| `POST /api/students/:studentId/enrollments/:enrollmentId/end` | jak wyżej | nie | 403 / 404 | odejście ze szkoły (#86); po zakończeniu przypisanie niezmienne; ponowienie: `changed: false` |
 | `GET /api/print/cards?schoolYearId=:year&classId=:class` | admin, zarząd, skarbnik — rok 1 (z klasą lub bez); przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 400 / 403 | przydział klasowy bez classId: 400; kwoty wpłat tylko rola finansowa z MFA |
+| `GET /api/representative/overview?schoolYearId=:year` | wyłącznie przedstawiciel (bez decyzji D-08: bez sekcji wpłat) | nie | 400 / 403 | konto bez żadnego przydziału `representative`: 403; przydział innego roku: `classes: []` (#118) |
 | `POST /api/mfa/enroll` | każdy zalogowany (własny czynnik) | nie | — | |
 | `POST /api/mfa/confirm` | każdy zalogowany | nie | — | rotuje sesję |
 | `POST /api/mfa/verify` | każdy zalogowany z potwierdzonym czynnikiem | nie | — | |
@@ -177,7 +183,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 
 Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady. W macierzy trasy publiczne dostają poprawne dane uwierzytelniające (konto z hasłem, świeży token zaproszenia albo resetu) niezależnie od cookie aktora — odpowiedź zależy wyłącznie od hasła lub tokenu; błędne dane, limity prób i CSRF logowania sprawdza `tests/pg-login.test.js`. Trasy administratora `password-reset` i `mfa-reset` są częścią modułu `admin` (wyłącznie admin z MFA).
 
-Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają na poziomie trasy MFA (dla admina, zarządu i skarbnika wymusza je bramka MFA routera), także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
+Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia nie wymagają na poziomie trasy MFA (dla admina, zarządu i skarbnika wymusza je bramka MFA routera), także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
+
+**Zebrania — MFA na poziomie usługi (#135, SR-10):** niezależnie od bramki MFA routera, `src/pg/meetings.js` sam sprawdza `actor.mfaVerified` dla rozstrzygnięcia uchwały, jej korekty, zatwierdzenia protokołu i udostępnienia go rodzicom/publicznie (lista `MFA_REQUIRED_ACTIONS`, opis w docs/MEETINGS.md). Odmowa: `403 mfa_required`, bez zapisu. Zatwierdzenie protokołu wymaga dodatkowo, by zatwierdzający nie był autorem zatwierdzanej wersji (`403 minutes_four_eyes_required` w serwisie, `409` z tym samym kodem w triggerze bazy przy bezpośrednim `UPDATE`). To sprawdzenie działa również wtedy, gdy trasa wywoływana jest bezpośrednio (np. w testach usługi z pominięciem routera) — dlatego kolumna MFA niżej dla tych tras pokazuje wymóg trasy, osobny od bramki routera.
 
 ## Akcje w panelach (issue #225)
 
