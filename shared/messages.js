@@ -31,6 +31,8 @@ export const MESSAGES = Object.freeze({
   invalid_json: "Serwer nie odczytał danych formularza.",
   invalid_content_type: "Serwer nie odczytał formatu danych.",
   unsupported_media_type: "Niedozwolony typ danych lub pliku.",
+  document_active_content: "Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady.",
+  document_malformed: "Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane).",
   request_too_large: "Za dużo danych w jednym żądaniu.",
   service_unavailable: "Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę.",
   retry_later: "Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę.",
@@ -269,7 +271,7 @@ export const STATUS_MESSAGES = Object.freeze({
   405: MESSAGES.method_not_allowed,
   409: MESSAGES.conflict,
   413: MESSAGES.request_too_large,
-  415: MESSAGES.unsupported_media_type,
+  415: MESSAGES.unsupported_media_type, // document_active_content i document_malformed mają własne komunikaty (mapa wyżej)
   429: "Zbyt wiele żądań. Odczekaj chwilę i spróbuj ponownie.",
 });
 
