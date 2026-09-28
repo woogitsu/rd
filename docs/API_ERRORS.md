@@ -262,6 +262,8 @@ wpisów).
 | `snapshot_required` | Najpierw utwórz kopię stanu danych. | Nie — popraw dane żądania. |
 | `statement_date_outside_school_year` | Data wyciągu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `statement_line_after_statement_date` | Pozycja wyciągu ma datę późniejszą niż data wyciągu. | Zależy od kontekstu (patrz moduł trasy). |
+| `statement_line_not_found` | Nie znaleziono pozycji wyciągu. | Nie — popraw dane żądania. |
+| `statement_line_not_income` | Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia. | Nie — popraw dane żądania. |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `timeout` | Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `too_many_attempts` | Zbyt wiele prób. Spróbuj ponownie później. | Zależy od kontekstu (patrz moduł trasy). |

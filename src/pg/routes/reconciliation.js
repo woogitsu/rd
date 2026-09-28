@@ -5,6 +5,7 @@
 //   POST /api/reconciliations                                 (Idempotency-Key)
 //   GET  /api/reconciliations/{id}
 //   POST /api/reconciliations/{id}/lines                      (Idempotency-Key) JSON lines albo CSV
+//   POST /api/reconciliations/{id}/lines/{lineId}/payment      (Idempotency-Key) wpłata + powiązanie naraz (#115)
 //   GET  /api/reconciliations/{id}/suggestions?windowDays=…   tylko propozycje, nigdy zatwierdzenie
 //   POST /api/reconciliations/{id}/matches                    (Idempotency-Key)
 //   POST /api/reconciliations/{id}/matches/{matchId}/revocation
@@ -788,6 +789,115 @@ async function suggestMatches(request, env, id, url, json) {
   return json({ reconciliationId: id, windowDays, suggestions });
 }
 
+// Wpłata wprost z pozycji wyciągu (#115, część 2): kwota i data pochodzą z
+// pozycji, nie z klienta; metoda jest zawsze 'bank' (pozycja jest z wyciągu
+// bankowego). household_id — skarbnik wskazuje gospodarstwo albo zostawia
+// NULL (status 'unmatched', przypisanie później przez istniejące
+// POST /api/payments/{id}/assignment). Wpłata i powiązanie powstają w jednej
+// transakcji z jednym kluczem idempotencji: ponowienie/podwójne kliknięcie
+// daje ten sam wynik, nigdy drugą wpłatę ani drugie powiązanie. Triggery z
+// 0015/0024_reconciliation.sql (bank_reconciliation_require_draft,
+// bank_match_guard) są backstopem: zatwierdzone uzgodnienie odrzuca nowe
+// powiązanie tak samo jak przy ręcznym POST …/matches.
+async function createPaymentFromLine(request, env, id, lineId, json) {
+  const idempotencyKey = readIdempotencyKey(request);
+  const data = await readJson(request);
+  if (data.householdId !== null && data.householdId !== undefined && !validId(data.householdId)) {
+    throw new RequestError('invalid_request');
+  }
+  const householdId = data.householdId ?? null;
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+
+  const byKey = async (executor) => (await executor.query(
+    `SELECT p.id AS payment_id, p.household_id, p.school_year_id, p.amount_cents,
+            to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.method, p.status, p.created_by,
+            m.id AS match_id, m.statement_line_id
+       FROM payment_entries p
+       JOIN bank_reconciliation_matches m ON m.payment_entry_id = p.id AND m.revoked_at IS NULL
+      WHERE p.idempotency_key = $1`,
+    [idempotencyKey],
+  )).rows[0] ?? null;
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    if (row.created_by !== actorId || row.statement_line_id !== lineId
+        || (row.household_id ?? null) !== householdId) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return json({
+      payment: {
+        id: row.payment_id, householdId: row.household_id ?? null, schoolYearId: row.school_year_id,
+        amountCents: toSafeInteger(row.amount_cents), receivedOn: row.received_on, method: row.method,
+        status: row.status,
+      },
+      match: { id: row.match_id, reconciliationId: id, statementLineId: row.statement_line_id, paymentEntryId: row.payment_id },
+    }, 200, REPLAYED);
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      const replay = replayOrConflict(await byKey(tx));
+      if (replay) return replay;
+      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      const line = await tx.query(
+        `SELECT id, amount_cents, to_char(booked_on, 'YYYY-MM-DD') AS booked_on
+           FROM bank_statement_lines WHERE id = $1 AND reconciliation_id = $2`,
+        [lineId, id],
+      );
+      if (!line.rows[0]) throw new RequestError('statement_line_not_found', 404);
+      const amountCents = toSafeInteger(line.rows[0].amount_cents);
+      if (amountCents <= 0) throw new RequestError('statement_line_not_income');
+      const taken = await tx.query(
+        'SELECT 1 FROM bank_reconciliation_matches WHERE statement_line_id = $1 AND revoked_at IS NULL', [lineId],
+      );
+      if (taken.rows.length) throw new RequestError('already_matched', 409);
+
+      const receivedOn = line.rows[0].booked_on;
+      const status = householdId ? 'recorded' : 'unmatched';
+      const paymentId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on,
+           method, reference, status, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, 'bank', NULL, $6, $7, $8)`,
+        [paymentId, householdId, row.school_year_id, amountCents, receivedOn, status, actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'payment.created', entityType: 'payment_entry', entityId: paymentId,
+        metadata: {
+          schoolYearId: row.school_year_id, source: 'reconciliation_line', reconciliationId: id, statementLineId: lineId,
+        },
+      });
+      const matchId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id, payment_entry_id, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [matchId, id, lineId, paymentId, actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.match.confirmed', entityType: 'bank_reconciliation_match', entityId: matchId,
+        metadata: {
+          reconciliationId: id, statementLineId: lineId, paymentEntryId: paymentId, schoolYearId: row.school_year_id,
+          source: 'line_payment',
+        },
+      });
+      return json({
+        payment: { id: paymentId, householdId, schoolYearId: row.school_year_id, amountCents, receivedOn, method: 'bank', status },
+        match: { id: matchId, reconciliationId: id, statementLineId: lineId, paymentEntryId: paymentId },
+      }, 201, CREATED);
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await byKey(env.db));
+      if (replay) return replay;
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+}
+
 async function confirmMatch(request, env, id, json) {
   const idempotencyKey = readIdempotencyKey(request);
   const data = await readJson(request);
@@ -1282,21 +1392,24 @@ export async function handle(request, env, url, json) {
       if (method === 'POST') return await createReconciliation(request, env, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
-    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|confirm))?(?:\/([^/]+)\/(revocation))?$/);
+    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|confirm))?(?:\/([^/]+)\/(revocation|payment))?$/);
     if (!match) return null;
     const id = decodeId(match[1]);
     const action = match[2] ?? null;
-    if (match[3] && action !== 'matches') return null;
+    const subAction = match[4] ?? null;
+    if (subAction === 'revocation' && action !== 'matches') return null;
+    if (subAction === 'payment' && action !== 'lines') return null;
     if (!action && method === 'GET') return await getReconciliation(request, env, id, url, json);
     if (action === 'suggestions' && method === 'GET') return await suggestMatches(request, env, id, url, json);
     if (method !== 'POST') {
       // GET, HEAD i inne — jedyne trasy tej ścieżki bez akcji/z 'suggestions' dopuszczają GET,
-      // reszta akcji (lines/matches/confirm/revocation) wyłącznie POST.
+      // reszta akcji (lines/matches/confirm/revocation/payment) wyłącznie POST.
       const allow = (!action || action === 'suggestions') ? 'GET' : 'POST';
       return json({ error: 'method_not_allowed' }, 405, { Allow: allow });
     }
+    if (action === 'lines' && subAction === 'payment') return await createPaymentFromLine(request, env, id, decodeId(match[3]), json);
     if (action === 'lines') return await importLines(request, env, id, json);
-    if (action === 'matches' && match[3]) return await revokeMatch(request, env, id, decodeId(match[3]), json);
+    if (action === 'matches' && subAction === 'revocation') return await revokeMatch(request, env, id, decodeId(match[3]), json);
     if (action === 'matches') return await confirmMatch(request, env, id, json);
     if (action === 'confirm') return await confirmReconciliation(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });

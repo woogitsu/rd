@@ -854,6 +854,9 @@ export const ROUTE_MATRIX = Object.freeze([
     ok: 201, withKey: true,
     body: (target) => ({ lines: [{ bookedOn: yearDate(target, '10-02'), amountCents: 1234, reference: 'Tytuł syntetyczny' }] }),
   }),
+  reconciliationRoute('reconciliation.linePayment', 'POST', '/lines/:lineId/payment', 'withLine', {
+    ok: 201, withKey: true, suffix: (obj) => `/lines/${obj.statementLineId}/payment`, body: () => ({ householdId: null }),
+  }),
   reconciliationRoute('reconciliation.suggestions', 'GET', '/suggestions', 'withLine', { fixture: 'static' }),
   reconciliationRoute('reconciliation.match', 'POST', '/matches', 'withLine', {
     ok: 201, withKey: true, body: (_target, obj) => ({ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }),
