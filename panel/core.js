@@ -1,3 +1,5 @@
+import { MoneyError, formatEur, parseEurInput } from "./money.js";
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 export const METHOD_LABELS = Object.freeze({
@@ -15,28 +17,22 @@ export function isValidId(value) {
   return typeof value === "string" && ID_PATTERN.test(value.trim());
 }
 
+// #173: jeden moduł kwot EUR (src/pg i panele) — patrz panel/money.js.
 export function formatCents(value) {
-  const cents = Number(value);
-  if (!Number.isSafeInteger(cents)) return "—";
-
-  return new Intl.NumberFormat("pl-PL", {
-    style: "currency",
-    currency: "EUR",
-  }).format(cents / 100);
+  return formatEur(value, { style: "screen" });
 }
 
 export function parseEuroAmount(value) {
-  const normalized = String(value ?? "").trim().replace(",", ".");
-  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+  try {
+    return parseEurInput(value);
+  } catch (error) {
+    if (error instanceof MoneyError && error.code === "amount_out_of_range") {
+      throw new Error("Kwota musi mieścić się między 0,01 EUR a 1 000 000 EUR.");
+    }
+    // Treść zgodna z poprzednim komunikatem (tests/ledger-panel-core.test.js) —
+    // maksymalnie dwa miejsca po przecinku to najczęstsza przyczyna błędu formatu.
     throw new Error("Podaj kwotę z maksymalnie dwoma miejscami po przecinku.");
   }
-
-  const cents = Math.round(Number(normalized) * 100);
-  if (!Number.isSafeInteger(cents) || cents < 1 || cents > 100_000_000) {
-    throw new Error("Kwota musi mieścić się między 0,01 EUR a 1 000 000 EUR.");
-  }
-
-  return cents;
 }
 
 export function buildPaymentsUrl({ schoolYearId, status = "", cursor = "", limit = 50 }) {
