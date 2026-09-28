@@ -642,3 +642,42 @@ test('PATCH keeps unspecified quorum fields and a configured rule requires its s
     assert.equal(off.source, null);
   } finally { await db.close(); }
 });
+
+// --- #152: publikacja publiczna protokołu z możliwymi danymi osobowymi -----
+
+test('publishing minutes as public is blocked when the body contains a known name, an e-mail or an IBAN; internal/parents visibility is not blocked', async () => {
+  const db = await meetingsDb();
+  try {
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('student-pii','household-1','Kuba','Testowanski')");
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('en-pii','student-pii','class-a','year')");
+
+    const meeting = await heldMeeting(db);
+    const withName = (await createMinutesVersion(db, board,
+      { idempotencyKey: key(), meetingId: meeting.id, body: 'Omówiono sprawę Kuba Testowanski i jego nieobecności.' })).minutes;
+    await approveMinutes(db, board, { minutesId: withName.id });
+    await assert.rejects(
+      setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withName.id, visibility: 'public' }),
+      { code: 'minutes_contain_personal_data', status: 409 },
+    );
+    assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes, []);
+    // Widoczność wewnętrzna/dla rodziców nie jest blokowana (tylko ostrzeżenie
+    // w innych miejscach zapisu — poza zakresem tej trasy w tym PR).
+    const internal = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withName.id, visibility: 'internal' });
+    assert.equal(internal.replayed, false);
+
+    const withEmail = (await createMinutesVersion(db, board,
+      { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: ktos@example.invalid, do ustalenia.' })).minutes;
+    await approveMinutes(db, board, { minutesId: withEmail.id });
+    await assert.rejects(
+      setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withEmail.id, visibility: 'public' }),
+      { code: 'minutes_contain_personal_data' },
+    );
+
+    const clean = (await createMinutesVersion(db, board,
+      { idempotencyKey: key(), meetingId: meeting.id, body: 'Protokół bez żadnych danych osobowych, wyłącznie sprawy ogólne.' })).minutes;
+    await approveMinutes(db, board, { minutesId: clean.id });
+    const published = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: clean.id, visibility: 'public' });
+    assert.equal(published.replayed, false);
+    assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.minutesId), [clean.id]);
+  } finally { await db.close(); }
+});

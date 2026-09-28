@@ -468,8 +468,8 @@ test('audit events are atomic with the write and carry no amounts, references or
 // --- #152: ostrzeżenie o możliwych danych osobowych w korekcie wpłaty ------
 
 async function seedSiblingsForPii(backend) {
-  await backend.db.query("INSERT INTO classes (id, school_year_id, name) VALUES ('c-pii', 'y2026', '1A')");
-  await backend.db.query(`
+  await backend.db.exec(`
+    INSERT INTO classes (id, school_year_id, name) VALUES ('c-pii', 'y2026', '1A');
     INSERT INTO students (id, household_id, first_name, last_name) VALUES
       ('st-pii-1', 'h1', 'Anna', 'Testowy'), ('st-pii-2', 'h1', 'Piotr', 'Testowy');
     INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES
