@@ -610,45 +610,61 @@ async function suggestMatches(request, env, id, url, json) {
 
   const openLine = `l.reconciliation_id = $1 AND NOT EXISTS (
       SELECT 1 FROM bank_reconciliation_matches m WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)`;
-  const [lines, ledger, payments] = await Promise.all([
-    env.db.query(
+  // Zapas ponad limit odpowiedzi (#158): dopasowanie po tytule (referenceMatch)
+  // liczone jest dopiero w JS, więc SQL musi przepuścić więcej niż MAX_CANDIDATES,
+  // żeby kandydat z trafionym tytułem, ale dalszą datą, mógł wypchnąć bliższego
+  // dniowo, ale bez zgodności tytułu, kandydata na pierwsze miejsce.
+  const candidateLimit = MAX_CANDIDATES * 4;
+  // Jedna migawka (REPEATABLE READ, READ ONLY) na jednym połączeniu: równoległe
+  // potwierdzenie dopasowania (POST …/matches) na innym połączeniu nie może
+  // sprawić, że ta sama pozycja/kandydat wygląda inaczej w trzech zapytaniach.
+  const [lines, ledger, payments] = await env.db.transaction(async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    const linesResult = await tx.query(
       `SELECT l.id, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on, l.amount_cents, l.reference_hash
          FROM bank_statement_lines l WHERE ${openLine} ORDER BY l.booked_on, l.id`,
       [id],
-    ),
-    env.db.query(
-      `SELECT l.id AS line_id, e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
-              e.method, abs(e.occurred_on - l.booked_on) AS day_distance
-         FROM bank_statement_lines l
-         JOIN ledger_entry_net e ON e.school_year_id = $2
-          AND (CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END) = l.amount_cents
-          AND abs(e.occurred_on - l.booked_on) <= $3
-        WHERE ${openLine}
-          AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
-                           WHERE m.reconciliation_id = $1 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
-        ORDER BY l.id, day_distance, e.id`,
-      [id, row.school_year_id, windowDays],
-    ),
+    );
+    const ledgerResult = await tx.query(
+      `SELECT line_id, id, occurred_on, net_amount_cents, method, day_distance FROM (
+         SELECT l.id AS line_id, e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
+                e.method, abs(e.occurred_on - l.booked_on) AS day_distance,
+                row_number() OVER (PARTITION BY l.id ORDER BY abs(e.occurred_on - l.booked_on), e.id) AS rn
+           FROM bank_statement_lines l
+           JOIN ledger_entry_net e ON e.school_year_id = $2
+            AND (CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END) = l.amount_cents
+            AND e.occurred_on BETWEEN l.booked_on - $3::int AND l.booked_on + $3::int
+          WHERE ${openLine}
+            AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                             WHERE m.reconciliation_id = $1 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
+         ) ranked WHERE rn <= $4
+        ORDER BY line_id, day_distance, id`,
+      [id, row.school_year_id, windowDays, candidateLimit],
+    );
     // Wpłaty nieujęte jeszcze w księdze (wpłata ujęta w księdze jest proponowana jako wpis księgi).
-    env.db.query(
-      `SELECT l.id AS line_id, p.id, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.reference,
-              p.method, p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
-              abs(p.received_on - l.booked_on) AS day_distance
-         FROM bank_statement_lines l
-         JOIN payment_entries p ON p.school_year_id = $2 AND p.status IN ('recorded', 'unmatched')
-          AND p.method = 'bank'
-          AND abs(p.received_on - l.booked_on) <= $3
-         LEFT JOIN (SELECT payment_entry_id, sum(amount_cents) AS corrected
-                      FROM payment_corrections GROUP BY payment_entry_id) c ON c.payment_entry_id = p.id
-        WHERE ${openLine} AND l.amount_cents > 0
-          AND p.amount_cents - COALESCE(c.corrected, 0) = l.amount_cents
-          AND NOT EXISTS (SELECT 1 FROM ledger_entries le WHERE le.payment_entry_id = p.id)
-          AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
-                           WHERE m.reconciliation_id = $1 AND m.payment_entry_id = p.id AND m.revoked_at IS NULL)
-        ORDER BY l.id, day_distance, p.id`,
-      [id, row.school_year_id, windowDays],
-    ),
-  ]);
+    const paymentsResult = await tx.query(
+      `SELECT line_id, id, received_on, reference, method, net_amount_cents, day_distance FROM (
+         SELECT l.id AS line_id, p.id, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.reference,
+                p.method, p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
+                abs(p.received_on - l.booked_on) AS day_distance,
+                row_number() OVER (PARTITION BY l.id ORDER BY abs(p.received_on - l.booked_on), p.id) AS rn
+           FROM bank_statement_lines l
+           JOIN payment_entries p ON p.school_year_id = $2 AND p.status IN ('recorded', 'unmatched')
+            AND p.method = 'bank'
+            AND p.received_on BETWEEN l.booked_on - $3::int AND l.booked_on + $3::int
+           LEFT JOIN (SELECT payment_entry_id, sum(amount_cents) AS corrected
+                        FROM payment_corrections GROUP BY payment_entry_id) c ON c.payment_entry_id = p.id
+          WHERE ${openLine} AND l.amount_cents > 0
+            AND p.amount_cents - COALESCE(c.corrected, 0) = l.amount_cents
+            AND NOT EXISTS (SELECT 1 FROM ledger_entries le WHERE le.payment_entry_id = p.id)
+            AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                             WHERE m.reconciliation_id = $1 AND m.payment_entry_id = p.id AND m.revoked_at IS NULL)
+         ) ranked WHERE rn <= $4
+        ORDER BY line_id, day_distance, id`,
+      [id, row.school_year_id, windowDays, candidateLimit],
+    );
+    return [linesResult, ledgerResult, paymentsResult];
+  });
 
   const byLine = new Map(lines.rows.map((line) => [line.id, { line, candidates: [] }]));
   for (const entry of ledger.rows) {
@@ -658,12 +674,19 @@ async function suggestMatches(request, env, id, url, json) {
       referenceMatch: false,
     });
   }
+  // Skrót tytułu liczony co najwyżej raz na wpłatę-kandydata w całym żądaniu
+  // (#158), nawet gdy ta sama wpłata jest kandydatem dla wielu pozycji.
+  const hashCache = new Map();
+  const cachedHashReference = (salt, value) => {
+    if (!hashCache.has(value)) hashCache.set(value, hashReference(salt, value));
+    return hashCache.get(value);
+  };
   for (const payment of payments.rows) {
     const slot = byLine.get(payment.line_id);
     if (!slot) continue;
     let referenceMatch = false;
     if (slot.line.reference_hash && payment.reference) {
-      referenceMatch = (await hashReference(row.reference_salt, payment.reference)) === slot.line.reference_hash;
+      referenceMatch = (await cachedHashReference(row.reference_salt, payment.reference)) === slot.line.reference_hash;
     }
     slot.candidates.push({
       type: 'payment_entry', id: payment.id, date: payment.received_on, method: payment.method,
