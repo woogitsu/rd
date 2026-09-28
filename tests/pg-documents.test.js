@@ -10,7 +10,7 @@ import {
 } from '../src/documents.js';
 import { createMemoryStorage, createS3Storage, sha256Hex, signRequest, storageFromEnv } from '../src/storage.js';
 import { resolveRuntime } from '../src/server.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 const HOUR = 60 * 60 * 1000;
@@ -949,3 +949,64 @@ test('cross-origin describe request is refused before touching the database', as
   const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions');
   assert.equal(count.rows[0].n, 0);
 }));
+
+// Zamrożenie roku (follow-up #76/#313, 0106_document_descriptions_year_freeze.sql):
+// document_descriptions nie ma własnej kolumny school_year_id — rok ustala
+// dokument-rodzic. Zamknięcie "na skróty" (jak w tests/pg-year-close-finance-freeze.test.js)
+// wyłącznie wstawia wiersz zamknięcia, bez wygaszania przydziałów ról ani
+// prawdziwej procedury /close — interesuje nas wyłącznie trigger a0_year_freeze.
+test('opis dokumentu: w otwartym roku działa, po zamknięciu roku dokumentu-rodzica 409 school_year_closed', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+
+  const open = await describe(env, { cookie, id });
+  assert.equal(open.response.status, 201);
+
+  await seedSchoolYear(db, 'y-2027-next', { startsOn: '2027-09-01', endsOn: '2028-08-31' });
+  await db.exec(`
+    SET session_replication_role = replica;
+    INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
+      closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
+      carried_opening_balance_id, expired_grant_count)
+    VALUES ('clo-doc-desc', '${YEAR}', 'y-2027-next', 'closed', 'u-a', 'u-b', now(), 0, 0, 0, 0, 'ob-next', 0);
+    SET session_replication_role = origin;
+  `);
+
+  const closed = await describe(env, { cookie, id, key: 'desc-key-closed-year' });
+  assert.equal(closed.response.status, 409);
+  assert.equal(closed.data.error, 'school_year_closed');
+
+  // Odrzucenie triggera cofa transakcję — żadnej nowej wersji opisu.
+  const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions WHERE document_id = $1', [id]);
+  assert.equal(count.rows[0].n, 1);
+}));
+
+// Dokumenty przywrócone bez school_year_id (np. z D1) nie są objęte
+// zamrożeniem — school_year_assert_open() pomija NULL, ten sam wzorzec co
+// przy samym documents (0036). Sprawdzenie na poziomie bazy (bez API): sam
+// canAccessDocument już i tak odmawia dostępu do dokumentu bez roku
+// (niezależnie od zamrożenia), więc tu weryfikujemy wyłącznie trigger.
+test('trigger a0_year_freeze na document_descriptions pomija dokument bez school_year_id', async () => {
+  const db = await createTestDb();
+  try {
+    await db.query(
+      `INSERT INTO users (id, email, display_name) VALUES ('u-legacy', 'u-legacy@example.invalid', 'Legacy')`,
+    );
+    const legacyId = '00000000-0000-4000-8000-0000000000d1';
+    await db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+       VALUES ($1, 'legacy/obj', 'application/pdf', 10, 'board', 'u-legacy', NULL, repeat('a', 64), 'legacy-doc-key')`,
+      [legacyId],
+    );
+    await db.query(
+      `INSERT INTO document_descriptions (document_id, revision_no, title, category, created_by)
+       VALUES ($1, 1, 'Tytuł dokumentu bez roku', 'inne', 'u-legacy')`,
+      [legacyId],
+    );
+    const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions WHERE document_id = $1', [legacyId]);
+    assert.equal(count.rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});

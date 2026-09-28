@@ -388,13 +388,11 @@ najnowszym istniejącym dla danego dokumentu. Kategoria to lista zamknięta
 techniczne do zatwierdzenia przez zarząd i skarbnika, niezależne od `kind`
 dokumentu. Skutki dla danych: nowa, pusta tabela; istniejące dokumenty nie
 dostają wpisu opisu i panel pokazuje dla nich „Bez tytułu” (brak wpisu, nie
-błąd). **Poza zakresem tej migracji:** tabela nie ma jeszcze triggera
-zamrożenia roku szkolnego (`a0_year_freeze`/0036) — dodanie opisu do
-dokumentu z zamkniętego roku jest dziś możliwe; rozszerzenie
-`year_freeze_via_parent` na tę tabelę to osobny, świadomie odłożony PR (żeby
-wyjść od najnowszej wersji tej funkcji na `main` i nie powtórzyć incydentu z
-#279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch funkcji. Opis:
-[`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
+błąd). Trigger zamrożenia roku szkolnego dla tej tabeli to osobny, świadomie
+odłożony PR — patrz `0106_document_descriptions_year_freeze.sql` niżej (żeby
+wyjść od najnowszej wersji `year_freeze_via_parent` na `main` i nie powtórzyć
+incydentu z #279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch
+funkcji. Opis: [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
 
 `0074_retention_policies.sql` (issue #91, D-04) dodaje `retention_policies` —
 rejestr polityk retencji, tylko dopisywanie (trigger blokuje UPDATE/DELETE).
@@ -454,6 +452,34 @@ dotykają wielu tabel i seedów testowych naraz, osobny PR. Wycofanie na
 pustej bazie: usunięcie dwóch nowych triggerów/funkcji i przywrócenie
 `email_campaign_guard()` z `0063_email_campaign_schedule_pause.sql`; na
 bazie z danymi — bezpieczne, żaden wiersz nie jest zmieniany ani usuwany.
+
+`0106_document_descriptions_year_freeze.sql` (follow-up #76/#313, issue #80)
+zamyka lukę odłożoną w `0065_document_descriptions.sql`: nowy wpis opisu
+dokumentu (`document_descriptions`) przypisanego do zamkniętego roku
+szkolnego był dotąd możliwy. `document_descriptions` nie ma własnej kolumny
+`school_year_id` — rok ustala dokument-rodzic, więc rozszerza WSPÓLNĄ
+funkcję `year_freeze_via_parent()` o gałąź `document_descriptions` (rok z
+`documents.school_year_id` przez `document_id`) — **wychodząc z jej
+najnowszej wersji na origin/main, rozszerzonej w #330/0076_event_volunteering.sql
+o gałęzie `event_tasks`/`event_task_signups`**, a nie z `0049`, żeby nie
+powtórzyć incydentu z #279 (main zepsuty przez nadpisanie tej funkcji nie od
+najnowszej wersji). Dokumenty bez `school_year_id` (np. przywrócone z D1) nie
+są objęte — `school_year_assert_open` pomija `NULL`, ten sam wzorzec co przy
+`documents` (0036). Trasa `POST /api/documents/{id}/description` tłumaczy
+odrzucenie triggera na `409 school_year_closed` (kod błędu już istniał w
+`shared/messages.js`/`docs/API_ERRORS.md` z uploadu dokumentów — nowy wpis
+nie był potrzebny). Skutki dla danych: sama redefinicja funkcji i nowy
+trigger na przyszłe zapisy; żaden istniejący wiersz nie jest zmieniany ani
+usuwany — zapytanie kontrolne przed migracją (powinno zwrócić 0 wierszy):
+`SELECT count(*) FROM document_descriptions dd JOIN documents d ON d.id = dd.document_id
+  JOIN school_year_closures c ON c.school_year_id = d.school_year_id AND c.status = 'closed';`
+Wycofanie na pustej bazie: `DROP TRIGGER a0_year_freeze ON document_descriptions;`
+i przywrócenie `year_freeze_via_parent()` do wersji z
+`0076_event_volunteering.sql` (bez gałęzi `document_descriptions`); na
+bazie z danymi — bezpieczne, o ile żaden opis do zamkniętego roku nie został
+w międzyczasie odrzucony i ręcznie obejściowo wstawiony poza triggerem (nie
+powinno się zdarzyć). Opis: [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md),
+[`docs/YEAR_CLOSE.md`](../docs/YEAR_CLOSE.md).
 
 ## Migracje bez osobnego przeglądu wyżej (#175)
 

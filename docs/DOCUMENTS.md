@@ -67,7 +67,9 @@ Dokument bez żadnego wpisu opisu (istniejące dokumenty sprzed tej migracji, al
 
 Dziennik: `document.described` zapisuje aktora, czas, identyfikator dokumentu, kategorię i numer wersji — **bez tytułu ani opisu** (mogą zawierać treść opisową dokumentu).
 
-**Poza zakresem tej wersji:** kolumna `document_descriptions` nie ma jeszcze triggera zamrożenia roku szkolnego — dodanie opisu do dokumentu z zamkniętego roku jest dziś możliwe (opisane w `postgres/README.md`). Panel: wybór roku i klasy z listy serwera (dziś pole tekstowe) to osobny zakres.
+Zamrożenie roku (issue #76/#313, `postgres/migrations/0106_document_descriptions_year_freeze.sql`): `document_descriptions` nie ma własnej kolumny `school_year_id` — rok ustala dokument-rodzic (`documents.school_year_id`, `FOR UPDATE` blokuje wiersz `documents` przed zapisem opisu, więc sprawdzenie jest spójne z numerowaniem wersji). Nowy opis dokumentu przypisanego do zamkniętego roku kończy się `409 school_year_closed`; dokumenty bez `school_year_id` (np. przywrócone z D1) nie są objęte — jak przy samym `documents` (`postgres/README.md`, `docs/YEAR_CLOSE.md`).
+
+**Poza zakresem tej wersji:** panel — wybór roku i klasy z listy serwera (dziś pole tekstowe) to osobny zakres.
 
 ## Walidacja pliku
 

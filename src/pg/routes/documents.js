@@ -779,12 +779,12 @@ async function createDescription(request, env, id, json) {
         return json({ description: toDescription(existing), replayed: true }, 200);
       }
     }
-    // Uwaga (poza zakresem tego PR): document_descriptions NIE ma jeszcze
-    // triggera zamrożenia roku (a0_year_freeze/0036) — dodanie opisu do
-    // dokumentu z zamkniętego roku szkolnego jest dziś możliwe. Zamierzone
-    // rozszerzenie year_freeze_via_parent wymaga wyjścia od jego najnowszej
-    // wersji na origin/main (fix-common.md) i osobnego PR, żeby nie
-    // powtórzyć incydentu z #279.
+    // Rok zamknięty (0106_document_descriptions_year_freeze.sql, trigger
+    // a0_year_freeze na document_descriptions, rok przez dokument-rodzic) —
+    // ten sam wzorzec co przy uploadzie dokumentu wyżej.
+    if (String(error?.message ?? '').includes('school_year_closed')) {
+      return json({ error: 'school_year_closed' }, 409);
+    }
     throw error;
   }
 }
