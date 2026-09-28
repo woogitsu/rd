@@ -36,6 +36,9 @@ import { pgliteClient } from './smoke-postgres.js';
 import {
   buildSyntheticData, insertSyntheticData, primaryRoles, seedSyntheticSessions, YEAR,
 } from './lib/synthetic-seed.js';
+import {
+  buildHistoricalData, checkHeavyBudgets, HEAVY_DEFAULTS, insertHistoricalData, runHeavyScenario, seedHeavySessions,
+} from './lib/heavy-scenario.js';
 
 const migrationsDir = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const distRoot = fileURLToPath(new URL('../dist/', import.meta.url));
@@ -75,6 +78,7 @@ export function parseArgs(argv) {
   const options = {
     users: 50, durationSec: 30, thinkMs: 0, timeoutMs: 10_000, target: null,
     confirmStaging: false, allowWrites: null, out: null, thresholds: { ...DEFAULT_THRESHOLDS },
+    scenario: 'light', heavyIterations: 3, heavy: { ...HEAVY_DEFAULTS },
   };
   const valueFlags = new Map([
     ['--users', (v) => { options.users = number(v, '--users', { min: 1, integer: true }); }],
@@ -87,6 +91,15 @@ export function parseArgs(argv) {
     ['--p99-ms', (v) => { options.thresholds.p99Ms = number(v, '--p99-ms'); }],
     ['--max-error-rate', (v) => { options.thresholds.maxErrorRate = number(v, '--max-error-rate'); }],
     ['--min-rps', (v) => { options.thresholds.minRps = number(v, '--min-rps'); }],
+    ['--scenario', (v) => {
+      if (v !== 'light' && v !== 'heavy') throw new UsageError('--scenario must be "light" or "heavy"');
+      options.scenario = v;
+    }],
+    ['--heavy-iterations', (v) => { options.heavyIterations = number(v, '--heavy-iterations', { min: 1, integer: true }); }],
+    ['--heavy-years', (v) => { options.heavy.years = number(v, '--heavy-years', { min: 1, integer: true }); }],
+    ['--heavy-classes', (v) => { options.heavy.classesPerYear = number(v, '--heavy-classes', { min: 1, integer: true }); }],
+    ['--heavy-students', (v) => { options.heavy.studentsPerYear = number(v, '--heavy-students', { min: 1, integer: true }); }],
+    ['--heavy-audit-events', (v) => { options.heavy.auditEvents = number(v, '--heavy-audit-events', { min: 0, integer: true }); }],
   ]);
   for (let i = 0; i < argv.length; i += 1) {
     const [flag, inline] = argv[i].split(/=(.*)/s, 2);
@@ -233,6 +246,69 @@ export async function startLocalTarget({ log = () => {} } = {}) {
   } catch (error) {
     await db.close().catch(() => {});
     throw error;
+  }
+}
+
+// ---------- scenariusz "heavy" (#217) ----------
+
+export async function startHeavyTarget({ heavy = HEAVY_DEFAULTS, log = () => {} } = {}) {
+  const started = performance.now();
+  const db = new PGlite();
+  try {
+    await applyMigrations(pgliteClient(db), await loadMigrations(migrationsDir));
+    const data = buildHistoricalData(heavy);
+    const reconciliationId = await insertHistoricalData(db, data);
+    const cookies = await seedHeavySessions(db, data.users.map(([id]) => id));
+    const roles = new Map(data.grants.map(([, userId, role]) => [userId, role]));
+    const actors = data.users.map(([userId]) => ({ userId, role: roles.get(userId), cookie: cookies.get(userId) }));
+    const server = await startServer({
+      host: '127.0.0.1', port: 0, distRoot, env: { db, APP_ENV: 'load-test' }, fetchHandler: handlePgRequest,
+    });
+    const setupMs = Math.round(performance.now() - started);
+    log(`heavy target ready in ${setupMs} ms (PGlite, ${data.yearIds.length} lat, `
+      + `${data.students.length} uczniów, ${data.auditEventCount} zdarzeń audytu)`);
+    return {
+      baseUrl: `http://127.0.0.1:${server.address().port}`,
+      latestYear: data.latestYear, classId: data.latestClassId, householdId: data.latestHouseholdId,
+      otherHouseholdId: data.latestOtherHouseholdId, reconciliationId, actors,
+      dataset: {
+        years: data.yearIds.length, students: data.students.length, guardians: data.guardians.length,
+        auditEvents: data.auditEventCount,
+      },
+      setupMs,
+      close: async () => {
+        server.closeAllConnections?.();
+        await new Promise((resolve) => server.close(resolve));
+        await db.close();
+      },
+    };
+  } catch (error) {
+    await db.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function runHeavy(options, { log = () => {} } = {}) {
+  const startedAt = new Date().toISOString();
+  const target = await startHeavyTarget({ heavy: options.heavy, log });
+  try {
+    log(`running scenario heavy (${options.heavyIterations} iterations/route) against local PGlite`);
+    const result = await runHeavyScenario({
+      baseUrl: target.baseUrl, actors: target.actors, latestYear: target.latestYear, classId: target.classId,
+      householdId: target.householdId, otherHouseholdId: target.otherHouseholdId, reconciliationId: target.reconciliationId,
+      iterations: options.heavyIterations, timeoutMs: options.timeoutMs, log,
+    });
+    const breaches = checkHeavyBudgets(result.byOperation);
+    return {
+      mode: 'local', scenario: 'heavy',
+      target: 'pglite-in-process (not representative)',
+      startedAt, node: process.version,
+      dataset: target.dataset, setupMs: target.setupMs,
+      ...result,
+      breaches, passed: breaches.length === 0,
+    };
+  } finally {
+    await target.close();
   }
 }
 
@@ -417,6 +493,13 @@ export function checkThresholds(result, thresholds = DEFAULT_THRESHOLDS) {
 }
 
 export async function loadTest(options, { env = process.env, log = () => {} } = {}) {
+  if (options.scenario === 'heavy') {
+    // #217 pkt 4: scenariusz "heavy" zapisuje dane (import wyciągu) — wyłącznie
+    // lokalnie. Tryb zdalny (tylko do odczytu, tylko staging) nie jest jeszcze
+    // zaimplementowany — patrz "Ryzyka" w opisie PR.
+    if (options.target) throw new UsageError('--scenario heavy runs locally only (remote heavy mode is not implemented yet)');
+    return runHeavy(options, { log });
+  }
   const startedAt = new Date().toISOString();
   let target;
   if (options.target) {

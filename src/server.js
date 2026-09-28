@@ -9,8 +9,15 @@ import { storageFromEnv } from './storage.js';
 import { checkReadiness } from './health.js';
 import { createRequestMetrics, describeError, log, startMetricsReporter } from './log.js';
 import { dummyHash } from './pg/password.js';
+import { resolveWriteMode } from './write-mode.js';
 
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+// #185 pkt 4: bez limitu jawnego Node trzyma bufor żądania (i gniazdo)
+// nieograniczenie długo dla wolnego/złośliwego klienta. 120 s starcza na
+// upload 10-25 MB nawet na słabym łączu; headersTimeout musi być mniejszy
+// niż requestTimeout (wymóg Node — inaczej ostrzeżenie/błąd konfiguracji).
+export const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+export const DEFAULT_HEADERS_TIMEOUT_MS = 60_000;
 
 // #126: bez TRUST_PROXY za proxy Railway `clientAddress` (src/node-app.js) bierze
 // adres gniazda (adres proxy), więc limit logowań na IP jest wspólny dla całej
@@ -40,7 +47,11 @@ export function assertTrustProxyConfigured(processEnv = process.env) {
 // Bez niej: dotychczasowy router Workera (bez D1 chronione trasy zwracają 503).
 // Migracje NIE są uruchamiane przy starcie — wyłącznie `npm run db:migrate:postgres`.
 // Storage Bucket (BUCKET_*) jest opcjonalny: bez niego trasy dokumentów zwracają 503.
+// APP_WRITE_MODE (#143): wartość inna niż 'normal'/'read_only' zatrzymuje start
+// (błąd konfiguracji), zanim powstanie pula bazy czy klient magazynu.
 export function resolveRuntime(processEnv = process.env, { createDatabase = createPgDatabase, createStorage = storageFromEnv } = {}) {
+  const writeMode = resolveWriteMode(processEnv.APP_WRITE_MODE);
+  log.info('write_mode_active', { mode: writeMode });
   if (processEnv.DATABASE_URL) {
     const storage = createStorage(processEnv);
     const documentMaxBytes = maxUploadBytes(processEnv.DOCUMENT_MAX_BYTES);
@@ -51,7 +62,14 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         db,
         storage,
         documentMaxBytes,
+        // #185 pkt 3: limit uploadów naraz NA PROCES (nie na klaster) — patrz
+        // src/documents.js tryAcquireUploadSlot. Nieustawione/niepoprawne ->
+        // domyślne 4 (DEFAULT_MAX_CONCURRENT_UPLOADS).
+        maxConcurrentUploads: Number.isInteger(Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS))
+          && Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS) > 0
+          ? Number(processEnv.DOCUMENT_MAX_CONCURRENT_UPLOADS) : undefined,
         APP_ENV: processEnv.APP_ENV,
+        APP_WRITE_MODE: writeMode,
         IMPORT_ENABLED: processEnv.IMPORT_ENABLED,
         // Webhook i plan kampanii e-mail (#40). Klucz API Brevo NIE trafia do serwera HTTP —
         // używa go wyłącznie zadanie scripts/email-worker.js.
@@ -65,13 +83,21 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         // Logowanie hasłem (#3): role z obowiązkowym MFA i koszt scrypt (log2 N).
         MFA_REQUIRED_ROLES: processEnv.MFA_REQUIRED_ROLES,
         SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
+        // Stan systemu i heartbeat zadań (#149) — tylko liczby/kody, żadnych
+        // sekretów oprócz tokenu monitora (nigdy nie zwracanego w odpowiedzi).
+        RAILWAY_GIT_COMMIT_SHA: processEnv.RAILWAY_GIT_COMMIT_SHA,
+        APP_WRITE_MODE: processEnv.APP_WRITE_MODE,
+        HEALTH_JOBS_TOKEN: processEnv.HEALTH_JOBS_TOKEN,
+        BACKUP_MAX_AGE_HOURS: processEnv.BACKUP_MAX_AGE_HOURS,
+        EMAIL_WORKER_MAX_AGE_HOURS: processEnv.EMAIL_WORKER_MAX_AGE_HOURS,
+        EMAIL_QUEUE_MAX_AGE_HOURS: processEnv.EMAIL_QUEUE_MAX_AGE_HOURS,
       },
       fetchHandler: handlePgRequest,
       bodyLimit: bodyLimitFor(documentMaxBytes),
       close: () => db.close(),
     };
   }
-  return { mode: 'legacy', env: {}, fetchHandler: worker.fetch.bind(worker), close: async () => {} };
+  return { mode: 'legacy', env: { APP_WRITE_MODE: writeMode }, fetchHandler: worker.fetch.bind(worker), close: async () => {} };
 }
 
 export async function startServer({
@@ -86,10 +112,15 @@ export async function startServer({
   metrics,
   readiness,
   trustProxy = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
+  requestTimeout = DEFAULT_REQUEST_TIMEOUT_MS,
+  headersTimeout = DEFAULT_HEADERS_TIMEOUT_MS,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');
   const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit, logger, metrics, readiness, trustProxy });
   const server = createServer(handler);
+  // #185 pkt 4: patrz DEFAULT_REQUEST_TIMEOUT_MS wyżej.
+  server.requestTimeout = requestTimeout;
+  server.headersTimeout = headersTimeout;
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, resolve);
