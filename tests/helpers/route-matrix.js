@@ -950,6 +950,19 @@ export const ROUTE_MATRIX = Object.freeze([
     check: ({ actor, json }) => classListCheck(actor, json),
   },
 
+  // ---------- board (#131) ----------
+  // Pulpit zarządu: statystyki per klasa. Admin/zarząd bez przydziału klasowego
+  // (przydział zarządu ograniczony do klasy — `boardA` — nie otwiera tego
+  // widoku, SR-01); skarbnik i inne role — 403. MFA jest już wymuszone przez
+  // bramkę routera dla admin/board (mfa-policy.js), stąd `mfa: true` tutaj.
+  {
+    id: 'board.overview', module: 'board', method: 'GET',
+    path: '/api/board/overview?schoolYearId=:year',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: `/api/board/overview?schoolYearId=${YEAR_1}` }),
+    check: ({ actor, json }) => classListCheck(actor, json),
+  },
+
   // ---------- mfa (#3) ----------
   // Każda sesja (także bez przydziału) zarządza wyłącznie własnym czynnikiem; nowy użytkownik na przypadek.
   mfaRoute('mfa.enroll', '/api/mfa/enroll', 201, null),
