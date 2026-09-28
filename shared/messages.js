@@ -18,6 +18,8 @@ export const MESSAGES = Object.freeze({
   invalid_ended_on: "Podaj poprawną datę odejścia (RRRR-MM-DD).",
   // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
   minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
+  // --- Tryb tylko do odczytu (#143) ------------------------------------------------
+  read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
   unauthenticated: "Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie.",
   mfa_required: "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",

@@ -16,9 +16,16 @@
 // bez czynnika — 403 mfa_enrollment_required, na każdej trasie poza
 // zwolnionymi (sesja, logowanie, MFA, wylogowanie, trasy publiczne).
 // env.db ma kontrakt z src/db.js (w testach: PGlite).
+//
+// Tryb tylko do odczytu (APP_WRITE_MODE=read_only, issue #143): każde żądanie
+// zmieniające pod /api/ (poza /api/login i /api/logout — patrz ../write-mode.js)
+// dostaje 503 { error: 'read_only' } zanim trafi do modułu, w tym webhook
+// Brevo (dostawca ponawia dostarczenie po 5xx — zdarzenie nie ginie).
 
 import { isSameOrigin } from '../auth.js';
 import { json, logRouteError, UNSAFE_METHODS } from './http.js';
+import { isReadOnly, isWriteExempt, READ_ONLY_RETRY_AFTER_SECONDS } from '../write-mode.js';
+import { log } from '../log.js';
 import { classifyDbError } from './db-errors.js';
 import * as sessionRoutes from './routes/session.js';
 import * as paymentsRoutes from './routes/payments.js';
@@ -72,6 +79,11 @@ export function createPgHandler(routes = ROUTES) {
     if (url.pathname.startsWith('/api/') && UNSAFE_METHODS.has(request.method) && !isSameOrigin(request)) {
       const exempt = routes.some((route) => typeof route.allowsCrossOrigin === 'function' && route.allowsCrossOrigin(request, url));
       if (!exempt) return json({ error: 'invalid_origin' }, 403);
+    }
+
+    if (url.pathname.startsWith('/api/') && UNSAFE_METHODS.has(request.method) && !isWriteExempt(url.pathname) && isReadOnly(env)) {
+      log.warn('write_mode_rejected', { method: request.method, path: url.pathname });
+      return json({ error: 'read_only' }, 503, { 'Retry-After': String(READ_ONLY_RETRY_AFTER_SECONDS) });
     }
 
     if (url.pathname.startsWith('/api/') && !isMfaGateExempt(url.pathname)) {
