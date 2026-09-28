@@ -103,6 +103,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/documents/:financialDocumentId/void` | jak wyżej (supersede, dokument finansowy) | tak | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
 | `POST /api/documents/:boardDocumentId/void` | jak wyżej (supersede, dokument zarządu) | nie | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
 | `POST /api/documents/:classDocumentId/void` | jak wyżej (supersede, dokument klasy) | nie | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
+| `POST /api/documents/:financialDocumentId/description` | jak metadane dokumentu finansowego | tak | 404 | tytuł/kategoria (#76); dopisuje wersję, `documents` niezmienne |
+| `POST /api/documents/:boardDocumentId/description` | jak metadane dokumentu zarządu | nie | 404 | #76 |
+| `POST /api/documents/:classDocumentId/description` | jak metadane dokumentu klasy | nie | 404 | #76 |
 | `GET /api/ledger?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | zarząd z przydziałem klasy: 403 (SR-01) |
 | `GET /api/ledger/categories?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/summary?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
@@ -159,7 +162,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years/:schoolYearId/expire-grants` | wyłącznie admin | tak | 403 | macierz: zakończony rok syntetyczny |
 | `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail |
+| `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail; zaproszenie na własny adres: `409 cannot_grant_self`, a zaproszenie wystawione przez to samo konto nie nadaje mu roli przy przyjęciu (#146) |
 | `POST /api/admin/invitations/:invitationId/revoke` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108) |
 | `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |

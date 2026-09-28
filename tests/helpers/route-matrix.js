@@ -228,6 +228,21 @@ function documentStatus(id, action, kind, targets, allow, mfa) {
   };
 }
 
+// Zapis opisu (tytuł/kategoria — issue #76): te same reguły dostępu co odczyt
+// metadanych dokumentu (canAccessDocument), więc mfaDeny/deny = 404 jak wyżej.
+function documentDescribe(id, path, kind, targets, allow, mfa) {
+  return {
+    id, module: 'documents', method: 'POST', path,
+    targets, allow, mfa, mfaDeny: 404, ok: 201, deny: 404,
+    fixture: 'static', object: { kind: 'document', stage: kind },
+    build: ({ obj, target, key }) => ({
+      path: `/api/documents/${obj.documentId}/description`, headers: withKey(key),
+      body: { title: `Opis ${marker(target.key)}`, category: 'inne' },
+    }),
+    contains: (_actor, target) => [target.key],
+  };
+}
+
 function ledgerRead(id, path, suffix, contains) {
   return {
     id, module: 'ledger', method: 'GET', path, targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403,
@@ -650,6 +665,9 @@ export const ROUTE_MATRIX = Object.freeze([
   documentStatus('documents.voidBoard', 'void', 'board', YEAR_TARGETS, DOC_BOARD, false),
   documentStatus('documents.supersedeClass', 'supersede', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
   documentStatus('documents.voidClass', 'void', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
+  documentDescribe('documents.describeFinancial', '/api/documents/:financialDocumentId/description', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
+  documentDescribe('documents.describeBoard', '/api/documents/:boardDocumentId/description', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentDescribe('documents.describeClass', '/api/documents/:classDocumentId/description', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
 
   // ---------- ledger (#38) ----------
   // admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu (docs/LEDGER.md).

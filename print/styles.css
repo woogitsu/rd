@@ -92,7 +92,12 @@ td:first-child, th:first-child { width: 3rem; }
 .card-draft { margin: 0 0 4mm; padding: 1.5mm 3mm; border: 1px solid var(--red); color: var(--red-dark); font-size: 9pt; font-weight: 700; letter-spacing: .06em; }
 
 @media (max-width: 640px) {
-  .site-header { flex-direction: column; align-items: flex-start; }
+  /* #182: align-items:flex-start zostawiał <nav> nierozciągnięty do
+     szerokości nagłówka — nav nie ma się do czego skurczyć, linki renderują
+     się w jednej linii szerszej niż ekran (poziomy scroll całej strony).
+     align-items:stretch (wartość domyślna) naprawia to tak samo jak w
+     admin/styles.css i panel/styles.css. */
+  .site-header { flex-direction: column; align-items: stretch; }
   nav a { padding: .45rem .5rem; }
   .print-card { padding: 1.2rem; font-size: 10.5pt; }
   .buttons, .buttons button, #print-button { width: 100%; }

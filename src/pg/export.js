@@ -218,6 +218,15 @@ export const EXPORT_TABLES = Object.freeze([
   // jak już istniejące source_document_id w ledger_entries; restoreBundle
   // działa z wyłączonymi kluczami obcymi (session_replication_role = replica).
   { table: 'document_status_events', where: () => YEAR_TIME('created_at') },
+  // 0065 (#76/#313): tytuł, kategoria, data i opis dokumentu — dane Rady do
+  // odtworzenia, w odróżnieniu od samych plików (`documents` zostaje w
+  // EXPORT_EXCLUDED_TABLES, bo pliki kopiuje się osobno ze Storage Bucketu).
+  // Brak school_year_id — zakres po dacie utworzenia wpisu opisu (jak
+  // guardian_contact_changes). document_id wskazuje na documents.id, którego
+  // w paczce nie ma (jak source_document_id w ledger_entries) — po
+  // odtworzeniu identyfikator zostaje bez odpowiednika, restoreBundle działa
+  // z wyłączonymi kluczami obcymi (session_replication_role = replica).
+  { table: 'document_descriptions', where: () => YEAR_TIME('created_at') },
 
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },

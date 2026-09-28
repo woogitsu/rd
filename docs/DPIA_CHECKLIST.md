@@ -81,6 +81,8 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `email_campaigns.subject` | temat kampanii — do przeglądu przy zatwierdzeniu treści |
 | `email_campaigns.body_text` | treść kampanii — do przeglądu przy zatwierdzeniu treści |
 | `document_status_events.reason` | powód zastąpienia/unieważnienia dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#82) |
+| `document_descriptions.title` | tytuł dokumentu może zawierać imię i nazwisko (np. „Zwrot dla rodziny Kowalski”) (#76/#313) |
+| `document_descriptions.description` | opis dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#76/#313) |
 
 ## Środki już istniejące (do odwołania w DPIA)
 
