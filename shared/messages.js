@@ -147,6 +147,7 @@ export const MESSAGES = Object.freeze({
   invalid_effective_on: "Podaj poprawną datę.",
   closing_balance_out_of_range: "Saldo zamknięcia jest poza dozwolonym zakresem.",
   next_year_opening_balance_exists: "Bilans otwarcia następnego roku już istnieje.",
+  category_not_found: "Nie znaleziono kategorii księgi.",
   difference_requires_note: "Różnica wymaga wpisania wyjaśnienia.",
   reconciliation_not_found: "Nie znaleziono uzgodnienia.",
   reconciliation_confirmed: "Uzgodnienie jest już potwierdzone i nie można go zmienić.",

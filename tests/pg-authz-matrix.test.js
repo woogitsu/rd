@@ -384,6 +384,17 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // #207: kategoria świeża per przypadek — do dezaktywacji (nie może być
+  // współdzielonym `cat-in-<year>`, bo tamta jest używana przez inne trasy).
+  ledgerCategory: async (ctx, target) => {
+    const id = nextKey('fx-ledger-cat');
+    await ctx.db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+       VALUES ($1, $2, 'income', $3, 'u-fx-admin')`,
+      [id, target.schoolYearId, `Kat ${marker(target.key)} ${id}`],
+    );
+    return { categoryId: id };
+  },
   // Bilans otwarcia roku celu wprost w bazie (#199); trasa poprawki wymaga jego istnienia.
   openingBalance: async (ctx, target) => {
     await ctx.db.query(
