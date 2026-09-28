@@ -595,6 +595,20 @@ export const ROUTE_MATRIX = Object.freeze([
       path: `/api/ledger/${obj.ledgerEntryId}/corrections`, headers: withKey(key), body: { amountCents: 1, reason: 'Korekta syntetyczna' },
     }),
   },
+  {
+    // #144: przeksięgowanie (storno + wpis zastępczy) — jednorazowe na wpis, więc fixture 'fresh'.
+    id: 'ledger.replacement', module: 'ledger', method: 'POST', path: '/api/ledger/:ledgerEntryId/replacement',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'ledgerEntry' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/ledger/${obj.ledgerEntryId}/replacement`, headers: withKey(key),
+      body: {
+        schoolYearId: target.schoolYearId, direction: 'income', amountCents: 100000, categoryId: ledgerCategory(target),
+        description: `Wpis zastępczy ${marker(target.key)}`, occurredOn: yearDate(target, '10-06'), method: 'bank',
+        reason: 'Zła kategoria, korekta syntetyczna',
+      },
+    }),
+  },
 
   // ---------- email (#10, #40) ----------
   // Szkic i kolejka: zarząd, skarbnik z MFA; zatwierdzenie: wyłącznie zarząd z MFA (inna osoba niż autor).
