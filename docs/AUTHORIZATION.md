@@ -20,6 +20,8 @@ GET /api/access zwraca zalogowanemu użytkownikowi wyłącznie jego własne akty
 
 Moduły tras używają `requireAccess(request, env, { roles, classId, schoolYearId, requireMfa }, json)`: `401 unauthenticated` bez sesji, `403 forbidden` bez roli, zakresu lub MFA. Trasa dotycząca klasy **musi** podać `classId`, a trasa roczna `schoolYearId`. Bez `classId` bramka bierze pod uwagę wyłącznie przydziały bez `class_id` (`isAuthorizedScoped`, SR-02) — przydział klasowy nie działa wtedy jak szkolny. Ten sam wariant (`isAuthorizedScoped` lub jawne odfiltrowanie przydziałów klasowych) stosują trasy ogólnoszkolne poza `requireAccess`: wpłaty, księga, kampanie e-mail, uzgodnienie wyciągu, eksport roczny, dane finansowe rodzin, zamknięcie roku, dokumenty ogólnoszkolne (SR-01). Operacje finansowe podają `requireMfa: true`. Role `principal` i `audit` nie mają domyślnych uprawnień; trasa dopuszcza je tylko jawnie, po decyzji szkoły.
 
+Trasy, dla których rozróżnienie powodu odmowy ma znaczenie dla ekranu logowania — dziś lista klasy (`GET /api/exports/class-roster`) i raport Komisji Rewizyjnej (`GET /api/reports/audit`), bo ich role (`representative`, `audit`) nie są domyślnie na liście `MFA_REQUIRED_ROLES` — używają zamiast ogólnego `403 forbidden` funkcji `mfaAwareForbiddenCode(context, requirement, env)` (`src/pg/authorization.js`): najpierw sprawdza rolę i zakres **bez** `requireMfa` (sama odmowa z powodu roli/zakresu zostaje `forbidden` i nie ujawnia stanu MFA konta ani istnienia zasobu, SR-07), a dopiero gdy to przechodzi, zwraca `403 mfa_required` (czynnik zapisany, sesja bez potwierdzonego kodu) albo `403 mfa_enrollment_required` (konto bez czynnika) — #161. Kolejność sprawdzeń (najpierw zakres) jest bez zmian; zmienia się tylko treść pola `error` w odpowiedzi. Konto z już zapisanym, ale w tej sesji niepotwierdzonym czynnikiem i tak dostanie `mfa_required` wcześniej, na poziomie bramki routera (`mfaGate`, reguła 1 niżej) — dla **dowolnej** chronionej trasy, niezależnie od zakresu.
+
 Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i tylko z przydziałem bez `class_id` (wszystkie klasy) obejmującym wybrany rok. Przydział zarządu ograniczony do klasy nie wystarcza — kontrola jest dodatkowa względem `isAuthorized`, która przy braku `classId` w wymaganiu przepuszcza przydziały klasowe. Zakres ról importu to założenie do decyzji D-08.
 
 ## Macierz tras API (issue #4) — testy negatywne
@@ -43,6 +45,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/payments` | admin, zarząd, skarbnik — rok 1 | tak | 403 | walidacja klucza i treści przed sprawdzeniem sesji |
 | `POST /api/payments/:paymentId/corrections` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | wpłata z innego roku: 403; nieistniejąca: 404 |
 | `POST /api/payments/:paymentId/assignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | jak wyżej |
+| `POST /api/payments/:paymentId/refunds` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | zwrot jako osobny, niezmienny zapis (#138); powiązanie z księgą o innym netto: 409 `ledger_correction_required` |
+| `POST /api/payments/:paymentId/reassignment` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | ponowne przypisanie jako osobne zdarzenie zamiast korekty do zera (#138); historia w `payment_reassignments` |
 | `GET /api/public/events` | publiczna | nie | — | tylko opublikowane rewizje, bez danych klas |
 | `GET /api/events?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wydarzenia własnej klasy | nie | 403 | lista przedstawiciela 1A nie zawiera 1B ani wydarzeń ogólnoszkolnych |
 | `POST /api/events` | admin, zarząd — rok 1 (klasa lub ogólnoszkolne); przedstawiciel — własna klasa | nie | 403 | |
@@ -88,6 +92,12 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
+| `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
+| `GET /api/ledger/transfers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #199 |
+| `POST /api/ledger/transfers` | jak wyżej | tak | 403 | #199; przeniesienie kasa ↔ rachunek, storno jako nowy wpis |
+| `GET /api/ledger/opening-balance?schoolYearId=:year` | jak wyżej | tak | 403 | #199 |
+| `POST /api/ledger/opening-balance` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #199; admin i skarbnik: 403; tylko pierwszy rok (409 `not_first_school_year`) |
+| `POST /api/ledger/opening-balance/adjustments` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #199; admin i skarbnik: 403; zamknięty rok: 409 |
 | `GET /api/email/campaigns?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin techniczny: 403; SR-01 |
 | `POST /api/email/campaigns` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/email/campaigns/:campaignId` | jak wyżej, rok kampanii | tak | 403 | SR-01 |
@@ -138,9 +148,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/reconciliations/:reconciliationId/matches` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/confirm` | jak wyżej; inna osoba niż autor | tak | 403 | SR-01 |
-| `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md) |
+| `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md). Rola i rok pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195) |
-| `GET /api/exports/class-roster?classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | tak | 403 | |
+| `GET /api/exports/class-roster?classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | tak | 403 | Rola i klasa pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `GET /api/classes` | admin, zarząd, skarbnik — klasy roku przydziału; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | Komisja Rewizyjna, dyrekcja: 403 |
 | `GET /api/classes/:classId/students` | jak wyżej | nie | 403 / 404 | rola bez dostępu do rodzin: 403; klasa poza zakresem: 404 |
 | `GET /api/households/:householdId` | jak wyżej (dzieci spoza zakresu pominięte) | nie | 403 / 404 | rodzeństwo w 1A i 1B: przedstawiciel widzi tylko swoje dziecko (test uzupełniający) |
@@ -167,6 +177,19 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 Trasy logowania (`src/pg/routes/login.js`, moduł `login`) nie działają na danych Rady. W macierzy trasy publiczne dostają poprawne dane uwierzytelniające (konto z hasłem, świeży token zaproszenia albo resetu) niezależnie od cookie aktora — odpowiedź zależy wyłącznie od hasła lub tokenu; błędne dane, limity prób i CSRF logowania sprawdza `tests/pg-login.test.js`. Trasy administratora `password-reset` i `mfa-reset` są częścią modułu `admin` (wyłącznie admin z MFA).
 
 Uwagi do decyzji (nie są rozstrzygnięciem): wydarzenia i zebrania nie wymagają na poziomie trasy MFA (dla admina, zarządu i skarbnika wymusza je bramka MFA routera), także zatwierdzanie i publikacja; admin techniczny może tworzyć i edytować szkice wydarzeń oraz zarządzać zebraniami; Komisja Rewizyjna czyta również projekty protokołów. Każde z tych zachowań wymaga potwierdzenia w D-08/D-09.
+
+## Akcje w panelach (issue #225)
+
+Panele ukrywają akcje, których rola nie może wykonać. Robią to na podstawie `GET /api/access`; sesja przed MFA dostaje tam `grants: []`, więc nie widzi żadnych akcji. To wyłącznie skrót dla użytkownika, a każdą operację nadal autoryzuje serwer.
+
+| Panel | Akcja | Kto ją widzi |
+|---|---|---|
+| Wpłaty, Księga | formularze i „Dodaj wpłatę”/„Dodaj wpis” | role z `FINANCIAL_ROLES` z przydziałem bez klasy; pozostali widzą jeden komunikat o braku dostępu |
+| Dokumenty | rodzaj w formularzu przesyłania | według `DOCUMENT_POLICIES`; przedstawiciel widzi tylko „Materiał klasy” z podpowiedzią własnych klas |
+| Zebrania | „Nowe zebranie” | `MANAGE_ROLES` |
+| Wydarzenia | „Nowy szkic”, „Zgłoś”, „Zatwierdź”, „Opublikuj”, „Odwołaj” | według `EVENT_POLICY`; „Zatwierdź” nie jest pokazywane autorowi wydarzenia ani autorowi bieżącej wersji, który zamiast tego widzi wyjaśnienie zasady czterech oczu |
+
+Listy ról w panelach (`*/core.js`) porównuje ze stałymi serwera test `tests/role-policy-parity.test.js`. Odpowiedź 403 panele Wpłat i Księgi opisują jako brak uprawnień, a nie jako „Błąd serwera”.
 
 ## Znane luki (przypadki `todo` w macierzy)
 

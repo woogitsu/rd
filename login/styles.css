@@ -1,4 +1,5 @@
 /* Ekran logowania — paleta z docs/DESIGN.md, kontrast z docs/ACCESSIBILITY.md. */
+[hidden] { display: none !important; }
 :root {
   color: #282c2f;
   background: #ffffff;

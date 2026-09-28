@@ -103,6 +103,12 @@ export function validateRows(matrix, mapping, options = {}) {
     if (nameKey && !seenName.has(nameKey)) seenName.set(nameKey, number);
     if (issues.length) errors.push(...issues.map(message => ({ row: number, message })));
     if (!record.guardian1 && !record.guardian2) warnings.push({ row: number, message: 'Brak opiekuna: nie będzie możliwy kontakt e-mail.' });
+    // #98: jedna kolumna "Imię i nazwisko" nie rozróżnia przedrostków ani drugich imion —
+    // przy więcej niż dwóch wyrazach prosimy o ręczne sprawdzenie podziału.
+    for (const [key, label] of [['guardian1', 'Opiekun 1'], ['guardian2', 'Opiekun 2']]) {
+      const words = record[key] ? record[key].split(/\s+/).filter(Boolean) : [];
+      if (words.length > 2) warnings.push({ row: number, message: `${label}: więcej niż dwa wyrazy w imieniu i nazwisku — sprawdź podział na imię i nazwisko.` });
+    }
     records.push({ row: number, ...record, valid: !issues.length });
   }
   if (!records.length) throw new Error('Brak wierszy uczniów.');

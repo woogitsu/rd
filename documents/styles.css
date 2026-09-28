@@ -1,3 +1,5 @@
+/* Atrybut hidden zawsze ukrywa element, także gdy reguła autora ustawia display (#192). */
+[hidden] { display: none !important; }
 /* Panel dokumentów: białe tło, oszczędny czerwony akcent, płaskie tabele (docs/DESIGN.md). */
 :root {
   --text: #282c2f;
@@ -73,7 +75,7 @@ button:disabled { cursor: progress; opacity: .6; }
 .message.success { color: var(--success); }
 progress { width: 100%; height: .6rem; accent-color: var(--red); }
 
-.table-wrap { margin-top: 1rem; overflow-x: auto; }
+.table-wrap { position: relative; margin-top: 1rem; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 th, td { padding: .6rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
 th { color: var(--muted); font-size: .8rem; font-weight: 600; background: var(--neutral); }
