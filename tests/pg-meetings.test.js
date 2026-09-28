@@ -13,10 +13,13 @@ import {
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
-// #135: sesje zarządu/admina/skarbnika w testach mają MFA potwierdzone (mfa: true),
-// bo rozstrzygnięcie uchwały, zatwierdzenie protokołu i jego udostępnienie wymagają
-// tego teraz na poziomie usługi. `boardNoMfa` — ten sam przydział, sesja bez MFA —
-// służy wyłącznie do testów odmowy `403 mfa_required` wprowadzonych w #135.
+// #150 (SR-10): zarządzanie zebraniami/protokołami/uchwałami wymaga teraz jawnie
+// potwierdzonego MFA na KAŻDEJ trasie zarządzania (nie tylko #135's podzbiorze) —
+// board i classBoard dostają mfaVerified: true, tak jak pozostali aktorzy tego
+// pliku, którzy naprawdę zarządzają (rep, principal, treasurer są tu wyłącznie
+// do testów odmowy). `boardNoMfa` — ten sam przydział, sesja bez MFA — służy
+// testom odmowy `403 mfa_required` (rozszerzonym w #150 na wszystkie trasy
+// zarządzania, nie tylko decyzję o uchwale/zatwierdzenie protokołu z #135).
 const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
 const boardNoMfa = { userId: 'board', grants: [grant('board')], mfaVerified: false };
 const admin = { userId: 'admin', grants: [grant('admin', { schoolYearId: null })], mfaVerified: true };
