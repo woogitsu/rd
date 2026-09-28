@@ -19,6 +19,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { recordDataAccess } from '../data-access.js';
 
 export const name = 'payments';
 
@@ -395,7 +396,7 @@ async function listPayments(request, env, url, json) {
   if (limit < 1 || limit > 100) throw new RequestError('invalid_limit');
   const cursorScope = { schoolYearId, filter: status ?? '' };
   const cursor = decodeCursor(url.searchParams.get('cursor'), cursorScope);
-  await requireFinancialContext(request, env, schoolYearId);
+  const context = await requireFinancialContext(request, env, schoolYearId);
 
   const values = [schoolYearId];
   const conditions = ["p.status IN ('recorded', 'unmatched')", 'p.school_year_id = $1'];
@@ -429,6 +430,9 @@ async function listPayments(request, env, url, json) {
   const nextCursor = rows.length > limit && visibleRows.length
     ? encodeCursor(visibleRows[visibleRows.length - 1], cursorScope)
     : null;
+  await recordDataAccess(env, {
+    actorId: context.session.user.id, accessKind: 'payment_list', schoolYearId, outcome: 'ok', rowCount: visibleRows.length,
+  });
   return json({ payments: visibleRows.map(paymentListItem), nextCursor });
 }
 
