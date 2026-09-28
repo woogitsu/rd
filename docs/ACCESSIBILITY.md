@@ -141,8 +141,26 @@ Wykonać przed pracą na danych rodzin, na danych syntetycznych, w konfiguracjac
 8. Import: po wyborze pliku czytany jest komunikat o liczbie wierszy lub błędzie; po „Sprawdź dane” fokus trafia na „3. Wynik sprawdzenia”, a podsumowanie jest czytane.
 9. Powiększenie 200% i 400% w przeglądarce (nie tylko szerokość okna) oraz tryb wysokiego kontrastu Windows (`forced-colors`) — obrys fokusu i obramowania pól muszą pozostać widoczne.
 
+## Rozszerzenie przeglądu na wszystkie aplikacje statyczne (#112)
+
+`tests/a11y-static.test.js` obejmował wcześniej tylko `import`, `panel`, `ledger`, `print` (na sztywno w kodzie testu). Lista `APPS` jest teraz wyprowadzana z `STATIC_PREFIXES` w `src/node-app.js`, więc obejmuje automatycznie każdą aplikację serwowaną przez serwer — dodanie nowej bez skip linku, `main#main`, `:focus-visible`, `prefers-reduced-motion` czy `caption`/`th[scope]` nie przejdzie CI.
+
+| Aplikacja | Stan przed #112 | Zmiana |
+|---|---|---|
+| `admin/` | brak `:focus-visible`/`prefers-reduced-motion`/`min-height:44px`, stara paleta (`#c92127`, `#f4c8ca`, `#bbb3ae`, `#8a817c`), `border-radius` na przyciskach/polach/kartach, 4 tabele bez `caption`/`th[scope]`, 3 `.form-error` bez `id` | tokeny DESIGN.md, usunięty `border-radius`, dodane `:focus-visible`, `prefers-reduced-motion`, `min-height:44px`, `caption`+`th[scope]` w 4 tabelach, `id` na `.form-error`, reguła `forced-colors` dla plakietek i aktywnej zakładki |
+| `families/` | jak wyżej (`#a11e2a`/`#b52330`/`#c62936`, `rgba(198,41,54,.14)` na obrysie fokusu ok. 1,1:1, `border-radius`), 4 tabele bez `caption`/`th[scope]`, oba `<dialog>` bez `aria-labelledby`, `.form-error` bez `id`, `#message` zawsze `role="status"` (błąd krytyczny nie ogłaszany asertywnie) | jak wyżej + `aria-labelledby` na obu oknach (z `id` na nagłówku), `#message` dostaje `role="alert"` dynamicznie, gdy pokazuje błąd (`families/main.js` `showMessage`) |
+| `documents/`, `events/`, `meetings/` | brakowało `prefers-reduced-motion` i `min-height:44px` na przycisku; `.section:focus`/`.detail:focus { outline: none }` gasiły fokus również dla klawiatury (nadpisywały globalny `:focus-visible` wyższą specyficznością) | dodane `prefers-reduced-motion`, `min-height:44px`; usunięte zbędne `outline: none` (dla `documents/` domyślne zachowanie przeglądarki uzupełnia już istniejący `.section:focus-visible`); w `meetings/` 9 kolejnych `.form-error` dostało `id` |
+| `site/` | brakowało `prefers-reduced-motion`; `main:focus { outline: none }` gasił fokus klawiatury na punkcie orientacyjnym | dodane `prefers-reduced-motion`, `forced-colors` dla plakietki „odwołane”; usunięte `outline: none`. Strona nie ma żadnego `<button>`, więc kryterium 44 px przycisku jej nie dotyczy (test to sprawdza warunkowo) |
+| `login/` | już zgodny (miał wszystko z listy), ale nie był w `tests/a11y-static.test.js` — brak nawigacji paneli powodował, że nie pasował do dawnej sztywnej asercji etykiet | test teraz pomija asercję nawigacji, gdy `<nav aria-label="…">` nie występuje wcale — `login/` przechodzi pozostałe (jedyny, zawsze widoczny `<h1>`, etykiety, fokus, itd.) bez zmian w kodzie |
+
+Nawigacja różni się realnie między aplikacjami (statyczne linki w czterech pierwotnych, `<ul id="shell-nav">` wypełniany w czasie działania przez `shared/shell.js` w `admin`/`families`/`events`/`meetings`/`documents`, sekcje strony w `site/`, brak w `login/`) — test sprawdza teraz dla każdego wariantu to, co ma sens dla niego (etykieta `nav`, brak powtórzonych etykiet, co najwyżej jeden `aria-current="page"`), zamiast jednej sztywnej listy etykiet z czterech pierwotnych aplikacji.
+
+Aplikacje z kilkoma wzajemnie wykluczającymi się widokami pod jednym `main` (`families/`: klasy / klasa / gospodarstwo) mogą mieć po jednym `<h1>` na widok, o ile każdy jest wewnątrz elementu z atrybutem `hidden` — test liczy tylko `<h1>`, które nigdy nie są `hidden` (musi być ich najwyżej jeden).
+
+**Poza zakresem tej zmiany** (patrz #112, pkt. 3–4 propozycji): reguła `forced-colors` jest dodana tylko tam, gdzie już poprawiałem CSS (`admin/`, `families/`, `site/`) — nie ma jeszcze testu statycznego wymuszającego ją we wszystkich aplikacjach; `docs/a11y/audit.mjs` (zrzuty Playwright 320/1280 px) nadal renderuje tylko cztery pierwotne aplikacje — rozszerzenie o pozostałe wymaga uruchomienia z Playwright (nie jest zależnością projektu) i jest osobnym, ręcznym krokiem.
+
 ## Poza zakresem przeglądu
 
-- Ekran logowania (`login/`) — sprawdzany statycznie w `tests/login-core.test.js` (język, skip link, jedna `h1`, etykiety, odwołania ARIA, role live błędów, fokus, 44 px, ograniczony ruch); nie ma nawigacji paneli, więc nie jest w `tests/a11y-static.test.js`. Przegląd z czytnikiem ekranu i przy 320 px — do wykonania.
+- Ekran logowania (`login/`) — sprawdzany statycznie zarówno w `tests/login-core.test.js`, jak i (od #112) w `tests/a11y-static.test.js`. Przegląd z czytnikiem ekranu i przy 320 px — do wykonania.
 - Plakietki statusu mają zaokrąglone rogi (`border-radius: 999px`) — kwestia stylu, nie dostępności; zostawione.
 - Kolejność Tab w długich tabelach (przycisk w każdym wierszu) — przy dużej liczbie wierszy rozważyć paginację lub jedną akcję na zaznaczenie; wymaga decyzji projektowej.
