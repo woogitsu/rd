@@ -32,7 +32,10 @@
 //      rozstrzygnięcia przez recoverStale (webhook → sent, inaczej
 //      delivery_unknown). Odmowa konta (401/402/403), SIGTERM i awaria bazy
 //      zatrzymują przebieg; niewysłana reszta partii wraca do „queued” bez
-//      zużycia próby (#172, #209).
+//      zużycia próby (#172, #209). Wyłącznik (#180): 429 i brak połączenia
+//      z dostawcą zatrzymują przebieg bez zużycia próby i limitu; seria
+//      EMAIL_BREAKER_UNCERTAIN kolejnych wyników niepewnych (5xx, timeout)
+//      zatrzymuje partię, reszta zostaje w kolejce.
 // Każda zmiana stanu kolejki lub kampanii i jej zdarzenie audytu powstają w tej
 // samej transakcji (#178). Niezgodność treści z zatwierdzonym skrótem daje
 // jedno zdarzenie email.campaign.integrity_mismatch na kampanię i stan skrótów.
@@ -422,15 +425,16 @@ async function recordSentWithRetries(db, item, options) {
   throw new ResultNotRecordedError(item, options.messageId, lastError);
 }
 
-// Wiadomość na pewno nie wyszła (odmowa konta u dostawcy): wiersz wraca do
-// kolejki bez zużycia próby i bez wpisu w dzienniku limitu.
-async function requeueNotSent(db, item, { code, now, runToken, stage }) {
+// Wiadomość na pewno nie wyszła (odmowa konta, 429, brak połączenia): wiersz
+// wraca do kolejki bez zużycia próby i bez wpisu w dzienniku limitu;
+// delaySeconds odsuwa kolejną próbę (np. Retry-After).
+async function requeueNotSent(db, item, { code, now, runToken, stage, delaySeconds = 0 }) {
   return db.transaction(async (tx) => {
     const { rows } = await tx.query(
       `UPDATE email_outbox SET state = 'queued', last_error = $2, updated_at = $3, send_started_at = NULL,
-              attempts = GREATEST(0, attempts - 1), next_attempt_at = $3::timestamptz
+              attempts = GREATEST(0, attempts - 1), next_attempt_at = $3::timestamptz + make_interval(secs => $5)
         WHERE id = $1 AND state = 'sending' AND claim_token = $4 RETURNING id`,
-      [item.id, code, now.toISOString(), runToken],
+      [item.id, code, now.toISOString(), runToken, delaySeconds],
     );
     if (!rows[0]) return 'lease_lost';
     await insertAuditEvent(tx, {
@@ -497,6 +501,16 @@ async function recordTransportError(db, item, error, { config, now, runToken }) 
     const outcome = await requeueNotSent(db, item, { code, now, runToken, stage: 'provider_account_rejected' });
     return { outcome: outcome === 'lease_lost' ? 'lease_lost' : null, stop: 'provider_account_rejected' };
   }
+  // Wyłącznik (#180): 429 i brak połączenia dotyczą dostawcy, nie odbiorcy.
+  // Przebieg się zatrzymuje (kolejne wiadomości dostałyby to samo), wiersz
+  // wraca do kolejki bez zużycia próby i limitu — więc nie staje się „failed”
+  // po EMAIL_MAX_ATTEMPTS przy dłuższej przerwie.
+  if (known && (error.code === 'provider_rate_limited' || error.notSent)) {
+    const stage = error.notSent ? 'provider_unreachable' : 'provider_rate_limited';
+    const delaySeconds = error.retryAfterSeconds ?? BACKOFF_BASE_MINUTES * 60;
+    const outcome = await requeueNotSent(db, item, { code, now, runToken, stage, delaySeconds });
+    return { outcome: outcome === 'lease_lost' ? 'lease_lost' : 'retried', stop: stage };
+  }
   const retry = known && error.retryable && item.attempts < config.maxAttempts;
   // Wynik, po którym wiadomość mogła wyjść (niepewny albo wyjątek spoza
   // EmailTransportError), zużywa limit dnia; jawna odmowa dostawcy — nie.
@@ -527,7 +541,7 @@ async function recordTransportError(db, item, error, { config, now, runToken }) 
       metadata: { campaignId: item.campaignId, reason: code },
     });
     return retry ? 'retried' : 'failed';
-  }) };
+  }), uncertain: !retry && mayHaveLeft };
 }
 
 // Zmiana stanu i zdarzenie w jednej transakcji (#178): przerwanie po UPDATE nie
@@ -607,6 +621,8 @@ export async function runEmailBatch(env, {
   const clock = () => new Date(now.getTime() + (Date.now() - startedMs));
   let stop = null;
   let fatal = null;
+  let uncertainStreak = 0;
+  const breakerUncertain = config.breakerUncertain ?? 2;
   const unrecorded = [];
   try {
     for (const item of claimed) {
@@ -619,11 +635,15 @@ export async function runEmailBatch(env, {
         if (verdict.error === 'campaign_cancelled' || verdict.error === 'lease_lost') run.stoppedReason ??= verdict.error;
         continue;
       }
-      const { outcome, stop: breaker } = await deliver(db, item, { transport, config, now, runToken, resultRetryDelaysMs });
+      const { outcome, stop: stopped, uncertain } = await deliver(db, item, { transport, config, now, runToken, resultRetryDelaysMs });
       if (outcome === 'lease_lost') run.stoppedReason ??= 'lease_lost';
       else if (outcome) run[outcome] += 1;
+      // Seria wyników niepewnych (5xx, timeout) = dostawca niedostępny:
+      // zatrzymaj partię, zamiast zamieniać resztę w delivery_unknown (#180).
+      uncertainStreak = uncertain ? uncertainStreak + 1 : 0;
+      const breaker = stopped ?? (uncertainStreak >= breakerUncertain ? 'provider_unavailable' : null);
       if (breaker) {
-        if (!outcome) run.requeued += 1;
+        if (stopped && !outcome) run.requeued += 1;
         stop = breaker;
         break;
       }
