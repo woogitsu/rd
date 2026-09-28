@@ -29,6 +29,7 @@ import { log } from '../log.js';
 import { classifyDbError } from './db-errors.js';
 import * as sessionRoutes from './routes/session.js';
 import * as paymentsRoutes from './routes/payments.js';
+import * as paymentInstructionsRoutes from './routes/payment-instructions.js';
 import * as eventsRoutes from './routes/events.js';
 import * as meetingsRoutes from './routes/meetings.js';
 import * as importRoutes from './routes/import.js';
@@ -57,6 +58,7 @@ import { isMfaGateExempt, mfaGate } from './mfa-policy.js';
 export const ROUTES = [
   sessionRoutes,
   paymentsRoutes,
+  paymentInstructionsRoutes, // #92: zatwierdzone dane do wpłaty (IBAN/BIC/odbiorca) do kodu QR EPC
   eventsRoutes,
   meetingsRoutes,
   importRoutes,

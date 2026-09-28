@@ -94,6 +94,8 @@ const YEAR_TARGETS = ['W1', 'Y2'];
 const EVENT_EDIT = { admin: Y1_ALL, board: Y1_ALL, repA: ['A'], repB: ['B'] };
 const EVENT_REVIEW = { board: Y1_ALL };
 const FINANCIAL = { admin: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 };
+// #92: zatwierdzenie danych do wpłaty — wariant zachowawczy do decyzji D-08, bez skarbnika.
+const PAYMENT_INSTRUCTIONS_APPROVE = { admin: SCHOOL_Y1, board: SCHOOL_Y1 };
 // Zarząd z przydziałem klasy 1A zarządza wyłącznie zebraniami klasy 1A.
 const MEETING_MANAGE = { admin: Y1_ALL, board: Y1_ALL, boardA: ['A'] };
 const MEETING_READ = { admin: Y1_ALL, board: Y1_ALL, audit: Y1_ALL, boardA: ['A'] };
@@ -512,6 +514,23 @@ export const ROUTE_MATRIX = Object.freeze([
     id: 'payments.exportCsv', module: 'payments', method: 'GET', path: '/api/payments/export.csv?schoolYearId=:year',
     targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
     build: ({ target }) => ({ path: `/api/payments/export.csv?schoolYearId=${target.schoolYearId}` }),
+  },
+
+  // ---------- payment-instructions (#92) ----------
+  {
+    id: 'payment-instructions.get', module: 'payment-instructions', method: 'GET',
+    path: '/api/payment-instructions?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/payment-instructions?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    id: 'payment-instructions.approve', module: 'payment-instructions', method: 'POST',
+    path: '/api/payment-instructions',
+    targets: YEAR_TARGETS, allow: PAYMENT_INSTRUCTIONS_APPROVE, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/payment-instructions', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, iban: 'BE68539007547034', payeeName: `Rada ${marker(target.key)}` },
+    }),
   },
 
   // ---------- events (#12) ----------

@@ -254,6 +254,17 @@ export const MESSAGES = Object.freeze({
   statement_line_not_found: "Nie znaleziono pozycji wyciągu.",
   statement_line_not_income: "Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia.",
 
+  // --- Dane do wpłaty i kod QR EPC (#92) --------------------------------------------
+  invalid_iban: "Numer rachunku (IBAN) jest niepoprawny — sprawdź sumę kontrolną.",
+  invalid_bic: "Numer BIC jest niepoprawny (8 albo 11 znaków).",
+  invalid_payee_name: "Podaj nazwę odbiorcy (maksymalnie 70 znaków).",
+  invalid_name: "Nazwa odbiorcy jest niepoprawna albo za długa (maksymalnie 70 znaków).",
+  invalid_info: "Informacja dla płatnika jest za długa (maksymalnie 70 znaków).",
+  invalid_remittance_both: "Podaj wyłącznie referencję strukturalną albo tytuł przelewu, nie oba naraz.",
+  invalid_structured_reference: "Niepoprawny format komunikacji strukturalnej (12 cyfr).",
+  invalid_unstructured_text: "Tytuł przelewu jest za długi (maksymalnie 140 znaków).",
+  epc_payload_too_large: "Dane do kodu QR są za długie (limit specyfikacji EPC).",
+
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",
   year_close_already_started: "Zamknięcie roku zostało już rozpoczęte.",

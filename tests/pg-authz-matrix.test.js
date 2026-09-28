@@ -972,6 +972,7 @@ test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
 const MODULE_SOURCES = {
   session: ['../src/pg/routes/session.js'],
   payments: ['../src/pg/routes/payments.js'],
+  'payment-instructions': ['../src/pg/routes/payment-instructions.js'],
   events: ['../src/pg/routes/events.js', '../src/pg/events.js'],
   meetings: ['../src/pg/routes/meetings.js', '../src/pg/meetings.js'],
   import: ['../src/pg/routes/import.js'],

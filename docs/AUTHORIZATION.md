@@ -60,6 +60,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/payments/:paymentId/allocations` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | części wpłaty, suma przypisana i „nieprzypisana część” (#127); przedstawiciel: 403; nieistniejąca: 404 |
 | `POST /api/payments/:paymentId/allocations` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | podział wyłącznie wpłaty nieprzypisanej, suma części ≤ netto (#127); przedstawiciel: 403 |
 | `POST /api/payments/:paymentId/allocations/:allocationId/reversal` | admin, zarząd, skarbnik — rok wpłaty | tak | 403 | cofnięcie części jako nowy zapis z powodem (#127) |
+| `GET /api/payment-instructions?schoolYearId=:year` | admin, zarząd, skarbnik — rok 1 | tak | 403 | zatwierdzone dane do wpłaty (#92) do kodu QR EPC; brak zatwierdzonej wersji: `{ paymentInstructions: null }`, status 200 |
+| `POST /api/payment-instructions` | admin, zarząd — rok 1 (BEZ skarbnika — wariant zachowawczy do decyzji D-08) | tak | 403 | nowe zatwierdzenie = nowa, niezmienna wersja (IBAN nigdy w metadanych audytu) |
 | `GET /api/payments/export.csv?schoolYearId=:year` | admin, zarząd, skarbnik — rok 1 | tak | 403 | eksport CSV (#141): wpisy wpłat + korekty w jednym pliku (`typ_wiersza`); bez imion/nazwisk, bez statusu „dłużnik”; limit `MAX_EXPORT_ROWS`: 413 `export_too_large` |
 | `GET /api/public/events` | publiczna | nie | — | tylko opublikowane rewizje, bez danych klas |
 | `GET /api/events?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wydarzenia własnej klasy | nie | 403 | lista przedstawiciela 1A nie zawiera 1B ani wydarzeń ogólnoszkolnych |

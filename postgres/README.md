@@ -822,3 +822,13 @@ także wycofanie zgody, czeka na zatwierdzenie przez człowieka; kolejkę widzą
 tylko admin i zarząd. Skutki dla danych: dwie nowe, puste tabele, istniejące
 dane bez zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów
 i funkcji; z wnioskami — tylko po kopii zapasowej.
+
+`0086_payment_instructions.sql` (#92) dodaje tabelę `payment_instructions`
+(IBAN/BIC/nazwa odbiorcy zatwierdzone na rok do generatora kodu QR EPC na
+kartkach). Żadna istniejąca tabela nie jest zmieniana. Zmiana rachunku w
+trakcie roku nie nadpisuje poprzedniej wersji — to nowy wiersz (bieżąca
+konfiguracja roku = wiersz o najnowszym `approved_at`); trigger
+`payment_instructions_guard()` blokuje `UPDATE`/`DELETE`. IBAN/BIC nie
+trafiają do metadanych zdarzeń audytu. Wycofanie: usunięcie tabeli,
+triggera i funkcji (żadna inna tabela nie odwołuje się do
+`payment_instructions`).
