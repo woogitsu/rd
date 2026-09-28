@@ -14,3 +14,9 @@ private-data/
 exports/
 rd-snapshot*.json
 d1-export*.sql
+# Playwright (tests/e2e): dane logowania syntetyczne generowane przy starcie
+# serwera testowego, wyniki i raporty lokalne — nie commitujemy.
+tests/e2e/support/.runtime.json
+test-results/
+playwright-report/
+blob-report/
