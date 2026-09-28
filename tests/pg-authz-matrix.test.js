@@ -618,6 +618,15 @@ for (const route of ROUTE_MATRIX) {
   }
 }
 
+// #214: `todo` w macierzy nie oblewa CI, więc bez limitu jest wygodnym miejscem
+// na ukrycie nowej regresji uprawnień. Dziś macierz nie ma żadnego wpisu — ten
+// meta-test to zabezpiecza: dodanie `todo` do route-matrix.js musi być świadome
+// i opisane w PR/issue, nie przejść bez zauważenia.
+test('macierz uprawnień: zero wpisów `todo` (znana luka wymaga świadomej decyzji, patrz #214)', () => {
+  const allTodoReasons = ROUTE_MATRIX.flatMap((route) => caseList(route).map((item) => item.todo).filter(Boolean));
+  assert.deepEqual(allTodoReasons, [], `macierz ma ${allTodoReasons.length} wpis(y) todo — opisz je w PR i w issue: ${allTodoReasons.join(' | ')}`);
+});
+
 test.after(async () => {
   for (const pending of contexts.values()) await (await pending).db.close();
 });
