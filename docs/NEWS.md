@@ -6,7 +6,8 @@ Stan: prototyp dla nowego stosu Node.js + PostgreSQL (migracja `0018_news.sql`, 
 
 - Na stronę publiczną trafia tylko opublikowana wersja wpisu, zatwierdzona przez inną osobę niż autor wpisu i autor tej wersji (cztery oczy — w serwisie i w triggerze bazy).
 - Zdjęcie może pojawić się w zatwierdzanym lub publikowanym wpisie tylko wtedy, gdy jego prawa zostały zweryfikowane przez inną osobę niż ta, która je zarejestrowała. Trigger bazy blokuje zatwierdzenie i publikację wpisu z niezweryfikowanym lub cofniętym zdjęciem, także przy zapisie z pominięciem API.
-- Każde zdjęcie ma autora, źródło, datę wykonania i tekst licencji/zgody na publikację (publiczny podpis). Opcjonalnie: opis źródła, tekst alternatywny i wewnętrzną notatkę o prawach (niepubliczną).
+- Każde zdjęcie ma autora, źródło, datę wykonania i tekst licencji/zgody na publikację (publiczny podpis). Opcjonalnie: opis źródła i wewnętrzną notatkę o prawach (niepubliczną).
+- **Tekst alternatywny jest obowiązkowy** (#124, WCAG 1.1.1): przy rejestracji zdjęcia trzeba podać `altText` (opis sceny, bez imion i nazwisk dzieci) albo jawnie zaznaczyć `decorative = true` (zdjęcie czysto ozdobne — na stronie publicznej dostanie puste `alt=""`, zgodnie ze standardem). Ponieważ metadane są niezmienne, to jedyny moment na tę decyzję — nie da się dodać opisu później inaczej niż nowym rekordem zdjęcia. Ograniczenie bazy `news_photo_alt_text_required` (`0071_news_photo_alt_text_required.sql`) i tak blokuje zapis (w tym weryfikację) bez jednego z nich; zdjęcia sprzed tej migracji zostają bez zmian i widoczne w widoku `news_photos_missing_alt_text` („do uzupełnienia opisu”).
 - Zdjęcie z dziećmi (`depictsChildren = true`) nie może zostać zweryfikowane bez co najmniej jednego odwołania do zgody dotyczącej dziecka. Liczba odwołań musi też pokrywać liczbę rozpoznawalnych dzieci (`identifiableChildren`) i dorosłych (`identifiableAdults`).
 - Odwołanie do zgody to wyłącznie identyfikator dokumentu zgody (np. `consent-doc-0001`) i rodzaj osoby (`child`/`adult`). **Nie zapisujemy imion, nazwisk ani klas osób na zdjęciu.** Jedna zgoda może obejmować rodzeństwo (dwa numery osoby, ten sam dokument).
 - Źródło `public_website_copy` (kopia z publicznej strony, np. galerii szkoły) jest odrzucane, chyba że zapisano wyraźne udzielenie licencji (`explicitLicenseGranted = true`) i odwołanie do dokumentu licencji. Sama publiczna dostępność zdjęcia nie daje prawa do jego skopiowania.
@@ -43,14 +44,14 @@ Przedstawiciel nie widzi wpisów innych klas (404 bez ujawniania istnienia). Ska
 
 ## API
 
-- `GET /api/public/news?schoolYearId=&limit=` — bez logowania; limit do 50. Pola: `id`, `title`, `body`, `publishedAt`, `photos[]` z `id`, `author`, `source`, `license`, `takenOn`, `altText`. Bez identyfikatorów użytkowników, klas, dokumentów, zgód i notatek wewnętrznych.
+- `GET /api/public/news?schoolYearId=&limit=` — bez logowania; limit do 50. Pola: `id`, `title`, `body`, `publishedAt`, `photos[]` z `id`, `author`, `source`, `license`, `takenOn`, `altText`, `decorative` (`altText` jest pustym tekstem `""`, gdy `decorative = true`). Bez identyfikatorów użytkowników, klas, dokumentów, zgód i notatek wewnętrznych.
 - `GET /api/news?schoolYearId=` — lista wewnętrzna.
 - `POST /api/news` — szkic (`schoolYearId`, `classId?`, `title`, `body`, `photoIds?`); wymaga `Idempotency-Key`.
 - `GET /api/news/:id` — szczegóły z historią wersji.
 - `PATCH /api/news/:id` — nowa wersja; body z `revision`.
 - `POST /api/news/:id/submit|approve|publish|withdraw` — body z `revision` (i `reason` przy wycofaniu).
 - `GET /api/news-photos?status=pending|verified|revoked`, `GET /api/news-photos/:id` — rejestr zdjęć z odwołaniami do zgód.
-- `POST /api/news-photos` — rejestracja metadanych (`documentId`, `author`, `source`, `sourceDetail?`, `takenOn`, `licenseText`, `explicitLicenseGranted?`, `licenseDocumentRef?`, `rightsNote?`, `altText?`, `depictsChildren`, `identifiableChildren?`, `identifiableAdults?`, `consents?`); wymaga `Idempotency-Key`.
+- `POST /api/news-photos` — rejestracja metadanych (`documentId`, `author`, `source`, `sourceDetail?`, `takenOn`, `licenseText`, `explicitLicenseGranted?`, `licenseDocumentRef?`, `rightsNote?`, `altText?`, `decorative?`, `depictsChildren`, `identifiableChildren?`, `identifiableAdults?`, `consents?`); wymaga `Idempotency-Key`. `altText` albo `decorative = true` jest **wymagane** — inaczej `422 alt_text_required` (#124).
 - `POST /api/news-photos/:id/consents` — `{ subjectNo, subjectKind, consentDocumentRef }`; ten sam wpis ponownie = powtórka, inny pod tym samym numerem = `409 consent_conflict`.
 - `POST /api/news-photos/:id/verify` (body `{}`), `POST /api/news-photos/:id/revoke` (`{ reason }`).
 

@@ -47,6 +47,8 @@ Pobranie ma nagłówki `Content-Disposition: attachment; filename="dokument-<id>
 - Dozwolone typy: PDF, PNG, JPEG. Typ jest ustalany po sygnaturze pliku (magic bytes) i musi zgadzać się z zadeklarowanym `Content-Type`. Plik HTML, skrypt, dokument biurowy czy CSV z nagłówkiem PDF zostanie odrzucony.
 - CSV nie jest dopuszczony: nie ma sygnatury, a zwykle zawiera listy osób. Import rodzin ma osobny przepływ ([import/README.md](../import/README.md)).
 - Limit rozmiaru: `DOCUMENT_MAX_BYTES`, domyślnie 10 MiB, najwyżej 25 MiB. Serwer Node podnosi limit ciała żądania wyłącznie dla `POST /api/documents`; wszystkie inne trasy nadal mają 1 MiB. Trasa sama liczy bajty podczas odczytu, niezależnie od `Content-Length`.
+- **Sesja przed ciałem** (#185): dla `POST /api/documents` serwer Node NIE buforuje ciała przed wywołaniem trasy — trafia ono do żądania jako strumień, a `readLimited` (`src/documents.js`) czyta go dopiero PO sprawdzeniu sesji, roli i typu. Żądanie bez ważnej sesji z dużym zadeklarowanym `Content-Length` kosztuje pamięci tyle co zwykłe odrzucenie `401`, nie tyle co upload. Połączenie jest wtedy jawnie zamykane (`Connection: close`), żeby nieprzeczytane bajty nie zawisły na współdzielonym gnieździe keep-alive.
+- **Limit równoczesnych uploadów na proces**: `DOCUMENT_MAX_CONCURRENT_UPLOADS` (domyślnie 4). Piąty i kolejny równoczesny `POST /api/documents` dostaje `503 upload_busy` z `Retry-After` BEZ odczytu ciała. Limit jest na proces, nie na klaster Railway (kilka instancji ma osobne liczniki) — do rozważenia przy skalowaniu poziomym.
 - Skan antywirusowy nie jest jeszcze dostępny (ryzyko opisane niżej).
 - **Kontrola struktury (issue #89, heurystyka, NIE zastępuje skanu antywirusowego):** po zgodności sygnatury i typu serwer sprawdza surowe bajty pliku (`src/documents.js#validateStructure`) i odrzuca `415`:
   - `document_active_content` — PDF zawierający (nieskompresowane) słowa kluczowe `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile`, `/RichMedia`, `/XFA` albo `/Encrypt` (szyfrowanie uniemożliwia dalszą kontrolę treści, więc traktujemy je tak samo);
@@ -79,6 +81,7 @@ Zmienne ustawiane wyłącznie jako zmienne/secrets usługi Railway (odwołania d
 | `BUCKET_SECRET_ACCESS_KEY` | `${{Bucket.SECRET_ACCESS_KEY}}` | klucz tajny |
 | `BUCKET_URL_STYLE` | opcjonalnie | `virtual` (domyślnie) albo `path` dla starszych bucketów — zgodnie z zakładką Credentials |
 | `DOCUMENT_MAX_BYTES` | opcjonalnie | limit pliku w bajtach |
+| `DOCUMENT_MAX_CONCURRENT_UPLOADS` | opcjonalnie | limit równoczesnych uploadów na proces, domyślnie 4 |
 
 Brak wszystkich zmiennych `BUCKET_*` oznacza brak magazynu (trasy dokumentów zwracają 503). Częściowa konfiguracja zatrzymuje start serwera. Każde środowisko Railway ma osobny bucket z osobnymi poświadczeniami. Region bucketu (UE) wybiera się przy tworzeniu i nie da się go zmienić — sprawdzić osobno od regionu aplikacji i bazy. Klient S3 jest zaimplementowany w `src/storage.js` (AWS Signature V4 na `node:crypto` i `fetch`, bez dodatkowych zależności; testy sprawdzają opublikowane wektory AWS).
 

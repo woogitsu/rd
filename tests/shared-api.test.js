@@ -12,7 +12,7 @@ import {
 import { nextFromFragment } from '../login/core.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation'];
+const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close'];
 
 function fakeLocation(pathname, search = '', hash = '') {
   return { pathname, search, hash };

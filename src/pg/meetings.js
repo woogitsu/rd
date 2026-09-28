@@ -17,6 +17,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
+import { detectPossiblePersonalData } from './pii-check.js';
 import { insertAuditEvent } from './audit.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
@@ -46,6 +47,8 @@ const DATABASE_CONFLICTS = new Set([
   'resolution_quorum_check_required', 'resolution_votes_exceed_present_voters',
   // 0021_meetings_integrity.sql (#81)
   'minutes_open_resolutions', 'resolution_quorum_check_stale',
+  // 0060_resolution_register.sql (#102)
+  'resolution_amends_cross_year_requires_flag',
   // Zwykle nieosiągalne z API (moduł wstawia projekt i nie usuwa zebrań), ale to
   // odmowa reguły danych, nie awaria — 409 zamiast 503.
   'minutes_must_start_as_draft', 'meetings_cannot_be_deleted',
@@ -72,10 +75,13 @@ function requireMfaVerified(actor) {
 }
 
 export class MeetingError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, details = undefined) {
     super(code);
     this.code = code;
     this.status = status;
+    // #102: pole dodatkowe do odpowiedzi błędu (np. świeża podpowiedź numeru
+    // po kolizji resolution_number_taken). Nigdy treść uchwały ani protokołu.
+    this.details = details;
   }
 }
 
@@ -116,6 +122,13 @@ function integer(value, min, max, { optional = false } = {}) {
 
 function bool(value) {
   if (typeof value !== 'boolean') throw new MeetingError('invalid_request');
+  return value;
+}
+
+const RELATION_KINDS = new Set(['amends', 'repeals']);
+// #102: relationKind jest wymagane razem z amendsResolutionId (oba albo żadne).
+function oneOfRelationKind(value) {
+  if (!RELATION_KINDS.has(value)) throw new MeetingError('invalid_relation_kind');
   return value;
 }
 
@@ -423,6 +436,8 @@ function meetingFromRow(row) {
     scheduledAt: iso(row.scheduled_at),
     location: row.location ?? null,
     status: row.status,
+    // #215: optymistyczna kontrola wersji edycji PATCH — patrz updateMeeting.
+    revisionNo: row.revision_no,
     quorumRule: {
       mode: row.quorum_mode,
       numerator: row.quorum_numerator ?? null,
@@ -499,9 +514,14 @@ function resolutionFromRow(row) {
     meetingId: row.meeting_id,
     number: row.number ?? null,
     revision: row.revision,
+    // #215: revisionNo osobno od revision (łańcucha korekt) — do optymistycznej
+    // kontroli wersji edycji PATCH (patrz updateResolution).
+    revisionNo: row.revision_no,
     correctsId: row.corrects_id ?? null,
     correctionReason: row.correction_reason ?? null,
     amendsResolutionId: row.amends_resolution_id ?? null,
+    relationKind: row.relation_kind ?? null,
+    relationCrossYear: Boolean(row.relation_cross_year),
     title: row.title,
     body: row.body,
     status: row.status,
@@ -510,6 +530,8 @@ function resolutionFromRow(row) {
     votesAbstain: row.votes_abstain ?? null,
     quorumCheckId: row.quorum_check_id ?? null,
     decidedAt: iso(row.decided_at),
+    // #102: obecne wyłącznie, gdy zapytanie dołączyło resolution_effective_status.
+    ...(row.effective_status !== undefined ? { effectiveStatus: row.effective_status } : {}),
   };
 }
 
@@ -636,51 +658,75 @@ export async function createMeeting(db, actor, input = {}, env) {
   return { meeting: meetingFromRow(await loadMeeting(db, result.entityId)), replayed: result.replayed };
 }
 
+// #215: reguła quorum jest scalana z zapisanym stanem (pola nieobecne w
+// żądaniu zostają) — ten merge czytał sprzed transakcji, więc druga
+// równoległa edycja innego pola quorum po cichu cofała pierwszą. Merge i
+// zapis są teraz w jednej transakcji, pod blokadą wiersza (FOR UPDATE), a
+// `input.revision`, gdy podane, musi zgadzać się z bieżącym `revision_no`
+// (inaczej `409 revision_conflict`) — opcjonalne na razie, patrz
+// updateResolution wyżej i "Ryzyko zmiany" w #215.
 export async function updateMeeting(db, actor, input = {}, env) {
   const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
-  const changes = {};
-  if (input.title !== undefined) changes.title = text(input.title, 3, 200);
-  if (input.scheduledAt !== undefined) changes.scheduled_at = timestamp(input.scheduledAt);
-  if (input.location !== undefined) changes.location = text(input.location, 1, 200, { optional: true });
-  if (input.status !== undefined) {
-    if (!STATUSES.has(input.status)) throw new MeetingError('invalid_request');
-    changes.status = input.status;
-  }
-  if (QUORUM_FIELDS.some(field => input[field] !== undefined)) {
-    // PATCH: pola reguły nieobecne w żądaniu zostają z zapisanej reguły;
-    // jawne null czyści pole. Pola nieużywane przez nowy tryb są zerowane.
-    const merged = storedQuorumInput(meeting);
-    for (const field of QUORUM_FIELDS) {
-      if (input[field] !== undefined) merged[field] = input[field];
-    }
-    const rule = parseQuorumRule(merged);
-    Object.assign(changes, {
-      quorum_mode: rule.quorumMode,
-      quorum_numerator: rule.quorumNumerator,
-      quorum_denominator: rule.quorumDenominator,
-      quorum_inclusive: rule.quorumInclusive,
-      quorum_min_count: rule.quorumMinCount,
-      voting_body_size: rule.votingBodySize,
-      quorum_rule_source: rule.quorumRuleSource,
-    });
-  }
-  const columns = Object.keys(changes);
-  if (!columns.length) throw new MeetingError('invalid_request');
-  // #113: termin zmieniony dostaje własne zdarzenie w dzienniku, ze starą i
-  // nową datą jako znaczniki czasu (bez treści zebrania) — dziś nie ma jeszcze
-  // zawiadomienia (kampanii) ani jego wersji porządku, do których to zdarzenie
-  // mogłoby się odnosić (osobny zakres, patrz docs/MEETINGS.md).
-  const reschedule = changes.scheduled_at !== undefined
-    && new Date(changes.scheduled_at).getTime() !== new Date(meeting.scheduled_at).getTime()
-    ? { fromScheduledAt: iso(meeting.scheduled_at), toScheduledAt: iso(changes.scheduled_at) } : null;
+  const expectedRevision = input.revision !== undefined ? integer(input.revision, 1, 1000000000) : null;
   await mutate(db, async tx => {
+    const { rows: lockedRows } = await tx.query('SELECT * FROM meetings WHERE id = $1 FOR UPDATE', [meeting.id]);
+    const locked = lockedRows[0];
+    if (!locked) throw new MeetingError('meeting_not_found', 404);
+    const changes = {};
+    if (input.title !== undefined) changes.title = text(input.title, 3, 200);
+    if (input.scheduledAt !== undefined) changes.scheduled_at = timestamp(input.scheduledAt);
+    if (input.location !== undefined) changes.location = text(input.location, 1, 200, { optional: true });
+    if (input.status !== undefined) {
+      if (!STATUSES.has(input.status)) throw new MeetingError('invalid_request');
+      changes.status = input.status;
+    }
+    if (QUORUM_FIELDS.some(field => input[field] !== undefined)) {
+      // PATCH: pola reguły nieobecne w żądaniu zostają z zapisanej reguły;
+      // jawne null czyści pole. Pola nieużywane przez nowy tryb są zerowane.
+      const merged = storedQuorumInput(locked);
+      for (const field of QUORUM_FIELDS) {
+        if (input[field] !== undefined) merged[field] = input[field];
+      }
+      const rule = parseQuorumRule(merged);
+      Object.assign(changes, {
+        quorum_mode: rule.quorumMode,
+        quorum_numerator: rule.quorumNumerator,
+        quorum_denominator: rule.quorumDenominator,
+        quorum_inclusive: rule.quorumInclusive,
+        quorum_min_count: rule.quorumMinCount,
+        voting_body_size: rule.votingBodySize,
+        quorum_rule_source: rule.quorumRuleSource,
+      });
+    }
+    if (!Object.keys(changes).length) throw new MeetingError('invalid_request');
+    // Wartości identyczne z zapisanymi (poza scheduled_at, porównywanym jako
+    // znacznik czasu) odfiltrowane — podwójne kliknięcie/powtórzenie tej
+    // samej edycji nic nie zmienia w wierszu, więc dostaje odtworzenie bez
+    // błędu i bez nowego zdarzenia audytu, zamiast konfliktu wersji.
+    const columns = Object.keys(changes).filter((column) => (
+      column === 'scheduled_at'
+        ? new Date(changes[column]).getTime() !== new Date(locked.scheduled_at).getTime()
+        : changes[column] !== locked[column]
+    ));
+    if (!columns.length) return;
+    if (expectedRevision !== null && locked.revision_no !== expectedRevision) {
+      throw new MeetingError('revision_conflict', 409);
+    }
+    // #113: termin zmieniony dostaje własne zdarzenie w dzienniku, ze starą i
+    // nową datą jako znaczniki czasu (bez treści zebrania) — dziś nie ma jeszcze
+    // zawiadomienia (kampanii) ani jego wersji porządku, do których to zdarzenie
+    // mogłoby się odnosić (osobny zakres, patrz docs/MEETINGS.md).
+    const reschedule = changes.scheduled_at !== undefined
+      && new Date(changes.scheduled_at).getTime() !== new Date(locked.scheduled_at).getTime()
+      ? { fromScheduledAt: iso(locked.scheduled_at), toScheduledAt: iso(changes.scheduled_at) } : null;
     const assignments = columns.map((column, index) => `${column} = $${index + 2}`).join(', ');
-    await tx.query(`UPDATE meetings SET ${assignments} WHERE id = $1`,
+    const { rows } = await tx.query(`UPDATE meetings SET ${assignments} WHERE id = $1 RETURNING revision_no`,
       [meeting.id, ...columns.map(column => changes[column])]);
     await audit(tx, actor, 'meeting.updated', 'meeting', meeting.id, {
       fields: columns,
-      ...(changes.status && changes.status !== meeting.status
-        ? { fromStatus: meeting.status, toStatus: changes.status } : {}),
+      fromRevision: locked.revision_no, toRevision: rows[0].revision_no,
+      ...(changes.status && changes.status !== locked.status
+        ? { fromStatus: locked.status, toStatus: changes.status } : {}),
     });
     if (reschedule) {
       await audit(tx, actor, 'meeting.rescheduled', 'meeting', meeting.id, reschedule);
@@ -828,11 +874,41 @@ export async function approveMinutes(db, actor, input = {}) {
   return { minutes: minutesFromRow(await loadMinutes(db, minutes.id)), replayed: !changed };
 }
 
+// #152: znane imiona/nazwiska uczniów i opiekunów w zakresie roku szkolnego
+// zebrania — przybliżenie (uczniowie zapisani w tym roku + opiekunowie ich
+// gospodarstw), tylko do wykrywania możliwych danych osobowych w treści
+// protokołu, nigdy do niczego innego.
+async function loadKnownNamesForSchoolYear(db, schoolYearId) {
+  const { rows } = await db.query(
+    `SELECT first_name, last_name FROM students
+      WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
+     UNION
+     SELECT g.first_name, g.last_name FROM guardians g
+      WHERE g.household_id IN (
+        SELECT household_id FROM students
+         WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
+      )`,
+    [schoolYearId],
+  );
+  return rows.map((row) => ({ firstName: row.first_name, lastName: row.last_name }));
+}
+
 export async function setMinutesVisibility(db, actor, input = {}) {
   const key = idempotencyKey(input.idempotencyKey);
   const minutes = await loadMinutes(db, input.minutesId, input.meetingId);
-  await meetingForManage(db, actor, minutes.meeting_id);
+  const meeting = await meetingForManage(db, actor, minutes.meeting_id);
   if (!VISIBILITIES.has(input.visibility)) throw new MeetingError('invalid_request');
+  // #152: publikacja PUBLICZNA (widok /site/, poza Radą) blokowana twardo przy
+  // wykryciu możliwych danych osobowych w treści protokołu — zgodnie z
+  // AGENTS.md „widok publiczny wyłącznie zatwierdzone dane”. Widoczność
+  // wewnętrzna/dla rodziców („internal”/„parents”) dostaje tylko ostrzeżenie
+  // w innych miejscach (#152 zakres tego PR: brak wyjątku z drugim
+  // zatwierdzeniem — wariant zachowawczy, patrz opis w PR).
+  if (input.visibility === 'public') {
+    const knownNames = await loadKnownNamesForSchoolYear(db, meeting.school_year_id);
+    const piiCheck = detectPossiblePersonalData(minutes.body, { knownNames });
+    if (piiCheck.categories.length) throw new MeetingError('minutes_contain_personal_data', 409);
+  }
   const data = {
     minutesId: minutes.id,
     visibility: input.visibility,
@@ -916,11 +992,29 @@ export async function listPublicMinutes(db, input = {}) {
 
 // ---------- resolutions ----------
 
+// #102: podpowiedź następnego numeru z resolution_number_pattern roku
+// ('{seq}' i '{year}' — rok kalendarzowy początku roku szkolnego). Bez
+// ustawionego wzorca (domyślnie, do decyzji D-15) zwraca null: nic nie jest
+// narzucane. Tylko podpowiedź — unikalność nadal pilnuje istniejący indeks.
+async function suggestResolutionNumber(executor, schoolYearId) {
+  const year = await one(executor,
+    'SELECT resolution_number_pattern, starts_on FROM school_years WHERE id = $1', [schoolYearId]);
+  if (!year?.resolution_number_pattern) return null;
+  const { rows } = await executor.query(
+    `SELECT count(*)::int AS n FROM resolutions
+      WHERE school_year_id = $1 AND corrects_id IS NULL AND number IS NOT NULL`, [schoolYearId]);
+  const seq = rows[0].n + 1;
+  const yearNumber = new Date(year.starts_on).getUTCFullYear();
+  return year.resolution_number_pattern.replace('{seq}', String(seq)).replace('{year}', String(yearNumber));
+}
+
 export async function createResolution(db, actor, input = {}) {
   const key = idempotencyKey(input.idempotencyKey);
   const meeting = await meetingForManage(db, actor, input.meetingId);
   const status = input.status ?? 'draft';
   if (!RESOLUTION_STATUSES.has(status)) throw new MeetingError('invalid_request');
+  const relationKind = input.amendsResolutionId !== undefined && input.amendsResolutionId !== null
+    ? oneOfRelationKind(input.relationKind) : null;
   const data = {
     meetingId: meeting.id,
     number: text(input.number, 3, 64, { optional: true }),
@@ -930,58 +1024,107 @@ export async function createResolution(db, actor, input = {}) {
     ...parseVotes(input),
     quorumCheckId: optionalId(input.quorumCheckId),
     amendsResolutionId: optionalId(input.amendsResolutionId),
+    relationKind,
+    relationCrossYear: Boolean(input.relationCrossYear),
   };
   if (status === 'adopted' && !data.number) throw new MeetingError('resolution_number_required');
   requireFinalVotes(status, data, data.quorumCheckId);
   // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; projekt (draft) nie.
   if (status === 'adopted' || status === 'rejected') requireMfaVerified(actor);
-  const result = await idempotent(db, actor, key, 'resolution.create', data, async tx => {
-    const id = randomUUID();
-    await tx.query(
-      `INSERT INTO resolutions (id, school_year_id, meeting_id, number, title, body, status,
-         votes_for, votes_against, votes_abstain, quorum_check_id, amends_resolution_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [id, meeting.school_year_id, meeting.id, data.number, data.title, data.body, data.status,
-        data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId,
-        data.amendsResolutionId, actor.userId]);
-    await audit(tx, actor, 'resolution.created', 'resolution', id, { meetingId: meeting.id, status });
-    return { entityType: 'resolution', entityId: id };
-  });
-  return { resolution: resolutionFromRow(await loadResolution(db, result.entityId)), replayed: result.replayed };
+  const suggestedNumber = await suggestResolutionNumber(db, meeting.school_year_id);
+  let result;
+  try {
+    result = await idempotent(db, actor, key, 'resolution.create', data, async tx => {
+      const id = randomUUID();
+      await tx.query(
+        `INSERT INTO resolutions (id, school_year_id, meeting_id, number, title, body, status,
+           votes_for, votes_against, votes_abstain, quorum_check_id, amends_resolution_id,
+           relation_kind, relation_cross_year, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [id, meeting.school_year_id, meeting.id, data.number, data.title, data.body, data.status,
+          data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId,
+          data.amendsResolutionId, data.relationKind, data.relationCrossYear, actor.userId]);
+      await audit(tx, actor, 'resolution.created', 'resolution', id, { meetingId: meeting.id, status });
+      return { entityType: 'resolution', entityId: id };
+    });
+  } catch (error) {
+    // #102: kolizja podpowiedzi numeru między dwoma równoległymi projektami —
+    // odpowiedź niesie świeżą podpowiedź, żeby drugi sekretarz mógł spróbować dalej.
+    if (error instanceof MeetingError && error.code === 'resolution_number_taken') {
+      const fresh = await suggestResolutionNumber(db, meeting.school_year_id);
+      throw new MeetingError('resolution_number_taken', 409, { suggestedNumber: fresh });
+    }
+    throw error;
+  }
+  return {
+    resolution: resolutionFromRow(await loadResolution(db, result.entityId)),
+    replayed: result.replayed,
+    suggestedNumber,
+  };
 }
 
 // Edits a draft or records its final outcome. Final resolutions are immutable.
+//
+// #215: read-modify-write happened outside the transaction (stale base for
+// fields not present in the request) with no version check, so a parallel
+// edit of a different field silently overwrote the first editor's change,
+// and a parallel adoption could apply to content already replaced. The row
+// is now locked (SELECT ... FOR UPDATE) and merged *inside* the transaction,
+// and `input.revision`, when the caller sends it, must match the row's
+// current `revision_no` or the request gets `409 revision_conflict` instead
+// of silently merging. `revision` stays optional for now (existing callers
+// that do not send it keep the previous best-effort merge behaviour, now at
+// least race-free because the merge base is read under the lock) — see
+// issue #215 "Ryzyko zmiany" for the staged rollout.
 export async function updateResolution(db, actor, input = {}) {
   const resolution = await loadResolution(db, input.resolutionId, input.meetingId);
   await meetingForManage(db, actor, resolution.meeting_id);
-  if (resolution.status !== 'draft') throw new MeetingError('resolution_final_immutable', 409);
-  const next = {
-    number: input.number !== undefined ? text(input.number, 3, 64, { optional: true }) : resolution.number,
-    title: input.title !== undefined ? text(input.title, 3, 300) : resolution.title,
-    body: input.body !== undefined ? text(input.body, 3, 20000) : resolution.body,
-    status: input.status ?? resolution.status,
-    votesFor: input.votesFor !== undefined ? integer(input.votesFor, 0, 10000, { optional: true }) : resolution.votes_for,
-    votesAgainst: input.votesAgainst !== undefined
-      ? integer(input.votesAgainst, 0, 10000, { optional: true }) : resolution.votes_against,
-    votesAbstain: input.votesAbstain !== undefined
-      ? integer(input.votesAbstain, 0, 10000, { optional: true }) : resolution.votes_abstain,
-    quorumCheckId: input.quorumCheckId !== undefined ? optionalId(input.quorumCheckId) : resolution.quorum_check_id,
-  };
-  if (!RESOLUTION_STATUSES.has(next.status)) throw new MeetingError('invalid_request');
-  if (next.status === 'adopted' && !next.number) throw new MeetingError('resolution_number_required');
-  requireFinalVotes(next.status, next, next.quorumCheckId);
-  // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; edycja projektu nie.
-  if (next.status === 'adopted' || next.status === 'rejected') requireMfaVerified(actor);
+  const expectedRevision = input.revision !== undefined ? integer(input.revision, 1, 1000000000) : null;
   await mutate(db, async tx => {
+    const { rows: lockedRows } = await tx.query('SELECT * FROM resolutions WHERE id = $1 FOR UPDATE', [resolution.id]);
+    const locked = lockedRows[0];
+    if (!locked) throw new MeetingError('resolution_not_found', 404);
+    const next = {
+      number: input.number !== undefined ? text(input.number, 3, 64, { optional: true }) : locked.number,
+      title: input.title !== undefined ? text(input.title, 3, 300) : locked.title,
+      body: input.body !== undefined ? text(input.body, 3, 20000) : locked.body,
+      status: input.status ?? locked.status,
+      votesFor: input.votesFor !== undefined ? integer(input.votesFor, 0, 10000, { optional: true }) : locked.votes_for,
+      votesAgainst: input.votesAgainst !== undefined
+        ? integer(input.votesAgainst, 0, 10000, { optional: true }) : locked.votes_against,
+      votesAbstain: input.votesAbstain !== undefined
+        ? integer(input.votesAbstain, 0, 10000, { optional: true }) : locked.votes_abstain,
+      quorumCheckId: input.quorumCheckId !== undefined ? optionalId(input.quorumCheckId) : locked.quorum_check_id,
+    };
+    // Podwójne kliknięcie / powtórzenie tej samej edycji: żądanie opisuje
+    // dokładnie stan, w którym wiersz już jest (niezależnie od wersji) —
+    // odtworzenie bez błędu i bez drugiego zdarzenia audytu, jak przy
+    // wydarzeniach/aktualnościach (events.js/news.js).
+    const isNoOp = next.number === locked.number && next.title === locked.title && next.body === locked.body
+      && next.status === locked.status && next.votesFor === locked.votes_for
+      && next.votesAgainst === locked.votes_against && next.votesAbstain === locked.votes_abstain
+      && next.quorumCheckId === locked.quorum_check_id;
+    if (isNoOp) return;
+    if (expectedRevision !== null && locked.revision_no !== expectedRevision) {
+      throw new MeetingError('revision_conflict', 409);
+    }
+    if (locked.status !== 'draft') throw new MeetingError('resolution_final_immutable', 409);
+    if (!RESOLUTION_STATUSES.has(next.status)) throw new MeetingError('invalid_request');
+    if (next.status === 'adopted' && !next.number) throw new MeetingError('resolution_number_required');
+    requireFinalVotes(next.status, next, next.quorumCheckId);
+    // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; edycja projektu nie.
+    if (next.status === 'adopted' || next.status === 'rejected') requireMfaVerified(actor);
     const { rows } = await tx.query(
       `UPDATE resolutions SET number = $2, title = $3, body = $4, status = $5, votes_for = $6,
          votes_against = $7, votes_abstain = $8, quorum_check_id = $9
-       WHERE id = $1 AND status = 'draft' RETURNING id`,
+       WHERE id = $1 AND status = 'draft' RETURNING id, revision_no`,
       [resolution.id, next.number, next.title, next.body, next.status, next.votesFor,
         next.votesAgainst, next.votesAbstain, next.quorumCheckId]);
     if (!rows.length) throw new MeetingError('resolution_final_immutable', 409);
-    await audit(tx, actor, 'resolution.updated', 'resolution', resolution.id,
-      { meetingId: resolution.meeting_id, fromStatus: resolution.status, toStatus: next.status });
+    await audit(tx, actor, 'resolution.updated', 'resolution', resolution.id, {
+      meetingId: resolution.meeting_id, fromStatus: locked.status, toStatus: next.status,
+      fromRevision: locked.revision_no, toRevision: rows[0].revision_no,
+    });
   });
   return { resolution: resolutionFromRow(await loadResolution(db, resolution.id)) };
 }
@@ -1017,11 +1160,12 @@ export async function correctResolution(db, actor, input = {}) {
     const id = randomUUID();
     await tx.query(
       `INSERT INTO resolutions (id, school_year_id, meeting_id, number, revision, corrects_id,
-         correction_reason, amends_resolution_id, title, body, status, votes_for, votes_against,
-         votes_abstain, quorum_check_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         correction_reason, amends_resolution_id, relation_kind, relation_cross_year, title, body,
+         status, votes_for, votes_against, votes_abstain, quorum_check_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [id, previous.school_year_id, previous.meeting_id, previous.number, previous.revision + 1,
-        previous.id, data.reason, previous.amends_resolution_id, data.title, data.body, data.status,
+        previous.id, data.reason, previous.amends_resolution_id, previous.relation_kind,
+        previous.relation_cross_year, data.title, data.body, data.status,
         data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId, actor.userId]);
     await audit(tx, actor, 'resolution.corrected', 'resolution', id,
       { meetingId: previous.meeting_id, correctsId: previous.id, revision: previous.revision + 1, status });
@@ -1036,11 +1180,172 @@ export async function findAdoptedResolution(db, actor, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
   const number = text(input.number, 3, 64);
   authorize(actor, RESOLUTION_LOOKUP_ROLES, { schoolYearId });
+  // #102: dołącza effective_status, żeby wyszukiwarka pokazała uchylenie/zmianę
+  // zamiast milcząco traktować uchwałę jak nadal obowiązującą.
   const row = await one(db,
-    `SELECT * FROM resolution_current
-      WHERE school_year_id = $1 AND number = $2 AND status = 'adopted'`, [schoolYearId, number]);
+    `SELECT rc.*, es.effective_status FROM resolution_current rc
+       JOIN resolution_effective_status es ON es.id = rc.id
+      WHERE rc.school_year_id = $1 AND rc.number = $2 AND rc.status = 'adopted'`, [schoolYearId, number]);
   if (!row) throw new MeetingError('resolution_not_found', 404);
   return { resolution: resolutionFromRow(row) };
+}
+
+// ---------- resolution register (#102) ----------
+
+const EXECUTION_STATUSES = new Set(['not_started', 'in_progress', 'done', 'will_not_be_done']);
+
+function oneOfExecutionStatus(value) {
+  if (!EXECUTION_STATUSES.has(value)) throw new MeetingError('invalid_execution_status');
+  return value;
+}
+
+function dateOnly(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)
+      || Number.isNaN(new Date(`${value}T00:00:00Z`).valueOf())) {
+    throw new MeetingError('invalid_request');
+  }
+  return value;
+}
+
+// DATE wraca z pg/PGlite jako Date (północ UTC); zawsze oddajemy zwykły
+// 'RRRR-MM-DD', niezależnie od tego, czy zapytanie użyło to_char().
+function dateOnlyOut(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value.slice(0, 10);
+  return (value instanceof Date ? value : new Date(value)).toISOString().slice(0, 10);
+}
+
+const REGISTER_SELECT = `
+  SELECT rc.id, rc.number, rc.title, rc.status, rc.revision, rc.votes_for, rc.votes_against,
+         rc.votes_abstain, rc.decided_at, rc.meeting_id, rc.amends_resolution_id, rc.relation_kind,
+         rc.relation_cross_year, m.class_id, m.scheduled_at AS meeting_scheduled_at, m.title AS meeting_title,
+         es.effective_status,
+         amender.id AS amended_by_id, amender.number AS amended_by_number,
+         repealer.id AS repealed_by_id, repealer.number AS repealed_by_number,
+         exec.status AS execution_status, exec.due_on AS execution_due_on,
+         exec.responsible_user_id AS execution_responsible_user_id, exec.created_at AS execution_recorded_at
+    FROM resolution_current rc
+    JOIN meetings m ON m.id = rc.meeting_id
+    JOIN resolution_effective_status es ON es.id = rc.id
+    LEFT JOIN resolution_current amender
+      ON amender.amends_resolution_id = rc.id AND amender.relation_kind = 'amends' AND amender.status = 'adopted'
+    LEFT JOIN resolution_current repealer
+      ON repealer.amends_resolution_id = rc.id AND repealer.relation_kind = 'repeals' AND repealer.status = 'adopted'
+    LEFT JOIN LATERAL (
+      SELECT status, due_on, responsible_user_id, created_at FROM resolution_execution_events
+       WHERE resolution_id = rc.id ORDER BY created_at DESC LIMIT 1
+    ) exec ON true`;
+
+function registerRowToApi(row) {
+  return {
+    id: row.id,
+    number: row.number ?? null,
+    title: row.title,
+    status: row.status,
+    effectiveStatus: row.effective_status,
+    revision: row.revision,
+    votesFor: row.votes_for ?? null,
+    votesAgainst: row.votes_against ?? null,
+    votesAbstain: row.votes_abstain ?? null,
+    decidedAt: iso(row.decided_at),
+    meetingId: row.meeting_id,
+    meetingTitle: row.meeting_title,
+    meetingScheduledAt: iso(row.meeting_scheduled_at),
+    amendsResolutionId: row.amends_resolution_id ?? null,
+    relationKind: row.relation_kind ?? null,
+    relationCrossYear: Boolean(row.relation_cross_year),
+    amendedBy: row.amended_by_id ? { id: row.amended_by_id, number: row.amended_by_number ?? null } : null,
+    repealedBy: row.repealed_by_id ? { id: row.repealed_by_id, number: row.repealed_by_number ?? null } : null,
+    execution: {
+      status: row.execution_status ?? null,
+      dueOn: dateOnlyOut(row.execution_due_on),
+      responsibleUserId: row.execution_responsible_user_id ?? null,
+      recordedAt: iso(row.execution_recorded_at),
+    },
+  };
+}
+
+// Rejestr uchwał roku z filtrami. Dostęp: role odczytu (admin, zarząd, Komisja
+// Rewizyjna); przydział klasowy widzi wyłącznie uchwały zebrań tej klasy.
+// Uchwała uchylona (`effectiveStatus: 'repealed'`) zostaje w rejestrze — nie
+// jest traktowana jako obowiązująca, ale nie znika z historii.
+export async function listResolutionRegister(db, actor, input = {}) {
+  const schoolYearId = requireId(input.schoolYearId);
+  const context = contextFor(actor, null);
+  context.grants = actor.grants ?? [];
+  if (!isAuthorized(context, { roles: [...READ_ROLES], schoolYearId })) throw new MeetingError('forbidden', 403);
+  const status = input.status ? (RESOLUTION_STATUSES.has(input.status) ? input.status
+    : (() => { throw new MeetingError('invalid_request'); })()) : null;
+  const executionStatus = input.executionStatus
+    ? (input.executionStatus === 'none' || EXECUTION_STATUSES.has(input.executionStatus) ? input.executionStatus
+      : (() => { throw new MeetingError('invalid_request'); })())
+    : null;
+  const q = input.q ? text(input.q, 1, 200) : null;
+  const { rows } = await db.query(
+    `${REGISTER_SELECT}
+      WHERE rc.school_year_id = $1
+        AND ($2::text IS NULL OR rc.status = $2)
+        AND ($3::text IS NULL OR rc.title ILIKE '%' || $3 || '%' OR rc.number ILIKE '%' || $3 || '%')
+        AND ($4::text IS NULL
+             OR ($4 = 'none' AND exec.status IS NULL)
+             OR exec.status = $4)
+      ORDER BY m.scheduled_at DESC, rc.number NULLS LAST, rc.id`,
+    [schoolYearId, status, q, executionStatus]);
+  const visible = rows.filter((row) => {
+    try {
+      authorize(actor, READ_ROLES, { schoolYearId, classId: row.class_id });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return { resolutions: visible.map(registerRowToApi) };
+}
+
+function executionEventFromRow(row) {
+  return {
+    id: row.id,
+    resolutionId: row.resolution_id,
+    status: row.status,
+    responsibleUserId: row.responsible_user_id ?? null,
+    dueOn: dateOnlyOut(row.due_on),
+    note: row.note ?? null,
+    createdBy: row.created_by,
+    createdAt: iso(row.created_at),
+  };
+}
+
+// Zapisuje zdarzenie wykonania uchwały (tylko dopisywanie — bieżący stan to
+// ostatnie zdarzenie). Dozwolone także po zatwierdzeniu protokołu: tabela nie
+// jest objęta blokadą zebrania (meeting_assert_editable dotyczy tylko samej
+// uchwały, obecności i protokołu).
+export async function recordResolutionExecution(db, actor, input = {}) {
+  const key = idempotencyKey(input.idempotencyKey);
+  const resolution = await loadResolution(db, input.resolutionId, input.meetingId);
+  await meetingForManage(db, actor, resolution.meeting_id);
+  if (resolution.status !== 'adopted' && resolution.status !== 'rejected') {
+    throw new MeetingError('resolution_not_decided', 409);
+  }
+  const data = {
+    resolutionId: resolution.id,
+    status: oneOfExecutionStatus(input.status),
+    responsibleUserId: input.responsibleUserId !== undefined ? optionalId(input.responsibleUserId) : null,
+    dueOn: input.dueOn !== undefined && input.dueOn !== null ? dateOnly(input.dueOn) : null,
+    note: text(input.note, 3, 500, { optional: true }),
+  };
+  const result = await idempotent(db, actor, key, 'resolution.execution', data, async tx => {
+    const id = randomUUID();
+    await tx.query(
+      `INSERT INTO resolution_execution_events
+         (id, resolution_id, status, responsible_user_id, due_on, note, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, data.resolutionId, data.status, data.responsibleUserId, data.dueOn, data.note, actor.userId]);
+    await audit(tx, actor, 'resolution.execution.recorded', 'resolution_execution_event', id,
+      { resolutionId: resolution.id, status: data.status });
+    return { entityType: 'resolution_execution_event', entityId: id };
+  });
+  const { rows } = await db.query('SELECT * FROM resolution_execution_events WHERE id = $1', [result.entityId]);
+  return { execution: executionEventFromRow(rows[0]), replayed: result.replayed };
 }
 
 // ---------- HTTP ----------
@@ -1099,6 +1404,12 @@ function route(method, pathname) {
   }
   if (n === 2 && a === 'resolutions' && b === 'lookup') {
     return method === 'GET' ? { name: 'lookup' } : { name: 'method', allowed: ['GET'] };
+  }
+  // #102: rejestr uchwał roku i śledzenie wykonania — nie zebranie, więc
+  // rozpoznawane przed traktowaniem `a` jako meetingId poniżej.
+  if (n === 1 && a === 'resolutions') return method === 'GET' ? { name: 'resolutionRegister' } : { name: 'method' };
+  if (n === 3 && a === 'resolutions' && c === 'execution') {
+    return method === 'POST' ? { name: 'resolutionExecution', resolutionId: b, create: true } : { name: 'method' };
   }
   const meetingId = a;
   if (n === 1) {
@@ -1166,6 +1477,12 @@ export async function handle(request, env, url, json) {
           schoolYearId: query.get('schoolYearId'), number: query.get('number'),
         }));
       }
+      if (target.name === 'resolutionRegister') {
+        return json(await listResolutionRegister(db, actor, {
+          schoolYearId: query.get('schoolYearId'), status: query.get('status') || undefined,
+          q: query.get('q') || undefined, executionStatus: query.get('executionStatus') || undefined,
+        }));
+      }
       return json(await getMeeting(db, actor, { meetingId: target.meetingId }, env));
     }
 
@@ -1186,12 +1503,15 @@ export async function handle(request, env, url, json) {
       resolution: () => createResolution(db, actor, input),
       resolutionUpdate: () => updateResolution(db, actor, input),
       resolutionCorrect: () => correctResolution(db, actor, input),
+      resolutionExecution: () => recordResolutionExecution(db, actor, input),
     };
     const { replayed, ...result } = await handlers[target.name]();
     if (!target.create) return json(result);
     return json(result, replayed ? 200 : 201, { 'Idempotency-Replayed': replayed ? 'true' : 'false' });
   } catch (error) {
-    if (error instanceof MeetingError) return json({ error: error.code }, error.status);
+    if (error instanceof MeetingError) {
+      return json({ error: error.code, ...(error.details ?? {}) }, error.status);
+    }
     throw error;
   }
 }

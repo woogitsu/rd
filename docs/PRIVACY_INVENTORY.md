@@ -33,6 +33,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_campaigns`|`paused_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`resumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`subject`|Opiekun|direct|wolny tekst|temat kampanii e-mail|email_snapshot|tak|nie|
+|`email_preview_sends`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie wysyłki testowej z osobą|nieustalona (D-04)|nie|nie|
+|`email_preview_sends`|`recipient_hash`|Członek Rady|pseudonymous|kontakt|limit wysyłek testowych na adres techniczny Rady|nieustalona (D-04)|nie|nie|
 |`email_suppressions`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
 |`enrollment_history`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`enrollments`|`ended_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -95,6 +97,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_entries`|`reference`|Opiekun|direct|wolny tekst|tytuł przelewu z wyciągu bankowego|payment_reference|tak|tak|
 |`payment_reassignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_refunds`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`resolution_execution_events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`resolution_execution_events`|`note`|Członek Rady|direct|wolny tekst|notatka o postępie wykonania uchwały|audit_event|tak|tak|
+|`resolution_execution_events`|`responsible_user_id`|Członek Rady|pseudonymous|identyfikacja|wskazanie osoby odpowiedzialnej za wykonanie uchwały|nieustalona (D-04)|nie|tak|
 |`resolutions`|`body`|Członek Rady|direct|wolny tekst|treść uchwały|audit_event|tak|tak|
 |`resolutions`|`correction_reason`|Członek Rady|direct|wolny tekst|uzasadnienie korekty uchwały|audit_event|tak|tak|
 |`resolutions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -114,7 +119,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **101**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **106**, w tym wolnego tekstu: **24** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -318,6 +323,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `recipients_hash` | none | — | nie |
 | `resumed_at` | none | — | nie |
 | `resumed_by` | pseudonymous | board_member | nie |
+| `revision_no` | none | — | tak |
 | `school_year_id` | none | — | nie |
 | `send_not_before` | none | — | nie |
 | `snapshot_built_at` | none | — | nie |
@@ -348,6 +354,19 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `sent_at` | none | — | nie |
 | `state` | none | — | nie |
 | `updated_at` | none | — | nie |
+
+### `email_preview_sends`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `actor_id` | pseudonymous | board_member | nie |
+| `campaign_id` | none | — | nie |
+| `content_hash` | none | — | nie |
+| `created_at` | none | — | nie |
+| `id` | none | — | nie |
+| `idempotency_key` | none | — | nie |
+| `provider_message_id` | none | — | nie |
+| `recipient_hash` | pseudonymous | board_member | nie |
 
 ### `email_send_ledger`
 
@@ -819,6 +838,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `quorum_mode` | none | — | tak |
 | `quorum_numerator` | none | — | tak |
 | `quorum_rule_source` | none | — | tak |
+| `revision_no` | none | — | tak |
 | `scheduled_at` | none | — | tak |
 | `school_year_id` | none | — | tak |
 | `status` | none | — | tak |
@@ -885,6 +905,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |---|---|---|---|
 | `alt_text` | direct | third_party | nie |
 | `author` | direct | third_party | nie |
+| `decorative` | none | — | nie |
 | `depicts_children` | none | — | nie |
 | `document_id` | none | — | nie |
 | `explicit_license_granted` | none | — | nie |
@@ -1029,6 +1050,19 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `reason` | none | — | tak |
 | `refunded_on` | none | — | tak |
 
+### `resolution_execution_events`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `due_on` | none | — | tak |
+| `id` | none | — | tak |
+| `note` | direct | board_member | tak |
+| `resolution_id` | none | — | tak |
+| `responsible_user_id` | pseudonymous | board_member | tak |
+| `status` | none | — | tak |
+
 ### `resolutions`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
@@ -1044,7 +1078,10 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `meeting_id` | none | — | tak |
 | `number` | none | — | tak |
 | `quorum_check_id` | none | — | tak |
+| `relation_cross_year` | none | — | tak |
+| `relation_kind` | none | — | tak |
 | `revision` | none | — | tak |
+| `revision_no` | none | — | tak |
 | `school_year_id` | none | — | tak |
 | `status` | none | — | tak |
 | `title` | none | — | tak |
@@ -1108,6 +1145,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `ends_on` | none | — | tak |
 | `id` | none | — | tak |
 | `label` | none | — | tak |
+| `resolution_number_pattern` | none | — | tak |
 | `starts_on` | none | — | tak |
 
 ### `sessions`

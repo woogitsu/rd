@@ -121,6 +121,28 @@ export function bodyLimitFor(uploadLimit = DEFAULT_MAX_UPLOAD_BYTES) {
   return (url, method) => (method === 'POST' && url.pathname === UPLOAD_PATH ? limit : DEFAULT_BODY_LIMIT_BYTES);
 }
 
+// #185 pkt 3: limit równoczesnych uploadów NA PROCES (nie na klaster Railway —
+// z kilkoma instancjami trzeba by dzielić stan, poza zakresem tego prototypu).
+// Semafor liczący — bez kolejki: piąte i kolejne równoczesne żądanie dostaje
+// od razu `503 upload_busy`, zamiast czekać na zwolnienie miejsca. Licznik
+// żyje przez cały czas życia procesu (moduł ładowany raz), nie per-żądanie.
+export const DEFAULT_MAX_CONCURRENT_UPLOADS = 4;
+let activeUploads = 0;
+
+export function tryAcquireUploadSlot(max = DEFAULT_MAX_CONCURRENT_UPLOADS) {
+  if (activeUploads >= max) return null;
+  activeUploads += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeUploads -= 1;
+  };
+}
+
+// Wyłącznie do testów (odtworzenie stanu między przebiegami w tym samym procesie).
+export function resetUploadSlotsForTests() { activeUploads = 0; }
+
 // Czyta ciało Web Request z twardym limitem (niezależnie od Content-Length).
 export async function readLimited(request, limit) {
   const declared = Number(request.headers.get('content-length'));
