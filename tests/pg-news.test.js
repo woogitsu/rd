@@ -105,7 +105,7 @@ test('drafts, submitted and approved posts never appear publicly; public payload
     assert.deepEqual(list.posts[0].photos, [{
       id: photo.id, author: 'Fotograf testowy', source: 'own_work',
       license: 'Zdjęcie własne autora, udostępnione Radzie do publikacji.',
-      takenOn: '2026-10-10', altText: 'Stół kiermaszowy z ciastami',
+      takenOn: '2026-10-10', altText: 'Stół kiermaszowy z ciastami', decorative: false,
     }]);
     const body = JSON.stringify(list);
     for (const leak of ['board1', 'board2', 'admin', 'tajny', 'uploadedBy', 'createdBy', 'approvedBy',
@@ -206,6 +206,60 @@ test('copies from a public website are rejected without an explicit licence', as
       sourceDetail: 'Strona szkoły, zgoda pisemna na ponowną publikację',
     }));
     assert.equal(licensed.photo.rightsStatus, 'pending');
+  } finally { await db.close(); }
+});
+
+// #124: opis zastępczy jest niezmienny (poprawka = nowe zdjęcie), więc musi
+// być podany, albo zdjęcie zadeklarowane jako czysto dekoracyjne, już przy
+// rejestracji — inaczej zablokowałaby to dopiero weryfikacja (0071).
+test('alt text is required at registration unless the photo is marked decorative', async () => {
+  const db = await newsDb();
+  try {
+    await assert.rejects(
+      registerPhoto(db, admin, photoInput({ altText: undefined })),
+      { code: 'alt_text_required', status: 422 },
+    );
+    const { photo: decorative } = await registerPhoto(db, admin, photoInput({ altText: undefined, decorative: true }));
+    assert.equal(decorative.altText, null);
+    assert.equal(decorative.decorative, true);
+    const verified = await verifyPhoto(db, board1, { photoId: decorative.id });
+    assert.equal(verified.photo.rightsStatus, 'verified');
+
+    await publishedPost(db, { photoIds: [decorative.id] });
+    const list = await pub(db);
+    // Zdjęcie dekoracyjne: alt="" (celowo puste), nie null (brak opisu) — WCAG 1.1.1.
+    assert.equal(list.posts[0].photos[0].altText, '');
+    assert.equal(list.posts[0].photos[0].decorative, true);
+
+    await assert.rejects(registerPhoto(db, admin, photoInput({ decorative: 'yes' })), { code: 'invalid_decorative' });
+  } finally { await db.close(); }
+});
+
+// news_photo_alt_text_required (0071) jest dodane z NOT VALID: Postgres
+// sprawdza je przy każdym kolejnym INSERT/UPDATE (co blokuje bezpośredni
+// zapis bez opisu, jak niżej — więc od tej migracji nie da się już w ogóle
+// stworzyć wiersza bez alt_text/decorative), ale NIE sprawdza wstecznie
+// wierszy zapisanych PRZED tą migracją. Te sprzed migracji (jeśli istniały
+// bez opisu) zostają czytelne i zweryfikowane bez zmian — dopóki ktoś nie
+// spróbuje ich zaktualizować (np. weryfikacją), co i tak wymaga już opisu.
+// Fizyczna symulacja „sprzed migracji” wymagałaby cofnięcia ALTER TABLE w
+// trakcie testu, więc sprawdzamy to statycznie w pliku migracji.
+test('news_photo_alt_text_required is added with NOT VALID (does not retroactively invalidate existing rows)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const sql = readFileSync(new URL('../postgres/migrations/0071_news_photo_alt_text_required.sql', import.meta.url), 'utf8');
+  assert.match(sql, /ADD CONSTRAINT news_photo_alt_text_required\s+CHECK \(alt_text IS NOT NULL OR decorative\) NOT VALID/);
+});
+
+test('a raw insert without alt text or decorative is rejected by the database, and the registry view stays empty otherwise', async () => {
+  const db = await newsDb();
+  try {
+    await assert.rejects(db.query(
+      `INSERT INTO news_photos (id, document_id, author, source, taken_on, license_text, depicts_children, uploaded_by)
+       VALUES ('p-no-alt', 'doc-no-alt', 'Autor', 'own_work', '2020-01-01', 'Zdjęcie bez opisu', false, 'admin')`,
+    ), /news_photo_alt_text_required/);
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    const { rows } = await db.query('SELECT * FROM news_photos_missing_alt_text WHERE id = $1', [photo.id]);
+    assert.equal(rows.length, 0, 'zdjęcie z opisem nie powinno trafić do rejestru braków');
   } finally { await db.close(); }
 });
 

@@ -29,6 +29,7 @@
 import { fileURLToPath } from 'node:url';
 import { loadMigrations } from './postgres-migrations.js';
 import { describeError, log } from './log.js';
+import { isReadOnly, WRITE_MODE_NORMAL, WRITE_MODE_READ_ONLY } from './write-mode.js';
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 2000;
 const MIGRATIONS_DIR = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
@@ -61,15 +62,17 @@ const inflightChecks = new WeakMap();
  * @returns {Promise<{ ready: boolean, body: object }>}
  */
 export async function checkReadiness(env = {}, options = {}) {
+  const writeMode = isReadOnly(env) ? WRITE_MODE_READ_ONLY : WRITE_MODE_NORMAL;
+  const withWriteMode = ({ ready, body }) => ({ ready, body: { ...body, write_mode: writeMode } });
   if (!env?.db || typeof env.db.query !== 'function') {
-    return { ready: false, body: { status: 'not_ready', checks: { database: 'not_configured' } } };
+    return withWriteMode({ ready: false, body: { status: 'not_ready', checks: { database: 'not_configured' } } });
   }
   const existing = inflightChecks.get(env.db);
-  if (existing) return existing;
+  if (existing) return existing.then(withWriteMode);
   const promise = performReadinessCheck(env.db, options);
   inflightChecks.set(env.db, promise);
   try {
-    return await promise;
+    return withWriteMode(await promise);
   } finally {
     // Tylko sprzątanie „własnego” wpisu — na wypadek, gdyby db zdążyło
     // w międzyczasie dostać nowy wpis (nie powinno, ale nie nadpisujemy cudzego).
