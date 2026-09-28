@@ -57,7 +57,8 @@ Serwer odrzuca słownictwo sugerujące zadłużenie (ten sam słownik co kartki 
 - Dziennik `email_send_ledger` (dzień UTC, tylko dopisywanie) liczy wiadomości kampanii, które **mogły wyjść** (przyjęte przez dostawcę albo z wynikiem niepewnym), oraz inne wiadomości konta (`source = 'other'`, funkcja `recordOtherSends`). Wpis powstaje razem z wynikiem, nie przy przejęciu. Jawna odmowa dostawcy (np. 400, 401/403), wiersze zwrócone do kolejki i zatrzymany przebieg nie zużywają limitu. Wiadomości w locie (`sending` bez wpisu) są liczone do puli, więc równoległe przebiegi jej nie przekroczą (#172).
 - Pula dnia = `EMAIL_DAILY_LIMIT` (domyślnie 300) − `EMAIL_DAILY_RESERVED` (rezerwa na inne wiadomości konta, np. zaproszenia, wysyłki ręczne z panelu Brevo) − wszystkie wpisy dnia.
 - Przydział kampanii na dzień = max(ceil(N / `EMAIL_CAMPAIGN_MIN_DAYS`), `EMAIL_CAMPAIGN_MIN_DAILY`), nie więcej niż pula konta. Dla ~2000 adresatów: 286 dziennie, 7 dni.
-- Założenie: doba Brevo liczona jest w UTC. Jeżeli dostawca liczy inaczej, rezerwa `EMAIL_DAILY_RESERVED` powinna pokryć różnicę. Wiadomości wysłane poza aplikacją trzeba dopisać do dziennika lub pokryć rezerwą.
+- Doba resetu limitu na koncie Brevo nie jest udokumentowana jednoznacznie (część źródeł podaje UTC, część strefę konta). Kolumna `email_send_ledger.day` (i `email_worker_runs.day`) zostaje dobą UTC dla zgodności, ale pozostała pula (`remainingQuota`, #84) liczy **większe** z dwóch zużyć: doby UTC (po kolumnie `day`) i doby strefy konta `EMAIL_QUOTA_TIMEZONE` (domyślnie `Europe/Brussels`, po `recorded_at`). Żadna z dwóch dób nie zostaje więc przekroczona; w dni graniczne (23:xx UTC) tryb ten może obniżyć przepustowość o kilka wiadomości — akceptowalne przy kampanii rozłożonej na ≥7 dni.
+- **Przed produkcją**: sprawdzić w ustawieniach konta Brevo, w jakiej strefie faktycznie liczony jest limit, i ustawić `EMAIL_QUOTA_TIMEZONE` zgodnie (D-17). Wiadomości wysłane poza aplikacją trzeba dopisać do dziennika (`recordOtherSends`) lub pokryć rezerwą `EMAIL_DAILY_RESERVED`.
 
 ## Zadanie na Railway
 `npm run email:worker` wykonuje jeden przebieg i kończy proces. Domyślnie jest to **dry-run**: te same sprawdzenia i renderowanie, zapis przebiegu w `email_worker_runs`, bez zmian w kolejce i dzienniku limitu i bez połączenia z Brevo. Wysyłka: `npm run email:worker -- --send` przy `EMAIL_SENDING_ENABLED=true`.
@@ -84,6 +85,7 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 | `EMAIL_TEST_ALLOWLIST` | poza produkcją: dozwolone adresy techniczne (`*@domena` lub pełny adres, po przecinku) |
 | `EMAIL_DAILY_LIMIT` | limit konta Brevo na dobę (domyślnie 300) |
 | `EMAIL_DAILY_RESERVED` | rezerwa na inne wiadomości konta (domyślnie 0) |
+| `EMAIL_QUOTA_TIMEZONE` | strefa doby limitu konta Brevo (domyślnie `Europe/Brussels`); nieznana strefa wraca do domyślnej |
 | `EMAIL_CAMPAIGN_MIN_DAYS` | minimalna liczba dni rozłożenia kampanii (domyślnie 7) |
 | `EMAIL_CAMPAIGN_MIN_DAILY` | minimalny dzienny przydział małej kampanii (domyślnie 50) |
 | `EMAIL_BATCH_SIZE` | wiersze na jeden przebieg (domyślnie 50) |
