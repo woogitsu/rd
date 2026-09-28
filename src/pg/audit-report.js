@@ -177,7 +177,9 @@ export function renderAuditReportHtml(report) {
 <tr><th>Bilans otwarcia (z korektami)</th><td class="num">${money(balance.openingBalanceCents)}</td></tr>
 <tr><th>Przychody netto</th><td class="num">${money(balance.incomeCents)}</td></tr>
 <tr><th>Wydatki netto</th><td class="num">${money(balance.expenseCents)}</td></tr>
+<tr><th>Bilans otwarcia — rachunek / kasa</th><td class="num">${money(balance.openingBankCents ?? 0)} / ${money(balance.openingCashCents ?? 0)}</td></tr>
 <tr><th>Bilans zamknięcia</th><td class="num">${money(balance.closingBalanceCents)}</td></tr>
+<tr><th>Bilans zamknięcia — rachunek / kasa</th><td class="num">${money(balance.closingBankCents ?? 0)} / ${money(balance.closingCashCents ?? 0)}</td></tr>
 </tbody></table>
 <p class="meta">Kontrole krzyżowe poniżej porównują niezależnie liczone źródła; wynik jest wskaźnikiem do sprawdzenia, nie oceną.</p>
 ${table([['Kontrola'], ['Wynik'], ['Wartości']], checkRows, 'Brak kontroli.')}

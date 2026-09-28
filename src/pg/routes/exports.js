@@ -15,7 +15,7 @@ import { isAuthorized, isAuthorizedScoped, loadAuthorizationContext } from '../a
 import { insertAuditEvent } from '../audit.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import {
-  buildClassRoster, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
+  buildClassRoster, buildClassRosterCsv, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
 } from '../export.js';
 
 export const name = 'exports';
@@ -56,11 +56,11 @@ function safeFilePart(value) {
   return value.replace(/[^A-Za-z0-9_.-]/g, '_');
 }
 
-function attachment(body, filename, headers = {}) {
+function attachment(body, filename, headers = {}, contentType = 'application/json; charset=utf-8') {
   return new Response(body, {
     status: 200,
     headers: {
-      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Type': contentType,
       'Content-Disposition': `attachment; filename="${filename}"`,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
@@ -77,7 +77,7 @@ async function authorize(request, env, requirement, json) {
   return { context };
 }
 
-async function recordRun(tx, { kind, schoolYearId, classId = null, formatVersion, actorId, sha256, rowCounts }) {
+async function recordRun(tx, { kind, schoolYearId, classId = null, formatVersion, actorId, sha256, rowCounts, format = 'json' }) {
   const runId = crypto.randomUUID();
   await tx.query(
     `INSERT INTO export_runs (id, kind, school_year_id, class_id, format_version, requested_by, manifest_sha256, row_counts)
@@ -89,7 +89,10 @@ async function recordRun(tx, { kind, schoolYearId, classId = null, formatVersion
     action: 'export.created',
     entityType: 'export_run',
     entityId: runId,
-    metadata: { kind, schoolYearId, classId, formatVersion, manifestSha256: sha256, rowCounts },
+    // `format` (#132: json domyślnie, także csv) trafia tylko do audytu — bez
+    // migracji `export_runs`, kolumna `row_counts` zostaje jak dotąd (json/CSV
+    // niosą te same liczności).
+    metadata: { kind, schoolYearId, classId, formatVersion, manifestSha256: sha256, rowCounts, format },
   });
   return runId;
 }
@@ -136,6 +139,11 @@ async function createYearlyExport(request, env, json) {
 async function exportClassRoster(request, env, url, json) {
   const classId = url.searchParams.get('classId');
   if (!classId || !ID_PATTERN.test(classId)) throw new RequestError('invalid_class');
+  // #132: format czytelny dla człowieka (CSV) obok kanonicznego JSON (domyślny,
+  // zgodność wsteczna). XLSX celowo pominięty — brak lekkiej biblioteki do zapisu
+  // bez nowej ciężkiej zależności (decyzja opisana w PR).
+  const format = url.searchParams.get('format') ?? 'json';
+  if (format !== 'json' && format !== 'csv') throw new RequestError('invalid_format');
 
   // Najpierw zakres klasy: przedstawiciel innej klasy dostaje 403 niezależnie
   // od tego, czy klasa istnieje.
@@ -158,13 +166,22 @@ async function exportClassRoster(request, env, url, json) {
     }
     const runId = await recordRun(tx, {
       kind: 'class_roster', schoolYearId: built.schoolYearId, classId, formatVersion: ROSTER_FORMAT_VERSION,
-      actorId, sha256: built.sha256, rowCounts: built.rowCounts,
+      actorId, sha256: built.sha256, rowCounts: built.rowCounts, format,
     });
     return { ...built, runId };
   });
   if (result.notFound) return json({ error: 'class_not_found' }, 404);
   if (result.forbidden) return json({ error: 'forbidden' }, 403);
 
+  if (format === 'csv') {
+    const csv = buildClassRosterCsv(result.roster);
+    return attachment(
+      csv,
+      `lista-klasy-${safeFilePart(result.roster.class.name)}-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}.csv`,
+      { 'X-Export-Run-Id': result.runId, 'X-Export-Manifest-Sha256': result.sha256 },
+      'text/csv; charset=utf-8',
+    );
+  }
   return attachment(result.body, `rd-lista-klasy-${safeFilePart(classId)}-v${ROSTER_FORMAT_VERSION}.json`, {
     'X-Export-Run-Id': result.runId,
     'X-Export-Manifest-Sha256': result.sha256,

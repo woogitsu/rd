@@ -7,6 +7,7 @@ import {
   addConsent, approve, createDraft, getInternal, getPhoto, listInternal, listPublic, publish,
   registerPhoto, revokePhoto, submit, updateDraft, verifyPhoto, withdraw, PUBLIC_CACHE_SECONDS,
 } from '../src/pg/news.js';
+import { newsItems } from '../site/core.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
@@ -110,6 +111,25 @@ test('drafts, submitted and approved posts never appear publicly; public payload
     for (const leak of ['board1', 'board2', 'admin', 'tajny', 'uploadedBy', 'createdBy', 'approvedBy',
       'documentId', photo.documentId, 'Notatka wewnętrzna', 'revision']) {
       assert.equal(body.includes(leak), false, `public payload leaks ${leak}`);
+    }
+  } finally { await db.close(); }
+});
+
+test('kontrakt API → strona: newsItems czyta rzeczywistą odpowiedź listPublic (#237)', async () => {
+  const db = await newsDb();
+  try {
+    // Pusta lista: strona pokaże „Brak opublikowanych aktualności” tylko wtedy.
+    assert.deepEqual(newsItems(await pub(db)), []);
+    await publishedPost(db, { title: 'Starsza aktualność' });
+    await publishedPost(db, { title: 'Nowsza aktualność' });
+    const payload = JSON.parse(JSON.stringify(await pub(db))); // kształt jak z fetch().json()
+    const items = newsItems(payload);
+    assert.deepEqual(items.map((n) => n.title), ['Nowsza aktualność', 'Starsza aktualność']);
+    for (const [index, item] of items.entries()) {
+      assert.equal(item.id, payload.posts[index].id);
+      assert.equal(item.body, payload.posts[index].body);
+      assert.equal(item.publishedAt.toISOString(), new Date(payload.posts[index].publishedAt).toISOString());
+      assert.deepEqual(Object.keys(item).sort(), ['body', 'id', 'publishedAt', 'title']);
     }
   } finally { await db.close(); }
 });
