@@ -199,7 +199,7 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
 
 async function makePayment(db, target, stage) {
   const id = nextKey('fx-payment');
-  const unmatched = stage === 'unmatched';
+  const unmatched = stage === 'unmatched' || stage === 'allocated';
   await db.query(
     `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
        reference, status, created_by, idempotency_key)
@@ -207,6 +207,16 @@ async function makePayment(db, target, stage) {
     [id, unmatched ? null : 'hh-1', target.schoolYearId, `Wpłata ${marker(target.key)}`,
       unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`, yearDate(target, '10-01')],
   );
+  if (stage === 'allocated') {
+    // #127: wpłata nieprzypisana z jedną częścią dla hh-1 (payments.allocations.reversal).
+    const allocationId = `${id}-alloc`;
+    await db.query(
+      `INSERT INTO payment_allocations (id, payment_entry_id, school_year_id, household_id, amount_cents, created_by, idempotency_key)
+       VALUES ($1, $2, $3, 'hh-1', 100, $4, $5)`,
+      [allocationId, id, target.schoolYearId, fxAdmin.userId, `${allocationId}-key`],
+    );
+    return { paymentId: id, allocationId };
+  }
   return { paymentId: id };
 }
 
@@ -285,6 +295,21 @@ async function makeReconciliation(ctx, target, stage) {
   }, withKey(nextKey('fx-rec')));
   const reconciliationId = json.reconciliation.id;
   if (stage === 'draft') return { reconciliationId };
+  if (stage === 'groupReady' || stage === 'groupMatched') {
+    // #127 cz. 2: przelew zbiorczy — jedna pozycja 2000 EUR ↔ dwie wpłaty po 1000 EUR.
+    const first = await makePayment(ctx.db, target, 'recorded');
+    const second = await makePayment(ctx.db, target, 'recorded');
+    await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/lines`, {
+      lines: [{ bookedOn: yearDate(target, '10-01'), amountCents: 200000, reference: 'Przelew zbiorczy syntetyczny' }],
+    }, withKey(nextKey('fx-lines')));
+    const detail = await api(ctx, cookie, 'GET', `/api/reconciliations/${reconciliationId}`);
+    const obj = { reconciliationId, statementLineId: detail.json.lines[0].id, paymentIds: [first.paymentId, second.paymentId] };
+    if (stage === 'groupReady') return obj;
+    const group = await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/group-matches`, {
+      statementLineId: obj.statementLineId, items: obj.paymentIds.map((paymentEntryId) => ({ paymentEntryId })),
+    }, withKey(nextKey('fx-group')));
+    return { ...obj, groupMatchId: group.json.groupMatch.id };
+  }
   const { paymentId } = await makePayment(ctx.db, target, 'recorded');
   await api(ctx, cookie, 'POST', `/api/reconciliations/${reconciliationId}/lines`, {
     lines: [{ bookedOn: yearDate(target, '10-01'), amountCents: 100000, reference: 'Tytuł syntetyczny' }],
@@ -549,7 +574,8 @@ function sessionOptions(actor, mfa, withGrants, userId = `mx-${actor.key}`) {
 const WRITE_TABLES = [
   'audit_events', 'events', 'event_revisions', 'meetings', 'meeting_agenda_items', 'meeting_attendees',
   'meeting_quorum_checks', 'meeting_minutes', 'meeting_minutes_publications', 'resolutions',
-  'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments', 'role_grants',
+  'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments',
+  'payment_allocations', 'payment_allocation_reversals', 'role_grants',
   'users', 'sessions', 'invitations', 'user_mfa_factors', 'mfa_recovery_codes',
   'import_batches', 'households', 'guardians', 'students', 'enrollments', 'student_guardians',
   'guardian_contact_changes', 'student_guardian_changes', 'enrollment_history', 'documents',
@@ -559,6 +585,8 @@ const WRITE_TABLES = [
   'email_webhook_events', 'email_suppressions', 'email_preferences_events', 'email_preview_sends',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
+  'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
+  'bank_reconciliation_group_match_revocations',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
   'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
@@ -822,6 +850,7 @@ const MODULE_SOURCES = {
   documents: ['../src/pg/routes/documents.js', '../src/documents.js'],
   ledger: ['../src/pg/routes/ledger.js'],
   'ledger-cash': ['../src/pg/routes/ledger-cash.js'],
+  'ledger-cost-centers': ['../src/pg/routes/ledger-cost-centers.js'],
   email: ['../src/pg/routes/email.js'],
   news: ['../src/pg/routes/news.js', '../src/pg/news.js'],
   admin: ['../src/pg/routes/admin.js'],

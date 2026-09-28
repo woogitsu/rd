@@ -363,9 +363,9 @@ test('#150: sesja bez aktywności dłużej niż limit jest wycofana (idle), z au
   const cookie = await seedUserSession(db, { userId: 'u-idle' });
   const session = await loadSession(request('/api/session', { cookie }), env);
   assert.ok(session, 'sesja świeżo utworzona jest ważna');
-  // Symulacja bezczynności: cofamy last_seen_at poza domyślny limit (30 min). created_at
-  // jest niezmienne po zapisie (0082, session_guard_trigger) i niepotrzebne tutaj — po
-  // pierwszym żądaniu idle liczy się wyłącznie z last_seen_at (COALESCE w src/pg/auth.js).
+  // Symulacja bezczynności: cofamy last_seen_at poza domyślny limit (30 min).
+  // `created_at` jest niezmienne po zapisie (migracja 0082, session_guard_trigger)
+  // i tak nie decyduje o bezczynności, gdy last_seen_at jest już ustawione.
   await db.query(
     "UPDATE sessions SET last_seen_at = now() - interval '31 minutes' WHERE id = $1",
     [session.sessionId],
@@ -397,17 +397,16 @@ test('#150: last_seen_at jest aktualizowany najwyżej raz na okno throttlingu, n
 }));
 
 test('#150: rotacja (MFA/zmiana hasła) nie przedłuża absolutnego limitu 24h od pierwszego logowania', async () => withDb(async (db, env) => {
-  const cookie = await seedUserSession(db, { userId: 'u-rotchain' });
-  const first = await loadSession(request('/api/session', { cookie }), env);
-  // Cofamy created_at PIERWSZEJ sesji, jakby zalogowała się 23h50m temu. created_at jest
-  // niezmienne po zapisie (0082, session_guard_trigger) — dla tego jednego zapisu testowego
-  // wyłączamy triggery (jak w innych testach niezmienności), a nie regułę produkcyjną.
+  // `created_at` sesji jest niezmienne po zapisie (migracja 0082,
+  // session_guard_trigger), więc symulacja "zalogowała się 23h50m temu"
+  // musi ustawić created_at PRZY tworzeniu sesji, nie przez UPDATE po fakcie.
   const almostExpired = new Date(Date.now() - (SESSION_TTL_SECONDS - 10 * 60) * 1000);
-  await db.exec(`
-    SET session_replication_role = replica;
-    UPDATE sessions SET created_at = '${almostExpired.toISOString()}' WHERE id = '${first.sessionId}';
-    SET session_replication_role = origin;
-  `);
+  const cookie = await seedUserSession(db, { userId: 'u-rotchain', createdAt: almostExpired, expiresAt: new Date(almostExpired.getTime() + SESSION_TTL_SECONDS * 1000) });
+  // last_seen_at (mutowalne — w przeciwieństwie do created_at) musi być świeże,
+  // inaczej test padnie na limicie bezczynności zamiast na absolutnym limicie
+  // rotacji, który tu badamy: w praktyce sesja miałaby aktywność w tym czasie.
+  await db.query("UPDATE sessions SET last_seen_at = now() WHERE user_id = 'u-rotchain'");
+  const first = await loadSession(request('/api/session', { cookie }), env);
 
   const rotated = await rotateSession(env, first, { mfaVerified: true });
   const rotatedExpires = new Date(rotated.expiresAt).getTime();

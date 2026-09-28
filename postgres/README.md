@@ -236,6 +236,21 @@ ani usunąć. Wycofanie na pustej bazie: usunięcie tabeli i funkcji
 `export_run_immutable`; na bazie z danymi — po kopii i decyzji o retencji
 (D-04). Szczegóły: [`docs/EXPORT.md`](../docs/EXPORT.md).
 
+`0017_year_close.sql` (issue #15) dodaje tabele `school_year_closures` i
+`school_year_closure_checklist`. Skutki dla danych: migracja tylko dodaje
+tabele; żaden istniejący wiersz nie jest zmieniany ani usuwany. Rok bez
+wiersza w `school_year_closures` jest „otwarty”; rozpoczęcie zamknięcia
+tworzy wiersz `closing`, zamknięcie zmienia go na `closed`. Bilans zamknięcia
+jest liczony z `ledger_year_summary` (0003) i przenoszony jako
+`ledger_opening_balances` następnego roku. Po zamknięciu triggery odrzucają
+nowe zapisy przypisane do zamkniętego roku (wpłaty, księga, wydarzenia,
+zebrania, przydziały ról w tym roku…) — odczyt pozostaje bez zmian; korekta
+po zamknięciu nie ma dziś ścieżki w aplikacji. Przydziały ról zawężone do
+zamykanego roku dostają `expires_at` (jedyna zmiana dozwolona przez trigger
+0004); wiersze zostają. Wycofanie na pustej bazie: usunięcie tabel i
+triggerów zamrożenia; na bazie z danymi — po kopii, bo cofnięcie zgubiłoby
+zapis, które lata były zamknięte. Szczegóły: [`docs/YEAR_CLOSE.md`](../docs/YEAR_CLOSE.md).
+
 `0014_households.sql` (issue #5) dodaje wiele gospodarstw ucznia
 (`student_households`, jedno główne na okres), członkostwo opiekunów w
 gospodarstwach (`guardian_households`), historię zmian kontaktu
@@ -373,3 +388,223 @@ dotykają wielu tabel i seedów testowych naraz, osobny PR. Wycofanie na
 pustej bazie: usunięcie dwóch nowych triggerów/funkcji i przywrócenie
 `email_campaign_guard()` z `0063_email_campaign_schedule_pause.sql`; na
 bazie z danymi — bezpieczne, żaden wiersz nie jest zmieniany ani usuwany.
+
+## Migracje bez osobnego przeglądu wyżej (#175)
+
+Poniższe migracje mają pełny opis skutków dla danych w nagłówku własnego
+pliku SQL (`postgres/migrations/`); tu tylko streszczenie i odwołanie do
+issue, żeby test spójności dokumentacji (`tests/docs-consistency.test.js`)
+wymuszał wpis dla każdego pliku migracji.
+
+`0024_reconciliation_match_integrity.sql` (#162, część #165) dodaje widok
+`bank_match_consistency`: dla każdego aktywnego powiązania uzgodnienia
+pokazuje, czy kwota pozycji wyciągu zgadza się z bieżącym netto celu i czy
+te same pieniądze nie są policzone podwójnie (wpłata i wpis księgi, który ją
+ujmuje, powiązane jednocześnie). Wyłącznie odczyt — bez zmiany danych.
+
+`0032_document_uploads.sql` (#168) dodaje tabelę `document_uploads`:
+zamiar przesłania dokumentu zapisywany w stanie `pending` przed `PUT` do
+bucketu, potem w jednej transakcji zamieniany na `documents` + `committed` +
+zdarzenie audytu. Chroni przed obiektem osieroconym po awarii w trakcie
+przesyłania. Bez zmiany istniejących wierszy.
+
+`0035_student_guardians_current.sql` (#157) ujednolica trzy niezależne,
+rozjeżdżające się warunki daty „aktualnego” opiekuna (karta gospodarstwa,
+kampania e-mail, lista klasy) w jedną funkcję/widok korzystający z
+`rd_today()` (Europe/Brussels, jak `0023`). Bez zmiany istniejących wierszy.
+
+`0036_year_freeze_finance.sql` (#80) rozszerza zamrożenie zamkniętego roku
+(`0017`) na tabele uzgodnienia rachunku (`bank_reconciliations`,
+`bank_statement_imports`, `bank_statement_lines`,
+`bank_reconciliation_matches`, `0015`), które dotąd nie były objęte. Bez
+zmiany istniejących wierszy; zmienia się wyłącznie zachowanie przyszłych
+zapisów w zamkniętym roku.
+
+`0037_scope_reference_checks.sql` (#205) rozszerza dwie istniejące funkcje
+triggerów (`CREATE OR REPLACE`, te same triggery z `0009` nadal ich
+używają) tak, by identyfikatory w treści żądań były sprawdzane względem
+zakresu (klasa/rok), a nie tylko względem istnienia przez klucz obcy. Bez
+zmiany danych ani nowych triggerów.
+
+`0038_payment_ledger_consistency.sql` (#138) wymusza w
+`ledger_entry_insert_guard`, że wpis księgi powiązany z wpłatą
+(`payment_entry_id`) ma kwotę równą bieżącemu netto tej wpłaty (kwota minus
+korekty minus zwroty) w chwili zapisu — inaczej `422
+ledger_payment_amount_mismatch`; wyjątek dla trybu odtworzenia (wzorem
+`0027`). Dodaje też `payment_refunds` i `payment_reassignments`. Zobacz też
+`0049` (naprawa kolizji z `0036`).
+
+`0039_reconciliation_correction_guard.sql` (#165) rozszerza
+`ledger_correction_guard`/`payment_correction_guard`: korekta wpisu/wpłaty
+z aktywnym powiązaniem w uzgodnieniu o statusie `draft` jest odrzucana
+(`409 active_bank_match`) zamiast po cichu rozjeżdżać uzgodnienie. System
+świadomie nie cofa powiązania automatycznie.
+
+`0040_ledger_replacement.sql` (#144) dodaje `ledger_entries.replaces_entry_id`
+(nullable, sprawdzane triggerem — wymaga też zgodności `school_year_id`) i
+unikalny częściowy indeks: wpis może zostać zastąpiony co najwyżej raz.
+Wspiera przeksięgowanie jako storno + wpis zastępczy (`docs/LEDGER.md`).
+
+`0049_year_freeze_union.sql` naprawia kolizję dwóch wersji
+`year_freeze_via_parent()`: `0036` i `0038`, pisane równolegle na tej samej
+bazowej wersji z `0017`, nadpisały się nawzajem (migracje stosowane są w
+kolejności nazw) — `0038` gubił gałąź `0036` dla tabel uzgodnienia. Ta
+migracja łączy obie gałęzie w jedną funkcję. Bez zmiany danych.
+
+`0054_enrollment_freeze.sql` (#78, punkt 4) dodaje trigger `a0_year_freeze`
+na `enrollments`, spójny z `payment_entries`/`ledger_entries`/`events`/…
+(`0017`): zapis wskazujący zamknięty rok dostaje `school_year_closed`. Bez
+nowych kolumn ani zmiany istniejących wierszy.
+
+`0055_enrollment_end.sql` (#86, część) dodaje
+`enrollments.ended_on`/`ended_reason`/`ended_by`/`ended_at` — odejście ze
+szkoły w trakcie roku kończy przypisanie do klasy zamiast go usuwać.
+Wszystkie istniejące wiersze dostają `ended_on = NULL` (bez zmian).
+Zakończenie relacji opiekun–dziecko i członkostwa w gospodarstwie zostaje
+poza zakresem (osobna migracja/PR).
+
+`0056_email_preview_sends.sql` (#104) dodaje wysyłkę testową kampanii na
+adresy techniczne Rady: rozszerza `CHECK` dziennika limitu dostawcy
+(`email_send_ledger`) o `source = 'preview'` (kampania bez wiersza kolejki
+`email_outbox`), tak by wysyłka testowa liczyła się do dziennego limitu
+konta. Bez nowej tabeli ani zmiany istniejących wierszy.
+
+`0057_email_preferences.sql` (#110) dodaje kategorię kampanii
+(`email_campaigns.category`, domyślnie `contribution_reminder` — wszystkie
+dotychczasowe kampanie to przypomnienia o składce, bez zmiany istniejących
+wierszy poza tym uzupełnieniem) i tabelę append-only
+`email_preferences_events` — wypisanie/zapisanie się z kategorii komunikatów
+jednym kliknięciem, bez identyfikatora rodziny/opiekuna (adres jest jedynym
+kluczem, jak w `email_suppressions`). Rozszerza też `CHECK` powodu wykluczenia
+kampanii o `opted_out`.
+
+`0058_backup_runs.sql` (#90) dodaje tabelę append-only `backup_runs` —
+dziennik przebiegów kopii zapasowej PostgreSQL i próbnego odtworzenia (jak
+`email_worker_runs` w `0007`), obejmujący też `storage_backup` (kopia
+prywatnego bucketu dokumentów, #103) dla jednego źródła „ostatni udany
+backup” (#149). Nowa tabela; nic wstecznego.
+
+`0059_list_indexes.sql` (#159, część 2) dodaje wyłącznie indeksy pod listy z
+kursorem (m.in. `audit_events(occurred_at DESC, id)`). Bez nowych kolumn,
+tabel ani zmiany danych; zapis robi nieco więcej pracy (utrzymanie
+indeksów), zaniedbywalne przy obecnej skali.
+
+`0060_resolution_register.sql` (#102) dodaje rejestr uchwał: relacje
+„zmienia”/„uchyla” (`resolutions.relation_kind` + `amends_resolution_id`,
+wymagane razem), zgodę na powiązanie z innym rokiem
+(`relation_cross_year`), widok `resolution_effective_status`
+(`in_force`/`amended`/`repealed`, liczony z relacji, nic nie nadpisuje),
+tabelę append-only `resolution_execution_events` (historia wykonania) i
+opcjonalną podpowiedź numeru uchwały
+(`school_years.resolution_number_pattern`, puste domyślnie — decyzja
+D-15). Istniejące wiersze z `amends_resolution_id` bez rodzaju relacji
+dostają NULL (nie jest znany wstecznie); trigger odtąd wymaga rodzaju
+przy nowych powiązaniach.
+
+`0061_meetings_mfa_four_eyes.sql` (#135, SR-10) aktualizuje wyłącznie ciało
+funkcji `meeting_minutes_change_guard()`: zatwierdzenie protokołu przez tę
+samą osobę, która go napisała, kończy się `minutes_four_eyes_required` — też
+przy bezpośrednim `UPDATE` z pominięciem API. Bez zmiany danych.
+
+`0064_email_outbox_resolutions.sql` (#139) dodaje tabelę append-only
+`email_outbox_resolutions` — rozstrzyganie `delivery_unknown`/soft bounce bez
+zmiany historii wiersza `email_outbox`, wypełnianą wyłącznie przez
+`POST /api/email/campaigns/{id}/resolutions`. Nowa tabela; bez zmian w
+istniejących.
+
+`0067_data_access_log.sql` (#133) dodaje osobną (nie `audit_events`) tabelę
+`data_access_log` — dziennik odczytu danych dzieci i opiekunów (lista
+klasy, karta gospodarstwa, kartki, lista wpłat). Nowa tabela; brak historii
+odczytów sprzed tej migracji. Retencja nieustalona (D-04) — domyślnie nie
+usuwać.
+
+`0069_mfa_key_rotation.sql` (#134) dodaje
+`mfa_recovery_codes.rotated_to_factor_id` (nullable FK), żeby rotacja
+`MFA_ENCRYPTION_KEY` (`scripts/rotate-mfa-key.js`) mogła wstawić nowy wiersz
+czynnika MFA zamiast nadpisywać niezmienny `user_mfa_factors` (trigger
+`0013`) i przenieść nieużyte kody odzyskiwania na nowy czynnik zamiast je
+logicznie unieważniać. Wyłącznie nowa kolumna; bez zmiany istniejących
+wierszy (domyślnie `NULL`).
+
+`0070_session_idle_revoke_reason.sql` (#150) rozszerza wyłącznie listę
+dozwolonych powodów wycofania sesji (`sessions_revoked_reason_check`) o
+`idle` — sesja bez aktywności dłużej niż limit jest odtąd jawnie wycofywana
+(`session.revoked`) zamiast tylko przestać działać po cichu. Żaden istniejący
+wiersz się nie zmienia.
+
+`0071_news_photo_alt_text_required.sql` (#124) dodaje
+`news_photos.decorative` (domyślnie `false`) i ograniczenie
+`news_photo_alt_text_required` (`alt_text IS NOT NULL OR decorative`),
+dodane z `NOT VALID` — Postgres nie sprawdza wstecznie istniejących
+wierszy. Zdjęcie wgrane wcześniej bez `alt_text` i bez `decorative` nie da
+się zweryfikować (`verifyPhoto()`), dopóki nie powstanie jego poprawka
+(nowy rekord); metadane zdjęć pozostają niezmienne.
+
+`0093_resolution_meeting_campaign_revision.sql` (#215) dodaje
+`revision_no` (`DEFAULT 1`) do `resolutions`, `meetings` i
+`email_campaigns` oraz trigger `bump_revision_no()`, który zwiększa numer
+wersji przy każdym `UPDATE` wiersza — niezależnie od tego, czy trasa API
+sprawdza wersję (optimistic concurrency), tak jak już działa dla
+`events`/`news`. Żadne istniejące wiersze nie zmieniają treści, tylko
+dostają numer wersji startowej.
+
+`0095_close_legacy_d1_and_truncate_guard.sql` (SR-05/SR-06, #101) zamyka
+dwie luki bez rozdziału ról bazy: (1) `event_before_insert()` (redefinicja
+z najnowszej wersji, `0008`) pozwala wstawić wydarzenie od razu jako
+`published` już tylko w trybie odtworzenia migawki
+(`SET LOCAL rd.restore = 'on'`) — zwykły `INSERT` z tym statusem poza tym
+trybem kończy się `legacy_publish_restore_only`; (2) nowa funkcja
+`deny_truncate()` i trigger `BEFORE TRUNCATE` na każdej tabeli chronionej
+dziś triggerem niezmienności UPDATE/DELETE. Żaden istniejący wiersz nie
+jest zmieniany ani usuwany; zmienia się wyłącznie zachowanie przyszłych
+operacji.
+
+`0083_news_photo_consent_scope.sql` (#106, część) dodaje rejestr zakresu,
+wygaśnięcia i wycofania zgody na wizerunek. `news_photo_consents` dostaje
+kolumny `scope` (lista zamknięta `rada_website`/`print`/`social_media`,
+domyślnie pusty zakres) i `valid_until` (`NULL` = bez terminu). Nowa tabela
+`news_photo_consent_withdrawals` (tylko dopisywanie, ten sam wzorzec
+niezmienności co inne rejestry zdarzeń) zapisuje wycofanie jednej zgody po
+`consent_document_ref` — obejmuje to również rodzeństwo, jeśli ta sama zgoda
+dotyczyła obojga dzieci na tym samym zdjęciu. Widok `public_news`
+(przebudowany od najnowszej definicji z `0071_news_photo_alt_text_required.sql`,
+z zachowanym `CASE WHEN ph.decorative...`) i nowa funkcja
+`news_photo_consents_public_ok` pokazują zdjęcie publicznie tylko, gdy
+wszystkie jego wiersze zgody mają `rada_website` w zakresie, nie wygasły i
+nie zostały wycofane. Skutki dla danych: WARIANT ZACHOWAWCZY wobec braku
+decyzji D-18 — każdy istniejący wiersz `news_photo_consents` dostaje pusty
+`scope`, co wstrzymuje publiczną widoczność powiązanych zdjęć do czasu
+jawnego potwierdzenia zakresu (nowym wpisem zgody); zdjęcia bez wierszy
+zgody (brak zidentyfikowanych osób) się nie zmieniają. Wycofanie: usunąć
+widok `public_news` i przywrócić wersję z `0018_news.sql`, usunąć kolumny
+`scope`/`valid_until` i tabelę `news_photo_consent_withdrawals`; pozostałe
+dane w `news_photo_consents` nie są ruszane.
+
+`0084_news_photo_files.sql` (#96, część) dodaje tabelę `news_photo_files` —
+magazyn wariantów plików zdjęć galerii (`web`, `thumb`) w prywatnym
+Storage Bucket pod osobnym prefiksem `photos/` (oddzielnym od `docs/`
+dokumentów). Przetwarzanie usuwa metadane EXIF/GPS; wariant `original`
+świadomie nie jest zapisywany (wariant zachowawczy do czasu decyzji
+zarządu D-18/D-04/D-05). Publiczny odczyt tylko dla zweryfikowanych zdjęć
+opublikowanej wersji. Skutki dla danych: nowa, pusta tabela;
+`news_photos.document_id` i istniejące metadane zdjęć bez pliku pozostają
+bez zmian (plik jest opcjonalnym uzupełnieniem). Wycofanie: usunięcie
+tabeli `news_photo_files` (obiekty pod `photos/` w buckecie zostają
+osierocone do ręcznego sprzątania).
+
+`0089_bank_statement_formats.sql` (#105) rozszerza import wyciągu bankowego
+o formaty CODA i CAMT.053: `bank_statement_imports.source` dopuszcza
+`'coda'`/`'camt053'`, dochodzą skrót pliku (`file_hash`, blokada
+podwójnego importu), numer wyciągu i salda z pliku;
+`bank_statement_lines.bank_transaction_hash` (HMAC-SHA256 identyfikatora
+transakcji banku, unikalny globalnie) wykrywa ten sam ruch bankowy w
+każdym uzgodnieniu; nowy trigger pilnuje, by wpłata/wpis księgi nie miały
+aktywnego powiązania w dwóch uzgodnieniach tego samego roku jednocześnie
+(`bank_match_guard` nie jest redefiniowana). Nie zapisujemy treści pliku
+ani numerów rachunków — tylko solone skróty. Skutki dla danych: nowe
+kolumny są `NULL`/`0` dla istniejących wierszy; żaden wiersz nie jest
+zmieniany ani usuwany; istniejące powiązania w kilku uzgodnieniach roku
+zostają (trigger działa tylko dla nowych). Wycofanie na bazie bez
+importów z plików: usunięcie triggera/funkcji, indeksu i kolumn oraz
+przywrócenie poprzedniego `CHECK source IN ('manual','csv')`; na bazie z
+importami CODA/CAMT — tylko po kopii zapasowej.
