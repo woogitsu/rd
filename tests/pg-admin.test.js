@@ -69,7 +69,8 @@ test('admin API refuses anonymous, non-admin, admin without MFA and cross-origin
     assert.equal(users.status, 200);
     assert.equal(users.headers.get('Cache-Control'), 'no-store');
     const target = users.data.users.find((user) => user.id === 'u-target');
-    assert.deepEqual(Object.keys(target).sort(), ['activeGrants', 'activeSessions', 'createdAt', 'disabledAt', 'displayName', 'email', 'id']);
+    assert.deepEqual(Object.keys(target).sort(),
+      ['activeGrants', 'activeSessions', 'createdAt', 'disabledAt', 'displayName', 'email', 'id', 'mfaEnrolled']);
   } finally {
     await db.close();
   }
@@ -296,6 +297,89 @@ test('invitations return the token once, block duplicates, can be revoked and ne
     const allAudit = JSON.stringify(await auditRows(db));
     assert.doesNotMatch(allAudit, /example\.invalid/i);
     assert.ok(!allAudit.includes(created.data.token));
+  } finally {
+    await db.close();
+  }
+});
+
+// #224: panel admina otrzymał akcje resetu hasła i resetu MFA (API istniało
+// wcześniej, #238) — testy przechodzą przez trasę HTTP, nie przez funkcje login.js.
+test('password reset and MFA reset: single valid token, self-reset blocked, disabled accounts refused', async () => {
+  const { db, env, admin } = await setup();
+  try {
+    // Podwójne kliknięcie „Wydaj kod resetu”: drugi token unieważnia pierwszy.
+    const first = await post(env, '/api/admin/users/u-target/password-reset', admin, {});
+    assert.equal(first.status, 201);
+    assert.match(first.data.token, /^[A-Za-z0-9_-]{20,}$/);
+    assert.equal(first.data.reset.userId, 'u-target');
+    const second = await post(env, '/api/admin/users/u-target/password-reset', admin, {});
+    assert.equal(second.status, 201);
+    assert.notEqual(second.data.token, first.data.token);
+    const tokens = (await db.query(
+      "SELECT used_at, revoked_at FROM password_reset_tokens WHERE user_id = 'u-target' ORDER BY created_at",
+    )).rows;
+    assert.equal(tokens.length, 2);
+    assert.ok(tokens[0].revoked_at, 'pierwszy nieużyty token jest unieważniony przez drugi');
+    assert.equal(tokens[1].revoked_at, null);
+
+    // Nieprawidłowy ttlHours jest odrzucony, ważny mieści się w limicie.
+    assert.equal((await post(env, '/api/admin/users/u-target/password-reset', admin, { ttlHours: 1000 })).data.error, 'invalid_ttl');
+    assert.equal((await post(env, '/api/admin/users/u-target/password-reset', admin, { ttlHours: 24 })).status, 201);
+
+    // Admin nie może wydać resetu ani zresetować MFA własnego konta.
+    assert.equal((await post(env, '/api/admin/users/u-admin/password-reset', admin, {})).status, 201, 'reset hasła własnego konta jest dozwolony');
+    const ownMfa = await post(env, '/api/admin/users/u-admin/mfa-reset', admin, { confirm: 'u-admin' });
+    assert.equal(ownMfa.status, 409);
+    assert.equal(ownMfa.data.error, 'cannot_reset_own_mfa');
+
+    // Konto wyłączone: reset hasła niedostępny.
+    await seedUser(db, { userId: 'u-off', disabled: true });
+    const offReset = await post(env, '/api/admin/users/u-off/password-reset', admin, {});
+    assert.equal(offReset.status, 409);
+    assert.equal(offReset.data.error, 'user_disabled');
+
+    // Reset MFA bez potwierdzenia identyfikatora konta jest odrzucony.
+    const noConfirm = await post(env, '/api/admin/users/u-target/mfa-reset', admin, {});
+    assert.equal(noConfirm.data.error, 'confirmation_required');
+    const wrongConfirm = await post(env, '/api/admin/users/u-target/mfa-reset', admin, { confirm: 'u-inny' });
+    assert.equal(wrongConfirm.data.error, 'confirmation_required');
+
+    // Konto bez zapisanego czynnika ani kodów odzyskiwania: reset nic nie zmienia.
+    const untouched = await post(env, '/api/admin/users/u-target/mfa-reset', admin, { confirm: 'u-target' });
+    assert.equal(untouched.status, 200);
+    assert.equal(untouched.data.changed, false);
+
+    // Konto z potwierdzonym czynnikiem: reset wyłącza czynnik, wylogowuje i loguje zdarzenie bez PII.
+    const victim = await seedUserSession(db, { userId: 'u-mfa-victim', roles: [{ role: 'board' }], mfa: true });
+    await db.query(
+      `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
+       VALUES ('f-victim', 'u-mfa-victim', 'totp', 'AAAAAAAAAA', 'BBBBBBBBBBBBBBBB', 'CCCCCCCCCCCCCCCCCCCCCC', now())`,
+    );
+    const reset = await post(env, '/api/admin/users/u-mfa-victim/mfa-reset', admin, { confirm: 'u-mfa-victim' });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.data.changed, true);
+    assert.equal(reset.data.disabledFactors, 1);
+    assert.equal(
+      (await db.query("SELECT disabled_at FROM user_mfa_factors WHERE id = 'f-victim'")).rows[0].disabled_at !== null,
+      true,
+    );
+    assert.equal((await call(env, '/api/session', { cookie: victim })).status, 401, 'reset MFA wylogowuje konto');
+
+    const users = await call(env, '/api/admin/users', { cookie: admin });
+    const target = users.data.users.find((user) => user.id === 'u-mfa-victim');
+    assert.equal(target.mfaEnrolled, false, 'po resecie czynnik nie jest już aktywny');
+    const stillEnrolled = await seedUserSession(db, { userId: 'u-mfa-ok', mfa: true });
+    await db.query(
+      `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
+       VALUES ('f-ok', 'u-mfa-ok', 'totp', 'DDDDDDDDDD', 'EEEEEEEEEEEEEEEE', 'FFFFFFFFFFFFFFFFFFFFFF', now())`,
+    );
+    void stillEnrolled;
+    const usersAfter = await call(env, '/api/admin/users', { cookie: admin });
+    assert.equal(usersAfter.data.users.find((user) => user.id === 'u-mfa-ok').mfaEnrolled, true);
+
+    const events = (await auditRows(db)).filter((row) => row.action.startsWith('auth.password_reset') || row.action === 'mfa.reset');
+    assert.ok(events.length >= 5);
+    for (const event of events) assert.doesNotMatch(event.metadata, /@|example\.invalid/);
   } finally {
     await db.close();
   }
