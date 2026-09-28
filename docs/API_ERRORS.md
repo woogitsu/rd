@@ -44,6 +44,7 @@ wpisów).
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `backup_failed` | Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
+| `bank_import_not_configured` | Import wyciągu z pliku banku nie jest skonfigurowany. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
@@ -124,6 +125,7 @@ wpisów).
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |
+| `invalid_document_date` | Niepoprawna data dokumentu. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
 | `invalid_domain` | Wybierz obszar dziennika z listy. | Nie — popraw dane. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
@@ -184,6 +186,7 @@ wpisów).
 | `invalid_source_detail` | Niepoprawny opis źródła. | Nie — popraw dane żądania. |
 | `invalid_source_document` | Niepoprawny dokument źródłowy. | Nie — popraw dane żądania. |
 | `invalid_source` | Niepoprawne źródło wpisu. | Nie — popraw dane żądania. |
+| `invalid_statement_file` | Nie udało się odczytać pliku wyciągu. Sprawdź format pliku. | Nie — popraw dane żądania. |
 | `invalid_statement_line` | Niepoprawna pozycja wyciągu. | Nie — popraw dane żądania. |
 | `invalid_status` | Niepoprawny status. | Nie — popraw dane żądania. |
 | `invalid_taken_on` | Niepoprawna data wykonania zdjęcia. | Nie — popraw dane żądania. |
@@ -208,6 +211,7 @@ wpisów).
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
 | `match_method_mismatch` | Sposób wpłaty nie pasuje do pozycji wyciągu. | Nie — popraw dane żądania. |
 | `match_not_found` | Nie znaleziono dopasowania. | Nie — popraw dane żądania. |
+| `matched_in_other_reconciliation` | Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku. | Nie — popraw dane żądania. |
 | `meeting_not_found` | Nie znaleziono zebrania. | Nie — popraw dane żądania. |
 | `method_not_allowed` | Ta operacja jest niedostępna. | Zależy od kontekstu (patrz moduł trasy). |
 | `mfa_enrollment_required` | Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą. | Nie — popraw dane żądania. |
@@ -284,10 +288,17 @@ wpisów).
 | `sending_disabled` | Wysyłka e-mail jest wyłączona w tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `service_unavailable` | Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `snapshot_required` | Najpierw utwórz kopię stanu danych. | Nie — popraw dane żądania. |
+| `statement_account_mismatch` | Rachunek w pliku wyciągu nie jest zatwierdzonym rachunkiem Rady. | Nie — popraw dane żądania. |
+| `statement_account_unsupported` | Ten rodzaj numeru rachunku w wyciągu nie jest obsługiwany. | Nie — popraw dane żądania. |
+| `statement_already_imported` | Ten plik wyciągu został już zaimportowany. | Nie — popraw dane żądania. |
+| `statement_amount_out_of_range` | Kwota w wyciągu przekracza dozwolony zakres. | Nie — popraw dane żądania. |
+| `statement_currency_unsupported` | Obsługiwane są wyłącznie wyciągi w EUR. | Nie — popraw dane żądania. |
 | `statement_date_outside_school_year` | Data wyciągu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `statement_line_after_statement_date` | Pozycja wyciągu ma datę późniejszą niż data wyciągu. | Zależy od kontekstu (patrz moduł trasy). |
 | `statement_line_not_found` | Nie znaleziono pozycji wyciągu. | Nie — popraw dane żądania. |
 | `statement_line_not_income` | Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia. | Nie — popraw dane żądania. |
+| `statement_multiple_not_supported` | Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno. | Nie — popraw dane żądania. |
+| `statement_transaction_id_missing` | Ruch w wyciągu nie ma identyfikatora transakcji banku. | Nie — popraw dane żądania. |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `task_full` | Brak wolnych miejsc w tym zadaniu. Odśwież listę. | Zależy od kontekstu (patrz moduł trasy). |
 | `task_time_outside_event` | Czas zadania musi mieścić się w czasie wydarzenia. | Zależy od kontekstu (patrz moduł trasy). |

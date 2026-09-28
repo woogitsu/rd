@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
 import { createSessionSecret, hashSecret } from '../auth.js';
 import { insertAuditEvent } from './audit.js';
 import {
-  createSession, grantInvitation, INVITATION_TOKEN_PATTERN, isoTimestamp, lockInvitation, revokeUserSessionsWith, rotateSession,
+  createSession, grantInvitation, INVITATION_TOKEN_PATTERN, isoTimestamp, isSelfInvitation, lockInvitation, revokeUserSessionsWith, rotateSession,
 } from './auth.js';
 import { mfaStatus } from './mfa-policy.js';
 import {
@@ -398,6 +398,9 @@ export async function acceptInvitationWithPassword(env, { token, password, passw
       });
     }
     if (user.disabled_at) throw new LoginError('invalid_invitation', 400);
+    // #146: zaproszenie wystawione przez to samo konto (admin zaprosił własny
+    // adres) nie nadaje mu roli — samonadanie z pominięciem drugiej osoby.
+    if (await isSelfInvitation(tx, invitation, user.id)) throw new LoginError('invalid_invitation', 400);
     // Stan konta zmienił się między sprawdzeniem hasła a blokadą — klient powinien ponowić.
     if ((existing?.hash ?? null) !== (user.hash ?? null)) throw new LoginError('conflict', 409);
 
