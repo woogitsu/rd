@@ -122,12 +122,15 @@ jobs:
   # (dane wyłącznie syntetyczne, e-mail nigdy nie jest wysyłany — serwer HTTP
   # nie robi tego synchronicznie, patrz tests/e2e/support/server.js).
   #
-  # CELOWO nie jest wymagany przez ci-ok (continue-on-error): runnery
-  # self-hosted nie mają Dockera i NIE WIADOMO, czy mają zainstalowaną
-  # przeglądarkę Chromium ani czy `playwright install --with-deps` zadziała
-  # bez sudo/dostępu do sieci na danym runnerze. Dopóki to nie zostanie
-  # potwierdzone na realnym runnerze, awaria tego joba nie blokuje PR — patrz
-  # opis w PR.
+  # Chromium jest wstępnie zainstalowany na runnerach self-hosted w
+  # /opt/pw-browsers (PLAYWRIGHT_BROWSERS_PATH ustawiony na poziomie
+  # runnera) — `playwright install` celowo NIE jest tu wywoływane: runnery
+  # nie mają Dockera ani gwarantowanego sudo/dostępu do sieci, patrz
+  # komentarz w playwright.config.js.
+  #
+  # CELOWO nie jest wymagany przez ci-ok (continue-on-error): dopóki to nie
+  # zostanie potwierdzone na realnym runnerze, awaria tego joba nie blokuje
+  # PR — patrz opis w PR.
   e2e:
     runs-on: self-hosted
     timeout-minutes: 15
@@ -140,9 +143,6 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      # Może się nie udać bez sudo/sieci na danym runnerze — stąd cały job
-      # jest continue-on-error, nie tylko ten krok.
-      - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
