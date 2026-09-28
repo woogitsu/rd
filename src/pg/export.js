@@ -553,7 +553,7 @@ export async function buildClassRoster(executor, classId) {
   if (!klass) throw new ExportError('class_not_found');
   const { rows: students } = await executor.query(
     `SELECT s.id, s.first_name, s.last_name
-       FROM enrollments e JOIN students s ON s.id = e.student_id
+       FROM enrollments_current e JOIN students s ON s.id = e.student_id
       WHERE e.class_id = $1 AND e.school_year_id = $2
       ORDER BY s.last_name COLLATE "C", s.first_name COLLATE "C", s.id COLLATE "C"`,
     [klass.id, klass.school_year_id],
@@ -565,7 +565,7 @@ export async function buildClassRoster(executor, classId) {
             CASE WHEN sg.contact_allowed AND g.contact_allowed THEN g.email END AS email,
             sg.is_primary_contact
        FROM student_guardians sg JOIN guardians g ON g.id = sg.guardian_id
-      WHERE sg.student_id IN (SELECT student_id FROM enrollments WHERE class_id = $1 AND school_year_id = $2)
+      WHERE sg.student_id IN (SELECT student_id FROM enrollments_current WHERE class_id = $1 AND school_year_id = $2)
         AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
         AND (sg.ends_on IS NULL OR sg.ends_on >= CURRENT_DATE)
       ORDER BY sg.student_id COLLATE "C", g.last_name COLLATE "C", g.first_name COLLATE "C", g.id COLLATE "C"`,

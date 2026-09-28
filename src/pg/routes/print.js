@@ -64,7 +64,7 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
     values.push(classId);
     if (full) {
       conditions.push(`p.household_id IN (
-        SELECT p2.household_id FROM enrollments e2 JOIN ${primary} p2 ON p2.student_id = e2.student_id
+        SELECT p2.household_id FROM enrollments_current e2 JOIN ${primary} p2 ON p2.student_id = e2.student_id
          WHERE e2.school_year_id = $1 AND e2.class_id = $3)`);
     } else {
       conditions.push('e.class_id = $3');
@@ -77,7 +77,7 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
     : '';
   const { rows } = await db.query(
     `SELECT p.household_id, s.first_name, s.last_name, c.name AS class_name${paymentColumn}
-       FROM enrollments e
+       FROM enrollments_current e
        JOIN students s ON s.id = e.student_id
        JOIN ${primary} p ON p.student_id = e.student_id
        JOIN households h ON h.id = p.household_id
