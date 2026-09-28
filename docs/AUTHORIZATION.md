@@ -137,9 +137,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years/:schoolYearId/expire-grants` | wyłącznie admin | tak | 403 | macierz: zakończony rok syntetyczny |
 | `GET /api/admin/invitations` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/invitations` | wyłącznie admin | tak | 403 | token zwracany raz; bez wysyłki e-mail |
+| `POST /api/admin/invitations` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | token zwracany raz; bez wysyłki e-mail; nadaje rolę przy przyjęciu, więc MFA starsze niż 15 min → `403 mfa_stale` |
 | `POST /api/admin/invitations/:invitationId/revoke` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108) |
+| `POST /api/admin/invitations/:invitationId/reissue` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | odejście od stanu innego niż „oczekujące”: 409 (#108); MFA starsze niż 15 min → `403 mfa_stale` |
 | `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years` | wyłącznie admin | tak | 403 | nowy rok szkolny (#78); zły zakres dat: 400; duplikat id/etykiety: 409 |
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |

@@ -439,6 +439,20 @@ test('password reset, MFA reset and role grant require FRESH MFA (step-up)', asy
     assert.equal(staleGrant.status, 403);
     assert.equal(staleGrant.data.error, 'mfa_stale');
 
+    // Zaproszenie nadaje rolę przy przyjęciu — ten sam krok w górę co /grants
+    // (inaczej przejęta sesja ze starym MFA zapraszała dowolny adres do roli admin).
+    const staleInvite = await post(env, '/api/admin/invitations', stale, { email: 'stale-invite@example.invalid', role: 'admin' });
+    assert.equal(staleInvite.status, 403);
+    assert.equal(staleInvite.data.error, 'mfa_stale');
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM invitations WHERE email = 'stale-invite@example.invalid'")).rows[0].n, 0);
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-admin-stale'");
+    const freshInvite = await post(env, '/api/admin/invitations', stale, { email: 'stale-invite@example.invalid', role: 'board' });
+    assert.equal(freshInvite.status, 201);
+    await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-admin-stale'");
+    const staleReissue = await post(env, `/api/admin/invitations/${freshInvite.data.invitation.id}/reissue`, stale, {});
+    assert.equal(staleReissue.status, 403);
+    assert.equal(staleReissue.data.error, 'mfa_stale');
+
     // Trasy poza zakresem #150 część 2 (lista, wyłączenie/włączenie konta,
     // cofnięcie sesji, cofnięcie przydziału) nadal działają z MFA "kiedyś w sesji".
     await seedUser(db, { userId: 'u-other-target' });
@@ -447,7 +461,7 @@ test('password reset, MFA reset and role grant require FRESH MFA (step-up)', asy
 
     assert.equal(
       (await db.query(
-        "SELECT count(*)::int AS n FROM audit_events WHERE action IN ('auth.password_reset_issued', 'mfa.reset', 'role_grant.created')",
+        "SELECT count(*)::int AS n FROM audit_events WHERE action IN ('auth.password_reset_issued', 'mfa.reset', 'role_grant.created', 'invitation.reissued')",
       )).rows[0].n,
       0,
       'odmowa mfa_stale nic nie zapisuje',

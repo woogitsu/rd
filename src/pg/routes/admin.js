@@ -751,8 +751,9 @@ function allowedMethodsFor(section, pathLength, action) {
 // (reset hasła, wyłączenie MFA) i nadanie roli wymagają MFA potwierdzonego od
 // niedawna, nie tylko kiedyś w tej sesji — sprawdzane PO roli 'admin' (SR-07),
 // więc konto bez dostępu dostaje ten sam `forbidden` niezależnie od wieku MFA.
-// Pozostałe trasy admina (lista, wyłączenie/włączenie konta, cofnięcie sesji,
-// zaproszenia, lata szkolne, cofnięcie przydziału, audyt) zostają przy MFA
+// Utworzenie i ponowne wydanie zaproszenia — jak nadanie roli (rola powstaje
+// przy przyjęciu). Pozostałe trasy admina (lista, wyłączenie/włączenie konta,
+// cofnięcie sesji, cofnięcie zaproszenia, lata szkolne, cofnięcie przydziału, audyt) zostają przy MFA
 // "kiedyś w sesji" jak dotąd — poza zakresem #150 część 2.
 function requireFreshMfa(context) {
   const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
@@ -783,9 +784,15 @@ async function route(request, env, url, json, actorId, context) {
   }
   if (section === 'invitations') {
     if (path.length === 1 && method === 'GET') return listInvitations(env, json);
-    if (path.length === 1 && method === 'POST') return createInvitationRoute(env, actorId, request, json);
+    // Zaproszenie (i jego ponowne wydanie) nadaje rolę w chwili przyjęcia —
+    // to też „nadanie roli”, więc ten sam krok w górę co POST /grants; bez tego
+    // admin ze starym MFA (przejęta sesja) zapraszał dowolny adres do roli admin.
+    if (path.length === 1 && method === 'POST') { requireFreshMfa(context); return createInvitationRoute(env, actorId, request, json); }
     if (path.length === 3 && action === 'revoke' && method === 'POST') return revokeInvitationRoute(env, actorId, decodeId(rawId), json);
-    if (path.length === 3 && action === 'reissue' && method === 'POST') return reissueInvitationRoute(env, actorId, decodeId(rawId), json);
+    if (path.length === 3 && action === 'reissue' && method === 'POST') {
+      requireFreshMfa(context);
+      return reissueInvitationRoute(env, actorId, decodeId(rawId), json);
+    }
   }
   if (section === 'school-years') {
     if (path.length === 1 && method === 'GET') return listSchoolYears(env, json);
