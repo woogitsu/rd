@@ -1113,13 +1113,13 @@ export async function handle(request, env, url, json) {
 
   try {
     if (isReport) {
-      if (method !== 'GET') throw new RequestError('method_not_allowed', 405);
+      if (method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       return await auditReport(request, env, url, json);
     }
     if (path === '/api/reconciliations') {
       if (method === 'GET') return await listReconciliations(request, env, url, json);
       if (method === 'POST') return await createReconciliation(request, env, json);
-      throw new RequestError('method_not_allowed', 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|confirm))?(?:\/([^/]+)\/(revocation))?$/);
     if (!match) return null;
@@ -1128,12 +1128,17 @@ export async function handle(request, env, url, json) {
     if (match[3] && action !== 'matches') return null;
     if (!action && method === 'GET') return await getReconciliation(request, env, id, json);
     if (action === 'suggestions' && method === 'GET') return await suggestMatches(request, env, id, url, json);
-    if (method !== 'POST') throw new RequestError('method_not_allowed', 405);
+    if (method !== 'POST') {
+      // GET, HEAD i inne — jedyne trasy tej ścieżki bez akcji/z 'suggestions' dopuszczają GET,
+      // reszta akcji (lines/matches/confirm/revocation) wyłącznie POST.
+      const allow = (!action || action === 'suggestions') ? 'GET' : 'POST';
+      return json({ error: 'method_not_allowed' }, 405, { Allow: allow });
+    }
     if (action === 'lines') return await importLines(request, env, id, json);
     if (action === 'matches' && match[3]) return await revokeMatch(request, env, id, decodeId(match[3]), json);
     if (action === 'matches') return await confirmMatch(request, env, id, json);
     if (action === 'confirm') return await confirmReconciliation(request, env, id, json);
-    throw new RequestError('method_not_allowed', 405);
+    return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;

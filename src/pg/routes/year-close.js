@@ -510,14 +510,14 @@ export async function handle(request, env, url, json) {
     const schoolYearId = decodeId(match[1]);
     const action = match[2] ?? null;
     if (action === null) {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       return await getStatus(request, env, schoolYearId, json);
     }
     if (action === 'handover') {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       return await handover(request, env, schoolYearId, json);
     }
-    if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
     if (action === 'start') return await startClosing(request, env, schoolYearId, json);
     if (action === 'close') return await closeYear(request, env, schoolYearId, json);
     return await confirmChecklistItem(request, env, schoolYearId, match[3], json);
