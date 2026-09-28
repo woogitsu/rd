@@ -153,6 +153,7 @@ wpisów).
 | `invalid_options` | Niepoprawne ustawienia importu. | Nie — popraw dane żądania. |
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_origin` | Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji. | Nie — popraw dane żądania. |
+| `invalid_payee_name` | Podaj nazwę odbiorcy (maksymalnie 70 znaków). | Nie — popraw dane żądania. |
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
 | `invalid_payee_name` | Podaj nazwę odbiorcy (maksymalnie 70 znaków). | Nie — popraw dane żądania. |
 | `invalid_payment_id` | Niepoprawny identyfikator wpłaty. | Nie — popraw dane żądania. |
