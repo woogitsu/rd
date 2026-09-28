@@ -94,5 +94,9 @@
   {
     "name": "0032_document_uploads.sql",
     "sha256": "3f0acdd347c2729312f55894c7cb3523e649eabd18cc0bd6a7560f9dba530791"
+  },
+  {
+    "name": "0028_cash_opening_and_transfers.sql",
+    "sha256": "4677e923bc40390c0167fdce7206dcff22a3bccec92de383c3ae35c6739e9164"
   }
 ]
