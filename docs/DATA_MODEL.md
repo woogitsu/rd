@@ -67,6 +67,12 @@ Zgoda używana przez kampanię (`computeSnapshot`, worker przed wysyłką) i prz
 
 `enrollments` zachowuje ograniczenia z `0001_core.sql` (jeden wiersz na ucznia i rok) i opisuje stan bieżący. Zmiana klasy w tym samym roku aktualizuje `class_id` i dopisuje wpis `class_changed`; nowy rok szkolny to nowy wiersz `enrollments`. Ponowienie tej samej zmiany (podwójne kliknięcie) niczego nie zapisuje.
 
+#### Konfiguracja roku i klas (0054, issue #78)
+
+`POST /api/admin/school-years` i `POST /api/admin/school-years/{id}/classes` (wyłącznie admin, MFA — patrz nagłówek `src/pg/routes/admin.js`) tworzą rok i jego klasy z audytem (`school_year.created`, `class.created`). Bez trasy usuwania — AC #78 wprost tego zabrania; korekta błędnie utworzonej klasy to nowa klasa i przeniesienie uczniów, nie usunięcie (zgodne z niezmiennością `enrollments`/`enrollment_history`). Migracja 0054 rozszerza zamrożenie roku (`a0_year_freeze`, 0017/0036) o `enrollments` — zmiana lub nowe przypisanie w zamkniętym roku zwraca `school_year_closed`.
+
+Poza zakresem tej migracji (patrz PR — „Część #78"): kopiowanie struktury klas między latami i masowa promocja uczniów z podglądem (`plan`/`digest`/`apply`) — osobny, większy zakres.
+
 ### Jednostka ewidencji składki (D-11)
 
 Model nie rozstrzyga, czy składkę ewidencjonujemy na rodzinę czy na dziecko. Wpłaty nadal wskazują `payment_entries.household_id`; nowe tabele nie są powiązane z wpłatami i nie wyznaczają adresata ani wysokości składki. Główne gospodarstwo jest pojęciem organizacyjnym, nie finansowym.
