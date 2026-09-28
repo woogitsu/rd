@@ -5,8 +5,9 @@ import crypto from 'node:crypto';
 import { handlePgRequest } from '../src/pg/app.js';
 import { checkReadiness } from '../src/health.js';
 import { resolveRuntime } from '../src/server.js';
-import { resolveWriteMode, WRITE_MODE_NORMAL, WRITE_MODE_READ_ONLY } from '../src/write-mode.js';
+import { isWriteExempt, resolveWriteMode, WRITE_MODE_NORMAL, WRITE_MODE_READ_ONLY } from '../src/write-mode.js';
 import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { ROUTE_MATRIX } from './helpers/route-matrix.js';
 
 const BASE = 'https://rd.example';
 
@@ -141,3 +142,35 @@ test('podwójne kliknięcie w chwili przełączenia na read_only: żądanie sprz
   const count = await db.query("SELECT count(*)::int AS n FROM payment_entries WHERE idempotency_key = $1", [key]);
   assert.equal(count.rows[0].n, 1);
 }));
+
+// Bramka read_only działa na samym method+pathname, przed wczytaniem sesji/obiektu
+// (patrz src/pg/app.js) — dlatego dowolna wartość identyfikatora w ścieżce wystarcza.
+// Kryterium akceptacji #143: żaden moduł z tests/helpers/route-matrix.js nie zapisuje
+// w read_only. Test iteruje po całej macierzy tras (#79/#119 pokazały, że lista
+// wpisana ręcznie gubi trasy dopisane później przez inne moduły).
+function stripQuery(pathTemplate) {
+  return pathTemplate.split('?')[0].replace(/:[A-Za-z][A-Za-z0-9]*/g, 'x');
+}
+
+test('read_only: KAŻDA trasa zmieniająca z macierzy tras dostaje 503 (poza zwolnionymi)', async () => {
+  const env = { APP_WRITE_MODE: 'read_only' };
+  const seen = new Set();
+  for (const route of ROUTE_MATRIX) {
+    if (route.method === 'GET') continue;
+    const pathname = stripQuery(route.path);
+    if (seen.has(`${route.method} ${pathname}`)) continue;
+    seen.add(`${route.method} ${pathname}`);
+    const response = await handlePgRequest(call(null, pathname, { method: route.method, body: {} }), env);
+    if (isWriteExempt(pathname)) {
+      assert.notEqual(response.status, 503, `${route.id}: trasa zwolniona nie powinna dostać 503`);
+      continue;
+    }
+    assert.equal(response.status, 503, `${route.id} (${route.module}): oczekiwano 503 read_only, otrzymano ${response.status}`);
+    const body = await response.clone().json();
+    assert.deepEqual(body, { error: 'read_only' }, `${route.id}: nieoczekiwana treść odpowiedzi`);
+  }
+  // Meta-asercja: macierz nie jest pusta i faktycznie objęła wiele modułów (jak
+  // w tests/pg-authz-matrix.test.js) — inaczej test przechodziłby pusty i nic nie sprawdzał.
+  const modules = new Set(ROUTE_MATRIX.filter((route) => route.method !== 'GET').map((route) => route.module));
+  assert.ok(modules.size >= 10, `spodziewano się tras z co najmniej 10 modułów, jest ${modules.size}`);
+});
