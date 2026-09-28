@@ -584,3 +584,163 @@ test('replay does not report success when the object behind the idempotency key 
   assert.equal(retry.response.status, 409);
   assert.equal(retry.data.error, 'document_content_missing');
 }));
+
+// --- Tytuł, kategoria i wyszukiwanie (issue #76) ------------------------------------
+
+function describeRequest({ cookie, id, key, body, origin, headers = {} }) {
+  return request(`/api/documents/${id}/description`, {
+    method: 'POST', cookie, origin,
+    headers: { 'Idempotency-Key': key ?? `desc-key-${++keyCounter}-${Date.now()}`, ...headers },
+    body: body ?? { title: 'Faktura — wynajem sali, październik', category: 'faktura', documentDate: '2026-10-05' },
+  });
+}
+
+async function describe(env, options) {
+  const response = await handlePgRequest(describeRequest(options), env);
+  return { response, data: await response.json().catch(() => null) };
+}
+
+test('treasurer adds a title and category to a financial document; history keeps the previous version', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+
+  const first = await describe(env, { cookie, id });
+  assert.equal(first.response.status, 201);
+  assert.equal(first.data.description.revisionNo, 1);
+  assert.equal(first.data.description.title, 'Faktura — wynajem sali, październik');
+
+  const second = await describe(env, {
+    cookie, id, body: { title: 'Faktura — wynajem sali, poprawiona data', category: 'faktura', documentDate: '2026-10-06' },
+  });
+  assert.equal(second.response.status, 201);
+  assert.equal(second.data.description.revisionNo, 2);
+
+  const meta = await get(env, `/api/documents/${id}`, cookie);
+  const metaData = await meta.json();
+  assert.equal(metaData.document.title, 'Faktura — wynajem sali, poprawiona data');
+  assert.equal(metaData.descriptionHistory.length, 2);
+  assert.equal(metaData.descriptionHistory[0].revisionNo, 2);
+  assert.equal(metaData.descriptionHistory[1].revisionNo, 1);
+  assert.equal(metaData.descriptionHistory[1].title, 'Faktura — wynajem sali, październik');
+
+  const rows = await auditRows(db, 'document.described');
+  assert.equal(rows.length, 2);
+  await assertNoPii(rows.map((row) => row.metadata_json));
+  assert.equal(JSON.stringify(rows[0].metadata_json).includes('Faktura'), false);
+}));
+
+test('class representative can only describe documents of their own class', async () => withEnv(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const { data } = await upload(env, { cookie, kind: 'class', classId: 'c-1a' });
+  const id = data.document.id;
+
+  const repACookie = await repA(db);
+  const okResponse = await describe(env, { cookie: repACookie, id });
+  assert.equal(okResponse.response.status, 201);
+
+  const repBCookie = await repB(db);
+  const denied = await describe(env, { cookie: repBCookie, id, key: `desc-key-${++keyCounter}` });
+  assert.equal(denied.response.status, 404);
+}));
+
+test('unknown document id gives the same 404 as an inaccessible one (no existence oracle)', async () => withEnv(async (db, env) => {
+  const repBCookie = await repB(db);
+  const missing = await describe(env, { cookie: repBCookie, id: '00000000-0000-4000-8000-000000000000' });
+  assert.equal(missing.response.status, 404);
+}));
+
+test('double click and network retry with the same Idempotency-Key reuse the row; different content conflicts', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+  const key = 'describe-double-click';
+
+  const first = await describe(env, { cookie, id, key });
+  const retry = await describe(env, { cookie, id, key });
+  assert.equal(first.response.status, 201);
+  assert.equal(retry.response.status, 200);
+  assert.equal(retry.data.replayed, true);
+  assert.equal(retry.data.description.revisionNo, 1);
+
+  const conflict = await describe(env, { cookie, id, key, body: { title: 'Inny tytuł, ten sam klucz', category: 'inne' } });
+  assert.equal(conflict.response.status, 409);
+  assert.equal(conflict.data.error, 'idempotency_conflict');
+
+  const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions WHERE document_id = $1', [id]);
+  assert.equal(count.rows[0].n, 1);
+}));
+
+test('description validation: title length, unknown category, malformed date and oversize description', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+
+  assert.equal((await describe(env, { cookie, id, body: { title: 'ab', category: 'faktura' } })).response.status, 400);
+  assert.equal((await describe(env, { cookie, id, body: { title: 'Poprawny tytuł', category: 'nieznana' } })).response.status, 400);
+  assert.equal((await describe(env, { cookie, id, body: { title: 'Poprawny tytuł', category: 'faktura', documentDate: '2026-13-40' } })).response.status, 400);
+  assert.equal((await describe(env, { cookie, id, body: { title: 'Poprawny tytuł', category: 'faktura', description: 'x'.repeat(1001) } })).response.status, 400);
+  assert.equal((await describe(env, { cookie, id, key: 'no-body-key' })).response.status, 201);
+}));
+
+test('search finds a title within scope, but never a document from another class or from board (no oracle)', async () => withEnv(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const uploadA = await upload(env, { cookie, kind: 'class', classId: 'c-1a' });
+  const uploadB = await upload(env, { cookie, kind: 'class', classId: 'c-1b' });
+  const uploadBoard = await upload(env, { cookie, kind: 'board' });
+  await describe(env, { cookie, id: uploadA.data.document.id, body: { title: 'Regulamin wycieczki klasowej', category: 'regulamin' } });
+  await describe(env, { cookie, id: uploadB.data.document.id, body: { title: 'Regulamin świetlicy', category: 'regulamin' } });
+  await describe(env, { cookie, id: uploadBoard.data.document.id, body: { title: 'Regulamin Rady Rodziców', category: 'regulamin' } });
+
+  const repACookie = await repA(db);
+  const response = await get(env, `/api/documents?schoolYearId=${YEAR}&q=Regulamin`, repACookie);
+  const listData = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(listData.documents.length, 1);
+  assert.equal(listData.documents[0].title, 'Regulamin wycieczki klasowej');
+}));
+
+test('category filter narrows the list in SQL', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const invoice = await upload(env, { cookie });
+  const bankStatement = await upload(env, { cookie });
+  await describe(env, { cookie, id: invoice.data.document.id, body: { title: 'Faktura za wynajem', category: 'faktura' } });
+  await describe(env, { cookie, id: bankStatement.data.document.id, body: { title: 'Wyciąg bankowy wrzesień', category: 'wyciag' } });
+
+  const response = await get(env, `/api/documents?schoolYearId=${YEAR}&category=wyciag`, cookie);
+  const listData = await response.json();
+  assert.equal(listData.documents.length, 1);
+  assert.equal(listData.documents[0].category, 'wyciag');
+}));
+
+test('document without any description shows title: null (panel renders "Bez tytułu")', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const meta = await get(env, `/api/documents/${data.document.id}`, cookie);
+  const metaData = await meta.json();
+  assert.equal(metaData.document.title, null);
+  assert.equal(metaData.descriptionHistory.length, 0);
+}));
+
+test('document_descriptions rows are immutable', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  await describe(env, { cookie, id: data.document.id });
+  await assert.rejects(
+    db.query("UPDATE document_descriptions SET title = 'x' WHERE document_id = $1", [data.document.id]),
+    /document_descriptions_are_immutable/,
+  );
+  await assert.rejects(
+    db.query('DELETE FROM document_descriptions WHERE document_id = $1', [data.document.id]),
+    /document_descriptions_are_immutable/,
+  );
+}));
+
+test('cross-origin describe request is refused before touching the database', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const response = await handlePgRequest(describeRequest({ cookie, id: data.document.id, origin: 'https://evil.example' }), env);
+  assert.equal(response.status, 403);
+  const count = await db.query('SELECT count(*)::int AS n FROM document_descriptions');
+  assert.equal(count.rows[0].n, 0);
+}));
