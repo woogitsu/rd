@@ -1,6 +1,6 @@
 # Księga przychodów, wydatków i preliminarz
 
-Migracja `0007_ledger_schema.sql` rozwija początkową tabelę `ledger_entries` w niezmienną księgę opartą na centach EUR. Ten etap definiuje model i reguły integralności; nie udostępnia jeszcze API ani interfejsu.
+**Status: model w bazie (migracja `0007_ledger_schema.sql`), API na PostgreSQL (`src/pg/routes/ledger.js`, sekcja niżej) i panel (`ledger/`) — istnieją jako prototyp na danych syntetycznych, nie wdrożone na Railway ani zatwierdzone do pracy na danych rodzin.** Migracja `0007_ledger_schema.sql` rozwija początkową tabelę `ledger_entries` w niezmienną księgę opartą na centach EUR i definiuje model oraz reguły integralności.
 
 ## Zapisy księgi
 
@@ -39,16 +39,18 @@ Zmiana kategorii, daty, metody lub kierunku wpisu (najczęstsze pomyłki skarbni
 
 Dostęp dla dyrekcji i Komisji Rewizyjnej pozostaje wyłączony do zatwierdzenia macierzy kompetencji przez szkołę.
 
-## Dalsze etapy
+## Interfejs
 
-- uzgadnianie księgi z wyciągiem,
-- eksport PDF (eksport CSV: patrz niżej, tylko router PostgreSQL),
-- powiązanie wpisów z prywatnymi dokumentami w Railway Storage Bucket ([DOCUMENTS.md](DOCUMENTS.md)),
 Interfejs w `ledger/` pokazuje podsumowanie roku, bieżący preliminarz i filtrowane wpisy. Pozwala tworzyć przychody lub wydatki i dopisywać korekty, korzystając wyłącznie z chronionego API. Formularz wymusza referencję uchwały dla wydatku powyżej 3000 EUR i zachowuje klucz idempotencji przy ponowieniu tego samego żądania.
 
-- interfejs uzgadniania rachunku,
-- edycja preliminarza,
-- formularz przesyłania prywatnego dokumentu (API: [DOCUMENTS.md](DOCUMENTS.md)).
+## Dalsze etapy
+
+Uzgadnianie księgi z wyciągiem bankowym już istnieje — patrz [RECONCILIATION.md](RECONCILIATION.md) (`src/pg/routes/reconciliation.js`), nie jest to już przyszły etap tego modułu. Pozostałe punkty:
+
+- eksport PDF (eksport CSV: patrz niżej, tylko router PostgreSQL),
+- powiązanie wpisów z prywatnymi dokumentami w Railway Storage Bucket ([DOCUMENTS.md](DOCUMENTS.md)),
+- edycja preliminarza w interfejsie (dziś tylko odczyt bieżącej wersji przez `GET /api/ledger/budget`),
+- formularz przesyłania prywatnego dokumentu w interfejsie księgi (API: [DOCUMENTS.md](DOCUMENTS.md)).
 
 Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowania, korekt, uchwał i dostępu przez Radę oraz szkołę.
 

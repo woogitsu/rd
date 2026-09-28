@@ -13,7 +13,7 @@ monitoringu z #16. Kontekst: [plan migracji](RAILWAY_MIGRATION.md),
 |---|---|---|
 | Konfiguracja usługi | `railway.json` | build `npm ci && npm run build`, start `node src/server.js` (bezpośrednio, aby SIGTERM trafił do serwera), healthcheck `/health` (liveness), `drainingSeconds: 15`, restart `ON_FAILURE` (maks. 5 prób), region `europe-west4-drams3a` (Amsterdam), bez usypiania |
 | Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE |
-| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`) i przez prawdziwy HTTP z migracjami (`200`), wszystkich 11 paneli (`STATIC_PREFIXES`), nagłówki, `404` dla ścieżek prywatnych/traversal i brak `*.map`, granice ról na poziomie HTTP |
+| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`) i przez prawdziwy HTTP z migracjami (`200`), wszystkich 13 paneli (`STATIC_PREFIXES`), nagłówki, `404` dla ścieżek prywatnych/traversal i brak `*.map`, granice ról na poziomie HTTP |
 | Smoke test zdalny | `npm run smoke:remote` (`scripts/smoke-remote.js`) | wyłącznie `GET`, po deployu stagingu (sekcja „Smoke test po deployu” niżej) |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
 | Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
@@ -488,7 +488,7 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
 | Konfiguracja Railway bez sekretów, region UE, bez migracji przy starcie | `railway.json`, `tests/railway-config.test.js` | w repo |
 | Test wolumenu 1000 uczniów / 2000 kontaktów / 50 użytkowników | `tests/postgres-volume.test.js` (PGlite) | w repo; powtórzyć na stagingu |
 | Testy bezpieczeństwa: role, MFA, zakres przedstawiciela, ochrona plików | #35, #39 | do wykonania |
-| Równoważność starego i nowego API (te same żądania, porównanie statusów i JSON na danych syntetycznych) | #35–#38 | do wykonania |
+| Równoważność starego i nowego API (te same żądania, porównanie statusów i JSON na danych syntetycznych) | `docs/EQUIVALENCE.md`, `tests/api-parity-session.test.js`, `tests/pg-payments-api.test.js`, `tests/pg-ledger-api.test.js` (#35–#38) | w repo (na danych syntetycznych); powtórzyć na stagingu |
 | Staging Railway na danych syntetycznych | protokół | do wykonania |
 | Test 50 równoczesnych użytkowników na stagingu | `npm run load:test -- --target … --i-confirm-staging`, tabela „Wyniki” | skrypt w repo, pomiar lokalny (PGlite, niereprezentatywny); staging do wykonania |
 | Backup PostgreSQL i próbne odtworzenie | tabela wyżej | do wykonania |

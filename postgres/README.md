@@ -236,6 +236,21 @@ ani usunąć. Wycofanie na pustej bazie: usunięcie tabeli i funkcji
 `export_run_immutable`; na bazie z danymi — po kopii i decyzji o retencji
 (D-04). Szczegóły: [`docs/EXPORT.md`](../docs/EXPORT.md).
 
+`0017_year_close.sql` (issue #15) dodaje tabele `school_year_closures` i
+`school_year_closure_checklist`. Skutki dla danych: migracja tylko dodaje
+tabele; żaden istniejący wiersz nie jest zmieniany ani usuwany. Rok bez
+wiersza w `school_year_closures` jest „otwarty”; rozpoczęcie zamknięcia
+tworzy wiersz `closing`, zamknięcie zmienia go na `closed`. Bilans zamknięcia
+jest liczony z `ledger_year_summary` (0003) i przenoszony jako
+`ledger_opening_balances` następnego roku. Po zamknięciu triggery odrzucają
+nowe zapisy przypisane do zamkniętego roku (wpłaty, księga, wydarzenia,
+zebrania, przydziały ról w tym roku…) — odczyt pozostaje bez zmian; korekta
+po zamknięciu nie ma dziś ścieżki w aplikacji. Przydziały ról zawężone do
+zamykanego roku dostają `expires_at` (jedyna zmiana dozwolona przez trigger
+0004); wiersze zostają. Wycofanie na pustej bazie: usunięcie tabel i
+triggerów zamrożenia; na bazie z danymi — po kopii, bo cofnięcie zgubiłoby
+zapis, które lata były zamknięte. Szczegóły: [`docs/YEAR_CLOSE.md`](../docs/YEAR_CLOSE.md).
+
 `0014_households.sql` (issue #5) dodaje wiele gospodarstw ucznia
 (`student_households`, jedno główne na okres), członkostwo opiekunów w
 gospodarstwach (`guardian_households`), historię zmian kontaktu
@@ -329,3 +344,107 @@ dotykają wielu tabel i seedów testowych naraz, osobny PR. Wycofanie na
 pustej bazie: usunięcie dwóch nowych triggerów/funkcji i przywrócenie
 `email_campaign_guard()` z `0063_email_campaign_schedule_pause.sql`; na
 bazie z danymi — bezpieczne, żaden wiersz nie jest zmieniany ani usuwany.
+
+## Migracje bez osobnego przeglądu wyżej (#175)
+
+Poniższe migracje mają pełny opis skutków dla danych w nagłówku własnego
+pliku SQL (`postgres/migrations/`); tu tylko streszczenie i odwołanie do
+issue, żeby test spójności dokumentacji (`tests/docs-consistency.test.js`)
+wymuszał wpis dla każdego pliku migracji.
+
+`0024_reconciliation_match_integrity.sql` (#162, część #165) dodaje widok
+`bank_match_consistency`: dla każdego aktywnego powiązania uzgodnienia
+pokazuje, czy kwota pozycji wyciągu zgadza się z bieżącym netto celu i czy
+te same pieniądze nie są policzone podwójnie (wpłata i wpis księgi, który ją
+ujmuje, powiązane jednocześnie). Wyłącznie odczyt — bez zmiany danych.
+
+`0032_document_uploads.sql` (#168) dodaje tabelę `document_uploads`:
+zamiar przesłania dokumentu zapisywany w stanie `pending` przed `PUT` do
+bucketu, potem w jednej transakcji zamieniany na `documents` + `committed` +
+zdarzenie audytu. Chroni przed obiektem osieroconym po awarii w trakcie
+przesyłania. Bez zmiany istniejących wierszy.
+
+`0035_student_guardians_current.sql` (#157) ujednolica trzy niezależne,
+rozjeżdżające się warunki daty „aktualnego” opiekuna (karta gospodarstwa,
+kampania e-mail, lista klasy) w jedną funkcję/widok korzystający z
+`rd_today()` (Europe/Brussels, jak `0023`). Bez zmiany istniejących wierszy.
+
+`0036_year_freeze_finance.sql` (#80) rozszerza zamrożenie zamkniętego roku
+(`0017`) na tabele uzgodnienia rachunku (`bank_reconciliations`,
+`bank_statement_imports`, `bank_statement_lines`,
+`bank_reconciliation_matches`, `0015`), które dotąd nie były objęte. Bez
+zmiany istniejących wierszy; zmienia się wyłącznie zachowanie przyszłych
+zapisów w zamkniętym roku.
+
+`0037_scope_reference_checks.sql` (#205) rozszerza dwie istniejące funkcje
+triggerów (`CREATE OR REPLACE`, te same triggery z `0009` nadal ich
+używają) tak, by identyfikatory w treści żądań były sprawdzane względem
+zakresu (klasa/rok), a nie tylko względem istnienia przez klucz obcy. Bez
+zmiany danych ani nowych triggerów.
+
+`0038_payment_ledger_consistency.sql` (#138) wymusza w
+`ledger_entry_insert_guard`, że wpis księgi powiązany z wpłatą
+(`payment_entry_id`) ma kwotę równą bieżącemu netto tej wpłaty (kwota minus
+korekty minus zwroty) w chwili zapisu — inaczej `422
+ledger_payment_amount_mismatch`; wyjątek dla trybu odtworzenia (wzorem
+`0027`). Dodaje też `payment_refunds` i `payment_reassignments`. Zobacz też
+`0049` (naprawa kolizji z `0036`).
+
+`0039_reconciliation_correction_guard.sql` (#165) rozszerza
+`ledger_correction_guard`/`payment_correction_guard`: korekta wpisu/wpłaty
+z aktywnym powiązaniem w uzgodnieniu o statusie `draft` jest odrzucana
+(`409 active_bank_match`) zamiast po cichu rozjeżdżać uzgodnienie. System
+świadomie nie cofa powiązania automatycznie.
+
+`0040_ledger_replacement.sql` (#144) dodaje `ledger_entries.replaces_entry_id`
+(nullable, sprawdzane triggerem — wymaga też zgodności `school_year_id`) i
+unikalny częściowy indeks: wpis może zostać zastąpiony co najwyżej raz.
+Wspiera przeksięgowanie jako storno + wpis zastępczy (`docs/LEDGER.md`).
+
+`0049_year_freeze_union.sql` naprawia kolizję dwóch wersji
+`year_freeze_via_parent()`: `0036` i `0038`, pisane równolegle na tej samej
+bazowej wersji z `0017`, nadpisały się nawzajem (migracje stosowane są w
+kolejności nazw) — `0038` gubił gałąź `0036` dla tabel uzgodnienia. Ta
+migracja łączy obie gałęzie w jedną funkcję. Bez zmiany danych.
+
+`0054_enrollment_freeze.sql` (#78, punkt 4) dodaje trigger `a0_year_freeze`
+na `enrollments`, spójny z `payment_entries`/`ledger_entries`/`events`/…
+(`0017`): zapis wskazujący zamknięty rok dostaje `school_year_closed`. Bez
+nowych kolumn ani zmiany istniejących wierszy.
+
+`0055_enrollment_end.sql` (#86, część) dodaje
+`enrollments.ended_on`/`ended_reason`/`ended_by`/`ended_at` — odejście ze
+szkoły w trakcie roku kończy przypisanie do klasy zamiast go usuwać.
+Wszystkie istniejące wiersze dostają `ended_on = NULL` (bez zmian).
+Zakończenie relacji opiekun–dziecko i członkostwa w gospodarstwie zostaje
+poza zakresem (osobna migracja/PR).
+
+`0058_backup_runs.sql` (#90) dodaje tabelę append-only `backup_runs` —
+dziennik przebiegów kopii zapasowej PostgreSQL i próbnego odtworzenia (jak
+`email_worker_runs` w `0007`), obejmujący też `storage_backup` (kopia
+prywatnego bucketu dokumentów, #103) dla jednego źródła „ostatni udany
+backup” (#149). Nowa tabela; nic wstecznego.
+
+`0059_list_indexes.sql` (#159, część 2) dodaje wyłącznie indeksy pod listy z
+kursorem (m.in. `audit_events(occurred_at DESC, id)`). Bez nowych kolumn,
+tabel ani zmiany danych; zapis robi nieco więcej pracy (utrzymanie
+indeksów), zaniedbywalne przy obecnej skali.
+
+`0061_meetings_mfa_four_eyes.sql` (#135, SR-10) aktualizuje wyłącznie ciało
+funkcji `meeting_minutes_change_guard()`: zatwierdzenie protokołu przez tę
+samą osobę, która go napisała, kończy się `minutes_four_eyes_required` — też
+przy bezpośrednim `UPDATE` z pominięciem API. Bez zmiany danych.
+
+`0067_data_access_log.sql` (#133) dodaje osobną (nie `audit_events`) tabelę
+`data_access_log` — dziennik odczytu danych dzieci i opiekunów (lista
+klasy, karta gospodarstwa, kartki, lista wpłat). Nowa tabela; brak historii
+odczytów sprzed tej migracji. Retencja nieustalona (D-04) — domyślnie nie
+usuwać.
+
+`0069_mfa_key_rotation.sql` (#134) dodaje
+`mfa_recovery_codes.rotated_to_factor_id` (nullable FK), żeby rotacja
+`MFA_ENCRYPTION_KEY` (`scripts/rotate-mfa-key.js`) mogła wstawić nowy wiersz
+czynnika MFA zamiast nadpisywać niezmienny `user_mfa_factors` (trigger
+`0013`) i przenieść nieużyte kody odzyskiwania na nowy czynnik zamiast je
+logicznie unieważniać. Wyłącznie nowa kolumna; bez zmiany istniejących
+wierszy (domyślnie `NULL`).

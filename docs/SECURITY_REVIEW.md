@@ -6,6 +6,24 @@ Status stosu: prototyp na danych syntetycznych, niewdrożony. Przegląd nie ozna
 
 Testy regresyjne: `tests/security-pg-review.test.js`, `tests/security-scope-api.test.js` (SR-01b, SR-07, SR-14) i macierz `tests/pg-authz-matrix.test.js`. Poprawki nie zmieniają schematu (brak nowej migracji).
 
+## Poza zakresem przeglądu (#175)
+
+Ten przegląd nie obejmuje poniższych modułów i migracji o wysokim ryzyku
+(dane osobowe, role, pliki). Nie przeszły przeglądu — z faktu istnienia
+tego dokumentu nie należy wnioskować, że kod kont, MFA i dokumentów jest
+sprawdzony pod kątem bezpieczeństwa:
+
+- `src/pg/routes/admin.js` (role, konta, zaproszenia, wygaszenie kadencji),
+- `src/pg/mfa.js`, `src/pg/routes/mfa.js` (rejestracja i weryfikacja MFA, poza pojedynczą luką wymienioną przy SR-01b),
+- `src/pg/routes/documents.js` (pobieranie prywatnych plików ze Storage Bucket),
+- webhook Brevo (`src/pg/routes/email.js:621` i okolice — jedyna trasa bez kontroli `Origin`, z konieczności),
+- `src/pg/routes/import.js` (import uczniów i rodzin z pliku),
+- `src/pg/routes/exports.js` (eksport roczny i archiwum),
+- `src/pg/routes/families.js` (katalog rodzin, uczniów i opiekunów),
+- `postgres/migrations/0013`–`0018` (MFA, aktualności, hasła, gospodarstwa, uzgodnienia, eksporty) i wszystkie migracje po `0018`.
+
+Przegląd tych modułów jest osobnym zadaniem (nie częścią #175).
+
 ## Ustalenia
 
 | ID | Waga | Miejsce | Opis | Status |

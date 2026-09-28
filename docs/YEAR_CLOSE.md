@@ -22,7 +22,7 @@ Każdy punkt potwierdza osoba z rolą zarządu albo skarbnika (MFA). Zapisywane 
 | `audit_commission_report` | raport Komisji Rewizyjnej przekazany |
 | `minutes_approved` | protokoły zebrań zatwierdzone |
 | `resolutions_archived` | uchwały zebrane w archiwum |
-| `reconciliation_confirmed` | księga uzgodniona z rachunkiem (moduł uzgodnień, migracja 0015, powstaje osobno) |
+| `reconciliation_confirmed` | księga uzgodniona z rachunkiem (moduł uzgodnień istnieje — `src/pg/routes/reconciliation.js`, migracja `0015`, [docs/RECONCILIATION.md](RECONCILIATION.md)) |
 | `documents_handed_over` | dokumenty przekazane nowej Radzie |
 
 Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawienie przekazania pokazuje pomocniczo np. liczbę odbytych zebrań bez zatwierdzonego protokołu.
@@ -76,7 +76,7 @@ Wszystkie trasy: aktywna sesja, MFA, przydział bez zawężenia do klasy, w zakr
 | `POST /api/year-close/{rok}/close` | zarząd | 200; 409 `checklist_incomplete` (z listą braków), `four_eyes_required`, `next_year_opening_balance_exists` |
 | `GET /api/year-close/{rok}/handover` | zarząd, skarbnik; po zamknięciu także zarząd/skarbnik roku następnego i admin (tylko odczyt) | zestawienie przekazania (JSON) |
 
-Zestawienie przekazania zawiera wyłącznie liczby, sumy w centach EUR i identyfikatory: bilans (z podziałem rachunek/kasa: `openingCashCents`, `closingCashCents`, `closingBankCents`; bilans otwarcia nowego roku z `cashCents`), liczby wpisów i korekt księgi, sumy wpłat zapisanych i niewyjaśnionych (bez rodzin), zebrania według stanu i liczbę odbytych bez zatwierdzonego protokołu, uchwały według stanu (bieżące wersje), wydarzenia według stanu, listę kontrolną z identyfikatorami osób, liczbę wygaszonych ról i aktywne role nowego roku. Nie zawiera imion, adresów e-mail ani danych dzieci. Suma wpłat nie jest listą „dłużników” — składki są dobrowolne. Eksport PDF/CSV (0016) powstaje osobno.
+Zestawienie przekazania zawiera wyłącznie liczby, sumy w centach EUR i identyfikatory: bilans (z podziałem rachunek/kasa: `openingCashCents`, `closingCashCents`, `closingBankCents`; bilans otwarcia nowego roku z `cashCents`), liczby wpisów i korekt księgi, sumy wpłat zapisanych i niewyjaśnionych (bez rodzin), zebrania według stanu i liczbę odbytych bez zatwierdzonego protokołu, uchwały według stanu (bieżące wersje), wydarzenia według stanu, listę kontrolną z identyfikatorami osób, liczbę wygaszonych ról i aktywne role nowego roku. Nie zawiera imion, adresów e-mail ani danych dzieci. Suma wpłat nie jest listą „dłużników” — składki są dobrowolne. Eksport roczny (0016, `docs/EXPORT.md`, `POST /api/exports`) już istnieje dla listy klasy (JSON/CSV) i archiwum kadencji, ale **nie** dla samego zestawienia przekazania: `GET /api/year-close/{rok}/handover` zwraca dziś wyłącznie JSON — drukowalny PDF/CSV tego konkretnego dokumentu (do podpisu przy przekazaniu) nie istnieje i pozostaje przyszłym etapem.
 
 Po zamknięciu osoby, których jedyny przydział był zawężony do starego roku, tracą dostęp — także do tego zestawienia (zamknięcie wygasza przydziały roku, również `audit` i `treasurer`).
 
