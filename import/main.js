@@ -2,6 +2,11 @@ import { readXlsxRows } from './xlsx.js';
 import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
+import { mountShell } from '../shared/shell.js';
+import '../shared/shell.css';
+
+mountShell();
+
 const fileInput = document.querySelector('#file');
 const encodingSelect = document.querySelector('#encoding');
 const status = document.querySelector('#file-status');

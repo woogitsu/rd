@@ -11,6 +11,10 @@ import {
   parseEuroAmount,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const state = { entries: [], categories: [], nextCursor: null, requestKey: null };
 const byId = (id) => document.getElementById(id);
