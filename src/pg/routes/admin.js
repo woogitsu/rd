@@ -601,10 +601,7 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
   const created = await createInvitation(env, {
     actorId, email: invitation.email, role: invitation.role,
     classId: invitation.class_id, schoolYearId: invitation.school_year_id,
-  });
-  await insertAuditEvent(env.db, {
-    actorId, action: 'invitation.reissued', entityType: 'invitation', entityId: created.invitationId,
-    metadata: { replacesInvitationId: invitationId },
+    replacesInvitationId: invitationId,
   });
   return json({
     invitation: {
