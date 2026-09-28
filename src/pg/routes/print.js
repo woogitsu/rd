@@ -21,6 +21,7 @@
 
 import { loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { recordDataAccess } from '../data-access.js';
 import { toSafeInteger } from './payments.js';
 import { effectiveDay } from '../today.js';
 
@@ -118,12 +119,19 @@ export async function handle(request, env, url, json) {
   const scope = printScope(context, { schoolYearId, classId });
   if (scope.error) return json({ error: scope.error }, scope.status);
 
+  const actorId = context.session.user.id;
   if (classId) {
     const { rows } = await env.db.query('SELECT 1 FROM classes WHERE id = $1 AND school_year_id = $2', [classId, schoolYearId]);
-    if (!rows.length) return json({ error: 'class_not_found' }, 404);
+    if (!rows.length) {
+      await recordDataAccess(env, { actorId, accessKind: 'print_cards', schoolYearId, classId, outcome: 'not_found' });
+      return json({ error: 'class_not_found' }, 404);
+    }
   } else {
     const { rows } = await env.db.query('SELECT 1 FROM school_years WHERE id = $1', [schoolYearId]);
-    if (!rows.length) return json({ error: 'school_year_not_found' }, 404);
+    if (!rows.length) {
+      await recordDataAccess(env, { actorId, accessKind: 'print_cards', schoolYearId, outcome: 'not_found' });
+      return json({ error: 'school_year_not_found' }, 404);
+    }
   }
 
   const rows = await loadRows(env.db, { schoolYearId, classId, ...scope, on: effectiveDay(env) });
@@ -142,6 +150,9 @@ export async function handle(request, env, url, json) {
       studentCount: rows.length,
       paymentInfoIncluded: scope.paymentInfo,
     },
+  });
+  await recordDataAccess(env, {
+    actorId, accessKind: 'print_cards', schoolYearId, classId, outcome: 'ok', rowCount: rows.length,
   });
 
   return json({

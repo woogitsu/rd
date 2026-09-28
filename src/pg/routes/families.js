@@ -19,6 +19,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { recordDataAccess } from '../data-access.js';
 
 export const name = 'families';
 
@@ -175,9 +176,13 @@ async function loadVisibleClass(executor, scope, classId) {
 }
 
 async function listClassStudents(request, env, classId, json) {
-  const { scope } = await requireReadContext(request, env);
+  const { context, scope } = await requireReadContext(request, env);
+  const actorId = context.session.user.id;
   const klass = await loadVisibleClass(env.db, scope, classId);
-  if (!klass) throw notFound();
+  if (!klass) {
+    await recordDataAccess(env, { actorId, accessKind: 'class_students', classId, outcome: 'not_found' });
+    throw notFound();
+  }
   // Zakres klasowy: tylko gospodarstwa kontaktowe, bez oznaczenia głównego.
   const households = isClassScoped(scope)
     ? `SELECT json_agg(json_build_object('householdId', m.household_id) ORDER BY m.household_id)
@@ -193,6 +198,9 @@ async function listClassStudents(request, env, classId, json) {
       ORDER BY s.last_name, s.first_name, s.id`,
     [classId],
   );
+  await recordDataAccess(env, {
+    actorId, accessKind: 'class_students', schoolYearId: klass.school_year_id, classId, outcome: 'ok', rowCount: rows.length,
+  });
   return json({
     class: { id: klass.id, name: klass.name, schoolYearId: klass.school_year_id, schoolYearLabel: klass.school_year_label },
     students: rows.map((row) => ({
@@ -236,7 +244,11 @@ async function getHousehold(request, env, householdId, json) {
       ORDER BY s.last_name, s.first_name, s.id`,
     params,
   );
-  if (!students.rows.length) throw notFound();
+  const actorId = context.session.user.id;
+  if (!students.rows.length) {
+    await recordDataAccess(env, { actorId, accessKind: 'household_card', householdId, outcome: 'not_found' });
+    throw notFound();
+  }
   const visibleStudentIds = students.rows.map((row) => row.id);
 
   const household = await env.db.query('SELECT id, archived_at FROM households WHERE id = $1', [householdId]);
@@ -306,6 +318,7 @@ async function getHousehold(request, env, householdId, json) {
       paymentCount: toSafeInteger(row.payment_count),
     }));
   }
+  await recordDataAccess(env, { actorId, accessKind: 'household_card', householdId, outcome: 'ok', rowCount: students.rows.length });
   return json(body);
 }
 
