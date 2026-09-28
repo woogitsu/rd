@@ -38,6 +38,22 @@ export function parsePreviewRecipients(value) {
     .filter((item) => /^[^\s@*,]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(item));
 }
 
+const DEFAULT_QUOTA_TIMEZONE = 'Europe/Brussels';
+
+// Strefa doby limitu Brevo (#84): konto szkoły najpewniej pracuje w strefie
+// belgijskiej, nie w UTC. Wartość niedozwolona dla Intl (literówka w env)
+// wraca do domyślnej zamiast rzucać wyjątek przy starcie workera.
+function quotaTimezoneFrom(value) {
+  const candidate = typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_QUOTA_TIMEZONE;
+  try {
+    // eslint-disable-next-line no-new -- tylko walidacja identyfikatora strefy
+    new Intl.DateTimeFormat('en-CA', { timeZone: candidate });
+    return candidate;
+  } catch {
+    return DEFAULT_QUOTA_TIMEZONE;
+  }
+}
+
 // Konfiguracja z env (process.env w skrypcie, obiekt env w testach).
 export function emailConfig(env = {}) {
   const dailyLimit = intFrom(env.EMAIL_DAILY_LIMIT, 300, { min: 0, max: 100_000 });
@@ -46,6 +62,7 @@ export function emailConfig(env = {}) {
     sendingEnabled: env.EMAIL_SENDING_ENABLED === 'true',
     dailyLimit,
     dailyReserved: Math.min(dailyLimit, intFrom(env.EMAIL_DAILY_RESERVED, 0, { min: 0, max: 100_000 })),
+    quotaTimezone: quotaTimezoneFrom(env.EMAIL_QUOTA_TIMEZONE),
     minDays: intFrom(env.EMAIL_CAMPAIGN_MIN_DAYS, 7, { min: 1, max: 60 }),
     minDailyCap: intFrom(env.EMAIL_CAMPAIGN_MIN_DAILY, 50, { min: 1, max: 10_000 }),
     batchSize: intFrom(env.EMAIL_BATCH_SIZE, 50, { min: 1, max: 500 }),

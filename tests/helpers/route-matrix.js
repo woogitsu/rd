@@ -812,6 +812,18 @@ export const ROUTE_MATRIX = Object.freeze([
     object: 'invitation', build: ({ obj }) => ({ path: `/api/admin/invitations/${obj.invitationId}/revoke`, body: {} }),
   }),
   adminRoute('admin.schoolYears', 'GET', '/api/admin/school-years', {}),
+  // Konfiguracja roku i klas (#78): wyłącznie admin z MFA, jak cały moduł.
+  adminRoute('admin.schoolYearCreate', 'POST', '/api/admin/school-years', {
+    ok: 201,
+    build: ({ key }) => ({
+      path: '/api/admin/school-years',
+      body: { id: `y-matrix-${safeKey(key).toLowerCase()}`, label: `Rok macierzy ${safeKey(key)}`, startsOn: '2030-09-01', endsOn: '2031-08-31' },
+    }),
+  }),
+  adminRoute('admin.classesCreate', 'POST', '/api/admin/school-years/:schoolYearId/classes', {
+    ok: 201, object: 'emptySchoolYear',
+    build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
+  }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
 
   // ---------- reconciliation (#7, #15) ----------
