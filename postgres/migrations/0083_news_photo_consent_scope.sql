@@ -29,6 +29,14 @@
 -- warunków zgody), usunąć kolumny scope/valid_until i tabelę
 -- news_photo_consent_withdrawals. Dane w news_photo_consents poza nowymi
 -- kolumnami nie są ruszane.
+--
+-- Poprawka scaleniowa (integracja z origin/main po #124/0071): pierwsza
+-- wersja tego pliku przebudowała public_news od 0018, gubiąc bez konfliktu
+-- gita poprawkę 0071 (CASE WHEN ph.decorative THEN '' ELSE ph.alt_text END
+-- oraz pole `decorative` w JSON-ie) — wykryte przez
+-- tests/pg-news.test.js:"alt text is required at registration unless the
+-- photo is marked decorative" po scaleniu origin/main. Przywrócono obie
+-- gałęzie 0071 w tym samym CREATE OR REPLACE VIEW.
 
 ALTER TABLE news_photo_consents
   ADD COLUMN scope TEXT[] NOT NULL DEFAULT '{}'
@@ -75,7 +83,8 @@ SELECT p.id, p.school_year_id, r.title, r.body, p.published_at, p.first_publishe
         'source', ph.source,
         'license', ph.license_text,
         'takenOn', to_char(ph.taken_on, 'YYYY-MM-DD'),
-        'altText', ph.alt_text) ORDER BY u.ord)
+        'altText', CASE WHEN ph.decorative THEN '' ELSE ph.alt_text END,
+        'decorative', ph.decorative) ORDER BY u.ord)
       FROM unnest(r.photo_ids) WITH ORDINALITY AS u(photo_id, ord)
       JOIN news_photos ph ON ph.id = u.photo_id AND ph.rights_status = 'verified'
         AND news_photo_consents_public_ok(ph)
