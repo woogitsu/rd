@@ -555,7 +555,9 @@ export async function handle(request, env, url, json) {
   const route = url.pathname.slice('/api/import/'.length);
   const method = request.method;
   if (!((route === 'options' && method === 'GET') || (['preview', 'commit'].includes(route) && method === 'POST'))) {
-    return ['options', 'preview', 'commit'].includes(route) ? json({ error: 'method_not_allowed' }, 405) : null;
+    if (route === 'options') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    if (['preview', 'commit'].includes(route)) return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+    return null;
   }
   const access = await requireAccess(request, env, ACCESS, json);
   if (access.response) return access.response;
