@@ -239,6 +239,8 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
   documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',
   document_uploads: 'zamiary uploadu dokumentów (klucz obiektu, skrót) — dane techniczne jak documents (0032)',
+  data_access_log: 'dziennik odczytu danych rodzin — rozliczalność dostępu, nie dane Rady do odtworzenia; retencja do decyzji D-04 (0067)',
+  backup_runs: 'dziennik przebiegów kopii zapasowej i próby odtworzenia — dane operacyjne środowiska, nie danych Rady (0058)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',
   export_runs: 'dziennik eksportów — każdy eksport zmieniałby następny',
   meeting_request_keys: 'klucze idempotencji żądań — dane techniczne',
@@ -464,6 +466,13 @@ export async function buildYearlyExport(executor, schoolYearId) {
       sha256: sha256Hex(content),
       sums: centsSums(columnNames, records),
     });
+    // #216: oddaje pętlę zdarzeń między tabelami, żeby długi eksport (np.
+    // audit_events roku z ~200 tys. wierszy) nie blokował innych żądań
+    // (także /health/ready) przez cały czas budowania paczki. Nie dzieli
+    // jeszcze przetwarzania JEDNEJ dużej tabeli na partie — pełne
+    // strumieniowanie (format v2, kursor, licząca się przyrostowo suma
+    // kontrolna) zostaje do osobnego PR, patrz opis PR i issue #216 pkt 1.
+    await new Promise((resolve) => { setImmediate(resolve); });
   }
 
   const manifest = {
