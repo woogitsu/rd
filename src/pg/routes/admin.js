@@ -37,6 +37,7 @@ import { insertAuditEvent } from '../audit.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
 } from '../login.js';
+import { computeOpsStatus } from '../ops-status.js';
 
 export const name = 'admin';
 
@@ -706,6 +707,14 @@ async function listAudit(env, url, json) {
   });
 }
 
+// Stan techniczny systemu (issue #149). Cache-Control: no-store — nigdy nie
+// trzymane w pamięci podręcznej przeglądarki/proxy; tylko liczby i znaczniki
+// czasu (bez adresów, nazw rodzin i treści — patrz src/pg/ops-status.js).
+async function opsStatus(env, json) {
+  const status = await computeOpsStatus({ db: env.db, env });
+  return json(status, 200, { 'Cache-Control': 'no-store' });
+}
+
 // --- Router ----------------------------------------------------------------
 
 // Zwraca dozwolone metody dla ROZPOZNANEGO kształtu ścieżki (#156, RFC 9110
@@ -734,6 +743,7 @@ function allowedMethodsFor(section, pathLength, action) {
   }
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
+  if (section === 'ops-status' && pathLength === 1) return ['GET'];
   return null;
 }
 
@@ -777,10 +787,11 @@ async function route(request, env, url, json, actorId) {
   }
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json);
+  if (section === 'ops-status' && path.length === 1 && method === 'GET') return opsStatus(env, json);
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit']);
+const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
