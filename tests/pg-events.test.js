@@ -237,7 +237,7 @@ test('double-click create is idempotent and conflicting reuse of a key is reject
     assert.equal(rows[0].n, 1);
     const audits = await db.query(`SELECT action, actor_id, entity_id, metadata_json FROM audit_events WHERE entity_type='event'`);
     assert.equal(audits.rows.length, 1);
-    assert.deepEqual(audits.rows[0].metadata_json, { revision: 1, status: 'draft' });
+    assert.deepEqual(audits.rows[0].metadata_json, { schoolYearId: input.schoolYearId, revision: 1, status: 'draft' });
     await assert.rejects(createDraft(db, board1, { ...input, title: 'Inny tytuł' }), { code: 'idempotency_conflict' });
     await assert.rejects(createDraft(db, board2, input), { code: 'idempotency_conflict' });
 

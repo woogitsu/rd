@@ -7,7 +7,7 @@
 //   POST /api/email/campaigns/{id}/snapshot          migawka odbiorców → szkic
 //   GET  /api/email/campaigns/{id}/preview           podgląd: próbka, liczby, wykluczenia, plan dni (bez wysyłki)
 //   GET  /api/email/campaigns/{id}/recipients        lista odbiorców do weryfikacji (dziennik odczytu)
-//   POST /api/email/campaigns/{id}/approve           zarząd + MFA, inna osoba niż autor; dokładne skróty
+//   POST /api/email/campaigns/{id}/approve           zarząd + MFA, inna osoba niż autor; dokładne skróty; krok w górę MFA (#150)
 //   POST /api/email/campaigns/{id}/queue             zakolejkowanie zatwierdzonej kampanii
 //   GET  /api/email/campaigns/{id}/report            raport doręczeń: same liczby i kody (#139)
 //   GET  /api/email/campaigns/{id}/attention         lista operacyjna „do sprawdzenia” (#139, dziennik odczytu)
@@ -27,7 +27,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
@@ -332,6 +332,7 @@ async function updateCampaign(request, env, id, json) {
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.updated', entityType: 'email_campaign', entityId: id,
         metadata: {
+          schoolYearId: campaign.school_year_id,
           contentHash: hash, previousContentHash: campaign.content_hash, approvalInvalidated: invalidated,
           sendNotBeforeChanged: sendNotBefore !== currentSendNotBefore,
           fromRevision: campaign.revision_no, toRevision: rows[0].revision_no,
@@ -478,7 +479,10 @@ async function buildSnapshot(request, env, id, json) {
       await insertAuditEvent(tx, {
         actorId, action: 'email.snapshot.built', entityType: 'email_campaign', entityId: id,
         // Kody powodów jako pary [kod, liczba] — nazwa kodu (np. no_valid_email) nie jest daną osobową.
-        metadata: { recipientsHash: snapshot.hash, recipients: snapshot.recipients.length, exclusionCounts: Object.entries(byReason), approvalInvalidated: wasApproved },
+        metadata: {
+          schoolYearId: campaign.school_year_id,
+          recipientsHash: snapshot.hash, recipients: snapshot.recipients.length, exclusionCounts: Object.entries(byReason), approvalInvalidated: wasApproved,
+        },
       });
       return json({
         recipientsHash: snapshot.hash, recipientsCount: snapshot.recipients.length,
@@ -550,7 +554,7 @@ async function listRecipients(request, env, id, url, json) {
   );
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'email.recipients.viewed', entityType: 'email_campaign', entityId: id,
-    metadata: { offset, recipientsHash: campaign.recipients_hash ?? null },
+    metadata: { schoolYearId: campaign.school_year_id, offset, recipientsHash: campaign.recipients_hash ?? null },
   });
   return json({
     recipients: rows.slice(0, RECIPIENT_PAGE).map((row) => ({ householdId: row.household_id, guardianId: row.guardian_id, email: row.email })),
@@ -579,6 +583,11 @@ async function approve(request, env, id, json) {
   }
   const { context } = await campaignFor(request, env, id, APPROVER_ROLES);
   const actorId = context.session.user.id;
+  // #150 (SR-10, krok w górę): zatwierdzenie kampanii uruchamia rzeczywistą
+  // wysyłkę do rodzin — MFA musi być potwierdzone od niedawna, nie tylko
+  // kiedyś w tej sesji. Sprawdzane PO roli/zakresie (SR-07, campaignFor wyżej).
+  const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+  if (staleCode) throw new RequestError(staleCode, 403);
   try {
     return await env.db.transaction(async (tx) => {
       const campaign = await loadCampaign(tx, id, { lock: true });
@@ -615,7 +624,10 @@ async function approve(request, env, id, json) {
       if (!rows[0]) throw new RequestError('approval_stale', 409);
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.approved', entityType: 'email_campaign', entityId: id,
-        metadata: { contentHash: data.contentHash, recipientsHash: data.recipientsHash, recipients: recipients.length },
+        metadata: {
+          schoolYearId: campaign.school_year_id,
+          contentHash: data.contentHash, recipientsHash: data.recipientsHash, recipients: recipients.length,
+        },
       });
       return json({ campaign: campaignView(rows[0]) });
     });
@@ -654,7 +666,10 @@ async function queue(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.queued', entityType: 'email_campaign', entityId: id,
-        metadata: { queued: inserted.length, dailyCap, recipientsHash: campaign.recipients_hash },
+        metadata: {
+          schoolYearId: campaign.school_year_id,
+          queued: inserted.length, dailyCap, recipientsHash: campaign.recipients_hash,
+        },
       });
       return json({ campaign: campaignView(rows[0]), queued: inserted.length });
     });
@@ -680,7 +695,8 @@ async function pause(request, env, id, json) {
         [id, actorId],
       );
       await insertAuditEvent(tx, {
-        actorId, action: 'email.campaign.paused', entityType: 'email_campaign', entityId: id, metadata: {},
+        actorId, action: 'email.campaign.paused', entityType: 'email_campaign', entityId: id,
+        metadata: { schoolYearId: campaign.school_year_id },
       });
       return json({ campaign: campaignView(rows[0]) });
     });
@@ -705,7 +721,8 @@ async function resume(request, env, id, json) {
         [id, actorId],
       );
       await insertAuditEvent(tx, {
-        actorId, action: 'email.campaign.resumed', entityType: 'email_campaign', entityId: id, metadata: {},
+        actorId, action: 'email.campaign.resumed', entityType: 'email_campaign', entityId: id,
+        metadata: { schoolYearId: campaign.school_year_id },
       });
       return json({ campaign: campaignView(rows[0]) });
     });
@@ -734,7 +751,7 @@ async function cancel(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.campaign.cancelled', entityType: 'email_campaign', entityId: id,
-        metadata: { previousStatus: campaign.status, cancelledMessages: cancelled.length },
+        metadata: { schoolYearId: campaign.school_year_id, previousStatus: campaign.status, cancelledMessages: cancelled.length },
       });
       return json({ campaign: campaignView(rows[0]), cancelledMessages: cancelled.length });
     });
@@ -829,7 +846,10 @@ async function testSend(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.preview.sent', entityType: 'email_campaign', entityId: id,
-        metadata: { contentHash: campaign.content_hash, recipientIndex, ok: !transportError, transportError: transportError?.code ?? null },
+        metadata: {
+          schoolYearId: campaign.school_year_id, contentHash: campaign.content_hash, recipientIndex,
+          ok: !transportError, transportError: transportError?.code ?? null,
+        },
       });
     });
   } catch (error) {
@@ -899,7 +919,7 @@ async function report(request, env, id, json) {
 // delivery_unknown) i adresy z ≥3 soft_bounce. Adres maskowany; odczyt trafia
 // do dziennika. provider_message_id/id wiersza = X-Mailin-custom do logów Brevo.
 async function attention(request, env, id, json) {
-  const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const { context, campaign } = await campaignFor(request, env, id, EDITOR_ROLES);
   const { rows } = await env.db.query(
     `SELECT t.outbox_id, t.state, t.last_error, t.provider_message_id, t.email, t.soft_bounce_count FROM (
        SELECT o.id AS outbox_id, o.state, o.last_error, o.provider_message_id, r.email,
@@ -913,7 +933,7 @@ async function attention(request, env, id, json) {
   );
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'email.attention_list.viewed', entityType: 'email_campaign', entityId: id,
-    metadata: { rows: rows.length },
+    metadata: { schoolYearId: campaign.school_year_id, rows: rows.length },
   });
   return json({
     rows: rows.map((row) => ({
@@ -935,7 +955,7 @@ async function createResolution(request, env, id, json) {
   if (!RESOLUTIONS.includes(data.resolution)) throw new RequestError('invalid_request');
   if (typeof data.evidenceCode !== 'string' || !EVIDENCE_CODE_PATTERN.test(data.evidenceCode)) throw new RequestError('invalid_request');
   const requiredRoles = data.resolution === 'confirmed_not_sent' ? APPROVER_ROLES : EDITOR_ROLES;
-  const { context } = await campaignFor(request, env, id, requiredRoles);
+  const { context, campaign } = await campaignFor(request, env, id, requiredRoles);
   const actorId = context.session.user.id;
   try {
     return await env.db.transaction(async (tx) => {
@@ -966,7 +986,7 @@ async function createResolution(request, env, id, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.outbox.resolved', entityType: 'email_outbox', entityId: data.outboxId,
-        metadata: { campaignId: id, resolution: data.resolution, evidenceCode: data.evidenceCode },
+        metadata: { campaignId: id, schoolYearId: campaign.school_year_id, resolution: data.resolution, evidenceCode: data.evidenceCode },
       });
       return json({ resolution: { id: resolutionId, outboxId: data.outboxId, resolution: data.resolution, evidenceCode: data.evidenceCode } }, 201);
     });
@@ -1049,9 +1069,9 @@ async function recordWebhookEvent(db, event) {
   const dedupeKey = sha256Hex(JSON.stringify([eventName, messageId, event.id ?? null, event.ts_event ?? event.date ?? null, hash]));
   return db.transaction(async (tx) => {
     const { rows: outboxRows } = await tx.query(
-      `SELECT o.id, o.state, o.campaign_id, r.guardian_id, r.email_hash, c.category
+      `SELECT o.id, o.state, o.campaign_id, c.school_year_id, r.guardian_id, r.email_hash, c.category
          FROM email_outbox o JOIN email_campaign_recipients r ON r.id = o.recipient_id
-         JOIN email_campaigns c ON c.id = o.campaign_id
+              JOIN email_campaigns c ON c.id = o.campaign_id
         WHERE ($1::text IS NOT NULL AND o.provider_message_id = $1) OR ($2::text IS NOT NULL AND o.id = $2)
         LIMIT 1 FOR UPDATE OF o`,
       [messageId, custom],
@@ -1078,7 +1098,10 @@ async function recordWebhookEvent(db, event) {
       );
       await insertAuditEvent(tx, {
         action: 'email.preference.opt_out', entityType: 'email_outbox', entityId: outbox.id,
-        metadata: { category: outbox.category, source: 'webhook', campaignId: outbox.campaign_id },
+        metadata: {
+          category: outbox.category, source: 'webhook', campaignId: outbox.campaign_id,
+          schoolYearId: outbox.school_year_id,
+        },
       });
       return { recorded: true, suppressed: true };
     }
@@ -1094,10 +1117,18 @@ async function recordWebhookEvent(db, event) {
       await tx.query(`UPDATE email_outbox SET state = 'bounced', last_error = $2, updated_at = now() WHERE id = $1`, [outbox.id, eventName]);
     }
     // Zgłoszenie potrzeby poprawy adresu: identyfikator opiekuna, bez adresu.
+    // #174: adres jest wyłączeniem NIEZALEŻNYM od roku (email_suppressions nie
+    // ma school_year_id — dotyczy adresu, nie jednej kampanii); schoolYearId
+    // dopisujemy, gdy zdarzenie dało się powiązać z konkretną wysyłką, ale
+    // celowo NIE wymagamy go (brak dopasowania do outboksu jest normalny —
+    // webhook może dotyczyć adresu bez żadnej kampanii w toku).
     await insertAuditEvent(tx, {
       action: 'email.address_suppressed', entityType: outbox ? 'email_outbox' : 'email_webhook_event',
       entityId: outbox?.id ?? eventId,
-      metadata: { event: eventName, reason, guardianId: outbox?.guardian_id ?? null, campaignId: outbox?.campaign_id ?? null },
+      metadata: {
+        event: eventName, reason, guardianId: outbox?.guardian_id ?? null,
+        campaignId: outbox?.campaign_id ?? null, schoolYearId: outbox?.school_year_id ?? null,
+      },
     });
     return { recorded: true, suppressed: true };
   });
@@ -1147,9 +1178,18 @@ async function preferencesOptOut(request, env, url, json) {
          VALUES ($1, $2, $3, 'opt_out', 'link', $4)`,
         [crypto.randomUUID(), payload.emailHash, payload.category, payload.campaignId],
       );
+      // #174: schoolYearId dopisujemy, gdy token dotyczy konkretnej kampanii.
+      let schoolYearId = null;
+      if (payload.campaignId) {
+        const { rows: campaignRows } = await tx.query(
+          `SELECT school_year_id FROM email_campaigns WHERE id = $1`,
+          [payload.campaignId],
+        );
+        schoolYearId = campaignRows[0]?.school_year_id ?? null;
+      }
       await insertAuditEvent(tx, {
         action: 'email.preference.opt_out', entityType: 'email_campaign', entityId: payload.campaignId,
-        metadata: { category: payload.category, source: 'link' },
+        metadata: { category: payload.category, source: 'link', schoolYearId },
       });
       return json({ category: payload.category, optedOut: true });
     });

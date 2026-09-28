@@ -206,17 +206,19 @@ async function recoverStale(db, now) {
               provider_message_id = COALESCE(o.provider_message_id, w.provider_message_id)
          FROM (SELECT DISTINCT ON (outbox_id) outbox_id, provider_message_id
                  FROM email_webhook_events WHERE outbox_id IS NOT NULL
-                ORDER BY outbox_id, provider_message_id NULLS LAST, received_at) w
+                ORDER BY outbox_id, provider_message_id NULLS LAST, received_at) w,
+              email_campaigns c
         WHERE w.outbox_id = o.id AND o.state = 'sending' AND o.send_started_at IS NOT NULL
-          AND o.claimed_at < $1::timestamptz - make_interval(mins => $2)
-        RETURNING o.id, o.campaign_id, o.attempts, to_char(o.send_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
+          AND o.claimed_at < $1::timestamptz - make_interval(mins => $2) AND c.id = o.campaign_id
+        RETURNING o.id, o.campaign_id, o.attempts, c.school_year_id,
+                  to_char(o.send_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
       [now.toISOString(), LEASE_MINUTES],
     );
     for (const row of accepted) {
       await recordLedger(tx, { day: row.day, campaignId: row.campaign_id, outboxId: row.id, attempt: row.attempts });
       await insertAuditEvent(tx, {
         action: 'email.sent_recovered', entityType: 'email_outbox', entityId: row.id,
-        metadata: { campaignId: row.campaign_id, reason: 'provider_webhook' },
+        metadata: { schoolYearId: row.school_year_id, campaignId: row.campaign_id, reason: 'provider_webhook' },
       });
     }
     // Wiersz z tokenem, którego wysyłka się nie rozpoczęła, na pewno nie wyszedł —
@@ -224,15 +226,16 @@ async function recoverStale(db, now) {
     // wiersz sprzed migracji 0025 bez tokenu) → delivery_unknown, bez
     // ponawiania, z wpisem w dzienniku limitu (mogła wyjść).
     const { rows } = await tx.query(
-      `UPDATE email_outbox
+      `UPDATE email_outbox eo
           SET state = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN 'queued' ELSE 'failed' END,
               attempts = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN GREATEST(0, attempts - 1) ELSE attempts END,
               last_error = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN 'lease_expired' ELSE 'delivery_unknown' END,
               next_attempt_at = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN $1::timestamptz ELSE next_attempt_at END,
               updated_at = $1
-        WHERE state = 'sending' AND claimed_at < $1::timestamptz - make_interval(mins => $2)
-        RETURNING id, campaign_id, state, attempts,
-                  to_char(COALESCE(send_started_at, claimed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
+         FROM email_campaigns c
+        WHERE eo.state = 'sending' AND eo.claimed_at < $1::timestamptz - make_interval(mins => $2) AND c.id = eo.campaign_id
+        RETURNING eo.id, eo.campaign_id, eo.state, eo.attempts, c.school_year_id,
+                  to_char(COALESCE(eo.send_started_at, eo.claimed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
       [now.toISOString(), LEASE_MINUTES],
     );
     for (const row of rows) {
@@ -242,7 +245,7 @@ async function recoverStale(db, now) {
       await insertAuditEvent(tx, {
         action: row.state === 'queued' ? 'email.lease_expired_requeued' : 'email.delivery_unknown',
         entityType: 'email_outbox', entityId: row.id,
-        metadata: { campaignId: row.campaign_id },
+        metadata: { schoolYearId: row.school_year_id, campaignId: row.campaign_id },
       });
     }
     return rows.length + accepted.length;
@@ -306,7 +309,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
             );
             await insertAuditEvent(tx, {
               action: `email.${verdict.state}`, entityType: 'email_outbox', entityId: row.id,
-              metadata: { campaignId: campaign.id, reason: verdict.error },
+              metadata: { schoolYearId: campaign.school_year_id, campaignId: campaign.id, reason: verdict.error },
             });
           }
           continue;
@@ -377,7 +380,7 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
       // Wiersz przejął inny przebieg albo został już rozstrzygnięty — nie ruszamy go.
       await insertAuditEvent(tx, {
         action: 'email.send_aborted', entityType: 'email_outbox', entityId: item.id,
-        metadata: { campaignId: item.campaignId, reason: 'lease_lost', runId: runToken },
+        metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: 'lease_lost', runId: runToken },
       });
       return { state: null, error: 'lease_lost' };
     }
@@ -396,7 +399,7 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
     await insertAuditEvent(tx, {
       action: verdict.state === 'queued' ? 'email.send_deferred' : `email.${verdict.state}`,
       entityType: 'email_outbox', entityId: item.id,
-      metadata: { campaignId: item.campaignId, reason: verdict.error, stage: 'before_send' },
+      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: verdict.error, stage: 'before_send' },
     });
     return verdict;
   });
@@ -437,13 +440,16 @@ async function recordSent(db, item, { messageId, now, runToken }) {
       // rozstrzygnięty (delivery_unknown). Zapisujemy fakt wysyłki, nie „sent”.
       await insertAuditEvent(tx, {
         action: 'email.sent_after_lease_lost', entityType: 'email_outbox', entityId: item.id,
-        metadata: { campaignId: item.campaignId, householdId: item.household_id, providerMessageId: messageId, runId: runToken },
+        metadata: {
+          schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId,
+          householdId: item.household_id, providerMessageId: messageId, runId: runToken,
+        },
       });
       return 'lease_lost';
     }
     await insertAuditEvent(tx, {
       action: 'email.sent', entityType: 'email_outbox', entityId: item.id,
-      metadata: { campaignId: item.campaignId, householdId: item.household_id },
+      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, householdId: item.household_id },
     });
     return 'sent';
   });
@@ -477,12 +483,12 @@ async function requeueNotSent(db, item, { code, now, runToken, stage, delaySecon
     if (!rows[0]) return 'lease_lost';
     await insertAuditEvent(tx, {
       action: 'email.requeued', entityType: 'email_outbox', entityId: item.id,
-      metadata: { campaignId: item.campaignId, reason: code, stage },
+      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: code, stage },
     });
     if (stage === 'provider_account_rejected') {
       await insertAuditEvent(tx, {
         action: 'email.campaign.provider_rejected', entityType: 'email_campaign', entityId: item.campaignId,
-        metadata: { reason: code, runId: runToken },
+        metadata: { schoolYearId: item.campaign.school_year_id, reason: code, runId: runToken },
       });
     }
     return 'requeued';
@@ -496,16 +502,17 @@ async function requeueNotSent(db, item, { code, now, runToken, stage, delaySecon
 async function releaseClaims(db, { runToken, now, reason }) {
   return db.transaction(async (tx) => {
     const { rows } = await tx.query(
-      `UPDATE email_outbox SET state = 'queued', last_error = $3, updated_at = $2, next_attempt_at = $2::timestamptz,
+      `UPDATE email_outbox eo SET state = 'queued', last_error = $3, updated_at = $2, next_attempt_at = $2::timestamptz,
               attempts = GREATEST(0, attempts - 1)
-        WHERE claim_token = $1 AND state = 'sending' AND send_started_at IS NULL
-        RETURNING id, campaign_id`,
+         FROM email_campaigns c
+        WHERE eo.claim_token = $1 AND eo.state = 'sending' AND eo.send_started_at IS NULL AND c.id = eo.campaign_id
+        RETURNING eo.id, eo.campaign_id, c.school_year_id`,
       [runToken, now.toISOString(), reason],
     );
     for (const row of rows) {
       await insertAuditEvent(tx, {
         action: 'email.requeued', entityType: 'email_outbox', entityId: row.id,
-        metadata: { campaignId: row.campaign_id, reason, stage: 'run_stopped' },
+        metadata: { schoolYearId: row.school_year_id, campaignId: row.campaign_id, reason, stage: 'run_stopped' },
       });
     }
     return rows.length;
@@ -572,13 +579,16 @@ async function recordTransportError(db, item, error, { config, now, runToken }) 
     if (!rows[0]) {
       await insertAuditEvent(tx, {
         action: 'email.send_aborted', entityType: 'email_outbox', entityId: item.id,
-        metadata: { campaignId: item.campaignId, reason: 'lease_lost', transportError: code, runId: runToken },
+        metadata: {
+          schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId,
+          reason: 'lease_lost', transportError: code, runId: runToken,
+        },
       });
       return 'lease_lost';
     }
     await insertAuditEvent(tx, {
       action: retry ? 'email.retry_scheduled' : 'email.failed', entityType: 'email_outbox', entityId: item.id,
-      metadata: { campaignId: item.campaignId, reason: code },
+      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: code },
     });
     return retry ? 'retried' : 'failed';
   }), uncertain: !retry && mayHaveLeft };
@@ -592,11 +602,14 @@ async function completeCampaigns(db, now) {
       `UPDATE email_campaigns c SET status = 'done', completed_at = $1
         WHERE c.status = 'sending'
           AND NOT EXISTS (SELECT 1 FROM email_outbox o WHERE o.campaign_id = c.id AND o.state IN ('queued', 'sending'))
-        RETURNING id`,
+        RETURNING id, school_year_id`,
       [now.toISOString()],
     );
     for (const row of rows) {
-      await insertAuditEvent(tx, { action: 'email.campaign.done', entityType: 'email_campaign', entityId: row.id });
+      await insertAuditEvent(tx, {
+        action: 'email.campaign.done', entityType: 'email_campaign', entityId: row.id,
+        metadata: { schoolYearId: row.school_year_id },
+      });
     }
     return rows.length;
   });
@@ -608,6 +621,7 @@ async function completeCampaigns(db, now) {
 // anulowana — do decyzji zarządu przy #130). Metadane: wyłącznie skróty.
 async function recordIntegrityMismatch(tx, campaign, observedContentHash) {
   const metadata = {
+    schoolYearId: campaign.school_year_id,
     observedContentHash,
     contentHash: campaign.content_hash,
     approvedContentHash: campaign.approved_content_hash,
