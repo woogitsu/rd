@@ -105,6 +105,7 @@ wpisów).
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
 | `invalid_audience` | Wybierz odbiorców. | Nie — popraw dane żądania. |
 | `invalid_author` | Niepoprawny autor. | Nie — popraw dane żądania. |
+| `invalid_body_text` | Podaj treść informacji (1–20000 znaków). | Nie — popraw dane żądania. |
 | `invalid_body` | Treść jest pusta albo za długa. | Nie — popraw dane żądania. |
 | `invalid_campaign_id` | Niepoprawny identyfikator wysyłki. | Nie — popraw dane żądania. |
 | `invalid_category` | Wybierz kategorię z listy. | Nie — popraw dane żądania. |
@@ -126,6 +127,7 @@ wpisów).
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
 | `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_datetime` | Niepoprawna data lub godzina. | Nie — popraw dane żądania. |
+| `invalid_decision_ref` | Podaj odwołanie do decyzji (np. numer uchwały). | Nie — popraw dane żądania. |
 | `invalid_decorative` | Niepoprawna wartość pola „zdjęcie dekoracyjne”. | Nie — popraw dane. |
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
@@ -273,6 +275,10 @@ wpisów).
 | `preview_campaign_limit` | Wyczerpano limit wiadomości testowych dla tej kampanii. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_required` | Najpierw wyślij podgląd importu. | Nie — popraw dane żądania. |
 | `preview_stale` | Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `privacy_notice_missing` | Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import. | Zależy od kontekstu (patrz moduł trasy). |
+| `privacy_notice_not_approved` | Najpierw zatwierdź tę wersję (inna osoba niż autor). | Zależy od kontekstu (patrz moduł trasy). |
+| `privacy_notice_not_draft` | Tę wersję już zatwierdzono albo opublikowano. | Zależy od kontekstu (patrz moduł trasy). |
+| `privacy_notice_not_found` | Nie znaleziono tej wersji informacji. | Nie — popraw dane żądania. |
 | `production_requires_flag` | Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `production_restore_requires_allow_production` | Odtworzenie na produkcji wymaga osobnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `public_copy_requires_license` | Publiczna kopia wymaga zapisanej licencji lub zgody. | Zależy od kontekstu (patrz moduł trasy). |

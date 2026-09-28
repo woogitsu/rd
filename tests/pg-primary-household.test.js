@@ -49,6 +49,22 @@ async function link(db, studentId, guardianId, { startsOn = null, endsOn = null 
   );
 }
 
+// #145 (D-06): commit importu wymaga opublikowanej informacji o przetwarzaniu
+// danych; ten test dotyczy dopasowania gospodarstwa, nie tej bramki.
+async function seedPublishedPrivacyNotice(db, { id = 'pn-test', createdBy = 'u-privacy-author' } = {}) {
+  await db.query(
+    `INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+    [createdBy, `${createdBy}@example.invalid`, 'Test Autor'],
+  );
+  await db.query(
+    `INSERT INTO privacy_notices (id, body_text, content_hash, decision_ref, status, created_by, approved_by, approved_at, published_by, published_at)
+     VALUES ($1, 'Testowa informacja o przetwarzaniu danych.', repeat('a', 64), 'D-06/test', 'published',
+             $2, 'u-admin', now(), 'u-admin', now())`,
+    [id, createdBy],
+  );
+  return id;
+}
+
 async function payment(db, id, householdId, cents) {
   await db.query(
     `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
@@ -340,6 +356,7 @@ test('import: istniejący uczeń dopasowany do bieżącego głównego gospodarst
   try {
     await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
     const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
+    await seedPublishedPrivacyNotice(db);
     const HEADER = 'ID ucznia;Imię ucznia;Nazwisko ucznia;Klasa;ID rodziny;Opiekun 1;E-mail opiekuna 1;Opiekun 2;E-mail opiekuna 2';
     const payload = (...lines) => {
       const matrix = parseCsv(`${HEADER}\n${lines.join('\n')}\n`);
