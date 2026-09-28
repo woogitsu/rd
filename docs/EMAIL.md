@@ -13,8 +13,20 @@ Brevo Free: do 300 wysłanych wiadomości dziennie, limit wspólny dla całego k
 
    **Kontrola wersji edycji** (#215): kampania ma `revisionNo`, rosnący przy każdej zmianie wiersza (także z workera). `PUT …/{id}` przyjmuje opcjonalne pole `revision` — niezgodność z bieżącym `revisionNo` (odczytanym pod blokadą wiersza) daje `409 revision_conflict` zamiast cichego nadpisania treści drugiej osoby. Bez tego pola PUT działa jak dawniej (pełne zastąpienie treści). Podwójne kliknięcie tej samej edycji jest odtwarzane bez błędu.
 5. `POST …/queue` tworzy wiersze kolejki `email_outbox` (klucz `campaign:<id>:household:<id>`, unikalny) i ustala dzienny przydział kampanii. Zadanie Railway wysyła każdą wiadomość osobno i nie przekracza limitu.
-6. Webhook Brevo zapisuje wynik; bounce, skarga lub wypisanie dopisuje adres (tylko jego skrót) do listy wyłączeń i zapisuje w dzienniku potrzebę poprawy danych opiekuna.
+6. Webhook Brevo zapisuje wynik; bounce lub skarga (`spam`) dopisuje adres (tylko jego skrót) do listy wyłączeń globalnych i zapisuje w dzienniku potrzebę poprawy danych opiekuna. Wypisanie (`unsubscribed`) jest teraz preferencją kategorii, nie blokadą globalną — patrz niżej (#110).
 7. `GET /api/email/campaigns/{id}` pokazuje wysłane, oczekujące, błędy, pominięte po wpłacie i wyłączone. Wznowienie nie duplikuje wiadomości.
+
+## Kategorie komunikatów i wypisanie jednym kliknięciem (#110)
+Każda kampania ma `category`: `contribution_reminder` (przypomnienie o dobrowolnej składce, domyślna) albo `organizational` (informacja organizacyjna). Kategoria wchodzi do zatwierdzanego skrótu treści (`rd-email-content-v2`) — zmiana kategorii wymaga ponownego zatwierdzenia, tak jak zmiana tematu czy treści. Do czasu decyzji zarządu/szkoły o tym, co jest komunikatem obowiązkowym (D-06), **obie kategorie mają link wypisania** — wariant zachowawczy.
+
+- Każda wiadomość ma stopkę z linkiem wypisania, dodawaną przez serwer (poza edycją autora treści, ale zależną wyłącznie od kategorii, więc objętą tym samym skrótem i podglądem). Adres: `GET/POST /api/email/preferences?t=<token>`, gdzie token jest nieprzezroczystym, podpisanym HMAC-SHA256 (`EMAIL_UNSUBSCRIBE_SECRET`) zapisem (kampania, kategoria, skrót adresu) — bez adresu ani czytelnych identyfikatorów w URL.
+- `GET` tylko pokazuje kategorię z tokenu (bez skutku — ochrona przed skanerami linków w skrzynkach). `POST` wypisuje: idempotentnie (drugie kliknięcie tego samego linku nie tworzy drugiego zdarzenia) i bez logowania. Zły lub zmieniony token → `400 invalid_token`, bez ujawniania, która część jest niepoprawna. Obie trasy są zwolnione z kontroli `Origin` (jak webhook) i mają prosty limit żądań (na proces — patrz „Ograniczenia” niżej).
+- Nagłówki `List-Unsubscribe` i `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058) trafiają do żądania Brevo tylko, gdy `EMAIL_UNSUBSCRIBE_SECRET` i `PUBLIC_BASE_URL` są ustawione — inaczej wiadomość wychodzi bez stopki i bez tych nagłówków (nie blokuje wysyłki).
+- Stan preferencji: tabela `email_preferences_events` (tylko dopisywanie); aktywny stan dla (adres, kategoria) to ostatnie zdarzenie. Wypisanie z jednej kategorii nie blokuje innych. Skarga (`spam`) nadal blokuje wszystko, globalnie, przez `email_suppressions`.
+- Migawka i worker sprawdzają preferencję kategorii tuż przed użyciem/wysyłką (powód wykluczenia `opted_out`); wypisanie między zakolejkowaniem a wysyłką daje `suppressed / category_opted_out`, bez wysyłki.
+- Webhook `unsubscribed`: gdy zdarzenie dotyczy rozpoznanego wiersza kolejki, zapisuje preferencję dla kategorii tej kampanii (`source = 'webhook'`); bez dopasowania — tylko samo zdarzenie, bez żadnej blokady (nie znamy kategorii).
+- Audyt: `email.preference.opt_out` z kategorią i źródłem (`link`/`webhook`/`staff_on_parent_request`), nigdy z adresem.
+- **Ograniczenia tego prototypu**: limit żądań na trasę publiczną (`EMAIL_PREFERENCES_RATE_LIMIT`, domyślnie 200/min) jest licznikiem w pamięci procesu (nie działa między instancjami/replikami, nie rozróżnia adresatów po IP) — przed produkcją wymaga trwałego, per-IP licznika. Wartość domyślna jest celowo wysoka, żeby nie kolidować z automatycznym sprawdzaniem uprawnień (macierz #189 odpytuje tę trasę wieloma tożsamościami z tego samego procesu testowego) — realną ochronę przed nadużyciem trzeba dostroić przed wdrożeniem, razem z licznikiem trwałym. Trasa publiczna zwraca dziś JSON, nie stronę HTML z potwierdzeniem — wymaga uzupełnienia przed wdrożeniem. Kategoria „obowiązkowa bez wypisania” nie jest zaimplementowana (czeka na D-06).
 
 ### Wysyłka testowa (`POST …/test-send`, #104)
 Board lub skarbnik z MFA mogą wysłać jedną wiadomość z bieżącą treścią kampanii (temat z prefiksem `[TEST] `, `{rodzina}` = `PRZYKŁAD`) na adres z `EMAIL_PREVIEW_RECIPIENTS` — pełne adresy skrzynek technicznych Rady, bez wieloznaczników. Adres identyczny z jakimkolwiek `guardians.email` w bazie jest odrzucany (`preview_recipient_not_allowed`), żeby pomyłkowo nie wysłać testu do rodzica. Wysyłka testowa korzysta z tego samego klienta i tych samych barier co zadanie kolejki (ten sam moduł `src/email/brevo.js`), nie ma własnej implementacji sieciowej.
@@ -89,8 +101,10 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 - Log przebiegu zawiera wyłącznie liczby i kody.
 
 ## Webhook Brevo
-`POST /api/email/webhooks/brevo`. Brevo nie podpisuje treści HMAC; weryfikacja to wspólny sekret `BREVO_WEBHOOK_SECRET` (min. 32 znaki) przesyłany w nagłówku `Authorization: Bearer <sekret>` (konfiguracja „auth” webhooka Brevo) albo jako hasło Basic Auth. Porównanie w stałym czasie; zły lub brak sekretu → 401, brak konfiguracji → 503. To jedyna trasa API zwolniona z kontroli `Origin`. Zapisujemy tylko zweryfikowane zdarzenia, bez adresu (skrót SHA-256), z deduplikacją. `hard_bounce`, `invalid_email`, `blocked`, `spam`, `unsubscribed` dopisują adres do listy wyłączeń; bounce zmienia stan wiersza na `bounced`. Zdjęcie adresu z listy wyłączeń nie jest zaimplementowane (wymaga procedury i decyzji).
+`POST /api/email/webhooks/brevo`. Brevo nie podpisuje treści HMAC; weryfikacja to wspólny sekret `BREVO_WEBHOOK_SECRET` (min. 32 znaki) przesyłany w nagłówku `Authorization: Bearer <sekret>` (konfiguracja „auth” webhooka Brevo) albo jako hasło Basic Auth. Porównanie w stałym czasie; zły lub brak sekretu → 401, brak konfiguracji → 503. Zapisujemy tylko zweryfikowane zdarzenia, bez adresu (skrót SHA-256), z deduplikacją. `hard_bounce`, `invalid_email`, `blocked`, `spam` dopisują adres do listy wyłączeń globalnych; bounce zmienia stan wiersza na `bounced`. `unsubscribed` zapisuje preferencję kategorii kampanii, nie blokadę globalną (#110). Zdjęcie globalnej blokady nie jest zaimplementowane (wymaga procedury i decyzji, #94).
 - Rotacja sekretu (#139): opcjonalne `BREVO_WEBHOOK_SECRET_PREVIOUS` — przez czas rotacji akceptowane są oba sekrety (zdarzenie z poprzednim loguje się jako `email.webhook.previous_secret_used`, bez treści zdarzenia). Po usunięciu zmiennej stary sekret znów daje 401. Ograniczenie do zakresów IP Brevo (`BREVO_WEBHOOK_ALLOWED_CIDRS`) **nie jest zaimplementowane** w tym PR.
+
+`GET`/`POST /api/email/preferences?t=…` (#110) — patrz „Kategorie komunikatów” wyżej. Te dwie trasy oraz webhook Brevo są jedynymi trasami API zwolnionymi z kontroli `Origin`.
 
 ## Raport doręczeń i lista operacyjna (#139)
 - `GET /api/email/campaigns/{id}/report` (board/treasurer, MFA): liczby per stan kolejki (`outbox`), per ostatnie zapisane zdarzenie dostawcy (`lastProviderEvent`, brak zdarzenia = `none`), per rozstrzygnięcie (`resolutions`) i wykluczenia. Wyłącznie agregaty — bez adresów, imion i identyfikatorów rodzin (sprawdzane testem). Eksport CSV i dostęp Komisji Rewizyjnej (D-09) **nie są zaimplementowane**.
@@ -122,6 +136,9 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 | `BREVO_REPLY_TO` | adres odpowiedzi (#148); na produkcji wymagany — brak daje `reply_to_not_configured` |
 | `BREVO_WEBHOOK_SECRET` | wspólny sekret webhooka |
 | `BREVO_WEBHOOK_SECRET_PREVIOUS` | poprzedni sekret, akceptowany dodatkowo na czas rotacji (#139) |
+| `EMAIL_UNSUBSCRIBE_SECRET` | (#110) sekret HMAC do podpisu tokenu wypisania jednym kliknięciem; brak = brak stopki i brak nagłówków `List-Unsubscribe*` |
+| `PUBLIC_BASE_URL` | adres bazowy serwera do budowy linku wypisania (i kontroli `Origin` — już używany gdzie indziej) |
+| `EMAIL_PREFERENCES_RATE_LIMIT` | (#110) limit żądań na `GET`/`POST /api/email/preferences` na proces na minutę (domyślnie 200 — patrz „Ograniczenia” niżej) |
 | `EMAIL_DKIM_HOSTS` | (dla `npm run email:preflight`) nazwy hostów DKIM do sprawdzenia w DNS (np. `mail._domainkey.rada.example.invalid`), po przecinku |
 
 ## Wdrożenie
