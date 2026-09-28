@@ -110,7 +110,38 @@ export async function requireAccess(request, env, requirement, json) {
     await logAccessDenied(env, context, requirement, request);
     return { response: json({ error: 'forbidden' }, 403) };
   }
+  // #150 (SR-10, krok w górę/step-up): `requireMfa: { maxAgeSeconds }` zamiast
+  // `true` — SPRAWDZANE PO roli/zakresie (SR-07), więc osoba bez dostępu
+  // dostaje ten sam ogólny `forbidden`, niezależnie od wieku MFA.
+  if (requirement?.requireMfa && typeof requirement.requireMfa === 'object') {
+    const code = freshMfaForbiddenCode(context, requirement.requireMfa.maxAgeSeconds);
+    if (code) return { response: json({ error: code }, 403) };
+  }
   return { context };
+}
+
+// Wiek ostatniego potwierdzenia MFA bieżącej sesji w sekundach, albo null,
+// gdy sesja nie ma potwierdzonego MFA (loadSession ustawia mfaVerifiedAt).
+export function mfaAgeSeconds(session) {
+  const verifiedAt = session?.mfaVerifiedAt ? new Date(session.mfaVerifiedAt).getTime() : NaN;
+  return Number.isFinite(verifiedAt) ? Math.max(0, (Date.now() - verifiedAt) / 1000) : null;
+}
+
+// Domyślny próg świeżości MFA dla operacji nieodwracalnych/masowych (założenie
+// do D-10, zob. issue #150): eksport roczny, zamknięcie roku, zatwierdzenie
+// kampanii e-mail, nadanie roli, reset hasła/MFA, przyjęcie uchwały > 3000 EUR.
+export const MFA_STEP_UP_MAX_AGE_SECONDS = 15 * 60;
+
+// Krok w górę (step-up, #150 SR-10): zwraca null, gdy MFA jest wystarczająco
+// świeże, albo kod błędu 403 do zwrócenia wywołującemu — `mfa_required`, gdy
+// sesja w ogóle nie ma potwierdzonego MFA (spójne z bramką routera), albo
+// `mfa_stale`, gdy jest, ale starsze niż `maxAgeSeconds`. Klient prosi o kod
+// i ponawia to samo żądanie (spójnie z #99) — nic nie jest tu zapisywane.
+export function freshMfaForbiddenCode(context, maxAgeSeconds = MFA_STEP_UP_MAX_AGE_SECONDS) {
+  const session = context?.session;
+  if (!session?.mfaVerified) return 'mfa_required';
+  const age = mfaAgeSeconds(session);
+  return age === null || age > maxAgeSeconds ? 'mfa_stale' : null;
 }
 
 // Rozróżnia powód odmowy 403 dla wymogu z `requireMfa` (#161). Sam brak roli
