@@ -16,12 +16,27 @@ odtworzyć do pustej bazy.
 | Trasa | Kto | Zawartość |
 |---|---|---|
 | `POST /api/exports` z `{"schoolYearId": "…"}` | admin albo zarząd, sesja z MFA, przydział bez roku lub dla tego roku | pełna paczka roku (dane rodzin i finanse) |
-| `GET /api/exports/class-roster?classId=…` | przedstawiciel **wyłącznie własnej klasy** (i roku), a także admin i zarząd; MFA | lista uczniów klasy z opiekunami; bez wpłat, sum i identyfikatorów rodzin |
+| `GET /api/exports/class-roster?classId=…&format=json\|csv` | przedstawiciel **wyłącznie własnej klasy** (i roku), a także admin i zarząd; MFA | lista uczniów klasy z opiekunami; bez wpłat, sum i identyfikatorów rodzin |
 
 **Założenie do decyzji zarządu i szkoły (D-08, D-09):** pełny eksport mają
 tylko admin i zarząd. Skarbnik, Komisja Rewizyjna i dyrekcja nie mają
 dostępu, dopóki szkoła nie określi ich zakresu. Lista klasy także wymaga MFA,
 bo zawiera dane dzieci i adresy e-mail opiekunów.
+
+### Lista klasy: JSON i CSV (#132)
+
+`format=json` (domyślny) zwraca kanoniczny JSON — bajt w bajt deterministyczny,
+sortowany `COLLATE "C"`, z SHA-256 do weryfikacji. `format=csv` zwraca ten sam
+zestaw danych do wydruku/otwarcia w Excelu: jeden wiersz na ucznia (nazwisko,
+imię, do dwóch opiekunów w kolumnach, e-mail tylko przy zgodzie na kontakt,
+pusta kolumna „Uwagi”), posortowany `Intl.Collator('pl')` (Ćwik, Łukasik,
+Śliwa, Zieliński, Żak w kolejności alfabetu polskiego — nie bajtowo), z
+wierszem nagłówkowym (klasa, rok, data wygenerowania) i stopką „Zawiera dane
+osobowe — nie przesyłać dalej, usunąć po wykorzystaniu”. Nazwa pliku nie
+zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv`. Każde pobranie
+(niezależnie od formatu) zapisuje `export_runs` i `export.created`; format
+trafia tylko do metadanych audytu, bez migracji schematu. XLSX celowo
+pominięty — brak lekkiej biblioteki do zapisu bez nowej ciężkiej zależności.
 
 Odpowiedź to plik JSON jako załącznik (`Content-Disposition: attachment`,
 `Cache-Control: no-store`). Nagłówki `X-Export-Run-Id` i

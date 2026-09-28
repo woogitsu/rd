@@ -434,3 +434,11 @@ export function canApproveMinutes(minutesItem, minutes, meeting) {
   if (meeting?.status !== "held") return false;
   return latestMinutes(minutes)?.id === minutesItem.id;
 }
+
+// Role jak MANAGE_ROLES w src/pg/meetings.js (test tests/role-policy-parity.test.js pilnuje
+// zgodności). „Nowe zebranie” tylko dla ról zarządzających; serwer i tak autoryzuje (#225).
+export const MEETING_MANAGE_ROLES = Object.freeze(["admin", "board"]);
+
+export function canManageMeetings(grants) {
+  return (Array.isArray(grants) ? grants : []).some((grant) => MEETING_MANAGE_ROLES.includes(grant?.role));
+}

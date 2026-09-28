@@ -39,6 +39,26 @@ export function buildLedgerUrl({ schoolYearId, direction = "", cursor = "", limi
   return `/api/ledger?${params}`;
 }
 
+// Zapytanie listy zapamiętywane przy wczytaniu roku (#192); „Wczytaj następne”
+// używa tylko tego zapytania i kursora, nie bieżących pól formularza.
+export function ledgerQuery({ schoolYearId, direction = "" }) {
+  buildLedgerUrl({ schoolYearId, direction });
+  return Object.freeze({ schoolYearId: String(schoolYearId).trim(), direction: String(direction ?? "") });
+}
+
+// Adres następnej strony albo null, gdy nie ma kursora lub zapytania.
+export function buildNextLedgerUrl(query, cursor) {
+  if (!query || typeof cursor !== "string" || cursor === "") return null;
+  return buildLedgerUrl({ ...query, cursor });
+}
+
+// true, gdy pola formularza różnią się od zapytania wyświetlonej księgi.
+export function ledgerFilterChanged(query, current) {
+  if (!query) return false;
+  return String(current?.schoolYearId ?? "").trim() !== query.schoolYearId
+    || String(current?.direction ?? "") !== query.direction;
+}
+
 export function buildOverviewUrl(resource, schoolYearId, direction = "") {
   if (!["categories", "summary", "budget"].includes(resource) || !isValidId(schoolYearId)) {
     throw new Error("Niepoprawne parametry podsumowania.");
@@ -76,4 +96,23 @@ export function normalizeEntry(entry) {
 export function makeIdempotencyKey(prefix, randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto)) {
   if (typeof randomUUID !== "function") throw new Error("Ta przeglądarka nie obsługuje bezpiecznych identyfikatorów operacji.");
   return `${prefix}-${randomUUID()}`;
+}
+
+// Role finansowe jak FINANCIAL_ROLES w src/pg/routes/payments.js i ledger.js (test
+// tests/role-policy-parity.test.js pilnuje zgodności). Liczą się tylko przydziały bez klasy
+// (isAuthorizedScoped bez classId). Ukrycie akcji to skrót — serwer i tak autoryzuje (#225).
+export const FINANCIAL_ROLES = Object.freeze(["admin", "board", "treasurer"]);
+
+export function hasFinancialAccess(grants, schoolYearId = "") {
+  return (Array.isArray(grants) ? grants : []).some((grant) => FINANCIAL_ROLES.includes(grant?.role)
+    && !grant.classId
+    && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === String(schoolYearId).trim()));
+}
+
+// Opis błędu HTTP dla osoby korzystającej z panelu: 403 to brak uprawnień, nie awaria.
+export function describeApiError(status, code) {
+  if (status === 401 || code === "unauthenticated") return "Sesja wygasła. Zaloguj się ponownie.";
+  if (code === "mfa_required") return "Potwierdź logowanie drugim składnikiem (MFA), aby korzystać z finansów.";
+  if (status === 403 || code === "forbidden") return "Nie masz uprawnień do tej operacji w wybranym roku szkolnym.";
+  return null;
 }
