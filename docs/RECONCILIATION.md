@@ -22,7 +22,7 @@ Zakres: issue #7 (uzgodnienie księgi z wyciągiem bankowym) i przygotowanie rap
 
 Skutki dla danych: migracja wyłącznie dodaje tabele, funkcje, triggery i indeksy; nie zmienia istniejących wierszy księgi, wpłat ani uchwał. Wycofanie na pustej bazie = usunięcie tych obiektów; na bazie z danymi — tylko po kopii zapasowej i decyzji o retencji (D-04).
 
-Ograniczenia: brak dopasowań wiele-do-jednego (np. jeden przelew zbiorczy za kilka wpłat) i dopasowań z różną kwotą — różnicę opisuje się w wyjaśnieniu. Brak porzucania szkicu (szkic pozostaje; tworzy się nowy).
+Ograniczenia: brak dopasowań wiele-do-jednego (np. jeden przelew zbiorczy za kilka wpłat) i dopasowań z różną kwotą — różnicę opisuje się w wyjaśnieniu. Przelew zbiorczy kilku rodzin można zapisać jako jedną wpłatę nieprzypisaną i podzielić ją na gospodarstwa (#127, `docs/PAYMENTS.md`) — wtedy pozycja wyciągu łączy się z nią 1:1. Brak porzucania szkicu (szkic pozostaje; tworzy się nowy).
 
 ## Tytuł przelewu i dane osobowe
 

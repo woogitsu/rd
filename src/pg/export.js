@@ -103,6 +103,10 @@ function householdScope(has) {
       parts.push(`id IN (SELECT pr.new_household_id FROM payment_reassignments pr
         JOIN payment_entries p ON p.id = pr.payment_entry_id WHERE p.school_year_id = $1)`);
     }
+    // #127: gospodarstwa z częściami podzielonych wpłat roku.
+    if (has.has('payment_allocations')) {
+      parts.push('id IN (SELECT household_id FROM payment_allocations WHERE school_year_id = $1)');
+    }
   }
   return `(${parts.join(' OR ')})`;
 }
@@ -166,6 +170,9 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
   { table: 'payment_reassignments', requires: ['payment_entries'],
     where: () => 'payment_entry_id IN (SELECT id FROM payment_entries WHERE school_year_id = $1)' },
+  // 0104 (#127): części podzielonych wpłat i ich cofnięcia (własna kolumna school_year_id).
+  { table: 'payment_allocations', requires: ['payment_entries'], where: () => 'school_year_id = $1' },
+  { table: 'payment_allocation_reversals', requires: ['payment_allocations'], where: () => 'school_year_id = $1' },
 
   { table: 'ledger_categories', where: () => 'school_year_id = $1' },
   { table: 'ledger_opening_balances', where: () => 'school_year_id = $1' },

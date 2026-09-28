@@ -88,6 +88,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`news_posts`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`password_reset_tokens`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`password_reset_tokens`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`payment_allocation_reversals`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`payment_allocation_reversals`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie cofnięcia części wpłaty|payment_reference|tak|tak|
+|`payment_allocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_assignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_corrections`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`payment_corrections`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie korekty wpłaty|payment_reference|tak|tak|
@@ -114,7 +117,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **101**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **104**, w tym wolnego tekstu: **24** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -945,6 +948,31 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `token_hash` | none | — | nie |
 | `used_at` | none | — | nie |
 | `user_id` | pseudonymous | board_member | nie |
+
+### `payment_allocation_reversals`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `allocation_id` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `reason` | direct | guardian | tak |
+| `school_year_id` | none | — | tak |
+
+### `payment_allocations`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `amount_cents` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `household_id` | none | — | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `payment_entry_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
 
 ### `payment_assignments`
 

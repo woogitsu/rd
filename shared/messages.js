@@ -173,6 +173,12 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  // Podział wpłaty na gospodarstwa (#127).
+  payment_allocation_exceeds_net: "Suma części wpłaty przekroczyłaby jej kwotę po korektach i zwrotach. Najpierw cofnij część.",
+  payment_allocation_household_exists: "To gospodarstwo ma już część tej wpłaty. Cofnij ją, jeśli kwota jest błędna.",
+  payment_has_allocations: "Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części.",
+  payment_allocation_not_found: "Nie znaleziono tej części wpłaty.",
+  payment_allocation_already_reversed: "Ta część wpłaty została już cofnięta.",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",

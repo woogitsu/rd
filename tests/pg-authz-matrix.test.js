@@ -195,7 +195,7 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
 
 async function makePayment(db, target, stage) {
   const id = nextKey('fx-payment');
-  const unmatched = stage === 'unmatched';
+  const unmatched = stage === 'unmatched' || stage === 'allocated';
   await db.query(
     `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
        reference, status, created_by, idempotency_key)
@@ -203,6 +203,16 @@ async function makePayment(db, target, stage) {
     [id, unmatched ? null : 'hh-1', target.schoolYearId, `Wpłata ${marker(target.key)}`,
       unmatched ? 'unmatched' : 'recorded', fxAdmin.userId, `${id}-key`, yearDate(target, '10-01')],
   );
+  if (stage === 'allocated') {
+    // #127: wpłata nieprzypisana z jedną częścią dla hh-1 (payments.allocations.reversal).
+    const allocationId = `${id}-alloc`;
+    await db.query(
+      `INSERT INTO payment_allocations (id, payment_entry_id, school_year_id, household_id, amount_cents, created_by, idempotency_key)
+       VALUES ($1, $2, $3, 'hh-1', 100, $4, $5)`,
+      [allocationId, id, target.schoolYearId, fxAdmin.userId, `${allocationId}-key`],
+    );
+    return { paymentId: id, allocationId };
+  }
   return { paymentId: id };
 }
 
@@ -469,7 +479,8 @@ function sessionOptions(actor, mfa, withGrants, userId = `mx-${actor.key}`) {
 const WRITE_TABLES = [
   'audit_events', 'events', 'event_revisions', 'meetings', 'meeting_agenda_items', 'meeting_attendees',
   'meeting_quorum_checks', 'meeting_minutes', 'meeting_minutes_publications', 'resolutions',
-  'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments', 'role_grants',
+  'meeting_request_keys', 'payment_entries', 'payment_corrections', 'payment_assignments',
+  'payment_allocations', 'payment_allocation_reversals', 'role_grants',
   'users', 'sessions', 'invitations', 'user_mfa_factors', 'mfa_recovery_codes',
   'import_batches', 'households', 'guardians', 'students', 'enrollments', 'student_guardians',
   'guardian_contact_changes', 'student_guardian_changes', 'enrollment_history', 'documents',

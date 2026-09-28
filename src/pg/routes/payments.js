@@ -9,6 +9,10 @@
 // Nowe trasy (#138): zwrot i ponowne przypisanie jako osobne, niezmienne zdarzenia.
 //   POST /api/payments/{id}/refunds         (Idempotency-Key)
 //   POST /api/payments/{id}/reassignment    (Idempotency-Key)
+// Podział wpłaty nieprzypisanej na gospodarstwa (#127, część 1):
+//   GET  /api/payments/{id}/allocations
+//   POST /api/payments/{id}/allocations                         (Idempotency-Key)
+//   POST /api/payments/{id}/allocations/{allocationId}/reversal (Idempotency-Key)
 //
 // Każdy zapis i jego zdarzenie audytu powstają w jednej transakcji. Korekta
 // i przypisanie blokują wiersz wpłaty (SELECT … FOR UPDATE), więc równoległe
@@ -340,6 +344,11 @@ function mapDatabaseError(error) {
   if (message.includes('legacy_reversed_payment_cannot_be_corrected')) {
     throw new RequestError('payment_cannot_be_corrected', 409);
   }
+  // #127 (0104): podział wpłaty — suma części ≤ netto; korekta/zwrot nie schodzą poniżej części;
+  // wpłata z częściami nie dostaje jednego gospodarstwa.
+  if (message.includes('payment_allocation_exceeds_net')) throw new RequestError('payment_allocation_exceeds_net', 409);
+  if (message.includes('payment_allocation_household_exists')) throw new RequestError('payment_allocation_household_exists', 409);
+  if (message.includes('payment_has_allocations')) throw new RequestError('payment_has_allocations', 409);
   if (message.includes('payment_not_unmatched')) {
     throw new RequestError('payment_already_assigned', 409);
   }
@@ -759,21 +768,247 @@ async function reassignPayment(request, env, paymentEntryId, json) {
   return json(result, 201, CREATED);
 }
 
+// Podział wpłaty na kilka gospodarstw (#127, część 1; migracja 0104).
+// Dotyczy wyłącznie wpłaty nieprzypisanej ('unmatched'): przelew zbiorczy,
+// rodzeństwo w różnych gospodarstwach. Część jest niezmienna; błąd = cofnięcie
+// części (nowy zapis z powodem) + nowa część. Suma bieżących części ≤ netto
+// wpłaty — pilnuje trigger payment_allocation_guard pod blokadą wiersza wpłaty.
+// Dziennik bez kwot i identyfikatorów gospodarstw, jak przy payment.assigned.
+
+function parseAllocationInput(data) {
+  if (!validId(data.householdId)) throw new RequestError('invalid_request');
+  return { householdId: data.householdId, amountCents: readAmount(data.amountCents) };
+}
+
+function allocationFromRow(row) {
+  return {
+    id: row.id,
+    paymentEntryId: row.payment_entry_id,
+    householdId: row.household_id,
+    amountCents: toSafeInteger(row.amount_cents),
+  };
+}
+
+function allocationMatches(row, paymentEntryId, input, actorId) {
+  return row.created_by === actorId
+    && row.payment_entry_id === paymentEntryId
+    && row.household_id === input.householdId
+    && toSafeInteger(row.amount_cents) === input.amountCents;
+}
+
+function allocationReversalMatches(row, paymentEntryId, allocationId, reason, actorId) {
+  return row.created_by === actorId
+    && row.payment_entry_id === paymentEntryId
+    && row.allocation_id === allocationId
+    && row.reason === reason;
+}
+
+async function loadAllocationByKey(executor, key) {
+  const { rows } = await executor.query(
+    `SELECT id, payment_entry_id, household_id, amount_cents, created_by
+       FROM payment_allocations WHERE idempotency_key = $1 LIMIT 1`,
+    [key],
+  );
+  return rows[0] ?? null;
+}
+
+async function loadAllocationReversalByKey(executor, key) {
+  const { rows } = await executor.query(
+    `SELECT r.id, r.allocation_id, a.payment_entry_id, r.reason, r.created_by
+       FROM payment_allocation_reversals r JOIN payment_allocations a ON a.id = r.allocation_id
+      WHERE r.idempotency_key = $1 LIMIT 1`,
+    [key],
+  );
+  return rows[0] ?? null;
+}
+
+async function listAllocations(request, env, paymentEntryId, json) {
+  if (!validId(paymentEntryId)) throw new RequestError('invalid_payment_id');
+  const context = await requireFinancialContext(request, env);
+  // Jedna migawka dla wpłaty, części i sum (REPEATABLE READ, tylko odczyt).
+  const body = await env.db.transaction(async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const { rows } = await tx.query(
+      'SELECT id, school_year_id, status, household_id, net_amount_cents FROM payment_entry_net WHERE id = $1',
+      [paymentEntryId],
+    );
+    const payment = rows[0];
+    if (!payment) throw new RequestError('payment_not_found', 404);
+    requireYear(context, payment.school_year_id);
+    const parts = await tx.query(
+      `SELECT a.id, a.payment_entry_id, a.household_id, a.amount_cents, a.created_at,
+              r.id AS reversal_id, r.reason AS reversal_reason, r.created_at AS reversed_at
+         FROM payment_allocations a
+         LEFT JOIN payment_allocation_reversals r ON r.allocation_id = a.id
+        WHERE a.payment_entry_id = $1
+        ORDER BY a.created_at, a.id`,
+      [paymentEntryId],
+    );
+    const allocations = parts.rows.map((row) => ({
+      ...allocationFromRow(row),
+      createdAt: new Date(row.created_at).toISOString(),
+      reversal: row.reversal_id
+        ? { id: row.reversal_id, reason: row.reversal_reason, createdAt: new Date(row.reversed_at).toISOString() }
+        : null,
+    }));
+    const netAmountCents = toSafeInteger(payment.net_amount_cents);
+    const allocatedCents = allocations.filter((item) => !item.reversal).reduce((sum, item) => sum + item.amountCents, 0);
+    return {
+      paymentEntryId,
+      status: payment.status,
+      householdId: payment.household_id ?? null,
+      netAmountCents,
+      allocatedCents,
+      // „Nieprzypisana część” do wyjaśnienia; dla wpłaty z jednym gospodarstwem 0.
+      unallocatedCents: payment.status === 'unmatched' ? netAmountCents - allocatedCents : 0,
+      allocations,
+    };
+  });
+  return json(body, 200, { 'Cache-Control': 'no-store' });
+}
+
+async function createAllocation(request, env, paymentEntryId, json) {
+  if (!validId(paymentEntryId)) throw new RequestError('invalid_payment_id');
+  const idempotencyKey = readIdempotencyKey(request);
+  const input = parseAllocationInput(await readJson(request));
+  const context = await requireFinancialContext(request, env);
+  const actorId = context.session.user.id;
+
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    if (!allocationMatches(row, paymentEntryId, input, actorId)) throw new RequestError('idempotency_conflict', 409);
+    return new Replay({ allocation: allocationFromRow(row) });
+  };
+
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        'SELECT id, household_id, school_year_id, status FROM payment_entries WHERE id = $1 FOR UPDATE',
+        [paymentEntryId],
+      );
+      const payment = rows[0];
+      if (!payment) throw new RequestError('payment_not_found', 404);
+      requireYear(context, payment.school_year_id);
+      const replay = replayOrConflict(await loadAllocationByKey(tx, idempotencyKey));
+      if (replay) return replay;
+      if (payment.status !== 'unmatched' || payment.household_id !== null) {
+        throw new RequestError('payment_already_assigned', 409);
+      }
+      if (!(await tx.query('SELECT 1 FROM households WHERE id = $1', [input.householdId])).rows.length) {
+        throw new RequestError('invalid_reference');
+      }
+      const allocationId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO payment_allocations (id, payment_entry_id, school_year_id, household_id, amount_cents, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [allocationId, paymentEntryId, payment.school_year_id, input.householdId, input.amountCents, actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'payment.allocation.created', entityType: 'payment_allocation',
+        entityId: allocationId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id },
+      });
+      return { allocation: { id: allocationId, paymentEntryId, householdId: input.householdId, amountCents: input.amountCents } };
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await loadAllocationByKey(env.db, idempotencyKey));
+      if (replay) return json(replay.body, 200, REPLAYED);
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    mapDatabaseError(error);
+  }
+  if (result instanceof Replay) return json(result.body, 200, REPLAYED);
+  return json(result, 201, CREATED);
+}
+
+async function reverseAllocation(request, env, paymentEntryId, allocationId, json) {
+  if (!validId(paymentEntryId)) throw new RequestError('invalid_payment_id');
+  if (!validId(allocationId)) throw new RequestError('invalid_request');
+  const idempotencyKey = readIdempotencyKey(request);
+  const data = await readJson(request);
+  const reason = textOrNull(data.reason, 500);
+  if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
+  const context = await requireFinancialContext(request, env);
+  const actorId = context.session.user.id;
+
+  const replayOrConflict = (row) => {
+    if (!row) return null;
+    if (!allocationReversalMatches(row, paymentEntryId, allocationId, reason, actorId)) {
+      throw new RequestError('idempotency_conflict', 409);
+    }
+    return new Replay({ reversal: { id: row.id, allocationId: row.allocation_id, paymentEntryId, reason: row.reason } });
+  };
+
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        'SELECT id, school_year_id FROM payment_entries WHERE id = $1 FOR UPDATE',
+        [paymentEntryId],
+      );
+      const payment = rows[0];
+      if (!payment) throw new RequestError('payment_not_found', 404);
+      requireYear(context, payment.school_year_id);
+      const replay = replayOrConflict(await loadAllocationReversalByKey(tx, idempotencyKey));
+      if (replay) return replay;
+      const allocation = await tx.query(
+        `SELECT a.id, r.id AS reversal_id FROM payment_allocations a
+           LEFT JOIN payment_allocation_reversals r ON r.allocation_id = a.id
+          WHERE a.id = $1 AND a.payment_entry_id = $2`,
+        [allocationId, paymentEntryId],
+      );
+      if (!allocation.rows.length) throw new RequestError('payment_allocation_not_found', 404);
+      if (allocation.rows[0].reversal_id) throw new RequestError('payment_allocation_already_reversed', 409);
+      const reversalId = crypto.randomUUID();
+      await tx.query(
+        `INSERT INTO payment_allocation_reversals (id, allocation_id, school_year_id, reason, created_by, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [reversalId, allocationId, payment.school_year_id, reason, actorId, idempotencyKey],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'payment.allocation.reversed', entityType: 'payment_allocation',
+        entityId: allocationId, metadata: { paymentEntryId, reversalId, schoolYearId: payment.school_year_id },
+      });
+      return { reversal: { id: reversalId, allocationId, paymentEntryId, reason } };
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = await loadAllocationReversalByKey(env.db, idempotencyKey);
+      if (replay) return json(replayOrConflict(replay).body, 200, REPLAYED);
+      // Równoległe cofnięcie tej samej części innym kluczem (UNIQUE allocation_id).
+      throw new RequestError('payment_allocation_already_reversed', 409);
+    }
+    mapDatabaseError(error);
+  }
+  if (result instanceof Replay) return json(result.body, 200, REPLAYED);
+  return json(result, 201, CREATED);
+}
+
 export async function handle(request, env, url, json) {
   const correctionMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/corrections$/);
   const assignmentMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/assignment$/);
   const refundMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/refunds$/);
   const reassignmentMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/reassignment$/);
+  const allocationsMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/allocations$/);
+  const allocationReversalMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/allocations\/([^/]+)\/reversal$/);
   const isPaymentCreate = url.pathname === '/api/payments';
   const isPaymentList = request.method === 'GET' && url.pathname === '/api/payments';
+  const isAllocationList = request.method === 'GET' && Boolean(allocationsMatch);
   const isMutation = request.method === 'POST'
-    && (isPaymentCreate || correctionMatch || assignmentMatch || refundMatch || reassignmentMatch);
-  if (!isPaymentList && !isMutation) return null;
+    && (isPaymentCreate || correctionMatch || assignmentMatch || refundMatch || reassignmentMatch
+      || allocationsMatch || allocationReversalMatch);
+  if (!isPaymentList && !isAllocationList && !isMutation) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.
   if (isMutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
 
   try {
     if (isPaymentList) return await listPayments(request, env, url, json);
+    if (isAllocationList) return await listAllocations(request, env, decodeId(allocationsMatch[1]), json);
+    if (allocationsMatch) return await createAllocation(request, env, decodeId(allocationsMatch[1]), json);
+    if (allocationReversalMatch) {
+      return await reverseAllocation(request, env, decodeId(allocationReversalMatch[1]), decodeId(allocationReversalMatch[2]), json);
+    }
     if (isPaymentCreate) return await createPayment(request, env, json);
     if (correctionMatch) return await createCorrection(request, env, decodeId(correctionMatch[1]), json);
     if (refundMatch) return await createRefund(request, env, decodeId(refundMatch[1]), json);

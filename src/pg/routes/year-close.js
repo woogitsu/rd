@@ -451,6 +451,10 @@ async function handover(request, env, schoolYearId, json) {
               COALESCE(sum(net_amount_cents) FILTER (WHERE status = 'recorded'), 0) AS recorded_net_cents,
               count(*) FILTER (WHERE status = 'unmatched') AS unmatched_count,
               COALESCE(sum(net_amount_cents) FILTER (WHERE status = 'unmatched'), 0) AS unmatched_net_cents,
+              -- #127: z tego część już podzielona na gospodarstwa (payment_allocations_current).
+              (SELECT COALESCE(sum(a.amount_cents), 0) FROM payment_allocations_current a
+                 JOIN payment_entries p ON p.id = a.payment_entry_id
+                WHERE p.school_year_id = $1 AND p.status = 'unmatched') AS unmatched_allocated_cents,
               (SELECT count(*) FROM payment_corrections c JOIN payment_entries p ON p.id = c.payment_entry_id
                 WHERE p.school_year_id = $1) AS correction_count
          FROM payment_entry_net WHERE school_year_id = $1`,
@@ -522,6 +526,7 @@ async function handover(request, env, schoolYearId, json) {
       recordedNetCents: toSafeInteger(pay.recorded_net_cents),
       unmatchedCount: toSafeInteger(pay.unmatched_count),
       unmatchedNetCents: toSafeInteger(pay.unmatched_net_cents),
+      unmatchedAllocatedCents: toSafeInteger(pay.unmatched_allocated_cents),
       correctionCount: toSafeInteger(pay.correction_count),
     },
     meetings: {
