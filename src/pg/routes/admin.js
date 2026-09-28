@@ -15,6 +15,8 @@
 //   POST /api/admin/invitations                 { email, role, classId?, schoolYearId?, ttlHours? }
 //   POST /api/admin/invitations/{id}/revoke
 //   GET  /api/admin/school-years                lata i klasy do formularzy
+//   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
+//   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
 //   GET  /api/admin/audit?limit=                dziennik zmian kont i ról
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
@@ -184,7 +186,9 @@ async function listUsers(env, json) {
               WHERE g.user_id = u.id AND g.revoked_at IS NULL
                 AND (g.expires_at IS NULL OR g.expires_at > now())) AS active_grants,
             (SELECT count(*)::int FROM sessions s
-              WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions
+              WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions,
+            EXISTS (SELECT 1 FROM user_mfa_factors f
+                     WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL AND f.disabled_at IS NULL) AS mfa_enrolled
        FROM users u
       ORDER BY lower(u.email)
       LIMIT ${MAX_LIST}`,
@@ -196,6 +200,7 @@ async function listUsers(env, json) {
       displayName: row.display_name,
       disabledAt: isoTimestamp(row.disabled_at),
       createdAt: isoTimestamp(row.created_at),
+      mfaEnrolled: Boolean(row.mfa_enrolled),
       activeGrants: Number(row.active_grants),
       activeSessions: Number(row.active_sessions),
     })),
@@ -303,6 +308,10 @@ async function listGrants(env, url, json) {
 async function createGrant(env, actorId, request, json) {
   const data = await readJson(request);
   if (!validId(data.userId)) throw new RequestError('invalid_user_id');
+  // #146: samonadanie roli (np. admin nadaje sobie treasurer/board) omija zasadę
+  // czterech oczu wymaganą wszędzie indziej dla ważnych decyzji. Odrzucamy przed
+  // transakcją: żaden wiersz nie powstaje, żadne zdarzenie audytu się nie zapisuje.
+  if (data.userId === actorId) throw new RequestError('cannot_grant_self', 409);
   const role = data.role;
   const classId = optionalId(data.classId, 'invalid_class_id');
   const schoolYearIdInput = optionalId(data.schoolYearId, 'invalid_school_year_id');
@@ -496,6 +505,87 @@ async function revokeInvitationRoute(env, actorId, invitationId, json) {
   return json({ invitationId, changed });
 }
 
+// --- Konfiguracja roku (#78) ------------------------------------------------
+// Założenie do decyzji D-08: dopóki zarząd nie ma odczytu w tym module (patrz
+// nagłówek pliku), tworzenie roku i klas zostaje wyłącznie przy adminie —
+// wariant zachowawczy węższy niż propozycja z issue (admin, zarząd).
+// Usuwanie klas i lat nie ma trasy (AC issue #78: brak drogi do usunięcia
+// klasy z przypisaniami) — korekta to nowa klasa i przeniesienie uczniów.
+
+function validDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+function slugify(name) {
+  return String(name).trim().toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+async function createSchoolYear(env, actorId, request, json) {
+  const data = await readJson(request);
+  if (!validId(data.id)) throw new RequestError('invalid_id');
+  const label = typeof data.label === 'string' ? data.label.trim() : '';
+  if (!label || label.length > 200) throw new RequestError('invalid_label');
+  if (!validDate(data.startsOn) || !validDate(data.endsOn)) throw new RequestError('invalid_date');
+  if (data.endsOn < data.startsOn) throw new RequestError('invalid_date_range');
+  const result = await env.db.transaction(async (tx) => {
+    const existing = await tx.query('SELECT 1 FROM school_years WHERE id = $1 OR label = $2', [data.id, label]);
+    if (existing.rows.length) throw new Abort('school_year_exists', 409);
+    await tx.query(
+      'INSERT INTO school_years (id, label, starts_on, ends_on) VALUES ($1, $2, $3, $4)',
+      [data.id, label, data.startsOn, data.endsOn],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'school_year.created', entityType: 'school_year', entityId: data.id,
+      metadata: { startsOn: data.startsOn, endsOn: data.endsOn },
+    });
+    return { id: data.id, label, startsOn: data.startsOn, endsOn: data.endsOn };
+  });
+  return json({ schoolYear: result }, 201);
+}
+
+async function createClasses(env, actorId, schoolYearId, request, json) {
+  const data = await readJson(request);
+  if (!Array.isArray(data.names) || !data.names.length || data.names.length > 100) {
+    throw new RequestError('invalid_names');
+  }
+  const names = [];
+  const seen = new Set();
+  for (const raw of data.names) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (!name || name.length > 60) throw new RequestError('invalid_names');
+    const key = name.toLowerCase();
+    if (seen.has(key)) throw new RequestError('duplicate_name');
+    seen.add(key);
+    names.push(name);
+  }
+  const result = await env.db.transaction(async (tx) => {
+    const year = await tx.query('SELECT id FROM school_years WHERE id = $1', [schoolYearId]);
+    if (!year.rows[0]) throw new Abort('school_year_not_found', 404);
+    const existing = await tx.query('SELECT name FROM classes WHERE school_year_id = $1', [schoolYearId]);
+    const existingNames = new Set(existing.rows.map((row) => row.name.toLowerCase()));
+    const created = [];
+    const usedIds = new Set();
+    for (const name of names) {
+      if (existingNames.has(name.toLowerCase())) throw new Abort('class_exists', 409);
+      let id = `${schoolYearId}-${slugify(name)}`;
+      if (id === `${schoolYearId}-` || usedIds.has(id)) id = `${schoolYearId}-${crypto.randomUUID()}`;
+      usedIds.add(id);
+      await tx.query('INSERT INTO classes (id, school_year_id, name) VALUES ($1, $2, $3)', [id, schoolYearId, name]);
+      await insertAuditEvent(tx, {
+        actorId, action: 'class.created', entityType: 'class', entityId: id,
+        metadata: { schoolYearId, name },
+      });
+      created.push({ id, name, schoolYearId });
+    }
+    return created;
+  });
+  return json({ classes: result }, 201);
+}
+
 // --- Słowniki i dziennik ---------------------------------------------------
 
 async function listSchoolYears(env, json) {
@@ -515,7 +605,7 @@ async function listSchoolYears(env, json) {
 
 const AUDIT_ACTIONS = [
   'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
-  'school_year.grants_expired',
+  'school_year.grants_expired', 'school_year.created', 'class.created',
   'invitation.created', 'invitation.revoked', 'invitation.accepted',
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
@@ -611,8 +701,12 @@ async function route(request, env, url, json, actorId) {
   }
   if (section === 'school-years') {
     if (path.length === 1 && method === 'GET') return listSchoolYears(env, json);
+    if (path.length === 1 && method === 'POST') return createSchoolYear(env, actorId, request, json);
     if (path.length === 3 && action === 'expire-grants' && method === 'POST') {
       return expireSchoolYear(env, actorId, decodeId(rawId), request, json);
+    }
+    if (path.length === 3 && action === 'classes' && method === 'POST') {
+      return createClasses(env, actorId, decodeId(rawId), request, json);
     }
   }
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json);
