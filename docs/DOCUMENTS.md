@@ -26,9 +26,10 @@ Macierz jest **założeniem technicznym do zatwierdzenia** przez zarząd i szko�
 | Metoda i ścieżka | Opis |
 |---|---|
 | `POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]` | Przesłanie pliku. Ciało to surowe bajty pliku; wymagane nagłówki `Content-Type` i `Idempotency-Key` (8–128 znaków). `classId` wyłącznie dla `class`. Powiązanie (`ledger_entry` albo `payment_entry` z tego samego roku) wyłącznie dla `financial`. |
-| `GET /api/documents?schoolYearId=…[&kind=…][&classId=…][&limit=…][&offset=…]` | Lista metadanych dostępnych użytkownikowi (najwyżej 100 na stronę). |
-| `GET /api/documents/{id}` | Metadane jednego dokumentu. |
+| `GET /api/documents?schoolYearId=…[&kind=…][&classId=…][&category=…][&q=…][&limit=…][&offset=…]` | Lista metadanych dostępnych użytkownikowi (najwyżej 100 na stronę), z tytułem i kategorią najnowszej wersji opisu. `q` szuka w tytule i opisie (`ILIKE`, znaki specjalne wzorca uciekane); filtr i paginacja liczą się w SQL przed `LIMIT`. |
+| `GET /api/documents/{id}` | Metadane jednego dokumentu, z pełną historią opisu (`descriptionHistory`, najnowsza wersja pierwsza). |
 | `GET /api/documents/{id}/content` | Pobranie pliku po autoryzacji. |
+| `POST /api/documents/{id}/description` | Nowa wersja opisu (issue #76): `{ title, category, documentDate?, description? }`, JSON, nagłówek `Idempotency-Key`. Uprawnienie takie samo jak do przesłania danego rodzaju dokumentu (patrz macierz wyżej); MFA wymagane dla `financial`. Dopisuje wiersz — nie edytuje poprzedniej wersji. |
 
 Odpowiedzi:
 
@@ -41,6 +42,18 @@ Odpowiedzi:
 Ponowienie tego samego żądania (podwójne kliknięcie, ponowiona sieć) z tym samym `Idempotency-Key` zwraca `200` z `replayed: true` i tym samym dokumentem; nie powstaje drugi wpis ani drugi obiekt.
 
 Pobranie ma nagłówki `Content-Disposition: attachment; filename="dokument-<id>.<ext>"`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Content-Security-Policy: sandbox; default-src 'none'`, `Cross-Origin-Resource-Policy: same-origin` i `Referrer-Policy: no-referrer`. Przed wydaniem pliku serwer porównuje rozmiar i SHA-256 obiektu z bazą; niezgodność blokuje pobranie.
+
+## Tytuł, kategoria i wyszukiwanie (issue #76)
+
+`documents` pozostaje niezmienne (zasada z issue #39/#8). Osobna, dopisywana tabela `document_descriptions` przechowuje tytuł (3–200 znaków), kategorię z zamkniętej listy (`faktura`, `potwierdzenie_przelewu`, `wyciag`, `protokol`, `uchwala`, `umowa`, `regulamin`, `sprawozdanie_rewizyjne`, `inne` — założenie do zatwierdzenia przez zarząd i skarbnika), opcjonalną datę dokumentu i opcjonalny opis (do 1000 znaków). Zmiana opisu **nie edytuje** poprzedniego wiersza — dodaje kolejną wersję (`revision_no`); poprzednie wersje zostają w historii (`GET /api/documents/{id}`). Obowiązuje najnowsza wersja.
+
+Dokument bez żadnego wpisu opisu (istniejące dokumenty sprzed tej migracji, albo taki, dla którego nikt jeszcze nie dodał tytułu) ma `title: null` — panel pokazuje wtedy „Bez tytułu”, nie błąd.
+
+**Ostrzeżenie dla osoby wypełniającej formularz:** tytuł nie powinien zawierać imion i nazwisk uczniów ani rodziców — trafia do listy widocznej dla każdego z dostępem do danego rodzaju dokumentu (np. „Faktura — wynajem sali, październik”, nie „Faktura za obóz Jasia Kowalskiego”). To nie jest wymuszone technicznie.
+
+Dziennik: `document.described` zapisuje aktora, czas, identyfikator dokumentu, kategorię i numer wersji — **bez tytułu ani opisu** (mogą zawierać treść opisową dokumentu).
+
+**Poza zakresem tej wersji:** kolumna `document_descriptions` nie ma jeszcze triggera zamrożenia roku szkolnego — dodanie opisu do dokumentu z zamkniętego roku jest dziś możliwe (opisane w `postgres/README.md`). Panel: wybór roku i klasy z listy serwera (dziś pole tekstowe) to osobny zakres.
 
 ## Walidacja pliku
 
@@ -60,7 +73,7 @@ Pobranie ma nagłówki `Content-Disposition: attachment; filename="dokument-<id>
 
 Klucz w buckecie ma postać `docs/<losowy uuid>`, niezależny od identyfikatora dokumentu w API. Nie zawiera nazwy pliku, roku, klasy, rodziny ani użytkownika; wymusza to ograniczenie w bazie. Oryginalna nazwa pliku **nie jest zapisywana** (często zawiera nazwisko). Plik do pobrania dostaje nazwę technyczną `dokument-<id>`. Dziennik zapisuje wyłącznie identyfikatory, rodzaj, typ, rozmiar i SHA-256 — bez nazwy pliku, treści i danych osobowych.
 
-Bucket nie może zawierać zdjęć archiwalnych ani wizerunku dzieci: publikacja zdjęć wymaga osobnego sprawdzenia praw i zgód (AGENTS.md).
+Bucket nie może zawierać zdjęć archiwalnych ani wizerunku dzieci: publikacja zdjęć wymaga osobnego sprawdzenia praw i zgód (AGENTS.md). Od #96 zdjęcia galerii mają osobny prefiks `photos/<losowy uuid>` w tym samym prywatnym buckecie (moduł `src/pg/news.js`, migracja `postgres/migrations/0084_news_photo_files.sql`) — oddzielny od `docs/` używanego przez ten moduł, żeby dowody finansowe/dokumenty zarządu i zdjęcia galerii się nie mieszały. Trasy dokumentów (`POST /api/documents`, `GET /api/documents/:id/content`) nie przyjmują ani nie wydają obiektów spod `photos/`, i odwrotnie — patrz [NEWS.md](NEWS.md).
 
 ## Dane w PostgreSQL
 

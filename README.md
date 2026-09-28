@@ -44,6 +44,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Zamknięcie roku i przekazanie kadencji](docs/YEAR_CLOSE.md)
 - [Rejestr decyzji zarządu i szkoły](docs/DECISIONS.md)
 - [Stan prototypu — zestawienie na spotkanie zarządu](docs/STATUS.md)
+- [Scenariusz pokazu prototypu dla zarządu](docs/DEMO.md)
 - [Serwer Node.js dla Railway](docs/NODE_SERVER.md)
 - [Równoważność starego (Worker/D1) i nowego (PostgreSQL) API](docs/EQUIVALENCE.md)
 - [Migracja danych z D1 do PostgreSQL](docs/D1_POSTGRES_MIGRATION.md)
