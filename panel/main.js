@@ -1,3 +1,4 @@
+import { describeApiError, hasFinancialAccess } from "./core.js";
 import {
   METHOD_LABELS,
   STATUS_LABELS,
@@ -37,7 +38,11 @@ async function api(url, options = {}) {
     headers: { "Content-Type": "application/json", ...options.headers },
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error?.message || data.message || `Błąd serwera (${response.status}).`);
+  if (!response.ok) {
+    const code = typeof data.error === "string" ? data.error : null;
+    throw new Error(describeApiError(response.status, code)
+      || data.error?.message || data.message || `Błąd serwera (${response.status}).`);
+  }
   return data;
 }
 
@@ -280,4 +285,31 @@ body.addEventListener("click", (event) => {
     assignmentDialog.form.querySelector(".context").textContent = `${payment.receivedOn} · ${payment.reference || "Bez opisu"} · ${formatCents(payment.netCents)}`;
     assignmentDialog.dialog.showModal();
   }
+});
+
+// #225: Wpłaty prowadzą role finansowe. Inne konta (np. przedstawiciel klasy) nie widzą
+// formularzy, tylko jeden komunikat. Sesja przed MFA dostaje z /api/access puste grants.
+const financeSections = [filtersForm.closest("section"), body.closest("section")];
+async function applyAccess() {
+  let grants = [];
+  let mfaRequired = false;
+  try {
+    const access = await api("/api/access");
+    grants = Array.isArray(access.grants) ? access.grants : [];
+    mfaRequired = access.mfaRequired === true;
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+    return;
+  }
+  if (hasFinancialAccess(grants)) return;
+  byId("open-payment").hidden = true;
+  for (const section of financeSections) section.hidden = true;
+  const notice = byId("access-notice");
+  if (mfaRequired) notice.textContent = describeApiError(403, "mfa_required");
+  notice.hidden = false;
+}
+byId("open-payment").hidden = true;
+applyAccess().then(() => {
+  if (!financeSections[0].hidden) byId("open-payment").hidden = false;
 });

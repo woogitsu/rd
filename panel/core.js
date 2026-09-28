@@ -97,3 +97,22 @@ export function normalizePayment(payment) {
         : 0,
   };
 }
+
+// Role finansowe jak FINANCIAL_ROLES w src/pg/routes/payments.js i ledger.js (test
+// tests/role-policy-parity.test.js pilnuje zgodności). Liczą się tylko przydziały bez klasy
+// (isAuthorizedScoped bez classId). Ukrycie akcji to skrót — serwer i tak autoryzuje (#225).
+export const FINANCIAL_ROLES = Object.freeze(["admin", "board", "treasurer"]);
+
+export function hasFinancialAccess(grants, schoolYearId = "") {
+  return (Array.isArray(grants) ? grants : []).some((grant) => FINANCIAL_ROLES.includes(grant?.role)
+    && !grant.classId
+    && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === String(schoolYearId).trim()));
+}
+
+// Opis błędu HTTP dla osoby korzystającej z panelu: 403 to brak uprawnień, nie awaria.
+export function describeApiError(status, code) {
+  if (status === 401 || code === "unauthenticated") return "Sesja wygasła. Zaloguj się ponownie.";
+  if (code === "mfa_required") return "Potwierdź logowanie drugim składnikiem (MFA), aby korzystać z finansów.";
+  if (status === 403 || code === "forbidden") return "Nie masz uprawnień do tej operacji w wybranym roku szkolnym.";
+  return null;
+}
