@@ -72,12 +72,16 @@ wpisów).
 | `consents_locked` | Zgód nie można zmienić w obecnym stanie wpisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `content_hash_mismatch` | Plik uszkodził się podczas przesyłania. Wyślij go ponownie. | Nie — popraw dane żądania. |
 | `correction_exceeds_remaining_amount` | Korekta przekracza kwotę pozostałą po wcześniejszych korektach. | Zależy od kontekstu (patrz moduł trasy). |
+| `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
+| `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
 | `date_outside_school_year` | Data wpisu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `difference_requires_note` | Różnica wymaga wpisania wyjaśnienia. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_active_content` | Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_content_missing` | Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_integrity_mismatch` | Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi. | Nie — popraw dane żądania. |
 | `document_malformed` | Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane). | Zależy od kontekstu (patrz moduł trasy). |
+| `document_status_conflict` | Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
+| `document_status_replacement_not_active` | Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_too_large` | Plik przekracza dozwolony rozmiar. | Zależy od kontekstu (patrz moduł trasy). |
 | `duplicate_name` | Nazwy klas na liście powtarzają się. | Nie — popraw dane żądania. |
 | `duplicate_photo` | To zdjęcie jest już dodane. | Nie — popraw dane żądania. |
@@ -87,6 +91,9 @@ wpisów).
 | `event_cancelled` | Wydarzenie jest odwołane; odwołanie jest ostateczne. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_not_found` | Nie znaleziono wydarzenia albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
 | `event_not_public` | Publikować można tylko wydarzenie z odbiorcami „Publiczne”. | Zależy od kontekstu (patrz moduł trasy). |
+| `event_task_already_cancelled` | To zadanie zostało już odwołane. | Zależy od kontekstu (patrz moduł trasy). |
+| `event_task_not_found` | Nie znaleziono zadania albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
+| `event_task_signup_not_found` | Nie znaleziono zapisu. | Nie — popraw dane żądania. |
 | `export_in_progress` | Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie. | Tak, po chwili (drugi równoczesny eksport tego samego roku). |
 | `export_too_large` | Eksport jest za duży. Zawęź zakres. | Zależy od kontekstu (patrz moduł trasy). |
 | `fingerprint_mismatch` | Dane różnią się od podglądu. Wyślij podgląd ponownie. | Nie — popraw dane żądania. |
@@ -95,6 +102,9 @@ wpisów).
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
 | `group_match_direction_mismatch` | Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ). | Nie — popraw dane żądania. |
 | `group_match_sum_mismatch` | Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu. | Nie — popraw dane żądania. |
+| `guardian_not_found` | Nie znaleziono opiekuna. | Nie — popraw dane żądania. |
+| `guardian_outside_class` | Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku. | Zależy od kontekstu (patrz moduł trasy). |
+| `household_not_found` | Nie znaleziono gospodarstwa. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_reused` | Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -116,6 +126,7 @@ wpisów).
 | `invalid_class` | Niepoprawny identyfikator klasy. | Nie — popraw dane żądania. |
 | `invalid_code` | Kod jest nieprawidłowy. Sprawdź aplikację i wpisz aktualny kod. | Nie — popraw dane żądania. |
 | `invalid_columns` | Niepoprawne kolumny importu. | Nie — popraw dane żądania. |
+| `invalid_confirmation_note` | Podaj uzasadnienie (od 3 do 1000 znaków). | Nie — popraw dane. |
 | `invalid_consent` | Niepoprawny zapis zgody na publikację. | Nie — popraw dane żądania. |
 | `invalid_content_type` | Serwer nie odczytał formatu danych. | Nie — popraw dane żądania. |
 | `invalid_cost_center` | Wskazane wydarzenie lub klasa nie należy do roku tego wpisu. | Nie — popraw dane żądania. |
@@ -127,6 +138,7 @@ wpisów).
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
 | `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_datetime` | Niepoprawna data lub godzina. | Nie — popraw dane żądania. |
+| `invalid_decision_note_ref` | Odwołanie do decyzji może mieć od 1 do 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_decision_ref` | Podaj odwołanie do decyzji (np. numer uchwały). | Nie — popraw dane żądania. |
 | `invalid_decorative` | Niepoprawna wartość pola „zdjęcie dekoracyjne”. | Nie — popraw dane. |
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
@@ -135,6 +147,7 @@ wpisów).
 | `invalid_document_date` | Niepoprawna data dokumentu. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
 | `invalid_domain` | Wybierz obszar dziennika z listy. | Nie — popraw dane. |
+| `invalid_due_on` | Podaj poprawną datę terminu odpowiedzi. | Nie — popraw dane żądania. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
 | `invalid_email` | Podaj poprawny adres e-mail. | Nie — popraw dane żądania. |
 | `invalid_ended_on` | Podaj poprawną datę odejścia (RRRR-MM-DD). | Nie — popraw dane. |
@@ -164,6 +177,7 @@ wpisów).
 | `invalid_names` | Podaj nazwy klas (każda do 60 znaków). | Nie — popraw dane żądania. |
 | `invalid_next_school_year` | Niepoprawny następny rok szkolny. | Nie — popraw dane żądania. |
 | `invalid_options` | Niepoprawne ustawienia importu. | Nie — popraw dane żądania. |
+| `invalid_or_expired_link` | Ten link jest nieprawidłowy albo już nieaktywny. | Nie — poproś o nowy link. |
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_origin` | Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji. | Nie — popraw dane żądania. |
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
@@ -174,9 +188,12 @@ wpisów).
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
+| `invalid_received_on` | Podaj poprawną datę wpłynięcia żądania. | Nie — popraw dane żądania. |
 | `invalid_reference_text` | Opis wpłaty jest za długi albo zawiera niedozwolone znaki. | Nie — popraw dane żądania. |
 | `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje. | Nie — popraw dane żądania. |
 | `invalid_relation_kind` | Wybierz rodzaj powiązania uchwały z listy. | Nie — popraw dane. |
+| `invalid_release_reason` | Wybierz jeden z dopuszczalnych powodów zdjęcia blokady. | Nie — popraw dane. |
+| `invalid_replacement_document` | Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę. | Nie — popraw dane żądania. |
 | `invalid_request` | Serwer odrzucił dane formularza. Sprawdź pola. | Nie — popraw dane żądania. |
 | `invalid_reversal` | Tego przeniesienia nie można cofnąć w obecnym stanie. | Nie — popraw dane żądania. |
 | `invalid_revision` | Brak numeru wersji. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -188,6 +205,8 @@ wpisów).
 | `invalid_school_year` | Niepoprawny identyfikator roku szkolnego. | Nie — popraw dane żądania. |
 | `invalid_send_not_before` | Podaj poprawną datę i godzinę startu wysyłki. | Nie — popraw dane. |
 | `invalid_signature` | Niepoprawny podpis żądania. | Nie — popraw dane żądania. |
+| `invalid_signup_target` | Wskaż dokładnie jedną osobę: opiekuna albo konto. | Nie — popraw dane żądania. |
+| `invalid_slots_needed` | Liczba potrzebnych miejsc musi być od 1 do 200. | Nie — popraw dane żądania. |
 | `invalid_source_detail` | Niepoprawny opis źródła. | Nie — popraw dane żądania. |
 | `invalid_source_document` | Niepoprawny dokument źródłowy. | Nie — popraw dane żądania. |
 | `invalid_source` | Niepoprawne źródło wpisu. | Nie — popraw dane żądania. |
@@ -211,6 +230,7 @@ wpisów).
 | `ledger_entry_already_corrected_to_zero` | Wpis jest już w pełni skorygowany do zera. Nie można go przeksięgować. | Zależy od kontekstu (patrz moduł trasy). |
 | `ledger_entry_already_replaced` | Ten wpis został już przeksięgowany. | Zależy od kontekstu (patrz moduł trasy). |
 | `ledger_entry_not_found` | Nie znaleziono wpisu księgi. | Nie — popraw dane żądania. |
+| `link_used` | Ten link został już wykorzystany. | Nie — link jest jednorazowy, poproś o nowy. |
 | `login_busy` | Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund. | Tak — po chwili. |
 | `match_already_revoked` | Dopasowanie zostało już wycofane. | Zależy od kontekstu (patrz moduł trasy). |
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
@@ -291,7 +311,11 @@ wpisów).
 | `reconciliation_not_found` | Nie znaleziono uzgodnienia. | Nie — popraw dane żądania. |
 | `refund_exceeds_remaining_amount` | Zwrot przekracza kwotę pozostałą po wcześniejszych korektach i zwrotach. | Zależy od kontekstu (patrz moduł trasy). |
 | `relation_ended` | Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa. | Zależy od kontekstu (patrz moduł trasy). |
+| `release_reason_not_allowed` | Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”. | Zależy od kontekstu (patrz moduł trasy). |
 | `replacement_target_mismatch` | Przeksięgowanie nie zgadza się z zastępowanym wpisem. Odśwież widok i spróbuj ponownie. | Nie — popraw dane żądania. |
+| `request_already_consumed` | Ten wniosek o zdjęcie blokady został już rozpatrzony. | Zależy od kontekstu (patrz moduł trasy). |
+| `request_not_found` | Nie znaleziono wniosku o zdjęcie blokady. | Nie — popraw dane. |
+| `request_not_found` | Nie znaleziono wniosku. | Nie — popraw dane żądania. |
 | `request_too_large` | Za dużo danych w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_expense_only` | Uchwałę jako upoważnienie można wskazać tylko przy wydatku. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_final_immutable` | Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu. | Zależy od kontekstu (patrz moduł trasy). |
@@ -328,6 +352,11 @@ wpisów).
 | `statement_multiple_not_supported` | Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno. | Nie — popraw dane żądania. |
 | `statement_transaction_id_missing` | Ruch w wyciągu nie ma identyfikatora transakcji banku. | Nie — popraw dane żądania. |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `student_not_found` | Nie znaleziono ucznia. | Nie — popraw dane żądania. |
+| `subject_required` | Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie. | Zależy od kontekstu (patrz moduł trasy). |
+| `suppression_not_active` | Ta blokada nie jest już aktywna. | Zależy od kontekstu (patrz moduł trasy). |
+| `task_full` | Brak wolnych miejsc w tym zadaniu. Odśwież listę. | Zależy od kontekstu (patrz moduł trasy). |
+| `task_time_outside_event` | Czas zadania musi mieścić się w czasie wydarzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `timeout` | Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `too_many_attempts` | Zbyt wiele prób. Spróbuj ponownie później. | Zależy od kontekstu (patrz moduł trasy). |
 | `too_many_rows` | Za dużo wierszy w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
