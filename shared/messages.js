@@ -170,6 +170,8 @@ export const MESSAGES = Object.freeze({
   campaign_locked: "Wysyłka jest zablokowana i nie można jej zmienić.",
   no_recipients: "Wysyłka nie ma odbiorców.",
   recipients_hash_mismatch: "Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie.",
+  outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
+  not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
 
   // --- Import -----------------------------------------------------------------------------------
   import_disabled: "Import jest wyłączony na tym środowisku.",

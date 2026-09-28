@@ -1481,6 +1481,113 @@ test('no_payment_record: payment recorded during a provider pause → skipped af
   } finally { await t.close(); }
 });
 
+// --- #139: raport doręczeń, lista operacyjna, rozstrzyganie delivery_unknown, rotacja sekretu ----
+
+test('#139 report: only counts and codes, no addresses/names/household ids', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport({ fail: (_m, n) => (n === 1 ? new EmailTransportError('provider_rejected_400', { retryable: false }) : null) });
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/report`);
+    assert.equal(res.status, 200);
+    const text = JSON.stringify(res.body);
+    assert.ok(!/@/.test(text), `raport nie może zawierać adresów: ${text}`);
+    assert.ok(!/h1|h2/.test(text), `raport nie może zawierać identyfikatorów rodzin: ${text}`);
+    assert.equal(res.body.outbox.sent + res.body.outbox.failed, 2);
+    assert.equal(res.body.lastProviderEvent.none, 2, 'żadne zdarzenie webhooka jeszcze nie doszło');
+    assert.deepEqual(res.body.resolutions, {});
+    for (const cookie of [null]) assert.equal((await t.call(cookie, `/api/email/campaigns/${campaign.id}/report`)).status, 401);
+    const rep = await seedUserSession(t.db, { userId: 'u-rep139', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/report`)).status, 403);
+  } finally { await t.close(); }
+});
+
+test('#139 attention list: failed/delivery_unknown and ≥3 soft_bounce rows, masked address, read is logged', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    await t.db.query("UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2, claim_token = $3, send_started_at = $2 WHERE campaign_id = $1 AND household_id = 'h1'", [campaign.id, DAY1.toISOString(), crypto.randomUUID()]);
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    assert.equal((await outboxStates(t, campaign.id)).find((r) => r.household_id === 'h1').state, 'failed');
+    const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/attention`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.rows.length, 1);
+    assert.equal(res.body.rows[0].lastError, 'delivery_unknown');
+    assert.match(res.body.rows[0].email, /^h\*\*\*@example\.invalid$/);
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.attention_list.viewed' AND entity_id = $1`, [campaign.id]), 1);
+    const rep = await seedUserSession(t.db, { userId: 'u-rep139b', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/attention`)).status, 403);
+  } finally { await t.close(); }
+});
+
+test('#139 resolutions: confirmed_not_sent requires board, not_resolvable for sent rows, double click keeps one record', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    await t.db.query("UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2, claim_token = $3, send_started_at = $2 WHERE campaign_id = $1", [campaign.id, DAY1.toISOString(), crypto.randomUUID()]);
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    const [row] = await outboxStates(t, campaign.id);
+    assert.equal(row.state, 'failed');
+    const { rows: [{ id: outboxId }] } = await t.db.query('SELECT id FROM email_outbox WHERE campaign_id = $1', [campaign.id]);
+
+    // Bardziej dotkliwe twierdzenie wymaga silniejszej roli.
+    const deniedTreasurer = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId, resolution: 'confirmed_not_sent', evidenceCode: 'brevo_log_no_event' },
+    });
+    assert.deepEqual([deniedTreasurer.status, deniedTreasurer.body], [403, { error: 'forbidden' }]);
+
+    const ok = await t.call(t.board, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId, resolution: 'confirmed_not_sent', evidenceCode: 'brevo_log_no_event' },
+    });
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+
+    // Podwójne kliknięcie: ten sam wiersz, jeden zapis w historii.
+    const again = await t.call(t.board, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId, resolution: 'confirmed_not_sent', evidenceCode: 'brevo_log_no_event' },
+    });
+    assert.equal(again.status, 200);
+    assert.equal(await t.count('SELECT count(*)::int AS n FROM email_outbox_resolutions WHERE outbox_id = $1', [outboxId]), 1);
+
+    // Wiersz, który jeszcze nie jest w stanie końcowym, nie da się rozstrzygnąć.
+    await family(t.db, 'h2');
+    const campaign2 = await readyCampaign(t, { key: crypto.randomUUID() });
+    const { rows: [{ id: queuedId }] } = await t.db.query('SELECT id FROM email_outbox WHERE campaign_id = $1', [campaign2.id]);
+    const notResolvable = await t.call(t.treasurer, `/api/email/campaigns/${campaign2.id}/resolutions`, {
+      method: 'POST', body: { outboxId: queuedId, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
+    });
+    assert.deepEqual(notResolvable.body, { error: 'not_resolvable' });
+  } finally { await t.close(); }
+});
+
+test('#139 webhook secret rotation: previous secret still accepted, logged; removing it makes it a plain wrong secret', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    const sent = transport.calls[0];
+    const { rows: [row] } = await t.db.query('SELECT provider_message_id FROM email_outbox WHERE id = $1', [sent.outboxId]);
+    const event = { event: 'delivered', email: 'h1-g1@example.invalid', 'message-id': row.provider_message_id, ts_event: 1791187200, id: 1 };
+    const rotatedEnv = { ...t.env, BREVO_WEBHOOK_SECRET: 'n'.repeat(48), BREVO_WEBHOOK_SECRET_PREVIOUS: WEBHOOK_SECRET };
+    const res = await handlePgRequest(webhookRequest(event, `Bearer ${WEBHOOK_SECRET}`), rotatedEnv);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { received: 1, recorded: 1, suppressed: 0 });
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.webhook.previous_secret_used'`), 1);
+    // Sekret usunięty z env: stary klucz znowu jest zwykłym złym sekretem.
+    const withoutPrevious = await handlePgRequest(webhookRequest({ ...event, id: 2 }, `Bearer ${WEBHOOK_SECRET}`), { ...t.env, BREVO_WEBHOOK_SECRET: 'n'.repeat(48) });
+    assert.deepEqual(await withoutPrevious.json(), { error: 'invalid_signature' });
+  } finally { await t.close(); }
+});
+
 test('no test in this file touched the network', () => {
   assert.equal(networkGuardCalls(), 0);
 });

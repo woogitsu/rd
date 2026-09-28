@@ -694,6 +694,8 @@ export const ROUTE_MATRIX = Object.freeze([
   emailRoute('email.snapshot', 'POST', '/snapshot', 'draft', {}),
   emailRoute('email.preview', 'GET', '/preview', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
   emailRoute('email.recipients', 'GET', '/recipients', 'snapshot', { fixture: 'static' }),
+  emailRoute('email.report', 'GET', '/report', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
+  emailRoute('email.attention', 'GET', '/attention', 'snapshot', { fixture: 'static' }),
   emailRoute('email.approve', 'POST', '/approve', 'snapshot', {
     allow: EMAIL_APPROVE, body: (_target, obj) => ({ contentHash: obj.contentHash, recipientsHash: obj.recipientsHash }),
   }),
