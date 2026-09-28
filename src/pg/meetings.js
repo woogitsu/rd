@@ -296,11 +296,9 @@ async function meetingForManageOrClassHost(db, actor, meetingId, env) {
 // przez przedstawiciela do własnej klasy — #171, minimalizacja jak w families/).
 async function guardianInClass(db, guardianId, classId, schoolYearId) {
   const row = await one(db,
-    `SELECT 1 FROM student_guardians sg
-       JOIN enrollments e ON e.student_id = sg.student_id
+    `SELECT 1 FROM student_guardians_current sg
+       JOIN enrollments_current e ON e.student_id = sg.student_id
       WHERE sg.guardian_id = $1 AND e.class_id = $2 AND e.school_year_id = $3
-        AND (sg.starts_on IS NULL OR sg.starts_on <= CURRENT_DATE)
-        AND (sg.ends_on IS NULL OR sg.ends_on > CURRENT_DATE)
       LIMIT 1`,
     [guardianId, classId, schoolYearId]);
   return Boolean(row);
