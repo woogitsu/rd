@@ -123,11 +123,16 @@ export async function verifyPasswordOrDummy(password, hash, env) {
 // odrzuca już limit długości) oraz rdzeni, z których zbudowane są typowe
 // hasła („haslo” + cyfry). Porównanie bez wielkości liter. To nie zastępuje
 // listy z wycieków (np. Have I Been Pwned w trybie k-anonimowości) — do decyzji.
+// Uwaga (#196): listę i rdzenie zapisujemy WYŁĄCZNIE w wersji bez polskich
+// znaków diakrytycznych — porównanie zawsze zdejmuje diakrytyki z hasła
+// (`foldLatin`), więc np. „hasło” i „haslo” trafiają do tego samego wpisu.
+// Usunięty martwy wpis `asdfghjkl;'` (11 znaków — krótszy niż minLength=12,
+// nigdy nie mógł zostać dopasowany; patrz test kontraktu listy).
 const COMMON_PASSWORDS = new Set([
   '123456789012', '1234567890123', '12345678901234', '123456789012345', '1234567890qwerty',
   '1q2w3e4r5t6y', '1q2w3e4r5t6y7u', '1qaz2wsx3edc', '1qaz2wsx3edc4rfv', 'zaq12wsxcde3', 'zaq1zaq1zaq1',
   'qwertyuiop12', 'qwertyuiop123', 'qwertyuiopasdf', 'qwerty123456', 'qwerty12345678', 'qwertyqwerty',
-  'asdfghjkl123', 'asdfghjkl;\'', 'zxcvbnm12345', 'qazwsxedcrfv', 'password1234', 'password12345',
+  'asdfghjkl123', 'zxcvbnm12345', 'qazwsxedcrfv', 'password1234', 'password12345',
   'password123456', 'passwordpassword', 'password!123', 'p@ssw0rd1234', 'p@ssword1234', 'iloveyou1234',
   'administrator', 'administrator1', 'admin1234567', 'adminadmin123', 'welcome12345', 'welcome123456',
   'letmein12345', 'football1234', 'baseball1234', 'princess1234', 'sunshine1234', 'superman1234',
@@ -138,7 +143,29 @@ const COMMON_PASSWORDS = new Set([
   'radarodzicow', 'radarodzicow1', 'radarodzicow12', 'radarodzicow123', 'radarodzicow2026',
   'szkolapolska', 'szkolapolska1', 'szkolapolska123', 'kochamcie123', 'kochamcie1234',
 ]);
-const COMMON_STEMS = ['password', 'passw0rd', 'haslo', 'qwerty', 'admin', 'welcome', 'letmein', 'zaq12wsx', 'radarodzicow', 'szkolapolska', 'polska', 'iloveyou'];
+// Rdzenie dopasowywane po zdjęciu diakrytyków i cyfr/znaków — patrz `checkPasswordPolicy`.
+// `zaqwsxcde` łapie rozszerzony marsz klawiaturowy (np. „Zaq1@wsxcde3”, gdzie
+// `compact` usuwa tylko separatory, więc dopasowanie idzie po samych literach).
+// `wrzesien` to jeden konkretny przypadek z audytu; pełna lista miesięcy i nazw
+// lokalnych (miasto, szkoła) to kontekstowe rdzenie z konfiguracji — do decyzji.
+const COMMON_STEMS = [
+  'password', 'passw0rd', 'haslo', 'qwerty', 'admin', 'welcome', 'letmein', 'zaq12wsx', 'zaqwsxcde',
+  'radarodzicow', 'szkolapolska', 'polska', 'iloveyou', 'kochamcie', 'bruksela', 'wrzesien',
+];
+
+// Zdejmuje diakrytyki wyłącznie do PORÓWNANIA z listą haseł powszechnych —
+// hash hasła nadal liczony jest z pełną normalizacją NFKC (`normalizePassword`).
+// NFKD rozkłada ą/ć/ę/ń/ó/ś/ź/ż na literę bazową + znak diakrytyczny (usuwany
+// niżej), ale NIE rozkłada ł/Ł (to odrębna litera, nie akcent), stąd jawna
+// zamiana. Bez tego „hasło”/„Hasło123456789” nie trafiały na listę zapisaną
+// bez polskich znaków (audyt #196).
+function foldLatin(value) {
+  return String(value)
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/ł/g, 'l')
+    .replace(/Ł/g, 'L');
+}
 
 function isRepetitive(value) {
   // Jeden znak lub krótki wzorzec powtórzony (np. „abcabcabcabc”).
@@ -168,12 +195,16 @@ export function checkPasswordPolicy(password, { email } = {}) {
   if (length < PASSWORD_POLICY.minLength) return 'password_too_short';
   if (length > PASSWORD_POLICY.maxLength) return 'password_too_long';
   const lower = normalized.toLowerCase();
-  const compact = lower.replace(/[\s\-_.!@#$%^&*]+/g, '');
-  if (COMMON_PASSWORDS.has(lower) || COMMON_PASSWORDS.has(compact)) return 'password_common';
-  if (isRepetitive(lower) || isSequential(lower)) return 'password_common';
-  // Rdzeń + same cyfry/znaki (np. „haslo12345678!”).
-  const letters = compact.replace(/[^a-ząćęłńóśźż]/g, '');
-  if (COMMON_STEMS.some((stem) => letters === stem.replace(/[^a-z]/g, '') || letters === stem.replace(/[^a-z]/g, '').repeat(2))) {
+  // Porównanie z listą i rdzeniami działa na wersji BEZ polskich znaków, żeby
+  // „hasło”/„Hasło123456789”/„Radarodziców2027” trafiały tak samo jak warianty
+  // ASCII (#196). Hash i reszta polityki (długość, e-mail) nadal używają `lower`.
+  const folded = foldLatin(lower);
+  const compact = folded.replace(/[\s\-_.!@#$%^&*]+/g, '');
+  if (COMMON_PASSWORDS.has(folded) || COMMON_PASSWORDS.has(compact)) return 'password_common';
+  if (isRepetitive(compact) || isSequential(compact)) return 'password_common';
+  // Rdzeń + same cyfry/znaki (np. „haslo12345678!”, „Hasło123456789”).
+  const letters = compact.replace(/[^a-z]/g, '');
+  if (COMMON_STEMS.some((stem) => letters === stem || letters === stem.repeat(2))) {
     return 'password_common';
   }
   if (email) {
