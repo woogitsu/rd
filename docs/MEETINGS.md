@@ -75,7 +75,7 @@ Wydatek powyżej 3000 EUR wymaga w `ledger_entries.resolution_reference` tekstow
 | admin, board | zarządzanie zebraniami, obecnością, protokołami, uchwałami i widocznością |
 | audit (Komisja Rewizyjna) | odczyt wszystkich zebrań, także projektów protokołów |
 | treasurer | wyłącznie sprawdzenie przyjętej uchwały po numerze |
-| representative | wyłącznie udostępnione rodzicom zatwierdzone protokoły: zebrania ogólne i zarządu oraz własnej klasy |
+| representative | wyłącznie udostępnione rodzicom zatwierdzone protokoły: zebrania ogólne i zarządu oraz własnej klasy (patrz niżej: zebranie klasowe za flagą) |
 | principal | brak dostępu do decyzji D-09 |
 
 Przydział z `classId` działa tylko dla zebrań tej klasy; nigdy dla zebrań ogólnych lub zarządu. Przydział z `schoolYearId` działa tylko w swoim roku. Zarządzanie zebraniem (dane, obecność, porządek obrad, ustalenie quorum, projekt uchwały) nie wymaga MFA; rozstrzygnięcie uchwały, zatwierdzenie protokołu i jego udostępnienie rodzicom/publicznie wymagają sesji z MFA (#135, sekcja niżej). **Założenie do D-08:** `admin` (techniczny) ma dziś te same uprawnienia zarządzania co `board`, choć PRODUCT.md mówi, że admin techniczny nie publikuje — nie zawężono tego w tym PR, wymaga osobnej decyzji.
@@ -116,6 +116,24 @@ Panel sprawdza `GET /api/access` **przed** pierwszym żądaniem listy i wybiera 
 - inne role bez żadnej z powyższych (np. sam `principal`) → obie sekcje ukryte, tak jak dziś (403 przy próbie odczytu, bez zmiany funkcji tego PR).
 
 Widoczność `parents` w widoku przedstawiciela oznacza, że wolno przekazać treść rodzicom klasy; wydruk/PDF tego widoku korzysta ze wspólnego arkusza druku (#151).
+
+### Zebranie klasowe prowadzone przez przedstawiciela — za flagą `MEETINGS_CLASS_HOST` (#171, D-08)
+
+Domyślnie wyłączone (wariant najbardziej zachowawczy do czasu decyzji D-08 — mniej uprawnień, patrz AGENTS.md). Ustawienie zmiennej środowiskowej `MEETINGS_CLASS_HOST=representative` pozwala przydziałowi `representative` z `classId = X` dla zebrań `kind = 'class'` i `class_id = X` (nigdy dla zebrania ogólnego, zarządu ani innej klasy — sprawdzane PRZED walidacją pozostałych danych):
+
+- utworzyć zebranie, zmienić jego dane i status (`createMeeting`, `updateMeeting`),
+- dodać punkt porządku obrad (`addAgendaItem`),
+- zapisać obecność (`recordAttendance`) — **wyłącznie siebie** (`userId` równy własnemu identyfikatorowi) albo opiekuna z tej samej klasy (sprawdzane zapytaniem do `student_guardians`/`enrollments`; opiekun spoza klasy → `422 invalid_reference` bez ujawniania, czy istnieje),
+- dodać wersję protokołu (`createMinutesVersion`).
+
+**Świadomie NIE obejmuje** (zawężenie zakresu względem propozycji w issue, zgodnie z AGENTS.md „przy niejasności regulaminu zaimplementuj wariant najbardziej zachowawczy”):
+- zatwierdzenia protokołu ani zmiany widoczności (`approveMinutes`, `setMinutesVisibility` zostają `MANAGE_ROLES`-only bez zmian — realizuje to samo kryterium akceptacji „przedstawiciel nie zatwierdza własnego protokołu” prościej niż reguła czterech oczu z propozycji issue; zatwierdza wyłącznie admin/board),
+- ustalenia quorum (`determineQuorum` zostaje `MANAGE_ROLES`-only — zebranie klasowe w tym PR nie tworzy uchwał, więc wynik quorum nie ma tu zastosowania),
+- uchwał (`createResolution`/`updateResolution`/`correctResolution` zostają `MANAGE_ROLES`-only, zgodnie z założeniem issue że zebranie klasowe nie podejmuje uchwał Rady — D-21),
+- listy/wyszukiwania zebrań klasowych przedstawiciela — `GET /api/meetings` nadal wymaga `READ_ROLES` (patrz #167: przedstawiciel korzysta z `shared-minutes`, który pokazuje tylko zatwierdzone i udostępnione protokoły, nie szkice). Ekran panelu do prowadzenia zebrania klasowego **nie jest częścią tego PR** — potrzebny endpoint/widok listy własnych zebrań to osobny, przyszły zakres,
+- pola `proposedRepresentative` w protokole i powiązania z `role_grants`/zaproszeniem (#108) — osobny zakres.
+
+Zamknięty rok blokuje zapis jak dotychczas (trigger `a0_year_freeze`) — flaga nie omija reguł bazy.
 
 ## API
 
