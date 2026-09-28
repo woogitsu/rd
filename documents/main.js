@@ -24,6 +24,10 @@ import {
   validateUploadMeta,
 } from "./core.js";
 import { MESSAGES, api, errorMessage as sharedErrorMessage, handleAuthFailure } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 // Tekst błędu (#99): słownik dokumentów, potem wspólny (np. mfa_required), potem
 // komunikaty dokumentów według statusu; pozostałe statusy — wspólny tekst.

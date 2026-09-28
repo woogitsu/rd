@@ -1,12 +1,16 @@
-// Statyczny przegląd dostępności (WCAG 2.2 AA) czterech aplikacji Vite: import, panel, ledger, print.
+// Statyczny przegląd dostępności (WCAG 2.2 AA) wszystkich aplikacji Vite z panelem.
 // Test nie zastępuje sprawdzenia z czytnikiem ekranu — zob. docs/ACCESSIBILITY.md.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const APPS = ['import', 'panel', 'ledger', 'print'];
+// Issue #85: wspólna powłoka. Te aplikacje dostały tę samą nawigację i blok konta,
+// ale nie miały wcześniej pełnego przeglądu WCAG z listy wyżej (osobny zakres audytu) —
+// sprawdzamy tu wyłącznie spójność nawigacji/konta, którą wprowadza ta zmiana.
+const SHELL_APPS = [...APPS, 'families', 'events', 'meetings', 'documents', 'admin'];
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-const html = Object.fromEntries(APPS.map((app) => [app, read(`${app}/index.html`)]));
+const html = Object.fromEntries(SHELL_APPS.map((app) => [app, read(`${app}/index.html`)]));
 const css = Object.fromEntries(APPS.map((app) => [app, read(`${app}/styles.css`)]));
 
 function tags(source) {
@@ -40,13 +44,6 @@ for (const app of APPS) {
     assert.match(html[app], /<nav aria-label="Panel">/);
     assert.match(html[app], /<h1[\s>]/);
     assert.equal((html[app].match(/<h1[\s>]/g) || []).length, 1);
-  });
-
-  test(`${app}: spójna nawigacja (WCAG 3.2.3)`, () => {
-    const nav = html[app].match(/<nav aria-label="Panel">([\s\S]*?)<\/nav>/)[1];
-    const labels = [...nav.matchAll(/<a[^>]*>([^<]+)<\/a>/g)].map((m) => m[1].trim());
-    assert.deepEqual(labels, ['Wpłaty', 'Księga', 'Import uczniów', 'Kartki']);
-    assert.equal((nav.match(/aria-current="page"/g) || []).length, 1);
   });
 
   test(`${app}: tabele mają caption i th scope`, () => {
@@ -91,6 +88,21 @@ for (const app of APPS) {
     assert.doesNotMatch(css[app], /outline:\s*(none|0)\b/);
     assert.match(css[app], /button\s*\{[^}]*min-height:\s*44px/);
     assert.match(css[app], /prefers-reduced-motion:\s*reduce/);
+  });
+}
+
+for (const app of SHELL_APPS) {
+  test(`${app}: wspólna nawigacja i blok konta (issue #85, WCAG 3.2.3)`, () => {
+    // Nawigacja jest teraz identyczna we wszystkich panelach: jeden pusty <ul>
+    // wypełniany w czasie działania przez shared/shell.js na podstawie GET /api/access
+    // (visiblePanels — testowane bez DOM w tests/shell-core.test.js). Ukrycie linku nie
+    // jest kontrolą dostępu — o tym nadal decyduje wyłącznie serwer (bez zmian tutaj).
+    assert.match(html[app], /<html lang="pl">/);
+    assert.match(html[app], /<a class="skip-link" href="#main">Przejdź do treści<\/a>/);
+    assert.match(html[app], /<main[^>]*\bid="main"/);
+    const nav = html[app].match(/<nav aria-label="Panel">([\s\S]*?)<\/nav>/)[1];
+    assert.match(nav, /<ul id="shell-nav" aria-live="polite"><\/ul>/);
+    assert.match(html[app], /<div id="shell-account"><\/div>/);
   });
 }
 
