@@ -279,6 +279,45 @@ DATABASE_URL=<referencja z Railway> APP_ENV=staging \
   skrypt ponownie (poprzedniego zaproszenia bez administratora nie da się
   cofnąć przez API).
 
+## Rotacja klucza szyfrowania MFA (`MFA_ENCRYPTION_KEY(S)`, #134)
+
+Klucz szyfruje sekrety TOTP (`user_mfa_factors.secret_ciphertext`), nigdy nie
+jest w repozytorium — tylko jako sekret usługi Railway. Wiersz czynnika jest
+niezmienny (trigger), więc rotacja nie nadpisuje szyfrogramu w miejscu: nowy
+wiersz na nowym kluczu, stary wyłączony (`disabled_at`). Szczegóły techniczne
+i format `MFA_ENCRYPTION_KEYS`: `docs/AUTH.md`.
+
+**Rotacja planowa** (np. cykliczna, bez podejrzenia wycieku):
+1. Wygenerować nowy klucz (32 losowe bajty, np. `openssl rand -hex 32`).
+2. Ustawić w zmiennych usługi Railway pierścień z OBOMA kluczami, nowym jako
+   wyższa wersja: `MFA_ENCRYPTION_KEYS=2:<nowy>,1:<stary>` (usunąć osobne
+   `MFA_ENCRYPTION_KEY`, jeśli była ustawiona — pierścień ją zastępuje).
+   Redeploy usługi.
+3. Tryb próbny: `DATABASE_URL=<referencja> MFA_ENCRYPTION_KEYS=2:<nowy>,1:<stary> npm run mfa:rotate-key`
+   — sprawdzić liczbę kont do rotacji i `missing key` (musi być 0).
+4. Zapis: to samo z `-- --apply`. Skrypt jest idempotentny — bezpiecznie
+   uruchomić ponownie, gdyby coś przerwało pierwsze uruchomienie.
+5. Po potwierdzeniu, że raport pokazuje 0 kont na starej wersji (kolejne
+   uruchomienie skryptu, `rotated: 0`), usunąć stary klucz z pierścienia
+   (`MFA_ENCRYPTION_KEYS=2:<nowy>` albo z powrotem `MFA_ENCRYPTION_KEY=<nowy>`)
+   i zrobić redeploy.
+6. Dziennik: `mfa.key_rotated` na koncie (identyfikatory czynników i wersje,
+   bez sekretów) plus wynik skryptu na stdout (wyłącznie liczby).
+
+**Rotacja po incydencie** (podejrzenie wycieku klucza): jak wyżej, ale krok 5
+(usunięcie starego klucza z pierścienia) wykonać NATYCHMIAST po kroku 4, bez
+czekania — ryzyko jest w tym, że stary klucz nadal działa, dopóki jest
+w pierścieniu. Poinformować zarząd/IOD zgodnie z `docs/SECURITY.md`.
+
+**Utrata klucza** (zmienna skasowana, brak kopii): nie da się odzyskać
+istniejących czynników — `MFA_ENCRYPTION_KEYS`/`MFA_ENCRYPTION_KEY` bez
+starej wersji daje `mfa_key_missing` (503) zamiast cichego błędu przy próbie
+weryfikacji. Jedyne wyjście to reset MFA każdego dotkniętego konta
+(`POST /api/admin/users/{id}/mfa-reset`, panel admina, gałąź logowania) —
+każda osoba zapisuje czynnik ponownie po zalogowaniu. Komunikacja z rodzinami
+o masowym resecie MFA to decyzja zarządu (szablon, kanał — D-16/D-17, jak
+przy innych wysyłkach).
+
 ## Backup PostgreSQL
 
 1. Włączyć w usłudze PostgreSQL harmonogram backupów wolumenu
