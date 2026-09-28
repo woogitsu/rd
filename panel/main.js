@@ -13,12 +13,27 @@ import {
   paymentsQuery,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
+import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
+import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
+import {
+  classOptionsHtml,
+  householdOptionsHtml,
+  householdSummary,
+  householdsForStudent,
+  requiresExplicitHouseholdChoice,
+  studentOptionsHtml,
+} from "../shared/household-picker.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { mountPrintMeta } from "../shared/print-meta.js";
+import "../shared/print.css";
 
-mountShell();
+let printedBy = null;
+mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
-const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null };
+const FILTER_KEYS = ["schoolYearId", "status"];
+const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -30,6 +45,7 @@ const loading = byId("loading");
 const summary = byId("result-summary");
 const loadMore = byId("load-more");
 const filterHint = byId("filter-hint");
+const printButton = byId("print-payments");
 
 function localDate() {
   const now = new Date();
@@ -96,6 +112,7 @@ function render() {
   message.textContent = count === 0 ? "Brak wpłat dla wybranych filtrów." : "";
   loadMore.hidden = !state.nextCursor;
   updateFilterHint();
+  updatePrintMeta();
 }
 
 function filterChanged() {
@@ -107,6 +124,22 @@ function updateFilterHint() {
   const changed = filterChanged();
   filterHint.hidden = !changed;
   loadMore.disabled = state.loading || changed;
+  printButton.disabled = state.loading || state.printing || changed || !state.query || state.payments.length === 0;
+}
+
+// Blok metadanych wydruku (#151), niewidoczny na ekranie (shared/print.css).
+function updatePrintMeta() {
+  const container = byId("print-meta");
+  if (!container) return;
+  const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
+  const filters = state.query?.status ? STATUS_LABELS[state.query.status] : null;
+  mountPrintMeta(container, {
+    view: "Dobrowolne wpłaty",
+    schoolYear: yearLabel,
+    filters,
+    printedBy,
+    incompleteCount: state.nextCursor ? state.payments.length : null,
+  });
 }
 
 function setBusy(busy) {
@@ -160,11 +193,58 @@ async function loadPayments({ append = false, reload = false } = {}) {
   }
 }
 
+function syncFiltersToUrl() {
+  const query = filtersToQuery({ schoolYearId: yearInput.value, status: statusInput.value });
+  const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
+  window.history.replaceState(null, "", url);
+}
+
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  syncFiltersToUrl();
   loadPayments();
 });
+
+// Wybór roku z listy zamiast wpisywania identyfikatora (issue #128); filtry odtwarzane
+// z adresu (query string), nie z localStorage.
+(async function initFilters() {
+  const restored = filtersFromQuery(window.location.search, FILTER_KEYS);
+  let years = [];
+  try {
+    const access = await api("/api/access");
+    years = yearsFromGrants(access && access.grants);
+  } catch {
+    years = [];
+  }
+  const year = defaultYear(years, restored.schoolYearId);
+  yearInput.innerHTML = yearOptionsHtml(years, year);
+  if (restored.status && [...statusInput.options].some((o) => o.value === restored.status)) {
+    statusInput.value = restored.status;
+  }
+  if (year) {
+    syncFiltersToUrl();
+    loadPayments();
+  }
+})();
 loadMore.addEventListener("click", () => loadPayments({ append: true }));
+
+// „Drukuj zestawienie” dociąga wszystkie strony bieżącego filtra przed wydrukiem
+// (#151); state.printing chroni przed podwójnym kliknięciem.
+printButton.addEventListener("click", async () => {
+  if (state.loading || state.printing || filterChanged() || !state.query) return;
+  state.printing = true;
+  updateFilterHint();
+  try {
+    while (buildNextPaymentsUrl(state.query, state.nextCursor)) {
+      await loadPayments({ append: true });
+    }
+    updatePrintMeta();
+    window.print();
+  } finally {
+    state.printing = false;
+    updateFilterHint();
+  }
+});
 yearInput.addEventListener("input", updateFilterHint);
 statusInput.addEventListener("change", updateFilterHint);
 
@@ -177,7 +257,7 @@ function restoreFocus() {
   heading.focus();
 }
 
-function configureDialog(id, prefix, submit, successText) {
+function configureDialog(id, prefix, submit, successText, describeConfirm) {
   const dialog = byId(id);
   const form = dialog.querySelector("form");
   const errorBox = form.querySelector(".form-error");
@@ -190,6 +270,13 @@ function configureDialog(id, prefix, submit, successText) {
       return;
     }
     if (!form.reportValidity()) return;
+
+    // Podsumowanie skutków przed zapisem (issue #136) — zapis jest trwały,
+    // poprawka wymaga nowej korekty widocznej w historii.
+    if (describeConfirm) {
+      const confirmed = await confirmAction(describeConfirm(new FormData(form)));
+      if (!confirmed) return;
+    }
 
     errorBox.textContent = "";
     const submitButton = event.submitter;
@@ -219,6 +306,84 @@ function configureDialog(id, prefix, submit, successText) {
   return { dialog, form };
 }
 
+// Wybór rodziny przez klasę → ucznia → gospodarstwo, zamiast wpisywania UUID (issue #128).
+// Pole UUID zostaje jako tryb zaawansowany (<details>) — patrz propozycja p.2 w issue.
+function wireHouseholdPicker(prefix, getSchoolYearId) {
+  const classSelect = byId(`${prefix}-class`);
+  const studentSelect = byId(`${prefix}-student`);
+  const householdSelect = byId(`${prefix}-household`);
+  const summary = byId(`${prefix}-household-summary`);
+  const idInput = byId(`${prefix}-household-id`);
+  let students = [];
+
+  function reset() {
+    classSelect.innerHTML = "";
+    studentSelect.innerHTML = "";
+    householdSelect.innerHTML = "";
+    studentSelect.disabled = true;
+    householdSelect.disabled = true;
+    summary.textContent = "";
+    students = [];
+  }
+
+  async function loadClasses() {
+    reset();
+    const schoolYearId = getSchoolYearId();
+    if (!isValidId(schoolYearId)) {
+      classSelect.innerHTML = classOptionsHtml([], "");
+      return;
+    }
+    try {
+      const result = await api(`/api/classes?schoolYearId=${encodeURIComponent(schoolYearId)}`);
+      classSelect.innerHTML = classOptionsHtml(Array.isArray(result.classes) ? result.classes : [], "");
+    } catch {
+      classSelect.innerHTML = classOptionsHtml([], "");
+    }
+  }
+
+  classSelect.addEventListener("change", async () => {
+    studentSelect.innerHTML = "";
+    householdSelect.innerHTML = "";
+    householdSelect.disabled = true;
+    summary.textContent = "";
+    students = [];
+    if (!classSelect.value) {
+      studentSelect.disabled = true;
+      return;
+    }
+    try {
+      const result = await api(`/api/classes/${encodeURIComponent(classSelect.value)}/students`);
+      students = Array.isArray(result.students) ? result.students : [];
+      studentSelect.innerHTML = studentOptionsHtml(students, "");
+      studentSelect.disabled = false;
+    } catch {
+      studentSelect.innerHTML = studentOptionsHtml([], "");
+      studentSelect.disabled = true;
+    }
+  });
+
+  studentSelect.addEventListener("change", () => {
+    const households = householdsForStudent(students, studentSelect.value);
+    householdSelect.innerHTML = householdOptionsHtml(households, "");
+    householdSelect.disabled = households.length === 0;
+    const student = students.find((s) => s.id === studentSelect.value) || null;
+    summary.textContent = householdSummary(student, households);
+    idInput.value = requiresExplicitHouseholdChoice(households) ? "" : (households[0]?.householdId ?? "");
+  });
+
+  householdSelect.addEventListener("change", () => {
+    idInput.value = householdSelect.value;
+  });
+
+  return { loadClasses, reset };
+}
+
+const paymentPicker = wireHouseholdPicker("payment", () => paymentDialog.form.elements.schoolYearId.value);
+const assignmentPicker = wireHouseholdPicker(
+  "assignment",
+  () => assignmentDialog.form.querySelector(".context").dataset.schoolYearId || ""
+);
+
 const paymentDialog = configureDialog("payment-dialog", "payment", async (data, requestKey) => {
   const householdId = String(data.get("householdId") || "").trim();
   if (householdId && !isValidId(householdId)) throw new Error("Niepoprawny identyfikator rodziny.");
@@ -234,7 +399,30 @@ const paymentDialog = configureDialog("payment-dialog", "payment", async (data, 
       ...(householdId ? { householdId } : {}),
     }),
   });
-}, "Zapisano wpłatę.");
+}, "Zapisano wpłatę.", (data) => {
+  const householdId = String(data.get("householdId") || "").trim();
+  let amountText = String(data.get("amount") || "");
+  let warning = "";
+  try {
+    const cents = parseEuroAmount(data.get("amount"));
+    amountText = formatCents(cents);
+    if (cents > 100_000) warning = "Kwota jest nietypowo wysoka (ponad 1000 EUR). Sprawdź, zanim zapiszesz.";
+  } catch {
+    // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
+  }
+  return {
+    title: "Zapisać wpłatę?",
+    effects: [
+      `Kwota: ${amountText}`,
+      `Data wpływu: ${data.get("receivedOn")}`,
+      `Metoda: ${METHOD_LABELS[data.get("method")] ?? data.get("method")}`,
+      householdId ? `Rodzina: ${householdId}` : "Bez przypisania rodziny — wpłata trafi do „Do przypisania”.",
+      "Zapis jest trwały; pomyłkę poprawisz korektą widoczną w historii.",
+    ],
+    warning,
+    confirmLabel: "Zapisz wpłatę",
+  };
+});
 
 const correctionDialog = configureDialog("correction-dialog", "correction", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
@@ -246,7 +434,23 @@ const correctionDialog = configureDialog("correction-dialog", "correction", asyn
       reason: data.get("reason"),
     }),
   });
-}, "Dodano korektę.");
+}, "Dodano korektę.", (data) => {
+  let amountText = String(data.get("amount") || "");
+  try {
+    amountText = formatCents(parseEuroAmount(data.get("amount")));
+  } catch {
+    // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
+  }
+  return {
+    title: "Dodać korektę?",
+    effects: [
+      `Kwota pomniejszenia: ${amountText}`,
+      `Powód: ${String(data.get("reason") || "").trim() || "—"}`,
+      "Korekta nie usuwa pierwotnego zapisu — kwota netto zostanie przeliczona, historia zostaje widoczna.",
+    ],
+    confirmLabel: "Dodaj korektę",
+  };
+});
 
 const assignmentDialog = configureDialog("assignment-dialog", "assignment", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
@@ -262,6 +466,7 @@ const assignmentDialog = configureDialog("assignment-dialog", "assignment", asyn
 byId("open-payment").addEventListener("click", () => {
   paymentDialog.form.elements.schoolYearId.value = state.query?.schoolYearId ?? yearInput.value;
   paymentDialog.form.elements.receivedOn.value = localDate();
+  paymentPicker.loadClasses();
   paymentDialog.dialog.showModal();
 });
 
@@ -277,7 +482,10 @@ body.addEventListener("click", (event) => {
     correctionDialog.dialog.showModal();
   } else if (button.dataset.action === "assign") {
     assignmentDialog.form.elements.paymentId.value = payment.id;
-    assignmentDialog.form.querySelector(".context").textContent = `${payment.receivedOn} · ${payment.reference || "Bez opisu"} · ${formatCents(payment.netCents)}`;
+    const context = assignmentDialog.form.querySelector(".context");
+    context.textContent = `${payment.receivedOn} · ${payment.reference || "Bez opisu"} · ${formatCents(payment.netCents)}`;
+    context.dataset.schoolYearId = payment.schoolYearId;
+    assignmentPicker.loadClasses();
     assignmentDialog.dialog.showModal();
   }
 });

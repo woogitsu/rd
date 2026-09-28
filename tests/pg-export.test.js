@@ -142,7 +142,7 @@ test('yearly export is deterministic, scoped to the year and recorded without co
   const first = await exportRequest(db, cookie);
   assert.equal(first.status, 200);
   assert.match(first.headers.get('Content-Type'), /^application\/json/);
-  assert.equal(first.headers.get('Content-Disposition'), `attachment; filename="rd-eksport-${YEAR}-v1.json"`);
+  assert.equal(first.headers.get('Content-Disposition'), `attachment; filename="rd-eksport-${YEAR}-v2.json"`);
   assert.equal(first.headers.get('Cache-Control'), 'no-store');
   const firstBody = await first.text();
 
@@ -195,6 +195,22 @@ test('yearly export is deterministic, scoped to the year and recorded without co
   assert.equal(events.rows[0].actor_id, 'u-admin');
   assert.equal(events.rows[0].metadata_json.rowCounts.guardians, 3);
   assert.doesNotMatch(JSON.stringify(events.rows), /@|Opiekun|Uczeń/);
+});
+
+// #154: readJson w exports.js nie sprawdzał deklarowanego Content-Length przed
+// odczytem ciała (inne moduły, np. families.js/email.js, robią to najpierw).
+// Skutek: zawyżony nagłówek Content-Length dla małego, poprawnego ciała nie był
+// odrzucany — trasa wykonywała żądanie tak, jakby nagłówek był zgodny z rzeczywistością.
+test('POST /api/exports odrzuca zawyżony deklarowany Content-Length, nawet gdy ciało mieści się w limicie', async () => {
+  const cookie = await adminCookie(db, 'u-admin-cl');
+  const res = await handlePgRequest(request('/api/exports', {
+    method: 'POST',
+    cookie,
+    body: { schoolYearId: YEAR },
+    headers: { 'Content-Length': '999999' },
+  }), { db });
+  assert.equal(res.status, 413);
+  assert.deepEqual(await res.json(), { error: 'request_too_large' });
 });
 
 test('manifest verification detects tampering', async () => {

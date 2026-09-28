@@ -13,9 +13,12 @@ import {
   invitationLink,
   invitationPayload,
   isOwnLastAdminGrant,
+  mfaResetConfirmation,
+  passwordResetLink,
   scopeLabel,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -78,9 +81,19 @@ function actionsCell(buttons) {
 }
 
 // Blokada przycisku na czas żądania chroni przed podwójnym kliknięciem;
-// serwer i tak traktuje powtórzenie idempotentnie.
+// serwer i tak traktuje powtórzenie idempotentnie. Okno potwierdzenia (issue #136)
+// zastępuje natywne okno przeglądarki; akcje tutaj są nieodwracalne inaczej niż
+// nowym zapisem, więc fokus startuje na „Anuluj” (destructive: true).
 async function runAction(element, confirmText, fn) {
-  if (confirmText && !window.confirm(confirmText)) return;
+  if (confirmText) {
+    const confirmed = await confirmAction({
+      title: "Potwierdź operację",
+      effects: [confirmText],
+      confirmLabel: "Potwierdź",
+      destructive: true,
+    });
+    if (!confirmed) return;
+  }
   element.disabled = true;
   try {
     await fn();
@@ -149,6 +162,23 @@ function renderUsers() {
       await loadUsers();
     }), { disabled: user.activeSessions === 0 });
     buttons.push(sessions);
+    // #224: wydanie resetu hasła — dostępne API, brak było ekranu; niedostępne
+    // dla własnego konta i konta wyłączonego (to samo konto trzeba najpierw włączyć).
+    buttons.push(button("Wydaj kod resetu hasła", (event) => runAction(event.currentTarget, confirmationText("password-reset", user.email), async () => {
+      hideResetToken();
+      const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, { method: "POST", body: {} });
+      showResetToken(result.token, result.reset.expiresAt);
+      await loadAudit();
+    }), {
+      disabled: self || Boolean(user.disabledAt),
+      title: self ? "Nie można wydać resetu hasła dla własnego konta" : user.disabledAt ? "Konto jest wyłączone" : "",
+    }));
+    // Reset MFA tylko dla konta z zapisanym (potwierdzonym) czynnikiem — inaczej nie ma czego resetować.
+    if (user.mfaEnrolled) {
+      buttons.push(button("Zresetuj MFA", (event) => runMfaReset(event.currentTarget, user), {
+        danger: true, disabled: self, title: self ? "Nie można zresetować MFA własnego konta" : "",
+      }));
+    }
     if (user.disabledAt) {
       buttons.push(button("Włącz", (event) => runAction(event.currentTarget, confirmationText("enable", user.email), async () => {
         await api(`/api/admin/users/${encodeURIComponent(user.id)}/enable`, { method: "POST", body: {} });
@@ -171,6 +201,66 @@ async function loadUsers() {
   state.users = (await api("/api/admin/users")).users;
   renderUsers();
   fillDictionaries();
+}
+
+// --- Reset hasła i MFA (#224) ------------------------------------------------
+
+function hideResetToken() {
+  byId("reset-link").textContent = "";
+  byId("reset-token-value").textContent = "";
+  byId("reset-token-meta").textContent = "";
+  byId("reset-token-box").hidden = true;
+}
+
+function showResetToken(token, expiresAt) {
+  byId("reset-link").textContent = passwordResetLink(token, window.location.origin);
+  byId("reset-token-value").textContent = token;
+  byId("reset-token-meta").textContent = `Ważny do ${formatDateTime(expiresAt)}.`;
+  byId("copy-reset-link").textContent = "Kopiuj link";
+  byId("copy-reset-token").textContent = "Kopiuj kod";
+  byId("reset-token-box").hidden = false;
+}
+
+byId("hide-reset-token").addEventListener("click", hideResetToken);
+byId("copy-reset-link").addEventListener("click", async (event) => {
+  try {
+    await navigator.clipboard.writeText(byId("reset-link").textContent);
+    event.currentTarget.textContent = "Skopiowano";
+  } catch {
+    showMessage("Nie udało się skopiować. Zaznacz link i skopiuj ręcznie.", true);
+  }
+});
+byId("copy-reset-token").addEventListener("click", async (event) => {
+  try {
+    await navigator.clipboard.writeText(byId("reset-token-value").textContent);
+    event.currentTarget.textContent = "Skopiowano";
+  } catch {
+    showMessage("Nie udało się skopiować. Zaznacz kod i skopiuj ręcznie.", true);
+  }
+});
+
+// Reset MFA wymaga wpisania identyfikatora konta (kontrakt API) — chroni przed
+// przypadkowym wyłączeniem cudzego czynnika jednym kliknięciem.
+async function runMfaReset(element, user) {
+  const typed = window.prompt(`Aby zresetować weryfikację dwuetapową konta ${user.email}, wpisz jego identyfikator:\n${user.id}`);
+  const check = mfaResetConfirmation(typed, user.id);
+  if (check.cancelled) return;
+  if (!check.ok) {
+    showMessage("Wpisany identyfikator nie zgadza się z kontem. Weryfikacja dwuetapowa nie została zresetowana.", true);
+    return;
+  }
+  element.disabled = true;
+  try {
+    const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/mfa-reset`, { method: "POST", body: { confirm: user.id } });
+    showMessage(result.changed
+      ? "Zresetowano weryfikację dwuetapową. Konto zostało wylogowane i zapisze nowy czynnik po zalogowaniu."
+      : "Konto nie miało zapisanego czynnika ani kodów odzyskiwania — nic nie zmieniono.");
+    await Promise.all([loadUsers(), loadAudit()]);
+  } catch (error) {
+    showMessage(error.message, true);
+  } finally {
+    element.disabled = false;
+  }
 }
 
 // --- Przydziały ---------------------------------------------------------------
@@ -336,7 +426,17 @@ byId("term-form").addEventListener("submit", async (event) => {
   const { schoolYearId, confirm } = Object.fromEntries(new FormData(form));
   if (!schoolYearId) { errorBox.textContent = "Brak zakończonych lat szkolnych."; return; }
   if (confirm.trim() !== schoolYearId) { errorBox.textContent = "Wpisany identyfikator nie zgadza się z wybranym rokiem."; return; }
-  if (!window.confirm(`Wygasić wszystkie aktywne przydziały roku ${schoolYearId}?`)) return;
+  const confirmed = await confirmAction({
+    title: "Potwierdź wygaszenie kadencji",
+    effects: [
+      `Wygaszone zostaną wszystkie aktywne przydziały ról roku ${schoolYearId}.`,
+      "Osoby z przydziałem tylko tego roku stracą dostęp do paneli od następnego żądania.",
+      "Cofnięcie jest widoczne w dzienniku zdarzeń; przywrócenie wymaga nowego przydziału.",
+    ],
+    confirmLabel: "Wygaś przydziały",
+    destructive: true,
+  });
+  if (!confirmed) return;
   submit.disabled = true;
   try {
     const result = await api(`/api/admin/school-years/${encodeURIComponent(schoolYearId)}/expire-grants`, { method: "POST", body: { confirm: schoolYearId } });

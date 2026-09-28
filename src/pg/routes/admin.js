@@ -14,7 +14,11 @@
 //   GET  /api/admin/invitations
 //   POST /api/admin/invitations                 { email, role, classId?, schoolYearId?, ttlHours? }
 //   POST /api/admin/invitations/{id}/revoke
+//   POST /api/admin/invitations/{id}/reissue    wycofuje i tworzy nowe zaproszenie (#108); tylko oczekujące
 //   GET  /api/admin/school-years                lata i klasy do formularzy
+//   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
+//   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
+//   GET  /api/admin/class-coverage?schoolYearId= obsada klas roku: przydziały, oczekujące zaproszenia, ostatnie logowanie (#108)
 //   GET  /api/admin/audit?limit=                dziennik zmian kont i ról
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
@@ -183,7 +187,9 @@ async function listUsers(env, json) {
               WHERE g.user_id = u.id AND g.revoked_at IS NULL
                 AND (g.expires_at IS NULL OR g.expires_at > now())) AS active_grants,
             (SELECT count(*)::int FROM sessions s
-              WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions
+              WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions,
+            EXISTS (SELECT 1 FROM user_mfa_factors f
+                     WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL AND f.disabled_at IS NULL) AS mfa_enrolled
        FROM users u
       ORDER BY lower(u.email)
       LIMIT ${MAX_LIST}`,
@@ -195,6 +201,7 @@ async function listUsers(env, json) {
       displayName: row.display_name,
       disabledAt: isoTimestamp(row.disabled_at),
       createdAt: isoTimestamp(row.created_at),
+      mfaEnrolled: Boolean(row.mfa_enrolled),
       activeGrants: Number(row.active_grants),
       activeSessions: Number(row.active_sessions),
     })),
@@ -302,6 +309,10 @@ async function listGrants(env, url, json) {
 async function createGrant(env, actorId, request, json) {
   const data = await readJson(request);
   if (!validId(data.userId)) throw new RequestError('invalid_user_id');
+  // #146: samonadanie roli (np. admin nadaje sobie treasurer/board) omija zasadę
+  // czterech oczu wymaganą wszędzie indziej dla ważnych decyzji. Odrzucamy przed
+  // transakcją: żaden wiersz nie powstaje, żadne zdarzenie audytu się nie zapisuje.
+  if (data.userId === actorId) throw new RequestError('cannot_grant_self', 409);
   const role = data.role;
   const classId = optionalId(data.classId, 'invalid_class_id');
   const schoolYearIdInput = optionalId(data.schoolYearId, 'invalid_school_year_id');
@@ -495,6 +506,159 @@ async function revokeInvitationRoute(env, actorId, invitationId, json) {
   return json({ invitationId, changed });
 }
 
+// --- Konfiguracja roku (#78) ------------------------------------------------
+// Założenie do decyzji D-08: dopóki zarząd nie ma odczytu w tym module (patrz
+// nagłówek pliku), tworzenie roku i klas zostaje wyłącznie przy adminie —
+// wariant zachowawczy węższy niż propozycja z issue (admin, zarząd).
+// Usuwanie klas i lat nie ma trasy (AC issue #78: brak drogi do usunięcia
+// klasy z przypisaniami) — korekta to nowa klasa i przeniesienie uczniów.
+
+function validDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+function slugify(name) {
+  return String(name).trim().toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+async function createSchoolYear(env, actorId, request, json) {
+  const data = await readJson(request);
+  if (!validId(data.id)) throw new RequestError('invalid_id');
+  const label = typeof data.label === 'string' ? data.label.trim() : '';
+  if (!label || label.length > 200) throw new RequestError('invalid_label');
+  if (!validDate(data.startsOn) || !validDate(data.endsOn)) throw new RequestError('invalid_date');
+  if (data.endsOn < data.startsOn) throw new RequestError('invalid_date_range');
+  const result = await env.db.transaction(async (tx) => {
+    const existing = await tx.query('SELECT 1 FROM school_years WHERE id = $1 OR label = $2', [data.id, label]);
+    if (existing.rows.length) throw new Abort('school_year_exists', 409);
+    await tx.query(
+      'INSERT INTO school_years (id, label, starts_on, ends_on) VALUES ($1, $2, $3, $4)',
+      [data.id, label, data.startsOn, data.endsOn],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'school_year.created', entityType: 'school_year', entityId: data.id,
+      metadata: { startsOn: data.startsOn, endsOn: data.endsOn },
+    });
+    return { id: data.id, label, startsOn: data.startsOn, endsOn: data.endsOn };
+  });
+  return json({ schoolYear: result }, 201);
+}
+
+async function createClasses(env, actorId, schoolYearId, request, json) {
+  const data = await readJson(request);
+  if (!Array.isArray(data.names) || !data.names.length || data.names.length > 100) {
+    throw new RequestError('invalid_names');
+  }
+  const names = [];
+  const seen = new Set();
+  for (const raw of data.names) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (!name || name.length > 60) throw new RequestError('invalid_names');
+    const key = name.toLowerCase();
+    if (seen.has(key)) throw new RequestError('duplicate_name');
+    seen.add(key);
+    names.push(name);
+  }
+  const result = await env.db.transaction(async (tx) => {
+    const year = await tx.query('SELECT id FROM school_years WHERE id = $1', [schoolYearId]);
+    if (!year.rows[0]) throw new Abort('school_year_not_found', 404);
+    const existing = await tx.query('SELECT name FROM classes WHERE school_year_id = $1', [schoolYearId]);
+    const existingNames = new Set(existing.rows.map((row) => row.name.toLowerCase()));
+    const created = [];
+    const usedIds = new Set();
+    for (const name of names) {
+      if (existingNames.has(name.toLowerCase())) throw new Abort('class_exists', 409);
+      let id = `${schoolYearId}-${slugify(name)}`;
+      if (id === `${schoolYearId}-` || usedIds.has(id)) id = `${schoolYearId}-${crypto.randomUUID()}`;
+      usedIds.add(id);
+      await tx.query('INSERT INTO classes (id, school_year_id, name) VALUES ($1, $2, $3)', [id, schoolYearId, name]);
+      await insertAuditEvent(tx, {
+        actorId, action: 'class.created', entityType: 'class', entityId: id,
+        metadata: { schoolYearId, name },
+      });
+      created.push({ id, name, schoolYearId });
+    }
+    return created;
+  });
+  return json({ classes: result }, 201);
+}
+
+// „Wyślij ponownie” (#108): wycofuje stare zaproszenie i tworzy nowe o tym
+// samym zakresie (token wraca raz, jak przy utworzeniu). Tylko dla zaproszeń
+// wciąż oczekujących — przyjęte, wygasłe lub już wycofane nie mają tu drogi
+// (nowe zaproszenie od zera przez POST /api/admin/invitations).
+async function reissueInvitationRoute(env, actorId, invitationId, json) {
+  const { rows } = await env.db.query(`SELECT ${INVITATION_COLUMNS} FROM invitations i WHERE i.id = $1`, [invitationId]);
+  const invitation = rows[0];
+  if (!invitation) throw new RequestError('invitation_not_found', 404);
+  if (invitation.status !== 'pending') throw new RequestError('invitation_not_pending', 409);
+  const revoked = await revokeInvitation(env, { invitationId, actorId });
+  if (!revoked) throw new RequestError('invitation_not_pending', 409);
+  const created = await createInvitation(env, {
+    actorId, email: invitation.email, role: invitation.role,
+    classId: invitation.class_id, schoolYearId: invitation.school_year_id,
+    replacesInvitationId: invitationId,
+  });
+  return json({
+    invitation: {
+      id: created.invitationId, email: invitation.email, role: invitation.role,
+      classId: invitation.class_id, schoolYearId: invitation.school_year_id,
+      expiresAt: created.expiresAt, status: 'pending', replacesInvitationId: invitationId,
+    },
+    token: created.secret,
+  }, 201);
+}
+
+// Tabela obsady klas roku (#108): przydziały przedstawiciela aktywne dziś,
+// oczekujące zaproszenia (bez tokenów) i data ostatniego logowania (bez
+// godziny) przedstawiciela tej klasy — wyłącznie liczby i daty, bez e-maili.
+function toSafeInteger(value) {
+  const number = Number(value ?? 0);
+  if (!Number.isSafeInteger(number)) throw new Error('unsafe_integer');
+  return number;
+}
+
+async function classCoverage(env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_school_year_id');
+  const year = await env.db.query('SELECT 1 FROM school_years WHERE id = $1', [schoolYearId]);
+  if (!year.rows[0]) throw new RequestError('school_year_not_found', 404);
+  const { rows } = await env.db.query(
+    `SELECT c.id, c.name,
+            (SELECT count(DISTINCT g.user_id) FROM role_grants g
+               WHERE g.class_id = c.id AND g.role = 'representative'
+                 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now())) AS active_count,
+            (SELECT count(*) FROM invitations i
+               WHERE i.class_id = c.id AND i.role = 'representative'
+                 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS pending_count,
+            (SELECT min(i.expires_at) FROM invitations i
+               WHERE i.class_id = c.id AND i.role = 'representative'
+                 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS next_expires_at,
+            (SELECT to_char(max(s.created_at), 'YYYY-MM-DD') FROM sessions s
+               JOIN role_grants g2 ON g2.user_id = s.user_id
+              WHERE g2.class_id = c.id AND g2.role = 'representative'
+                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on
+       FROM classes c WHERE c.school_year_id = $1
+       ORDER BY c.name, c.id`,
+    [schoolYearId],
+  );
+  return json({
+    schoolYearId,
+    classes: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      activeRepresentativeCount: toSafeInteger(row.active_count),
+      pendingInvitationCount: toSafeInteger(row.pending_count),
+      nextInvitationExpiresAt: isoTimestamp(row.next_expires_at),
+      lastRepresentativeLoginOn: row.last_login_on ?? null,
+    })),
+  });
+}
+
 // --- Słowniki i dziennik ---------------------------------------------------
 
 async function listSchoolYears(env, json) {
@@ -514,8 +678,8 @@ async function listSchoolYears(env, json) {
 
 const AUDIT_ACTIONS = [
   'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
-  'school_year.grants_expired',
-  'invitation.created', 'invitation.revoked', 'invitation.accepted',
+  'school_year.grants_expired', 'school_year.created', 'class.created',
+  'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued',
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
   'auth.password_changed', 'mfa.reset',
@@ -560,7 +724,7 @@ function allowedMethodsFor(section, pathLength, action) {
   }
   if (section === 'invitations') {
     if (pathLength === 1) return ['GET', 'POST'];
-    if (pathLength === 3 && action === 'revoke') return ['POST'];
+    if (pathLength === 3 && ['revoke', 'reissue'].includes(action)) return ['POST'];
     return null;
   }
   if (section === 'school-years') {
@@ -568,6 +732,7 @@ function allowedMethodsFor(section, pathLength, action) {
     if (pathLength === 3 && action === 'expire-grants') return ['POST'];
     return null;
   }
+  if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
   return null;
 }
@@ -598,18 +763,24 @@ async function route(request, env, url, json, actorId) {
     if (path.length === 1 && method === 'GET') return listInvitations(env, json);
     if (path.length === 1 && method === 'POST') return createInvitationRoute(env, actorId, request, json);
     if (path.length === 3 && action === 'revoke' && method === 'POST') return revokeInvitationRoute(env, actorId, decodeId(rawId), json);
+    if (path.length === 3 && action === 'reissue' && method === 'POST') return reissueInvitationRoute(env, actorId, decodeId(rawId), json);
   }
   if (section === 'school-years') {
     if (path.length === 1 && method === 'GET') return listSchoolYears(env, json);
+    if (path.length === 1 && method === 'POST') return createSchoolYear(env, actorId, request, json);
     if (path.length === 3 && action === 'expire-grants' && method === 'POST') {
       return expireSchoolYear(env, actorId, decodeId(rawId), request, json);
     }
+    if (path.length === 3 && action === 'classes' && method === 'POST') {
+      return createClasses(env, actorId, decodeId(rawId), request, json);
+    }
   }
+  if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json);
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'audit']);
+const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;

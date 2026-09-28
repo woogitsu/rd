@@ -35,6 +35,10 @@ async function main() {
     throw Object.assign(new Error('invalid_bundle_json'), { code: error?.code === 'ENOENT' ? 'bundle_not_found' : 'invalid_bundle_json' });
   }
   const report = verifyBundle(bundle);
+  if (report.warnings?.includes('bundle_incomplete')) {
+    // Paczka wersji 1 (sprzed #202): brak gospodarstw, uzgodnień i zamknięcia roku.
+    console.error(`Warning: bundle_incomplete (formatVersion ${report.formatVersion}); missing tables: ${report.missingTables.join(', ')}`);
+  }
   if (!restorePglite && !restoreDatabase) {
     console.log(JSON.stringify({ verified: true, ...report }));
     return;

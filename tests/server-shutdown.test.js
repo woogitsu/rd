@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createShutdown } from '../src/server.js';
+import { assertTrustProxyConfigured, createShutdown, trustProxyRequired } from '../src/server.js';
 import { createLogger } from '../src/log.js';
 
 function quiet() {
@@ -71,4 +71,26 @@ test('shutdown forces exit 1 after the timeout when a request hangs or db.close 
     close: async () => { throw Object.assign(new Error('postgres://user:secret@host'), { code: '57P01' }); },
   })('SIGTERM');
   assert.equal(failed, 1);
+});
+
+// #126: bez TRUST_PROXY za proxy Railway licznik prób logowania na IP jest
+// wspólny dla wszystkich (src/node-app.js clientAddress). Poza development/test
+// (w tym brak APP_ENV — lokalnie i w testach) wymagamy jawnego ustawienia.
+test('trustProxyRequired only applies to staging/production, case-insensitively', () => {
+  assert.equal(trustProxyRequired(undefined), false);
+  assert.equal(trustProxyRequired(''), false);
+  assert.equal(trustProxyRequired('development'), false);
+  assert.equal(trustProxyRequired('test'), false);
+  assert.equal(trustProxyRequired('STAGING'), true);
+  assert.equal(trustProxyRequired('Production'), true);
+  assert.equal(trustProxyRequired('prod'), true);
+});
+
+test('assertTrustProxyConfigured refuses to start in staging/production without TRUST_PROXY', () => {
+  assert.doesNotThrow(() => assertTrustProxyConfigured({ APP_ENV: undefined }));
+  assert.doesNotThrow(() => assertTrustProxyConfigured({ APP_ENV: 'test' }));
+  assert.doesNotThrow(() => assertTrustProxyConfigured({ APP_ENV: 'production', TRUST_PROXY: '1' }));
+  assert.doesNotThrow(() => assertTrustProxyConfigured({ APP_ENV: 'staging', TRUST_PROXY: 'true' }));
+  assert.throws(() => assertTrustProxyConfigured({ APP_ENV: 'production' }), /TRUST_PROXY/);
+  assert.throws(() => assertTrustProxyConfigured({ APP_ENV: 'staging', TRUST_PROXY: '0' }), /TRUST_PROXY/);
 });
