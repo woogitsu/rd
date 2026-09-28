@@ -28,6 +28,7 @@
     "db:snapshot:d1": "node scripts/create-d1-snapshot.js",
     "db:restore:postgres": "node scripts/restore-postgres-snapshot.js",
     "storage:smoke": "node scripts/storage-smoke.js",
+    "cleanup:document-uploads": "node scripts/document-uploads-cleanup.js",
     "dev:events": "vite events",
     "build:events": "vite build events --outDir ../dist/events --base ./ --emptyOutDir",
     "dev:documents": "vite documents",
@@ -40,12 +41,14 @@
     "dev:admin": "vite admin",
     "build:admin": "vite build admin --outDir ../dist/admin --base ./ --emptyOutDir",
     "db:verify-export": "node scripts/verify-export.js",
+    "auth:bootstrap-admin": "node scripts/bootstrap-admin.js",
     "dev:families": "vite families",
     "build:families": "vite build families --outDir ../dist/families --base ./ --emptyOutDir",
     "dev:login": "vite login",
     "build:login": "vite build login --outDir ../dist/login --base ./ --emptyOutDir"
   },
   "dependencies": {
+    "fflate": "0.8.3",
     "pg": "8.23.0",
     "qrcode-generator": "1.4.4",
     "read-excel-file": "9.3.10",

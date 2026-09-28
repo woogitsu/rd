@@ -11,7 +11,10 @@
 //      także „other”), dzienny przydział kampanii (daily_cap), pobiera wiersze
 //      FOR UPDATE SKIP LOCKED i dla każdego przy przejęciu sprawdza:
 //      wpłatę (kampania „brak wpisu wpłaty”), listę wyłączeń, zgodę na kontakt,
-//      listę adresów testowych poza produkcją; rezerwuje limit wpisem w dzienniku;
+//      listę adresów testowych poza produkcją. Limit liczy wpisy dziennika
+//      i wiadomości w locie („sending” bez wpisu); wpis w dzienniku powstaje
+//      dopiero z wynikiem, po którym wiadomość mogła wyjść (przyjęcie, wynik
+//      niepewny) — jawna odmowa dostawcy nie zużywa limitu (#172);
 //   3. przed KAŻDĄ wysyłką potwierdza wiersz jedną instrukcją UPDATE … RETURNING
 //      (confirmSend): nadal „sending”, nadal z tokenem tego przebiegu
 //      (claim_token), kampania nadal „sending”, brak wpłaty (dla „brak wpisu
@@ -23,6 +26,19 @@
 //      zatrzymuje więc wszystko poza wiadomością, której wysyłka już trwa (#210);
 //   4. wynik zapisuje tylko, jeśli wiersz nadal należy do przebiegu; inaczej
 //      zdarzenie email.sent_after_lease_lost zamiast email.sent (#177).
+//   5. zapis wyniku jest oddzielony od transportu: błąd bazy po przyjęciu
+//      wiadomości nie daje failed/transport_error; zapis jest ponawiany, a gdy
+//      się nie uda, wiersz zostaje w „sending” (wysłano, wynik niezapisany) do
+//      rozstrzygnięcia przez recoverStale (webhook → sent, inaczej
+//      delivery_unknown). Odmowa konta (401/402/403), SIGTERM i awaria bazy
+//      zatrzymują przebieg; niewysłana reszta partii wraca do „queued” bez
+//      zużycia próby (#172, #209). Wyłącznik (#180): 429 i brak połączenia
+//      z dostawcą zatrzymują przebieg bez zużycia próby i limitu; seria
+//      EMAIL_BREAKER_UNCERTAIN kolejnych wyników niepewnych (5xx, timeout)
+//      zatrzymuje partię, reszta zostaje w kolejce.
+// Każda zmiana stanu kolejki lub kampanii i jej zdarzenie audytu powstają w tej
+// samej transakcji (#178). Niezgodność treści z zatwierdzonym skrótem daje
+// jedno zdarzenie email.campaign.integrity_mismatch na kampanię i stan skrótów.
 // Dry-run wykonuje te same sprawdzenia i renderuje treść, ale nie zmienia stanu
 // kolejki ani dziennika limitu i nie woła transportu — zapisuje tylko przebieg.
 // Ponowne uruchomienie nie dubluje wiadomości: unikalny klucz kampania+rodzina,
@@ -71,12 +87,31 @@ export async function recordOtherSends(executor, { day, count }) {
   );
 }
 
+// Wiadomości w locie: przejęte („sending”), dla których nie ma jeszcze wpisu
+// w dzienniku limitu bieżącej próby. Wpis powstaje dopiero z wynikiem, który
+// mógł zużyć limit dostawcy (przyjęcie albo wynik niepewny) — #172, #180.
+const IN_FLIGHT = `SELECT COUNT(*)::int FROM email_outbox o
+   WHERE o.state = 'sending'
+     AND NOT EXISTS (SELECT 1 FROM email_send_ledger l WHERE l.outbox_id = o.id AND l.attempt = o.attempts)`;
+
 export async function remainingQuota(executor, day, config) {
   const { rows } = await executor.query(
-    'SELECT COALESCE(SUM(message_count), 0)::int AS used FROM email_send_ledger WHERE day = $1',
+    `SELECT (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger WHERE day = $1)
+          + (${IN_FLIGHT}) AS used`,
     [day],
   );
   return Math.max(0, config.dailyLimit - config.dailyReserved - Number(rows[0].used));
+}
+
+// Wpis w dzienniku limitu dla próby, która mogła wyjść (idempotentnie: jeden
+// wpis na wiersz i próbę; wiersze przejęte przed tą zmianą mają go już).
+async function recordLedger(tx, { day, campaignId, outboxId, attempt }) {
+  await tx.query(
+    `INSERT INTO email_send_ledger (id, day, source, campaign_id, outbox_id, attempt, message_count)
+     VALUES ($1, $2, 'campaign', $3, $4, $5, 1)
+     ON CONFLICT (outbox_id, attempt) DO NOTHING`,
+    [crypto.randomUUID(), day, campaignId, outboxId, attempt],
+  );
 }
 
 async function recheckRow(tx, campaign, row, config) {
@@ -123,27 +158,55 @@ async function recordRun(db, run) {
 
 async function recoverStale(db, now) {
   return db.transaction(async (tx) => {
+    // Wysyłka rozpoczęta, wynik niezapisany (#172), ale dostawca przysłał już
+    // zdarzenie webhooka z X-Mailin-custom = id wiersza: wiadomość została
+    // przyjęta → „sent”, nie delivery_unknown.
+    const { rows: accepted } = await tx.query(
+      `UPDATE email_outbox o
+          SET state = 'sent', sent_at = o.send_started_at, last_error = NULL, updated_at = $1,
+              provider_message_id = COALESCE(o.provider_message_id, w.provider_message_id)
+         FROM (SELECT DISTINCT ON (outbox_id) outbox_id, provider_message_id
+                 FROM email_webhook_events WHERE outbox_id IS NOT NULL
+                ORDER BY outbox_id, provider_message_id NULLS LAST, received_at) w
+        WHERE w.outbox_id = o.id AND o.state = 'sending' AND o.send_started_at IS NOT NULL
+          AND o.claimed_at < $1::timestamptz - make_interval(mins => $2)
+        RETURNING o.id, o.campaign_id, o.attempts, to_char(o.send_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
+      [now.toISOString(), LEASE_MINUTES],
+    );
+    for (const row of accepted) {
+      await recordLedger(tx, { day: row.day, campaignId: row.campaign_id, outboxId: row.id, attempt: row.attempts });
+      await insertAuditEvent(tx, {
+        action: 'email.sent_recovered', entityType: 'email_outbox', entityId: row.id,
+        metadata: { campaignId: row.campaign_id, reason: 'provider_webhook' },
+      });
+    }
     // Wiersz z tokenem, którego wysyłka się nie rozpoczęła, na pewno nie wyszedł —
-    // wraca do kolejki. Pozostałe (wysyłka rozpoczęta albo wiersz sprzed
-    // migracji 0025 bez tokenu) → delivery_unknown, bez ponawiania.
+    // wraca do kolejki bez zużycia próby. Pozostałe (wysyłka rozpoczęta albo
+    // wiersz sprzed migracji 0025 bez tokenu) → delivery_unknown, bez
+    // ponawiania, z wpisem w dzienniku limitu (mogła wyjść).
     const { rows } = await tx.query(
       `UPDATE email_outbox
           SET state = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN 'queued' ELSE 'failed' END,
+              attempts = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN GREATEST(0, attempts - 1) ELSE attempts END,
               last_error = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN 'lease_expired' ELSE 'delivery_unknown' END,
               next_attempt_at = CASE WHEN claim_token IS NOT NULL AND send_started_at IS NULL THEN $1::timestamptz ELSE next_attempt_at END,
               updated_at = $1
         WHERE state = 'sending' AND claimed_at < $1::timestamptz - make_interval(mins => $2)
-        RETURNING id, campaign_id, state`,
+        RETURNING id, campaign_id, state, attempts,
+                  to_char(COALESCE(send_started_at, claimed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
       [now.toISOString(), LEASE_MINUTES],
     );
     for (const row of rows) {
+      if (row.state === 'failed' && row.attempts > 0) {
+        await recordLedger(tx, { day: row.day, campaignId: row.campaign_id, outboxId: row.id, attempt: row.attempts });
+      }
       await insertAuditEvent(tx, {
         action: row.state === 'queued' ? 'email.lease_expired_requeued' : 'email.delivery_unknown',
         entityType: 'email_outbox', entityId: row.id,
         metadata: { campaignId: row.campaign_id },
       });
     }
-    return rows.length;
+    return rows.length + accepted.length;
   });
 }
 
@@ -159,7 +222,8 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
       `SELECT c.id, c.school_year_id, c.audience, c.subject, c.body_text, c.content_hash,
               c.approved_content_hash, c.approved_recipients_hash, c.recipients_hash, c.daily_cap,
               y.label AS school_year_label,
-              (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id) AS sent_today
+              (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id)
+                + (${IN_FLIGHT} AND o.campaign_id = c.id) AS sent_today
          FROM email_campaigns c JOIN school_years y ON y.id = c.school_year_id
         WHERE c.status = 'sending'
         ORDER BY c.queued_at, c.id
@@ -173,6 +237,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
       if (hash !== campaign.content_hash || hash !== campaign.approved_content_hash
           || campaign.recipients_hash !== campaign.approved_recipients_hash) {
         run.stoppedReason = 'approval_mismatch';
+        await recordIntegrityMismatch(tx, campaign, hash);
         continue;
       }
       let capLeft = campaign.daily_cap - campaign.sent_today;
@@ -221,11 +286,6 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
                   claim_token = $3, send_started_at = NULL
             WHERE id = $1 AND state = 'queued'`,
           [row.id, now.toISOString(), runToken],
-        );
-        await tx.query(
-          `INSERT INTO email_send_ledger (id, day, source, campaign_id, outbox_id, attempt, message_count)
-           VALUES ($1, $2, 'campaign', $3, $4, $5, 1)`,
-          [crypto.randomUUID(), day, campaign.id, row.id, row.attempts + 1],
         );
         claimed.push({
           ...row, attempts: row.attempts + 1, campaignId: campaign.id, message,
@@ -304,9 +364,120 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
   });
 }
 
-async function deliver(db, item, { transport, config, now, runToken }) {
+// Dostawca przyjął wiadomość, ale zapisu wyniku nie udało się utrwalić mimo
+// ponowień (awaria bazy). Wiersz zostaje w „sending” z send_started_at —
+// stan „wysłano, wynik niezapisany” do rozstrzygnięcia (webhook albo
+// delivery_unknown), NIGDY failed/transport_error (#172).
+export class ResultNotRecordedError extends Error {
+  constructor(item, providerMessageId, cause) {
+    super('result_not_recorded');
+    this.code = 'result_not_recorded';
+    this.outboxId = item.id;
+    this.providerMessageId = providerMessageId;
+    this.cause = cause;
+  }
+}
+
+const RESULT_RETRY_DELAYS_MS = [250, 1000, 3000];
+const sleep = (ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve());
+
+// Zapis „sent” — idempotentny, bo poprzednia próba mogła zostać zatwierdzona
+// mimo utraconego potwierdzenia COMMIT.
+async function recordSent(db, item, { messageId, now, runToken }) {
+  return db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `UPDATE email_outbox SET state = 'sent', sent_at = $2, provider_message_id = $3, last_error = NULL, updated_at = $2
+        WHERE id = $1 AND state = 'sending' AND claim_token = $4
+        RETURNING id`,
+      [item.id, now.toISOString(), messageId, runToken],
+    );
+    await recordLedger(tx, { day: item.day, campaignId: item.campaignId, outboxId: item.id, attempt: item.attempts });
+    if (!rows[0]) {
+      const { rows: current } = await tx.query('SELECT state, claim_token FROM email_outbox WHERE id = $1', [item.id]);
+      if (current[0]?.state === 'sent' && current[0].claim_token === runToken) return 'sent';
+      // Dostawca przyjął wiadomość, ale dzierżawa wygasła i wiersz został już
+      // rozstrzygnięty (delivery_unknown). Zapisujemy fakt wysyłki, nie „sent”.
+      await insertAuditEvent(tx, {
+        action: 'email.sent_after_lease_lost', entityType: 'email_outbox', entityId: item.id,
+        metadata: { campaignId: item.campaignId, householdId: item.household_id, providerMessageId: messageId, runId: runToken },
+      });
+      return 'lease_lost';
+    }
+    await insertAuditEvent(tx, {
+      action: 'email.sent', entityType: 'email_outbox', entityId: item.id,
+      metadata: { campaignId: item.campaignId, householdId: item.household_id },
+    });
+    return 'sent';
+  });
+}
+
+async function recordSentWithRetries(db, item, options) {
+  const delays = options.resultRetryDelaysMs ?? RESULT_RETRY_DELAYS_MS;
+  let lastError;
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      return await recordSent(db, item, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt < delays.length) await sleep(delays[attempt]);
+    }
+  }
+  throw new ResultNotRecordedError(item, options.messageId, lastError);
+}
+
+// Wiadomość na pewno nie wyszła (odmowa konta, 429, brak połączenia): wiersz
+// wraca do kolejki bez zużycia próby i bez wpisu w dzienniku limitu;
+// delaySeconds odsuwa kolejną próbę (np. Retry-After).
+async function requeueNotSent(db, item, { code, now, runToken, stage, delaySeconds = 0 }) {
+  return db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `UPDATE email_outbox SET state = 'queued', last_error = $2, updated_at = $3, send_started_at = NULL,
+              attempts = GREATEST(0, attempts - 1), next_attempt_at = $3::timestamptz + make_interval(secs => $5)
+        WHERE id = $1 AND state = 'sending' AND claim_token = $4 RETURNING id`,
+      [item.id, code, now.toISOString(), runToken, delaySeconds],
+    );
+    if (!rows[0]) return 'lease_lost';
+    await insertAuditEvent(tx, {
+      action: 'email.requeued', entityType: 'email_outbox', entityId: item.id,
+      metadata: { campaignId: item.campaignId, reason: code, stage },
+    });
+    if (stage === 'provider_account_rejected') {
+      await insertAuditEvent(tx, {
+        action: 'email.campaign.provider_rejected', entityType: 'email_campaign', entityId: item.campaignId,
+        metadata: { reason: code, runId: runToken },
+      });
+    }
+    return 'requeued';
+  });
+}
+
+// Zwraca wiersze przejęte przez ten przebieg, których wysyłka się nie
+// rozpoczęła, z powrotem do kolejki (bez zużycia próby) — po zatrzymaniu
+// przebiegu (SIGTERM, odmowa konta, awaria bazy), zamiast czekać na wygaśnięcie
+// dzierżawy (#172).
+async function releaseClaims(db, { runToken, now, reason }) {
+  return db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `UPDATE email_outbox SET state = 'queued', last_error = $3, updated_at = $2, next_attempt_at = $2::timestamptz,
+              attempts = GREATEST(0, attempts - 1)
+        WHERE claim_token = $1 AND state = 'sending' AND send_started_at IS NULL
+        RETURNING id, campaign_id`,
+      [runToken, now.toISOString(), reason],
+    );
+    for (const row of rows) {
+      await insertAuditEvent(tx, {
+        action: 'email.requeued', entityType: 'email_outbox', entityId: row.id,
+        metadata: { campaignId: row.campaign_id, reason, stage: 'run_stopped' },
+      });
+    }
+    return rows.length;
+  });
+}
+
+async function deliver(db, item, { transport, config, now, runToken, resultRetryDelaysMs }) {
+  let result;
   try {
-    const result = await transport.send({
+    result = await transport.send({
       to: item.email,
       sender: config.sender,
       subject: item.message.subject,
@@ -314,82 +485,122 @@ async function deliver(db, item, { transport, config, now, runToken }) {
       outboxId: item.id,
       idempotencyKey: item.idempotency_key,
     });
-    const messageId = result?.messageId ?? null;
-    return await db.transaction(async (tx) => {
-      const { rows } = await tx.query(
-        `UPDATE email_outbox SET state = 'sent', sent_at = $2, provider_message_id = $3, last_error = NULL, updated_at = $2
-          WHERE id = $1 AND state = 'sending' AND claim_token = $4
-          RETURNING id`,
-        [item.id, now.toISOString(), messageId, runToken],
-      );
-      if (!rows[0]) {
-        // Dostawca przyjął wiadomość, ale dzierżawa wygasła i wiersz został już
-        // rozstrzygnięty (delivery_unknown). Zapisujemy fakt wysyłki, nie „sent”.
-        await insertAuditEvent(tx, {
-          action: 'email.sent_after_lease_lost', entityType: 'email_outbox', entityId: item.id,
-          metadata: { campaignId: item.campaignId, householdId: item.household_id, providerMessageId: messageId, runId: runToken },
-        });
-        return 'lease_lost';
-      }
-      await insertAuditEvent(tx, {
-        action: 'email.sent', entityType: 'email_outbox', entityId: item.id,
-        metadata: { campaignId: item.campaignId, householdId: item.household_id },
-      });
-      return 'sent';
-    });
   } catch (error) {
-    const known = error instanceof EmailTransportError;
-    const code = known && /^[a-z0-9_]{1,60}$/.test(error.code) ? error.code : 'transport_error';
-    const retry = known && error.retryable && item.attempts < config.maxAttempts;
-    return db.transaction(async (tx) => {
-      const { rows } = retry
-        ? await tx.query(
-          `UPDATE email_outbox SET state = 'queued', last_error = $2, updated_at = $3, send_started_at = NULL,
-                  next_attempt_at = $3::timestamptz + make_interval(mins => $4)
-            WHERE id = $1 AND state = 'sending' AND claim_token = $5 RETURNING id`,
-          [item.id, code, now.toISOString(), backoffMinutes(item.attempts), runToken],
-        )
-        : await tx.query(
-          `UPDATE email_outbox SET state = 'failed', last_error = $2, updated_at = $3
-            WHERE id = $1 AND state = 'sending' AND claim_token = $4 RETURNING id`,
-          [item.id, code, now.toISOString(), runToken],
-        );
-      if (!rows[0]) {
-        await insertAuditEvent(tx, {
-          action: 'email.send_aborted', entityType: 'email_outbox', entityId: item.id,
-          metadata: { campaignId: item.campaignId, reason: 'lease_lost', transportError: code, runId: runToken },
-        });
-        return 'lease_lost';
-      }
+    return recordTransportError(db, item, error, { config, now, runToken });
+  }
+  // Zapis wyniku osobno od transportu: błąd bazy po przyjęciu wiadomości nie
+  // jest błędem transportu (#172).
+  const messageId = result?.messageId ?? null;
+  return { outcome: await recordSentWithRetries(db, item, { messageId, now, runToken, resultRetryDelaysMs }) };
+}
+
+async function recordTransportError(db, item, error, { config, now, runToken }) {
+  const known = error instanceof EmailTransportError;
+  const code = known && /^[a-z0-9_]{1,60}$/.test(error.code) ? error.code : 'transport_error';
+  if (known && error.accountLevel) {
+    const outcome = await requeueNotSent(db, item, { code, now, runToken, stage: 'provider_account_rejected' });
+    return { outcome: outcome === 'lease_lost' ? 'lease_lost' : null, stop: 'provider_account_rejected' };
+  }
+  // Wyłącznik (#180): 429 i brak połączenia dotyczą dostawcy, nie odbiorcy.
+  // Przebieg się zatrzymuje (kolejne wiadomości dostałyby to samo), wiersz
+  // wraca do kolejki bez zużycia próby i limitu — więc nie staje się „failed”
+  // po EMAIL_MAX_ATTEMPTS przy dłuższej przerwie.
+  if (known && (error.code === 'provider_rate_limited' || error.notSent)) {
+    const stage = error.notSent ? 'provider_unreachable' : 'provider_rate_limited';
+    const delaySeconds = error.retryAfterSeconds ?? BACKOFF_BASE_MINUTES * 60;
+    const outcome = await requeueNotSent(db, item, { code, now, runToken, stage, delaySeconds });
+    return { outcome: outcome === 'lease_lost' ? 'lease_lost' : 'retried', stop: stage };
+  }
+  const retry = known && error.retryable && item.attempts < config.maxAttempts;
+  // Wynik, po którym wiadomość mogła wyjść (niepewny albo wyjątek spoza
+  // EmailTransportError), zużywa limit dnia; jawna odmowa dostawcy — nie.
+  const mayHaveLeft = !known || error.uncertain;
+  return { outcome: await db.transaction(async (tx) => {
+    const { rows } = retry
+      ? await tx.query(
+        `UPDATE email_outbox SET state = 'queued', last_error = $2, updated_at = $3, send_started_at = NULL,
+                next_attempt_at = $3::timestamptz + make_interval(mins => $4)
+          WHERE id = $1 AND state = 'sending' AND claim_token = $5 RETURNING id`,
+        [item.id, code, now.toISOString(), backoffMinutes(item.attempts), runToken],
+      )
+      : await tx.query(
+        `UPDATE email_outbox SET state = 'failed', last_error = $2, updated_at = $3
+          WHERE id = $1 AND state = 'sending' AND claim_token = $4 RETURNING id`,
+        [item.id, code, now.toISOString(), runToken],
+      );
+    if (mayHaveLeft) await recordLedger(tx, { day: item.day, campaignId: item.campaignId, outboxId: item.id, attempt: item.attempts });
+    if (!rows[0]) {
       await insertAuditEvent(tx, {
-        action: retry ? 'email.retry_scheduled' : 'email.failed', entityType: 'email_outbox', entityId: item.id,
-        metadata: { campaignId: item.campaignId, reason: code },
+        action: 'email.send_aborted', entityType: 'email_outbox', entityId: item.id,
+        metadata: { campaignId: item.campaignId, reason: 'lease_lost', transportError: code, runId: runToken },
       });
-      return retry ? 'retried' : 'failed';
+      return 'lease_lost';
+    }
+    await insertAuditEvent(tx, {
+      action: retry ? 'email.retry_scheduled' : 'email.failed', entityType: 'email_outbox', entityId: item.id,
+      metadata: { campaignId: item.campaignId, reason: code },
     });
-  }
+    return retry ? 'retried' : 'failed';
+  }), uncertain: !retry && mayHaveLeft };
 }
 
+// Zmiana stanu i zdarzenie w jednej transakcji (#178): przerwanie po UPDATE nie
+// może zostawić kampanii „done” bez śladu w dzienniku.
 async function completeCampaigns(db, now) {
-  const { rows } = await db.query(
-    `UPDATE email_campaigns c SET status = 'done', completed_at = $1
-      WHERE c.status = 'sending'
-        AND NOT EXISTS (SELECT 1 FROM email_outbox o WHERE o.campaign_id = c.id AND o.state IN ('queued', 'sending'))
-      RETURNING id`,
-    [now.toISOString()],
-  );
-  for (const row of rows) {
-    await insertAuditEvent(db, { action: 'email.campaign.done', entityType: 'email_campaign', entityId: row.id });
-  }
+  return db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `UPDATE email_campaigns c SET status = 'done', completed_at = $1
+        WHERE c.status = 'sending'
+          AND NOT EXISTS (SELECT 1 FROM email_outbox o WHERE o.campaign_id = c.id AND o.state IN ('queued', 'sending'))
+        RETURNING id`,
+      [now.toISOString()],
+    );
+    for (const row of rows) {
+      await insertAuditEvent(tx, { action: 'email.campaign.done', entityType: 'email_campaign', entityId: row.id });
+    }
+    return rows.length;
+  });
 }
 
-export async function runEmailBatch(env, { transport = null, dryRun = true, now = new Date(), config = emailConfig(env) } = {}) {
+// Niezgodność treści/listy z zatwierdzonym skrótem (#178): zdarzenie na
+// kampanii raz dla danego stanu skrótów, nie przy każdym przebiegu. Kampania
+// pozostaje w „sending” i nie jest wysyłana (stan docelowy — wstrzymana czy
+// anulowana — do decyzji zarządu przy #130). Metadane: wyłącznie skróty.
+async function recordIntegrityMismatch(tx, campaign, observedContentHash) {
+  const metadata = {
+    observedContentHash,
+    contentHash: campaign.content_hash,
+    approvedContentHash: campaign.approved_content_hash,
+    recipientsHash: campaign.recipients_hash,
+    approvedRecipientsHash: campaign.approved_recipients_hash,
+  };
+  const { rows } = await tx.query(
+    `SELECT 1 FROM audit_events
+      WHERE entity_type = 'email_campaign' AND entity_id = $1 AND action = 'email.campaign.integrity_mismatch'
+        AND metadata_json @> $2::jsonb
+      LIMIT 1`,
+    [campaign.id, JSON.stringify(metadata)],
+  );
+  if (rows[0]) return;
+  await insertAuditEvent(tx, {
+    action: 'email.campaign.integrity_mismatch', entityType: 'email_campaign', entityId: campaign.id,
+    metadata: { ...metadata, reason: 'approval_mismatch' },
+  });
+}
+
+// signal: AbortSignal — po przerwaniu (SIGTERM w scripts/email-worker.js)
+// przebieg kończy bieżącą wiadomość, nie zaczyna następnej, zwraca resztę
+// przejętych wierszy do kolejki i zapisuje stopped_reason = 'shutdown'.
+export async function runEmailBatch(env, {
+  transport = null, dryRun = true, now = new Date(), config = emailConfig(env), signal = null, resultRetryDelaysMs,
+} = {}) {
   const db = env?.db;
   if (!db) throw new Error('database_unavailable');
   const day = utcDay(now);
   const run = {
     mode: dryRun ? 'dry_run' : 'live', day, startedAt: now, remainingQuota: 0,
     planned: 0, sent: 0, retried: 0, failed: 0, skipped: 0, suppressed: 0, stoppedReason: null, sample: null,
+    requeued: 0, unrecorded: [],
   };
   if (!dryRun) {
     const refusal = liveRunRefusal(config) ?? (transport ? null : 'transport_missing');
@@ -408,18 +619,73 @@ export async function runEmailBatch(env, { transport = null, dryRun = true, now 
   // liczyła się od chwili wysyłki danej wiadomości, a nie od startu przebiegu.
   const startedMs = Date.now();
   const clock = () => new Date(now.getTime() + (Date.now() - startedMs));
-  for (const item of claimed) {
-    const verdict = await confirmSend(db, item, { runToken, config, sendAt: clock() });
-    if (verdict) {
-      if (verdict.state === 'cancelled' || verdict.state === 'skipped') run.skipped += 1;
-      else if (verdict.state === 'suppressed') run.suppressed += 1;
-      else if (verdict.state === 'failed') run.failed += 1;
-      if (verdict.error === 'campaign_cancelled' || verdict.error === 'lease_lost') run.stoppedReason ??= verdict.error;
-      continue;
+  let stop = null;
+  let fatal = null;
+  let uncertainStreak = 0;
+  const breakerUncertain = config.breakerUncertain ?? 2;
+  const unrecorded = [];
+  try {
+    for (const item of claimed) {
+      if (signal?.aborted) { stop = 'shutdown'; break; }
+      const verdict = await confirmSend(db, item, { runToken, config, sendAt: clock() });
+      if (verdict) {
+        if (verdict.state === 'cancelled' || verdict.state === 'skipped') run.skipped += 1;
+        else if (verdict.state === 'suppressed') run.suppressed += 1;
+        else if (verdict.state === 'failed') run.failed += 1;
+        if (verdict.error === 'campaign_cancelled' || verdict.error === 'lease_lost') run.stoppedReason ??= verdict.error;
+        continue;
+      }
+      const { outcome, stop: stopped, uncertain } = await deliver(db, item, { transport, config, now, runToken, resultRetryDelaysMs });
+      if (outcome === 'lease_lost') run.stoppedReason ??= 'lease_lost';
+      else if (outcome) run[outcome] += 1;
+      // Seria wyników niepewnych (5xx, timeout) = dostawca niedostępny:
+      // zatrzymaj partię, zamiast zamieniać resztę w delivery_unknown (#180).
+      uncertainStreak = uncertain ? uncertainStreak + 1 : 0;
+      const breaker = stopped ?? (uncertainStreak >= breakerUncertain ? 'provider_unavailable' : null);
+      if (breaker) {
+        if (stopped && !outcome) run.requeued += 1;
+        stop = breaker;
+        break;
+      }
     }
-    const outcome = await deliver(db, item, { transport, config, now, runToken });
-    if (outcome === 'lease_lost') run.stoppedReason ??= 'lease_lost';
-    else run[outcome] += 1;
+  } catch (error) {
+    if (error instanceof ResultNotRecordedError) {
+      unrecorded.push({ item: claimed.find((c) => c.id === error.outboxId), providerMessageId: error.providerMessageId });
+      stop = 'result_not_recorded';
+    } else {
+      stop = 'database_error';
+    }
+    fatal = error;
+  }
+  if (!dryRun && claimed.length) {
+    // Reszta partii, która nie trafiła do dostawcy, wraca do kolejki od razu.
+    try {
+      run.requeued += await releaseClaims(db, { runToken, now: clock(), reason: stop ?? 'run_ended' });
+      // Baza znów odpowiada: dopisz wynik wiadomości przyjętych przez dostawcę.
+      for (const entry of unrecorded.splice(0)) {
+        try {
+          const outcome = await recordSent(db, entry.item, { messageId: entry.providerMessageId, now, runToken });
+          if (outcome === 'sent') run.sent += 1;
+          else run.stoppedReason ??= 'lease_lost';
+        } catch {
+          unrecorded.push(entry);
+        }
+      }
+      if (fatal instanceof ResultNotRecordedError && !unrecorded.length) fatal = null;
+    } catch (error) {
+      fatal ??= error;
+    }
+  }
+  run.unrecorded = unrecorded.map((entry) => ({ outboxId: entry.item.id, providerMessageId: entry.providerMessageId }));
+  if (stop) run.stoppedReason = stop;
+  if (fatal) {
+    // Baza nadal nie odpowiada: wiersze w „sending” rozstrzygnie recoverStale
+    // po wygaśnięciu dzierżawy (niewysłane → queued, rozpoczęte → webhook albo
+    // delivery_unknown). Identyfikatory przyjętych wiadomości — do logu.
+    const error = fatal instanceof ResultNotRecordedError ? fatal : Object.assign(new Error('email_run_interrupted'), { cause: fatal });
+    error.code ??= 'email_run_interrupted';
+    error.run = run;
+    throw error;
   }
   if (!dryRun) await completeCampaigns(db, now);
   await recordRun(db, run);

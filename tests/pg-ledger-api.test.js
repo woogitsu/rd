@@ -359,7 +359,7 @@ test('summary balances opening, adjustments, income, expenses and corrections in
   await correct(backend, expense.id, { amountCents: 345, reason: 'Zwrot części' });
   // Rok obok nie wpływa na bilans (admin bez zakresu roku).
   const admin = await backend.as('u-admin', { mfa: true, roles: [{ role: 'admin' }] });
-  assert.equal((await createEntry(backend, { schoolYearId: 'y2025', categoryId: 'expense-2025', sourceDocumentId: null }, 'other-year-0001', admin)).status, 201);
+  assert.equal((await createEntry(backend, { schoolYearId: 'y2025', categoryId: 'expense-2025', sourceDocumentId: null, occurredOn: '2025-10-01' }, 'other-year-0001', admin)).status, 201);
 
   const result = await summary(backend);
   const income = 5000 + 2500 + 99;
@@ -548,7 +548,7 @@ test('missing MFA, expired grant, no session and cross-origin writes are refused
 
 test('a year-scoped grant cannot read or write another school year', async () => withPg({}, async (backend) => {
   const admin = await backend.as('u-admin', { mfa: true, roles: [{ role: 'admin' }] });
-  const old = (await createEntry(backend, { schoolYearId: 'y2025', categoryId: 'expense-2025', sourceDocumentId: null }, 'old-year-0001', admin)).body.entry;
+  const old = (await createEntry(backend, { schoolYearId: 'y2025', categoryId: 'expense-2025', sourceDocumentId: null, occurredOn: '2025-10-01' }, 'old-year-0001', admin)).body.entry;
   assert.ok(old?.id);
   for (const req of [
     ...LEDGER_GETS.map((path) => call(backend.cookie, path.replace('y2026', 'y2025'))),
@@ -601,9 +601,34 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
   } finally {
     console.error = original;
   }
+  // #214: kontrola pozytywna — bez niej test przechodzi także wtedy, gdy logger przestaje pisać na console.error.
+  assert.ok(errors.length > 0, 'awarie triggera audytu muszą zostać zalogowane przez console.error');
   assert.ok(errors.every((line) => !line.includes('Syntetyczny') && !line.includes('@')));
   assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 0);
   assert.equal(await backend.count('ledger_corrections'), 1);
+
+  // #211: ponowienie tym samym kluczem po usunięciu awarii — dokładnie ten krok
+  // wykona przeglądarka skarbnika po 503 (macierz scenariuszy AGENTS.md, księga).
+  await backend.db.exec('DROP TRIGGER fail_ledger_audit ON audit_events; DROP FUNCTION fail_ledger_audit();');
+  const retried = await createEntry(backend, {}, 'audit-fail-0001');
+  assert.equal(retried.status, 201);
+  assert.equal(retried.replayed, 'false');
+  assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 1);
+  assert.equal(await backend.count('audit_events', `action = 'ledger.entry.created' AND entity_id = '${retried.body.entry.id}'`), 1);
+  const thirdTry = await createEntry(backend, {}, 'audit-fail-0001');
+  assert.equal(thirdTry.status, 200);
+  assert.equal(thirdTry.replayed, 'true');
+  assert.equal(thirdTry.body.entry.id, retried.body.entry.id);
+  assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 1);
+
+  const correctionRetry = await correct(backend, entry.id, { amountCents: 1, reason: 'Bez audytu' }, 'audit-fail-0002');
+  assert.equal(correctionRetry.status, 201);
+  assert.equal(correctionRetry.replayed, 'false');
+  assert.equal(await backend.count('ledger_corrections'), 2);
+  const correctionThird = await correct(backend, entry.id, { amountCents: 1, reason: 'Bez audytu' }, 'audit-fail-0002');
+  assert.equal(correctionThird.status, 200);
+  assert.equal(correctionThird.replayed, 'true');
+  assert.equal(await backend.count('ledger_corrections'), 2);
 }));
 
 test('CSV export of a school year is financial-only, injection-safe and audited', async () => withPg({}, async (backend) => {
