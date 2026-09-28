@@ -70,10 +70,13 @@ test('valid session returns the same JSON contract as the Worker', async () => w
   const response = await handlePgRequest(request('/api/session', { cookie }), env);
   assert.equal(response.status, 200);
   const data = await response.json();
-  assert.deepEqual(Object.keys(data).sort(), ['expiresAt', 'mfaVerified', 'sessionId', 'user']);
+  assert.deepEqual(Object.keys(data).sort(), ['expiresAt', 'mfaVerified', 'sessionId', 'user', 'writeMode']);
   assert.equal(data.mfaVerified, true);
   assert.deepEqual(data.user, { id: 'u1', email: 'u1@example.invalid', displayName: 'Test u1' });
   assert.match(data.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+  // #143: writeMode informuje panele o trybie tylko do odczytu; poza tym testem
+  // (bez APP_WRITE_MODE=read_only) system działa normalnie.
+  assert.equal(data.writeMode, 'normal');
 }));
 
 test('missing, malformed, unknown, expired, revoked and disabled sessions are rejected', async () => withDb(async (db, env) => {
@@ -108,7 +111,20 @@ test('access lists only own active grants; expired and revoked grants are ignore
   const response = await handlePgRequest(request('/api/access', { cookie }), env);
   assert.deepEqual(await response.json(), {
     grants: [{ role: 'representative', classId: 'c-1a', schoolYearId: 'y-2026', expiresAt: null }],
+    hasActiveRole: true,
   });
+}));
+
+// #176: hasActiveRole odzwierciedla ROLE_STATUS (src/pg/auth.js), jedno źródło prawdy
+// dla ekranu startowego login/ — konto z samym `principal` nie dostaje listy paneli.
+test('access: hasActiveRole is false for principal alone, true once any other role is granted', async () => withDb(async (db, env) => {
+  const principalOnly = await seedUserSession(db, { userId: 'dir1', roles: [{ role: 'principal' }] });
+  const none = await seedUserSession(db, { userId: 'dir2', roles: [] });
+  const withAudit = await seedUserSession(db, { userId: 'dir3', roles: [{ role: 'principal' }, { role: 'audit' }] });
+  const access = async (cookie) => (await handlePgRequest(request('/api/access', { cookie }), env)).json();
+  assert.equal((await access(principalOnly)).hasActiveRole, false);
+  assert.equal((await access(none)).hasActiveRole, false);
+  assert.equal((await access(withAudit)).hasActiveRole, true, 'audit ma częściowy dostęp (partial), nie pending_decision');
 }));
 
 test('representative cannot reach another class or school year; two representatives of one class both can', async () => withDb(async (db, env) => {

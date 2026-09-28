@@ -77,8 +77,15 @@ async function seedData(db) {
   await db.query(`INSERT INTO ledger_budget_lines (id, school_year_id, category_id, planned_cents, created_by, created_at, idempotency_key)
     VALUES ('bl-1', '${YEAR}', 'cat-out', 50000, 'u-seed', '2026-09-01T10:00:00Z', 'budget-key-0001')`);
 
+  // #101 (SR-06): bezpośredni INSERT ... visibility='published' jest zamknięty poza
+  // trybem odtworzenia (SET LOCAL rd.restore='on', ten sam mechanizm co 0027 dla dat
+  // spoza roku szkolnego) — dane seedowe tego testu nie przechodzą przez pełny
+  // przepływ szkic→publikacja, więc odtwarzamy tu ten tryb jak legacy_d1.
+  await db.query(`BEGIN`);
+  await db.query(`SET LOCAL rd.restore = 'on'`);
   await db.query(`INSERT INTO events (id, school_year_id, title, begins_at, description, visibility, published_at, created_by)
     VALUES ('ev-1', '${YEAR}', 'Piknik testowy', '2026-10-10T10:00:00Z', NULL, 'published', '2026-09-20T00:00:00Z', 'u-seed')`);
+  await db.query(`COMMIT`);
 
   // Zebranie z obecnością (także opiekuna), kworum, uchwałą i protokołem — przez moduł zebrań.
   await seedUser(db, { userId: 'u-voter' });
@@ -409,9 +416,19 @@ test('representative exports only the roster of their own class, without financi
     seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true }),
     /class_not_in_school_year/,
   );
-  await db.exec('ALTER TABLE role_grants DISABLE TRIGGER a0_year_freeze');
-  const repOldYear = await seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true });
-  await db.exec('ALTER TABLE role_grants ENABLE TRIGGER a0_year_freeze');
+  // Od #198/0081 ten wiersz jest odrzucany nawet z wyłączonym triggerem —
+  // złożony FK role_grants_class_in_year (niezależna gwarancja obok
+  // a0_year_freeze) blokuje go też na poziomie bazy. session_replication_role
+  // = replica wyłącza triggery I sprawdzanie FK na czas jednej transakcji,
+  // żeby odtworzyć wiersz jak sprzed obu zabezpieczeń (np. z importu D1) i
+  // sprawdzić, że autoryzacja i tak go nie uznaje.
+  await db.query("SET session_replication_role = replica");
+  let repOldYear;
+  try {
+    repOldYear = await seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: OLD_YEAR }], mfa: true });
+  } finally {
+    await db.query("SET session_replication_role = origin");
+  }
   assert.equal((await roster('c-1a', repOldYear)).status, 403, 'grant for another year');
   const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer' }], mfa: true });
   assert.equal((await roster('c-1a', treasurer)).status, 403);

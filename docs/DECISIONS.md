@@ -76,7 +76,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 ### D-04. Okresy retencji i usuwanie
 
 - Pytanie: jak długo przechowujemy: dane ucznia i opiekuna po zakończeniu nauki, historię wpłat i księgę, dokumenty źródłowe, dziennik audytu, kampanie e-mail, kopie zapasowe oraz przesłany plik importu?
-- Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania.
+- Dlaczego: #2 i #36 wymagają usunięcia pliku źródłowego „zgodnie z retencją”; #8/#39 retencji dokumentów; #9 kopii i eksportu rocznego. Bez tej decyzji nie da się zaprojektować usuwania. #152 proponuje krótszą retencję jawnej referencji wpłaty (`payment_entries.reference`) niż księgi — sama kolumna/hash nie jest wdrożona, czeka na tę decyzję.
 - Warianty w dokumentacji: nie wskazano okresów. Dokumenty Rady archiwizować zgodnie z regulaminem i decyzją szkoły (SECURITY.md).
 - Mechanizm techniczny (bez wartości): [`docs/RETENTION.md`](RETENTION.md) — rejestr `retention_policies` (#91), raport kandydatów `GET /api/admin/retention/preview`. Wykonanie (usuwanie/anonimizacja) świadomie poza zakresem #91 w obecnym PR.
 - Status: otwarta
@@ -135,6 +135,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
   | Eksport roczny / archiwum | roczny: `admin, board`; archiwum kadencji: `board` | `src/pg/routes/exports.js:25,27` | `tests/pg-export-v2.test.js` |
   | Zamknięcie roku | odczyt/checklista: `board, treasurer`; zamknięcie: `board` | `src/pg/routes/year-close.js:35-37` | `tests/pg-year-close.test.js` |
   | Kartki (dowody wpłat) | `admin, board, treasurer` + `representative` (własna klasa) | `src/pg/routes/print.js:30-31` | `tests/pg-print.test.js` |
+  | Sprawozdanie roczne i przepływy (#125) | `board, treasurer`; `admin`, `audit`, `principal`, przedstawiciel — brak dostępu | `src/pg/routes/financial-reports.js:20` | `tests/pg-annual-report.test.js` |
   | Uzgodnienia bankowe | zapis: `admin, board, treasurer`; raport: `audit, board, treasurer`; raport archiwum: `board, treasurer` | `src/pg/routes/reconciliation.js:31-34` | `tests/pg-reconciliation.test.js` |
   | Wydarzenia (#12) | tworzy: `admin, board` + `representative` (własna klasa); zatwierdza/publikuje: wyłącznie `board`, zasada czterech oczu | `src/pg/routes/events.js`, `docs/EVENTS.md` | `tests/pg-events.test.js` |
 
@@ -143,6 +144,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
   moduły w ogóle działały na danych syntetycznych. Test `tests/pg-authz-matrix.test.js`
   sprawdza zgodność `tests/helpers/route-matrix.js` z `ROUTES`, ale nie
   porównuje stałych ról z tą tabelą — rozszerzenie do zrobienia osobno.
+- Założenie techniczne do czasu decyzji (#152, PII_CHECK.md): publikacja publiczna protokołu z wykrytym imieniem/nazwiskiem, e-mailem lub IBAN jest dziś blokowana zawsze (`409`), bez wyjątku dla nazwiska członka Rady pełniącego funkcję — wariant zachowawczy, bo brak decyzji, czy takie nazwisko jest dopuszczalne w publicznym protokole. Nie jest to decyzja.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -151,7 +153,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 ### D-09. Uprawnienia dyrekcji i Komisji Rewizyjnej
 
 - Pytanie: czy i w jakim zakresie dyrekcja oraz Komisja Rewizyjna mają dostęp do wpłat, księgi, dokumentów i eksportu?
-- Dlaczego: dostęp ról `principal` i `audit` do wpłat i księgi jest wyłączony do czasu decyzji (PAYMENTS.md, LEDGER.md). Dotyczy #4, #6, #7, #35.
+- Dlaczego: dostęp ról `principal` i `audit` do wpłat i księgi jest wyłączony do czasu decyzji (PAYMENTS.md, LEDGER.md). Dotyczy #4, #6, #7, #35, #137 (ścieżka kontroli KR: uwagi, odpowiedzi skarbnika, protokół — zablokowana tą samą decyzją).
 - Warianty w dokumentacji: PRODUCT.md — Komisja Rewizyjna: odczyt wpłat, odczyt i eksport księgi, minimum danych rodzin; dyrekcja: domyślnie brak dostępu do wpłat, raport zbiorczy księgi.
 - Status: otwarta
 - Data decyzji:
