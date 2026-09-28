@@ -450,3 +450,19 @@ test('#150: własne sesje — lista tylko swoich, cofnięcie cudzej sesji nic ni
   // Podwójne kliknięcie „Wyloguj to urządzenie”: drugie wywołanie na już wycofanej sesji -> false.
   assert.equal(await revokeOwnSession(env, sessA1, sessA2.sessionId), false);
 }));
+
+test('bodyLimit: POST /api/news-photos/:id/file has its own higher limit, independent of DOCUMENT_MAX_BYTES', async () => {
+  const fakeDb = { query: async () => ({ rows: [] }), transaction: async () => {}, close: async () => {} };
+  const { bodyLimit } = resolveRuntime(
+    { DATABASE_URL: 'postgres://synthetic.invalid/rd', DOCUMENT_MAX_BYTES: String(2 * 1024 * 1024) },
+    { createDatabase: () => fakeDb },
+  );
+  const photoUrl = new URL('https://rd.example.invalid/api/news-photos/abc/file');
+  const docUrl = new URL('https://rd.example.invalid/api/documents');
+  const otherUrl = new URL('https://rd.example.invalid/api/news-photos');
+  assert.equal(bodyLimit(photoUrl, 'POST'), 10 * 1024 * 1024);
+  assert.equal(bodyLimit(docUrl, 'POST'), 2 * 1024 * 1024);
+  assert.notEqual(bodyLimit(otherUrl, 'POST'), 10 * 1024 * 1024);
+  // GET nie zmienia limitu (żadna z tras nie przesyła ciała).
+  assert.notEqual(bodyLimit(photoUrl, 'GET'), 10 * 1024 * 1024);
+});
