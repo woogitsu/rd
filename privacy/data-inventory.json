@@ -5575,6 +5575,52 @@
       "data_type": "text"
     }
   },
+  "news_photo_consent_withdrawals": {
+    "consent_document_ref": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "recorded_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "recorded_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "withdrawn_on": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "date"
+    }
+  },
   "news_photo_consents": {
     "consent_document_ref": {
       "personal": "none",
@@ -5620,6 +5666,17 @@
       "exportable": false,
       "data_type": "text"
     },
+    "scope": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "ARRAY"
+    },
     "subject_kind": {
       "personal": "none",
       "subject": null,
@@ -5641,6 +5698,17 @@
       "free_text": false,
       "exportable": false,
       "data_type": "integer"
+    },
+    "valid_until": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "date"
     }
   },
   "news_photos": {

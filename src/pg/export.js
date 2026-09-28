@@ -256,6 +256,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   news_post_revisions: 'jak news_posts',
   news_photos: 'zdjęcia wymagają zgód na publikację wizerunku — osobny zakres',
   news_photo_consents: 'zgody na wizerunek — osobny zakres (D-04)',
+  news_photo_consent_withdrawals: 'wycofania zgód na wizerunek — jak news_photo_consents, osobny zakres (D-04)',
 });
 
 // ---------------------------------------------------------------------------

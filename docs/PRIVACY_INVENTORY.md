@@ -76,6 +76,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`meeting_minutes_publications`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meetings`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`mfa_recovery_codes`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`news_photo_consent_withdrawals`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`news_photo_consents`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`news_photos`|`alt_text`|Osoba trzecia|direct|wolny tekst|opis alternatywny zdjęcia|document_financial|tak|nie|
 |`news_photos`|`author`|Osoba trzecia|direct|wizerunek|autorstwo zdjęcia|document_financial|tak|nie|
@@ -114,7 +115,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **101**, w tym wolnego tekstu: **23** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **102**, w tym wolnego tekstu: **23** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -851,6 +852,15 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `used_session_id` | none | — | nie |
 | `user_id` | pseudonymous | board_member | nie |
 
+### `news_photo_consent_withdrawals`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `consent_document_ref` | none | — | nie |
+| `recorded_at` | none | — | nie |
+| `recorded_by` | pseudonymous | board_member | nie |
+| `withdrawn_on` | none | — | nie |
+
 ### `news_photo_consents`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
@@ -859,8 +869,10 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `photo_id` | none | — | nie |
 | `recorded_at` | none | — | nie |
 | `recorded_by` | pseudonymous | board_member | nie |
+| `scope` | none | — | nie |
 | `subject_kind` | none | — | nie |
 | `subject_no` | none | — | nie |
+| `valid_until` | none | — | nie |
 
 ### `news_photos`
 
