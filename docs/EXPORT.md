@@ -133,7 +133,9 @@ metadane i pliki dokumentów (także zamiary uploadu `document_uploads`, 0032), 
 dziennik eksportów, kampanie e-mail z odbiorcami, wykluczeniami, kolejką,
 blokadami i zdarzeniami dostawcy (adresy e-mail; zakres i retencja — D-04)
 oraz aktualności i zdjęcia (zgody na wizerunek, w tym rejestr wycofań
-`news_photo_consent_withdrawals` (0083) — osobny zakres, D-04). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
+`news_photo_consent_withdrawals` (0083) — osobny zakres, D-04), w tym pliki
+wariantów zdjęć `news_photo_files` (#96 — jak news_photos, ten sam zakres
+D-04). Kolumny `created_by`, `actor_id`, `source_document_id` itp.
 zawierają więc identyfikatory, które w odtworzonej bazie nie mają
 odpowiednika. Pliki dokumentów kopiuje się osobno (patrz
 [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md), backup Storage Bucket).

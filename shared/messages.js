@@ -317,6 +317,13 @@ export const MESSAGES = Object.freeze({
   invalid_consent_scope: "Wybierz zakres zgody z listy (strona Rady, druk, media społecznościowe).",
   invalid_consent_valid_until: "Niepoprawna data ważności zgody (RRRR-MM-DD).",
   consent_not_found: "Nie znaleziono zgody o tym odwołaniu.",
+  // --- Plik zdjęcia galerii (#96) ----------------------------------------------------
+  empty_photo_file: "Plik zdjęcia jest pusty.",
+  photo_file_too_large: "Plik zdjęcia przekracza dozwolony rozmiar.",
+  photo_file_malformed: "Plik zdjęcia odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi.",
+  photo_file_active_content: "Plik zdjęcia odrzucony: zawiera potencjalnie aktywną treść niedozwoloną w zdjęciach galerii.",
+  photo_file_exists: "To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik.",
+  photo_file_integrity_mismatch: "Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi.",
   preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
   preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
   sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",

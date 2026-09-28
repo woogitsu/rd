@@ -172,6 +172,17 @@ export function pdfBytes(scope) {
   return new TextEncoder().encode(`%PDF-1.4\n% ${marker(scope)} dokument syntetyczny\n%%EOF\n`);
 }
 
+// Prawdziwy, poprawny plik PNG 2x2 (nie tekst udający sygnaturę jak pdfBytes
+// powyżej) — POST /api/news-photos/:id/file (#96) dekoduje bajty przez sharp,
+// więc atrapa musi być poprawnym obrazem, nie tylko mieć poprawne magic bytes.
+// Wygenerowany raz: sharp({create:{width:2,height:2,channels:3,background:
+// {r:200,g:30,b:30}}}).png().toBuffer() — bez danych osobowych, bez EXIF.
+const SYNTHETIC_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWM4ISd3Qk6OAUIBAB8mBBGFRCvEAAAAAElFTkSuQmCC';
+export function pngBytes() {
+  const binary = atob(SYNTHETIC_PNG_BASE64);
+  return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+}
+
 export const CAMPAIGN_TEXT = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok {rok}. Tytuł przelewu: {rodzina}. '
   + 'Jeśli wpłata została już wykonana, prosimy pominąć wiadomość.';
 export function campaignBody(target) {
@@ -440,6 +451,12 @@ export const ROUTE_MATRIX = Object.freeze([
       path: `/api/payments/${obj.paymentId}/reassignment`, headers: withKey(key),
       body: { householdId: 'hh-2', reason: 'Błędne przypisanie, korekta syntetyczna' },
     }),
+  },
+  {
+    // #141: eksport CSV wpisów wpłat i korekt (skarbnik/zarząd/admin).
+    id: 'payments.exportCsv', module: 'payments', method: 'GET', path: '/api/payments/export.csv?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/payments/export.csv?schoolYearId=${target.schoolYearId}` }),
   },
 
   // ---------- events (#12) ----------
@@ -853,6 +870,34 @@ export const ROUTE_MATRIX = Object.freeze([
     allow: PHOTO_VERIFY, mfa: false, ok: 200, deny: 403, fixture: 'fresh',
     object: { kind: 'consent', stage: 'pending' }, visible: () => ['W1'],
     build: ({ obj }) => ({ path: `/api/news-photo-consents/${obj.consentDocumentRef}/withdraw`, body: {} }),
+  },
+  {
+    // Plik obrazu (#96): surowe bajty PNG, nie JSON — Content-Type + Idempotency-Key.
+    id: 'news.photoFile', module: 'news', method: 'POST', path: '/api/news-photos/:photoId/file', targets: ['-'],
+    allow: PHOTO_REGISTER, mfa: false, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'photo', stage: 'pending' }, visible: () => ['W1'],
+    build: ({ obj, key }) => ({
+      path: `/api/news-photos/${obj.photoId}/file`,
+      headers: { ...withKey(key), 'Content-Type': 'image/png' },
+      body: pngBytes(),
+    }),
+  },
+  // Trasa publiczna (#96): zdjęcie zweryfikowane, z plikiem, w opublikowanym
+  // wpisie -> 200 dla każdego (bez sesji też) — sama treść nie zależy od roli.
+  // Cofnięcie/wygaśnięcie/szkic -> 404 identyczne jak nieistniejące; ta ścieżka
+  // ma dedykowany test w tests/pg-news.test.js (macierz sprawdza tu tylko, że
+  // odpowiedź jest jednakowa dla każdego aktora, nie cały cykl życia pliku).
+  {
+    id: 'news.publicPhotoFileWeb', module: 'news', method: 'GET', path: '/api/public/news-photos/:photoId/web',
+    targets: ['-'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static',
+    object: { kind: 'publicPhotoFile', stage: 'n/a' }, visible: () => [],
+    build: ({ obj }) => ({ path: `/api/public/news-photos/${obj.photoId}/web` }),
+  },
+  {
+    id: 'news.publicPhotoFileThumb', module: 'news', method: 'GET', path: '/api/public/news-photos/:photoId/thumb',
+    targets: ['-'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static',
+    object: { kind: 'publicPhotoFile', stage: 'n/a' }, visible: () => [],
+    build: ({ obj }) => ({ path: `/api/public/news-photos/${obj.photoId}/thumb` }),
   },
 
   // ---------- admin (#3, #4, #9) ----------

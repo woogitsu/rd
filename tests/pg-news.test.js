@@ -2,12 +2,15 @@
 // dokumentów i zgód są fikcyjne, bez imion dzieci i opiekunów.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import sharp from 'sharp';
 import { handlePgRequest } from '../src/pg/app.js';
 import {
   addConsent, approve, createDraft, getInternal, getPhoto, listInternal, listPublic, publish,
   registerPhoto, revokePhoto, submit, updateDraft, verifyPhoto, withdraw, withdrawConsent, PUBLIC_CACHE_SECONDS,
+  PHOTO_UPLOAD_MAX_BYTES, uploadPhotoFile,
 } from '../src/pg/news.js';
 import { newsItems } from '../site/core.js';
+import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
@@ -512,5 +515,156 @@ test('HTTP: public route, sessions, cross-origin refusal and text stored verbati
     }), env);
     assert.equal(withdrawn.status, 200);
     assert.deepEqual((await (await handlePgRequest(request(`/api/public/news?schoolYearId=${year}`), env)).json()).posts, []);
+  } finally { await db.close(); }
+});
+
+// --- Plik zdjęcia (#96): warianty bez EXIF/GPS, publiczny odczyt tylko dla ---
+// --- zdjęcia zweryfikowanego w opublikowanej wersji, sprzątanie po awarii. --
+
+// JPEG syntetyczny z EXIF (orientacja 6 — obrót 90° w prawo do wyświetlenia)
+// i wymiarami niekwadratowymi: po ponownym kodowaniu bez metadanych wymiary
+// muszą się zamienić miejscami, co dowodzi, że orientacja została
+// uwzględniona PRZED odrzuceniem EXIF (nie tylko że EXIF zniknął).
+async function jpegWithExifOrientation() {
+  return sharp({ create: { width: 30, height: 10, channels: 3, background: { r: 200, g: 40, b: 10 } } })
+    .jpeg()
+    .withMetadata({ orientation: 6 })
+    .toBuffer();
+}
+
+test('plik zdjęcia: EXIF/GPS usunięte, orientacja uwzględniona, publiczny odczyt tylko po weryfikacji i publikacji', async () => {
+  const db = await newsDb();
+  const storage = createMemoryStorage();
+  const env = { db, storage };
+  try {
+    const source = await jpegWithExifOrientation();
+    const sourceMeta = await sharp(source).metadata();
+    assert.ok(sourceMeta.exif, 'atrapa testowa musi faktycznie nieść EXIF, inaczej test niczego nie sprawdza');
+
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    const boardCookie = await seedUserSession(db, { userId: 'u-board-file', roles: [{ role: 'board', schoolYearId: year }], mfa: true });
+    const repCookie = await seedUserSession(db, { userId: 'u-rep-file', roles: [{ role: 'representative', classId: `${year}-1a`, schoolYearId: year }], mfa: true });
+
+    // Przedstawiciel klasy nie może przesłać pliku zdjęcia (NEWS.md).
+    const denied = await handlePgRequest(request(`/api/news-photos/${photo.id}/file`, {
+      method: 'POST', cookie: repCookie, headers: { 'Content-Type': 'image/jpeg', 'Idempotency-Key': key('file') }, body: source,
+    }), env);
+    assert.equal(denied.status, 403);
+
+    // Nim zdjęcie jest opublikowane, trasa publiczna traktuje je jak nieistniejące.
+    const beforeUpload = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/web`), env);
+    assert.equal(beforeUpload.status, 404);
+    const unknownPhoto = await handlePgRequest(request('/api/public/news-photos/no-such-photo/web'), env);
+    assert.equal(unknownPhoto.status, 404);
+    assert.deepEqual(await unknownPhoto.json(), await beforeUpload.json());
+
+    const uploadKey = key('file');
+    const uploaded = await handlePgRequest(request(`/api/news-photos/${photo.id}/file`, {
+      method: 'POST', cookie: boardCookie, headers: { 'Content-Type': 'image/jpeg', 'Idempotency-Key': uploadKey }, body: source,
+    }), env);
+    assert.equal(uploaded.status, 201);
+    const { files } = await uploaded.json();
+    assert.deepEqual(files.map((f) => f.variant).sort(), ['thumb', 'web']);
+    const web = files.find((f) => f.variant === 'web');
+    // Orientacja 6 na źródle 30x10 -> po rotate() wymiary zamienione (10x30),
+    // poniżej maksymalnych wymiarów wariantu, więc bez powiększania.
+    assert.equal(web.width, 10);
+    assert.equal(web.height, 30);
+
+    // Osobny prefiks od dokumentów (docs/) — nie miesza bucketu galerii z
+    // bucketem dokumentów finansowych/zarządu/klas.
+    const { rows: fileRows } = await db.query('SELECT object_key FROM news_photo_files WHERE photo_id = $1', [photo.id]);
+    assert.ok(fileRows.every((r) => r.object_key.startsWith('photos/')));
+
+    // Podwójne kliknięcie: ten sam klucz idempotencji i te same bajty -> powtórka.
+    const replay = await handlePgRequest(request(`/api/news-photos/${photo.id}/file`, {
+      method: 'POST', cookie: boardCookie, headers: { 'Content-Type': 'image/jpeg', 'Idempotency-Key': uploadKey }, body: source,
+    }), env);
+    assert.equal(replay.status, 200);
+    const byVariant = (a) => [...a].sort((x, y) => x.variant.localeCompare(y.variant));
+    assert.deepEqual(byVariant((await replay.json()).files), byVariant(files));
+
+    // Inny plik dla zdjęcia, które ma już plik -> konflikt (nie nadpisujemy po cichu).
+    const otherFile = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 1, g: 2, b: 3 } } }).jpeg().toBuffer();
+    const conflict = await handlePgRequest(request(`/api/news-photos/${photo.id}/file`, {
+      method: 'POST', cookie: boardCookie, headers: { 'Content-Type': 'image/jpeg', 'Idempotency-Key': key('file') }, body: otherFile,
+    }), env);
+    assert.equal(conflict.status, 409);
+    assert.deepEqual(await conflict.json(), { error: 'photo_file_exists' });
+
+    // Zdjęcie zweryfikowane, ale wpis jeszcze nieopublikowany -> nadal 404.
+    await verifyPhoto(db, board1, { photoId: photo.id });
+    const stillHidden = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/web`), env);
+    assert.equal(stillHidden.status, 404);
+
+    await publishedPost(db, { title: 'Fotorelacja (syntetyczna)', photoIds: [photo.id] });
+
+    const publicWeb = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/web`), env);
+    assert.equal(publicWeb.status, 200);
+    assert.equal(publicWeb.headers.get('Content-Type'), 'image/jpeg');
+    assert.equal(publicWeb.headers.get('Cache-Control'), `public, max-age=${PUBLIC_CACHE_SECONDS}`);
+    const publicBytes = new Uint8Array(await publicWeb.arrayBuffer());
+    const publicMeta = await sharp(publicBytes).metadata();
+    assert.equal(publicMeta.exif, undefined, 'wariant publiczny nie może nieść EXIF/GPS');
+    assert.equal(publicMeta.width, 10);
+    assert.equal(publicMeta.height, 30);
+
+    const publicThumb = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/thumb`), env);
+    assert.equal(publicThumb.status, 200);
+
+    const badVariant = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/original`), env);
+    assert.equal(badVariant.status, 404);
+
+    // Cofnięcie praw ukrywa wariant z trasy publicznej przy następnym żądaniu.
+    await revokePhoto(db, board1, { photoId: photo.id, reason: 'Cofnięcie zgody (syntetyczne)' });
+    const afterRevoke = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/web`), env);
+    assert.equal(afterRevoke.status, 404);
+
+    // Zbyt duży plik: sprawdzany PRZED dekodowaniem, więc atrapa nie musi być poprawnym obrazem.
+    const { photo: bigPhoto } = await registerPhoto(db, admin, photoInput());
+    const tooBig = await handlePgRequest(request(`/api/news-photos/${bigPhoto.id}/file`, {
+      method: 'POST', cookie: boardCookie,
+      headers: { 'Content-Type': 'image/jpeg', 'Idempotency-Key': key('file') },
+      body: new Uint8Array(PHOTO_UPLOAD_MAX_BYTES + 1),
+    }), env);
+    assert.equal(tooBig.status, 413);
+
+    // Deklarowany typ niezgodny z wykrytym -> odrzucone przed dekodowaniem.
+    const { photo: mismatchPhoto } = await registerPhoto(db, admin, photoInput());
+    const mismatch = await handlePgRequest(request(`/api/news-photos/${mismatchPhoto.id}/file`, {
+      method: 'POST', cookie: boardCookie,
+      headers: { 'Content-Type': 'image/png', 'Idempotency-Key': key('file') },
+      body: source, // JPEG prawdziwy, zadeklarowany jako PNG
+    }), env);
+    assert.equal(mismatch.status, 415);
+  } finally { await db.close(); }
+});
+
+test('plik zdjęcia: ponowienie po awarii w połowie generowania wariantów nie zostawia osieroconych obiektów ani wierszy', async () => {
+  const db = await newsDb();
+  const realStorage = createMemoryStorage();
+  let putCount = 0;
+  // Drugi zapis do bucketu (wariant thumb) pada — symuluje awarię w połowie
+  // przesyłania (issue #96: „ponowienie po awarii w połowie generowania
+  // wariantów — brak osieroconych wariantów w bazie; obiekty sprzątane
+  // best effort”).
+  const flaky = {
+    ...realStorage,
+    async putObject(key, bytes, contentType) {
+      putCount += 1;
+      if (putCount === 2) throw new Error('storage_unreachable (syntetyczne)');
+      return realStorage.putObject(key, bytes, contentType);
+    },
+  };
+  const env = { db, storage: flaky };
+  try {
+    const source = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 5, g: 5, b: 5 } } }).jpeg().toBuffer();
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    await assert.rejects(
+      uploadPhotoFile(db, flaky, admin, { photoId: photo.id, bytes: source, contentType: 'image/jpeg', idempotencyKey: key('file') }),
+    );
+    const { rows } = await db.query('SELECT 1 FROM news_photo_files WHERE photo_id = $1', [photo.id]);
+    assert.equal(rows.length, 0, 'żaden wariant nie powinien zostać zapisany w bazie po częściowej awarii');
+    assert.equal(realStorage.keys().length, 0, 'obiekt zapisany przed awarią powinien zostać posprzątany best effort');
   } finally { await db.close(); }
 });
