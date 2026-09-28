@@ -10,8 +10,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PANELS, visiblePanels } from '../shared/shell.js';
+import { STATIC_PREFIXES } from '../src/node-app.js';
 
 const src = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const packageJson = () => JSON.parse(src('package.json'));
 
 // Wyciąga role z `const NAME = ['a', 'b'];` — nie obsługuje spreadu (np. PRINT_ROLES),
 // te są liczone ręcznie niżej z komentarzem.
@@ -31,6 +33,40 @@ test('PANELS: unikalne id, href zaczyna/kończy się na "/", niepusta polska ety
     assert.match(panel.href, /^\/[a-z-]+\/$/, panel.id);
     assert.ok(panel.label && panel.label.length > 0, panel.id);
     assert.ok(Array.isArray(panel.roles) && panel.roles.length > 0, `${panel.id}: pusta lista ról`);
+  }
+});
+
+// Pilnuje, żeby PANELS i STATIC_PREFIXES (src/node-app.js) nigdy się nie rozjechały:
+// dodanie nowego panelu bez wpisu w PANELS (lub odwrotnie) ma wywalić test, zanim
+// trafi do produkcji. `login` i `site` celowo nie mają wpisu w PANELS — `login` to
+// ekran logowania (bez nawigacji powłoki), `site` to jedyny publiczny prefiks
+// (PUBLIC_STATIC_PREFIX w src/node-app.js), obydwa poza zakresem tej nawigacji.
+const NAV_EXEMPT_PREFIXES = new Set(['login', 'site']);
+
+test('każdy prefiks z STATIC_PREFIXES poza login/site ma wpis w PANELS', () => {
+  for (const prefix of STATIC_PREFIXES) {
+    if (NAV_EXEMPT_PREFIXES.has(prefix)) continue;
+    assert.ok(panelById[prefix], `STATIC_PREFIXES zawiera "${prefix}", ale brak go w PANELS (shared/shell.js)`);
+  }
+});
+
+test('każdy wpis PANELS ma prefiks w STATIC_PREFIXES', () => {
+  for (const panel of PANELS) {
+    assert.ok(STATIC_PREFIXES.has(panel.id), `PANELS zawiera "${panel.id}", ale brak go w STATIC_PREFIXES (src/node-app.js)`);
+  }
+});
+
+test('każdy wpis PANELS ma skrypt build:<panel> w łańcuchu "build" package.json', () => {
+  const pkg = packageJson();
+  const buildChain = pkg.scripts && pkg.scripts.build;
+  assert.ok(buildChain, 'brak skryptu "build" w package.json');
+  for (const panel of PANELS) {
+    const scriptName = `build:${panel.id}`;
+    assert.ok(pkg.scripts[scriptName], `brak skryptu "${scriptName}" w package.json`);
+    assert.ok(
+      buildChain.includes(`npm run ${scriptName}`),
+      `skrypt "build" w package.json nie wywołuje "npm run ${scriptName}" dla panelu "${panel.id}"`,
+    );
   }
 });
 
