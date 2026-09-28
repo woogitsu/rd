@@ -59,6 +59,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`guardians`|`last_name`|Opiekun|direct|identyfikacja|identyfikacja opiekuna|guardian_contact|nie|tak|
 |`invitations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`invitations`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`ledger_allocation_versions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`ledger_allocation_versions`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie zmiany przypisania wpisu do centrum kosztów|document_financial|tak|tak|
 |`ledger_budget_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_categories`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_corrections`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -126,7 +128,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **113**, w tym wolnego tekstu: **27** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **115**, w tym wolnego tekstu: **28** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -665,6 +667,31 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `role` | none | — | nie |
 | `school_year_id` | none | — | nie |
 | `token_hash` | none | — | nie |
+
+### `ledger_allocation_items`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `amount_cents` | none | — | tak |
+| `class_id` | none | — | tak |
+| `event_id` | none | — | tak |
+| `id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `version_id` | none | — | tak |
+
+### `ledger_allocation_versions`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `ledger_entry_id` | none | — | tak |
+| `reason` | direct | third_party | tak |
+| `school_year_id` | none | — | tak |
+| `supersedes_id` | none | — | tak |
+| `version_no` | none | — | tak |
 
 ### `ledger_budget_lines`
 

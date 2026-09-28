@@ -210,6 +210,12 @@ export const MESSAGES = Object.freeze({
   payment_has_allocations: "Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części.",
   payment_allocation_not_found: "Nie znaleziono tej części wpłaty.",
   payment_allocation_already_reversed: "Ta część wpłaty została już cofnięta.",
+  // Centra kosztów w księdze (#117).
+  invalid_allocation: "Niepoprawny podział wpisu na wydarzenia lub klasy.",
+  invalid_cost_center: "Wskazane wydarzenie lub klasa nie należy do roku tego wpisu.",
+  allocation_exceeds_net: "Suma przypisań przekracza kwotę wpisu po korektach. Najpierw zmień przypisanie.",
+  allocation_version_conflict: "Przypisanie tego wpisu zostało w międzyczasie zmienione. Odśwież widok.",
+  allocation_reason_required: "Zmiana przypisania wymaga podania powodu.",
   statement_line_not_found: "Nie znaleziono pozycji wyciągu.",
   statement_line_not_income: "Z tej pozycji wyciągu nie można utworzyć wpłaty — kwota nie jest dodatnia.",
 

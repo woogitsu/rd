@@ -110,6 +110,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
 | `student_guardian_changes` | historia relacji opiekun–dziecko uczniów roku (zgoda, kontakt główny, daty) z dat roku — bez treści powodu (0026, D-03) |
 | `ledger_transfers` | przeniesienia kasa ↔ rachunek roku (0028) |
+| `ledger_allocation_versions`, `ledger_allocation_items` | wersje przypisania wpisów księgi roku do wydarzeń i klas (centra kosztów, 0090, #117) |
 | `bank_reconciliations`, `bank_statement_imports`, `bank_statement_lines`, `bank_reconciliation_matches` | uzgodnienia roku z pozycjami wyciągu (tylko skróty tytułów) i powiązaniami, także cofniętymi z powodem (0015/0024) |
 | `bank_reconciliation_group_matches`, `bank_reconciliation_group_match_items`, `bank_reconciliation_group_match_revocations` | dopasowania zbiorcze (jedna pozycja wyciągu ↔ kilka wpłat/wpisów), ich pozycje i cofnięcia z powodem (0105, #127) |
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |

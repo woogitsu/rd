@@ -87,6 +87,29 @@ Bilans otwarcia (`ledger_opening_balances.amount_cents` = całość) ma część
 - Założenia (zarząd nic nie zdecydował — wariant zachowawczy): D-13 — jedna kasa, jeden rachunek, „kasa” = wszystko poza rachunkiem; bilans otwarcia i poprawki wyłącznie zarząd (bez admina i skarbnika); zasada czterech oczu dla poprawek (D-12) nie jest wymuszona; ręczny bilans tylko dla pierwszego roku — kolejne lata dostają bilans z zamknięcia.
 - Bilanse przeniesione przed 0028 mają `cash_cents = 0`; jeśli zawierały gotówkę, rozbicie wpisuje zarząd poprawką `{ amountCents: 0, cashCents: <gotówka> }`.
 
+### Centra kosztów: wydarzenie i klasa (issue #117, migracja `0090`)
+
+Wpis księgi można przypisać do **wydarzenia** (`events`) albo **klasy** (`classes`) tego samego roku — w całości albo w częściach (np. zakup dla dwóch klas). Część nieprzypisana to pozycja „ogólne”. Wpisy są niezmienne, więc przypisanie ma **wersje** (`ledger_allocation_versions` + `ledger_allocation_items`): zmiana = nowa wersja wskazująca poprzednią (`supersedesId`) z powodem; historia zostaje, a w dzienniku jest zdarzenie `ledger.allocation.created` (identyfikatory, numer wersji, liczba pozycji — bez kwot i opisów).
+
+- Wydarzenie lub klasa z innego roku → `400 invalid_cost_center` (w bazie: złożone klucze obce z `school_year_id`).
+- Suma pozycji ≤ netto wpisu → inaczej `409 allocation_exceeds_net`. **Korekta wpisu**, po której netto spadłoby poniżej sumy bieżącego przypisania, jest odrzucana (`409 allocation_exceeds_net`, także przeksięgowanie #144): najpierw nowa wersja przypisania z mniejszymi kwotami, potem korekta. Trigger na `ledger_corrections` pilnuje tego także przy bezpośrednim `INSERT`.
+- Wersja budowana na nieaktualnej poprzedniej (podwójne kliknięcie innym kluczem, równoległa zmiana) → `409 allocation_version_conflict` z `currentVersionId`; ten sam `Idempotency-Key` → powtórzenie odpowiedzi. Zmiana (wersja ≥ 2) wymaga powodu.
+- Wydarzenie odwołane zachowuje przypisane wpisy; raport pokazuje jego status.
+- Rok zamknięty → `409 school_year_closed` (obie tabele mają `a0_year_freeze`). Obie tabele są w paczce eksportu roku (docs/EXPORT.md).
+- Kolumny `event_id`/`class_id` w `ledger_entries` (propozycja #117 pkt 1) nie zostały dodane — jedno źródło prawdy to wersje przypisania; przypisanie nowego wpisu to jego wersja 1.
+
+| Trasa | Opis |
+| --- | --- |
+| `GET /api/ledger/{id}/allocations` | netto wpisu, bieżąca wersja, suma przypisana, „ogólne”, historia wersji |
+| `POST /api/ledger/{id}/allocations` | `Idempotency-Key`; `{ "items": [{ "eventId" \| "classId", "amountCents" }], "supersedesId": null \| "<bieżąca wersja>", "reason?" }`; `items: []` = całość do „ogólne” |
+| `GET /api/ledger/cost-centers?schoolYearId=&type=event\|class&format=json\|csv` | przychody, wydatki i wynik per centrum + „ogólne” + razem; suma = `ledger_year_summary` |
+| `GET /api/ledger/cost-centers/events/{eventId}` | rozliczenie wydarzenia: przypisane wpisy (data, kategoria, opis, kwota), wynik |
+
+Rozliczenie wydarzenia jest pod `/api/ledger/…`, bo moduł wydarzeń obsługuje całe `/api/events/*` (zamiast proponowanego `/api/events/{id}/finance`).
+
+Dostęp: admin, zarząd, skarbnik z MFA w zakresie roku (jak księga). **Przedstawiciel klasy, `audit` i `principal` — `403`** na wszystkich trasach, także dla własnej klasy i nieistniejących identyfikatorów (bez wyroczni istnienia) — D-08 i D-09 nie są rozstrzygnięte, wariant zachowawczy. Raport per klasa obejmuje wyłącznie wpisy księgi przypisane klasie (wydatki, dofinansowania), nigdy wpłat rodzin — składki są dobrowolne i raport nie może stać się wskaźnikiem wpłat klasy.
+
+Poza zakresem (dalsze PR): wersja HTML do druku, sekcja „Wynik wydarzeń” w raporcie KR, UI w panelu księgi, widok dla przedstawiciela po decyzji D-08.
 ### Sprawozdanie roczne i przepływy środków (issue #125, część)
 
 Moduł `src/pg/annual-report.js`, trasy `src/pg/routes/financial-reports.js`. Bez migracji.

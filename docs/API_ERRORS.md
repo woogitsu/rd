@@ -36,6 +36,9 @@ wpisów).
 | `active_bank_match` | Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `admin_exists` | Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne. | Zależy od kontekstu (patrz moduł trasy). |
 | `agenda_position_taken` | Ta pozycja porządku obrad jest już zajęta. | Zależy od kontekstu (patrz moduł trasy). |
+| `allocation_exceeds_net` | Suma przypisań przekracza kwotę wpisu po korektach. Najpierw zmień przypisanie. | Nie — popraw dane żądania. |
+| `allocation_reason_required` | Zmiana przypisania wymaga podania powodu. | Nie — popraw dane żądania. |
+| `allocation_version_conflict` | Przypisanie tego wpisu zostało w międzyczasie zmienione. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `already_matched_via_ledger` | Pozycja jest już dopasowana do wpisu księgi. | Nie — popraw dane żądania. |
 | `already_matched_via_payment` | Pozycja jest już dopasowana do wpłaty. | Nie — popraw dane żądania. |
 | `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
@@ -96,6 +99,7 @@ wpisów).
 | `import_disabled` | Import jest wyłączony na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `import_has_conflicts` | Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `inconsistent_matches` | Dopasowania są niespójne. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
+| `invalid_allocation` | Niepoprawny podział wpisu na wydarzenia lub klasy. | Nie — popraw dane żądania. |
 | `invalid_alt_text` | Podaj opis zdjęcia (tekst alternatywny). | Nie — popraw dane żądania. |
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
 | `invalid_audience` | Wybierz odbiorców. | Nie — popraw dane żądania. |
@@ -111,6 +115,7 @@ wpisów).
 | `invalid_columns` | Niepoprawne kolumny importu. | Nie — popraw dane żądania. |
 | `invalid_consent` | Niepoprawny zapis zgody na publikację. | Nie — popraw dane żądania. |
 | `invalid_content_type` | Serwer nie odczytał formatu danych. | Nie — popraw dane żądania. |
+| `invalid_cost_center` | Wskazane wydarzenie lub klasa nie należy do roku tego wpisu. | Nie — popraw dane żądania. |
 | `invalid_credentials` | Nieprawidłowy adres e-mail lub hasło. | Nie — popraw dane żądania. |
 | `invalid_csv_header` | Plik CSV ma niepoprawny nagłówek. | Nie — popraw dane żądania. |
 | `invalid_csv` | Nie udało się odczytać pliku CSV. | Nie — popraw dane żądania. |
