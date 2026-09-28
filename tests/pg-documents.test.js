@@ -397,3 +397,157 @@ test('type detection, size limits and runtime wiring', () => {
   assert.equal(runtime.bodyLimit(new URL('https://rd.test/api/documents'), 'POST'), 2048);
   assert.equal(JSON.stringify(Object.keys(runtime.env)).includes('BUCKET'), false);
 });
+
+// --- Utracone potwierdzenie COMMIT przy uploadzie (#168) --------------------
+
+async function silencedRouteError(fn) {
+  const errors = [];
+  const original = console.error;
+  console.error = (line) => errors.push(line);
+  try { return { result: await fn(), errors }; } finally { console.error = original; }
+}
+
+// Owija db tak, by transaction() NAPRAWDĘ się zatwierdziła (prawdziwy BEGIN/
+// COMMIT na PGlite), ale zwróciła wywołującemu błąd połączenia — tak jak przy
+// utraconym potwierdzeniu COMMIT (reset TCP, failover) opisanym w #168.
+function lostCommitAckOnce(db) {
+  let armed = true;
+  return {
+    query: (...args) => db.query(...args),
+    async transaction(fn) {
+      const result = await db.transaction(fn);
+      if (armed) {
+        armed = false;
+        const error = new Error('read ECONNRESET');
+        error.code = 'ECONNRESET';
+        throw error;
+      }
+      return result;
+    },
+  };
+}
+
+// Owija db tak, że transaction() uruchamia prawdziwą transakcję, ale jedno
+// zapytanie wewnątrz niej rzuca błąd, więc PGlite naprawdę wykonuje ROLLBACK
+// (odtwarza „zapisz obiekt i rzuć” z niepowodzeniem samego zapisu w bazie —
+// obiekt trafił do bucketu, ale wiersz documents nie powstał).
+function failInsideTransaction(db, matchText) {
+  return {
+    query: (...args) => db.query(...args),
+    transaction: (fn) => db.transaction(async (tx) => fn({
+      query: async (text, params) => {
+        if (text.includes(matchText)) {
+          const error = new Error('synthetic_test_failure');
+          error.code = 'ETEST';
+          throw error;
+        }
+        return tx.query(text, params);
+      },
+    })),
+  };
+}
+
+test('lost COMMIT acknowledgement: object stays, exactly one document, download works', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const wrapped = { ...env, db: lostCommitAckOnce(db) };
+  const { result: { response, data } } = await silencedRouteError(() => upload(wrapped, { cookie }));
+  // Transakcja się zatwierdziła; upload() to wykrywa świeżym zapytaniem i
+  // zwraca sukces zamiast usuwać obiekt, który ma już wiersz w documents.
+  assert.equal(response.status, 201);
+  assert.match(data.document.id, UUID);
+
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 1);
+  assert.equal((await db.query("SELECT state FROM document_uploads")).rows[0].state, 'committed');
+  const download = await get(env, `/api/documents/${data.document.id}/content`, cookie);
+  assert.equal(download.status, 200);
+}));
+
+test('genuine rollback (object written, insert rolled back): object is deleted, upload marked abandoned, retry creates exactly one document', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const wrapped = { ...env, db: failInsideTransaction(db, 'UPDATE document_uploads') };
+  const key = 'lost-write-key-1';
+  const { result: { response }, errors } = await silencedRouteError(() => upload(wrapped, { cookie, key }));
+  assert.equal(response.status, 503);
+  assert.match(errors.join('\n'), /"code":"ETEST"/);
+
+  // Wykryte od razu (baza jest osiągalna): obiekt usunięty, upload porzucony.
+  assert.equal(storage.keys().length, 0);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 0);
+  const [uploadRow] = (await db.query('SELECT state, resolution FROM document_uploads')).rows;
+  assert.equal(uploadRow.state, 'abandoned');
+  assert.equal(uploadRow.resolution, 'insert_rolled_back');
+
+  // Ponowienie tym samym kluczem: żaden wiersz documents nie istnieje, więc to
+  // nie jest replay — powstaje dokładnie jeden nowy dokument i jeden obiekt.
+  const { response: retryResponse, data } = await upload(env, { cookie, key });
+  assert.equal(retryResponse.status, 201);
+  assert.equal(data.replayed, undefined);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 1);
+  assert.equal(storage.keys().length, 1);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM document_uploads WHERE state = 'committed'")).rows[0].n, 1);
+}));
+
+test('database unreachable through the whole attempt (transaction and confirm both fail): object and pending row are left for the cleanup job', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  // Baza niedostępna przez CAŁĄ próbę: transakcja nie zdąża nic zapisać
+  // (BEGIN/INSERT nigdy nie doszły), a potwierdzający SELECT też pada —
+  // dziś nie da się rozstrzygnąć, więc nic nie ruszamy.
+  // Zapytania przed próbą transakcji (sesja, wpis 'pending') idą normalnie;
+  // dopiero PO nieudanej transakcji (BEGIN/INSERT nigdy nie doszły do bazy)
+  // baza przestaje odpowiadać — to właśnie wtedy pada potwierdzający SELECT.
+  let down = false;
+  const wrapped = {
+    ...env,
+    db: {
+      async query(text, params) {
+        if (down) { const e = new Error('read ECONNRESET'); e.code = 'ECONNRESET'; throw e; }
+        return db.query(text, params);
+      },
+      async transaction() {
+        down = true;
+        const error = new Error('connect ETIMEDOUT'); error.code = 'ETIMEDOUT';
+        throw error;
+      },
+    },
+  };
+  const { result: { response } } = await silencedRouteError(() => upload(wrapped, { cookie }));
+  assert.equal(response.status, 503);
+  // Ani obiekt, ani wiersz uploadu nie zostały ruszone — nie wiadomo, co się stało.
+  assert.equal(storage.keys().length, 1);
+  assert.equal((await db.query("SELECT state FROM document_uploads")).rows[0].state, 'pending');
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 0);
+}));
+
+test('download when the object is missing from the bucket gives 409 document_content_missing (not 503), with audit', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const objectKey = (await db.query('SELECT object_key FROM documents WHERE id = $1', [data.document.id])).rows[0].object_key;
+  await storage.deleteObject(objectKey);
+
+  const response = await get(env, `/api/documents/${data.document.id}/content`, cookie);
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error, 'document_content_missing');
+  const [event] = await auditRows(db, 'document.content_missing');
+  assert.equal(event.entity_id, data.document.id);
+  assertNoPii(event.metadata_json);
+
+  // Granica ról: przedstawiciel innej klasy dostaje 404, nie 409 — bez wyroczni.
+  const { data: classDoc } = await upload(env, { cookie: await repA(db), kind: 'class', classId: 'c-1a' });
+  const classDocId = classDoc.document.id;
+  const missingObjectKey = (await db.query('SELECT object_key FROM documents WHERE id = $1', [classDocId])).rows[0].object_key;
+  await storage.deleteObject(missingObjectKey);
+  assert.equal((await get(env, `/api/documents/${classDocId}/content`, await repB(db))).status, 404);
+  assert.equal((await get(env, `/api/documents/${classDocId}/content`, await repA(db))).status, 409);
+}));
+
+test('replay does not report success when the object behind the idempotency key is gone', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const first = await upload(env, { cookie, key: 'replay-missing-object' });
+  assert.equal(first.response.status, 201);
+  const objectKey = (await db.query('SELECT object_key FROM documents WHERE id = $1', [first.data.document.id])).rows[0].object_key;
+  await storage.deleteObject(objectKey);
+
+  const retry = await upload(env, { cookie, key: 'replay-missing-object' });
+  assert.equal(retry.response.status, 409);
+  assert.equal(retry.data.error, 'document_content_missing');
+}));

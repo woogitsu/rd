@@ -434,8 +434,24 @@ test('audit events are atomic with the write and carry no amounts, references or
   } finally {
     console.error = original;
   }
+  // #214: kontrola pozytywna — bez niej test przechodzi także wtedy, gdy logger przestaje pisać na console.error.
+  assert.ok(errors.length > 0, 'awaria triggera audytu musi zostać zalogowana przez console.error');
   assert.ok(errors.every((line) => !line.includes('synthetic-reference') && !line.includes('@')));
   assert.equal(await backend.count('payment_entries', "idempotency_key = 'audit-fail-0001'"), 0);
+
+  // #211: ponowienie tym samym kluczem po usunięciu awarii — dokładnie ten krok
+  // wykona przeglądarka skarbnika po 503 (macierz scenariuszy AGENTS.md, wpłaty).
+  await backend.db.exec('DROP TRIGGER fail_payment_audit ON audit_events; DROP FUNCTION fail_payment_audit();');
+  const retried = await createPayment(backend, {}, 'audit-fail-0001');
+  assert.equal(retried.status, 201);
+  assert.equal(retried.replayed, 'false');
+  assert.equal(await backend.count('payment_entries', "idempotency_key = 'audit-fail-0001'"), 1);
+  assert.equal(await backend.count('audit_events', `action = 'payment.created' AND entity_id = '${retried.body.payment.id}'`), 1);
+  const thirdTry = await createPayment(backend, {}, 'audit-fail-0001');
+  assert.equal(thirdTry.status, 200);
+  assert.equal(thirdTry.replayed, 'true');
+  assert.equal(thirdTry.body.payment.id, retried.body.payment.id);
+  assert.equal(await backend.count('payment_entries', "idempotency_key = 'audit-fail-0001'"), 1);
 }));
 
 test('BIGINT aggregates are converted only when safe; route is registered once', () => {
