@@ -384,6 +384,12 @@ async function makeAdminTarget(ctx, stage) {
     await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
     return { schoolYearId };
   }
+  if (stage === 'dataRequest') {
+    // Rejestr żądań osób (#100) — cel dla przejścia stanu; gospodarstwo ogólnoszkolne (hh-1).
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',
+      { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' });
+    return { requestId: json.request.id };
+  }
   throw new Error(`unknown admin fixture ${stage}`);
 }
 

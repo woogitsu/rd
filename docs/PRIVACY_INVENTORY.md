@@ -26,6 +26,11 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`bank_statement_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`data_access_log`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`data_access_log`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie wpisu z gospodarstwem|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie żądania z opiekunem|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`handled_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie żądania z osobą obsługującą|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie żądania z gospodarstwem|nieustalona (D-04)|nie|nie|
+|`data_subject_requests`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie żądania z uczniem|nieustalona (D-04)|nie|nie|
 |`document_descriptions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`document_descriptions`|`description`|Osoba trzecia|direct|wolny tekst|opis dokumentu|document_financial|tak|tak|
 |`document_descriptions`|`title`|Osoba trzecia|direct|wolny tekst|tytuł dokumentu|document_financial|tak|tak|
@@ -140,7 +145,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **127**, w tym wolnego tekstu: **30** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **132**, w tym wolnego tekstu: **30** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -305,6 +310,24 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `outcome` | none | — | nie |
 | `row_count` | none | — | nie |
 | `school_year_id` | none | — | nie |
+
+### `data_subject_requests`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `decision_note_ref` | none | — | nie |
+| `due_on` | none | — | nie |
+| `guardian_id` | pseudonymous | guardian | nie |
+| `handled_by` | pseudonymous | board_member | nie |
+| `household_id` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `kind` | none | — | nie |
+| `received_on` | none | — | nie |
+| `status` | none | — | nie |
+| `student_id` | pseudonymous | student | nie |
+| `updated_at` | none | — | nie |
 
 ### `document_descriptions`
 

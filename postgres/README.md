@@ -682,3 +682,15 @@ uzgodnienia są `draft`/`confirmed`, więc dotychczasowa unikalność spełnia
 nową. Wycofanie: tylko bez porzuconych uzgodnień i zduplikowanych skrótów
 (odtworzenie indeksów UNIQUE z 0089, funkcji z 0024/0015 i poprzedniego
 CHECK); w przeciwnym razie wyłącznie po kopii zapasowej.
+
+`0068_data_subject_requests.sql` (#100) dodaje rejestr żądań osób (RODO):
+dostęp, sprostowanie, usunięcie, ograniczenie, sprzeciw, przenoszenie.
+Wariant zachowawczy: wyłącznie rejestr i przejścia stanu `received →
+identity_verified → in_progress → answered | rejected` (bez cofania);
+eksport danych jednej rodziny, sprostowanie i ograniczenie przetwarzania nie
+są zaimplementowane do decyzji D-07/D-08/D-09. Tabela nie przechowuje treści
+żądania ani danych kontaktowych wnioskodawcy — tylko identyfikatory obiektu
+i odwołanie `decision_note_ref`. Skutki dla danych: nowa, pusta tabela bez
+wstecznego wypełnienia; wiersz nigdy nie jest usuwany. Wycofanie na pustej
+bazie: usunięcie tabeli, triggera i funkcji; z wpisami — tylko po kopii
+zapasowej (rejestr służy rozliczalności wobec osób).

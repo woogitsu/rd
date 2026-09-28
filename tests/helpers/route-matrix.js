@@ -1051,6 +1051,19 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Rejestr żądań osób (#100): wariant zachowawczy, wyłącznie admin (jak cały moduł).
+  adminRoute('admin.dataRequests', 'GET', '/api/admin/data-requests', {}),
+  adminRoute('admin.dataRequestCreate', 'POST', '/api/admin/data-requests', {
+    ok: 201,
+    build: () => ({
+      path: '/api/admin/data-requests',
+      body: { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' },
+    }),
+  }),
+  adminRoute('admin.dataRequestStatus', 'POST', '/api/admin/data-requests/:requestId/status', {
+    object: 'dataRequest',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/status`, body: { status: 'identity_verified' } }),
+  }),
   // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
   adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
   // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
