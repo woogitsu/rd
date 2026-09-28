@@ -10,8 +10,10 @@
 //   (PRODUCT.md: technical admin does not publish);
 // - approver must differ from the event author and the revision author
 //   (four eyes, enforced again by the database trigger).
+import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
+import { buildCalendar, icalUidDomain } from '../ical.js';
 
 export const EVENT_TIMEZONE = 'Europe/Brussels';
 export const EVENT_POLICY = Object.freeze({
@@ -537,7 +539,13 @@ export async function listInternal(db, actor, input) {
   return { events: rows.map(internalEvent) };
 }
 
-export async function listPublic(db, input = {}) {
+const PUBLIC_ICS_COLUMNS = `id, title, description, begins_at, ends_at, location, organizer, timezone,
+            public_status, published_at, first_published_at,
+            (SELECT e.status <> 'cancelled' AND e.revision_no <> e.published_revision_no
+               FROM events e WHERE e.id = public_events.id) AS pending_change,
+            (SELECT e.published_revision_no FROM events e WHERE e.id = public_events.id) AS sequence_no`;
+
+async function publicEventRows(db, input = {}) {
   const conditions = [];
   const params = [];
   if (input.schoolYearId !== undefined && input.schoolYearId !== null) {
@@ -553,16 +561,57 @@ export async function listPublic(db, input = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new EventError('invalid_limit');
   params.push(limit);
   const { rows } = await db.query(
-    `SELECT id, title, description, begins_at, ends_at, location, organizer, timezone,
-            public_status, published_at, first_published_at,
-            (SELECT e.status <> 'cancelled' AND e.revision_no <> e.published_revision_no
-               FROM events e WHERE e.id = public_events.id) AS pending_change
+    `SELECT ${PUBLIC_ICS_COLUMNS}
        FROM public_events
       ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
       ORDER BY begins_at, id LIMIT $${params.length}`,
     params,
   );
+  return rows;
+}
+
+export async function listPublic(db, input = {}) {
+  const rows = await publicEventRows(db, input);
   return { timezone: EVENT_TIMEZONE, events: rows.map(publicEvent) };
+}
+
+// Wewnętrzne: to samo źródło co listPublic, do budowy kalendarza iCal
+// (src/ical.js). Nigdy nie ujawnia autorów, klas ani powodu odwołania.
+async function listPublicForIcs(db, input) {
+  const rows = await publicEventRows(db, input);
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description ?? null,
+    location: row.location ?? null,
+    organizer: row.organizer ?? null,
+    startsAtUtc: row.begins_at,
+    endsAtUtc: row.ends_at ?? null,
+    status: row.public_status,
+    sequence: row.sequence_no ?? 0,
+    dtstamp: row.published_at,
+  }));
+}
+
+async function getPublicForIcs(db, eventId) {
+  if (!validId(eventId)) throw new EventError('invalid_event_id');
+  const { rows } = await db.query(
+    `SELECT ${PUBLIC_ICS_COLUMNS} FROM public_events WHERE id = $1`, [eventId],
+  );
+  const row = rows[0];
+  if (!row) throw new EventError('event_not_found', 404);
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description ?? null,
+    location: row.location ?? null,
+    organizer: row.organizer ?? null,
+    startsAtUtc: row.begins_at,
+    endsAtUtc: row.ends_at ?? null,
+    status: row.public_status,
+    sequence: row.sequence_no ?? 0,
+    dtstamp: row.published_at,
+  };
 }
 
 // ---------- HTTP ----------
@@ -608,17 +657,40 @@ function pick(data, keys) {
   return Object.fromEntries(keys.filter((key) => key in data).map((key) => [key, data[key]]));
 }
 
-// Handles /api/public/events and /api/events... Returns null for other paths.
+function icsETag(content) {
+  return `"${createHash('sha256').update(content, 'utf8').digest('hex')}"`;
+}
+
+// 304 gdy If-None-Match zawiera bieżący ETag (RFC 9110 §13.1.1: porównanie listy
+// znaczników rozdzielonych przecinkami, dopuszcza W/"..." jako słabe dopasowanie).
+function icsResponse(content, request) {
+  const etag = icsETag(content);
+  const headers = {
+    'Content-Type': 'text/calendar; charset=utf-8',
+    'Cache-Control': 'public, max-age=60',
+    ETag: etag,
+  };
+  const inm = request.headers.get('If-None-Match');
+  const matches = inm && inm.split(',').map((s) => s.trim().replace(/^W\//, '')).includes(etag);
+  if (matches) return new Response(null, { status: 304, headers });
+  return new Response(content, { status: 200, headers });
+}
+
+// Handles /api/public/events, /api/public/events.ics, /api/public/events/:id.ics
+// and /api/events... Returns null for other paths.
 // env.db: { query, transaction }; env.loadAuthorizationContext(request, env)
 // -> { session: { user: { id }, mfaVerified }, grants } | null.
 export async function handle(request, env, url, json) {
   const path = url.pathname;
   const isPublic = path === '/api/public/events';
-  if (!isPublic && path !== '/api/events' && !path.startsWith('/api/events/')) return null;
+  const isPublicIcsChannel = path === '/api/public/events.ics';
+  const icsMatch = path.match(/^\/api\/public\/events\/([^/]+)\.ics$/);
+  const isPublicIcs = isPublicIcsChannel || Boolean(icsMatch);
+  if (!isPublic && !isPublicIcs && path !== '/api/events' && !path.startsWith('/api/events/')) return null;
   try {
     if (!env?.db) throw new EventError('service_unavailable', 503);
     if (isPublic) {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       const limitText = url.searchParams.get('limit');
       if (limitText !== null && !/^\d{1,3}$/.test(limitText)) throw new EventError('invalid_limit');
       const from = url.searchParams.get('from');
@@ -629,6 +701,25 @@ export async function handle(request, env, url, json) {
         limit: limitText === null ? undefined : Number(limitText),
       });
       return json(result, 200, { 'Cache-Control': 'public, max-age=60' });
+    }
+    if (isPublicIcs) {
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (isPublicIcsChannel) {
+        const limitText = url.searchParams.get('limit');
+        if (limitText !== null && !/^\d{1,3}$/.test(limitText)) throw new EventError('invalid_limit');
+        const from = url.searchParams.get('from');
+        if (from !== null && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new EventError('invalid_date');
+        const schoolYearId = url.searchParams.get('schoolYearId');
+        if (schoolYearId !== null && !validId(schoolYearId)) throw new EventError('invalid_school_year');
+        const events = await listPublicForIcs(env.db, {
+          schoolYearId: schoolYearId ?? undefined,
+          from: from ?? undefined,
+          limit: limitText === null ? 200 : Number(limitText),
+        });
+        return icsResponse(buildCalendar(events, { uidDomain: icalUidDomain(env) }), request);
+      }
+      const event = await getPublicForIcs(env.db, decodeId(icsMatch[1]));
+      return icsResponse(buildCalendar([event], { uidDomain: icalUidDomain(env), calName: event.title }), request);
     }
 
     const itemMatch = path.match(/^\/api\/events\/([^/]+)$/);

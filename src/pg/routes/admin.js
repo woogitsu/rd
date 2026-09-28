@@ -627,6 +627,34 @@ async function listAudit(env, url, json) {
 
 // --- Router ----------------------------------------------------------------
 
+// Zwraca dozwolone metody dla ROZPOZNANEGO kształtu ścieżki (#156, RFC 9110
+// §15.5.6 wymaga nagłówka Allow przy 405); null = ścieżka w ogóle nieznana
+// (404, nie 405).
+function allowedMethodsFor(section, pathLength, action) {
+  if (section === 'users') {
+    if (pathLength === 1) return ['GET'];
+    if (pathLength === 3 && ['disable', 'enable', 'revoke-sessions', 'password-reset', 'mfa-reset'].includes(action)) return ['POST'];
+    return null;
+  }
+  if (section === 'grants') {
+    if (pathLength === 1) return ['GET', 'POST'];
+    if (pathLength === 3 && action === 'revoke') return ['POST'];
+    return null;
+  }
+  if (section === 'invitations') {
+    if (pathLength === 1) return ['GET', 'POST'];
+    if (pathLength === 3 && action === 'revoke') return ['POST'];
+    return null;
+  }
+  if (section === 'school-years') {
+    if (pathLength === 1) return ['GET'];
+    if (pathLength === 3 && action === 'expire-grants') return ['POST'];
+    return null;
+  }
+  if (section === 'audit' && pathLength === 1) return ['GET'];
+  return null;
+}
+
 async function route(request, env, url, json, actorId) {
   const path = url.pathname.slice(PREFIX.length).split('/');
   const method = request.method;
@@ -672,7 +700,8 @@ const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years'
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
-  const section = url.pathname.slice(PREFIX.length).split('/')[0];
+  const path = url.pathname.slice(PREFIX.length).split('/');
+  const [section, , action, ...rest] = path;
   if (!KNOWN_SECTIONS.has(section)) return null;
 
   // Sesja i uprawnienia przed walidacją wejścia: anonim nie poznaje kształtu API.
@@ -682,7 +711,10 @@ export async function handle(request, env, url, json) {
   try {
     const response = await route(request, env, url, json, actorId);
     if (response === null) return null;
-    return response ?? json({ error: 'method_not_allowed' }, 405);
+    if (response !== undefined) return response;
+    const allowed = rest.length ? null : allowedMethodsFor(section, path.length, action);
+    if (!allowed) return null;
+    return json({ error: 'method_not_allowed' }, 405, { Allow: allowed.join(', ') });
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code }, error.status);
     throw error;
