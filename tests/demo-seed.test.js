@@ -138,6 +138,32 @@ test('demo-seed: wpłaty, wpisy księgi, wydarzenia i zebranie mają nieliczne, 
   assert.ok(seeded.newsId);
 });
 
+test('demo-seed: uzgodnienie wyciągu — szkic z zaimportowanym wyciągiem, NIE zatwierdzony', async () => {
+  const { reconciliation } = seeded;
+  assert.ok(reconciliation.reconciliationId, 'seed zwraca id utworzonego uzgodnienia');
+  assert.ok(reconciliation.lineCount >= 2, 'wyciąg ma co najmniej kilka zaimportowanych pozycji');
+
+  // Ta sama trasa co GET szczegółów w panelu /reconciliation/ (treasurer.cookie —
+  // WRITE_ROLES — ma dostęp do odczytu własnego uzgodnienia).
+  const treasurer = seeded.accounts.find((a) => a.role === 'treasurer');
+  const detail = await apiCall(seeded.env, {
+    method: 'GET', path: `/api/reconciliations/${reconciliation.reconciliationId}`, cookie: treasurer.cookie,
+  });
+  assert.equal(detail.data.reconciliation.status, 'draft', 'seed NIE zatwierdza uzgodnienia (POST .../confirm nie jest wołane)');
+  assert.equal(detail.data.reconciliation.schoolYearId, SCHOOL_YEAR_ID);
+  assert.equal(detail.data.lines.length, reconciliation.lineCount);
+
+  // Przynajmniej jedna pozycja celowo nie odpowiada żadnej wpłacie/wpisowi księgi —
+  // import samych linii wyciągu nie tworzy dopasowań (to osobna akcja w panelu),
+  // więc wszystkie linie mają match: null; sprawdzamy więc same kwoty/liczności
+  // zamiast stanu dopasowania.
+  const amounts = detail.data.lines.map((line) => line.amountCents);
+  assert.ok(amounts.includes(1550) || amounts.includes(-375), 'przynajmniej jedna pozycja ma kwotę celowo niepasującą do wpłat/księgi');
+
+  const notes = String(detail.data.reconciliation.notes ?? '');
+  assert.match(notes, /BE62.?5100.?0754.?7061/, 'notatka wskazuje testowy IBAN (dane syntetyczne, nie prawdziwy rachunek)');
+});
+
 test('demo-seed: nazwiska rodzin/uczniów są jawnie syntetyczne', () => {
   const { roster } = seeded;
   for (const [, , , lastName] of roster.students) assert.match(lastName, /^Przykładowy /);

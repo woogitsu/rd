@@ -331,6 +331,49 @@ async function seedPayments(env, cookie, roster) {
   return created;
 }
 
+// --- Uzgodnienie wyciągu bankowego (POST /api/reconciliations + .../lines) -----
+// Tylko SZKIC — bez POST .../confirm (żadne zadanie/seed testowy nie potwierdza
+// uzgodnienia w cudzym imieniu, AGENTS.md). Wyciąg importowany jako CSV przez
+// ISTNIEJĄCĄ trasę importu (src/pg/routes/reconciliation.js#parseStatementCsv,
+// nagłówki PL/EN — patrz HEADER_ALIASES), tak jak w prawdziwym panelu
+// /reconciliation/. IBAN w treści notatek to publicznie znany testowy numer
+// (Stripe, dokumentacja testowa) — nie należy do żadnego prawdziwego rachunku.
+// Kwoty większości pozycji odpowiadają wpłatom z seedPayments (ten sam
+// harmonogram: częściowe raty h01/h04/h07/h10 i pełne wpłaty „bank” h03/h05/
+// h09/h11) oraz dwóm wpisom księgi (składki, darowizna, opłata bankowa) — dzięki
+// temu panel może zaproponować dopasowania tak jak przy prawdziwych danych.
+// Dwie pozycje (2026-11-18, 2026-11-25) celowo NIE odpowiadają żadnej wpłacie
+// ani wpisowi księgi — do pokazu stanu „niedopasowana” / „do wyjaśnienia”.
+const DEMO_TEST_IBAN = 'BE62 5100 0754 7061'; // testowy IBAN z dokumentacji Stripe — nie jest prawdziwym rachunkiem
+async function seedReconciliation(env, treasurerCookie) {
+  const created = await apiCall(env, {
+    method: 'POST', path: '/api/reconciliations', cookie: treasurerCookie, idempotencyKey: idKey('demo-reconciliation'),
+    body: {
+      schoolYearId: SCHOOL_YEAR_ID,
+      statementDate: '2026-12-05',
+      statementBalanceCents: 274975,
+      notes: `Wyciąg testowy dla rachunku ${DEMO_TEST_IBAN} (IBAN testowy, dane syntetyczne — do pokazu importu i dopasowań). Szkic, nie zatwierdzony.`,
+    },
+  });
+  const reconciliationId = created.data.reconciliation.id;
+  const csv = [
+    'data,kwota,tytuł',
+    '2026-10-05,30.00,DEMO wpłata h01 rata 1',
+    '2026-10-15,50.00,DEMO wpłata h03',
+    '2026-10-31,450.00,Zestawienie wpłat składek — październik (dane przykładowe)',
+    '2026-11-10,200.00,Darowizna na cele statutowe Rady (dane przykładowe)',
+    '2026-11-18,15.50,Wpłata nieznanego nadawcy — do wyjaśnienia (dane przykładowe)',
+    '2026-11-25,-3.75,Opłata SWIFT — do wyjaśnienia (dane przykładowe)',
+    '2026-12-01,20.00,DEMO wpłata h10 rata 2',
+    '2026-12-01,-12.00,Opłata za prowadzenie rachunku Rady (dane przykładowe)',
+  ].join('\n');
+  const imported = await apiCall(env, {
+    method: 'POST', path: `/api/reconciliations/${reconciliationId}/lines`, cookie: treasurerCookie,
+    idempotencyKey: idKey('demo-reconciliation-lines'), body: { csv },
+  });
+  return { reconciliationId, lineCount: imported.data.import.lineCount };
+}
+
 // --- Księga (kategorie: SQL — brak API POST; wpisy: POST /api/ledger) ----------
 async function seedLedger(env, cookie, actorUserId) {
   // SQL — brak API: GET /api/ledger/categories istnieje, ale nie ma odpowiednika
@@ -531,6 +574,9 @@ export async function runDemoSeed({
     const ledgerCreated = await seedLedger(env, treasurer.cookie, treasurer.userId);
     log(`Księga: ${ledgerCreated} wpisów.`);
 
+    const reconciliation = await seedReconciliation(env, treasurer.cookie);
+    log(`Uzgodnienie wyciągu: ${reconciliation.reconciliationId}, ${reconciliation.lineCount} pozycji zaimportowanych (SZKIC, nie zatwierdzony).`);
+
     const eventsPublished = await seedEvents(env, admin.cookie, board1.cookie);
     log(`Wydarzenia: ${eventsPublished} zapowiedzi opublikowanych.`);
 
@@ -558,7 +604,7 @@ export async function runDemoSeed({
     log(`Aktualności: wpis ${newsId} opublikowany.`);
 
     return {
-      mode, accounts, roster, meeting, campaignId, newsId,
+      mode, accounts, roster, meeting, campaignId, newsId, reconciliation,
       counts: { payments: paymentsCreated, ledger: ledgerCreated, events: eventsPublished },
       // Tylko gdy keepOpen: true (testy) — env.db zostaje otwarty, wywołujący
       // odpowiada za close(). W zwykłym użyciu (CLI, demo:seed) undefined.
