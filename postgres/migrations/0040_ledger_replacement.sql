@@ -90,7 +90,12 @@ BEGIN
         - COALESCE((SELECT sum(amount_cents) FROM payment_corrections WHERE payment_entry_id = linked.id), 0)
         INTO linked_net;
     END IF;
-    IF NEW.amount_cents <> linked_net THEN
+    -- Wyjątek wzorem 0027/0038: odtworzenie historycznych danych (import z D1)
+    -- ustawia SET LOCAL rd.restore = 'on' i przenosi niezgodne historyczne
+    -- wiersze bez zmian (D1 nigdy nie miało prawdziwych danych). API nigdy
+    -- tego ustawienia nie włącza.
+    IF NEW.amount_cents <> linked_net
+       AND current_setting('rd.restore', true) IS DISTINCT FROM 'on' THEN
       RAISE EXCEPTION 'ledger_payment_amount_mismatch';
     END IF;
   END IF;
