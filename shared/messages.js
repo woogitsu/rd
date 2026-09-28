@@ -173,6 +173,17 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  // Import wyciągu CODA / CAMT.053 (#105).
+  invalid_statement_file: "Nie udało się odczytać pliku wyciągu. Sprawdź format pliku.",
+  statement_account_mismatch: "Rachunek w pliku wyciągu nie jest zatwierdzonym rachunkiem Rady.",
+  statement_account_unsupported: "Ten rodzaj numeru rachunku w wyciągu nie jest obsługiwany.",
+  statement_currency_unsupported: "Obsługiwane są wyłącznie wyciągi w EUR.",
+  statement_multiple_not_supported: "Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno.",
+  statement_transaction_id_missing: "Ruch w wyciągu nie ma identyfikatora transakcji banku.",
+  statement_amount_out_of_range: "Kwota w wyciągu przekracza dozwolony zakres.",
+  statement_already_imported: "Ten plik wyciągu został już zaimportowany.",
+  bank_import_not_configured: "Import wyciągu z pliku banku nie jest skonfigurowany.",
+  matched_in_other_reconciliation: "Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku.",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",

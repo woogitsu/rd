@@ -663,6 +663,24 @@ test('a payment and the ledger entry that books it cannot both be matched in one
       ledger_entry_id, created_by, idempotency_key) VALUES ('m-direct', $1, $2, 'le-dup', 'u-treasurer', 'direct-match-1')`,
     [first.id, first.lineIds[1]]), /bank_match_already_matched_via_payment/);
 
+    // #105: ten sam cel nie może być aktywnie powiązany w dwóch uzgodnieniach roku,
+    // więc przed kolejnym scenariuszem cofamy powiązanie z poprzedniego uzgodnienia.
+    const revokeActive = async (reconciliationId) => {
+      const { rows } = await db.query(
+        'SELECT id FROM bank_reconciliation_matches WHERE reconciliation_id = $1 AND revoked_at IS NULL', [reconciliationId]);
+      for (const { id: activeId } of rows) {
+        const response = await call(`/api/reconciliations/${reconciliationId}/matches/${activeId}/revocation`, {
+          method: 'POST', cookie: cookies.treasurer, body: { reason: 'Kolejny scenariusz testu' },
+        });
+        assert.equal(response.status, 200);
+      }
+    };
+    const blocked = await draftWithLines(call, cookies, [2500]);
+    const elsewhere = await matchCall(call, cookies.treasurer, blocked.id, { statementLineId: blocked.lineIds[0], ledgerEntryId: 'le-dup' });
+    assert.equal(elsewhere.status, 409);
+    assert.deepEqual(await elsewhere.json(), { error: 'matched_in_other_reconciliation', reconciliationId: first.id });
+    await revokeActive(first.id);
+
     // Odwrotna kolejność: najpierw wpis księgi, potem wpłata.
     const second = await draftWithLines(call, cookies, [2500, 2500]);
     assert.equal((await matchCall(call, cookies.treasurer, second.id, { statementLineId: second.lineIds[0], ledgerEntryId: 'le-dup' })).status, 201);
@@ -686,6 +704,7 @@ test('a payment and the ledger entry that books it cannot both be matched in one
     assert.equal(revoked.status, 200);
     assert.equal((await matchCall(call, cookies.treasurer, second.id, { statementLineId: second.lineIds[1], paymentEntryId: 'p-dup' })).status, 201);
 
+    await revokeActive(second.id);
     // Dwa równoległe żądania (wpłata i jej wpis) — jedno 201, drugie 409.
     const third = await draftWithLines(call, cookies, [2500, 2500]);
     const raced = await Promise.all([
