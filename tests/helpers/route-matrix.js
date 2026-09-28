@@ -1012,6 +1012,8 @@ export const ROUTE_MATRIX = Object.freeze([
     object: 'dataRequest',
     build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/status`, body: { status: 'identity_verified' } }),
   }),
+  // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
+  adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
   // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
   adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 
@@ -1049,6 +1051,10 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   reconciliationRoute('reconciliation.confirm', 'POST', '/confirm', 'draft', {
     body: () => ({ confirmationNote: 'Różnica wyjaśniona (syntetyczne)' }),
+  }),
+  // Porzucenie szkicu bez aktywnych dopasowań (0107, przegląd #344).
+  reconciliationRoute('reconciliation.abandon', 'POST', '/abandon', 'draft', {
+    body: () => ({ reason: 'Saldo pliku niezgodne (syntetyczne)' }),
   }),
   {
     id: 'reconciliation.auditReport', module: 'reconciliation', method: 'GET', path: '/api/reports/audit?schoolYearId=:year&format=json',

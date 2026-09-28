@@ -37,6 +37,10 @@
 // NIE są tu zaimplementowane — zależą od D-07 (kto przyjmuje, weryfikacja
 // tożsamości, termin) i D-08/D-09 (kto czyta rejestr); do tego czasu odczyt i
 // zapis są wyłącznie dla admina, jak reszta modułu.
+//   GET  /api/admin/retention/preview           raport kandydatów do retencji (D-04, #91):
+//                                                 wyłącznie liczności per kategoria i rok/rok szkolny
+//                                                 + zarejestrowane polityki (`retention_policies`, bez PII).
+//                                                 Nie usuwa ani nie anonimizuje żadnych danych — sam odczyt.
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
 // #181: docelowo domeny finance/email mają też role zarządu/skarbnika/kampanii
@@ -908,6 +912,86 @@ async function setDataRequestStatus(env, actorId, requestId, request, json) {
   return json(result);
 }
 
+// --- Retencja (D-04, #91): raport kandydatów, wyłącznie odczyt --------------
+//
+// Kategorie zgodne z privacy/data-inventory.json (retention_category, #123) i
+// z CHECK w postgres/migrations/0074_retention_policies.sql. Zapytanie liczy
+// WYŁĄCZNIE wiersze (COUNT), nigdy imion/nazwisk/e-maili/referencji — odpowiedź
+// zawiera tylko identyfikatory techniczne (id roku szkolnego, etykieta roku,
+// rok kalendarzowy) i liczby, zgodnie z kryterium akceptacji #91.
+const RETENTION_PREVIEW_SQL = `
+  SELECT 'guardian_contact' AS category, NULL::text AS school_year_id, NULL::text AS school_year_label,
+         EXTRACT(YEAR FROM changed_at)::int AS period_year, COUNT(*) AS candidate_count
+    FROM guardian_contact_changes GROUP BY 4
+  UNION ALL
+  SELECT 'student_identity', e.school_year_id, sy.label, NULL, COUNT(*)
+    FROM enrollments e JOIN school_years sy ON sy.id = e.school_year_id GROUP BY 2, 3
+  UNION ALL
+  SELECT 'email_snapshot', c.school_year_id, sy.label, NULL, COUNT(*)
+    FROM email_campaign_recipients r
+    JOIN email_campaigns c ON c.id = r.campaign_id
+    JOIN school_years sy ON sy.id = c.school_year_id
+   GROUP BY 2, 3
+  UNION ALL
+  SELECT 'payment_reference', p.school_year_id, sy.label, NULL, COUNT(*)
+    FROM payment_entries p JOIN school_years sy ON sy.id = p.school_year_id
+   WHERE p.reference IS NOT NULL AND btrim(p.reference) <> ''
+   GROUP BY 2, 3
+  UNION ALL
+  SELECT 'document_financial', NULL, NULL, EXTRACT(YEAR FROM created_at)::int, COUNT(*)
+    FROM documents GROUP BY 4
+  UNION ALL
+  SELECT 'audit_event', NULL, NULL, EXTRACT(YEAR FROM occurred_at)::int, COUNT(*)
+    FROM audit_events GROUP BY 4
+  UNION ALL
+  SELECT 'export_package', er.school_year_id, sy.label, NULL, COUNT(*)
+    FROM export_runs er JOIN school_years sy ON sy.id = er.school_year_id
+   GROUP BY 2, 3
+  UNION ALL
+  SELECT 'import_file', ib.school_year_id, sy.label, NULL, COUNT(*)
+    FROM import_batches ib JOIN school_years sy ON sy.id = ib.school_year_id
+   GROUP BY 2, 3
+  ORDER BY 1, 4, 2
+`;
+
+async function retentionPreview(env, json) {
+  const [{ rows: candidateRows }, { rows: policyRows }] = await Promise.all([
+    env.db.query(RETENTION_PREVIEW_SQL),
+    env.db.query(
+      `SELECT id, data_category, retain_for, retain_until_rule, decision_ref, effective_from, approved_by, created_by, created_at
+         FROM retention_policies
+        ORDER BY data_category, effective_from DESC`,
+    ),
+  ]);
+  const currentByCategory = new Map();
+  for (const row of policyRows) {
+    if (!currentByCategory.has(row.data_category)) currentByCategory.set(row.data_category, row);
+  }
+  return json({
+    generatedAt: isoTimestamp(new Date()),
+    candidates: candidateRows.map((row) => ({
+      category: row.category,
+      schoolYearId: row.school_year_id ?? null,
+      schoolYearLabel: row.school_year_label ?? null,
+      periodYear: row.period_year ?? null,
+      count: Number(row.candidate_count),
+      hasPolicy: currentByCategory.has(row.category),
+    })),
+    policies: policyRows.map((row) => ({
+      id: row.id,
+      category: row.data_category,
+      retainFor: row.retain_for ?? null,
+      retainUntilRule: row.retain_until_rule ?? null,
+      decisionRef: row.decision_ref,
+      effectiveFrom: isoTimestamp(row.effective_from),
+      approvedBy: row.approved_by ?? null,
+      createdBy: row.created_by,
+      createdAt: isoTimestamp(row.created_at),
+      current: currentByCategory.get(row.data_category)?.id === row.id,
+    })),
+  });
+}
+
 // #181: historia jednego obiektu. Wariant zachowawczy — tylko admin (jak cały
 // moduł); role finansowe/kampanii własnego zakresu (skarbnik widzi historię
 // swojej wpłaty) zostają do decyzji D-08/D-09, kiedy dojdzie osobna trasa
@@ -996,6 +1080,7 @@ function allowedMethodsFor(section, pathLength, action) {
     if (pathLength === 3 && action === 'status') return ['POST'];
     return null;
   }
+  if (section === 'retention' && pathLength === 2) return ['GET'];
   if (section === 'ops-status' && pathLength === 1) return ['GET'];
   return null;
 }
@@ -1052,11 +1137,14 @@ async function route(request, env, url, json, actorId) {
       return setDataRequestStatus(env, actorId, decodeId(rawId), request, json);
     }
   }
+  if (section === 'retention' && rawId === 'preview' && path.length === 2 && method === 'GET') {
+    return retentionPreview(env, json);
+  }
   if (section === 'ops-status' && path.length === 1 && method === 'GET') return opsStatus(env, json);
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'data-requests', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'data-requests', 'retention', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
