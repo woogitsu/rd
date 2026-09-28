@@ -36,12 +36,13 @@ wpisów).
 | `active_bank_match` | Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `admin_exists` | Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne. | Zależy od kontekstu (patrz moduł trasy). |
 | `agenda_position_taken` | Ta pozycja porządku obrad jest już zajęta. | Zależy od kontekstu (patrz moduł trasy). |
-| `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
 | `already_matched_via_ledger` | Pozycja jest już dopasowana do wpisu księgi. | Nie — popraw dane żądania. |
 | `already_matched_via_payment` | Pozycja jest już dopasowana do wpłaty. | Nie — popraw dane żądania. |
+| `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
 | `ambiguous_local_time` | Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi. | Zależy od kontekstu (patrz moduł trasy). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `backup_failed` | Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
@@ -65,8 +66,10 @@ wpisów).
 | `correction_exceeds_remaining_amount` | Korekta przekracza kwotę pozostałą po wcześniejszych korektach. | Zależy od kontekstu (patrz moduł trasy). |
 | `date_outside_school_year` | Data wpisu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `difference_requires_note` | Różnica wymaga wpisania wyjaśnienia. | Zależy od kontekstu (patrz moduł trasy). |
+| `document_active_content` | Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_content_missing` | Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_integrity_mismatch` | Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi. | Nie — popraw dane żądania. |
+| `document_malformed` | Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane). | Zależy od kontekstu (patrz moduł trasy). |
 | `document_too_large` | Plik przekracza dozwolony rozmiar. | Zależy od kontekstu (patrz moduł trasy). |
 | `duplicate_name` | Nazwy klas na liście powtarzają się. | Nie — popraw dane żądania. |
 | `duplicate_photo` | To zdjęcie jest już dodane. | Nie — popraw dane żądania. |
@@ -75,6 +78,7 @@ wpisów).
 | `event_cancelled` | Wydarzenie jest odwołane; odwołanie jest ostateczne. | Zależy od kontekstu (patrz moduł trasy). |
 | `event_not_found` | Nie znaleziono wydarzenia albo nie masz do niego dostępu. | Nie — popraw dane żądania. |
 | `event_not_public` | Publikować można tylko wydarzenie z odbiorcami „Publiczne”. | Zależy od kontekstu (patrz moduł trasy). |
+| `export_in_progress` | Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie. | Tak, po chwili (drugi równoczesny eksport tego samego roku). |
 | `export_too_large` | Eksport jest za duży. Zawęź zakres. | Zależy od kontekstu (patrz moduł trasy). |
 | `fingerprint_mismatch` | Dane różnią się od podglądu. Wyślij podgląd ponownie. | Nie — popraw dane żądania. |
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
@@ -102,12 +106,12 @@ wpisów).
 | `invalid_consent` | Niepoprawny zapis zgody na publikację. | Nie — popraw dane żądania. |
 | `invalid_content_type` | Serwer nie odczytał formatu danych. | Nie — popraw dane żądania. |
 | `invalid_credentials` | Nieprawidłowy adres e-mail lub hasło. | Nie — popraw dane żądania. |
-| `invalid_csv` | Nie udało się odczytać pliku CSV. | Nie — popraw dane żądania. |
 | `invalid_csv_header` | Plik CSV ma niepoprawny nagłówek. | Nie — popraw dane żądania. |
+| `invalid_csv` | Nie udało się odczytać pliku CSV. | Nie — popraw dane żądania. |
 | `invalid_current_password` | Obecne hasło jest nieprawidłowe. | Nie — popraw dane żądania. |
 | `invalid_cursor` | Nie udało się wczytać kolejnej strony wyników. Odśwież listę. | Nie — popraw dane żądania. |
-| `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
+| `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_datetime` | Niepoprawna data lub godzina. | Nie — popraw dane żądania. |
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
@@ -115,6 +119,7 @@ wpisów).
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
 | `invalid_email` | Podaj poprawny adres e-mail. | Nie — popraw dane żądania. |
+| `invalid_ended_on` | Podaj poprawną datę odejścia (RRRR-MM-DD). | Nie — popraw dane. |
 | `invalid_event_id` | Niepoprawny identyfikator wydarzenia. | Nie — popraw dane żądania. |
 | `invalid_expires_at` | Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata). | Nie — popraw dane żądania. |
 | `invalid_explicit_license` | Niepoprawna licencja zdjęcia. | Nie — popraw dane żądania. |
@@ -148,8 +153,8 @@ wpisów).
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
-| `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje. | Nie — popraw dane żądania. |
 | `invalid_reference_text` | Opis wpłaty jest za długi albo zawiera niedozwolone znaki. | Nie — popraw dane żądania. |
+| `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje. | Nie — popraw dane żądania. |
 | `invalid_request` | Serwer odrzucił dane formularza. Sprawdź pola. | Nie — popraw dane żądania. |
 | `invalid_reversal` | Tego przeniesienia nie można cofnąć w obecnym stanie. | Nie — popraw dane żądania. |
 | `invalid_revision` | Brak numeru wersji. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -157,12 +162,13 @@ wpisów).
 | `invalid_role` | Wybierz rolę z listy. | Nie — popraw dane żądania. |
 | `invalid_row_numbers` | Niepoprawne numery wierszy. | Nie — popraw dane żądania. |
 | `invalid_rows` | Niepoprawne wiersze importu. | Nie — popraw dane żądania. |
-| `invalid_school_year` | Niepoprawny identyfikator roku szkolnego. | Nie — popraw dane żądania. |
 | `invalid_school_year_id` | Niepoprawny identyfikator roku szkolnego. | Nie — popraw dane żądania. |
+| `invalid_school_year` | Niepoprawny identyfikator roku szkolnego. | Nie — popraw dane żądania. |
+| `invalid_send_not_before` | Podaj poprawną datę i godzinę startu wysyłki. | Nie — popraw dane. |
 | `invalid_signature` | Niepoprawny podpis żądania. | Nie — popraw dane żądania. |
-| `invalid_source` | Niepoprawne źródło wpisu. | Nie — popraw dane żądania. |
 | `invalid_source_detail` | Niepoprawny opis źródła. | Nie — popraw dane żądania. |
 | `invalid_source_document` | Niepoprawny dokument źródłowy. | Nie — popraw dane żądania. |
+| `invalid_source` | Niepoprawne źródło wpisu. | Nie — popraw dane żądania. |
 | `invalid_statement_line` | Niepoprawna pozycja wyciągu. | Nie — popraw dane żądania. |
 | `invalid_status` | Niepoprawny status. | Nie — popraw dane żądania. |
 | `invalid_taken_on` | Niepoprawna data wykonania zdjęcia. | Nie — popraw dane żądania. |
@@ -174,12 +180,14 @@ wpisów).
 | `invalid_window` | Niepoprawny zakres dat. | Nie — popraw dane żądania. |
 | `invitation_already_accepted` | Zaproszenie zostało już przyjęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `invitation_not_found` | Nie znaleziono zaproszenia. | Nie — popraw dane żądania. |
+| `invitation_not_pending` | To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie. | Zależy od kontekstu (patrz moduł trasy). |
 | `invitation_pending` | Dla tego adresu i zakresu istnieje już oczekujące zaproszenie. | Zależy od kontekstu (patrz moduł trasy). |
 | `last_admin_grant` | Nie można odebrać sobie ostatniego aktywnego przydziału administratora. | Zależy od kontekstu (patrz moduł trasy). |
 | `ledger_correction_required` | Najpierw skoryguj powiązany wpis księgi o tę samą kwotę, dopiero potem powtórz tę operację. | Nie — popraw dane żądania. |
 | `ledger_entry_already_corrected_to_zero` | Wpis jest już w pełni skorygowany do zera. Nie można go przeksięgować. | Zależy od kontekstu (patrz moduł trasy). |
 | `ledger_entry_already_replaced` | Ten wpis został już przeksięgowany. | Zależy od kontekstu (patrz moduł trasy). |
 | `ledger_entry_not_found` | Nie znaleziono wpisu księgi. | Nie — popraw dane żądania. |
+| `login_busy` | Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund. | Tak — po chwili. |
 | `match_already_revoked` | Dopasowanie zostało już wycofane. | Zależy od kontekstu (patrz moduł trasy). |
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
 | `match_method_mismatch` | Sposób wpłaty nie pasuje do pozycji wyciągu. | Nie — popraw dane żądania. |
@@ -187,9 +195,11 @@ wpisów).
 | `meeting_not_found` | Nie znaleziono zebrania. | Nie — popraw dane żądania. |
 | `method_not_allowed` | Ta operacja jest niedostępna. | Zależy od kontekstu (patrz moduł trasy). |
 | `mfa_enrollment_required` | Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą. | Nie — popraw dane żądania. |
+| `mfa_key_missing` | Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem. | Nie — zależy od sesji i uprawnień. |
 | `mfa_locked` | Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `mfa_required` | Potwierdź logowanie kodem z aplikacji uwierzytelniającej. | Nie — popraw dane żądania. |
 | `mfa_unavailable` | Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `minutes_four_eyes_required` | Protokół zatwierdza inna osoba niż jego autor. | Zależy od kontekstu (patrz moduł trasy). |
 | `minutes_not_found` | Nie znaleziono wersji protokołu. | Nie — popraw dane żądania. |
 | `next_school_year_not_found` | Nie znaleziono następnego roku szkolnego. | Nie — popraw dane żądania. |
 | `next_year_opening_balance_exists` | Bilans otwarcia następnego roku już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
@@ -240,6 +250,7 @@ wpisów).
 | `resolution_number_required` | Uchwała przyjęta wymaga numeru. | Nie — popraw dane żądania. |
 | `resolution_number_taken` | Ten numer uchwały jest już zajęty w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_required` | Ten wydatek wymaga wskazania uchwały. | Nie — popraw dane żądania. |
+| `restore_drill_failed` | Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
 | `retry_later` | Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `revision_conflict` | Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `school_year_closed` | Rok szkolny jest zamknięty. Zmiany nie są możliwe. | Zależy od kontekstu (patrz moduł trasy). |

@@ -329,3 +329,27 @@ zatrzymają migrację czytelnym błędem zamiast cichego zapisania niespójnośc
 (#198, punkt 5) — wymaga rodzaju dokumentu przeznaczonego dla galerii, decyzja
 i zakres #96; osobna migracja i PR.
 Opis: [`docs/AUTH.md`](../docs/AUTH.md).
+
+`0082_immutability_hardening.sql` (issue #204, część: punkty 1, 2 i 5 z
+propozycji) zamyka trzy furtki, przez które kilka faktów traktowanych jako
+trwałe dało się zmienić albo sfałszować mimo istniejących triggerów
+niezmienności: (1) `email_campaign_guard` — w stanie `approved` nie da się
+już podmienić zatwierdzającego, czasu zatwierdzenia, skrótów zatwierdzenia
+ani migawki bez zmiany stanu; przejście `approved -> draft` musi wyczyścić
+wszystkie pola zatwierdzenia naraz; (2) nowy trigger `session_guard` —
+`token_hash`, `user_id`, `created_at`, `rotated_from` niezmienne,
+`revoked_at`/`revoked_reason` ustawiane raz, `mfa_verified_at` tylko rośnie,
+wiersza sesji nie da się usunąć; (3) nowy trigger `email_outbox_insert_guard`
+(BEFORE INSERT) — wiersz kolejki wysyłki idzie wyłącznie do kampanii w
+stanie `approved` lub `sending`, zawsze jako świeży `state='queued'`,
+`attempts=0`, bez `sent_at`/`claimed_at`/`send_started_at`/`claim_token`.
+Skutki dla danych: same nowe/rozszerzone triggery na przyszłe zapisy; żaden
+istniejący wiersz nie jest zmieniany. Świadomie poza zakresem tej migracji
+(patrz komentarz w pliku i PR): wspólna funkcja stamp znacznika czasu dla
+tabel append-only (`payment_entries`, `ledger_entries`, `audit_events`,
+`*_corrections`, bilanse otwarcia) i analogiczny trigger „ustawiane raz” dla
+`ended_at`/`cancelled_at`/`withdrawn_at` w pozostałych tabelach — oba
+dotykają wielu tabel i seedów testowych naraz, osobny PR. Wycofanie na
+pustej bazie: usunięcie dwóch nowych triggerów/funkcji i przywrócenie
+`email_campaign_guard()` z `0063_email_campaign_schedule_pause.sql`; na
+bazie z danymi — bezpieczne, żaden wiersz nie jest zmieniany ani usuwany.
