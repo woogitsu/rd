@@ -196,7 +196,7 @@ describe('po zamknięciu roku przez drugą osobę z zarządu', () => {
     assert.deepEqual(summary.finance.nextYearOpeningBalance.amountCents, 143500);
     assert.equal(summary.finance.nextYearOpeningBalance.carriedFromClosure, true);
     assert.deepEqual(summary.payments, {
-      recordedCount: 1, recordedNetCents: 2000, unmatchedCount: 1, unmatchedNetCents: 1500, correctionCount: 0,
+      recordedCount: 1, recordedNetCents: 2000, unmatchedCount: 1, unmatchedNetCents: 1500, unmatchedAllocatedCents: 0, correctionCount: 0,
     });
     assert.deepEqual(summary.meetings.byStatus, { draft: 1 });
     assert.equal(summary.checklist.every((entry) => entry.confirmed && entry.confirmedBy && entry.confirmedAt), true);
@@ -405,6 +405,32 @@ test('zamknięcie odmawia, gdy nowy rok ma już bilans otwarcia lub rok następn
     assert.equal((await refused.json()).error, 'next_year_opening_balance_exists');
     const { rows } = await db.query('SELECT count(*)::int AS n FROM role_grants WHERE school_year_id = $1 AND expires_at IS NOT NULL', [OLD]);
     assert.equal(rows[0].n, 0, 'odmowa nie wygasza ról');
+  } finally {
+    await db.close();
+  }
+});
+
+// #150 (SR-10, krok w górę): samo zamknięcie roku (operacja nieodwracalna)
+// wymaga MFA potwierdzonego od niedawna (15 min), nie tylko kiedyś w sesji.
+// Rozpoczęcie i checklista zostają przy MFA "kiedyś w sesji" — poza zakresem.
+test('zamknięcie roku wymaga ŚWIEŻEGO MFA (krok w górę): stare potwierdzenie to 403 mfa_stale', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    await startAndConfirm(env, cookies);
+    await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-board-b'");
+
+    const stale = await post(env, `/api/year-close/${OLD}/close`, cookies.boardB);
+    assert.equal(stale.status, 403);
+    assert.equal((await stale.json()).error, 'mfa_stale');
+    assert.equal(await auditCount(db, 'year_close.closed'), 0, 'odmowa mfa_stale nic nie zapisuje');
+
+    // Rozpoczęcie i checklista dalej działają z MFA sprzed 20 minut (poza zakresem #150 część 2).
+    assert.equal((await get(env, `/api/year-close/${OLD}`, cookies.boardB)).status, 200);
+
+    await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-board-b'");
+    const closed = await post(env, `/api/year-close/${OLD}/close`, cookies.boardB);
+    assert.equal(closed.status, 200);
+    assert.equal(await auditCount(db, 'year_close.closed'), 1);
   } finally {
     await db.close();
   }

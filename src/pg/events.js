@@ -361,7 +361,8 @@ export async function createDraft(db, actor, input) {
           content.beginsAt, content.endsAt, content.location, content.organizer, content.audience,
           actor.userId, idempotencyKey],
       );
-      await audit(tx, actor.userId, 'event.created', id, { revision: 1, status: 'draft' });
+      await audit(tx, actor.userId, 'event.created', id,
+        { schoolYearId: scope.school_year_id, revision: 1, status: 'draft' });
       return { event: internalEvent(rows[0]), replayed: false };
     });
   } catch (error) {
@@ -410,7 +411,8 @@ export async function updateDraft(db, actor, input) {
       [row.id, content.title, content.description, content.beginsAt, content.endsAt,
         content.location, content.organizer, content.audience, actor.userId],
     );
-    await audit(tx, actor.userId, 'event.revised', row.id, { revision: rows[0].revision_no, status: 'draft' });
+    await audit(tx, actor.userId, 'event.revised', row.id,
+      { schoolYearId: row.school_year_id, revision: rows[0].revision_no, status: 'draft' });
     return { event: internalEvent(rows[0]), replayed: false };
   });
 }
@@ -437,7 +439,8 @@ async function transition(db, actor, input, spec) {
     const { rows } = await tx.query(
       `UPDATE events SET ${sql} WHERE id = $1 RETURNING ${EVENT_COLUMNS}`, [row.id, ...params],
     );
-    await audit(tx, actor.userId, spec.action, row.id, { revision: row.revision_no, status: rows[0].status });
+    await audit(tx, actor.userId, spec.action, row.id,
+      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status });
     return { event: internalEvent(rows[0]), replayed: false };
   });
 }

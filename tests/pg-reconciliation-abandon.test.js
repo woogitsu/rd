@@ -147,6 +147,13 @@ test('porzucenie szkicu i ponowny import tego samego pliku do nowego szkicu', as
   });
   assert.equal(fromLine.status, 409);
   assert.equal((await fromLine.json()).error, 'reconciliation_abandoned');
+  // Dopasowanie zbiorcze (#127 cz. 2, 0105) w porzuconym szkicu — ten sam kod.
+  const grouped = await call(`/api/reconciliations/${first}/group-matches`, {
+    method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('grp') },
+    body: { statementLineId: abandonedLine.id, items: [{ paymentEntryId: 'p-brak-1' }, { paymentEntryId: 'p-brak-2' }] },
+  });
+  assert.equal(grouped.status, 409);
+  assert.equal((await grouped.json()).error, 'reconciliation_abandoned');
   await assert.rejects(db.query("UPDATE bank_reconciliations SET status = 'draft', abandoned_by = NULL, abandoned_at = NULL, abandon_reason = NULL WHERE id = $1", [first]),
     /bank_reconciliation_abandoned/);
   await assert.rejects(db.query('DELETE FROM bank_reconciliations WHERE id = $1', [first]), /cannot_be_deleted/);

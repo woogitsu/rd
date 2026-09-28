@@ -5,10 +5,10 @@
 //   POST /api/admin/users/{id}/disable          wyłącza konto i wycofuje wszystkie sesje
 //   POST /api/admin/users/{id}/enable
 //   POST /api/admin/users/{id}/revoke-sessions
-//   POST /api/admin/users/{id}/password-reset   { ttlHours? } — jednorazowy token resetu hasła (zwracany raz)
-//   POST /api/admin/users/{id}/mfa-reset        { confirm: "<id konta>" } — wyłącza MFA i kody odzyskiwania
+//   POST /api/admin/users/{id}/password-reset   { ttlHours? } — jednorazowy token resetu hasła (zwracany raz); krok w górę MFA (#150)
+//   POST /api/admin/users/{id}/mfa-reset        { confirm: "<id konta>" } — wyłącza MFA i kody odzyskiwania; krok w górę MFA (#150)
 //   GET  /api/admin/grants?userId=&role=&schoolYearId=&classId=&status=
-//   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? }
+//   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? } — krok w górę MFA (#150)
 //   POST /api/admin/grants/{id}/revoke
 //   POST /api/admin/school-years/{id}/expire-grants   { confirm: "<id roku>" } — wygaszenie kadencji
 //   GET  /api/admin/invitations
@@ -60,7 +60,7 @@ import {
   allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions,
   revokeUserSessionsWith, ROLE_STATUS, ROLES,
 } from '../auth.js';
-import { requireAccess } from '../authorization.js';
+import { freshMfaForbiddenCode, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
@@ -1085,7 +1085,20 @@ function allowedMethodsFor(section, pathLength, action) {
   return null;
 }
 
-async function route(request, env, url, json, actorId) {
+// #150 (SR-10, krok w górę/step-up): operacje nieodwracalne na cudzym koncie
+// (reset hasła, wyłączenie MFA) i nadanie roli wymagają MFA potwierdzonego od
+// niedawna, nie tylko kiedyś w tej sesji — sprawdzane PO roli 'admin' (SR-07),
+// więc konto bez dostępu dostaje ten sam `forbidden` niezależnie od wieku MFA.
+// Utworzenie i ponowne wydanie zaproszenia — jak nadanie roli (rola powstaje
+// przy przyjęciu). Pozostałe trasy admina (lista, wyłączenie/włączenie konta,
+// cofnięcie sesji, cofnięcie zaproszenia, lata szkolne, cofnięcie przydziału, audyt) zostają przy MFA
+// "kiedyś w sesji" jak dotąd — poza zakresem #150 część 2.
+function requireFreshMfa(context) {
+  const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+  if (staleCode) throw new RequestError(staleCode, 403);
+}
+
+async function route(request, env, url, json, actorId, context) {
   const path = url.pathname.slice(PREFIX.length).split('/');
   const method = request.method;
   const [section, rawId, action, ...rest] = path;
@@ -1103,20 +1116,26 @@ async function route(request, env, url, json, actorId) {
       if (action === 'disable') return setUserDisabled(env, actorId, userId, true, json);
       if (action === 'enable') return setUserDisabled(env, actorId, userId, false, json);
       if (action === 'revoke-sessions') return revokeSessionsOf(env, actorId, userId, json);
-      if (action === 'password-reset') return passwordResetRoute(env, actorId, userId, request, json);
-      if (action === 'mfa-reset') return mfaResetRoute(env, actorId, userId, request, json);
+      if (action === 'password-reset') { requireFreshMfa(context); return passwordResetRoute(env, actorId, userId, request, json); }
+      if (action === 'mfa-reset') { requireFreshMfa(context); return mfaResetRoute(env, actorId, userId, request, json); }
     }
   }
   if (section === 'grants') {
     if (path.length === 1 && method === 'GET') return listGrants(env, url, json);
-    if (path.length === 1 && method === 'POST') return createGrant(env, actorId, request, json);
+    if (path.length === 1 && method === 'POST') { requireFreshMfa(context); return createGrant(env, actorId, request, json); }
     if (path.length === 3 && action === 'revoke' && method === 'POST') return revokeGrant(env, actorId, decodeId(rawId), json);
   }
   if (section === 'invitations') {
     if (path.length === 1 && method === 'GET') return listInvitations(env, json);
-    if (path.length === 1 && method === 'POST') return createInvitationRoute(env, actorId, request, json);
+    // Zaproszenie (i jego ponowne wydanie) nadaje rolę w chwili przyjęcia —
+    // to też „nadanie roli”, więc ten sam krok w górę co POST /grants; bez tego
+    // admin ze starym MFA (przejęta sesja) zapraszał dowolny adres do roli admin.
+    if (path.length === 1 && method === 'POST') { requireFreshMfa(context); return createInvitationRoute(env, actorId, request, json); }
     if (path.length === 3 && action === 'revoke' && method === 'POST') return revokeInvitationRoute(env, actorId, decodeId(rawId), json);
-    if (path.length === 3 && action === 'reissue' && method === 'POST') return reissueInvitationRoute(env, actorId, decodeId(rawId), json);
+    if (path.length === 3 && action === 'reissue' && method === 'POST') {
+      requireFreshMfa(context);
+      return reissueInvitationRoute(env, actorId, decodeId(rawId), json);
+    }
   }
   if (section === 'school-years') {
     if (path.length === 1 && method === 'GET') return listSchoolYears(env, json);
@@ -1157,7 +1176,7 @@ export async function handle(request, env, url, json) {
   if (access.response) return access.response;
   const actorId = access.context.session.user.id;
   try {
-    const response = await route(request, env, url, json, actorId);
+    const response = await route(request, env, url, json, actorId, access.context);
     if (response === null) return null;
     if (response !== undefined) return response;
     const allowed = rest.length ? null : allowedMethodsFor(section, path.length, action);
