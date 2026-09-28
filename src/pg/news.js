@@ -173,6 +173,9 @@ function parsePhoto(input) {
   if (input.explicitLicenseGranted !== undefined && typeof input.explicitLicenseGranted !== 'boolean') {
     throw new NewsError('invalid_explicit_license');
   }
+  if (input.decorative !== undefined && typeof input.decorative !== 'boolean') {
+    throw new NewsError('invalid_decorative');
+  }
   const photo = {
     documentId: reference(input.documentId, 'invalid_document_id', { required: true }),
     author: text(input.author, { min: 2, max: 200, required: true, code: 'invalid_author' }),
@@ -184,11 +187,17 @@ function parsePhoto(input) {
     licenseDocumentRef: reference(input.licenseDocumentRef, 'invalid_license_document_ref'),
     rightsNote: text(input.rightsNote, { min: 3, max: 1000, code: 'invalid_rights_note', multiline: true }),
     altText: text(input.altText, { min: 3, max: 300, code: 'invalid_alt_text' }),
+    decorative: input.decorative === true,
     depictsChildren: input.depictsChildren,
     identifiableChildren: count(input.identifiableChildren, 'invalid_identifiable_children'),
     identifiableAdults: count(input.identifiableAdults, 'invalid_identifiable_adults'),
   };
   if (photo.identifiableChildren > 0 && !photo.depictsChildren) throw new NewsError('invalid_depicts_children');
+  // #124: opis zastępczy jest niezmienny jak reszta metadanych (poprawka =
+  // nowe zdjęcie), więc musi być podany (albo jawnie zadeklarowane
+  // decorative) już przy rejestracji — inaczej weryfikacja i tak zablokuje
+  // to zdjęcie (ograniczenie bazy news_photo_alt_text_required, 0071).
+  if (!photo.altText && !photo.decorative) throw new NewsError('alt_text_required', 422);
   // Sama publiczna dostępność (np. galeria na stronie szkoły) nie daje prawa do kopiowania.
   if (source === 'public_website_copy' && (!photo.explicitLicenseGranted || !photo.licenseDocumentRef)) {
     throw new NewsError('public_copy_requires_license', 422);
@@ -209,7 +218,7 @@ const POST_COLUMNS = `id, school_year_id, class_id, title, body, photo_ids, stat
   first_published_at, withdrawn_by, withdrawn_at, withdrawal_reason, idempotency_key`;
 
 const PHOTO_COLUMNS = `id, document_id, author, source, source_detail, to_char(taken_on, 'YYYY-MM-DD') AS taken_on, license_text,
-  explicit_license_granted, license_document_ref, rights_note, alt_text, depicts_children,
+  explicit_license_granted, license_document_ref, rights_note, alt_text, decorative, depicts_children,
   identifiable_children, identifiable_adults, uploaded_by, uploaded_at, rights_status,
   rights_verified_by, rights_verified_at, revoked_by, revoked_at, revocation_reason, idempotency_key`;
 
@@ -256,6 +265,7 @@ function internalPhoto(row, consents = null) {
     licenseDocumentRef: row.license_document_ref ?? null,
     rightsNote: row.rights_note ?? null,
     altText: row.alt_text ?? null,
+    decorative: row.decorative,
     depictsChildren: row.depicts_children,
     identifiableChildren: row.identifiable_children,
     identifiableAdults: row.identifiable_adults,
@@ -290,6 +300,7 @@ function publicPost(row) {
       license: p.license,
       takenOn: p.takenOn,
       altText: p.altText ?? null,
+      decorative: p.decorative === true,
     })),
   };
 }
@@ -318,6 +329,7 @@ const DB_ERRORS = [
   ['news_photo_public_copy_requires_license', 'public_copy_requires_license', 422],
   ['news_photo_revoked_is_final', 'photo_revoked', 409],
   ['news_photo_consents_locked', 'consents_locked', 409],
+  ['news_photo_alt_text_required', 'alt_text_required', 422],
 ];
 
 function mapDatabaseError(error) {
@@ -625,13 +637,13 @@ export async function registerPhoto(db, actor, input) {
     return await db.transaction(async (tx) => {
       const { rows } = await tx.query(
         `INSERT INTO news_photos (id, document_id, author, source, source_detail, taken_on, license_text,
-           explicit_license_granted, license_document_ref, rights_note, alt_text, depicts_children,
+           explicit_license_granted, license_document_ref, rights_note, alt_text, decorative, depicts_children,
            identifiable_children, identifiable_adults, uploaded_by, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING ${PHOTO_COLUMNS}`,
         [id, photo.documentId, photo.author, photo.source, photo.sourceDetail, photo.takenOn,
           photo.licenseText, photo.explicitLicenseGranted, photo.licenseDocumentRef, photo.rightsNote,
-          photo.altText, photo.depictsChildren, photo.identifiableChildren, photo.identifiableAdults,
+          photo.altText, photo.decorative, photo.depictsChildren, photo.identifiableChildren, photo.identifiableAdults,
           actor.userId, idempotencyKey],
       );
       await audit(tx, actor.userId, 'news_photo.registered', 'news_photo', id, {
@@ -787,7 +799,7 @@ function idempotencyHeader(request) {
 }
 
 const PHOTO_FIELDS = ['documentId', 'author', 'source', 'sourceDetail', 'takenOn', 'licenseText',
-  'explicitLicenseGranted', 'licenseDocumentRef', 'rightsNote', 'altText', 'depictsChildren',
+  'explicitLicenseGranted', 'licenseDocumentRef', 'rightsNote', 'altText', 'decorative', 'depictsChildren',
   'identifiableChildren', 'identifiableAdults', 'consents'];
 
 // Obsługuje /api/public/news, /api/news… i /api/news-photos…; inne ścieżki -> null.

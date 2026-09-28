@@ -19,9 +19,20 @@
 //   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
 //   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
 //   GET  /api/admin/class-coverage?schoolYearId= obsada klas roku: przydziały, oczekujące zaproszenia, ostatnie logowanie (#108)
-//   GET  /api/admin/audit?limit=                dziennik zmian kont i ról
+//   GET  /api/admin/audit?limit=&domain=&actorId=&from=&to=&schoolYearId=
+//        dziennik zdarzeń; bez `domain` — jak dotąd (zmiany kont i ról).
+//        Z `domain` (finance|email|access|security|documents|year_close) — akcje
+//        tej domeny (#181). `schoolYearId` filtruje tylko zdarzenia, które mają
+//        ten identyfikator w metadanych — część zdarzeń go jeszcze nie ma (#174).
+//   GET  /api/admin/audit/entity/{entityType}/{entityId}
+//        historia jednego obiektu (#181): payment_entry, ledger_entry,
+//        reconciliation, email_campaign. 404, gdy obiekt nie istnieje.
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
+// #181: docelowo domeny finance/email mają też role zarządu/skarbnika/kampanii
+// (nie tylko admina) — zostaje to do decyzji D-08/D-09 (kto z zarządu i
+// Komisji Rewizyjnej czyta które domeny); do tego czasu odczyt dziennika
+// (listing i historia obiektu) jest wariantem zachowawczym: wyłącznie admin.
 // Założenie do decyzji D-08/D-09: zarząd nie ma tu nawet odczytu, dopóki
 // szkoła nie zatwierdzi macierzy kompetencji. Przyjęcie zaproszenia z hasłem:
 // POST /api/invitations/accept (src/pg/routes/login.js).
@@ -31,7 +42,10 @@
 // przydziałów admina są serializowane blokadą doradczą, aby dwie równoległe
 // operacje nie odebrały sobie nawzajem ostatniego dostępu administratora.
 
-import { createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions, revokeUserSessionsWith, ROLES } from '../auth.js';
+import {
+  allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions,
+  revokeUserSessionsWith, ROLE_STATUS, ROLES,
+} from '../auth.js';
 import { requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import {
@@ -163,6 +177,11 @@ async function assertActorStillAdmin(tx, actorId) {
 async function resolveScope(executor, { role, classId, schoolYearId }) {
   if (!ROLES.includes(role)) throw new RequestError('invalid_role');
   if (role === 'representative' && !classId) throw new RequestError('class_required');
+  // #176: przydział klasowy dla roli bez żadnej trasy klasowej jest dziś ciche
+  // „nic” (isAuthorizedScoped odfiltrowuje przydziały klasowe na trasach
+  // ogólnoszkolnych, a klasowej trasy te role nie mają) — odrzucamy zamiast
+  // milcząco zapisywać przydział, który niczego nie da.
+  if (classId && !CLASS_SCOPE_ROLES.includes(role)) throw new RequestError('class_scope_not_supported', 422);
   let yearId = schoolYearId;
   if (classId) {
     const { rows } = await executor.query('SELECT school_year_id FROM classes WHERE id = $1', [classId]);
@@ -465,6 +484,12 @@ async function createInvitationRoute(env, actorId, request, json) {
   }
   if (typeof data.email !== 'string') throw new RequestError('invalid_email');
   const email = data.email.trim().toLowerCase();
+  // #176: rola bez żadnej trasy chronionej dziś (`pending_decision`, np. principal)
+  // tworzy konto z danymi osobowymi bez celu (D-01/D-06) — odrzucamy, chyba że
+  // ALLOW_PENDING_ROLES=true (przygotowanie kont z wyprzedzeniem przed D-09, testy).
+  if (ROLE_STATUS[data.role] === 'pending_decision' && !allowPendingRoles(env)) {
+    throw new RequestError('role_pending_decision', 422);
+  }
   const scope = await resolveScope(env.db, { role: data.role, classId, schoolYearId: schoolYearIdInput });
 
   // Podwójne kliknięcie: drugie zaproszenie o tym samym zakresie dla adresu,
@@ -687,22 +712,118 @@ const AUDIT_ACTIONS = [
   'auth.password_changed', 'mfa.reset',
 ];
 
-async function listAudit(env, url, json) {
+// #181: domeny mapowane na przedrostki action. Wariant zachowawczy — odczyt
+// zostaje wyłącznie dla admina (D-08/D-09 nie ustaliły jeszcze ról zarządu/KR
+// per domena), zmienia się tylko zakres akcji, jaki admin może przefiltrować.
+const DOMAIN_ACTION_PREFIXES = {
+  access: ['role_grant.', 'invitation.', 'user.', 'session.', 'school_year.grants_expired', 'access.denied'],
+  finance: ['payment.', 'ledger.', 'reconciliation.', 'report.audit.'],
+  email: ['email.'],
+  security: ['mfa.', 'auth.'],
+  documents: ['document.', 'export.', 'print.'],
+  year_close: ['year_close.', 'ledger_opening_balance.'],
+};
+
+function parseAuditFilters(url) {
+  const domain = url.searchParams.get('domain');
+  if (domain !== null && !Object.hasOwn(DOMAIN_ACTION_PREFIXES, domain)) throw new RequestError('invalid_domain');
+  const actorId = optionalId(url.searchParams.get('actorId'), 'invalid_actor_id');
+  const schoolYearId = optionalId(url.searchParams.get('schoolYearId'), 'invalid_school_year_id');
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  if (from !== null && Number.isNaN(Date.parse(from))) throw new RequestError('invalid_from');
+  if (to !== null && Number.isNaN(Date.parse(to))) throw new RequestError('invalid_to');
+  return { domain, actorId, schoolYearId, from, to };
+}
+
+async function listAudit(env, url, json, actorId) {
   const limitParam = url.searchParams.get('limit');
   const limit = limitParam === null ? 100 : Number(limitParam);
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST) throw new RequestError('invalid_limit');
+  const filters = parseAuditFilters(url);
+  const values = [];
+  const conditions = [];
+  if (filters.domain) {
+    conditions.push(`(${DOMAIN_ACTION_PREFIXES[filters.domain].map((prefix) => {
+      values.push(`${prefix}%`);
+      return `action LIKE $${values.length}`;
+    }).join(' OR ')})`);
+  } else {
+    values.push(AUDIT_ACTIONS);
+    conditions.push(`action = ANY($${values.length}::text[])`);
+  }
+  if (filters.actorId) { values.push(filters.actorId); conditions.push(`actor_id = $${values.length}`); }
+  if (filters.from) { values.push(filters.from); conditions.push(`occurred_at >= $${values.length}`); }
+  if (filters.to) { values.push(filters.to); conditions.push(`occurred_at <= $${values.length}`); }
+  if (filters.schoolYearId) {
+    values.push(filters.schoolYearId);
+    conditions.push(`metadata_json ->> 'schoolYearId' = $${values.length}`);
+  }
+  values.push(limit);
   const { rows } = await env.db.query(
     `SELECT id, actor_id, action, entity_type, entity_id, occurred_at, metadata_json
        FROM audit_events
-      WHERE action = ANY($1::text[])
+      WHERE ${conditions.join(' AND ')}
       ORDER BY occurred_at DESC, id
-      LIMIT $2`,
-    [AUDIT_ACTIONS, limit],
+      LIMIT $${values.length}`,
+    values,
   );
+  // #181 pkt 4: odczyt dziennika sam zapisuje zdarzenie, bez parametrów zapytania.
+  await insertAuditEvent(env.db, {
+    actorId, action: 'audit.viewed', entityType: 'audit_log', entityId: filters.domain ?? 'access',
+    metadata: {},
+  });
   return json({
     events: rows.map((row) => ({
       id: row.id, actorId: row.actor_id ?? null, action: row.action, entityType: row.entity_type,
       entityId: row.entity_id, occurredAt: isoTimestamp(row.occurred_at),
+      metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
+    })),
+  });
+}
+
+// #181: historia jednego obiektu. Wariant zachowawczy — tylko admin (jak cały
+// moduł); role finansowe/kampanii własnego zakresu (skarbnik widzi historię
+// swojej wpłaty) zostają do decyzji D-08/D-09, kiedy dojdzie osobna trasa
+// spoza /api/admin z ich autoryzacją. Etykieta roli aktora w chwili zdarzenia
+// (z issue) nie jest tu liczona — wymagałaby złączenia z historią przydziałów
+// ról po czasie; odłożone jako osobne rozszerzenie.
+const ENTITY_TABLES = {
+  payment_entry: 'payment_entries',
+  ledger_entry: 'ledger_entries',
+  reconciliation: 'bank_reconciliations',
+  email_campaign: 'email_campaigns',
+};
+// Zdarzenia powiązane (korekta, przypisanie, zwrot, dopasowanie…) mają własny
+// entity_type/entity_id, a odniesienie do obiektu głównego trzymają w
+// metadanych pod tym kluczem (konwencja już istniejąca w routes/payments.js,
+// ledger.js, reconciliation.js — patrz ich insertAuditEvent).
+const RELATED_METADATA_KEY = {
+  payment_entry: 'paymentEntryId',
+  ledger_entry: 'ledgerEntryId',
+  reconciliation: 'reconciliationId',
+  email_campaign: 'campaignId',
+};
+
+async function entityAudit(env, entityType, entityId, json, actorId) {
+  const table = ENTITY_TABLES[entityType];
+  if (!table) throw new RequestError('invalid_entity_type');
+  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
+  if (!exists.length) throw new RequestError('not_found', 404);
+  const { rows } = await env.db.query(
+    `SELECT id, actor_id, action, occurred_at, metadata_json
+       FROM audit_events
+      WHERE (entity_type = $1 AND entity_id = $2) OR metadata_json ->> $3 = $2
+      ORDER BY occurred_at, id`,
+    [entityType, entityId, RELATED_METADATA_KEY[entityType]],
+  );
+  await insertAuditEvent(env.db, {
+    actorId, action: 'audit.viewed', entityType, entityId, metadata: {},
+  });
+  return json({
+    entityType, entityId,
+    events: rows.map((row) => ({
+      id: row.id, actorId: row.actor_id ?? null, action: row.action, occurredAt: isoTimestamp(row.occurred_at),
       metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
     })),
   });
@@ -752,6 +873,11 @@ async function route(request, env, url, json, actorId) {
   const path = url.pathname.slice(PREFIX.length).split('/');
   const method = request.method;
   const [section, rawId, action, ...rest] = path;
+  // GET /api/admin/audit/entity/{entityType}/{entityId} (#181): jedyna trasa
+  // z czterema segmentami, więc obsługiwana przed ogólnym `if (rest.length)`.
+  if (section === 'audit' && rawId === 'entity' && rest.length === 1 && method === 'GET') {
+    return entityAudit(env, action, decodeId(rest[0]), json, actorId);
+  }
   if (rest.length) return null;
 
   if (section === 'users') {
@@ -787,7 +913,7 @@ async function route(request, env, url, json, actorId) {
     }
   }
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
-  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json);
+  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId);
   if (section === 'ops-status' && path.length === 1 && method === 'GET') return opsStatus(env, json);
   return undefined;
 }
