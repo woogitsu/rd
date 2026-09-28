@@ -212,6 +212,9 @@ export const EXPORT_TABLES = Object.freeze([
     where: () => `minutes_id IN (SELECT mm.id FROM meeting_minutes mm JOIN meetings m ON m.id = mm.meeting_id
       WHERE m.school_year_id = $1)` },
   { table: 'resolutions', where: () => 'school_year_id = $1' },
+  // #102: wykonanie uchwał — historia zdarzeń powiązana z uchwałą roku.
+  { table: 'resolution_execution_events', requires: ['resolutions'],
+    where: () => 'resolution_id IN (SELECT id FROM resolutions WHERE school_year_id = $1)' },
 
   // 0065 (#76/#313): tytuł, kategoria, data i opis dokumentu — dane Rady do
   // odtworzenia, w odróżnieniu od samych plików (`documents` zostaje w
