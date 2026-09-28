@@ -90,6 +90,7 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 
 ## Webhook Brevo
 `POST /api/email/webhooks/brevo`. Brevo nie podpisuje treści HMAC; weryfikacja to wspólny sekret `BREVO_WEBHOOK_SECRET` (min. 32 znaki) przesyłany w nagłówku `Authorization: Bearer <sekret>` (konfiguracja „auth” webhooka Brevo) albo jako hasło Basic Auth. Porównanie w stałym czasie; zły lub brak sekretu → 401, brak konfiguracji → 503. To jedyna trasa API zwolniona z kontroli `Origin`. Zapisujemy tylko zweryfikowane zdarzenia, bez adresu (skrót SHA-256), z deduplikacją. `hard_bounce`, `invalid_email`, `blocked`, `spam`, `unsubscribed` dopisują adres do listy wyłączeń; bounce zmienia stan wiersza na `bounced`.
+- Rotacja sekretu (#139): opcjonalne `BREVO_WEBHOOK_SECRET_PREVIOUS` — przez czas rotacji akceptowane są oba sekrety (zdarzenie z poprzednim loguje się jako `email.webhook.previous_secret_used`, bez treści zdarzenia). Po usunięciu zmiennej stary sekret znów daje 401. Ograniczenie do zakresów IP Brevo (`BREVO_WEBHOOK_ALLOWED_CIDRS`) **nie jest zaimplementowane** w tym PR.
 
 ## Lista wyłączeń: przegląd i zdjęcie blokady (#94)
 Blokada (`email_suppressions`) to zdarzenie, nie stan — adres może być zablokowany, odblokowany i ponownie zablokowany; historia jest kompletna i nic nie jest nadpisywane ani usuwane. „Aktywna blokada” dla danego adresu to **wyłącznie** wynik widoku `email_active_suppressions` (ostatnie zdarzenie blokady nowsze niż ostatnie zdjęcie blokady) — migawka kampanii i worker sprawdzają wyłącznie ten widok, nigdy surowej tabeli `email_suppressions`.
@@ -100,6 +101,12 @@ Blokada (`email_suppressions`) to zdarzenie, nie stan — adres może być zablo
   2. `POST /api/email/suppressions/{emailHash}/release` (board/treasurer, MFA, **inna osoba niż zgłaszająca**) z `requestId` — tworzy nowy, niezmienialny zapis w `email_suppression_releases` (`released_by`, `approved_by` — różne osoby, wymuszone też w bazie). Ta sama osoba dostaje `403 self_approval_forbidden`.
 - Zmiana adresu opiekuna (`PATCH /api/guardians/:id/contact`) daje nowy skrót — rodzina automatycznie wraca do migawki przy następnym budowaniu listy, bez zdejmowania żadnej blokady starego adresu.
 - Ograniczenie tego prototypu: przedstawiciel klasy nie widzi nawet licznika „adresów do sprawdzenia” w swoich klasach (opcja z issue #94 zależna od D-08) — nie jest zaimplementowane.
+
+## Raport doręczeń i lista operacyjna (#139)
+- `GET /api/email/campaigns/{id}/report` (board/treasurer, MFA): liczby per stan kolejki (`outbox`), per ostatnie zapisane zdarzenie dostawcy (`lastProviderEvent`, brak zdarzenia = `none`), per rozstrzygnięcie (`resolutions`) i wykluczenia. Wyłącznie agregaty — bez adresów, imion i identyfikatorów rodzin (sprawdzane testem). Eksport CSV i dostęp Komisji Rewizyjnej (D-09) **nie są zaimplementowane**.
+- `GET /api/email/campaigns/{id}/attention` (board/treasurer, MFA, dziennik odczytu): wiersze w stanie `failed` (w tym `delivery_unknown`) i adresy z ≥3 zdarzeniami `soft_bounce`. Adres zawsze maskowany; `outboxId`/`providerMessageId` (= `X-Mailin-custom`) do wyszukania w logach Brevo.
+- `POST /api/email/campaigns/{id}/resolutions` (`{ outboxId, resolution: 'confirmed_delivered'|'confirmed_not_sent', evidenceCode }`), tylko dla wierszy `failed`; tylko dopisywanie (`email_outbox_resolutions`), historia wiersza outbox się nie zmienia. `confirmed_not_sent` wymaga roli `board` (twierdzenie poważniejsze — otwiera możliwość przebiegu uzupełniającego); `confirmed_delivered` — board/treasurer. Podwójne kliknięcie zwraca istniejący zapis zamiast tworzyć drugi. **Pełna zasada czterech oczu (inna osoba niż każdy, kto wcześniej działał na wierszu) nie jest zaimplementowana** — obecnie kontrolą jest tylko silniejsza rola dla `confirmed_not_sent`.
+- **Nie jest częścią tego PR**: przebieg uzupełniający (`followup`) do rodzin `confirmed_not_sent`, skrypt `npm run email:reconcile`, CIDR webhooka.
 
 ## Zmienne środowiskowe
 | Zmienna | Znaczenie |
@@ -124,6 +131,7 @@ Blokada (`email_suppressions`) to zdarzenie, nie stan — adres może być zablo
 | `BREVO_FROM_EMAIL`, `BREVO_FROM_NAME` | zweryfikowany nadawca (D-17) |
 | `BREVO_REPLY_TO` | adres odpowiedzi (#148); na produkcji wymagany — brak daje `reply_to_not_configured` |
 | `BREVO_WEBHOOK_SECRET` | wspólny sekret webhooka |
+| `BREVO_WEBHOOK_SECRET_PREVIOUS` | poprzedni sekret, akceptowany dodatkowo na czas rotacji (#139) |
 | `EMAIL_DKIM_HOSTS` | (dla `npm run email:preflight`) nazwy hostów DKIM do sprawdzenia w DNS (np. `mail._domainkey.rada.example.invalid`), po przecinku |
 
 ## Wdrożenie

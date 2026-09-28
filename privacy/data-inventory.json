@@ -1976,12 +1976,91 @@
       "data_type": "timestamp with time zone"
     }
   },
-  "email_preview_sends": {
+  "email_outbox_resolutions": {
+    "campaign_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "evidence_code": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
     "id": {
       "personal": "none",
       "subject": null,
       "category": null,
       "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "outbox_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "resolution": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "resolved_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    }
+  },
+  "email_preview_sends": {
+    "actor_id": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie wysyłki testowej z osobą",
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
@@ -2010,22 +2089,22 @@
       "exportable": false,
       "data_type": "text"
     },
-    "recipient_hash": {
-      "personal": "pseudonymous",
-      "subject": "board_member",
-      "category": "kontakt",
-      "purpose": "limit wysyłek testowych na adres techniczny Rady",
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
       "exportable": false,
-      "data_type": "text"
+      "data_type": "timestamp with time zone"
     },
-    "actor_id": {
-      "personal": "pseudonymous",
-      "subject": "board_member",
-      "category": "identyfikacja",
-      "purpose": "powiązanie wysyłki testowej z osobą",
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
@@ -2054,16 +2133,16 @@
       "exportable": false,
       "data_type": "text"
     },
-    "created_at": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
+    "recipient_hash": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "kontakt",
+      "purpose": "limit wysyłek testowych na adres techniczny Rady",
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
       "exportable": false,
-      "data_type": "timestamp with time zone"
+      "data_type": "text"
     }
   },
   "email_send_ledger": {

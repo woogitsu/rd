@@ -227,9 +227,11 @@ wpisów).
 | `nonexistent_local_time` | Ta godzina nie istnieje w Brukseli (zmiana czasu z zimowego na letni). Wybierz inną godzinę. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_first_school_year` | Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_found` | Nie znaleziono zasobu albo nie masz do niego dostępu. | Zależy od kontekstu (patrz moduł trasy). |
+| `not_resolvable` | Tej wiadomości nie można jeszcze rozstrzygnąć. | Nie — popraw dane żądania. |
 | `offset_not_valid_in_europe_brussels` | Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_exists` | Bilans otwarcia dla tego roku szkolnego już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_not_found` | Nie znaleziono bilansu otwarcia dla tego roku szkolnego. | Nie — popraw dane żądania. |
+| `outbox_not_found` | Nie znaleziono tej wiadomości w kolejce. | Nie — popraw dane żądania. |
 | `password_mismatch` | Hasła nie są takie same. | Nie — popraw dane żądania. |
 | `password_required` | Podaj hasło. | Nie — popraw dane żądania. |
 | `password_too_long` | Hasło jest za długie. | Zależy od kontekstu (patrz moduł trasy). |

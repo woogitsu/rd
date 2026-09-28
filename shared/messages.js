@@ -224,6 +224,8 @@ export const MESSAGES = Object.freeze({
   request_already_consumed: "Ten wniosek o zdjęcie blokady został już rozpatrzony.",
   request_not_found: "Nie znaleziono wniosku o zdjęcie blokady.",
   suppression_not_active: "Ta blokada nie jest już aktywna.",
+  outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
+  not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
 
   // --- Import -----------------------------------------------------------------------------------
   import_disabled: "Import jest wyłączony na tym środowisku.",
