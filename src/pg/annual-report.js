@@ -34,8 +34,8 @@ async function loadYear(db, schoolYearId) {
 export async function buildAnnualReport(db, schoolYearId, { now = new Date() } = {}) {
   const year = await loadYear(db, schoolYearId);
   if (!year) return null;
-  const [categories, counts, reconciliation] = await Promise.all([
-    db.query(
+  // Zapytania kolejno (jedno połączenie w transakcji migawki — src/pg/db-snapshot.js).
+  const categories = await db.query(
       `SELECT c.id, c.direction, c.name,
               COALESCE(sum(e.net_amount_cents), 0) AS net_cents,
               count(e.id) AS entry_count,
@@ -48,19 +48,18 @@ export async function buildAnnualReport(db, schoolYearId, { now = new Date() } =
         GROUP BY c.id, c.direction, c.name, c.school_year_id
         ORDER BY c.direction DESC, c.name COLLATE "C", c.id COLLATE "C"`,
       [schoolYearId],
-    ),
-    db.query(
+  );
+  const counts = await db.query(
       `SELECT (SELECT count(*) FROM ledger_entries WHERE school_year_id = $1) AS entry_count,
               (SELECT count(*) FROM ledger_corrections c JOIN ledger_entries e ON e.id = c.ledger_entry_id
                 WHERE e.school_year_id = $1) AS correction_count`,
       [schoolYearId],
-    ),
-    db.query(
+  );
+  const reconciliation = await db.query(
       `SELECT to_char(max(statement_date), 'YYYY-MM-DD') AS statement_date
          FROM bank_reconciliations WHERE school_year_id = $1 AND status = 'confirmed'`,
       [schoolYearId],
-    ),
-  ]);
+  );
 
   const byDirection = (direction) => categories.rows
     .filter((row) => row.direction === direction)
@@ -118,20 +117,18 @@ function monthsBetween(startsOn, endsOn) {
 export async function buildCashFlow(db, schoolYearId, { now = new Date() } = {}) {
   const year = await loadYear(db, schoolYearId);
   if (!year) return null;
-  const [entries, transfers] = await Promise.all([
-    db.query(
+  const entries = await db.query(
       `SELECT to_char(occurred_on, 'YYYY-MM') AS month, method, direction, sum(net_amount_cents) AS cents
          FROM ledger_entry_net WHERE school_year_id = $1
         GROUP BY 1, 2, 3`,
       [schoolYearId],
-    ),
-    db.query(
+  );
+  const transfers = await db.query(
       `SELECT to_char(transferred_on, 'YYYY-MM') AS month, direction, sum(amount_cents) AS cents
          FROM ledger_transfers WHERE school_year_id = $1
         GROUP BY 1, 2`,
       [schoolYearId],
-    ),
-  ]);
+  );
   const monthSet = new Set(monthsBetween(year.starts_on, year.ends_on));
   for (const row of [...entries.rows, ...transfers.rows]) monthSet.add(row.month);
   const months = [...monthSet].sort();

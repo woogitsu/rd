@@ -47,7 +47,9 @@ async function annualReport(request, env, url, json) {
   const format = url.searchParams.get('format') ?? 'json';
   if (!['json', 'html'].includes(format)) throw new RequestError('invalid_request');
   const context = await requireReportAccess(request, env, schoolYearId);
+  // Jedna migawka (REPEATABLE READ) dla wszystkich sum i zdarzenie audytu w tej samej transakcji (#213, #178).
   const report = await env.db.transaction(async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
     const built = await buildAnnualReport(tx, schoolYearId);
     if (!built) return null;
     await insertAuditEvent(tx, {
@@ -76,7 +78,9 @@ async function cashFlow(request, env, url, json) {
   const granularity = url.searchParams.get('granularity') ?? 'month';
   if (granularity !== 'month') throw new RequestError('invalid_request');
   const context = await requireReportAccess(request, env, schoolYearId);
+  // Jedna migawka (REPEATABLE READ) dla wszystkich sum i zdarzenie audytu w tej samej transakcji (#213, #178).
   const report = await env.db.transaction(async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
     const built = await buildCashFlow(tx, schoolYearId);
     if (!built) return null;
     await insertAuditEvent(tx, {
