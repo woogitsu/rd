@@ -45,7 +45,6 @@ export const ERROR_MESSAGES = Object.freeze({
   invalid_origin: "Żądanie odrzucone: niezgodne pochodzenie strony.",
   last_admin_grant: "Nie można odebrać sobie ostatniego aktywnego przydziału administratora.",
   cannot_disable_self: "Nie można wyłączyć własnego konta.",
-  cannot_grant_self: "Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu.",
   class_required: "Przedstawiciel klasy wymaga wskazania klasy.",
   class_not_found: "Wskazana klasa nie istnieje.",
   school_year_not_found: "Wskazany rok szkolny nie istnieje.",
