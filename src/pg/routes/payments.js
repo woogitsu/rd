@@ -33,10 +33,11 @@ const PAYMENT_COLUMNS = `id, household_id, school_year_id, amount_cents,
   to_char(received_on, 'YYYY-MM-DD') AS received_on, method, reference, status, created_by`;
 
 class RequestError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
 }
 
@@ -504,6 +505,19 @@ async function createCorrection(request, env, paymentEntryId, json) {
       const replay = replayOrConflict(await loadCorrectionByKey(tx, idempotencyKey));
       if (replay) return replay;
       if (payment.status === 'reversed') throw new RequestError('payment_cannot_be_corrected', 409);
+      // #165: korekta z aktywnym powiązaniem w SZKICU uzgodnienia jest zachowawczo
+      // zablokowana — skarbnik najpierw cofa powiązanie (z powodem), dopiero potem
+      // koryguje wpłatę. Trigger payment_correction_guard sprawdza to samo (0039).
+      const activeMatch = await tx.query(
+        `SELECT r.id AS reconciliation_id FROM bank_reconciliation_matches m
+           JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+          WHERE m.payment_entry_id = $1 AND m.revoked_at IS NULL AND r.status = 'draft'
+          LIMIT 1`,
+        [paymentEntryId],
+      );
+      if (activeMatch.rows.length) {
+        throw new RequestError('active_bank_match', 409, { reconciliationId: activeMatch.rows[0].reconciliation_id });
+      }
       const corrected = await tx.query(
         'SELECT COALESCE(SUM(amount_cents), 0) AS corrected_cents FROM payment_corrections WHERE payment_entry_id = $1',
         [paymentEntryId],
@@ -757,7 +771,7 @@ export async function handle(request, env, url, json) {
     if (reassignmentMatch) return await reassignPayment(request, env, decodeId(reassignmentMatch[1]), json);
     return await assignPayment(request, env, decodeId(assignmentMatch[1]), json);
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }

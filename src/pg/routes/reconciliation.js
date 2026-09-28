@@ -875,9 +875,15 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
   const ledgerLinkedNetCents = toSafeInteger(payments.ledger_linked_net_cents);
 
   // 4. Powiązania pozycji wyciągu niezgodne kwotowo (#165) albo podwójne (#162).
+  // Osobno liczone powiązania w uzgodnieniach JUŻ ZATWIERDZONYCH — mogą stać się
+  // niezgodne dopiero po zatwierdzeniu (późniejsza korekta wpisu/wpłaty); #165
+  // blokuje korektę, dopóki takie powiązanie jest aktywne w SZKICU, więc
+  // niezgodność w zatwierdzonym uzgodnieniu jest tym, co KR musi wyjaśnić ręcznie
+  // (zatwierdzone uzgodnienie jest niezmienne — nie ma ścieżki jego poprawy).
   const matches = (await executor.query(
     `SELECT count(*) FILTER (WHERE NOT c.amount_matches) AS amount_mismatch,
-            count(*) FILTER (WHERE c.double_counted) AS double_counted
+            count(*) FILTER (WHERE c.double_counted) AS double_counted,
+            count(*) FILTER (WHERE NOT c.amount_matches AND r.status = 'confirmed') AS amount_mismatch_confirmed
        FROM bank_match_consistency c
        JOIN bank_reconciliations r ON r.id = c.reconciliation_id
       WHERE r.school_year_id = $1`,
@@ -885,6 +891,7 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
   )).rows[0];
   const amountMismatch = toSafeInteger(matches.amount_mismatch);
   const doubleCounted = toSafeInteger(matches.double_counted);
+  const amountMismatchConfirmed = toSafeInteger(matches.amount_mismatch_confirmed);
 
   // 5. Ostatnie zatwierdzone uzgodnienie: różnica (utrwalona) i przelewy księgi po jego dacie.
   let latest = { ok: null, statementDate: null, differenceCents: null, bankEntriesAfterStatement: null };
@@ -931,6 +938,9 @@ async function buildCrossChecks(executor, year, balance, latestConfirmed) {
       ok: amountMismatch === 0 && doubleCounted === 0,
       amountMismatchCount: amountMismatch,
       doubleCountedCount: doubleCounted,
+      // #165: podzbiór powyższego — powiązania niezgodne w uzgodnieniu JUŻ
+      // zatwierdzonym (niezmiennym); powstały z korekty po zatwierdzeniu.
+      amountMismatchConfirmedCount: amountMismatchConfirmed,
     },
     { id: 'latest_confirmed_reconciliation', ...latest },
   ];
