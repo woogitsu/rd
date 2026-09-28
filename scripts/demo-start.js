@@ -15,7 +15,7 @@ import { startServer } from '../src/server.js';
 import { createPgDatabase } from '../src/db.js';
 import { dummyHash } from '../src/pg/password.js';
 import {
-  assertSafeEnvironment, DemoSeedRefused, DEMO_MFA_KEY_FILE, DEMO_PGLITE_DIR,
+  assertSafeEnvironment, DemoSeedRefused, DEMO_MFA_KEY_FILE, DEMO_PGLITE_DIR, SCHOOL_YEAR_ID,
 } from './demo-seed.js';
 
 async function readMfaKey() {
@@ -59,6 +59,9 @@ export async function startDemoServer({ port = Number(process.env.PORT || 3000) 
   const address = server.address();
   console.log(`Serwer demo działa na http://127.0.0.1:${address.port} (dane wyłącznie syntetyczne, WYŁĄCZNIE lokalnie).`);
   console.log('Konta i hasła demo zostały wypisane przez „npm run demo:seed” — nie są zapisane na dysku.');
+  // site/core.js#defaultSchoolYearId zgaduje rok z dzisiejszej daty — jawne
+  // „?rok=” pokazuje ten sam rok, do którego seed wpisał dane, niezależnie od tego.
+  console.log(`Strona publiczna: http://127.0.0.1:${address.port}/site/?rok=${SCHOOL_YEAR_ID}`);
   const shutdown = async () => {
     await new Promise((resolve) => server.close(resolve));
     await close(db);

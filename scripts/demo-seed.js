@@ -44,7 +44,17 @@ export const DEMO_PGLITE_DIR = join(DEMO_DATA_DIR, 'pgdata');
 export const DEMO_MFA_KEY_FILE = join(DEMO_DATA_DIR, 'mfa-encryption-key.local');
 
 export const DEMO_ORIGIN = 'http://localhost:3000';
-export const SCHOOL_YEAR_ID = 'y2026';
+// UWAGA: /site/ (publiczna strona) nie ma API do wylistowania lat szkolnych —
+// site/core.js#defaultSchoolYearId ZAKŁADA, że identyfikator roku ma postać
+// „<rok>-<rok+1>” i liczy go z dzisiejszej daty (wrzesień = początek roku).
+// Jeśli SCHOOL_YEAR_ID tu nie pasuje do tego wzorca, /site/ pyta serwer o inny
+// rok niż ten, do którego seed wpisał zebranie/wydarzenia/protokół — publiczna
+// strona wygląda pusto („Brak opublikowanych protokołów”), mimo że dane
+// istnieją. Dlatego identyfikator jest w tym samym formacie (nie np. „y2026”);
+// zob. też druga asercja w tests/demo-seed.test.js (GET
+// /api/meetings/public-minutes zwraca ≥1 protokół) i wypisywany na konsoli
+// link z jawnym „?rok=”, gdyby demo działo się poza wrześniem bieżącego roku.
+export const SCHOOL_YEAR_ID = '2026-2027';
 export const SCHOOL_YEAR_LABEL = '2026/2027';
 export const HOUSEHOLD_COUNT = 20;
 export const CLASS_NAMES = ['0-A', 'I-A', 'II-A', 'III-A', 'IV-A'];
@@ -138,7 +148,9 @@ function extractCookie(response) {
   return setCookie ? setCookie.split(';', 1)[0] : null;
 }
 
-async function apiCall(env, { method = 'GET', path, cookie, body, idempotencyKey } = {}) {
+// Wyeksportowane dla testów (tests/demo-seed.test.js), żeby sprawdzić publiczny
+// endpoint po seedzie tym samym mechanizmem, którego seed sam używa.
+export async function apiCall(env, { method = 'GET', path, cookie, body, idempotencyKey } = {}) {
   const headers = new Headers();
   if (cookie) headers.set('Cookie', cookie);
   if (idempotencyKey) headers.set('Idempotency-Key', idempotencyKey);
@@ -466,7 +478,13 @@ async function seedNews(env, authorCookie, approverCookie) {
 
 // --- Punkt wejścia ----------------------------------------------------------------
 
-export async function runDemoSeed({ env: processEnv = process.env, databaseUrl, inMemory = false, log = console.log } = {}) {
+export async function runDemoSeed({
+  env: processEnv = process.env, databaseUrl, inMemory = false, log = console.log,
+  // Testy (tests/demo-seed.test.js) ustawiają `keepOpen: true`, żeby po seedzie
+  // odpytać jeszcze GET /api/meetings/public-minutes na tej samej bazie — wtedy
+  // WYWOŁUJĄCY odpowiada za zamknięcie zwróconego `env.db` (patrz `result.env`).
+  keepOpen = false,
+} = {}) {
   assertSafeEnvironment(processEnv);
   const { db, mode, close } = await openDemoDatabase({ databaseUrl: databaseUrl ?? processEnv.DATABASE_URL, inMemory });
   const mfaEncryptionKey = randomBytes(32).toString('hex');
@@ -519,6 +537,20 @@ export async function runDemoSeed({ env: processEnv = process.env, databaseUrl, 
     const meeting = await seedMeeting(env, board1.cookie, board1.userId, board2.cookie);
     log(`Zebranie: ${meeting.meetingId}, protokół ${meeting.minutesId} zatwierdzony i udostępniony publicznie.`);
 
+    // Samokontrola: protokół zatwierdzony i „public” ma się rzeczywiście pojawić
+    // na /site/ pod TYM identyfikatorem roku, nie tylko w wewnętrznym API — inaczej
+    // seed „mówi” o publikacji, a publiczna strona pokazuje pusty stan (patrz
+    // komentarz przy SCHOOL_YEAR_ID: site/core.js zgaduje rok z dzisiejszej daty).
+    const publicMinutes = await apiCall(env, {
+      method: 'GET', path: `/api/meetings/public-minutes?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`,
+    });
+    if (!Array.isArray(publicMinutes.data.minutes) || publicMinutes.data.minutes.length < 1) {
+      throw new Error(
+        'Seed demo: protokół zatwierdzony do publikacji nie pojawia się na GET /api/meetings/public-minutes '
+        + `dla schoolYearId=${SCHOOL_YEAR_ID} — /site/ pokazałby „Brak opublikowanych protokołów”.`,
+      );
+    }
+
     const campaignId = await seedEmailDraft(env, board1.cookie);
     log(`Kampania e-mail: szkic ${campaignId} (NIE zatwierdzony, NIE zakolejkowany, nic nie zostało wysłane).`);
 
@@ -528,6 +560,9 @@ export async function runDemoSeed({ env: processEnv = process.env, databaseUrl, 
     return {
       mode, accounts, roster, meeting, campaignId, newsId,
       counts: { payments: paymentsCreated, ledger: ledgerCreated, events: eventsPublished },
+      // Tylko gdy keepOpen: true (testy) — env.db zostaje otwarty, wywołujący
+      // odpowiada za close(). W zwykłym użyciu (CLI, demo:seed) undefined.
+      env: keepOpen ? env : undefined,
     };
   } finally {
     if (mode === 'pglite' && !inMemory) {
@@ -536,7 +571,7 @@ export async function runDemoSeed({ env: processEnv = process.env, databaseUrl, 
       await mkdir(DEMO_DATA_DIR, { recursive: true });
       await (await import('node:fs/promises')).writeFile(DEMO_MFA_KEY_FILE, mfaEncryptionKey, 'utf8');
     }
-    await close();
+    if (!keepOpen) await close();
   }
 }
 
@@ -557,6 +592,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const result = await runDemoSeed();
     printCredentials(result.accounts);
     console.log(`Baza demo gotowa (${result.mode}). Uruchom „npm run demo:start”, żeby wystawić panel lokalnie.`);
+    // site/core.js#defaultSchoolYearId zgaduje rok z dzisiejszej daty — poza
+    // wrześniem–sierpniem roku ${SCHOOL_YEAR_ID} zgadnie inny rok niż ten,
+    // do którego seed wpisał dane, i /site/ pokaże puste sekcje mimo danych
+    // w bazie. „?rok=” wymusza właściwy rok niezależnie od dzisiejszej daty.
+    console.log(`Strona publiczna: http://localhost:3000/site/?rok=${SCHOOL_YEAR_ID} (bez „?rok=” zależy od dzisiejszej daty).`);
   } catch (error) {
     if (error instanceof DemoSeedRefused) {
       console.error(error.message);

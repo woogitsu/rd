@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assertSafeEnvironment, DemoSeedRefused, runDemoSeed,
+  apiCall, assertSafeEnvironment, DemoSeedRefused, runDemoSeed, SCHOOL_YEAR_ID,
 } from '../scripts/demo-seed.js';
 
 test('demo-seed: odmawia działania gdy NODE_ENV=production', () => {
@@ -49,8 +49,40 @@ test('demo-seed: akceptuje DATABASE_URL na localhost i pusty DATABASE_URL (PGlit
 // byłoby zbyt kosztowne (patrz BRIEF.md: ~550 MB na instancję PGlite).
 let seeded;
 test('demo-seed: przebiega bez błędu na PGlite w pamięci', async () => {
-  seeded = await runDemoSeed({ inMemory: true, log: () => {} });
+  // keepOpen: true — kolejny test odpytuje tę samą bazę przez publiczny
+  // endpoint; zamykamy ją w test.after poniżej.
+  seeded = await runDemoSeed({ inMemory: true, log: () => {}, keepOpen: true });
   assert.equal(seeded.mode, 'pglite');
+});
+
+test.after(async () => {
+  await seeded?.env?.db?.close();
+});
+
+// Regresja: /site/ pokazywało „Brak opublikowanych protokołów”, mimo że seed
+// zatwierdzał protokół i ustawiał widoczność „public” — przyczyną było
+// niedopasowanie formatu identyfikatora roku (seed używał „y2026”, a
+// site/core.js#defaultSchoolYearId zgaduje z dzisiejszej daty identyfikator w
+// postaci „<rok>-<rok+1>”, więc publiczne zapytanie pytało o inny rok niż ten,
+// do którego trafiły dane). Ten test woła DOKŁADNIE tę samą trasę, którą woła
+// przeglądarka na /site/ (GET /api/meetings/public-minutes, bez sesji).
+test('demo-seed: publiczny endpoint /api/meetings/public-minutes zwraca zatwierdzony protokół', async () => {
+  const response = await apiCall(seeded.env, {
+    method: 'GET', path: `/api/meetings/public-minutes?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`,
+  });
+  assert.ok(Array.isArray(response.data.minutes), 'odpowiedź zawiera listę protokołów');
+  assert.ok(response.data.minutes.length >= 1, '/site/ ma pokazać co najmniej jeden zatwierdzony, publiczny protokół');
+  const published = response.data.minutes.find((entry) => entry.minutesId === seeded.meeting.minutesId);
+  assert.ok(published, 'protokół z zebrania zasiedzonego przez seed jest wśród publicznie widocznych');
+});
+
+test('demo-seed: SCHOOL_YEAR_ID jest w formacie zgodnym z site/core.js#defaultSchoolYearId', () => {
+  // ID_PATTERN w site/core.js akceptuje szerszy zakres znaków, ale
+  // defaultSchoolYearId ZAWSZE generuje postać „<rok>-<rok+1>” — dopasowanie
+  // gwarantuje, że domyślne (bez „?rok=”) wejście na /site/ pokaże ten rok.
+  assert.match(SCHOOL_YEAR_ID, /^\d{4}-\d{4}$/);
+  const [start, end] = SCHOOL_YEAR_ID.split('-').map(Number);
+  assert.equal(end, start + 1);
 });
 
 test('demo-seed: konta demo — jedna z każdej wymaganej roli', () => {
@@ -89,7 +121,10 @@ test('demo-seed: wszystkie adresy e-mail rodzin i kont są w domenie @example.in
 });
 
 test('demo-seed: nigdzie nie występuje słowo „dłużnik” (AGENTS.md: brak automatycznego statusu)', () => {
-  const haystack = JSON.stringify(seeded).toLowerCase();
+  // `env` (keepOpen: true) trzyma uchwyt PGlite ze strukturą cykliczną — poza
+  // zakresem tej asercji (baza nie jest tekstem), więc pomijamy je przy stringify.
+  const { env: _env, ...serializable } = seeded;
+  const haystack = JSON.stringify(serializable).toLowerCase();
   assert.ok(!haystack.includes('dłużnik'), 'seed nie wprowadza etykiety „dłużnik”');
 });
 
