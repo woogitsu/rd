@@ -9,6 +9,7 @@
 //   POST /api/reconciliations/{id}/matches                    (Idempotency-Key)
 //   POST /api/reconciliations/{id}/matches/{matchId}/revocation
 //   POST /api/reconciliations/{id}/confirm                    zasada czterech oczu
+//   POST /api/reconciliations/{id}/abandon                    porzucenie szkicu bez aktywnych powiązań (0107)
 //   GET  /api/reports/audit?schoolYearId=…&format=json|html
 //
 // Uzgodnienia: admin, board, treasurer z MFA w zakresie roku. Raport: audit,
@@ -306,7 +307,7 @@ const RECONCILIATION_COLUMNS = `r.id, r.school_year_id, to_char(r.statement_date
   CASE WHEN r.status = 'draft' THEN ledger_non_bank_net_at(r.school_year_id, r.statement_date)
        ELSE r.ledger_non_bank_cents END AS ledger_non_bank_cents,
   r.status, r.notes, r.reference_salt, r.created_by, r.created_at, r.confirmed_by, r.confirmed_at,
-  r.confirmation_note`;
+  r.confirmation_note, r.abandoned_by, r.abandoned_at, r.abandon_reason`;
 
 function reconciliationFromRow(row) {
   const statementBalanceCents = toSafeInteger(row.statement_balance_cents);
@@ -326,7 +327,17 @@ function reconciliationFromRow(row) {
     confirmedBy: row.confirmed_by ?? null,
     confirmedAt: isoTimestamp(row.confirmed_at),
     confirmationNote: row.confirmation_note ?? null,
+    abandonedBy: row.abandoned_by ?? null,
+    abandonedAt: isoTimestamp(row.abandoned_at),
+    abandonReason: row.abandon_reason ?? null,
   };
+}
+
+// Zapis do uzgodnienia, które nie jest szkicem: zatwierdzone albo porzucone (0107).
+function notDraftError(row) {
+  return row.status === 'abandoned'
+    ? new RequestError('reconciliation_abandoned', 409)
+    : new RequestError('reconciliation_confirmed', 409);
 }
 
 function matchFromRow(row) {
@@ -376,6 +387,13 @@ function mapDatabaseError(error) {
   // w #80 na uzgodnienia rachunku) — stan, nie awaria bazy (#156).
   if (message.includes('school_year_closed')) throw new RequestError('school_year_closed', 409);
   if (message.includes('bank_reconciliation_confirmed_immutable')) throw new RequestError('reconciliation_confirmed', 409);
+  if (message.includes('bank_reconciliation_abandoned')) throw new RequestError('reconciliation_abandoned', 409);
+  if (message.includes('bank_reconciliation_has_active_matches')) throw new RequestError('reconciliation_has_active_matches', 409);
+  // Równoległy import tego samego pliku/ruchu (0107) — API sprawdza to samo pod blokadą doradczą.
+  if (message.includes('bank_statement_file_already_imported')
+      || message.includes('bank_statement_transaction_already_imported')) {
+    throw new RequestError('statement_already_imported', 409);
+  }
   if (message.includes('bank_reconciliation_date_outside_year')) throw new RequestError('statement_date_outside_school_year');
   if (message.includes('bank_statement_line_after_statement_date')) throw new RequestError('statement_line_after_statement_date');
   if (message.includes('bank_match_amount_mismatch')) throw new RequestError('match_amount_mismatch', 409);
@@ -708,7 +726,7 @@ async function importLines(request, env, id, json) {
           hashed.map((line) => [line.bookedOn, line.amountCents, line.referenceHash])]));
       const replay = replayOrConflict(await byKey(tx));
       if (replay) return replay;
-      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      if (row.status !== 'draft') throw notDraftError(row);
       if (fromFile) return importStatementFile(tx, { context, actorId, row, input, hashed, fileHash, requestHash, idempotencyKey, json });
 
       const importId = crypto.randomUUID();
@@ -775,7 +793,7 @@ async function importStatementFile(tx, { context, actorId, row, input, hashed, f
   const earlier = (await tx.query(
     `SELECT i.id, i.reconciliation_id, r.school_year_id
        FROM bank_statement_imports i JOIN bank_reconciliations r ON r.id = i.reconciliation_id
-      WHERE i.file_hash = $1`,
+      WHERE i.file_hash = $1 AND r.status <> 'abandoned'`,
     [fileHash],
   )).rows[0];
   if (earlier) {
@@ -788,7 +806,7 @@ async function importStatementFile(tx, { context, actorId, row, input, hashed, f
   const known = new Map((await tx.query(
     `SELECT l.bank_transaction_hash, l.reconciliation_id, r.school_year_id
        FROM bank_statement_lines l JOIN bank_reconciliations r ON r.id = l.reconciliation_id
-      WHERE l.bank_transaction_hash = ANY($1::text[])`,
+      WHERE l.bank_transaction_hash = ANY($1::text[]) AND r.status <> 'abandoned'`,
     [hashed.map((line) => line.transactionHash)],
   )).rows.map((item) => [item.bank_transaction_hash, item]));
   const seen = new Set();
@@ -816,7 +834,7 @@ async function importStatementFile(tx, { context, actorId, row, input, hashed, f
   const previousFile = (await tx.query(
     `SELECT i.closing_balance_cents FROM bank_statement_imports i
        JOIN bank_reconciliations r ON r.id = i.reconciliation_id
-      WHERE r.school_year_id = $1 AND i.file_hash IS NOT NULL
+      WHERE r.school_year_id = $1 AND i.file_hash IS NOT NULL AND r.status <> 'abandoned'
       ORDER BY i.created_at DESC, i.id DESC LIMIT 1`,
     [row.school_year_id],
   )).rows[0];
@@ -1014,7 +1032,7 @@ async function confirmMatch(request, env, id, json) {
       requireYear(context, WRITE_ROLES, row.school_year_id);
       const replay = replayOrConflict(await byKey(tx));
       if (replay) return replay;
-      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      if (row.status !== 'draft') throw notDraftError(row);
       const taken = await tx.query(
         `SELECT 1 FROM bank_reconciliation_matches
           WHERE revoked_at IS NULL AND (statement_line_id = $1
@@ -1110,7 +1128,7 @@ async function revokeMatch(request, env, id, matchId, json) {
         }
         throw new RequestError('match_already_revoked', 409);
       }
-      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      if (row.status !== 'draft') throw notDraftError(row);
       const updated = await tx.query(
         `UPDATE bank_reconciliation_matches SET revoked_at = now(), revoked_by = $2, revoke_reason = $3
           WHERE id = $1 RETURNING *`,
@@ -1141,6 +1159,7 @@ async function confirmReconciliation(request, env, id, json) {
         if (row.confirmed_by === actorId) return json({ reconciliation: reconciliationFromRow(row) }, 200, REPLAYED);
         throw new RequestError('reconciliation_confirmed', 409);
       }
+      if (row.status === 'abandoned') throw new RequestError('reconciliation_abandoned', 409);
       // Zasada czterech oczu: zatwierdza inna osoba niż autor uzgodnienia.
       if (row.created_by === actorId) throw new RequestError('four_eyes_required', 403);
       // Kwoty powiązań sprawdzane ponownie (#165): korekta po powiązaniu albo podwójne ujęcie (#162).
@@ -1172,6 +1191,58 @@ async function confirmReconciliation(request, env, id, json) {
     if (String(error?.message ?? '').includes('bank_reconciliation_inconsistent_matches')) {
       throw new RequestError('inconsistent_matches', 409, { matches: await inconsistentMatches(env.db, id) });
     }
+    mapDatabaseError(error);
+  }
+}
+
+// Porzucenie szkicu (0107, przegląd #344): przejście stanu, nie usunięcie —
+// importy, pozycje i cofnięte powiązania zostają w historii. Porzucony szkic
+// nie blokuje ponownego importu tego samego pliku do nowego szkicu. Role jak
+// przy zatwierdzeniu; bez zasady czterech oczu (porzucenie nie utrwala salda
+// jako uzgodnionego) — założenie do potwierdzenia przez Radę (D-13).
+// Idempotencja jak przy zatwierdzeniu: ponowienie tej samej osoby z tym samym
+// powodem zwraca 200 z Idempotency-Replayed: true.
+async function abandonReconciliation(request, env, id, json) {
+  const data = await readJson(request);
+  const reason = optionalText(data.reason, 3, 500, 'invalid_reason');
+  if (!reason) throw new RequestError('invalid_reason');
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      if (row.status === 'abandoned') {
+        if (row.abandoned_by === actorId && row.abandon_reason === reason) {
+          return json({ reconciliation: reconciliationFromRow(row) }, 200, REPLAYED);
+        }
+        throw new RequestError('reconciliation_abandoned', 409);
+      }
+      if (row.status !== 'draft') throw new RequestError('reconciliation_confirmed', 409);
+      const active = await tx.query(
+        `SELECT count(*) AS n FROM bank_reconciliation_matches
+          WHERE reconciliation_id = $1 AND revoked_at IS NULL`, [id],
+      );
+      const activeMatchCount = toSafeInteger(active.rows[0].n);
+      if (activeMatchCount > 0) {
+        throw new RequestError('reconciliation_has_active_matches', 409, { activeMatchCount });
+      }
+      // Dopasowania zbiorcze (#390, jeśli są) sprawdza trigger bazy (0107).
+      await tx.query(
+        `UPDATE bank_reconciliations
+            SET status = 'abandoned', abandoned_by = $2, abandoned_at = now(), abandon_reason = $3
+          WHERE id = $1`,
+        [id, actorId, reason],
+      );
+      const abandoned = await loadReconciliation(tx, id);
+      await insertAuditEvent(tx, {
+        actorId, action: 'reconciliation.abandoned', entityType: 'bank_reconciliation', entityId: id,
+        metadata: { schoolYearId: row.school_year_id },
+      });
+      return json({ reconciliation: reconciliationFromRow(abandoned) }, 200, CREATED);
+    });
+  } catch (error) {
     mapDatabaseError(error);
   }
 }
@@ -1395,6 +1466,7 @@ export async function buildAuditReport(executor, schoolYearId) {
       unmatchedLineCount: toSafeInteger(row.unmatched_line_count),
       createdBy: item.createdBy, confirmedBy: item.confirmedBy, confirmedAt: item.confirmedAt,
       confirmationNote: item.confirmationNote,
+      abandonedAt: item.abandonedAt, abandonReason: item.abandonReason,
     };
   });
   const confirmed = items.filter((item) => item.status === 'confirmed');
@@ -1424,7 +1496,8 @@ export async function buildAuditReport(executor, schoolYearId) {
     reconciliations: {
       items,
       confirmedCount: confirmed.length,
-      draftCount: items.length - confirmed.length,
+      draftCount: items.filter((item) => item.status === 'draft').length,
+      abandonedCount: items.filter((item) => item.status === 'abandoned').length,
       latestConfirmed: confirmed.at(-1) ?? null,
     },
     checks: {
@@ -1496,7 +1569,7 @@ export async function handle(request, env, url, json) {
       if (method === 'POST') return await createReconciliation(request, env, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
-    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|confirm))?(?:\/([^/]+)\/(revocation))?$/);
+    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|confirm|abandon))?(?:\/([^/]+)\/(revocation))?$/);
     if (!match) return null;
     const id = decodeId(match[1]);
     const action = match[2] ?? null;
@@ -1505,7 +1578,7 @@ export async function handle(request, env, url, json) {
     if (action === 'suggestions' && method === 'GET') return await suggestMatches(request, env, id, url, json);
     if (method !== 'POST') {
       // GET, HEAD i inne — jedyne trasy tej ścieżki bez akcji/z 'suggestions' dopuszczają GET,
-      // reszta akcji (lines/matches/confirm/revocation) wyłącznie POST.
+      // reszta akcji (lines/matches/confirm/abandon/revocation) wyłącznie POST.
       const allow = (!action || action === 'suggestions') ? 'GET' : 'POST';
       return json({ error: 'method_not_allowed' }, 405, { Allow: allow });
     }
@@ -1513,6 +1586,7 @@ export async function handle(request, env, url, json) {
     if (action === 'matches' && match[3]) return await revokeMatch(request, env, id, decodeId(match[3]), json);
     if (action === 'matches') return await confirmMatch(request, env, id, json);
     if (action === 'confirm') return await confirmReconciliation(request, env, id, json);
+    if (action === 'abandon') return await abandonReconciliation(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);

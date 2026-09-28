@@ -99,6 +99,7 @@
 
         <div class="dialog-actions detail-actions">
           <button id="confirm-reconciliation" type="button" class="primary" hidden>Potwierdź uzgodnienie</button>
+          <button id="abandon-reconciliation" type="button" hidden>Porzuć szkic</button>
         </div>
         <p class="message" id="confirm-waiting" hidden>Czeka na drugą osobę — kto utworzył uzgodnienie, nie może go potwierdzić.</p>
         <p class="message error" id="confirm-inconsistent" hidden>Są niespójne dopasowania — popraw je, zanim potwierdzisz.</p>
@@ -135,6 +136,13 @@
       <label id="confirm-note-field" hidden>Wyjaśnienie różnicy <textarea name="confirmationNote" rows="3" minlength="3" maxlength="1000"></textarea></label>
       <div class="form-error" id="confirm-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="confirm-error">Potwierdź</button></div>
+    </form></dialog>
+    <dialog id="abandon-dialog" aria-labelledby="abandon-dialog-title"><form id="abandon-form" method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Historia zostaje</p><h2 id="abandon-dialog-title">Porzuć szkic uzgodnienia</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p>Porzucony szkic zostaje w historii razem z zaimportowanymi pozycjami, ale nie można go już zmienić ani potwierdzić. Ten sam wyciąg można potem zaimportować do nowego szkicu. Najpierw cofnij wszystkie dopasowania.</p>
+      <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <div class="form-error" id="abandon-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="abandon-error">Porzuć szkic</button></div>
     </form></dialog>
     <script type="module" src="/main.js"></script>
   </body>

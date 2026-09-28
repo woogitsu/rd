@@ -153,6 +153,8 @@ export const MESSAGES = Object.freeze({
   difference_requires_note: "Różnica wymaga wpisania wyjaśnienia.",
   reconciliation_not_found: "Nie znaleziono uzgodnienia.",
   reconciliation_confirmed: "Uzgodnienie jest już potwierdzone i nie można go zmienić.",
+  reconciliation_abandoned: "Szkic uzgodnienia został porzucony i nie można go już zmienić ani potwierdzić.",
+  reconciliation_has_active_matches: "Szkic ma aktywne dopasowania — cofnij je, zanim porzucisz szkic.",
   invalid_statement_line: "Niepoprawna pozycja wyciągu.",
   invalid_line_count: "Niepoprawna liczba pozycji wyciągu.",
   statement_line_after_statement_date: "Pozycja wyciągu ma datę późniejszą niż data wyciągu.",
