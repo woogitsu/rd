@@ -8,12 +8,14 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
       <a class="brand" href="../"><span class="brand-mark" aria-hidden="true">RR</span><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
-      <nav aria-label="Panel"><a href="../panel/">Wpłaty</a><a href="../ledger/">Księga</a><a class="active" href="./" aria-current="page">Rodziny</a></nav>
+      <nav aria-label="Panel"><ul id="shell-nav" aria-live="polite"></ul></nav>
+      <div id="shell-account"></div>
     </header>
 
-    <main>
+    <main id="main">
       <nav class="breadcrumbs" id="breadcrumbs" aria-label="Ścieżka"></nav>
       <div class="message" id="message" role="status"></div>
 
@@ -26,7 +28,13 @@
       <section id="class-view" hidden>
         <div class="page-heading"><div><p class="eyebrow" id="class-year"></p><h1 id="class-title">Klasa</h1><p>Lista uczniów i ich gospodarstw. Dane rodzin są poufne.</p></div></div>
         <section class="card">
-          <div class="table-wrap"><table><thead><tr><th>Uczeń</th><th>Gospodarstwa</th><th><span class="sr-only">Akcje</span></th></tr></thead><tbody id="students-body"></tbody></table></div>
+          <form id="student-search-form" role="search" novalidate>
+            <label for="student-search">Szukaj ucznia
+              <input id="student-search" name="q" type="search" autocomplete="off" placeholder="Imię lub nazwisko" aria-describedby="student-search-count" />
+            </label>
+          </form>
+          <p id="student-search-count" role="status" aria-live="polite"></p>
+          <div class="table-wrap"><table><caption class="sr-only">Uczniowie klasy</caption><thead><tr><th scope="col">Uczeń</th><th scope="col">Gospodarstwa</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="students-body"></tbody></table></div>
           <p class="empty" id="students-empty" hidden>Brak uczniów przypisanych do tej klasy.</p>
         </section>
       </section>

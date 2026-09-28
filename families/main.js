@@ -3,16 +3,22 @@ import {
   canEditFamilies,
   classHref,
   ERROR_MESSAGES,
+  filterStudentsByName,
   formatCents,
   fullName,
   groupClassesByYear,
   householdHref,
   parseRoute,
+  sortStudentsByName,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { mountShell } from "../shared/shell.js";
+import "../shared/shell.css";
+
+mountShell();
 
 const byId = (id) => document.getElementById(id);
-const state = { classes: null, canEdit: false, currentClass: null, currentHousehold: null };
+const state = { classes: null, canEdit: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
 const views = { classes: byId("classes-view"), class: byId("class-view"), household: byId("household-view") };
 const message = byId("message");
 const breadcrumbs = byId("breadcrumbs");
@@ -104,22 +110,44 @@ function householdLinks(households) {
   return fragment;
 }
 
-async function renderClass(classId) {
-  const data = await api(`/api/classes/${encodeURIComponent(classId)}/students`);
-  state.currentClass = data.class;
-  setBreadcrumbs([{ text: "Klasy", href: "#/" }, { text: data.class.name }]);
-  byId("class-title").textContent = `Klasa ${data.class.name}`;
-  byId("class-year").textContent = `Rok szkolny ${data.class.schoolYearLabel}`;
-  byId("students-body").replaceChildren(...data.students.map((student) => {
+function renderStudentRows() {
+  const filtered = filterStudentsByName(state.classStudents, state.studentQuery);
+  byId("students-body").replaceChildren(...filtered.map((student) => {
     const row = document.createElement("tr");
     const actions = cell("", "row-actions");
-    if (state.canEdit) actions.append(button("Zmień klasę", () => openEnrollment(student, data.class)));
+    if (state.canEdit) actions.append(button("Zmień klasę", () => openEnrollment(student, state.currentClass)));
     row.append(cell(fullName(student)), cell(householdLinks(student.households)), actions);
     return row;
   }));
-  byId("students-empty").hidden = data.students.length > 0;
+  const total = state.classStudents.length;
+  byId("students-empty").hidden = filtered.length > 0;
+  if (filtered.length === 0 && state.studentQuery) {
+    byId("students-empty").textContent = `Brak uczniów pasujących do „${state.studentQuery}”.`;
+  } else {
+    byId("students-empty").textContent = "Brak uczniów przypisanych do tej klasy.";
+  }
+  byId("student-search-count").textContent =
+    state.studentQuery ? `${filtered.length} z ${total} uczniów` : `${total} uczniów`;
+}
+
+async function renderClass(classId) {
+  const data = await api(`/api/classes/${encodeURIComponent(classId)}/students`);
+  state.currentClass = data.class;
+  state.classStudents = sortStudentsByName(data.students);
+  state.studentQuery = "";
+  byId("student-search").value = "";
+  setBreadcrumbs([{ text: "Klasy", href: "#/" }, { text: data.class.name }]);
+  byId("class-title").textContent = `Klasa ${data.class.name}`;
+  byId("class-year").textContent = `Rok szkolny ${data.class.schoolYearLabel}`;
+  renderStudentRows();
   showView("class");
 }
+
+byId("student-search-form").addEventListener("submit", (event) => event.preventDefault());
+byId("student-search").addEventListener("input", (event) => {
+  state.studentQuery = event.target.value;
+  renderStudentRows();
+});
 
 async function renderHousehold(householdId) {
   const data = await api(`/api/households/${encodeURIComponent(householdId)}`);

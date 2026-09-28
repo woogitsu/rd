@@ -288,6 +288,12 @@ async function makeAdminTarget(ctx, stage) {
       { email: `${userId}@example.invalid`, role: 'board', schoolYearId: YEAR_1 });
     return { invitationId: json.invitation.id };
   }
+  if (stage === 'emptySchoolYear') {
+    // Rok bez klas (#78) — cel dla tworzenia klas; nigdy rok 1 aktorów macierzy.
+    const schoolYearId = nextKey('y-pusty');
+    await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
+    return { schoolYearId };
+  }
   throw new Error(`unknown admin fixture ${stage}`);
 }
 
@@ -733,6 +739,7 @@ const MODULE_SOURCES = {
   'year-close': ['../src/pg/routes/year-close.js'],
   mfa: ['../src/pg/routes/mfa.js'],
   login: ['../src/pg/routes/login.js'],
+  representative: ['../src/pg/routes/representative.js'],
 };
 
 // Segmenty ścieżek widoczne w kodzie modułu: literały '/api/…', segmenty z wyrażeń
