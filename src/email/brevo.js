@@ -27,6 +27,17 @@ export function parseAllowlist(value) {
     .filter((item) => /^(\*|[^\s@*,]+)@[a-z0-9.-]+$/.test(item));
 }
 
+// EMAIL_PREVIEW_RECIPIENTS (#104): pełne adresy skrzynek technicznych Rady,
+// bez wieloznaczników — inaczej niż EMAIL_TEST_ALLOWLIST. Wpis, który nie
+// wygląda na pojedynczy adres, jest odrzucany przy parsowaniu (nigdy nie
+// trafia na listę), więc literówka nie otwiera wysyłki testowej szerzej.
+export function parsePreviewRecipients(value) {
+  return String(value ?? '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => /^[^\s@*,]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(item));
+}
+
 // Konfiguracja z env (process.env w skrypcie, obiekt env w testach).
 export function emailConfig(env = {}) {
   const dailyLimit = intFrom(env.EMAIL_DAILY_LIMIT, 300, { min: 0, max: 100_000 });
@@ -43,8 +54,21 @@ export function emailConfig(env = {}) {
     // przebieg się zatrzymuje, a reszta partii zostaje w kolejce.
     breakerUncertain: intFrom(env.EMAIL_BREAKER_UNCERTAIN, 2, { min: 1, max: 50 }),
     allowlist: parseAllowlist(env.EMAIL_TEST_ALLOWLIST),
+    previewRecipients: parsePreviewRecipients(env.EMAIL_PREVIEW_RECIPIENTS),
+    // D-16: czy test jest obowiązkowy przed zatwierdzeniem. Domyślnie wyłączone
+    // (wariant zachowawczy — brak decyzji zarządu).
+    previewRequiredBeforeApproval: env.EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL === 'true',
     sender: { email: env.BREVO_FROM_EMAIL || null, name: env.BREVO_FROM_NAME || 'Rada Rodziców' },
   };
+}
+
+// Odmowa wysyłki testowej albo null. `guardianEmails` to zbiór znormalizowanych
+// adresów opiekunów z bazy (ochrona przed pomyłkowym testem na adres rodzica).
+export function previewRecipientRefusal(config, email, guardianEmails) {
+  const address = String(email ?? '').trim().toLowerCase();
+  if (!config.previewRecipients.includes(address)) return 'preview_recipient_not_allowed';
+  if (guardianEmails?.has(address)) return 'preview_recipient_not_allowed';
+  return null;
 }
 
 export function isProduction(config) {

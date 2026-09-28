@@ -218,12 +218,13 @@ function ledgerRead(id, path, suffix, contains) {
   };
 }
 
-function emailRoute(id, method, suffix, stage, { fixture = 'fresh', allow = EMAIL_EDIT, body, contains }) {
+function emailRoute(id, method, suffix, stage, { fixture = 'fresh', allow = EMAIL_EDIT, body, contains, ok = 200, withKey: keyed = false }) {
   return {
     id, module: 'email', method, path: `/api/email/campaigns/:campaignId${suffix}`, targets: YEAR_TARGETS,
-    allow, mfa: true, ok: 200, deny: 403, fixture, object: { kind: 'campaign', stage },
-    build: ({ obj, target }) => ({
+    allow, mfa: true, ok, deny: 403, fixture, object: { kind: 'campaign', stage },
+    build: ({ obj, target, key }) => ({
       path: `/api/email/campaigns/${obj.campaignId}${suffix}`,
+      headers: method !== 'GET' && keyed ? withKey(key) : {},
       body: method === 'GET' ? undefined : (body ? body(target, obj) : {}),
     }),
     contains,
@@ -623,6 +624,12 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   emailRoute('email.queue', 'POST', '/queue', 'approved', {}),
   emailRoute('email.cancel', 'POST', '/cancel', 'draft', {}),
+  // Środowisko macierzy nie ustawia EMAIL_SENDING_ENABLED, więc dozwolona
+  // osoba dostaje 409 sending_disabled (bramka bez sieci) — autoryzacja jest
+  // sprawdzana wcześniej, więc 403 dla ról spoza EMAIL_EDIT nadal obowiązuje.
+  emailRoute('email.testSend', 'POST', '/test-send', 'draft', {
+    ok: 409, withKey: true, body: () => ({ recipientEmail: 'test@rada.example.invalid' }),
+  }),
   {
     // Webhook Brevo: bez sesji i bez Origin; uwierzytelnia wspólny sekret (brak/zły sekret = 401, test niżej).
     id: 'email.webhook', module: 'email', method: 'POST', path: '/api/email/webhooks/brevo', targets: ['-'],

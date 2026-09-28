@@ -14,6 +14,16 @@ Brevo Free: do 300 wysłanych wiadomości dziennie, limit wspólny dla całego k
 6. Webhook Brevo zapisuje wynik; bounce, skarga lub wypisanie dopisuje adres (tylko jego skrót) do listy wyłączeń i zapisuje w dzienniku potrzebę poprawy danych opiekuna.
 7. `GET /api/email/campaigns/{id}` pokazuje wysłane, oczekujące, błędy, pominięte po wpłacie i wyłączone. Wznowienie nie duplikuje wiadomości.
 
+### Wysyłka testowa (`POST …/test-send`, #104)
+Board lub skarbnik z MFA mogą wysłać jedną wiadomość z bieżącą treścią kampanii (temat z prefiksem `[TEST] `, `{rodzina}` = `PRZYKŁAD`) na adres z `EMAIL_PREVIEW_RECIPIENTS` — pełne adresy skrzynek technicznych Rady, bez wieloznaczników. Adres identyczny z jakimkolwiek `guardians.email` w bazie jest odrzucany (`preview_recipient_not_allowed`), żeby pomyłkowo nie wysłać testu do rodzica. Wysyłka testowa korzysta z tego samego klienta i tych samych barier co zadanie kolejki (ten sam moduł `src/email/brevo.js`), nie ma własnej implementacji sieciowej.
+
+- Wymaga `EMAIL_SENDING_ENABLED=true`; inaczej `409 sending_disabled` bez żadnego zapytania do sieci.
+- Limit: 5 testów na kampanię i 20 na konto na dobę (UTC), liczone z `email_preview_sends`; przekroczenie daje `429`. Każda próba (udana albo zakończona błędem dostawcy) zużywa pulę dnia Brevo (`email_send_ledger`, `source = 'preview'`) — to prawdziwa wiadomość wychodząca z tego samego konta.
+- `Idempotency-Key` jak przy szkicu kampanii: powtórzone żądanie z tym samym kluczem nie wysyła drugiej wiadomości.
+- Test nie zmienia stanu kampanii, migawki ani zatwierdzenia.
+- Flaga `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` (domyślnie wyłączona — brak decyzji D-16): gdy włączona, `POST …/approve` odrzuca zatwierdzenie treści, dla której nie było jeszcze udanej próby wysyłki testowej (`preview_required`).
+- Audyt (`email.preview.sent`) zawiera skrót treści i indeks adresu na liście `EMAIL_PREVIEW_RECIPIENTS`, nigdy sam adres.
+
 Anulowanie (`POST …/cancel`) zatrzymuje wiersze oczekujące w kolejce (`cancelledMessages`). Wiersze już przejęte przez zadanie (`sending`) zadanie samo oznacza jako `cancelled` przy potwierdzeniu przed wysyłką — wyjść może najwyżej wiadomość, której przekazanie do Brevo już trwa (jedna na proces zadania). Wiadomości przyjętej przez Brevo nie da się cofnąć.
 
 ## Dobór adresatów (założenie do decyzji D-11 i D-17)
@@ -75,6 +85,8 @@ Proponowana konfiguracja (nie jest włączona automatycznie — wymaga decyzji s
 |---|---|
 | `EMAIL_SENDING_ENABLED` | `true` włącza wysyłkę; domyślnie wyłączona |
 | `EMAIL_TEST_ALLOWLIST` | poza produkcją: dozwolone adresy techniczne (`*@domena` lub pełny adres, po przecinku) |
+| `EMAIL_PREVIEW_RECIPIENTS` | (#104) adresy dozwolone dla `POST …/test-send` — wyłącznie pełne adresy skrzynek technicznych Rady, bez wieloznaczników, po przecinku |
+| `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` | (#104) `true` wymaga udanej wysyłki testowej dla bieżącej treści przed zatwierdzeniem kampanii; domyślnie wyłączone (D-16 nie zapadła) |
 | `EMAIL_DAILY_LIMIT` | limit konta Brevo na dobę (domyślnie 300) |
 | `EMAIL_DAILY_RESERVED` | rezerwa na inne wiadomości konta (domyślnie 0) |
 | `EMAIL_CAMPAIGN_MIN_DAYS` | minimalna liczba dni rozłożenia kampanii (domyślnie 7) |

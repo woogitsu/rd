@@ -98,6 +98,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/approve` | zarząd — przydział bez klasy, rok 1; inna osoba niż autor | tak | 403 | skarbnik: 403; SR-01 |
 | `POST /api/email/campaigns/:campaignId/queue` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko kolejka, bez wysyłki; SR-01 |
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/email/campaigns/:campaignId/test-send` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko adres z `EMAIL_PREVIEW_RECIPIENTS`, nie adres opiekuna; `EMAIL_SENDING_ENABLED≠true` → 409 bez sieci; limit 5/kampanię i 20/konto na dobę → 429 (#104) |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
 | `GET /api/news?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wpisy własnej klasy | nie | 403 | |
