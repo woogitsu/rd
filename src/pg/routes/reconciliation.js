@@ -1146,6 +1146,8 @@ export async function buildAuditReport(executor, schoolYearId) {
     flagged: !row.resolution_id,
   }));
 
+  const evidence = await buildEvidenceSection(executor, schoolYearId);
+
   const corrections = (await executor.query(
     `SELECT k.id, k.ledger_entry_id, to_char(e.occurred_on, 'YYYY-MM-DD') AS entry_occurred_on, e.direction,
             k.amount_cents, k.reason, k.created_by, k.created_at
@@ -1225,6 +1227,63 @@ export async function buildAuditReport(executor, schoolYearId) {
       items: checks,
       largeExpensesWithoutAdoptedResolution: largeExpenses.filter((item) => item.flagged).length,
     },
+    evidence,
+  };
+}
+
+// #87: dowody wydatków dla Komisji Rewizyjnej. Liczą się wydatki z netto > 0
+// (wpis skorygowany do zera, np. storno przy przeksięgowaniu, nie wymaga już
+// dowodu). Dowodem jest dokument główny (source_document_id) albo dokument
+// dołączony przez documents.linked_entity_*. „Możliwy duplikat” = ten sam
+// plik (sha256; dla wierszy bez skrótu — ten sam dokument) przy więcej niż
+// jednym wydatku — informacja do sprawdzenia, nie zarzut. Numer faktury i
+// wystawca (tabela ledger_entry_evidence z #87) wymagają osobnej migracji.
+async function buildEvidenceSection(executor, schoolYearId) {
+  const evidenceCte = `WITH expense AS (
+      SELECT e.id, e.occurred_on, e.description, e.net_amount_cents, e.category_id
+        FROM ledger_entry_net e
+       WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.net_amount_cents > 0
+    ), evidence AS (
+      SELECT x.id AS ledger_entry_id, l.source_document_id AS document_id
+        FROM expense x JOIN ledger_entries l ON l.id = x.id
+       WHERE l.source_document_id IS NOT NULL
+      UNION
+      SELECT x.id, d.id FROM expense x
+        JOIN documents d ON d.linked_entity_type = 'ledger_entry' AND d.linked_entity_id = x.id
+    )`;
+  const missingRows = (await executor.query(
+    `${evidenceCte}
+     SELECT x.id, to_char(x.occurred_on, 'YYYY-MM-DD') AS occurred_on, x.description, x.net_amount_cents,
+            c.name AS category
+       FROM expense x JOIN ledger_categories c ON c.id = x.category_id
+      WHERE NOT EXISTS (SELECT 1 FROM evidence v WHERE v.ledger_entry_id = x.id)
+      ORDER BY x.occurred_on, x.id`,
+    [schoolYearId],
+  )).rows;
+  const duplicateRows = (await executor.query(
+    `${evidenceCte}
+     SELECT COALESCE(d.sha256, v.document_id) AS evidence_key,
+            array_agg(DISTINCT v.document_id ORDER BY v.document_id) AS document_ids,
+            array_agg(DISTINCT v.ledger_entry_id ORDER BY v.ledger_entry_id) AS ledger_entry_ids
+       FROM evidence v LEFT JOIN documents d ON d.id = v.document_id
+      GROUP BY COALESCE(d.sha256, v.document_id)
+     HAVING count(DISTINCT v.ledger_entry_id) > 1
+      ORDER BY 1`,
+    [schoolYearId],
+  )).rows;
+  const withoutEvidence = missingRows.map((row) => ({
+    id: row.id, occurredOn: row.occurred_on, category: row.category, description: row.description,
+    netAmountCents: toSafeInteger(row.net_amount_cents),
+  }));
+  return {
+    expensesWithoutEvidence: {
+      count: withoutEvidence.length,
+      netCents: withoutEvidence.reduce((sum, item) => sum + item.netAmountCents, 0),
+      items: withoutEvidence,
+    },
+    possibleDuplicateEvidence: duplicateRows.map((row) => ({
+      documentIds: row.document_ids, ledgerEntryIds: row.ledger_entry_ids,
+    })),
   };
 }
 
