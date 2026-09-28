@@ -134,6 +134,15 @@ async function createYearlyExport(request, env, json) {
   try {
     result = await env.db.transaction(async (tx) => {
       await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      // #216: podwójne kliknięcie „Eksportuj” to były dwa niezależne, w pełni
+      // symultaniczne przebiegi (pamięć i czas rosły dwukrotnie, dwa wiersze
+      // export_runs). Blokada doradcza na (rok) — zwalnia się sama na
+      // COMMIT/ROLLBACK tej transakcji — pozwala tylko jednemu przebiegowi
+      // na raz; drugi dostaje 409 zamiast czekać (klient sam decyduje, czy
+      // ponowić), zamiast pełnego strumieniowania z issue #216 (poza
+      // zakresem tego PR, patrz opis PR).
+      const lock = await tx.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked', [`rd_export:${schoolYearId}`]);
+      if (!lock.rows[0].locked) throw new RequestError('export_in_progress', 409);
       const built = await buildYearlyExport(tx, schoolYearId);
       const runId = await recordRun(tx, {
         kind: 'yearly', schoolYearId, formatVersion: EXPORT_FORMAT_VERSION, actorId,
