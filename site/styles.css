@@ -41,7 +41,6 @@ nav a { display: inline-block; padding: .35rem 0; color: var(--text); text-decor
 nav a:hover { color: var(--red); text-decoration: underline; }
 
 main { max-width: 960px; margin: 0 auto; padding: 2.5rem 16px 3rem; }
-main:focus { outline: none; }
 h1 { margin-bottom: .75rem; font-family: Georgia, "Times New Roman", serif; font-size: clamp(1.8rem, 5vw, 2.6rem); font-weight: 400; }
 .lead { max-width: 42rem; color: var(--muted); }
 
@@ -84,6 +83,15 @@ h2 { margin-bottom: 1rem; font-size: 1.35rem; }
 @media (max-width: 480px) {
   .event-details, .minutes-meta { grid-template-columns: 1fr; }
   .event-details dd, .minutes-meta dd { margin-bottom: .35rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
+
+/* Tryb wysokiego kontrastu Windows (#112). */
+@media (forced-colors: active) {
+  .badge { border: 1px solid CanvasText; }
 }
 
 @media print {

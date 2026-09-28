@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
+import { insertAuditEvent } from './audit.js';
 
 export const EVENT_TIMEZONE = 'Europe/Brussels';
 export const EVENT_POLICY = Object.freeze({
@@ -276,14 +277,12 @@ function publicEvent(row) {
   };
 }
 
+// #184: przechodzi przez insertAuditEvent (assertNoPii), nie własny INSERT.
+// entityType domyślnie 'event'; #142 audytuje też event_task/event_task_signup
+// (metadata carries only workflow numbers and identifiers, never titles,
+// reasons or personal data — no guardian/user id either).
 async function audit(tx, actorId, action, eventId, metadata, entityType = 'event') {
-  // Metadata carries only workflow numbers and identifiers, never titles,
-  // reasons or personal data (issue #142: no guardian/user id either).
-  await tx.query(
-    `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-    [crypto.randomUUID(), actorId, action, entityType, eventId, JSON.stringify(metadata)],
-  );
+  await insertAuditEvent(tx, { actorId, action, entityType, entityId: eventId, metadata });
 }
 
 async function lockEvent(tx, eventId) {
