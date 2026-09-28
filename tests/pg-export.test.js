@@ -77,8 +77,15 @@ async function seedData(db) {
   await db.query(`INSERT INTO ledger_budget_lines (id, school_year_id, category_id, planned_cents, created_by, created_at, idempotency_key)
     VALUES ('bl-1', '${YEAR}', 'cat-out', 50000, 'u-seed', '2026-09-01T10:00:00Z', 'budget-key-0001')`);
 
+  // #101 (SR-06): bezpośredni INSERT ... visibility='published' jest zamknięty poza
+  // trybem odtworzenia (SET LOCAL rd.restore='on', ten sam mechanizm co 0027 dla dat
+  // spoza roku szkolnego) — dane seedowe tego testu nie przechodzą przez pełny
+  // przepływ szkic→publikacja, więc odtwarzamy tu ten tryb jak legacy_d1.
+  await db.query(`BEGIN`);
+  await db.query(`SET LOCAL rd.restore = 'on'`);
   await db.query(`INSERT INTO events (id, school_year_id, title, begins_at, description, visibility, published_at, created_by)
     VALUES ('ev-1', '${YEAR}', 'Piknik testowy', '2026-10-10T10:00:00Z', NULL, 'published', '2026-09-20T00:00:00Z', 'u-seed')`);
+  await db.query(`COMMIT`);
 
   // Zebranie z obecnością (także opiekuna), kworum, uchwałą i protokołem — przez moduł zebrań.
   await seedUser(db, { userId: 'u-voter' });

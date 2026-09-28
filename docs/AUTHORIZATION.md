@@ -100,6 +100,9 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/opening-balance?schoolYearId=:year` | jak wyżej | tak | 403 | #199 |
 | `POST /api/ledger/opening-balance` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #199; admin i skarbnik: 403; tylko pierwszy rok (409 `not_first_school_year`) |
 | `POST /api/ledger/opening-balance/adjustments` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #199; admin i skarbnik: 403; zamknięty rok: 409 |
+| `POST /api/ledger/categories` | admin, zarząd, skarbnik — przydział bez klasy, rok kategorii | tak | 403 | SR-01; ta sama nazwa+kierunek+rok co istniejąca kategoria: 200 z istniejącym wierszem (podwójne kliknięcie), nie 201; zamknięty rok: 409 `school_year_closed` (trigger a0_year_freeze z 0017, bez zmian w #207) |
+| `POST /api/ledger/categories/:categoryId/deactivate` | jak wyżej, rok kategorii (sprawdzany po odczycie wiersza) | tak | 403 / 404 | już nieaktywna: 200 bez drugiego zdarzenia audytu (idempotentne) |
+| `POST /api/ledger/categories/copy` | jak wyżej, przydział bez klasy w roku DOCELOWYM (rok źródłowy nie wymaga osobnego dostępu — kopiowane są wyłącznie nazwy i kierunki kategorii, bez kwot) | tak | 403 | #207; `dryRun: true` — podgląd bez zapisu; zapis: jeden wielowierszowy INSERT z `ON CONFLICT … DO NOTHING`, nie duplikuje przy ponowieniu; zamknięty rok docelowy: 409 `school_year_closed` |
 | `GET /api/email/campaigns?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin techniczny: 403; SR-01 |
 | `POST /api/email/campaigns` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/email/campaigns/:campaignId` | jak wyżej, rok kampanii | tak | 403 | SR-01 |
@@ -112,6 +115,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/pause` | zarząd, skarbnik — jak wyżej | tak | 403 | wstrzymanie wysyłki (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/resume` | zarząd, skarbnik — jak wyżej | tak | 403 | wznowienie (#130); SR-01 |
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/email/campaigns/:campaignId/test-send` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko adres z `EMAIL_PREVIEW_RECIPIENTS`, nie adres opiekuna; `EMAIL_SENDING_ENABLED≠true` → 409 bez sieci; limit 5/kampanię i 20/konto na dobę → 429 (#104) |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
 | `GET /api/news?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wpisy własnej klasy | nie | 403 | |
@@ -168,6 +172,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/students/:studentId/enrollments/:enrollmentId/end` | jak wyżej | nie | 403 / 404 | odejście ze szkoły (#86); po zakończeniu przypisanie niezmienne; ponowienie: `changed: false` |
 | `GET /api/print/cards?schoolYearId=:year&classId=:class` | admin, zarząd, skarbnik — rok 1 (z klasą lub bez); przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 400 / 403 | przydział klasowy bez classId: 400; kwoty wpłat tylko rola finansowa z MFA |
 | `GET /api/representative/overview?schoolYearId=:year` | wyłącznie przedstawiciel (bez decyzji D-08: bez sekcji wpłat) | nie | 400 / 403 | konto bez żadnego przydziału `representative`: 403; przydział innego roku: `classes: []` (#118) |
+| `GET /api/board/overview?schoolYearId=:year` | admin, zarząd — przydział bez klasy, rok przydziału | tak (już wymuszone bramką routera dla admin/zarząd) | 400 / 403 / 404 | zarząd z przydziałem ograniczonym do klasy: 403 (SR-01); skarbnik, Komisja Rewizyjna, dyrekcja, przedstawiciel: 403; rok poza przydziałem: 404 `school_year_not_found`; kolumna wpisów wpłat wymaga dodatkowo roli finansowej z MFA (#131) — bez niej pole `paymentEntryRatePercent` nie występuje w odpowiedzi; klasa z mniej niż 5 gospodarstwami: `null` zamiast odsetka; bez rankingu/sortowania po odsetku |
 | `POST /api/mfa/enroll` | każdy zalogowany (własny czynnik) | nie | — | |
 | `POST /api/mfa/confirm` | każdy zalogowany | nie | — | rotuje sesję |
 | `POST /api/mfa/verify` | każdy zalogowany z potwierdzonym czynnikiem | nie | — | |
