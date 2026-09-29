@@ -784,7 +784,7 @@ async function matrixContext(group = 'main') {
     contexts.set(group, (async () => {
       const db = await createTestDb();
       const env = {
-        db, storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+        db, APP_ENV: 'test', storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
         BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, EMAIL_UNSUBSCRIBE_SECRET: UNSUBSCRIBE_SECRET, ...FAST_SCRYPT,
         // Wysyłka testowa (#104): bramka bez sieci wyłączona, transport wstrzyknięty
         // (nigdy nie łączy się z siecią), adres z listy technicznej Rady.

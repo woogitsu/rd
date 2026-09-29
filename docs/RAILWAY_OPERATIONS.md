@@ -58,7 +58,7 @@ logach, zgłoszeniach ani buildzie frontendu.
 | Zmienna | Usługa | Uwagi |
 |---|---|---|
 | `PORT` | aplikacja | ustawia Railway |
-| `APP_ENV` | aplikacja | `staging` lub `production` |
+| `APP_ENV` | aplikacja / skrypty | `staging` lub `production` (także `development`, `test`; wielkość liter bez znaczenia, `prod` = `production`; wspólna normalizacja `src/app-env.js`). Brak lub nieznana wartość jest zachowawczo traktowana jak produkcja: import wymaga `IMPORT_ENABLED=true`, a migracja, odtworzenie, kopia storage, test odtworzenia, bootstrap administratora i `storage:smoke` odmawiają bez `--allow-production` (skrypty wypisują ostrzeżenie). Ustaw jawnie |
 | `PUBLIC_BASE_URL` | aplikacja | osobny dla każdego środowiska |
 | `DATABASE_URL` | aplikacja | referencja do prywatnego adresu PostgreSQL (`*.railway.internal`), nie publiczny TCP proxy |
 | `BUCKET`, `ENDPOINT`, `REGION`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` | aplikacja | referencje do zmiennych Storage Bucket (#39) |

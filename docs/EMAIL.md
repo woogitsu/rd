@@ -54,7 +54,7 @@ Serwer odrzuca słownictwo sugerujące zadłużenie (ten sam słownik co kartki 
 ## Bariery bezpieczeństwa wysyłki
 - `EMAIL_SENDING_ENABLED` musi mieć dokładnie wartość `true`; inaczej przebieg „live” zatrzymuje się bez zmian w kolejce.
 - Transport Brevo odmawia pracy przy `APP_ENV=test` i pod `node --test`, zanim wywoła sieć. Testy używają wyłącznie fałszywego transportu, a globalny `fetch` jest w nich pułapką.
-- Poza `APP_ENV=production` każdy adres musi pasować do `EMAIL_TEST_ALLOWLIST` (adresy techniczne, np. `*@example.invalid,ops@example.test`); pusta lista blokuje wszystko. Odmowa jest zapisana jako `failed / recipient_not_allowlisted`.
+- Poza rozpoznaną produkcją (`APP_ENV=production`/`prod`, dowolna wielkość liter; brak lub nieznana wartość NIE wyłącza allowlisty) każdy adres musi pasować do `EMAIL_TEST_ALLOWLIST` (adresy techniczne, np. `*@example.invalid,ops@example.test`); pusta lista blokuje wszystko. Odmowa jest zapisana jako `failed / recipient_not_allowlisted`.
 - Tuż przed wysyłką zadanie sprawdza ponownie: wpłatę (dla „brak wpisu wpłaty”), listę wyłączeń, zgodę na kontakt i zgodność adresu, skrót zatwierdzonej treści.
 - Podczas migracji na Railway nie ustawiamy `EMAIL_SENDING_ENABLED=true` na żadnym środowisku z danymi rodzin; staging ma tylko dane syntetyczne i listę adresów technicznych.
 

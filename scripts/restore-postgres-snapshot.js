@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { Client } from 'pg';
+import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
 import { restoreSnapshot, SNAPSHOT_TABLES, verifySnapshot } from '../src/d1-postgres-migration.js';
 
 const args = process.argv.slice(2);
@@ -18,8 +19,10 @@ if (!snapshotPath) {
       console.log(`Snapshot verified (${sourceCount} rows). Dry run only; database was not contacted.`);
     } else if (!process.env.DATABASE_URL) {
       throw new Error('DATABASE_URL is required with --apply');
-    } else if (process.env.APP_ENV === 'production' && !args.includes('--allow-production')) {
-      throw new Error('Production restore requires explicit --allow-production');
+    } else if (guardDangerousOperation(process.env.APP_ENV, { allowProduction: args.includes('--allow-production') }).refused) {
+      const warning = appEnvWarning(process.env.APP_ENV);
+      if (warning) console.error(warning);
+      throw new Error('Production (or unrecognised APP_ENV) restore requires explicit --allow-production');
     } else {
       const client = new Client({ connectionString: process.env.DATABASE_URL });
       try {

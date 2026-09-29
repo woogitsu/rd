@@ -35,7 +35,7 @@ async function withDb(fn) {
     await seedClass(db, { id: 'c-2b', schoolYearId: YEAR, name: '2B' });
     const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
     await seedPublishedPrivacyNotice(db);
-    return await fn(db, { db }, admin);
+    return await fn(db, { db, APP_ENV: 'test' }, admin);
   } finally { await db.close(); }
 }
 
@@ -147,7 +147,7 @@ test('failure in the middle of a commit rolls back everything', async () => with
       },
     })),
   };
-  const response = await handlePgRequest(post('/api/import/commit', admin, { ...payload, fingerprint: p.body.fingerprint, planDigest: p.body.planDigest }, { key: 'key-00000003' }), { db: failingDb });
+  const response = await handlePgRequest(post('/api/import/commit', admin, { ...payload, fingerprint: p.body.fingerprint, planDigest: p.body.planDigest }, { key: 'key-00000003' }), { ...env, db: failingDb });
   assert.equal(response.status, 503);
   assert.deepEqual(await tableCounts(db), before);
   // Po usunięciu awarii ten sam klucz działa normalnie.
@@ -467,6 +467,39 @@ test('unknown import subpaths fall through and wrong methods are rejected', asyn
   assert.equal((await handler(request('/api/import/preview', { cookie: admin }), env)).status, 405);
 }));
 
+// #166: tabela APP_ENV x IMPORT_ENABLED dla preview i commit. Bramka jest
+// fail-closed: otwarta bez IMPORT_ENABLED=true tylko przy jawnym
+// development/test/staging; brak, pusty, nieznany i produkcja (każda pisownia)
+// zwracają 403 import_disabled.
+test('#166 import gate: APP_ENV x IMPORT_ENABLED (preview i commit)', async () => withDb(async (db, baseEnv, admin) => {
+  const payload = payloadFromCsv(BASIC);
+  const { APP_ENV: _ignored, ...bare } = baseEnv;
+  const commitBody = { ...payload, fingerprint: '0'.repeat(64), planDigest: '0'.repeat(64) };
+  const closed = [undefined, '', '   ', 'production', 'PRODUCTION', 'Production', 'prod', ' PROD ', 'prodution', 'load-test'];
+  const open = ['development', 'test', 'staging', 'Staging', ' TEST '];
+  const status = async (path, body, env, key) => {
+    const response = await handlePgRequest(post(path, admin, body, key ? { key } : {}), env);
+    return { status: response.status, error: (await response.clone().json()).error };
+  };
+  for (const appEnv of closed) {
+    const env = appEnv === undefined ? bare : { ...bare, APP_ENV: appEnv };
+    for (const [path, body] of [['/api/import/preview', payload], ['/api/import/commit', commitBody]]) {
+      assert.deepEqual(await status(path, body, env, 'key-166-closed-1'), { status: 403, error: 'import_disabled' }, `${appEnv} ${path}`);
+      for (const flag of [undefined, '', 'false', 'TRUE', '1']) {
+        const flagged = flag === undefined ? env : { ...env, IMPORT_ENABLED: flag };
+        assert.equal((await status(path, body, flagged, 'key-166-closed-1')).error, 'import_disabled', `${appEnv}/${flag} ${path}`);
+      }
+    }
+    const enabled = await handlePgRequest(post('/api/import/preview', admin, payload), { ...env, IMPORT_ENABLED: 'true' });
+    assert.equal(enabled.status, 200, `${appEnv} + IMPORT_ENABLED=true`);
+  }
+  for (const appEnv of open) {
+    const response = await handlePgRequest(post('/api/import/preview', admin, payload), { ...bare, APP_ENV: appEnv });
+    assert.equal(response.status, 200, appEnv);
+  }
+  assert.equal(await count(db, 'import_batches'), 0, 'zablokowane wywołania niczego nie zapisały');
+}));
+
 // --- #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu danych ---
 
 test('#145 commit without a published privacy notice is refused; preview is not blocked', async () => {
@@ -474,7 +507,7 @@ test('#145 commit without a published privacy notice is refused; preview is not 
   try {
     await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
     const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
-    const env = { db };
+    const env = { db, APP_ENV: 'test' };
     const payload = payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;Jan Testowy;jan@example.invalid;;'));
     const p = await preview(env, admin, payload);
     assert.equal(p.status, 200, 'podgląd nie zapisuje niczego i nie jest blokowany przez bramkę');

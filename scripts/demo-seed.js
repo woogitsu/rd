@@ -32,7 +32,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations, applyMigrations } from '../src/postgres-migrations.js';
 import { pgliteClient } from './smoke-postgres.js';
 import { createPgDatabase } from '../src/db.js';
-import { isProductionEnv, bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
+import { isProductionEnv } from '../src/app-env.js';
+import { bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { pad } from './lib/synthetic-seed.js';
@@ -194,7 +195,7 @@ async function createDemoAccount(env, { email, displayName, role, classId, schoo
   const password = demoPassword();
   let token;
   if (!adminCookie) {
-    const bootstrap = await bootstrapAdmin(env.db, { email, appEnv: process.env.APP_ENV, ttlSeconds: 3600 });
+    const bootstrap = await bootstrapAdmin(env.db, { email, appEnv: 'development' /* produkcję odrzucono wyżej */, ttlSeconds: 3600 });
     token = bootstrap.secret;
   } else {
     const invitation = await apiCall(env, {
