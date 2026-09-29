@@ -1,6 +1,6 @@
 // Kampanie e-mail o dobrowolnej składce na PostgreSQL (issues #10, #40). Prototyp — nie jest wdrożony.
 //
-//   GET  /api/email/campaigns?schoolYearId=…         lista kampanii roku
+//   GET  /api/email/campaigns?schoolYearId=…[&limit=&cursor=]   lista kampanii roku (kursor keyset, #159)
 //   POST /api/email/campaigns                        szkic (Idempotency-Key)
 //   GET  /api/email/campaigns/{id}                   stan i liczniki kolejki
 //   PUT  /api/email/campaigns/{id}                   zmiana treści → szkic, zatwierdzenie traci ważność
@@ -29,6 +29,9 @@ import { timingSafeEqual } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import {
+  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+} from '../list-cursor.js';
 import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
 import {
@@ -217,11 +220,22 @@ async function listCampaigns(request, env, url, json) {
   if (!validId(schoolYearId)) throw new RequestError('invalid_request');
   const context = await requireContext(request, env, EDITOR_ROLES);
   requireYear(context, EDITOR_ROLES, schoolYearId);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 100, maxLimit: 100 }, fail);
+  const scope = JSON.stringify(['campaigns', schoolYearId]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const values = [schoolYearId];
+  const after = cursor ? `AND ${afterTimestampDescSql('c.created_at', 'c.id', cursor, values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT ${CAMPAIGN_COLUMNS} FROM email_campaigns c WHERE c.school_year_id = $1 ORDER BY c.created_at DESC, c.id LIMIT 100`,
-    [schoolYearId],
+    `SELECT ${CAMPAIGN_COLUMNS}, ${cursorTimestampSql('c.created_at')} AS cursor_ts
+       FROM email_campaigns c WHERE c.school_year_id = $1 ${after}
+      ORDER BY c.created_at DESC, c.id LIMIT ${limit + 1}`,
+    values,
   );
-  return json({ campaigns: rows.map(campaignView) });
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return json({
+    campaigns: page.items.map(campaignView), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
+  });
 }
 
 async function createCampaign(request, env, json) {
@@ -438,6 +452,43 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
   return { recipients, exclusions, hash: recipientsHash(recipients) };
 }
 
+// Ostrzeżenie o zmianach po zbudowaniu migawki (#86): adresaci, którzy według
+// DZISIEJSZYCH danych nie kwalifikowaliby się już do wysyłki — opiekun stracił
+// relację z dzieckiem z tej rodziny, dziecko odeszło ze szkoły (enrollments_current)
+// albo zmienił się kontakt/zgoda. Te same warunki co ponowne sprawdzenie w workerze
+// (recheckRow), więc kampania i tak nie wyśle do takiej osoby; ostrzeżenie pokazuje
+// to zarządowi PRZED wysyłką i zachęca do przebudowania migawki (nowe zatwierdzenie).
+// Zwraca liczniki wg powodu, bez identyfikatorów osób.
+export async function staleRecipientCounts(executor, campaign, { on = null } = {}) {
+  const { rows } = await executor.query(
+    `WITH d AS (SELECT COALESCE($3::date, rd_today()) AS on_date)
+     SELECT CASE
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
+                THEN 'guardian_relation_ended'
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
+                THEN 'student_withdrawn'
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                 JOIN guardians g ON g.id = sg.guardian_id
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id
+                                  AND g.contact_allowed AND sg.contact_allowed AND lower(btrim(g.email)) = r.email)
+                THEN 'consent_or_address_changed'
+            END AS reason
+       FROM email_campaign_recipients r
+      WHERE r.campaign_id = $1`,
+    [campaign.id, campaign.school_year_id, on],
+  );
+  const counts = {};
+  for (const row of rows) if (row.reason) counts[row.reason] = (counts[row.reason] ?? 0) + 1;
+  return counts;
+}
+
 async function buildSnapshot(request, env, id, json) {
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   const actorId = context.session.user.id;
@@ -551,6 +602,8 @@ async function preview(request, env, id, json) {
       ...estimateSchedule({ now: new Date(), sendNotBefore: campaign.send_not_before, days: planDays(count, dailyCap, config), sendWindow: config.sendWindow }),
     },
     warnings: contentWarnings({ bodyText: campaign.body_text }),
+    // Adresaci, którzy po zbudowaniu migawki przestali się kwalifikować (#86); { powód: liczba }.
+    staleRecipients: campaign.recipients_hash ? await staleRecipientCounts(env.db, campaign, { on: effectiveDay(env) }) : {},
     sends: false,
   });
 }
@@ -1205,12 +1258,29 @@ async function listSuppressions(request, env, url, json) {
        FROM email_active_suppressions s ORDER BY s.created_at DESC LIMIT 500`,
   );
   const guardians = await guardiansByEmailHash(env.db);
+  // Otwarty (niezatwierdzony) wniosek o zdjęcie blokady — żeby druga osoba mogła
+  // go zatwierdzić bez przepisywania identyfikatora. Bez adresu i bez identyfikatora
+  // zgłaszającego: tylko znacznik „to mój wniosek” (zgłaszający nie zatwierdza sam siebie).
+  const { rows: pending } = await env.db.query(
+    `SELECT DISTINCT ON (email_hash) id, email_hash, release_reason, confirmation_note, requested_by, created_at
+       FROM email_suppression_release_requests
+      WHERE consumed_at IS NULL AND email_hash = ANY($1::text[])
+      ORDER BY email_hash, created_at DESC, id DESC`,
+    [rows.map((row) => row.email_hash)],
+  );
+  const pendingByHash = new Map(pending.map((row) => [row.email_hash, row]));
+  const actorId = context.session.user.id;
   const items = rows.map((row) => {
     const match = guardians.get(row.email_hash);
+    const open = pendingByHash.get(row.email_hash);
     return {
       emailHash: row.email_hash, reason: row.reason, createdAt: iso(row.created_at), events: row.events,
       guardianId: match?.guardianId ?? null, householdId: match?.householdId ?? null,
       email: match ? maskEmail(match.email) : null,
+      pendingRequest: open ? {
+        requestId: open.id, releaseReason: open.release_reason, confirmationNote: open.confirmation_note,
+        createdAt: iso(open.created_at), requestedByMe: open.requested_by === actorId,
+      } : null,
     };
   });
   await insertAuditEvent(env.db, {
@@ -1240,6 +1310,15 @@ async function releaseRequest(request, env, hashValue, json) {
       if (PARENT_ONLY_REASONS.has(suppressionReason) && data.releaseReason !== 'parent_request') {
         throw new RequestError('release_reason_not_allowed', 409);
       }
+      // Podwójne kliknięcie / ponowienie: ten sam autor ma już otwarty wniosek o ten sam
+      // powód dla tego adresu — zwracamy go zamiast tworzyć drugi.
+      const { rows: existing } = await tx.query(
+        `SELECT id FROM email_suppression_release_requests
+          WHERE email_hash = $1 AND requested_by = $2 AND release_reason = $3 AND consumed_at IS NULL
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [hashValue, actorId, data.releaseReason],
+      );
+      if (existing[0]) return json({ requestId: existing[0].id }, 200);
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO email_suppression_release_requests (id, email_hash, suppression_reason, release_reason, confirmation_note, requested_by)

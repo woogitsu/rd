@@ -42,3 +42,22 @@ test('excludedHeaderLabel flags PESEL, address and phone header variants', () =>
   }
   assert.equal(excludedHeaderLabel('Klasa'), null);
 });
+
+test('#98 missingFromFileSummary: brak uczniów = brak sekcji; lista skrócona; bez imion', async () => {
+  const { missingFromFileSummary } = await import('../import/report.js');
+  assert.equal(missingFromFileSummary(undefined), null);
+  assert.equal(missingFromFileSummary({ count: 0, refs: [] }), null);
+  const refs = Array.from({ length: 45 }, (_, i) => `S${i + 1}`);
+  const s = missingFromFileSummary({ count: 45, refs });
+  assert.equal(s.title, 'W bazie, brak w pliku');
+  assert.equal(s.refs.length, 40);
+  assert.equal(s.more, 5);
+  assert.match(s.text, /: 45\./);
+});
+
+test('#98 panel importu renderuje sekcję „W bazie, brak w pliku” z odpowiedzi podglądu', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const main = await readFile(new URL('../import/main.js', import.meta.url), 'utf8');
+  assert.match(main, /missingFromFileSummary\(missing\)/);
+  assert.match(main, /\.\.\.missingFromFileNodes\(data\.missingFromFile\)/);
+});

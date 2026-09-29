@@ -214,7 +214,7 @@ export function buildUploadRequest(meta, mime, idempotencyKey) {
   };
 }
 
-export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", includeInactive = false, limit = LIST_LIMIT, offset = 0 }) {
+export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", includeInactive = false, limit = LIST_LIMIT, offset = 0, cursor = "" }) {
   const year = String(schoolYearId ?? "").trim();
   if (!isSafeId(year)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
   if (kind && !Object.hasOwn(KIND_LABELS, kind)) throw new Error("Nieznany rodzaj dokumentu.");
@@ -233,7 +233,9 @@ export function buildListUrl({ schoolYearId, kind = "", classId = "", category =
   // Domyślnie serwer zwraca tylko dokumenty aktualne; `status=all` dodaje zastąpione i unieważnione.
   if (includeInactive) params.set("status", "all");
   params.set("limit", String(limit));
-  if (offset) params.set("offset", String(offset));
+  // #159: kursor keyset zastępuje offset (offset zostaje tylko dla zgodności).
+  if (cursor) params.set("cursor", String(cursor));
+  else if (offset) params.set("offset", String(offset));
   return `/api/documents?${params.toString()}`;
 }
 
