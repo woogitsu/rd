@@ -349,7 +349,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   data_subject_requests: 'rejestr żądań osób RODO (dostęp/sprostowanie/usunięcie/...) — rozliczalność wobec osób, nie dane Rady do odtworzenia; kto ma dostęp do rejestru i retencja do decyzji D-07/D-08/D-09 (0068, #100)',
   backup_runs: 'dziennik przebiegów kopii zapasowej i próby odtworzenia — dane operacyjne środowiska, nie danych Rady (0058)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',
-  promotion_runs: 'rejestr idempotencji promocji na nowy rok (0137, #78) — same liczby i klucz; przypisania odtwarza eksport enrollments, ślad w audit_events',
+  promotion_runs: 'rejestr idempotencji promocji na nowy rok (0151, #78) — same liczby i klucz; przypisania odtwarza eksport enrollments, ślad w audit_events',
   export_runs: 'dziennik eksportów — każdy eksport zmieniałby następny',
   meeting_request_keys: 'klucze idempotencji żądań — dane techniczne',
   email_campaigns: 'kampanie e-mail — zakres i retencja do decyzji D-04 (adresy odbiorców)',

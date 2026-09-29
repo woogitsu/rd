@@ -967,7 +967,7 @@ migracji są ignorowane i wygasają po dobie; w bazie nadal tylko skróty
 przywrócenie CHECK `IN ('email','ip')` (kod aplikacji sprzed zmiany blokował
 konto po samym e-mailu).
 
-`0137_promotion_runs.sql` (#78) dodaje tabelę `promotion_runs`: rejestr
+`0151_promotion_runs.sql` (#78) dodaje tabelę `promotion_runs`: rejestr
 zatwierdzonych promocji uczniów na nowy rok szkolny (aktor, rok źródłowy i
 docelowy, `idempotency_key` UNIQUE, skrót planu, liczby przeniesionych,
 kończących, pominiętych, wykluczonych, konfliktów i odchodzących). Służy
