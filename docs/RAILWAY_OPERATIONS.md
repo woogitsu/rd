@@ -736,7 +736,24 @@ bez potrzeby dostępu do Railway:
 - Narzędzie monitora zewnętrznego, jego adresaci i dyżur/zastępstwa — do
   decyzji zarządu (nierozstrzygnięte tutaj).
 
-## CI i runner self-hosted (#153)
+## CI i runnery (#153)
+
+- **Od upublicznienia repozytorium CI działa wyłącznie na runnerach GitHub
+  `ubuntu-latest`.** Kod z PR-ów spoza zespołu nie może wykonywać się na
+  naszych maszynach. Workflow używa `pull_request` (nie `pull_request_target`),
+  nie ma sekretów, a `permissions` to `contents: read`.
+- **Do zrobienia przez administratora organizacji (poza repozytorium)**:
+  odłączyć runnery self-hosted od publicznego repozytorium (Settings → Actions →
+  Runners → usunąć albo wyłączyć dostęp repozytorium do grupy runnerów) i
+  ustawić „Require approval for all outside collaborators” (Settings → Actions →
+  General → Fork pull request workflows). Opisy poniżej o runnerze self-hosted
+  są historyczne i dotyczą wyłącznie takiego runnera, gdyby był używany
+  do prywatnych repozytoriów.
+- Usługa PostgreSQL w jobie `test-pg-real` jest efemeryczna, dostępna tylko na
+  runnerze; jej hasło (`rd_ci_only`) nie jest sekretem i nie chroni żadnych
+  danych.
+
+### Historia: runner self-hosted
 
 - **Kto zarządza runnerem i organizacją GitHub**: ustalenie zespołu
   technicznego (oddzielenie dostępu technicznego od roli skarbnika —

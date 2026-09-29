@@ -185,14 +185,15 @@ Automatycznej kontroli mutacyjnej w CI jeszcze nie ma (#208, punkt 4).
 `rowCount`/`affectedRows` — kontrakt `src/db.js` zwraca tylko `{ rows }`, a PGlite
 dodaje `rowCount`, więc taki kod przechodził testy i psuł się na serwerze.
 
-### CI: co musi zrobić administrator
+### CI: job `test-pg-real`
 
-Runnery self-hosted nie mają PostgreSQL ani Dockera (`.github/workflows/ci.yml`), więc
-testy wyścigów są w CI pomijane. Aby je włączyć bez zmiany reszty zestawu, administrator
-runnerów powinien: (1) zainstalować pakiety PostgreSQL 16 (`initdb`, `pg_ctl`, `postgres`)
-bez uruchamiania usługi systemowej; (2) dodać do `ci.yml` osobny job (np. `test-pg-real`,
-`runs-on: self-hosted`, `timeout-minutes: 20`, kroki `checkout` → `setup-node` → `npm ci`
-→ `npm run test:pg-real`, akcje przypięte do pełnego SHA) i dopisać go do `needs` joba
-`ci-ok`; (3) opcjonalnie nocny job `schedule` z `npm run test:pg-real -- --all`
-(powtarzanie testów współbieżności, #111). Skrypt sam tworzy i usuwa serwer, więc nie
-potrzeba sekretów, usług ani portów. Ten PR celowo nie zmienia `ci.yml`.
+CI działa na runnerach GitHub `ubuntu-latest` (repozytorium jest publiczne).
+Job `test-pg-real` (`.github/workflows/ci.yml`, wymagany przez `ci-ok`) uruchamia
+`npm run test:pg-real` z usługą `services: postgres` (obraz `postgres@sha256:…`
+przypięty do digestu — `tests/ci-supply-chain.test.js`; przy aktualizacji zmień
+digest obrazu `postgres:16`). Gdy `RD_TEST_PG_URL` jest ustawione, skrypt
+`scripts/test-pg-real.js` nie stawia własnego serwera, tylko używa wskazanego;
+bez zmiennej działa jak wcześniej (`initdb` w katalogu tymczasowym).
+Zwykłe shardy (`test`) nadal biegną na PGlite i pomijają testy wyścigów.
+Nocny przebieg `npm run test:pg-real -- --all` (powtarzanie testów
+współbieżności, #111) pozostaje opcją — nie jest jeszcze w `ci.yml`.

@@ -32,6 +32,27 @@ test('ci.yml declares read-only top-level permissions and no job widens them', (
   assert.doesNotMatch(workflow, /pull_request_target|secrets\./);
 });
 
+test('every job runs on a GitHub-hosted runner (public repository: no self-hosted)', () => {
+  const runsOn = workflow.split('\n').filter((l) => /^\s*runs-on:/.test(l));
+  assert.ok(runsOn.length > 0, 'expected at least one runs-on');
+  for (const line of runsOn) assert.match(line, /runs-on:\s*ubuntu-latest\s*$/, `job not on ubuntu-latest: ${line.trim()}`);
+  assert.doesNotMatch(workflow.replace(/^\s*#.*$/gm, ''), /self-hosted/);
+});
+
+test('service and container images in ci.yml are pinned to a sha256 digest', () => {
+  const images = workflow.split('\n').filter((l) => /^\s*image:\s*/.test(l));
+  assert.ok(images.length > 0, 'expected at least one service image');
+  for (const line of images) assert.match(line, /image:\s*[\w./-]+@sha256:[0-9a-f]{64}\s*$/, `image not pinned to a digest: ${line.trim()}`);
+});
+
+test('ci-ok requires test-pg-real (real PostgreSQL) and it uses the service via RD_TEST_PG_URL', () => {
+  const ciOkMatch = workflow.match(/ci-ok:\s*\n\s*needs:\s*\[([^\]]+)\]/);
+  assert.ok(ciOkMatch, 'ci-ok job with needs: [...] not found');
+  assert.ok(ciOkMatch[1].split(',').map((s) => s.trim()).includes('test-pg-real'), 'ci-ok must depend on test-pg-real');
+  assert.match(workflow, /RD_TEST_PG_URL:\s*postgres:\/\/[^\s@]+@127\.0\.0\.1:5432\//);
+  assert.match(workflow, /npm run test:pg-real/);
+});
+
 test('production dependencies are pinned exactly (no ^ or ~ ranges)', () => {
   for (const [name, range] of Object.entries(pkg.dependencies ?? {})) {
     assert.doesNotMatch(range, /^[\^~]/, `${name} uses a range (${range}); production deps must be pinned exactly`);
