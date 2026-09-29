@@ -128,7 +128,7 @@ Panel sprawdza `GET /api/access` **przed** pierwszym żądaniem listy i wybiera 
 - sam `representative` (bez żadnej z tych ról) → widok „Protokoły udostępnione” z `GET /api/meetings/shared-minutes`: data, rodzaj, klasa, tytuł, wersja, data zatwierdzenia i podgląd treści tylko do odczytu (bez listy obecności, quorum i projektów uchwał). Panel nigdy nie woła `GET /api/meetings` dla tej roli, więc nie ma odmowy 403 na starcie.
 - inne role bez żadnej z powyższych (np. sam `principal`) → obie sekcje ukryte, tak jak dziś (403 przy próbie odczytu, bez zmiany funkcji tego PR).
 
-Widoczność `parents` w widoku przedstawiciela oznacza, że wolno przekazać treść rodzicom klasy; wydruk/PDF tego widoku korzysta ze wspólnego arkusza druku (#151).
+Widoczność `parents` w widoku przedstawiciela oznacza, że wolno przekazać treść rodzicom klasy; wydruk/PDF tego widoku korzysta ze wspólnego arkusza druku (#151). Wydruk protokołu (przycisk „Drukuj / zapisz jako PDF”) zawiera listę obecności wg funkcji (bez nazwisk i e-maili), wynik quorum, treść i dwa puste pola podpisu (prowadzący, protokolant) — układ podpisów to założenie zachowawcze do decyzji D-21.
 
 ### Zebranie klasowe prowadzone przez przedstawiciela — za flagą `MEETINGS_CLASS_HOST` (#171, D-08)
 
