@@ -4,7 +4,10 @@ import {
   buildContactPatch,
   canEditFamilies,
   filterStudentsByName,
+  formatPercent,
   groupClassesByYear,
+  hasPaymentColumn,
+  overviewRows,
   overviewRow,
   parseRoute,
   sortStudentsByName,
@@ -72,6 +75,27 @@ test('sortStudentsByName: sortuje po nazwisku, potem imieniu, wg polskiego alfab
   ];
   const sorted = sortStudentsByName(students).map((s) => `${s.lastName} ${s.firstName}`);
   assert.deepEqual(sorted, ['Adamski Ala', 'Adamski Jan', 'Żurek Ola']);
+});
+
+test('pulpit zarządu (#131): trasa, wiersze bez sortowania, „—” zamiast brakującego odsetka, bez słów o długu', () => {
+  assert.deepEqual(parseRoute('#/overview'), { view: 'overview' });
+  const entry = (name, rate) => ({
+    name, studentCount: 3, householdCount: 2, representative: { active: 1, pendingInvites: 0 },
+    contactEmailCount: 2, noContactCount: 1, ...(rate === undefined ? {} : { paymentEntryRatePercent: rate }),
+  });
+  const withPayments = { classes: [entry('1B', 40), entry('1A', null)], totals: { ...entry('Razem', 33), unmatchedPaymentsCount: 1 } };
+  const view = overviewRows(withPayments);
+  assert.equal(view.withPayments, true);
+  assert.deepEqual(view.rows.map((row) => row[0]), ['1B', '1A'], 'kolejność serwera, bez sortowania po odsetku');
+  assert.deepEqual(view.rows[0].slice(-1), ['40%']);
+  assert.deepEqual(view.rows[1].slice(-1), ['—'], 'klasa poniżej progu');
+  assert.deepEqual(view.total.slice(0, 2), ['Razem', '3']);
+  const without = overviewRows({ classes: [entry('1A')], totals: entry('Razem') });
+  assert.equal(without.withPayments, false);
+  assert.equal(without.rows[0].length, 7, 'brak kolumny wpłat bez dostępu');
+  assert.equal(hasPaymentColumn({ classes: [], totals: entry('Razem') }), false);
+  assert.equal(formatPercent(undefined), '—');
+  assert.doesNotMatch(JSON.stringify(view), /dłużnik|zaległoś/i);
 });
 
 test('pulpit przedstawiciela: wiersz tabeli bez słów o zaległościach', () => {

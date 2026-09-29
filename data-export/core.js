@@ -33,7 +33,7 @@ export function yearlyYears(grants) {
 
 export function rosterUrl(classId, format = 'csv') {
   if (!isValidId(classId)) throw new Error('Wybierz klasę.');
-  if (format !== 'csv' && format !== 'json') throw new Error('Nieznany format.');
+  if (format !== 'csv' && format !== 'xlsx' && format !== 'json') throw new Error('Nieznany format.');
   return `/api/exports/class-roster?classId=${encodeURIComponent(classId.trim())}&format=${format}`;
 }
 
