@@ -10,7 +10,7 @@ import { CommitOutcomeUnknownError, commitFailureIsDefinite, createPgDatabase } 
 import { createPgHandler, ROUTES } from '../src/pg/app.js';
 import { MESSAGES } from '../shared/messages.js';
 import { ROUTE_MATRIX } from './helpers/route-matrix.js';
-import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const pgError = (code) => Object.assign(new Error(`synthetic ${code}`), { code });
@@ -60,7 +60,7 @@ async function shared() {
   if (!sharedDb) {
     sharedDb = await createTestDb();
     await seedSchoolYear(sharedDb, 'y2026');
-    await sharedDb.query("INSERT INTO households (id) VALUES ('h1')");
+    await seedEnrolledHousehold(sharedDb, 'h1', ['y2026']);
     sharedCookie = await seedUserSession(sharedDb, { userId: 'u1', mfa: true, roles: [{ role: 'treasurer', schoolYearId: 'y2026' }] });
   }
   return { pglite: sharedDb, cookie: sharedCookie };

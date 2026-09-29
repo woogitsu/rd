@@ -33,6 +33,13 @@
 //   GET  /api/admin/audit/entity/{entityType}/{entityId}
 //        historia jednego obiektu (#181): payment_entry, ledger_entry,
 //        reconciliation, email_campaign. 404, gdy obiekt nie istnieje.
+//   GET  /api/admin/access-log?kind=&actorId=&householdId=&classId=&schoolYearId=&outcome=&from=&to=&limit=&cursor=
+//        przegląd dziennika odczytu danych dzieci i opiekunów (#133): tylko do
+//        odczytu, kursor (occurred_at, id) malejąco, BEZ danych osobowych i bez
+//        e-maili członków Rady (aktor = identyfikator + bieżące role). Sam
+//        zapisuje `access_log.viewed` (bez parametrów). Wyłącznie admin + MFA
+//        (wariant zachowawczy do D-04/D-07/D-08/D-09; zarząd, skarbnik, KR,
+//        dyrekcja i przedstawiciele: 403).
 //   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
 //   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
 //   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
@@ -78,6 +85,7 @@ import { computeOpsStatus } from '../ops-status.js';
 import {
   afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
+import { DATA_ACCESS_KINDS } from '../data-access.js';
 
 export const name = 'admin';
 
@@ -810,7 +818,7 @@ export const AUDIT_ACTIONS = [
   'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued',
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
-  'auth.password_changed', 'mfa.reset',
+  'auth.password_changed', 'auth.account_under_pressure', 'mfa.reset',
   'account_recovery.requested', 'account_recovery.approved', 'account_recovery.rejected', 'account_recovery.expired',
 ];
 
@@ -888,6 +896,101 @@ async function listAudit(env, url, json, actorId) {
       entityId: row.entity_id, occurredAt: isoTimestamp(row.occurred_at),
       metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
     })),
+  });
+}
+
+// --- Przegląd dziennika odczytu danych rodzin (#133) -----------------------
+
+const ACCESS_LOG_OUTCOMES = ['ok', 'not_found'];
+const ACCESS_LOG_TS = `to_char(l.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+function encodeAccessLogCursor(row) {
+  return Buffer.from(JSON.stringify({ t: row.occurred_key, i: row.id }), 'utf8').toString('base64url');
+}
+
+function decodeAccessLogCursor(value) {
+  if (value === null || value === '') return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (typeof parsed?.t !== 'string' || typeof parsed?.i !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(parsed.t) || !validId(parsed.i)) throw new Error();
+    return { occurredKey: parsed.t, id: parsed.i };
+  } catch {
+    throw new RequestError('invalid_cursor');
+  }
+}
+
+async function listAccessLog(env, url, json, actorId) {
+  const params = url.searchParams;
+  const limitParam = params.get('limit');
+  const limit = limitParam === null ? 100 : Number(limitParam);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST) throw new RequestError('invalid_limit');
+  const kind = params.get('kind');
+  if (kind !== null && !DATA_ACCESS_KINDS.includes(kind)) throw new RequestError('invalid_access_kind');
+  const outcome = params.get('outcome');
+  if (outcome !== null && !ACCESS_LOG_OUTCOMES.includes(outcome)) throw new RequestError('invalid_outcome');
+  const filterActor = optionalId(params.get('actorId'), 'invalid_actor_id');
+  const householdId = optionalId(params.get('householdId'), 'invalid_household_id');
+  const classId = optionalId(params.get('classId'), 'invalid_class_id');
+  const schoolYearId = optionalId(params.get('schoolYearId'), 'invalid_school_year_id');
+  const from = params.get('from');
+  const to = params.get('to');
+  if (from !== null && Number.isNaN(Date.parse(from))) throw new RequestError('invalid_from');
+  if (to !== null && Number.isNaN(Date.parse(to))) throw new RequestError('invalid_to');
+  const cursor = decodeAccessLogCursor(params.get('cursor'));
+
+  const values = [];
+  const conditions = ['TRUE'];
+  const add = (sql, value) => { values.push(value); conditions.push(sql.replace('?', `$${values.length}`)); };
+  if (kind) add('l.access_kind = ?', kind);
+  if (outcome) add('l.outcome = ?', outcome);
+  if (filterActor) add('l.actor_id = ?', filterActor);
+  if (householdId) add('l.household_id = ?', householdId);
+  if (classId) add('l.class_id = ?', classId);
+  if (schoolYearId) add('l.school_year_id = ?', schoolYearId);
+  if (from) add('l.occurred_at >= ?::timestamptz', new Date(from).toISOString());
+  if (to) add('l.occurred_at <= ?::timestamptz', new Date(to).toISOString());
+  if (cursor) {
+    values.push(cursor.occurredKey, cursor.id);
+    conditions.push(`(l.occurred_at, l.id) < ($${values.length - 1}::timestamptz, $${values.length})`);
+  }
+  values.push(limit + 1);
+  const { rows } = await env.db.query(
+    `SELECT l.id, l.actor_id, l.access_kind, l.school_year_id, l.class_id, l.household_id, l.outcome,
+            l.row_count, l.hit_count, ${ACCESS_LOG_TS} AS occurred_key, l.occurred_at, l.last_seen_at,
+            COALESCE((
+              SELECT array_agg(DISTINCT rg.role ORDER BY rg.role) FROM role_grants rg
+               WHERE rg.user_id = l.actor_id AND rg.revoked_at IS NULL
+                 AND (rg.expires_at IS NULL OR rg.expires_at > now())
+            ), ARRAY[]::text[]) AS actor_roles
+       FROM data_access_log l
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY l.occurred_at DESC, l.id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+  const visible = rows.slice(0, limit);
+  const nextCursor = rows.length > limit && visible.length ? encodeAccessLogCursor(visible[visible.length - 1]) : null;
+  // Odczyt przeglądu sam zostawia ślad, bez parametrów zapytania (jak audit.viewed).
+  await insertAuditEvent(env.db, {
+    actorId, action: 'access_log.viewed', entityType: 'data_access_log', entityId: 'data_access_log', metadata: {},
+  });
+  return json({
+    entries: visible.map((row) => ({
+      id: row.id,
+      actorId: row.actor_id,
+      actorRoles: row.actor_roles ?? [],
+      accessKind: row.access_kind,
+      schoolYearId: row.school_year_id ?? null,
+      classId: row.class_id ?? null,
+      householdId: row.household_id ?? null,
+      outcome: row.outcome,
+      rowCount: Number(row.row_count),
+      hitCount: Number(row.hit_count),
+      occurredAt: isoTimestamp(row.occurred_at),
+      lastSeenAt: isoTimestamp(row.last_seen_at),
+    })),
+    nextCursor,
   });
 }
 
@@ -1169,6 +1272,7 @@ function allowedMethodsFor(section, pathLength, action) {
   }
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
+  if (section === 'access-log' && pathLength === 1) return ['GET'];
   if (section === 'data-requests') {
     if (pathLength === 1) return ['GET', 'POST'];
     if (pathLength === 3 && action === 'status') return ['POST'];
@@ -1253,6 +1357,7 @@ async function route(request, env, url, json, actorId, context) {
   }
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId);
+  if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
   if (section === 'data-requests') {
     if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);
     if (path.length === 1 && method === 'POST') return createDataRequest(env, actorId, request, json);
@@ -1267,7 +1372,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'data-requests', 'retention', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;

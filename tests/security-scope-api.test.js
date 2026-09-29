@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createMeeting, createMinutesVersion } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 const NEXT = 'y-2027';
@@ -22,7 +22,7 @@ async function baseDb() {
   const db = await createTestDb();
   await seedSchoolYear(db, YEAR);
   await seedClass(db, { id: CLASS, schoolYearId: YEAR });
-  await db.query("INSERT INTO households (id) VALUES ('h-sc-1')");
+  await seedEnrolledHousehold(db, 'h-sc-1', [YEAR]);
   await seedUser(db, { userId: 'u-sc-seed' });
   await db.query(`INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
     VALUES ('cat-sc-exp', $1, 'expense', 'Wydarzenia', 'u-sc-seed')`, [YEAR]);
@@ -237,12 +237,17 @@ test('zamknięty rok: wpłaty, księga, wydarzenia i zebrania odpowiadają 409 s
 
 // ---------- zebrania: pozostałe błędy triggerów to 409, nie 503 ----------
 
-// Opakowanie bazy, które symuluje odmowę triggera dla wskazanej instrukcji
-// (ścieżki nieosiągalne z API, ale mapowanie musi dać kod reguły, nie awarię).
-function failingDb(db, pattern, message) {
+// #214: wcześniej opakowanie wstrzykiwało `new Error('<nazwa reguły>')`, więc zmiana
+// treści RAISE EXCEPTION w triggerze nie oblewała testu, a produkcja zwracałaby 503.
+// Teraz opakowanie PODMIENIA instrukcję na taką, która naprawdę łamie regułę, i
+// wykonuje ją na prawdziwej bazie — komunikat pochodzi z prawdziwego triggera.
+function violatingDb(db, pattern, substitute) {
   const wrap = (executor) => ({
     query(sql, params) {
-      if (pattern.test(sql)) return Promise.reject(new Error(message));
+      if (pattern.test(sql)) {
+        const replacement = substitute(sql, params);
+        return executor.query(replacement.sql, replacement.params);
+      }
       return executor.query(sql, params);
     },
   });
@@ -261,13 +266,19 @@ test('zebrania: minutes_must_start_as_draft i meetings_cannot_be_deleted dają 4
     });
     await updateMeeting(db, actor, { meetingId: meeting.id, status: 'held' });
     await assert.rejects(
-      createMinutesVersion(failingDb(db, /INSERT INTO meeting_minutes/, 'minutes_must_start_as_draft'), actor, {
+      createMinutesVersion(violatingDb(db, /^\s*INSERT INTO meeting_minutes \(/, (sql, params) => ({
+        sql: `INSERT INTO meeting_minutes (id, meeting_id, version, supersedes_id, body, created_by, status, approved_by, approved_at)
+              VALUES ($1, $2, $3, $4, $5, $6, 'approved', $6, now())`,
+        params: [params[0], params[1], params[2], params[3], params[4], params[6]],
+      })), actor, {
         idempotencyKey: 'sc-trigger-minutes-1', meetingId: meeting.id, body: 'Protokół syntetyczny zebrania.',
       }),
       { code: 'minutes_must_start_as_draft', status: 409 },
     );
     await assert.rejects(
-      updateMeeting(failingDb(db, /UPDATE meetings/, 'meetings_cannot_be_deleted'), actor, { meetingId: meeting.id, title: 'Zmiana' }),
+      updateMeeting(violatingDb(db, /^\s*UPDATE meetings SET/, (sql, params) => ({
+        sql: 'DELETE FROM meetings WHERE id = $1', params: [params[0]],
+      })), actor, { meetingId: meeting.id, title: 'Zmiana' }),
       { code: 'meetings_cannot_be_deleted', status: 409 },
     );
   } finally {

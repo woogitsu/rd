@@ -24,8 +24,11 @@ import {
   approve, cancelTask, createDraft, createSignup, createTask, publish, submit, withdrawSignup,
 } from '../src/pg/events.js';
 import {
+  addAgendaItem,
+  approveMeetingNotice,
   approveMinutes,
   createMeeting,
+  createMeetingNotice,
   createMinutesVersion,
   createResolution,
   determineQuorum,
@@ -46,10 +49,10 @@ import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
 import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedDocument, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
-  ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
-  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
+  ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, REFERENCE_CASES, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
+  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
   pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
@@ -104,6 +107,9 @@ const withKey = (key) => ({ 'Idempotency-Key': key });
 
 // ---------- fixtures ----------
 
+// Zapisy gospodarstw hh-1/hh-2 idą do istniejących klas macierzy (bez nowych klas na listach).
+const MATRIX_CLASSES = { [YEAR_1]: TARGETS.A.classId, [YEAR_2]: TARGETS.Y2.classId };
+
 async function seedBase(db) {
   await seedSchoolYear(db, YEAR_1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedSchoolYear(db, YEAR_2, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
@@ -111,9 +117,11 @@ async function seedBase(db) {
     await seedClass(db, { id: target.classId, schoolYearId: target.schoolYearId });
   }
   for (const account of Object.values(FX_ACCOUNTS)) await seedUser(db, { userId: account.userId });
-  await db.query("INSERT INTO households (id) VALUES ('hh-1')");
+  await seedDocument(db, { id: PHOTO_SOURCE_DOCUMENT_ID, createdBy: 'u-fx-admin' });
+  // #205: gospodarstwo we wpłacie musi mieć ucznia zapisanego w roku wpłaty (oba lata macierzy).
+  await seedEnrolledHousehold(db, 'hh-1', [YEAR_1, YEAR_2], { classIds: MATRIX_CLASSES });
   // #138: cel ponownego przypisania wpłaty (payments.reassignment).
-  await db.query("INSERT INTO households (id) VALUES ('hh-2')");
+  await seedEnrolledHousehold(db, 'hh-2', [YEAR_1, YEAR_2], { classIds: MATRIX_CLASSES });
   // Kategorie księgi z nazwą niosącą znacznik roku (W1 = rok 1, Y2 = rok 2).
   for (const [year, scope] of [[YEAR_1, 'W1'], [YEAR_2, 'Y2']]) {
     await db.query(
@@ -124,6 +132,14 @@ async function seedBase(db) {
   }
   // Rodziny: jedna na klasę + rodzeństwo w 1A i 1B (opiekun ze zgodą na kontakt).
   for (const key of ['A', 'B', 'Y2']) await makeHousehold(db, TARGETS[key], `hh-${key}`);
+  // #205 (REFERENCE_CASES): identyfikatory spoza zakresu — konta bez przydziału w roku,
+  // gospodarstwo zarchiwizowane i bez ucznia. hh-Y2 (wyżej) ma dziecko tylko w roku 2.
+  await seedUser(db, { userId: 'u-fx-nogrant' });
+  await seedUser(db, { userId: 'u-fx-rok2' });
+  await db.query("INSERT INTO role_grants (id, user_id, role, school_year_id) VALUES ('rg-fx-rok2', 'u-fx-rok2', 'treasurer', $1)", [YEAR_2]);
+  await makeHousehold(db, TARGETS.A, 'hh-fx-arch');
+  await db.query("UPDATE households SET archived_at = now() WHERE id = 'hh-fx-arch'");
+  await db.query("INSERT INTO households (id) VALUES ('hh-fx-empty')");
   await db.query("INSERT INTO households (id) VALUES ('hh-sib')");
   await db.query(`INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed)
     VALUES ('gd-sib', 'hh-sib', 'Ewa', 'Opiekunka', 'opiekun-rodzenstwo@example.invalid', true)`);
@@ -171,6 +187,23 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
     [enrollmentId, studentId, classId, target.schoolYearId]);
   const membership = await db.query('SELECT id FROM student_households WHERE student_id = $1 AND is_primary', [studentId]);
   return { householdId, guardianId, studentId, enrollmentId, membershipId: membership.rows[0].id };
+}
+
+// #200: opiekun z aktywnymi relacjami z DWOMA uczniami z różnych klas tego samego roku
+// (rodzeństwo we wspólnym gospodarstwie). Zarząd z przydziałem jednej klasy nie zmienia
+// jego globalnego kontaktu (403 guardian_shared_outside_scope). Dla roku bez drugiej klasy
+// (Y2) drugi uczeń trafia do tej samej klasy — trasa i tak odmawia poza zakresem roku.
+async function makeSharedGuardianHousehold(db, target) {
+  const base = await makeHousehold(db, target);
+  const otherClassId = { A: TARGETS.B.classId, B: TARGETS.A.classId }[target.key] ?? target.classId;
+  const studentId = `${base.householdId}-s2`;
+  await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Jan', $3)",
+    [studentId, base.householdId, 'Syntetyczny']);
+  await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, false)',
+    [studentId, base.guardianId]);
+  await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
+    [`${base.householdId}-e2`, studentId, otherClassId, target.schoolYearId]);
+  return base;
 }
 
 async function seedFixtureSessions(db) {
@@ -246,7 +279,7 @@ async function makeEventTaskSignup(db, target, stage) {
   return { eventId, taskId, signupId: signup.id };
 }
 
-async function makeMeeting(db, target, stage, { title, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
+async function makeMeeting(db, target, stage, { title, itemTitle, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
   const scopeMarker = marker(target.key);
   const { meeting } = await createMeeting(db, fxAdmin, {
     idempotencyKey: nextKey('fx-meeting'), schoolYearId: target.schoolYearId,
@@ -257,6 +290,18 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
   });
   const obj = { meetingId: meeting.id };
   if (stage === 'draft') return obj;
+  // #113: zebranie zaplanowane z punktem porządku, szkicem i zatwierdzonym zawiadomieniem
+  // (autor fxAdmin, zatwierdza fxBoard — inna osoba, zasada czterech oczu).
+  if (['agendaItem', 'draftNotice', 'approvedNotice'].includes(stage)) {
+    const { agendaItem } = await addAgendaItem(db, fxAdmin, {
+      idempotencyKey: nextKey('fx-item'), meetingId: meeting.id, title: itemTitle ?? `Punkt ${scopeMarker}`,
+    });
+    const withItem = { ...obj, agendaItemId: agendaItem.id };
+    if (stage === 'agendaItem') return withItem;
+    const { notice } = await createMeetingNotice(db, fxAdmin, { meetingId: meeting.id });
+    if (stage === 'approvedNotice') await approveMeetingNotice(db, fxBoard, { meetingId: meeting.id, noticeId: notice.id });
+    return { ...withItem, noticeId: notice.id };
+  }
   await updateMeeting(db, fxAdmin, { meetingId: meeting.id, status: 'held' });
   if (stage === 'held') return obj;
   if (stage === 'draftResolution') {
@@ -729,6 +774,7 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  sharedGuardianHousehold: (ctx, target) => makeSharedGuardianHousehold(ctx.db, target),
   // #86: gospodarstwo fixture + drugie, puste — do dodania członkostwa ucznia.
   householdSpare: async (ctx, target) => {
     const made = await makeHousehold(ctx.db, target);
@@ -800,6 +846,12 @@ async function seedStatic(ctx) {
   await makeMeeting(ctx.db, TARGETS.W1, 'shared', {
     title: `Zebranie jawne ${marker('PUBLIC')}`, minutesBody: `Protokół ${marker('PUBLIC')} — treść jawna.`, visibility: 'public',
   });
+  // #113: jawne zawiadomienie zebrania ogólnego (bez znaczników klas) oraz zatwierdzone zawiadomienie
+  // zebrania klasowego A, które nie może pojawić się na stronie publicznej.
+  await makeMeeting(ctx.db, TARGETS.W1, 'approvedNotice', {
+    title: `Zebranie jawne ${marker('PUBLIC')}`, itemTitle: `Punkt jawny ${marker('PUBLIC')}`,
+  });
+  await makeMeeting(ctx.db, TARGETS.A, 'approvedNotice');
   // Kampania istniejąca w bazie (#110): email_preferences_events.campaign_id
   // ma FK do email_campaigns, więc token wypisania w macierzy musi wskazywać
   // na prawdziwy wiersz, nie dowolny ciąg znaków.
@@ -1035,13 +1087,86 @@ for (const route of ROUTE_MATRIX) {
 }
 
 // #214: `todo` w macierzy nie oblewa CI, więc bez limitu jest wygodnym miejscem
-// na ukrycie nowej regresji uprawnień. Dziś macierz nie ma żadnego wpisu — ten
-// meta-test to zabezpiecza: dodanie `todo` do route-matrix.js musi być świadome
-// i opisane w PR/issue, nie przejść bez zauważenia.
-test('macierz uprawnień: zero wpisów `todo` (znana luka wymaga świadomej decyzji, patrz #214)', () => {
-  const allTodoReasons = ROUTE_MATRIX.flatMap((route) => caseList(route).map((item) => item.todo).filter(Boolean));
-  assert.deepEqual(allTodoReasons, [], `macierz ma ${allTodoReasons.length} wpis(y) todo — opisz je w PR i w issue: ${allTodoReasons.join(' | ')}`);
+// na ukrycie nowej regresji uprawnień. Dopuszczalne `todo` to WYŁĄCZNIE wpisy
+// z listy poniżej: klucz to id trasy, wartość to numer otwartego issue. Lista
+// jest dziś pusta. Nowe `todo` bez wpisu oraz wpis bez `todo` w macierzy (lub bez
+// numeru issue) oblewają test — luka musi być zgłoszona, nie schowana.
+export const ALLOWED_TODO = Object.freeze({
+  // 'route.id': '#NNN',
 });
+
+export function todoViolations(routes, allowed, listCases = caseList) {
+  const problems = [];
+  const withTodo = new Set();
+  for (const route of routes) {
+    if (listCases(route).some((item) => item.todo)) withTodo.add(route.id);
+  }
+  for (const id of withTodo) {
+    if (!Object.hasOwn(allowed, id)) problems.push(`trasa ${id} ma \`todo\` bez wpisu w ALLOWED_TODO`);
+  }
+  for (const [id, issue] of Object.entries(allowed)) {
+    if (!/^#\d+$/.test(String(issue))) problems.push(`wpis ${id} nie wskazuje numeru issue (#NNN)`);
+    if (!withTodo.has(id)) problems.push(`wpis ${id} w ALLOWED_TODO nie ma odpowiadającego \`todo\` w macierzy`);
+  }
+  return problems;
+}
+
+test('macierz uprawnień: `todo` tylko z listy ALLOWED_TODO wskazującej issue (#214)', () => {
+  assert.deepEqual(todoViolations(ROUTE_MATRIX, ALLOWED_TODO), []);
+});
+
+test('meta-test `todo` wykrywa nowe `todo` bez wpisu, wpis martwy i wpis bez issue (kontrola pozytywna)', () => {
+  const fakeRoutes = [
+    { id: 'a.route', targets: [], todo: () => 'luka' },
+    { id: 'b.route', targets: [] },
+  ];
+  const listCases = (route) => [{ todo: route.todo?.() }];
+  assert.equal(todoViolations(fakeRoutes, {}, listCases).length, 1, 'todo bez wpisu');
+  assert.deepEqual(todoViolations(fakeRoutes, { 'a.route': '#214' }, listCases), []);
+  assert.equal(todoViolations(fakeRoutes, { 'a.route': 'kiedyś' }, listCases).length, 1, 'wpis bez numeru issue');
+  assert.equal(todoViolations(fakeRoutes, { 'a.route': '#214', 'b.route': '#1' }, listCases).length, 1, 'martwy wpis');
+});
+
+// ---------- identyfikatory w treści żądania: spoza zakresu = nieistniejący (#205, SR-07) ----------
+
+for (const item of REFERENCE_CASES) {
+  test(`identyfikator w treści: ${item.id} — spoza zakresu i nieistniejący dają tę samą odmowę, bez zapisu`, async () => {
+    const ctx = await matrixContext();
+    const route = ROUTE_MATRIX.find((entry) => entry.id === item.routeId);
+    assert.ok(route, `brak trasy ${item.routeId} w macierzy`);
+    const target = TARGETS[item.target];
+    for (const actorKey of item.actors) {
+      const cookie = ctx.sessions[actorKey][true];
+      const values = [...item.outOfScope, item.missing, item.inScope];
+      // Obiekty (zebranie, wpłata nieprzypisana) powstają PRZED zdjęciem śladu zapisu.
+      const objects = new Map();
+      for (const value of values) {
+        objects.set(value, route.object ? await makeObject(ctx, route.object, target, { cookie, route: route.id, success: true }) : null);
+      }
+      const send = async (value) => {
+        const built = await route.build({ target, obj: objects.get(value), key: nextKey(`ref-${item.id}`), fx: ctx.fx });
+        const response = await handlePgRequest(request(built.path, {
+          method: route.method, body: item.body(value, { target, actorKey }),
+          headers: { 'Idempotency-Key': nextKey(`ref-key-${actorKey}`) }, cookie,
+        }), ctx.env);
+        const text = await response.text();
+        return { status: response.status, text };
+      };
+      const before = await writeFingerprint(ctx.db);
+      const refused = [];
+      for (const value of [...item.outOfScope, item.missing]) refused.push({ value, ...(await send(value)) });
+      for (const result of refused) {
+        assert.equal(result.status, item.denied, `${actorKey}/${result.value}: ${result.text}`);
+        assert.equal(JSON.parse(result.text).error, item.deniedError, `${actorKey}/${result.value}`);
+        assert.equal(result.text, refused[refused.length - 1].text, `${actorKey}/${result.value}: odpowiedź odróżnia spoza zakresu od nieistniejącego`);
+        for (const scope of SCOPED_MARKER_KEYS) assert.ok(!MARKERS[scope].some((value) => result.text.includes(value)), `${actorKey}: odmowa zawiera dane ${scope}`);
+      }
+      assert.deepEqual(await writeFingerprint(ctx.db), before, `${actorKey}: odmowa zmieniła dane`);
+      const accepted = await send(item.inScope);
+      assert.equal(accepted.status, item.ok, `${actorKey}/${item.inScope}: ${accepted.text}`);
+    }
+  });
+}
 
 test.after(async () => {
   for (const pending of contexts.values()) await (await pending).db.close();
@@ -1103,8 +1228,10 @@ test('meta: każdy moduł z ROUTES ma wpisy w macierzy i odwrotnie', () => {
 test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
   const ids = ROUTE_MATRIX.map((route) => route.id);
   assert.equal(new Set(ids).size, ids.length, 'id tras w macierzy muszą być unikalne');
-  const signatures = ROUTE_MATRIX.map((route) => `${route.method} ${route.path}`);
-  assert.equal(new Set(signatures).size, signatures.length, 'para metoda + ścieżka musi być unikalna');
+  // `variant` (opcjonalny): druga pozycja tej samej trasy z innym obiektem fixture (np. #200 —
+  // opiekun z dziećmi z dwóch klas), z własną tabelą oczekiwanych statusów.
+  const signatures = ROUTE_MATRIX.map((route) => `${route.method} ${route.path}${route.variant ? ` [${route.variant}]` : ''}`);
+  assert.equal(new Set(signatures).size, signatures.length, 'para metoda + ścieżka (+ variant) musi być unikalna');
   for (const route of ROUTE_MATRIX) {
     assert.ok(route.targets.length > 0 && route.targets.every((key) => key in TARGETS), route.id);
     assert.ok([200, 201, 204].includes(route.ok), `${route.id}: ok`);

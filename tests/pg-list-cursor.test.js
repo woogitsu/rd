@@ -69,12 +69,15 @@ before(async () => {
   );
   // Audyt: znaczniki różniące się o mikrosekundy (obcięcie do ms w kursorze zgubiłoby wiersze)
   // oraz remisy.
+  // #204: 0144 stempluje occurred_at = now(); historyczne daty fixture'a wymagają trybu odtworzenia.
+  await db.query(`SET rd.restore = 'on'`);
   await db.query(
     `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, occurred_at)
      SELECT 'ae-' || lpad(i::text, 5, '0'), 'u-admin', 'role_grant.created', 'role_grant', 'x-' || i,
             timestamptz '2026-01-01 00:00:00+00' - (i / 7) * interval '1 second' + (CASE WHEN i % 2 = 0 THEN (i % 7) * interval '1 microsecond' ELSE interval '0' END)
        FROM generate_series(1, ${TOTAL}) i`,
   );
+  await db.query(`RESET rd.restore`);
   await db.query(
     `INSERT INTO email_campaigns (id, school_year_id, title, audience, subject, body_text, content_hash, created_by, updated_by,
                                   idempotency_key, created_at)

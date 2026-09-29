@@ -377,12 +377,16 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
 // własność wiersza i wszystkie warunki. Gospodarstwo dziecka i relacje z opiekunem
 // dotyczą dnia item.memberDay (Bruksela, jak w recheckRow i migawce), a nie
 // kolumny students.household_id (#194) ani dnia UTC limitu Brevo. Zwraca null (wysyłaj) albo werdykt.
+// #208/#210: odczyt kampanii jest blokujący (FOR SHARE), więc potwierdzenie i anulowanie
+// (FOR UPDATE na kampanii) szeregują się: albo potwierdzenie zatwierdziło się przed
+// liczeniem inFlight w anulowaniu (wiadomość jest wtedy policzona), albo czeka i widzi
+// „cancelled”. Bez blokady wiadomość mogła wyjść po odpowiedzi „anulowano” z inFlight = 0.
 async function confirmSend(db, item, { runToken, config, sendAt }) {
   return db.transaction(async (tx) => {
     const { rows } = await tx.query(
       `UPDATE email_outbox o SET send_started_at = $3, claimed_at = $3, updated_at = $3
         WHERE o.id = $1 AND o.claim_token = $2 AND o.state = 'sending' AND o.send_started_at IS NULL
-          AND EXISTS (SELECT 1 FROM email_campaigns c WHERE c.id = o.campaign_id AND c.status = 'sending')
+          AND EXISTS (SELECT 1 FROM email_campaigns c WHERE c.id = o.campaign_id AND c.status = 'sending' FOR SHARE OF c)
           AND NOT EXISTS (
             SELECT 1 FROM email_campaigns c
               JOIN household_payment_totals p ON p.household_id = o.household_id AND p.school_year_id = c.school_year_id

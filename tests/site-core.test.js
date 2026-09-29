@@ -18,7 +18,9 @@ import {
   newsPhotoUrl,
   normalizePhotos,
   normalizeEvent,
+  noticesUrl,
   publicMinutes,
+  publicNotices,
   schoolYearFromSearch,
   upcomingEvents,
 } from "../site/core.js";
@@ -151,6 +153,25 @@ test("rok szkolny i adresy API", () => {
   assert.throws(() => minutesUrl("../x"));
 });
 
+// #113: zawiadomienia o zebraniach ogólnych — wyłącznie pola zatwierdzone, bez powodu odwołania.
+test("zawiadomienia: URL, normalizacja, sortowanie i odrzucenie niepoprawnych wpisów", () => {
+  assert.equal(noticesUrl("2026-2027"), "/api/meetings/public-notices?schoolYearId=2026-2027");
+  assert.throws(() => noticesUrl("../x"), /invalid_school_year/);
+  const list = publicNotices([
+    { id: "n2", title: "Zebranie późniejsze", scheduledAt: "2026-11-20T18:00:00Z", location: "Aula",
+      agenda: [{ position: 1, title: "Sprawozdanie" }, { position: 2, title: " " }] },
+    { id: "n1", title: "Zebranie wcześniejsze", scheduledAt: "2026-10-20T18:00:00Z", cancelled: true, agenda: [] },
+    { id: "bad id", title: "Zły identyfikator", scheduledAt: "2026-10-20T18:00:00Z" },
+    { id: "n3", title: "Bez daty" },
+    null,
+  ]);
+  assert.deepEqual(list.map((item) => item.id), ["n1", "n2"]);
+  assert.equal(list[0].cancelled, true);
+  assert.deepEqual(list[1].agenda, ["Sprawozdanie"]);
+  assert.equal(list[1].location, "Aula");
+  assert.deepEqual(publicNotices(undefined), []);
+});
+
 test("aktualności: zdjęcia — adresy tylko ze stałych tras publicznego API, alt z bazy, dekoracyjne z pustym alt (#96)", () => {
   const [post] = newsItems({ posts: [{
     id: "p1", title: "Piknik", body: "Treść", publishedAt: "2026-09-20T10:00:00Z",
@@ -193,6 +214,57 @@ test("kod strony: zdjęcia leniwe, thumb/web, znikają po błędzie ładowania, 
   assert.match(source, /img\.srcset = /);
   assert.match(source, /addEventListener\("error", \(\) => figure\.remove\(\)\)/);
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML/);
+});
+
+// #116: stały adres wpisu i archiwum.
+import {
+  NEWS_UNAVAILABLE_MESSAGE,
+  archiveYears,
+  newsAnchorId,
+  newsIdFromHash,
+  newsListUrl,
+  newsPermalink,
+  newsPostFromPayload,
+  newsPostUrl,
+  newsYearFromSearch,
+} from "../site/core.js";
+
+test("stały link wpisu: fragment #wpis-<id> w obie strony, inne fragmenty ignorowane", () => {
+  assert.equal(newsPermalink("post-1"), "#wpis-post-1");
+  assert.equal(newsAnchorId("a.b:c_d"), "wpis-a.b:c_d");
+  assert.equal(newsIdFromHash("#wpis-post-1"), "post-1");
+  for (const hash of ["", "#wydarzenia", "#wpis-", "#wpis-../x", "#wpis-a b", "#wpis-<script>", null, undefined])
+    assert.equal(newsIdFromHash(hash), null, String(hash));
+  assert.throws(() => newsPermalink("../x"), /invalid_post_id/);
+  assert.equal(newsPostUrl("post-1"), "/api/public/news/post-1");
+  assert.throws(() => newsPostUrl("a/b"), /invalid_post_id/);
+});
+
+test("wpis z GET /api/public/news/{id}: tekst pozostaje tekstem, brak treści = null", () => {
+  const post = newsPostFromPayload({ post: { id: "p1", title: "<script>alert(1)</script>", body: "Treść", publishedAt: "2026-09-01T10:00:00Z", photos: [] } });
+  assert.equal(post.title, "<script>alert(1)</script>");
+  assert.equal(post.id, "p1");
+  assert.equal(newsPostFromPayload({ error: "post_not_found" }), null);
+  assert.equal(newsPostFromPayload(null), null);
+  assert.equal(newsPostFromPayload({ post: { id: "p1", title: "", body: "x" } }), null);
+  assert.match(NEWS_UNAVAILABLE_MESSAGE, /nie jest dostępny/);
+});
+
+test("archiwum: rok tylko z poprawnego ?rok=, adres listy z limitem, lata od bieżącego wstecz", () => {
+  assert.equal(newsYearFromSearch("?rok=2025-2026"), "2025-2026");
+  assert.equal(newsYearFromSearch("?rok=../x"), null);
+  assert.equal(newsYearFromSearch(""), null);
+  assert.equal(newsListUrl(), "/api/public/news");
+  assert.equal(newsListUrl("2025-2026"), "/api/public/news?schoolYearId=2025-2026&limit=50");
+  assert.throws(() => newsListUrl("a&b"), /invalid_school_year/);
+  assert.deepEqual(archiveYears(NOW, 3), ["2026-2027", "2025-2026", "2024-2025"]);
+  assert.equal(archiveYears(NOW).length, 6);
+});
+
+test("main.js: wpis wybrany po adresie i archiwum nie używają innerHTML", async () => {
+  const source = await readFile(new URL("../site/main.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|outerHTML/);
+  assert.match(source, /NEWS_UNAVAILABLE_MESSAGE/);
 });
 
 test("#122: adresy iCal wydarzenia i kanału są budowane tylko z bezpiecznych wartości", () => {

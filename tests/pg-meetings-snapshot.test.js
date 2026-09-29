@@ -32,7 +32,8 @@ test('getMeeting: wszystkie zapytania idą przez jedną transakcję, a wynik ma 
   const detail = await getMeeting(spy, actor, { meetingId: 'm-1' });
   assert.equal(detail.meeting.id, 'm-1');
   assert.deepEqual(detail.agenda, []);
-  assert.equal(seen.filter((q) => q.scope === 'tx').length, 7);
+  // SET + zebranie + osiem list (po #113: wersje porządku, zmiany terminu, zawiadomienia).
+  assert.equal(seen.filter((q) => q.scope === 'tx').length, 10);
   assert.ok(seen.length > 0);
   assert.equal(seen.filter((q) => q.scope === 'db').length, 0, 'żadne zapytanie poza transakcją');
   assert.match(seen[0].sql, /SET TRANSACTION ISOLATION LEVEL REPEATABLE READ/);

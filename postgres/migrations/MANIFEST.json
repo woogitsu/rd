@@ -300,6 +300,10 @@
     "sha256": "a206e630b58d1e3132ce0fe1eb4d6b706b3e623098b8428db34ad195440c4892"
   },
   {
+    "name": "0150_meeting_attendee_user_scope.sql",
+    "sha256": "154b3e71d4320c743ae4d9c3f6550c9a0d78c51064d377879250b9c20206ca44"
+  },
+  {
     "name": "0132_keyset_list_indexes.sql",
     "sha256": "3d944e3f55db082b29db4e26de58cddd95e3ba7deb2f12332b5042de6d7945d2"
   },
@@ -310,5 +314,25 @@
   {
     "name": "0138_financial_report_snapshots.sql",
     "sha256": "8be6c123cf7abe5f7bad6af731875f305318331d54e94511962a0486d6337610"
+  },
+  {
+    "name": "0139_meeting_cancel_notice.sql",
+    "sha256": "43ac15730a4a7d290a6a34b6fdfdac229346c91ac5a55374c092bc6036fc1f75"
+  },
+  {
+    "name": "0140_data_access_log_review.sql",
+    "sha256": "304aab73b8a25f23650bdbede67203c1513daadc28fc488aaf7c9d83c6d172af"
+  },
+  {
+    "name": "0142_ledger_replacement_payment_link.sql",
+    "sha256": "89648113bd1a96487591db8412d53b99a2161e3fb44bed19097ee8ddede1b077"
+  },
+  {
+    "name": "0143_news_photo_document_fk_and_role_grants_validate.sql",
+    "sha256": "f5eb32b993bbc6e1065520e6a41c916ea5aebe2fb49e417d84dd1dac0b2529a1"
+  },
+  {
+    "name": "0144_immutability_stamps_and_truncate.sql",
+    "sha256": "972bab7664ff26fe68be49aeb1a8b3cae7172642ff71698ab68a8f7976c2b0cb"
   }
 ]

@@ -24,7 +24,7 @@ import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { csvCell, csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
-import { detectPossiblePersonalData } from '../pii-check.js';
+import { gateFreeText, loadKnownNames, piiAuditMetadata } from '../pii-gate.js';
 import { recordDataAccess } from '../data-access.js';
 
 export const name = 'payments';
@@ -61,6 +61,26 @@ class Replay {
 
 function validId(value) {
   return typeof value === 'string' && ID_PATTERN.test(value);
+}
+
+// #205: householdId z treści żądania musi wskazywać gospodarstwo w zakresie roku
+// wpłaty: niezarchiwizowane i z uczniem zapisanym w tym roku (wariant zachowawczy
+// do D-11 — bez ostrzeżenia i "powodu"). Nieistniejące gospodarstwo i gospodarstwo
+// spoza zakresu dają ten sam kod (`invalid_reference`), sprawdzany przed zapisem,
+// więc odpowiedź nie jest wyrocznią istnienia. Kto chce zapisać wpłatę na rodzinę
+// bez ucznia w roku, zostawia ją jako nieprzypisaną (`unmatched`).
+async function assertHouseholdInScope(tx, householdId, schoolYearId) {
+  const { rows } = await tx.query(
+    `SELECT 1 FROM households h
+      WHERE h.id = $1 AND h.archived_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM student_households sh
+            JOIN enrollments e ON e.student_id = sh.student_id
+           WHERE sh.household_id = h.id AND e.school_year_id = $2
+        )`,
+    [householdId, schoolYearId],
+  );
+  if (!rows.length) throw new RequestError('invalid_reference');
 }
 
 function decodeId(value) {
@@ -157,14 +177,17 @@ function parseRefundInput(data) {
   const reason = textOrNull(data.reason, 500);
   if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
   if (!validDate(data.refundedOn) || !METHODS.has(data.method)) throw new RequestError('invalid_request');
-  return { amountCents: readAmount(data.amountCents), refundedOn: data.refundedOn, method: data.method, reason };
+  return {
+    amountCents: readAmount(data.amountCents), refundedOn: data.refundedOn, method: data.method, reason,
+    confirmPersonalData: data.confirmPersonalData === true,
+  };
 }
 
 function parseReassignmentInput(data) {
   const reason = textOrNull(data.reason, 500);
   if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
   if (!validId(data.householdId)) throw new RequestError('invalid_request');
-  return { householdId: data.householdId, reason };
+  return { householdId: data.householdId, reason, confirmPersonalData: data.confirmPersonalData === true };
 }
 
 function paymentFromRow(row) {
@@ -278,23 +301,9 @@ async function loadPaymentByKey(executor, key) {
   return rows[0] ?? null;
 }
 
-// #152: kandydaci na "znane imię i nazwisko" w zakresie roku szkolnego —
-// uczniowie zapisani w tym roku i opiekunowie ich gospodarstw. Przybliżenie
-// (nie każdy opiekun gospodarstwa musi mieć aktywną relację z dzieckiem w tym
-// roku) — świadomie szersze niż węziej, żeby nie przeoczyć trafienia.
-async function loadKnownNames(executor, schoolYearId) {
-  const { rows } = await executor.query(
-    `SELECT first_name, last_name FROM students
-      WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
-     UNION
-     SELECT g.first_name, g.last_name FROM guardians g
-      WHERE g.household_id IN (
-        SELECT household_id FROM students
-         WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
-      )`,
-    [schoolYearId],
-  );
-  return rows.map((row) => ({ firstName: row.first_name, lastName: row.last_name }));
+// #152: bramka pól wolnego tekstu (src/pg/pii-gate.js) — błąd 422 tej trasy.
+function piiFail(code, categories) {
+  return new RequestError(code, 422, { categories });
 }
 
 async function loadCorrectionByKey(executor, key) {
@@ -478,7 +487,9 @@ const CREATED = { 'Idempotency-Replayed': 'false' };
 
 async function createPayment(request, env, json) {
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parsePaymentInput(await readJson(request));
+  const paymentData = await readJson(request);
+  const input = parsePaymentInput(paymentData);
+  const confirmPersonalData = paymentData.confirmPersonalData === true;
   const context = await requireFinancialContext(request, env, input.schoolYearId);
   const actorId = context.session.user.id;
 
@@ -493,6 +504,11 @@ async function createPayment(request, env, json) {
     result = await env.db.transaction(async (tx) => {
       const replay = replayOrConflict(await loadPaymentByKey(tx, idempotencyKey));
       if (replay) return replay;
+      if (input.householdId) await assertHouseholdInScope(tx, input.householdId, input.schoolYearId);
+      // #152: tytuł przelewu przepisany z wyciągu często zawiera imię dziecka lub IBAN nadawcy.
+      const gate = gateFreeText([['payment_entries.reference', input.reference]], {
+        confirm: confirmPersonalData, knownNames: await loadKnownNames(tx, input.schoolYearId), fail: piiFail,
+      });
       const paymentId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO payment_entries (
@@ -504,7 +520,7 @@ async function createPayment(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'payment.created', entityType: 'payment_entry', entityId: paymentId,
-        metadata: { schoolYearId: input.schoolYearId },
+        metadata: { schoolYearId: input.schoolYearId, ...piiAuditMetadata(gate) },
       });
       return { payment: { id: paymentId, ...input } };
     });
@@ -576,14 +592,12 @@ async function createCorrection(request, env, paymentEntryId, json) {
       if (toSafeInteger(corrected.rows[0].corrected_cents) + input.amountCents > toSafeInteger(payment.amount_cents)) {
         throw new RequestError('correction_exceeds_remaining_amount', 409);
       }
-      // #152: pole wolnego tekstu w niezmiennej tabeli — ostrzeżenie przed
-      // zapisem, nie twarda blokada. Kategorie i liczby trafień trafiają do
-      // audytu (bez treści); wynik detekcji nigdy nie ujawnia dopasowanego
-      // fragmentu ani nazwiska.
-      const piiCheck = detectPossiblePersonalData(input.reason, { knownNames: await loadKnownNames(tx, payment.school_year_id) });
-      if (piiCheck.categories.length && !input.confirmPersonalData) {
-        throw new RequestError('possible_personal_data', 422, { categories: piiCheck.categories });
-      }
+      // #152: pole wolnego tekstu w niezmiennej tabeli. E-mail/IBAN/numer
+      // rejestru krajowego — odrzucenie bez obejścia; telefon i znane imię —
+      // ostrzeżenie do potwierdzenia. Kategorie (bez treści) trafiają do audytu.
+      const gate = gateFreeText([['payment_corrections.reason', input.reason]], {
+        confirm: input.confirmPersonalData, knownNames: await loadKnownNames(tx, payment.school_year_id), fail: piiFail,
+      });
       const correctionId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
@@ -596,7 +610,7 @@ async function createCorrection(request, env, paymentEntryId, json) {
         metadata: {
           paymentEntryId,
           schoolYearId: payment.school_year_id,
-          ...(piiCheck.categories.length ? { piiConfirmed: true, piiCategories: piiCheck.categories } : {}),
+          ...piiAuditMetadata(gate),
         },
       });
       return { correction: { id: correctionId, paymentEntryId, amountCents: input.amountCents, reason: input.reason } };
@@ -646,6 +660,7 @@ async function assignPayment(request, env, paymentEntryId, json) {
       if (payment.status !== 'unmatched' || payment.household_id !== null) {
         throw new RequestError('payment_already_assigned', 409);
       }
+      await assertHouseholdInScope(tx, householdId, payment.school_year_id);
       const assignmentId = crypto.randomUUID();
       // Trigger payment_assignments_apply_insert ustawia household_id i status 'recorded'.
       await tx.query(
@@ -721,6 +736,9 @@ async function createRefund(request, env, paymentEntryId, json) {
       if (correctedCents + refundedCents + input.amountCents > toSafeInteger(payment.amount_cents)) {
         throw new RequestError('refund_exceeds_remaining_amount', 409);
       }
+      const gate = gateFreeText([['payment_refunds.reason', input.reason]], {
+        confirm: input.confirmPersonalData, knownNames: await loadKnownNames(tx, payment.school_year_id), fail: piiFail,
+      });
       const refundId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO payment_refunds (id, payment_entry_id, amount_cents, refunded_on, method, reason, created_by, idempotency_key)
@@ -729,7 +747,7 @@ async function createRefund(request, env, paymentEntryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'payment.refund.created', entityType: 'payment_refund',
-        entityId: refundId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id },
+        entityId: refundId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { refund: {
         id: refundId, paymentEntryId, amountCents: input.amountCents,
@@ -784,9 +802,10 @@ async function reassignPayment(request, env, paymentEntryId, json) {
       if (payment.household_id === input.householdId) {
         throw new RequestError('payment_reassignment_same_household', 409);
       }
-      if (!(await tx.query('SELECT 1 FROM households WHERE id = $1', [input.householdId])).rows.length) {
-        throw new RequestError('invalid_reference');
-      }
+      await assertHouseholdInScope(tx, input.householdId, payment.school_year_id);
+      const gate = gateFreeText([['payment_reassignments.reason', input.reason]], {
+        confirm: input.confirmPersonalData, knownNames: await loadKnownNames(tx, payment.school_year_id), fail: piiFail,
+      });
       const reassignmentId = crypto.randomUUID();
       // Trigger payment_reassignments_apply_insert ustawia nowe household_id.
       await tx.query(
@@ -797,7 +816,7 @@ async function reassignPayment(request, env, paymentEntryId, json) {
       // Dziennik bez identyfikatorów gospodarstw w metadanych, jak przy przypisaniu.
       await insertAuditEvent(tx, {
         actorId, action: 'payment.reassigned', entityType: 'payment_reassignment',
-        entityId: reassignmentId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id },
+        entityId: reassignmentId, metadata: { paymentEntryId, schoolYearId: payment.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { reassignment: {
         id: reassignmentId, paymentEntryId, oldHouseholdId, newHouseholdId: input.householdId, reason: input.reason,
@@ -944,9 +963,7 @@ async function createAllocation(request, env, paymentEntryId, json) {
       if (payment.status !== 'unmatched' || payment.household_id !== null) {
         throw new RequestError('payment_already_assigned', 409);
       }
-      if (!(await tx.query('SELECT 1 FROM households WHERE id = $1', [input.householdId])).rows.length) {
-        throw new RequestError('invalid_reference');
-      }
+      await assertHouseholdInScope(tx, input.householdId, payment.school_year_id);
       const allocationId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO payment_allocations (id, payment_entry_id, school_year_id, household_id, amount_cents, created_by, idempotency_key)
@@ -978,6 +995,7 @@ async function reverseAllocation(request, env, paymentEntryId, allocationId, jso
   const data = await readJson(request);
   const reason = textOrNull(data.reason, 500);
   if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
+  const confirmPersonalData = data.confirmPersonalData === true;
   const context = await requireFinancialContext(request, env);
   const actorId = context.session.user.id;
 
@@ -1009,6 +1027,9 @@ async function reverseAllocation(request, env, paymentEntryId, allocationId, jso
       );
       if (!allocation.rows.length) throw new RequestError('payment_allocation_not_found', 404);
       if (allocation.rows[0].reversal_id) throw new RequestError('payment_allocation_already_reversed', 409);
+      const gate = gateFreeText([['payment_allocation_reversals.reason', reason]], {
+        confirm: confirmPersonalData, knownNames: await loadKnownNames(tx, payment.school_year_id), fail: piiFail,
+      });
       const reversalId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO payment_allocation_reversals (id, allocation_id, school_year_id, reason, created_by, idempotency_key)
@@ -1017,7 +1038,7 @@ async function reverseAllocation(request, env, paymentEntryId, allocationId, jso
       );
       await insertAuditEvent(tx, {
         actorId, action: 'payment.allocation.reversed', entityType: 'payment_allocation',
-        entityId: allocationId, metadata: { paymentEntryId, reversalId, schoolYearId: payment.school_year_id },
+        entityId: allocationId, metadata: { paymentEntryId, reversalId, schoolYearId: payment.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { reversal: { id: reversalId, allocationId, paymentEntryId, reason } };
     });
@@ -1141,6 +1162,10 @@ async function exportCsv(request, env, url) {
         schoolYearId, format: 'csv', entryCount: entries.rows.length, correctionCount: corrections.rows.length,
       },
     });
+    // #133: eksport z identyfikatorami gospodarstw — wpis w tej samej transakcji (strict).
+    await recordDataAccess({ db: tx }, {
+      actorId, accessKind: 'payment_export', schoolYearId, outcome: 'ok', rowCount: entries.rows.length + corrections.rows.length,
+    }, { strict: true });
     return { entryRows: entries.rows, correctionRows: corrections.rows };
   });
 

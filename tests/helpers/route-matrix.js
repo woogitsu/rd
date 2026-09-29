@@ -200,9 +200,11 @@ export function campaignBody(target) {
     subject: 'Dobrowolna składka {rok}', bodyText: CAMPAIGN_TEXT };
 }
 
+// Dokument zarządu wstawiany przez seedBase (0143: FK news_photos.document_id).
+export const PHOTO_SOURCE_DOCUMENT_ID = 'dok-galeria-syntetyczny';
 export function photoBody(key) {
   return {
-    documentId: `dok-${safeKey(key)}`.slice(0, 120), author: 'Fotograf syntetyczny', source: 'own_work', takenOn: '2026-10-10',
+    documentId: PHOTO_SOURCE_DOCUMENT_ID, author: 'Fotograf syntetyczny', source: 'own_work', takenOn: '2026-10-10',
     licenseText: 'Zdjęcie własne autora, udostępnione Radzie do publikacji (syntetyczne).',
     altText: `Zdjęcie ${marker('W1')}`, depictsChildren: false,
   };
@@ -341,6 +343,14 @@ function familyReadDeny(actor) {
 // Zmiany w katalogu rodzin: rola bez prawa edycji — 403; rola edycji poza zakresem — 404 (jak brak obiektu).
 function familyEditDeny(actor) {
   return ['admin', 'board', 'boardA'].includes(actor.key) ? 404 : 403;
+}
+
+// #200: opiekun z relacjami z uczniami z dwóch klas roku 1. Zarząd z przydziałem klasy widzi go
+// (ma uczniów z zakresu), ale nie zmienia jego globalnego kontaktu: 403 guardian_shared_outside_scope
+// (nie 404 — brak wyroczni istnienia). Poza rokiem 1 — 404 jak brak obiektu.
+function familySharedGuardianDeny(actor, targetKey) {
+  if (actor.key === 'boardA') return targetKey === 'Y2' ? 404 : 403;
+  return familyEditDeny(actor);
 }
 
 // Kartki: przydział klasowy bez classId — 400 class_required (docs/PRINT); poza zakresem — 403.
@@ -683,6 +693,12 @@ export const ROUTE_MATRIX = Object.freeze([
     visible: () => [], contains: () => ['PUBLIC'],
   },
   {
+    id: 'meetings.publicNotices', module: 'meetings', method: 'GET', path: '/api/meetings/public-notices?schoolYearId=:year',
+    targets: ['-'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null,
+    build: () => ({ path: `/api/meetings/public-notices?schoolYearId=${YEAR_1}` }),
+    visible: () => [], contains: () => ['PUBLIC'],
+  },
+  {
     id: 'meetings.resolutionLookup', module: 'meetings', method: 'GET',
     path: '/api/meetings/resolutions/lookup?schoolYearId=:year&number=:number', targets: YEAR_TARGETS,
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, treasurer: SCHOOL_Y1 },
@@ -711,6 +727,22 @@ export const ROUTE_MATRIX = Object.freeze([
   meetingRoute('meetings.agendaItem', 'POST', '/api/meetings/:meetingId/agenda-items', () => '/agenda-items', {
     ok: 201, create: true, body: (target) => ({ title: `Punkt ${marker(target.key)}` }),
   }),
+  // #113: odwołanie, zmiana terminu, wycofanie punktu, zawiadomienie i szkic kampanii.
+  meetingRoute('meetings.cancel', 'POST', '/api/meetings/:meetingId/cancellation', () => '/cancellation', {
+    body: () => ({ reason: 'Odwołanie syntetyczne', revision: 1 }),
+  }),
+  meetingRoute('meetings.reschedule', 'POST', '/api/meetings/:meetingId/reschedule', () => '/reschedule', {
+    body: () => ({ scheduledAt: '2026-10-17T17:00:00Z', reason: 'Zmiana syntetyczna', revision: 1 }),
+  }),
+  meetingRoute('meetings.agendaWithdrawal', 'POST', '/api/meetings/:meetingId/agenda-items/:itemId/withdrawal',
+    (obj) => `/agenda-items/${obj.agendaItemId}/withdrawal`, { stage: 'agendaItem', body: () => ({}) }),
+  meetingRoute('meetings.noticeCreate', 'POST', '/api/meetings/:meetingId/notices', () => '/notices', {
+    ok: 201, stage: 'agendaItem', body: () => ({}),
+  }),
+  meetingRoute('meetings.noticeApproval', 'POST', '/api/meetings/:meetingId/notices/:noticeId/approval',
+    (obj) => `/notices/${obj.noticeId}/approval`, { stage: 'draftNotice', body: () => ({}) }),
+  meetingRoute('meetings.noticeCampaignDraft', 'POST', '/api/meetings/:meetingId/notices/:noticeId/campaign-draft',
+    (obj) => `/notices/${obj.noticeId}/campaign-draft`, { ok: 201, stage: 'approvedNotice', body: () => ({}) }),
   meetingRoute('meetings.attendance', 'POST', '/api/meetings/:meetingId/attendance', () => '/attendance', {
     body: () => ({ userId: 'u-fx-board', capacity: 'board_member', votingEligible: true, present: true }),
   }),
@@ -1157,6 +1189,14 @@ export const ROUTE_MATRIX = Object.freeze([
     build: () => ({ path: '/api/public/news' }),
     visible: () => [], contains: () => ['PUBLIC'],
   },
+  // #116: stały adres wpisu — ta sama zawartość dla każdego aktora (też bez sesji);
+  // szkic, nieopublikowany, wycofany i nieistniejący = identyczne 404 (test w pg-news.test.js).
+  {
+    id: 'news.publicItem', module: 'news', method: 'GET', path: '/api/public/news/:postId', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static', object: { kind: 'newsPost', stage: 'published' },
+    build: ({ obj }) => ({ path: `/api/public/news/${obj.postId}` }),
+    visible: () => [], contains: () => ['PUBLIC'],
+  },
   {
     id: 'news.list', module: 'news', method: 'GET', path: '/api/news?schoolYearId=:year', targets: YEAR_TARGETS,
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, repA: SCHOOL_Y1, repB: SCHOOL_Y1 }, mfa: false, ok: 200, deny: 403,
@@ -1309,6 +1349,8 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Przegląd dziennika odczytu danych rodzin (#133): wariant zachowawczy do D-04/D-07/D-08 — wyłącznie admin + MFA.
+  adminRoute('admin.accessLog', 'GET', '/api/admin/access-log', {}),
   // Rejestr żądań osób (#100): wariant zachowawczy, wyłącznie admin (jak cały moduł).
   adminRoute('admin.dataRequests', 'GET', '/api/admin/data-requests', {}),
   adminRoute('admin.dataRequestCreate', 'POST', '/api/admin/data-requests', {
@@ -1472,6 +1514,17 @@ export const ROUTE_MATRIX = Object.freeze([
     id: 'families.guardianContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/contact',
     targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({ path: `/api/guardians/${obj.guardianId}/contact`, body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' } }),
+  },
+  {
+    // #200: przypadek „opiekun rodzeństwa z innej klasy we wspólnym gospodarstwie”. Zapis wyłącznie
+    // pełny zarząd/admin; boardA dostaje 403 i nic nie zapisuje (liczniki tabel i audytu bez zmian).
+    id: 'families.guardianContactShared', variant: 'opiekun z dziećmi z dwóch klas', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/contact',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'], boardA: [] }, mfa: false, ok: 200,
+    deny: familySharedGuardianDeny, fixture: 'fresh', object: { kind: 'sharedGuardianHousehold' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/contact`,
+      body: { email: 'zmiana-zakresu@example.invalid', contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' },
+    }),
   },
   {
     id: 'families.relationContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/students/:studentId',
@@ -1737,6 +1790,46 @@ export const ROUTE_MATRIX = Object.freeze([
   },
 ].map((route) => Object.freeze(route)));
 
+// #205 / SR-07: identyfikator w TREŚCI żądania (nie w ścieżce). Odpowiedź na identyfikator
+// spoza zakresu aktora i na nieistniejący MUSI być nieodróżnialna (status i treść), a odmowa
+// nie może zmienić żadnej tabeli z WRITE_TABLES. `routeId` wskazuje wpis macierzy, z którego
+// pochodzi obiekt (spotkanie / wpłata), `body(value, ctx)` buduje treść żądania z wartością
+// identyfikatora. Fixture'y (konta, gospodarstwa, opiekunowie) tworzy seedBase w macierzy:
+//   u-fx-nogrant  konto bez przydziału; u-fx-rok2 — konto z przydziałem tylko w roku 2;
+//   hh-A-g / hh-B-g  opiekunowie dzieci z 1A / 1B; hh-Y2-g — opiekun dziecka z roku 2;
+//   hh-fx-arch  gospodarstwo zarchiwizowane; hh-fx-empty  gospodarstwo bez ucznia;
+//   hh-Y2  gospodarstwo z dzieckiem tylko w roku 2 (wpłata w roku 1).
+export const REFERENCE_CASES = Object.freeze([
+  {
+    id: 'meetings.attendance:guardianId', routeId: 'meetings.attendance', target: 'A',
+    actors: ['admin', 'board', 'boardA'], ok: 200,
+    inScope: 'hh-A-g',
+    outOfScope: ['hh-B-g', 'hh-Y2-g'], missing: 'gd-nie-istnieje',
+    denied: 400, deniedError: 'invalid_reference',
+    body: (value) => ({ guardianId: value, capacity: 'guardian', votingEligible: true, present: true }),
+  },
+  {
+    id: 'meetings.attendance:userId', routeId: 'meetings.attendance', target: 'A',
+    actors: ['admin', 'board', 'boardA'], ok: 200,
+    inScope: 'u-fx-treasurer',
+    outOfScope: ['u-fx-nogrant', 'u-fx-rok2'], missing: 'u-nie-istnieje',
+    denied: 400, deniedError: 'invalid_reference',
+    body: (value) => ({ userId: value, capacity: 'guest', votingEligible: false, present: true }),
+  },
+  ...['payments.create', 'payments.assignment', 'payments.allocations.create'].map((routeId) => ({
+    id: `${routeId}:householdId`, routeId, target: 'W1', actors: ['admin', 'board', 'treasurer'],
+    ok: 201,
+    inScope: 'hh-A',
+    outOfScope: ['hh-fx-arch', 'hh-fx-empty', 'hh-Y2'], missing: 'hh-nie-istnieje',
+    denied: 400, deniedError: 'invalid_reference',
+    body: (value, { target }) => ({
+      householdId: value,
+      ...(routeId === 'payments.create' ? { schoolYearId: target.schoolYearId, amountCents: 1000, receivedOn: '2026-10-05', method: 'bank' } : {}),
+      ...(routeId === 'payments.allocations.create' ? { amountCents: 100 } : {}),
+    }),
+  })),
+]);
+
 export function requiresMfa(route, actor) {
   return typeof route.mfa === 'function' ? Boolean(route.mfa(actor)) : Boolean(route.mfa);
 }
@@ -1773,6 +1866,7 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/invitations/preview': 'działa bez sesji; tylko odczyt po tokenie zaproszenia (zamaskowany adres, rola, klasa, rok, termin); nie konsumuje tokenu',
   '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
   '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
+  '/api/meetings/public-notices': 'publiczne dane zatwierdzone',
   '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
   '/api/email/preferences': 'wypisanie jednym kliknięciem: klika je klient poczty rodzica, nie przeglądarka z sesją (#110); token HMAC jest jedynym zabezpieczeniem',
   '/api/mfa/': 'zapis i potwierdzenie MFA; limity błędów per sesja, wyższy sufit per konto (#189)',

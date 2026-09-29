@@ -122,7 +122,7 @@ Jedna pozycja wyciągu może odpowiadać kilku wpłatom: rodziny zapłaciły jed
 - `householdId: null` → wpłata `unmatched` (przypisanie później przez istniejące `POST /api/payments/{id}/assignment`, jak przy pozycji bez referencji). `householdId` wskazujące gospodarstwo → wpłata `recorded` od razu.
 - Idempotencja: jeden `Idempotency-Key` chroni **całą** operację (wpłatę i powiązanie razem) — ponowienie/podwójne kliknięcie z tym samym kluczem daje `200` z tym samym `payment.id` i `match.id`, nigdy drugiej wpłaty ani drugiego powiązania. Klucz jest zapisany osobno w `payment_entries.idempotency_key` i `bank_reconciliation_matches.idempotency_key` (różne tabele, więc bez kolizji), ale sprawdzany łącznie — replay wymaga zgodności wpłaty **i** jej aktywnego powiązania.
 - Uzgodnienie zatwierdzone odrzuca operację tak samo jak ręczny `POST …/matches` (`409 reconciliation_confirmed`) — trigger `bank_reconciliation_require_draft` (0015) jest backstopem w bazie.
-- Poza zakresem tej części: propozycje gospodarstw po komunikacji strukturalnej (zależy od #83), zatwierdzanie wsadowe wielu par naraz i widok uzgodnienia w panelu — tylko API.
+- Poza zakresem tej części: propozycje gospodarstw po komunikacji strukturalnej (zależy od #83), zatwierdzanie wsadowe wielu par naraz. Ekran uzgodnienia istnieje jako prototyp (`reconciliation/`), ale nie obejmuje tej trasy — dla łączenia z utworzeniem wpłaty dostępne jest tylko API.
 
 Ogólny CSV: pierwszy wiersz to nagłówek z kolumnami `date`/`data`, `amount`/`kwota` i opcjonalnie `reference`/`tytuł`/`opis`. Separator `,` albo `;` (wykrywany z nagłówka), pola w cudzysłowach, BOM dopuszczalny. Data `RRRR-MM-DD` lub `DD.MM.RRRR`/`DD/MM/RRRR`; kwota w EUR z kropką lub przecinkiem, np. `-12,50`. Błędny wiersz zwraca `400 invalid_statement_line` z numerem wiersza danych. Używać wyłącznie danych syntetycznych.
 
@@ -138,6 +138,8 @@ Ogólny CSV: pierwszy wiersz to nagłówek z kolumnami `date`/`data`, `amount`/`
 - Zakres tylko API; panel nie woła tej trasy.
 
 ## Raport dla Komisji Rewizyjnej
+
+**Przeksięgowania (#144).** Sekcja 4 raportu (`reclassifications`) wymienia storno i wpis zastępczy: data, wpis stary → nowy, kategoria i data stara → nowa, kwota storna i nowego wpisu, powód, znacznik „powiązany z wpłatą” oraz „dotyczy zatwierdzonego uzgodnienia” (stary wpis był powiązany z pozycją wyciągu w uzgodnieniu zatwierdzonym; to zatwierdzone uzgodnienie zostaje niezmienione, a jego powiązanie stanie się niezgodne — sekcja `reconciliation_matches`). Przeksięgowanie wpisu z aktywnym powiązaniem w szkicu daje `409 active_bank_match` (jak korekta, 0039); wpis zastępczy nie dziedziczy dopasowania do pozycji wyciągu.
 
 `format=json` (domyślnie) albo `format=html`. Zawiera: bilans otwarcia (z korektami), przychody, wydatki i bilans zamknięcia z `ledger_year_summary`; przychody i wydatki według kategorii (kwota pierwotna, korekty, netto); wydatki o kwocie pierwotnej powyżej 3000 EUR (dokładnie 3000 EUR nie jest wykazywane) z referencją uchwały i oznaczeniem braku zgodnej przyjętej uchwały; listę korekt wpisów i bilansu otwarcia (autor jako identyfikator konta); uzgodnienia rachunku z różnicą, liczbą niedopasowanych pozycji i wyjaśnieniem.
 

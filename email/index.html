@@ -85,6 +85,19 @@
           <ul id="detail-outbox"></ul>
         </div>
 
+        <div id="detail-report-box" hidden>
+          <h3>Raport doręczeń</h3>
+          <div class="table-wrap" role="region" aria-label="Raport doręczeń" tabindex="0">
+            <table>
+              <caption class="sr-only">Raport doręczeń kampanii</caption>
+              <thead><tr><th scope="col">Stan</th><th scope="col" class="amount">Liczba wiadomości</th></tr></thead>
+              <tbody id="detail-report-body"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="detail-report-unknown" hidden></p>
+          <p class="empty">Same liczby, bez adresów i nazwisk. Stan „nie wiadomo” rozstrzyga zarząd po sprawdzeniu logów dostawcy; ponowna wysyłka jest możliwa wyłącznie w nowej kampanii.</p>
+        </div>
+
         <div class="dialog-actions detail-actions">
           <button id="edit-campaign" type="button">Edytuj szkic</button>
           <button id="build-snapshot" type="button">Utwórz migawkę odbiorców</button>

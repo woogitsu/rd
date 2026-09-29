@@ -372,7 +372,9 @@ test('#186: błąd zapisany w trakcie trwającej blokady jej nie nadpisuje (logi
   for (let i = 0; i < 4; i += 1) await login(account, { ip, password: `zle haslo ${i}` });
   const slow = login(account, { ip, password: 'zle haslo wolne' });
   // Gdy wolna próba liczy scrypt, ktoś (np. administrator) zakłada blokadę na 10 minut.
-  await new Promise((resolve) => setImmediate(resolve));
+  // #208: czekamy, aż wolna próba zarezerwuje miejsce (licznik 5); na prawdziwym
+  // PostgreSQL rezerwacja trwa dłużej niż jeden obrót pętli zdarzeń.
+  for (let i = 0; i < 200 && Number((await pairRow(account.email, ip)).failure_count) < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
   await db.query(
     "UPDATE login_rate_limits SET locked_until = now() + interval '10 minutes' WHERE scope_type = 'pair' AND scope_hash = $1",
     [scopeHash('pair', `${account.email}|${ip}`)],
@@ -609,6 +611,21 @@ test('przyjęcie zaproszenia: nowe konto z adresem z zaproszenia, rola, sesja; j
   assert.deepEqual(await again.json(), { error: 'invalid_invitation' });
   assert.equal((await post('/api/login', { email, password }, { ip: nextIp() })).status, 200);
   assert.equal((await post('/api/invitations/accept', { token: 'x'.repeat(43), password })).status, 400);
+});
+
+test('zaproszenie na adres różniący się tylko wielkością liter trafia do jednego konta (#198)', async () => {
+  const email = 'wielkosc.liter@example.invalid';
+  const { secret, invitationId } = await invite(`  ${email.toUpperCase()} `);
+  assert.equal((await db.query('SELECT email FROM invitations WHERE id = $1', [invitationId])).rows[0].email, email);
+  const password = newPassword();
+  const accepted = await post('/api/invitations/accept', { token: secret, password, passwordRepeat: password, displayName: 'Wielkosc Liter' });
+  assert.equal(accepted.status, 201);
+  // Logowanie z innym zapisem tego samego adresu wskazuje to samo konto; drugiego konta nie ma.
+  const mixed = await post('/api/login', { email: 'Wielkosc.Liter@Example.invalid', password }, { ip: nextIp() });
+  assert.equal(mixed.status, 200);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM users WHERE lower(btrim(email)) = $1', [email])).rows[0].n, 1);
+  // Baza odrzuca drugie konto z tym samym adresem w innej postaci.
+  await assert.rejects(db.query("INSERT INTO users (id, email, display_name) VALUES ('u-dup-case', 'WIELKOSC.LITER@example.invalid', 'Duplikat')"));
 });
 
 test('przyjęcie zaproszenia: wygasłe odrzucone; istniejące konto wymaga obecnego hasła', async () => {
