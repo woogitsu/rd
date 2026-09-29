@@ -19,7 +19,7 @@ import {
   scopeLabel,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
-import { confirmAction } from "../shared/confirm-dialog.js";
+import { confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -100,12 +100,36 @@ async function runAction(element, confirmText, fn) {
   }
   element.disabled = true;
   try {
-    await fn();
+    await withStepUp(fn);
   } catch (error) {
     showMessage(error.message, true);
   } finally {
     element.disabled = false;
   }
+}
+
+// Krok w górę MFA (#150, #224): reset hasła i MFA wymagają kodu potwierdzonego
+// od niedawna. Serwer odpowiada 403 mfa_stale; panel prosi o kod z aplikacji
+// (POST /api/mfa/verify) i ponawia operację dokładnie raz. Anulowanie okna kończy
+// operację bez żadnej zmiany; kod nie jest nigdzie zapisywany.
+async function withStepUp(fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error?.code !== "mfa_stale") throw error;
+  }
+  const code = await promptAction({
+    title: "Potwierdź kodem z aplikacji",
+    effects: [
+      "Ta operacja wymaga świeżego potwierdzenia weryfikacji dwuetapowej.",
+      "Wpisz aktualny 6-cyfrowy kod. Jeśli właśnie użyto go do logowania, poczekaj na kolejny.",
+    ],
+    confirmLabel: "Potwierdź kodem",
+    input: { label: "Kod z aplikacji", inputMode: "numeric", autocomplete: "one-time-code" },
+  });
+  if (code === null) throw new Error("Operacja wstrzymana: brak potwierdzenia kodem. Nic nie zmieniono.");
+  await api("/api/mfa/verify", { method: "POST", body: { code: code.replace(/\s+/g, "") } });
+  return fn();
 }
 
 function userLabel(userId) {
@@ -261,7 +285,16 @@ byId("copy-reset-token").addEventListener("click", async (event) => {
 // Reset MFA wymaga wpisania identyfikatora konta (kontrakt API) — chroni przed
 // przypadkowym wyłączeniem cudzego czynnika jednym kliknięciem.
 async function runMfaReset(element, user) {
-  const typed = window.prompt(`Aby zresetować weryfikację dwuetapową konta ${user.email}, wpisz jego identyfikator:\n${user.id}`);
+  const typed = await promptAction({
+    title: "Zresetować weryfikację dwuetapową?",
+    effects: [
+      `Konto ${user.email}: czynnik i kody odzyskiwania zostaną wyłączone, a sesje wycofane.`,
+      "Konto zapisze nowy czynnik po następnym logowaniu.",
+    ],
+    confirmLabel: "Zresetuj MFA",
+    destructive: true,
+    input: { label: `Aby potwierdzić, wpisz identyfikator konta: ${user.id}`, expected: user.id },
+  });
   const check = mfaResetConfirmation(typed, user.id);
   if (check.cancelled) return;
   if (!check.ok) {
@@ -270,7 +303,7 @@ async function runMfaReset(element, user) {
   }
   element.disabled = true;
   try {
-    const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/mfa-reset`, { method: "POST", body: { confirm: user.id } });
+    const result = await withStepUp(() => api(`/api/admin/users/${encodeURIComponent(user.id)}/mfa-reset`, { method: "POST", body: { confirm: user.id } }));
     showMessage(result.changed
       ? "Zresetowano weryfikację dwuetapową. Konto zostało wylogowane i zapisze nowy czynnik po zalogowaniu."
       : "Konto nie miało zapisanego czynnika ani kodów odzyskiwania — nic nie zmieniono.");

@@ -301,21 +301,20 @@ function parseSendNotBefore(value, current) {
 // #215: PUT zastępowało całą treść kampanii bez wersji — autor, którego
 // poprawkę nadpisano, dostawał 200 i nie wiedział, że ktoś inny zmienił
 // kampanię w międzyczasie (zatwierdzający widział ostatnią wersję, więc
-// błąd był niewidoczny do czasu wysyłki). `revision`, gdy podane w treści
-// żądania, musi zgadzać się z bieżącym `revisionNo` kampanii (odczytanym
+// błąd był niewidoczny do czasu wysyłki). `revision` w treści
+// żądania musi zgadzać się z bieżącym `revisionNo` kampanii (odczytanym
 // pod blokadą wiersza) — niezgodność daje `409 revision_conflict` zamiast
-// cichego nadpisania. Pole opcjonalne na razie (etapowe wprowadzenie, patrz
-// "Ryzyko zmiany" w #215) — starzy klienci bez `revision` zachowują się jak
-// dawniej.
+// cichego nadpisania. Od etapu 2 pole jest WYMAGANE (brak → 400
+// invalid_revision).
 async function updateCampaign(request, env, id, json) {
   const data = await readJson(request);
   let input;
   try { input = parseCampaignContent(data); } catch (error) { mapContentError(error); }
-  const expectedRevision = data.revision !== undefined ? Number(data.revision) : null;
-  if (expectedRevision !== null && !Number.isSafeInteger(expectedRevision)) {
-    throw new RequestError('invalid_revision');
-  }
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
+  // Etap 2 #215: `revision` wymagane (po sprawdzeniu uprawnień). Brak lub
+  // nie-liczba całkowita → 400 invalid_revision.
+  const expectedRevision = data.revision;
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new RequestError('invalid_revision');
   const actorId = context.session.user.id;
   try {
     return await env.db.transaction(async (tx) => {
@@ -330,7 +329,7 @@ async function updateCampaign(request, env, id, json) {
       if (hash === campaign.content_hash && input.title === campaign.title && sendNotBefore === currentSendNotBefore) {
         return json({ campaign: campaignView(campaign), approvalInvalidated: false });
       }
-      if (expectedRevision !== null && campaign.revision_no !== expectedRevision) {
+      if (campaign.revision_no !== expectedRevision) {
         throw new RequestError('revision_conflict', 409);
       }
       // Każda zmiana (także tytułu i terminu startu — zmienia updated_by) cofa

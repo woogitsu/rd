@@ -6,6 +6,7 @@ import { checkReadiness } from './health.js';
 import { checkJobsHealth, tokensMatch } from './pg/jobs-health.js';
 import { describeError, log, sanitizePath } from './log.js';
 import { UPLOAD_PATH } from './documents.js';
+import { createRateLimiter } from './rate-limit.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 // Jedyne źródło listy paneli statycznych (issue #119): smoke test i inne
@@ -231,7 +232,7 @@ async function serveJobsHealth(request, response, env, jobsHealth) {
 // wskazanych tras (np. POST /api/documents). Domyślnie 1 MiB dla wszystkich.
 export function createNodeHandler({
   distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit, logger = log, metrics = null, readiness = checkReadiness,
-  jobsHealth = checkJobsHealth, trustProxy = false,
+  jobsHealth = checkJobsHealth, trustProxy = false, rateLimiter = createRateLimiter({ env: globalThis.process?.env }),
 } = {}) {
   if (!distRoot) throw new Error('distRoot is required');
   if (typeof fetchHandler !== 'function') throw new Error('fetchHandler is required');
@@ -270,6 +271,21 @@ export function createNodeHandler({
       }
       if (await serveStatic(request, response, url, distRoot, baseline)) return;
       const method = request.method || 'GET';
+      // #126 (SR-13): ogólny limiter PRZED odczytem ciała i zapytaniem do bazy.
+      const slot = rateLimiter.acquire({
+        pathname: url.pathname, cookieHeader: request.headers.cookie, address: clientAddress(request, trustProxy),
+      });
+      if (!slot.ok) {
+        response.writeHead(429, {
+          ...baseline,
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Retry-After': String(slot.retryAfter),
+        });
+        response.end(JSON.stringify({ error: 'rate_limited' }));
+        return;
+      }
+      response.once('close', slot.release);
       // #185: POST /api/documents buforowało całe ciało (do 25 MB) w pamięci
       // PRZED sprawdzeniem sesji/roli w documents.js — anonimowe żądanie z
       // dużym Content-Length kosztowało tyle samo pamięci co upload
