@@ -14,10 +14,10 @@ test('visiblePanels: brak przydziału → brak paneli', () => {
 
 test('visiblePanels: admin widzi wszystkie panele poza Kampaniami e-mail i Zamknięciem roku (EDITOR_ROLES/READ_ROLES bez admina), w stałej kolejności', () => {
   // src/pg/routes/email.js EDITOR_ROLES i src/pg/routes/year-close.js READ_ROLES
-  // celowo nie wpuszczają admina — to nie luka w PANELS, tylko odzwierciedlenie
+  // celowo nie wpuszczają admina; panel Komisji Rewizyjnej (audit) jest tylko dla roli audit — to nie luka w PANELS, tylko odzwierciedlenie
   // docs/AUTHORIZATION.md ("admin techniczny: 403").
   const ids = visiblePanels([{ role: 'admin' }]).map((p) => p.id);
-  assert.deepEqual(ids, PANEL_IDS.filter((id) => id !== 'email' && id !== 'year-close'));
+  assert.deepEqual(ids, PANEL_IDS.filter((id) => id !== 'email' && id !== 'year-close' && id !== 'audit'));
 });
 
 test('visiblePanels: skarbnik widzi rodziny, wpłaty, księgę, kampanie e-mail, uzgodnienia, kartki, dokumenty i zamknięcie roku', () => {
@@ -68,8 +68,8 @@ test('visiblePanels: uzgodnienia wyciągu widoczne dla admina, zarządu i skarbn
   assert.ok(!visiblePanels([{ role: 'audit' }]).some((p) => p.id === 'reconciliation'));
 });
 
-test('visiblePanels: Komisja Rewizyjna (audit) widzi wyłącznie zebrania', () => {
-  assert.deepEqual(visiblePanels([{ role: 'audit' }]).map((p) => p.id), ['meetings']);
+test('visiblePanels: Komisja Rewizyjna (audit) widzi wyłącznie zebrania i swój raport', () => {
+  assert.deepEqual(visiblePanels([{ role: 'audit' }]).map((p) => p.id), ['meetings', 'audit']);
 });
 
 test('visiblePanels: dyrekcja (principal) bez domyślnych uprawnień — brak paneli', () => {

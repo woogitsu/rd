@@ -10,7 +10,7 @@ import { UPLOAD_PATH } from './documents.js';
 const MAX_BODY_BYTES = 1024 * 1024;
 // Jedyne źródło listy paneli statycznych (issue #119): smoke test i inne
 // narzędzia mają importować ten eksport zamiast wpisywać listę na sztywno.
-export const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close']);
+export const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close', 'audit']);
 // Jedyny prefiks przeznaczony do indeksowania przez wyszukiwarki (#116).
 // Wszystkie pozostałe prefiksy z STATIC_PREFIXES i cały /api/ poza /api/public/
 // wymagają logowania do danych, więc dostają `X-Robots-Tag: noindex, nofollow`.
@@ -19,7 +19,7 @@ const ROBOTS_NOINDEX = 'noindex, nofollow';
 // Blokuje wszystkie prefiksy paneli i całe /api/ poza /api/public/ — to samo
 // rozróżnienie co X-Robots-Tag powyżej, na wypadek czytników, które nie patrzą
 // na nagłówki odpowiedzi (#116).
-const ROBOTS_TXT_BODY = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close']
+const ROBOTS_TXT_BODY = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close', 'audit']
   .map((prefix) => `Disallow: /${prefix}/`).join('\n')}\nDisallow: /api/\nAllow: /api/public/\nAllow: /${PUBLIC_STATIC_PREFIX}/\n`;
 // Nagłówek z adresem klienta dla limitów logowania (src/pg/login.js). Zawsze
 // nadpisywany przez serwer — wartość wysłana przez klienta jest ignorowana.
