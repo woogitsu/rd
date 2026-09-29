@@ -21,6 +21,7 @@ import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isValidIban, normalizeIban } from '../../../print/iban.js';
+import { createJsonReader, isUniqueError } from '../input.js';
 
 export const name = 'payment-instructions';
 
@@ -50,21 +51,11 @@ function readIdempotencyKey(request) {
   return key;
 }
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const declaredLength = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  try {
-    const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  error: (code, status) => new RequestError(code, status),
+});
 
 function parseInput(data) {
   if (!validId(data.schoolYearId)) throw new RequestError('invalid_request');
@@ -106,10 +97,6 @@ async function loadByKey(executor, key) {
     [key],
   );
   return rows[0] ?? null;
-}
-
-function isUniqueError(error) {
-  return error?.code === '23505';
 }
 
 async function getCurrent(request, env, url, json) {
