@@ -1569,6 +1569,214 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/admin/promotions/apply": {
+      "post": {
+        "operationId": "admin_promotionApply",
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.promotionApply",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.promotionApply"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/promotions/classes/apply": {
+      "post": {
+        "operationId": "admin_promotionClassesApply",
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.promotionClassesApply",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.promotionClassesApply"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/promotions/classes/preview": {
+      "post": {
+        "operationId": "admin_promotionClassesPreview",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.promotionClassesPreview",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.promotionClassesPreview"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/promotions/preview": {
+      "post": {
+        "operationId": "admin_promotionPreview",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.promotionPreview",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.promotionPreview"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/admin/retention/preview": {
       "get": {
         "operationId": "admin_retentionPreview",
@@ -16083,6 +16291,7 @@
           "category_not_found",
           "checklist_incomplete",
           "class_exists",
+          "class_map_required",
           "class_not_found",
           "class_not_in_school_year",
           "class_required",
@@ -16154,6 +16363,7 @@
           "invalid_cents_value",
           "invalid_checklist_item",
           "invalid_class",
+          "invalid_class_map",
           "invalid_code",
           "invalid_columns",
           "invalid_confirmation_note",
@@ -16187,6 +16397,7 @@
           "invalid_ended_on",
           "invalid_entity_type",
           "invalid_event_id",
+          "invalid_exclusions",
           "invalid_execution_status",
           "invalid_expires_at",
           "invalid_explicit_license",
@@ -16220,12 +16431,14 @@
           "invalid_organizer",
           "invalid_origin",
           "invalid_outcome",
+          "invalid_overrides",
           "invalid_payee_name",
           "invalid_payload",
           "invalid_payment_id",
           "invalid_payment_link",
           "invalid_photo_id",
           "invalid_photos",
+          "invalid_plan_digest",
           "invalid_post_id",
           "invalid_quorum_rule",
           "invalid_reason",
@@ -16264,6 +16477,7 @@
           "invalid_user_id",
           "invalid_window",
           "invalid_year_end_confirmation",
+          "invalid_year_order",
           "invitation_already_accepted",
           "invitation_not_found",
           "invitation_not_pending",
@@ -16308,6 +16522,7 @@
           "not_first_school_year",
           "not_found",
           "not_resolvable",
+          "nothing_to_promote",
           "notice_campaign_audience_unsupported",
           "notice_four_eyes_required",
           "notice_not_approved",
@@ -16350,6 +16565,8 @@
           "photo_not_found",
           "photo_revoked",
           "photos_require_school_wide_role",
+          "plan_stale",
+          "plan_too_large",
           "possible_personal_data",
           "post_not_found",
           "post_withdrawn",
@@ -16405,6 +16622,7 @@
           "review_expense_only",
           "revision_conflict",
           "role_pending_decision",
+          "same_school_year",
           "school_year_closed",
           "school_year_exists",
           "school_year_not_finished",
@@ -16438,6 +16656,9 @@
           "transfer_not_found",
           "unauthenticated",
           "unknown_school_year",
+          "unknown_source_class",
+          "unknown_student",
+          "unknown_target_class",
           "unsafe_integer",
           "unsupported_media_type",
           "unsupported_value",
@@ -16648,6 +16869,11 @@
         "code": "class_exists",
         "meaning": "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "class_map_required",
+        "meaning": "Podaj jawną mapę klas (klasa źródłowa → klasa docelowa albo null dla klasy końcowej). Bez mapy nic nie jest przenoszone.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "class_not_found",
@@ -17005,6 +17231,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_class_map",
+        "meaning": "Mapa klas jest niepoprawna (identyfikatory klas, nazwy do 60 znaków, najwyżej 200 wpisów).",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_code",
         "meaning": "Kod jest nieprawidłowy. Sprawdź aplikację i wpisz aktualny kod.",
         "retry": "Nie — popraw dane żądania."
@@ -17167,6 +17398,11 @@
       {
         "code": "invalid_event_id",
         "meaning": "Niepoprawny identyfikator wydarzenia.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_exclusions",
+        "meaning": "Lista wykluczonych uczniów jest niepoprawna.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -17335,6 +17571,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_overrides",
+        "meaning": "Lista zmian klasy docelowej jest niepoprawna.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_payee_name",
         "meaning": "Podaj nazwę odbiorcy (maksymalnie 70 znaków).",
         "retry": "Nie — popraw dane żądania."
@@ -17362,6 +17603,11 @@
       {
         "code": "invalid_photos",
         "meaning": "Niepoprawna lista zdjęć.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_plan_digest",
+        "meaning": "Brak poprawnego skrótu planu (planDigest) z podglądu.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -17552,6 +17798,11 @@
       {
         "code": "invalid_year_end_confirmation",
         "meaning": "Potwierdzenie rozbieżności wymaga jednego z dozwolonych powodów i widzianych różnic w centach.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_year_order",
+        "meaning": "Rok docelowy musi zaczynać się później niż rok źródłowy.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -17775,6 +18026,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "nothing_to_promote",
+        "meaning": "Plan nie zawiera żadnego ucznia do przeniesienia.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "notice_campaign_audience_unsupported",
         "meaning": "Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana.",
         "retry": "Nie — popraw dane żądania."
@@ -17983,6 +18239,16 @@
         "code": "photos_require_school_wide_role",
         "meaning": "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "plan_stale",
+        "meaning": "Dane zmieniły się od podglądu promocji. Wygeneruj podgląd ponownie.",
+        "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "plan_too_large",
+        "meaning": "Plan promocji jest zbyt duży (najwyżej 2000 uczniów). Skontaktuj się z administratorem.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "possible_personal_data",
@@ -18260,6 +18526,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "same_school_year",
+        "meaning": "Rok źródłowy i docelowy muszą być różne.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "school_year_closed",
         "meaning": "Rok szkolny jest zamknięty. Zmiany nie są możliwe.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
@@ -18423,6 +18694,21 @@
         "code": "unknown_school_year",
         "meaning": "Nie znaleziono roku szkolnego.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "unknown_source_class",
+        "meaning": "Mapa klas wskazuje klasę, której nie ma w roku źródłowym.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "unknown_student",
+        "meaning": "Wykluczenie lub zmiana klasy dotyczy ucznia, który nie ma przypisania w roku źródłowym.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "unknown_target_class",
+        "meaning": "Wskazana klasa docelowa nie istnieje w roku docelowym.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "unsafe_integer",
