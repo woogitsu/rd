@@ -10,16 +10,15 @@
 //   npm run backup:postgres [-- --force]
 //
 // Nigdy nie wypisuje adresu bazy, nazwy bucketu ani kluczy dostępu/szyfrowania.
-// Zrzut trafia WYŁĄCZNIE do pliku tymczasowego, usuwanego też przy błędzie;
-// nigdy nie jest trzymany w całości w pamięci procesu.
+// Zrzut trafia na dysk WYŁĄCZNIE jako plik tymczasowy (katalog 0700), usuwany
+// też przy błędzie; dalej idzie już tylko zaszyfrowany. Raport zgodności
+// (liczności, sumy, skróty — bez danych osobowych) jest liczony w tej samej
+// migawce co zrzut i zapisywany w backup_runs jako punkt odniesienia próby.
 
-import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createPgDatabase } from '../src/db.js';
 import { createS3Storage } from '../src/storage.js';
 import { runBackup } from '../src/pg/backup.js';
+import { dumpWithReport } from './lib/pg-tools.js';
 
 const REQUIRED_ENV = ['DATABASE_URL', 'BACKUP_ENCRYPTION_PUBLIC_KEY',
   'BACKUP_S3_ENDPOINT', 'BACKUP_S3_REGION', 'BACKUP_S3_BUCKET',
@@ -27,22 +26,6 @@ const REQUIRED_ENV = ['DATABASE_URL', 'BACKUP_ENCRYPTION_PUBLIC_KEY',
 
 function missingEnv(env) {
   return REQUIRED_ENV.filter((name) => !env[name]);
-}
-
-// Zrzut niestandardowego formatu (`pg_dump --format=custom`) do pliku
-// tymczasowego (uprawnienia domyślne katalogu tmp usługi), a nie do stdout —
-// unika trzymania całej kopii w pamięci procesu naraz z szyfrogramem.
-async function dumpToTempFile(connectionString) {
-  const dir = await mkdtemp(join(tmpdir(), 'rd-backup-'));
-  const file = join(dir, 'dump.custom');
-  await new Promise((resolve, reject) => {
-    const child = spawn('pg_dump', ['--format=custom', '--file', file, connectionString], { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => (code === 0 ? resolve() : reject(Object.assign(new Error('pg_dump_failed'), { code: 'pg_dump_failed', stderr: stderr.slice(-500) }))));
-  });
-  return { dir, file };
 }
 
 async function main() {
@@ -64,7 +47,6 @@ async function main() {
   });
   const db = createPgDatabase({ connectionString: env.DATABASE_URL, application_name: 'rd-backup', max: 2 });
 
-  let tempDir;
   try {
     const result = await runBackup({
       db,
@@ -72,11 +54,9 @@ async function main() {
       encryptPublicKeyPem: env.BACKUP_ENCRYPTION_PUBLIC_KEY,
       environment: env.APP_ENV || 'unknown',
       force: process.argv.includes('--force'),
-      dump: async () => {
-        const { dir, file } = await dumpToTempFile(env.DATABASE_URL);
-        tempDir = dir;
-        return readFile(file);
-      },
+      // Zrzut + raport (liczności, sumy, skróty) z jednej migawki; plik
+      // tymczasowy usuwa dumpWithReport także przy błędzie.
+      dump: () => dumpWithReport(env.DATABASE_URL),
     });
     if (result.skipped) {
       console.log(JSON.stringify({ skipped: true }));
@@ -88,7 +68,6 @@ async function main() {
     console.error(`Backup failed: ${code}`);
     process.exitCode = 1;
   } finally {
-    if (tempDir) await rm(tempDir, { recursive: true, force: true }).catch(() => {});
     await db.close().catch(() => {});
   }
 }

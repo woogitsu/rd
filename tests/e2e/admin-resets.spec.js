@@ -88,7 +88,7 @@ test('reset hasła ze starym MFA: krok w górę kodem, link jednorazowy, nowe ha
   await context.close();
 });
 
-test('reset MFA: identyfikator konta wymagany, po resecie logowanie prowadzi do zapisu nowego czynnika', async ({ browser }) => {
+test('reset MFA: identyfikator konta wymagany, po resecie logowanie nie prosi już o kod (konto bez roli chronionej)', async ({ browser }) => {
   const target = admin.targets[1];
   const { context, page } = await adminPage(browser, admin.freshCookie);
   const confirmDialog = page.locator('#shared-confirm-dialog');
@@ -116,14 +116,18 @@ test('reset MFA: identyfikator konta wymagany, po resecie logowanie prowadzi do 
   // Czynnik zniknął: przycisk resetu MFA nie jest już oferowany dla tego konta.
   await expect(rowFor(page, target.userId).getByRole('button', { name: 'Zresetuj MFA' })).toHaveCount(0);
 
-  // Logowanie hasłem prowadzi teraz do zapisu nowego czynnika (view-enroll).
+  // Konto bez roli wymagającej MFA (role chronione idą przez wniosek, patrz test
+  // niżej): po resecie logowanie hasłem nie prosi o kod (brak czynnika), a ekran
+  // startowy oferuje dobrowolny zapis nowego czynnika (#161). Rola wymagająca MFA
+  // trafiłaby do obowiązkowego zapisu (view-enroll) — nextView w login/core.js.
   const userContext = await browser.newContext();
   const userPage = await userContext.newPage();
   await userPage.goto('/login/');
   await userPage.locator('#login-email').fill(target.email);
   await userPage.locator('#login-password').fill(target.password);
   await userPage.locator('#login-form button[type=submit]').click();
-  await expect(userPage.locator('#view-enroll')).toBeVisible();
+  await expect(userPage.locator('#view-start')).toBeVisible();
+  await expect(userPage.locator('#view-mfa')).toBeHidden();
 
   await userContext.close();
   await context.close();
@@ -156,5 +160,34 @@ test('krok w górę MFA: anulowanie okna z kodem nie wydaje resetu', async ({ br
     return ((await res.json()).events ?? []).filter((event) => event.action === 'auth.password_reset_issued').length;
   });
   expect(issuedAfter).toBe(issuedBefore);
+  await context.close();
+});
+
+test('konto z rolą chronioną: reset hasła i MFA tylko zapisują wniosek (202), bez tokenu i bez zmiany czynnika', async ({ browser }) => {
+  const target = admin.targets[2];
+  const { context, page } = await adminPage(browser, admin.freshCookie);
+  const confirmDialog = page.locator('#shared-confirm-dialog');
+  const countEvents = (action) => page.evaluate(async (name) => {
+    const res = await fetch('/api/admin/audit?limit=200', { credentials: 'same-origin' });
+    return ((await res.json()).events ?? []).filter((event) => event.action === name).length;
+  }, action);
+  const issuedBefore = await countEvents('auth.password_reset_issued');
+
+  await rowFor(page, target.userId).getByRole('button', { name: 'Wydaj kod resetu hasła' }).click();
+  await confirmDialog.locator('[data-role=confirm]').click();
+  await expect(page.locator('#global-message')).toContainText('zapisano wniosek');
+  await expect(page.locator('#global-message')).toContainText('innego administratora');
+  await expect(page.locator('#reset-token-box')).toBeHidden();
+
+  await rowFor(page, target.userId).getByRole('button', { name: 'Zresetuj MFA' }).click();
+  await confirmDialog.locator('#shared-confirm-input').fill(target.userId);
+  await confirmDialog.locator('[data-role=confirm]').click();
+  await expect(confirmDialog).toBeHidden();
+  await expect(page.locator('#global-message')).toContainText('zapisano wniosek');
+  await expect(page.locator('#global-message')).not.toContainText('nic nie zmieniono.');
+  // Czynnik nadal istnieje, token nie został wydany, wnioski są w dzienniku.
+  await expect(rowFor(page, target.userId).getByRole('button', { name: 'Zresetuj MFA' })).toBeVisible();
+  expect(await countEvents('auth.password_reset_issued')).toBe(issuedBefore);
+  expect(await countEvents('account_recovery.requested')).toBeGreaterThanOrEqual(2);
   await context.close();
 });

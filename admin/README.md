@@ -19,5 +19,6 @@ API działa na serwerze Node (PostgreSQL). Panel i API muszą działać pod tym 
 - zaproszenie: token pokazywany jeden raz, z przyciskiem kopiowania i ostrzeżeniem; panel nie wysyła e-maili,
 - wygaszenie kadencji zakończonego roku szkolnego (potwierdzenie przez wpisanie identyfikatora),
 - dziennik zmian kont i ról (identyfikatory, bez adresów e-mail).
+- sekcja „Stan systemu” (#149, `ops-status.js`): tabela na podstawie `GET /api/admin/ops-status` (migracje, worker e-mail, kolejka, kopie, eksport, tryb pracy, wersja); tylko liczby, znaczniki czasu i kody, „brak danych” osobno od „w normie”. Runbook incydentów: [docs/RUNBOOK.md](../docs/RUNBOOK.md).
 
 Przyciski wyłączone w interfejsie (np. wycofanie własnego ostatniego przydziału administratora) są tylko podpowiedzią — reguły egzekwuje serwer. Szczegóły i otwarte decyzje: [docs/ACCOUNTS.md](../docs/ACCOUNTS.md).

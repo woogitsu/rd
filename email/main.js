@@ -26,11 +26,13 @@ import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
+import { mountSuppressions } from "./suppressions.js";
 
 mountShell();
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
+const suppressions = mountSuppressions({ api });
 
 const state = {
   schoolYearId: "",
@@ -128,6 +130,7 @@ async function showYear(value) {
     await loadList();
     detailSection.hidden = true;
     state.selectedId = null;
+    await suppressions.load(value);
   } catch (error) {
     setMessage(`Nie udało się pobrać listy kampanii: ${error.message}`, true);
   } finally {
