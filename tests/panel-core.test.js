@@ -16,6 +16,9 @@ import {
   makeIdempotencyKey,
   normalizePayment,
   parseEuroAmount,
+  paymentsFilterChanged,
+  paymentsQuery,
+  buildNextPaymentsUrl,
 } from "../panel/core.js";
 
 test("kwota EUR jest zamieniana na całkowitą liczbę centów", () => {
@@ -83,6 +86,27 @@ test("dociągnięcie strony używa zapamiętanego zapytania i kursora", async ()
   assert.equal(paymentsFilterChanged(null, { schoolYearId: "y2027", status: "" }), false);
   assert.throws(() => paymentsQuery({ schoolYearId: "", status: "" }));
   assert.throws(() => paymentsQuery({ schoolYearId: "y2026", status: "reversed" }));
+});
+
+test("filtry listy wpłat trafiają do adresu, walidacja odrzuca złe wartości, zmiana filtra jest wykrywana (#128)", () => {
+  const filters = { schoolYearId: "y2026", method: "bank", dateFrom: "2026-09-01", dateTo: "2026-09-30", householdId: "h1", q: " 100% " };
+  const params = new URL(buildPaymentsUrl(filters), "https://rd.example").searchParams;
+  assert.equal(params.get("method"), "bank");
+  assert.equal(params.get("dateFrom"), "2026-09-01");
+  assert.equal(params.get("householdId"), "h1");
+  assert.equal(params.get("q"), "100%");
+  assert.equal(new URL(buildPaymentsUrl({ schoolYearId: "y2026" }), "https://rd.example").searchParams.has("q"), false);
+  assert.throws(() => buildPaymentsUrl({ ...filters, method: "blik" }));
+  assert.throws(() => buildPaymentsUrl({ ...filters, dateFrom: "wczoraj" }));
+  assert.throws(() => buildPaymentsUrl({ ...filters, dateFrom: "2026-10-01", dateTo: "2026-09-01" }));
+  assert.throws(() => buildPaymentsUrl({ ...filters, q: "a".repeat(101) }));
+  const query = paymentsQuery(filters);
+  assert.equal(paymentsFilterChanged(query, filters), false);
+  assert.equal(paymentsFilterChanged(query, { ...filters, q: "inna" }), true);
+  assert.equal(paymentsFilterChanged(query, { ...filters, method: "" }), true);
+  const next = new URL(buildNextPaymentsUrl(query, "kursor"), "https://rd.example").searchParams;
+  assert.equal(next.get("cursor"), "kursor");
+  assert.equal(next.get("q"), "100%");
 });
 
 // --- #127: podział wpłaty (dane syntetyczne, kwoty w centach) ---

@@ -32,6 +32,7 @@ import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
 import { panelYearState, yearOptionsHtml } from "../shared/school-year.js";
+import { shownSummary } from "../shared/household-picker.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
@@ -40,12 +41,37 @@ import "../shared/print.css";
 let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
-const FILTER_KEYS = ["schoolYearId", "direction"];
+const FILTER_KEYS = ["schoolYearId", "direction", "category", "dateFrom", "dateTo"];
 const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", grants: [], history: { rows: [], adoptionRows: [], currentLines: [] }, nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
 const directionInput = byId("direction-filter");
+const categoryInput = byId("category-filter");
+const dateFromInput = byId("date-from-filter");
+const dateToInput = byId("date-to-filter");
+
+// Wszystkie pola filtrów w jednym obiekcie (formularz, adres, zapytanie).
+function currentFilters() {
+  return {
+    schoolYearId: yearInput.value,
+    direction: directionInput.value,
+    category: categoryInput.value,
+    dateFrom: dateFromInput.value,
+    dateTo: dateToInput.value,
+  };
+}
+
+// Kategorie należą do roku: lista z GET /api/ledger/categories wybranego roku. Zapamiętana
+// z adresu kategoria zostaje wybrana, dopóki lista się nie wczyta (etykieta tymczasowa).
+function setCategoryOptions(categories, selected) {
+  const options = [new Option("Wszystkie", "")];
+  const known = categories.map((item) => new Option(`${item.name} (${DIRECTION_LABELS[item.direction] ?? "—"})`, item.id));
+  options.push(...known);
+  if (selected && !categories.some((item) => item.id === selected)) options.push(new Option("Wybrana kategoria", selected));
+  categoryInput.replaceChildren(...options);
+  categoryInput.value = selected ?? "";
+}
 const message = byId("message");
 const overview = byId("overview");
 const entriesBody = byId("entries-body");
@@ -100,7 +126,7 @@ function entryRow(raw) {
 function renderEntries() {
   entriesBody.replaceChildren(...state.entries.map(entryRow));
   const count = state.entries.length;
-  byId("result-summary").textContent = count === 1 ? "1 widoczny wpis" : `${count} widocznych wpisów`;
+  byId("result-summary").textContent = shownSummary(count, Boolean(state.nextCursor), ["wpis", "wpisy", "wpisów"]) || "Brak wpisów.";
   byId("entries-table").hidden = count === 0;
   byId("entries-empty").hidden = count !== 0;
   loadMore.hidden = !state.nextCursor;
@@ -114,7 +140,14 @@ function updatePrintMeta() {
   const container = byId("print-meta");
   if (!container) return;
   const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
-  const filters = state.query?.direction ? DIRECTION_LABELS[state.query.direction] : null;
+  const categoryName = state.query?.category
+    ? state.categories.find((item) => item.id === state.query.category)?.name ?? "wybrana kategoria" : null;
+  const filters = [
+    state.query?.direction ? DIRECTION_LABELS[state.query.direction] : null,
+    categoryName ? `kategoria: ${categoryName}` : null,
+    state.query?.dateFrom ? `od ${state.query.dateFrom}` : null,
+    state.query?.dateTo ? `do ${state.query.dateTo}` : null,
+  ].filter(Boolean).join(", ") || null;
   mountPrintMeta(container, {
     view: "Księga przychodów i wydatków",
     schoolYear: yearLabel,
@@ -206,7 +239,7 @@ const OPEN_ENTRY_HINT = "Dostępne po wczytaniu roku szkolnego.";
 const FILTER_CHANGED_HINT = "Zmieniono filtr. Kliknij „Pokaż”, aby wczytać księgę dla nowego filtra.";
 
 function filterChanged() {
-  return ledgerFilterChanged(state.query, { schoolYearId: yearInput.value, direction: directionInput.value });
+  return ledgerFilterChanged(state.query, currentFilters());
 }
 
 // „Dodaj wpis” i „Wczytaj następne” działają tylko dla zatwierdzonego (wczytanego) zapytania (#192).
@@ -254,7 +287,7 @@ async function loadOverview({ reload = false } = {}) {
   try {
     query = reload && state.query
       ? state.query
-      : ledgerQuery({ schoolYearId: yearInput.value, direction: directionInput.value });
+      : ledgerQuery(currentFilters());
   } catch (error) {
     message.className = "message error";
     message.textContent = error.message;
@@ -281,6 +314,7 @@ async function loadOverview({ reload = false } = {}) {
     ]);
     state.query = query;
     state.categories = Array.isArray(categoriesData.categories) ? categoriesData.categories : [];
+    setCategoryOptions(state.categories, query.category);
     state.resolutions = Array.isArray(resolutionsData?.resolutions) ? resolutionsData.resolutions : [];
     state.resolutionsError = resolutionsData?.error ? resolutionsData.error.message : "";
     renderSummary(summaryData.summary ?? {});
@@ -301,7 +335,7 @@ async function loadOverview({ reload = false } = {}) {
 }
 
 function syncFiltersToUrl() {
-  const query = filtersToQuery({ schoolYearId: yearInput.value, direction: directionInput.value });
+  const query = filtersToQuery(currentFilters());
   const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
   window.history.replaceState(null, "", url);
 }
@@ -328,6 +362,10 @@ filtersForm.addEventListener("submit", (event) => {
   if (restored.direction && [...directionInput.options].some((o) => o.value === restored.direction)) {
     directionInput.value = restored.direction;
   }
+  // Wartości spoza formatu odrzuca walidacja zapytania (komunikat w #message), nie wykonanie.
+  if (restored.category) setCategoryOptions([], restored.category);
+  if (restored.dateFrom) dateFromInput.value = restored.dateFrom;
+  if (restored.dateTo) dateToInput.value = restored.dateTo;
   if (year) {
     syncFiltersToUrl();
     loadOverview();
@@ -582,8 +620,9 @@ entriesBody.addEventListener("click", (event) => {
   correctionDialog.dialog.showModal();
 });
 
-yearInput.addEventListener("input", updateControls);
-directionInput.addEventListener("change", updateControls);
+// Zmiana roku unieważnia wybór kategorii (kategorie są per rok).
+yearInput.addEventListener("input", () => { setCategoryOptions([], ""); updateControls(); });
+for (const input of [directionInput, categoryInput, dateFromInput, dateToInput]) input.addEventListener("change", updateControls);
 updateControls();
 
 // --- #107: formularze preliminarza (istniejące trasy ledger-budget.js) ---------------

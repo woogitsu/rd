@@ -54,6 +54,33 @@
               <option value="unmatched">Do przypisania</option>
             </select>
           </label>
+          <label>
+            Sposób wpłaty
+            <select id="method-filter" name="method">
+              <option value="">Wszystkie</option>
+              <option value="bank">Przelew</option>
+              <option value="cash">Gotówka</option>
+              <option value="other">Inna</option>
+            </select>
+          </label>
+          <label>
+            Rodzina
+            <select id="household-filter" name="householdId">
+              <option value="">Wszystkie</option>
+            </select>
+          </label>
+          <label>
+            Data od
+            <input id="date-from-filter" name="dateFrom" type="date">
+          </label>
+          <label>
+            Data do
+            <input id="date-to-filter" name="dateTo" type="date">
+          </label>
+          <label>
+            Szukaj w tytule przelewu
+            <input id="q-filter" name="q" type="search" maxlength="100" autocomplete="off">
+          </label>
           <button type="submit">Pokaż</button>
         </form>
       </section>
