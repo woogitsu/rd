@@ -52,7 +52,7 @@ export async function seedClass(db, { id, schoolYearId = 'y-test', name = id }) 
 // Domyślny e-mail jest zawsze małymi literami (#198: users.email wymaga
 // lower(btrim(email))) niezależnie od wielkości liter w userId (np. klucze
 // aktorów macierzy uprawnień 'repA', 'boardA').
-// Dokument źródłowy zdjęcia galerii (0128, #198): dokument zarządu (jedyny
+// Dokument źródłowy zdjęcia galerii (0143, #198): dokument zarządu (jedyny
 // rodzaj dozwolony dla news_photos.document_id), bez pliku i bez danych osobowych.
 // Idempotentnie; wiersz spoza API (school_year_id NULL) — patrz documents_api_row.
 export async function seedDocument(db, { id, kind = 'board', createdBy = 'admin' }) {

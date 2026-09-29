@@ -80,7 +80,7 @@ function orderBudgetLines(rows) {
   return ordered;
 }
 
-// #198: spójność, której pilnują ograniczenia PostgreSQL (0081/0128). Zamiast
+// #198: spójność, której pilnują ograniczenia PostgreSQL (0081/0143). Zamiast
 // ogólnego błędu FK/UNIQUE w środku transakcji — czytelny błąd z identyfikatorami
 // wierszy (bez e-maili). Niczego nie naprawiamy po cichu.
 function assertScopeConsistency(tables) {

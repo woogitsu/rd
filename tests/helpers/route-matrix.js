@@ -200,7 +200,7 @@ export function campaignBody(target) {
     subject: 'Dobrowolna składka {rok}', bodyText: CAMPAIGN_TEXT };
 }
 
-// Dokument zarządu wstawiany przez seedBase (0128: FK news_photos.document_id).
+// Dokument zarządu wstawiany przez seedBase (0143: FK news_photos.document_id).
 export const PHOTO_SOURCE_DOCUMENT_ID = 'dok-galeria-syntetyczny';
 export function photoBody(key) {
   return {

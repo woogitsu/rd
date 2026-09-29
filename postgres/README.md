@@ -788,7 +788,7 @@ zmienia się wyłącznie wynik funkcji (a więc dostępność pliku dla odczytu
 publicznego). Wycofanie: `CREATE OR REPLACE FUNCTION news_photo_is_public`
 z ciałem sprzed tej migracji (jak w 0084, bez warunku zgody).
 
-`0128_news_photo_document_fk_and_role_grants_validate.sql` (#198, część 2)
+`0143_news_photo_document_fk_and_role_grants_validate.sql` (#198, część 2)
 dodaje klucz obcy `news_photos.document_id -> documents(id)` i trigger
 `news_photo_document_guard` (dokument musi istnieć i mieć rodzaj z
 `news_photo_document_kind_allowed()`; WARIANT ZACHOWAWCZY: tylko `board`,

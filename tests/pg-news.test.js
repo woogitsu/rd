@@ -50,7 +50,7 @@ const pub = async (db) => listPublic(db, { schoolYearId: year });
 
 after(async () => { if (shared) await shared.close(); });
 
-// 0128: news_photos.document_id wskazuje istniejący dokument zarządu — każda
+// 0143: news_photos.document_id wskazuje istniejący dokument zarządu — każda
 // rejestracja w testach najpierw zakłada dokument o podanym documentId.
 async function registerPhoto(db, actor, input) {
   if (typeof input?.documentId === 'string') await seedDocument(db, { id: input.documentId });

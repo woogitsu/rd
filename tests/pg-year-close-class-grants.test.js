@@ -12,7 +12,7 @@ import { request, seedClass, seedSchoolYear, seedUserSession } from './helpers/p
 const OLD = 'y-2024';
 const NEW = 'y-2025';
 const BACKFILL = '0022_role_grant_class_year.sql';
-const VALIDATE_GRANTS = '0128_news_photo_document_fk_and_role_grants_validate.sql';
+const VALIDATE_GRANTS = '0143_news_photo_document_fk_and_role_grants_validate.sql';
 const migrationsDirectory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 // Baza w stanie sprzed 0022 z przydziałami „legacy”, potem migracja 0022.
@@ -74,12 +74,12 @@ async function legacyDb() {
   // #157), inaczej trasy zależne od nowszych widoków/funkcji dostają 42P01
   // (undefined_table) niezwiązane z tym, co ten test faktycznie sprawdza.
   for (const migration of migrations.filter((item) => item.name > BACKFILL && item.name < VALIDATE_GRANTS)) await db.exec(migration.sql);
-  // Stan po 0022 i przed 0128: 0022 celowo nie przepisuje niespójnego wpisu.
+  // Stan po 0022 i przed 0143: 0022 celowo nie przepisuje niespójnego wpisu.
   const mismatchYearAfter0022 = (await db.query("SELECT school_year_id FROM role_grants WHERE id = 'g-mismatch'")).rows[0].school_year_id;
-  // 0128 waliduje role_grants_class_in_year i zatrzymuje się na niespójnym
-  // przydziale (nagłówek 0128). Rozstrzygamy g-mismatch jawnie, wzorem procedury
+  // 0143 waliduje role_grants_class_in_year i zatrzymuje się na niespójnym
+  // przydziale (nagłówek 0143). Rozstrzygamy g-mismatch jawnie, wzorem procedury
   // z nagłówka: rok przydziału = rok klasy, trigger role_grants_guard wyłączony
-  // na czas jednej instrukcji, zdarzenie audytu. Dopiero potem 0128 i nowsze.
+  // na czas jednej instrukcji, zdarzenie audytu. Dopiero potem 0143 i nowsze.
   await db.exec(`
     ALTER TABLE role_grants DISABLE TRIGGER role_grants_guard;
     WITH fixed AS (
@@ -159,10 +159,10 @@ describe('zamknięcie roku a przydziały klasy bez roku', () => {
       { class_id: 'c-1a', school_year_id: OLD, revoked: false },
       { class_id: 'c-1b', school_year_id: OLD, revoked: true },
     ]);
-    // 0022 nie przepisuje niespójnego wpisu (stan zmierzony przed jawną korektą przed 0128).
+    // 0022 nie przepisuje niespójnego wpisu (stan zmierzony przed jawną korektą przed 0143).
     assert.equal(expireDb.mismatchYearAfter0022, NEW, 'niespójny wpis nie jest przepisywany');
     const { rows: mismatch } = await db.query("SELECT school_year_id FROM role_grants WHERE id = 'g-mismatch'");
-    assert.equal(mismatch[0].school_year_id, OLD, 'przed 0128 rozstrzygnięty jawnie: rok klasy');
+    assert.equal(mismatch[0].school_year_id, OLD, 'przed 0143 rozstrzygnięty jawnie: rok klasy');
     const { rows: corrected } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'role_grant.school_year_corrected' AND entity_id = 'g-mismatch'");
     assert.equal(corrected[0].n, 1);
     const { rows: audit } = await db.query(

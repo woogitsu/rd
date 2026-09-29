@@ -96,7 +96,7 @@ BEGIN
                           WHERE c.id = g.class_id AND c.school_year_id = g.school_year_id)
     ) violations;
   IF bad_count > 0 THEN
-    RAISE EXCEPTION 'role_grants_class_out_of_year: % przydziałów klasy poza rokiem klasy lub bez roku (pierwsze: %); rozstrzygnij je ręcznie (patrz nagłówek 0128) i ponów migrację',
+    RAISE EXCEPTION 'role_grants_class_out_of_year: % przydziałów klasy poza rokiem klasy lub bez roku (pierwsze: %); rozstrzygnij je ręcznie (patrz nagłówek 0143) i ponów migrację',
       bad_count, bad_ids;
   END IF;
 END $$;
@@ -123,7 +123,7 @@ BEGIN
        WHERE d.id IS NULL
     ) violations;
   IF bad_count > 0 THEN
-    RAISE EXCEPTION 'news_photo_document_not_found: % zdjęć wskazuje nieistniejący dokument (pierwsze: %); rozstrzygnij je ręcznie (patrz nagłówek 0128) i ponów migrację',
+    RAISE EXCEPTION 'news_photo_document_not_found: % zdjęć wskazuje nieistniejący dokument (pierwsze: %); rozstrzygnij je ręcznie (patrz nagłówek 0143) i ponów migrację',
       bad_count, bad_ids;
   END IF;
 
@@ -136,7 +136,7 @@ BEGIN
        WHERE NOT news_photo_document_kind_allowed(d.kind)
     ) violations;
   IF bad_count > 0 THEN
-    RAISE EXCEPTION 'news_photo_document_not_allowed: % zdjęć wskazuje dokument niedozwolonego rodzaju (pierwsze: %); rozstrzygnij je ręcznie (patrz nagłówek 0128) i ponów migrację',
+    RAISE EXCEPTION 'news_photo_document_not_allowed: % zdjęć wskazuje dokument niedozwolonego rodzaju (pierwsze: %); rozstrzygnij je ręcznie (patrz nagłówek 0143) i ponów migrację',
       bad_count, bad_ids;
   END IF;
 END $$;

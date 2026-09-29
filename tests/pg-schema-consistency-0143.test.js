@@ -1,4 +1,4 @@
-// #198, część 2 (migracja 0128): news_photos.document_id -> documents(id) z
+// #198, część 2 (migracja 0143): news_photos.document_id -> documents(id) z
 // kontrolą rodzaju dokumentu oraz walidacja role_grants_class_in_year.
 // Wyłącznie dane syntetyczne (@example.invalid).
 import test from 'node:test';
@@ -10,12 +10,12 @@ import { loadMigrations } from '../src/postgres-migrations.js';
 import { createTestDb, seedClass, seedDocument, seedUser } from './helpers/pg.js';
 
 const migrationsDirectory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
-const TARGET = '0128_news_photo_document_fk_and_role_grants_validate.sql';
+const TARGET = '0143_news_photo_document_fk_and_role_grants_validate.sql';
 const admin = { userId: 'admin', grants: [{ role: 'admin', classId: null, schoolYearId: null }], mfaVerified: true };
 
-// Baza po wszystkich migracjach przed 0128 — do sprawdzania zachowania
+// Baza po wszystkich migracjach przed 0143 — do sprawdzania zachowania
 // migracji na istniejących (naruszających) danych.
-async function dbBefore0128() {
+async function dbBefore0143() {
   const migrations = await loadMigrations(migrationsDirectory);
   const db = new PGlite();
   for (const migration of migrations.filter((item) => item.name < TARGET)) await db.exec(migration.sql);
@@ -80,8 +80,8 @@ test('news_photos.document_id: klucz obcy i role_grants_class_in_year są zwalid
   } finally { await db.close(); }
 });
 
-test('migracja 0128 na poprawnych danych przechodzi i waliduje ograniczenia', async () => {
-  const { db, target } = await dbBefore0128();
+test('migracja 0143 na poprawnych danych przechodzi i waliduje ograniczenia', async () => {
+  const { db, target } = await dbBefore0143();
   try {
     await seedClass(db, { id: 'c-ok', schoolYearId: 'y-2026' });
     await seedUser(db, { userId: 'u-rep' });
@@ -97,8 +97,8 @@ test('migracja 0128 na poprawnych danych przechodzi i waliduje ograniczenia', as
   } finally { await db.close(); }
 });
 
-test('migracja 0128 zatrzymuje się z identyfikatorem przydziału klasy spoza roku i niczego nie zmienia', async () => {
-  const { db, target } = await dbBefore0128();
+test('migracja 0143 zatrzymuje się z identyfikatorem przydziału klasy spoza roku i niczego nie zmienia', async () => {
+  const { db, target } = await dbBefore0143();
   try {
     await seedClass(db, { id: 'c-2025', schoolYearId: 'y-2025' });
     await seedClass(db, { id: 'c-2026', schoolYearId: 'y-2026' });
@@ -116,8 +116,8 @@ test('migracja 0128 zatrzymuje się z identyfikatorem przydziału klasy spoza ro
   } finally { await db.close(); }
 });
 
-test('migracja 0128 zatrzymuje się na zdjęciu z nieistniejącym dokumentem (identyfikator zdjęcia w błędzie)', async () => {
-  const { db, target } = await dbBefore0128();
+test('migracja 0143 zatrzymuje się na zdjęciu z nieistniejącym dokumentem (identyfikator zdjęcia w błędzie)', async () => {
+  const { db, target } = await dbBefore0143();
   try {
     await insertPhoto(db, 'p-orphan', 'no-such-doc');
     await assert.rejects(db.exec(target.sql), /news_photo_document_not_found: 1 .*p-orphan/);
@@ -125,8 +125,8 @@ test('migracja 0128 zatrzymuje się na zdjęciu z nieistniejącym dokumentem (id
   } finally { await db.close(); }
 });
 
-test('migracja 0128 zatrzymuje się na zdjęciu wskazującym dokument finansowy', async () => {
-  const { db, target } = await dbBefore0128();
+test('migracja 0143 zatrzymuje się na zdjęciu wskazującym dokument finansowy', async () => {
+  const { db, target } = await dbBefore0143();
   try {
     await seedDocument(db, { id: 'doc-fin', kind: 'financial' });
     await insertPhoto(db, 'p-fin', 'doc-fin');
