@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {
   buildGrantsUrl, confirmationText, dateToExpiresAt, describeAuditEvent, errorMessage, grantPayload,
   indexClasses, invitationLink, invitationPayload, isOwnLastAdminGrant, mfaResetConfirmation, passwordResetLink,
-  PENDING_DECISION_ROLES, ROLE_LABELS, roleNeedsPendingDecisionWarning, scopeLabel,
+  ACTION_LABELS, PENDING_DECISION_ROLES, ROLE_LABELS, roleNeedsPendingDecisionWarning, scopeLabel,
 } from '../admin/core.js';
 import { ROLE_STATUS } from '../src/pg/auth.js';
+import { AUDIT_ACTIONS } from '../src/pg/routes/admin.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
 
@@ -102,4 +103,18 @@ test('passwordResetLink builds a /login/#reset= link carrying the token only in 
     passwordResetLink('abc123', 'https://rd.example.invalid'),
     'https://rd.example.invalid/login/#reset=abc123',
   );
+});
+
+// Przegląd demo: dziennik kont i ról pokazywał „user.created” i „auth.password_set”
+// surowym kodem. Każda akcja, którą GET /api/admin/audit może zwrócić, ma polską etykietę.
+test('dziennik kont: każda akcja z AUDIT_ACTIONS ma polską etykietę (bez surowego kodu)', () => {
+  assert.ok(AUDIT_ACTIONS.length > 0);
+  for (const action of AUDIT_ACTIONS) {
+    const label = ACTION_LABELS[action];
+    assert.ok(label, `brak etykiety dla ${action}`);
+    assert.doesNotMatch(label, /[a-z]+[._][a-z]+/, `etykieta dla ${action} wygląda jak kod: ${label}`);
+    assert.equal(describeAuditEvent({ action, metadata: {} }).label, label);
+  }
+  assert.equal(ACTION_LABELS['user.created'], 'Utworzenie konta');
+  assert.equal(ACTION_LABELS['auth.password_set'], 'Ustawienie hasła');
 });
