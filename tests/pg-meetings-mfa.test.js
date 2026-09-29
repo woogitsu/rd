@@ -6,9 +6,16 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import {
-  approveMinutes, correctResolution, createMeeting, createMinutesVersion, createResolution,
-  determineQuorum, recordAttendance, setMinutesVisibility, updateMeeting, updateResolution,
+  approveMinutes,
+  correctResolution,
+  createMeeting,
+  createMinutesVersion,
+  createResolution,
+  determineQuorum,
+  recordAttendance,
+  setMinutesVisibility,
 } from '../src/pg/meetings.js';
+import { updateMeeting, updateResolution } from './helpers/with-revision.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
