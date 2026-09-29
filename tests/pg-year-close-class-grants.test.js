@@ -12,6 +12,7 @@ import { request, seedClass, seedSchoolYear, seedUserSession } from './helpers/p
 const OLD = 'y-2024';
 const NEW = 'y-2025';
 const BACKFILL = '0022_role_grant_class_year.sql';
+const VALIDATE_GRANTS = '0128_news_photo_document_fk_and_role_grants_validate.sql';
 const migrationsDirectory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 // Baza w stanie sprzed 0022 z przydziałami „legacy”, potem migracja 0022.
@@ -72,8 +73,26 @@ async function legacyDb() {
   // dopinamy migracje nowsze niż 0022 (np. 0035_student_guardians_current.sql,
   // #157), inaczej trasy zależne od nowszych widoków/funkcji dostają 42P01
   // (undefined_table) niezwiązane z tym, co ten test faktycznie sprawdza.
-  for (const migration of migrations.filter((item) => item.name > BACKFILL)) await db.exec(migration.sql);
-  return { db, env: { db }, cookies, nullBefore };
+  for (const migration of migrations.filter((item) => item.name > BACKFILL && item.name < VALIDATE_GRANTS)) await db.exec(migration.sql);
+  // Stan po 0022 i przed 0128: 0022 celowo nie przepisuje niespójnego wpisu.
+  const mismatchYearAfter0022 = (await db.query("SELECT school_year_id FROM role_grants WHERE id = 'g-mismatch'")).rows[0].school_year_id;
+  // 0128 waliduje role_grants_class_in_year i zatrzymuje się na niespójnym
+  // przydziale (nagłówek 0128). Rozstrzygamy g-mismatch jawnie, wzorem procedury
+  // z nagłówka: rok przydziału = rok klasy, trigger role_grants_guard wyłączony
+  // na czas jednej instrukcji, zdarzenie audytu. Dopiero potem 0128 i nowsze.
+  await db.exec(`
+    ALTER TABLE role_grants DISABLE TRIGGER role_grants_guard;
+    WITH fixed AS (
+      UPDATE role_grants g SET school_year_id = c.school_year_id
+        FROM classes c WHERE c.id = g.class_id AND g.id = 'g-mismatch'
+        RETURNING g.id, g.class_id, c.school_year_id)
+    INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
+    SELECT gen_random_uuid()::text, 'u-admin', 'role_grant.school_year_corrected', 'role_grant', id,
+           jsonb_build_object('classId', class_id, 'schoolYearId', school_year_id, 'previousSchoolYearId', '${mismatchYearAfter0022}')
+      FROM fixed;
+    ALTER TABLE role_grants ENABLE TRIGGER role_grants_guard;`);
+  for (const migration of migrations.filter((item) => item.name >= VALIDATE_GRANTS)) await db.exec(migration.sql);
+  return { db, env: { db }, cookies, nullBefore, mismatchYearAfter0022 };
 }
 
 function post(env, path, cookie, body = {}) {
@@ -140,8 +159,12 @@ describe('zamknięcie roku a przydziały klasy bez roku', () => {
       { class_id: 'c-1a', school_year_id: OLD, revoked: false },
       { class_id: 'c-1b', school_year_id: OLD, revoked: true },
     ]);
+    // 0022 nie przepisuje niespójnego wpisu (stan zmierzony przed jawną korektą przed 0128).
+    assert.equal(expireDb.mismatchYearAfter0022, NEW, 'niespójny wpis nie jest przepisywany');
     const { rows: mismatch } = await db.query("SELECT school_year_id FROM role_grants WHERE id = 'g-mismatch'");
-    assert.equal(mismatch[0].school_year_id, NEW, 'niespójny wpis nie jest przepisywany');
+    assert.equal(mismatch[0].school_year_id, OLD, 'przed 0128 rozstrzygnięty jawnie: rok klasy');
+    const { rows: corrected } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'role_grant.school_year_corrected' AND entity_id = 'g-mismatch'");
+    assert.equal(corrected[0].n, 1);
     const { rows: audit } = await db.query(
       "SELECT actor_id, metadata_json FROM audit_events WHERE action = 'role_grant.school_year_backfilled'",
     );

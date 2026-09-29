@@ -40,12 +40,37 @@
 -- scripts/check-schema-consistency.mjs (reguły role_grants_* i news_photos_*).
 --
 -- Skutki dla danych: żaden wiersz nie jest zmieniany ani usuwany. Po błędzie
--- migracji administrator rozstrzyga każdy wiersz ręcznie: (a) przydziały są
--- niezmienne (0004) — wygaszenie starego przydziału i dodanie nowego wiersza;
--- (b)/(c) zdjęcia są niezmienne (0018) — zdjęcie z błędnym odwołaniem zostaje
+-- migracji administrator rozstrzyga każdy wiersz jawnie i ponawia migrację.
+-- Zdjęcia (b)/(c): są niezmienne (0018) — zdjęcie z błędnym odwołaniem zostaje
 -- cofnięte (revoked, nigdy niepubliczne) i zarejestrowane ponownie z
--- właściwym dokumentem. Dopiero potem migrację się ponawia. Migracja jest
--- w jednej transakcji, więc przy błędzie nic nie zostaje zastosowane.
+-- właściwym dokumentem; ale wiersz nadal wskazuje zły dokument, więc FK i tak
+-- go nie przyjmie — korekta odwołania wymaga tej samej procedury właściciela
+-- bazy co poniżej (UPDATE document_id z wyłączonym triggerem
+-- news_photos_before_update, na czas jednej instrukcji, i zdarzeniem audytu).
+-- Przydziały (a): 0022 CELOWO zostawia wiersze z rokiem różnym od roku klasy
+-- (możliwe tylko przy wpisach poza API), więc na prawdziwej bazie mogą istnieć.
+-- Przydziały są niezmienne i nieusuwalne (0004), a VALIDATE sprawdza także
+-- przydziały cofnięte i wygasłe, więc samo wygaszenie starego przydziału i
+-- dodanie nowego NIE usuwa naruszenia (chroni dostęp, nie migrację). Procedura
+-- (administrator, właściciel bazy, okno serwisowe, jedna transakcja, wzorem
+-- 0022): wyłączyć `role_grants_guard` na czas jednej instrukcji, ustawić
+-- school_year_id przydziału na rok jego klasy, włączyć trigger i dopisać
+-- zdarzenie audytu, np.:
+--   BEGIN;
+--   ALTER TABLE role_grants DISABLE TRIGGER role_grants_guard;
+--   WITH fixed AS (
+--     UPDATE role_grants g SET school_year_id = c.school_year_id
+--       FROM classes c WHERE c.id = g.class_id AND g.id = '<id przydziału>'
+--       RETURNING g.id, g.class_id, c.school_year_id)
+--   INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
+--   SELECT gen_random_uuid()::text, '<id administratora>', 'role_grant.school_year_corrected',
+--          'role_grant', id, jsonb_build_object('classId', class_id, 'schoolYearId', school_year_id,
+--          'previousSchoolYearId', '<dotychczasowy rok>') FROM fixed;
+--   ALTER TABLE role_grants ENABLE TRIGGER role_grants_guard;
+--   COMMIT;
+-- Decyzję, czy właściwy jest rok klasy, czy inny przydział, podejmuje
+-- administrator (zmiana zakresu dostępu). Migracja jest w jednej transakcji,
+-- więc przy błędzie nic nie zostaje zastosowane.
 -- Tabele są małe (kilkaset wierszy), ale ograniczenia mimo to dodawane są
 -- NOT VALID + VALIDATE CONSTRAINT po kontroli, żeby VALIDATE nie utrzymywało
 -- blokady ACCESS EXCLUSIVE dłużej niż zapis metadanych.
