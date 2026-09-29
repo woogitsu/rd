@@ -1053,7 +1053,23 @@ migracji są ignorowane i wygasają po dobie; w bazie nadal tylko skróty
 (retencja bez zmian: usuwanie po dobie). Wycofanie: usunięcie wierszy `'pair'` i
 przywrócenie CHECK `IN ('email','ip')` (kod aplikacji sprzed zmiany blokował
 konto po samym e-mailu).
-<<<<<<< HEAD
+
+
+`0132_keyset_list_indexes.sql` (#159) dodaje pięć indeksów pod listy z kursorem
+keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
+audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
+wiersz nie jest zmieniany; zapisy do tych tabel utrzymują dodatkowe indeksy.
+Wycofanie: `DROP INDEX` każdego z nich (bezpieczne). Kontrakt list: docs/API.md.
+
+`0140_data_access_log_review.sql` (#133) rozszerza CHECK `access_kind` w
+`data_access_log` o `class_roster_export`, `yearly_export` i `payment_export`
+(wpisy eksportów, zapisywane w tej samej transakcji co eksport) oraz dodaje
+indeksy pod przegląd `GET /api/admin/access-log` (kursor po
+`(occurred_at, id)`, filtr po rodzaju). Skutki dla danych: żaden wiersz nie
+jest zmieniany ani usuwany; trigger `data_access_log_guard` bez zmian;
+retencja nadal nieustalona (D-04). Wycofanie: przywrócenie CHECK z czterema
+dotychczasowymi wartościami możliwe tylko dopóki nie ma wierszy z nowymi
+rodzajami; indeksy można usunąć bez skutków dla danych.
 
 `0144_immutability_stamps_and_truncate.sql` (#204, punkty 3, 4, 6) dopina
 niezmienność dzienników. `stamp_created_now()` (BEFORE INSERT, trigger
@@ -1072,23 +1088,3 @@ triggerów synchronizacji), `email_webhook_events.occurred_at` (czas u
 dostawcy). Skutki dla danych: żaden wiersz nie jest zmieniany; zmienia się
 zachowanie przyszłych INSERT/UPDATE/TRUNCATE. Wycofanie: usunięcie triggerów
 `a0_stamp_*`, `*_no_truncate` z tej migracji i obu funkcji.
-||||||| 6934587
-=======
-
-
-`0132_keyset_list_indexes.sql` (#159) dodaje pięć indeksów pod listy z kursorem
-keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
-audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
-wiersz nie jest zmieniany; zapisy do tych tabel utrzymują dodatkowe indeksy.
-Wycofanie: `DROP INDEX` każdego z nich (bezpieczne). Kontrakt list: docs/API.md.
-
-`0140_data_access_log_review.sql` (#133) rozszerza CHECK `access_kind` w
-`data_access_log` o `class_roster_export`, `yearly_export` i `payment_export`
-(wpisy eksportów, zapisywane w tej samej transakcji co eksport) oraz dodaje
-indeksy pod przegląd `GET /api/admin/access-log` (kursor po
-`(occurred_at, id)`, filtr po rodzaju). Skutki dla danych: żaden wiersz nie
-jest zmieniany ani usuwany; trigger `data_access_log_guard` bez zmian;
-retencja nadal nieustalona (D-04). Wycofanie: przywrócenie CHECK z czterema
-dotychczasowymi wartościami możliwe tylko dopóki nie ma wierszy z nowymi
-rodzajami; indeksy można usunąć bez skutków dla danych.
->>>>>>> t-436
