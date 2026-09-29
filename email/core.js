@@ -104,6 +104,12 @@ export function canOfferApproval(campaign, actorId) {
     && !isLikelyOwnCampaign(campaign, actorId);
 }
 
+// Komunikat „dane od migawki zmieniły się” tylko dla istniejącej migawki, która przestała
+// być aktualna (snapshotCurrent === false). Bez migawki serwer zwraca null.
+export function isSnapshotStale(preview) {
+  return Boolean(preview) && Boolean(preview.recipientsHash) && preview.snapshotCurrent === false;
+}
+
 export function formatExclusions(exclusions) {
   return Object.entries(exclusions || {})
     .filter(([, count]) => Number(count) > 0)

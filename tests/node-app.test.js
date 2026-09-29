@@ -292,6 +292,30 @@ test('każda odpowiedź serwera Node ma nosniff, X-Frame-Options i (przy https) 
   }
 });
 
+test('Node server odpowiada 204 na /favicon.ico bez delegowania do API (przegląd demo: 404 w konsoli na każdym ekranie)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
+  let delegated = 0;
+  const fetchHandler = async () => {
+    delegated += 1;
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  };
+  const { server, baseUrl } = await listen(createNodeHandler({ distRoot: root, fetchHandler }));
+  try {
+    const get = await fetch(`${baseUrl}/favicon.ico`);
+    assert.equal(get.status, 204);
+    assert.equal(await get.text(), '');
+    const head = await fetch(`${baseUrl}/favicon.ico`, { method: 'HEAD' });
+    assert.equal(head.status, 204);
+    assert.equal(delegated, 0);
+    // Inne metody nie są specjalnie traktowane (trafiają do zwykłej obsługi → 404 z API).
+    const post = await fetch(`${baseUrl}/favicon.ico`, { method: 'POST', body: '{}' });
+    assert.notEqual(post.status, 204);
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Node server (#216): odpowiedź z Content-Length idzie strumieniowo z nagłówkami; przerwanie pobierania nie psuje serwera', async () => {
   const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
   const chunk = Buffer.alloc(64 * 1024, 0x61);

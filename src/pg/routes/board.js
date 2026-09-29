@@ -6,10 +6,15 @@
 //
 //   GET /api/board/overview?schoolYearId=
 //
-// Zakres: admin i zarząd, wyłącznie w latach z własnego przydziału (zarząd
-// przydzielony do jednego roku widzi tylko ten rok — SR-01). Skarbnik i
-// inne role nie mają tu dostępu: to pulpit zarządu, nie ogólny raport klas
-// (już istnieje w families.js) ani raport finansowy (ledger.js).
+// Zakres: admin i zarząd. Przydział szeroki (bez klasy) widzi wszystkie klasy
+// roku przydziału (zarząd przydzielony do jednego roku widzi tylko ten rok —
+// SR-01). Zarząd z przydziałem ograniczonym do klas widzi wyłącznie te klasy
+// (wiersze i sumy tylko z nich, bez kolumny wpisów wpłat — wariant zachowawczy
+// do decyzji D-08/D-09). Skarbnik i inne role nie mają tu dostępu: to pulpit
+// zarządu, nie ogólny raport klas (families.js) ani raport finansowy (ledger.js).
+// Wszystkie zapytania jednej odpowiedzi czytają jedną migawkę (readSnapshot,
+// #213), więc wiersze klas i suma szkoły są ze sobą spójne. Uczniowie liczeni
+// po widoku enrollments_current (odeszli ze szkoły — poza licznikami).
 //
 // Kolumna wpisów wpłat jest informacyjna i wymaga MFA oraz roli finansowej
 // (admin/board/treasurer — jak families.financialYears): jej brak w
@@ -23,6 +28,7 @@
 // Odpowiedź nie zawiera identyfikatorów gospodarstw, imion ani e-maili.
 
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { readSnapshot } from '../db-snapshot.js';
 import { scopeFromGrants } from './families.js';
 
 export const name = 'board';
@@ -52,24 +58,42 @@ export async function handle(request, env, url, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return json({ error: 'unauthenticated' }, 401);
 
-  // Tylko przydziały szerokie (bez class_id) — ten pulpit nie jest dostępny
-  // przez przydział klasowy, tylko przez rolę admin/zarząd całej szkoły/roku.
-  const scope = scopeFromGrants(context.grants.filter((grant) => !grant.classId), BASE_ROLES);
+  // Przydział szeroki (admin/zarząd całej szkoły lub roku) albo klasowy
+  // (zarząd klasy): klasowy zawęża wyniki do przypisanych klas.
+  const scope = scopeFromGrants(context.grants, BASE_ROLES);
   if (!scope.any) return json({ error: 'forbidden' }, 403);
 
   const schoolYearId = url.searchParams.get('schoolYearId');
   if (!ID_PATTERN.test(schoolYearId ?? '')) return json({ error: 'invalid_request' }, 400);
-  if (!scope.allYears && !scope.years.includes(schoolYearId)) return json({ error: 'school_year_not_found' }, 404);
+  // Kolumna wpłat: rola finansowa + MFA; dodatkowo (w buildOverview) tylko
+  // przy przydziale szerokim dla tego roku.
+  const financial = isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, requireMfa: true });
 
-  const year = await env.db.query('SELECT id, label FROM school_years WHERE id = $1', [schoolYearId]);
-  if (!year.rows[0]) return json({ error: 'school_year_not_found' }, 404);
+  const result = await readSnapshot(env.db, (tx) => buildOverview(tx, { schoolYearId, scope, financial }));
+  if (!result) return json({ error: 'school_year_not_found' }, 404);
+  return json(result);
+}
 
-  const includePayments = isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, requireMfa: true });
+async function buildOverview(db, { schoolYearId, scope, financial }) {
+  const year = await db.query('SELECT id, label FROM school_years WHERE id = $1', [schoolYearId]);
+  if (!year.rows[0]) return null;
 
-  const { rows } = await env.db.query(
+  // Klasy w zakresie: wszystkie klasy roku (zakres szeroki dla tego roku) plus
+  // klasy z przydziałów klasowych (przydział bez roku obowiązuje w każdym).
+  const wideForYear = scope.allYears || scope.years.includes(schoolYearId);
+  const grantedClasses = scope.classIds.filter((_, index) => scope.classYears[index] === null || scope.classYears[index] === schoolYearId);
+  const visible = await db.query(
+    `SELECT id FROM classes WHERE school_year_id = $1 AND ($2::boolean OR id = ANY($3::text[])) ORDER BY id`,
+    [schoolYearId, wideForYear, grantedClasses],
+  );
+  if (!wideForYear && !grantedClasses.length) return null;
+  const classIds = visible.rows.map((row) => row.id);
+  const includePayments = financial && wideForYear;
+
+  const { rows } = await db.query(
     `SELECT c.id, c.name,
-            (SELECT count(*) FROM enrollments e WHERE e.class_id = c.id) AS student_count,
-            (SELECT count(DISTINCT ph.household_id) FROM enrollments e
+            (SELECT count(*) FROM enrollments_current e WHERE e.class_id = c.id) AS student_count,
+            (SELECT count(DISTINCT ph.household_id) FROM enrollments_current e
                JOIN student_primary_household_current ph ON ph.student_id = e.student_id
               WHERE e.class_id = c.id) AS household_count,
             (SELECT count(*) FROM role_grants g
@@ -78,19 +102,19 @@ export async function handle(request, env, url, json) {
             (SELECT count(*) FROM invitations i
               WHERE i.class_id = c.id AND i.role = 'representative'
                 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS representative_pending,
-            (SELECT count(*) FROM enrollments e
+            (SELECT count(*) FROM enrollments_current e
               WHERE e.class_id = c.id AND EXISTS (
                 SELECT 1 FROM student_guardians_current sg JOIN guardians g ON g.id = sg.guardian_id
                  WHERE sg.student_id = e.student_id AND sg.contact_allowed AND g.contact_allowed
                    AND g.email IS NOT NULL
               )) AS contact_count,
-            (SELECT count(*) FROM enrollments e
+            (SELECT count(*) FROM enrollments_current e
               WHERE e.class_id = c.id AND NOT EXISTS (
                 SELECT 1 FROM student_guardians_current sg JOIN guardians g ON g.id = sg.guardian_id
                  WHERE sg.student_id = e.student_id AND sg.contact_allowed AND g.contact_allowed
                    AND g.email IS NOT NULL
               )) AS no_contact_count,
-            ${includePayments ? `(SELECT count(DISTINCT ph.household_id) FROM enrollments e
+            ${includePayments ? `(SELECT count(DISTINCT ph.household_id) FROM enrollments_current e
                JOIN student_primary_household_current ph ON ph.student_id = e.student_id
               WHERE e.class_id = c.id AND EXISTS (
                 SELECT 1 FROM household_payment_totals t
@@ -98,9 +122,9 @@ export async function handle(request, env, url, json) {
                    AND t.net_amount_cents > 0
               )) AS households_with_entry` : 'NULL AS households_with_entry'}
        FROM classes c
-      WHERE c.school_year_id = $1
+      WHERE c.school_year_id = $1 AND c.id = ANY($2::text[])
       ORDER BY c.name, c.id`,
-    [schoolYearId],
+    [schoolYearId, classIds],
   );
 
   const classes = rows.map((row) => {
@@ -126,23 +150,23 @@ export async function handle(request, env, url, json) {
 
   // Wiersz sumaryczny: gospodarstwa i rodzeństwo w kilku klasach liczone raz
   // (osobne zapytanie po całym roku, nie suma kolumn klas).
-  const totalsRow = await env.db.query(
-    `SELECT (SELECT count(*) FROM enrollments e JOIN classes c ON c.id = e.class_id WHERE c.school_year_id = $1) AS student_count,
-            (SELECT count(DISTINCT ph.household_id) FROM enrollments e
+  const totalsRow = await db.query(
+    `SELECT (SELECT count(*) FROM enrollments_current e JOIN classes c ON c.id = e.class_id WHERE c.school_year_id = $1 AND c.id = ANY($2::text[])) AS student_count,
+            (SELECT count(DISTINCT ph.household_id) FROM enrollments_current e
                JOIN classes c ON c.id = e.class_id
                JOIN student_primary_household_current ph ON ph.student_id = e.student_id
-              WHERE c.school_year_id = $1) AS household_count,
-            ${includePayments ? `(SELECT count(DISTINCT ph.household_id) FROM enrollments e
+              WHERE c.school_year_id = $1 AND c.id = ANY($2::text[])) AS household_count,
+            ${includePayments ? `(SELECT count(DISTINCT ph.household_id) FROM enrollments_current e
                JOIN classes c ON c.id = e.class_id
                JOIN student_primary_household_current ph ON ph.student_id = e.student_id
-              WHERE c.school_year_id = $1 AND EXISTS (
+              WHERE c.school_year_id = $1 AND c.id = ANY($2::text[]) AND EXISTS (
                 SELECT 1 FROM household_payment_totals t
                  WHERE t.household_id = ph.household_id AND t.school_year_id = $1
                    AND t.net_amount_cents > 0
               )) AS households_with_entry,
              (SELECT count(*) FROM payment_entries pe WHERE pe.school_year_id = $1 AND pe.status = 'unmatched') AS unmatched_count`
               : 'NULL AS households_with_entry, NULL AS unmatched_count'}`,
-    [schoolYearId],
+    [schoolYearId, classIds],
   );
   const totalsSource = totalsRow.rows[0];
   const totalHouseholdCount = toSafeInteger(totalsSource.household_count);
@@ -161,11 +185,12 @@ export async function handle(request, env, url, json) {
     totals.unmatchedPaymentsCount = toSafeInteger(totalsSource.unmatched_count);
   }
 
-  return json({
+  return {
     schoolYearId,
     schoolYearLabel: year.rows[0].label,
     note: NOTE,
+    scope: wideForYear ? 'school' : 'classes',
     classes,
     totals,
-  });
+  };
 }
