@@ -13,7 +13,8 @@ import { insertAuditEvent } from '../src/pg/audit.js';
 import {
   assertRestoreAllowed, buildYearlyExport, canonicalJson, restoreBundle, sha256Hex, verifyBundle,
 } from '../src/pg/export.js';
-import { createMeeting, createMinutesVersion, createResolution, determineQuorum, recordAttendance, updateMeeting } from '../src/pg/meetings.js';
+import { createMeeting, createMinutesVersion, createResolution, determineQuorum, recordAttendance } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';

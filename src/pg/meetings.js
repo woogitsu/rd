@@ -122,6 +122,14 @@ function integer(value, min, max, { optional = false } = {}) {
   return value;
 }
 
+// #215 etap 2: `revision` (numer wersji `revision_no` wiersza) jest wymagane
+// przy edycji uchwały i zebrania. Brak lub nie-liczba całkowita → 400
+// `invalid_revision`; niezgodność z bieżącą wersją → 409 `revision_conflict`.
+function requiredRevision(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1000000000) throw new MeetingError('invalid_revision');
+  return value;
+}
+
 function bool(value) {
   if (typeof value !== 'boolean') throw new MeetingError('invalid_request');
   return value;
@@ -683,12 +691,12 @@ export async function createMeeting(db, actor, input = {}, env) {
 // żądaniu zostają) — ten merge czytał sprzed transakcji, więc druga
 // równoległa edycja innego pola quorum po cichu cofała pierwszą. Merge i
 // zapis są teraz w jednej transakcji, pod blokadą wiersza (FOR UPDATE), a
-// `input.revision`, gdy podane, musi zgadzać się z bieżącym `revision_no`
-// (inaczej `409 revision_conflict`) — opcjonalne na razie, patrz
-// updateResolution wyżej i "Ryzyko zmiany" w #215.
+// `input.revision` jest WYMAGANE (etap 2 #215) i musi zgadzać się z bieżącym
+// `revision_no` (brak → `400 invalid_revision`, niezgodne → `409
+// revision_conflict`).
 export async function updateMeeting(db, actor, input = {}, env) {
   const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
-  const expectedRevision = input.revision !== undefined ? integer(input.revision, 1, 1000000000) : null;
+  const expectedRevision = requiredRevision(input.revision);
   await mutate(db, async tx => {
     const { rows: lockedRows } = await tx.query('SELECT * FROM meetings WHERE id = $1 FOR UPDATE', [meeting.id]);
     const locked = lockedRows[0];
@@ -730,7 +738,7 @@ export async function updateMeeting(db, actor, input = {}, env) {
         : changes[column] !== locked[column]
     ));
     if (!columns.length) return;
-    if (expectedRevision !== null && locked.revision_no !== expectedRevision) {
+    if (locked.revision_no !== expectedRevision) {
       throw new MeetingError('revision_conflict', 409);
     }
     // #113: termin zmieniony dostaje własne zdarzenie w dzienniku, ze starą i
@@ -1095,16 +1103,13 @@ export async function createResolution(db, actor, input = {}) {
 // edit of a different field silently overwrote the first editor's change,
 // and a parallel adoption could apply to content already replaced. The row
 // is now locked (SELECT ... FOR UPDATE) and merged *inside* the transaction,
-// and `input.revision`, when the caller sends it, must match the row's
-// current `revision_no` or the request gets `409 revision_conflict` instead
-// of silently merging. `revision` stays optional for now (existing callers
-// that do not send it keep the previous best-effort merge behaviour, now at
-// least race-free because the merge base is read under the lock) — see
-// issue #215 "Ryzyko zmiany" for the staged rollout.
+// and `input.revision` is REQUIRED (stage 2 of #215): it must match the row's
+// current `revision_no` — missing gives `400 invalid_revision`, stale gives
+// `409 revision_conflict` instead of silently merging.
 export async function updateResolution(db, actor, input = {}) {
   const resolution = await loadResolution(db, input.resolutionId, input.meetingId);
   await meetingForManage(db, actor, resolution.meeting_id);
-  const expectedRevision = input.revision !== undefined ? integer(input.revision, 1, 1000000000) : null;
+  const expectedRevision = requiredRevision(input.revision);
   await mutate(db, async tx => {
     const { rows: lockedRows } = await tx.query('SELECT * FROM resolutions WHERE id = $1 FOR UPDATE', [resolution.id]);
     const locked = lockedRows[0];
@@ -1130,7 +1135,7 @@ export async function updateResolution(db, actor, input = {}) {
       && next.votesAgainst === locked.votes_against && next.votesAbstain === locked.votes_abstain
       && next.quorumCheckId === locked.quorum_check_id;
     if (isNoOp) return;
-    if (expectedRevision !== null && locked.revision_no !== expectedRevision) {
+    if (locked.revision_no !== expectedRevision) {
       throw new MeetingError('revision_conflict', 409);
     }
     if (locked.status !== 'draft') throw new MeetingError('resolution_final_immutable', 409);
