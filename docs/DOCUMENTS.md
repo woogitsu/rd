@@ -83,7 +83,18 @@ Zamrożenie roku (issue #76/#313, `postgres/migrations/0106_document_description
   - `document_active_content` — PDF zawierający (nieskompresowane) słowa kluczowe `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile`, `/RichMedia`, `/XFA` albo `/Encrypt` (szyfrowanie uniemożliwia dalszą kontrolę treści, więc traktujemy je tak samo);
   - `document_malformed` — PDF bez `%%EOF` w ostatnim 1 KiB (np. poliglota z dołożonymi danymi po właściwej treści), PNG z uszkodzonym łańcuchem chunków albo danymi po `IEND`, JPEG bez `FF D9` na końcu (po odjęciu dopuszczalnego dopełnienia zerami).
   - **Ograniczenie:** to kontrola surowych bajtów, nie parser PDF. Strumienie PDF bywają skompresowane (`FlateDecode`) — słowo kluczowe wewnątrz skompresowanego strumienia nie zostanie wykryte. Reguła wymaga przeglądu przed włączeniem na prawdziwych, zanonimizowanych plikach z banku (ryzyko fałszywych odrzuceń podpisanych/zaszyfrowanych PDF-ów).
-  - Ta wersja **nie** obejmuje: kolumny `validation_version` w `documents`, podglądu obrazu (`disposition=inline`) ani renderowania PDF przez samodzielnie hostowany PDF.js w panelu — to osobny zakres (część issue #89 pozostaje otwarta).
+  - Nazwy PDF zapisane szesnastkowo (`/J#61vaScript`) są dekodowane przed porównaniem, żeby nie omijały listy. `/OpenAction` odrzucamy tylko, gdy akcja jest wpisana w miejscu (`/OpenAction << … >>`); cel-strona (`[ … ]`) i odnośnik (`5 0 R`) przechodzą, a odnośnik do akcji ze skryptem wychwytuje słowo kluczowe akcji. Pełne odrzucanie `/OpenAction` dałoby fałszywe odrzucenia PDF z banku.
+  - Ta wersja **nie** obejmuje: kolumny `validation_version` w `documents` ani renderowania PDF przez samodzielnie hostowany PDF.js (zależność wymaga decyzji D-05) — to osobny zakres (część issue #89 pozostaje otwarta).
+
+## Podgląd w panelu (issue #89)
+
+`GET /api/documents/{id}/content?disposition=inline` wydaje PDF, PNG albo JPEG do wyświetlenia w panelu bez zapisu na dysku. Wartość `attachment` (i brak parametru) to dotychczasowe pobranie; każda inna wartość daje `400 invalid_disposition`.
+
+- **Autoryzacja przy każdym żądaniu.** Nie ma adresu z tokenem ani podpisanego adresu do bucketu: przeglądarka woła ten sam endpoint serwera z ciasteczkiem sesji, a serwer liczy sesję, rolę, MFA, rok i klasę jak przy pobraniu. Wygaśnięcie sesji lub przydziału odcina podgląd od następnego żądania; skopiowany adres nie działa bez sesji (`401`). Dokument niedostępny dla roli i nieznany dają ten sam `404` (przy istniejącym dokumencie — zapis `document.access_denied`). Bucket pozostaje prywatny, treść przechodzi przez serwer.
+- **Nagłówki odpowiedzi podglądu:** `Content-Disposition: inline`, `Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'self'` (bez `allow-scripts` i `allow-same-origin`), `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Cross-Origin-Resource-Policy: same-origin`, `Referrer-Policy: no-referrer`. Tylko ta odpowiedź dostaje `X-Frame-Options: SAMEORIGIN` (reszta serwera zostaje przy `DENY`), żeby panel mógł osadzić PDF we własnej ramce.
+- **Panel:** obraz jako `<img>`, PDF w `<iframe sandbox="">` (pusty atrybut = brak skryptów, formularzy i dostępu do originu panelu). CSP paneli bez zmian (`script-src 'self'`, `img-src 'self' data:`, `default-src 'self'` obejmuje ramkę własnego originu).
+- **Dziennik:** podgląd zapisuje `document.viewed` (aktor, czas, identyfikator dokumentu, rodzaj, rok, klasa, sesja) przed wydaniem treści — błąd zapisu blokuje podgląd. Pobranie nadal zapisuje `document.downloaded`.
+- **Ograniczenie:** to wbudowany czytnik PDF przeglądarki, nie PDF.js. Niektóre przeglądarki (m.in. Chrome) odmawiają renderowania PDF w ramce z `sandbox`; wtedy panel pokazuje wskazówkę, że należy pobrać plik. Zabezpieczenia (CSP `sandbox` bez skryptów, kontrola struktury) nie zależą od tego, czy podgląd się wyświetli. Wariant z PDF.js (kryterium akceptacji issue #89) czeka na D-05.
 
 ## Klucz obiektu i dane osobowe
 
@@ -95,7 +106,7 @@ Bucket nie może zawierać zdjęć archiwalnych ani wizerunku dzieci: publikacja
 
 Migracja `postgres/migrations/0006_documents.sql` rozszerza tabelę `documents` (szczegóły skutków: [postgres/README.md](../postgres/README.md)). Wpis dokumentu jest niezmienny: `UPDATE` i `DELETE` zwracają błąd. Pola `retention_policy` i `retain_until` czekają na decyzję D-04; wartość `NULL` znaczy „retencja nieustalona — nie usuwać”. Usuwanie po okresie retencji będzie osobnym, audytowanym mechanizmem z własną migracją.
 
-Zdarzenia w `audit_events`: `document.uploaded` (w tej samej transakcji co wpis), `document.downloaded` (przed wydaniem treści; błąd zapisu blokuje pobranie), `document.access_denied`.
+Zdarzenia w `audit_events`: `document.uploaded` (w tej samej transakcji co wpis), `document.downloaded` (przed wydaniem treści; błąd zapisu blokuje pobranie), `document.viewed` (podgląd inline, przed wydaniem treści), `document.access_denied`.
 
 ## Konfiguracja
 
@@ -117,7 +128,7 @@ Brak wszystkich zmiennych `BUCKET_*` oznacza brak magazynu (trasy dokumentów zw
 ## Staging na syntetycznym pliku
 
 1. Utworzyć bucket w środowisku staging (region UE) i przekazać zmienne `BUCKET_*` usłudze staging. Nie używać bucketu produkcyjnego.
-2. `APP_ENV=staging npm run storage:smoke` — zapisuje wygenerowany syntetyczny PDF pod `smoke/<uuid>`, odczytuje go, porównuje SHA-256 i usuwa. Skrypt odmawia działania przy `APP_ENV=production` i nie wypisuje adresu, nazwy bucketu ani kluczy.
+2. `APP_ENV=staging npm run storage:smoke` — zapisuje wygenerowany syntetyczny PDF pod `smoke/<uuid>`, odczytuje go, porównuje SHA-256 i usuwa. Skrypt odmawia działania przy `APP_ENV=production` oraz przy braku lub nieznanej wartości `APP_ENV` i nie wypisuje adresu, nazwy bucketu ani kluczy.
 3. Po migracji `0006` na bazie staging i zalogowaniu syntetycznego skarbnika z MFA: przesłać syntetyczny PDF przez `POST /api/documents`, pobrać go, sprawdzić nagłówki, a następnie potwierdzić `404` dla konta przedstawiciela klasy i dla losowego identyfikatora oraz wpisy w `audit_events`.
 4. Nie używać prawdziwych faktur, wyciągów, protokołów ani plików z nazwiskami.
 
