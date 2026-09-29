@@ -8,7 +8,7 @@ import { bodyLimitFor, maxUploadBytes } from './documents.js';
 import { storageFromEnv } from './storage.js';
 import { checkReadiness } from './health.js';
 import { createRequestMetrics, describeError, log, startMetricsReporter } from './log.js';
-import { dummyHash } from './pg/password.js';
+import { dummyHash, loginQueueMetrics } from './pg/password.js';
 import { PHOTO_UPLOAD_MAX_BYTES } from './pg/news.js';
 import { resolveWriteMode } from './write-mode.js';
 
@@ -206,7 +206,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const server = await startServer({ env: runtime.env, fetchHandler: runtime.fetchHandler, bodyLimit: runtime.bodyLimit, metrics, readiness });
   const address = server.address();
   log.info('server_started', { mode: runtime.mode, port: typeof address === 'object' ? address.port : null });
-  const stopMetrics = startMetricsReporter({ metrics, intervalMs: positiveMs(process.env.METRICS_LOG_INTERVAL_MS, 5 * 60 * 1000) });
+  const stopMetrics = startMetricsReporter({ metrics, extraFields: loginQueueMetrics, intervalMs: positiveMs(process.env.METRICS_LOG_INTERVAL_MS, 5 * 60 * 1000) });
   const shutdown = createShutdown({
     server,
     close: () => runtime.close(),
