@@ -15,7 +15,7 @@ import { loadSession } from '../auth.js';
 import {
   acceptInvitationWithPassword, authState, changePassword, LoginError, passwordLogin, resetPasswordWithToken,
 } from '../login.js';
-import { MAX_PASSWORD_INPUT_BYTES } from '../password.js';
+import { MAX_PASSWORD_INPUT_BYTES, withQueueClient } from '../password.js';
 
 export const name = 'login';
 
@@ -104,7 +104,8 @@ async function route(request, env, url, json) {
 
 export async function handle(request, env, url, json) {
   try {
-    return await route(request, env, url, json);
+    // #203: obliczenia scrypt tego żądania liczą się do limitu kolejki dla adresu IP.
+    return await withQueueClient(clientIp(request), () => route(request, env, url, json));
   } catch (error) {
     if (error instanceof LoginError) {
       const headers = error.extra?.retryAfter ? { 'Retry-After': String(error.extra.retryAfter) } : {};
