@@ -1,5 +1,7 @@
 import {
   ACTION_LABELS,
+  accountName,
+  entityTypeLabel,
   GRANT_STATUS_LABELS,
   INVITATION_STATUS_LABELS,
   ROLE_LABELS,
@@ -21,6 +23,7 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
+import { shortId } from "../shared/short-id.js";
 import "../shared/shell.css";
 
 mountShell();
@@ -544,9 +547,13 @@ async function loadAudit({ append = false } = {}) {
   if (!events.length) return emptyRow(tbody, 5, "Brak zdarzeń.");
   tbody.replaceChildren(...events.map((item) => {
     const tr = document.createElement("tr");
-    const { label, details } = describeAuditEvent(item);
+    const { label, details } = describeAuditEvent(item, state.users);
     tr.append(cell(formatDateTime(item.occurredAt)), cell(ACTION_LABELS[item.action] ? label : item.action));
-    tr.append(cell(`${item.entityType} ${item.entityId}`, "mono"), cell(details || "—"), cell(item.actorId ?? "system", "mono"));
+    const object = cell(`${entityTypeLabel(item.entityType)} ${shortId(item.entityId)}`);
+    object.title = `${item.entityType} ${item.entityId}`;
+    const actor = cell(accountName(item.actorId, state.users));
+    if (item.actorId) actor.title = item.actorId;
+    tr.append(object, cell(details || "—"), actor);
     return tr;
   }));
 }

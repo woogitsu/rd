@@ -38,3 +38,10 @@ test('shell.css: na telefonie nawigacja nadal przewija się w sobie (bez zawijan
   assert.match(nav.body, /flex-wrap:\s*nowrap/);
   assert.match(nav.body, /overflow-x:\s*auto/);
 });
+
+test('shell.css: rok szkolny w bloku konta nie łamie się na wiele linii (przegląd demo)', async () => {
+  const css = (await readFile(new URL('../shared/shell.css', import.meta.url), 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = blocks(css).find((r) => r.selector === '#shell-account .shell-account-year');
+  assert.ok(rule);
+  assert.match(rule.body, /white-space:\s*nowrap/);
+});

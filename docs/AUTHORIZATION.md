@@ -30,7 +30,7 @@ Nadanie roli, która dziś nie daje żadnej trasy chronionej (np. `principal`, d
 
 - `POST /api/admin/invitations` i `POST /api/admin/grants` odrzucają rolę `pending_decision` kodem `422 role_pending_decision`, chyba że `ALLOW_PENDING_ROLES=true` (przygotowanie kont z wyprzedzeniem przed D-09, testy).
 - `resolveScope` (`src/pg/routes/admin.js`) odrzuca `classId` dla roli bez tras klasowych (`CLASS_SCOPE_ROLES` — dziś tylko `representative`) kodem `422 class_scope_not_supported`; dotychczas taki przydział zapisywał się i po cichu nie robił niczego.
-- `GET /api/access` zwraca dodatkowo `hasActiveRole` (`false`, gdy żaden aktywny przydział konta nie ma statusu innego niż `pending_decision`). Ekran startowy `login/` pokazuje wtedy komunikat o braku uprawnień zamiast listy 10 paneli kończących się odmową; treść komunikatu (kontakt, dokładne sformułowanie) czeka na zatwierdzenie przez zarząd, dziś jest robocza i nie obiecuje funkcji, których nie ma (AGENTS.md).
+- `GET /api/access` zwraca dodatkowo `hasActiveRole` (`false`, gdy żaden aktywny przydział konta nie ma statusu innego niż `pending_decision`). Ekran startowy `login/` pokazuje wtedy komunikat o braku uprawnień zamiast listy paneli kończących się odmową (lista startowa dla pozostałych kont pochodzi z `visiblePanels` — panele wynikające z przydziałów, bez stałej listy dla każdej roli; to nawigacja, dostęp egzekwuje serwer); treść komunikatu (kontakt, dokładne sformułowanie) czeka na zatwierdzenie przez zarząd, dziś jest robocza i nie obiecuje funkcji, których nie ma (AGENTS.md).
 
 Istniejące przed tą zmianą przydziały klasowe dla ról spoza `CLASS_SCOPE_ROLES` (jeśli takie powstały) nie są usuwane ani migrowane — nowa reguła działa tylko dla przyszłych zaproszeń/nadań. Przegląd takich wierszy (`SELECT * FROM role_grants WHERE role NOT IN ('representative') AND class_id IS NOT NULL`) zostawiamy administratorowi jako zapytanie, nie migrację danych.
 
@@ -175,6 +175,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/email/preferences?t=:token` | publiczna, bez sesji | nie | — | tylko odczyt kategorii z tokenu, bez skutku; zły/zmieniony token → 400; limit żądań → 429 (#110) |
 | `POST /api/email/preferences?t=:token` | publiczna, bez sesji; zwolniona z `Origin` (jak webhook) | nie | — | wypisanie z kategorii kampanii, idempotentne; zły/zmieniony token → 400; limit żądań → 429 (#110) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
+| `GET /api/public/news/:postId` | publiczna | nie | 404 | tylko opublikowana wersja niewycofanego wpisu (widok `public_news`); szkic, nieopublikowany, wycofany i nieznany = identyczne 404 (#116) |
 | `GET /api/public/news-photos/:photoId/web` | publiczna | nie | 404 | tylko zdjęcie zweryfikowane w opublikowanej wersji; nieznane/niepubliczne = 404 identyczne (#96) |
 | `GET /api/public/news-photos/:photoId/thumb` | publiczna | nie | 404 | jak wyżej |
 | `GET /api/news?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wpisy własnej klasy | nie | 403 | |

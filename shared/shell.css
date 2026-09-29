@@ -17,6 +17,8 @@ nav:has(> #shell-nav) { min-width: 0; }
   font-size: .9rem;
 }
 #shell-account .shell-account-name { font-weight: 600; }
+/* Blok konta nie łamie „Rok szkolny 2026-2027” w kilka linii (przegląd demo #6). */
+#shell-account .shell-account-year { white-space: nowrap; }
 #shell-account .shell-account-scope,
 #shell-account .shell-account-year { color: #5a5f63; }
 #shell-account a,
