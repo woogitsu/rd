@@ -11,7 +11,8 @@ import {
 } from '../src/pg/news.js';
 import { newsItems } from '../site/core.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, lifecycleActors, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
 const board1 = { userId: 'board1', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
@@ -809,5 +810,28 @@ test('publiczny wpis pod stałym adresem: tylko opublikowana wersja, identyczne 
     assert.equal(gone.status, 404);
     assert.deepEqual(await gone.json(), missingBody);
     assert.deepEqual((await pub(db)).posts, []);
+  } finally { await db.close(); }
+});
+
+// #214: jak wyżej — aktor z prawdziwego ładowania sesji i przydziałów.
+test('aktualności: wygasły i cofnięty przydział oraz nieważna sesja nie dają dostępu (aktor z loadAuthorizationContext)', async () => {
+  const db = await newsDb();
+  try {
+    const actors = await lifecycleActors(db, { role: 'board', schoolYearId: year, prefix: 'nw' });
+    assert.ok(actors.active, 'aktor z ważną sesją i przydziałem ładuje się przez loadAuthorizationContext');
+    assert.deepEqual(actors.active.grants.map((grant) => grant.role), ['board']);
+    // Nieważna sesja / konto wyłączone: brak kontekstu (401), nie „pusty aktor”.
+    for (const name of ['expiredSession', 'revokedSession', 'disabledAccount']) {
+      assert.equal(actors[name], null, `${name}: brak aktora`);
+    }
+    // Wygasły lub cofnięty przydział: sesja ważna, ale bez ról.
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      assert.ok(actors[name], `${name}: sesja jest ważna`);
+      assert.deepEqual(actors[name].grants, [], `${name}: przydział odfiltrowany przez SQL`);
+    }
+    assert.deepEqual((await listInternal(db, actors.active, { schoolYearId: year })).posts, []);
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      await assert.rejects(listInternal(db, actors[name], { schoolYearId: year }), { code: 'forbidden', status: 403 }, name);
+    }
   } finally { await db.close(); }
 });

@@ -9,6 +9,7 @@ import {
 import { requireAccess, revokeRoleGrant } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
 import { resolveRuntime } from '../src/server.js';
+import { assertEvery } from './helpers/assertions.js';
 import { createTestDb, request, seedClass, seedUser, seedUserSession } from './helpers/pg.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -244,7 +245,7 @@ test('session rotation revokes the old secret and keeps the chain', async () => 
   assert.equal(rows[0].rotated_from, session.sessionId);
   await assert.rejects(rotateSession(env, session), /session_not_active/);
   const { rows: hashes } = await db.query('SELECT token_hash FROM sessions');
-  assert.ok(hashes.every((row) => row.token_hash !== rotated.secret));
+  assertEvery(hashes, (row) => row.token_hash !== rotated.secret);
 }));
 
 test('disabled user cannot get a new session and all sessions can be revoked', async () => withDb(async (db, env) => {
@@ -287,14 +288,22 @@ test('invitation is one-time, expires, can be revoked and must match the account
   assert.equal((await acceptInvitation(env, { token: revokedInvite.secret, userId: 'rep' })).reason, 'revoked');
   assert.equal(await revokeInvitation(env, { invitationId: invite.invitationId, actorId: 'admin' }), false);
 
+  // #214: czas przesuwamy wstrzykiwanym zegarem (`now`), a nie przez
+  // ALTER TABLE ... DISABLE TRIGGER — strażnik zaproszeń pozostaje włączony.
   const expiring = await createInvitation(env, { actorId: 'admin', email: 'rep.synthetic@example.invalid', role: 'board', ttlSeconds: 60 });
-  await db.query('ALTER TABLE invitations DISABLE TRIGGER invitations_guard');
-  await db.query("UPDATE invitations SET created_at = now() - interval '2 days', expires_at = now() - interval '1 day' WHERE id = $1", [expiring.invitationId]);
-  await db.query('ALTER TABLE invitations ENABLE TRIGGER invitations_guard');
-  assert.equal((await acceptInvitation(env, { token: expiring.secret, userId: 'rep' })).reason, 'expired');
+  const beforeExpiry = new Date(Date.now() + 30 * 1000);
+  const afterExpiry = new Date(Date.now() + 2 * 24 * 3600 * 1000);
+  assert.equal((await acceptInvitation(env, { token: expiring.secret, userId: 'intruder', now: afterExpiry })).reason, 'expired');
+  assert.equal((await acceptInvitation(env, { token: expiring.secret, userId: 'rep', now: afterExpiry })).reason, 'expired');
+  assert.equal((await db.query('SELECT accepted_at FROM invitations WHERE id = $1', [expiring.invitationId])).rows[0].accepted_at, null);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM role_grants WHERE source_invitation_id = $1", [expiring.invitationId])).rows[0].n, 0);
+  // Strażnik nadal chroni wiersz: bezpośrednia zmiana terminu jest odrzucona.
+  await assert.rejects(db.query("UPDATE invitations SET expires_at = now() - interval '1 day' WHERE id = $1", [expiring.invitationId]), /invitation_immutable/);
+  // Kontrola pozytywna: tego samego zaproszenia przed terminem można użyć.
+  assert.equal((await acceptInvitation(env, { token: expiring.secret, userId: 'rep', now: beforeExpiry })).ok, true);
 
   const { rows: invitations } = await db.query('SELECT token_hash FROM invitations');
-  assert.ok(invitations.every((row) => row.token_hash !== invite.secret && row.token_hash.length === 64));
+  assertEvery(invitations, (row) => row.token_hash !== invite.secret && row.token_hash.length === 64);
 }));
 
 test('no email addresses reach audit metadata or console logs', async () => withDb(async (db, env) => {
@@ -435,7 +444,7 @@ test('#150: własne sesje — lista tylko swoich, cofnięcie cudzej sesji nic ni
 
   const listed = await listOwnSessions(env, sessA1);
   assert.equal(listed.length, 2, 'tylko własne sesje konta u-sess-a');
-  assert.ok(listed.every((row) => !('ip' in row) && !('userAgent' in row)), 'bez IP i User-Agent (minimalizacja)');
+  assertEvery(listed, (row) => !('ip' in row) && !('userAgent' in row), 'bez IP i User-Agent (minimalizacja)');
   assert.deepEqual(listed.find((row) => row.id === sessA1.sessionId)?.current, true);
   assert.deepEqual(listed.find((row) => row.id === sessA2.sessionId)?.current, false);
 
