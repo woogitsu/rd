@@ -108,7 +108,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/documents/:financialDocumentId` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | brak uprawnień lub MFA nieodróżnialny od braku dokumentu |
 | `GET /api/documents/:boardDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | |
 | `GET /api/documents/:classDocumentId` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | |
-| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded` |
+| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded`; `?disposition=inline` (podgląd PDF/PNG/JPEG, ta sama macierz) — `document.viewed` |
 | `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
 | `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |
 | `POST /api/documents/:financialDocumentId/supersede` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | issue #82: te same reguły dostępu co odczyt dokumentu finansowego (canAccessDocument); zastąpienie tylko dokumentem tego samego rodzaju/roku/klasy; powtórka tym samym kluczem — `replayed:true` |
@@ -125,6 +125,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/summary?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/budget?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/ledger/export.xlsx?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01; te same dane co CSV (#121), zdarzenie `ledger.exported` z `format: xlsx` |
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
