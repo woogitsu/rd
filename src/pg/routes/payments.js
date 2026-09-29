@@ -26,6 +26,7 @@ import { insertAuditEvent } from '../audit.js';
 import { csvCell, csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from '../pii-gate.js';
 import { recordDataAccess } from '../data-access.js';
+import { createJsonReader, isUniqueError } from '../input.js';
 
 export const name = 'payments';
 
@@ -114,25 +115,11 @@ export function toSafeInteger(value) {
   return number;
 }
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const declaredLength = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
-    throw new RequestError('request_too_large', 413);
-  }
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
-    throw new RequestError('request_too_large', 413);
-  }
-  try {
-    const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  error: (code, status) => new RequestError(code, status),
+});
 
 function readIdempotencyKey(request) {
   const key = request.headers.get('Idempotency-Key')?.trim();
@@ -365,10 +352,6 @@ function decodeCursor(value, scope) {
   } catch {
     throw new RequestError('invalid_cursor');
   }
-}
-
-function isUniqueError(error) {
-  return error?.code === '23505';
 }
 
 // Tłumaczy błędy triggerów i ograniczeń na kody API (jak mapDatabaseError w Workerze).
