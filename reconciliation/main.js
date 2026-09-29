@@ -19,7 +19,7 @@ import {
   summarizeInconsistencies,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
-import { initialSchoolYearId } from "../shared/school-year.js";
+import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -105,7 +105,7 @@ async function showYear(value) {
   filtersForm.querySelector("button").disabled = true;
   try {
     state.schoolYearId = value;
-    yearInput.value = value;
+    selectYearValue(yearInput, value);
     await loadList();
     detailSection.hidden = true;
     state.selectedId = null;
@@ -517,6 +517,6 @@ async function applyAccess() {
   // Rok domyślny (#128/#UI): najnowszy z przydziałów, awaryjnie heurystyka daty
   // (shared/school-year.js) — panel ładuje dane bez klikania „Pokaż”; użytkownik
   // nadal może zmienić rok.
-  await showYear(initialSchoolYearId(state.grants));
+  await showYear(fillYearSelect(yearInput, state.grants));
 }
 applyAccess();

@@ -35,8 +35,8 @@
       <section class="block" aria-labelledby="filters-title">
         <h2 id="filters-title">Rok szkolny</h2>
         <form id="filters-form" class="inline-form">
-          <label>Identyfikator roku szkolnego
-            <input id="school-year-id" name="schoolYearId" autocomplete="off" required placeholder="np. 2026-2027" />
+          <label>Rok szkolny
+            <select id="school-year-id" name="schoolYearId" required></select>
           </label>
           <button type="submit">Pokaż zebrania</button>
         </form>
@@ -279,7 +279,7 @@
     <dialog id="meeting-dialog" aria-labelledby="meeting-dialog-title">
       <form class="stack" novalidate>
         <h2 id="meeting-dialog-title">Nowe zebranie</h2>
-        <label>Rok szkolny <input name="schoolYearId" autocomplete="off" required /></label>
+        <label>Rok szkolny <select name="schoolYearId" required></select></label>
         <div class="field-row">
           <label>Rodzaj
             <select name="kind" required>
@@ -289,7 +289,7 @@
               <option value="class">Zebranie klasowe</option>
             </select>
           </label>
-          <label>Klasa (tylko zebranie klasowe) <input name="classId" autocomplete="off" maxlength="128" /></label>
+          <label>Klasa (tylko zebranie klasowe) <select name="classId" disabled></select></label>
         </div>
         <label>Tytuł <input name="title" minlength="3" maxlength="200" required /></label>
         <div class="field-row">

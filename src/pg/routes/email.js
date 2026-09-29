@@ -629,13 +629,15 @@ async function approve(request, env, id, json) {
       if (!recipients.length) throw new RequestError('no_recipients', 409);
       // D-16 (domyślnie wyłączone, wariant zachowawczy): jeśli flaga jest
       // włączona, zatwierdzenie wymaga co najmniej jednej wysyłki testowej
-      // dla dokładnie bieżącej treści (#104).
+      // dla dokładnie bieżącej treści (#104). Liczy się tylko test przyjęty
+      // przez dostawcę (provider_message_id); próba zakończona błędem nie.
       if (emailConfig(env).previewRequiredBeforeApproval) {
         const { rows: previewRows } = await tx.query(
-          'SELECT 1 FROM email_preview_sends WHERE campaign_id = $1 AND content_hash = $2 LIMIT 1',
+          `SELECT 1 FROM email_preview_sends
+            WHERE campaign_id = $1 AND content_hash = $2 AND provider_message_id IS NOT NULL LIMIT 1`,
           [id, campaign.content_hash],
         );
-        if (!previewRows[0]) throw new RequestError('preview_required', 409);
+        if (!previewRows[0]) throw new RequestError('campaign_test_send_required', 409);
       }
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'approved', approved_by = $2, approved_at = now(),
@@ -1408,7 +1410,7 @@ export async function handle(request, env, url, json) {
     if (url.pathname === PREFERENCES_PATH) {
       if (method === 'GET') return await preferencesShow(request, env, url, json);
       if (method === 'POST') return await preferencesOptOut(request, env, url, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     if (method !== 'GET' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     if (url.pathname === '/api/email/campaigns') {
@@ -1418,11 +1420,11 @@ export async function handle(request, env, url, json) {
     }
     if (url.pathname === '/api/email/suppressions') {
       if (method === 'GET') return await listSuppressions(request, env, url, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
     }
     const suppressionMatch = url.pathname.match(/^\/api\/email\/suppressions\/([0-9a-f]{64})\/(release-request|release)$/);
     if (suppressionMatch) {
-      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
       const [, emailHashParam, suppressionAction] = suppressionMatch;
       if (suppressionAction === 'release-request') return await releaseRequest(request, env, emailHashParam, json);
       return await release(request, env, emailHashParam, json);

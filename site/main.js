@@ -162,6 +162,30 @@ function renderNotices(notices) {
   container.append(list);
 }
 
+// #96: zdjęcia wyłącznie z publicznego API (adresy z newsPhotoUrl). Gdy plik
+// nie istnieje albo zgoda została właśnie cofnięta (404), figura znika bez
+// komunikatu o błędzie.
+function renderPhotos(photos) {
+  if (!photos?.length) return null;
+  const gallery = el("div", null, "news-photos");
+  for (const photo of photos) {
+    const figure = el("figure", null, "news-photo");
+    const img = document.createElement("img");
+    img.src = photo.thumbUrl;
+    img.srcset = `${photo.thumbUrl} 400w, ${photo.webUrl} 1600w`;
+    img.sizes = "(max-width: 640px) 100vw, 640px";
+    img.alt = photo.alt;
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.referrerPolicy = "no-referrer";
+    img.addEventListener("error", () => figure.remove());
+    figure.append(img);
+    if (photo.caption) figure.append(el("figcaption", photo.caption, "news-photo-caption"));
+    gallery.append(figure);
+  }
+  return gallery;
+}
+
 function renderNews(items) {
   const container = byId("news-list");
   container.replaceChildren();
@@ -179,6 +203,8 @@ function renderNews(items) {
       entry.append(date);
     }
     entry.append(el("h3", item.title, "news-title"), el("p", item.body, "news-body"));
+    const gallery = renderPhotos(item.photos);
+    if (gallery) entry.append(gallery);
     list.append(entry);
   }
   container.append(list);

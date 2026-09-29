@@ -483,6 +483,8 @@ test('class roster as CSV: same access rules, Polish-readable format, no financi
   assert.equal(own.headers.get('Content-Type'), 'text/csv; charset=utf-8');
   assert.match(own.headers.get('Content-Disposition'), /^attachment; filename="lista-klasy-1A-\d{8}\.csv"$/);
   assert.equal(own.headers.get('Cache-Control'), 'no-store');
+  const rawBytes = new Uint8Array(await own.clone().arrayBuffer());
+  assert.deepEqual([...rawBytes.slice(0, 3)], [0xef, 0xbb, 0xbf], 'BOM UTF-8 jak w pozostałych eksportach CSV (#121)');
   const csv = await own.text();
   assert.doesNotMatch(csv, /amount|cents|payment|household|h-1|h-2|s-1|s-3/);
   const lines = csv.trim().split('\r\n');

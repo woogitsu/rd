@@ -202,8 +202,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/users/:userId/disable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/enable` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/users/:userId/revoke-sessions` | wyłącznie admin | tak | 403 | |
-| `POST /api/admin/users/:userId/password-reset` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | jednorazowy token resetu hasła, zwracany raz; nowy unieważnia poprzedni; MFA starsze niż 15 min → `403 mfa_stale` |
-| `POST /api/admin/users/:userId/mfa-reset` | wyłącznie admin (nie własne konto) | tak, krok w górę: ≤15 min (#150) | 403 | wymaga `confirm` = id konta; wyłącza czynniki i kody odzyskiwania, wylogowuje konto; MFA starsze niż 15 min → `403 mfa_stale` |
+| `POST /api/admin/users/:userId/password-reset` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | jednorazowy token resetu hasła, zwracany raz; nowy unieważnia poprzedni; MFA starsze niż 15 min → `403 mfa_stale`; konto z rolą admin/board/treasurer (poza własnym) → `202` i wniosek zamiast tokenu (#146) |
+| `POST /api/admin/users/:userId/mfa-reset` | wyłącznie admin (nie własne konto) | tak, krok w górę: ≤15 min (#150) | 403 | wymaga `confirm` = id konta; wyłącza czynniki i kody odzyskiwania, wylogowuje konto; MFA starsze niż 15 min → `403 mfa_stale`; konto z rolą admin/board/treasurer → `202` i wniosek zamiast resetu (#146) |
+| `GET /api/admin/account-requests` | wyłącznie admin | tak | 403 | wnioski o reset hasła/MFA kont chronionych (#146); bez tokenów |
+| `POST /api/admin/account-requests/:requestId/approve` | wyłącznie admin, nie wnioskodawca i nie właściciel konta | tak, krok w górę: ≤15 min (#150) | 403 | zasada czterech oczu (`403 recovery_four_eyes_required`, także `CHECK` w bazie); zamknięty → 409; token resetu zwracany raz zatwierdzającemu |
+| `POST /api/admin/account-requests/:requestId/reject` | wyłącznie admin | tak | 403 | odrzucenie lub wycofanie wniosku; zamknięty → 409 |
 | `GET /api/admin/grants` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/grants` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | nadanie roli; MFA starsze niż 15 min → `403 mfa_stale` |
 | `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |
