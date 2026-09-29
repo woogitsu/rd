@@ -16,6 +16,7 @@ import {
   MFA_STEP_UP_MAX_AGE_SECONDS,
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { csvResponse } from '../csv.js';
 import { recordDataAccess } from '../data-access.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import {
@@ -217,11 +218,10 @@ async function exportClassRoster(request, env, url, json) {
 
   if (format === 'csv') {
     const csv = buildClassRosterCsv(result.roster);
-    return attachment(
+    return csvResponse(
       csv,
       `lista-klasy-${safeFilePart(result.roster.class.name)}-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}.csv`,
       { 'X-Export-Run-Id': result.runId, 'X-Export-Manifest-Sha256': result.sha256 },
-      'text/csv; charset=utf-8',
     );
   }
   return attachment(result.body, `rd-lista-klasy-${safeFilePart(classId)}-v${ROSTER_FORMAT_VERSION}.json`, {

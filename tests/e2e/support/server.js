@@ -12,6 +12,7 @@
 // nie jest ustawione, więc nawet gdyby jakiś kod spróbował wysłać, brak klucza
 // API zatrzyma go przed jakimkolwiek wywołaniem zewnętrznym.
 import { randomBytes } from 'node:crypto';
+import { base32Encode, encryptSecret, loadEncryptionKey } from '../../../src/pg/mfa.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
@@ -84,15 +85,30 @@ async function seedPasswordAccount(db, { userId, role, password }) {
 
 // Sesja wstrzykiwana bezpośrednio przez cookie (jak scripts/smoke-postgres.js) —
 // używana tam, gdzie test sprawdza granice roli/danych, a nie sam ekran logowania.
-async function seedCookieSession(db, { userId, mfa = false }) {
+// `mfaAgeMinutes`: MFA potwierdzone tyle minut temu (domyślnie teraz) — starsze niż
+// 15 min to sesja „mfa_stale” dla operacji wymagających kroku w górę (#150).
+async function seedCookieSession(db, { userId, mfa = false, mfaAgeMinutes = 0 }) {
   const { secret, tokenHash } = await createSessionSecret();
   const expires = new Date(Date.now() + 60 * 60 * 1000);
   await db.query(
     `INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, mfa_verified_at)
-     VALUES (gen_random_uuid(), $1, $2, now(), $3, CASE WHEN $4::boolean THEN now() END)`,
-    [userId, tokenHash, expires.toISOString(), Boolean(mfa)],
+     VALUES (gen_random_uuid(), $1, $2, now(), $3, CASE WHEN $4::boolean THEN now() - ($5::int * interval '1 minute') END)`,
+    [userId, tokenHash, expires.toISOString(), Boolean(mfa), mfaAgeMinutes],
   );
   return secret;
+}
+
+// Potwierdzony czynnik TOTP ze znanym sekretem (syntetycznym) — test liczy kod
+// tak jak aplikacja na telefonie. Klucz szyfrowania jak w serwerze testowym.
+async function seedTotpFactor(db, { userId, factorId, encryptionKey }) {
+  const secret = randomBytes(20);
+  const sealed = encryptSecret(loadEncryptionKey({ MFA_ENCRYPTION_KEY: encryptionKey }), secret, { factorId, userId });
+  await db.query(
+    `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
+     VALUES ($1, $2, 'totp', $3, $4, $5, now())`,
+    [factorId, userId, sealed.ciphertext, sealed.iv, sealed.tag],
+  );
+  return base32Encode(secret);
 }
 
 async function seedFamilies(db) {
@@ -187,6 +203,24 @@ async function main() {
   await grantRole(db, 'e2e-treasurer', 'treasurer', { schoolYearId: 'e2e-y-2026' });
   const treasurerCookie = await seedCookieSession(db, { userId: 'e2e-treasurer', mfa: true });
 
+  // 4. Panel „Konta i role” (#224): admin z czynnikiem TOTP i sesjami cookie —
+  //    jedna ze starym MFA (krok w górę: mfa_stale), jedna ze świeżym; dwa konta
+  //    docelowe (hasło + czynnik TOTP), na których test wykonuje resety.
+  const mfaKey = randomBytes(32).toString('base64');
+  await seedUser(db, 'e2e-admin-reset');
+  await grantRole(db, 'e2e-admin-reset', 'admin');
+  const adminTotpSecret = await seedTotpFactor(db, { userId: 'e2e-admin-reset', factorId: 'e2e-f-admin-reset', encryptionKey: mfaKey });
+  const adminStaleCookie = await seedCookieSession(db, { userId: 'e2e-admin-reset', mfa: true, mfaAgeMinutes: 60 });
+  const adminStaleCookie2 = await seedCookieSession(db, { userId: 'e2e-admin-reset', mfa: true, mfaAgeMinutes: 60 });
+  const adminFreshCookie = await seedCookieSession(db, { userId: 'e2e-admin-reset', mfa: true });
+  const resetTargets = [];
+  for (const id of ['e2e-reset-a', 'e2e-reset-b']) {
+    const password = `Syntetyczne haslo ${id} ${randomBytes(6).toString('hex')}`;
+    await seedPasswordAccount(db, { userId: id, role: 'board', password });
+    await seedTotpFactor(db, { userId: id, factorId: `e2e-f-${id}`, encryptionKey: mfaKey });
+    resetTargets.push({ userId: id, email: `${id}@example.invalid`, password });
+  }
+
   const runtime = {
     port: PORT,
     baseUrl: `http://127.0.0.1:${PORT}`,
@@ -196,6 +230,7 @@ async function main() {
     admin: { userId: 'e2e-admin', email: 'e2e-admin@example.invalid', password: adminPassword },
     representative: { userId: 'e2e-rep', cookie: repCookie },
     treasurer: { userId: 'e2e-treasurer', cookie: treasurerCookie },
+    adminReset: { userId: 'e2e-admin-reset', totpSecret: adminTotpSecret, staleCookie: adminStaleCookie, staleCookie2: adminStaleCookie2, freshCookie: adminFreshCookie, targets: resetTargets },
     publishedEventTitle: 'Piknik szkolny (syntetyczny)',
     draftEventTitle: 'Szkic niezatwierdzony SEKRET E2E',
   };
@@ -209,7 +244,7 @@ async function main() {
     env: {
       db,
       APP_ENV: 'test',
-      MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+      MFA_ENCRYPTION_KEY: mfaKey,
       SCRYPT_COST_LOG2: FAST_SCRYPT.SCRYPT_COST_LOG2,
     },
     fetchHandler: handlePgRequest,

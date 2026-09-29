@@ -943,6 +943,17 @@ usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
 
+`0124_login_rate_limit_pair_scope.sql` (#126) poszerza CHECK na
+`login_rate_limits.scope_type` o `'pair'` — SHA-256 pary (znormalizowany
+e-mail, IP) z osobną dziedziną skrótu. Blokada logowania zakładana jest teraz
+na parę i na IP, a zakres `'email'` tylko liczy próby (miękkie opóźnienie), więc
+osoba znająca sam adres nie odetnie właściciela od konta. Skutki dla danych:
+żaden wiersz nie jest zmieniany ani usuwany; wiersze `'email'` z blokadą sprzed
+migracji są ignorowane i wygasają po dobie; w bazie nadal tylko skróty
+(retencja bez zmian: usuwanie po dobie). Wycofanie: usunięcie wierszy `'pair'` i
+przywrócenie CHECK `IN ('email','ip')` (kod aplikacji sprzed zmiany blokował
+konto po samym e-mailu).
+
 `0140_data_access_log_review.sql` (#133) rozszerza CHECK `access_kind` w
 `data_access_log` o `class_roster_export`, `yearly_export` i `payment_export`
 (wpisy eksportów, zapisywane w tej samej transakcji co eksport) oraz dodaje

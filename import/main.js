@@ -1,5 +1,6 @@
 import { readXlsxSheets } from './xlsx.js';
 import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
+import { csvBytes } from '../src/pg/csv.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
 import { confirmAction } from '../shared/confirm-dialog.js';
@@ -159,7 +160,7 @@ document.querySelector('#preview').addEventListener('click', () => {
 downloadReportButton.addEventListener('click', () => {
   if (!reportEntries.length) return;
   const csv = buildErrorReportCsv(reportEntries);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const blob = new Blob([csvBytes(csv)], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = 'raport-importu.csv'; a.click();

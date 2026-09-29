@@ -23,7 +23,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
-import { csvCell, csvHeader, csvRow } from '../csv.js';
+import { csvCell, csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
 import { detectPossiblePersonalData } from '../pii-check.js';
 import { recordDataAccess } from '../data-access.js';
 
@@ -1056,21 +1056,23 @@ export const PAYMENT_EXPORT_COLUMNS = [
 // należności rodzin. Nie jest to wiersz danych — pierwsza linia pliku.
 const EXPORT_DISCLAIMER = 'Składki są dobrowolne; brak wpisu nie oznacza braku wpłaty.';
 
-export function paymentExportEntryLine(row) {
+export function paymentExportEntryValues(row) {
   const assigned = row.status === 'recorded';
-  return csvRow(PAYMENT_EXPORT_COLUMNS, [
+  return [
     'wpis', row.id, row.received_on, row.amount_cents, EXPORT_METHOD_LABELS[row.method] ?? row.method,
     EXPORT_ASSIGNMENT_LABELS[row.status] ?? row.status, assigned ? row.household_id : '',
     row.corrected_cents, row.refunded_cents, row.net_amount_cents, '', '',
-  ]);
+  ];
 }
+export function paymentExportEntryLine(row) { return csvRow(PAYMENT_EXPORT_COLUMNS, paymentExportEntryValues(row)); }
 
-export function paymentExportCorrectionLine(row) {
-  return csvRow(PAYMENT_EXPORT_COLUMNS, [
+export function paymentExportCorrectionValues(row) {
+  return [
     'korekta', row.id, row.created_on, row.amount_cents, '', '', row.household_id ?? '', 0, 0, 0,
     row.reason, row.actor_role ?? 'nieznana',
-  ]);
+  ];
 }
+export function paymentExportCorrectionLine(row) { return csvRow(PAYMENT_EXPORT_COLUMNS, paymentExportCorrectionValues(row)); }
 
 function readExportFilters(url) {
   const schoolYearId = url.searchParams.get('schoolYearId');
@@ -1146,22 +1148,11 @@ async function exportCsv(request, env, url) {
     return { entryRows: entries.rows, correctionRows: corrections.rows };
   });
 
-  const lines = [
-    csvCell(EXPORT_DISCLAIMER),
-    csvHeader(PAYMENT_EXPORT_COLUMNS),
-    ...entryRows.map(paymentExportEntryLine),
-    ...correctionRows.map(paymentExportCorrectionLine),
-  ];
-  // BOM UTF-8, żeby arkusz poprawnie odczytał polskie znaki (jak eksport księgi, #121).
-  return new Response(`﻿${lines.join('\r\n')}\r\n`, {
-    status: 200,
-    headers: {
-      'Cache-Control': 'no-store',
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="wplaty-${schoolYearId.replace(/[^A-Za-z0-9_-]/g, '_')}.csv"`,
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  return csvResponse(toCsv(
+    PAYMENT_EXPORT_COLUMNS,
+    [...entryRows.map(paymentExportEntryValues), ...correctionRows.map(paymentExportCorrectionValues)],
+    { preamble: [csvCell(EXPORT_DISCLAIMER)] },
+  ), `wplaty-${safeFileSegment(schoolYearId)}.csv`);
 }
 
 export async function handle(request, env, url, json) {
