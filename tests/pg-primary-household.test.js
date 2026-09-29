@@ -499,3 +499,90 @@ test('równoległe wstawienie nakładających się członkostw: jedna transakcja
     await admin.end();
   }
 });
+
+// #194: końcowe atomowe sprawdzenie w workerze (confirmSend) używa bieżącego
+// głównego gospodarstwa, nie kolumny zgodności. Dawniej po dniu D kolumna
+// wskazywała stare gospodarstwo, więc wiersz nowej rodziny wracał do kolejki
+// (send_recheck_changed) i nigdy nie wychodził.
+test('worker w dniu D: kampania zbudowana w D dla nowej rodziny wychodzi (atomowe sprawdzenie nie czyta kolumny zgodności)', async () => {
+  const t = await setup();
+  try {
+    await household(t.db, 'h-old', ['g-old']);
+    await household(t.db, 'h-new', ['g-new']);
+    await student(t.db, 's-1', 'h-old', 'c1');
+    await link(t.db, 's-1', 'g-old', { endsOn: '2026-10-09' });
+    await link(t.db, 's-1', 'g-new', { startsOn: D });
+    await scheduleMove(t.db, 's-1', 'h-old', 'h-new', D);
+    assert.equal((await t.db.query("SELECT household_id FROM students WHERE id = 's-1'")).rows[0].household_id, 'h-old');
+
+    const created = await t.call(ON_D, t.treasurer, '/api/email/campaigns', {
+      method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: { schoolYearId: YEAR, title: 'Przypomnienie', audience: 'all_households', subject: 'Składka {rok}', bodyText: BODY },
+    });
+    const id = created.body.campaign.id;
+    await t.call(ON_D, t.treasurer, `/api/email/campaigns/${id}/snapshot`, { method: 'POST' });
+    const stored = await t.db.query('SELECT household_id, guardian_id FROM email_campaign_recipients WHERE campaign_id = $1', [id]);
+    assert.deepEqual(stored.rows, [{ household_id: 'h-new', guardian_id: 'g-new' }]);
+    const preview = await t.call(ON_D, t.board, `/api/email/campaigns/${id}/preview`);
+    await t.call(ON_D, t.board, `/api/email/campaigns/${id}/approve`, {
+      method: 'POST', body: { contentHash: preview.body.contentHash, recipientsHash: preview.body.recipientsHash },
+    });
+    await t.call(ON_D, t.treasurer, `/api/email/campaigns/${id}/queue`, { method: 'POST' });
+    const sent = [];
+    const transport = { name: 'fake', async send(message) { sent.push(message); return { messageId: `fake-${sent.length}` }; } };
+    const run = await runEmailBatch(t.baseEnv, { transport, dryRun: false, now: ON_D });
+    assert.equal(run.sent, 1);
+    assert.equal(sent.length, 1);
+    const outbox = await t.db.query('SELECT household_id, state FROM email_outbox WHERE campaign_id = $1', [id]);
+    assert.deepEqual(outbox.rows, [{ household_id: 'h-new', state: 'sent' }]);
+  } finally {
+    await t.db.close();
+  }
+});
+
+// #194: kartka starszego roku bierze gospodarstwo właściwe dla tamtego roku
+// (koniec roku), nie dzisiejsze; wpłaty liczone dla roku kartki.
+test('kartki starszego roku: gospodarstwo z końca tamtego roku, nie dzisiejsze; zmiana w trakcie roku', async () => {
+  const t = await setup();
+  try {
+    const OLD_YEAR = 'y2025';
+    await seedClass(t.db, { id: 'c-old', schoolYearId: OLD_YEAR, name: '1A' });
+    await t.db.query("UPDATE school_years SET starts_on = '2025-09-01', ends_on = '2026-08-31' WHERE id = $1", [OLD_YEAR]);
+    await household(t.db, 'h-a', ['g-a']);
+    await household(t.db, 'h-b', ['g-b']);
+    await household(t.db, 'h-c', ['g-c']);
+    await student(t.db, 's-6', 'h-a', 'c1', ['g-a']);
+    await t.db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)', ['e-old-s-6', 's-6', 'c-old', OLD_YEAR]);
+    // Rodzeństwo zostaje w h-a przez cały czas.
+    await student(t.db, 's-7', 'h-a', 'c1', ['g-a']);
+    await t.db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)', ['e-old-s-7', 's-7', 'c-old', OLD_YEAR]);
+    // Zmiana w trakcie roku 2025/26 (h-a → h-b), potem kolejna w roku bieżącym (h-b → h-c).
+    await scheduleMove(t.db, 's-6', 'h-a', 'h-b', '2026-01-15');
+    await scheduleMove(t.db, 's-6', 'h-b', 'h-c', D);
+    await t.db.query(
+      `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+       VALUES ('p-old-year', 'h-b', $1, 700, '2026-02-01', 'bank', 'recorded', 'u-seed', 'primary-test-old-year')`, [OLD_YEAR],
+    );
+    const oldCards = async (now, query = '') => {
+      const res = await t.call(now, t.treasurer, `/api/print/cards?schoolYearId=${OLD_YEAR}${query}`);
+      return { status: res.status, rows: (res.body.rows ?? []).map((row) => `${row.lastName}@${row.householdId}:${row.recordedNetCents}`).sort() };
+    };
+    // Skarbnik z rolą przypisaną do y2026 nie ma dostępu do y2025 — nadaj rolę na rok 2025.
+    await t.db.query(`INSERT INTO role_grants (id, user_id, role, school_year_id) VALUES ('rg-old', 'u-tr', 'treasurer', $1)`, [OLD_YEAR]);
+
+    // Rok 2025/26: stan z 2026-08-31 (h-b), niezależnie od „dziś” (D i późniejsze).
+    const expected = ['s-6@h-b:700', 's-7@h-a:0'];
+    assert.deepEqual((await oldCards(ON_D)).rows, expected);
+    assert.deepEqual((await oldCards(new Date('2027-03-01T10:00:00Z'))).rows, expected);
+    // Bieżący rok 2026/27: dzisiejsze gospodarstwo (h-c), rodzeństwo w h-a.
+    assert.deepEqual(await t.cards(ON_D), ['s-6@h-c:0', 's-7@h-a:0']);
+    // Dzień D−1 w roku bieżącym: h-b.
+    assert.deepEqual(await t.cards(BEFORE), ['s-6@h-b:0', 's-7@h-a:0']);
+    // Rok 2025/26 obejrzany w trakcie tego roku (2026-03-01): h-b już od 2026-01-15.
+    assert.deepEqual((await oldCards(new Date('2026-03-01T10:00:00Z'))).rows, expected);
+    // Przed zmianą w trakcie roku (2025-12-01): jeszcze h-a.
+    assert.deepEqual((await oldCards(new Date('2025-12-01T10:00:00Z'))).rows, ['s-6@h-a:0', 's-7@h-a:0']);
+  } finally {
+    await t.db.close();
+  }
+});
