@@ -11,6 +11,8 @@
 
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+import pg from 'pg';
+import { createPgDatabase, poolConfig } from '../../src/db.js';
 import { createSessionSecret } from '../../src/auth.js';
 import { loadMigrations } from '../../src/postgres-migrations.js';
 // #214: instaluje globalną pułapkę na sieć jako efekt uboczny importu — każdy
@@ -21,7 +23,64 @@ export { networkGuardCalls };
 export const TEST_ORIGIN = 'https://rd.test';
 const migrationsDirectory = fileURLToPath(new URL('../../postgres/migrations/', import.meta.url));
 
+// #208: PGlite wykonuje transakcje po kolei (jedno połączenie, jedna blokada),
+// więc NIE nadaje się do testów współbieżności — testy „parallel/double click”
+// na nim sprawdzają tylko niezmiennik wyniku. Z RD_TEST_PG_BACKEND=real
+// (ustawia je `npm run test:pg-real -- --all`) createTestDb() zwraca zamiast
+// PGlite bazę na prawdziwym PostgreSQL (RD_TEST_PG_URL) przez createPgDatabase
+// z src/db.js: osobna baza na wywołanie, sklonowana z szablonu z migracjami.
+const realBackend = process.env.RD_TEST_PG_BACKEND === 'real' && Boolean(process.env.RD_TEST_PG_URL);
+let realTemplate;
+let realSeq = 0;
+
+function withDatabaseName(url, name) {
+  const next = new URL(url);
+  next.pathname = `/${name}`;
+  return next.toString();
+}
+
+async function adminQuery(sql) {
+  const admin = new pg.Client({ connectionString: process.env.RD_TEST_PG_URL });
+  await admin.connect();
+  try { await admin.query(sql); } finally { await admin.end(); }
+}
+
+async function ensureRealTemplate() {
+  realTemplate ??= (async () => {
+    const name = `rd_tpl_${process.pid}_${Date.now()}`;
+    await adminQuery(`CREATE DATABASE ${name}`);
+    const client = new pg.Client({ connectionString: withDatabaseName(process.env.RD_TEST_PG_URL, name) });
+    await client.connect();
+    try { for (const migration of await loadMigrations(migrationsDirectory)) await client.query(migration.sql); } finally { await client.end(); }
+    return name;
+  })();
+  return realTemplate;
+}
+
+export async function createRealTestDb() {
+  const template = await ensureRealTemplate();
+  const name = `rd_t_${process.pid}_${++realSeq}_${Date.now()}`;
+  await adminQuery(`CREATE DATABASE ${name} TEMPLATE ${template}`);
+  const url = withDatabaseName(process.env.RD_TEST_PG_URL, name);
+  const pool = new pg.Pool(poolConfig({ connectionString: url, max: 10, statement_timeout: 30_000 }));
+  const db = createPgDatabase(pool);
+  const closePool = db.close.bind(db);
+  return {
+    url,
+    query: db.query.bind(db),
+    transaction: db.transaction.bind(db),
+    probe: db.probe.bind(db),
+    // Odpowiednik PGlite.exec: kilka instrukcji w jednym tekście (protokół prosty).
+    async exec(sql) { await pool.query(sql); },
+    async close() {
+      await closePool();
+      await adminQuery(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+    },
+  };
+}
+
 export async function createTestDb() {
+  if (realBackend) return createRealTestDb();
   const db = new PGlite();
   for (const migration of await loadMigrations(migrationsDirectory)) await db.exec(migration.sql);
   return db;

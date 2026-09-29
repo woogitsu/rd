@@ -812,12 +812,15 @@ export async function withdrawConsent(db, actor, input) {
       [consentDocumentRef],
     );
     if (affected.length === 0) throw new NewsError('consent_not_found', 404);
-    const { rowCount } = await tx.query(
+    // #208: kontrakt src/db.js zwraca tylko { rows } (bez rowCount, który daje
+    // PGlite), więc o nowym wpisie decyduje RETURNING, nie licznik wierszy.
+    const { rows: inserted } = await tx.query(
       `INSERT INTO news_photo_consent_withdrawals (consent_document_ref, recorded_by)
-       VALUES ($1, $2) ON CONFLICT (consent_document_ref) DO NOTHING`,
+       VALUES ($1, $2) ON CONFLICT (consent_document_ref) DO NOTHING
+       RETURNING consent_document_ref`,
       [consentDocumentRef, actor.userId],
     );
-    if (rowCount === 0) return { replayed: true, affectedPhotos: affected.length };
+    if (inserted.length === 0) return { replayed: true, affectedPhotos: affected.length };
     await audit(tx, actor.userId, 'image_consent.withdrawn', 'news_photo_consent', consentDocumentRef,
       { affectedPhotos: affected.length });
     return { replayed: false, affectedPhotos: affected.length };

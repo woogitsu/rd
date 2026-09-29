@@ -156,7 +156,7 @@ async function reserveAttempt(env, scopes) {
            locked_until = CASE WHEN locked_until > now() THEN locked_until ELSE NULL END,
            updated_at = now()
          WHERE scope_type = $1 AND scope_hash = $2
-         RETURNING window_started_at, failure_count`,
+         RETURNING window_started_at::text AS window_started_at, failure_count`,
         [scope.type, scope.hash, LOGIN_POLICY.windowSeconds],
       );
       reserved.push({ ...scope, windowStartedAt: updated[0].window_started_at, count: Number(updated[0].failure_count) });
@@ -165,13 +165,18 @@ async function reserveAttempt(env, scopes) {
   });
 }
 
+// #208: początek okna wraca do bazy jako TEKST (pełna precyzja mikrosekund).
+// Jako Date z węzła traci mikrosekundy, więc na prawdziwym PostgreSQL warunek
+// `window_started_at = $3` nigdy nie był prawdziwy i sukces nie zwalniał
+// rezerwacji (licznik IP rósł do blokady po 20 udanych logowaniach z jednego
+// adresu w 15 minut); PGlite zwraca milisekundy, więc test tego nie widział.
 // Zwolnienie rezerwacji (sukces albo odrzucenie niebędące zgadywaniem). Tylko w tym
 // samym oknie i bez trwającej blokady — nigdy nie zdejmuje blokady.
 async function releaseAttempt(env, reserved) {
   for (const scope of reserved) {
     await database(env).query(
       `UPDATE login_rate_limits SET failure_count = GREATEST(failure_count - 1, 0), updated_at = now()
-        WHERE scope_type = $1 AND scope_hash = $2 AND window_started_at = $3 AND locked_until IS NULL`,
+        WHERE scope_type = $1 AND scope_hash = $2 AND window_started_at = $3::timestamptz AND locked_until IS NULL`,
       [scope.type, scope.hash, scope.windowStartedAt],
     );
   }

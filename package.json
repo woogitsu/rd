@@ -70,6 +70,7 @@
     "demo:seed": "node scripts/demo-seed.js",
     "demo:start": "node scripts/demo-start.js",
     "pretest:e2e": "npm run build",
+    "test:pg-real": "node scripts/test-pg-real.js",
     "test:e2e": "playwright test"
   },
   "dependencies": {

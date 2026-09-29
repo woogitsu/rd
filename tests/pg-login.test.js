@@ -332,7 +332,9 @@ test('#186: błąd zapisany w trakcie trwającej blokady jej nie nadpisuje (logi
   for (let i = 0; i < 4; i += 1) await login(account, { ip, password: `zle haslo ${i}` });
   const slow = login(account, { ip, password: 'zle haslo wolne' });
   // Gdy wolna próba liczy scrypt, ktoś (np. administrator) zakłada blokadę na 10 minut.
-  await new Promise((resolve) => setImmediate(resolve));
+  // #208: czekamy, aż wolna próba zarezerwuje miejsce (licznik 5); na prawdziwym
+  // PostgreSQL rezerwacja trwa dłużej niż jeden obrót pętli zdarzeń.
+  for (let i = 0; i < 200 && Number((await pairRow(account.email, ip)).failure_count) < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
   await db.query(
     "UPDATE login_rate_limits SET locked_until = now() + interval '10 minutes' WHERE scope_type = 'pair' AND scope_hash = $1",
     [scopeHash('pair', `${account.email}|${ip}`)],
