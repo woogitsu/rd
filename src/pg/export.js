@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import { csvRow, toCsv } from './csv.js';
+import { insertAuditEvent } from './audit.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
 // Wersja 2 (#202): gospodarstwa i ich historia (0014), uzgodnienia rachunku
@@ -868,6 +869,20 @@ export async function restoreBundle(db, bundle) {
   const totalsMatch = canonicalJson(manifestTotals) === canonicalJson(againTotals);
   if (!filesMatch) fail('restore_verification_failed:files');
   if (!totalsMatch) fail('restore_verification_failed:totals');
+  // #184: ślad odtworzenia z paczki. Zapis dopiero po pozytywnej weryfikacji
+  // (nieudane odtworzenie wycofuje transakcję i nie zostawia śladu), bez aktora
+  // (operator z DATABASE_URL, jak przy bootstrapie), z samym skrótem manifestu
+  // i licznikami. Zdarzenia `export.*` nie wchodzą do kolejnych paczek (auditScope).
+  await db.transaction(async (tx) => {
+    await insertAuditEvent(tx, {
+      actorId: null, action: 'export.restored', entityType: 'export', entityId: bundle.manifestSha256,
+      metadata: {
+        source: 'restore', schoolYearId: manifest.schoolYearId, formatVersion: bundle.formatVersion,
+        manifestSha256: bundle.manifestSha256, tables: manifest.files.length,
+        rows: manifest.files.reduce((sum, entry) => sum + entry.rows, 0),
+      },
+    });
+  }, { retries: 0 });
   return {
     ...verified, warnings, ...(backfilled ? { backfilled } : {}),
     restored: true, reexportFilesMatch: filesMatch, reexportTotalsMatch: totalsMatch, countsMatch: true,

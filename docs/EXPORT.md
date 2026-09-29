@@ -199,6 +199,14 @@ DATABASE_URL='…' APP_ENV=staging node scripts/verify-export.js \
 
 (`npm run db:verify-export -- …` jest skrótem do tego samego skryptu.)
 
+Udane odtworzenie (`--restore-pglite` i `--restore-database`) po pozytywnej
+weryfikacji sum i ponownego eksportu dopisuje zdarzenie audytu
+`export.restored` (`entity_type = export`, `entity_id` = SHA-256 manifestu,
+`actor_id = NULL` — operator z dostępem do bazy; metadane: skrót manifestu,
+`schoolYearId`, wersja formatu, liczba tabel i wierszy, bez danych osobowych).
+Nieudane odtworzenie nie zostawia zdarzenia. Zdarzenia `export.*` nie wchodzą do
+kolejnych paczek, więc skrót ponownego eksportu się nie zmienia.
+
 Kontrole weryfikacji: format i wersja, SHA-256 manifestu, zgodność listy
 plików z manifestem (brak plików nadmiarowych i nieznanych tabel), SHA-256 i
 liczność każdego pliku, kanoniczna postać każdej linii, zgodność kolumn oraz
