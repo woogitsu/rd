@@ -130,7 +130,7 @@ dopóki serwer czyta starą nazwę; przy jej usunięciu skrypty trzeba przełąc
 | Storage Bucket | rozmiar, liczba obiektów, odrzucone uploady | metryki bucketu, audyt aplikacji | przegląd retencji |
 | Brevo | dzienny limit planu, odbicia, błędne adresy, błędy API | panel Brevo, stan kolejki (#40) | wstrzymanie kampanii, korekta adresów |
 | Zadania | zadania w stanie błędu lub zbyt długo w kolejce | tabela kolejki (#40) | ponowienie z tym samym kluczem idempotencji |
-| Backup | brak nowego backupu > 26 h, nieudana próba odtworzenia | Railway Backups, protokół | ręczny backup, eskalacja |
+| Backup | brak nowego backupu > 26 h, nieudana próba odtworzenia | `backup_runs` (po uruchomieniu usług cron), Railway Backups, protokół | ręczny backup, eskalacja |
 | Koszty | alerty Usage | Railway | patrz wyżej |
 
 **Liveness a readiness.** `/health` potwierdza tylko działanie procesu i
@@ -420,35 +420,96 @@ przy innych wysyłkach).
 
 ## Backup PostgreSQL
 
+Stan: skrypty i dziennik przebiegów są w repozytorium (#90, `npm run backup:postgres`,
+`npm run restore:drill`, tabela `backup_runs`); **żadna usługa cron nie jest
+uruchomiona** — nie ma deploymentu Railway, a miejsce kopii poza Railway to
+decyzje D-01/D-20 (nierozstrzygnięte).
+
 1. Włączyć w usłudze PostgreSQL harmonogram backupów wolumenu
    (dzienny/tygodniowy/miesięczny; retencja wg Railway: ok. 6 dni / 1 miesiąc /
-   3 miesiące). Sprawdzić, czy plan workspace obejmuje backupy i PITR.
+   3 miesiące). Sprawdzić, czy plan workspace obejmuje backupy — dokumentacja
+   Railway nie opisuje PITR dla wolumenów, więc **nie zakładać PITR**: bez niego
+   RPO = odstęp między kopiami (backup wolumenu: do doby, zrzut logiczny: wg
+   harmonogramu poniżej).
 2. Przed każdą migracją schematu lub importem wykonać ręczny backup i zapisać
-   jego identyfikator w protokole.
-3. Co tydzień (produkcja) wykonać dodatkowo logiczny zrzut
-   `pg_dump --format=custom` przez tunel Railway na szyfrowany nośnik poza
-   Railway, prawa `0600`. Nie przechowywać zrzutu w repo, CI ani na
-   prywatnych laptopach bez szyfrowania. Czas przechowywania zrzutów
-   — decyzja szkoły (retencja).
+   jego identyfikator w protokole (ręczny backup wolumenu nie może przekroczyć
+   50% pojemności wolumenu; funkcja Railway jest oznaczona jako „w rozwoju”).
+3. Kopia logiczna poza Railway — `npm run backup:postgres` (usługa cron
+   `rd-backup`, **do uruchomienia po decyzji D-01/D-20**): `pg_dump --format=custom`
+   w migawce (`pg_export_snapshot`), szyfrowanie po stronie klienta kluczem
+   publicznym, zapis do drugiego magazynu S3 poza Railway, wpis w `backup_runs`.
+   Skrypt odmawia działania bez klucza szyfrującego i celu, nie loguje adresu
+   bazy, nazwy bucketu ani kluczy, a plik tymczasowy (katalog 0700) usuwa też
+   przy błędzie. Klucz prywatny jest poza Railway; kto go trzyma — decyzja
+   zarządu. Czas przechowywania kopii — D-04 (retencja).
+   Wraz z kopią zapisywany jest **raport zgodności** (liczności wszystkich
+   tabel, sumy kwot w centach, skróty SHA-256 zawartości tabel finansowych,
+   powiązań rodzina–uczeń–opiekun i audytu, lista wyzwalaczy i migracji) —
+   z tej samej migawki co zrzut, bez danych osobowych (`backup_runs.row_counts`,
+   `backup_runs.sums`).
+4. Harmonogram do uruchomienia po decyzji (propozycja, nie konfiguracja):
 
-## Próbne odtworzenie PostgreSQL (do wykonania)
+   | Usługa | Harmonogram (UTC) | Polecenie | Uwagi |
+   |---|---|---|---|
+   | `rd-backup` | codziennie, np. `17 2 * * *` | `npm run backup:postgres` | osobna usługa Railway z własnym plikiem konfiguracji z `cronSchedule` (np. `railway.backup.json`); `railway.json` aplikacji zostaje bez crona (`tests/railway-config.test.js`); przebieg nakładający się w tym samym dniu jest pomijany (klucz dnia) |
+   | `rd-restore-drill` | co tydzień, np. `43 4 * * 1`, najpierw staging | `npm run restore:drill` | odtwarza do OSOBNEJ bazy „drill” (inny host lub nazwa bazy niż `DATABASE_URL` — twarda kontrola); na produkcji wymaga `--allow-production` |
 
-Najpierw na stagingu z danymi syntetycznymi, potem przed cutover.
+   Alert „brak udanej kopii > 26 h” ma źródło danych: ostatni wiersz
+   `kind = 'backup'`, `result = 'success'` w `backup_runs`
+   (`GET /health/jobs`, `backup_too_old`; opis w sekcji „Stan systemu”).
+   Pliki usług cron i zmienne (`BACKUP_*`, `RESTORE_DRILL_*`) dodać dopiero
+   po wyborze magazynu; do tego czasu skrypty można uruchamiać wyłącznie
+   lokalnie (patrz niżej).
 
-1. Zapisać stan źródła: liczności tabel, suma `household_payment_totals`,
-   `ledger_year_summary`, lista `schema_migrations` (raport bez danych
-   osobowych).
-2. Utworzyć backup (ręczny) i zanotować jego czas.
-3. Wariant A — backup wolumenu: przywrócić w usłudze testowej lub w
-   stagingu (Railway montuje nowy wolumen jako staged change; poprzedni
-   wolumen zostaje zachowany). Wariant B — `pg_restore` zrzutu do pustej
-   bazy tymczasowej.
-4. Uruchomić `npm run db:migrate:postgres` na odtworzonej bazie — oczekiwany
-   wynik: `No pending migrations.` (sumy kontrolne zgodne).
-5. Porównać raport z punktu 1; sprawdzić ręcznie rodzinę z rodzeństwem,
-   dziecko z dwojgiem opiekunów, wpłatę częściową z korektą.
-6. Zmierzyć czas odtworzenia (RTO) i wiek backupu (RPO).
-7. Usunąć bazę/usługę tymczasową. Wpisać wynik do tabeli.
+## Próbne odtworzenie PostgreSQL
+
+**Zasada:** backupu wolumenu Railway nie da się przywrócić do innego projektu
+ani środowiska — przywrócenie montuje nowy wolumen w TEJ SAMEJ usłudze
+(staged change). Dlatego „próba odtworzenia” wolumenu na stagingu jest
+niemożliwa, a na produkcji podmieniłaby wolumen produkcyjny. Przywrócenie
+wolumenu (wariant A) jest wyłącznie **awaryjnym odtworzeniem w miejscu**, po
+osobnej decyzji zarządu/szkoły i backupie stanu bieżącego — nigdy próbą.
+Próby wykonujemy wariantem B (zrzut logiczny) lub C (eksport roczny).
+Źródło: [Railway: backup i odtworzenie PostgreSQL](https://docs.railway.com/guides/postgres-backups-restores)
+(sprawdzone 27.09.2026; dokumentacja zmienia się — przed decyzją sprawdzić ponownie).
+
+### Lokalnie na danych syntetycznych (można uruchamiać dziś)
+
+`npm run restore:drill:local` (wymaga lokalnego PostgreSQL z `pg_dump`/`pg_restore`
+i zmiennej `RD_LOCAL_PG_ADMIN_URL` albo `RD_TEST_PG_URL`; odmawia hosta innego
+niż lokalny, nie używa Railway ani sekretów produkcji). Skrypt tworzy dwie
+tymczasowe bazy, nakłada migracje i zestaw `scripts/lib/synthetic-seed.js`
+(rodzeństwo, dwoje opiekunów przy dziecku, wpłaty częściowe, korekty, wpisy
+księgi i audytu), wykonuje kopię z szyfrowaniem, odtwarza ją prawdziwym
+`pg_restore` i porównuje raport zgodności. Niezgodność, uszkodzona kopia
+(zła suma SHA-256) albo zaległe migracje = kod wyjścia 1. Test:
+`RD_TEST_PG_URL=… node --test tests/restore-drill-local.test.js` (bez zmiennej
+pomijany; testy raportu na PGlite działają zawsze). Tabele tylko do
+dopisywania odtwarzają się z zachowanymi wyzwalaczami bez `--disable-triggers`
+(format custom ładuje dane przed utworzeniem wyzwalaczy) — test sprawdza, że
+`UPDATE` na `audit_events` po odtworzeniu nadal jest odrzucany.
+Ograniczenia: w zestawie syntetycznym `email_outbox` jest pusty (jego
+wyzwalacze są sprawdzane, wiersze nie), a lokalna baza nie odtwarza
+parametrów Railway ani czasu przez sieć — RTO z tej próby to tylko dolna granica.
+
+### Procedura na stagingu i przed cutover (`npm run restore:drill`, po decyzji D-01/D-20)
+
+1. Kopia z punktu 3 wyżej (raport zgodności jest zapisany razem z kopią).
+2. Pobrać kopię z drugiego magazynu, sprawdzić SHA-256, odszyfrować kluczem
+   prywatnym (poza Railway), `pg_restore` do **osobnej, jednorazowej** bazy
+   „drill” — skrypt to robi i sam sprawdza, że baza docelowa różni się od źródłowej.
+3. Migrator na odtworzonej bazie — oczekiwany wynik: `No pending migrations.`
+   (sumy kontrolne migracji zgodne); zaległe migracje = błąd próby.
+4. Raport z odtworzonej bazy jest porównywany z raportem z chwili kopii;
+   jakakolwiek różnica = błąd. Wynik (`kind = 'restore_drill'`) trafia do
+   `backup_runs` bez danych osobowych.
+5. Sprawdzić ręcznie rodzinę z rodzeństwem, dziecko z dwojgiem opiekunów,
+   wpłatę częściową z korektą (lokalnie robi to test).
+6. Zmierzyć czas odtworzenia (RTO) i wiek kopii (RPO); usunąć bazę „drill”.
+   Wpisać wynik do tabeli.
+
+Kopia bez raportu (sprzed tego mechanizmu) daje wynik `comparison: no_baseline`
+— to nie jest zgodność i nie zamyka pozycji „próbne odtworzenie” na liście odbioru.
 
 Uzupełnieniem backupu jest wersjonowany eksport roczny z manifestem SHA-256
 i testem odtworzenia do pustej bazy (`scripts/verify-export.js`), opisany w
@@ -457,6 +518,7 @@ i testem odtworzenia do pustej bazy (`scripts/verify-export.js`), opisany w
 
 | Data | Środowisko | Kto | Backup (id/czas) | Wariant | Czas odtworzenia | Zgodność raportu | Wynik / uwagi |
 |---|---|---|---|---|---|---|---|
+| 29.09.2026 | lokalnie, PostgreSQL 16, dane syntetyczne (`npm run restore:drill:local`) | agent (test automatyczny) | tymczasowa baza źródłowa | B (zrzut logiczny, szyfrowany) | ok. 3 s (dolna granica, lokalnie) | zgodny (liczności, sumy, skróty) | nie zastępuje próby na stagingu |
 | do wykonania | staging | | | | | | |
 | do wykonania | production (przed cutover) | | | | | | |
 

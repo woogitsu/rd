@@ -411,6 +411,7 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  restore_report_bad_identifier: "Raport zgodności odrzucił nieprawidłową nazwę tabeli. Sprawdź schemat bazy.",
   // --- Belgijska referencja płatności OGM-VCS (#83) --------------------------------
   invalid_ogm_base: "Niepoprawna baza referencji płatności.",
   invalid_ogm_reference: "Niepoprawna referencja płatności (oczekiwano 12 cyfr).",
