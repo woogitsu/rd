@@ -64,7 +64,7 @@ async function meetingsDb() {
     await db.query('INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)',
       [id, `${id}@example.invalid`, `Synthetic ${id}`]);
   }
-  // #205 (0134): osoba na liście obecności musi mieć w bazie aktywny przydział w roku (i klasie) zebrania.
+  // #205 (0150): osoba na liście obecności musi mieć w bazie aktywny przydział w roku (i klasie) zebrania.
   await db.query(`INSERT INTO role_grants (id, user_id, role, class_id, school_year_id) VALUES
     ('grant-board', 'board', 'board', NULL, 'year'),
     ('grant-rep2-1a', 'rep2-1a', 'representative', 'class-a', 'year')`);

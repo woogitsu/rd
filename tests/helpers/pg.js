@@ -69,7 +69,7 @@ export async function seedEnrolledHousehold(db, householdId, schoolYearIds, { cl
 }
 
 // #205: osoba na liście obecności zebrania (userId) musi mieć w bazie aktywny
-// przydział obowiązujący w roku zebrania (trigger meeting_attendee_guard, 0134).
+// przydział obowiązujący w roku zebrania (trigger meeting_attendee_guard, 0150).
 // Dopisuje konto i przydział (domyślnie zarząd bez zawężenia roku i klasy).
 export async function seedRoleGrant(db, { userId, role = 'board', schoolYearId = null, classId = null }) {
   await seedUser(db, { userId });

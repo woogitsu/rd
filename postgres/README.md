@@ -788,7 +788,7 @@ zmienia się wyłącznie wynik funkcji (a więc dostępność pliku dla odczytu
 publicznego). Wycofanie: `CREATE OR REPLACE FUNCTION news_photo_is_public`
 z ciałem sprzed tej migracji (jak w 0084, bez warunku zgody).
 
-`0134_meeting_attendee_user_scope.sql` (#205, część) rozszerza
+`0150_meeting_attendee_user_scope.sql` (#205, część) rozszerza
 `meeting_attendee_guard()` (od wersji z 0037): `user_id` nowego wpisu
 obecności musi mieć aktywny przydział (niecofnięty, niewygasły) w roku
 zebrania, a dla zebrania klasowego bez zawężenia do innej klasy; odmowa to

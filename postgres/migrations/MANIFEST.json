@@ -296,7 +296,7 @@
     "sha256": "90b6b1439eb8bbf64cf526b3529db889136e3b4c2c452eb17050b9aaf636080b"
   },
   {
-    "name": "0134_meeting_attendee_user_scope.sql",
+    "name": "0150_meeting_attendee_user_scope.sql",
     "sha256": "154b3e71d4320c743ae4d9c3f6550c9a0d78c51064d377879250b9c20206ca44"
   }
 ]

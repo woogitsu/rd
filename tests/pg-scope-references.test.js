@@ -173,7 +173,7 @@ describe('#205: documentId listy kontrolnej zamknięcia roku', () => {
 });
 
 
-// ---------- userId na liście obecności (migracja 0134) ----------
+// ---------- userId na liście obecności (migracja 0150) ----------
 
 describe('#205: obecność — konto (userId) poza zakresem zebrania', () => {
   const YEAR_OTHER = 'y-205-drugi';
