@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { hashSecret } from '../src/auth.js';
+import { assertNoPii } from '../src/pg/audit.js';
 import { acceptInvitation } from '../src/pg/auth.js';
 import { BootstrapRefused, bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
 import { runBootstrapCli } from '../scripts/bootstrap-admin.js';
@@ -87,6 +88,14 @@ test('zaproszenie przyjęte istniejącym mechanizmem daje aktywnego admina; kole
     assert.equal(accepted.ok, true);
     const grants = (await db.query("SELECT role, user_id FROM role_grants WHERE revoked_at IS NULL")).rows;
     assert.deepEqual(grants, [{ role: 'admin', user_id: userId }]);
+    // #184: pierwsza rola ma ślad role_grant.created ze źródłem 'bootstrap' (aktor = przyjmujący, bez PII).
+    const grantEvents = (await db.query("SELECT actor_id, entity_id, metadata_json AS metadata FROM audit_events WHERE action = 'role_grant.created'")).rows;
+    assert.equal(grantEvents.length, 1);
+    assert.equal(grantEvents[0].actor_id, userId);
+    const grantMeta = typeof grantEvents[0].metadata === 'string' ? JSON.parse(grantEvents[0].metadata) : grantEvents[0].metadata;
+    assert.equal(grantMeta.source, 'bootstrap');
+    assert.equal(grantMeta.role, 'admin');
+    assertNoPii(grantMeta);
 
     const again = await runCli(db, ['other-admin@example.invalid']);
     assert.equal(again.code, 2);
