@@ -14,6 +14,10 @@ import {
   buildQuorumRule,
   buildSharedMinutesUrl,
   canApproveMinutes,
+  canApproveNotice,
+  canChangeSchedule,
+  canDraftNoticeCampaign,
+  describeNoticeLateness,
   canManageMeetings,
   canReadMeetings,
   currentResolutions,
@@ -254,4 +258,42 @@ test("kody błędów API mają polskie komunikaty, w tym 409", () => {
   assert.match(errorMessage("", 503), /chwilowo niedostępna/);
   assert.doesNotMatch(errorMessage("", 503), /Błąd serwera/);
   assert.match(errorMessage("forbidden", 403), /uprawnień/);
+});
+
+// #113: stan „odwołane” i zawiadomienie o zebraniu w panelu.
+test("odwołane zebranie jest zablokowane i nie ma dalszych przejść stanu", () => {
+  assert.deepEqual(allowedStatusTransitions("cancelled"), []);
+  assert.equal(isMeetingLocked({ meeting: { status: "cancelled" }, minutes: [] }), true);
+  assert.equal(canChangeSchedule({ status: "scheduled" }), true);
+  assert.equal(canChangeSchedule({ status: "draft" }), true);
+  for (const status of ["held", "archived", "cancelled"]) assert.equal(canChangeSchedule({ status }), false);
+});
+
+test("zatwierdzenie i szkic kampanii tylko dla najnowszego, aktualnego zawiadomienia", () => {
+  const meeting = { status: "scheduled", kind: "plenary" };
+  const draft = { status: "draft", isLatest: true, outdated: false, kind: "invitation" };
+  assert.equal(canApproveNotice(draft, meeting), true);
+  assert.equal(canApproveNotice({ ...draft, outdated: true }, meeting), false);
+  assert.equal(canApproveNotice({ ...draft, isLatest: false }, meeting), false);
+  assert.equal(canApproveNotice({ ...draft, status: "approved" }, meeting), false);
+  assert.equal(canApproveNotice(draft, { ...meeting, status: "draft" }), false);
+  assert.equal(canApproveNotice({ ...draft, kind: "cancellation" }, { status: "cancelled" }), true);
+
+  const approved = { ...draft, status: "approved" };
+  assert.equal(canDraftNoticeCampaign(approved, meeting), true);
+  assert.equal(canDraftNoticeCampaign({ ...approved, campaignId: "c1" }, meeting), false, "raz na zawiadomienie");
+  assert.equal(canDraftNoticeCampaign(draft, meeting), false, "tylko z zatwierdzonego");
+  assert.equal(canDraftNoticeCampaign(approved, { ...meeting, kind: "board" }), false, "zebranie zarządu poza zakresem");
+  assert.equal(canDraftNoticeCampaign({ ...approved, outdated: true }, meeting), false);
+});
+
+test("spóźnione zawiadomienie to tylko ostrzeżenie z regułą i źródłem", () => {
+  const meeting = { noticeRule: { minDays: 14, source: "Założenie testowe" } };
+  assert.equal(describeNoticeLateness({ noticeLate: false, noticeDaysBefore: 20 }, meeting), null);
+  assert.equal(describeNoticeLateness({ noticeLate: null }, meeting), null);
+  const warning = describeNoticeLateness({ noticeLate: true, noticeDaysBefore: 4 }, meeting);
+  assert.match(warning, /4 dn\./);
+  assert.match(warning, /co najmniej 14/);
+  assert.match(warning, /Założenie testowe/);
+  assert.match(warning, /nic nie jest blokowane/);
 });

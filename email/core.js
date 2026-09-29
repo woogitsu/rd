@@ -1,6 +1,8 @@
 // Logika czysta ekranu kampanii e-mail (issue #147, część 1 — src/pg/routes/email.js).
 // Bez sieci, bez DOM: łatwe do przetestowania (tests/email-panel-core.test.js).
 
+import { isoToLocalInput, localInputToIso } from '../shared/zoned-time.js';
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 // Role z src/pg/routes/email.js (EDITOR_ROLES/APPROVER_ROLES) — testy równoległości
@@ -13,6 +15,7 @@ export const STATUS_LABELS = Object.freeze({
   draft: 'Szkic',
   approved: 'Zatwierdzona',
   sending: 'W wysyłce',
+  paused: 'Wstrzymana',
   done: 'Zakończona',
   cancelled: 'Anulowana',
 });
@@ -20,6 +23,7 @@ export const STATUS_LABELS = Object.freeze({
 export const AUDIENCE_LABELS = Object.freeze({
   all_households: 'Wszystkie rodziny roku',
   no_payment_record: 'Rodziny bez odnotowanej wpłaty',
+  class_households: 'Rodziny dzieci jednej klasy (zebranie klasowe)',
 });
 
 // Kody z computeSnapshot w src/pg/routes/email.js.
@@ -51,9 +55,11 @@ export function hasApproverAccess(grants, schoolYearId = '') {
   return hasRoleAccess(grants, APPROVER_ROLES, schoolYearId);
 }
 
-export function buildCampaignsUrl(schoolYearId) {
+export function buildCampaignsUrl(schoolYearId, cursor = '') {
   if (!isValidId(schoolYearId)) throw new Error('Podaj poprawny identyfikator roku szkolnego.');
-  return `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  const base = `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  // #159: kolejna strona listy (kursor keyset z poprzedniej odpowiedzi).
+  return cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base;
 }
 
 export function campaignUrl(id) {
@@ -107,10 +113,51 @@ export function formatExclusions(exclusions) {
 
 export function formatDayPlan(plan) {
   if (!plan) return '';
-  const days = Array.isArray(plan.days) ? plan.days.length : 0;
+  // API zwraca liczbę dni (planDays); starsze odpowiedzi mogły mieć listę.
+  const days = Array.isArray(plan.days) ? plan.days.length : Number(plan.days) || 0;
   const cap = plan.dailyCap ?? '—';
   if (days <= 1) return `Zmieści się w jednym dniu (limit dzienny konta: ${cap}).`;
   return `Wysyłka rozłoży się na ${days} dni (limit dzienny konta: ${cap}; reszta zarezerwowana na inną pocztę: ${plan.reservedForOtherMail ?? '—'}).`;
+}
+
+// Strefa harmonogramu z odpowiedzi podglądu (domyślnie Europe/Brussels).
+export const DEFAULT_SCHEDULE_TIMEZONE = 'Europe/Brussels';
+
+export function scheduleTimezone(schedule) {
+  return schedule?.timezone || DEFAULT_SCHEDULE_TIMEZONE;
+}
+
+// Pole datetime-local (czas lokalny strefy harmonogramu) → ISO UTC do API.
+// Puste pole = brak terminu (null); zły format → wyjątek.
+export function sendNotBeforeFromInput(value, timeZone = DEFAULT_SCHEDULE_TIMEZONE) {
+  if (!value) return null;
+  const iso = localInputToIso(value, timeZone);
+  if (!iso) throw new Error('Podaj poprawną datę i godzinę startu wysyłki.');
+  return iso;
+}
+
+export function sendNotBeforeToInput(iso, timeZone = DEFAULT_SCHEDULE_TIMEZONE) {
+  return isoToLocalInput(iso, timeZone);
+}
+
+// Opis harmonogramu do wyświetlenia. To szacunek serwera (bez pauz i odmów dostawcy).
+export function formatSchedule(schedule) {
+  if (!schedule) return '';
+  const zone = scheduleTimezone(schedule);
+  const lines = [];
+  lines.push(schedule.sendNotBefore
+    ? `Start nie wcześniej niż: ${sendNotBeforeToInput(schedule.sendNotBefore, zone).replace('T', ' ')} (${zone}).`
+    : 'Start: jak najszybciej po zakolejkowaniu.');
+  if (schedule.window?.enabled) {
+    const two = (n) => String(n).padStart(2, '0');
+    const time = (m) => `${two(Math.floor(m / 60))}:${two(m % 60)}`;
+    lines.push(`Okno wysyłki: dni ${schedule.window.days.join(',')} (1 = pon.), ${time(schedule.window.startMinutes)}–${time(schedule.window.endMinutes)} (${zone}).`);
+  } else {
+    lines.push('Okno godzin wysyłki wyłączone (zarząd nie ustalił godzin, D-16).');
+  }
+  if (schedule.startsAtLocal) lines.push(`Szacowany pierwszy przebieg: ${schedule.startsAtLocal} (${zone}).`);
+  if (schedule.endsAtLocal) lines.push(`Szacowane zakończenie: do ${schedule.endsAtLocal} (${zone}).`);
+  return lines.join(' ');
 }
 
 // Kody z contentWarnings w src/email/content.js — nie blokują, informują zatwierdzającego.

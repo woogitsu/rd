@@ -261,4 +261,37 @@ export function minutesUrl(schoolYearId) {
   return `/api/meetings/public-minutes?${new URLSearchParams({ schoolYearId })}`;
 }
 
+// #113: zatwierdzone zawiadomienia o zebraniach ogólnych (bez powodu odwołania i opisów punktów).
+export function noticesUrl(schoolYearId) {
+  if (!ID_PATTERN.test(schoolYearId)) throw new Error("invalid_school_year");
+  return `/api/meetings/public-notices?${new URLSearchParams({ schoolYearId })}`;
+}
+
+export function normalizeNotice(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = typeof raw.id === "string" && ID_PATTERN.test(raw.id) ? raw.id : null;
+  const title = cleanText(raw.title, 300);
+  const scheduledAt = toDate(raw.scheduledAt);
+  if (!id || !title || !scheduledAt) return null;
+  const agenda = Array.isArray(raw.agenda)
+    ? raw.agenda.map((item) => cleanText(item?.title, 300)).filter(Boolean) : [];
+  return {
+    id,
+    title,
+    cancelled: raw.cancelled === true,
+    scheduledAt,
+    previousScheduledAt: toDate(raw.previousScheduledAt),
+    location: cleanText(raw.location, 200),
+    agenda,
+  };
+}
+
+export function publicNotices(rawList) {
+  if (!Array.isArray(rawList)) return [];
+  return rawList
+    .map(normalizeNotice)
+    .filter(Boolean)
+    .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
+}
+
 export const NEWS_URL = "/api/public/news";

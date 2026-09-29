@@ -58,7 +58,7 @@ logach, zgłoszeniach ani buildzie frontendu.
 | Zmienna | Usługa | Uwagi |
 |---|---|---|
 | `PORT` | aplikacja | ustawia Railway |
-| `APP_ENV` | aplikacja | `staging` lub `production`. Lokalne są tylko brak wartości, `development` i `test`; każda inna wartość (także literówka) jest traktowana jak środowisko wystawione do sieci i podlega walidacji startowej poniżej |
+| `APP_ENV` | aplikacja / skrypty | `staging` lub `production`; lokalne: `development`, `test` (wielkość liter bez znaczenia, `prod` = `production`; wspólna normalizacja `src/app-env.js`). Brak lub nieznana wartość (literówka) jest zachowawczo traktowana jak produkcja przy niebezpiecznych operacjach: import wymaga `IMPORT_ENABLED=true`, a migracja, odtworzenie, kopia storage, test odtworzenia, bootstrap administratora i `storage:smoke` odmawiają bez `--allow-production` (skrypty wypisują ostrzeżenie); walidacja startowa serwera opisana niżej. Ustaw jawnie |
 | `PUBLIC_BASE_URL` | aplikacja | **wymagana** poza środowiskiem lokalnym: `https://host` bez ścieżki, osobny dla każdego środowiska |
 | `MFA_ENCRYPTION_KEY` (albo `MFA_ENCRYPTION_KEYS`) | aplikacja | **wymagany** poza środowiskiem lokalnym: klucz 32 bajty (sekret), rotacja: sekcja niżej |
 | `TRUST_PROXY` | aplikacja | **wymagana** poza środowiskiem lokalnym: `1` lub `true` (za proxy Railway; inaczej wspólny licznik prób logowania na IP) |
@@ -366,7 +366,8 @@ DATABASE_URL=<referencja z Railway> APP_ENV=staging \
 - Dziennik: `user.created` (gdy konto powstało), `invitation.created`
   i `auth.bootstrap_issued` z aktorem technicznym `system:bootstrap`
   (`actor_id = NULL`), identyfikatorem konta i zaproszenia — bez e-maila
-  i tokenu.
+  i tokenu. Przyjęcie zaproszenia zapisuje `role_grant.created` z
+  `metadata.source = 'bootstrap'`.
 - `APP_ENV=production` wymaga jawnego `--allow-production` i wolno go użyć
   tylko w ramach zatwierdzonego cutover (D-20).
 - Przyjęcie zaproszenia: `/login/#invite=<token>` (`POST /api/invitations/accept`)

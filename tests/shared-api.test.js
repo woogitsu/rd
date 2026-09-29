@@ -12,7 +12,7 @@ import {
 import { nextFromFragment } from '../login/core.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close'];
+const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close', 'data-export', 'news'];
 
 function fakeLocation(pathname, search = '', hash = '') {
   return { pathname, search, hash };
@@ -53,6 +53,13 @@ test('safeNextPath przyjmuje tylko ścieżkę względną tego samego origin', ()
     ' /panel/', '/login/', '/login', '/api/session', '/panel/../api/session', '/panel/../login/',
     `/${'a'.repeat(600)}`,
   ]) assert.equal(safeNextPath(bad), null, String(bad));
+});
+
+test('#161: loginUrl z powodem enroll dopisuje reason tylko przy poprawnym celu', () => {
+  assert.equal(loginUrl('/audit/', { reason: 'enroll' }), '/login/#next=%2Faudit%2F&reason=enroll');
+  assert.equal(loginUrl('/audit/', { reason: 'inne' }), '/login/#next=%2Faudit%2F');
+  assert.equal(loginUrl('//example.invalid', { reason: 'enroll' }), '/login/');
+  assert.equal(nextFromFragment('#next=%2Faudit%2F&reason=enroll'), '/audit/');
 });
 
 test('loginUrl koduje powrót, a zły cel daje sam /login/', () => {
@@ -112,7 +119,7 @@ test('403 mfa_required i mfa_enrollment_required prowadzą na /login/ z osobnymi
 
   const enroll = client({ status: 403, body: { error: 'mfa_enrollment_required' }, location: fakeLocation('/admin/') });
   await assert.rejects(enroll.request('/api/admin/users'), (error) => error.authAction === 'enroll' && error.message === MESSAGES.mfa_enrollment_required);
-  assert.deepEqual(enroll.navigations, ['/login/#next=%2Fadmin%2F']);
+  assert.deepEqual(enroll.navigations, ['/login/#next=%2Fadmin%2F&reason=enroll']);
   assert.notEqual(MESSAGES.mfa_required, MESSAGES.mfa_enrollment_required);
 });
 
@@ -244,6 +251,22 @@ test('każdy kod błędu z src/pg ma polski tekst we wspólnym słowniku', () =>
   for (const [code, text] of Object.entries(MESSAGES)) {
     assert.ok(text.length > 5 && !text.includes(code), `${code}: ${text}`);
   }
+});
+
+// --- pobieranie plików (binary) ------------------------------------------------------------
+
+test('binary: sukces zwraca blob i nagłówki bez parsowania JSON, błąd nadal jako ApiError', async () => {
+  const headers = new Map([['x-export-run-id', 'run-1']]);
+  const okApi = createApiClient({
+    fetchImpl: async () => ({ status: 200, ok: true, blob: async () => 'BLOB', headers: { get: (n) => headers.get(n.toLowerCase()) ?? null }, json: async () => { throw new Error('nie wolno'); } }),
+    getLocation: () => fakeLocation('/data-export/'), navigate: () => {},
+  });
+  const result = await okApi.request('/api/exports', { method: 'POST', body: { schoolYearId: 'y1' }, binary: true });
+  assert.equal(result.blob, 'BLOB');
+  assert.equal(result.headers.get('X-Export-Run-Id'), 'run-1');
+  const failing = client({ status: 403, body: { error: 'mfa_stale' }, location: fakeLocation('/data-export/') });
+  await assert.rejects(failing.request('/api/exports', { method: 'POST', body: {}, binary: true }), (e) => e.code === 'mfa_stale' && e.status === 403);
+  assert.deepEqual(failing.navigations, []);
 });
 
 // --- test statyczny paneli ---------------------------------------------------------------
