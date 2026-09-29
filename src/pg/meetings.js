@@ -62,8 +62,10 @@ const DATABASE_CONFLICTS = new Set([
 // #135 (SR-10): operacje, które uzasadniają wydatek powyżej 3000 EUR albo
 // nieodwracalnie ustalają dokument zebrania, wymagają sesji z potwierdzonym
 // MFA (403 mfa_required, zgodnie z obsługą w panelu, zob. #99). Jedna lista,
-// udokumentowana w docs/AUTHORIZATION.md; szkic uchwały i porządek obrad
-// nadal działają bez MFA.
+// udokumentowana w docs/AUTHORIZATION.md. Uwaga: od #150 MFA jest wymagane
+// dla CAŁEGO zarządzania zebraniem (meetingForManage, createMeeting), także dla
+// szkicu uchwały, porządku obrad, obecności i widoczności internal — ta lista
+// opisuje tylko operacje z dodatkowym, własnym sprawdzeniem (#135).
 export const MFA_REQUIRED_ACTIONS = Object.freeze([
   'resolution.decide', // createResolution/updateResolution -> adopted|rejected, correctResolution
   'meeting.minutes.approve', // approveMinutes
@@ -946,7 +948,7 @@ export async function setMinutesVisibility(db, actor, input = {}) {
   };
   // #135: udostępnienie rodzicom lub publicznie wymaga MFA (treść protokołu
   // nie jest automatycznie sprawdzana pod kątem danych osobowych); widoczność
-  // wyłącznie wewnętrzna nadal działa bez MFA.
+  // wyłącznie wewnętrzna też wymaga MFA, ale już na wejściu (meetingForManage, #150).
   if (data.visibility === 'parents' || data.visibility === 'public') requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'meeting.minutes.visibility', data, async tx => {
     const id = randomUUID();
