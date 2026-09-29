@@ -38,6 +38,11 @@
             <select id="board-overview-year"></select>
           </label>
           <p class="note" id="board-overview-note"></p>
+          <div class="export-actions" id="board-overview-export" hidden>
+            <button type="button" data-export-format="csv">Pobierz CSV</button>
+            <button type="button" data-export-format="xlsx">Pobierz XLSX</button>
+            <span class="note" id="board-overview-export-status" role="status"></span>
+          </div>
           <div class="table-wrap"><table id="board-overview-table"><caption class="sr-only">Statystyki klas roku szkolnego</caption><thead id="board-overview-head"></thead><tbody id="board-overview-body"></tbody><tfoot id="board-overview-foot"></tfoot></table></div>
           <p class="note">Uczeń z rodzeństwem w kilku klasach jest liczony w każdej z tych klas; w wierszu „Razem” gospodarstwo liczy się raz. Kolumna „Do kartki” to uczniowie bez opiekuna ze zgodą na kontakt i adresem e-mail. Lista może być nieaktualna.</p>
           <p class="note" id="board-overview-unmatched" hidden></p>

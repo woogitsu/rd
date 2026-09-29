@@ -9,6 +9,8 @@ import {
   fullName,
   groupClassesByYear,
   overviewRows,
+  boardOverviewExportUrl,
+  exportFilename,
   householdHref,
   overviewRow,
   parseRoute,
@@ -178,7 +180,39 @@ async function renderBoardOverview() {
     unmatched.textContent = `Wpłaty bez przypisania do rodziny: ${data.totals.unmatchedPaymentsCount}. Nie są ujęte w odsetkach, więc ewidencja może być niepełna.`;
   }
   byId("board-overview-empty").hidden = rows.length > 0;
+  byId("board-overview-export").hidden = rows.length === 0;
+  byId("board-overview-export-status").textContent = "";
 }
+
+// #131: eksport tej samej tabeli; serwer stosuje te same uprawnienia i zakres co widok,
+// więc plik nie zawiera nic ponad to, co widać na ekranie. Jedno żądanie naraz.
+let exporting = false;
+byId("board-overview-export").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-export-format]");
+  if (!button || exporting) return;
+  const status = byId("board-overview-export-status");
+  const format = button.dataset.exportFormat;
+  exporting = true;
+  for (const item of byId("board-overview-export").querySelectorAll("button")) item.disabled = true;
+  status.textContent = "";
+  try {
+    const { blob, headers } = await api(boardOverviewExportUrl(byId("board-overview-year").value, format), { binary: true });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = exportFilename(headers.get("Content-Disposition"), `statystyki-klas.${format}`);
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    status.textContent = `Pobrano plik ${format.toUpperCase()}.`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    exporting = false;
+    for (const item of byId("board-overview-export").querySelectorAll("button")) item.disabled = false;
+  }
+});
 
 function householdLinks(households) {
   const fragment = document.createDocumentFragment();

@@ -82,6 +82,22 @@
           </form>
         </div>
 
+        <div id="import-statement-box" hidden>
+          <h3>Wgraj plik wyciągu z banku (CODA lub CAMT.053)</h3>
+          <form id="import-statement-form">
+            <label>Plik wyciągu<input id="statement-file" type="file" accept=".cod,.coda,.xml,.txt,text/xml,application/xml,text/plain" aria-describedby="statement-file-status"></label>
+            <label>Format pliku<select id="statement-format" aria-describedby="statement-file-status">
+              <option value="auto">Wykryj automatycznie</option>
+              <option value="coda">CODA</option>
+              <option value="camt053">CAMT.053 (XML)</option>
+            </select></label>
+            <p class="context" id="statement-file-status" role="status">Plik jest odczytywany w tej przeglądarce i wysyłany do serwera w całości. Serwer nie zapisuje treści pliku ani tytułów przelewów — tylko skróty. Rachunek w pliku musi być zatwierdzonym rachunkiem Rady, a ruchy już zaimportowane wcześniej są pomijane.</p>
+            <div class="form-error" id="statement-error" role="alert"></div>
+            <div class="message" id="statement-result" role="status"></div>
+            <button class="primary" type="submit" id="statement-submit" disabled>Wgraj plik wyciągu</button>
+          </form>
+        </div>
+
         <h3>Pozycje wyciągu</h3>
         <div class="table-wrap" role="region" aria-labelledby="detail-title" tabindex="0">
           <table>

@@ -236,6 +236,43 @@ export function selectHouseholds(households, selectedIds) {
   return households.filter((household) => selected.has(household.householdId));
 }
 
+// Przegląd demo 3: „Podgląd: 3 kartek” — liczba kartek z polską odmianą
+// (1 kartka, 2–4 kartki, 5–21 kartek, 22–24 kartki, 12–14 kartek).
+export function cardCountLabel(count) {
+  const n = Math.abs(Number(count) || 0);
+  if (n === 1) return "1 kartka";
+  const lastDigit = n % 10;
+  const lastTwo = n % 100;
+  const form = lastDigit >= 2 && lastDigit <= 4 && !(lastTwo >= 12 && lastTwo <= 14) ? "kartki" : "kartek";
+  return `${n} ${form}`;
+}
+
+// Nazwa klasy z serwera zwykle zaczyna się od „Klasa” („Klasa 0-A”), a z pliku
+// bywa samym oznaczeniem („1a”). Bez dublowania: „klasa Klasa 0-A” → „Klasa 0-A”.
+export function studentClassLabel(className) {
+  const name = String(className ?? "").trim();
+  if (!name) return "";
+  return /^klasa\b/i.test(name) ? name : `klasa ${name}`;
+}
+
+// Komunikat w kroku 4, gdy treść kartki jest niepełna. Przed dotknięciem formularza
+// błędy nie są pokazywane na czerwono w kroku 1, więc podgląd sam mówi, czego brakuje.
+export function previewBlockedMessage(errors = []) {
+  const details = errors.filter(Boolean).join(" ");
+  return details
+    ? `Uzupełnij treść kartki w kroku 1, aby zobaczyć podgląd. ${details}`
+    : "Uzupełnij treść kartki w kroku 1, aby zobaczyć podgląd.";
+}
+
+// Czy konto może wczytać kartki całego roku (rola finansowa bez ograniczenia do klasy,
+// tak jak printScope() w src/pg/routes/print.js). Inaczej lista klas nie ma pozycji
+// „Wszystkie klasy” — serwer i tak odrzuciłby żądanie bez klasy (class_required).
+const PRINT_FULL_ROLES = ["admin", "board", "treasurer"];
+export function canLoadAllClasses(grants, schoolYearId = "") {
+  return (Array.isArray(grants) ? grants : []).some((grant) => PRINT_FULL_ROLES.includes(grant?.role)
+    && !grant.classId && (!grant.schoolYearId || !schoolYearId || grant.schoolYearId === schoolYearId));
+}
+
 // Identyfikator roku z API ("2026-2027") na format treści kartki ("2026/2027").
 // Inny kształt identyfikatora zwraca pusty tekst — pole zostaje do ręcznego uzupełnienia.
 export function schoolYearCardLabel(schoolYearId) {
@@ -360,7 +397,7 @@ export function cardText(card) {
 export function renderCardHtml(card) {
   const e = escapeHtml;
   const students = card.students
-    .map((student) => `<li>${e(student.name)}, klasa ${e(student.className)}</li>`)
+    .map((student) => `<li>${e(student.name)}, ${e(studentClassLabel(student.className))}</li>`)
     .join("");
   const payment = card.payment.length
     ? `<dl class="card-payment">${card.payment.map(([label, value]) => `<dt>${e(label)}</dt><dd>${e(value)}</dd>`).join("")}</dl>`

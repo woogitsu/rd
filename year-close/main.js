@@ -2,6 +2,7 @@ import {
   CHECKLIST_ITEMS,
   CHECKLIST_ITEM_LABELS,
   STATUS_LABELS,
+  accessReviewSummary,
   canOfferClose,
   canOfferStart,
   checklistProgress,
@@ -17,6 +18,7 @@ import {
   startConfirmation,
   startUrl,
   statusUrl,
+  warningRows,
 } from "./core.js";
 import { formatEur } from "../panel/money.js";
 import { api as apiRequest } from "../shared/api.js";
@@ -78,6 +80,8 @@ function render() {
   byId("bal-bank").textContent = formatEur(balance.closingBankCents);
 
   renderChecklist(status);
+  renderWarnings(status);
+  renderAccessReview(status);
 
   byId("open-start").hidden = !canOfferStart(status, state.grants, state.schoolYearId);
 
@@ -127,6 +131,42 @@ function renderChecklist(status) {
   }));
   const progress = checklistProgress(status);
   byId("checklist-progress").textContent = `${progress.confirmed}/${progress.total}`;
+}
+
+function renderWarnings(status) {
+  const rows = warningRows(status);
+  byId("warnings-empty").hidden = rows.length > 0;
+  byId("warnings-body").replaceChildren(...rows.map((entry) => {
+    const row = document.createElement("tr");
+    row.append(textCell(entry.label));
+    const count = textCell(String(entry.count));
+    count.className = "amount";
+    const amount = textCell(entry.amountCents === null ? "—" : formatEur(entry.amountCents));
+    amount.className = "amount";
+    row.append(count, amount);
+    return row;
+  }));
+}
+
+function renderAccessReview(status) {
+  const summary = accessReviewSummary(status);
+  const body = byId("access-review-body");
+  if (!summary) {
+    byId("access-review-summary").textContent = "—";
+    body.replaceChildren();
+    return;
+  }
+  byId("access-review-summary").textContent = `Odczyty w roku: ${summary.total}. Odczyty bez ważnego przydziału w chwili odczytu: ${summary.withoutValidGrant}. Aktywne przydziały do wygaszenia przy zamknięciu: ${summary.activeGrants}.`;
+  body.replaceChildren(...summary.byKind.map((entry) => {
+    const row = document.createElement("tr");
+    row.append(textCell(entry.label));
+    const hits = textCell(String(entry.hits));
+    hits.className = "amount";
+    const actors = textCell(String(entry.actors));
+    actors.className = "amount";
+    row.append(hits, actors);
+    return row;
+  }));
 }
 
 function textCell(value) {

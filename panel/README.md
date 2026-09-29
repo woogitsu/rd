@@ -18,6 +18,7 @@ Panel i API (dziś na PostgreSQL, `src/pg/routes/payments.js`) muszą działać 
 - rejestracja wpłaty z kluczem idempotencji,
 - dopisywanie korekty bez zmiany historycznego rekordu,
 - jednokrotne przypisanie nierozpoznanej wpłaty do rodziny,
+- podział jednej wpłaty nieprzypisanej na kilka gospodarstw („Podziel”, #127): części w centach, suma bieżących części ≤ netto wpłaty (podpowiedź w przeglądarce, wiążąca kontrola po stronie serwera i bazy), potwierdzenie przed dodaniem i przed cofnięciem, cofnięcie części z powodem jako nowy zapis; API `GET/POST /api/payments/{id}/allocations`, tylko role finansowe; części nie oznaczają zobowiązań,
 - kwota netto obliczana jako wpłata plus suma korekt.
 
 Panel celowo nie wylicza zadłużenia: składka jest dobrowolna. Identyfikatory roku i rodziny są na tym etapie wprowadzane ręcznie, dopóki nie powstanie chroniony katalog rodzin i konfiguracja lat szkolnych.
