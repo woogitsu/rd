@@ -2,8 +2,8 @@
 //
 //   POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]
 //        ciało = surowe bajty pliku, nagłówki Content-Type i Idempotency-Key
-//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&limit=…][&cursor=…]
-//        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`
+//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&from=…][&to=…][&sort=documentDate|createdAt][&limit=…][&cursor=…]
+//        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`; kursor działa tylko przy sort=createdAt
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
 //   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed
@@ -20,6 +20,7 @@
 
 import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { PersonalDataError, gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
 import {
   afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
@@ -294,6 +295,18 @@ async function list(request, env, url, json) {
   if (rawQuery !== null && rawQuery.length > 200) return json({ error: 'invalid_request' }, 400);
   // Ucieczka znaków specjalnych ILIKE, żeby "%"/"_" w wyszukiwanej frazie nie działały jako wieloznaczniki.
   const searchQuery = rawQuery ? rawQuery.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`) : '';
+  // Issue #76: zakres daty dokumentu (najnowsza wersja opisu) i sortowanie.
+  // Dokument bez daty nie spełnia filtra from/to; przy sortowaniu po dacie trafia na koniec.
+  const fromDate = url.searchParams.get('from');
+  const toDate = url.searchParams.get('to');
+  if ((fromDate && !validDocumentDate(fromDate)) || (toDate && !validDocumentDate(toDate))) {
+    return json({ error: 'invalid_document_date' }, 400);
+  }
+  if (fromDate && toDate && fromDate > toDate) return json({ error: 'invalid_request' }, 400);
+  const sort = url.searchParams.get('sort') ?? 'createdAt';
+  if (sort !== 'createdAt' && sort !== 'documentDate') return json({ error: 'invalid_request' }, 400);
+  // Kursor keyset opiera się na created_at; przy sort=documentDate obowiązuje offset.
+  if (sort === 'documentDate' && url.searchParams.get('cursor')) return json({ error: 'invalid_request' }, 400);
   // #159: zły limit to 400 invalid_limit (wcześniej po cichu przycinany).
   const failList = (code) => { throw new ListError(code); };
   let limit;
@@ -301,7 +314,7 @@ async function list(request, env, url, json) {
   let cursorScope;
   try {
     limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 50, maxLimit: MAX_LIST_LIMIT }, failList);
-    cursorScope = JSON.stringify(['documents', schoolYearId, kindFilter, classFilter.value, statusFilter, categoryFilter, searchQuery]);
+    cursorScope = JSON.stringify(['documents', schoolYearId, kindFilter, classFilter.value, statusFilter, categoryFilter, searchQuery, fromDate || null, toDate || null]);
     cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope: cursorScope }, failList);
   } catch (error) {
     if (error instanceof ListError) return json({ error: error.code }, 400);
@@ -334,7 +347,7 @@ async function list(request, env, url, json) {
   // Wyszukiwanie i filtr kategorii zawężają zapytanie w SQL, PRZED LIMIT
   // (issue #76 wprost pilnuje tego, by pełna strona znaczyła realne wyniki).
   const queryValues = [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value,
-    limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null];
+    limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null, fromDate || null, toDate || null, sort];
   const after = cursor ? `AND ${afterTimestampDescSql('d.created_at', 'd.id', cursor, queryValues)}` : '';
   const { rows } = await env.db.query(
     `${SELECT_DOCUMENT}
@@ -345,8 +358,10 @@ async function list(request, env, url, json) {
         AND ($9::text = 'all' OR s.document_id IS NULL)
         AND ($10::text IS NULL OR dd.category = $10)
         AND ($11::text IS NULL OR dd.title ILIKE '%' || $11 || '%' OR dd.description ILIKE '%' || $11 || '%')
+        AND ($12::date IS NULL OR dd.document_date >= $12::date)
+        AND ($13::date IS NULL OR dd.document_date <= $13::date)
         ${after}
-      ORDER BY d.created_at DESC, d.id
+      ORDER BY CASE WHEN $14::text = 'documentDate' THEN dd.document_date END DESC NULLS LAST, d.created_at DESC, d.id
       LIMIT $7 OFFSET $8`,
     queryValues,
   );
@@ -354,7 +369,7 @@ async function list(request, env, url, json) {
   // zawężona filtrem uprawnień nie zgubiła dalszych wyników.
   const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), cursorScope);
   const documents = page.items.map(toDocument).filter((doc) => canAccessDocument(context, doc));
-  return json({ documents, limit, offset, nextCursor: page.nextCursor, truncated: page.truncated });
+  return json({ documents, limit, offset, nextCursor: sort === 'documentDate' ? null : page.nextCursor, truncated: page.truncated });
 }
 
 function tooLarge(json) {
@@ -700,6 +715,8 @@ async function changeStatus(request, env, id, json, action) {
         return { conflict: true };
       }
 
+      // #152: powód zdarzenia niezmiennego — bramka na dane osobowe (422).
+      const gate = gateFreeText([['document_status_events.reason', reason]], { confirm: body.value?.confirmPersonalData === true });
       const eventId = crypto.randomUUID();
       const inserted = (await tx.query(
         `INSERT INTO document_status_events (id, document_id, action, replacement_document_id, reason, created_by, idempotency_key)
@@ -713,7 +730,7 @@ async function changeStatus(request, env, id, json, action) {
         entityType: 'document', entityId: id,
         metadata: {
           kind: doc.kind, schoolYearId: doc.school_year_id, classId: doc.class_id,
-          replacementDocumentId, sessionId: context.session.sessionId,
+          replacementDocumentId, sessionId: context.session.sessionId, ...piiAuditMetadata(gate),
         },
       });
       return { created: toStatusEvent(inserted) };
@@ -727,6 +744,7 @@ async function changeStatus(request, env, id, json, action) {
     if (result.replayed) return json({ statusEvent: result.replayed, replayed: true }, 200);
     return json({ statusEvent: result.created }, 201);
   } catch (error) {
+    if (error instanceof PersonalDataError) return json({ error: error.code, categories: error.categories }, 422);
     if (error?.code === '23505') {
       if (error?.constraint === 'document_status_events_idempotency_key_key') {
         return json({ error: 'idempotency_conflict' }, 409);
@@ -799,6 +817,10 @@ async function createDescription(request, env, id, json) {
         if (existing.document_id !== id || !sameInput(existing)) return { conflict: true };
         return { replayed: toDescription(existing) };
       }
+      const gate = gateFreeText([
+        ['document_descriptions.title', input.title],
+        ['document_descriptions.description', input.description],
+      ], { confirm: body.value?.confirmPersonalData === true });
       const nextRevision = Number((await tx.query(
         'SELECT COALESCE(MAX(revision_no), 0) + 1 AS next FROM document_descriptions WHERE document_id = $1', [id],
       )).rows[0].next);
@@ -817,6 +839,7 @@ async function createDescription(request, env, id, json) {
         metadata: {
           kind: doc.kind, schoolYearId: doc.school_year_id, classId: doc.class_id,
           category: input.category, revisionNo: nextRevision, sessionId: context.session.sessionId,
+          ...piiAuditMetadata(gate),
         },
       });
       return { created: toDescription(inserted) };
@@ -826,6 +849,7 @@ async function createDescription(request, env, id, json) {
     if (result.replayed) return json({ description: result.replayed, replayed: true }, 200);
     return json({ description: result.created }, 201);
   } catch (error) {
+    if (error instanceof PersonalDataError) return json({ error: error.code, categories: error.categories }, 422);
     if (error?.code === '23505') {
       // Równoległe podwójne kliknięcie: drugi zapis przegrał wyścig o klucz idempotencji.
       const existing = (await env.db.query(

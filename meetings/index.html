@@ -125,7 +125,7 @@
               <label>Punkt <input name="title" minlength="3" maxlength="300" required /></label>
               <label>Pozycja (opcjonalnie) <input name="position" inputmode="numeric" pattern="[0-9]*" maxlength="3" /></label>
             </div>
-            <label>Opis (opcjonalnie) <textarea name="description" rows="2" maxlength="2000"></textarea></label>
+            <label>Opis (opcjonalnie) <textarea name="description" rows="2" maxlength="2000"></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
             <p class="form-error" id="agenda-error" role="alert"></p>
             <div><button type="submit">Dodaj punkt</button></div>
           </form>
@@ -237,8 +237,9 @@
           <form id="minutes-form" class="stack" novalidate>
             <label>Treść protokołu (nowa wersja)
               <textarea name="body" rows="14" minlength="10" maxlength="200000" required></textarea>
+              <small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small>
             </label>
-            <label>Opis zmiany (opcjonalnie) <input name="changeNote" maxlength="500" /></label>
+            <label>Opis zmiany (opcjonalnie) <input name="changeNote" maxlength="500" /><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
             <p class="form-error" id="minutes-error" role="alert"></p>
             <div><button type="submit">Zapisz nową wersję</button></div>
           </form>
@@ -329,7 +330,7 @@
           </label>
         </div>
         <label>Tytuł <input name="title" minlength="3" maxlength="300" required /></label>
-        <label>Treść <textarea name="body" rows="6" minlength="3" maxlength="20000" required></textarea></label>
+        <label>Treść <textarea name="body" rows="6" minlength="3" maxlength="20000" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
         <fieldset>
           <legend>Wynik głosowania na zebraniu (wpisuje sekretarz)</legend>
           <div class="votes">
@@ -341,7 +342,7 @@
           <p class="muted" data-vote-limit></p>
         </fieldset>
         <label data-amends>Zmienia uchwałę nr (opcjonalnie, ten sam rok szkolny) <input name="amendsNumber" maxlength="64" autocomplete="off" /></label>
-        <label data-reason hidden>Powód poprawki zapisu <textarea name="reason" rows="2" minlength="3" maxlength="500"></textarea></label>
+        <label data-reason hidden>Powód poprawki zapisu <textarea name="reason" rows="2" minlength="3" maxlength="500"></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
         <p class="form-error" id="resolution-error" role="alert"></p>
         <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zapisz uchwałę</button></div>
       </form>
@@ -359,7 +360,7 @@
           <ul id="approve-checklist-blocking" class="checklist checklist-blocking" hidden></ul>
           <ul id="approve-checklist-warnings" class="checklist" hidden></ul>
         </section>
-        <label>Uwaga o trybie przyjęcia (opcjonalnie) <input name="approvalNote" maxlength="500" /></label>
+        <label>Uwaga o trybie przyjęcia (opcjonalnie) <input name="approvalNote" maxlength="500" /><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
         <p class="form-error" id="approve-minutes-error" role="alert"></p>
         <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zatwierdź</button></div>
       </form>
@@ -377,7 +378,7 @@
             <option value="public">Publiczny</option>
           </select>
         </label>
-        <label>Powód (opcjonalnie) <input name="reason" maxlength="500" /></label>
+        <label>Powód (opcjonalnie) <input name="reason" maxlength="500" /><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
         <p class="muted">„Publiczny” oznacza dostęp bez logowania. Upewnij się, że treść nie zawiera danych osobowych.</p>
         <p class="form-error" id="visibility-error" role="alert"></p>
         <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zapisz widoczność</button></div>

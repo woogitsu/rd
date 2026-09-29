@@ -32,6 +32,22 @@ function ibanChecksumValid(raw) {
 // łapać przypadkowych długich liczb (np. kwot, numerów referencyjnych).
 const PHONE_PATTERN = /(?<!\d)(?:\+|00)(?:32|48)[ .-]?(?:\d[ .-]?){8,9}(?!\d)|\b0\d(?:[ .-]?\d){7,8}\b/g;
 
+// Numer rejestru krajowego BE (RRN): 11 cyfr YY.MM.DD-XXX.CC, gdzie CC to
+// 97 - (pierwsze 9 cyfr mod 97); dla urodzonych od 2000 r. liczy się z prefiksem
+// "2". Miesiąc 00-12 (lub +20/+40 dla numerów bis). Suma kontrolna i zakres
+// miesiąca ograniczają fałszywe trafienia na zwykłych 11-cyfrowych liczbach.
+const NATIONAL_ID_CANDIDATE = /(?<![\d])\d{2}[.\- ]?\d{2}[.\- ]?\d{2}[.\- ]?\d{3}[.\- ]?\d{2}(?![\d])/g;
+
+function nationalIdValid(raw) {
+  const digits = raw.replace(/[.\- ]/g, '');
+  if (!/^\d{11}$/.test(digits)) return false;
+  const month = Number(digits.slice(2, 4));
+  if (!(month <= 12 || (month >= 20 && month <= 32) || (month >= 40 && month <= 52))) return false;
+  const base = Number(digits.slice(0, 9));
+  const check = Number(digits.slice(9));
+  return 97 - (base % 97) === check || 97 - ((2_000_000_000 + base) % 97) === check;
+}
+
 function stripDiacritics(value) {
   return value.normalize('NFD').replace(/\p{Diacritic}/gu, '');
 }
@@ -67,16 +83,21 @@ function countKnownNameHits(text, knownNames) {
 /**
  * @param {string} text
  * @param {{knownNames?: Array<{firstName: string, lastName: string}>}} [options]
- * @returns {{categories: string[], counts: {email: number, iban: number, phone: number, known_name: number}}}
+ * @returns {{categories: string[], counts: {email: number, iban: number, national_id: number, phone: number, known_name: number}}}
  */
 export function detectPossiblePersonalData(text, { knownNames = [] } = {}) {
   const value = String(text ?? '');
   const emailHits = value.match(EMAIL_PATTERN)?.length ?? 0;
   const ibanCandidates = value.match(IBAN_CANDIDATE) ?? [];
   const ibanHits = ibanCandidates.filter(ibanChecksumValid).length;
-  const phoneHits = value.match(PHONE_PATTERN)?.length ?? 0;
+  const nationalIds = (value.match(NATIONAL_ID_CANDIDATE) ?? []).filter(nationalIdValid);
+  // Numer rejestru krajowego zapisany z separatorami wyglądałby też jak telefon —
+  // wycinamy go przed liczeniem telefonów, żeby kategorie się nie dublowały.
+  const withoutNationalIds = value.replace(NATIONAL_ID_CANDIDATE, (match) => (nationalIdValid(match) ? ' ' : match));
+  const phoneHits = withoutNationalIds.match(PHONE_PATTERN)?.length ?? 0;
+  const nationalIdHits = nationalIds.length;
   const knownNameHits = countKnownNameHits(value, knownNames);
-  const counts = { email: emailHits, iban: ibanHits, phone: phoneHits, known_name: knownNameHits };
+  const counts = { email: emailHits, iban: ibanHits, national_id: nationalIdHits, phone: phoneHits, known_name: knownNameHits };
   const categories = Object.entries(counts).filter(([, count]) => count > 0).map(([category]) => category);
   return { categories, counts };
 }

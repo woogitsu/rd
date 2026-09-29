@@ -158,7 +158,19 @@ test('korekta: nowa migawka wskazuje poprzednią z powodem; brak/zła referencja
   assert.equal(wrong.status, 409);
   assert.equal((await wrong.json()).error, 'report_snapshot_superseded');
 
-  const second = await create(cookies.treasurer, { schoolYearId: YEAR, supersedesId: first.id, reason: `Dodano wydatek ${TRAP}` });
+  // #152: powód zastąpienia to zapis niezmienny — e-mail odrzucony bez obejścia, telefon wymaga potwierdzenia.
+  const forbidden = await create(cookies.treasurer, { schoolYearId: YEAR, supersedesId: first.id, reason: `Dodano wydatek ${TRAP}`, confirmPersonalData: true });
+  assert.equal(forbidden.status, 422);
+  const forbiddenBody = await forbidden.json();
+  assert.equal(forbiddenBody.error, 'personal_data_forbidden');
+  assert.ok(!JSON.stringify(forbiddenBody).includes('pulapka'));
+  const phone = { schoolYearId: YEAR, supersedesId: first.id, reason: 'Dodano wydatek, kontakt +32 470 12 34 56' };
+  const needsConfirm = await create(cookies.treasurer, phone);
+  assert.equal(needsConfirm.status, 422);
+  assert.equal((await needsConfirm.json()).error, 'possible_personal_data');
+  assert.equal(await count(db, 'financial_report_snapshots'), 1);
+
+  const second = await create(cookies.treasurer, { ...phone, confirmPersonalData: true });
   assert.equal(second.status, 201);
   const secondBody = (await second.json()).snapshot;
   assert.equal(secondBody.supersedesId, first.id);
@@ -166,7 +178,8 @@ test('korekta: nowa migawka wskazuje poprzednią z powodem; brak/zła referencja
   assert.equal(await count(db, 'financial_report_snapshots'), 2);
   // Powód korekty (wolny tekst) nie trafia do audytu.
   const meta = JSON.stringify((await db.query("SELECT metadata_json FROM audit_events WHERE action = 'report.snapshot.created'")).rows);
-  assert.ok(!meta.includes('Dodano wydatek') && !meta.includes(TRAP));
+  assert.ok(!meta.includes('Dodano wydatek') && !meta.includes(TRAP) && !meta.includes('470'));
+  assert.ok(meta.includes('piiConfirmed'), 'audyt zapisuje samo potwierdzenie i kategorie');
 
   // Pierwsza migawka jest zastąpiona: lista pokazuje następcę, drugi następca tej samej migawki jest odrzucony.
   const list = (await (await handle(db, cookies.board, `${BASE}?schoolYearId=${YEAR}`)).json()).snapshots;
