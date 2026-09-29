@@ -68,6 +68,14 @@ export class DemoSeedRefused extends Error {
   }
 }
 
+// #166: demo działa zawsze lokalnie na PGlite i danych syntetycznych, więc brak
+// APP_ENV oznacza 'development' (bez ręcznego ustawiania zmiennych; import w demie
+// nie wymaga IMPORT_ENABLED). Jawnie ustawiona produkcja jest odrzucana wcześniej
+// przez assertSafeEnvironment; nieznana wartość zostaje bez zmian (zachowawczo).
+export function demoAppEnv(env = process.env) {
+  return env.APP_ENV || 'development';
+}
+
 // --- Bezpieczeństwo -----------------------------------------------------------
 // AGENTS.md/brief: to demo NIE może dotknąć produkcji, zdalnej bazy ani wysłać
 // żadnej wiadomości. Sprawdzane PRZED otwarciem jakiejkolwiek bazy.
@@ -535,7 +543,7 @@ export async function runDemoSeed({
   const env = {
     db,
     MFA_ENCRYPTION_KEY: mfaEncryptionKey,
-    APP_ENV: processEnv.APP_ENV,
+    APP_ENV: demoAppEnv(processEnv),
     // Origin sprawdzany przez handlePgRequest — apiCall() zawsze wysyła DEMO_ORIGIN.
   };
   try {
