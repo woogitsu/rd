@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { createSessionSecret } from '../../src/auth.js';
 import { loadMigrations } from '../../src/postgres-migrations.js';
+import { loadAuthorizationContext } from '../../src/pg/authorization.js';
 // #214: instaluje globalną pułapkę na sieć jako efekt uboczny importu — każdy
 // plik, który używa tego helpera, jest chroniony bez osobnej konfiguracji.
 import { networkGuardCalls } from './network-guard.js';
@@ -131,4 +132,36 @@ export function request(url, { method = 'GET', headers = {}, body, cookie, origi
     if (!finalHeaders.has('Content-Type')) finalHeaders.set('Content-Type', 'application/json');
   }
   return new Request(target, { method: upper, headers: finalHeaders, body: payload });
+}
+
+// #214: aktor dla funkcji bibliotecznych (meetings/events/news) zbudowany TAK JAK
+// w produkcji — przez ładowanie sesji i przydziałów (`loadAuthorizationContext`),
+// a nie ręcznie. Dzięki temu wygasła/cofnięta sesja, wyłączone konto oraz
+// wygasły/cofnięty przydział są odfiltrowywane przez prawdziwe zapytania SQL.
+// Zwraca null, gdy sesja jest nieważna (odpowiednik 401 unauthenticated).
+export async function actorFromSession(db, cookie) {
+  const env = { db };
+  const context = await loadAuthorizationContext(request('/api/session', { cookie }), env);
+  if (!context?.session?.user?.id) return null;
+  return {
+    userId: context.session.user.id,
+    grants: Array.isArray(context.grants) ? context.grants : [],
+    mfaVerified: Boolean(context.session.mfaVerified),
+  };
+}
+
+// Sześć aktorów o tej samej roli i zakresie, różniących się wyłącznie stanem
+// sesji lub przydziału. `active` musi mieć dostęp; pozostali nie.
+export async function lifecycleActors(db, { role, schoolYearId, classId, prefix = 'lc' }) {
+  const past = new Date(Date.now() - 24 * 3600 * 1000);
+  const grant = (extra = {}) => [{ role, schoolYearId, classId, ...extra }];
+  const make = async (name, options) => actorFromSession(db, await seedUserSession(db, { userId: `${prefix}-${name}`, mfa: true, ...options }));
+  return {
+    active: await make('active', { roles: grant() }),
+    expiredGrant: await make('expired-grant', { roles: grant({ expiresAt: past }) }),
+    revokedGrant: await make('revoked-grant', { roles: grant({ revoked: true }) }),
+    expiredSession: await make('expired-session', { roles: grant(), expiresAt: past }),
+    revokedSession: await make('revoked-session', { roles: grant(), revoked: true }),
+    disabledAccount: await make('disabled', { roles: grant(), disabled: true }),
+  };
 }
