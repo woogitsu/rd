@@ -4,11 +4,24 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import {
-  addAgendaItem, approveMinutes, correctResolution, createMeeting, createMinutesVersion,
-  createResolution, determineQuorum, findAdoptedResolution, getMeeting, handle, listMeetings,
-  listMinutesForParents, listPublicMinutes, listSharedMinutes, recordAttendance,
-  setMinutesVisibility, updateMeeting, updateResolution,
+  addAgendaItem,
+  approveMinutes,
+  correctResolution,
+  createMeeting,
+  createMinutesVersion,
+  createResolution,
+  determineQuorum,
+  findAdoptedResolution,
+  getMeeting,
+  handle,
+  listMeetings,
+  listMinutesForParents,
+  listPublicMinutes,
+  listSharedMinutes,
+  recordAttendance,
+  setMinutesVisibility,
 } from '../src/pg/meetings.js';
+import { updateMeeting, updateResolution } from './helpers/with-revision.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
@@ -612,7 +625,7 @@ test('HTTP handler enforces origin, session, idempotency and roles', async () =>
     assert.deepEqual((await response.json()).minutes, []);
     response = await call(new Request(`https://rd.example.invalid${path}/${created.meeting.id}`, {
       method: 'PATCH', headers: { Origin: 'https://rd.example.invalid', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'held' }),
+      body: JSON.stringify({ revision: created.meeting.revisionNo, status: 'held' }),
     }));
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error, 'meeting_status_transition_invalid');

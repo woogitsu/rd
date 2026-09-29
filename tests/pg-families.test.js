@@ -141,6 +141,21 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.deepEqual(treasurerClasses.body.classes.map((c) => c.id), ['c-1a', 'c-2b']);
   });
 
+  test('lista klas do wyboru w panelach (#128): filtr roku nie poszerza zakresu roli', async () => {
+    const { call, cookies } = await setup();
+    // Przedstawiciel 1A: rok bez jego przydziału → pusta lista, nie klasy innych.
+    assert.deepEqual((await call(`/api/classes?schoolYearId=${Y2}`, { cookie: cookies.repA })).body.classes, []);
+    // Skarbnik roku Y1 pytający o Y2: pusta lista (bez ujawniania istnienia klas).
+    assert.deepEqual((await call(`/api/classes?schoolYearId=${Y2}`, { cookie: cookies.treasurer })).body.classes, []);
+    // Zarząd bez zawężenia widzi klasy wskazanego roku, z etykietą roku do listy wyboru.
+    const board = await call(`/api/classes?schoolYearId=${Y2}`, { cookie: cookies.board });
+    assert.deepEqual(board.body.classes.map((c) => [c.id, c.name, c.schoolYearId]), [['c-2a-27', '2A', Y2]]);
+    // Odpowiedź wyboru nie zawiera danych rodzin (e-maili, opiekunów).
+    assert.equal(/@|guardian|email/i.test(JSON.stringify(board.body)), false);
+    // Nieprawidłowy identyfikator roku: 400.
+    assert.equal((await call('/api/classes?schoolYearId=a%25b', { cookie: cookies.board })).status, 400);
+  });
+
   test('sumy wpłat netto tylko dla ról finansowych z MFA, bez pól zadłużenia', async () => {
     const { db, call, cookies } = await setup();
     await seedUser(db, { userId: 'u-writer' });

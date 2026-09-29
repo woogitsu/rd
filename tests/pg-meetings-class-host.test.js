@@ -8,9 +8,18 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import {
-  addAgendaItem, approveMinutes, createMeeting, createMinutesVersion, createResolution,
-  determineQuorum, getMeeting, handle, recordAttendance, setMinutesVisibility, updateMeeting,
+  addAgendaItem,
+  approveMinutes,
+  createMeeting,
+  createMinutesVersion,
+  createResolution,
+  determineQuorum,
+  getMeeting,
+  handle,
+  recordAttendance,
+  setMinutesVisibility,
 } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const ON = { MEETINGS_CLASS_HOST: 'representative' };

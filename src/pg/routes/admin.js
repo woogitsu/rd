@@ -7,6 +7,12 @@
 //   POST /api/admin/users/{id}/revoke-sessions
 //   POST /api/admin/users/{id}/password-reset   { ttlHours? } — jednorazowy token resetu hasła (zwracany raz); krok w górę MFA (#150)
 //   POST /api/admin/users/{id}/mfa-reset        { confirm: "<id konta>" } — wyłącza MFA i kody odzyskiwania; krok w górę MFA (#150)
+//        #146: konto z rolą admin/board/treasurer (poza resetem hasła WŁASNEGO konta)
+//        nie dostaje tokenu/resetu od razu — odpowiedź 202 to wniosek, który zatwierdza
+//        INNY administrator (POST /api/admin/account-requests/{id}/approve).
+//   GET  /api/admin/account-requests?status=     wnioski o reset hasła/MFA kont chronionych (#146)
+//   POST /api/admin/account-requests/{id}/approve  zatwierdza (nie wnioskodawca, nie właściciel konta) i wykonuje; krok w górę MFA
+//   POST /api/admin/account-requests/{id}/reject   odrzuca lub wycofuje wniosek
 //   GET  /api/admin/grants?userId=&role=&schoolYearId=&classId=&status=
 //   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? } — krok w górę MFA (#150)
 //   POST /api/admin/grants/{id}/revoke
@@ -65,6 +71,9 @@ import { insertAuditEvent } from '../audit.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
 } from '../login.js';
+import {
+  approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, rejectRecoveryRequest, requiresRecoveryApproval,
+} from '../account-recovery.js';
 import { computeOpsStatus } from '../ops-status.js';
 
 export const name = 'admin';
@@ -291,6 +300,10 @@ async function passwordResetRoute(env, actorId, userId, request, json) {
     ttlSeconds = data.ttlHours * 3600;
   }
   try {
+    // #146: konto z rolą chronioną — tylko wniosek, token wyda drugi administrator.
+    if (await requiresRecoveryApproval(env, { actorId, userId, kind: 'password_reset' })) {
+      return json(await createRecoveryRequest(env, { actorId, userId, kind: 'password_reset', ttlSeconds }), 202);
+    }
     const reset = await issuePasswordReset(env, { actorId, userId, ttlSeconds });
     return json({ reset: { id: reset.resetId, userId, expiresAt: reset.expiresAt }, token: reset.secret }, 201);
   } catch (error) {
@@ -304,7 +317,32 @@ async function mfaResetRoute(env, actorId, userId, request, json) {
   const data = await readJson(request);
   if (data.confirm !== userId) throw new RequestError('confirmation_required');
   try {
+    if (actorId !== userId && await requiresRecoveryApproval(env, { actorId, userId, kind: 'mfa_reset' })) {
+      return json(await createRecoveryRequest(env, { actorId, userId, kind: 'mfa_reset' }), 202);
+    }
     return json(await adminResetMfa(env, { actorId, userId }));
+  } catch (error) {
+    if (error instanceof LoginError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
+}
+
+// --- Wnioski o reset hasła/MFA kont chronionych (#146) ---------------------
+
+async function recoveryRequestsList(env, url, json) {
+  const status = url.searchParams.get('status') || 'pending';
+  try {
+    return json({ requests: await listRecoveryRequests(env, { status }) });
+  } catch (error) {
+    if (error instanceof LoginError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
+}
+
+async function recoveryRequestDecision(env, actorId, requestId, decision, json) {
+  try {
+    if (decision === 'approve') return json(await approveRecoveryRequest(env, { actorId, requestId }), 200);
+    return json(await rejectRecoveryRequest(env, { actorId, requestId }), 200);
   } catch (error) {
     if (error instanceof LoginError) throw new RequestError(error.code, error.status);
     throw error;
@@ -730,6 +768,7 @@ const AUDIT_ACTIONS = [
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
   'auth.password_changed', 'mfa.reset',
+  'account_recovery.requested', 'account_recovery.approved', 'account_recovery.rejected', 'account_recovery.expired',
 ];
 
 // #181: domeny mapowane na przedrostki action. Wariant zachowawczy — odczyt
@@ -739,7 +778,7 @@ const DOMAIN_ACTION_PREFIXES = {
   access: ['role_grant.', 'invitation.', 'user.', 'session.', 'school_year.grants_expired', 'access.denied'],
   finance: ['payment.', 'ledger.', 'reconciliation.', 'report.audit.'],
   email: ['email.'],
-  security: ['mfa.', 'auth.'],
+  security: ['mfa.', 'auth.', 'account_recovery.'],
   documents: ['document.', 'export.', 'print.'],
   year_close: ['year_close.', 'ledger_opening_balance.'],
 };
@@ -1058,6 +1097,11 @@ function allowedMethodsFor(section, pathLength, action) {
     if (pathLength === 3 && ['disable', 'enable', 'revoke-sessions', 'password-reset', 'mfa-reset'].includes(action)) return ['POST'];
     return null;
   }
+  if (section === 'account-requests') {
+    if (pathLength === 1) return ['GET'];
+    if (pathLength === 3 && ['approve', 'reject'].includes(action)) return ['POST'];
+    return null;
+  }
   if (section === 'grants') {
     if (pathLength === 1) return ['GET', 'POST'];
     if (pathLength === 3 && action === 'revoke') return ['POST'];
@@ -1069,8 +1113,8 @@ function allowedMethodsFor(section, pathLength, action) {
     return null;
   }
   if (section === 'school-years') {
-    if (pathLength === 1) return ['GET'];
-    if (pathLength === 3 && action === 'expire-grants') return ['POST'];
+    if (pathLength === 1) return ['GET', 'POST'];
+    if (pathLength === 3 && ['expire-grants', 'classes'].includes(action)) return ['POST'];
     return null;
   }
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
@@ -1120,6 +1164,16 @@ async function route(request, env, url, json, actorId, context) {
       if (action === 'mfa-reset') { requireFreshMfa(context); return mfaResetRoute(env, actorId, userId, request, json); }
     }
   }
+  if (section === 'account-requests') {
+    if (path.length === 1 && method === 'GET') return recoveryRequestsList(env, url, json);
+    if (path.length === 3 && action === 'approve' && method === 'POST') {
+      requireFreshMfa(context);
+      return recoveryRequestDecision(env, actorId, decodeId(rawId), 'approve', json);
+    }
+    if (path.length === 3 && action === 'reject' && method === 'POST') {
+      return recoveryRequestDecision(env, actorId, decodeId(rawId), 'reject', json);
+    }
+  }
   if (section === 'grants') {
     if (path.length === 1 && method === 'GET') return listGrants(env, url, json);
     if (path.length === 1 && method === 'POST') { requireFreshMfa(context); return createGrant(env, actorId, request, json); }
@@ -1163,7 +1217,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'data-requests', 'retention', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'data-requests', 'retention', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;

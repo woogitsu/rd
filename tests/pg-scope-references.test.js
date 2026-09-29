@@ -4,7 +4,8 @@
 // sam kod. Wyłącznie dane syntetyczne.
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMeeting, createResolution, determineQuorum, recordAttendance, updateMeeting } from '../src/pg/meetings.js';
+import { createMeeting, createResolution, determineQuorum, recordAttendance } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createTestDb, request, seedClass, seedEnrolledHousehold, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 

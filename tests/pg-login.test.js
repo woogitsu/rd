@@ -11,7 +11,7 @@ import {
   checkPasswordPolicy, hashPassword, dummyHash, loginQueueMetrics, MAX_CONCURRENT, MAX_PER_CLIENT, MAX_WAITING, needsRehash, parseHash, verifyPassword, withQueueClient,
   verifyPasswordOrDummy, withSlot,
 } from '../src/pg/password.js';
-import { LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
+import { emailDelayMs, LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
 import { freshMfaForbiddenCode, loadAuthorizationContext } from '../src/pg/authorization.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
@@ -23,7 +23,7 @@ let db;
 let env;
 before(async () => {
   db = await createTestDb();
-  env = { db, MFA_ENCRYPTION_KEY: KEY, ...FAST };
+  env = { db, MFA_ENCRYPTION_KEY: KEY, LOGIN_EMAIL_DELAY_MS: '0', ...FAST };
   await seedSchoolYear(db, 'y-test');
 });
 after(async () => { await db?.close(); });
@@ -168,27 +168,31 @@ test('logowanie tworzy sesję bez MFA; ten sam błąd dla nieznanego e-maila i z
   assert.ok(failed.some((row) => row.entity_type === 'login_attempt' && row.metadata_json.reason === 'unknown_account'));
 });
 
-test('limit prób: 5 błędów na e-mail i 20 na IP → 429 z Retry-After; poprawne hasło też czeka', async () => {
+test('limit prób: 5 błędów pary (e-mail, IP) i 20 na IP → 429 z Retry-After; poprawne hasło z tego IP czeka', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-limit' });
+  const ipA = nextIp();
   const statuses = [];
-  for (let attempt = 0; attempt < LOGIN_POLICY.emailMaxFailures; attempt += 1) {
-    statuses.push((await login(account, { password: `zle haslo numer ${attempt}` })).status);
+  for (let attempt = 0; attempt < LOGIN_POLICY.pairMaxFailures; attempt += 1) {
+    statuses.push((await login(account, { ip: ipA, password: `zle haslo numer ${attempt}` })).status);
   }
   assert.deepEqual(statuses, [401, 401, 401, 401, 429]);
-  const blocked = await login(account);
+  const blocked = await login(account, { ip: ipA });
   assert.equal(blocked.status, 429);
   assert.deepEqual(await blocked.json(), { error: 'too_many_attempts' });
   assert.ok(Number(blocked.headers.get('Retry-After')) > 0);
-  // Blokada dotyczy adresu, nie konta w bazie: nieznany adres zachowuje się tak samo.
+  // Blokada dotyczy pary, nie konta w bazie: nieznany adres zachowuje się tak samo.
   const ghost = { email: 'ghost-limit@example.invalid', password: 'x'.repeat(12) };
+  const ghostIp = nextIp();
   const ghostStatuses = [];
-  for (let attempt = 0; attempt < 6; attempt += 1) ghostStatuses.push((await post('/api/login', ghost, { ip: nextIp() })).status);
+  for (let attempt = 0; attempt < 6; attempt += 1) ghostStatuses.push((await post('/api/login', ghost, { ip: ghostIp })).status);
   assert.deepEqual(ghostStatuses, [401, 401, 401, 401, 429, 429]);
-  // Po upływie blokady (symulacja) poprawne hasło działa i zeruje licznik e-maila.
-  await db.query("UPDATE login_rate_limits SET locked_until = now() - interval '1 second' WHERE scope_hash = $1", [scopeHash('email', account.email)]);
-  assert.equal((await login(account)).status, 200);
-  const { rows } = await db.query('SELECT 1 FROM login_rate_limits WHERE scope_hash = $1', [scopeHash('email', account.email)]);
-  assert.equal(rows.length, 0);
+  // Po upływie blokady (symulacja) poprawne hasło działa i zeruje liczniki pary i e-maila.
+  await db.query("UPDATE login_rate_limits SET locked_until = now() - interval '1 second' WHERE scope_hash = $1", [scopeHash('pair', `${account.email}|${ipA}`)]);
+  assert.equal((await login(account, { ip: ipA })).status, 200);
+  for (const [type, value] of [['pair', `${account.email}|${ipA}`], ['email', account.email]]) {
+    const { rows } = await db.query('SELECT 1 FROM login_rate_limits WHERE scope_hash = $1', [scopeHash(type, value)]);
+    assert.equal(rows.length, 0, type);
+  }
 
   // IP: 20 błędów z różnych adresów e-mail.
   const ip = '192.0.2.77';
@@ -209,6 +213,74 @@ test('limit prób: 5 błędów na e-mail i 20 na IP → 429 z Retry-After; popra
   assert.ok(all.rows.every((row) => /^[0-9a-f]{64}$/.test(row.scope_hash)));
 });
 
+// --- #126: blokada nie zależy od samej znajomości adresu e-mail ---------------------------
+
+test('#126: 5 błędów z IP A nie blokuje właściciela z IP B (dalej mfa_required), a z IP A blokuje', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-126b', roles: [{ role: 'treasurer', schoolYearId: 'y-test' }] });
+  const attacker = nextIp();
+  const statuses = [];
+  for (let i = 0; i < 12; i += 1) statuses.push((await login(account, { ip: attacker, password: `atak ${i} zle haslo` })).status);
+  assert.deepEqual(statuses.slice(0, 5), [401, 401, 401, 401, 429]);
+  assert.ok(statuses.slice(4).every((status) => status === 429));
+  const owner = await login(account, { ip: nextIp() });
+  assert.equal(owner.status, 200, 'właściciel z innego IP loguje się mimo ataku na jego adres');
+  const data = await owner.json();
+  assert.equal(data.mfaRequired, true);
+  assert.equal((await get('/api/auth/state', cookieFrom(owner))).status, 200);
+  assert.equal((await login(account, { ip: attacker })).status, 429, 'ten sam IP atakującego nadal czeka');
+  const email = await limitRow('email', account.email);
+  assert.ok(!email?.locked && email?.locked_until == null, 'zakres samego e-maila nie zakłada blokady');
+});
+
+test('#126: atak z wielu IP na jeden e-mail nie zakłada blokady konta, a poprawne hasło zeruje liczniki', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-126m' });
+  for (let i = 0; i < 30; i += 1) assert.equal((await login(account, { password: `rozproszony ${i} zle` })).status, 401);
+  const row = await limitRow('email', account.email);
+  assert.equal(row.failure_count, 30);
+  assert.equal(row.locked_until, null);
+  assert.equal((await login(account)).status, 200);
+  assert.equal(await limitRow('email', account.email), null);
+});
+
+test('#126: opóźnienie samego e-maila zaczyna się od progu i jest konfigurowalne (LOGIN_EMAIL_DELAY_MS)', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-126d' });
+  const delayed = { ...env, LOGIN_EMAIL_DELAY_MS: '1200' };
+  const timed = async (i) => {
+    const started = performance.now();
+    const response = await post('/api/login', { email: account.email, password: `opoznienie ${i} zle` }, { ip: nextIp(), useEnv: delayed });
+    return { status: response.status, ms: performance.now() - started };
+  };
+  const early = [];
+  for (let i = 0; i < LOGIN_POLICY.emailDelayAfter - 1; i += 1) early.push(await timed(i));
+  const late = await timed(99);
+  assert.ok(early.every((entry) => entry.status === 401 && entry.ms < 1000), early.map((entry) => entry.ms.toFixed(0)).join(','));
+  assert.equal(late.status, 401, 'opóźnienie nie zamienia się w blokadę');
+  assert.ok(late.ms >= 1200, `próba nr ${LOGIN_POLICY.emailDelayAfter} czeka ${late.ms.toFixed(0)} ms`);
+  assert.equal(emailDelayMs(LOGIN_POLICY.emailDelayAfter - 1, {}), 0);
+  assert.equal(emailDelayMs(LOGIN_POLICY.emailDelayAfter, {}), LOGIN_POLICY.emailDelayMs);
+  assert.equal(emailDelayMs(LOGIN_POLICY.emailDelayAfter * 2, {}), LOGIN_POLICY.emailDelayMaxMs);
+  assert.equal(emailDelayMs(500, { LOGIN_EMAIL_DELAY_MS: '0' }), 0);
+});
+
+test('#126: dwie osoby za jednym NAT-em — błędy jednej (5 na parę) nie blokują drugiej z innym kontem', async () => {
+  const first = await seedPasswordUser({ userId: 'u-login-126n1' });
+  const second = await seedPasswordUser({ userId: 'u-login-126n2' });
+  const nat = nextIp();
+  for (let i = 0; i < 5; i += 1) await login(first, { ip: nat, password: `nat ${i} zle haslo` });
+  assert.equal((await login(first, { ip: nat })).status, 429);
+  assert.equal((await login(second, { ip: nat })).status, 200, 'inna para (e-mail, IP) nie jest blokowana');
+});
+
+test('#126: w bazie limitów tylko skróty, także dla pary', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-126h' });
+  const ip = nextIp();
+  await login(account, { ip, password: 'skrot zle haslo' });
+  const { rows } = await db.query("SELECT scope_type, scope_hash FROM login_rate_limits WHERE scope_type = 'pair'");
+  assert.ok(rows.length >= 1);
+  assert.ok(rows.every((row) => /^[0-9a-f]{64}$/.test(row.scope_hash)));
+  assert.ok(!JSON.stringify(rows).includes(ip));
+});
+
 // --- #186: atomowość limitu prób --------------------------------------------------------
 // PGlite wykonuje zapytania i transakcje po kolei (jedno połączenie), ale scrypt liczy się poza
 // bazą, więc równoległe żądania i tak przeplatają się między sprawdzeniem limitu a zapisem błędu.
@@ -222,77 +294,85 @@ async function limitRow(type, value) {
   );
   return rows[0] ?? null;
 }
+const pairRow = (email, ip) => limitRow('pair', `${email}|${ip}`);
 const failedFor = async (action, userId) => (await auditRows(action)).filter((row) => row.entity_id === userId).length;
 
 test('#186: 30 równoległych błędnych haseł — najwyżej 5 sprawdzeń, reszta 429, blokada trwa', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-par30' });
-  const responses = await Promise.all(Array.from({ length: 30 }, (_, i) => login(account, { password: `zle haslo rownolegle ${i}` })));
+  const ip = nextIp();
+  const responses = await Promise.all(Array.from({ length: 30 }, (_, i) => login(account, { ip, password: `zle haslo rownolegle ${i}` })));
   const statuses = responses.map((response) => response.status);
   assert.ok(statuses.every((status) => status === 401 || status === 429), statuses.join(','));
-  assert.ok(await failedFor('auth.login_failed', account.userId) <= LOGIN_POLICY.emailMaxFailures,
-    `sprawdzono ${await failedFor('auth.login_failed', account.userId)} haseł przy limicie ${LOGIN_POLICY.emailMaxFailures}`);
-  assert.equal(statuses.filter((status) => status === 401).length <= LOGIN_POLICY.emailMaxFailures - 1, true);
-  assert.equal((await limitRow('email', account.email)).locked, true);
-  assert.equal((await login(account)).status, 429, 'poprawne hasło czeka na koniec blokady');
+  assert.ok(await failedFor('auth.login_failed', account.userId) <= LOGIN_POLICY.pairMaxFailures,
+    `sprawdzono ${await failedFor('auth.login_failed', account.userId)} haseł przy limicie ${LOGIN_POLICY.pairMaxFailures}`);
+  assert.equal(statuses.filter((status) => status === 401).length <= LOGIN_POLICY.pairMaxFailures - 1, true);
+  assert.equal((await pairRow(account.email, ip)).locked, true);
+  assert.equal((await login(account, { ip })).status, 429, 'poprawne hasło z tego IP czeka na koniec blokady');
 });
 
 test('#186: 4 błędy po kolei + 2 równoległe — spóźniony błąd nie zdejmuje blokady', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-late' });
-  for (let i = 0; i < 4; i += 1) assert.equal((await login(account, { password: `zle haslo ${i}` })).status, 401);
-  const pair = await Promise.all([login(account, { password: 'zle haslo 5' }), login(account, { password: 'zle haslo 6' })]);
+  const ip = nextIp();
+  for (let i = 0; i < 4; i += 1) assert.equal((await login(account, { ip, password: `zle haslo ${i}` })).status, 401);
+  const pair = await Promise.all([login(account, { ip, password: 'zle haslo 5' }), login(account, { ip, password: 'zle haslo 6' })]);
   assert.deepEqual(pair.map((response) => response.status).sort(), [429, 429]);
-  const row = await limitRow('email', account.email);
+  const row = await pairRow(account.email, ip);
   assert.equal(row.locked, true, `blokada zdjęta: ${JSON.stringify(row)}`);
   assert.equal(await failedFor('auth.login_failed', account.userId), 5);
   // Kolejne błędne próby w czasie blokady nie skracają jej i nie zerują licznika.
   const before = row.locked_until;
-  assert.equal((await login(account, { password: 'zle haslo 7' })).status, 429);
-  assert.deepEqual((await limitRow('email', account.email)).locked_until, before);
+  assert.equal((await login(account, { ip, password: 'zle haslo 7' })).status, 429);
+  assert.deepEqual((await pairRow(account.email, ip)).locked_until, before);
 });
 
 test('#186: błąd zapisany w trakcie trwającej blokady jej nie nadpisuje (logika SQL)', async () => {
   // Odtworzenie przeplotu: próba przeszła rezerwację (licznik 4 → 5), zanim inna założyła blokadę.
   const account = await seedPasswordUser({ userId: 'u-login-sql' });
-  for (let i = 0; i < 4; i += 1) await login(account, { password: `zle haslo ${i}` });
-  const slow = login(account, { password: 'zle haslo wolne' });
+  const ip = nextIp();
+  for (let i = 0; i < 4; i += 1) await login(account, { ip, password: `zle haslo ${i}` });
+  const slow = login(account, { ip, password: 'zle haslo wolne' });
   // Gdy wolna próba liczy scrypt, ktoś (np. administrator) zakłada blokadę na 10 minut.
   await new Promise((resolve) => setImmediate(resolve));
   await db.query(
-    "UPDATE login_rate_limits SET locked_until = now() + interval '10 minutes' WHERE scope_type = 'email' AND scope_hash = $1",
-    [scopeHash('email', account.email)],
+    "UPDATE login_rate_limits SET locked_until = now() + interval '10 minutes' WHERE scope_type = 'pair' AND scope_hash = $1",
+    [scopeHash('pair', `${account.email}|${ip}`)],
   );
   assert.equal((await slow).status, 429);
-  const row = await limitRow('email', account.email);
+  const row = await pairRow(account.email, ip);
   assert.equal(row.locked, true, 'zapis błędu nie może zdjąć trwającej blokady');
   assert.ok(row.failure_count >= 5);
 });
 
 test('#186: po wygaśnięciu blokady pierwsza próba liczona od 1; nieznany e-mail jak istniejący', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-expire' });
-  for (let i = 0; i < 5; i += 1) await login(account, { password: `zle haslo ${i}` });
-  assert.equal((await limitRow('email', account.email)).locked, true);
-  await db.query("UPDATE login_rate_limits SET locked_until = now() - interval '1 second' WHERE scope_hash = $1", [scopeHash('email', account.email)]);
-  assert.equal((await login(account, { password: 'zle haslo po blokadzie' })).status, 401);
-  const row = await limitRow('email', account.email);
+  const ip = nextIp();
+  for (let i = 0; i < 5; i += 1) await login(account, { ip, password: `zle haslo ${i}` });
+  assert.equal((await pairRow(account.email, ip)).locked, true);
+  await db.query("UPDATE login_rate_limits SET locked_until = now() - interval '1 second' WHERE scope_hash = $1", [scopeHash('pair', `${account.email}|${ip}`)]);
+  assert.equal((await login(account, { ip, password: 'zle haslo po blokadzie' })).status, 401);
+  const row = await pairRow(account.email, ip);
   assert.equal(row.failure_count, 1);
   assert.equal(row.locked_until, null);
 
   const ghost = 'ghost-rownolegly@example.invalid';
-  const ghostStatuses = (await Promise.all(Array.from({ length: 12 }, () => post('/api/login', { email: ghost, password: 'z'.repeat(12) }, { ip: nextIp() }))))
+  const ghostIp = nextIp();
+  const ghostStatuses = (await Promise.all(Array.from({ length: 12 }, () => post('/api/login', { email: ghost, password: 'z'.repeat(12) }, { ip: ghostIp }))))
     .map((response) => response.status);
+  const realIp = nextIp();
   const realStatuses = (await Promise.all(Array.from({ length: 12 }, (_, i) => login(
-    { email: 'u-login-ghostcmp@example.invalid', password: 'x' }, { password: `zle ${i} haslo` },
+    { email: 'u-login-ghostcmp@example.invalid', password: 'x' }, { ip: realIp, password: `zle ${i} haslo` },
   )))).map((response) => response.status);
   assert.equal(ghostStatuses.filter((status) => status === 401).length, realStatuses.filter((status) => status === 401).length);
-  assert.equal((await limitRow('email', ghost)).locked, true);
+  assert.equal((await pairRow(ghost, ghostIp)).locked, true);
 });
 
 test('#186: podwójne kliknięcie „Zaloguj” z poprawnym hasłem przy liczniku 4 — 200/429, bez zdjęcia blokady', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-dbl' });
-  for (let i = 0; i < 4; i += 1) await login(account, { password: `zle haslo ${i}` });
-  const statuses = (await Promise.all([login(account), login(account)])).map((response) => response.status).sort();
+  const ip = nextIp();
+  for (let i = 0; i < 4; i += 1) await login(account, { ip, password: `zle haslo ${i}` });
+  const statuses = (await Promise.all([login(account, { ip }), login(account, { ip })])).map((response) => response.status).sort();
   assert.ok(['200,200', '200,429'].includes(statuses.join(',')), statuses.join(','));
-  const row = await limitRow('email', account.email);
+  const row = await pairRow(account.email, ip);
   assert.ok(!row?.locked, 'udane logowanie nie zostawia blokady');
 });
 
@@ -312,19 +392,21 @@ test('#186: limit IP przy równoległych błędnych tokenach resetu i zaproszeni
 test('#186: równoległe błędne hasła przy zmianie hasła i przyjęciu zaproszenia istniejącego konta', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-parchg' });
   const cookie = cookieFrom(await login(account));
+  const changeIp = nextIp();
   const change = (await Promise.all(Array.from({ length: 12 }, (_, i) => post('/api/password/change',
-    { currentPassword: `zle obecne haslo ${i}`, newPassword: newPassword() }, { cookie, ip: nextIp() }))))
+    { currentPassword: `zle obecne haslo ${i}`, newPassword: newPassword() }, { cookie, ip: changeIp }))))
     .map((response) => response.status);
   assert.ok(change.every((status) => status === 400 || status === 429), change.join(','));
-  assert.ok(await failedFor('auth.password_change_failed', account.userId) <= LOGIN_POLICY.emailMaxFailures);
+  assert.ok(await failedFor('auth.password_change_failed', account.userId) <= LOGIN_POLICY.pairMaxFailures);
 
   const invited = await seedPasswordUser({ userId: 'u-login-parinv' });
   const { secret } = await invite(invited.email, 'representative', { classId: 'c-login-1a' });
+  const acceptIp = nextIp();
   const accept = (await Promise.all(Array.from({ length: 12 }, (_, i) => post('/api/invitations/accept',
-    { token: secret, password: `zle haslo zaproszenia ${i}` }, { ip: nextIp() }))))
+    { token: secret, password: `zle haslo zaproszenia ${i}` }, { ip: acceptIp }))))
     .map((response) => response.status);
   assert.ok(accept.every((status) => status === 401 || status === 429), accept.join(','));
-  assert.ok(await failedFor('auth.invitation_accept_failed', invited.userId) <= LOGIN_POLICY.emailMaxFailures);
+  assert.ok(await failedFor('auth.invitation_accept_failed', invited.userId) <= LOGIN_POLICY.pairMaxFailures);
 });
 
 test('#186: sprawdzenie limitu i rezerwacja próby w jednej transakcji z FOR UPDATE, przed scrypt', async () => {
@@ -645,15 +727,24 @@ test('reset MFA przez administratora: wyłącza czynnik i kody, wylogowuje; potw
   const selfReset = await post('/api/admin/users/u-login-admin3/mfa-reset', { confirm: 'u-login-admin3' }, { cookie: admin });
   assert.equal(selfReset.status, 409);
 
-  const reset = await post(path, { confirm: account.userId }, { cookie: admin });
+  // #146: konto zarządu — pierwszy administrator składa wniosek, reset wykonuje drugi.
+  const requested = await post(path, { confirm: account.userId }, { cookie: admin });
+  assert.equal(requested.status, 202);
+  assert.equal((await get('/api/session', mfaCookie)).status, 200, 'wniosek niczego nie zmienia');
+  const requestPath = `/api/admin/account-requests/${(await requested.json()).request.id}`;
+  assert.equal((await post(`${requestPath}/approve`, {}, { cookie: admin })).status, 403, 'wnioskodawca nie zatwierdza');
+  const admin4 = await seedUserSession(db, { userId: 'u-login-admin4', roles: [{ role: 'admin' }], mfa: true });
+  const reset = await post(`${requestPath}/approve`, {}, { cookie: admin4 });
   assert.equal(reset.status, 200);
-  const body = await reset.json();
+  const body = (await reset.json()).mfa;
   assert.equal(body.changed, true);
   assert.equal(body.disabledFactors, 1);
   assert.equal(body.invalidatedRecoveryCodes, 10);
   assert.ok(body.revokedSessions >= 1);
   assert.equal((await get('/api/session', mfaCookie)).status, 401);
-  const again = await (await post(path, { confirm: account.userId }, { cookie: admin })).json();
+  // Ponowny wniosek po resecie: zatwierdzenie nic już nie zmienia.
+  const againRequest = await (await post(path, { confirm: account.userId }, { cookie: admin })).json();
+  const again = (await (await post(`/api/admin/account-requests/${againRequest.request.id}/approve`, {}, { cookie: admin4 })).json()).mfa;
   assert.equal(again.changed, false);
 
   const relogin = await (await login(account)).json();
@@ -661,7 +752,8 @@ test('reset MFA przez administratora: wyłącza czynnik i kody, wylogowuje; potw
   assert.equal(relogin.mfaRequired, true, 'zarząd musi zapisać nowy czynnik');
   const events = await auditRows('mfa.reset');
   assert.equal(events.filter((row) => row.entity_id === account.userId).length, 1);
-  assert.equal(events[0].actor_id, 'u-login-admin3');
+  assert.equal(events[0].actor_id, 'u-login-admin4');
+  assert.equal(events[0].metadata_json.requestedBy, 'u-login-admin3');
 });
 
 // --- Brak danych jawnych w audycie i logach ---------------------------------------------
@@ -775,8 +867,16 @@ test('#189: konto bez czynnika — revoke-all jak dotąd; rola wymagająca MFA b
 
 test('#193: token resetu unieważniany po zmianie hasła, logowaniu, wyłączeniu konta, resecie MFA i udanym resecie', async () => {
   const admin = await seedUserSession(db, { userId: 'u-login-193adm', roles: [{ role: 'admin' }], mfa: true });
+  const admin2 = await seedUserSession(db, { userId: 'u-login-193adm-b', roles: [{ role: 'admin' }], mfa: true });
   const issue = async (userId) => {
     const response = await post(`/api/admin/users/${userId}/password-reset`, {}, { cookie: admin });
+    if (response.status === 202) {
+      // #146: konto zarządu — token wydaje dopiero drugi administrator.
+      const { request } = await response.json();
+      const approved = await post(`/api/admin/account-requests/${request.id}/approve`, {}, { cookie: admin2 });
+      assert.equal(approved.status, 200);
+      return (await approved.json()).token;
+    }
     assert.equal(response.status, 201);
     return (await response.json()).token;
   };
@@ -820,7 +920,9 @@ test('#193: token resetu unieważniany po zmianie hasła, logowaniu, wyłączeni
   const lost = await seedPasswordUser({ userId: 'u-login-193mfa', roles: [{ role: 'board', schoolYearId: 'y-test' }] });
   await enrollAndConfirm(cookieFrom(await login(lost)));
   const t3 = await issue(lost.userId);
-  assert.equal((await post(`/api/admin/users/${lost.userId}/mfa-reset`, { confirm: lost.userId }, { cookie: admin })).status, 200);
+  const lostRequest = await post(`/api/admin/users/${lost.userId}/mfa-reset`, { confirm: lost.userId }, { cookie: admin });
+  assert.equal(lostRequest.status, 202, '#146: konto zarządu — wniosek');
+  assert.equal((await post(`/api/admin/account-requests/${(await lostRequest.json()).request.id}/approve`, {}, { cookie: admin2 })).status, 200);
   assert.equal((await resetWith(t3)).status, 400);
   assert.ok((await revokedReasons(lost.userId)).includes('mfa_reset'));
   // Nowy token + hasło nadal wymaga zapisu MFA dla zarządu.
@@ -874,6 +976,12 @@ test('#203: pełna kolejka scrypt daje 503 login_busy z Retry-After, bez wpływu
       [scopeHash('ip', ip)],
     )).rows;
     assert.deepEqual(after.map((r) => r.failure_count), [0], 'login_busy nie liczy się jako próba');
+    // #126: także liczniki pary (e-mail, IP) i samego e-maila (opóźnienie) zostają na 0.
+    const pairAndEmail = (await db.query(
+      "SELECT scope_type, failure_count FROM login_rate_limits WHERE scope_hash = ANY($1::text[])",
+      [[scopeHash('pair', `${account.email}|${ip}`), scopeHash('email', account.email)]],
+    )).rows;
+    assert.ok(pairAndEmail.every((r) => r.failure_count === 0), JSON.stringify(pairAndEmail));
     assert.equal((await auditRows('auth.login_failed')).filter((row) => JSON.stringify(row).includes(ip)).length, 0);
   } finally {
     release();

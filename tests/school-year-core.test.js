@@ -3,8 +3,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   defaultYear,
+  fillYearSelect,
   heuristicSchoolYearId,
   initialSchoolYearId,
+  selectYearValue,
+  yearChoices,
   yearOptionsHtml,
   yearsFromGrants,
 } from '../shared/school-year.js';
@@ -79,4 +82,38 @@ test('initialSchoolYearId: brak lat w przydziałach (np. rola globalna admin/boa
   assert.equal(initialSchoolYearId([{ role: 'admin' }], { now }), '2026-2027');
   assert.equal(initialSchoolYearId([], { now }), '2026-2027');
   assert.equal(initialSchoolYearId(undefined, { now }), '2026-2027');
+});
+
+test('yearChoices: lata z przydziałów, dodatkowa wartość z linku, awaryjnie rok z heurystyki', () => {
+  const grants = [{ role: 'treasurer', schoolYearId: '2025-2026' }, { role: 'board', schoolYearId: '2026-2027' }];
+  assert.deepEqual(yearChoices(grants), ['2026-2027', '2025-2026']);
+  assert.deepEqual(yearChoices(grants, ['2024-2025', '2026-2027']), ['2026-2027', '2025-2026', '2024-2025']);
+  assert.deepEqual(yearChoices([{ role: 'admin' }], [], new Date('2026-10-05T10:00:00Z')), ['2026-2027']);
+  assert.deepEqual(yearChoices(undefined, [], new Date('2027-03-05T10:00:00Z')), ['2026-2027']);
+});
+
+test('fillYearSelect: wypełnia listę i zwraca rok; poprzedni wybór zachowany, spoza zakresu ignorowany', () => {
+  const grants = [{ schoolYearId: '2025-2026' }, { schoolYearId: '2026-2027' }];
+  const select = { innerHTML: '', value: '' };
+  assert.equal(fillYearSelect(select, grants), '2026-2027');
+  assert.match(select.innerHTML, /<option value="2026-2027" selected>/);
+  assert.equal(fillYearSelect(select, grants, { value: '2025-2026' }), '2025-2026');
+  assert.equal(select.value, '2025-2026');
+  // Rok z linku spoza przydziałów trafia na listę (serwer i tak autoryzuje żądanie).
+  assert.equal(fillYearSelect(select, grants, { value: '2019-2020' }), '2019-2020');
+  assert.match(select.innerHTML, /2019-2020/);
+});
+
+test('selectYearValue dodaje brakującą opcję i nie robi nic dla pustej wartości', () => {
+  const added = [];
+  globalThis.Option = class { constructor(text, value) { this.text = text; this.value = value; } };
+  const select = { options: [{ value: 'a' }], value: 'a', add(o) { added.push(o.value); this.options.push(o); } };
+  selectYearValue(select, 'a');
+  assert.deepEqual(added, []);
+  selectYearValue(select, 'b');
+  assert.deepEqual(added, ['b']);
+  assert.equal(select.value, 'b');
+  selectYearValue(select, '');
+  assert.equal(select.value, 'b');
+  delete globalThis.Option;
 });

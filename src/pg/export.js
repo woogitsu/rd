@@ -13,7 +13,7 @@
 // zapisywać jej w repo, CI, logach ani zgłoszeniach.
 
 import { createHash } from 'node:crypto';
-import { csvHeader, csvRow } from './csv.js';
+import { csvRow, toCsv } from './csv.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
 // Wersja 2 (#202): gospodarstwa i ich historia (0014), uzgodnienia rachunku
@@ -338,6 +338,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   user_passwords: 'skróty haseł kont — sekrety, nigdy w paczce',
   login_rate_limits: 'limity prób logowania — dane techniczne',
   password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
+  account_recovery_requests: 'wnioski o reset hasła/MFA kont chronionych (#146) — operacje na kontach, nie dane roku; poza paczką jak role_grants i tokeny resetu',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
   retention_policies: 'rejestr polityk retencji (D-04) — konfiguracja/decyzje zarządu, nie dane roku do odtworzenia (0074, #91)',
   privacy_notices: 'wersjonowana informacja o przetwarzaniu danych (D-06) — dokument organizacji, nie zawsze przypisany do jednego roku (school_year_id nullable); zakres i retencja do decyzji D-06 (0075, #145)',
@@ -792,6 +793,8 @@ export async function restoreBundle(db, bundle) {
   const warnings = [...verified.warnings];
   let backfilled = null;
 
+  // #156: odtworzenie jest ciężkie i operatorskie — bez automatycznego
+  // ponowienia przy 40001/40P01 (błąd ma być widoczny, próbę powtarza operator).
   await db.transaction(async (tx) => {
     await tx.query("SET LOCAL session_replication_role = 'replica'");
     // Triggery z własnym warunkiem odtworzenia (0027/0028: daty w roku) — i tak wyłączone.
@@ -850,7 +853,7 @@ export async function restoreBundle(db, bundle) {
     }
     // (3) Dane pochodne triggerów.
     await derivedRowsCheck(tx, existing);
-  });
+  }, { retries: 0 });
 
   // Kontrola po odtworzeniu: ten sam eksport z odtworzonej bazy.
   const again = await buildYearlyExport(db, manifest.schoolYearId);
@@ -952,16 +955,12 @@ export function buildClassRosterCsv(roster, { generatedAt = new Date() } = {}) {
   const collator = new Intl.Collator('pl', { sensitivity: 'base' });
   const students = [...roster.students].sort((a, b) =>
     collator.compare(a.lastName, b.lastName) || collator.compare(a.firstName, b.firstName) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const lines = [];
   const isoDate = generatedAt.toISOString().slice(0, 10);
   const oneCell = (text) => csvRow([{ header: '', type: 'text' }], [text]);
-  lines.push(oneCell(`Lista klasy ${roster.class.name} — rok szkolny ${roster.class.schoolYearId} — wygenerowano ${isoDate}`));
-  lines.push('');
-  lines.push(csvHeader(ROSTER_CSV_COLUMNS));
-  students.forEach((student, index) => {
+  const rows = students.map((student, index) => {
     const [g1, g2] = student.guardians;
     const primary = student.guardians.find((g) => g.primaryContact);
-    lines.push(csvRow(ROSTER_CSV_COLUMNS, [
+    return [
       String(index + 1),
       student.lastName,
       student.firstName,
@@ -971,9 +970,10 @@ export function buildClassRosterCsv(roster, { generatedAt = new Date() } = {}) {
       g2?.email ?? '',
       primary ? `${primary.firstName} ${primary.lastName}` : '',
       '',
-    ]));
+    ];
   });
-  lines.push('');
-  lines.push(oneCell('Zawiera dane osobowe — nie przesyłać dalej, usunąć po wykorzystaniu.'));
-  return `${lines.join('\r\n')}\r\n`;
+  return toCsv(ROSTER_CSV_COLUMNS, rows, {
+    preamble: [oneCell(`Lista klasy ${roster.class.name} — rok szkolny ${roster.class.schoolYearId} — wygenerowano ${isoDate}`), ''],
+    trailer: ['', oneCell('Zawiera dane osobowe — nie przesyłać dalej, usunąć po wykorzystaniu.')],
+  });
 }

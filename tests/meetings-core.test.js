@@ -251,6 +251,7 @@ test("kody błędów API mają polskie komunikaty, w tym 409", () => {
   assert.match(errorMessage("resolution_votes_exceed_present_voters", 409), /przekracza/);
   assert.match(errorMessage("meeting_locked", 409), /zablokowane/);
   assert.match(errorMessage("unknown_code", 409), /Konflikt danych/);
-  assert.match(errorMessage("", 503), /Błąd serwera \(503\)/);
+  assert.match(errorMessage("", 503), /chwilowo niedostępna/);
+  assert.doesNotMatch(errorMessage("", 503), /Błąd serwera/);
   assert.match(errorMessage("forbidden", 403), /uprawnień/);
 });

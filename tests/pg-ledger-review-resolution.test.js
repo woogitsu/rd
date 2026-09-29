@@ -5,8 +5,13 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { renderAuditReportHtml } from '../src/pg/audit-report.js';
 import {
-  correctResolution, createMeeting, createResolution, determineQuorum, recordAttendance, updateMeeting,
+  correctResolution,
+  createMeeting,
+  createResolution,
+  determineQuorum,
+  recordAttendance,
 } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const PREV = 'y-2025';
