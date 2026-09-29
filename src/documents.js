@@ -69,15 +69,28 @@ function asciiBytes(text) {
 // Klucze PDF, których obecność (nawet nieskompresowana) traktujemy jako
 // potencjalnie aktywną treść albo szyfrowanie uniemożliwiające dalszą kontrolę.
 // Lista do przeglądu (issue #89) — heurystyka, nie parser PDF.
-const PDF_DANGEROUS_KEYS = ['/JavaScript', '/JS', '/Launch', '/EmbeddedFile', '/RichMedia', '/XFA', '/Encrypt']
-  .map(asciiBytes);
+const PDF_DANGEROUS_KEYS = ['/JavaScript', '/JS', '/Launch', '/EmbeddedFile', '/RichMedia', '/XFA', '/Encrypt'];
+// Nazwy PDF mogą zawierać zapis szesnastkowy (`/J#61vaScript` = `/JavaScript`), więc
+// samo szukanie surowego napisu dawałoby trywialne obejście. Przed porównaniem
+// dekodujemy `#XX` wyłącznie wewnątrz nazw (token zaczynający się od `/`).
+const PDF_NAME_WITH_ESCAPE = /\/[^\s/<>[\](){}%]*#[0-9A-Fa-f]{2}[^\s/<>[\](){}%]*/g;
+// `/OpenAction << … >>` to akcja wpisana w miejscu; prawidłowy cel (strona) to tablica
+// `[ … ]` albo odnośnik `n 0 R`. Odnośnik do akcji ze skryptem/Launch wychwytują
+// słowa kluczowe powyżej, dlatego samego `/OpenAction` nie odrzucamy (ryzyko
+// fałszywych odrzuceń PDF z banku).
+const PDF_INLINE_OPEN_ACTION = /\/OpenAction\s*<</;
+// Jeden bajt = jeden znak (bez dekodowania UTF-8); stała, bo test katalogu błędów
+// (tests/pg-api-errors-catalog.test.js) traktuje literał w `new X('…')` jak kod błędu.
+const PDF_TEXT_ENCODING = 'latin1';
 const PDF_EOF = asciiBytes('%%EOF');
 const PNG_SIGNATURE_LENGTH = 8;
 const PNG_IEND = asciiBytes('IEND');
 
 function validatePdfStructure(bytes) {
-  for (const key of PDF_DANGEROUS_KEYS) {
-    if (bytesIndexOf(bytes, key) !== -1) return { ok: false, code: 'document_active_content' };
+  const text = new TextDecoder(PDF_TEXT_ENCODING).decode(bytes)
+    .replace(PDF_NAME_WITH_ESCAPE, (name) => name.replace(/#([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))));
+  if (PDF_DANGEROUS_KEYS.some((key) => text.includes(key)) || PDF_INLINE_OPEN_ACTION.test(text)) {
+    return { ok: false, code: 'document_active_content' };
   }
   // %%EOF musi wystąpić blisko końca pliku; jego brak (albo dane doklejone
   // dalej, np. poliglota PDF+ZIP) traktujemy jako uszkodzoną/podejrzaną strukturę.
@@ -144,23 +157,40 @@ export function tryAcquireUploadSlot(max = DEFAULT_MAX_CONCURRENT_UPLOADS) {
 export function resetUploadSlotsForTests() { activeUploads = 0; }
 
 // Czyta ciało Web Request z twardym limitem (niezależnie od Content-Length).
+// #185 pkt 2: przy deklarowanym Content-Length (<= limit) bajty trafiają od
+// razu do jednej prealokowanej Uint8Array — bez listy chunków i drugiej kopii.
+// Ciało dłuższe niż deklaracja rośnie skokowo (nadal z twardym limitem); bez
+// Content-Length (chunked) zbieramy chunki i składamy je raz.
 export async function readLimited(request, limit) {
   const declared = Number(request.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > limit) throw new RangeError('document_too_large');
+  const hasDeclared = request.headers.get('content-length') != null && Number.isInteger(declared) && declared >= 0;
+  if (hasDeclared && declared > limit) throw new RangeError('document_too_large');
   if (!request.body) return new Uint8Array(0);
   const reader = request.body.getReader();
+  let buffer = hasDeclared ? new Uint8Array(declared) : null;
   const chunks = [];
   let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
+    if (size + value.byteLength > limit) {
       await reader.cancel().catch(() => {});
       throw new RangeError('document_too_large');
     }
-    chunks.push(value);
+    if (buffer) {
+      if (size + value.byteLength > buffer.byteLength) {
+        // Ciało dłuższe niż deklaracja: powiększamy (rzadkie, klient łamie protokół).
+        const grown = new Uint8Array(Math.min(limit, Math.max(buffer.byteLength * 2, size + value.byteLength)));
+        grown.set(buffer.subarray(0, size));
+        buffer = grown;
+      }
+      buffer.set(value, size);
+    } else {
+      chunks.push(value);
+    }
+    size += value.byteLength;
   }
+  if (buffer) return size === buffer.byteLength ? buffer : buffer.subarray(0, size);
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }

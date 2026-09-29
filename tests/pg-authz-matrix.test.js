@@ -170,7 +170,8 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   const classId = target.classId ?? await fallbackClassId(db, target.schoolYearId);
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
     [enrollmentId, studentId, classId, target.schoolYearId]);
-  return { householdId, guardianId, studentId, enrollmentId };
+  const membership = await db.query('SELECT id FROM student_households WHERE student_id = $1 AND is_primary', [studentId]);
+  return { householdId, guardianId, studentId, enrollmentId, membershipId: membership.rows[0].id };
 }
 
 async function seedFixtureSessions(db) {
@@ -671,6 +672,23 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // #125: przygotowanie do utworzenia migawki — zmiana księgi (nowa treść) i bieżąca migawka roku.
+  reportSnapshotPrep: async (ctx, target) => {
+    await MAKERS.ledgerEntry(ctx, target);
+    const { rows } = await ctx.db.query(
+      `SELECT id FROM financial_report_snapshot_status WHERE school_year_id = $1 AND superseded_by_id IS NULL`,
+      [target.schoolYearId],
+    );
+    return { supersedesId: rows[0]?.id ?? null };
+  },
+  // #125: migawka zapisana przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  reportSnapshot: async (ctx, target) => {
+    const { supersedesId } = await MAKERS.reportSnapshotPrep(ctx, target);
+    const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/reports/annual/snapshots', {
+      schoolYearId: target.schoolYearId, ...(supersedesId ? { supersedesId, reason: 'Korekta syntetyczna' } : {}),
+    });
+    return { snapshotId: json.snapshot.id };
+  },
   // #97: wydatek zapisany przez konto pomocnicze (autor inny niż każdy aktor macierzy).
   ledgerExpense: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
@@ -719,6 +737,13 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #86: gospodarstwo fixture + drugie, puste — do dodania członkostwa ucznia.
+  householdSpare: async (ctx, target) => {
+    const made = await makeHousehold(ctx.db, target);
+    const spareHouseholdId = `${made.householdId}-spare`;
+    await ctx.db.query('INSERT INTO households (id) VALUES ($1)', [spareHouseholdId]);
+    return { ...made, spareHouseholdId };
+  },
   // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
   // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
   // pod TARGETS.A, niezależnie od przekazanego targetu.
@@ -831,6 +856,7 @@ const WRITE_TABLES = [
   'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
   'bank_reconciliation_group_match_revocations',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
+  'financial_report_snapshots', 'financial_report_snapshot_approvals',
   'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
 
@@ -849,7 +875,7 @@ async function matrixContext(group = 'main') {
     contexts.set(group, (async () => {
       const db = await createTestDb();
       const env = {
-        db, storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+        db, APP_ENV: 'test', storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
         BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, EMAIL_UNSUBSCRIBE_SECRET: UNSUBSCRIBE_SECRET, ...FAST_SCRYPT,
         // Wysyłka testowa (#104): bramka bez sieci wyłączona, transport wstrzyknięty
         // (nigdy nie łączy się z siecią), adres z listy technicznej Rady.

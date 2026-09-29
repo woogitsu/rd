@@ -2,9 +2,11 @@
 //
 //   POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]
 //        ciało = surowe bajty pliku, nagłówki Content-Type i Idempotency-Key
-//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&limit=…][&offset=…]
+//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&limit=…][&cursor=…]
+//        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
+//   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed
 //   POST /api/documents/{id}/supersede  { replacementDocumentId, reason } — issue #82
 //   POST /api/documents/{id}/void       { reason } — issue #82
 //   POST /api/documents/{id}/description  tytuł, kategoria, data dokumentu (issue #76)
@@ -19,6 +21,9 @@
 import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
+import {
+  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+} from '../list-cursor.js';
 import { sha256Hex } from '../../storage.js';
 import {
   ALLOWED_TYPES, declaredType, detectType, downloadFilename, maxUploadBytes, newObjectKey, readLimited,
@@ -56,12 +61,32 @@ const DESCRIPTION_PATH = /^\/api\/documents\/([^/]+)\/description$/;
 const MAX_LIST_LIMIT = 100;
 const MAX_OFFSET = 10_000;
 
+class ListError extends Error {
+  constructor(code) { super(code); this.code = code; }
+}
+
 const DOWNLOAD_HEADERS = Object.freeze({
   'Cache-Control': 'no-store',
   'Content-Security-Policy': "sandbox; default-src 'none'",
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
+});
+
+// Podgląd (issue #89): tylko typy, które wcześniej przeszły walidację sygnatury i
+// struktury przy przesyłaniu. Lista zamknięta, niezależna od ALLOWED_TYPES.
+const PREVIEW_TYPES = Object.freeze(['application/pdf', 'image/png', 'image/jpeg']);
+// Podgląd PDF ładuje się w <iframe sandbox> tego samego originu, więc tylko ta odpowiedź
+// dopuszcza ramkę z własnego originu; baseline serwera (X-Frame-Options: DENY) zostaje
+// dla całej reszty. CSP `sandbox` bez `allow-scripts`: nawet gdyby plik zawierał aktywną
+// treść, którą heurystyka pominęła, nie ma skryptów ani dostępu do originu panelu.
+const PREVIEW_HEADERS = Object.freeze({
+  'Cache-Control': 'no-store',
+  'Content-Security-Policy': "sandbox; default-src 'none'; frame-ancestors 'self'",
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Referrer-Policy': 'no-referrer',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
 });
 
 // Czy kontekst (sesja + aktywne przydziały) pozwala na dostęp do dokumentu.
@@ -114,11 +139,14 @@ function toDescription(row) {
 
 const SELECT_DOCUMENT = `SELECT d.id, d.object_key, d.kind, d.school_year_id, d.class_id, d.mime_type, d.byte_size,
        d.sha256, d.linked_entity_type, d.linked_entity_id, d.created_by, d.created_at, d.idempotency_key,
-       s.status, s.replacement_document_id,
+       COALESCE(s.action, 'active') AS status, s.replacement_document_id,
        dd.title AS description_title, dd.category AS description_category,
-       to_char(dd.document_date, 'YYYY-MM-DD') AS description_document_date
+       to_char(dd.document_date, 'YYYY-MM-DD') AS description_document_date,
+       ${cursorTimestampSql('d.created_at')} AS cursor_ts
   FROM documents d
-  LEFT JOIN document_current_status s ON s.document_id = d.id
+  -- Zamiast widoku document_current_status (ten sam wynik: co najwyżej jedno zdarzenie na
+  -- dokument): widok łączy tabelę documents drugi raz i uniemożliwia planerowi użycie indeksu kursora (#159).
+  LEFT JOIN document_status_events s ON s.document_id = d.id
   LEFT JOIN LATERAL (
     SELECT title, category, document_date, description FROM document_descriptions
      WHERE document_id = d.id ORDER BY revision_no DESC LIMIT 1
@@ -150,7 +178,7 @@ export async function handle(request, env, url, json) {
   const match = DOCUMENT_PATH.exec(url.pathname);
   if (!match) return null;
   if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
-  return match[2] ? download(request, env, match[1], json) : metadata(request, env, match[1], json);
+  return match[2] ? download(request, env, match[1], json, url) : metadata(request, env, match[1], json);
 }
 
 // Ładuje dokument i sprawdza dostęp. null = 404 (nieznany LUB niedozwolony).
@@ -189,13 +217,19 @@ async function metadata(request, env, id, json) {
   return json({ document: found.doc, supersedes, descriptionHistory: history.rows.map(toDescription) });
 }
 
-async function download(request, env, id, json) {
+async function download(request, env, id, json, url) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return json({ error: 'unauthenticated' }, 401);
+  // Parametr sprawdzamy po sesji (brak sesji = 401 bez ujawniania czegokolwiek),
+  // ale przed dostępem do bucketu. Wartość inna niż `inline`/`attachment` = 400.
+  const disposition = url.searchParams.has('disposition') ? url.searchParams.get('disposition') : 'attachment';
+  if (disposition !== 'inline' && disposition !== 'attachment') return json({ error: 'invalid_disposition' }, 400);
+  const inline = disposition === 'inline';
   if (!env.storage) return json({ error: 'storage_unavailable' }, 503);
   const found = await authorizedDocument(env, context, id, { auditDenied: true });
   if (!found) return json({ error: 'not_found' }, 404);
   const { doc, objectKey } = found;
+  if (inline && !PREVIEW_TYPES.includes(doc.mimeType)) return json({ error: 'document_preview_unsupported' }, 400);
 
   let object;
   try {
@@ -219,18 +253,24 @@ async function download(request, env, id, json) {
     error.code = 'document_integrity_mismatch';
     throw error;
   }
-  // Dziennik odczytu przed wydaniem treści; błąd zapisu = brak pobrania.
-  await insertAuditEvent(env.db, {
-    actorId: context.session.user.id, action: 'document.downloaded', entityType: 'document', entityId: doc.id,
-    metadata: { kind: doc.kind, schoolYearId: doc.schoolYearId, classId: doc.classId, sessionId: context.session.sessionId },
-  });
+  // Dziennik odczytu przed wydaniem treści; błąd zapisu = brak pobrania/podglądu.
+  const auditMetadata = { kind: doc.kind, schoolYearId: doc.schoolYearId, classId: doc.classId, sessionId: context.session.sessionId };
+  if (inline) {
+    await insertAuditEvent(env.db, {
+      actorId: context.session.user.id, action: 'document.viewed', entityType: 'document', entityId: doc.id, metadata: auditMetadata,
+    });
+  } else {
+    await insertAuditEvent(env.db, {
+      actorId: context.session.user.id, action: 'document.downloaded', entityType: 'document', entityId: doc.id, metadata: auditMetadata,
+    });
+  }
   return new Response(object.body, {
     status: 200,
     headers: {
-      ...DOWNLOAD_HEADERS,
+      ...(inline ? PREVIEW_HEADERS : DOWNLOAD_HEADERS),
       'Content-Type': doc.mimeType,
       'Content-Length': String(object.body.length),
-      'Content-Disposition': `attachment; filename="${downloadFilename(doc.id, doc.mimeType)}"`,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${downloadFilename(doc.id, doc.mimeType)}"`,
     },
   });
 }
@@ -254,8 +294,21 @@ async function list(request, env, url, json) {
   if (rawQuery !== null && rawQuery.length > 200) return json({ error: 'invalid_request' }, 400);
   // Ucieczka znaków specjalnych ILIKE, żeby "%"/"_" w wyszukiwanej frazie nie działały jako wieloznaczniki.
   const searchQuery = rawQuery ? rawQuery.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`) : '';
-  const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit') ?? '50', 10) || 50, 1), MAX_LIST_LIMIT);
-  const offset = Math.min(Math.max(Number.parseInt(url.searchParams.get('offset') ?? '0', 10) || 0, 0), MAX_OFFSET);
+  // #159: zły limit to 400 invalid_limit (wcześniej po cichu przycinany).
+  const failList = (code) => { throw new ListError(code); };
+  let limit;
+  let cursor;
+  let cursorScope;
+  try {
+    limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 50, maxLimit: MAX_LIST_LIMIT }, failList);
+    cursorScope = JSON.stringify(['documents', schoolYearId, kindFilter, classFilter.value, statusFilter, categoryFilter, searchQuery]);
+    cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope: cursorScope }, failList);
+  } catch (error) {
+    if (error instanceof ListError) return json({ error: error.code }, 400);
+    throw error;
+  }
+  // Przestarzałe: offset działa tylko bez kursora (zgodność ze starymi klientami).
+  const offset = cursor ? 0 : Math.min(Math.max(Number.parseInt(url.searchParams.get('offset') ?? '0', 10) || 0, 0), MAX_OFFSET);
 
   // Zakres widoczności z przydziałów; SQL zawęża, a canAccessDocument
   // sprawdza jeszcze każdy wiersz (obrona w głąb).
@@ -280,22 +333,28 @@ async function list(request, env, url, json) {
 
   // Wyszukiwanie i filtr kategorii zawężają zapytanie w SQL, PRZED LIMIT
   // (issue #76 wprost pilnuje tego, by pełna strona znaczyła realne wyniki).
+  const queryValues = [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value,
+    limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null];
+  const after = cursor ? `AND ${afterTimestampDescSql('d.created_at', 'd.id', cursor, queryValues)}` : '';
   const { rows } = await env.db.query(
     `${SELECT_DOCUMENT}
       WHERE d.school_year_id = $1
         AND (d.kind = ANY($2::text[]) OR (d.kind = 'class' AND ($3::boolean OR d.class_id = ANY($4::text[]))))
         AND ($5::text IS NULL OR d.kind = $5)
         AND ($6::text IS NULL OR d.class_id = $6)
-        AND ($9::text = 'all' OR COALESCE(s.status, 'active') = 'active')
+        AND ($9::text = 'all' OR s.document_id IS NULL)
         AND ($10::text IS NULL OR dd.category = $10)
         AND ($11::text IS NULL OR dd.title ILIKE '%' || $11 || '%' OR dd.description ILIKE '%' || $11 || '%')
+        ${after}
       ORDER BY d.created_at DESC, d.id
       LIMIT $7 OFFSET $8`,
-    [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value, limit, offset,
-      statusFilter, categoryFilter || null, searchQuery || null],
+    queryValues,
   );
-  const documents = rows.map(toDocument).filter((doc) => canAccessDocument(context, doc));
-  return json({ documents, limit, offset });
+  // Kursor liczymy z wierszy SQL (przed filtrem canAccessDocument), żeby strona
+  // zawężona filtrem uprawnień nie zgubiła dalszych wyników.
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), cursorScope);
+  const documents = page.items.map(toDocument).filter((doc) => canAccessDocument(context, doc));
+  return json({ documents, limit, offset, nextCursor: page.nextCursor, truncated: page.truncated });
 }
 
 function tooLarge(json) {

@@ -296,6 +296,22 @@
     "sha256": "90b6b1439eb8bbf64cf526b3529db889136e3b4c2c452eb17050b9aaf636080b"
   },
   {
+    "name": "0130_year_freeze_remaining_tables.sql",
+    "sha256": "a206e630b58d1e3132ce0fe1eb4d6b706b3e623098b8428db34ad195440c4892"
+  },
+  {
+    "name": "0132_keyset_list_indexes.sql",
+    "sha256": "3d944e3f55db082b29db4e26de58cddd95e3ba7deb2f12332b5042de6d7945d2"
+  },
+  {
+    "name": "0136_student_household_reasons.sql",
+    "sha256": "3218cd324b178b652941e0072be775704adbd7512e98855204f609d4eea9dcdb"
+  },
+  {
+    "name": "0138_financial_report_snapshots.sql",
+    "sha256": "8be6c123cf7abe5f7bad6af731875f305318331d54e94511962a0486d6337610"
+  },
+  {
     "name": "0151_promotion_runs.sql",
     "sha256": "1bdd80080bf2a49b227daba17c244af77e91f93c318060ab01b074984cb8550f"
   }

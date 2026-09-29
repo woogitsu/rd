@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Aktualności — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../"><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
+      <nav aria-label="Panel">
+        <ul id="shell-nav" aria-live="polite"></ul>
+      </nav>
+      <div id="shell-account"></div>
+    </header>
+
+    <main id="main">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">Strona publiczna</p>
+          <h1>Aktualności</h1>
+          <p>Szkic, zgłoszenie, zatwierdzenie przez inną osobę, publikacja i wycofanie. Na stronie publicznej pojawia się wyłącznie opublikowana wersja. Zasady publikacji zdjęć (D-18) czekają na decyzję zarządu.</p>
+        </div>
+        <div class="heading-action"><button class="primary" id="open-create" type="button" hidden>Nowy wpis</button></div>
+      </section>
+
+      <p class="message error" id="access-notice" role="status" hidden>Aktualności prowadzą administrator, zarząd i przedstawiciele klas. To konto nie ma dostępu do tego ekranu.</p>
+
+      <section class="card filters" aria-labelledby="filters-title">
+        <h2 id="filters-title">Rok szkolny</h2>
+        <form id="filters-form">
+          <label>Rok szkolny <select id="school-year-id" name="schoolYearId" required></select></label>
+          <button type="submit">Pokaż</button>
+        </form>
+      </section>
+
+      <div class="message" id="message" role="status"></div>
+
+      <section class="card" aria-labelledby="posts-title">
+        <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="posts-title">Wpisy</h2></div><span id="posts-count" aria-live="polite"></span></div>
+        <div class="table-wrap" id="posts-table" role="region" aria-labelledby="posts-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Wpisy aktualności wybranego roku</caption>
+            <thead><tr><th scope="col">Tytuł</th><th scope="col">Zakres</th><th scope="col">Stan</th><th scope="col" class="amount">Wersja</th><th scope="col">Zmieniono</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="posts-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="posts-empty" hidden>Brak wpisów w wybranym roku.</p>
+      </section>
+
+      <section class="card" id="detail" aria-labelledby="detail-title" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Wpis</p><h2 id="detail-title">—</h2></div>
+          <span id="detail-status" class="badge"></span>
+        </div>
+        <dl class="detail-grid">
+          <div><dt>Zakres</dt><dd id="detail-scope"></dd></div>
+          <div><dt>Wersja</dt><dd id="detail-revision"></dd></div>
+          <div><dt>Zatwierdzona wersja</dt><dd id="detail-approved"></dd></div>
+          <div><dt>Opublikowana wersja</dt><dd id="detail-published"></dd></div>
+          <div id="detail-withdrawal-row" hidden><dt>Powód wycofania (wewnętrznie)</dt><dd id="detail-withdrawal"></dd></div>
+        </dl>
+        <h3>Treść</h3>
+        <div class="post-body" id="detail-body"></div>
+        <h3>Zdjęcia we wpisie</h3>
+        <p class="empty" id="detail-photos-empty">Brak zdjęć.</p>
+        <div class="table-wrap" id="detail-photos-table" role="region" aria-label="Zdjęcia we wpisie" tabindex="0" hidden>
+          <table>
+            <caption class="sr-only">Zdjęcia we wpisie i status praw</caption>
+            <thead><tr><th scope="col">Zdjęcie</th><th scope="col">Prawa</th><th scope="col">Osoby</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="detail-photos-body"></tbody>
+          </table>
+        </div>
+        <div id="consent-box" role="status"></div>
+        <div class="dialog-actions detail-actions">
+          <button id="act-edit" type="button" hidden>Edytuj</button>
+          <button id="act-submit" type="button" hidden>Zgłoś do zatwierdzenia</button>
+          <button id="act-approve" type="button" class="primary" hidden>Zatwierdź</button>
+          <button id="act-publish" type="button" class="primary" hidden>Opublikuj</button>
+          <button id="act-withdraw" type="button" hidden>Wycofaj</button>
+        </div>
+        <p class="message" id="waiting" hidden>Czeka na drugą osobę — autor wpisu nie może go zatwierdzić.</p>
+        <h3>Historia wersji</h3>
+        <div class="table-wrap" role="region" aria-label="Historia wersji" tabindex="0">
+          <table>
+            <caption class="sr-only">Wersje wpisu</caption>
+            <thead><tr><th scope="col" class="amount">Wersja</th><th scope="col">Tytuł</th><th scope="col">Zapisano</th></tr></thead>
+            <tbody id="revisions-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="register-section" aria-labelledby="register-title" hidden>
+        <div class="section-heading"><div><p class="eyebrow">Tylko odczyt</p><h2 id="register-title">Rejestr zdjęć i status zgód</h2></div><span id="register-count" aria-live="polite"></span></div>
+        <p class="context">Rejestrację zdjęć, weryfikację i cofanie praw prowadzi wyłącznie zarząd poza tym ekranem. Do wpisu można wybrać tylko zdjęcia z zweryfikowanymi prawami.</p>
+        <div class="table-wrap" role="region" aria-labelledby="register-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Rejestr zdjęć</caption>
+            <thead><tr><th scope="col">Zdjęcie</th><th scope="col">Prawa</th><th scope="col">Osoby</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="register-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="register-empty" hidden>Rejestr zdjęć jest pusty.</p>
+      </section>
+    </main>
+
+    <dialog id="edit-dialog" aria-labelledby="edit-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow" id="edit-dialog-eyebrow">Szkic</p><h2 id="edit-dialog-title">Nowy wpis</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context">Treść jest zapisywana jako zwykły tekst (bez HTML). Bez danych osobowych dzieci — imion, nazwisk, klas.</p>
+      <label>Tytuł <input name="title" required minlength="3" maxlength="200" autocomplete="off" /></label>
+      <label>Treść <textarea name="body" rows="8" required maxlength="20000"></textarea></label>
+      <label id="edit-class-label">Zakres <select name="classId" id="edit-class"></select></label>
+      <fieldset class="photo-pick" id="edit-photos" hidden><legend>Zdjęcia (tylko z zweryfikowanymi prawami)</legend></fieldset>
+      <div class="form-error" id="edit-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="edit-error">Zapisz szkic</button></div>
+    </form></dialog>
+
+    <dialog id="reason-dialog" aria-labelledby="reason-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Ostateczne</p><h2 id="reason-dialog-title">Wycofaj wpis</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context">Powód jest widoczny tylko wewnętrznie. Wycofanie usuwa wpis ze strony publicznej i nie da się go cofnąć.</p>
+      <label>Powód (3–500 znaków) <textarea name="reason" rows="3" required minlength="3" maxlength="500" autofocus></textarea></label>
+      <div class="form-error" id="reason-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="reason-error">Dalej</button></div>
+    </form></dialog>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
