@@ -16,7 +16,7 @@ odtworzyć do pustej bazy.
 | Trasa | Kto | Zawartość |
 |---|---|---|
 | `POST /api/exports` z `{"schoolYearId": "…"}` | admin albo zarząd, sesja z MFA, przydział bez roku lub dla tego roku | pełna paczka roku (dane rodzin i finanse) |
-| `GET /api/exports/class-roster?classId=…&format=json\|csv` | przedstawiciel **wyłącznie własnej klasy** (i roku), a także admin i zarząd; MFA | lista uczniów klasy z opiekunami; bez wpłat, sum i identyfikatorów rodzin |
+| `GET /api/exports/class-roster?classId=…&format=json\|csv\|xlsx` | przedstawiciel **wyłącznie własnej klasy** (i roku), a także admin i zarząd; MFA | lista uczniów klasy z opiekunami; bez wpłat, sum i identyfikatorów rodzin |
 
 **Założenie do decyzji zarządu i szkoły (D-08, D-09):** pełny eksport mają
 tylko admin i zarząd. Skarbnik, Komisja Rewizyjna i dyrekcja nie mają
@@ -33,10 +33,16 @@ pusta kolumna „Uwagi”), posortowany `Intl.Collator('pl')` (Ćwik, Łukasik,
 Śliwa, Zieliński, Żak w kolejności alfabetu polskiego — nie bajtowo), z
 wierszem nagłówkowym (klasa, rok, data wygenerowania) i stopką „Zawiera dane
 osobowe — nie przesyłać dalej, usunąć po wykorzystaniu”. Nazwa pliku nie
-zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv`. Każde pobranie
+zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv` / `.xlsx`. Każde pobranie
 (niezależnie od formatu) zapisuje `export_runs` i `export.created`; format
-trafia tylko do metadanych audytu, bez migracji schematu. XLSX celowo
-pominięty — brak lekkiej biblioteki do zapisu bez nowej ciężkiej zależności.
+trafia tylko do metadanych audytu, bez migracji schematu. Format `xlsx` (#132)
+składa wspólny moduł `src/pg/xlsx.js` (#121) na tych samych kolumnach i wierszach
+co CSV (jeden arkusz, wiersz tytułu i stopka jak w CSV, tekst jako `inlineStr` —
+imię zaczynające się od `=` zostaje tekstem); zakres ról, klasy, roku i MFA jest
+identyczny jak dla JSON/CSV, a kolumny to wyłącznie dane, które ta rola widzi w
+JSON (bez nowych danych osobowych, D-03). Nie ma jeszcze zbiorczego pliku „arkusz
+na klasę” dla zarządu (pkt 5 issue #132 — osobny zakres, wymaga rozstrzygnięcia
+D-08).
 Plik ma BOM UTF-8, separator `;` i CRLF jak pozostałe eksporty CSV (wspólny
 moduł `src/pg/csv.js`, #121: `toCsv`, `csvResponse`, `csvCell`). Pola tekstowe
 (nazwiska, e-maile) zaczynające się od `= + - @`, tabulatora lub CR — także po
@@ -123,6 +129,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
 | `document_status_events` | zastąpienie/unieważnienie dokumentu z powodem, wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id`/`replacement_document_id` po odtworzeniu nie mają odpowiednika, jak `source_document_id` (0066, #82) |
 | `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
+| `financial_report_snapshots`, `financial_report_snapshot_approvals` | niezmienne migawki sprawozdania rocznego (JSON zagregowany, SHA-256, poprzednia migawka i powód korekty) oraz ich zatwierdzenia roku (0138, #125) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia z `metadata.schoolYearId` = rok eksportu (nigdy wg daty); stare zdarzenia bez roku — wg roku obiektu (`entity_type`/`entity_id`: wpłaty, korekty, przypisania, zwroty, księga, przeniesienia, uzgodnienia, zamknięcie roku, klasy, zapisy, `school_year`); pozostałe (sesje, MFA, konta, role, dokumenty, importy) oraz zdarzenia typu rocznego z nieosiągalnym obiektem — wg dat roku (Europe/Brussels); bez `export.*`. Szczegóły niżej |
 
@@ -199,6 +206,14 @@ DATABASE_URL='…' APP_ENV=staging node scripts/verify-export.js \
 
 (`npm run db:verify-export -- …` jest skrótem do tego samego skryptu.)
 
+Udane odtworzenie (`--restore-pglite` i `--restore-database`) po pozytywnej
+weryfikacji sum i ponownego eksportu dopisuje zdarzenie audytu
+`export.restored` (`entity_type = export`, `entity_id` = SHA-256 manifestu,
+`actor_id = NULL` — operator z dostępem do bazy; metadane: skrót manifestu,
+`schoolYearId`, wersja formatu, liczba tabel i wierszy, bez danych osobowych).
+Nieudane odtworzenie nie zostawia zdarzenia. Zdarzenia `export.*` nie wchodzą do
+kolejnych paczek, więc skrót ponownego eksportu się nie zmienia.
+
 Kontrole weryfikacji: format i wersja, SHA-256 manifestu, zgodność listy
 plików z manifestem (brak plików nadmiarowych i nieznanych tabel), SHA-256 i
 liczność każdego pliku, kanoniczna postać każdej linii, zgodność kolumn oraz
@@ -262,14 +277,30 @@ wersję (`rd-eksport-<rok>-v2.json`).
 
 ## Ryzyka i ograniczenia
 
-- Paczka jest budowana w pamięci (limit 500 000 wierszy na tabelę). Dla
-  jednej szkoły wystarcza; przy większych danych potrzebny będzie strumień.
-  **Nie jest jeszcze zaimplementowane** (#216, poza zakresem PR, który dodał
-  punkty niżej): strumieniowy format v2 (kursor, partie, SHA-256 przyrostowo),
-  odpowiedź HTTP jako `ReadableStream` bez buforowania w `node-app.js` i
-  podniesienie/pilnowanie `idle_in_transaction_session_timeout` w trakcie
-  budowania paczki. Rok z ok. 200 tys. zdarzeń audytu nadal może wyczerpać
-  stertę procesu przy niskim limicie pamięci usługi.
+- **Pamięć i pętla zdarzeń** (#216): trasa `POST /api/exports` czyta każdą
+  tabelę partiami po 2000 wierszy przez kursor w transakcji (limit 500 000
+  wierszy na tabelę bez zmian), liczy SHA-256 pliku i sumy `*_cents`
+  przyrostowo i po każdej partii oddaje pętlę zdarzeń (`setImmediate`), także
+  wewnątrz `audit_events`. Paczka powstaje od razu jako lista buforów (poza
+  stertą JS) — bez obiektów wierszy, pełnych tekstów plików i drugiej kopii
+  `canonicalJson(bundle)`; bajty są te same co dotąd (format i SHA-256
+  manifestu bez zmian, `formatVersion` 2). Odpowiedź ma `Content-Length` i
+  adapter Node (`src/node-app.js`) przesyła ją strumieniowo z obsługą
+  przeciążenia gniazda; zerwanie pobierania przez klienta anuluje strumień
+  (transakcja i wiersz `export_runs` są wtedy już zatwierdzone — paczka
+  powstaje przed wysyłką). Transakcja dostaje lokalnie
+  `idle_in_transaction_session_timeout = 60s`. Pomiar (PGlite, dane
+  syntetyczne, 200 tys. zdarzeń audytu, paczka 52 MB): szczyt sterty JS
+  252 MB → 39 MB przy `--max-old-space-size=256` (skrypt
+  `scripts/measure-export-memory.js`; czasy i blokada pętli PGlite nie są
+  reprezentatywne, bo silnik działa w procesie — pomiar na Railway zależy od
+  #41). Test wolumenowy (nocny): `RD_EXPORT_VOLUME_EVENTS=200000 node
+  --max-old-space-size=256 --test tests/pg-export-streaming.test.js`.
+  **Nadal nieobsłużone**: `scripts/verify-export.js` wczytuje całą paczkę
+  jednym `JSON.parse` (weryfikacja i odtworzenie); paczka w buforach nadal
+  zajmuje ok. jednej kopii rozmiaru pliku w pamięci procesu (poza stertą),
+  a `restoreBundle` i tryb bez `{ stream: true }` (testy) budują ją jak dotąd
+  w stringach.
 - **Blokada jednego eksportu na rok** (#216): `POST /api/exports` bierze
   `pg_try_advisory_xact_lock(hashtext('rd_export:'||rok))` na czas transakcji
   budującej paczkę. Drugi równoczesny przebieg tego samego roku dostaje od
@@ -277,9 +308,7 @@ wersję (`rd-eksport-<rok>-v2.json`).
   naraz — to zapobiega podwójnemu zużyciu pamięci i dwóm wierszom
   `export_runs` przy podwójnym kliknięciu „Eksportuj”. Blokada zwalnia się
   sama na COMMIT/ROLLBACK; różne lata eksportują się równolegle bez
-  przeszkód. Między kolejnymi tabelami paczki proces oddaje pętlę zdarzeń
-  (`setImmediate`) — zmniejsza to, ale nie eliminuje, blokowanie innych
-  żądań podczas budowania bardzo dużej paczki (patrz punkt wyżej).
+  przeszkód.
 - Zmiana schematu wymaga oceny, czy trzeba podnieść `formatVersion`.
   Weryfikator odrzuca nieznaną wersję; odtworzenie wymaga, by docelowy
   schemat miał wszystkie kolumny z manifestu.

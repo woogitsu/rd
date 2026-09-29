@@ -87,6 +87,7 @@ const isSuccess = (status) => status >= 200 && status < 300;
 // biznesowe — wtedy dopisz insertAuditEvent(tx, …) w trasie.
 export const AUDIT_EXEMPT_ROUTES = new Map([
   ['import.preview', 'podgląd: walidacja i różnica względem bazy, nic nie zapisuje (import.committed loguje commit)'],
+  ['login.invitationPreview', 'podgląd zaproszenia (#164): tylko odczyt po tokenie, nic nie zapisuje; odmowy loguje auth.invitation_preview_failed — tests/pg-login.test.js'],
   ['ledger.categoryCopy', 'macierz wykonuje tylko podgląd (dryRun); rzeczywiste kopiowanie loguje ledger_category.copied — scenariusz w tests/audit-write-coverage.test.js'],
   ['families.enrollment', 'macierz przypisuje do tej samej klasy (powtórka, changed: false); utworzenie i zmiana logują enrollment.created/class_changed — tests/audit-write-coverage.test.js'],
   ['yearClose.start', 'baza grupy yearClose rozpoczyna zamknięcie w setupie, więc przypadki to powtórki; rozpoczęcie loguje year_close.started — tests/audit-write-coverage.test.js'],
@@ -168,7 +169,8 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   const classId = target.classId ?? await fallbackClassId(db, target.schoolYearId);
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
     [enrollmentId, studentId, classId, target.schoolYearId]);
-  return { householdId, guardianId, studentId, enrollmentId };
+  const membership = await db.query('SELECT id FROM student_households WHERE student_id = $1 AND is_primary', [studentId]);
+  return { householdId, guardianId, studentId, enrollmentId, membershipId: membership.rows[0].id };
 }
 
 async function seedFixtureSessions(db) {
@@ -179,8 +181,20 @@ async function seedFixtureSessions(db) {
   return cookies;
 }
 
+// Świeżość MFA (krok w górę, MFA_STEP_UP_MAX_AGE_SECONDS = 15 min) liczy się od zegara ściennego,
+// a sesje macierzy są zakładane raz na początku wielominutowego przebiegu — na obciążonej maszynie
+// starzałyby się w trakcie i fixture/przypadki dostawałyby fałszywe 403 mfa_stale. Przed każdym
+// wywołaniem przesuwamy więc mfa_verified_at potwierdzonych sesji na „teraz” (zapis w górę jest
+// dozwolony przez trigger sesji; nie zmieniamy okna MFA w kodzie). Odmowy dla NIEPOTWIERDZONEGO MFA
+// (mfa_required) zostają bez zmian, a stara weryfikacja → 403 mfa_stale jest testowana osobno
+// (tests/pg-account-recovery.test.js, tests/pg-admin.test.js).
+async function refreshMfaFreshness(db) {
+  await db.query('UPDATE sessions SET mfa_verified_at = now() WHERE mfa_verified_at IS NOT NULL AND revoked_at IS NULL');
+}
+
 // Wywołanie API kontem fixture; błąd = przerwanie testu (fixture musi się udać).
 async function api(ctx, cookie, method, path, body, headers = {}) {
+  await refreshMfaFreshness(ctx.db);
   const response = await handlePgRequest(request(path, { method, body, headers, cookie }), ctx.env);
   const text = await response.text();
   if (!isSuccess(response.status)) throw new Error(`fixture ${method} ${path}: ${response.status} ${text.slice(0, 300)}`);
@@ -650,6 +664,23 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // #125: przygotowanie do utworzenia migawki — zmiana księgi (nowa treść) i bieżąca migawka roku.
+  reportSnapshotPrep: async (ctx, target) => {
+    await MAKERS.ledgerEntry(ctx, target);
+    const { rows } = await ctx.db.query(
+      `SELECT id FROM financial_report_snapshot_status WHERE school_year_id = $1 AND superseded_by_id IS NULL`,
+      [target.schoolYearId],
+    );
+    return { supersedesId: rows[0]?.id ?? null };
+  },
+  // #125: migawka zapisana przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  reportSnapshot: async (ctx, target) => {
+    const { supersedesId } = await MAKERS.reportSnapshotPrep(ctx, target);
+    const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/reports/annual/snapshots', {
+      schoolYearId: target.schoolYearId, ...(supersedesId ? { supersedesId, reason: 'Korekta syntetyczna' } : {}),
+    });
+    return { snapshotId: json.snapshot.id };
+  },
   // #97: wydatek zapisany przez konto pomocnicze (autor inny niż każdy aktor macierzy).
   ledgerExpense: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
@@ -698,6 +729,13 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #86: gospodarstwo fixture + drugie, puste — do dodania członkostwa ucznia.
+  householdSpare: async (ctx, target) => {
+    const made = await makeHousehold(ctx.db, target);
+    const spareHouseholdId = `${made.householdId}-spare`;
+    await ctx.db.query('INSERT INTO households (id) VALUES ($1)', [spareHouseholdId]);
+    return { ...made, spareHouseholdId };
+  },
   // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
   // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
   // pod TARGETS.A, niezależnie od przekazanego targetu.
@@ -810,6 +848,7 @@ const WRITE_TABLES = [
   'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
   'bank_reconciliation_group_match_revocations',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
+  'financial_report_snapshots', 'financial_report_snapshot_approvals',
   'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
 
@@ -888,6 +927,7 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
   if (obj?.cookie) cookie = obj.cookie;
   const key = `mx-${route.id}-${actor.key}-${mfa ? 'mfa' : 'nomfa'}-${targetKey === '-' ? 'x' : targetKey}-${++seq}`;
   const built = await route.build({ target: TARGETS[targetKey], obj, key, fx: ctx.fx });
+  await refreshMfaFreshness(ctx.db); // przed odciskiem zapisów, żeby nie wyglądało to na zmianę po odmowie
   // Odczyty (GET) sprawdzamy pod kątem wycieku; ślad zapisu — dla metod zmieniających stan.
   const tracksWrites = route.method !== 'GET';
   const before = tracksWrites ? await writeFingerprint(ctx.db) : null;

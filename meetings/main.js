@@ -17,6 +17,7 @@ import {
   buildSharedMinutesUrl,
   canApproveMinutes,
   currentResolutions,
+  describeApprovalChecklist,
   describeQuorumCheck,
   describeQuorumRule,
   ERROR_MESSAGES,
@@ -716,6 +717,7 @@ byId("minutes-body").addEventListener("click", (event) => {
     approveDialog.form.elements.minutesId.value = item.id;
     approveDialog.form.querySelector(".context").textContent = label;
     approveDialog.dialog.showModal();
+    loadApprovalChecklist();
   } else if (button.dataset.action === "visibility") {
     visibilityDialog.form.reset();
     visibilityDialog.form.elements.minutesId.value = item.id;
@@ -727,6 +729,33 @@ byId("minutes-body").addEventListener("click", (event) => {
     visibilityDialog.dialog.showModal();
   }
 });
+
+// #81: lista kontrolna jest tylko podpowiedzią (odczyt); zatwierdzenie i tak
+// sprawdza serwer. Błąd wczytania nie blokuje przycisku.
+async function loadApprovalChecklist() {
+  const status = byId("approve-checklist-status");
+  const blockingList = byId("approve-checklist-blocking");
+  const warningList = byId("approve-checklist-warnings");
+  const meetingId = state.detail.meeting.id;
+  status.textContent = "Wczytywanie…";
+  blockingList.hidden = true;
+  warningList.hidden = true;
+  try {
+    const result = describeApprovalChecklist(await api(meetingUrl(meetingId, "approval-checklist")));
+    if (state.detail?.meeting.id !== meetingId || !approveDialog.dialog.open) return;
+    const fill = (list, entries) => {
+      list.replaceChildren(...entries.map((entry) => el("li", {}, entry.text)));
+      list.hidden = entries.length === 0;
+    };
+    fill(blockingList, result.blocking);
+    fill(warningList, result.warnings);
+    status.textContent = result.blocking.length || result.warnings.length
+      ? (result.blocking.length ? "Serwer odrzuci zatwierdzenie, dopóki poniższe pozycje nie zostaną załatwione." : "Do sprawdzenia przed zatwierdzeniem:")
+      : "Brak zastrzeżeń.";
+  } catch {
+    status.textContent = "Nie udało się wczytać listy kontrolnej. Zatwierdzenie i tak sprawdza serwer.";
+  }
+}
 
 handleSubmit(approveDialog.form, async (data) => {
   await api(meetingUrl(state.detail.meeting.id, "minutes", data.minutesId, "approval"), {

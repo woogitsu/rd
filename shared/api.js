@@ -85,9 +85,13 @@ export function safeNextPath(value) {
   return `${path}${url.search}${url.hash}`;
 }
 
-export function loginUrl(next) {
+// `reason: "enroll"` (#161): przekierowanie po 403 mfa_enrollment_required. Ekran logowania
+// prowadzi wtedy prosto do zapisu MFA z komunikatem, po co (bez tego konto bez czynnika,
+// którego rola nie jest na liście MFA_REQUIRED_ROLES, wracałoby w pętli strona → start).
+export function loginUrl(next, { reason } = {}) {
   const safe = safeNextPath(next);
-  return safe ? `${LOGIN_PATH}#next=${encodeURIComponent(safe)}` : LOGIN_PATH;
+  if (!safe) return LOGIN_PATH;
+  return `${LOGIN_PATH}#next=${encodeURIComponent(safe)}${reason === "enroll" ? "&reason=enroll" : ""}`;
 }
 
 function currentPath(location) {
@@ -163,7 +167,7 @@ export function createApiClient({
     const path = location?.pathname ?? "";
     if (!redirecting && !(path === "/login" || path.startsWith("/login/"))) {
       redirecting = true;
-      const url = loginUrl(currentPath(location));
+      const url = loginUrl(currentPath(location), { reason: action === "enroll" ? "enroll" : undefined });
       if (hasUnsavedChanges()) warnUnsaved(url, SESSION_EXPIRED_WARNING);
       else navigate(url);
     }

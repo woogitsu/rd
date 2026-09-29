@@ -8,7 +8,9 @@ import {
   SNIFF_BYTES,
   buildDescriptionRequest,
   buildListUrl,
+  buildStatusRequest,
   buildUploadRequest,
+  canChangeStatus,
   categoryLabel,
   checkFile,
   contentUrl,
@@ -22,14 +24,19 @@ import {
   metadataUrl,
   previewKind,
   previewUrl,
+  replacementCandidates,
   normalizeDocument,
+  statusConfirmation,
+  statusLabel,
   submissionFingerprint,
   titleLabel,
   typeLabel,
   validateDescriptionInput,
+  validateStatusReason,
   validateUploadMeta,
 } from "./core.js";
 import { MESSAGES, api, errorMessage as sharedErrorMessage, handleAuthFailure } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { fillClassSelect } from "../shared/class-choice.js";
@@ -48,7 +55,7 @@ function apiErrorText(status, body) {
 }
 
 const byId = (id) => document.getElementById(id);
-const state = { documents: [], query: null, offset: 0, pending: null, uploading: false, detailsRequest: null };
+const state = { documents: [], query: null, cursor: "", pending: null, uploading: false, detailsRequest: null, grants: [], statusAction: null, statusPending: null };
 
 const filtersForm = byId("filters-form");
 const yearInput = byId("filter-year");
@@ -68,6 +75,10 @@ const previewFrame = byId("preview-frame");
 const descriptionHistory = byId("description-history");
 const descriptionForm = byId("description-form");
 const descriptionStatus = byId("description-status");
+const versionHistory = byId("version-history");
+const statusActions = byId("status-actions");
+const statusForm = byId("status-form");
+const statusMessage = byId("status-message");
 const uploadForm = byId("upload-form");
 const fileInput = byId("upload-file");
 const fileCheck = byId("file-check");
@@ -114,6 +125,7 @@ function documentRow(raw) {
   row.append(
     cell("Tytuł", titleLabel(doc)),
     cell("Kategoria", categoryLabel(doc)),
+    cell("Stan", statusLabel(doc)),
     cell("Dodano", formatDateTime(doc.createdAt)),
     cell("Rodzaj", doc.kind ? KIND_LABELS[doc.kind] : "Nieznany"),
     cell("Klasa", doc.classId ?? "—"),
@@ -158,12 +170,13 @@ async function loadList({ append = false } = {}) {
       classId: String(data.get("classId") ?? ""),
       category: String(data.get("category") ?? ""),
       q: String(data.get("q") ?? ""),
+      includeInactive: data.get("includeInactive") === "on",
     };
-    state.offset = 0;
+    state.cursor = "";
   }
   let url;
   try {
-    url = buildListUrl({ ...state.query, limit: LIST_LIMIT, offset: state.offset });
+    url = buildListUrl({ ...state.query, limit: LIST_LIMIT, cursor: append ? state.cursor : "" });
   } catch (error) {
     setMessage(listMessage, error.message, "error");
     return;
@@ -175,12 +188,11 @@ async function loadList({ append = false } = {}) {
     const result = await getJson(url);
     const items = Array.isArray(result.documents) ? result.documents : [];
     state.documents = append ? [...state.documents, ...items] : items;
-    const limit = Number(result.limit) || LIST_LIMIT;
-    state.offset += limit;
+    state.cursor = result.nextCursor ?? "";
     setMessage(listMessage, "");
     renderList();
-    // Serwer filtruje wiersze po LIMIT, więc pełna strona to jedyny sygnał dalszych wyników.
-    loadMore.hidden = items.length < limit;
+    // Serwer podaje kursor następnej strony; brak kursora = koniec listy.
+    loadMore.hidden = !state.cursor;
   } catch (error) {
     setMessage(listMessage, error.message, "error");
     if (!append) {
@@ -224,6 +236,7 @@ async function showDetails(id, trigger) {
   clearPreview();
   detailsPreview.hidden = true;
   state.descriptionPending = null;
+  resetStatusPanel();
   // Link pobierania nigdy nie wskazuje poprzedniego dokumentu (#192).
   detailsDownload.hidden = true;
   detailsDownload.removeAttribute("href");
@@ -252,12 +265,191 @@ async function showDetails(id, trigger) {
     state.currentDocumentId = result.document.id;
     state.currentDocument = result.document;
     renderDescriptionHistory(result.descriptionHistory);
+    await renderStatusPanel(result, request);
   } catch (error) {
     if (state.detailsRequest !== request) return;
     status.className = "message error";
     status.textContent = error.message;
   }
 }
+
+// Wersje i stan (#82). Łańcuch zastąpień budujemy z metadanych sąsiednich dokumentów
+// (każdy odczyt autoryzuje serwer; brak dostępu kończy łańcuch). Limit kroków chroni przed
+// nadmiarem żądań.
+const CHAIN_LIMIT = 10;
+
+function resetStatusPanel() {
+  state.statusAction = null;
+  state.statusPending = null;
+  versionHistory.replaceChildren();
+  statusActions.hidden = true;
+  statusForm.hidden = true;
+  statusForm.reset();
+  setMessage(statusMessage, "");
+}
+
+async function fetchChainNeighbour(id) {
+  try {
+    return await getJson(metadataUrl(id));
+  } catch {
+    return null;
+  }
+}
+
+async function loadChain(current) {
+  const before = [];
+  let previous = current.supersedes;
+  while (previous && before.length < CHAIN_LIMIT) {
+    const found = await fetchChainNeighbour(previous);
+    if (!found) break;
+    before.unshift({ doc: found.document });
+    previous = found.supersedes;
+  }
+  const after = [];
+  let next = current.document.replacementDocumentId;
+  while (next && after.length < CHAIN_LIMIT) {
+    const found = await fetchChainNeighbour(next);
+    if (!found) break;
+    after.push({ doc: found.document });
+    next = found.document.replacementDocumentId;
+  }
+  return [...before, { doc: current.document, current: true }, ...after];
+}
+
+function versionItem({ doc: raw, current }) {
+  const doc = normalizeDocument(raw);
+  const item = document.createElement("li");
+  if (current) {
+    item.className = "current";
+    item.setAttribute("aria-current", "true");
+  }
+  item.append(`${titleLabel(doc)} — ${statusLabel(doc)}, dodano ${formatDateTime(doc.createdAt)}${current ? " (ten dokument)" : ""}`);
+  if (!current) {
+    const open = document.createElement("button");
+    open.type = "button";
+    open.dataset.id = doc.id;
+    open.textContent = "Otwórz";
+    open.setAttribute("aria-label", `Otwórz wersję z ${formatDateTime(doc.createdAt)}`);
+    item.append(open);
+  }
+  return item;
+}
+
+async function renderStatusPanel(result, request) {
+  const doc = normalizeDocument(result.document);
+  const chain = await loadChain({ document: result.document, supersedes: result.supersedes ?? null });
+  if (state.detailsRequest !== request) return;
+  const alone = chain.length === 1;
+  versionHistory.replaceChildren(...(alone
+    ? [versionItem(chain[0])]
+    : chain.map(versionItem)));
+  if (alone && doc.status === "active") {
+    const note = document.createElement("li");
+    note.textContent = "Brak innych wersji tego dokumentu.";
+    versionHistory.append(note);
+  }
+  if (doc.status !== "active") {
+    setMessage(statusMessage, doc.status === "voided"
+      ? "Dokument jest unieważniony. Plik zostaje w archiwum."
+      : "Dokument jest zastąpiony nowszą wersją. Plik zostaje w archiwum.");
+  }
+  statusActions.hidden = !canChangeStatus(state.grants, doc);
+}
+
+function openStatusForm(action) {
+  const doc = state.currentDocument && normalizeDocument(state.currentDocument);
+  if (!doc) return;
+  state.statusAction = action;
+  state.statusPending = null;
+  statusForm.hidden = false;
+  byId("status-replacement-field").hidden = action !== "supersede";
+  const select = byId("status-replacement");
+  select.replaceChildren();
+  const hint = byId("status-replacement-hint");
+  hint.textContent = "";
+  if (action === "supersede") {
+    const candidates = replacementCandidates(state.documents, doc);
+    select.append(new Option("Wybierz…", ""));
+    for (const other of candidates) select.append(new Option(`${titleLabel(other)} — dodano ${formatDateTime(other.createdAt)}`, other.id));
+    hint.textContent = candidates.length
+      ? "Dokument zastępujący musi być już przesłany, aktualny i mieć ten sam rodzaj, rok szkolny oraz klasę."
+      : "Najpierw prześlij poprawiony dokument (ten sam rodzaj, rok i klasa), a potem odśwież listę i wróć tutaj.";
+  }
+  byId("status-submit").disabled = false;
+  setMessage(statusMessage, "");
+  (action === "supersede" ? select : byId("status-reason")).focus();
+}
+
+function closeStatusForm() {
+  state.statusAction = null;
+  state.statusPending = null;
+  statusForm.hidden = true;
+  statusForm.reset();
+}
+
+byId("status-supersede").addEventListener("click", () => openStatusForm("supersede"));
+byId("status-void").addEventListener("click", () => openStatusForm("void"));
+byId("status-cancel").addEventListener("click", () => {
+  closeStatusForm();
+  setMessage(statusMessage, "");
+});
+versionHistory.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-id]");
+  if (button) showDetails(button.dataset.id, details.returnFocus);
+});
+
+statusForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const action = state.statusAction;
+  const id = state.currentDocumentId;
+  const doc = state.currentDocument && normalizeDocument(state.currentDocument);
+  if (!action || !id || !doc) return;
+  const reason = validateStatusReason(byId("status-reason").value);
+  if (!reason.ok) {
+    setMessage(statusMessage, reason.error, "error");
+    return;
+  }
+  const replacementId = action === "supersede" ? byId("status-replacement").value : null;
+  if (action === "supersede" && !replacementId) {
+    setMessage(statusMessage, "Wybierz dokument zastępujący.", "error");
+    return;
+  }
+  const replacement = replacementId ? state.documents.map(normalizeDocument).find((other) => other.id === replacementId) : null;
+  // Okno potwierdzenia (wspólny komponent, #136): operacja jest trwała w panelu.
+  const confirmed = await confirmAction(statusConfirmation(action, titleLabel(doc), replacement ? titleLabel(replacement) : ""));
+  if (!confirmed) return;
+
+  // Te same dane = ponowienie z tym samym kluczem idempotencji (podwójne kliknięcie, błąd sieci).
+  const fingerprint = JSON.stringify([action, id, replacementId, reason.value]);
+  if (state.statusPending?.fingerprint !== fingerprint) {
+    try {
+      state.statusPending = { fingerprint, key: makeIdempotencyKey() };
+    } catch (error) {
+      setMessage(statusMessage, error.message, "error");
+      return;
+    }
+  }
+  const submit = byId("status-submit");
+  submit.disabled = true;
+  setMessage(statusMessage, "Zapisywanie…");
+  try {
+    const req = buildStatusRequest(action, id, { reason: reason.value, replacementDocumentId: replacementId }, state.statusPending.key);
+    const result = await getJson(req.url, { method: req.method, body: req.body, idempotencyKey: req.idempotencyKey });
+    state.statusPending = null;
+    const text = result.replayed
+      ? "Ta zmiana była już zapisana wcześniej — nie utworzono duplikatu."
+      : action === "void" ? "Dokument unieważniony. Plik zostaje w archiwum." : "Dokument zastąpiony. Plik zostaje w archiwum.";
+    closeStatusForm();
+    await showDetails(id);
+    setMessage(statusMessage, text, "success");
+    if (state.query) loadList();
+  } catch (error) {
+    if (error.status && !isRetryable(error.status)) state.statusPending = null;
+    setMessage(statusMessage, error.message, "error");
+  } finally {
+    submit.disabled = false;
+  }
+});
 
 function clearPreview() {
   previewImage.hidden = true;
@@ -511,6 +703,7 @@ async function applyAccess() {
   try {
     const access = await getJson("/api/access");
     grants = Array.isArray(access.grants) ? access.grants : [];
+    state.grants = grants;
   } catch {
     // Bez informacji o rolach formularz zostaje; serwer i tak autoryzuje. Listy roku
     // dostają rok z heurystyki daty, żeby panel nie został z pustym wyborem.

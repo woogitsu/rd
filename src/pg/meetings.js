@@ -613,35 +613,40 @@ export async function listMeetings(db, actor, input = {}) {
 }
 
 export async function getMeeting(db, actor, input = {}, env) {
-  const meeting = await loadMeeting(db, input.meetingId);
-  try {
-    authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
-  } catch (error) {
-    if (!(error instanceof MeetingError) || error.status !== 403
-        || !isClassHost(actor, env, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, kind: meeting.kind })) {
-      // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
-      if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
-      throw error;
+  // #158: zebranie i jego pięć list (porządek, obecność, kworum, protokoły,
+  // uchwały) czytane z JEDNEJ migawki REPEATABLE READ, READ ONLY, kolejno na
+  // jednym połączeniu (jak readSnapshot w db-snapshot.js, ale przez
+  // inTransaction, który obsługuje też gołego klienta) — wcześniej równoległe zapytania na puli dawały pięć migawek.
+  return inTransaction(db, async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    const meeting = await loadMeeting(tx, input.meetingId);
+    try {
+      authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
+    } catch (error) {
+      if (!(error instanceof MeetingError) || error.status !== 403
+          || !isClassHost(actor, env, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, kind: meeting.kind })) {
+        // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
+        if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
+        throw error;
+      }
     }
-  }
-  const [agenda, attendees, checks, minutes, resolutions] = await Promise.all([
-    db.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]),
-    db.query('SELECT * FROM meeting_attendees WHERE meeting_id = $1 ORDER BY recorded_at, id', [meeting.id]),
-    db.query(`${QUORUM_CHECK_SELECT} WHERE c.meeting_id = $1 ORDER BY c.seq`, [meeting.id]),
-    db.query(
+    const agenda = await tx.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]);
+    const attendees = await tx.query('SELECT * FROM meeting_attendees WHERE meeting_id = $1 ORDER BY recorded_at, id', [meeting.id]);
+    const checks = await tx.query(`${QUORUM_CHECK_SELECT} WHERE c.meeting_id = $1 ORDER BY c.seq`, [meeting.id]);
+    const minutes = await tx.query(
       `SELECT m.*, v.visibility FROM meeting_minutes m
          JOIN meeting_minutes_visibility v ON v.minutes_id = m.id
-        WHERE m.meeting_id = $1 ORDER BY m.version`, [meeting.id]),
-    db.query('SELECT * FROM resolutions WHERE meeting_id = $1 ORDER BY created_at, revision, id', [meeting.id]),
-  ]);
-  return {
-    meeting: meetingFromRow(meeting),
-    agenda: agenda.rows.map(agendaItemFromRow),
-    attendees: attendees.rows.map(attendeeFromRow),
-    quorumChecks: checks.rows.map(quorumCheckFromRow),
-    minutes: minutes.rows.map(minutesFromRow),
-    resolutions: resolutions.rows.map(resolutionFromRow),
-  };
+        WHERE m.meeting_id = $1 ORDER BY m.version`, [meeting.id]);
+    const resolutions = await tx.query('SELECT * FROM resolutions WHERE meeting_id = $1 ORDER BY created_at, revision, id', [meeting.id]);
+    return {
+      meeting: meetingFromRow(meeting),
+      agenda: agenda.rows.map(agendaItemFromRow),
+      attendees: attendees.rows.map(attendeeFromRow),
+      quorumChecks: checks.rows.map(quorumCheckFromRow),
+      minutes: minutes.rows.map(minutesFromRow),
+      resolutions: resolutions.rows.map(resolutionFromRow),
+    };
+  });
 }
 
 export async function createMeeting(db, actor, input = {}, env) {
@@ -842,7 +847,12 @@ export async function recordAttendance(db, actor, input = {}, env) {
 export async function determineQuorum(db, actor, input = {}) {
   const key = idempotencyKey(input.idempotencyKey);
   const meeting = await meetingForManage(db, actor, input.meetingId);
-  const result = await idempotent(db, actor, key, 'meeting.quorum.determine', { meetingId: meeting.id },
+  // #81: hash wejścia zawiera stan listy obecności. Ponowienie tego samego
+  // klucza po zmianie obecności nie odtwarza starego ustalenia (409
+  // idempotency_conflict) — nowe ustalenie wymaga nowego klucza.
+  const state = await one(db, 'SELECT revision FROM meeting_attendance_state WHERE meeting_id = $1', [meeting.id]);
+  const result = await idempotent(db, actor, key, 'meeting.quorum.determine',
+    { meetingId: meeting.id, attendanceRevision: Number(state?.revision ?? 0) },
     async tx => {
       const id = randomUUID();
       const row = await one(tx,
@@ -894,16 +904,85 @@ export async function approveMinutes(db, actor, input = {}) {
   // #135: zasada czterech oczu — zatwierdzający musi być inną osobą niż autor
   // tej wersji protokołu. Ta sama reguła w triggerze (0042) chroni bezpośredni UPDATE.
   if (minutes.created_by === actor.userId) throw new MeetingError('minutes_four_eyes_required', 403);
-  const changed = await mutate(db, async tx => {
-    const { rows } = await tx.query(
-      `UPDATE meeting_minutes SET status = 'approved', approved_by = $2, approved_at = now(), approval_note = $3
-        WHERE id = $1 AND status = 'draft' RETURNING id`, [minutes.id, actor.userId, approvalNote]);
-    if (!rows.length) return false;
-    await audit(tx, actor, 'meeting.minutes.approved', 'meeting_minutes', minutes.id,
-      { meetingId: minutes.meeting_id, schoolYearId: meeting.school_year_id, version: minutes.version });
-    return true;
-  });
+  let changed;
+  try {
+    changed = await mutate(db, async tx => {
+      const { rows } = await tx.query(
+        `UPDATE meeting_minutes SET status = 'approved', approved_by = $2, approved_at = now(), approval_note = $3
+          WHERE id = $1 AND status = 'draft' RETURNING id`, [minutes.id, actor.userId, approvalNote]);
+      if (!rows.length) return false;
+      await audit(tx, actor, 'meeting.minutes.approved', 'meeting_minutes', minutes.id,
+        { meetingId: minutes.meeting_id, schoolYearId: meeting.school_year_id, version: minutes.version });
+      return true;
+    });
+  } catch (error) {
+    // #81: odmowa niesie samą liczbę otwartych projektów (nigdy tytułów ani treści).
+    if (error instanceof MeetingError && error.code === 'minutes_open_resolutions') {
+      const open = await countOpenResolutions(db, minutes.meeting_id);
+      throw new MeetingError(error.code, error.status, { openResolutions: open });
+    }
+    throw error;
+  }
   return { minutes: minutesFromRow(await loadMinutes(db, minutes.id)), replayed: !changed };
+}
+
+async function countOpenResolutions(db, meetingId) {
+  const row = await one(db,
+    `SELECT count(*)::int AS n FROM resolution_current WHERE meeting_id = $1 AND status = 'draft'`, [meetingId]);
+  return row?.n ?? 0;
+}
+
+// #81: lista kontrolna przed zatwierdzeniem protokołu — TYLKO ODCZYT, bez wpisu
+// w audit_events, bez zmiany danych. Uprawnienia jak przy odczycie zebrania
+// (admin, zarząd, Komisja Rewizyjna; zarząd klasowy tylko własnej klasy);
+// brak uprawnień jest nieodróżnialny od braku zebrania (SR-07: 404), także
+// dla przedstawiciela. Zwraca wyłącznie kody i liczby, bez treści uchwał.
+// `blocking: true` — serwer i tak odrzuci zatwierdzenie (409); pozostałe
+// pozycje to ostrzeżenia, bo pierwsze zatwierdzenie blokuje zebranie na stałe
+// (D-21 otwarte: wariant zachowawczy, korekta po zatwierdzeniu to nowy zapis).
+export async function getApprovalChecklist(db, actor, input = {}) {
+  const meeting = await loadMeeting(db, input.meetingId);
+  try {
+    authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
+  } catch (error) {
+    if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
+    throw error;
+  }
+  const [checks, drafts, stale, minutes] = await Promise.all([
+    db.query(`${QUORUM_CHECK_SELECT} WHERE c.meeting_id = $1 ORDER BY c.seq`, [meeting.id]),
+    countOpenResolutions(db, meeting.id),
+    // Bieżące rewizje przyjętych/odrzuconych uchwał wsparte ustaleniem quorum,
+    // które nie jest już aktualne (lista obecności zmieniła się po ustaleniu).
+    one(db,
+      `SELECT count(*)::int AS n
+         FROM resolution_current r
+         JOIN meeting_quorum_checks c ON c.id = r.quorum_check_id
+         LEFT JOIN meeting_attendance_state s ON s.meeting_id = c.meeting_id
+        WHERE r.meeting_id = $1 AND r.status IN ('adopted', 'rejected')
+          AND NOT (c.attendance_revision IS NOT NULL AND c.attendance_revision = COALESCE(s.revision, 0))`,
+      [meeting.id]),
+    db.query(
+      'SELECT id, version, status FROM meeting_minutes WHERE meeting_id = $1 ORDER BY version DESC LIMIT 1',
+      [meeting.id]),
+  ]);
+  const latestCheck = checks.rows.at(-1);
+  const latestMinutes = minutes.rows[0] ?? null;
+  const items = [];
+  const add = (code, blocking, count = undefined) => items.push({ code, blocking, ...(count === undefined ? {} : { count }) });
+  if (meeting.status !== 'held') add('meeting_not_held', true);
+  if (drafts > 0) add('open_resolutions', true, drafts);
+  if (meeting.quorum_mode === 'not_configured') add('quorum_rule_missing', false);
+  else if (!meeting.quorum_rule_source) add('quorum_rule_source_missing', false);
+  if (!latestCheck) add('no_quorum_check', false);
+  else if (!quorumCheckFromRow(latestCheck).current) add('stale_quorum_check', false);
+  if ((stale?.n ?? 0) > 0) add('resolutions_on_stale_check', false, stale.n);
+  return {
+    meetingId: meeting.id,
+    minutesId: latestMinutes?.id ?? null,
+    minutesStatus: latestMinutes?.status ?? null,
+    ready: !items.some(item => item.blocking),
+    items,
+  };
 }
 
 // #152: znane imiona/nazwiska uczniów i opiekunów w zakresie roku szkolnego
@@ -1456,6 +1535,9 @@ function route(method, pathname) {
   if (n === 2 && b === 'attendance') {
     return post ? { name: 'attendance', meetingId } : { name: 'method', allowed: ['POST'] };
   }
+  if (n === 2 && b === 'approval-checklist') {
+    return method === 'GET' ? { name: 'approvalChecklist', meetingId } : { name: 'method', allowed: ['GET'] };
+  }
   if (n === 2 && b === 'quorum-checks') {
     return post ? { name: 'quorum', meetingId, create: true } : { name: 'method', allowed: ['POST'] };
   }
@@ -1514,6 +1596,9 @@ export async function handle(request, env, url, json) {
           schoolYearId: query.get('schoolYearId'), status: query.get('status') || undefined,
           q: query.get('q') || undefined, executionStatus: query.get('executionStatus') || undefined,
         }));
+      }
+      if (target.name === 'approvalChecklist') {
+        return json(await getApprovalChecklist(db, actor, { meetingId: target.meetingId }));
       }
       return json(await getMeeting(db, actor, { meetingId: target.meetingId }, env));
     }

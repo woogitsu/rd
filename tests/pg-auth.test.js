@@ -345,7 +345,7 @@ test('database wrapper bounds the pool and runs transactions on one client', asy
   assert.deepEqual(await db.query('SELECT 1', []), { rows: [{ sql: 'SELECT 1' }] });
   assert.equal(await db.transaction(async (tx) => (await tx.query('SELECT $1', [1])).rows[0].ok), 1);
   // #156: po BEGIN transakcja ustawia lock_timeout (SET LOCAL).
-  const lockTimeout = "SELECT set_config('lock_timeout', $1, true)";
+  const lockTimeout = 'SET LOCAL lock_timeout = 3000';
   assert.deepEqual(calls, ['BEGIN', lockTimeout, 'SELECT $1', 'COMMIT']);
   assert.equal(released, false);
   calls.length = 0;
