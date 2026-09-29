@@ -35,7 +35,7 @@ import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
   parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
 } from '../../email/content.js';
-import { campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
+import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
 
 export const name = 'email';
 
@@ -56,7 +56,7 @@ const SUPPRESS_EVENTS = Object.freeze({
   hard_bounce: 'hard_bounce', invalid_email: 'invalid_email', blocked: 'blocked',
   spam: 'complaint', complaint: 'complaint',
 });
-const BOUNCE_EVENTS = new Set(['hard_bounce', 'invalid_email', 'blocked']);
+const BOUNCE_EVENTS = new Set(BOUNCE_EVENT_NAMES);
 // Limit prostego, nieporozdzielanego licznika żądań na trasę publiczną (best
 // effort — jeden proces; docelowo wymaga trwałego licznika, patrz docs/EMAIL.md).
 // Konfigurowalny przez EMAIL_PREFERENCES_RATE_LIMIT (test dedykowany ustawia
@@ -734,13 +734,26 @@ async function resume(request, env, id, json) {
   }
 }
 
+// Wiadomości, których przekazanie do dostawcy już się rozpoczęło (#210):
+// anulowanie ich nie cofnie. Wiersze „sending” bez send_started_at worker
+// zatrzyma przy potwierdzeniu przed wysyłką.
+async function inFlightCount(tx, campaignId) {
+  const { rows } = await tx.query(
+    "SELECT COUNT(*)::int AS n FROM email_outbox WHERE campaign_id = $1 AND state = 'sending' AND send_started_at IS NOT NULL",
+    [campaignId],
+  );
+  return rows[0].n;
+}
+
 async function cancel(request, env, id, json) {
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   const actorId = context.session.user.id;
   try {
     return await env.db.transaction(async (tx) => {
       const campaign = await loadCampaign(tx, id, { lock: true });
-      if (campaign.status === 'cancelled') return json({ campaign: campaignView(campaign), cancelledMessages: 0 }, 200, { 'Idempotency-Replayed': 'true' });
+      if (campaign.status === 'cancelled') {
+        return json({ campaign: campaignView(campaign), cancelledMessages: 0, inFlight: await inFlightCount(tx, id) }, 200, { 'Idempotency-Replayed': 'true' });
+      }
       if (campaign.status === 'done') throw new RequestError('campaign_locked', 409);
       const { rows: cancelled } = await tx.query(
         `UPDATE email_outbox SET state = 'cancelled', last_error = 'campaign_cancelled', updated_at = now()
@@ -756,7 +769,8 @@ async function cancel(request, env, id, json) {
         actorId, action: 'email.campaign.cancelled', entityType: 'email_campaign', entityId: id,
         metadata: { schoolYearId: campaign.school_year_id, previousStatus: campaign.status, cancelledMessages: cancelled.length },
       });
-      return json({ campaign: campaignView(rows[0]), cancelledMessages: cancelled.length });
+      const inFlight = await inFlightCount(tx, id);
+      return json({ campaign: campaignView(rows[0]), cancelledMessages: cancelled.length, inFlight });
     });
   } catch (error) {
     return mapDatabaseError(error);

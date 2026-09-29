@@ -284,7 +284,11 @@
     "sha256": "106255c7077b63bb9e46e8093e61d49c79017c9cfbecc9ac6753c7db27a04bf9"
   },
   {
-    "name": "0113_year_freeze_remaining_tables.sql",
+    "name": "0121_import_batches_fingerprint_not_unique.sql",
+    "sha256": "e636fe9f6e77fcd48f49865085737912a187774cf71062f4796f2028a7adba35"
+  },
+  {
+    "name": "0130_year_freeze_remaining_tables.sql",
     "sha256": "a206e630b58d1e3132ce0fe1eb4d6b706b3e623098b8428db34ad195440c4892"
   }
 ]

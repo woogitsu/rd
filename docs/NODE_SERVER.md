@@ -36,7 +36,8 @@ Brakujący plik zwraca odpowiedź `404`; serwer nie zastępuje go plikiem `index
 | Zmienna | Wymagana | Znaczenie |
 |---|---:|---|
 | `PORT` | na Railway | Port przydzielony procesowi; lokalnie domyślnie `3000` |
-| `PUBLIC_BASE_URL` | opcjonalna | Publiczny adres bazowy używany przy tworzeniu obiektu `Request` |
+| `PUBLIC_BASE_URL` | obowiązkowa poza development/test | Publiczny adres bazowy (`https://host` bez ścieżki) używany przy tworzeniu obiektu `Request`; bez niej za proxy TLS zapisy kończą się `403 invalid_origin`. Serwer nie startuje z `APP_ENV` innym niż lokalny bez poprawnej wartości — [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md#walidacja-konfiguracji-przy-starcie-114) |
+| `MFA_ENCRYPTION_KEY`, `TRUST_PROXY`, `BREVO_WEBHOOK_SECRET` | obowiązkowe poza development/test | Sprawdzane przy starcie tak samo jak `PUBLIC_BASE_URL` (`validateConfig`, `src/config.js`) |
 | `DATABASE_URL` | opcjonalna | Gdy ustawiona, API obsługuje router PostgreSQL (`src/pg/app.js`); bez niej działa dotychczasowy router Workera |
 | `PG_POOL_MAX` | opcjonalna | Maksymalna liczba połączeń w puli (domyślnie 10, najwyżej 50) |
 | `PG_STATEMENT_TIMEOUT_MS` | opcjonalna | Limit czasu pojedynczego zapytania (domyślnie 10000 ms) |
@@ -60,6 +61,7 @@ Sekrety i `DATABASE_URL` nie są potrzebne do testu samego serwera. Serwer **nie
 
 1. gdy `env.db` nie istnieje (brak `DATABASE_URL`) — `503` i `checks.database: "not_configured"`,
 2. `SELECT 1` z limitem 2 s — przy błędzie `503` i `database: "error"`, przy przekroczeniu czasu `database: "timeout"`,
+   Limit jest realny po stronie bazy (#244): sonda działa przez `db.probe` (`src/db.js`) na jednym własnym połączeniu, w transakcji z `SET LOCAL statement_timeout`/`lock_timeout` równym pozostałemu budżetowi 2 s, więc PostgreSQL sam anuluje zapytanie, a połączenie wraca do puli po ≤ 2 s (nie po `statement_timeout` puli, 10 s). Równoległe sondy dzielą jedno sprawdzenie (single-flight), a sonda uruchomiona, gdy poprzednia jeszcze trwa, kończy się `database: "timeout"` bez zajmowania kolejnego połączenia ani miejsca w kolejce puli. Atrapy i PGlite (bez `probe`) używają samego wyścigu z czasem.
 3. porównanie `schema_migrations` z plikami `postgres/migrations/*.sql` — przy brakach `503`, `migrations: "pending"` oraz liczba i nazwy brakujących plików migracji,
 4. w trakcie zamykania procesu — `503` i `checks.server: "shutting_down"`.
 
@@ -75,7 +77,7 @@ Redakcja jest zabezpieczeniem dodatkowym — kod nadal nie może przekazywać do
 
 **Log żądań.** `src/node-app.js` po zakończeniu każdej odpowiedzi zapisuje `http_request` z metodą, ścieżką bez query stringu, w której segmenty podobne do identyfikatorów (liczby, UUID, ciągi z cyframi, adresy e-mail) są zastąpione `:id`, statusem i czasem w ms. Nie zapisuje nagłówków, cookies, adresu IP ani ciał. Sondy `/health` i `/health/ready` są logowane na poziomie `debug`, odpowiedzi 5xx na poziomie `error`, przerwane połączenia (`status: 0`) na poziomie `warn`.
 
-**Liczniki.** Proces liczy żądania według klasy statusu (2xx–5xx) oraz czas średni i maksymalny, a co `METRICS_LOG_INTERVAL_MS` zapisuje zdarzenie `http_metrics` i zeruje liczniki (okresy bez ruchu są pomijane). Liczniki nie są wystawiane przez HTTP — nie ma publicznego punktu metryk, więc nie trzeba go chronić.
+**Liczniki.** Proces liczy żądania według klasy statusu (2xx–5xx) oraz czas średni i maksymalny, a co `METRICS_LOG_INTERVAL_MS` zapisuje zdarzenie `http_metrics` i zeruje liczniki (okresy bez ruchu są pomijane). Zdarzenie zawiera też `login_queue_depth` i `login_busy_total` kolejki scrypt (#203, patrz docs/AUTH.md). Liczniki nie są wystawiane przez HTTP — nie ma publicznego punktu metryk, więc nie trzeba go chronić.
 
 **Zamykanie.** Po SIGTERM/SIGINT serwer przestaje przyjmować połączenia, `/health/ready` zwraca `503`, trwające żądania są kończone, bezczynne połączenia keep-alive zamykane, a następnie zamykana jest pula PostgreSQL (`db.close()`). Po `SHUTDOWN_TIMEOUT_MS` pozostałe połączenia są zamykane siłą i proces kończy się kodem 1. Railway domyślnie wysyła SIGKILL zaraz po SIGTERM, dlatego `railway.json` ustawia `drainingSeconds: 15`, a start odbywa się bezpośrednio przez `node src/server.js` (npm nie przekazuje sygnału do procesu potomnego).
 
