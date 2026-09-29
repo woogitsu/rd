@@ -343,6 +343,14 @@ function familyEditDeny(actor) {
   return ['admin', 'board', 'boardA'].includes(actor.key) ? 404 : 403;
 }
 
+// #200: opiekun z relacjami z uczniami z dwóch klas roku 1. Zarząd z przydziałem klasy widzi go
+// (ma uczniów z zakresu), ale nie zmienia jego globalnego kontaktu: 403 guardian_shared_outside_scope
+// (nie 404 — brak wyroczni istnienia). Poza rokiem 1 — 404 jak brak obiektu.
+function familySharedGuardianDeny(actor, targetKey) {
+  if (actor.key === 'boardA') return targetKey === 'Y2' ? 404 : 403;
+  return familyEditDeny(actor);
+}
+
 // Kartki: przydział klasowy bez classId — 400 class_required (docs/PRINT); poza zakresem — 403.
 function printDeny(actor, targetKey) {
   return targetKey === 'W1' && ['repA', 'repB', 'boardA'].includes(actor.key) ? 400 : 403;
@@ -1480,6 +1488,17 @@ export const ROUTE_MATRIX = Object.freeze([
     id: 'families.guardianContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/contact',
     targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({ path: `/api/guardians/${obj.guardianId}/contact`, body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' } }),
+  },
+  {
+    // #200: przypadek „opiekun rodzeństwa z innej klasy we wspólnym gospodarstwie”. Zapis wyłącznie
+    // pełny zarząd/admin; boardA dostaje 403 i nic nie zapisuje (liczniki tabel i audytu bez zmian).
+    id: 'families.guardianContactShared', variant: 'opiekun z dziećmi z dwóch klas', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/contact',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'], boardA: [] }, mfa: false, ok: 200,
+    deny: familySharedGuardianDeny, fixture: 'fresh', object: { kind: 'sharedGuardianHousehold' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/contact`,
+      body: { email: 'zmiana-zakresu@example.invalid', contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' },
+    }),
   },
   {
     id: 'families.relationContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/students/:studentId',

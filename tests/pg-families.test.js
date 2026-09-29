@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildClassRoster } from '../src/pg/export.js';
+import { computeSnapshot } from '../src/pg/routes/email.js';
+import { DEFAULT_CATEGORY } from '../src/email/content.js';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
@@ -564,6 +566,75 @@ describe('zmiana kontaktu opiekuna: zakres klasowy przez relację z uczniem (#20
     }
     const byBoard = await db.query(`SELECT changed_by FROM guardian_contact_changes WHERE guardian_id IN ('g-2', 'g-4', 'g-q')`);
     assert.deepEqual(byBoard.rows.map((r) => r.changed_by), ['u-board', 'u-board', 'u-board']);
+  });
+});
+
+describe('kampania e-mail po odmowie zmiany kontaktu (#200)', () => {
+  let db;
+  after(async () => { await db?.close(); });
+
+  // Migawka odbiorców (computeSnapshot) tylko czyta bazę — nic nie wysyła.
+  const recipientsOf = async () => {
+    const { recipients, hash } = await computeSnapshot(db, { school_year_id: Y1, audience: 'all_households', category: DEFAULT_CATEGORY });
+    return { recipients, hash };
+  };
+
+  test('odrzucona zmiana kontaktu (403/404) nie zmienia listy odbiorców; zmiana przez pełny zarząd — zmienia', async () => {
+    db = await createTestDb();
+    await seedSchoolYear(db, Y1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
+    await seedClass(db, { id: 'c-1a', schoolYearId: Y1, name: '1A' });
+    await seedClass(db, { id: 'c-1b', schoolYearId: Y1, name: '1B' });
+    // h-1: rodzeństwo s-a (1A), s-b (1B); g-2 (kontakt główny) ma relację z obojgiem,
+    // g-4 tylko z s-b. h-2: rodzina wyłącznie z 1B (opiekun poza zakresem 1A).
+    await db.exec(`
+      INSERT INTO households (id) VALUES ('h-1'), ('h-2');
+      INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES
+        ('g-2', 'h-1', 'Bogdan', 'Drugi', 'g2@example.invalid', true),
+        ('g-4', 'h-1', 'Dorota', 'Czwarta', 'g4@example.invalid', true),
+        ('g-5', 'h-2', 'Ewa', 'Piata', 'g5@example.invalid', true);
+      INSERT INTO students (id, household_id, first_name, last_name) VALUES
+        ('s-a', 'h-1', 'Ada', 'Wspolna'), ('s-b', 'h-1', 'Bartek', 'Wspolny'), ('s-c', 'h-2', 'Celina', 'Osobna');
+      INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES
+        ('s-a', 'g-2', true, true), ('s-b', 'g-2', true, true), ('s-b', 'g-4', true, false), ('s-c', 'g-5', true, true);
+      INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES
+        ('e-a', 's-a', 'c-1a', '${Y1}'), ('e-b', 's-b', 'c-1b', '${Y1}'), ('e-c', 's-c', 'c-1b', '${Y1}');
+    `);
+    const call = async (path, cookie, body) => {
+      const response = await handlePgRequest(request(path, { method: 'PATCH', cookie, body }), { db });
+      return { status: response.status, body: await response.json() };
+    };
+    const boardA = await seedUserSession(db, { userId: 'u-board-1a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }], mfa: true });
+    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
+
+    const before = await recipientsOf();
+    assert.deepEqual(before.recipients.map((r) => [r.householdId, r.guardianId, r.email]), [
+      ['h-1', 'g-2', 'g2@example.invalid'], ['h-2', 'g-5', 'g5@example.invalid'],
+    ]);
+    const auditBefore = Number((await db.query('SELECT count(*) AS n FROM audit_events')).rows[0].n);
+
+    // g-2 (1A + 1B): 403; g-4 i g-5 (tylko 1B): 404. Zmiana e-maila i zgody, każda osobno i razem.
+    const payloads = [
+      { email: 'przejete@example.invalid', reason: 'test zakresu' },
+      { contactAllowed: false, reason: 'test zakresu' },
+      { email: 'przejete@example.invalid', contactAllowed: false, reason: 'test zakresu' },
+    ];
+    for (const payload of payloads) {
+      assert.deepEqual(await call('/api/guardians/g-2/contact', boardA, payload),
+        { status: 403, body: { error: 'guardian_shared_outside_scope' } });
+      for (const id of ['g-4', 'g-5']) {
+        assert.deepEqual(await call(`/api/guardians/${id}/contact`, boardA, payload), { status: 404, body: { error: 'not_found' } }, id);
+      }
+    }
+    assert.deepEqual(await recipientsOf(), before);
+    assert.equal(Number((await db.query('SELECT count(*) AS n FROM audit_events')).rows[0].n), auditBefore);
+    assert.equal(Number((await db.query('SELECT count(*) AS n FROM guardian_contact_changes')).rows[0].n), 0);
+
+    // Kontrola czułości: ta sama zmiana wykonana przez zarząd bez przydziału klasy zmienia migawkę.
+    const changed = await call('/api/guardians/g-2/contact', board, { email: 'nowy@example.invalid', reason: 'test zakresu' });
+    assert.equal(changed.status, 200);
+    const after = await recipientsOf();
+    assert.notEqual(after.hash, before.hash);
+    assert.equal(after.recipients[0].email, 'nowy@example.invalid');
   });
 });
 
