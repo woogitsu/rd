@@ -1011,7 +1011,7 @@ test('second run during the first (valid lease, injected clock): takes over noth
     assert.equal(transport.calls.length, 3);
     assert.equal(new Set(transport.calls.map((m) => m.idempotencyKey)).size, 3);
     assert.equal(new Set(transport.calls.map(householdOf)).size, 3);
-    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'sent' && r.last_error === null));
+    assertEvery(await outboxStates(t, campaign.id), (r) => r.state === 'sent' && r.last_error === null, 'wszystkie wiadomości wysłane bez błędu');
     assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.sent'"), 3);
     assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action IN ('email.delivery_unknown', 'email.sent_after_lease_lost', 'email.lease_expired_requeued')"), 0);
   } finally { await t.close(); }
