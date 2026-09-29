@@ -9,7 +9,7 @@ import { createInvitation } from '../src/pg/auth.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import {
   checkPasswordPolicy, hashPassword, dummyHash, loginQueueMetrics, MAX_CONCURRENT, MAX_PER_CLIENT, MAX_WAITING, needsRehash, parseHash, verifyPassword, withQueueClient,
-  verifyPasswordOrDummy, withSlot,
+  verifyPasswordOrDummy, withSlot, scryptQueueDepth,
 } from '../src/pg/password.js';
 import { emailDelayMs, LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
 import { freshMfaForbiddenCode, loadAuthorizationContext } from '../src/pg/authorization.js';
@@ -57,6 +57,35 @@ async function seedPasswordUser({ userId, roles = [], password = newPassword(), 
     [userId, await hashPassword(password, { env: FAST })],
   );
   return { userId, email: `${userId}@example.invalid`, password };
+}
+
+// Deterministyczny zamiennik pomiaru czasu: sprawdza, czy żądanie w ogóle sięgnęło po scrypt.
+// Oba trwające miejsca kolejki zajmuje atrapa, więc każde obliczenie scrypt musi stanąć w kolejce
+// (scryptQueueDepth().waiting === 1) i nie może się skończyć przed zwolnieniem atrapy. Żadnych
+// asercji na czas ścienny — wynik nie zależy od obciążenia maszyny.
+async function waitFor(condition, what, deadlineMs = 15_000) {
+  const deadline = Date.now() + deadlineMs;
+  while (!condition()) {
+    if (Date.now() > deadline) assert.fail(`nie doczekano warunku: ${what}`);
+    await new Promise((resolve) => { setTimeout(resolve, 2); });
+  }
+}
+async function loginReachingScrypt(body) {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const occupied = Array.from({ length: MAX_CONCURRENT }, () => withSlot(() => held));
+  try {
+    await waitFor(() => scryptQueueDepth().running === MAX_CONCURRENT, 'zajęte miejsca kolejki');
+    let settled = false;
+    const pending = post('/api/login', body, { ip: nextIp() }).finally(() => { settled = true; });
+    await waitFor(() => scryptQueueDepth().waiting === 1, `żądanie ${JSON.stringify(Object.keys(body))} czeka w kolejce scrypt`);
+    assert.equal(settled, false, 'żądanie nie odpowiada przed policzeniem scrypt');
+    release();
+    return await pending;
+  } finally {
+    release();
+    await Promise.all(occupied);
+  }
 }
 
 async function login(account, { ip = nextIp(), password = account.password } = {}) {
@@ -144,22 +173,17 @@ test('logowanie tworzy sesję bez MFA; ten sam błąd dla nieznanego e-maila i z
   const upper = await post('/api/login', { email: `  ${account.email.toUpperCase()} `, password: account.password }, { ip: nextIp() });
   assert.equal(upper.status, 200);
 
-  const time = async (body) => {
-    const started = process.hrtime.bigint();
-    const response = await post('/api/login', body, { ip: nextIp() });
-    return { response, ms: Number(process.hrtime.bigint() - started) / 1e6 };
-  };
-  const wrong = await time({ email: account.email, password: 'zle haslo ale dlugie' });
-  const unknown = await time({ email: 'nieznany-login@example.invalid', password: 'zle haslo ale dlugie' });
-  const malformed = await time({ email: 'to-nie-jest-adres', password: 'zle haslo ale dlugie' });
-  for (const { response } of [wrong, unknown, malformed]) {
+  // Nieznany adres i zły format też liczą scrypt (fikcyjny hash), tak jak złe hasło znanego konta —
+  // sprawdzamy to licznikiem kolejki scrypt, nie czasem odpowiedzi.
+  await dummyHash(env); // fikcyjny hash gotowy (jak przy starcie serwera), by nie mieszał się do pomiaru
+  const wrong = await loginReachingScrypt({ email: account.email, password: 'zle haslo ale dlugie' });
+  const unknown = await loginReachingScrypt({ email: 'nieznany-login@example.invalid', password: 'zle haslo ale dlugie' });
+  const malformed = await loginReachingScrypt({ email: 'to-nie-jest-adres', password: 'zle haslo ale dlugie' });
+  for (const response of [wrong, unknown, malformed]) {
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { error: 'invalid_credentials' });
     assert.equal(response.headers.get('Set-Cookie'), null);
   }
-  // Nieznany adres też liczy scrypt (fikcyjny hash): czas tego samego rzędu.
-  assert.ok(unknown.ms > wrong.ms * 0.4, `nieznany e-mail ${unknown.ms.toFixed(1)} ms vs złe hasło ${wrong.ms.toFixed(1)} ms`);
-  assert.ok(malformed.ms > wrong.ms * 0.4, `zły format ${malformed.ms.toFixed(1)} ms vs złe hasło ${wrong.ms.toFixed(1)} ms`);
 
   const succeeded = (await auditRows('auth.login_succeeded')).filter((row) => row.actor_id === account.userId);
   assert.ok(succeeded.length >= 2);
@@ -244,18 +268,34 @@ test('#126: atak z wielu IP na jeden e-mail nie zakłada blokady konta, a popraw
 
 test('#126: opóźnienie samego e-maila zaczyna się od progu i jest konfigurowalne (LOGIN_EMAIL_DELAY_MS)', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-126d' });
-  const delayed = { ...env, LOGIN_EMAIL_DELAY_MS: '1200' };
-  const timed = async (i) => {
-    const started = performance.now();
-    const response = await post('/api/login', { email: account.email, password: `opoznienie ${i} zle` }, { ip: nextIp(), useEnv: delayed });
-    return { status: response.status, ms: performance.now() - started };
+  // Nietypowa wartość służy jako znacznik: podmieniony setTimeout zapisuje zażądane opóźnienie
+  // i wywołuje je od razu (inne timery, np. limit kolejki scrypt, działają normalnie). Test sprawdza
+  // więc, ILE serwer chciał czekać i od której próby, a nie ile trwało to na obciążonej maszynie.
+  const MARK = 1234;
+  const delayed = { ...env, LOGIN_EMAIL_DELAY_MS: String(MARK) };
+  const requested = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    if (ms === MARK) { requested.push(ms); return realSetTimeout(fn, 0, ...args); }
+    return realSetTimeout(fn, ms, ...args);
   };
-  const early = [];
-  for (let i = 0; i < LOGIN_POLICY.emailDelayAfter - 1; i += 1) early.push(await timed(i));
-  const late = await timed(99);
-  assert.ok(early.every((entry) => entry.status === 401 && entry.ms < 1000), early.map((entry) => entry.ms.toFixed(0)).join(','));
+  const attempt = async (i) => {
+    const before = requested.length;
+    const response = await post('/api/login', { email: account.email, password: `opoznienie ${i} zle` }, { ip: nextIp(), useEnv: delayed });
+    return { status: response.status, delays: requested.slice(before) };
+  };
+  let early;
+  let late;
+  try {
+    early = [];
+    for (let i = 0; i < LOGIN_POLICY.emailDelayAfter - 1; i += 1) early.push(await attempt(i));
+    late = await attempt(99);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  assert.ok(early.every((entry) => entry.status === 401 && entry.delays.length === 0), JSON.stringify(early));
   assert.equal(late.status, 401, 'opóźnienie nie zamienia się w blokadę');
-  assert.ok(late.ms >= 1200, `próba nr ${LOGIN_POLICY.emailDelayAfter} czeka ${late.ms.toFixed(0)} ms`);
+  assert.deepEqual(late.delays, [MARK], `próba nr ${LOGIN_POLICY.emailDelayAfter} czeka dokładnie LOGIN_EMAIL_DELAY_MS`);
   assert.equal(emailDelayMs(LOGIN_POLICY.emailDelayAfter - 1, {}), 0);
   assert.equal(emailDelayMs(LOGIN_POLICY.emailDelayAfter, {}), LOGIN_POLICY.emailDelayMs);
   assert.equal(emailDelayMs(LOGIN_POLICY.emailDelayAfter * 2, {}), LOGIN_POLICY.emailDelayMaxMs);
@@ -1004,16 +1044,22 @@ test('#203: zalew logowań z jednego IP nie zajmuje kolejki innym adresom (limit
   const busyBefore = loginQueueMetrics().login_busy_total;
   try {
     // Prawowite logowanie z innego adresu wchodzi do kolejki (nie jest odrzucone).
-    const legitimate = login(account, { ip: otherIp });
-    const started = Date.now();
+    let legitimateSettled = false;
+    const legitimate = login(account, { ip: otherIp }).finally(() => { legitimateSettled = true; });
     const flood = await Promise.all(Array.from({ length: 15 }, (_, i) => post('/api/login', { email: `flood${i}@example.invalid`, password: 'Syntetyczne haslo zalew' }, { ip: floodIp })));
     for (const response of flood) {
       assert.equal(response.status, 503);
       assert.equal((await response.json()).error, 'login_busy');
       assert.equal(response.headers.get('Retry-After'), '5');
     }
-    assert.ok(Date.now() - started < 2000, 'odrzucenia są natychmiastowe (bez scrypt)');
+    // „Natychmiast, bez scrypt” bez zegara: każde z 15 odrzuceń to jedno busy('clientQueueFull') w
+    // withSlot (przed obliczeniem), a zalew nie zajął ani nie zwolnił żadnego miejsca kolejki —
+    // trwają nadal tylko dwie atrapy, a prawowite żądanie jeszcze nie odpowiedziało.
     assert.equal(loginQueueMetrics().login_busy_total - busyBefore, 15);
+    assert.equal(scryptQueueDepth().running, MAX_CONCURRENT, 'zalew nie uruchomił żadnego scrypt');
+    // Prawowite logowanie robi kilka zapytań do bazy, zanim stanie w kolejce — czekamy na warunek, nie na czas.
+    await waitFor(() => loginQueueMetrics().login_queue_depth === MAX_PER_CLIENT - MAX_CONCURRENT + 1, 'prawowite logowanie w kolejce');
+    assert.equal(legitimateSettled, false, 'prawowite logowanie czeka na wolne miejsce, nie zostało odrzucone');
     assert.equal(loginQueueMetrics().login_queue_depth, MAX_PER_CLIENT - MAX_CONCURRENT + 1, 'oczekują: nadmiar zalewającego + jedno prawowite logowanie');
     release();
     await Promise.all(occupied);

@@ -180,8 +180,20 @@ async function seedFixtureSessions(db) {
   return cookies;
 }
 
+// Świeżość MFA (krok w górę, MFA_STEP_UP_MAX_AGE_SECONDS = 15 min) liczy się od zegara ściennego,
+// a sesje macierzy są zakładane raz na początku wielominutowego przebiegu — na obciążonej maszynie
+// starzałyby się w trakcie i fixture/przypadki dostawałyby fałszywe 403 mfa_stale. Przed każdym
+// wywołaniem przesuwamy więc mfa_verified_at potwierdzonych sesji na „teraz” (zapis w górę jest
+// dozwolony przez trigger sesji; nie zmieniamy okna MFA w kodzie). Odmowy dla NIEPOTWIERDZONEGO MFA
+// (mfa_required) zostają bez zmian, a stara weryfikacja → 403 mfa_stale jest testowana osobno
+// (tests/pg-account-recovery.test.js, tests/pg-admin.test.js).
+async function refreshMfaFreshness(db) {
+  await db.query('UPDATE sessions SET mfa_verified_at = now() WHERE mfa_verified_at IS NOT NULL AND revoked_at IS NULL');
+}
+
 // Wywołanie API kontem fixture; błąd = przerwanie testu (fixture musi się udać).
 async function api(ctx, cookie, method, path, body, headers = {}) {
+  await refreshMfaFreshness(ctx.db);
   const response = await handlePgRequest(request(path, { method, body, headers, cookie }), ctx.env);
   const text = await response.text();
   if (!isSuccess(response.status)) throw new Error(`fixture ${method} ${path}: ${response.status} ${text.slice(0, 300)}`);
@@ -914,6 +926,7 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
   if (obj?.cookie) cookie = obj.cookie;
   const key = `mx-${route.id}-${actor.key}-${mfa ? 'mfa' : 'nomfa'}-${targetKey === '-' ? 'x' : targetKey}-${++seq}`;
   const built = await route.build({ target: TARGETS[targetKey], obj, key, fx: ctx.fx });
+  await refreshMfaFreshness(ctx.db); // przed odciskiem zapisów, żeby nie wyglądało to na zmianę po odmowie
   // Odczyty (GET) sprawdzamy pod kątem wycieku; ślad zapisu — dla metod zmieniających stan.
   const tracksWrites = route.method !== 'GET';
   const before = tracksWrites ? await writeFingerprint(ctx.db) : null;
