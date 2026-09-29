@@ -436,6 +436,17 @@ i transakcje z `src/db.js`:
 - **`405` zawsze z `Allow`.** `tests/pg-tx-retry.test.js` skanuje `src/pg/**`
   i sprawdza odpowiedzi na nieobsługiwane metody.
 
+## OpenAPI (#160, etap 1)
+
+`docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem
+`npm run openapi:build` z `tests/helpers/route-matrix.js` i z tabeli kodów
+powyżej; `tests/openapi.test.js` psuje się przy ręcznej edycji pliku albo trasie
+dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
+`docs/AUTHORIZATION.md` (D-08/D-09), do zatwierdzenia przez zarząd/szkołę.
+`x-rd-deny-status` to statusy odmowy wyliczone z macierzy (403 lub 404 per
+trasa), więc polityka 403/404 jest już czytelna maszynowo, choć jeszcze nie
+opisana słownie per moduł.
+
 ## Czego nie obejmuje ten dokument
 
 Część #160 — ten katalog to tylko punkt 4 propozycji z issue ("katalog
@@ -445,9 +456,9 @@ błędów"). Nie obejmuje:
   404 dla obiektu poza zakresem (patrz różnice między `families.js`/
   `documents.js` i `payments.js`/`ledger.js`/`email.js`/`reconciliation.js`
   opisane w issue #160);
-- generatora `docs/openapi.json` ze schematami wejścia/wyjścia
-  (`scripts/build-openapi.js` — poza zakresem tego PR, `scripts/` jest dziś
-  dotykane przez otwarte PR #288/#289/#297/#302/#311);
+- schematów ciał żądań i odpowiedzi w `docs/openapi.json` (etap 1 generatora,
+  `scripts/build-openapi.js`, opisuje tylko ścieżki, metody, role, MFA,
+  statusy i kody z tego katalogu; patrz sekcja „OpenAPI” niżej);
 - `jsconfig.json`, adnotacji `@ts-check`/JSDoc typów i kroku `tsc --noEmit` w
   CI (wymagałoby dodania `typescript` jako zależności — instalacja pakietu
   wymaga połączenia z rejestrem npm, co jest poza zakresem sesji tego

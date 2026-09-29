@@ -26,6 +26,7 @@
     "dev:print": "vite print",
     "build:print": "vite build print --outDir ../dist/print --base ./ --emptyOutDir",
     "db:migrate:postgres": "node scripts/migrate-postgres.js",
+    "openapi:build": "node scripts/build-openapi.js",
     "migrations:manifest": "node scripts/generate-migrations-manifest.js",
     "migrations:check-order": "node scripts/check-migrations-order.js",
     "migrations:check-functions": "node scripts/check-function-redefinitions.js",
