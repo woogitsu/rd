@@ -44,6 +44,7 @@ wpisów).
 | `already_matched_via_payment` | Pozycja jest już dopasowana do wpłaty. | Nie — popraw dane żądania. |
 | `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
 | `alt_text_required` | Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne. | Zależy od kontekstu (patrz moduł trasy). |
+| `ambiguous_csv_delimiter` | Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem. | Nie — popraw dane żądania. |
 | `ambiguous_local_time` | Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi. | Zależy od kontekstu (patrz moduł trasy). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -150,6 +151,7 @@ wpisów).
 | `invalid_credentials` | Nieprawidłowy adres e-mail lub hasło. | Nie — popraw dane żądania. |
 | `invalid_csv_header` | Plik CSV ma niepoprawny nagłówek. | Nie — popraw dane żądania. |
 | `invalid_csv` | Nie udało się odczytać pliku CSV. | Nie — popraw dane żądania. |
+| `invalid_csv_encoding` | Plik CSV ma nieznane kodowanie (w tekście są znaki zastępcze). Zapisz go jako „CSV UTF-8” albo wybierz kodowanie i wgraj ponownie. | Nie — popraw dane żądania. |
 | `invalid_current_password` | Obecne hasło jest nieprawidłowe. | Nie — popraw dane żądania. |
 | `invalid_cursor` | Nie udało się wczytać kolejnej strony wyników. Odśwież listę. | Nie — popraw dane żądania. |
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
@@ -327,6 +329,7 @@ wpisów).
 | `payment_reference_already_revoked` | Ta referencja płatności jest już unieważniona. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_reference_not_found` | Nie znaleziono referencji płatności. | Nie — popraw dane żądania. |
 | `pending_admin_invitation` | Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
+| `personal_data_forbidden` | Tekst zawiera adres e-mail, numer rachunku (IBAN) albo numer rejestru krajowego. Ten zapis jest niezmienny i trafia do eksportu — usuń te dane osobowe i zapisz ponownie (nie można tego potwierdzić). | Nie — popraw dane żądania. |
 | `photo_file_exists` | To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik. | Nie — popraw dane żądania. |
 | `photo_file_integrity_mismatch` | Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi. | Zależy od kontekstu (patrz moduł trasy). |
 | `photo_file_malformed` | Plik zdjęcia odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi. | Nie — popraw dane żądania. |

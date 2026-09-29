@@ -13,10 +13,23 @@ export function installNetworkGuard() {
   if (installed) return;
   installed = true;
   realFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (input, init) => {
+    // Testy serwera HTTP łączą się z własnym procesem przez pętlę zwrotną —
+    // to nie jest ruch do świata zewnętrznego.
+    if (isLoopback(input)) return realFetch(input, init);
     calls += 1;
     throw new Error('network_forbidden_in_tests');
   };
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+export function isLoopback(input) {
+  try {
+    const raw = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
+    return LOOPBACK_HOSTS.has(new URL(raw).hostname);
+  } catch {
+    return false;
+  }
 }
 
 // Liczba prób sieciowych przechwyconych od startu procesu (wszystkie pliki

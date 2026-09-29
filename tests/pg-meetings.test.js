@@ -22,6 +22,7 @@ import {
   setMinutesVisibility,
 } from '../src/pg/meetings.js';
 import { updateMeeting, updateResolution } from './helpers/with-revision.js';
+import { lifecycleActors } from './helpers/pg.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
@@ -668,7 +669,7 @@ test('PATCH keeps unspecified quorum fields and a configured rule requires its s
 
 // --- #152: publikacja publiczna protokołu z możliwymi danymi osobowymi -----
 
-test('publishing minutes as public is blocked when the body contains a known name, an e-mail or an IBAN; internal/parents visibility is not blocked', async () => {
+test('publishing minutes as public is blocked when the body contains a known name, or a phone number; internal/parents visibility is not blocked', async () => {
   const db = await meetingsDb();
   try {
     await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('student-pii','household-1','Kuba','Testowanski')");
@@ -690,11 +691,19 @@ test('publishing minutes as public is blocked when the body contains a known nam
     const internal = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withName.id, visibility: 'internal' });
     assert.equal(internal.replayed, false);
 
-    const withEmail = (await createMinutesVersion(db, board,
-      { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: ktos@example.invalid, do ustalenia.' })).minutes;
-    await approveMinutes(db, admin, { minutesId: withEmail.id });
+    // #152: e-mail/IBAN w treści protokołu są odrzucane już przy zapisie wersji
+    // (zapis niezmienny), bez możliwości potwierdzenia; blokada publikacji
+    // publicznej zostaje dla pozostałych kategorii (znane imię, telefon).
     await assert.rejects(
-      setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withEmail.id, visibility: 'public' }),
+      createMinutesVersion(db, board,
+        { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: ktos@example.invalid, do ustalenia.', confirmPersonalData: true }),
+      { code: 'personal_data_forbidden', status: 422 },
+    );
+    const withPhone = (await createMinutesVersion(db, board,
+      { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: +32 470 12 34 56, do ustalenia.', confirmPersonalData: true })).minutes;
+    await approveMinutes(db, admin, { minutesId: withPhone.id });
+    await assert.rejects(
+      setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withPhone.id, visibility: 'public' }),
       { code: 'minutes_contain_personal_data' },
     );
 
@@ -704,5 +713,29 @@ test('publishing minutes as public is blocked when the body contains a known nam
     const published = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: clean.id, visibility: 'public' });
     assert.equal(published.replayed, false);
     assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.minutesId), [clean.id]);
+  } finally { await db.close(); }
+});
+
+// #214: aktor budowany przez prawdziwe ładowanie sesji i przydziałów — wygasły
+// i cofnięty przydział oraz nieważna sesja nie dają dostępu do zebrań.
+test('zebrania: wygasły i cofnięty przydział oraz nieważna sesja nie dają dostępu (aktor z loadAuthorizationContext)', async () => {
+  const db = await meetingsDb();
+  try {
+    const actors = await lifecycleActors(db, { role: 'board', schoolYearId: 'year', prefix: 'mt' });
+    assert.ok(actors.active, 'aktor z ważną sesją i przydziałem ładuje się przez loadAuthorizationContext');
+    assert.deepEqual(actors.active.grants.map((grant) => grant.role), ['board']);
+    // Nieważna sesja / konto wyłączone: brak kontekstu (401), nie „pusty aktor”.
+    for (const name of ['expiredSession', 'revokedSession', 'disabledAccount']) {
+      assert.equal(actors[name], null, `${name}: brak aktora`);
+    }
+    // Wygasły lub cofnięty przydział: sesja ważna, ale bez ról.
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      assert.ok(actors[name], `${name}: sesja jest ważna`);
+      assert.deepEqual(actors[name].grants, [], `${name}: przydział odfiltrowany przez SQL`);
+    }
+    assert.deepEqual((await listMeetings(db, actors.active, { schoolYearId: 'year' })).meetings, []);
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      await assert.rejects(listMeetings(db, actors[name], { schoolYearId: 'year' }), { code: 'forbidden', status: 403 }, name);
+    }
   } finally { await db.close(); }
 });

@@ -2977,13 +2977,13 @@
       "data_type": "text"
     },
     "confirmation_note": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uwaga do zwolnienia adresu z listy wykluczeń",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     },
@@ -3414,13 +3414,13 @@
       "data_type": "text"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
+      "personal": "direct",
+      "subject": "student",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany przypisania do klasy",
       "retention_category": null,
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -5689,13 +5689,13 @@
       "data_type": "text"
     },
     "note": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uwaga do linii preliminarza",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -6418,13 +6418,13 @@
       "data_type": "text"
     },
     "note": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uwaga do bilansu otwarcia",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -6486,13 +6486,13 @@
       "data_type": "text"
     },
     "description": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "opis przeniesienia gotówka–bank",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -7059,13 +7059,13 @@
       "data_type": "text"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "board_member",
+      "category": "wolny tekst",
+      "purpose": "powód zmiany widoczności protokołu",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -8130,13 +8130,13 @@
       "data_type": "text"
     },
     "source_detail": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "opis źródła zdjęcia",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     },
@@ -9250,13 +9250,13 @@
       "data_type": "text"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany przypisania wpłaty",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     }
@@ -9340,13 +9340,13 @@
       "data_type": "text"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zwrotu wpłaty",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -10201,13 +10201,13 @@
       "data_type": "text"
     },
     "note": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uwaga do punktu listy zamknięcia roku",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -10704,13 +10704,13 @@
       "data_type": "date"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "guardian",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany relacji opiekun–uczeń",
+      "retention_category": "guardian_contact",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     },

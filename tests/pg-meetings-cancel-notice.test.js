@@ -700,6 +700,46 @@ test('zamknięty rok: odwołanie, zmiana terminu i zawiadomienia dają 409 schoo
       `INSERT INTO meeting_reschedules (id, meeting_id, school_year_id, from_scheduled_at, to_scheduled_at, reason, actor_id)
        VALUES ('r-x', $1, $2, now(), now() + interval '1 day', 'Powód testowy', 'u-bd')`, [meeting.id, YEAR]),
     /school_year_closed/);
+    // #80: trigger a0_year_freeze na trzech nowych tabelach — INSERT/UPDATE/DELETE
+    // zamkniętego roku daje school_year_closed (przed strażnikami tabel).
+    await assert.rejects(t.db.query(
+      `INSERT INTO meeting_agenda_versions (id, meeting_id, school_year_id, version, snapshot, content_hash, created_by)
+       VALUES ('av-x', $1, $2, 99, '[]'::jsonb, 'h', 'u-bd')`, [meeting.id, YEAR]), /school_year_closed/);
+    await assert.rejects(t.db.query('UPDATE meeting_agenda_versions SET content_hash = $1 WHERE meeting_id = $2', ['h2', meeting.id]), /school_year_closed/);
+    await assert.rejects(t.db.query('UPDATE meeting_notices SET title = $1 WHERE meeting_id = $2', ['Inny', meeting.id]), /school_year_closed/);
+    await assert.rejects(t.db.query('DELETE FROM meeting_notices WHERE meeting_id = $1', [meeting.id]), /school_year_closed/);
+    await assert.rejects(t.db.query('DELETE FROM meeting_agenda_versions WHERE meeting_id = $1', [meeting.id]), /school_year_closed/);
+    for (const table of ['meeting_agenda_versions', 'meeting_notices']) {
+      assert.ok(await t.count(`SELECT count(*) AS n FROM ${table} WHERE meeting_id = $1`, [meeting.id]) > 0, `${table}: wiersze nietknięte`);
+    }
+    assert.equal((await t.view(meeting)).meeting.status, 'scheduled');
+  } finally { await t.close(); }
+});
+
+// ---------- bramka danych osobowych (#152) ----------
+
+test('powód odwołania i zmiany terminu przechodzi bramkę: e-mail odrzucony, telefon wymaga potwierdzenia, audyt bez treści', async () => {
+  const t = await setup();
+  try {
+    const meeting = await t.create();
+    const base = `/api/meetings/${meeting.id}`;
+    const rev = await t.revision(meeting);
+    const email = await t.call(t.cookies.board, 'POST', `${base}/reschedule`,
+      { scheduledAt: inDays(40), reason: 'Pisać na jan@example.invalid', revision: rev });
+    assert.deepEqual([email.status, email.body.error], [422, 'personal_data_forbidden']);
+    const phone = 'Kontakt +32 470 12 34 56 w sprawie sali';
+    const ask = await t.call(t.cookies.board, 'POST', `${base}/reschedule`, { scheduledAt: inDays(40), reason: phone, revision: rev });
+    assert.deepEqual([ask.status, ask.body.error], [422, 'possible_personal_data']);
+    assert.equal(await t.count('SELECT count(*) AS n FROM meeting_reschedules WHERE meeting_id = $1', [meeting.id]), 0);
+    const ok = await t.call(t.cookies.board, 'POST', `${base}/reschedule`,
+      { scheduledAt: inDays(40), reason: phone, revision: rev, confirmPersonalData: true });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    const audit = (await t.db.query(`SELECT metadata_json FROM audit_events WHERE action = 'meeting.rescheduled'`)).rows[0].metadata_json;
+    assert.equal(audit.piiConfirmed, true);
+    assert.ok(!JSON.stringify(audit).includes('470'), 'audyt bez treści powodu');
+    const rev2 = await t.revision(meeting);
+    const cancelMail = await t.call(t.cookies.board, 'POST', `${base}/cancellation`, { reason: 'Pisać na jan@example.invalid', revision: rev2 });
+    assert.deepEqual([cancelMail.status, cancelMail.body.error], [422, 'personal_data_forbidden']);
     assert.equal((await t.view(meeting)).meeting.status, 'scheduled');
   } finally { await t.close(); }
 });

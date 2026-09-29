@@ -51,8 +51,11 @@
 
 Każde poniższe pole może zostać wypełnione wolnym tekstem zawierającym dane osobowe
 (np. imię i nazwisko dziecka w tytule przelewu) i **nie da się go poprawić ani
-usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek: #152
-(`src/pg/pii-check.js`, bramka 422/409 przed zapisem i publikacją).
+usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek: #152 —
+wspólna bramka `src/pg/pii-gate.js` (oparta na `src/pg/pii-check.js`) przed zapisem
+we wszystkich trasach zapisu tych pól oraz blokada publikacji publicznej protokołu.
+Heurystyka nie wykrywa nazwisk poza znanymi z roku szkolnego, więc nie zastępuje
+odpowiedzialności osoby zapisującej.
 
 | Kolumna | Typowe ryzyko |
 |---|---|
@@ -102,6 +105,17 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `document_status_events.reason` | powód zastąpienia/unieważnienia dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#82) |
 | `document_descriptions.title` | tytuł dokumentu może zawierać imię i nazwisko (np. „Zwrot dla rodziny Kowalski”) (#76/#313) |
 | `document_descriptions.description` | opis dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#76/#313) |
+| `payment_refunds.reason` | uzasadnienie zwrotu wpłaty, może opisywać rodzinę lub dziecko (#138) |
+| `payment_reassignments.reason` | uzasadnienie zmiany przypisania wpłaty do gospodarstwa (#138) |
+| `ledger_transfers.description` | opis przeniesienia gotówka–bank, może zawierać nazwisko osoby (#152) |
+| `ledger_opening_balances.note` | uwaga do bilansu otwarcia (#152) |
+| `ledger_budget_lines.note` | uwaga do linii preliminarza (#152) |
+| `meeting_minutes_publications.reason` | powód zmiany widoczności protokołu (#152) |
+| `school_year_closure_checklist.note` | uwaga do punktu listy zamknięcia roku (#152) |
+| `enrollment_history.reason` | uzasadnienie zmiany klasy, może opisywać sytuację rodzinną (#152) |
+| `student_guardian_changes.reason` | uzasadnienie zmiany relacji opiekun–uczeń (#152) |
+| `news_photos.source_detail` | opis źródła zdjęcia, może zawierać dane osoby przekazującej (#152) |
+| `email_suppression_releases.confirmation_note` | uwaga do zwolnienia adresu z listy wykluczeń (#152) |
 
 ## Środki już istniejące (do odwołania w DPIA)
 
@@ -111,6 +125,11 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 - Solony SHA-256 referencji bankowej zamiast tekstu jawnego przy uzgodnieniu
   (`postgres/migrations/0015_reconciliation.sql`).
 - Klucze obiektów w Storage Bucket bez oryginalnej nazwy pliku (`docs/DOCUMENTS.md`).
+- Bramka danych osobowych po stronie serwera dla pól wolnego tekstu w tabelach niezmiennych
+  (`src/pg/pii-gate.js`, #152, `docs/PII_CHECK.md`): e-mail, IBAN i numer rejestru krajowego BE
+  są odrzucane bez możliwości obejścia (422 `personal_data_forbidden`), telefon i znane imię
+  wymagają potwierdzenia (422 `possible_personal_data`). Test
+  `tests/pii-gate-coverage.test.js` wymaga bramki dla każdego pola `free_text` z tabeli niezmiennej.
 
 ## Do ustalenia przez zarząd/IOD
 
