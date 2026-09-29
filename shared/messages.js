@@ -300,6 +300,7 @@ export const MESSAGES = Object.freeze({
   invalid_cell: "Niepoprawna wartość komórki.",
   unsupported_version: "Nieobsługiwana wersja danych importu. Odśwież stronę.",
   preview_required: "Najpierw wyślij podgląd importu.",
+  campaign_test_send_required: "Najpierw wyślij wiadomość testową z bieżącą treścią kampanii. Po zmianie treści test trzeba powtórzyć.",
   preview_stale: "Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie.",
   fingerprint_mismatch: "Dane różnią się od podglądu. Wyślij podgląd ponownie.",
   import_has_conflicts: "Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy.",

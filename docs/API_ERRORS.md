@@ -56,6 +56,7 @@ wpisów).
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
+| `campaign_test_send_required` | Najpierw wyślij wiadomość testową z bieżącą treścią kampanii. Po zmianie treści test trzeba powtórzyć. | Nie — popraw dane żądania. |
 | `cannot_disable_self` | Nie można wyłączyć własnego konta. | Zależy od kontekstu (patrz moduł trasy). |
 | `cannot_grant_self` | Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu. | Zależy od kontekstu (patrz moduł trasy). |
 | `cannot_reset_own_mfa` | Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora. | Zależy od kontekstu (patrz moduł trasy). |
