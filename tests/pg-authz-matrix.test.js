@@ -171,6 +171,23 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   return { householdId, guardianId, studentId, enrollmentId };
 }
 
+// #200: opiekun z aktywnymi relacjami z DWOMA uczniami z różnych klas tego samego roku
+// (rodzeństwo we wspólnym gospodarstwie). Zarząd z przydziałem jednej klasy nie zmienia
+// jego globalnego kontaktu (403 guardian_shared_outside_scope). Dla roku bez drugiej klasy
+// (Y2) drugi uczeń trafia do tej samej klasy — trasa i tak odmawia poza zakresem roku.
+async function makeSharedGuardianHousehold(db, target) {
+  const base = await makeHousehold(db, target);
+  const otherClassId = { A: TARGETS.B.classId, B: TARGETS.A.classId }[target.key] ?? target.classId;
+  const studentId = `${base.householdId}-s2`;
+  await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Jan', $3)",
+    [studentId, base.householdId, 'Syntetyczny']);
+  await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, false)',
+    [studentId, base.guardianId]);
+  await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
+    [`${base.householdId}-e2`, studentId, otherClassId, target.schoolYearId]);
+  return base;
+}
+
 async function seedFixtureSessions(db) {
   const cookies = {};
   for (const [name, account] of Object.entries(FX_ACCOUNTS)) {
@@ -698,6 +715,7 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  sharedGuardianHousehold: (ctx, target) => makeSharedGuardianHousehold(ctx.db, target),
   // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
   // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
   // pod TARGETS.A, niezależnie od przekazanego targetu.
@@ -1063,8 +1081,10 @@ test('meta: każdy moduł z ROUTES ma wpisy w macierzy i odwrotnie', () => {
 test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
   const ids = ROUTE_MATRIX.map((route) => route.id);
   assert.equal(new Set(ids).size, ids.length, 'id tras w macierzy muszą być unikalne');
-  const signatures = ROUTE_MATRIX.map((route) => `${route.method} ${route.path}`);
-  assert.equal(new Set(signatures).size, signatures.length, 'para metoda + ścieżka musi być unikalna');
+  // `variant` (opcjonalny): druga pozycja tej samej trasy z innym obiektem fixture (np. #200 —
+  // opiekun z dziećmi z dwóch klas), z własną tabelą oczekiwanych statusów.
+  const signatures = ROUTE_MATRIX.map((route) => `${route.method} ${route.path}${route.variant ? ` [${route.variant}]` : ''}`);
+  assert.equal(new Set(signatures).size, signatures.length, 'para metoda + ścieżka (+ variant) musi być unikalna');
   for (const route of ROUTE_MATRIX) {
     assert.ok(route.targets.length > 0 && route.targets.every((key) => key in TARGETS), route.id);
     assert.ok([200, 201, 204].includes(route.ok), `${route.id}: ok`);
