@@ -9,6 +9,8 @@ import {
   hasRepresentativeGrant,
   hasPaymentColumn,
   overviewRows,
+  boardOverviewExportUrl,
+  exportFilename,
   overviewRow,
   parseRoute,
   sortStudentsByName,
@@ -118,4 +120,15 @@ test('pulpit przedstawiciela jest wołany tylko z przydziałem representative (b
   const { readFile } = await import('node:fs/promises');
   const main = await readFile(new URL('../families/main.js', import.meta.url), 'utf8');
   assert.match(main, /state\.isRepresentative \? groups : \[\]/);
+});
+
+test('adres eksportu statystyk klas (#131) jest kodowany i walidowany', () => {
+  assert.equal(boardOverviewExportUrl('y-2026', 'csv'), '/api/board/overview/export.csv?schoolYearId=y-2026');
+  assert.equal(boardOverviewExportUrl('y-2026', 'xlsx'), '/api/board/overview/export.xlsx?schoolYearId=y-2026');
+  assert.throws(() => boardOverviewExportUrl('', 'csv'));
+  assert.throws(() => boardOverviewExportUrl('../x', 'csv'));
+  assert.throws(() => boardOverviewExportUrl('y-2026', 'json'));
+  assert.equal(exportFilename('attachment; filename="statystyki-klas-y-2026-20260929.csv"', 'x.csv'), 'statystyki-klas-y-2026-20260929.csv');
+  assert.equal(exportFilename('attachment; filename="../../etc"', 'x.csv'), 'x.csv');
+  assert.equal(exportFilename(null, 'x.csv'), 'x.csv');
 });

@@ -77,6 +77,22 @@ export function afterTimestampDescSql(tsColumn, idColumn, cursor, values) {
 }
 
 /**
+ * Warunek „po kursorze” dla kolejności rosnącej po krotce kolumn (klucz…, id):
+ * `(k1, k2, id) > ($1, $2, $3)`. `casts` (np. '::date') dopisuje rzutowanie parametru.
+ * @param {string[]} columns wyrażenia SQL w kolejności ORDER BY
+ * @param {string[]} parts wartości z kursora, w tej samej kolejności
+ * @param {string[]} values tablica parametrów zapytania (jest dopisywana)
+ * @param {string[]} [casts]
+ */
+export function afterTupleAscSql(columns, parts, values, casts = []) {
+  const placeholders = parts.map((part, index) => {
+    values.push(part);
+    return `$${values.length}${casts[index] ?? ''}`;
+  });
+  return `(${columns.join(', ')}) > (${placeholders.join(', ')})`;
+}
+
+/**
  * Z `limit + 1` pobranych wierszy robi stronę i kursor następnej strony.
  * @param {object[]} rows wiersze z zapytania z `LIMIT limit + 1`
  * @param {number} limit
