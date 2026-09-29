@@ -1446,7 +1446,7 @@ test('a line payment keeps odd cent amounts exactly and audits without the trans
 test('an unmatched line payment is assigned later through the payment assignment route and keeps its match', async () => {
   const { db, cookies, call } = await setup();
   try {
-    await db.query("INSERT INTO households (id) VALUES ('h-late')");
+    await seedEnrolledHousehold(db, 'h-late', [YEAR]);
     const { id, lineIds } = await draftWithLines(call, cookies, [1000]);
     const created = await (await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: null })).json();
     assert.equal(created.payment.status, 'unmatched');
