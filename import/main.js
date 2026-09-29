@@ -1,10 +1,10 @@
 import { readXlsxSheets } from './xlsx.js';
-import { FIELDS, guessMapping, parseCsv, toServerPayload, validateRows } from './core.js';
+import { FIELDS, guessMapping, matrixShapeError, parseCsv, selectSheet, toServerPayload, validateRows } from './core.js';
 import { csvBytes } from '../src/pg/csv.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
 import { confirmAction } from '../shared/confirm-dialog.js';
-import { buildErrorReportCsv, unusedColumns } from './report.js';
+import { buildErrorReportCsv, missingFromFileSummary, unusedColumns } from './report.js';
 import { applyRememberedMapping, clearRememberedMapping, hasRememberedMapping, loadRememberedMapping, saveRememberedMapping } from './mapping-memory.js';
 import { mountShell } from '../shared/shell.js';
 import '../shared/shell.css';
@@ -51,8 +51,7 @@ const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce
 // pliku i przy zmianie arkusza XLSX (bez ponownego odczytu pliku).
 function applyMatrix(note = '') {
   mapArea.replaceChildren();
-  if (matrix.length < 2 || matrix.length > 5001) throw new Error('Plik musi zawierać od 1 do 5000 wierszy danych.');
-  if (!Array.isArray(matrix[0]) || matrix[0].length > 60) throw new Error('Nagłówek ma więcej niż 60 kolumn.');
+  const shapeError = matrixShapeError(matrix); if (shapeError) throw new Error(shapeError);
   const headers = matrix[0].map(v => String(v ?? '').trim());
   // #109: aliasy mają pierwszeństwo, potem mapowanie zapamiętane w tej przeglądarce (tylko nagłówek → pole).
   const suggested = applyRememberedMapping(headers, guessMapping(headers), loadRememberedMapping());
@@ -96,21 +95,26 @@ async function readSelectedFile() {
       xlsxSheets.forEach((sheet, index) => sheetSelect.add(new Option(`${sheet.name} (${Math.max(sheet.rows.length - 1, 0)} wierszy)`, String(index))));
       sheetField.hidden = xlsxSheets.length < 2;
       sheetSelect.value = '0';
-      matrix = xlsxSheets[0].rows;
-      applyMatrix(xlsxSheets.length > 1 ? ` Arkusz: ${xlsxSheets[0].name}.` : '');
+      showSheet(0);
     }
   } catch (error) { matrix = null; xlsxSheets = null; showError(`Nie udało się odczytać pliku: ${error.message}`); }
 }
 fileInput.addEventListener('change', readSelectedFile);
 encodingSelect.addEventListener('change', readSelectedFile);
-sheetSelect.addEventListener('change', () => {
-  if (!xlsxSheets) return;
-  const sheet = xlsxSheets[Number(sheetSelect.value)]; if (!sheet) return;
+// #88: pokazuje wskazany arkusz. Błąd arkusza (np. pusty pierwszy) to komunikat przy
+// wyborze arkusza — lista `xlsxSheets` i pole wyboru zostają, więc można wskazać inny.
+function showSheet(index) {
+  const { sheet, matrix: selected, error } = selectSheet(xlsxSheets, index); if (!sheet) return;
   lastResult = null; resetServer(); resultSection.hidden = true; serverSection.hidden = true;
-  matrix = sheet.rows;
-  try { applyMatrix(` Arkusz: ${sheet.name}.`); }
-  catch (error) { matrix = null; mappingSection.hidden = true; showError(error.message); }
-});
+  matrix = selected;
+  if (error) {
+    mapArea.replaceChildren(); mappingSection.hidden = true;
+    return showError(`Arkusz „${sheet.name}”: ${error}${xlsxSheets.length > 1 ? ' Wybierz inny arkusz.' : ''}`);
+  }
+  fileInput.removeAttribute('aria-invalid');
+  applyMatrix(xlsxSheets.length > 1 ? ` Arkusz: ${sheet.name}.` : '');
+}
+sheetSelect.addEventListener('change', () => { if (xlsxSheets) showSheet(sheetSelect.value); });
 document.querySelector('#preview').addEventListener('click', () => {
   if (!matrix) return;
   const mapping = Object.fromEntries(Array.from(mapArea.querySelectorAll('select')).map(el => [el.dataset.field, el.value]));
@@ -244,6 +248,19 @@ function messageList(title, entries) {
   if (entries.length > 40) { const p = document.createElement('p'); p.textContent = `Pokazano 40 z ${entries.length} komunikatów.`; nodes.push(p); }
   return nodes;
 }
+function missingFromFileNodes(missing) {
+  const summary = missingFromFileSummary(missing);
+  if (!summary) return [];
+  const heading = document.createElement('h3'); heading.textContent = summary.title;
+  const text = document.createElement('p'); text.textContent = summary.text;
+  const nodes = [heading, text];
+  if (summary.refs.length) {
+    const list = document.createElement('p'); list.className = 'muted';
+    list.textContent = `ID ucznia: ${summary.refs.join(', ')}${summary.more ? ` i ${summary.more} kolejnych` : ''}.`;
+    nodes.push(list);
+  }
+  return nodes;
+}
 function renderServerPreview(data) {
   const c = data.counts;
   const info = document.createElement('p'); info.className = 'muted';
@@ -253,6 +270,7 @@ function renderServerPreview(data) {
   serverReport.replaceChildren(
     reportBoxes([['Nowe', c.rowsAdded], ['Aktualizacje', c.rowsUpdated], ['Bez zmian', c.rowsUnchanged], ['Konflikty', c.rowsConflict], ['Pominięte (błędy)', c.rowsSkipped]]),
     info,
+    ...missingFromFileNodes(data.missingFromFile),
     ...messageList('Wymaga ręcznej decyzji', problems),
     ...messageList('Uwagi serwera', data.warnings.map(w => [w.row, w.message])),
   );

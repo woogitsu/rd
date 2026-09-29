@@ -90,3 +90,14 @@ test('plik czyta niezależny czytnik (read-excel-file): typy string/number, ujem
   assert.deepEqual(rows[2], ['zwykły', 0.05, 19.99]);
   assert.equal(typeof rows[1][0], 'string');
 });
+
+test('preamble i trailer: jednokomórkowe wiersze, nagłówek kolumn zamrożony pod preamble', () => {
+  const { sheet } = open(toXlsx(COLUMNS, [['a', 100, null]], { preamble: ['=Tytuł', ''], trailer: ['', 'Stopka'] }));
+  assert.ok(sheet.includes('<row r="1"><c r="A1" s="1" t="inlineStr">'));
+  assert.ok(sheet.includes('<row r="2"></row>'));
+  assert.ok(sheet.includes('<c r="A3" s="1" t="inlineStr"><is><t xml:space="preserve">opis</t>'));
+  assert.ok(sheet.includes('<c r="A6" t="inlineStr"><is><t xml:space="preserve">Stopka</t>'));
+  assert.ok(sheet.includes('<dimension ref="A1:C6"/>'));
+  assert.ok(sheet.includes('ySplit="3" topLeftCell="A4"'));
+  assert.ok(!/<f[\s>/]/.test(sheet));
+});

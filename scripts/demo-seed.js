@@ -194,8 +194,9 @@ function demoPassword() {
 // Konto pierwszego administratora (bootstrapAdmin — funkcja domenowa, ta sama co
 // `npm run auth:bootstrap-admin`), potem zaproszenia administratora dla reszty ról
 // (POST /api/admin/invitations — ta sama trasa co panel /admin/), przyjęcie
-// zaproszenia z hasłem (POST /api/invitations/accept) i — dla ról z obowiązkowym
-// MFA (domyślnie admin/board/treasurer) — zapis i potwierdzenie czynnika TOTP
+// zaproszenia z hasłem (POST /api/invitations/accept) i — dla wszystkich kont demo
+// (także przedstawiciela klasy i Komisji Rewizyjnej, poza domyślnym MFA_REQUIRED_ROLES;
+// decyzja użytkownika, wymóg w kodzie bez zmian) — zapis i potwierdzenie czynnika TOTP
 // (POST /api/mfa/enroll, /api/mfa/confirm). Konto powstaje więc dokładnie tak samo
 // jak w prawdziwym /admin/ + /login/, tylko kod TOTP liczymy tu sami zamiast
 // przepisywać go z aplikacji uwierzytelniającej.
@@ -311,33 +312,49 @@ async function seedRoster(db) {
 
 // --- Wpłaty (POST /api/payments — panel /panel/) --------------------------------
 // Częściowe i pełne, bez żadnego automatycznego statusu „dłużnik” (AGENTS.md:
-// składki są dobrowolne) — po prostu część rodzin ma wpłatę, część nie.
+// składki są dobrowolne) — po prostu część rodzin ma wpłatę, część nie. Plan jest
+// jawny (nie wyliczany), bo od niego zależą księga i wyciąg: każda wpłata
+// przypisana do rodziny dostaje w seedLedger powiązany wpis księgi o tej samej
+// kwocie i metodzie, a kwoty wpłat „bank” są parami różne, żeby propozycje
+// dopasowania w /reconciliation/ nie były niejednoznaczne.
+const PAYMENT_PLAN = [
+  // [numer rodziny, metoda, kwota w centach, data wpłaty]
+  [1, 'bank', 3000, '2026-10-05'], [1, 'bank', 2000, '2026-12-01'], // rodzina z wpłatą w dwóch ratach
+  [2, 'cash', 5000, '2026-10-15'],
+  [3, 'bank', 5000, '2026-10-15'],
+  [4, 'bank', 2500, '2026-10-06'], [4, 'bank', 2700, '2026-12-02'],
+  [5, 'bank', 4000, '2026-10-16'],
+  [6, 'cash', 5000, '2026-10-20'],
+  [7, 'bank', 3500, '2026-10-07'], [7, 'bank', 1500, '2026-12-03'],
+  [8, 'cash', 3000, '2026-10-22'],
+  [9, 'bank', 6000, '2026-10-19'],
+  [10, 'bank', 4500, '2026-10-09'], [10, 'bank', 1000, '2026-12-04'],
+  [11, 'bank', 5500, '2026-10-21'],
+  [12, 'cash', 5000, '2026-10-25'],
+];
+
+// CELOWY przykład do pokazu kontroli (docs/DEMO.md, „Celowe przykłady”): wpłata
+// przelewem bez przypisanej rodziny. Ma status „unmatched”, więc nie może zostać
+// ujęta w księdze, dopóki skarbnik nie przypisze jej do rodziny (osobne zdarzenie).
+const UNASSIGNED_PAYMENT = { method: 'bank', amountCents: 1550, receivedOn: '2026-11-18', reference: 'DEMO-NIEPRZYPISANA' };
+
 async function seedPayments(env, cookie, roster) {
-  const paid = roster.households.slice(0, 12);
-  let created = 0;
-  for (let i = 0; i < paid.length; i += 1) {
-    const [householdId] = paid[i];
-    if (i % 3 === 0) {
-      // Wpłata częściowa w dwóch ratach.
-      await apiCall(env, {
-        method: 'POST', path: '/api/payments', cookie, idempotencyKey: idKey('demo-payment'),
-        body: { schoolYearId: SCHOOL_YEAR_ID, householdId, amountCents: 3000, receivedOn: '2026-10-05', method: 'bank', reference: `DEMO-${householdId}-1` },
-      });
-      await apiCall(env, {
-        method: 'POST', path: '/api/payments', cookie, idempotencyKey: idKey('demo-payment'),
-        body: { schoolYearId: SCHOOL_YEAR_ID, householdId, amountCents: 2000, receivedOn: '2026-12-01', method: 'bank', reference: `DEMO-${householdId}-2` },
-      });
-      created += 2;
-    } else {
-      // Wpłata pełna, jednorazowa.
-      await apiCall(env, {
-        method: 'POST', path: '/api/payments', cookie, idempotencyKey: idKey('demo-payment'),
-        body: { schoolYearId: SCHOOL_YEAR_ID, householdId, amountCents: 5000, receivedOn: '2026-10-15', method: i % 2 === 0 ? 'bank' : 'cash', reference: `DEMO-${householdId}` },
-      });
-      created += 1;
-    }
+  if (roster.households.length < 12) throw new Error('Seed demo: plan wpłat wymaga co najmniej 12 rodzin.');
+  const payments = [];
+  for (const [number, method, amountCents, receivedOn] of PAYMENT_PLAN) {
+    const householdId = roster.households[number - 1][0];
+    const reference = `DEMO-${householdId}-${receivedOn}`;
+    const response = await apiCall(env, {
+      method: 'POST', path: '/api/payments', cookie, idempotencyKey: idKey('demo-payment'),
+      body: { schoolYearId: SCHOOL_YEAR_ID, householdId, amountCents, receivedOn, method, reference },
+    });
+    payments.push({ id: response.data.payment.id, householdId, method, amountCents, receivedOn });
   }
-  return created;
+  const unassigned = await apiCall(env, {
+    method: 'POST', path: '/api/payments', cookie, idempotencyKey: idKey('demo-payment'),
+    body: { schoolYearId: SCHOOL_YEAR_ID, ...UNASSIGNED_PAYMENT },
+  });
+  return { payments, unassignedPaymentId: unassigned.data.payment.id };
 }
 
 // --- Uzgodnienie wyciągu bankowego (POST /api/reconciliations + .../lines) -----
@@ -347,34 +364,50 @@ async function seedPayments(env, cookie, roster) {
 // nagłówki PL/EN — patrz HEADER_ALIASES), tak jak w prawdziwym panelu
 // /reconciliation/. IBAN w treści notatek to publicznie znany testowy numer
 // (Stripe, dokumentacja testowa) — nie należy do żadnego prawdziwego rachunku.
-// Kwoty większości pozycji odpowiadają wpłatom z seedPayments (ten sam
-// harmonogram: częściowe raty h01/h04/h07/h10 i pełne wpłaty „bank” h03/h05/
-// h09/h11) oraz dwóm wpisom księgi (składki, darowizna, opłata bankowa) — dzięki
-// temu panel może zaproponować dopasowania tak jak przy prawdziwych danych.
-// Dwie pozycje (2026-11-18, 2026-11-25) celowo NIE odpowiadają żadnej wpłacie
-// ani wpisowi księgi — do pokazu stanu „niedopasowana” / „do wyjaśnienia”.
+// Wyciąg zawiera KAŻDY ruch na rachunku do 2026-12-05: wszystkie wpłaty „bank”
+// z seedPayments (każda ma wpis księgi z seedLedger), darowiznę, przelew za
+// materiały i opłatę za rachunek — a poza tym dwie pozycje CELOWO bez wpisu
+// księgi (przykłady do pokazu, docs/DEMO.md, „Celowe przykłady”): wpłata
+// nieprzypisana do rodziny (15,50 EUR, wpłata w module wpłat ze statusem
+// „unmatched”) i opłata SWIFT (−3,75 EUR, jeszcze niezaksięgowana). Saldo wyciągu
+// = saldo rachunku w księdze + 15,50 − 3,75, czyli różnica uzgodnienia to
+// dokładnie 11,75 EUR, w całości opisana tymi dwiema pozycjami.
+// Saldo wyciągu na 2026-12-05 (zob. komentarz wyżej): rachunek w księdze 450,00 EUR
+// (wpłaty „bank” 412,00 + darowizna 200,00 − materiały 150,00 − opłata 12,00)
+// + wpłata nieprzypisana 15,50 − opłata SWIFT 3,75 = 461,75 EUR. Kasa jest
+// wyzerowana (gotówka 180,00 ze składek wydana na poczęstunek 180,00), więc
+// saldo księgi = saldo rachunku i różnica uzgodnienia to dokładnie 11,75 EUR.
+export const DEMO_STATEMENT_BALANCE_CENTS = 46175;
+export const DEMO_STATEMENT_DIFFERENCE_CENTS = 1175;
 const DEMO_TEST_IBAN = 'BE62 5100 0754 7061'; // testowy IBAN z dokumentacji Stripe — nie jest prawdziwym rachunkiem
-async function seedReconciliation(env, treasurerCookie) {
+async function seedReconciliation(env, treasurerCookie, payments) {
   const created = await apiCall(env, {
     method: 'POST', path: '/api/reconciliations', cookie: treasurerCookie, idempotencyKey: idKey('demo-reconciliation'),
     body: {
       schoolYearId: SCHOOL_YEAR_ID,
       statementDate: '2026-12-05',
-      statementBalanceCents: 274975,
+      statementBalanceCents: DEMO_STATEMENT_BALANCE_CENTS,
       notes: `Wyciąg testowy dla rachunku ${DEMO_TEST_IBAN} (IBAN testowy, dane syntetyczne — do pokazu importu i dopasowań). Szkic, nie zatwierdzony.`,
     },
   });
   const reconciliationId = created.data.reconciliation.id;
+  // Jedna pozycja na ruch na rachunku; tytuły wpłat rodzin bez danych osobowych.
+  const bankPayments = payments.filter((payment) => payment.method === 'bank');
+  const lines = [
+    ...bankPayments.map((payment) => [payment.receivedOn, payment.amountCents, `DEMO wpłata ${payment.householdId} (dane przykładowe)`]),
+    ['2026-11-05', -15000, 'Materiały plastyczne na zajęcia dodatkowe (dane przykładowe)'],
+    ['2026-11-10', 20000, 'Darowizna na cele statutowe Rady (dane przykładowe)'],
+    ['2026-11-18', UNASSIGNED_PAYMENT.amountCents, 'Wpłata nieznanego nadawcy — do wyjaśnienia (dane przykładowe)'],
+    ['2026-11-25', -375, 'Opłata SWIFT — do wyjaśnienia (dane przykładowe)'],
+    ['2026-12-01', -1200, 'Opłata za prowadzenie rachunku Rady (dane przykładowe)'],
+  ].sort((x, y) => x[0].localeCompare(y[0]));
+  const statementSum = lines.reduce((sum, line) => sum + line[1], 0);
+  if (statementSum !== DEMO_STATEMENT_BALANCE_CENTS) {
+    throw new Error(`Seed demo: suma pozycji wyciągu (${statementSum}) ≠ saldo wyciągu (${DEMO_STATEMENT_BALANCE_CENTS}).`);
+  }
   const csv = [
     'data,kwota,tytuł',
-    '2026-10-05,30.00,DEMO wpłata h01 rata 1',
-    '2026-10-15,50.00,DEMO wpłata h03',
-    '2026-10-31,450.00,Zestawienie wpłat składek — październik (dane przykładowe)',
-    '2026-11-10,200.00,Darowizna na cele statutowe Rady (dane przykładowe)',
-    '2026-11-18,15.50,Wpłata nieznanego nadawcy — do wyjaśnienia (dane przykładowe)',
-    '2026-11-25,-3.75,Opłata SWIFT — do wyjaśnienia (dane przykładowe)',
-    '2026-12-01,20.00,DEMO wpłata h10 rata 2',
-    '2026-12-01,-12.00,Opłata za prowadzenie rachunku Rady (dane przykładowe)',
+    ...lines.map(([date, cents, title]) => `${date},${(cents / 100).toFixed(2)},${title}`),
   ].join('\n');
   const imported = await apiCall(env, {
     method: 'POST', path: `/api/reconciliations/${reconciliationId}/lines`, cookie: treasurerCookie,
@@ -384,7 +417,7 @@ async function seedReconciliation(env, treasurerCookie) {
 }
 
 // --- Księga (kategorie: SQL — brak API POST; wpisy: POST /api/ledger) ----------
-async function seedLedger(env, cookie, actorUserId) {
+async function seedLedger(env, cookie, actorUserId, payments) {
   // SQL — brak API: GET /api/ledger/categories istnieje, ale nie ma odpowiednika
   // POST (docs/NODE_SERVER.md, src/pg/routes/ledger.js). Tak samo robią testy
   // (tests/pg-authz-matrix.test.js).
@@ -399,11 +432,22 @@ async function seedLedger(env, cookie, actorUserId) {
   ];
   await insertRows(env.db, 'ledger_categories', ['id', 'school_year_id', 'direction', 'name', 'created_by'], categories);
 
+  // Każda wpłata przypisana do rodziny ma powiązany wpis księgi (paymentEntryId) o tej
+  // samej kwocie i metodzie — inaczej raport roczny i raport Komisji Rewizyjnej
+  // („wpłaty ujęte w księdze”) pokazywałyby rozbieżność. Wpłata nieprzypisana
+  // (UNASSIGNED_PAYMENT) celowo NIE ma wpisu księgi — zob. docs/DEMO.md.
+  // Gotówka ze składek (4 wpłaty „cash”, 180,00 EUR) jest wydana na poczęstunek
+  // (180,00 EUR), więc saldo kasy = 0 (nie ujemne), a saldo księgi pokrywa się z saldem rachunku
+  // i uzgodnienie wyciągu nie musi tłumaczyć gotówki poza rachunkiem.
   const entries = [
-    { direction: 'income', categoryId: 'cat-income-skladki', amountCents: 45000, description: 'Wpłaty składek — zestawienie za październik (dane przykładowe)', occurredOn: '2026-10-31', method: 'bank' },
+    ...payments.map((payment) => ({
+      direction: 'income', categoryId: 'cat-income-skladki', amountCents: payment.amountCents,
+      description: 'Wpłata składki dobrowolnej (dane przykładowe)', occurredOn: payment.receivedOn,
+      method: payment.method, paymentEntryId: payment.id,
+    })),
     { direction: 'income', categoryId: 'cat-income-darowizny', amountCents: 20000, description: 'Darowizna na cele statutowe Rady (dane przykładowe)', occurredOn: '2026-11-10', method: 'bank' },
-    { direction: 'expense', categoryId: 'cat-expense-materialy', amountCents: 15000, description: 'Materiały plastyczne na zajęcia dodatkowe (dane przykładowe)', occurredOn: '2026-11-05', method: 'card' },
-    { direction: 'expense', categoryId: 'cat-expense-wydarzenia', amountCents: 25000, description: 'Poczęstunek na spotkanie andrzejkowe (dane przykładowe)', occurredOn: '2026-11-25', method: 'cash' },
+    { direction: 'expense', categoryId: 'cat-expense-materialy', amountCents: 15000, description: 'Materiały plastyczne na zajęcia dodatkowe (dane przykładowe)', occurredOn: '2026-11-05', method: 'bank' },
+    { direction: 'expense', categoryId: 'cat-expense-wydarzenia', amountCents: 18000, description: 'Poczęstunek na spotkanie andrzejkowe (dane przykładowe)', occurredOn: '2026-11-25', method: 'cash' },
     { direction: 'expense', categoryId: 'cat-expense-oplaty', amountCents: 1200, description: 'Opłata za prowadzenie rachunku Rady (dane przykładowe)', occurredOn: '2026-12-01', method: 'bank' },
   ];
   for (const entry of entries) {
@@ -571,22 +615,23 @@ export async function runDemoSeed({
     });
     const representative = await createDemoAccount(env, {
       email: 'przedstawiciel@example.invalid', displayName: 'Przedstawiciel klasy 0-A (demo)', role: 'representative',
-      classId: roster.classes[0][0], adminCookie: admin.cookie, enrollMfa: false,
+      classId: roster.classes[0][0], adminCookie: admin.cookie, enrollMfa: true,
     });
     const audit = await createDemoAccount(env, {
       email: 'komisja-rewizyjna@example.invalid', displayName: 'Komisja Rewizyjna (demo)', role: 'audit',
-      schoolYearId: SCHOOL_YEAR_ID, adminCookie: admin.cookie, enrollMfa: false,
+      schoolYearId: SCHOOL_YEAR_ID, adminCookie: admin.cookie, enrollMfa: true,
     });
     const accounts = [admin, board1, board2, treasurer, representative, audit];
     log(`Konta demo utworzone: ${accounts.map((a) => a.role).join(', ')}.`);
 
-    const paymentsCreated = await seedPayments(env, treasurer.cookie, roster);
-    log(`Wpłaty: ${paymentsCreated} wpisów (częściowe i pełne, bez statusu „dłużnik”).`);
+    const { payments, unassignedPaymentId } = await seedPayments(env, treasurer.cookie, roster);
+    const paymentsCreated = payments.length + 1;
+    log(`Wpłaty: ${paymentsCreated} wpisów (częściowe i pełne, w tym 1 celowo nieprzypisana; bez statusu „dłużnik”).`);
 
-    const ledgerCreated = await seedLedger(env, treasurer.cookie, treasurer.userId);
-    log(`Księga: ${ledgerCreated} wpisów.`);
+    const ledgerCreated = await seedLedger(env, treasurer.cookie, treasurer.userId, payments);
+    log(`Księga: ${ledgerCreated} wpisów (wpłaty rodzin ujęte w księdze).`);
 
-    const reconciliation = await seedReconciliation(env, treasurer.cookie);
+    const reconciliation = await seedReconciliation(env, treasurer.cookie, payments);
     log(`Uzgodnienie wyciągu: ${reconciliation.reconciliationId}, ${reconciliation.lineCount} pozycji zaimportowanych (SZKIC, nie zatwierdzony).`);
 
     const eventsPublished = await seedEvents(env, admin.cookie, board1.cookie);
@@ -616,7 +661,7 @@ export async function runDemoSeed({
     log(`Aktualności: wpis ${newsId} opublikowany.`);
 
     return {
-      mode, accounts, roster, meeting, campaignId, newsId, reconciliation,
+      mode, accounts, roster, meeting, campaignId, newsId, reconciliation, unassignedPaymentId,
       counts: { payments: paymentsCreated, ledger: ledgerCreated, events: eventsPublished },
       // Tylko gdy keepOpen: true (testy) — env.db zostaje otwarty, wywołujący
       // odpowiada za close(). W zwykłym użyciu (CLI, demo:seed) undefined.
@@ -638,7 +683,7 @@ function printCredentials(accounts) {
   console.log('=== Konta demo — WYŁĄCZNIE do lokalnego pokazu, hasła nigdzie indziej nie są zapisane ===');
   console.log('Nie używać tych kont ani haseł poza lokalnym środowiskiem demo. Nie wysyłać ich e-mailem.');
   for (const account of accounts) {
-    const mfaNote = account.mfaSecret ? `sekret TOTP (base32): ${account.mfaSecret}` : 'MFA nieskonfigurowane (rola bez wymogu)';
+    const mfaNote = account.mfaSecret ? `sekret TOTP (base32): ${account.mfaSecret}` : 'MFA nieskonfigurowane';
     console.log(`- ${account.role.padEnd(14)} ${account.email.padEnd(32)} hasło: ${account.password}   ${mfaNote}`);
   }
   console.log('==========================================================================================');
