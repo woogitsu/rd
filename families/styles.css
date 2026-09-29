@@ -58,3 +58,4 @@ dialog form{display:grid;gap:15px;padding:24px}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 /* Tryb wysokiego kontrastu Windows (#112). */
 @media(forced-colors:active){.site-header nav .active{text-decoration:underline;border-bottom:2px solid CanvasText}}
+.export-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0}
