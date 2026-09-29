@@ -2060,41 +2060,7 @@ export async function buildAuditReport(executor, schoolYearId) {
   // #107: preliminarz (przyjęty i bieżący) a wykonanie netto per kategoria.
   const budgetExecution = await buildBudgetExecution(executor, schoolYearId);
 
-  // Widok z 0009_meetings.sql; bez niego zgodność z uchwałą pozostaje niesprawdzona.
-  const linksView = (await executor.query("SELECT to_regclass('ledger_resolution_links') IS NOT NULL AS present")).rows[0];
-  const hasLinks = Boolean(linksView?.present);
-  const largeExpenses = (await executor.query(
-    `SELECT e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.amount_cents, e.net_amount_cents,
-            e.description, c.name AS category, e.resolution_reference,
-            ${hasLinks ? 'link.resolution_id' : 'NULL::text AS resolution_id'},
-            le.resolution_id AS explicit_resolution_id, explicit.status AS explicit_status
-       FROM ledger_entry_net e
-       JOIN ledger_categories c ON c.id = e.category_id
-       JOIN ledger_entries le ON le.id = e.id
-       -- #93: jawne powiązanie (resolution_id) — stan bieżącej rewizji uchwały.
-       LEFT JOIN LATERAL (
-         SELECT rs.status FROM resolution_spending rs
-          WHERE le.resolution_id IN (SELECT resolution_chain_ids(rs.resolution_id)) LIMIT 1
-       ) explicit ON le.resolution_id IS NOT NULL
-       ${hasLinks ? 'LEFT JOIN ledger_resolution_links link ON link.ledger_entry_id = e.id' : ''}
-      WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.amount_cents > $2
-      ORDER BY e.occurred_on, e.id`,
-    [schoolYearId, LARGE_EXPENSE_CENTS],
-  )).rows.map((row) => ({
-    id: row.id,
-    occurredOn: row.occurred_on,
-    amountCents: toSafeInteger(row.amount_cents),
-    netAmountCents: toSafeInteger(row.net_amount_cents),
-    description: row.description,
-    category: row.category,
-    resolutionReference: row.resolution_reference ?? null,
-    resolutionId: row.explicit_resolution_id ?? row.resolution_id ?? null,
-    // #93: 'explicit' = wskazana przy zapisie (resolution_id), 'text' = dopasowanie po numerze.
-    resolutionLink: row.explicit_resolution_id ? 'explicit' : 'text',
-    matchesAdoptedResolution: row.explicit_resolution_id ? row.explicit_status === 'adopted'
-      : (hasLinks ? Boolean(row.resolution_id) : null),
-    flagged: row.explicit_resolution_id ? row.explicit_status !== 'adopted' : !row.resolution_id,
-  }));
+  const largeExpenses = await buildLargeExpenses(executor, schoolYearId);
 
   const evidence = await buildEvidenceSection(executor, schoolYearId);
 
@@ -2240,6 +2206,46 @@ export async function buildAuditReport(executor, schoolYearId) {
   };
 }
 
+// Wydatki powyżej progu 3000 EUR wraz z powiązaniem z uchwałą (raport KR, #93; lista
+// kontrolna zamknięcia roku, #80 — tylko liczby). Jedno źródło reguły „flagged”.
+export async function buildLargeExpenses(executor, schoolYearId) {
+  // Widok z 0009_meetings.sql; bez niego zgodność z uchwałą pozostaje niesprawdzona.
+  const linksView = (await executor.query("SELECT to_regclass('ledger_resolution_links') IS NOT NULL AS present")).rows[0];
+  const hasLinks = Boolean(linksView?.present);
+  return (await executor.query(
+    `SELECT e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.amount_cents, e.net_amount_cents,
+            e.description, c.name AS category, e.resolution_reference,
+            ${hasLinks ? 'link.resolution_id' : 'NULL::text AS resolution_id'},
+            le.resolution_id AS explicit_resolution_id, explicit.status AS explicit_status
+       FROM ledger_entry_net e
+       JOIN ledger_categories c ON c.id = e.category_id
+       JOIN ledger_entries le ON le.id = e.id
+       -- #93: jawne powiązanie (resolution_id) — stan bieżącej rewizji uchwały.
+       LEFT JOIN LATERAL (
+         SELECT rs.status FROM resolution_spending rs
+          WHERE le.resolution_id IN (SELECT resolution_chain_ids(rs.resolution_id)) LIMIT 1
+       ) explicit ON le.resolution_id IS NOT NULL
+       ${hasLinks ? 'LEFT JOIN ledger_resolution_links link ON link.ledger_entry_id = e.id' : ''}
+      WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.amount_cents > $2
+      ORDER BY e.occurred_on, e.id`,
+    [schoolYearId, LARGE_EXPENSE_CENTS],
+  )).rows.map((row) => ({
+    id: row.id,
+    occurredOn: row.occurred_on,
+    amountCents: toSafeInteger(row.amount_cents),
+    netAmountCents: toSafeInteger(row.net_amount_cents),
+    description: row.description,
+    category: row.category,
+    resolutionReference: row.resolution_reference ?? null,
+    resolutionId: row.explicit_resolution_id ?? row.resolution_id ?? null,
+    // #93: 'explicit' = wskazana przy zapisie (resolution_id), 'text' = dopasowanie po numerze.
+    resolutionLink: row.explicit_resolution_id ? 'explicit' : 'text',
+    matchesAdoptedResolution: row.explicit_resolution_id ? row.explicit_status === 'adopted'
+      : (hasLinks ? Boolean(row.resolution_id) : null),
+    flagged: row.explicit_resolution_id ? row.explicit_status !== 'adopted' : !row.resolution_id,
+  }));
+}
+
 // #87: dowody wydatków dla Komisji Rewizyjnej. Liczą się wydatki z netto > 0
 // (wpis skorygowany do zera, np. storno przy przeksięgowaniu, nie wymaga już
 // dowodu). Dowodem jest dokument główny (source_document_id) albo dokument
@@ -2247,7 +2253,7 @@ export async function buildAuditReport(executor, schoolYearId) {
 // plik (sha256; dla wierszy bez skrótu — ten sam dokument) przy więcej niż
 // jednym wydatku — informacja do sprawdzenia, nie zarzut. Numer faktury i
 // wystawca (tabela ledger_entry_evidence z #87) wymagają osobnej migracji.
-async function buildEvidenceSection(executor, schoolYearId) {
+export async function buildEvidenceSection(executor, schoolYearId) {
   const evidenceCte = `WITH expense AS (
       SELECT e.id, e.occurred_on, e.description, e.net_amount_cents, e.category_id
         FROM ledger_entry_net e
