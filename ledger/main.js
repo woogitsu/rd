@@ -8,6 +8,7 @@ import {
   buildCostCentersUrl,
   buildOverviewUrl,
   costCenterRows,
+  buildResolutionsUrl,
   formatCents,
   isValidId,
   ledgerFilterChanged,
@@ -16,6 +17,8 @@ import {
   needsResolution,
   normalizeEntry,
   parseEuroAmount,
+  resolutionLimitInfo,
+  resolutionOptionLabel,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
@@ -30,7 +33,7 @@ let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const FILTER_KEYS = ["schoolYearId", "direction"];
-const state = { entries: [], categories: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
+const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -219,16 +222,20 @@ async function loadOverview({ reload = false } = {}) {
   setBusy(true);
   try {
     const year = query.schoolYearId;
-    const [summaryData, budgetData, categoriesData, costCentersData] = await Promise.all([
+    const [summaryData, budgetData, categoriesData, costCentersData, resolutionsData] = await Promise.all([
       api(buildOverviewUrl("summary", year)),
       api(buildOverviewUrl("budget/execution", year)),
       api(buildOverviewUrl("categories", year)),
       // Widok pomocniczy: jego błąd nie blokuje podglądu księgi.
       api(buildCostCentersUrl(year)).catch((error) => ({ error })),
+      // Lista uchwał jest pomocnicza: jej błąd nie blokuje podglądu księgi.
+      api(buildResolutionsUrl(year)).catch((error) => ({ error })),
       loadEntries({ query }),
     ]);
     state.query = query;
     state.categories = Array.isArray(categoriesData.categories) ? categoriesData.categories : [];
+    state.resolutions = Array.isArray(resolutionsData?.resolutions) ? resolutionsData.resolutions : [];
+    state.resolutionsError = resolutionsData?.error ? resolutionsData.error.message : "";
     renderSummary(summaryData.summary ?? {});
     renderCostCenters(costCentersData?.report ?? null, costCentersData?.error ? costCentersData.error.message : "");
     byId("events-csv").href = buildCostCentersUrl(year, "csv");
@@ -377,8 +384,9 @@ function configureDialog(id, prefix, submit, successText, describeConfirm) {
 const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) => {
   const amountCents = parseEuroAmount(data.get("amount"));
   const direction = String(data.get("direction"));
-  const resolutionReference = String(data.get("resolutionReference") || "").trim();
-  if (needsResolution(direction, amountCents) && !resolutionReference) throw new Error("Dla tego wydatku podaj referencję uchwały.");
+  const resolutionId = direction === "expense" ? String(data.get("resolutionId") || "").trim() : "";
+  if (needsResolution(direction, amountCents) && !resolutionId) throw new Error("Dla tego wydatku wybierz uchwałę z listy.");
+  if (resolutionId && !isValidId(resolutionId)) throw new Error("Niepoprawny identyfikator uchwały.");
   const sourceDocumentId = String(data.get("sourceDocumentId") || "").trim();
   if (sourceDocumentId && !isValidId(sourceDocumentId)) throw new Error("Niepoprawny identyfikator dokumentu.");
   const evidenceFile = data.get("evidenceFile");
@@ -393,7 +401,7 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
       occurredOn: String(data.get("occurredOn")), method: String(data.get("method")),
       source: String(data.get("source") || "") || null,
       sourceDocumentId: sourceDocumentId || null,
-      resolutionReference: resolutionReference || null,
+      resolutionId: resolutionId || null,
     }),
   });
   // #87: dowód dołączany po zapisie wpisu, z kluczem pochodnym od klucza wpisu —
@@ -472,13 +480,41 @@ function updateResolutionField() {
   const form = entryDialog.form;
   let amount = 0;
   try { amount = parseEuroAmount(form.elements.amount.value); } catch {}
+  const isExpense = form.elements.direction.value === "expense";
   const required = needsResolution(form.elements.direction.value, amount);
-  byId("resolution-field").hidden = !required;
-  form.elements.resolutionReference.required = required;
+  const select = form.elements.resolutionId;
+  const previous = select.value;
+  // Uchwałę można wskazać przy każdym wydatku (upoważnienie kwotowe); wymagana powyżej progu.
+  byId("resolution-field").hidden = !isExpense;
+  byId("resolution-hint").hidden = !isExpense;
+  select.required = required;
+  const placeholder = document.createElement("option");
+  placeholder.value = ""; placeholder.textContent = required ? "Wybierz uchwałę" : "Bez uchwały";
+  const options = state.resolutions.map((item) => {
+    const option = document.createElement("option"); option.value = item.id; option.textContent = resolutionOptionLabel(item); return option;
+  });
+  select.replaceChildren(placeholder, ...options);
+  if (state.resolutions.some((item) => item.id === previous)) select.value = previous;
+  const hint = byId("resolution-hint");
+  const chosen = state.resolutions.find((item) => item.id === select.value);
+  if (chosen) {
+    const info = resolutionLimitInfo(chosen, amount, form.elements.occurredOn.value);
+    hint.textContent = info.text;
+    hint.classList.toggle("warning", info.exceeded || info.expired);
+  } else {
+    hint.classList.remove("warning");
+    hint.textContent = state.resolutionsError
+      ? `Nie udało się pobrać listy uchwał: ${state.resolutionsError}`
+      : required && state.resolutions.length === 0
+        ? "Brak przyjętych uchwał zebrań ogólnych w tym i poprzednim roku. Uchwałę wpisuje zarząd w rejestrze uchwał."
+        : "Wymagana dla wydatku powyżej 3000 EUR. Na liście są przyjęte uchwały zebrań ogólnych z tego i poprzedniego roku.";
+  }
 }
 
 entryDialog.form.elements.direction.addEventListener("change", () => { updateCategories(); updateResolutionField(); });
 entryDialog.form.elements.amount.addEventListener("input", updateResolutionField);
+entryDialog.form.elements.occurredOn.addEventListener("input", updateResolutionField);
+entryDialog.form.elements.resolutionId.addEventListener("change", updateResolutionField);
 byId("open-entry").addEventListener("click", () => {
   if (!state.query || filterChanged()) return;
   entryDialog.form.elements.schoolYearId.value = state.query.schoolYearId;

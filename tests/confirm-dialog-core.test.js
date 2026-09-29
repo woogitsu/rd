@@ -1,6 +1,5 @@
 // Testy czystych funkcji wspólnego okna potwierdzenia (issue #136).
-// confirmAction (DOM, <dialog>) nie jest testowany tu jednostkowo — jak main.js
-// pozostałych paneli w tym repozytorium; patrz komentarz w shared/confirm-dialog.js.
+// confirmAction (DOM, <dialog>) testuje tests/e2e/confirm-dialog.spec.js (Playwright).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildEffectsHtml } from '../shared/confirm-dialog.js';

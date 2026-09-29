@@ -59,10 +59,73 @@ test('buildEventComponent has a stable UID across revisions and no ORGANIZER/ema
   assert.ok(!lines.join('\n').includes('mailto'));
 });
 
-test('DTSTART/DTEND use Europe/Brussels TZID, not raw UTC', () => {
+test('DTSTART/DTEND are emitted in UTC (Z), without TZID', () => {
   const lines = buildEventComponent(sampleEvent());
-  assert.ok(lines.some((l) => l === 'DTSTART;TZID=Europe/Brussels:20261112T183000'));
-  assert.ok(lines.some((l) => l === 'DTEND;TZID=Europe/Brussels:20261112T200000'));
+  assert.ok(lines.some((l) => l === 'DTSTART:20261112T173000Z'));
+  assert.ok(lines.some((l) => l === 'DTEND:20261112T190000Z'));
+  assert.ok(!lines.join('\n').includes('TZID'));
+});
+
+function dt(lines, name) {
+  return lines.find((l) => l.startsWith(`${name}:`))?.slice(name.length + 1);
+}
+
+test('29.03.2026: brak godziny 02:00-02:59, 01:59 CET i 03:00 CEST dzieli 1 minuta UTC', () => {
+  // 01:59 CET = 00:59Z; 03:00 CEST = 01:00Z; lokalnie 02:xx nie istnieje.
+  const lines = buildEventComponent(sampleEvent({
+    startsAtUtc: new Date('2026-03-29T00:59:00Z'),
+    endsAtUtc: new Date('2026-03-29T01:00:00Z'),
+  }));
+  assert.equal(dt(lines, 'DTSTART'), '20260329T005900Z');
+  assert.equal(dt(lines, 'DTEND'), '20260329T010000Z');
+});
+
+test('25.10.2026: powtórzona godzina 02:30 (CEST i CET) daje dwa różne, jednoznaczne czasy UTC', () => {
+  const cest = new Date('2026-10-25T02:30:00+02:00'); // pierwsze 02:30
+  const cet = new Date('2026-10-25T02:30:00+01:00'); // drugie 02:30
+  const a = buildEventComponent(sampleEvent({ startsAtUtc: cest, endsAtUtc: cet }));
+  assert.equal(dt(a, 'DTSTART'), '20261025T003000Z');
+  assert.equal(dt(a, 'DTEND'), '20261025T013000Z');
+  assert.notEqual(dt(a, 'DTSTART'), dt(a, 'DTEND'));
+});
+
+test('wydarzenie przez zmianę czasu (25.10.2026 01:30 CEST -> 03:30 CET) zachowuje rzeczywisty odstęp 3 h', () => {
+  const lines = buildEventComponent(sampleEvent({
+    startsAtUtc: new Date('2026-10-25T01:30:00+02:00'),
+    endsAtUtc: new Date('2026-10-25T03:30:00+01:00'),
+  }));
+  assert.equal(dt(lines, 'DTSTART'), '20261024T233000Z');
+  assert.equal(dt(lines, 'DTEND'), '20261025T023000Z');
+});
+
+test('DTSTAMP, DTSTART i DTEND przyjmują też ciągi ISO, a niepoprawna data jest odrzucona', () => {
+  const lines = buildEventComponent(sampleEvent({ startsAtUtc: '2026-07-01T10:00:00.000Z', dtstamp: '2026-06-01T08:00:00Z' }));
+  assert.equal(dt(lines, 'DTSTART'), '20260701T100000Z');
+  assert.equal(dt(lines, 'DTSTAMP'), '20260601T080000Z');
+  assert.throws(() => buildEventComponent(sampleEvent({ startsAtUtc: 'nie-data' })), RangeError);
+});
+
+test('UID jest stały przy zmianie treści i SEQUENCE', () => {
+  const uid = (e) => buildEventComponent(e).find((l) => l.startsWith('UID:'));
+  assert.equal(uid(sampleEvent({ sequence: 1 })), uid(sampleEvent({ sequence: 5, title: 'Inny tytuł' })));
+});
+
+test('żadna linia całego kalendarza nie przekracza 75 oktetów, a rozwinięcie zwraca oryginał', () => {
+  const description = 'Zażółć gęślą jaźń; długi, opis. '.repeat(20);
+  const ics = buildCalendar([sampleEvent({ description, title: 'Ż'.repeat(80) })]);
+  for (const physical of ics.split('\r\n')) {
+    assert.ok(new TextEncoder().encode(physical).length <= 75, `za długa linia: ${physical.length}`);
+  }
+  const unfolded = ics.replace(/\r\n /g, '');
+  assert.ok(unfolded.includes(`DESCRIPTION:${escapeText(description)}`));
+  assert.ok(unfolded.includes(`SUMMARY:${'Ż'.repeat(80)}`));
+});
+
+test('kanał publiczny nie zawiera pól osobowych (ORGANIZER, ATTENDEE, mailto)', () => {
+  const ics = buildCalendar([sampleEvent({ organizer: 'Rada Rodziców' })]);
+  for (const forbidden of ['ORGANIZER', 'ATTENDEE', 'mailto']) {
+    assert.equal(ics.includes(forbidden), false, forbidden);
+  }
 });
 
 test('an event with no ends_at has no DTEND', () => {
@@ -76,11 +139,11 @@ test('cancelled events use STATUS:CANCELLED and carry no cancellation reason fie
   assert.ok(!lines.join('\n').toUpperCase().includes('REASON'));
 });
 
-test('buildCalendar wraps events in VCALENDAR/VTIMEZONE with CRLF line endings', () => {
+test('buildCalendar wraps events in VCALENDAR (UTC, bez VTIMEZONE) with CRLF line endings', () => {
   const ics = buildCalendar([sampleEvent()], { uidDomain: 'rd.example.invalid' });
   assert.ok(ics.startsWith('BEGIN:VCALENDAR\r\n'));
-  assert.ok(ics.includes('BEGIN:VTIMEZONE\r\n'));
-  assert.ok(ics.includes('TZID:Europe/Brussels\r\n'));
+  assert.equal(ics.includes('VTIMEZONE'), false);
+  assert.equal(ics.includes('TZID'), false);
   assert.ok(ics.endsWith('END:VCALENDAR\r\n'));
   assert.equal(ics.includes('\n\n'), false);
   // Every line must be CRLF-terminated (no lone LF).

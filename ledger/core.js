@@ -57,6 +57,44 @@ export function costCenterRows(report) {
   };
 }
 
+// #93: lista uchwał do wyboru zamiast wolnego tekstu (GET /api/ledger/resolutions — numer,
+// tytuł, kwoty; bez treści uchwały, D-09).
+export function buildResolutionsUrl(schoolYearId) {
+  if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
+  return `/api/ledger/resolutions?${new URLSearchParams({ schoolYearId: schoolYearId.trim() })}`;
+}
+
+// Opis pozycji listy uchwał; kwoty w centach EUR. Brak upoważnienia kwotowego to
+// „bez limitu kwoty” (D-15, wariant zachowawczy: kwota opcjonalna), nie limit zerowy.
+export function resolutionOptionLabel(item) {
+  const number = String(item?.number ?? "").trim() || "bez numeru";
+  const title = String(item?.title ?? "").trim();
+  const remaining = Number.isSafeInteger(item?.remainingCents) ? `pozostało ${formatCents(item.remainingCents)}` : "bez limitu kwoty";
+  return `${number}${title ? ` — ${title}` : ""} (${remaining})`;
+}
+
+// Limit upoważnienia wybranej uchwały względem kwoty wydatku. Serwer i tak
+// rozstrzyga (409 resolution_amount_exceeded/expired); to podpowiedź przed zapisem.
+export function resolutionLimitInfo(item, amountCents, occurredOn = "") {
+  if (!item) return { text: "", exceeded: false, expired: false };
+  const parts = [];
+  const hasLimit = Number.isSafeInteger(item.authorizedAmountCents);
+  if (hasLimit) {
+    parts.push(`Upoważnienie: ${formatCents(item.authorizedAmountCents)}`);
+    parts.push(`wykorzystano ${formatCents(Number(item.spentNetCents) || 0)}`);
+    parts.push(`pozostało ${formatCents(Number(item.remainingCents) || 0)}`);
+  } else {
+    parts.push("Uchwała nie określa kwoty upoważnienia");
+  }
+  if (item.validUntil) parts.push(`ważne do ${item.validUntil}`);
+  const exceeded = hasLimit && Number.isSafeInteger(amountCents) && amountCents > Number(item.remainingCents);
+  const expired = Boolean(item.validUntil && occurredOn && occurredOn > item.validUntil);
+  let text = parts.join(", ") + ".";
+  if (exceeded) text += " Kwota wydatku przekracza pozostałą kwotę upoważnienia — zapis zostanie odrzucony.";
+  if (expired) text += " Data wydatku jest późniejsza niż termin upoważnienia — zapis zostanie odrzucony.";
+  return { text, exceeded, expired };
+}
+
 export function buildLedgerUrl({ schoolYearId, direction = "", cursor = "", limit = 50 }) {
   if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
   if (direction && !Object.hasOwn(DIRECTION_LABELS, direction)) throw new Error("Nieznany rodzaj wpisu.");
