@@ -48,6 +48,9 @@ export const PANELS = Object.freeze([
   // src/pg/routes/exports.js YEARLY_EXPORT_ROLES (admin, board) + ROSTER_ROLES
   // (representative — wyłącznie lista własnej klasy; serwer weryfikuje klasę i MFA).
   { id: "data-export", href: "/data-export/", label: "Eksport", roles: ["admin", "board", "representative"] },
+  // src/pg/news.js NEWS_POLICY (suma draftSchoolWide, draftClass, review). Przedstawiciel
+  // widzi wyłącznie wpisy własnej klasy — zakres egzekwuje serwer.
+  { id: "news", href: "/news/", label: "Aktualności", roles: ["admin", "board", "representative"] },
   // wyłącznie admin (docs/AUTHORIZATION.md: „wyłącznie admin”).
   { id: "admin", href: "/admin/", label: "Konta i role", roles: ["admin"] },
 ]);
