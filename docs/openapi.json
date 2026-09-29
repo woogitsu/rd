@@ -16277,6 +16277,7 @@
           "budget_line_exists",
           "budget_line_not_found",
           "budget_line_superseded",
+          "business_rule_violation",
           "campaign_audience_locked",
           "campaign_locked",
           "campaign_not_draft",
@@ -16799,6 +16800,11 @@
         "code": "budget_line_superseded",
         "meaning": "Ta wersja linii preliminarza została już zmieniona. Odśwież widok i zmień aktualną wersję.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "business_rule_violation",
+        "meaning": "Operacja jest niezgodna z aktualnym stanem danych (np. wpis jest zablokowany lub zatwierdzony). Odśwież widok i sprawdź stan.",
+        "retry": "Nie automatycznie — najpierw odśwież widok i sprawdź stan (odmowa reguły biznesowej z triggera bazy)."
       },
       {
         "code": "campaign_audience_locked",
