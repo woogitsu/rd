@@ -66,6 +66,14 @@ export function yearChoices(grants, extra = [], now = new Date()) {
   return years.sort((a, b) => b.localeCompare(a));
 }
 
+// Stan listy roku dla paneli Wpłaty i Księga (przegląd demo): lata z przydziałów,
+// a gdy przydział nie ma roku (admin o zasięgu globalnym) — rok z heurystyki daty,
+// tak jak w pozostałych panelach. `restored` to rok z adresu (jeśli jest na liście).
+export function panelYearState(grants, restored = "", now = new Date()) {
+  const years = yearChoices(grants, [], now);
+  return { years, year: defaultYear(years, restored) };
+}
+
 // Wypełnia <select> latami i zwraca wybrany rok (poprzedni, jeśli jest na liście).
 export function fillYearSelect(select, grants, { value = "", now } = {}) {
   const years = yearChoices(grants, value ? [value] : [], now);

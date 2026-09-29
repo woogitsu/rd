@@ -8,9 +8,11 @@ import {
   parseInputBytes,
   parseInputRows,
   renderCardsHtml,
+  schoolYearCardLabel,
 } from "./core.js";
 import { describeSource } from "../import/csv.js";
 import { api as apiRequest } from "../shared/api.js";
+import { fillYearSelect } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -59,29 +61,66 @@ const API_ERRORS = {
   too_many_rows: "Za dużo wierszy — wybierz klasę.",
 };
 
+// Rok i klasa to listy wyboru (jak w Wpłatach): lata z przydziałów konta (/api/access),
+// klasy z /api/classes dla wybranego roku. Serwer i tak sprawdza zakres każdego żądania.
 function createApiControls() {
   const anchor = fileMessage;
   const wrapper = document.createElement("div");
   wrapper.className = "toolbar";
-  const field = (labelText, name, placeholder) => {
+  const field = (labelText, name) => {
     const label = document.createElement("label");
     label.textContent = labelText;
-    const input = document.createElement("input");
-    input.type = "text";
-    input.name = name;
-    input.placeholder = placeholder;
-    input.autocomplete = "off";
-    label.append(input);
-    return { label, input };
+    const select = document.createElement("select");
+    select.name = name;
+    label.append(select);
+    return { label, select };
   };
-  const year = field("Rok szkolny (ID)", "apiSchoolYearId", "np. 2026-2027");
-  const klass = field("Klasa (ID, opcjonalnie dla zarządu)", "apiClassId", "np. 1a");
+  const year = field("Rok szkolny", "apiSchoolYearId");
+  const klass = field("Klasa", "apiClassId");
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = "Wczytaj z serwera";
   wrapper.append(year.label, klass.label, button);
   anchor.before(wrapper);
-  return { yearInput: year.input, classInput: klass.input, button };
+  return { yearInput: year.select, classInput: klass.select, button };
+}
+
+// Pole „Rok szkolny” treści kartki wypełniane z wybranego roku (2026-2027 → 2026/2027),
+// dopóki użytkownik nie zmienił formularza treści ręcznie.
+function syncCardYear() {
+  if (state.configTouched) return;
+  const label = schoolYearCardLabel(api.yearInput.value);
+  if (label) configForm.elements.schoolYear.value = label;
+}
+
+async function loadClassOptions() {
+  const schoolYearId = api.yearInput.value;
+  const select = api.classInput;
+  select.replaceChildren(new Option("Wszystkie klasy (zarząd)", ""));
+  if (!schoolYearId) return;
+  try {
+    const params = new URLSearchParams({ schoolYearId });
+    const data = await apiRequest(`/api/classes?${params}`, { cache: "no-store", messages: API_ERRORS });
+    if (api.yearInput.value !== schoolYearId) return;
+    for (const item of Array.isArray(data?.classes) ? data.classes : []) {
+      select.append(new Option(item.name, item.id));
+    }
+  } catch {
+    // Brak listy klas nie blokuje wczytania całego roku (zarząd); serwer oceni zakres.
+  }
+}
+
+async function initApiControls() {
+  let grants = [];
+  try {
+    const access = await apiRequest("/api/access", { cache: "no-store", messages: API_ERRORS });
+    grants = Array.isArray(access?.grants) ? access.grants : [];
+  } catch {
+    // Bez przydziałów lista zawiera rok z daty; serwer i tak autoryzuje żądanie.
+  }
+  fillYearSelect(api.yearInput, grants);
+  syncCardYear();
+  await loadClassOptions();
 }
 
 async function loadFromApi(schoolYearId, classId) {
@@ -312,10 +351,10 @@ let apiLoading = false;
 
 async function handleApiLoad() {
   if (apiLoading) return;
-  const schoolYearId = api.yearInput.value.trim();
-  const classId = api.classInput.value.trim();
+  const schoolYearId = api.yearInput.value;
+  const classId = api.classInput.value;
   if (!schoolYearId) {
-    fileMessage.textContent = "Podaj identyfikator roku szkolnego.";
+    fileMessage.textContent = "Wybierz rok szkolny.";
     return;
   }
   apiLoading = true;
@@ -345,6 +384,11 @@ async function handleApiLoad() {
 }
 
 api.button.addEventListener("click", handleApiLoad);
+api.yearInput.addEventListener("change", () => {
+  syncCardYear();
+  renderPreview();
+  loadClassOptions();
+});
 fileInput.addEventListener("change", () => handleFile(fileInput.files?.[0]));
 fileEncoding.addEventListener("change", () => {
   if (fileInput.files?.[0]) handleFile(fileInput.files[0]);
@@ -386,4 +430,5 @@ printButton.addEventListener("click", () => {
   window.print();
 });
 
+initApiControls().then(renderPreview);
 renderPreview();

@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { sha256Hex } from '../storage.js';
 import { decryptEnvelope, encryptEnvelope } from '../backup-crypto.js';
+import { compareRestoreReports } from './restore-report.js';
 
 function backupError(code, extra) {
   return Object.assign(new Error(code), { code, ...extra });
@@ -39,7 +40,7 @@ export async function recordBackupRun(db, {
 
 export async function latestSuccessfulBackupRun(db, kind = 'backup') {
   const { rows } = await db.query(
-    `SELECT id, object_key, size_bytes, sha256, finished_at FROM backup_runs
+    `SELECT id, object_key, size_bytes, sha256, finished_at, row_counts, sums FROM backup_runs
      WHERE kind = $1 AND result = 'success' ORDER BY finished_at DESC LIMIT 1`,
     [kind],
   );
@@ -60,13 +61,19 @@ export async function runBackup({
 
   const startedAt = now();
   try {
-    const plaintext = await dump();
+    // `dump()` zwraca Buffer albo { plaintext, report } — raport (liczności i
+    // sumy z tej samej migawki co zrzut) trafia do dziennika jako punkt
+    // odniesienia dla próby odtworzenia.
+    const dumped = await dump();
+    const plaintext = Buffer.isBuffer(dumped) ? dumped : dumped.plaintext;
+    const report = Buffer.isBuffer(dumped) ? null : dumped.report ?? null;
     const envelope = encryptEnvelope(plaintext, encryptPublicKeyPem);
     const sha256 = sha256Hex(envelope);
     await storage.putObject(objectKey, envelope, 'application/octet-stream');
     await recordBackupRun(db, {
       kind, environment, startedAt, finishedAt: now(), result: 'success',
       objectKey, sizeBytes: envelope.length, sha256,
+      rowCounts: report?.rowCounts ?? null, sums: report?.sums ?? null,
     });
     return { skipped: false, objectKey, sha256, sizeBytes: envelope.length };
   } catch (error) {
@@ -101,6 +108,17 @@ export async function runRestoreDrill({
     const pendingMigrations = await migrateTarget();
     if (pendingMigrations && pendingMigrations.length) throw backupError('restore_migrations_pending', { pending: pendingMigrations });
     const report = await reportQuery();
+
+    // Punkt odniesienia: raport z chwili zrzutu (backup_runs.row_counts/sums).
+    // Niezgodność = błąd próby (kod ≠ 0), a nie „sukces z niepełnymi danymi”.
+    // Kopia bez raportu (sprzed tej zmiany) nie ma z czym się porównać — próba
+    // jest wtedy oznaczona `comparison: 'no_baseline'`, nigdy „zgodna”.
+    const baseline = latest.row_counts && latest.sums ? { rowCounts: latest.row_counts, sums: latest.sums } : null;
+    if (baseline) {
+      const differences = compareRestoreReports(baseline, report);
+      if (differences.length) throw backupError('restore_report_mismatch', { differences });
+    }
+    report.comparison = baseline ? 'matched' : 'no_baseline';
 
     await recordBackupRun(db, {
       kind: 'restore_drill', environment, startedAt, finishedAt: now(), result: 'success',

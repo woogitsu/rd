@@ -1,29 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
+import { createLegacyDb, d1Adapter } from './helpers/parity.js';
 import {
   clearSessionCookie, createSessionSecret, hashSecret, isSameOrigin,
   parseCookies, readSessionToken, sessionCookie,
 } from '../src/auth.js';
 
 const knownToken = 'A'.repeat(43);
-
-function mockDb(session = null) {
-  const calls = [];
-  return {
-    calls,
-    prepare(sql) {
-      return {
-        bind(...values) {
-          const statement = { sql, values, first: async () => session, run: async () => ({ success: true }) };
-          calls.push(statement);
-          return statement;
-        },
-      };
-    },
-    async batch(statements) { calls.push({ batch: statements }); return statements.map(() => ({ success: true })); },
-  };
-}
 
 test('session secret is random, URL-safe and stored only as a hash', async () => {
   const first = await createSessionSecret();
@@ -50,43 +34,94 @@ test('same-origin validation is strict', () => {
   assert.equal(isSameOrigin(new Request('https://rd.example/api/logout', { headers: { Origin: 'https://evil.example' } })), false);
 });
 
+// #214: wcześniej mockDb zwracał tę samą sesję dla KAŻDEGO SQL, więc testy
+// przechodziły także po usunięciu warunków expires_at / revoked_at / disabled_at
+// z zapytania w src/auth.js. Teraz działa prawdziwy SQL na SQLite z migracjami D1.
+const FUTURE = '2099-01-01 00:00:00';
+const PAST = '2000-01-01 00:00:00';
+const tokenOf = (char) => char.repeat(43);
+const cookieOf = (char) => `rd_session=${tokenOf(char)}`;
+
+async function legacyEnv() {
+  const db = createLegacyDb();
+  const user = db.prepare('INSERT INTO users (id, email, display_name, disabled_at) VALUES (?, ?, ?, ?)');
+  user.run('u1', 'test@example.invalid', 'Osoba Testowa', null);
+  user.run('u-off', 'off@example.invalid', 'Osoba Wyłączona', '2026-09-01 00:00:00');
+  const session = db.prepare(`INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, mfa_verified_at, revoked_at)
+                              VALUES (?, ?, ?, '2026-09-27 07:00:00', ?, ?, ?)`);
+  const rows = [
+    ['s-ok', 'u1', 'A', FUTURE, null, null],
+    ['s-mfa', 'u1', 'B', FUTURE, '2026-09-27 08:00:00', null],
+    ['s-expired', 'u1', 'C', PAST, null, null],
+    ['s-revoked', 'u1', 'D', FUTURE, null, '2026-09-26 00:00:00'],
+    ['s-disabled', 'u-off', 'E', FUTURE, null, null],
+    ['s-logout', 'u1', 'F', FUTURE, null, null],
+  ];
+  for (const [id, userId, char, expires, mfa, revoked] of rows) {
+    session.run(id, userId, await hashSecret(tokenOf(char)), expires, mfa, revoked);
+  }
+  return { db, env: { DB: d1Adapter(db) } };
+}
+
+function sessionRequest(char) {
+  return new Request('https://rd.example/api/session', char ? { headers: { Cookie: cookieOf(char) } } : {});
+}
+
 test('GET /api/session returns 401 without a valid cookie', async () => {
-  const response = await worker.fetch(new Request('https://rd.example/api/session'), { DB: mockDb() });
-  assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), { error: 'unauthenticated' });
+  const { db, env } = await legacyEnv();
+  try {
+    const response = await worker.fetch(sessionRequest(), env);
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: 'unauthenticated' });
+    const unknown = await worker.fetch(sessionRequest('Z'), env);
+    assert.equal(unknown.status, 401, 'nieznany, poprawnie sformatowany token');
+  } finally { db.close(); }
 });
 
 test('GET /api/session returns the active user without exposing the token', async () => {
-  const DB = mockDb({
-    session_id: 's1', expires_at: '2026-09-28T00:00:00Z', mfa_verified_at: null,
-    user_id: 'u1', email: 'test@example.org', display_name: 'Osoba Testowa',
-  });
-  const request = new Request('https://rd.example/api/session', { headers: { Cookie: `rd_session=${knownToken}` } });
-  const response = await worker.fetch(request, { DB });
-  assert.equal(response.status, 200);
-  const data = await response.json();
-  assert.equal(data.user.id, 'u1');
-  assert.equal(data.mfaVerified, false);
-  assert.equal(JSON.stringify(data).includes(knownToken), false);
-  assert.equal(DB.calls[0].values[0], await hashSecret(knownToken));
+  const { db, env } = await legacyEnv();
+  try {
+    const response = await worker.fetch(sessionRequest('A'), env);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.equal(data.user.id, 'u1');
+    assert.equal(data.mfaVerified, false);
+    assert.equal(JSON.stringify(data).includes(tokenOf('A')), false);
+    const mfa = await (await worker.fetch(sessionRequest('B'), env)).json();
+    assert.equal(mfa.mfaVerified, true);
+  } finally { db.close(); }
 });
 
-test('logout rejects cross-origin requests and revokes a valid session atomically', async () => {
-  const blockedDb = mockDb();
-  const blocked = await worker.fetch(new Request('https://rd.example/api/logout', {
-    method: 'POST', headers: { Origin: 'https://evil.example', Cookie: `rd_session=${knownToken}` },
-  }), { DB: blockedDb });
-  assert.equal(blocked.status, 403);
-  assert.equal(blockedDb.calls.length, 0);
+test('GET /api/session rejects expired, revoked and disabled-account sessions (real SQL)', async () => {
+  const { db, env } = await legacyEnv();
+  try {
+    for (const [char, why] of [['C', 'wygasła'], ['D', 'cofnięta'], ['E', 'konto wyłączone']]) {
+      const response = await worker.fetch(sessionRequest(char), env);
+      assert.equal(response.status, 401, `sesja ${why} musi dać 401`);
+    }
+    // kontrola pozytywna: ta sama baza, ważna sesja przechodzi
+    assert.equal((await worker.fetch(sessionRequest('A'), env)).status, 200);
+  } finally { db.close(); }
+});
 
-  const DB = mockDb({
-    session_id: 's1', expires_at: '2026-09-28T00:00:00Z', mfa_verified_at: '2026-09-27T00:00:00Z',
-    user_id: 'u1', email: 'test@example.org', display_name: 'Osoba Testowa',
-  });
-  const response = await worker.fetch(new Request('https://rd.example/api/logout', {
-    method: 'POST', headers: { Origin: 'https://rd.example', Cookie: `rd_session=${knownToken}` },
-  }), { DB });
-  assert.equal(response.status, 204);
-  assert.match(response.headers.get('Set-Cookie'), /Max-Age=0/);
-  assert.equal(DB.calls.some(call => call.batch?.length === 2), true);
+test('logout rejects cross-origin requests and revokes a valid session', async () => {
+  const { db, env } = await legacyEnv();
+  try {
+    const blocked = await worker.fetch(new Request('https://rd.example/api/logout', {
+      method: 'POST', headers: { Origin: 'https://evil.example', Cookie: cookieOf('F') },
+    }), env);
+    assert.equal(blocked.status, 403);
+    assert.equal(db.prepare("SELECT revoked_at FROM sessions WHERE id = 's-logout'").get().revoked_at, null,
+      'żądanie z obcego origin nie cofa sesji');
+
+    const response = await worker.fetch(new Request('https://rd.example/api/logout', {
+      method: 'POST', headers: { Origin: 'https://rd.example', Cookie: cookieOf('F') },
+    }), env);
+    assert.equal(response.status, 204);
+    assert.match(response.headers.get('Set-Cookie'), /Max-Age=0/);
+    assert.notEqual(db.prepare("SELECT revoked_at FROM sessions WHERE id = 's-logout'").get().revoked_at, null);
+    assert.equal((await worker.fetch(sessionRequest('F'), env)).status, 401, 'po wylogowaniu token nie działa');
+    const audit = db.prepare("SELECT entity_id FROM audit_events WHERE action = 'session.logout'").all();
+    assert.deepEqual(audit.map((row) => row.entity_id), ['s-logout'], 'wylogowanie zapisuje zdarzenie audytu');
+  } finally { db.close(); }
 });

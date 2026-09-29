@@ -7,7 +7,9 @@ import worker from '../src/index.js';
 import { hashSecret } from '../src/auth.js';
 import { handlePgRequest, ROUTES } from '../src/pg/app.js';
 import * as ledgerRoutes from '../src/pg/routes/ledger.js';
+import { unzipSync, strFromU8 } from 'fflate';
 import { buildLedgerUrl, buildOverviewUrl, normalizeEntry } from '../ledger/core.js';
+import { assertEvery } from './helpers/assertions.js';
 import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const BASE = 'https://rd.example';
@@ -505,6 +507,7 @@ test('an expense above 3000 EUR without a resolution reference is refused; exact
 const LEDGER_GETS = [
   '/api/ledger?schoolYearId=y2026', '/api/ledger/categories?schoolYearId=y2026', '/api/ledger/summary?schoolYearId=y2026',
   '/api/ledger/budget?schoolYearId=y2026', '/api/ledger/export.csv?schoolYearId=y2026',
+  '/api/ledger/export.xlsx?schoolYearId=y2026',
 ];
 
 test('representative, audit and principal roles are refused on every ledger route', async () => {
@@ -622,7 +625,7 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
   }
   // #214: kontrola pozytywna — bez niej test przechodzi także wtedy, gdy logger przestaje pisać na console.error.
   assert.ok(errors.length > 0, 'awarie triggera audytu muszą zostać zalogowane przez console.error');
-  assert.ok(errors.every((line) => !line.includes('Syntetyczny') && !line.includes('@')));
+  assertEvery(errors, (line) => !line.includes('Syntetyczny') && !line.includes('@'));
   assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 0);
   assert.equal(await backend.count('ledger_corrections'), 1);
 
@@ -662,7 +665,7 @@ test('CSV export of a school year is financial-only, injection-safe and audited'
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('Content-Type'), 'text/csv; charset=utf-8');
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
-  assert.equal(response.headers.get('Content-Disposition'), 'attachment; filename="ksiega-y2026.csv"');
+  assert.match(response.headers.get('Content-Disposition'), /^attachment; filename="ksiega-y2026-\d{8}\.csv"$/);
   const bytes = new Uint8Array(await response.arrayBuffer());
   assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf], 'UTF-8 BOM for spreadsheets');
   const text = new TextDecoder().decode(bytes);
@@ -696,6 +699,70 @@ test('CSV export of a school year is financial-only, injection-safe and audited'
   const post = await read(await backend.fetch(call(backend.cookie, '/api/ledger/export.csv', { body: {}, key: 'export-key-0001' })));
   assert.equal(post.status, 404);
   assert.equal(await backend.count('audit_events', "action = 'ledger.exported'"), 1);
+}));
+
+// Odczyt arkusza z bajtów XLSX bez zewnętrznego czytnika: wiersze -> { ref: { type, value } }.
+function readXlsxRows(bytes) {
+  const sheet = strFromU8(unzipSync(bytes)['xl/worksheets/sheet1.xml']);
+  return [...sheet.matchAll(/<row r="(\d+)">([\s\S]*?)<\/row>/g)].map(([, , cells]) => [...cells.matchAll(/<c r="([A-Z]+)\d+"[^>]*?(?: t="(inlineStr)")?>(?:<is><t[^>]*>([\s\S]*?)<\/t><\/is>|<v>(.*?)<\/v>)<\/c>/g)]
+    .map(([, column, inline, text, number]) => ({ column, type: inline ? 'string' : 'number', value: inline ? text : number })));
+}
+
+test('XLSX export: same roles, audit format=xlsx, numeric negative amounts, no formulas, sums equal CSV and summary', async () => withPg({}, async (backend) => {
+  const expense = (await createEntry(backend, {
+    amountCents: 12345, description: '=HYPERLINK("http://evil.example")', occurredOn: '2026-09-10', source: '+48 konto; "cytat"',
+  })).body.entry;
+  await correct(backend, expense.id, { amountCents: 45, reason: 'Korekta eksportu' });
+  await createEntry(backend, { ...incomeInput, description: '@SUM(A1)', occurredOn: '2026-09-11' });
+  await createEntry(backend, { ...incomeInput, paymentEntryId: null, categoryId: 'income-other', description: '-2+3 wiersz\ndrugi', amountCents: 7, method: 'card' });
+
+  const response = await backend.fetch(call(backend.cookie, '/api/ledger/export.xlsx?schoolYearId=y2026'));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Content-Type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+  assert.match(response.headers.get('Content-Disposition'), /^attachment; filename="ksiega-y2026-\d{8}\.xlsx"$/);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  for (const [name, part] of Object.entries(unzipSync(bytes))) assert.ok(!/<f[\s>/]/.test(strFromU8(part)), `${name} bez formuł`);
+  const rows = readXlsxRows(bytes);
+  assert.equal(rows.length, 1 + 3);
+  const at = (row, column) => row.find((cell) => cell.column === column);
+  // Kolumny L, M, N = kwota_eur, korekty_eur, netto_eur: liczby; K/D/E/G tekst.
+  for (const row of rows.slice(1)) for (const column of ['L', 'M', 'N']) assert.equal(at(row, column).type, 'number');
+  assert.deepEqual(at(rows[1], 'E'), { column: 'E', type: 'string', value: '=HYPERLINK(&quot;http://evil.example&quot;)' });
+  assert.equal(at(rows[1], 'L').value, '123.45');
+  assert.equal(at(rows[1], 'N').value, '123.00');
+
+  // Sumy netto XLSX = CSV = ledger_year_summary (osobno przychody i wydatki).
+  const csv = new TextDecoder().decode(await (await backend.fetch(call(backend.cookie, '/api/ledger/export.csv?schoolYearId=y2026'))).arrayBuffer());
+  const csvNet = { Przychód: 0, Wydatek: 0 };
+  const xlsxNet = { Przychód: 0, Wydatek: 0 };
+  for (const line of csv.split('\r\n').slice(1, -1)) {
+    const cells = line.match(/("([^"]|"")*"|[^;]*)(;|$)/g).map((cell) => cell.replace(/;$/, ''));
+    csvNet[cells[2]] += Math.round(Number(cells[13].replace(',', '.')) * 100);
+  }
+  for (const row of rows.slice(1)) xlsxNet[at(row, 'C').value] += Math.round(Number(at(row, 'N').value) * 100);
+  assert.deepEqual(xlsxNet, csvNet);
+  const totals = await summary(backend);
+  assert.equal(xlsxNet.Przychód, totals.incomeCents);
+  assert.equal(xlsxNet.Wydatek, totals.expenseCents);
+
+  const events = (await backend.db.query("SELECT actor_id, entity_type, entity_id, metadata_json FROM audit_events WHERE action = 'ledger.exported' ORDER BY occurred_at, id")).rows;
+  assert.deepEqual(events.map((event) => event.metadata_json), [
+    { format: 'xlsx', rowCount: 3, schoolYearId: 'y2026' },
+    { format: 'csv', rowCount: 3, schoolYearId: 'y2026' },
+  ]);
+  // Podwójne kliknięcie: dwa pobrania, dwa wpisy audytu (zamierzone, docs/EXPORT.md).
+  assert.equal((await backend.fetch(call(backend.cookie, '/api/ledger/export.xlsx?schoolYearId=y2026'))).status, 200);
+  assert.equal(await backend.count('audit_events', "action = 'ledger.exported'"), 3);
+
+  const other = await read(await backend.fetch(call(backend.cookie, '/api/ledger/export.xlsx?schoolYearId=y2025')));
+  assert.deepEqual([other.status, other.body], [403, { error: 'forbidden' }]);
+  const bad = await read(await backend.fetch(call(backend.cookie, '/api/ledger/export.xlsx')));
+  assert.deepEqual([bad.status, bad.body], [400, { error: 'invalid_request' }]);
+  const post = await read(await backend.fetch(call(backend.cookie, '/api/ledger/export.xlsx', { body: {}, key: 'export-key-0002' })));
+  assert.equal(post.status, 404);
+  assert.equal(await backend.count('audit_events', "action = 'ledger.exported'"), 3);
 }));
 
 test('CSV helpers neutralise formulas and quote separators', () => {
