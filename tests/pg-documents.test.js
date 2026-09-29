@@ -1186,6 +1186,19 @@ test('from/to filter by document date in SQL; undated documents fail the filter;
     assert.equal(response.status, 400);
     assert.equal((await response.json()).error, 'invalid_document_date');
   }
+  // Kursor keyset (#159) z filtrem daty: strona 1 daje kursor, strona 2 działa w zakresie; przy sort=documentDate kursor jest odrzucany.
+  const page1 = await (await get(env, `/api/documents?schoolYearId=${YEAR}&from=2026-01-01&limit=1`, cookie)).json();
+  assert.equal(page1.documents.length, 1);
+  assert.ok(page1.nextCursor);
+  const page2 = await get(env, `/api/documents?schoolYearId=${YEAR}&from=2026-01-01&limit=1&cursor=${encodeURIComponent(page1.nextCursor)}`, cookie);
+  assert.equal(page2.status, 200);
+  assert.notEqual((await page2.json()).documents[0].id, page1.documents[0].id);
+  const otherRange = await get(env, `/api/documents?schoolYearId=${YEAR}&from=2026-02-01&limit=1&cursor=${encodeURIComponent(page1.nextCursor)}`, cookie);
+  assert.equal(otherRange.status, 400);
+  const sortedCursor = await get(env, `/api/documents?schoolYearId=${YEAR}&sort=documentDate&limit=1&cursor=${encodeURIComponent(page1.nextCursor)}`, cookie);
+  assert.equal(sortedCursor.status, 400);
+  assert.equal((await (await get(env, `/api/documents?schoolYearId=${YEAR}&sort=documentDate&limit=1`, cookie)).json()).nextCursor, null);
+
   for (const bad of ['&from=2026-05-01&to=2026-04-01', '&sort=title']) {
     const response = await get(env, `/api/documents?schoolYearId=${YEAR}${bad}`, cookie);
     assert.equal(response.status, 400);
