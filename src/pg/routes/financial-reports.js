@@ -23,6 +23,7 @@ import { insertAuditEvent } from '../audit.js';
 import { reportContentSecurityPolicy } from '../audit-report.js';
 import { buildAnnualReport, buildCashFlow, renderAnnualReportHtml } from '../annual-report.js';
 import { readSnapshot } from '../db-snapshot.js';
+import { gateFreeText, PersonalDataError, piiAuditMetadata } from '../pii-gate.js';
 import {
   approveSnapshot, createSnapshot, listSnapshots, loadSnapshotYear, readSnapshotById, ReportError,
 } from '../report-snapshots.js';
@@ -120,8 +121,10 @@ async function snapshotCreate(request, env, json) {
   const text = reason === null ? null : (typeof reason === 'string' ? reason.trim() : undefined);
   if (text === undefined || (text !== null && (text.length < 3 || text.length > 500))) throw new RequestError('invalid_reason');
   const context = await requireReportAccess(request, env, schoolYearId);
+  // #152: powód zastąpienia migawki jest zapisem niezmiennym — bramka na dane osobowe.
+  const gate = gateFreeText([['financial_report_snapshots.supersede_reason', text]], { confirm: data.confirmPersonalData === true });
   const result = await createSnapshot(env.db, {
-    actorId: context.session.user.id, schoolYearId, supersedesId, reason: text || null,
+    actorId: context.session.user.id, schoolYearId, supersedesId, reason: text || null, auditMetadata: piiAuditMetadata(gate),
   });
   return json({ snapshot: result.snapshot, replayed: result.replayed }, result.replayed ? 200 : 201, { 'Cache-Control': 'no-store' });
 }
@@ -196,6 +199,7 @@ export async function handle(request, env, url, json) {
       if (approve) return await snapshotApprove(request, env, snapshotId, json);
       return await snapshotRead(request, env, url, snapshotId, json);
     } catch (error) {
+      if (error instanceof PersonalDataError) return json({ error: error.code, categories: error.categories }, 422);
       if (error instanceof RequestError) return json({ error: error.code }, error.status);
       throw error;
     }

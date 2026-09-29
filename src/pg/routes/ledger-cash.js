@@ -27,6 +27,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
 
 export const name = 'ledger-cash';
@@ -47,11 +48,17 @@ const TRANSFER_COLUMNS = `id, school_year_id, direction, amount_cents,
   reverses_id, created_by`;
 
 class RequestError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
+}
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+function piiFail(code, categories) {
+  return new RequestError(code, 422, { categories });
 }
 
 class Replay {
@@ -207,7 +214,9 @@ async function listTransfers(request, env, url, json) {
 
 async function createTransfer(request, env, json) {
   const key = readIdempotencyKey(request);
-  const input = parseTransfer(await readJson(request));
+  const transferData = await readJson(request);
+  const input = parseTransfer(transferData);
+  const confirmPersonalData = transferData.confirmPersonalData === true;
   const context = await requireAccess(request, env, TRANSFER_ROLES, input.schoolYearId);
   const actorId = context.session.user.id;
   const byKey = async (executor) => (await executor.query(
@@ -226,6 +235,7 @@ async function createTransfer(request, env, json) {
       if (replay) return replay;
       await requireSchoolYear(tx, input.schoolYearId);
       await requireDocument(tx, input.sourceDocumentId, input.schoolYearId);
+      const gate = gateFreeText([['ledger_transfers.description', input.description]], { confirm: confirmPersonalData, fail: piiFail });
       let values = input;
       if (input.reversesId) {
         // Storno: przeciwny kierunek, ta sama kwota i data pierwotnego zapisu.
@@ -255,7 +265,7 @@ async function createTransfer(request, env, json) {
       await insertAuditEvent(tx, {
         actorId, action: values.reversesId ? 'ledger.transfer.reversed' : 'ledger.transfer.created',
         entityType: 'ledger_transfer', entityId: id,
-        metadata: { schoolYearId: values.schoolYearId, reversesId: values.reversesId },
+        metadata: { schoolYearId: values.schoolYearId, reversesId: values.reversesId, ...piiAuditMetadata(gate) },
       });
       return { transfer: transferFromRow((await tx.query(`SELECT ${TRANSFER_COLUMNS} FROM ledger_transfers WHERE id = $1`, [id])).rows[0]) };
     });
@@ -365,6 +375,7 @@ async function createOpening(request, env, json) {
       );
       if (earlier.length) throw new RequestError('not_first_school_year', 409);
       await requireDocument(tx, sourceDocumentId, schoolYearId);
+      const gate = gateFreeText([['ledger_opening_balances.note', note]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_opening_balances (id, school_year_id, amount_cents, cash_cents, source_document_id,
@@ -374,7 +385,7 @@ async function createOpening(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger_opening_balance.created', entityType: 'ledger_opening_balance', entityId: id,
-        metadata: { schoolYearId },
+        metadata: { schoolYearId, ...piiAuditMetadata(gate) },
       });
       return json(await openingView(tx, schoolYearId), 201, CREATED);
     });
@@ -426,6 +437,7 @@ async function createAdjustment(request, env, json) {
       const cashAfter = view.current.cashCents + cashCents;
       if (Math.abs(totalAfter) > MAX_OPENING_CENTS) throw new RequestError('invalid_amount');
       if (cashAfter < 0) throw new RequestError('cash_below_zero', 409);
+      const gate = gateFreeText([['ledger_opening_balance_adjustments.reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_opening_balance_adjustments (id, opening_balance_id, amount_cents, cash_cents, reason,
@@ -435,7 +447,7 @@ async function createAdjustment(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger_opening_balance.adjusted', entityType: 'ledger_opening_balance_adjustment', entityId: id,
-        metadata: { schoolYearId, openingBalanceId: opening.id },
+        metadata: { schoolYearId, openingBalanceId: opening.id, ...piiAuditMetadata(gate) },
       });
       return json({ adjustmentId: id, ...(await openingView(tx, schoolYearId)) }, 201, CREATED);
     });
@@ -467,7 +479,7 @@ export async function handle(request, env, url, json) {
     const allow = isTransfers || isOpening ? 'GET, POST' : 'POST';
     return json({ error: 'method_not_allowed' }, 405, { Allow: allow });
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }

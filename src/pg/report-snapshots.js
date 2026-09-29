@@ -91,7 +91,7 @@ export async function readSnapshotById(executor, snapshotId) {
 }
 
 // Tworzy migawkę z bieżących danych księgi. Zwraca { snapshot, replayed }.
-export async function createSnapshot(db, { actorId, schoolYearId, supersedesId = null, reason = null, id = null }) {
+export async function createSnapshot(db, { actorId, schoolYearId, supersedesId = null, reason = null, id = null, auditMetadata = {} }) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await db.transaction(async (tx) => {
@@ -140,7 +140,7 @@ export async function createSnapshot(db, { actorId, schoolYearId, supersedesId =
         }
         await insertAuditEvent(tx, {
           actorId, action: 'report.snapshot.created', entityType: 'financial_report_snapshot', entityId: snapshotId,
-          metadata: { schoolYearId, kind: 'annual', sha256, supersedesId: head ? supersedesId : null },
+          metadata: { schoolYearId, kind: 'annual', sha256, supersedesId: head ? supersedesId : null, ...auditMetadata },
         });
         const created = (await tx.query(
           `SELECT ${STATUS_COLUMNS} FROM financial_report_snapshot_status WHERE id = $1`, [snapshotId],

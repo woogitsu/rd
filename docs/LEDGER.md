@@ -123,7 +123,7 @@ Rozliczenie wydarzenia jest pod `/api/ledger/…`, bo moduł wydarzeń obsługuj
 
 Dostęp: admin, zarząd, skarbnik z MFA w zakresie roku (jak księga). **Przedstawiciel klasy, `audit` i `principal` — `403`** na wszystkich trasach, także dla własnej klasy i nieistniejących identyfikatorów (bez wyroczni istnienia) — D-08 i D-09 nie są rozstrzygnięte, wariant zachowawczy. Raport per klasa obejmuje wyłącznie wpisy księgi przypisane klasie (wydatki, dofinansowania), nigdy wpłat rodzin — składki są dobrowolne i raport nie może stać się wskaźnikiem wpłat klasy.
 
-Poza zakresem (dalsze PR): wersja HTML do druku, sekcja „Wynik wydarzeń” w raporcie KR, UI w panelu księgi, widok dla przedstawiciela po decyzji D-08.
+Raport KR ma już wersję HTML do druku (`GET /api/reports/audit?format=html`) i sekcję „Wynik wydarzeń”, a panel `ledger/` odczytuje wynik wydarzeń (`GET /api/ledger/cost-centers`). Nadal poza zakresem: widok dla przedstawiciela — czeka na decyzję D-08.
 ### Sprawozdanie roczne i przepływy środków (issue #125, część)
 
 Moduł `src/pg/annual-report.js`, trasy `src/pg/routes/financial-reports.js`. Migawki: migracja 0138.

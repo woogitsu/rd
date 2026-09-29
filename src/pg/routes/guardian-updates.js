@@ -28,6 +28,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { scopeFromGrants } from './families.js';
 
 export const name = 'guardian-updates';
@@ -41,12 +42,16 @@ const MAX_BODY_BYTES = 4 * 1024;
 const MAX_NOTE_LENGTH = 500;
 
 class RequestError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
 }
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+const piiFail = (code, categories) => new RequestError(code, 422, { categories });
 
 function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
@@ -190,6 +195,9 @@ async function submitUpdate(request, env, json) {
     // odpowiedź na WŁASNE, wcześniej ważne żądanie, nie na zgadywanie.
     if (link.used_at) throw new RequestError('link_used', 409);
 
+    // #152: uwaga opiekuna trafia do niezmiennego wniosku. Odrzucenie cofa transakcję,
+    // więc link pozostaje nieużyty i można wysłać poprawiony tekst.
+    const gate = gateFreeText([['guardian_update_requests.note', input.note ?? null]], { confirm: data.confirmPersonalData === true, fail: piiFail });
     await tx.query('UPDATE guardian_update_links SET used_at = now() WHERE id = $1', [link.id]);
     const requestId = crypto.randomUUID();
     await tx.query(
@@ -204,7 +212,7 @@ async function submitUpdate(request, env, json) {
     );
     await insertAuditEvent(tx, {
       actorId: null, action: 'guardian_update_request.created', entityType: 'guardian_update_request', entityId: requestId,
-      metadata: { guardianId: link.guardian_id },
+      metadata: { guardianId: link.guardian_id, ...piiAuditMetadata(gate) },
     });
     return { requestId };
   });
@@ -309,7 +317,7 @@ export async function handle(request, env, url, json) {
     if (isList) return await listRequests(request, env, url, json);
     return await decideRequest(request, env, decodeURIComponent(decideMatch[1]), decideMatch[2], json);
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }

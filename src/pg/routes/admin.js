@@ -818,7 +818,7 @@ export const AUDIT_ACTIONS = [
   'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued',
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
-  'auth.password_changed', 'mfa.reset',
+  'auth.password_changed', 'auth.account_under_pressure', 'mfa.reset',
   'account_recovery.requested', 'account_recovery.approved', 'account_recovery.rejected', 'account_recovery.expired',
 ];
 

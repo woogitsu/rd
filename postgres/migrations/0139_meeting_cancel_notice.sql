@@ -129,8 +129,9 @@ CREATE TRIGGER meeting_agenda_items_withdrawal_guard BEFORE UPDATE ON meeting_ag
   FOR EACH ROW EXECUTE FUNCTION meeting_agenda_item_withdrawal_guard();
 
 -- Wspólna kontrola nowych tabel zebrania: rok otwarty (school_year_closed).
--- Tabele mają własne school_year_id, więc nie dotykamy wspólnych funkcji
--- year_freeze_* z wcześniejszych migracji.
+-- Tabele mają własne school_year_id; zamrożenie zamkniętego roku (#80) to
+-- trigger a0_year_freeze z istniejącej year_freeze_direct() (0017, bez
+-- redefinicji), założony niżej na wszystkich trzech tabelach.
 CREATE FUNCTION meeting_notice_tables_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE m RECORD;
 BEGIN
@@ -322,3 +323,12 @@ CREATE TRIGGER meeting_reschedules_no_truncate BEFORE TRUNCATE ON meeting_resche
   FOR EACH STATEMENT EXECUTE FUNCTION deny_truncate();
 CREATE TRIGGER meeting_notices_no_truncate BEFORE TRUNCATE ON meeting_notices
   FOR EACH STATEMENT EXECUTE FUNCTION deny_truncate();
+
+-- Zamrożenie roku (#80): zapis w tabelach zebrania zamkniętego roku daje
+-- school_year_closed; a0_ uruchamia się przed pozostałymi triggerami BEFORE.
+CREATE TRIGGER a0_year_freeze BEFORE INSERT OR UPDATE OR DELETE ON meeting_agenda_versions
+  FOR EACH ROW EXECUTE FUNCTION year_freeze_direct();
+CREATE TRIGGER a0_year_freeze BEFORE INSERT OR UPDATE OR DELETE ON meeting_reschedules
+  FOR EACH ROW EXECUTE FUNCTION year_freeze_direct();
+CREATE TRIGGER a0_year_freeze BEFORE INSERT OR UPDATE OR DELETE ON meeting_notices
+  FOR EACH ROW EXECUTE FUNCTION year_freeze_direct();

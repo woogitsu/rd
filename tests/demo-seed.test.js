@@ -189,7 +189,8 @@ test('demo-seed: uzgodnienie wyciągu — szkic z zaimportowanym wyciągiem, NIE
   assert.ok(amounts.includes(1550) || amounts.includes(-375), 'przynajmniej jedna pozycja ma kwotę celowo niepasującą do wpłat/księgi');
 
   const notes = String(detail.data.reconciliation.notes ?? '');
-  assert.match(notes, /BE62.?5100.?0754.?7061/, 'notatka wskazuje testowy IBAN (dane syntetyczne, nie prawdziwy rachunek)');
+  assert.match(notes, /dane syntetyczne/, 'notatka jest oznaczona jako dane syntetyczne');
+  assert.doesNotMatch(notes, /[A-Z]{2}\d{2}[ ]?(?:\d{4}[ ]?){2}/, 'notatka nie zawiera numeru rachunku (bramka danych osobowych)');
 });
 
 test('demo-seed: nazwiska rodzin/uczniów są jawnie syntetyczne', () => {

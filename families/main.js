@@ -1,6 +1,7 @@
 import {
   buildContactPatch,
   canEditFamilies,
+  hasRepresentativeGrant,
   classHref,
   ERROR_MESSAGES,
   filterStudentsByName,
@@ -23,7 +24,7 @@ let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const byId = (id) => document.getElementById(id);
-const state = { classes: null, canEdit: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
+const state = { classes: null, canEdit: false, isRepresentative: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
 const views = { classes: byId("classes-view"), overview: byId("overview-view"), class: byId("class-view"), household: byId("household-view") };
 const message = byId("message");
 const breadcrumbs = byId("breadcrumbs");
@@ -117,7 +118,8 @@ async function renderOverview(groups) {
   const section = byId("overview-card");
   const body = byId("overview-body");
   const rows = [];
-  for (const group of groups) {
+  // Tylko z przydziałem przedstawiciela — inne role dostałyby 403 w konsoli.
+  for (const group of state.isRepresentative ? groups : []) {
     try {
       const data = await apiRequest(`/api/representative/overview?schoolYearId=${encodeURIComponent(group.schoolYearId)}`);
       rows.push(...data.classes.map(overviewRow));
@@ -377,9 +379,12 @@ window.addEventListener("hashchange", () => { showMessage(""); route(); });
 
 (async () => {
   try {
-    state.canEdit = canEditFamilies((await api("/api/access")).grants);
+    const grants = (await api("/api/access")).grants;
+    state.canEdit = canEditFamilies(grants);
+    state.isRepresentative = hasRepresentativeGrant(grants);
   } catch {
     state.canEdit = false;
+    state.isRepresentative = false;
   }
   await route();
 })();

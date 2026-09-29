@@ -7,6 +7,7 @@ import {
   availableActions, canReadPhotoRegister, consentSummary, describeApiError, hasNewsAccess, isLikelyOwnPost,
   isSchoolWideEditor, listUrl, makeIdempotencyKey, newsYears, peopleSummary, photoSummary, photoUrl, postUrl,
   representedClassIds, selectablePhotos, validateDraft, validateReason,
+  formatDateTime,
 } from '../news/core.js';
 
 const source = readFileSync(new URL('../src/pg/news.js', import.meta.url), 'utf8');
@@ -137,4 +138,11 @@ test('ekran: tekst przez textContent (bez innerHTML z treści), confirmAction dl
   // tylko odczyt zdjęć: żadnych żądań zmieniających rejestr zdjęć
   assert.doesNotMatch(main, /news-photos[^\n]*method:\s*["'](POST|PATCH|PUT|DELETE)["']/);
   assert.doesNotMatch(main, /\/verify|\/revoke|\/consents|\/file/);
+});
+
+test('formatDateTime: czas w Europe/Brussels, nie UTC (przegląd demo)', () => {
+  assert.equal(formatDateTime('2026-09-29T12:22:00.000Z'), '29.09.2026, 14:22');
+  assert.equal(formatDateTime('2026-01-15T12:22:00Z'), '15.01.2026, 13:22');
+  assert.equal(formatDateTime(null), '—');
+  assert.doesNotMatch(formatDateTime('2026-09-29T12:22:00Z'), /UTC/);
 });
