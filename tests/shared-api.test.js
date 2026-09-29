@@ -12,7 +12,7 @@ import {
 import { nextFromFragment } from '../login/core.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close', 'exports'];
+const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close', 'data-export'];
 
 function fakeLocation(pathname, search = '', hash = '') {
   return { pathname, search, hash };
@@ -252,12 +252,12 @@ test('binary: sukces zwraca blob i nagłówki bez parsowania JSON, błąd nadal 
   const headers = new Map([['x-export-run-id', 'run-1']]);
   const okApi = createApiClient({
     fetchImpl: async () => ({ status: 200, ok: true, blob: async () => 'BLOB', headers: { get: (n) => headers.get(n.toLowerCase()) ?? null }, json: async () => { throw new Error('nie wolno'); } }),
-    getLocation: () => fakeLocation('/exports/'), navigate: () => {},
+    getLocation: () => fakeLocation('/data-export/'), navigate: () => {},
   });
   const result = await okApi.request('/api/exports', { method: 'POST', body: { schoolYearId: 'y1' }, binary: true });
   assert.equal(result.blob, 'BLOB');
   assert.equal(result.headers.get('X-Export-Run-Id'), 'run-1');
-  const failing = client({ status: 403, body: { error: 'mfa_stale' }, location: fakeLocation('/exports/') });
+  const failing = client({ status: 403, body: { error: 'mfa_stale' }, location: fakeLocation('/data-export/') });
   await assert.rejects(failing.request('/api/exports', { method: 'POST', body: {}, binary: true }), (e) => e.code === 'mfa_stale' && e.status === 403);
   assert.deepEqual(failing.navigations, []);
 });

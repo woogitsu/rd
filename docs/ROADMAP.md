@@ -52,7 +52,7 @@ Część modułów ma kompletne trasy API, ale do niedawna żadna aplikacja ich 
 | Uzgodnienie wyciągu i raport KR | `src/pg/routes/reconciliation.js` | **prototyp** — `reconciliation/` (ta zmiana) |
 | Zamknięcie roku | `src/pg/routes/year-close.js` | **prototyp** — `year-close/` (stan, bilans, lista kontrolna, zestawienie przekazania; opis w `year-close/README.md`) |
 | Aktualności i galeria | `src/pg/routes/news.js` | brak — poza zakresem tej partii (issue #147, kolejna partia) |
-| Eksport roczny i lista klasy | `src/pg/routes/exports.js` | **prototyp** — `exports/` (uruchomienie z krokiem w górę MFA, pobranie, weryfikacja w przeglądarce, lista klasy; lista dawnych eksportów: **tylko API — brak trasy**, ekran pokazuje pliki pobrane w tej karcie; opis w `exports/README.md`) |
+| Eksport roczny i lista klasy | `src/pg/routes/exports.js` | **prototyp** — `data-export/` (uruchomienie z krokiem w górę MFA, pobranie, weryfikacja w przeglądarce, lista klasy; lista dawnych eksportów: **tylko API — brak trasy**, ekran pokazuje pliki pobrane w tej karcie; opis w `data-export/README.md`) |
 | Preliminarz | `GET /api/ledger/budget` | gotowy — widoczny w `ledger/` |
 
 „Prototyp” oznacza tu: żaden przycisk nie wysyła poczty ani nie zmienia stanu produkcyjnie sam z siebie — panel tylko woła istniejące, autoryzowane trasy; zasady dostępu i cztery oczy egzekwuje wyłącznie serwer.

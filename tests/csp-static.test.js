@@ -75,7 +75,7 @@ test('wykrywacz łapie celowo wstawione naruszenia (fixture)', () => {
 
 test('źródła wszystkich aplikacji są wykrywane', () => {
   const apps = sourcePages.map((path) => relative(root, path).split(/[\\/]/)[0]);
-  for (const app of ['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close', 'exports']) {
+  for (const app of ['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close', 'data-export']) {
     assert.ok(apps.includes(app), app);
   }
 });

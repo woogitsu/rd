@@ -26,7 +26,7 @@ Dostępne ścieżki (pełna lista `STATIC_PREFIXES` w `src/node-app.js`):
 - `/email/` — korespondencja i kampanie,
 - `/reconciliation/` — uzgodnienie z wyciągiem bankowym,
 - `/year-close/` — zamknięcie roku szkolnego,
-- `/exports/` — eksport roczny i lista klasy (pobranie, weryfikacja),
+- `/data-export/` — eksport roczny i lista klasy (pobranie, weryfikacja),
 - `/health` — liveness: wyłącznie techniczny status procesu (`{"status":"ok"}`), bez danych użytkowników i bez zapytań do bazy,
 - `/health/ready` — readiness: stan bazy i migracji (opis niżej); `200` gdy gotowy, `503` gdy nie.
 

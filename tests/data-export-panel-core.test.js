@@ -1,4 +1,4 @@
-// Testy czystych funkcji ekranu eksportu (issue #147): exports/core.js.
+// Testy czystych funkcji ekranu eksportu (issue #147): data-export/core.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -6,7 +6,7 @@ import {
   ROSTER_ROLES, YEARLY_EXPORT_ROLES, canonicalJson, describeApiError, filenameFromDisposition, formatBytes,
   hasRosterAccess, hasYearlyAccess, isTotpShape, needsStepUp, normalizeTotp, rosterUrl, sha256Hex, verifyBundleText,
   yearlyBody, yearlyYears,
-} from '../exports/core.js';
+} from '../data-export/core.js';
 import { canonicalJson as serverCanonicalJson, sha256Hex as serverSha256Hex } from '../src/pg/export.js';
 
 const parse = (text) => [...text.matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
@@ -108,7 +108,7 @@ test('verifyBundleText: nie-JSON i nie-paczka bez wyjątku, komunikaty bez treś
 });
 
 test('ekran: brak localStorage, brak window.confirm, nieodwracalne akcje przez confirmAction, jedno żądanie naraz', () => {
-  const main = readFileSync(new URL('../exports/main.js', import.meta.url), 'utf8');
+  const main = readFileSync(new URL('../data-export/main.js', import.meta.url), 'utf8');
   assert.doesNotMatch(main, /localStorage|sessionStorage|window\.confirm|\bfetch\s*\(/);
   assert.equal((main.match(/confirmAction\(/g) ?? []).length, 2);
   assert.match(main, /if \(state\.busy\) return;/);
