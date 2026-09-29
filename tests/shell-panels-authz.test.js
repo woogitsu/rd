@@ -130,6 +130,14 @@ test('year-close (Zamknięcie roku): role jak READ_ROLES w src/pg/routes/year-cl
   assert.ok(!panelById['year-close'].roles.includes('audit'), 'Komisja Rewizyjna: 403 na trasach /api/year-close/* (docs/AUTHORIZATION.md)');
 });
 
+test('exports (Eksport): suma ról YEARLY_EXPORT_ROLES i ROSTER_ROLES w src/pg/routes/exports.js (skarbnik i audit BEZ dostępu)', () => {
+  const yearly = rolesConst('src/pg/routes/exports.js', 'YEARLY_EXPORT_ROLES');
+  const roster = rolesConst('src/pg/routes/exports.js', 'ROSTER_ROLES');
+  assert.deepEqual([...panelById.exports.roles].sort(), [...new Set([...yearly, ...roster])].sort());
+  assert.ok(!panelById.exports.roles.includes('treasurer'));
+  assert.ok(!panelById.exports.roles.includes('audit'));
+});
+
 test('admin (Konta i role): wyłącznie admin', () => {
   assert.deepEqual([...panelById.admin.roles], ['admin']);
 });
