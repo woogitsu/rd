@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Eksport danych — Rada Rodziców</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <header class="site-header">
+      <a class="brand" href="../"><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
+      <nav aria-label="Panel">
+        <ul id="shell-nav" aria-live="polite"></ul>
+      </nav>
+      <div id="shell-account"></div>
+    </header>
+
+    <main id="main">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">Dane osobowe</p>
+          <h1>Eksport danych</h1>
+          <p>Eksport roczny (zarząd, administrator) i lista klasy (przedstawiciel własnej klasy). Każde pobranie zapisuje się w dzienniku zdarzeń i wymaga MFA. Pliki zawierają dane osobowe — zapisz je w bezpiecznym miejscu i usuń po wykorzystaniu.</p>
+        </div>
+      </section>
+
+      <p class="message error" id="access-notice" role="status" hidden>Eksport jest dostępny dla zarządu, administratora i przedstawiciela klasy (z MFA). To konto nie ma dostępu do tego ekranu.</p>
+
+      <div class="message" id="message" role="status"></div>
+
+      <section class="card" id="yearly-section" aria-labelledby="yearly-title" hidden>
+        <h2 id="yearly-title">Eksport roczny</h2>
+        <p class="context">Pełna paczka JSON roku szkolnego: dane rodzin, wpłaty, księga, zebrania, uzgodnienia. Zawiera manifest z sumami kontrolnymi. Nie zastępuje kopii zapasowej bazy.</p>
+        <form id="yearly-form" class="filters-inline">
+          <label>Rok szkolny <select id="yearly-year" name="schoolYearId" required></select></label>
+          <button type="submit" class="primary" id="yearly-run">Uruchom eksport</button>
+        </form>
+      </section>
+
+      <section class="card" id="roster-section" aria-labelledby="roster-title" hidden>
+        <h2 id="roster-title">Lista klasy</h2>
+        <p class="context">Uczniowie klasy z opiekunami (e-mail tylko przy zgodzie na kontakt). Bez wpłat i identyfikatorów rodzin.</p>
+        <form id="roster-form" class="filters-inline">
+          <label>Klasa <select id="roster-class" name="classId" required></select></label>
+          <label>Format <select id="roster-format" name="format"><option value="csv">CSV (do wydruku, Excel)</option><option value="json">JSON</option></select></label>
+          <button type="submit" class="primary" id="roster-run">Pobierz listę</button>
+        </form>
+      </section>
+
+      <section class="card" id="runs-section" aria-labelledby="runs-title" hidden>
+        <div class="section-heading"><div><p class="eyebrow">Ta karta przeglądarki</p><h2 id="runs-title">Pobrane eksporty</h2></div><span id="runs-count" aria-live="polite"></span></div>
+        <p class="context">Serwer nie udostępnia listy dawnych eksportów — każdy przebieg jest zapisany w dzienniku po stronie serwera (identyfikator, rok, skrót, liczności). Poniżej są tylko pliki pobrane w tej karcie; po odświeżeniu strony lista znika, a pliki nie są nigdzie zapisywane.</p>
+        <div class="table-wrap" id="runs-table" role="region" aria-labelledby="runs-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Eksporty pobrane w tej karcie</caption>
+            <thead><tr><th scope="col">Rodzaj</th><th scope="col">Zakres</th><th scope="col">Czas</th><th scope="col">Rozmiar</th><th scope="col">Identyfikator przebiegu</th><th scope="col">Weryfikacja</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="runs-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="runs-empty">Brak eksportów w tej karcie.</p>
+      </section>
+
+      <section class="card" id="verify-section" aria-labelledby="verify-title" hidden>
+        <h2 id="verify-title">Sprawdź plik eksportu rocznego</h2>
+        <p class="context">Sprawdzenie w przeglądarce: skrót manifestu, skróty i liczności plików tabel. Plik nie jest wysyłany do serwera. Pełne sprawdzenie (kolumny, sumy w centach, odtworzenie do pustej bazy): <code>npm run db:verify-export</code>.</p>
+        <label>Plik JSON <input type="file" id="verify-file" accept="application/json,.json" /></label>
+        <div id="verify-result" role="status"></div>
+      </section>
+    </main>
+
+    <dialog id="mfa-dialog" aria-labelledby="mfa-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Krok w górę</p><h2 id="mfa-dialog-title">Potwierdź kodem</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context">Eksport wymaga świeżego potwierdzenia (ostatnie 15 minut). Wpisz aktualny kod z aplikacji uwierzytelniającej, a eksport uruchomi się ponownie.</p>
+      <label>Kod z aplikacji <input name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus /></label>
+      <div class="form-error" id="mfa-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="mfa-error">Potwierdź</button></div>
+    </form></dialog>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
