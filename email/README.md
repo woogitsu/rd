@@ -4,6 +4,8 @@ Lokalnie uruchom serwer (`npm start`) oraz interfejs (`npm run dev:email`). Pane
 
 Ekran pokazuje listę kampanii roku, szkic treści, migawkę odbiorców z liczbą i powodami wykluczeń, plan wysyłki względem dziennego limitu Brevo oraz listę odbiorców z zamaskowanymi adresami (pełny adres po kliknięciu; każde otwarcie listy zapisuje się w dzienniku niezależnie od tego, czy panel pokazuje maskę). Zatwierdzenie wymaga aktualnej migawki i pokazuje dokładną liczbę odbiorców przed odblokowaniem przycisku.
 
+Pod listą kampanii jest sekcja „Lista wyłączeń adresów” (#94): zamaskowane adresy zablokowane po odbiciu, skardze lub blokadzie dostawcy, z identyfikatorem rodziny i opiekuna. Blokadę zdejmuje się dwuetapowo (wniosek jednej osoby, zatwierdzenie drugiej); powstaje nowy zapis, historia zostaje, nic nie jest wysyłane. Logika bez DOM: `suppressions-core.js`.
+
 **Żaden przycisk tego ekranu nie wysyła poczty.** Zatwierdzenie i zakolejkowanie tylko przygotowują wiersze w `email_outbox` — wysyła je wyłącznie osobne zadanie `scripts/email-worker.js`, uruchamiane niezależnie od panelu.
 
 Prototyp — nie używać na danych rzeczywistych przed decyzją zarządu o szablonie wiadomości (D-16) i nadawcy/adresatach (D-17); ekran pokazuje wtedy ostrzeżenie zamiast domyślnie „zatwierdzonej” treści.

@@ -121,3 +121,6 @@ dialog h2 { font-family: Georgia, serif; font-weight: 500; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+.checklist { margin: .25rem 0 .5rem; padding-left: 1.25rem; }
+.checklist-blocking { color: var(--red-dark); font-weight: 600; }

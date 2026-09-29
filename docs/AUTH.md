@@ -160,6 +160,7 @@ Zwolnione (uzasadnienia: `MFA_GATE_EXEMPT_REASONS` w `tests/helpers/route-matrix
 | `POST /api/login` | każdy (zgodny `Origin`) | cookie sesji bez MFA, `{mfaRequired, mfaEnrolled, mfaRequiredByRole, mustChangePassword, expiresAt}` | `auth.login_succeeded` (aktor = konto), `auth.login_failed` (aktor pusty; obiekt = konto, gdy znane, inaczej losowy identyfikator próby; powód), `auth.account_under_pressure` (jednorazowo przy przekroczeniu progu; obiekt = konto) |
 | `GET /api/auth/state` | zalogowany | stan MFA i hasła bieżącej sesji | — |
 | `POST /api/invitations/accept` | posiadacz tokenu | `201`, cookie sesji, `created` | `user.created`, `auth.password_set`, `invitation.accepted`, `role_grant.created`, `auth.login_succeeded`; błędy `auth.invitation_accept_failed` |
+| `POST /api/invitations/preview` | posiadacz tokenu | `200` `{email (maska), role, className, schoolYear, expiresAt, accountExists}`; token nie jest konsumowany, bez sesji | bez zdarzenia przy sukcesie; błędy `auth.invitation_preview_failed` |
 | `POST /api/password/change` | zalogowany, po bramce MFA | nowe cookie, `revokedSessions` | `auth.password_changed`, `session.revoked` × n; błędy `auth.password_change_failed` |
 | `POST /api/password/reset` | posiadacz tokenu | `{ok: true}`, bez sesji | `auth.password_reset_completed`, `session.revoked` × n; błędy `auth.password_reset_failed` |
 | `POST /api/admin/users/{id}/password-reset` | admin + MFA | `201`, token **raz**, ważny 2 h (`ttlHours` 1–24) | `auth.password_reset_issued`, `auth.password_reset_revoked` (poprzedni token) |

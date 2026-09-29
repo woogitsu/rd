@@ -6,7 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import {
   cancel, cancelTask, createDraft, createSignup, createTask, listPublicTasks, listTasks, publish, approve, submit,
-  withdrawSignup,
+  updateDraft, withdrawSignup,
 } from '../src/pg/events.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
@@ -259,5 +259,68 @@ test('event_tasks and event_task_signups reject direct DELETE (immutability)', a
       db.query("UPDATE event_tasks SET title = 'x' WHERE id = $1", [created.task.id]),
       /event_tasks_are_immutable/,
     );
+  } finally { await db.close(); }
+});
+
+test('double click and network retry with the same Idempotency-Key produce a single signup and a single audit event', async () => {
+  const db = await tasksDb();
+  try {
+    const event = await draftClassEvent(db, board, 'c1a');
+    const created = await createTask(db, board, { eventId: event.id, title: 'Stoisko', slotsNeeded: 3, idempotencyKey: key() });
+    const sameKey = key('click');
+    const results = await Promise.all([
+      createSignup(db, repA, { eventId: event.id, taskId: created.task.id, guardianId: 'g1', idempotencyKey: sameKey }),
+      createSignup(db, repA, { eventId: event.id, taskId: created.task.id, guardianId: 'g1', idempotencyKey: sameKey }),
+    ]);
+    assert.equal(results[0].signup.id, results[1].signup.id);
+    assert.equal(results.filter((r) => r.replayed).length, 1);
+    const again = await createSignup(db, repA, { eventId: event.id, taskId: created.task.id, guardianId: 'g1', idempotencyKey: sameKey });
+    assert.equal(again.replayed, true);
+    const rows = (await db.query('SELECT count(*)::int AS n FROM event_task_signups WHERE task_id = $1', [created.task.id])).rows[0];
+    assert.equal(rows.n, 1);
+    const audit = (await db.query("SELECT metadata_json FROM audit_events WHERE action = 'event.task_signup_created'")).rows;
+    assert.equal(audit.length, 1, 'replay does not duplicate the audit event');
+    const metadata = typeof audit[0].metadata_json === 'string' ? JSON.parse(audit[0].metadata_json) : audit[0].metadata_json;
+    assert.equal(metadata.schoolYearId, 'year');
+    assert.ok(!('guardianId' in metadata) && !('personName' in metadata), 'no personal data in audit metadata');
+  } finally { await db.close(); }
+});
+
+test('siblings in 1A and 1B: each representative signs the guardian only for the event of their own class', async () => {
+  const db = await tasksDb();
+  try {
+    // Rodzeństwo d2 (1B) i d3 (1A) z tym samym opiekunem g3.
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('d3','h2','Ala','Syntetyczna')");
+    await db.query("INSERT INTO student_guardians (student_id, guardian_id, contact_allowed) VALUES ('d3','g3',true)");
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e3','d3','c1a','year')");
+    const eventA = await draftClassEvent(db, board, 'c1a');
+    const eventB = await draftClassEvent(db, board, 'c1b');
+    const taskA = await createTask(db, board, { eventId: eventA.id, title: 'Dyżur A', slotsNeeded: 2, idempotencyKey: key() });
+    const taskB = await createTask(db, board, { eventId: eventB.id, title: 'Dyżur B', slotsNeeded: 2, idempotencyKey: key() });
+
+    const a = await createSignup(db, repA, { eventId: eventA.id, taskId: taskA.task.id, guardianId: 'g3', idempotencyKey: key() });
+    const b = await createSignup(db, repB, { eventId: eventB.id, taskId: taskB.task.id, guardianId: 'g3', idempotencyKey: key() });
+    assert.notEqual(a.signup.id, b.signup.id);
+    await assert.rejects(
+      createSignup(db, repA, { eventId: eventB.id, taskId: taskB.task.id, guardianId: 'g3', idempotencyKey: key() }),
+      (error) => error.status === 404,
+    );
+    await assert.rejects(
+      createSignup(db, repB, { eventId: eventA.id, taskId: taskA.task.id, guardianId: 'g3', idempotencyKey: key() }),
+      (error) => error.status === 404,
+    );
+  } finally { await db.close(); }
+});
+
+test('a new event revision keeps tasks and signups', async () => {
+  const db = await tasksDb();
+  try {
+    const event = await draftClassEvent(db, board, 'c1a');
+    const created = await createTask(db, board, { eventId: event.id, title: 'Bufet', slotsNeeded: 2, idempotencyKey: key() });
+    await createSignup(db, repA, { eventId: event.id, taskId: created.task.id, guardianId: 'g1', idempotencyKey: key() });
+    await updateDraft(db, board, { eventId: event.id, revision: event.revision, title: 'Piknik klasowy (zmieniony)' });
+    const { tasks } = await listTasks(db, board, { eventId: event.id });
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].confirmedCount, 1);
   } finally { await db.close(); }
 });
