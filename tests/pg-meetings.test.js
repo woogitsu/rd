@@ -655,7 +655,7 @@ test('PATCH keeps unspecified quorum fields and a configured rule requires its s
 
 // --- #152: publikacja publiczna protokołu z możliwymi danymi osobowymi -----
 
-test('publishing minutes as public is blocked when the body contains a known name, an e-mail or an IBAN; internal/parents visibility is not blocked', async () => {
+test('publishing minutes as public is blocked when the body contains a known name, or a phone number; internal/parents visibility is not blocked', async () => {
   const db = await meetingsDb();
   try {
     await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('student-pii','household-1','Kuba','Testowanski')");
@@ -677,11 +677,19 @@ test('publishing minutes as public is blocked when the body contains a known nam
     const internal = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withName.id, visibility: 'internal' });
     assert.equal(internal.replayed, false);
 
-    const withEmail = (await createMinutesVersion(db, board,
-      { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: ktos@example.invalid, do ustalenia.' })).minutes;
-    await approveMinutes(db, admin, { minutesId: withEmail.id });
+    // #152: e-mail/IBAN w treści protokołu są odrzucane już przy zapisie wersji
+    // (zapis niezmienny), bez możliwości potwierdzenia; blokada publikacji
+    // publicznej zostaje dla pozostałych kategorii (znane imię, telefon).
     await assert.rejects(
-      setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withEmail.id, visibility: 'public' }),
+      createMinutesVersion(db, board,
+        { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: ktos@example.invalid, do ustalenia.', confirmPersonalData: true }),
+      { code: 'personal_data_forbidden', status: 422 },
+    );
+    const withPhone = (await createMinutesVersion(db, board,
+      { idempotencyKey: key(), meetingId: meeting.id, body: 'Kontakt w sprawie: +32 470 12 34 56, do ustalenia.', confirmPersonalData: true })).minutes;
+    await approveMinutes(db, admin, { minutesId: withPhone.id });
+    await assert.rejects(
+      setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: withPhone.id, visibility: 'public' }),
       { code: 'minutes_contain_personal_data' },
     );
 

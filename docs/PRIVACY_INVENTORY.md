@@ -55,9 +55,11 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_suppression_release_requests`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
 |`email_suppression_release_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_suppression_releases`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_suppression_releases`|`confirmation_note`|Osoba trzecia|direct|wolny tekst|uwaga do zwolnienia adresu z listy wykluczeń|audit_event|tak|nie|
 |`email_suppression_releases`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
 |`email_suppression_releases`|`released_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_suppressions`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
+|`enrollment_history`|`reason`|Uczeń|direct|wolny tekst|uzasadnienie zmiany przypisania do klasy|nieustalona (D-04)|tak|tak|
 |`enrollment_history`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`enrollments`|`ended_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`enrollments`|`ended_reason`|Uczeń|direct|wolny tekst|uzasadnienie zmiany|nieustalona (D-04)|tak|tak|
@@ -96,6 +98,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`ledger_budget_adoptions`|`adopted_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie przyjęcia preliminarza z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_budget_adoptions`|`note`|Osoba trzecia|direct|wolny tekst|uwaga przy przyjęciu preliminarza|document_financial|tak|tak|
 |`ledger_budget_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`ledger_budget_lines`|`note`|Osoba trzecia|direct|wolny tekst|uwaga do linii preliminarza|document_financial|tak|tak|
 |`ledger_categories`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_category_deactivations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_category_deactivations`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie wyłączenia kategorii|document_financial|tak|tak|
@@ -108,7 +111,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`ledger_opening_balance_adjustments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`ledger_opening_balance_adjustments`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie korekty bilansu otwarcia|document_financial|tak|tak|
 |`ledger_opening_balances`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`ledger_opening_balances`|`note`|Osoba trzecia|direct|wolny tekst|uwaga do bilansu otwarcia|document_financial|tak|tak|
 |`ledger_transfers`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`ledger_transfers`|`description`|Osoba trzecia|direct|wolny tekst|opis przeniesienia gotówka–bank|document_financial|tak|tak|
 |`meeting_agenda_items`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meeting_agenda_items`|`description`|Członek Rady|direct|wolny tekst|punkt porządku obrad|audit_event|tak|tak|
 |`meeting_attendees`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie opiekuna z zebraniem|audit_event|nie|tak|
@@ -120,6 +125,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`meeting_minutes`|`change_note`|Członek Rady|direct|wolny tekst|opis zmiany wersji protokołu|audit_event|tak|tak|
 |`meeting_minutes`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meeting_minutes_publications`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`meeting_minutes_publications`|`reason`|Członek Rady|direct|wolny tekst|powód zmiany widoczności protokołu|audit_event|tak|tak|
 |`meetings`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`mfa_recovery_codes`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`news_photo_consent_withdrawals`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -130,6 +136,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`news_photos`|`revocation_reason`|Osoba trzecia|direct|wolny tekst|powód wycofania zgody na wizerunek|document_financial|tak|nie|
 |`news_photos`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`news_photos`|`rights_note`|Osoba trzecia|direct|wolny tekst|zgoda/licencja na wizerunek|document_financial|tak|nie|
+|`news_photos`|`source_detail`|Osoba trzecia|direct|wolny tekst|opis źródła zdjęcia|document_financial|tak|nie|
 |`news_post_revisions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`news_posts`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`news_posts`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -145,6 +152,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_entries`|`reference`|Opiekun|direct|wolny tekst|tytuł przelewu z wyciągu bankowego|payment_reference|tak|tak|
 |`payment_instructions`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`payment_reassignments`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`payment_reassignments`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie zmiany przypisania wpłaty|document_financial|tak|tak|
 |`payment_reference_revocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`payment_reference_revocations`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie unieważnienia referencji płatności|payment_reference|tak|nie|
 |`payment_references`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -152,6 +160,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`payment_references`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`payment_references`|`structured_reference`|Opiekun|pseudonymous|identyfikacja|belgijska referencja płatności OGM-VCS — pseudonim gospodarstwa na tytule przelewu|payment_reference|nie|nie|
 |`payment_refunds`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`payment_refunds`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie zwrotu wpłaty|document_financial|tak|tak|
 |`privacy_notice_deliveries`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie ewidencji przekazania z gospodarstwem|nieustalona (D-04)|nie|nie|
 |`privacy_notice_deliveries`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`privacy_notices`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia z osobą (zasada czterech oczu)|nieustalona (D-04)|nie|nie|
@@ -169,8 +178,10 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`retention_policies`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`school_year_closure_checklist`|`note`|Osoba trzecia|direct|wolny tekst|uwaga do punktu listy zamknięcia roku|audit_event|tak|tak|
 |`sessions`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`student_guardian_changes`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`student_guardian_changes`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie zmiany relacji opiekun–uczeń|guardian_contact|tak|nie|
 |`student_guardian_changes`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`student_guardians`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`student_guardians`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -183,7 +194,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **170**, w tym wolnego tekstu: **40** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **181**, w tym wolnego tekstu: **51** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -579,7 +590,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
 | `approved_by` | pseudonymous | board_member | nie |
-| `confirmation_note` | none | — | nie |
+| `confirmation_note` | direct | third_party | nie |
 | `created_at` | none | — | nie |
 | `email_hash` | pseudonymous | guardian | nie |
 | `id` | none | — | nie |
@@ -641,7 +652,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `from_class_id` | none | — | tak |
 | `id` | none | — | tak |
 | `kind` | none | — | tak |
-| `reason` | none | — | tak |
+| `reason` | direct | student | tak |
 | `school_year_id` | none | — | tak |
 | `source` | none | — | tak |
 | `student_id` | pseudonymous | student | tak |
@@ -939,7 +950,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `created_by` | pseudonymous | board_member | tak |
 | `id` | none | — | tak |
 | `idempotency_key` | none | — | tak |
-| `note` | none | — | tak |
+| `note` | direct | third_party | tak |
 | `planned_cents` | none | — | tak |
 | `school_year_id` | none | — | tak |
 | `supersedes_id` | none | — | tak |
@@ -1039,7 +1050,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `created_by` | pseudonymous | board_member | tak |
 | `id` | none | — | tak |
 | `idempotency_key` | none | — | tak |
-| `note` | none | — | tak |
+| `note` | direct | third_party | tak |
 | `school_year_id` | none | — | tak |
 | `source_document_id` | none | — | tak |
 
@@ -1050,7 +1061,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `amount_cents` | none | — | tak |
 | `created_at` | none | — | tak |
 | `created_by` | pseudonymous | board_member | tak |
-| `description` | none | — | tak |
+| `description` | direct | third_party | tak |
 | `direction` | none | — | tak |
 | `id` | none | — | tak |
 | `idempotency_key` | none | — | tak |
@@ -1129,7 +1140,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `created_by` | pseudonymous | board_member | tak |
 | `id` | none | — | tak |
 | `minutes_id` | none | — | tak |
-| `reason` | none | — | tak |
+| `reason` | direct | board_member | tak |
 | `seq` | none | — | tak |
 | `visibility` | none | — | tak |
 
@@ -1277,7 +1288,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `rights_verified_at` | none | — | nie |
 | `rights_verified_by` | none | — | nie |
 | `source` | none | — | nie |
-| `source_detail` | none | — | nie |
+| `source_detail` | direct | third_party | nie |
 | `taken_on` | none | — | nie |
 | `uploaded_at` | none | — | nie |
 | `uploaded_by` | none | — | nie |
@@ -1426,7 +1437,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `new_household_id` | none | — | tak |
 | `old_household_id` | none | — | tak |
 | `payment_entry_id` | none | — | tak |
-| `reason` | none | — | tak |
+| `reason` | direct | third_party | tak |
 
 ### `payment_reference_revocations`
 
@@ -1465,7 +1476,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `idempotency_key` | none | — | tak |
 | `method` | none | — | tak |
 | `payment_entry_id` | none | — | tak |
-| `reason` | none | — | tak |
+| `reason` | direct | third_party | tak |
 | `refunded_on` | none | — | tak |
 
 ### `privacy_notice_deliveries`
@@ -1591,7 +1602,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `confirmed_by` | none | — | tak |
 | `document_id` | none | — | tak |
 | `item` | none | — | tak |
-| `note` | none | — | tak |
+| `note` | direct | third_party | tak |
 
 ### `school_year_closures`
 
@@ -1655,7 +1666,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `previous_ends_on` | none | — | tak |
 | `previous_is_primary_contact` | none | — | tak |
 | `previous_starts_on` | none | — | tak |
-| `reason` | none | — | nie |
+| `reason` | direct | guardian | nie |
 | `source` | none | — | tak |
 | `student_id` | pseudonymous | student | tak |
 

@@ -24,6 +24,7 @@ import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
@@ -53,6 +54,11 @@ const MAX_CANDIDATES = 5;
 // Dopasowanie zbiorcze (#127, cz. 2): jedna pozycja wyciągu ↔ 2…50 wpłat/wpisów.
 const MIN_GROUP_ITEMS = 2;
 const MAX_GROUP_ITEMS = 50;
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+function piiFail(code, categories) {
+  return new RequestError(code, 422, { categories });
+}
 
 class RequestError extends Error {
   constructor(code, status = 400, extra = {}) {
@@ -473,6 +479,7 @@ async function createReconciliation(request, env, json) {
     const response = await env.db.transaction(async (tx) => {
       const replay = replayOrConflict(await byKey(tx));
       if (replay) return replay;
+      const gate = gateFreeText([['bank_reconciliations.notes', input.notes]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliations (id, school_year_id, statement_date, statement_balance_cents,
@@ -483,7 +490,7 @@ async function createReconciliation(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.created', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: input.schoolYearId },
+        metadata: { schoolYearId: input.schoolYearId, ...piiAuditMetadata(gate) },
       });
       const row = await loadReconciliation(tx, id);
       return json({ reconciliation: reconciliationFromRow(row) }, 201, CREATED);
@@ -1360,6 +1367,7 @@ async function revokeMatch(request, env, id, matchId, json) {
         throw new RequestError('match_already_revoked', 409);
       }
       if (row.status !== 'draft') throw notDraftError(row);
+      const gate = gateFreeText([['bank_reconciliation_matches.revoke_reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const updated = await tx.query(
         `UPDATE bank_reconciliation_matches SET revoked_at = now(), revoked_by = $2, revoke_reason = $3
           WHERE id = $1 RETURNING *`,
@@ -1367,7 +1375,7 @@ async function revokeMatch(request, env, id, matchId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.revoked', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id, schoolYearId: row.school_year_id },
+        metadata: { reconciliationId: id, schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       return json({ match: matchFromRow(updated.rows[0]) }, 200, CREATED);
     });
@@ -1611,6 +1619,7 @@ async function revokeGroupMatch(request, env, id, groupId, json) {
         throw new RequestError('match_already_revoked', 409);
       }
       if (row.status !== 'draft') throw notDraftError(row);
+      const gate = gateFreeText([['bank_reconciliation_group_match_revocations.reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const revocationId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliation_group_match_revocations (id, group_match_id, reconciliation_id, school_year_id,
@@ -1620,7 +1629,7 @@ async function revokeGroupMatch(request, env, id, groupId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.group_match.revoked', entityType: 'bank_reconciliation_group_match',
-        entityId: groupId, metadata: { reconciliationId: id, revocationId, schoolYearId: row.school_year_id },
+        entityId: groupId, metadata: { reconciliationId: id, revocationId, schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       const [updated] = await loadGroupMatches(tx, id, groupId);
       return json({ groupMatch: publicGroupMatch(updated) }, 200, CREATED);
@@ -1663,6 +1672,7 @@ async function confirmReconciliation(request, env, id, json) {
       }
       const current = reconciliationFromRow(row);
       if (current.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
+      const gate = gateFreeText([['bank_reconciliations.confirmation_note', note]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       await tx.query(
         `UPDATE bank_reconciliations
             SET status = 'confirmed', confirmed_by = $2, confirmed_at = now(), confirmation_note = $3
@@ -1675,7 +1685,7 @@ async function confirmReconciliation(request, env, id, json) {
       if (result.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.confirmed', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: row.school_year_id, balanced: result.differenceCents === 0 },
+        metadata: { schoolYearId: row.school_year_id, balanced: result.differenceCents === 0, ...piiAuditMetadata(gate) },
       });
       return json({ reconciliation: result }, 200, CREATED);
     });
@@ -1727,6 +1737,7 @@ async function abandonReconciliation(request, env, id, json) {
         throw new RequestError('reconciliation_has_active_matches', 409, { activeMatchCount });
       }
       // Dopasowania zbiorcze (#390, jeśli są) sprawdza trigger bazy (0107).
+      const gate = gateFreeText([['bank_reconciliations.abandon_reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       await tx.query(
         `UPDATE bank_reconciliations
             SET status = 'abandoned', abandoned_by = $2, abandoned_at = now(), abandon_reason = $3
@@ -1736,7 +1747,7 @@ async function abandonReconciliation(request, env, id, json) {
       const abandoned = await loadReconciliation(tx, id);
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.abandoned', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: row.school_year_id },
+        metadata: { schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       return json({ reconciliation: reconciliationFromRow(abandoned) }, 200, CREATED);
     });

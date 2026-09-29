@@ -67,7 +67,7 @@
       <input type="hidden" name="schoolYearId" />
       <div class="field-row"><label>Rodzaj <select name="direction"><option value="income">Przychód</option><option value="expense">Wydatek</option></select></label><label>Kategoria <select name="categoryId" required></select></label></div>
       <div class="field-row"><label>Kwota EUR <input name="amount" inputmode="decimal" required autofocus placeholder="150,00" /></label><label>Data <input name="occurredOn" type="date" required /></label></div>
-      <label>Opis <input name="description" minlength="3" maxlength="500" required /></label>
+      <label>Opis <input name="description" minlength="3" maxlength="500" required /><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
       <div class="field-row"><label>Metoda <select name="method"><option value="bank">Przelew</option><option value="cash">Gotówka</option><option value="card">Karta</option><option value="other">Inna</option></select></label><label>Źródło <input name="source" maxlength="200" placeholder="Opcjonalnie" /></label></div>
       <label>Dowód (PDF, PNG lub JPEG) <input name="evidenceFile" type="file" accept="application/pdf,image/png,image/jpeg" aria-describedby="evidence-hint" /><small id="evidence-hint">Opcjonalnie. Plik trafia do prywatnego magazynu i zostaje dołączony do wpisu po jego zapisaniu.</small></label>
       <label>ID dokumentu źródłowego <input name="sourceDocumentId" autocomplete="off" placeholder="Opcjonalnie — dokument finansowy tego roku" /></label>
@@ -80,7 +80,7 @@
       <div class="dialog-heading"><div><p class="eyebrow">Historia zmian</p><h2 id="correction-dialog-title">Dodaj korektę</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
       <input type="hidden" name="entryId" /><p class="context" id="correction-context"></p>
       <label>Kwota pomniejszenia EUR <input name="amount" inputmode="decimal" required autofocus /></label>
-      <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
       <div class="form-error" id="correction-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="correction-error">Dodaj korektę</button></div>
     </form></dialog>

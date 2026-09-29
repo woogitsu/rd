@@ -38,6 +38,7 @@ import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { csvCell, csvHeader } from '../csv.js';
 import { renderBudgetExecutionHtml } from '../budget-report.js';
 import { reportContentSecurityPolicy } from '../audit-report.js';
@@ -53,6 +54,11 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_PLANNED_CENTS = 100_000_000;
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js) — `RequestError` niżej.
+function piiFail(code, categories) {
+  return new RequestError(code, 422, { categories });
+}
 
 class RequestError extends Error {
   constructor(code, status = 400, extra = {}) {
@@ -202,7 +208,9 @@ function categoryFromRow(row) {
 async function deactivateCategory(request, env, categoryId, json) {
   if (!validId(categoryId)) throw new RequestError('invalid_request');
   const key = readIdempotencyKey(request);
-  const reason = text((await readJson(request)).reason, 3, 500, 'invalid_reason');
+  const deactivationData = await readJson(request);
+  const reason = text(deactivationData.reason, 3, 500, 'invalid_reason');
+  const confirmPersonalData = deactivationData.confirmPersonalData === true;
   const context = await requireAccess(request, env, FINANCIAL_ROLES);
   const actorId = context.session.user.id;
   const outcome = await idempotentWrite(env, {
@@ -217,6 +225,7 @@ async function deactivateCategory(request, env, categoryId, json) {
       if (!category) throw new RequestError('category_not_found', 404);
       requireYear(context, FINANCIAL_ROLES, category.school_year_id);
       if (!category.active) throw new RequestError('category_inactive', 409);
+      const gate = gateFreeText([['ledger_category_deactivations.reason', reason]], { confirm: confirmPersonalData, fail: piiFail });
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_category_deactivations (id, school_year_id, category_id, reason, created_by, idempotency_key)
@@ -225,7 +234,7 @@ async function deactivateCategory(request, env, categoryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.category.deactivated', entityType: 'ledger_category', entityId: categoryId,
-        metadata: { deactivationId: id, schoolYearId: category.school_year_id },
+        metadata: { deactivationId: id, schoolYearId: category.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { deactivation: { id, categoryId, reason } };
     },
@@ -280,6 +289,7 @@ async function createLine(request, env, json) {
         'SELECT 1 FROM ledger_budget_lines WHERE school_year_id = $1 AND category_id = $2 LIMIT 1', [input.schoolYearId, input.categoryId],
       );
       if (existing.rows.length) throw new RequestError('budget_line_exists', 409);
+      const gate = gateFreeText([['ledger_budget_lines.note', input.note]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       const { rows } = await tx.query(
         `INSERT INTO ledger_budget_lines AS l (id, school_year_id, category_id, planned_cents, note, created_by, idempotency_key)
@@ -288,7 +298,7 @@ async function createLine(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.budget_line.created', entityType: 'ledger_budget_line', entityId: id,
-        metadata: { schoolYearId: input.schoolYearId, categoryId: input.categoryId },
+        metadata: { schoolYearId: input.schoolYearId, categoryId: input.categoryId, ...piiAuditMetadata(gate) },
       });
       return { line: lineFromRow(rows[0]) };
     },
@@ -315,6 +325,7 @@ async function reviseLine(request, env, lineId, json) {
       requireYear(context, FINANCIAL_ROLES, previous.school_year_id);
       const newer = await tx.query('SELECT id FROM ledger_budget_lines WHERE supersedes_id = $1', [lineId]);
       if (newer.rows.length) throw new RequestError('budget_line_superseded', 409, { currentLineId: newer.rows[0].id });
+      const gate = gateFreeText([['ledger_budget_lines.note', input.note]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       const inserted = await tx.query(
         `INSERT INTO ledger_budget_lines AS l (id, school_year_id, category_id, planned_cents, note, supersedes_id, created_by, idempotency_key)
@@ -323,7 +334,7 @@ async function reviseLine(request, env, lineId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.budget_line.revised', entityType: 'ledger_budget_line', entityId: id,
-        metadata: { schoolYearId: previous.school_year_id, supersedesId: lineId },
+        metadata: { schoolYearId: previous.school_year_id, supersedesId: lineId, ...piiAuditMetadata(gate) },
       });
       return { line: lineFromRow(inserted.rows[0]) };
     },
@@ -382,6 +393,7 @@ async function createAdoption(request, env, json) {
         'SELECT id FROM ledger_current_budget WHERE school_year_id = $1 ORDER BY id', [input.schoolYearId],
       )).rows.map((row) => row.id);
       if (!lines.length) throw new RequestError('budget_empty', 409);
+      const gate = gateFreeText([['ledger_budget_adoptions.note', input.note]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       const { rows } = await tx.query(
         `INSERT INTO ledger_budget_adoptions (id, school_year_id, resolution_id, note, adopted_on, adopted_by, idempotency_key)
@@ -397,7 +409,7 @@ async function createAdoption(request, env, json) {
       }
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.budget.adopted', entityType: 'ledger_budget_adoption', entityId: id,
-        metadata: { schoolYearId: input.schoolYearId, resolutionId: input.resolutionId, lineCount: lines.length },
+        metadata: { schoolYearId: input.schoolYearId, resolutionId: input.resolutionId, lineCount: lines.length, ...piiAuditMetadata(gate) },
       });
       return toBody(rows[0], lines);
     },

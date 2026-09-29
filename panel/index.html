@@ -105,7 +105,7 @@
         <label>Metoda
           <select name="method"><option value="bank">Przelew</option><option value="cash">Gotówka</option><option value="other">Inna</option></select>
         </label>
-        <label>Opis / referencja <input name="reference" maxlength="200" required placeholder="np. składka roczna" /></label>
+        <label>Opis / referencja <input name="reference" maxlength="200" required placeholder="np. składka roczna" /><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
         <fieldset class="household-picker">
           <legend>Rodzina (opcjonalnie — zostaw puste, jeśli wpłata wymaga przypisania)</legend>
           <label>Klasa <select id="payment-class"></select></label>
@@ -128,7 +128,7 @@
         <input type="hidden" name="paymentId" />
         <p class="context" id="correction-context"></p>
         <label>Kwota pomniejszenia EUR <input name="amount" inputmode="decimal" required autofocus placeholder="10,00" /></label>
-        <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="300" required></textarea></label>
+        <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="300" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
         <div class="form-error" id="correction-error" role="alert"></div>
         <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="correction-error">Dodaj korektę</button></div>
       </form>

@@ -15,6 +15,7 @@ import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
 import { insertAuditEvent } from './audit.js';
+import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
 
 export const EVENT_TIMEZONE = 'Europe/Brussels';
 export const EVENT_POLICY = Object.freeze({
@@ -30,12 +31,17 @@ const MAX_BODY_BYTES = 16 * 1024;
 const CONTENT_FIELDS = ['title', 'description', 'startsAt', 'endsAt', 'location', 'organizer', 'audience'];
 
 export class EventError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    // #152: pola dodatkowe odpowiedzi (kategorie bramki danych osobowych) — nigdy treść.
+    this.extra = extra;
   }
 }
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+const piiFail = (code, categories) => new EventError(code, 422, { categories });
 
 // ---------- Europe/Brussels time handling ----------
 
@@ -643,13 +649,14 @@ export async function createTask(db, actor, input) {
       if (!sameTaskContent(existing, content, eventId)) throw new EventError('idempotency_conflict', 409);
       return { task: toTask(existing), replayed: true };
     }
+    const gate = gateFreeText([['event_tasks.title', content.title]], { confirm: input?.confirmPersonalData === true, fail: piiFail });
     const id = crypto.randomUUID();
     const { rows } = await tx.query(
       `INSERT INTO event_tasks (id, event_id, title, starts_at, ends_at, slots_needed, is_public, created_by, idempotency_key)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [id, eventId, content.title, content.startsAt, content.endsAt, content.slotsNeeded, content.isPublic, actor.userId, idempotencyKey],
     );
-    await audit(tx, actor.userId, 'event.task_created', id, { eventId, schoolYearId: event.school_year_id, slotsNeeded: content.slotsNeeded }, 'event_task');
+    await audit(tx, actor.userId, 'event.task_created', id, { eventId, schoolYearId: event.school_year_id, slotsNeeded: content.slotsNeeded, ...piiAuditMetadata(gate) }, 'event_task');
     return { task: toTask(rows[0]) };
   });
 }
@@ -666,11 +673,12 @@ export async function cancelTask(db, actor, input) {
     const task = rows[0];
     if (!task) throw new EventError('event_task_not_found', 404);
     if (task.cancelled_at) return { task: toTask(task), replayed: true };
+    const gate = gateFreeText([['event_tasks.cancellation_reason', reason]], { confirm: input?.confirmPersonalData === true, fail: piiFail });
     const { rows: updated } = await tx.query(
       `UPDATE event_tasks SET cancelled_at = now(), cancelled_by = $2, cancellation_reason = $3 WHERE id = $1 RETURNING *`,
       [taskId, actor.userId, reason],
     );
-    await audit(tx, actor.userId, 'event.task_cancelled', taskId, { eventId, schoolYearId: event.school_year_id }, 'event_task');
+    await audit(tx, actor.userId, 'event.task_cancelled', taskId, { eventId, schoolYearId: event.school_year_id, ...piiAuditMetadata(gate) }, 'event_task');
     return { task: toTask(updated[0]) };
   });
 }
@@ -1060,7 +1068,7 @@ export async function handle(request, env, url, json) {
       const data = await readJson(request);
       if (isTaskCreate) {
         const result = await createTask(env.db, actor, {
-          ...pick(data, ['title', 'startsAt', 'endsAt', 'slotsNeeded', 'isPublic']),
+          ...pick(data, ['title', 'startsAt', 'endsAt', 'slotsNeeded', 'isPublic', 'confirmPersonalData']),
           eventId: decodeId(tasksMatch[1]), idempotencyKey,
         });
         return json({ task: result.task, replayed: Boolean(result.replayed) }, result.replayed ? 200 : 201, noStore);
@@ -1074,7 +1082,7 @@ export async function handle(request, env, url, json) {
     if (isTaskCancel) {
       const data = await readJson(request);
       const result = await cancelTask(env.db, actor, {
-        ...pick(data, ['reason']), eventId: decodeId(taskCancelMatch[1]), taskId: decodeId(taskCancelMatch[2]),
+        ...pick(data, ['reason', 'confirmPersonalData']), eventId: decodeId(taskCancelMatch[1]), taskId: decodeId(taskCancelMatch[2]),
       });
       return json({ task: result.task, replayed: Boolean(result.replayed) }, 200, noStore);
     }
@@ -1108,7 +1116,7 @@ export async function handle(request, env, url, json) {
     });
     return json({ event: result.event, replayed: result.replayed }, 200, noStore);
   } catch (error) {
-    if (error instanceof EventError) return json({ error: error.code }, error.status);
+    if (error instanceof EventError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }

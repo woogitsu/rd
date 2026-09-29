@@ -18,6 +18,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
 import { detectPossiblePersonalData } from './pii-check.js';
+import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { insertAuditEvent } from './audit.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
@@ -768,6 +769,7 @@ export async function addAgendaItem(db, actor, input = {}, env) {
     position: integer(input.position, 1, 200, { optional: true }),
   };
   const result = await idempotent(db, actor, key, 'meeting.agenda_item.add', data, async tx => {
+    const gate = gatePii([['meeting_agenda_items.description', data.description]], input);
     const id = randomUUID();
     await tx.query(
       `INSERT INTO meeting_agenda_items (id, meeting_id, position, title, description, created_by)
@@ -776,7 +778,7 @@ export async function addAgendaItem(db, actor, input = {}, env) {
          $4, $5, $6)`,
       [id, data.meetingId, data.position, data.title, data.description, actor.userId]);
     await audit(tx, actor, 'meeting.agenda_item.added', 'meeting_agenda_item', id,
-      { meetingId: meeting.id, schoolYearId: meeting.school_year_id });
+      { meetingId: meeting.id, schoolYearId: meeting.school_year_id, ...piiAuditMetadata(gate) });
     return { entityType: 'meeting_agenda_item', entityId: id };
   });
   const row = await one(db, 'SELECT * FROM meeting_agenda_items WHERE id = $1', [result.entityId]);
@@ -861,6 +863,10 @@ export async function createMinutesVersion(db, actor, input = {}, env) {
     changeNote: text(input.changeNote, 3, 500, { optional: true }),
   };
   const result = await idempotent(db, actor, key, 'meeting.minutes.create', data, async tx => {
+    const gate = gatePii([
+      ['meeting_minutes.body', data.body],
+      ['meeting_minutes.change_note', data.changeNote],
+    ], input);
     const latest = await one(tx,
       'SELECT id, version FROM meeting_minutes WHERE meeting_id = $1 ORDER BY version DESC LIMIT 1',
       [meeting.id]);
@@ -871,7 +877,7 @@ export async function createMinutesVersion(db, actor, input = {}, env) {
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [id, meeting.id, version, latest?.id ?? null, data.body, data.changeNote, actor.userId]);
     await audit(tx, actor, 'meeting.minutes.version_created', 'meeting_minutes', id,
-      { meetingId: meeting.id, schoolYearId: meeting.school_year_id, version });
+      { meetingId: meeting.id, schoolYearId: meeting.school_year_id, version, ...piiAuditMetadata(gate) });
     return { entityType: 'meeting_minutes', entityId: id };
   });
   return { minutes: minutesFromRow(await loadMinutes(db, result.entityId)), replayed: result.replayed };
@@ -887,34 +893,25 @@ export async function approveMinutes(db, actor, input = {}) {
   // tej wersji protokołu. Ta sama reguła w triggerze (0042) chroni bezpośredni UPDATE.
   if (minutes.created_by === actor.userId) throw new MeetingError('minutes_four_eyes_required', 403);
   const changed = await mutate(db, async tx => {
+    const gate = gatePii([['meeting_minutes.approval_note', approvalNote]], input);
     const { rows } = await tx.query(
       `UPDATE meeting_minutes SET status = 'approved', approved_by = $2, approved_at = now(), approval_note = $3
         WHERE id = $1 AND status = 'draft' RETURNING id`, [minutes.id, actor.userId, approvalNote]);
     if (!rows.length) return false;
     await audit(tx, actor, 'meeting.minutes.approved', 'meeting_minutes', minutes.id,
-      { meetingId: minutes.meeting_id, schoolYearId: meeting.school_year_id, version: minutes.version });
+      { meetingId: minutes.meeting_id, schoolYearId: meeting.school_year_id, version: minutes.version, ...piiAuditMetadata(gate) });
     return true;
   });
   return { minutes: minutesFromRow(await loadMinutes(db, minutes.id)), replayed: !changed };
 }
 
-// #152: znane imiona/nazwiska uczniów i opiekunów w zakresie roku szkolnego
-// zebrania — przybliżenie (uczniowie zapisani w tym roku + opiekunowie ich
-// gospodarstw), tylko do wykrywania możliwych danych osobowych w treści
-// protokołu, nigdy do niczego innego.
-async function loadKnownNamesForSchoolYear(db, schoolYearId) {
-  const { rows } = await db.query(
-    `SELECT first_name, last_name FROM students
-      WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
-     UNION
-     SELECT g.first_name, g.last_name FROM guardians g
-      WHERE g.household_id IN (
-        SELECT household_id FROM students
-         WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
-      )`,
-    [schoolYearId],
-  );
-  return rows.map((row) => ({ firstName: row.first_name, lastName: row.last_name }));
+// #152: bramka pól wolnego tekstu (src/pg/pii-gate.js) — błąd 422 tego modułu;
+// kategorie w `details`, nigdy treść. `confirmPersonalData` z żądania.
+function gatePii(fields, input) {
+  return gateFreeText(fields, {
+    confirm: input?.confirmPersonalData === true,
+    fail: (code, categories) => new MeetingError(code, 422, { categories }),
+  });
 }
 
 export async function setMinutesVisibility(db, actor, input = {}) {
@@ -929,7 +926,7 @@ export async function setMinutesVisibility(db, actor, input = {}) {
   // w innych miejscach (#152 zakres tego PR: brak wyjątku z drugim
   // zatwierdzeniem — wariant zachowawczy, patrz opis w PR).
   if (input.visibility === 'public') {
-    const knownNames = await loadKnownNamesForSchoolYear(db, meeting.school_year_id);
+    const knownNames = await loadKnownNames(db, meeting.school_year_id);
     const piiCheck = detectPossiblePersonalData(minutes.body, { knownNames });
     if (piiCheck.categories.length) throw new MeetingError('minutes_contain_personal_data', 409);
   }
@@ -943,12 +940,13 @@ export async function setMinutesVisibility(db, actor, input = {}) {
   // wyłącznie wewnętrzna też wymaga MFA, ale już na wejściu (meetingForManage, #150).
   if (data.visibility === 'parents' || data.visibility === 'public') requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'meeting.minutes.visibility', data, async tx => {
+    const gate = gatePii([['meeting_minutes_publications.reason', data.reason]], input);
     const id = randomUUID();
     await tx.query(
       `INSERT INTO meeting_minutes_publications (id, minutes_id, visibility, reason, created_by)
        VALUES ($1, $2, $3, $4, $5)`, [id, data.minutesId, data.visibility, data.reason, actor.userId]);
     await audit(tx, actor, 'meeting.minutes.visibility_set', 'meeting_minutes', minutes.id,
-      { meetingId: minutes.meeting_id, schoolYearId: meeting.school_year_id, visibility: data.visibility, publicationId: id });
+      { meetingId: minutes.meeting_id, schoolYearId: meeting.school_year_id, visibility: data.visibility, publicationId: id, ...piiAuditMetadata(gate) });
     return { entityType: 'meeting_minutes_publication', entityId: id };
   });
   return { minutes: minutesFromRow(await loadMinutes(db, minutes.id)), replayed: result.replayed };
@@ -1059,6 +1057,7 @@ export async function createResolution(db, actor, input = {}) {
   let result;
   try {
     result = await idempotent(db, actor, key, 'resolution.create', data, async tx => {
+      const gate = gatePii([['resolutions.body', data.body]], input);
       const id = randomUUID();
       await tx.query(
         `INSERT INTO resolutions (id, school_year_id, meeting_id, number, title, body, status,
@@ -1069,7 +1068,7 @@ export async function createResolution(db, actor, input = {}) {
           data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId,
           data.amendsResolutionId, data.relationKind, data.relationCrossYear, actor.userId]);
       await audit(tx, actor, 'resolution.created', 'resolution', id,
-        { meetingId: meeting.id, schoolYearId: meeting.school_year_id, status });
+        { meetingId: meeting.id, schoolYearId: meeting.school_year_id, status, ...piiAuditMetadata(gate) });
       return { entityType: 'resolution', entityId: id };
     });
   } catch (error) {
@@ -1139,6 +1138,8 @@ export async function updateResolution(db, actor, input = {}) {
     requireFinalVotes(next.status, next, next.quorumCheckId);
     // #135: rozstrzygnięcie uchwały (adopted/rejected) wymaga MFA; edycja projektu nie.
     if (next.status === 'adopted' || next.status === 'rejected') requireMfaVerified(actor);
+    // #152: treść uchwały po zmianie (finalna wersja staje się niezmienna).
+    const gate = gatePii([['resolutions.body', next.body !== locked.body ? next.body : null]], input);
     const { rows } = await tx.query(
       `UPDATE resolutions SET number = $2, title = $3, body = $4, status = $5, votes_for = $6,
          votes_against = $7, votes_abstain = $8, quorum_check_id = $9
@@ -1149,7 +1150,7 @@ export async function updateResolution(db, actor, input = {}) {
     await audit(tx, actor, 'resolution.updated', 'resolution', resolution.id, {
       meetingId: resolution.meeting_id, schoolYearId: resolution.school_year_id,
       fromStatus: locked.status, toStatus: next.status,
-      fromRevision: locked.revision_no, toRevision: rows[0].revision_no,
+      fromRevision: locked.revision_no, toRevision: rows[0].revision_no, ...piiAuditMetadata(gate),
     });
   });
   return { resolution: resolutionFromRow(await loadResolution(db, resolution.id)) };
@@ -1183,6 +1184,10 @@ export async function correctResolution(db, actor, input = {}) {
   // #135: korekta zawsze zapisuje rozstrzygnięcie (adopted/rejected) — zawsze wymaga MFA.
   requireMfaVerified(actor);
   const result = await idempotent(db, actor, key, 'resolution.correct', data, async tx => {
+    const gate = gatePii([
+      ['resolutions.correction_reason', data.reason],
+      ['resolutions.body', data.body !== previous.body ? data.body : null],
+    ], input);
     const id = randomUUID();
     await tx.query(
       `INSERT INTO resolutions (id, school_year_id, meeting_id, number, revision, corrects_id,
@@ -1195,7 +1200,7 @@ export async function correctResolution(db, actor, input = {}) {
         data.votesFor, data.votesAgainst, data.votesAbstain, data.quorumCheckId, actor.userId]);
     await audit(tx, actor, 'resolution.corrected', 'resolution', id,
       { meetingId: previous.meeting_id, schoolYearId: previous.school_year_id, correctsId: previous.id,
-        revision: previous.revision + 1, status });
+        revision: previous.revision + 1, status, ...piiAuditMetadata(gate) });
     return { entityType: 'resolution', entityId: id };
   });
   return { resolution: resolutionFromRow(await loadResolution(db, result.entityId)), replayed: result.replayed };
@@ -1361,6 +1366,7 @@ export async function recordResolutionExecution(db, actor, input = {}) {
     note: text(input.note, 3, 500, { optional: true }),
   };
   const result = await idempotent(db, actor, key, 'resolution.execution', data, async tx => {
+    const gate = gatePii([['resolution_execution_events.note', data.note]], input);
     const id = randomUUID();
     await tx.query(
       `INSERT INTO resolution_execution_events
@@ -1368,7 +1374,7 @@ export async function recordResolutionExecution(db, actor, input = {}) {
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [id, data.resolutionId, data.status, data.responsibleUserId, data.dueOn, data.note, actor.userId]);
     await audit(tx, actor, 'resolution.execution.recorded', 'resolution_execution_event', id,
-      { resolutionId: resolution.id, schoolYearId: resolution.school_year_id, status: data.status });
+      { resolutionId: resolution.id, schoolYearId: resolution.school_year_id, status: data.status, ...piiAuditMetadata(gate) });
     return { entityType: 'resolution_execution_event', entityId: id };
   });
   const { rows } = await db.query('SELECT * FROM resolution_execution_events WHERE id = $1', [result.entityId]);

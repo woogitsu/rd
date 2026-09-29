@@ -17,6 +17,7 @@
 
 import { freshMfaForbiddenCode, isAuthorized, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { readSnapshot } from '../db-snapshot.js';
@@ -382,6 +383,10 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
       [closure.id, item],
     );
     if (rows.length) return { replayed: true };
+    // #152: uwaga do punktu listy jest zapisem niezmiennym — bramka na dane osobowe.
+    const gate = gateFreeText([['school_year_closure_checklist.note', note]], {
+      confirm: data.confirmPersonalData === true, fail: (code, categories) => new RequestError(code, 422, { categories }),
+    });
     try {
       await tx.query(
         `INSERT INTO school_year_closure_checklist (closure_id, item, note, document_id, confirmed_by)
@@ -393,7 +398,7 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
     }
     await insertAuditEvent(tx, {
       actorId, action: 'year_close.checklist_confirmed', entityType: 'school_year_closure', entityId: closure.id,
-      metadata: { schoolYearId, item, documentId },
+      metadata: { schoolYearId, item, documentId, ...piiAuditMetadata(gate) },
     });
     return { replayed: false };
   });

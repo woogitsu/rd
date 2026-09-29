@@ -106,6 +106,7 @@
         <form id="description-form" novalidate>
           <label>Tytuł
             <input name="title" id="description-title" autocomplete="off" required maxlength="200" placeholder="np. Faktura — wynajem sali, październik" />
+            <small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small>
           </label>
           <div class="field-row">
             <label>Kategoria
@@ -128,6 +129,7 @@
           </div>
           <label>Opis (opcjonalnie)
             <textarea name="description" id="description-text" maxlength="1000" rows="2"></textarea>
+            <small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small>
           </label>
           <div class="actions">
             <button class="primary" id="description-submit" type="submit">Zapisz opis</button>

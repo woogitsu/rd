@@ -18,6 +18,7 @@
 
 import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { PersonalDataError, gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
 import { sha256Hex } from '../../storage.js';
 import {
@@ -641,6 +642,8 @@ async function changeStatus(request, env, id, json, action) {
         return { conflict: true };
       }
 
+      // #152: powód zdarzenia niezmiennego — bramka na dane osobowe (422).
+      const gate = gateFreeText([['document_status_events.reason', reason]], { confirm: body.value?.confirmPersonalData === true });
       const eventId = crypto.randomUUID();
       const inserted = (await tx.query(
         `INSERT INTO document_status_events (id, document_id, action, replacement_document_id, reason, created_by, idempotency_key)
@@ -654,7 +657,7 @@ async function changeStatus(request, env, id, json, action) {
         entityType: 'document', entityId: id,
         metadata: {
           kind: doc.kind, schoolYearId: doc.school_year_id, classId: doc.class_id,
-          replacementDocumentId, sessionId: context.session.sessionId,
+          replacementDocumentId, sessionId: context.session.sessionId, ...piiAuditMetadata(gate),
         },
       });
       return { created: toStatusEvent(inserted) };
@@ -668,6 +671,7 @@ async function changeStatus(request, env, id, json, action) {
     if (result.replayed) return json({ statusEvent: result.replayed, replayed: true }, 200);
     return json({ statusEvent: result.created }, 201);
   } catch (error) {
+    if (error instanceof PersonalDataError) return json({ error: error.code, categories: error.categories }, 422);
     if (error?.code === '23505') {
       if (error?.constraint === 'document_status_events_idempotency_key_key') {
         return json({ error: 'idempotency_conflict' }, 409);
@@ -740,6 +744,10 @@ async function createDescription(request, env, id, json) {
         if (existing.document_id !== id || !sameInput(existing)) return { conflict: true };
         return { replayed: toDescription(existing) };
       }
+      const gate = gateFreeText([
+        ['document_descriptions.title', input.title],
+        ['document_descriptions.description', input.description],
+      ], { confirm: body.value?.confirmPersonalData === true });
       const nextRevision = Number((await tx.query(
         'SELECT COALESCE(MAX(revision_no), 0) + 1 AS next FROM document_descriptions WHERE document_id = $1', [id],
       )).rows[0].next);
@@ -758,6 +766,7 @@ async function createDescription(request, env, id, json) {
         metadata: {
           kind: doc.kind, schoolYearId: doc.school_year_id, classId: doc.class_id,
           category: input.category, revisionNo: nextRevision, sessionId: context.session.sessionId,
+          ...piiAuditMetadata(gate),
         },
       });
       return { created: toDescription(inserted) };
@@ -767,6 +776,7 @@ async function createDescription(request, env, id, json) {
     if (result.replayed) return json({ description: result.replayed, replayed: true }, 200);
     return json({ description: result.created }, 201);
   } catch (error) {
+    if (error instanceof PersonalDataError) return json({ error: error.code, categories: error.categories }, 422);
     if (error?.code === '23505') {
       // Równoległe podwójne kliknięcie: drugi zapis przegrał wyścig o klucz idempotencji.
       const existing = (await env.db.query(

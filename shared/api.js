@@ -8,6 +8,7 @@
 // wyłącznie po stronie serwera — klient tylko prowadzi użytkownika do logowania.
 
 import { errorCode, errorMessage } from "./messages.js";
+import { confirmPersonalData } from "./pii-confirm.js";
 
 export { MESSAGES, errorMessage, statusMessage } from "./messages.js";
 
@@ -76,6 +77,8 @@ export function createApiClient({
   fetchImpl = (...args) => globalThis.fetch(...args),
   getLocation = () => globalThis.location,
   navigate = (url) => globalThis.location.assign(url),
+  // #152: pytanie o potwierdzenie przy 422 possible_personal_data; bez funkcji — brak ponowienia.
+  confirmPersonalData = null,
 } = {}) {
   let redirecting = false;
 
@@ -93,7 +96,23 @@ export function createApiClient({
     return action;
   }
 
-  async function request(url, {
+  // Ciało z potwierdzeniem danych osobowych albo null, gdy ciała nie da się uzupełnić.
+  function withPersonalDataConfirmation(body) {
+    if (isPlainBody(body)) return { ...body, confirmPersonalData: true };
+    if (typeof body === "string") {
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return JSON.stringify({ ...parsed, confirmPersonalData: true });
+      } catch { /* nie JSON — bez ponowienia */ }
+    }
+    return null;
+  }
+
+  function request(url, options = {}) {
+    return execute(url, options, false);
+  }
+
+  async function execute(url, {
     method = "GET",
     body,
     headers = {},
@@ -101,7 +120,7 @@ export function createApiClient({
     messages = null,
     redirect = true,
     ...init
-  } = {}) {
+  } = {}, confirmed) {
     const finalHeaders = { Accept: "application/json", ...headers };
     let payload = body;
     if (body !== undefined) {
@@ -127,6 +146,13 @@ export function createApiClient({
     if (!response.ok) {
       const code = errorCode(data?.error);
       if (redirect) handleAuthFailure(response.status, code);
+      if (code === "possible_personal_data" && !confirmed && confirmPersonalData) {
+        const retryBody = withPersonalDataConfirmation(body);
+        if (retryBody !== null && await confirmPersonalData({ categories: data?.categories ?? [] })) {
+          // To samo żądanie i ten sam klucz idempotencji — serwer nie utworzy drugiego wpisu.
+          return execute(url, { method, body: retryBody, headers, idempotencyKey, messages, redirect, ...init }, true);
+        }
+      }
       throw new ApiError({ status: response.status, code, data, messages });
     }
     return data ?? {};
@@ -137,7 +163,7 @@ export function createApiClient({
 
 let defaultClient = null;
 function client() {
-  defaultClient ??= createApiClient();
+  defaultClient ??= createApiClient({ confirmPersonalData });
   return defaultClient;
 }
 
