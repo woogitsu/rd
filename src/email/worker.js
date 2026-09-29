@@ -175,18 +175,22 @@ async function recheckRow(tx, campaign, row, config) {
   // Gospodarstwo dziecka = główne członkostwo obowiązujące dziś w Brukseli
   // (#194), jak w migawce; nie kolumna students.household_id. Dzień limitu
   // Brevo (row.day) pozostaje w UTC.
+  // Uczeń, przez którego opiekun jest adresatem, musi nadal być w szkole w roku
+  // kampanii (enrollments_current, #86); zakończona relacja opiekun–dziecko
+  // wypada już w student_guardians_current_on.
   const consent = await tx.query(
-    `SELECT 1
+    `SELECT EXISTS (SELECT 1 FROM enrollments_current en
+                     WHERE en.student_id = sg.student_id AND en.school_year_id = $5) AS enrolled
        FROM guardians g
        JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
        JOIN student_primary_household_on($4::date) p ON p.student_id = sg.student_id
       WHERE g.id = $1 AND p.household_id = $2
         AND g.contact_allowed AND sg.contact_allowed
-        AND lower(btrim(g.email)) = $3
-      LIMIT 1`,
-    [row.guardian_id, row.household_id, row.email, row.memberDay],
+        AND lower(btrim(g.email)) = $3`,
+    [row.guardian_id, row.household_id, row.email, row.memberDay, campaign.school_year_id],
   );
-  if (!consent.rows[0]) return { state: 'suppressed', error: 'consent_or_address_changed' };
+  if (!consent.rows.length) return { state: 'suppressed', error: 'consent_or_address_changed' };
+  if (!consent.rows.some((r) => r.enrolled)) return { state: 'suppressed', error: 'student_withdrawn' };
   const refusal = recipientRefusal(config, row.email);
   if (refusal) return { state: 'failed', error: refusal };
   return null;
@@ -398,7 +402,10 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
               JOIN student_primary_household_on($4::date) ph ON ph.student_id = sg.student_id
              WHERE r.id = o.recipient_id AND ph.household_id = o.household_id
                AND g.contact_allowed AND sg.contact_allowed
-               AND lower(btrim(g.email)) = r.email)
+               AND lower(btrim(g.email)) = r.email
+               AND EXISTS (SELECT 1 FROM enrollments_current en
+                            WHERE en.student_id = sg.student_id
+                              AND en.school_year_id = (SELECT c.school_year_id FROM email_campaigns c WHERE c.id = o.campaign_id)))
         RETURNING o.id`,
       [item.id, runToken, sendAt.toISOString(), item.memberDay],
     );

@@ -25,7 +25,10 @@ import "../shared/shell.css";
 
 mountShell();
 
-const state = { me: null, users: [], grants: [], invitations: [], years: [], classes: new Map(), yearMap: new Map() };
+const state = {
+  me: null, users: [], grants: [], invitations: [], auditEvents: [],
+  usersCursor: null, grantsCursor: null, invitationsCursor: null, auditCursor: null,
+  years: [], classes: new Map(), yearMap: new Map() };
 const byId = (id) => document.getElementById(id);
 const globalMessage = byId("global-message");
 
@@ -129,6 +132,8 @@ async function withStepUp(fn) {
   return fn();
 }
 
+const RECOVERY_REQUEST_MESSAGE = "Konto ma rolę chronioną: zapisano wniosek, nic jeszcze nie zmieniono. Kod resetu lub wyłączenie MFA wymaga zatwierdzenia przez innego administratora.";
+
 function userLabel(userId) {
   const user = state.users.find((item) => item.id === userId);
   return user ? user.email : userId;
@@ -172,7 +177,8 @@ function fillDictionaries() {
 
 function renderUsers() {
   const tbody = byId("users-body");
-  byId("users-summary").textContent = `${state.users.length} kont. Konta tworzy wyłącznie przyjęcie zaproszenia.`;
+  const more = state.usersCursor ? " Lista jest niepełna — użyj „Pokaż więcej”." : "";
+  byId("users-summary").textContent = `${state.users.length} kont. Konta tworzy wyłącznie przyjęcie zaproszenia.${more}`;
   if (!state.users.length) return emptyRow(tbody, 7, "Brak kont.");
   tbody.replaceChildren(...state.users.map((user) => {
     const tr = document.createElement("tr");
@@ -192,6 +198,12 @@ function renderUsers() {
     buttons.push(button("Wydaj kod resetu hasła", (event) => runAction(event.currentTarget, confirmationText("password-reset", user.email), async () => {
       hideResetToken();
       const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, { method: "POST", body: {} });
+      // #146: konto z rolą chronioną — serwer (202) zapisał tylko wniosek, bez tokenu.
+      if (!result.token) {
+        showMessage(RECOVERY_REQUEST_MESSAGE);
+        await loadAudit();
+        return;
+      }
       showResetToken(result.token, result.reset.expiresAt);
       await loadAudit();
     }), {
@@ -222,8 +234,22 @@ function renderUsers() {
   }));
 }
 
-async function loadUsers() {
-  state.users = (await api("/api/admin/users")).users;
+// #159: listy mają kursor (`nextCursor`); przycisk „Pokaż więcej” dociąga kolejną stronę
+// zamiast pokazywać obciętą listę bez informacji.
+function withCursor(url, cursor) {
+  if (!cursor) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}cursor=${encodeURIComponent(cursor)}`;
+}
+
+function toggleMore(id, cursor) {
+  byId(id).hidden = !cursor;
+}
+
+async function loadUsers({ append = false } = {}) {
+  const result = await api(withCursor("/api/admin/users", append ? state.usersCursor : null));
+  state.users = append ? [...state.users, ...result.users] : result.users;
+  state.usersCursor = result.nextCursor ?? null;
+  toggleMore("users-more", state.usersCursor);
   renderUsers();
   fillDictionaries();
 }
@@ -286,7 +312,10 @@ async function runMfaReset(element, user) {
   element.disabled = true;
   try {
     const result = await withStepUp(() => api(`/api/admin/users/${encodeURIComponent(user.id)}/mfa-reset`, { method: "POST", body: { confirm: user.id } }));
-    showMessage(result.changed
+    // #146: konto z rolą chronioną — serwer (202) zapisał tylko wniosek; MFA nie zmieniono.
+    showMessage(result.request
+      ? RECOVERY_REQUEST_MESSAGE
+      : result.changed
       ? "Zresetowano weryfikację dwuetapową. Konto zostało wylogowane i zapisze nowy czynnik po zalogowaniu."
       : "Konto nie miało zapisanego czynnika ani kodów odzyskiwania — nic nie zmieniono.");
     await Promise.all([loadUsers(), loadAudit()]);
@@ -324,9 +353,12 @@ function renderGrants() {
   }));
 }
 
-async function loadGrants() {
+async function loadGrants({ append = false } = {}) {
   const filters = Object.fromEntries(new FormData(byId("grant-filters")));
-  state.grants = (await api(buildGrantsUrl(filters))).grants;
+  const result = await api(withCursor(buildGrantsUrl(filters), append ? state.grantsCursor : null));
+  state.grants = append ? [...state.grants, ...result.grants] : result.grants;
+  state.grantsCursor = result.nextCursor ?? null;
+  toggleMore("grants-more", state.grantsCursor);
   renderGrants();
 }
 
@@ -398,8 +430,11 @@ function renderInvitations() {
   }));
 }
 
-async function loadInvitations() {
-  state.invitations = (await api("/api/admin/invitations")).invitations;
+async function loadInvitations({ append = false } = {}) {
+  const result = await api(withCursor("/api/admin/invitations", append ? state.invitationsCursor : null));
+  state.invitations = append ? [...state.invitations, ...result.invitations] : result.invitations;
+  state.invitationsCursor = result.nextCursor ?? null;
+  toggleMore("invitations-more", state.invitationsCursor);
   renderInvitations();
 }
 
@@ -499,8 +534,12 @@ byId("term-form").addEventListener("submit", async (event) => {
 
 // --- Dziennik -------------------------------------------------------------------
 
-async function loadAudit() {
-  const { events } = await api("/api/admin/audit?limit=100");
+async function loadAudit({ append = false } = {}) {
+  const result = await api(withCursor("/api/admin/audit?limit=100", append ? state.auditCursor : null));
+  state.auditEvents = append ? [...state.auditEvents, ...result.events] : result.events;
+  state.auditCursor = result.nextCursor ?? null;
+  toggleMore("audit-more", state.auditCursor);
+  const events = state.auditEvents;
   const tbody = byId("audit-body");
   if (!events.length) return emptyRow(tbody, 5, "Brak zdarzeń.");
   tbody.replaceChildren(...events.map((item) => {
@@ -512,6 +551,9 @@ async function loadAudit() {
   }));
 }
 
+for (const [id, load] of [["users-more", loadUsers], ["grants-more", loadGrants], ["invitations-more", loadInvitations], ["audit-more", loadAudit]]) {
+  byId(id).addEventListener("click", () => load({ append: true }).catch((error) => showMessage(error.message, true)));
+}
 byId("reload-audit").addEventListener("click", () => loadAudit().catch((error) => showMessage(error.message, true)));
 
 // --- Start ----------------------------------------------------------------------

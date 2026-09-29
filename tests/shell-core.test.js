@@ -3,7 +3,7 @@
 // wiązany ręcznie; kontrolę dostępu i tak wykonuje wyłącznie serwer (docs/AUTHORIZATION.md).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PANELS, activeYearLabel, isActivePanel, mountShell, navItemsHtml, roleLabel, scopeSummary, visiblePanels } from '../shared/shell.js';
+import { READ_ONLY_BANNER_TEXT, isReadOnlySession, PANELS, activeYearLabel, isActivePanel, mountShell, navItemsHtml, roleLabel, scopeSummary, visiblePanels } from '../shared/shell.js';
 
 const PANEL_IDS = PANELS.map((p) => p.id);
 
@@ -183,4 +183,50 @@ test('mountShell: wygasła sesja/przydział — brak starej nazwy i linków', as
   }, () => mountShell({ document: doc, location: loc }));
   assert.equal(doc.els['shell-nav'].innerHTML, '');
   assert.equal(doc.els['shell-account'].innerHTML, '');
+});
+
+// Tryb tylko do odczytu (#143): baner z writeMode z /api/session; bez DOM (atrapa) nic nie wybucha.
+function bannerDoc() {
+  const doc = fakeDoc();
+  const inserted = [];
+  doc.body = { firstChild: null, insertBefore: (el) => inserted.push(el) };
+  doc.createElement = () => ({ attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } });
+  return { doc, inserted };
+}
+
+test('isReadOnlySession: tylko jawne read_only', () => {
+  assert.equal(isReadOnlySession({ writeMode: 'read_only' }), true);
+  assert.equal(isReadOnlySession({ writeMode: 'normal' }), false);
+  assert.equal(isReadOnlySession({}), false);
+  assert.equal(isReadOnlySession(null), false);
+});
+
+test('mountShell: baner serwisowy przy writeMode=read_only', async () => {
+  const { doc, inserted } = bannerDoc();
+  await withFetch({
+    '/api/access': { status: 200, body: { grants: [{ role: 'treasurer', schoolYearId: '2026-2027' }] } },
+    '/api/session': { status: 200, body: { displayName: 'Skarbnik', writeMode: 'read_only' } },
+  }, () => mountShell({ document: doc, location: loc }));
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].id, 'shell-write-mode');
+  assert.equal(inserted[0].attrs.role, 'status');
+  assert.equal(inserted[0].textContent, READ_ONLY_BANNER_TEXT);
+  assert.match(READ_ONLY_BANNER_TEXT, /Trwają prace serwisowe — zapisy wstrzymane/);
+});
+
+test('mountShell: brak banera w trybie normalnym i bez sesji', async () => {
+  for (const body of [{ displayName: 'X', writeMode: 'normal' }, { displayName: 'X' }]) {
+    const { doc, inserted } = bannerDoc();
+    await withFetch({
+      '/api/access': { status: 200, body: { grants: [] } },
+      '/api/session': { status: 200, body },
+    }, () => mountShell({ document: doc, location: loc }));
+    assert.equal(inserted.length, 0);
+  }
+  const { doc, inserted } = bannerDoc();
+  await withFetch({
+    '/api/access': { status: 200, body: { grants: [] } },
+    '/api/session': { status: 500, body: {} },
+  }, () => mountShell({ document: doc, location: loc }));
+  assert.equal(inserted.length, 0);
 });

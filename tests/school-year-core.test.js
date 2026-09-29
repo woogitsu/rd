@@ -6,6 +6,7 @@ import {
   fillYearSelect,
   heuristicSchoolYearId,
   initialSchoolYearId,
+  panelYearState,
   selectYearValue,
   yearChoices,
   yearOptionsHtml,
@@ -116,4 +117,28 @@ test('selectYearValue dodaje brakującą opcję i nie robi nic dla pustej warto�
   selectYearValue(select, '');
   assert.equal(select.value, 'b');
   delete globalThis.Option;
+});
+
+test('panelYearState: admin z przydziałem bez roku dostaje rok z heurystyki zamiast „Brak lat” (Wpłaty, Księga)', () => {
+  const now = new Date('2026-09-29T10:00:00Z');
+  const admin = panelYearState([{ role: 'admin' }], '', now);
+  assert.deepEqual(admin, { years: ['2026-2027'], year: '2026-2027' });
+  assert.match(yearOptionsHtml(admin.years, admin.year), /<option value="2026-2027" selected>/);
+  assert.doesNotMatch(yearOptionsHtml(admin.years, admin.year), /Brak lat/);
+  assert.deepEqual(panelYearState(undefined, '', now), { years: ['2026-2027'], year: '2026-2027' });
+});
+
+test('panelYearState: lata z przydziałów mają pierwszeństwo, rok z adresu tylko gdy jest na liście', () => {
+  const grants = [{ role: 'treasurer', schoolYearId: '2025-2026' }, { role: 'board', schoolYearId: '2026-2027' }];
+  assert.deepEqual(panelYearState(grants, '2025-2026'), { years: ['2026-2027', '2025-2026'], year: '2025-2026' });
+  assert.equal(panelYearState(grants, '2019-2020').year, '2026-2027');
+});
+
+test('panele Wpłaty i Księga wybierają rok przez panelYearState (nie przez samo yearsFromGrants)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  for (const file of ['../panel/main.js', '../ledger/main.js']) {
+    const source = await readFile(new URL(file, import.meta.url), 'utf8');
+    assert.match(source, /panelYearState\(/, file);
+    assert.doesNotMatch(source, /yearsFromGrants\(/, file);
+  }
 });

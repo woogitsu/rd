@@ -252,6 +252,20 @@ export function formatSchoolYear(id) {
   return /^\d{4}-\d{4}$/.test(id) ? id.replace("-", "/") : id;
 }
 
+// Pojedynczy plik .ics wydarzenia (publiczny, tylko opublikowana wersja).
+export function eventIcsUrl(id) {
+  if (typeof id !== "string" || !ID_PATTERN.test(id)) return null;
+  return `/api/public/events/${encodeURIComponent(id)}.ics`;
+}
+
+// Kanał subskrypcji: https (pobranie) i webcal (subskrypcja w aplikacji kalendarza).
+// Host pochodzi z bieżącego adresu strony; brak poprawnego hosta = brak linków.
+export function calendarFeedUrls(host) {
+  if (typeof host !== "string" || !/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(host)) return null;
+  const path = "/api/public/events.ics";
+  return { https: `https://${host}${path}`, webcal: `webcal://${host}${path}` };
+}
+
 export function eventsUrl(now = new Date()) {
   return `/api/public/events?${new URLSearchParams({ from: brusselsDate(now), limit: "200" })}`;
 }
