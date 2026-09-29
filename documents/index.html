@@ -97,8 +97,17 @@
           <button id="close-details" type="button">Zamknij</button>
         </div>
         <dl id="details-list" class="details"></dl>
-        <p><a id="details-download" class="button-link" href="#" rel="noopener">Pobierz plik</a></p>
-        <p class="hint">Plik zostanie zapisany jako załącznik z nazwą techniczną. Pobranie jest zapisywane w dzienniku zdarzeń.</p>
+        <p>
+          <button id="details-preview" type="button" hidden>Podgląd</button>
+          <a id="details-download" class="button-link" href="#" rel="noopener">Pobierz plik</a>
+        </p>
+        <p class="hint">Podgląd otwiera plik w panelu bez zapisu na dysku (PDF w ramce bez skryptów, obraz jako obraz). Pobranie zapisuje plik jako załącznik z nazwą techniczną. Podgląd i pobranie są zapisywane w dzienniku zdarzeń.</p>
+        <div id="preview-area" hidden>
+          <p id="preview-message" class="message" role="status"></p>
+          <img id="preview-image" class="preview-image" alt="Podgląd dokumentu" hidden />
+          <iframe id="preview-frame" class="preview-frame" title="Podgląd dokumentu PDF" sandbox="" referrerpolicy="no-referrer" hidden></iframe>
+          <p class="hint">Jeśli przeglądarka nie wyświetli PDF w ramce bez skryptów, pobierz plik.</p>
+        </div>
 
         <h3>Tytuł i kategoria</h3>
         <p class="hint">Nie wpisuj imion i nazwisk uczniów ani rodziców — tytuł jest widoczny dla każdego z dostępem do dokumentów tego rodzaju. Zapis dodaje nową wersję opisu; poprzednia zostaje w historii.</p>
