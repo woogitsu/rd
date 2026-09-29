@@ -4,6 +4,7 @@
 // paneli, jest wiązana ręcznie; kontrolę dostępu i tak wykonuje wyłącznie serwer.
 
 import { api as apiRequest } from "./api.js";
+import { defaultYear, yearsFromGrants } from "./school-year.js";
 
 // Kolejność stała dla wszystkich paneli (patrz issue #85, propozycja p.3; rozszerzone
 // o #226 — uzgodnienia, kampanie e-mail i zamknięcie roku miały wcześniej własne,
@@ -65,16 +66,22 @@ export function visiblePanels(grants) {
   return PANELS.filter((panel) => panel.roles.some((role) => roles.has(role)));
 }
 
-// Krótki opis zakresu do bloku konta, np. "Przedstawiciel klasy · 2 role".
-// Pełne etykiety klas i lat (nazwy zamiast identyfikatorów) to zakres issue #128
-// (potrzebują GET /api/classes) — tu pokazujemy wyłącznie nazwy ról i surowe lata.
+// Krótki opis zakresu do bloku konta, np. "Przedstawiciel klasy, Skarbnik".
+// Pełne etykiety klas (nazwy zamiast identyfikatorów) to zakres issue #128
+// (potrzebują GET /api/classes) — tu pokazujemy wyłącznie nazwy ról. Rok szkolny
+// pokazuje osobno wskaźnik roku (activeYearLabel).
 export function scopeSummary(grants) {
   const list = Array.isArray(grants) ? grants : [];
   if (list.length === 0) return "Brak przydzielonej roli";
-  const roles = [...new Set(list.map((g) => roleLabel(g.role)))];
-  const years = [...new Set(list.map((g) => g.schoolYearId).filter(Boolean))].sort();
-  const rolesText = roles.join(", ");
-  return years.length ? `${rolesText} · ${years.join(", ")}` : rolesText;
+  return [...new Set(list.map((g) => roleLabel(g && g.role)))].join(", ");
+}
+
+// Wskaźnik roku szkolnego w bloku konta: najnowszy rok z przydziałów (tak samo jak
+// domyślny rok w panelach, shared/school-year.js). Pusty napis, gdy przydziały nie
+// niosą roku (np. rola globalna) — wtedy panele stosują własny rok domyślny.
+export function activeYearLabel(grants) {
+  const year = defaultYear(yearsFromGrants(grants), "");
+  return year ? `Rok szkolny ${year}` : "";
 }
 
 // Aktywny panel: porównanie ścieżki bieżącej strony z href panelu (prefiks, bez query).
@@ -139,9 +146,11 @@ export async function mountShell({ document: doc = document, location: loc = win
       return { grants, session };
     }
     const name = escapeHtml(session.displayName || session.email || "Konto");
+    const yearLabel = activeYearLabel(grants);
     account.innerHTML =
       `<span class="shell-account-name">${name}</span>` +
       `<span class="shell-account-scope">${escapeHtml(scopeSummary(grants))}</span>` +
+      (yearLabel ? `<span class="shell-account-year">${escapeHtml(yearLabel)}</span>` : "") +
       `<a href="/login/#change">Zmień hasło</a>` +
       `<button type="button" id="shell-logout">Wyloguj</button>`;
     const btn = doc.getElementById("shell-logout");
