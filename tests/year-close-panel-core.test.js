@@ -8,6 +8,7 @@ import {
   CLOSE_ROLES,
   READ_ROLES,
   canOfferClose,
+  canOfferStart,
   checklistProgress,
   checklistUrl,
   closeUrl,
@@ -18,6 +19,7 @@ import {
   hasReadAccess,
   isLikelyOwnClosure,
   isValidId,
+  startConfirmation,
   startUrl,
   statusUrl,
 } from '../year-close/core.js';
@@ -106,4 +108,37 @@ test('describeApiError: komunikaty po polsku dla typowych kodów', () => {
   assert.match(describeApiError(409, 'school_year_closed'), /zamknięty/);
   assert.match(describeApiError(403, 'forbidden'), /Nie masz uprawnień/);
   assert.equal(describeApiError(500, null), null);
+});
+
+test('canOfferStart: tylko rola zamykająca i rok w stanie open; lista kontrolna nie blokuje rozpoczęcia', () => {
+  const board = [{ role: 'board', schoolYearId: 'y1' }];
+  const treasurer = [{ role: 'treasurer', schoolYearId: 'y1' }];
+  // 0/6 punktów listy kontrolnej: rozpoczęcie musi być możliwe (punkty potwierdza się dopiero po nim).
+  const open = { status: 'open', checklist: [], missingChecklistItems: [...CHECKLIST_ITEMS] };
+  assert.equal(canOfferStart(open, board, 'y1'), true);
+  assert.equal(canOfferStart(open, treasurer, 'y1'), false, 'serwer: POST /start tylko dla CLOSE_ROLES');
+  assert.equal(canOfferStart(open, [], 'y1'), false);
+  assert.equal(canOfferStart({ status: 'closing' }, board, 'y1'), false);
+  assert.equal(canOfferStart({ status: 'closed' }, board, 'y1'), false);
+  assert.equal(canOfferStart(null, board, 'y1'), false);
+  assert.equal(canOfferStart(open, [{ role: 'board', schoolYearId: 'y2' }], 'y1'), false);
+});
+
+test('startConfirmation: okno destrukcyjne z opisem nieodwracalności i rokiem docelowym', () => {
+  const dialog = startConfirmation('2026-2027', '2027-2028');
+  assert.equal(dialog.destructive, true);
+  const text = dialog.effects.join(' ');
+  assert.match(text, /2026-2027/);
+  assert.match(text, /2027-2028/);
+  assert.match(text, /nie da się cofnąć/);
+  assert.match(text, /lista kontrolna|listy kontrolnej/);
+});
+
+test('panel: rozpoczęcie zamknięcia przechodzi przez confirmAction przed żądaniem POST', () => {
+  const main = readFileSync(new URL('../year-close/main.js', import.meta.url), 'utf8');
+  assert.match(main, /from "\.\.\/shared\/confirm-dialog\.js"/);
+  const confirmAt = main.indexOf('await confirmAction(startConfirmation(');
+  const postAt = main.indexOf('await api(startUrl(');
+  assert.ok(confirmAt > 0 && postAt > confirmAt, 'confirmAction musi poprzedzać POST /start');
+  assert.match(main, /byId\("open-start"\)\.hidden = !canOfferStart\(status, state\.grants, state\.schoolYearId\)/);
 });
