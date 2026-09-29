@@ -7,6 +7,11 @@
 //   npm run test:pg-real -- --all             CAŁY zestaw tests/*.test.js z bazą
 //                                             PostgreSQL zamiast PGlite (RD_TEST_PG_BACKEND=real)
 //
+// Gdy RD_TEST_PG_URL jest już ustawione (CI: usługa `services: postgres` w
+// .github/workflows/ci.yml), skrypt NIE tworzy własnego serwera, tylko uruchamia
+// testy na wskazanej bazie (uprawnienia CREATE DATABASE wymagane; testy tworzą
+// i usuwają własne bazy, nie dotykają istniejących). Wtedy nie trzeba PG_BIN.
+//
 // Zmienne: PG_BIN (katalog z initdb/pg_ctl; domyślnie pg_config --bindir, potem
 // /usr/lib/postgresql/*/bin, potem PATH). Uruchomione jako root skrypt uruchamia
 // serwer jako użytkownik `postgres` (PostgreSQL odmawia startu jako root).
@@ -21,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const args = process.argv.slice(2);
 const runAll = args.includes('--all');
+const externalUrl = process.env.RD_TEST_PG_URL || '';
 const explicitFiles = args.filter((a) => !a.startsWith('--'));
 
 function findBin() {
@@ -60,7 +66,21 @@ function testFiles() {
   return all.filter((f) => /process\.env\.RD_TEST_PG_URL/.test(readFileSync(join(dir, f), 'utf8'))).map((f) => `tests/${f}`);
 }
 
+// Testy w tym samym trybie co `npm test` (tests/setup.js: APP_ENV=test, pułapka na sieć).
+const nodeTestArgs = ['--test', '--test-concurrency=1', '--import', './tests/setup.js'];
+
+async function runExternal() {
+  const files = testFiles();
+  if (!files.length) { console.error('Brak plików testowych do uruchomienia.'); return 2; }
+  const env = { ...process.env };
+  if (runAll) env.RD_TEST_PG_BACKEND = 'real';
+  console.error(`# PostgreSQL z RD_TEST_PG_URL (istniejący serwer); plików testowych: ${files.length}`);
+  const child = spawn(process.execPath, [...nodeTestArgs, ...files], { cwd: root, env, stdio: 'inherit' });
+  return await new Promise((ok) => { child.on('close', (code) => ok(code ?? 1)); child.on('error', () => ok(2)); });
+}
+
 async function main() {
+  if (externalUrl) return runExternal();
   const bin = findBin();
   if (bin === null) {
     console.error('Brak PostgreSQL (initdb/pg_ctl). Zainstaluj PostgreSQL 16 albo ustaw PG_BIN.');
@@ -107,7 +127,7 @@ async function main() {
 
     const env = { ...process.env, RD_TEST_PG_URL: url };
     if (runAll) env.RD_TEST_PG_BACKEND = 'real';
-    child = spawn(process.execPath, ['--test', '--test-concurrency=1', ...files], { cwd: root, env, stdio: 'inherit' });
+    child = spawn(process.execPath, [...nodeTestArgs, ...files], { cwd: root, env, stdio: 'inherit' });
     return await new Promise((ok) => { child.on('close', (code) => ok(code ?? 1)); child.on('error', () => ok(2)); });
   } finally {
     await cleanup();

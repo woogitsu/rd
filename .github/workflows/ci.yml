@@ -6,8 +6,12 @@ on:
 permissions:
   contents: read
 
-# Anuluj poprzedni przebieg tej samej gałęzi/PR, gdy przyjdzie nowy push —
-# 17 runnerów self-hosted jest współdzielonych między agentami (#111).
+# Repozytorium jest publiczne: CI działa wyłącznie na runnerach hostowanych
+# przez GitHub (`ubuntu-latest`, 2 rdzenie, 7 GB). Nie używamy runnerów
+# self-hosted (kod z PR-ów spoza zespołu nie może działać na naszych maszynach),
+# wyzwalacza z uprawnieniami zapisu ani sekretów — patrz docs/RAILWAY_OPERATIONS.md.
+#
+# Anuluj poprzedni przebieg tej samej gałęzi/PR, gdy przyjdzie nowy push.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -16,21 +20,17 @@ jobs:
   # Testy bez potrzeby prawdziwego PostgreSQL, shardowane na 4 równoległe
   # joby (node --test --test-shard=i/N). Każdy shard uruchamia cały zestaw
   # tests/*.test.js z --test-concurrency=2, żeby ograniczyć liczbę
-  # równoległych instancji PGlite (każda ~550 MB, #111).
-  # Limit 25 min: shard 3 zbliżał się do 15 min (14 min na main 29.09, dwa
-  # przebiegi przerwane limitem bez żadnego padającego testu).
+  # równoległych instancji PGlite (każda ~550 MB, #111). Runner hostowany ma
+  # 2 rdzenie, więc zestaw dzielimy na 6 shardów zamiast podnosić limit czasu.
   test:
-    runs-on: self-hosted
-    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-    # Testy wyścigów na prawdziwym PostgreSQL (tests/pg-reconciliation-race.test.js,
-    # współbieżność w pg-primary-household.test.js, #208) są pomijane bez
-    # RD_TEST_PG_URL / RD_TEST_DATABASE_URL. Runnery self-hosted nie mają Dockera
-    # (`services:` kończył się na „Initialize containers”), więc serwer PostgreSQL
-    # trzeba zainstalować na runnerach i ustawić te zmienne osobno.
+        shard: [1, 2, 3, 4, 5, 6]
+    # Testy wyścigów na prawdziwym PostgreSQL (#208) są w tym jobie pomijane
+    # (bez RD_TEST_PG_URL) — biegną w osobnym jobie `test-pg-real`.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,14 +39,14 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts
-      - run: node --test --test-concurrency=2 --test-shard=${{ matrix.shard }}/4 --import ./tests/setup.js tests/*.test.js
+      - run: node --test --test-concurrency=2 --test-shard=${{ matrix.shard }}/6 --import ./tests/setup.js tests/*.test.js
 
   # #153: łańcuch dostaw. Blokuje przy podatnościach high/critical w
   # zależnościach produkcyjnych, przy podatnościach critical w całym drzewie
   # i przy braku podpisów rejestru. Osobny job (podział zgodny z #111), żeby
   # awaria audytu nie mieszała się z testami.
   audit:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,7 +72,7 @@ jobs:
       - run: npm audit signatures
 
   build:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,7 +97,7 @@ jobs:
 
   smoke:
     needs: build
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -117,12 +117,47 @@ jobs:
       - run: npm run smoke
       - run: npm run db:migrate:local
 
+  # Testy na PRAWDZIWYM PostgreSQL (#208): wyścigi i współbieżność, które na
+  # PGlite (jeden proces, jedno połączenie) nie mają sensu. Serwer to usługa
+  # `services:` (obraz przypięty do digestu sha256, jak akcje — #153), dostępna
+  # tylko na 127.0.0.1 runnera; dane wyłącznie syntetyczne, bez sekretów
+  # (hasło poniżej dotyczy wyłącznie efemerycznego kontenera CI).
+  # Skrypt `scripts/test-pg-real.js` przy ustawionym RD_TEST_PG_URL używa tego
+  # serwera zamiast uruchamiać własny (docs/TESTING.md).
+  test-pg-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        # postgres:16 (multi-arch index) przypięty do digestu.
+        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_PASSWORD: rd_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RD_TEST_PG_URL: postgres://postgres:rd_ci_only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm run test:pg-real
+
   # Integralność i kolejność migracji PostgreSQL (issue #79): manifest sum
   # kontrolnych aktualny, a PR ani nie zmienia scalonego pliku migracji, ani
   # nie dokłada nowego z numerem <= maksimum na gałęzi bazowej. Kontrola
   # numeracji potrzebuje historii gałęzi bazowej — tylko dla pull_request.
   migrations-order:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -148,17 +183,14 @@ jobs:
   # (dane wyłącznie syntetyczne, e-mail nigdy nie jest wysyłany — serwer HTTP
   # nie robi tego synchronicznie, patrz tests/e2e/support/server.js).
   #
-  # Chromium jest wstępnie zainstalowany na runnerach self-hosted w
-  # /opt/pw-browsers (PLAYWRIGHT_BROWSERS_PATH ustawiony na poziomie
-  # runnera) — `playwright install` celowo NIE jest tu wywoływane: runnery
-  # nie mają Dockera ani gwarantowanego sudo/dostępu do sieci, patrz
-  # komentarz w playwright.config.js.
+  # Na runnerze hostowanym GitHub Chromium instalujemy jawnie
+  # (`playwright install --with-deps`, sudo jest tam dostępne).
   #
-  # CELOWO nie jest wymagany przez ci-ok (continue-on-error): dopóki to nie
-  # zostanie potwierdzone na realnym runnerze, awaria tego joba nie blokuje
-  # PR — patrz opis w PR.
+  # CELOWO nie jest wymagany przez ci-ok (continue-on-error): awaria tego
+  # joba nie blokuje PR, dopóki testy przeglądarkowe nie okażą się stabilne
+  # na runnerze hostowanym.
   e2e:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
     steps:
@@ -169,6 +201,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -181,19 +214,21 @@ jobs:
   # zakończył się sukcesem (włącznie z anulowaniem albo pominięciem). `e2e`
   # jest CELOWO poza tą listą (patrz komentarz przy tym jobie).
   ci-ok:
-    needs: [test, audit, build, smoke, migrations-order]
+    needs: [test, test-pg-real, audit, build, smoke, migrations-order]
     if: always()
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Wszystkie joby zielone
         run: |
           echo "test: ${{ needs.test.result }}"
+          echo "test-pg-real: ${{ needs.test-pg-real.result }}"
           echo "audit: ${{ needs.audit.result }}"
           echo "build: ${{ needs.build.result }}"
           echo "smoke: ${{ needs.smoke.result }}"
           echo "migrations-order: ${{ needs.migrations-order.result }}"
           if [ "${{ needs.test.result }}" != "success" ] ||
+             [ "${{ needs.test-pg-real.result }}" != "success" ] ||
              [ "${{ needs.audit.result }}" != "success" ] ||
              [ "${{ needs.build.result }}" != "success" ] ||
              [ "${{ needs.smoke.result }}" != "success" ] ||
