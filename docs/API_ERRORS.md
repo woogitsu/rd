@@ -89,6 +89,7 @@ wpisów).
 | `document_content_missing` | Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_integrity_mismatch` | Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi. | Nie — popraw dane żądania. |
 | `document_malformed` | Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane). | Zależy od kontekstu (patrz moduł trasy). |
+| `document_preview_unsupported` | Podglądu tego typu pliku nie ma. Pobierz plik. | Nie — popraw dane żądania. |
 | `document_status_conflict` | Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_status_replacement_not_active` | Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_too_large` | Plik przekracza dozwolony rozmiar. | Zależy od kontekstu (patrz moduł trasy). |
@@ -157,6 +158,7 @@ wpisów).
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |
+| `invalid_disposition` | Nieznany sposób otwarcia pliku. Użyj podglądu albo pobrania. | Nie — popraw dane żądania. |
 | `invalid_document_date` | Niepoprawna data dokumentu. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
 | `invalid_domain` | Wybierz obszar dziennika z listy. | Nie — popraw dane. |

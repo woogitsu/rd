@@ -17,6 +17,7 @@
 // - odmawia przy APP_ENV=production bez jawnej zgody (allowProduction).
 // Surowy token zwracany jest wyłącznie wywołującemu; w bazie zostaje SHA-256.
 
+import { isProductionEnv, isProductionLikeEnv } from '../app-env.js';
 import { insertAuditEvent } from './audit.js';
 import { createInvitation } from './auth.js';
 
@@ -35,17 +36,15 @@ function normalizeEmail(email) {
   return value;
 }
 
-export function isProductionEnv(appEnv) {
-  const value = String(appEnv ?? '').trim().toLowerCase();
-  return value === 'production' || value === 'prod';
-}
+// Re-eksport: jedna implementacja w src/app-env.js (#166).
+export { isProductionEnv };
 
 // db: kontrakt src/db.js (albo PGlite). Zwraca { userId, userCreated, invitationId, secret, expiresAt }.
 export async function bootstrapAdmin(db, {
   email, displayName = 'Administrator', appEnv, allowProduction = false, ttlSeconds = BOOTSTRAP_DEFAULT_TTL_SECONDS,
 } = {}) {
   if (!db || typeof db.transaction !== 'function') throw new Error('database_unavailable');
-  if (isProductionEnv(appEnv) && allowProduction !== true) throw new BootstrapRefused('production_requires_flag');
+  if (isProductionLikeEnv(appEnv) && allowProduction !== true) throw new BootstrapRefused('production_requires_flag');
   const normalized = normalizeEmail(email);
   const ttl = Math.max(60 * 60, Math.min(Number(ttlSeconds) || BOOTSTRAP_DEFAULT_TTL_SECONDS, BOOTSTRAP_MAX_TTL_SECONDS));
   const name = String(displayName ?? '').trim().slice(0, 120) || 'Administrator';

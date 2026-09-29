@@ -10,6 +10,8 @@
 //   a klucz trafia też w nagłówku wiadomości do diagnostyki;
 // - klucz API wyłącznie z sekretu serwera (BREVO_API_KEY), nigdy w logach.
 
+import { isProductionEnv, resolveAppEnv } from '../app-env.js';
+
 export const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -127,7 +129,9 @@ function sendWindowFrom(env) {
 export function emailConfig(env = {}) {
   const dailyLimit = intFrom(env.EMAIL_DAILY_LIMIT, 300, { min: 0, max: 100_000 });
   return {
-    appEnv: String(env.APP_ENV ?? 'development'),
+    // Wspólna normalizacja (#166): 'Production'/'prod' → 'production'; brak → 'development'
+    // (allowlista aktywna, czyli fail-closed dla wysyłki).
+    appEnv: resolveAppEnv(env.APP_ENV).name || 'development',
     sendingEnabled: env.EMAIL_SENDING_ENABLED === 'true',
     dailyLimit,
     dailyReserved: Math.min(dailyLimit, intFrom(env.EMAIL_DAILY_RESERVED, 0, { min: 0, max: 100_000 })),
@@ -180,7 +184,7 @@ export function withinSendWindow(now, sendWindow) {
 }
 
 export function isProduction(config) {
-  return config.appEnv === 'production';
+  return isProductionEnv(config.appEnv);
 }
 
 export function matchesAllowlist(allowlist, email) {

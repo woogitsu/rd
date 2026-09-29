@@ -115,3 +115,6 @@ a { color: var(--red); }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+.preview-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--line, #ddd); }
+.preview-frame { display: block; width: 100%; height: 70vh; min-height: 24rem; border: 1px solid var(--line, #ddd); background: #fff; }
