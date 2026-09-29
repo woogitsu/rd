@@ -148,7 +148,7 @@ export function availableActions(post, { grants = [], actorId = null } = {}) {
   };
 }
 
-// Zdjęcia do wyboru we wpisie: tylko z zweryfikowanymi prawami (serwer i tak
+// Zdjęcia do wyboru we wpisie: tylko ze zweryfikowanymi prawami (serwer i tak
 // blokuje zatwierdzenie i publikację wpisu z niezweryfikowanym lub cofniętym zdjęciem).
 export function selectablePhotos(photos) {
   return (Array.isArray(photos) ? photos : []).filter((p) => p?.rightsStatus === 'verified');
@@ -175,10 +175,13 @@ export function consentSummary(consent) {
   return `${kind} nr ${consent?.subjectNo ?? '?'} · zakres: ${scope.length ? scope.join(', ') : 'nie określono'} · ${until}`;
 }
 
+const dateTimeFormatter = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Brussels' });
+
+// Czas w Europe/Brussels, jak w Wydarzeniach, Zebraniach i Kontach (przegląd demo).
 export function formatDateTime(value) {
   if (!value) return '—';
-  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  return match ? `${match[3]}.${match[2]}.${match[1]} ${match[4]}:${match[5]} UTC` : String(value);
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : dateTimeFormatter.format(date);
 }
 
 export function describeApiError(status, code) {

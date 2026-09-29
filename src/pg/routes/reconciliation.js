@@ -25,8 +25,10 @@ import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
+import { detectDelimiter, parseCsvMatrix } from '../../../import/csv.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { buildBudgetExecution } from './ledger-budget.js';
@@ -56,6 +58,11 @@ const MAX_CANDIDATES = 5;
 const MIN_GROUP_ITEMS = 2;
 const MAX_GROUP_ITEMS = 50;
 const MAX_BATCH_MATCHES = 50;
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+function piiFail(code, categories) {
+  return new RequestError(code, 422, { categories });
+}
 
 class RequestError extends Error {
   constructor(code, status = 400, extra = {}) {
@@ -158,30 +165,18 @@ const HEADER_ALIASES = new Map([
   ['description', 'reference'], ['communication', 'reference'],
 ]);
 
+// #77: wspólny parser RFC 4180 (import/csv.js) — separator ; , albo tabulator liczony poza
+// cudzysłowami w pierwszej linii. Remis nie jest zgadywany po cichu: błąd zamiast domyślnego przecinka.
 function parseCsvRows(text) {
-  const source = text.replace(/^﻿/, '');
-  const firstLine = source.split(/\r?\n/, 1)[0] ?? '';
-  const delimiter = (firstLine.match(/;/g)?.length ?? 0) > (firstLine.match(/,/g)?.length ?? 0) ? ';' : ',';
-  const rows = [];
-  let row = [];
-  let field = '';
-  let quoted = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    if (quoted) {
-      if (char === '"' && source[index + 1] === '"') { field += '"'; index += 1; }
-      else if (char === '"') quoted = false;
-      else field += char;
-    } else if (char === '"' && field === '') quoted = true;
-    else if (char === delimiter) { row.push(field); field = ''; }
-    else if (char === '\n' || char === '\r') {
-      if (char === '\r' && source[index + 1] === '\n') index += 1;
-      row.push(field); rows.push(row); row = []; field = '';
-    } else field += char;
+  if (text.includes('\uFFFD') || text.includes('\u0000')) throw new RequestError('invalid_csv_encoding');
+  const detected = detectDelimiter(text);
+  if (detected.tie) throw new RequestError('ambiguous_csv_delimiter');
+  try {
+    return parseCsvMatrix(text, { delimiter: detected.delimiter });
+  } catch {
+    // Komunikat parsera zawiera tylko pozycję znaku, ale kod błędu API pozostaje ogólny.
+    throw new RequestError('invalid_csv');
   }
-  if (quoted) throw new RequestError('invalid_csv');
-  if (field !== '' || row.length) { row.push(field); rows.push(row); }
-  return rows.filter((cells) => cells.some((cell) => cell.trim() !== ''));
 }
 
 function parseCsvDate(value) {
@@ -476,6 +471,7 @@ async function createReconciliation(request, env, json) {
     const response = await env.db.transaction(async (tx) => {
       const replay = replayOrConflict(await byKey(tx));
       if (replay) return replay;
+      const gate = gateFreeText([['bank_reconciliations.notes', input.notes]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliations (id, school_year_id, statement_date, statement_balance_cents,
@@ -486,7 +482,7 @@ async function createReconciliation(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.created', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: input.schoolYearId },
+        metadata: { schoolYearId: input.schoolYearId, ...piiAuditMetadata(gate) },
       });
       const row = await loadReconciliation(tx, id);
       return json({ reconciliation: reconciliationFromRow(row) }, 201, CREATED);
@@ -1507,6 +1503,7 @@ async function revokeMatch(request, env, id, matchId, json) {
         throw new RequestError('match_already_revoked', 409);
       }
       if (row.status !== 'draft') throw notDraftError(row);
+      const gate = gateFreeText([['bank_reconciliation_matches.revoke_reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const updated = await tx.query(
         `UPDATE bank_reconciliation_matches SET revoked_at = now(), revoked_by = $2, revoke_reason = $3
           WHERE id = $1 RETURNING *`,
@@ -1514,7 +1511,7 @@ async function revokeMatch(request, env, id, matchId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.revoked', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id, schoolYearId: row.school_year_id },
+        metadata: { reconciliationId: id, schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       return json({ match: matchFromRow(updated.rows[0]) }, 200, CREATED);
     });
@@ -1758,6 +1755,7 @@ async function revokeGroupMatch(request, env, id, groupId, json) {
         throw new RequestError('match_already_revoked', 409);
       }
       if (row.status !== 'draft') throw notDraftError(row);
+      const gate = gateFreeText([['bank_reconciliation_group_match_revocations.reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const revocationId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliation_group_match_revocations (id, group_match_id, reconciliation_id, school_year_id,
@@ -1767,7 +1765,7 @@ async function revokeGroupMatch(request, env, id, groupId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.group_match.revoked', entityType: 'bank_reconciliation_group_match',
-        entityId: groupId, metadata: { reconciliationId: id, revocationId, schoolYearId: row.school_year_id },
+        entityId: groupId, metadata: { reconciliationId: id, revocationId, schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       const [updated] = await loadGroupMatches(tx, id, groupId);
       return json({ groupMatch: publicGroupMatch(updated) }, 200, CREATED);
@@ -1810,6 +1808,7 @@ async function confirmReconciliation(request, env, id, json) {
       }
       const current = reconciliationFromRow(row);
       if (current.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
+      const gate = gateFreeText([['bank_reconciliations.confirmation_note', note]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       await tx.query(
         `UPDATE bank_reconciliations
             SET status = 'confirmed', confirmed_by = $2, confirmed_at = now(), confirmation_note = $3
@@ -1822,7 +1821,7 @@ async function confirmReconciliation(request, env, id, json) {
       if (result.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.confirmed', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: row.school_year_id, balanced: result.differenceCents === 0 },
+        metadata: { schoolYearId: row.school_year_id, balanced: result.differenceCents === 0, ...piiAuditMetadata(gate) },
       });
       return json({ reconciliation: result }, 200, CREATED);
     });
@@ -1874,6 +1873,7 @@ async function abandonReconciliation(request, env, id, json) {
         throw new RequestError('reconciliation_has_active_matches', 409, { activeMatchCount });
       }
       // Dopasowania zbiorcze (#390, jeśli są) sprawdza trigger bazy (0107).
+      const gate = gateFreeText([['bank_reconciliations.abandon_reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       await tx.query(
         `UPDATE bank_reconciliations
             SET status = 'abandoned', abandoned_by = $2, abandoned_at = now(), abandon_reason = $3
@@ -1883,7 +1883,7 @@ async function abandonReconciliation(request, env, id, json) {
       const abandoned = await loadReconciliation(tx, id);
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.abandoned', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: row.school_year_id },
+        metadata: { schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       return json({ reconciliation: reconciliationFromRow(abandoned) }, 200, CREATED);
     });

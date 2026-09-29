@@ -63,6 +63,12 @@ export function canEditFamilies(grants) {
   return Array.isArray(grants) && grants.some((grant) => grant.role === "admin" || grant.role === "board");
 }
 
+// Pulpit przedstawiciela (/api/representative/overview) jest dostępny tylko z przydziałem
+// przedstawiciela; pozostałe role dostawałyby 403 w konsoli (przegląd demo).
+export function hasRepresentativeGrant(grants) {
+  return Array.isArray(grants) && grants.some((grant) => grant && grant.role === "representative");
+}
+
 // Wyszukiwanie po imieniu/nazwisku na już wczytanej liście uczniów klasy (issue #128).
 // Filtr działa po stronie klienta — dane są już w przeglądarce, więc nie potrzeba
 // nowej trasy API. Dopasowanie jest bez rozróżniania wielkości liter i polskich

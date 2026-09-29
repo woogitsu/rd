@@ -33,6 +33,7 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
+import { shortId } from "../shared/short-id.js";
 import "../shared/shell.css";
 import { classChoiceOptionsHtml, fillClassSelect } from "../shared/class-choice.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
@@ -281,7 +282,10 @@ function renderDetail() {
     const marks = revisionMarks(event, revision.revision);
     row.append(cell(marks.length ? `${revision.revision} (${marks.join(", ")})` : String(revision.revision)));
     row.append(cell(formatStamp(revision.createdAt)));
-    row.append(cell(revision.createdBy || "—"));
+    // API nie zwraca nazwy autora — pokazujemy skrócony identyfikator (pełny w podpowiedzi).
+    const author = cell(shortId(revision.createdBy));
+    if (revision.createdBy) author.title = revision.createdBy;
+    row.append(author);
     const summary = [revision.title, formatBrussels(revision.startsAt ? new Date(revision.startsAt) : null)];
     if (revision.location) summary.push(revision.location);
     summary.push(AUDIENCE_LABELS[revision.audience] ?? revision.audience);

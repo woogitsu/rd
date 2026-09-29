@@ -110,3 +110,12 @@ h2 { margin-bottom: 1rem; font-size: 1.35rem; }
   /* main.js opens every <details> on beforeprint. */
   .minutes-body summary { display: none; }
 }
+
+/* #116: stały link do wpisu, archiwum według roku i wybrany wpis */
+.news-archive-list { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; margin: 0 0 1rem; padding: 0; list-style: none; }
+.news-archive-list a[aria-current="page"] { font-weight: 700; text-decoration: none; }
+.news-permalink-row { margin: .5rem 0 0; font-size: .9rem; }
+.news-linked { margin-bottom: 1rem; padding: .75rem 1rem; border-left: 3px solid var(--red); background: var(--soft); }
+.news-linked[hidden], .news-archive[hidden] { display: none; }
+.news-linked-title { margin: 0 0 .25rem; font-size: 1rem; }
+@media print { .news-archive, .news-permalink-row { display: none; } }

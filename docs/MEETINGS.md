@@ -1,6 +1,8 @@
 # Zebrania, obecność, quorum, protokoły i uchwały
 
-Zakres issue #13 na docelowym stosie Node.js + PostgreSQL: migracja `postgres/migrations/0009_meetings.sql`, usługi i obsługa HTTP w `src/pg/meetings.js`, testy w `tests/pg-meetings.test.js` (PGlite, dane syntetyczne). To **prototyp**, nie funkcja gotowa do pracy na danych rodzin. Trasy nie są jeszcze podłączone do serwera Node; `handle()` otrzyma `env.db` i `env.loadAuthorizationContext` w osobnym PR-ze.
+Zakres issue #13 na docelowym stosie Node.js + PostgreSQL: migracja `postgres/migrations/0009_meetings.sql`, usługi i obsługa HTTP w `src/pg/meetings.js`, testy w `tests/pg-meetings.test.js` (PGlite, dane syntetyczne). To **prototyp**, nie funkcja gotowa do pracy na danych rodzin. Trasy są podłączone do routera PostgreSQL (`src/pg/routes/meetings.js`, `ROUTES` w `src/pg/app.js`), a panel `meetings/` woła je z tego samego originu.
+
+Status: API na PostgreSQL i panel `meetings/` — prototyp na danych syntetycznych, niewdrożony na Railway. Głosowanie elektroniczne między zebraniami nie istnieje (czeka na D-19), a wymagania wobec regulaminu (D-15, D-21) nie są rozstrzygnięte.
 
 ## Czego moduł świadomie nie robi
 

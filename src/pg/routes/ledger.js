@@ -37,6 +37,7 @@ import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvCell, csvResponse, csvRow, formatEuro, safeFileSegment, toCsv } from '../csv.js';
@@ -73,6 +74,11 @@ class RequestError extends Error {
 }
 
 // Wynik odtworzenia zapisu po kluczu idempotencji — kończy transakcję bez zapisu.
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+function piiFail(code, categories) {
+  return new RequestError(code, 422, { categories });
+}
+
 class Replay {
   constructor(body) {
     this.body = body;
@@ -824,7 +830,9 @@ async function validateEntryReferences(tx, input, payment, { replacing = false }
 
 async function createEntry(request, env, json) {
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseEntryInput(await readJson(request));
+  const data = await readJson(request);
+  const input = parseEntryInput(data);
+  const confirmPersonalData = data.confirmPersonalData === true;
   const context = await requireFinancialContext(request, env, input.schoolYearId);
   const actorId = context.session.user.id;
 
@@ -853,6 +861,7 @@ async function createEntry(request, env, json) {
       const replay = replayOrConflict(await loadEntryByKey(tx, idempotencyKey));
       if (replay) return replay;
       const resolutionReference = await validateEntryReferences(tx, input, payment);
+      const gate = gateFreeText([['ledger_entries.description', input.description]], { confirm: confirmPersonalData, fail: piiFail });
       const entryId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_entries (
@@ -870,6 +879,7 @@ async function createEntry(request, env, json) {
         metadata: {
           schoolYearId: input.schoolYearId,
           ...(input.resolutionId ? { resolutionId: input.resolutionId } : {}),
+          ...piiAuditMetadata(gate),
         },
       });
       return { entry: createdEntry(entryId, { ...input, resolutionReference }) };
@@ -891,7 +901,9 @@ async function createEntry(request, env, json) {
 async function createCorrection(request, env, ledgerEntryId, json) {
   if (!validId(ledgerEntryId)) throw new RequestError('invalid_ledger_entry_id');
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseCorrectionInput(await readJson(request));
+  const correctionData = await readJson(request);
+  const input = parseCorrectionInput(correctionData);
+  const confirmPersonalData = correctionData.confirmPersonalData === true;
   const context = await requireFinancialContext(request, env);
   const actorId = context.session.user.id;
 
@@ -930,6 +942,7 @@ async function createCorrection(request, env, ledgerEntryId, json) {
       if (toSafeInteger(corrected.rows[0].corrected_cents) + input.amountCents > toSafeInteger(entry.amount_cents)) {
         throw new RequestError('correction_exceeds_remaining_amount', 409);
       }
+      const gate = gateFreeText([['ledger_corrections.reason', input.reason]], { confirm: confirmPersonalData, fail: piiFail });
       const correctionId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
@@ -938,7 +951,7 @@ async function createCorrection(request, env, ledgerEntryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.correction.created', entityType: 'ledger_correction',
-        entityId: correctionId, metadata: { ledgerEntryId, schoolYearId: entry.school_year_id },
+        entityId: correctionId, metadata: { ledgerEntryId, schoolYearId: entry.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { correction: { id: correctionId, ledgerEntryId, amountCents: input.amountCents, reason: input.reason } };
     });
@@ -1142,6 +1155,10 @@ async function createReplacement(request, env, ledgerEntryId, json) {
       if (remaining <= 0) throw new RequestError('ledger_entry_already_corrected_to_zero', 409);
 
       const resolutionReference = await validateEntryReferences(tx, input, payment, { replacing: true });
+      const gate = gateFreeText([
+        ['ledger_corrections.reason', input.reason],
+        ['ledger_entries.description', input.description],
+      ], { confirm: body.confirmPersonalData === true, fail: piiFail });
 
       // Centra kosztów (0090): przypisanie przechodzi na wpis zastępczy, o ile
       // kierunek się nie zmienia i suma mieści się w nowej kwocie; inaczej
@@ -1196,6 +1213,7 @@ async function createReplacement(request, env, ledgerEntryId, json) {
           ...(allocated > 0 ? { allocationCarried: carryAllocation, allocationReleased: !carryAllocation } : {}),
           ...(affectedReconciliations.length ? { confirmedReconciliationIds: affectedReconciliations } : {}),
           ...(input.resolutionId ? { resolutionId: input.resolutionId } : {}),
+          ...piiAuditMetadata(gate),
         },
       });
       const created = createdEntry(entryId, { ...input, resolutionReference }, { replacesEntryId: ledgerEntryId });
@@ -1257,7 +1275,9 @@ async function loadReviewByKey(executor, key) {
 async function createReview(request, env, ledgerEntryId, json) {
   if (!validId(ledgerEntryId)) throw new RequestError('invalid_ledger_entry_id');
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseReviewInput(await readJson(request));
+  const reviewData = await readJson(request);
+  const input = parseReviewInput(reviewData);
+  const confirmPersonalData = reviewData.confirmPersonalData === true;
   const context = await requireFinancialContext(request, env);
   const actorId = context.session.user.id;
   const replayOrConflict = (row) => {
@@ -1283,6 +1303,7 @@ async function createReview(request, env, ledgerEntryId, json) {
       if (replay) return replay;
       if (entry.direction !== 'expense') throw new RequestError('review_expense_only', 409);
       if (entry.created_by === actorId) throw new RequestError('four_eyes_required', 403);
+      const gate = gateFreeText([['ledger_entry_reviews.note', input.note]], { confirm: confirmPersonalData, fail: piiFail });
       const id = crypto.randomUUID();
       const inserted = await tx.query(
         `INSERT INTO ledger_entry_reviews (id, school_year_id, ledger_entry_id, decision, note, reviewed_by, idempotency_key)
@@ -1293,7 +1314,7 @@ async function createReview(request, env, ledgerEntryId, json) {
       // Dziennik: aktor, czas, identyfikator wpisu i decyzja — bez kwoty, opisu i uwagi.
       await insertAuditEvent(tx, {
         actorId, action: `ledger.entry.${input.decision}`, entityType: 'ledger_entry', entityId: ledgerEntryId,
-        metadata: { reviewId: id, schoolYearId: entry.school_year_id },
+        metadata: { reviewId: id, schoolYearId: entry.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { review: reviewFromRow(inserted.rows[0]) };
     });
@@ -1441,7 +1462,9 @@ function authorizationFromRow(row) {
 async function createAuthorization(request, env, resolutionId, json) {
   if (!validId(resolutionId)) throw new RequestError('invalid_request');
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseAuthorizationInput(await readJson(request));
+  const authorizationData = await readJson(request);
+  const input = parseAuthorizationInput(authorizationData);
+  const confirmPersonalData = authorizationData.confirmPersonalData === true;
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   // Rola i MFA przed odczytem uchwały (bez wyroczni istnienia); rok po odczycie.
@@ -1488,6 +1511,7 @@ async function createAuthorization(request, env, resolutionId, json) {
       if ((current.rows[0]?.id ?? null) !== input.supersedesId) {
         throw new RequestError('authorization_superseded', 409, { currentAuthorizationId: current.rows[0]?.id ?? null });
       }
+      const gate = gateFreeText([['resolution_spending_authorizations.note', input.note]], { confirm: confirmPersonalData, fail: piiFail });
       const id = crypto.randomUUID();
       const inserted = await tx.query(
         `INSERT INTO resolution_spending_authorizations
@@ -1500,7 +1524,7 @@ async function createAuthorization(request, env, resolutionId, json) {
       // Dziennik bez kwoty (jak inne zapisy finansowe): aktor, czas, uchwała, poprzednia kwota.
       await insertAuditEvent(tx, {
         actorId, action: 'resolution.spending_authorization.recorded', entityType: 'resolution', entityId: resolutionId,
-        metadata: { authorizationId: id, supersedesId: input.supersedesId, schoolYearId: resolution.school_year_id },
+        metadata: { authorizationId: id, supersedesId: input.supersedesId, schoolYearId: resolution.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { authorization: authorizationFromRow(inserted.rows[0]) };
     });

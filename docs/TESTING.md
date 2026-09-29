@@ -8,7 +8,7 @@ Pilnuje jej `tests/testing-matrix.test.js`. Dane w testach są wyłącznie synte
 (`@example.invalid`), czas jest wstrzykiwany (`env.now`) tam, gdzie wynik zależy od dnia.
 
 Legenda: `✓` pokryte testem wskazanym w rejestrze dowodów poniżej (dla kolumny „Role”
-dowodem jest `tests/pg-authz-matrix.test.js`, 16 modułów × aktorzy × MFA × zakres);
+dowodem jest `tests/pg-authz-matrix.test.js`, 27 modułów × aktorzy × MFA × zakres);
 `~` częściowo (tylko sekwencyjnie, bez skutków albo niesprawdzone pole po polu);
 `n/d (powód)` scenariusz nie dotyczy modułu; `— (#N)` puste pole z odwołaniem do zgłoszenia.
 Pole puste bez powodu i bez odwołania nie jest dozwolone.
@@ -16,7 +16,8 @@ Pole puste bez powodu i bez odwołania nie jest dozwolone.
 Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei, więc
 „równoległe” scenariusze sprawdzają niezmiennik wyniku, a nie realny wyścig
 (realne wyścigi na PostgreSQL: `tests/pg-reconciliation-race.test.js`,
-`tests/pg-export-race.test.js`, uruchamiane z `RD_TEST_PG_URL`; #208).
+`tests/pg-export-race.test.js`, `tests/pg-real-concurrency.test.js`, uruchamiane
+z `RD_TEST_PG_URL`; #208, sekcja „Testy na prawdziwym PostgreSQL” niżej).
 
 ## Macierz
 
@@ -126,3 +127,72 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | druk | Wpł. częściowe | tests/pg-print.test.js | kwoty netto tylko dla roli finansowej z MFA |
 | druk | Korekty | tests/pg-print.test.js | kwoty netto tylko dla roli finansowej z MFA |
 | eksport | Ponowienie | tests/pg-export-audit-year.test.js | ponowny eksport daje ten sam wynik |
+
+## Testy na prawdziwym PostgreSQL (#208)
+
+PGlite ma jedno połączenie i wykonuje transakcje po kolei, więc **nie nadaje się do
+testów współbieżności**: testy „parallel / double click” na nim sprawdzają wynik
+końcowy, a usunięcie `FOR UPDATE` zwykle nie zmienia ich wyniku. Wyścigi, blokady
+i gałęzie `23505 → odtworzenie zapisu` wymagają serwera PostgreSQL 16.
+
+### Uruchomienie lokalne
+
+```
+npm run test:pg-real                       # pliki czytające RD_TEST_PG_URL (wyścigi)
+npm run test:pg-real -- tests/pg-x.test.js # wskazane pliki
+npm run test:pg-real -- --all              # CAŁY zestaw na PostgreSQL zamiast PGlite
+```
+
+`scripts/test-pg-real.js`: `initdb` w katalogu tymczasowym → serwer na losowym porcie
+(wyłącznie `127.0.0.1`, uwierzytelnianie `trust`, `fsync=off`) → `node --test
+--test-concurrency=1` z `RD_TEST_PG_URL` → zatrzymanie serwera → usunięcie katalogu
+(także po błędzie i po SIGINT/SIGTERM). Nie łączy się z żadną istniejącą bazą ani z
+siecią zewnętrzną. Binaria: `PG_BIN`, potem `pg_config --bindir`, potem
+`/usr/lib/postgresql/*/bin`, potem `PATH`. Uruchomiony jako root skrypt startuje serwer
+jako użytkownik `postgres` (PostgreSQL odmawia startu jako root); katalog tymczasowy
+(`TMPDIR`, domyślnie `/tmp`) musi być wtedy dostępny dla tego użytkownika.
+
+Z `--all` ustawiane jest `RD_TEST_PG_BACKEND=real`: `createTestDb()` z
+`tests/helpers/pg.js` zwraca zamiast PGlite bazę na prawdziwym PostgreSQL przez
+`createPgDatabase` (`src/db.js`, pula `pg`) — osobna baza na wywołanie, klonowana z
+szablonu z migracjami. Dzięki temu każdy istniejący test można sprawdzić na serwerze
+docelowym. Różnice widoczne dopiero tam (typy `bigint` jako tekst, brak `rowCount`,
+mikrosekundy `timestamptz`, prawdziwe blokady, ponowienia 40001 w `src/db.js`) to
+realne ryzyka wdrożenia na Railway. Pełny przebieg trwa kilkanaście minut.
+
+### Testy wyścigów
+
+`tests/pg-real-concurrency.test.js` (pomijany bez `RD_TEST_PG_URL`): podwójne kliknięcie
+zapisu wpłaty (aż do wykonania gałęzi 23505), dwoje opiekunów płacących równolegle,
+trzy równoległe korekty 40/40/40 €, dwa i pięć równoległych wydatków na jedną uchwałę
+(#93), podwójne kliknięcie wydatku z uchwałą, dwa równoległe przebiegi kolejki e-mail,
+anulowanie kampanii w trakcie przebiegu i podwójne anulowanie (#210), udane logowania
+zwalniające limit IP.
+
+Wzorzec „bariera” (`gatedEnv`): pierwsze żądanie jest wstrzymywane w transakcji po
+zapisie, przed COMMIT; drugie musi czekać na blokadę (`pg_stat_activity`,
+`wait_event_type = 'Lock'`) i po zatwierdzeniu pierwszego zobaczyć jego wynik. Samo
+`Promise.all` przeplata się zbyt rzadko (okno wyścigu to mikrosekundy). Kontrola
+mutacyjna wykonana ręcznie: usunięcie `FOR UPDATE` z triggera
+`ledger_entry_resolution_guard` (0072) czerwieni testy #93 (bariera i pięć wydatków),
+a zdjęcie blokady kampanii w `cancel` (`loadCampaign(..., { lock: true })`) — test
+bariery anulowania. Wpłaty mają kilka warstw blokad (API i triggery 0002/0038/0039/
+0104): po zdjęciu `FOR UPDATE` z API korekty i z triggerów 0002 test bariery korekt
+nadal przechodzi, bo pozostałe warstwy trzymają blokadę.
+Automatycznej kontroli mutacyjnej w CI jeszcze nie ma (#208, punkt 4).
+
+`tests/pg-db-contract.test.js` (działa w CI bez PostgreSQL): `src/` nie czyta
+`rowCount`/`affectedRows` — kontrakt `src/db.js` zwraca tylko `{ rows }`, a PGlite
+dodaje `rowCount`, więc taki kod przechodził testy i psuł się na serwerze.
+
+### CI: co musi zrobić administrator
+
+Runnery self-hosted nie mają PostgreSQL ani Dockera (`.github/workflows/ci.yml`), więc
+testy wyścigów są w CI pomijane. Aby je włączyć bez zmiany reszty zestawu, administrator
+runnerów powinien: (1) zainstalować pakiety PostgreSQL 16 (`initdb`, `pg_ctl`, `postgres`)
+bez uruchamiania usługi systemowej; (2) dodać do `ci.yml` osobny job (np. `test-pg-real`,
+`runs-on: self-hosted`, `timeout-minutes: 20`, kroki `checkout` → `setup-node` → `npm ci`
+→ `npm run test:pg-real`, akcje przypięte do pełnego SHA) i dopisać go do `needs` joba
+`ci-ok`; (3) opcjonalnie nocny job `schedule` z `npm run test:pg-real -- --all`
+(powtarzanie testów współbieżności, #111). Skrypt sam tworzy i usuwa serwer, więc nie
+potrzeba sekretów, usług ani portów. Ten PR celowo nie zmienia `ci.yml`.

@@ -26,9 +26,12 @@
 // zatwierdzenie — wyłącznie board z MFA. Rola admin (techniczna) nie ma dostępu.
 
 import { timingSafeEqual } from 'node:crypto';
+import { BlockList, isIP } from 'node:net';
+import { CLIENT_IP_HEADER } from './login.js';
 import { isSameOrigin } from '../../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import {
   afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
@@ -88,12 +91,16 @@ function prefRateLimited(key, env) {
 }
 
 class RequestError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
 }
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+const piiFail = (code, categories) => new RequestError(code, 422, { categories });
 
 function validId(value) {
   return typeof value === 'string' && ID_PATTERN.test(value);
@@ -986,6 +993,7 @@ async function status(request, env, id, json) {
   });
 }
 
+const REPORT_CATEGORIES = Object.freeze(['queued', 'sending', 'sent', 'delivered', 'bounced', 'delivery_unknown', 'failed', 'suppressed', 'skipped', 'cancelled']);
 const RESOLUTIONS = Object.freeze(['confirmed_delivered', 'confirmed_not_sent']);
 const EVIDENCE_CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
 
@@ -1007,6 +1015,28 @@ async function report(request, env, id, json) {
       GROUP BY COALESCE(last_event.event, 'none') ORDER BY 1`,
     [id],
   );
+  // Rozłączny podział wierszy kolejki na stany raportu (każdy wiersz w dokładnie
+  // jednej kategorii): sent = przyjęte przez Brevo bez potwierdzenia doręczenia,
+  // delivered = przyjęte i jest zdarzenie „delivered”, delivery_unknown = nie
+  // wiemy, czy wyszło (stan końcowy bez zmiany historii), failed = inna
+  // odmowa. Rozstrzygnięcia liczymy osobno — nie zmieniają stanu wiersza.
+  const { rows: summaryRows } = await env.db.query(
+    `SELECT CASE
+              WHEN o.state = 'sent' AND EXISTS (SELECT 1 FROM email_webhook_events w WHERE w.outbox_id = o.id AND w.event = 'delivered') THEN 'delivered'
+              WHEN o.state = 'failed' AND o.last_error = 'delivery_unknown' THEN 'delivery_unknown'
+              ELSE o.state
+            END AS category,
+            COUNT(*)::int AS n,
+            COUNT(res.id)::int AS resolved
+       FROM email_outbox o
+       LEFT JOIN email_outbox_resolutions res ON res.outbox_id = o.id
+      WHERE o.campaign_id = $1
+      GROUP BY 1 ORDER BY 1`,
+    [id],
+  );
+  const summary = Object.fromEntries(REPORT_CATEGORIES.map((key) => [key, 0]));
+  for (const row of summaryRows) summary[row.category] = row.n;
+  const unknown = summaryRows.find((row) => row.category === 'delivery_unknown');
   const { rows: resolutions } = await env.db.query(
     'SELECT resolution, COUNT(*)::int AS n FROM email_outbox_resolutions WHERE campaign_id = $1 GROUP BY resolution ORDER BY resolution',
     [id],
@@ -1017,6 +1047,8 @@ async function report(request, env, id, json) {
   );
   return json({
     campaign: campaignView(campaign),
+    summary,
+    deliveryUnknownUnresolved: (unknown?.n ?? 0) - (unknown?.resolved ?? 0),
     outbox: Object.fromEntries(rows.map((row) => [row.state, row.n])),
     lastProviderEvent: Object.fromEntries(lastEvent.map((row) => [row.event, row.n])),
     resolutions: Object.fromEntries(resolutions.map((row) => [row.resolution, row.n])),
@@ -1137,9 +1169,46 @@ function webhookSecrets(env) {
   ].filter((entry) => entry.secret.length >= 32);
 }
 
+// Zdarzenia transakcyjne Brevo, które zapisujemy. Inne typy (np. przyszłe
+// zdarzenia dostawcy) są ignorowane z odpowiedzią 200 — 4xx/5xx wywołałoby
+// niekończące się ponowienia po stronie Brevo, a nie mamy co z nimi zrobić.
+export const KNOWN_WEBHOOK_EVENTS = Object.freeze(new Set([
+  'request', 'delivered', 'hard_bounce', 'soft_bounce', 'blocked', 'spam', 'complaint', 'invalid_email',
+  'deferred', 'error', 'unsubscribed', 'click', 'opened', 'unique_opened', 'proxy_open', 'loaded_by_proxy',
+]));
+
+// #139: opcjonalne ograniczenie do zakresów IP Brevo (BREVO_WEBHOOK_ALLOWED_CIDRS,
+// po przecinku; domyślnie puste = brak ograniczenia). Adres klienta jest
+// wiarygodny tylko za zaufanym proxy, więc kontrola działa wyłącznie przy
+// TRUST_PROXY=1 (nagłówek ustawia serwer Node, klient nie może go podrobić).
+// Niepoprawny wpis konfiguracji = fail closed (503), nigdy „przepuść wszystko”.
+function webhookSourceCheck(request, env) {
+  const raw = typeof env.BREVO_WEBHOOK_ALLOWED_CIDRS === 'string' ? env.BREVO_WEBHOOK_ALLOWED_CIDRS.trim() : '';
+  if (!raw) return 'ok';
+  if (env.TRUST_PROXY !== '1' && env.TRUST_PROXY !== 'true') return 'ok';
+  const list = new BlockList();
+  for (const entry of raw.split(',').map((part) => part.trim()).filter(Boolean)) {
+    const [address, prefixText, extra] = entry.split('/');
+    const family = isIP(address);
+    const prefix = prefixText === undefined ? (family === 4 ? 32 : 128) : Number(prefixText);
+    if (!family || extra !== undefined || !Number.isInteger(prefix) || prefix < 0 || prefix > (family === 4 ? 32 : 128)) return 'misconfigured';
+    list.addSubnet(address, prefix, family === 4 ? 'ipv4' : 'ipv6');
+  }
+  let ip = (request.headers.get(CLIENT_IP_HEADER) ?? '').trim();
+  const mapped = ip.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (mapped) ip = mapped[1];
+  const family = isIP(ip);
+  if (!family) return 'denied';
+  return list.check(ip, family === 4 ? 'ipv4' : 'ipv6') ? 'ok' : 'denied';
+}
+
 async function webhook(request, env, json) {
   const candidates = webhookSecrets(env);
   if (!candidates.length) return json({ error: 'webhook_not_configured' }, 503);
+  // Przed parsowaniem treści (i przed porównaniem sekretu): źródło spoza zakresu → 401.
+  const source = webhookSourceCheck(request, env);
+  if (source === 'misconfigured') return json({ error: 'webhook_not_configured' }, 503);
+  if (source === 'denied') return json({ error: 'invalid_signature' }, 401);
   const token = webhookTokenFrom(request);
   const matched = token ? candidates.find((c) => sameSecret(token, c.secret)) : null;
   if (!matched) return json({ error: 'invalid_signature' }, 401);
@@ -1159,12 +1228,15 @@ async function webhook(request, env, json) {
   }
   let recorded = 0;
   let suppressed = 0;
+  let ignored = 0;
   for (const event of events) {
+    const name = typeof event.event === 'string' ? event.event.trim().toLowerCase() : '';
+    if (!KNOWN_WEBHOOK_EVENTS.has(name)) { ignored += 1; continue; }
     const outcome = await recordWebhookEvent(env.db, event);
     if (outcome.recorded) recorded += 1;
     if (outcome.suppressed) suppressed += 1;
   }
-  return json({ received: events.length, recorded, suppressed });
+  return json({ received: events.length, recorded, suppressed, ignored });
 }
 
 async function recordWebhookEvent(db, event) {
@@ -1341,6 +1413,8 @@ async function releaseRequest(request, env, hashValue, json) {
         [hashValue, actorId, data.releaseReason],
       );
       if (existing[0]) return json({ requestId: existing[0].id }, 200);
+      // #152: uwaga trafia (przez zatwierdzenie) do niezmiennej tabeli zwolnień.
+      const gate = gateFreeText([['email_suppression_releases.confirmation_note', note ?? null]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO email_suppression_release_requests (id, email_hash, suppression_reason, release_reason, confirmation_note, requested_by)
@@ -1349,7 +1423,7 @@ async function releaseRequest(request, env, hashValue, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.suppression.release_requested', entityType: 'email_suppression_release_request', entityId: id,
-        metadata: { hashValue, releaseReason: data.releaseReason, suppressionReason, schoolYearId: data.schoolYearId },
+        metadata: { hashValue, releaseReason: data.releaseReason, suppressionReason, schoolYearId: data.schoolYearId, ...piiAuditMetadata(gate) },
       });
       return json({ requestId: id }, 201);
     });
@@ -1465,7 +1539,7 @@ async function preferencesOptOut(request, env, url, json) {
       return json({ category: payload.category, optedOut: true });
     });
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }
@@ -1547,7 +1621,7 @@ export async function handle(request, env, url, json) {
     if (action === 'test-send') return await testSend(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }
