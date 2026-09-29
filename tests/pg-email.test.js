@@ -488,8 +488,14 @@ test('snapshot: consent required, invalid e-mail excluded, siblings and two guar
     await family(t.db, 'h7', { guardians: [{ id: 'h1-g2', household: 'h1', primary: true }] });
     await t.db.query("INSERT INTO households (id) VALUES ('h8')");                // brak dzieci w roku
     const campaign = await createDraft(t);
+    // Świeży szkic bez migawki: snapshotCurrent = null (nie false), brak odbiorców.
+    const fresh = (await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).body;
+    assert.equal(fresh.recipientsHash, null);
+    assert.equal(fresh.snapshotCurrent, null);
+    assert.equal(fresh.recipientsCount, 0);
     const result = await snapshot(t, campaign.id);
     assert.equal(result.recipientsCount, 2);
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).body.snapshotCurrent, true);
     assert.deepEqual(result.exclusions, { no_consent: 2, no_valid_email: 2, duplicate_address: 1 });
     const { rows } = await t.db.query('SELECT household_id, guardian_id FROM email_campaign_recipients WHERE campaign_id = $1 ORDER BY household_id', [campaign.id]);
     assert.deepEqual(rows, [{ household_id: 'h1', guardian_id: 'h1-g2' }, { household_id: 'h6', guardian_id: 'h6-g2' }]);

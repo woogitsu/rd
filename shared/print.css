@@ -50,5 +50,11 @@
   body[data-print-target] main > *:not(.print-only) { display: none !important; }
   body[data-print-target="minutes"] #print-minutes { display: block !important; }
   .minutes-text { white-space: pre-wrap; word-break: break-word; }
+  /* Układ podpisów (D-21, założenie zachowawcze): dwa puste pola na końcu
+     protokołu, bez imion i bez danych spoza odpowiedzi API. Zakres podpisów
+     wymaganych regulaminem rozstrzyga zarząd. */
+  .print-signatures { display: flex; gap: 12mm; margin-top: 18mm; break-inside: avoid; page-break-inside: avoid; }
+  .print-signatures > div { flex: 1; border-top: 1px solid #000; padding-top: 1.5mm; font-size: 9pt; }
+  #print-attendance-body td.signature { height: 10mm; min-width: 40mm; }
   .print-draft-mark { padding: 1.5mm 3mm; border: 1px solid #000; font-weight: 700; letter-spacing: .06em; }
 }

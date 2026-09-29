@@ -13,3 +13,10 @@
 .photo-pick label{display:flex;gap:9px;align-items:flex-start;font-weight:400}.photo-pick input{width:auto;margin-top:4px}
 .status-submitted{background:#fff3dc;color:#8a5411}.status-published{background:#e5f2ea;color:#276447}.status-withdrawn{background:#f8e7e9;color:#9d1723}.status-verified{background:#e9f5ed;color:#23613e}.status-pending{background:#fff3dc;color:#8a5411}.status-revoked{background:#f8e7e9;color:#9d1723}
 .inline-actions{display:flex;flex-wrap:wrap;gap:8px}
+
+/* Tryb wysokiego kontrastu Windows (#112): plakietki i aktywna zakładka nie
+   mogą polegać na tle ani box-shadow, które w forced-colors znikają. */
+@media (forced-colors: active) {
+  .badge { border: 1px solid CanvasText; }
+  nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
+}
