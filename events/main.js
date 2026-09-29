@@ -36,7 +36,7 @@ import { mountShell } from "../shared/shell.js";
 import { shortId } from "../shared/short-id.js";
 import "../shared/shell.css";
 import { classChoiceOptionsHtml, fillClassSelect } from "../shared/class-choice.js";
-import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
+import { fillYearSelect, selectYearValue, formatSchoolYear } from "../shared/school-year.js";
 
 mountShell();
 
@@ -175,7 +175,7 @@ function renderList() {
   tableWrap.hidden = visible.length === 0;
   const counts = countByStatus(state.events);
   const parts = Object.entries(counts).filter(([, n]) => n > 0).map(([s, n]) => `${STATUS_LABELS[s]}: ${n}`);
-  listSummary.textContent = `Rok ${state.schoolYearId} · wszystkich: ${state.events.length}${parts.length ? ` (${parts.join(", ")})` : ""} · widocznych: ${visible.length}`;
+  listSummary.textContent = `Rok ${formatSchoolYear(state.schoolYearId)} · wszystkich: ${state.events.length}${parts.length ? ` (${parts.join(", ")})` : ""} · widocznych: ${visible.length}`;
   setMessage(listMessage, visible.length === 0 ? "Brak wydarzeń dla wybranych filtrów." : "");
 }
 
@@ -240,7 +240,7 @@ function renderDetail() {
     ...fact("Organizator", event.organizer),
     ...fact("Odbiorcy", AUDIENCE_LABELS[event.audience] ?? event.audience),
     ...fact("Klasa", event.classId || "Ogólnoszkolne"),
-    ...fact("Rok szkolny", event.schoolYearId),
+    ...fact("Rok szkolny", formatSchoolYear(event.schoolYearId)),
     ...fact("Opis", event.description),
   ];
   if (event.publishedRevision) {
@@ -491,7 +491,7 @@ function prepareForm(editing) {
     byId("event-dialog-title").textContent = "Edytuj wydarzenie";
     eventSubmit.textContent = "Zapisz nową wersję";
     context.hidden = false;
-    context.textContent = `Edytujesz wersję ${editing.revision} (${STATUS_LABELS[editing.status]}). Rok ${editing.schoolYearId}, ${editing.classId ? `klasa ${editing.classId}` : "wydarzenie ogólnoszkolne"}.`;
+    context.textContent = `Edytujesz wersję ${editing.revision} (${STATUS_LABELS[editing.status]}). Rok ${formatSchoolYear(editing.schoolYearId)}, ${editing.classId ? `klasa ${editing.classId}` : "wydarzenie ogólnoszkolne"}.`;
     // Zakres jest tylko do odczytu — opcje zawierają wyłącznie bieżące wartości wydarzenia.
     fields("schoolYearId").innerHTML = "";
     selectYearValue(fields("schoolYearId"), editing.schoolYearId);

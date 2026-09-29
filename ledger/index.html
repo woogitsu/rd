@@ -10,7 +10,7 @@
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
-      <a class="brand" href="../"><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
+      <a class="brand" href="../"><span>Rada Rodziców<br /><small data-school-name></small></span></a>
       <nav aria-label="Panel"><ul id="shell-nav" aria-live="polite"></ul></nav>
       <div id="shell-account"></div>
     </header>
@@ -32,6 +32,9 @@
         <form id="filters-form">
           <label>Rok szkolny <select id="school-year-id" name="schoolYearId" required></select></label>
           <label>Rodzaj <select id="direction-filter" name="direction"><option value="">Wszystkie</option><option value="income">Przychody</option><option value="expense">Wydatki</option></select></label>
+          <label>Kategoria <select id="category-filter" name="category"><option value="">Wszystkie</option></select></label>
+          <label>Data od <input id="date-from-filter" name="dateFrom" type="date"></label>
+          <label>Data do <input id="date-to-filter" name="dateTo" type="date"></label>
           <button type="submit">Pokaż</button>
         </form>
       </section>

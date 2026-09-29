@@ -23,7 +23,7 @@ import {
 import { formatEur } from "../panel/money.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
-import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
+import { fillYearSelect, selectYearValue, formatSchoolYear } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -276,7 +276,7 @@ checklistDialog.addEventListener("close", () => { byId("checklist-error").textCo
 const closeDialog = byId("close-dialog");
 byId("open-close").addEventListener("click", () => {
   byId("close-error").textContent = "";
-  byId("close-dialog-year").textContent = state.schoolYearId;
+  byId("close-dialog-year").textContent = formatSchoolYear(state.schoolYearId);
   byId("close-dialog-balance").textContent = formatEur(state.status?.balance?.closingBalanceCents);
   closeDialog.showModal();
 });

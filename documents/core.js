@@ -10,6 +10,7 @@ export const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 export const LIST_LIMIT = 50;
 
 import { statusMessage } from "../shared/messages.js";
+import { formatSchoolYear } from "../shared/school-year.js";
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -351,7 +352,7 @@ export function metadataRows(rawDoc) {
   return [
     ["Identyfikator", doc.id || "—"],
     ["Rodzaj", doc.kind ? KIND_LABELS[doc.kind] : "Nieznany"],
-    ["Rok szkolny", doc.schoolYearId ?? "—"],
+    ["Rok szkolny", doc.schoolYearId ? formatSchoolYear(doc.schoolYearId) : "—"],
     ["Klasa", doc.classId ?? "—"],
     ["Typ pliku", typeLabel(doc.mimeType)],
     ["Rozmiar", doc.byteSize === null ? "—" : formatBytes(doc.byteSize)],

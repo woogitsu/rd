@@ -7,9 +7,14 @@
 // - webhook: /api/email/webhooks/* — klucz: adres klienta,
 // - public: /api/public/*, /api/meetings/public-minutes i wszystkie żądania /api/*
 //   bez ciasteczka sesji — klucz: adres klienta,
-// - session: pozostałe /api/* z ciasteczkiem sesji — klucz: skrót ciasteczka
-//   (wyższy próg; ciasteczko nie jest sprawdzane w bazie, więc podrobione też
-//   dostaje własny, ograniczony licznik).
+// - session: pozostałe /api/* z ciasteczkiem sesji (`__Host-rd_session` poza
+//   środowiskiem lokalnym albo `rd_session`, wartość w formacie tokenu) — klucz:
+//   skrót ciasteczka (wyższy próg). Ciasteczko nie jest sprawdzane w bazie, więc
+//   dodatkowo WSZYSTKIE żądania klasy session z jednego adresu liczą się do
+//   wspólnego progu adresu (sessionAddressPerWindow) — rotacja podrobionych
+//   ciasteczek nie daje nieograniczonej liczby świeżych liczników (przegląd 29.09).
+// Trasy bez sesji (logowanie, zaproszenia, reset hasła, publiczne) są zawsze klasy
+// public po adresie, niezależnie od wysłanego ciasteczka.
 // Kosztowne trasy (eksport roczny i lista klasy, podgląd importu, raporty) mają
 // dodatkowo limit RÓWNOCZESNYCH żądań na sesję (bez sesji — na adres).
 //
@@ -28,10 +33,34 @@ export const RATE_LIMIT_DEFAULTS = Object.freeze({
   webhookPerWindow: 600,
   publicPerWindow: 300,
   sessionPerWindow: 1200,
+  // Suma żądań zalogowanych z jednego adresu (np. NAT szkoły): kilka pełnych sesji.
+  sessionAddressPerWindow: 3000,
   heavyConcurrency: 2,
 });
 const MAX_KEYS = 20_000;
-const SESSION_COOKIE = /(?:^|;\s*)rd_session=([^;]+)/;
+// Obie nazwy ciasteczka sesji (src/auth.js, #114): `__Host-` ma pierwszeństwo.
+const SESSION_COOKIE_NAMES = ['__Host-rd_session', 'rd_session'];
+const SESSION_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+// Trasy obsługiwane bez sesji — ich limit zawsze liczy się po adresie klienta.
+const UNAUTHENTICATED_PATHS = new Set([
+  '/api/login', '/api/invitations/accept', '/api/invitations/preview', '/api/password/reset',
+  '/api/meetings/public-minutes', '/api/meetings/public-notices',
+]);
+
+function sessionTokenFrom(cookieHeader) {
+  const cookies = new Map();
+  for (const part of String(cookieHeader ?? '').split(';')) {
+    const index = part.indexOf('=');
+    if (index < 1) continue;
+    const name = part.slice(0, index).trim();
+    if (!cookies.has(name)) cookies.set(name, part.slice(index + 1).trim());
+  }
+  for (const name of SESSION_COOKIE_NAMES) {
+    const value = cookies.get(name);
+    if (value && SESSION_TOKEN.test(value)) return value;
+  }
+  return null;
+}
 const HEAVY_PREFIXES = ['/api/exports', '/api/import/', '/api/reports/'];
 
 function intFrom(value, fallback) {
@@ -48,6 +77,7 @@ export function rateLimitConfig(env = {}) {
     webhookPerWindow: intFrom(env.RATE_LIMIT_WEBHOOK_PER_MIN, RATE_LIMIT_DEFAULTS.webhookPerWindow),
     publicPerWindow: intFrom(env.RATE_LIMIT_PUBLIC_PER_MIN, RATE_LIMIT_DEFAULTS.publicPerWindow),
     sessionPerWindow: intFrom(env.RATE_LIMIT_SESSION_PER_MIN, RATE_LIMIT_DEFAULTS.sessionPerWindow),
+    sessionAddressPerWindow: intFrom(env.RATE_LIMIT_SESSION_ADDRESS_PER_MIN, RATE_LIMIT_DEFAULTS.sessionAddressPerWindow),
     heavyConcurrency: intFrom(env.RATE_LIMIT_HEAVY_CONCURRENCY, RATE_LIMIT_DEFAULTS.heavyConcurrency),
   };
 }
@@ -55,9 +85,10 @@ export function rateLimitConfig(env = {}) {
 export function classifyRequest(pathname, cookieHeader) {
   if (!pathname.startsWith('/api/')) return null;
   if (pathname.startsWith('/api/email/webhooks/')) return { cls: 'webhook', session: null };
-  const match = SESSION_COOKIE.exec(String(cookieHeader ?? ''));
-  if (pathname.startsWith('/api/public/') || pathname === '/api/meetings/public-minutes' || !match) return { cls: 'public', session: null };
-  return { cls: 'session', session: match[1] };
+  if (pathname.startsWith('/api/public/') || UNAUTHENTICATED_PATHS.has(pathname)) return { cls: 'public', session: null };
+  const token = sessionTokenFrom(cookieHeader);
+  if (!token) return { cls: 'public', session: null };
+  return { cls: 'session', session: token };
 }
 
 export const isHeavyPath = (pathname) => HEAVY_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`));
@@ -96,6 +127,16 @@ export function createRateLimiter({ env = {}, now = () => Date.now() } = {}) {
       entry.count += 1;
       touch(windows, key, entry);
       if (entry.count > limit) return { ok: false, retryAfter: Math.max(1, Math.ceil((entry.resetAt - stamp) / 1000)) };
+    }
+    if (klass.cls === 'session' && config.sessionAddressPerWindow > 0) {
+      const key = keyOf('session-address', String(address ?? ''));
+      let entry = windows.get(key);
+      if (!entry || entry.resetAt <= stamp) entry = { count: 0, resetAt: stamp + config.windowMs };
+      entry.count += 1;
+      touch(windows, key, entry);
+      if (entry.count > config.sessionAddressPerWindow) {
+        return { ok: false, retryAfter: Math.max(1, Math.ceil((entry.resetAt - stamp) / 1000)) };
+      }
     }
     if (config.heavyConcurrency > 0 && isHeavyPath(pathname)) {
       const key = keyOf('heavy', identity);

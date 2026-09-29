@@ -264,6 +264,30 @@ test('#152 członkostwo w gospodarstwie: powód z e-mailem odrzucony, z telefone
   } finally { await t.db.close(); }
 });
 
+test('#152 zakończenie relacji opiekun–dziecko: powód z e-mailem/IBAN odrzucony, telefon wymaga potwierdzenia, bez zapisu przy odmowie', async () => {
+  const t = await setup();
+  try {
+    const call = (body) => endRelation(t, t.cookies.board, 's-1', 'g-1a', { endsOn: '2020-01-01', ...body });
+    const email = await call({ reason: 'Nowy adres: rodzic@example.invalid', confirmPersonalData: true });
+    assert.equal(email.status, 422);
+    assert.equal(email.body.error, 'personal_data_forbidden');
+    const iban = await call({ reason: 'Zwrot na BE71096123456769', confirmPersonalData: true });
+    assert.equal(iban.status, 422);
+    assert.equal(iban.body.error, 'personal_data_forbidden');
+    const phone = await call({ reason: 'Kontakt +32 470 12 34 56' });
+    assert.equal(phone.status, 422);
+    assert.equal(phone.body.error, 'possible_personal_data');
+    const history = async () => (await t.db.query(`SELECT reason FROM student_guardian_changes WHERE student_id = 's-1' AND guardian_id = 'g-1a'`)).rows;
+    assert.ok(!JSON.stringify(await history()).includes('example.invalid'), 'odmowa nie zapisuje historii');
+    const relation = await t.db.query(`SELECT ends_on FROM student_guardians WHERE student_id = 's-1' AND guardian_id = 'g-1a'`);
+    assert.equal(relation.rows[0].ends_on, null);
+    const ok = await call({ reason: 'Kontakt +32 470 12 34 56', confirmPersonalData: true });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    const audit = JSON.stringify((await t.db.query(`SELECT metadata_json FROM audit_events WHERE action = 'student_guardian.ended'`)).rows);
+    assert.ok(audit.includes('piiConfirmed') && !audit.includes('470'));
+  } finally { await t.db.close(); }
+});
+
 // Kampania zatwierdzona i zakolejkowana PRZED zmianą — worker i podgląd.
 async function approvedCampaign(t) {
   const created = await t.call('/api/email/campaigns', {

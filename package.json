@@ -26,6 +26,7 @@
     "dev:print": "vite print",
     "build:print": "vite build print --outDir ../dist/print --base ./ --emptyOutDir",
     "db:migrate:postgres": "node scripts/migrate-postgres.js",
+    "openapi:build": "node scripts/build-openapi.js",
     "migrations:manifest": "node scripts/generate-migrations-manifest.js",
     "migrations:check-order": "node scripts/check-migrations-order.js",
     "migrations:check-functions": "node scripts/check-function-redefinitions.js",
@@ -87,6 +88,6 @@
     "@electric-sql/pglite": "0.5.8",
     "@playwright/test": "1.63.0",
     "vite": "^8.3.1",
-    "wrangler": "^4.40.0"
+    "wrangler": "^4.143.1"
   }
 }

@@ -5,6 +5,7 @@
 import {
   adoptionText, budgetExecutionTable, escapeHtml, formatDate, formatEur, REPORT_CSS,
 } from './audit-report.js';
+import { formatSchoolYear } from '../../shared/school-year.js';
 
 const e = escapeHtml;
 const money = (cents) => (cents === null || cents === undefined ? '—' : e(formatEur(cents)));
@@ -17,13 +18,13 @@ export function renderBudgetExecutionHtml(report) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Preliminarz a wykonanie — ${e(schoolYear.label)}</title>
+<title>Preliminarz a wykonanie — ${e(formatSchoolYear(schoolYear.label))}</title>
 <style>${REPORT_CSS}</style>
 </head>
 <body>
 <header>
 <h1>Preliminarz a wykonanie</h1>
-<p>Rada Rodziców — rok szkolny ${e(schoolYear.label)} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
+<p>Rada Rodziców — rok szkolny ${e(formatSchoolYear(schoolYear.label))} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
 <p class="meta">Wygenerowano: ${e(formatDate(report.generatedAt))}.${report.asOf ? ` Wykonanie na dzień ${e(formatDate(report.asOf))}.` : ''} Kwoty w EUR. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
 <p class="notice">Zestawienie z księgi w systemie. Nie jest zatwierdzonym sprawozdaniem finansowym.</p>
 </header>

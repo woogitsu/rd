@@ -44,8 +44,8 @@ test('yearOptionsHtml: brak lat pokazuje czytelny komunikat zamiast pustej listy
 
 test('yearOptionsHtml: zaznacza wybrany rok, koduje bezpiecznie', () => {
   const html = yearOptionsHtml(['2026-2027', '2025-2026'], '2025-2026');
-  assert.match(html, /<option value="2025-2026" selected>2025-2026<\/option>/);
-  assert.match(html, /<option value="2026-2027">2026-2027<\/option>/);
+  assert.match(html, /<option value="2025-2026" selected>2025\/2026<\/option>/);
+  assert.match(html, /<option value="2026-2027">2026\/2027<\/option>/);
 });
 
 test('filtersToQuery: pomija puste wartości, koduje resztę', () => {
@@ -141,4 +141,10 @@ test('panele Wpłaty i Księga wybierają rok przez panelYearState (nie przez sa
     assert.match(source, /panelYearState\(/, file);
     assert.doesNotMatch(source, /yearsFromGrants\(/, file);
   }
+});
+
+test('option w liście ma wartość-identyfikator i etykietę „RRRR/RRRR” (formatSchoolYear)', () => {
+  const html = yearOptionsHtml(['2026-2027'], '');
+  assert.match(html, /value="2026-2027"/);
+  assert.doesNotMatch(html, />2026-2027</);
 });

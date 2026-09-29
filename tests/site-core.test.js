@@ -32,7 +32,7 @@ function event(id, startsAtUtc, extra = {}) {
 }
 
 test("nazwa Rady jest pełna i poprawna", () => {
-  assert.equal(RADA_NAME, "Rada Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli");
+  assert.equal(RADA_NAME, "Rada Rodziców Szkoły Polskiej w Brukseli");
 });
 
 test("czas wydarzenia jest formatowany w strefie Europe/Brussels", () => {
