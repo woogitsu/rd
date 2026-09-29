@@ -7,6 +7,7 @@ import {
   approve, cancel, createDraft, formatBrusselsLocal, getInternal, handle, listInternal,
   listPublic, parseBrusselsLocal, publish, submit, updateDraft,
 } from '../src/pg/events.js';
+import { lifecycleActors } from './helpers/pg.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const ORIGIN = 'https://rd.example.invalid';
@@ -423,5 +424,30 @@ test('stale revision is a conflict before content validation; double submit stil
     assert.equal(again.event.revision, 2);
     // Invalid content on the current revision is still a validation error.
     await assert.rejects(updateDraft(db, board1, { eventId: event.id, revision: 2, title: 'x' }), { code: 'invalid_title' });
+  } finally { await db.close(); }
+});
+
+// #214: jak wyżej — aktor z prawdziwego ładowania sesji i przydziałów.
+test('wydarzenia: wygasły i cofnięty przydział oraz nieważna sesja nie dają dostępu (aktor z loadAuthorizationContext)', async () => {
+  const db = await eventsDb();
+  try {
+    const actors = await lifecycleActors(db, { role: 'board', schoolYearId: 'year', prefix: 'ev' });
+    assert.ok(actors.active, 'aktor z ważną sesją i przydziałem ładuje się przez loadAuthorizationContext');
+    assert.deepEqual(actors.active.grants.map((grant) => grant.role), ['board']);
+    // Nieważna sesja / konto wyłączone: brak kontekstu (401), nie „pusty aktor”.
+    for (const name of ['expiredSession', 'revokedSession', 'disabledAccount']) {
+      assert.equal(actors[name], null, `${name}: brak aktora`);
+    }
+    // Wygasły lub cofnięty przydział: sesja ważna, ale bez ról.
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      assert.ok(actors[name], `${name}: sesja jest ważna`);
+      assert.deepEqual(actors[name].grants, [], `${name}: przydział odfiltrowany przez SQL`);
+    }
+    assert.deepEqual((await listInternal(db, actors.active, { schoolYearId: 'year' })).events, []);
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      await assert.rejects(listInternal(db, actors[name], { schoolYearId: 'year' }), { code: 'forbidden', status: 403 }, name);
+      await assert.rejects(createDraft(db, actors[name], draftInput()), { code: 'forbidden' }, `${name}: szkic`);
+    }
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM events')).rows[0].n, 0, 'odmowa niczego nie zapisała');
   } finally { await db.close(); }
 });

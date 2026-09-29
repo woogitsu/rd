@@ -22,6 +22,7 @@ import {
   setMinutesVisibility,
 } from '../src/pg/meetings.js';
 import { updateMeeting, updateResolution } from './helpers/with-revision.js';
+import { lifecycleActors } from './helpers/pg.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
@@ -704,5 +705,29 @@ test('publishing minutes as public is blocked when the body contains a known nam
     const published = await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: clean.id, visibility: 'public' });
     assert.equal(published.replayed, false);
     assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.minutesId), [clean.id]);
+  } finally { await db.close(); }
+});
+
+// #214: aktor budowany przez prawdziwe ładowanie sesji i przydziałów — wygasły
+// i cofnięty przydział oraz nieważna sesja nie dają dostępu do zebrań.
+test('zebrania: wygasły i cofnięty przydział oraz nieważna sesja nie dają dostępu (aktor z loadAuthorizationContext)', async () => {
+  const db = await meetingsDb();
+  try {
+    const actors = await lifecycleActors(db, { role: 'board', schoolYearId: 'year', prefix: 'mt' });
+    assert.ok(actors.active, 'aktor z ważną sesją i przydziałem ładuje się przez loadAuthorizationContext');
+    assert.deepEqual(actors.active.grants.map((grant) => grant.role), ['board']);
+    // Nieważna sesja / konto wyłączone: brak kontekstu (401), nie „pusty aktor”.
+    for (const name of ['expiredSession', 'revokedSession', 'disabledAccount']) {
+      assert.equal(actors[name], null, `${name}: brak aktora`);
+    }
+    // Wygasły lub cofnięty przydział: sesja ważna, ale bez ról.
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      assert.ok(actors[name], `${name}: sesja jest ważna`);
+      assert.deepEqual(actors[name].grants, [], `${name}: przydział odfiltrowany przez SQL`);
+    }
+    assert.deepEqual((await listMeetings(db, actors.active, { schoolYearId: 'year' })).meetings, []);
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      await assert.rejects(listMeetings(db, actors[name], { schoolYearId: 'year' }), { code: 'forbidden', status: 403 }, name);
+    }
   } finally { await db.close(); }
 });

@@ -1035,12 +1035,44 @@ for (const route of ROUTE_MATRIX) {
 }
 
 // #214: `todo` w macierzy nie oblewa CI, więc bez limitu jest wygodnym miejscem
-// na ukrycie nowej regresji uprawnień. Dziś macierz nie ma żadnego wpisu — ten
-// meta-test to zabezpiecza: dodanie `todo` do route-matrix.js musi być świadome
-// i opisane w PR/issue, nie przejść bez zauważenia.
-test('macierz uprawnień: zero wpisów `todo` (znana luka wymaga świadomej decyzji, patrz #214)', () => {
-  const allTodoReasons = ROUTE_MATRIX.flatMap((route) => caseList(route).map((item) => item.todo).filter(Boolean));
-  assert.deepEqual(allTodoReasons, [], `macierz ma ${allTodoReasons.length} wpis(y) todo — opisz je w PR i w issue: ${allTodoReasons.join(' | ')}`);
+// na ukrycie nowej regresji uprawnień. Dopuszczalne `todo` to WYŁĄCZNIE wpisy
+// z listy poniżej: klucz to id trasy, wartość to numer otwartego issue. Lista
+// jest dziś pusta. Nowe `todo` bez wpisu oraz wpis bez `todo` w macierzy (lub bez
+// numeru issue) oblewają test — luka musi być zgłoszona, nie schowana.
+export const ALLOWED_TODO = Object.freeze({
+  // 'route.id': '#NNN',
+});
+
+export function todoViolations(routes, allowed, listCases = caseList) {
+  const problems = [];
+  const withTodo = new Set();
+  for (const route of routes) {
+    if (listCases(route).some((item) => item.todo)) withTodo.add(route.id);
+  }
+  for (const id of withTodo) {
+    if (!Object.hasOwn(allowed, id)) problems.push(`trasa ${id} ma \`todo\` bez wpisu w ALLOWED_TODO`);
+  }
+  for (const [id, issue] of Object.entries(allowed)) {
+    if (!/^#\d+$/.test(String(issue))) problems.push(`wpis ${id} nie wskazuje numeru issue (#NNN)`);
+    if (!withTodo.has(id)) problems.push(`wpis ${id} w ALLOWED_TODO nie ma odpowiadającego \`todo\` w macierzy`);
+  }
+  return problems;
+}
+
+test('macierz uprawnień: `todo` tylko z listy ALLOWED_TODO wskazującej issue (#214)', () => {
+  assert.deepEqual(todoViolations(ROUTE_MATRIX, ALLOWED_TODO), []);
+});
+
+test('meta-test `todo` wykrywa nowe `todo` bez wpisu, wpis martwy i wpis bez issue (kontrola pozytywna)', () => {
+  const fakeRoutes = [
+    { id: 'a.route', targets: [], todo: () => 'luka' },
+    { id: 'b.route', targets: [] },
+  ];
+  const listCases = (route) => [{ todo: route.todo?.() }];
+  assert.equal(todoViolations(fakeRoutes, {}, listCases).length, 1, 'todo bez wpisu');
+  assert.deepEqual(todoViolations(fakeRoutes, { 'a.route': '#214' }, listCases), []);
+  assert.equal(todoViolations(fakeRoutes, { 'a.route': 'kiedyś' }, listCases).length, 1, 'wpis bez numeru issue');
+  assert.equal(todoViolations(fakeRoutes, { 'a.route': '#214', 'b.route': '#1' }, listCases).length, 1, 'martwy wpis');
 });
 
 test.after(async () => {

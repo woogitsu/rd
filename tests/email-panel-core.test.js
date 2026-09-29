@@ -20,6 +20,7 @@ import {
   hasApproverAccess,
   hasEditorAccess,
   isLikelyOwnCampaign,
+  isSnapshotStale,
   isValidId,
   makeIdempotencyKey,
   maskEmail,
@@ -153,4 +154,19 @@ test('#130 formatSchedule: start, okno i szacowany koniec w strefie z odpowiedzi
   assert.equal(formatSchedule(null), '');
   // Plan dni zwracany przez API jest liczbą.
   assert.match(formatDayPlan({ days: 7, dailyCap: 286, reservedForOtherMail: 0 }), /7 dni/);
+});
+
+test('isSnapshotStale: komunikat tylko dla istniejącej migawki, która przestała być aktualna', () => {
+  assert.equal(isSnapshotStale(null), false);
+  assert.equal(isSnapshotStale({ recipientsHash: null, snapshotCurrent: null }), false, 'świeży szkic bez migawki');
+  assert.equal(isSnapshotStale({ recipientsHash: null, snapshotCurrent: false }), false, 'stara odpowiedź serwera bez migawki');
+  assert.equal(isSnapshotStale({ recipientsHash: 'a'.repeat(64), snapshotCurrent: true }), false);
+  assert.equal(isSnapshotStale({ recipientsHash: 'a'.repeat(64), snapshotCurrent: false }), true);
+});
+
+test('panel kampanii używa isSnapshotStale do komunikatu i do gotowości zatwierdzenia', () => {
+  const main = readFileSync(new URL('../email/main.js', import.meta.url), 'utf8');
+  assert.match(main, /byId\("detail-snapshot-current"\)\.hidden = !isSnapshotStale\(preview\)/);
+  assert.match(main, /!isSnapshotStale\(preview\);/);
+  assert.doesNotMatch(main, /snapshotCurrent/);
 });
