@@ -26,8 +26,9 @@ export const CONFIRMATION_NOTE_PATTERN = /^[a-z0-9_]{1,40}$/;
 
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 
-export function suppressionsUrl(schoolYearId) {
-  return `/api/email/suppressions?schoolYearId=${encodeURIComponent(schoolYearId)}`;
+export function suppressionsUrl(schoolYearId, cursor = '') {
+  const base = `/api/email/suppressions?schoolYearId=${encodeURIComponent(schoolYearId)}`;
+  return cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base;
 }
 
 export function suppressionActionUrl(emailHash, action) {
