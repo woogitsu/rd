@@ -20,6 +20,18 @@ test('every `uses:` action in ci.yml is pinned to a full commit SHA', () => {
   }
 });
 
+test('every `npm ci` in ci.yml uses --ignore-scripts (no dependency install scripts on the runner)', () => {
+  const lines = workflow.split('\n').filter((l) => /\bnpm ci\b/.test(l) && !l.trim().startsWith('#'));
+  assert.ok(lines.length > 0, 'expected at least one `npm ci` step');
+  for (const line of lines) assert.match(line, /npm ci --ignore-scripts/, `npm ci without --ignore-scripts: ${line.trim()}`);
+});
+
+test('ci.yml declares read-only top-level permissions and no job widens them', () => {
+  assert.match(workflow, /^permissions:\s*\n\s+contents: read\s*$/m);
+  assert.doesNotMatch(workflow, /(contents|actions|packages|id-token|pull-requests|issues|checks|statuses|deployments):\s*write/);
+  assert.doesNotMatch(workflow, /pull_request_target|secrets\./);
+});
+
 test('production dependencies are pinned exactly (no ^ or ~ ranges)', () => {
   for (const [name, range] of Object.entries(pkg.dependencies ?? {})) {
     assert.doesNotMatch(range, /^[\^~]/, `${name} uses a range (${range}); production deps must be pinned exactly`);
