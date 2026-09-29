@@ -4,6 +4,8 @@ Uruchom razem z API według „Uruchomienie lokalne” w [README głównym](../R
 
 Panel udostępnia podsumowanie roku, aktualny preliminarz, filtrowaną listę wpisów, formularz przychodu lub wydatku oraz addytywne korekty. Wydatek można powiązać z uchwałą wybraną z listy przyjętych uchwał zebrań ogólnych (bieżący i poprzedni rok; numer, tytuł i kwoty, bez treści); powyżej 3000 EUR wybór jest wymagany. Panel pokazuje limit upoważnienia i pozostałą kwotę, a przekroczenie odrzuca serwer (409). Identyfikator dokumentu można podać wyłącznie dla dokumentu już utworzonego w chronionym magazynie — przesyłanie plików będzie osobnym etapem.
 
+Cykl nowego roku bez SQL (#207): sekcja „Historia preliminarza” ma „Kopiuj kategorie z innego roku” (`POST /api/ledger/categories/copy` — najpierw podgląd `dryRun`, potem potwierdzenie z listą nowych i pominiętych kategorii; ponowienie niczego nie dubluje). Gdy wczytany rok nie ma żadnej aktywnej kategorii, „Dodaj wpis” jest wyłączony z komunikatem „Brak kategorii dla tego roku”. Zarząd widzi „Wpisz bilans otwarcia” tylko dla roku bez bilansu (`POST /api/ledger/opening-balance`, rachunek i kasa osobno); serwer przyjmuje go wyłącznie dla pierwszego roku w systemie (409 `not_first_school_year`) — kolejne lata dostają bilans z zamknięcia roku. Poprawki bilansu (`/opening-balance/adjustments`) nie mają jeszcze formularza.
+
 Tabela „Wynik wydarzeń” pokazuje przypisania wpisów do wydarzeń (centra kosztów, tylko odczyt, z pozycją „Bez przypisania” i eksportem CSV).
 
 Nie używać na danych rzeczywistych przed zatwierdzeniem zasad dostępu, księgowania i korekt.

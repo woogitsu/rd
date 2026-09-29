@@ -624,6 +624,8 @@ async function deactivateCategory(request, env, categoryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger_category.deactivated', entityType: 'ledger_category', entityId: categoryId,
+        // #207: rok w metadanych, jak przy pozostałych zdarzeniach księgi (eksport roczny, filtr dziennika).
+        metadata: { schoolYearId: category.school_year_id },
       });
       return json({ category: categoryFromRow(updated.rows[0]) });
     });
@@ -689,7 +691,7 @@ async function copyCategories(request, env, json) {
       if (rows.length) {
         await insertAuditEvent(tx, {
           actorId, action: 'ledger_category.copied', entityType: 'school_year', entityId: input.toSchoolYearId,
-          metadata: { from: input.fromSchoolYearId, count: rows.length },
+          metadata: { schoolYearId: input.toSchoolYearId, from: input.fromSchoolYearId, count: rows.length },
         });
       }
       return json({

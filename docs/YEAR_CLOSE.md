@@ -110,6 +110,23 @@ Wariant zachowawczy do czasu decyzji D-08/D-09 (zarząd jeszcze nie zdecydował)
 - Nie ma przydziału „tylko do odczytu” w zamkniętym roku: `POST /api/admin/grants` z `schoolYearId` zamkniętego roku kończy się `409 school_year_closed` (nie `503`), bez zapisu.
 - Komisja Rewizyjna traci odczyt w chwili zamknięcia (D-09: czy i jak długo KR ma dostęp po zamknięciu). Jeśli Rada zdecyduje inaczej, regułę trzeba rozszerzyć osobną zmianą.
 
+## Nowy rok szkolny bez ręcznego SQL (#207)
+
+Pełny cykl przechodzi przez API i panele, bez `INSERT` w bazie; kolejność sprawdza test `tests/pg-year-cycle.test.js` (jeden PGlite, wyłącznie `handlePgRequest`). Uprawnienia bez zmian (wariant zachowawczy D-08/D-09 — panel tylko pokazuje akcje istniejących tras, serwer autoryzuje każde żądanie).
+
+| Krok | Trasa | Panel | Kto |
+|---|---|---|---|
+| Nowy rok | `POST /api/admin/school-years` | Konta i role → „Lata szkolne i klasy” | admin |
+| Klasy nowego roku | `POST /api/admin/school-years/:id/classes` albo kopia z mapą `POST /api/admin/promotions/classes/preview` i `…/apply` | Konta i role (dodanie klas); kopia z mapą — tylko API (#78) | admin |
+| Promocja uczniów | `POST /api/admin/promotions/preview` i `…/apply` (planDigest, Idempotency-Key) | tylko API (zakładka „Nowy rok” — #78) | admin |
+| Kategorie księgi | `POST /api/ledger/categories/copy` (`dryRun` → zapis) albo `POST /api/ledger/categories` | Księga → „Kopiuj kategorie z innego roku”, „Nowa kategoria” | admin, zarząd, skarbnik roku docelowego |
+| Preliminarz | `POST /api/ledger/budget` | Księga → „Dodaj linię planu” | jak wyżej |
+| Bilans otwarcia | pierwszy rok: `POST /api/ledger/opening-balance`; kolejne lata: zamknięcie roku poprzedniego | Księga → „Wpisz bilans otwarcia” (tylko rok bez bilansu) | zarząd |
+| Przydziały ról | `POST /api/admin/grants` / zaproszenia | Konta i role | admin |
+| Zamknięcie poprzedniego roku | `/api/year-close/:id/*` | Zamknięcie roku | wg sekcji „Zamknięcie” |
+
+Poza zakresem (osobne decyzje): akceptacja zaproszeń i konta w teście są seedowane (D-10); formularz poprawki bilansu otwarcia (`/opening-balance/adjustments`, #199) i zakładka promocji w `families/` (#78) nie istnieją jeszcze w panelach.
+
 ## Założenia
 
 - Zasada czterech oczu przy zamknięciu (inna osoba niż rozpoczynająca) — założenie, nie przepis regulaminu (D-21).

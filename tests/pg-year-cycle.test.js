@@ -1,6 +1,8 @@
 // Test integracyjny cyklu roku szkolnego (issue #207, część 2). Jeden plik,
-// jedna instancja PGlite, wyłącznie `handlePgRequest` — poza dwoma krokami,
-// które dziś w ogóle nie mają API (oznaczone niżej `// SQL: brak API`).
+// jedna instancja PGlite, wyłącznie `handlePgRequest` — poza kontami (D-10),
+// które dziś nie mają pełnej ścieżki API (oznaczone niżej `// SQL: brak API`).
+// Rok szkolny, klasy i promocja idą przez API z #78 (`/api/admin/school-years`,
+// `/api/admin/promotions/*`), bez ręcznego SQL.
 // Dane wyłącznie syntetyczne (`@example.invalid`), bez wysyłki e-mail
 // (kampania jest tylko zatwierdzana i kolejkowana, nie ma testowego transportu —
 // #207 zakres nie obejmuje wysyłki).
@@ -25,7 +27,7 @@ import {
 import { updateMeeting } from './helpers/with-revision.js';
 import { buildYearlyExport, restoreBundle } from '../src/pg/export.js';
 import { buildHouseholds, parseInputRows } from '../print/core.js';
-import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedUserSession } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
 const Y2 = 'y-2027';
@@ -47,21 +49,30 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     const post = (path, cookie, body, key) => call(path, cookie, { method: 'POST', body, key });
     const patch = (path, cookie, body) => call(path, cookie, { method: 'PATCH', body });
 
-    // --- Krok 1: rok szkolny i klasy --------------------------------------
-    // SQL: brak API (#78) — tworzenie roku szkolnego i klas jest dziś tylko SQL.
-    await seedSchoolYear(db, Y1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
-    await db.query(`INSERT INTO classes (id, school_year_id, name) VALUES ('c-1a', $1, '1A'), ('c-2b', $1, '2B')`, [Y1]);
+    // --- Krok 1: rok szkolny i klasy (API z #78, bez SQL) -------------------
+    // Konto administratora technicznego jest seedowane (D-10, patrz krok 2);
+    // rok i klasy tworzy już ono samo przez API, z audytem.
+    const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
+    const yearY1 = await post('/api/admin/school-years', admin, { id: Y1, label: '2026/2027 (test #207)', startsOn: '2026-09-01', endsOn: '2027-08-31' });
+    assert.equal(yearY1.status, 201, JSON.stringify(yearY1.body));
+    const classesY1 = await post(`/api/admin/school-years/${Y1}/classes`, admin, { names: ['1A', '2B'] });
+    assert.equal(classesY1.status, 201, JSON.stringify(classesY1.body));
+    const classIdY1 = Object.fromEntries(classesY1.body.classes.map((c) => [c.name, c.id]));
+    // Podwójne kliknięcie „Dodaj klasy” nie tworzy duplikatów (409 class_exists).
+    const classesAgain = await post(`/api/admin/school-years/${Y1}/classes`, admin, { names: ['1A'] });
+    assert.deepEqual([classesAgain.status, classesAgain.body.error], [409, 'class_exists']);
+    const yearAgain = await post('/api/admin/school-years', admin, { id: Y1, label: 'inna etykieta', startsOn: '2026-09-01', endsOn: '2027-08-31' });
+    assert.deepEqual([yearAgain.status, yearAgain.body.error], [409, 'school_year_exists']);
 
     // --- Krok 2: konta zarządu, skarbnika, Komisji Rewizyjnej -------------
     // SQL: brak API (D-10) — zaproszenie ma dziś API, ale akceptacja konta
     // przez zaproszoną osobę jest poza zakresem testu (brak D-10); konta i
     // sesje są tu seedowane bezpośrednio, jak zakłada BRIEF dla tego repo.
-    const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
     const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board', schoolYearId: Y1 }], mfa: true });
     const board2 = await seedUserSession(db, { userId: 'u-board2', roles: [{ role: 'board', schoolYearId: Y1 }], mfa: true });
     const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: Y1 }], mfa: true });
     const audit = await seedUserSession(db, { userId: 'u-audit', roles: [{ role: 'audit', schoolYearId: Y1 }], mfa: true });
-    await seedUserSession(db, { userId: 'u-rep', roles: [], mfa: true });
+    const rep = await seedUserSession(db, { userId: 'u-rep', roles: [], mfa: true });
 
     // --- Krok 3: import uczniów i opiekunów -------------------------------
     // Rodzeństwo Oli i Jana (rodzina H2) w dwóch klasach, dwoje opiekunów w H1,
@@ -106,7 +117,7 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     const FAMILY_COUNT = 2; // H1, H2 (rodzeństwo Oli i Jana liczy się raz)
 
     // --- Krok 4: przydział przedstawiciela klasy 1A -----------------------
-    const grant = await post('/api/admin/grants', admin, { userId: 'u-rep', role: 'representative', classId: 'c-1a', schoolYearId: Y1 });
+    const grant = await post('/api/admin/grants', admin, { userId: 'u-rep', role: 'representative', classId: classIdY1['1A'], schoolYearId: Y1 });
     assert.equal(grant.status, 201, JSON.stringify(grant.body));
 
     // --- Krok 5: kartki klasy i całego roku --------------------------------
@@ -118,7 +129,7 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     // to tylko source_ref; dalsze kroki (wpłaty, zgoda) odwołują się do id z API.
     const HH1 = cardsYear.body.rows.find((r) => r.firstName === 'Ala').householdId;
     const HH2 = cardsYear.body.rows.find((r) => r.firstName === 'Ola').householdId;
-    const cards1a = await get(`/api/print/cards?schoolYearId=${Y1}&classId=c-1a`, admin);
+    const cards1a = await get(`/api/print/cards?schoolYearId=${Y1}&classId=${classIdY1['1A']}`, admin);
     assert.equal(cards1a.status, 200);
     // Klasa 1A ma uczennice z obu rodzin (Ala z H1, Ola z H2) — pełne rodzeństwo z 2B dochodzi tylko w roku.
     assert.deepEqual(new Set(cards1a.body.rows.map((r) => r.householdId)), new Set([HH1, HH2]));
@@ -151,6 +162,13 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
       '#207: liczba rodzin = odbiorcy kampanii + wykluczenia');
 
     // --- Krok 7: kategorie księgi przez API (#207, część 1) ---------------
+    // Rok bez kategorii: wpis księgi nie ma do czego trafić (panel ledger/
+    // wyłącza wtedy „Dodaj wpis” z komunikatem „Brak kategorii dla tego roku”).
+    const entryWithoutCategory = await post('/api/ledger', board, {
+      schoolYearId: Y1, direction: 'income', amountCents: 100, categoryId: 'brak-kategorii', description: 'Próba bez kategorii',
+      occurredOn: '2026-09-10', method: 'bank',
+    }, 'entry-no-category-0001');
+    assert.deepEqual([entryWithoutCategory.status, entryWithoutCategory.body.error], [400, 'invalid_category']);
     const catIncome = await post('/api/ledger/categories', board, { schoolYearId: Y1, direction: 'income', name: 'Składki dobrowolne' });
     assert.equal(catIncome.status, 201, JSON.stringify(catIncome.body));
     const catExpense = await post('/api/ledger/categories', board, { schoolYearId: Y1, direction: 'expense', name: 'Wycieczki' });
@@ -284,9 +302,23 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     assert.equal(householdsInBundle, FAMILY_COUNT, '#207: eksport podaje tę samą liczbę rodzin co kartki i kampania');
 
     // --- Krok 15: zamknięcie roku (cztery oczy, lista kontrolna) ------------
-    // SQL: brak API (#78) — rok następny musi istnieć, zanim można rozpocząć zamknięcie.
-    await seedSchoolYear(db, Y2, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
-    await db.query(`INSERT INTO classes (id, school_year_id, name) VALUES ('c-2a', $1, '2A'), ('c-3b', $1, '3B')`, [Y2]);
+    // Rok następny musi istnieć, zanim można rozpocząć zamknięcie — tworzy go
+    // admin przez API (#78), a klasy kopiuje z jawnej mapy (bez zgadywania
+    // następnika po nazwie), najpierw podgląd, potem zapis.
+    const yearY2 = await post('/api/admin/school-years', admin, { id: Y2, label: '2027/2028 (test #207)', startsOn: '2027-09-01', endsOn: '2028-08-31' });
+    assert.equal(yearY2.status, 201, JSON.stringify(yearY2.body));
+    const classMapNames = { [classIdY1['1A']]: '2A', [classIdY1['2B']]: '3B' };
+    const classCopyPreview = await post('/api/admin/promotions/classes/preview', admin, { fromSchoolYearId: Y1, toSchoolYearId: Y2, classMap: classMapNames });
+    assert.equal(classCopyPreview.status, 200, JSON.stringify(classCopyPreview.body));
+    assert.deepEqual(classCopyPreview.body.classes.map((c) => c.action), ['create', 'create']);
+    const classCopy = await post('/api/admin/promotions/classes/apply', admin, { fromSchoolYearId: Y1, toSchoolYearId: Y2, classMap: classMapNames });
+    assert.equal(classCopy.status, 201, JSON.stringify(classCopy.body));
+    const classCopyAgain = await post('/api/admin/promotions/classes/apply', admin, { fromSchoolYearId: Y1, toSchoolYearId: Y2, classMap: classMapNames });
+    assert.equal(classCopyAgain.status, 200, 'podwójne kliknięcie kopiowania klas nie tworzy nowych klas');
+    assert.equal(classCopyAgain.body.createdCount, 0);
+    const yearsAfterCopy = await get('/api/admin/school-years', admin);
+    const classIdY2 = Object.fromEntries(yearsAfterCopy.body.schoolYears.find((y) => y.id === Y2).classes.map((c) => [c.name, c.id]));
+    assert.deepEqual(Object.keys(classIdY2).sort(), ['2A', '3B']);
 
     const start = await post(`/api/year-close/${Y1}/start`, board, { nextSchoolYearId: Y2 });
     assert.equal(start.status, 201, JSON.stringify(start.body));
@@ -326,36 +358,67 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     assert.equal(manualOpeningRefused.status, 409);
     assert.equal(manualOpeningRefused.body.error, 'opening_balance_exists');
 
-    // --- Krok 18: promocja — import pliku nowego roku (te same ID uczniów) --
-    const promotionCsv = `${HEADER}\n`
-      + 'S1;Ala;Testowa;2A;H1;Anna Testowa;anna@example.invalid;Piotr Testowy;piotr@example.invalid\n'
-      + 'S2;Ola;Nowak;2A;H2;Ewa Nowak;zly-adres;;\n'
-      + 'S3;Jan;Nowak;3B;H2;Ewa Nowak;zly-adres;;\n';
-    const promotionParsed = validateRows(parseCsv(promotionCsv), guessMapping(parseCsv(promotionCsv)[0]), { allowedClasses: ['2A', '3B'] });
-    const promotionPayload = toServerPayload(promotionParsed, Y2);
-    const promotionPreview = await post('/api/import/preview', admin, promotionPayload);
+    // --- Krok 18: promocja uczniów przez API (#78) --------------------------
+    // Podgląd → planDigest → zapis z Idempotency-Key; tylko nowe wiersze
+    // enrollments w roku Y2, bez nowych rodzin i bez nowego pliku ze szkoły.
+    const promotionBody = { fromSchoolYearId: Y1, toSchoolYearId: Y2, classMap: { [classIdY1['1A']]: classIdY2['2A'], [classIdY1['2B']]: classIdY2['3B'] } };
+    const promotionPreview = await post('/api/admin/promotions/preview', admin, promotionBody);
     assert.equal(promotionPreview.status, 200, JSON.stringify(promotionPreview.body));
-    assert.equal(promotionPreview.body.counts.rowsUpdated, 3, 'promocja aktualizuje istniejących uczniów, nie tworzy nowych rodzin');
-    assert.equal(promotionPreview.body.counts.householdsCreated, 0);
-    const promotionCommit = await post('/api/import/commit', admin, {
-      ...promotionPayload, fingerprint: promotionPreview.body.fingerprint, planDigest: promotionPreview.body.planDigest,
-    }, 'import-y2-0001');
-    assert.equal(promotionCommit.status, 201, JSON.stringify(promotionCommit.body));
+    const promotionApply = await post('/api/admin/promotions/apply', admin, { ...promotionBody, planDigest: promotionPreview.body.planDigest }, 'promotion-y2-0001');
+    assert.equal(promotionApply.status, 201, JSON.stringify(promotionApply.body));
+    const promotionRetry = await post('/api/admin/promotions/apply', admin, { ...promotionBody, planDigest: promotionPreview.body.planDigest }, 'promotion-y2-0001');
+    assert.equal(promotionRetry.status, 200, 'ponowienie promocji z tym samym kluczem nie tworzy przypisań drugi raz');
+    assert.equal(promotionRetry.body.replayed, true);
+    const cardsY2 = await get(`/api/print/cards?schoolYearId=${Y2}`, boardNextYear);
+    assert.equal(cardsY2.status, 200, JSON.stringify(cardsY2.body));
+    assert.equal(cardsY2.body.rows.length, 3, 'wszyscy trzej uczniowie są w klasach roku Y2');
+    assert.equal(buildHouseholds(parseInputRows(cardsY2.body.rows).rows).households.length, FAMILY_COUNT,
+      '#207: promocja nie tworzy nowych rodzin — kartki Y2 mają te same rodziny co Y1');
+    assert.deepEqual(new Set(cardsY2.body.rows.map((r) => r.householdId)), new Set([HH1, HH2]));
 
     // --- Krok 19: kategorie nowego roku (kopiowanie, #207 część 1) ----------
+    // Przedstawiciel klasy nie kopiuje kategorii ani nie wpisuje bilansu otwarcia.
+    assert.equal((await post('/api/ledger/categories/copy', rep, { fromSchoolYearId: Y1, toSchoolYearId: Y2, dryRun: true })).status, 403);
+    assert.equal((await post('/api/ledger/opening-balance', rep, {
+      schoolYearId: Y1, bankCents: 1, cashCents: 0, note: 'Próba przedstawiciela.',
+    }, 'opening-rep-0001')).status, 403);
     const copyDryRun = await post('/api/ledger/categories/copy', boardNextYear, { fromSchoolYearId: Y1, toSchoolYearId: Y2, dryRun: true });
     assert.equal(copyDryRun.status, 200, JSON.stringify(copyDryRun.body));
     assert.equal(copyDryRun.body.copied.length, 2);
-    const copyReal = await post('/api/ledger/categories/copy', boardNextYear, { fromSchoolYearId: Y1, toSchoolYearId: Y2, dryRun: false });
-    assert.equal(copyReal.status, 200, JSON.stringify(copyReal.body));
-    assert.equal(copyReal.body.copied.length, 2);
+    assert.equal((await get(`/api/ledger/categories?schoolYearId=${Y2}`, admin)).body.categories.length, 0, 'podgląd nic nie zapisuje');
+    // Podwójne kliknięcie „Kopiuj kategorie” (dwa równoległe żądania) daje jeden zestaw.
+    const copyBody = { fromSchoolYearId: Y1, toSchoolYearId: Y2, dryRun: false };
+    const [copyA, copyB] = await Promise.all([
+      post('/api/ledger/categories/copy', boardNextYear, copyBody),
+      post('/api/ledger/categories/copy', boardNextYear, copyBody),
+    ]);
+    assert.deepEqual([copyA.status, copyB.status], [200, 200], JSON.stringify([copyA.body, copyB.body]));
+    assert.equal(copyA.body.copied.length + copyB.body.copied.length, 2);
     const categoriesY2 = await get(`/api/ledger/categories?schoolYearId=${Y2}`, admin);
     assert.equal(categoriesY2.status, 200);
+    assert.equal(categoriesY2.body.categories.length, 2);
     assert.deepEqual(new Set(categoriesY2.body.categories.map((c) => c.name)), new Set(['Składki dobrowolne', 'Wycieczki']));
-    // Podwójne kliknięcie kopiowania nie duplikuje kategorii.
-    const copyAgain = await post('/api/ledger/categories/copy', boardNextYear, { fromSchoolYearId: Y1, toSchoolYearId: Y2, dryRun: false });
+    const copyAgain = await post('/api/ledger/categories/copy', boardNextYear, copyBody);
     assert.equal(copyAgain.body.copied.length, 0);
     assert.equal(copyAgain.body.skippedCount, 2);
+    // Stary (zamknięty) rok bez zmian: dalej te same dwie kategorie.
+    assert.equal((await get(`/api/ledger/categories?schoolYearId=${Y1}`, admin)).body.categories.length, 2);
+
+    // Preliminarz nowego roku na skopiowanej kategorii (#107) — bez SQL.
+    const incomeY2 = categoriesY2.body.categories.find((c) => c.direction === 'income');
+    const budgetLine = await post('/api/ledger/budget', boardNextYear, { schoolYearId: Y2, categoryId: incomeY2.id, plannedCents: 150000 }, 'budget-y2-0001');
+    assert.equal(budgetLine.status, 201, JSON.stringify(budgetLine.body));
+    const budgetRetry = await post('/api/ledger/budget', boardNextYear, { schoolYearId: Y2, categoryId: incomeY2.id, plannedCents: 150000 }, 'budget-y2-0001');
+    assert.equal(budgetRetry.status, 200, 'podwójne kliknięcie linii preliminarza odtwarza zapis');
+    // Pierwszy wpis nowego roku trafia do skopiowanej kategorii.
+    const firstEntryY2 = await post('/api/ledger', boardNextYear, {
+      schoolYearId: Y2, direction: 'income', amountCents: 2500, categoryId: incomeY2.id, description: 'Pierwsza składka roku Y2',
+      occurredOn: '2027-09-15', method: 'bank',
+    }, 'entry-y2-0001');
+    assert.equal(firstEntryY2.status, 201, JSON.stringify(firstEntryY2.body));
+    const summaryY2 = await get(`/api/ledger/summary?schoolYearId=${Y2}`, boardNextYear);
+    assert.equal(summaryY2.body.summary.openingBalanceCents, closingBalanceCents);
+    assert.equal(summaryY2.body.summary.closingBalanceCents, closingBalanceCents + 2500);
 
     // --- Odtworzenie eksportu: kroki 3–5 i 13 dają ten sam wynik ------------
     const { bundle: rebuiltBundle } = await db.transaction((tx) => buildYearlyExport(tx, Y1));

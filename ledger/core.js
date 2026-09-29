@@ -1,4 +1,4 @@
-import { MoneyError, formatEur, parseEurInput } from "../panel/money.js";
+import { MoneyError, formatEur, parseEurInput, parseStatementAmount } from "../panel/money.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
@@ -305,4 +305,70 @@ export function budgetAdoptionRequestBody({ schoolYearId, adoptedOn, note, resol
     body.resolutionId = resolution;
   }
   return body;
+}
+
+// --- #207: cykl roku bez SQL — stan „Dodaj wpis”, kopiowanie kategorii, bilans otwarcia ---
+
+export const NO_CATEGORIES_HINT = "Brak kategorii dla tego roku. Dodaj kategorię albo skopiuj kategorie z poprzedniego roku (sekcja „Historia preliminarza”).";
+
+// Stan przycisku „Dodaj wpis”: bez zatwierdzonego zapytania, przy zmienionym
+// filtrze albo gdy wczytany rok nie ma żadnej aktywnej kategorii — zamiast
+// surowego błędu invalid_category po wypełnieniu formularza.
+export function openEntryState({ loading = false, query = null, changed = false, categoryCount = 0 } = {}) {
+  if (changed) return { disabled: true, hint: "Zmieniono filtr. Kliknij „Pokaż”, aby wczytać księgę dla nowego filtra." };
+  if (loading || !query) return { disabled: true, hint: "Dostępne po wczytaniu roku szkolnego." };
+  if (!(Number(categoryCount) > 0)) return { disabled: true, hint: NO_CATEGORIES_HINT };
+  return { disabled: false, hint: "" };
+}
+
+// Treść POST /api/ledger/categories/copy (bez dryRun — dokłada go wywołujący).
+export function categoryCopyRequestBody({ fromSchoolYearId, toSchoolYearId }) {
+  const from = String(fromSchoolYearId ?? "").trim();
+  const to = String(toSchoolYearId ?? "").trim();
+  if (!isValidId(from)) throw new Error("Podaj poprawny identyfikator roku źródłowego.");
+  if (!isValidId(to)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
+  if (from === to) throw new Error("Rok źródłowy musi być inny niż rok wczytany w księdze.");
+  return { fromSchoolYearId: from, toSchoolYearId: to };
+}
+
+// Potwierdzenie na podstawie podglądu (dryRun). Gdy nie ma nic do skopiowania,
+// rzuca błąd z opisem zamiast pytać o pusty zapis.
+export function categoryCopyConfirm(preview, { fromSchoolYearId, toSchoolYearId }) {
+  const copied = Array.isArray(preview?.copied) ? preview.copied : [];
+  const skipped = Array.isArray(preview?.skipped) ? preview.skipped : [];
+  if (!copied.length) {
+    throw new Error(skipped.length
+      ? `Wszystkie aktywne kategorie roku ${fromSchoolYearId} (${skipped.length}) są już w roku ${toSchoolYearId}. Nic nie zapisano.`
+      : `Rok ${fromSchoolYearId} nie ma aktywnych kategorii do skopiowania. Nic nie zapisano.`);
+  }
+  const label = (item) => `${item.name} (${DIRECTION_LABELS[item.direction] ?? "—"})`;
+  const effects = [`Z roku ${fromSchoolYearId} do roku ${toSchoolYearId}: ${copied.length} ${copied.length === 1 ? "kategoria" : "kategorii"}.`,
+    ...copied.map((item) => `Nowa: ${label(item)}`)];
+  if (skipped.length) effects.push(`Pominięte, bo już istnieją: ${skipped.map(label).join(", ")}`);
+  effects.push("Kopiowane są wyłącznie nazwy i rodzaje aktywnych kategorii; rok źródłowy się nie zmienia.");
+  return { title: "Skopiować kategorie?", effects, confirmLabel: "Kopiuj kategorie" };
+}
+
+// Bilans otwarcia PIERWSZEGO roku (POST /api/ledger/opening-balance, #199):
+// rachunek może być ujemny lub zerowy, kasa co najmniej zero. Kwoty w centach.
+export function openingBalanceRequestBody({ schoolYearId, bank, cash, note, sourceDocumentId }) {
+  if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
+  let bankCents;
+  let cashCents;
+  try { bankCents = parseStatementAmount(bank); } catch { throw new Error("Podaj stan rachunku w EUR (np. 1250,00 albo -20,00)."); }
+  try { cashCents = parseEurInput(String(cash ?? "").trim() || "0", { min: 0 }); } catch { throw new Error("Podaj stan kasy w EUR (0 lub więcej)."); }
+  const body = { schoolYearId: schoolYearId.trim(), bankCents, cashCents, note: trimmedText(note, 3, 500, "Podaj opis źródła bilansu (3–500 znaków).") };
+  const documentId = String(sourceDocumentId ?? "").trim();
+  if (documentId) {
+    if (!isValidId(documentId)) throw new Error("Niepoprawny identyfikator dokumentu.");
+    body.sourceDocumentId = documentId;
+  }
+  return body;
+}
+
+// Formularz ręcznego bilansu otwarcia: tylko zarząd (OPENING_ROLES w
+// ledger-cash.js) i tylko gdy rok nie ma jeszcze bilansu. O tym, czy to
+// pierwszy rok w systemie, rozstrzyga serwer (409 not_first_school_year).
+export function canRecordOpeningBalance(grants, schoolYearId, openingView) {
+  return canAdoptBudget(grants, schoolYearId) && Boolean(openingView) && openingView.openingBalance === null;
 }

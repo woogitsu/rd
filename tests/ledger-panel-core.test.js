@@ -149,3 +149,62 @@ test("#107: treści żądań preliminarza — centy EUR, walidacja przed wysyłk
   assert.throws(() => c.budgetAdoptionRequestBody({ schoolYearId: "y1", adoptedOn: "", note: "Zebranie" }), /datę/);
   assert.equal(c.deactivationRequestBody({ categoryId: "c1", reason: "Nieaktualna" }).body.reason, "Nieaktualna");
 });
+
+test("#207: „Dodaj wpis” wyłączony z komunikatem, gdy rok nie ma kategorii", async () => {
+  const { openEntryState, NO_CATEGORIES_HINT } = await import("../ledger/core.js");
+  const query = { schoolYearId: "2026-2027", direction: "" };
+  assert.deepEqual(openEntryState({ query, categoryCount: 2 }), { disabled: false, hint: "" });
+  assert.deepEqual(openEntryState({ query, categoryCount: 0 }), { disabled: true, hint: NO_CATEGORIES_HINT });
+  assert.match(NO_CATEGORIES_HINT, /^Brak kategorii dla tego roku\./);
+  assert.equal(openEntryState({ query: null, categoryCount: 3 }).hint, "Dostępne po wczytaniu roku szkolnego.");
+  assert.equal(openEntryState({ query, categoryCount: 3, loading: true }).disabled, true);
+  assert.match(openEntryState({ query, categoryCount: 0, changed: true }).hint, /Zmieniono filtr/);
+});
+
+test("#207: kopiowanie kategorii — treść żądania i potwierdzenie z podglądu", async () => {
+  const { categoryCopyRequestBody, categoryCopyConfirm } = await import("../ledger/core.js");
+  const body = categoryCopyRequestBody({ fromSchoolYearId: " 2026-2027 ", toSchoolYearId: "2027-2028" });
+  assert.deepEqual(body, { fromSchoolYearId: "2026-2027", toSchoolYearId: "2027-2028" });
+  assert.throws(() => categoryCopyRequestBody({ fromSchoolYearId: "2027-2028", toSchoolYearId: "2027-2028" }), /inny/);
+  assert.throws(() => categoryCopyRequestBody({ fromSchoolYearId: "", toSchoolYearId: "2027-2028" }), /źródłowego/);
+  const confirm = categoryCopyConfirm({
+    copied: [{ direction: "income", name: "Składki" }],
+    skipped: [{ direction: "expense", name: "Wycieczki" }],
+  }, body);
+  assert.equal(confirm.confirmLabel, "Kopiuj kategorie");
+  assert.ok(confirm.effects.some((line) => line === "Nowa: Składki (Przychód)"));
+  assert.ok(confirm.effects.some((line) => /Pominięte.*Wycieczki \(Wydatek\)/.test(line)));
+  assert.throws(() => categoryCopyConfirm({ copied: [], skipped: [{ direction: "income", name: "Składki" }] }, body), /Nic nie zapisano/);
+  assert.throws(() => categoryCopyConfirm({ copied: [], skipped: [] }, body), /nie ma aktywnych kategorii/);
+});
+
+test("#207: bilans otwarcia pierwszego roku — kwoty w centach, rachunek ze znakiem, kasa ≥ 0, tylko zarząd", async () => {
+  const { openingBalanceRequestBody, canRecordOpeningBalance } = await import("../ledger/core.js");
+  assert.deepEqual(
+    openingBalanceRequestBody({ schoolYearId: "2026-2027", bank: "1 250,50", cash: "", note: "Stan z papierowej księgi", sourceDocumentId: "" }),
+    { schoolYearId: "2026-2027", bankCents: 125050, cashCents: 0, note: "Stan z papierowej księgi" },
+  );
+  assert.equal(openingBalanceRequestBody({ schoolYearId: "y", bank: "-20,00", cash: "5", note: "abc" }).bankCents, -2000);
+  assert.equal(openingBalanceRequestBody({ schoolYearId: "y", bank: "0", cash: "5", note: "abc", sourceDocumentId: "doc-1" }).sourceDocumentId, "doc-1");
+  assert.throws(() => openingBalanceRequestBody({ schoolYearId: "y", bank: "10", cash: "-1", note: "abc" }), /kasy/);
+  assert.throws(() => openingBalanceRequestBody({ schoolYearId: "y", bank: "abc", cash: "0", note: "abc" }), /rachunku/);
+  assert.throws(() => openingBalanceRequestBody({ schoolYearId: "y", bank: "1", cash: "0", note: "a" }), /opis/);
+  const board = [{ role: "board", schoolYearId: "y" }];
+  const empty = { openingBalance: null };
+  assert.equal(canRecordOpeningBalance(board, "y", empty), true);
+  assert.equal(canRecordOpeningBalance(board, "y", { openingBalance: { id: "ob-1" } }), false, "rok z bilansem");
+  assert.equal(canRecordOpeningBalance(board, "y", null), false, "brak danych o bilansie");
+  for (const role of ["treasurer", "admin", "audit"]) {
+    assert.equal(canRecordOpeningBalance([{ role, schoolYearId: "y" }], "y", empty), false, role);
+  }
+  assert.equal(canRecordOpeningBalance([{ role: "board", schoolYearId: "inny" }], "y", empty), false);
+});
+
+test("#207: panel ma akcje kopiowania kategorii i bilansu otwarcia na istniejących trasach", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [html, main] = await Promise.all([readFile(new URL("../ledger/index.html", import.meta.url), "utf8"), readFile(new URL("../ledger/main.js", import.meta.url), "utf8")]);
+  for (const id of ["open-copy", "copy-dialog", "opening-actions", "open-opening", "opening-dialog"]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(main, /\/api\/ledger\/categories\/copy/);
+  assert.match(main, /dryRun/);
+  assert.match(main, /\/api\/ledger\/opening-balance/);
+});
