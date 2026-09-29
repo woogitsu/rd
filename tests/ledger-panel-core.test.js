@@ -61,3 +61,33 @@ test("#107: wiersz plan vs wykonanie — brak planu to „poza planem”, przekr
   const outside = budgetExecutionRow({ categoryName: "Inne", direction: "expense", currentPlanCents: null, executedNetCents: 1500, executionPercent: null, active: false });
   assert.deepEqual([outside.planned, outside.percent, outside.note], ["—", "—", "kategoria wyłączona, poza planem"]);
 });
+
+test("#93: lista uchwał zamiast wolnego tekstu — adres, opis pozycji i limit upoważnienia", async () => {
+  const { buildResolutionsUrl, resolutionOptionLabel, resolutionLimitInfo } = await import("../ledger/core.js");
+  assert.equal(buildResolutionsUrl("y2026"), "/api/ledger/resolutions?schoolYearId=y2026");
+  assert.throws(() => buildResolutionsUrl("../x"));
+  const limited = { id: "r1", number: "U-1/2026", title: "Budżet", authorizedAmountCents: 500000, spentNetCents: 200000, remainingCents: 300000, validUntil: "2026-12-31" };
+  const open = { id: "r2", number: "U-2/2026", title: "Wycieczka", authorizedAmountCents: null, spentNetCents: 0, remainingCents: null, validUntil: null };
+  assert.match(resolutionOptionLabel(limited), /^U-1\/2026 — Budżet \(pozostało .*3\s?000,00.*\)$/);
+  assert.match(resolutionOptionLabel(open), /bez limitu kwoty/);
+  assert.equal(resolutionLimitInfo(null, 100, "").text, "");
+  const ok = resolutionLimitInfo(limited, 300000, "2026-10-01");
+  assert.deepEqual([ok.exceeded, ok.expired], [false, false]);
+  const over = resolutionLimitInfo(limited, 300001, "2026-10-01");
+  assert.equal(over.exceeded, true);
+  assert.match(over.text, /przekracza pozostałą kwotę/);
+  const late = resolutionLimitInfo(limited, 100, "2027-01-02");
+  assert.equal(late.expired, true);
+  const noLimit = resolutionLimitInfo(open, 9_999_999, "2030-01-01");
+  assert.deepEqual([noLimit.exceeded, noLimit.expired], [false, false]);
+  assert.match(noLimit.text, /nie określa kwoty/);
+});
+
+test("#93: panel nie wysyła już wolnego tekstu referencji uchwały", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [html, main] = await Promise.all([readFile(new URL("../ledger/index.html", import.meta.url), "utf8"), readFile(new URL("../ledger/main.js", import.meta.url), "utf8")]);
+  assert.doesNotMatch(html, /name="resolutionReference"/);
+  assert.match(html, /<select name="resolutionId"/);
+  assert.match(main, /resolutionId: resolutionId \|\| null/);
+  assert.doesNotMatch(main, /resolutionReference:/);
+});
