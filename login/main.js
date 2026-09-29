@@ -3,6 +3,7 @@ import {
   canOfferVoluntaryMfaEnrollment,
   clearSensitiveViews,
   enrollIntroText,
+  enrollReasonFromFragment,
   enrollmentConfirmError,
   errorMessage,
   formatSecret,
@@ -39,6 +40,7 @@ const globalMessage = byId("global-message");
 let lastState = null;
 // Ścieżka panelu, z którego przyszło przekierowanie (#99); tylko w pamięci strony.
 let returnTo = nextFromFragment(window.location.hash);
+let enrollReason = enrollReasonFromFragment(window.location.hash);
 
 class ApiError extends Error {
   constructor(code, status) { super(errorMessage(code, status)); this.code = code; this.status = status; }
@@ -104,6 +106,15 @@ async function goNext(state, { initial = false } = {}) {
     window.location.replace(returnTo);
     return;
   }
+  // #161: panel odesłał tu konto bez czynnika (403 mfa_enrollment_required), którego rola
+  // nie jest na liście obowiązkowych — prowadzimy prosto do zapisu MFA z wyjaśnieniem,
+  // zamiast listy paneli, z której link „Powrót” kończyłby się tą samą odmową.
+  if (view === "start" && initial && returnTo && enrollReason && canOfferVoluntaryMfaEnrollment(state)) {
+    resetEnrollment();
+    renderEnrollIntro(false, { page: true });
+    showView("enroll");
+    return;
+  }
   if (view === "start") await renderStart();
   if (view === "enroll") { resetEnrollment(); renderEnrollIntro(true); }
   showView(view);
@@ -111,8 +122,8 @@ async function goNext(state, { initial = false } = {}) {
 
 // #161: tekst i przycisk powrotu zależą od tego, czy widok wymusiła rola
 // (nextView → "enroll") czy konto weszło tu dobrowolnie z widoku startowego.
-function renderEnrollIntro(forced) {
-  byId("enroll-intro-text").textContent = enrollIntroText(forced);
+function renderEnrollIntro(forced, options) {
+  byId("enroll-intro-text").textContent = enrollIntroText(forced, options);
   byId("enroll-back").hidden = forced;
 }
 
@@ -472,7 +483,18 @@ byId("enroll-voluntary").addEventListener("click", () => {
   renderEnrollIntro(false);
   showView("enroll");
 });
-byId("enroll-back").addEventListener("click", async () => goNext(lastState ?? await refreshState()));
+byId("enroll-back").addEventListener("click", async () => {
+  const state = lastState ?? await refreshState();
+  // Bez wymuszonego przekierowania: powrót do strony, która odesłała tu konto, kończyłby
+  // się tą samą odmową. Lista paneli zostaje, a link „Powrót” — do wyboru użytkownika.
+  if (nextView(state) === "start") {
+    lastState = state;
+    await renderStart();
+    showView("start");
+    return;
+  }
+  await goNext(state);
+});
 
 // --- 7. Start i wylogowanie ---------------------------------------------------------------
 
@@ -543,6 +565,7 @@ byId("logout-all").addEventListener("click", async () => {
 async function route() {
   const fragment = parseFragment(window.location.hash);
   returnTo = nextFromFragment(window.location.hash);
+  enrollReason = enrollReasonFromFragment(window.location.hash);
   if (fragment.view === "invite" || fragment.view === "reset") {
     // Token z części „#…” przenosimy do pola i usuwamy z paska adresu i historii.
     if (fragment.token) byId(`${fragment.view}-token`).value = fragment.token;

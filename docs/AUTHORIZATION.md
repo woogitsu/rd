@@ -125,6 +125,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/summary?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/budget?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/ledger/export.xlsx?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01; te same dane co CSV (#121), zdarzenie `ledger.exported` z `format: xlsx` |
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |

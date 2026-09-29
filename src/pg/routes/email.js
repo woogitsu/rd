@@ -842,7 +842,12 @@ async function testSend(request, env, id, json) {
   );
   if (accountCount[0].n >= PREVIEW_ACCOUNT_DAILY_LIMIT) throw new RequestError('preview_account_limit', 429);
 
-  const rendered = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD' });
+  // Wiadomość testowa ma stopkę i nagłówki wypisania jak prawdziwa (#110); token
+  // dotyczy adresu syntetycznego z podglądu, nie adresu odbiorcy testu.
+  const unsubscribeUrl = unsubscribeUrlFor(config, {
+    campaignId: campaign.id, category: campaign.category, emailHash: emailHash('podglad@example.invalid'),
+  });
+  const rendered = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD', unsubscribeUrl });
   const transport = transportFor(env, config);
   let providerMessageId = null;
   let transportError = null;
@@ -850,7 +855,7 @@ async function testSend(request, env, id, json) {
     const result = await transport.send({
       to: normalized, sender: config.sender, replyTo: config.replyTo,
       subject: TEST_SUBJECT_PREFIX + rendered.subject, text: rendered.text,
-      outboxId: `preview:${id}`, idempotencyKey: key,
+      outboxId: `preview:${id}`, idempotencyKey: key, unsubscribeUrl,
     });
     providerMessageId = result?.messageId ?? null;
   } catch (error) {
