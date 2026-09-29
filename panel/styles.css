@@ -133,3 +133,10 @@ dialog form { display: grid; gap: 1rem; padding: 1.5rem; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+/* Tryb wysokiego kontrastu Windows (#112): plakietki i aktywna zakładka nie
+   mogą polegać na tle ani box-shadow, które w forced-colors znikają. */
+@media (forced-colors: active) {
+  .badge { border: 1px solid CanvasText; }
+  nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
+}

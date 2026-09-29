@@ -3,6 +3,7 @@
 //   POST /api/login                 { email, password } → sesja bez MFA + { mfaRequired, mfaEnrolled, … }
 //   GET  /api/auth/state            stan bieżącej sesji dla ekranu logowania
 //   POST /api/invitations/accept    { token, password, displayName? } → konto, rola, sesja
+//   POST /api/invitations/preview   { token } → rola, klasa, rok, termin, zamaskowany adres (bez konsumowania tokenu)
 //   POST /api/password/change       { currentPassword, newPassword } (zalogowany; wylogowuje inne sesje)
 //   POST /api/password/reset        { token, newPassword } — token wydaje wyłącznie administrator
 //
@@ -13,14 +14,14 @@
 
 import { loadSession } from '../auth.js';
 import {
-  acceptInvitationWithPassword, authState, changePassword, LoginError, passwordLogin, resetPasswordWithToken,
+  acceptInvitationWithPassword, authState, changePassword, LoginError, passwordLogin, previewInvitation, resetPasswordWithToken,
 } from '../login.js';
 import { MAX_PASSWORD_INPUT_BYTES, withQueueClient } from '../password.js';
 
 export const name = 'login';
 
 const MAX_BODY_BYTES = 4 * 1024;
-const POST_ROUTES = new Set(['/api/login', '/api/invitations/accept', '/api/password/change', '/api/password/reset']);
+const POST_ROUTES = new Set(['/api/login', '/api/invitations/accept', '/api/invitations/preview', '/api/password/change', '/api/password/reset']);
 export const CLIENT_IP_HEADER = 'x-rd-client-ip';
 
 async function readJson(request) {
@@ -84,6 +85,11 @@ async function route(request, env, url, json) {
       token, password, passwordRepeat, displayName: data.displayName, clientIp: clientIp(request),
     });
     return loginResponse(json, { session: payload.session, mfaRequired: payload.mfaRequired, mfaEnrolled: payload.mfaEnrolled, mfaRequiredByRole: payload.mfaRequiredByRole, created: payload.created }, 201);
+  }
+  if (path === '/api/invitations/preview') {
+    const data = await readJson(request);
+    const token = stringField(data, 'token', 64);
+    return json(await previewInvitation(env, { token, clientIp: clientIp(request) }));
   }
   if (path === '/api/password/reset') {
     const data = await readJson(request);

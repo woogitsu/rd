@@ -245,6 +245,10 @@ export const MESSAGES = Object.freeze({
   match_already_revoked: "Dopasowanie zostało już wycofane.",
   match_amount_mismatch: "Kwoty dopasowania się nie zgadzają.",
   match_method_mismatch: "Sposób wpłaty nie pasuje do pozycji wyciągu.",
+  match_batch_empty: "Wybierz co najmniej jedną parę pozycji i wpłaty.",
+  match_batch_too_large: "Za dużo par w jednej partii. Zatwierdź mniejszą liczbę naraz.",
+  match_batch_duplicate: "Ta sama pozycja lub wpłata występuje w partii więcej niż raz.",
+  match_batch_rejected: "Nie zatwierdzono żadnej pary: część wybranych par jest niepoprawna. Odśwież propozycje i wybierz ponownie.",
   already_matched: "Pozycja jest już dopasowana.",
   already_matched_via_payment: "Pozycja jest już dopasowana do wpłaty.",
   already_matched_via_ledger: "Pozycja jest już dopasowana do wpisu księgi.",
@@ -441,6 +445,7 @@ export const MESSAGES = Object.freeze({
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",
   restore_drill_failed: "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+  restore_report_bad_identifier: "Raport zgodności odrzucił nieprawidłową nazwę tabeli. Sprawdź schemat bazy.",
   // --- Belgijska referencja płatności OGM-VCS (#83) --------------------------------
   invalid_ogm_base: "Niepoprawna baza referencji płatności.",
   invalid_ogm_reference: "Niepoprawna referencja płatności (oczekiwano 12 cyfr).",

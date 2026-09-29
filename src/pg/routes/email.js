@@ -604,7 +604,8 @@ async function preview(request, env, id, json) {
     campaign: campaignView(campaign),
     contentHash: campaign.content_hash,
     recipientsHash: campaign.recipients_hash ?? null,
-    snapshotCurrent: campaign.recipients_hash ? recipientsHash(recipients) === campaign.recipients_hash : false,
+    // null = migawki jeszcze nie ma (świeży szkic); true/false tylko dla istniejącej migawki.
+    snapshotCurrent: campaign.recipients_hash ? recipientsHash(recipients) === campaign.recipients_hash : null,
     recipientsCount: count,
     exclusions: Object.fromEntries(exclusions.map((row) => [row.reason, row.n])),
     sample: { householdId: sampleHousehold, recipient: recipients[0] ? maskEmail(recipients[0].email) : null, ...sample },
@@ -1279,12 +1280,29 @@ async function listSuppressions(request, env, url, json) {
        FROM email_active_suppressions s ORDER BY s.created_at DESC LIMIT 500`,
   );
   const guardians = await guardiansByEmailHash(env.db);
+  // Otwarty (niezatwierdzony) wniosek o zdjęcie blokady — żeby druga osoba mogła
+  // go zatwierdzić bez przepisywania identyfikatora. Bez adresu i bez identyfikatora
+  // zgłaszającego: tylko znacznik „to mój wniosek” (zgłaszający nie zatwierdza sam siebie).
+  const { rows: pending } = await env.db.query(
+    `SELECT DISTINCT ON (email_hash) id, email_hash, release_reason, confirmation_note, requested_by, created_at
+       FROM email_suppression_release_requests
+      WHERE consumed_at IS NULL AND email_hash = ANY($1::text[])
+      ORDER BY email_hash, created_at DESC, id DESC`,
+    [rows.map((row) => row.email_hash)],
+  );
+  const pendingByHash = new Map(pending.map((row) => [row.email_hash, row]));
+  const actorId = context.session.user.id;
   const items = rows.map((row) => {
     const match = guardians.get(row.email_hash);
+    const open = pendingByHash.get(row.email_hash);
     return {
       emailHash: row.email_hash, reason: row.reason, createdAt: iso(row.created_at), events: row.events,
       guardianId: match?.guardianId ?? null, householdId: match?.householdId ?? null,
       email: match ? maskEmail(match.email) : null,
+      pendingRequest: open ? {
+        requestId: open.id, releaseReason: open.release_reason, confirmationNote: open.confirmation_note,
+        createdAt: iso(open.created_at), requestedByMe: open.requested_by === actorId,
+      } : null,
     };
   });
   await insertAuditEvent(env.db, {
@@ -1314,6 +1332,15 @@ async function releaseRequest(request, env, hashValue, json) {
       if (PARENT_ONLY_REASONS.has(suppressionReason) && data.releaseReason !== 'parent_request') {
         throw new RequestError('release_reason_not_allowed', 409);
       }
+      // Podwójne kliknięcie / ponowienie: ten sam autor ma już otwarty wniosek o ten sam
+      // powód dla tego adresu — zwracamy go zamiast tworzyć drugi.
+      const { rows: existing } = await tx.query(
+        `SELECT id FROM email_suppression_release_requests
+          WHERE email_hash = $1 AND requested_by = $2 AND release_reason = $3 AND consumed_at IS NULL
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [hashValue, actorId, data.releaseReason],
+      );
+      if (existing[0]) return json({ requestId: existing[0].id }, 200);
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO email_suppression_release_requests (id, email_hash, suppression_reason, release_reason, confirmation_note, requested_by)

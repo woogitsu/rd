@@ -112,18 +112,32 @@ function workbookXml(sheetName) {
 }
 
 // columns: [{ header, type }]; rows: tablice wartości w kolejności kolumn
-// (jak w toCsv). Zwraca Uint8Array z plikiem XLSX.
-export function toXlsx(columns, rows, { sheetName = 'Arkusz' } = {}) {
+// (jak w toCsv). Opcjonalnie `preamble` / `trailer`: tablice tekstów zapisywane
+// jako jednokomórkowe wiersze przed nagłówkiem i po danych (jak w toCsv; #132 —
+// nazwa klasy, rok, stopka o danych osobowych). Wiersz nagłówka kolumn jest
+// zamrożony. Zwraca Uint8Array z plikiem XLSX.
+export function toXlsx(columns, rows, { sheetName = 'Arkusz', preamble = [], trailer = [] } = {}) {
   const lines = [];
-  const headerCells = columns.map((column, i) => textCell(`${columnLetters(i)}1`, column.header, STYLE_HEADER)).join('');
-  lines.push(`<row r="1">${headerCells}</row>`);
-  rows.forEach((values, rowIndex) => {
+  let r = 0;
+  preamble.forEach((text, i) => {
+    r += 1;
+    lines.push(`<row r="${r}">${text === '' ? '' : textCell(`A${r}`, text, i === 0 ? STYLE_HEADER : 0)}</row>`);
+  });
+  r += 1;
+  const headerRow = r;
+  const headerCells = columns.map((column, i) => textCell(`${columnLetters(i)}${r}`, column.header, STYLE_HEADER)).join('');
+  lines.push(`<row r="${r}">${headerCells}</row>`);
+  rows.forEach((values) => {
     if (values.length !== columns.length) throw new Error('xlsx_row_length_mismatch');
-    const r = rowIndex + 2;
+    r += 1;
     const cells = columns.map((column, i) => cellXml(column, values[i], `${columnLetters(i)}${r}`)).join('');
     lines.push(`<row r="${r}">${cells}</row>`);
   });
-  const lastRef = `${columnLetters(Math.max(columns.length, 1) - 1)}${rows.length + 1}`;
+  trailer.forEach((text) => {
+    r += 1;
+    lines.push(`<row r="${r}">${text === '' ? '' : textCell(`A${r}`, text)}</row>`);
+  });
+  const lastRef = `${columnLetters(Math.max(columns.length, 1) - 1)}${r}`;
   const cols = columns.map((column, i) => {
     const width = column.type === 'text' ? 24 : 16;
     return `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`;
@@ -131,7 +145,7 @@ export function toXlsx(columns, rows, { sheetName = 'Arkusz' } = {}) {
   const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
     + `<dimension ref="A1:${lastRef}"/>`
-    + '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+    + `<sheetViews><sheetView workbookViewId="0"><pane ySplit="${headerRow}" topLeftCell="A${headerRow + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`
     + `<cols>${cols}</cols><sheetData>${lines.join('')}</sheetData></worksheet>`;
   const mtime = Date.UTC(2000, 0, 1); // stała data: ten sam wynik bajt w bajt dla tych samych danych
   const file = (text) => [strToU8(text), { mtime }];
