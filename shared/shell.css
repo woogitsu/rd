@@ -1,7 +1,14 @@
 /* Styl bloku konta wspólnej powłoki paneli (issue #85). Białe tło, oszczędny
    czerwony akcent, bez ikon dekoracyjnych — zgodnie z AGENTS.md. Każdy panel
    dołącza ten plik obok własnego styles.css. */
-#shell-nav { list-style: none; display: flex; margin: 0; padding: 0; gap: .1rem; }
+#shell-nav { list-style: none; display: flex; flex-wrap: wrap; margin: 0; padding: 0; gap: .1rem; }
+/* Przegląd demo: przy 12–13 linkach (zarząd) nawigacja bez zawijania rozpychała
+   nagłówek do ok. 1770 px przy ekranie 1280 px — „Wyloguj” lądował poza ekranem.
+   <nav> musi móc się skurczyć, a linki zawijają się do drugiego wiersza. */
+nav:has(> #shell-nav) { min-width: 0; }
+/* Po zawinięciu każdy wiersz linków ma własną wysokość — znacznik aktywnej
+   pozycji (box-shadow) nie zachodzi na wiersz poniżej. */
+#shell-nav a { display: block; }
 #shell-account {
   display: flex;
   align-items: center;
@@ -14,6 +21,8 @@
 #shell-account .shell-account-year { color: #5a5f63; }
 #shell-account a,
 #shell-account button {
+  flex-shrink: 0;
+  white-space: nowrap;
   background: none;
   border: 1px solid #b3262d;
   color: #b3262d;
@@ -40,7 +49,16 @@
      ekran w admin/meetings/events/documents/panel (poziomy scroll całej
      strony przy 8–9 linkach). */
   nav:has(> #shell-nav) { min-width: 0; }
-  #shell-nav { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #shell-nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   #shell-nav li { white-space: nowrap; }
   #shell-account { flex-wrap: wrap; margin-left: 0; }
+}
+
+/* Baner trybu tylko do odczytu (#143): biały układ, czerwony akcent, bez ikon. */
+.shell-write-mode {
+  background: #fff;
+  border-bottom: 3px solid #b3262d;
+  color: #8e2026;
+  padding: .6rem 1rem;
+  font-weight: 600;
 }

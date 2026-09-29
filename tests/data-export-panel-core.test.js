@@ -31,7 +31,8 @@ test('granice ról: eksport roczny tylko admin/zarząd bez klasy; lista klasy ta
 test('adresy i ciała żądań: poprawny identyfikator, format csv/json', () => {
   assert.equal(rosterUrl('c1', 'json'), '/api/exports/class-roster?classId=c1&format=json');
   assert.throws(() => rosterUrl('../x'));
-  assert.throws(() => rosterUrl('c1', 'xlsx'));
+  assert.equal(rosterUrl('c1', 'xlsx'), '/api/exports/class-roster?classId=c1&format=xlsx');
+  assert.throws(() => rosterUrl('c1', 'pdf'));
   assert.deepEqual(yearlyBody(' 2026-2027 '), { schoolYearId: '2026-2027' });
   assert.throws(() => yearlyBody(''));
 });

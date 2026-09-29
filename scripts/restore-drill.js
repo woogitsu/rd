@@ -8,56 +8,24 @@
 //   BACKUP_S3_*                        jak w backup-postgres.js
 //   APP_ENV=production wymaga --allow-production
 //
-// Raport (liczności i sumy, bez danych osobowych) trafia do backup_runs
-// (kind=restore_drill) w bazie ŹRÓDŁOWEJ; baza docelowa jest czyszczona przez
+// Raport (liczności, sumy i skróty, bez danych osobowych) jest porównywany
+// z raportem zapisanym przy tworzeniu kopii (backup_runs.row_counts/sums, ta
+// sama migawka co zrzut); niezgodność = kod wyjścia 1. Wynik trafia do
+// backup_runs (kind=restore_drill) w bazie ŹRÓDŁOWEJ; baza docelowa jest czyszczona przez
 // operatora usługi (osobna, jednorazowa baza „drill” — poza zakresem skryptu).
 
 import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
-import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
 import { Client } from 'pg';
 import { createPgDatabase } from '../src/db.js';
 import { createS3Storage } from '../src/storage.js';
 import { runRestoreDrill } from '../src/pg/backup.js';
+import { buildRestoreReport } from '../src/pg/restore-report.js';
+import { restoreInto } from './lib/pg-tools.js';
 import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
 
 const REQUIRED_ENV = ['DATABASE_URL', 'RESTORE_DRILL_TARGET_DATABASE_URL', 'BACKUP_DECRYPTION_PRIVATE_KEY',
   'BACKUP_S3_ENDPOINT', 'BACKUP_S3_REGION', 'BACKUP_S3_BUCKET', 'BACKUP_S3_ACCESS_KEY_ID', 'BACKUP_S3_SECRET_ACCESS_KEY'];
-
-async function pgRestoreInto(targetUrl, plaintextBuffer) {
-  const dir = await mkdtemp(join(tmpdir(), 'rd-restore-'));
-  const file = join(dir, 'dump.custom');
-  try {
-    await writeFile(file, plaintextBuffer);
-    await new Promise((resolve, reject) => {
-      const child = spawn('pg_restore', ['--clean', '--if-exists', '--no-owner', '--dbname', targetUrl, file], { stdio: ['ignore', 'ignore', 'pipe'] });
-      let stderr = '';
-      child.stderr.on('data', (chunk) => { stderr += chunk; });
-      child.on('error', reject);
-      child.on('close', (code) => (code === 0 ? resolve() : reject(Object.assign(new Error('pg_restore_failed'), { code: 'pg_restore_failed', stderr: stderr.slice(-500) }))));
-    });
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
-async function reportOn(targetClient) {
-  const tables = ['households', 'students', 'guardians', 'student_guardians', 'payment_entries', 'ledger_entries', 'documents'];
-  const rowCounts = {};
-  for (const table of tables) {
-    const { rows } = await targetClient.query(`SELECT count(*)::int AS n FROM ${table}`);
-    rowCounts[table] = rows[0].n;
-  }
-  const sums = {};
-  const totals = await targetClient.query('SELECT coalesce(sum(net_cents), 0)::bigint AS total FROM household_payment_totals');
-  sums.household_payment_net_cents = Number(totals.rows[0].total);
-  const ledger = await targetClient.query('SELECT coalesce(sum(net_cents), 0)::bigint AS total FROM ledger_year_summary');
-  sums.ledger_year_net_cents = Number(ledger.rows[0].total);
-  return { rowCounts, sums };
-}
 
 async function main() {
   const env = process.env;
@@ -93,19 +61,21 @@ async function main() {
       sourceUrl: env.DATABASE_URL,
       targetUrl: env.RESTORE_DRILL_TARGET_DATABASE_URL,
       environment: env.APP_ENV || 'unknown',
-      restore: (plaintext) => pgRestoreInto(env.RESTORE_DRILL_TARGET_DATABASE_URL, plaintext),
+      restore: (plaintext) => restoreInto(env.RESTORE_DRILL_TARGET_DATABASE_URL, plaintext),
       migrateTarget: async () => {
         const applied = await applyMigrations(targetClient, await loadMigrations(migrationsDirectory));
         // applyMigrations zwraca listę NAŁOŻONYCH plików; po pg_restore z
         // aktualnym zrzutem oczekujemy pustej listy ("No pending migrations.").
         return applied;
       },
-      reportQuery: () => reportOn(targetClient),
+      reportQuery: () => buildRestoreReport((sql, params) => targetClient.query(sql, params)),
     });
     console.log(JSON.stringify(report));
   } catch (error) {
     const code = typeof error?.code === 'string' && /^[a-z0-9_]{1,60}$/.test(error.code) ? error.code : 'restore_drill_failed';
     console.error(`Restore drill failed: ${code}`);
+    // Tylko nazwy sekcji/kluczy — bez wartości (skróty i sumy zostają w dzienniku).
+    if (Array.isArray(error?.differences)) for (const d of error.differences.slice(0, 50)) console.error(`  ${d.section}: ${d.key}`);
     process.exitCode = 1;
   } finally {
     await targetClient.end().catch(() => {});

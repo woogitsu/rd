@@ -88,7 +88,10 @@ test('#134: po dodaniu klucza v2 czynniki v1 nadal weryfikują kody; nowe czynni
 test('#134: skrypt rotacji przenosi czynniki v1 na v2, zachowuje last_used_step i kody odzyskiwania', async () => {
   const account = await enrollAndConfirm('u-rot-apply');
   // Zużywamy jeden krok TOTP przed rotacją, żeby sprawdzić ochronę przed replay po rotacji.
-  const usedStep = await postWith('/api/mfa/verify', account.cookie, { code: codeAt(account.secret, 1) }, envRing());
+  // Kod liczymy RAZ i używamy go ponownie przy replay: ponowne liczenie z Date.now() po granicy
+  // 30-sekundowego kroku dałoby kod NASTĘPNEGO kroku (ważny, więc 200 zamiast 400).
+  const usedCode = codeAt(account.secret, 1);
+  const usedStep = await postWith('/api/mfa/verify', account.cookie, { code: usedCode }, envRing());
   assert.equal(usedStep.status, 200);
   let cookie = cookieFrom(usedStep); // każda udana weryfikacja rotuje sesję — dalej używamy najnowszego cookie
   const beforeRow = (await db.query('SELECT id, last_used_step, confirmed_at FROM user_mfa_factors WHERE id = $1', [account.factorId])).rows[0];
@@ -123,7 +126,7 @@ test('#134: skrypt rotacji przenosi czynniki v1 na v2, zachowuje last_used_step 
   // Replay kroku użytego TUŻ PRZED rotacją jest odrzucony jako 'replay' (nie 'mfa_key_missing'
   // ani cichy sukces) — last_used_step został przeniesiony na nowy wiersz. Błąd nie rotuje
   // sesji, więc `cookie` zostaje ważne do kolejnego kroku testu.
-  const replay = await postWith('/api/mfa/verify', cookie, { code: codeAt(account.secret, 1) }, envRing());
+  const replay = await postWith('/api/mfa/verify', cookie, { code: usedCode }, envRing());
   assert.equal(replay.status, 400);
   assert.equal((await replay.json()).error, 'invalid_code');
   const replayAudit = (await db.query(
