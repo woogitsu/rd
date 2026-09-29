@@ -698,6 +698,13 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: `/api/meetings/${obj.meetingId}` }),
     contains: (_actor, target) => [target.key],
   },
+  {
+    // #81: tylko odczyt, uprawnienia jak przy GET zebrania; brak dostępu = 404 (SR-07).
+    id: 'meetings.approvalChecklist', module: 'meetings', method: 'GET',
+    path: '/api/meetings/:meetingId/approval-checklist', targets: CLASS_TARGETS,
+    allow: MEETING_READ, mfa: false, ok: 200, deny: 404, fixture: 'static', object: { kind: 'meeting', stage: 'shared' },
+    build: ({ obj }) => ({ path: `/api/meetings/${obj.meetingId}/approval-checklist` }),
+  },
   meetingRoute('meetings.update', 'PATCH', '/api/meetings/:meetingId', () => '', {
     body: (target) => ({ revision: 1, title: `Zmiana ${marker(target.key)}` }),
   }),
