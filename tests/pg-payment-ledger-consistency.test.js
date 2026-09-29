@@ -224,3 +224,127 @@ test('rola bez dostępu finansowego dostaje 403 na zwrocie i ponownym przypisani
     assert.equal(asNoMfa.status, 403);
   } finally { await db.close(); }
 });
+
+test('ponowienie udanego przypisania (ten sam klucz i treść) zwraca zapisany wynik zamiast fałszywego 409 (#138)', async () => {
+  const { db, cookie, fetch } = await setup();
+  try {
+    const paymentId = await createPayment(fetch, cookie, { amountCents: 6000, key: 'k-pay-reassign-replay-001', householdId: 'h1' });
+    const path = `/api/payments/${paymentId}/reassignment`;
+    const body = { householdId: 'h2', reason: 'Wpłata trafiła do niewłaściwego rodzeństwa' };
+    const first = await fetch(req(path, { cookie, key: 'k-reassign-replay-001', body }));
+    assert.equal(first.status, 201);
+    const created = (await readJson(first)).body;
+
+    // Podwójne kliknięcie / ponowienie po sukcesie: bieżące household_id to już h2.
+    const replay = await fetch(req(path, { cookie, key: 'k-reassign-replay-001', body }));
+    assert.equal(replay.status, 200);
+    assert.equal(replay.headers.get('Idempotency-Replayed'), 'true');
+    assert.deepEqual((await readJson(replay)).body, created);
+    assert.equal(created.reassignment.oldHouseholdId, 'h1');
+
+    // Ten sam klucz z inną treścią albo od innej osoby to nadal konflikt.
+    const otherReason = await readJson(await fetch(req(path, { cookie, key: 'k-reassign-replay-001', body: { ...body, reason: 'Inny powód niż poprzednio' } })));
+    assert.deepEqual([otherReason.status, otherReason.body], [409, { error: 'idempotency_conflict' }]);
+    const otherHousehold = await readJson(await fetch(req(path, { cookie, key: 'k-reassign-replay-001', body: { ...body, householdId: 'h1' } })));
+    assert.deepEqual([otherHousehold.status, otherHousehold.body], [409, { error: 'idempotency_conflict' }]);
+    const otherCookie = await seedUserSession(db, { userId: 'u-treasurer-2', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
+    const otherActor = await readJson(await fetch(req(path, { cookie: otherCookie, key: 'k-reassign-replay-001', body })));
+    assert.deepEqual([otherActor.status, otherActor.body], [409, { error: 'idempotency_conflict' }]);
+    // Ten sam klucz dla innej wpłaty to też konflikt.
+    const otherPaymentId = await createPayment(fetch, cookie, { amountCents: 1000, key: 'k-pay-reassign-replay-002', householdId: 'h1' });
+    const otherPayment = await readJson(await fetch(req(`/api/payments/${otherPaymentId}/reassignment`, { cookie, key: 'k-reassign-replay-001', body })));
+    assert.deepEqual([otherPayment.status, otherPayment.body], [409, { error: 'idempotency_conflict' }]);
+
+    // Nowy klucz do tego samego gospodarstwa: wpłata już tam jest.
+    const again = await readJson(await fetch(req(path, { cookie, key: 'k-reassign-replay-002', body })));
+    assert.deepEqual([again.status, again.body], [409, { error: 'payment_reassignment_same_household' }]);
+
+    assert.equal(await db.query('SELECT count(*)::int AS n FROM payment_reassignments').then((r) => r.rows[0].n), 1);
+    assert.equal(await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'payment.reassigned'").then((r) => r.rows[0].n), 1);
+  } finally { await db.close(); }
+});
+
+test('równoległe ponowienie ponownego przypisania (podwójne kliknięcie): jeden zapis i jedno odtworzenie', async () => {
+  const { db, cookie, fetch } = await setup();
+  try {
+    const paymentId = await createPayment(fetch, cookie, { amountCents: 6000, key: 'k-pay-reassign-par-001', householdId: 'h1' });
+    const send = () => fetch(req(`/api/payments/${paymentId}/reassignment`, {
+      cookie, key: 'k-reassign-par-001', body: { householdId: 'h2', reason: 'Równoległe kliknięcie' },
+    })).then(readJson);
+    const results = await Promise.all([send(), send()]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 201]);
+    assert.equal(results[0].body.reassignment.id, results[1].body.reassignment.id);
+    assert.equal(await db.query('SELECT count(*)::int AS n FROM payment_reassignments').then((r) => r.rows[0].n), 1);
+  } finally { await db.close(); }
+});
+
+async function createUnassignedPayment(fetch, cookie, key) {
+  const res = await readJson(await fetch(req('/api/payments', {
+    cookie, key,
+    body: { schoolYearId: YEAR, amountCents: 2500, receivedOn: '2026-10-01', method: 'bank', reference: 'Wpłata syntetyczna', status: 'unmatched' },
+  })));
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  return res.body.payment.id;
+}
+
+test('przypisanie wpłaty: podwójne kliknięcie równolegle daje zapis i odtworzenie, nie payment_already_assigned (#6)', async () => {
+  const { db, cookie, fetch } = await setup();
+  try {
+    const paymentId = await createUnassignedPayment(fetch, cookie, 'k-pay-assign-par-001');
+    const send = () => fetch(req(`/api/payments/${paymentId}/assignment`, {
+      cookie, key: 'k-assign-par-0001', body: { householdId: 'h1' },
+    })).then(readJson);
+    const results = await Promise.all([send(), send(), send()]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 200, 201]);
+    assert.equal(new Set(results.map((r) => r.body.assignment.id)).size, 1);
+    assert.equal(await db.query('SELECT count(*)::int AS n FROM payment_assignments').then((r) => r.rows[0].n), 1);
+    assert.equal(await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'payment.assigned'").then((r) => r.rows[0].n), 1);
+  } finally { await db.close(); }
+});
+
+test('przypisanie wpłaty: wyścig na jednym kluczu przy nieaktualnym odczycie klucza kończy się odtworzeniem lub idempotency_conflict (#6)', async () => {
+  const { db, cookie } = await setup();
+  try {
+    // Symulacja wyścigu na prawdziwym PostgreSQL: drugie żądanie nie widzi jeszcze
+    // zatwierdzonego wiersza o tym kluczu (odczyt przed commitem pierwszego), więc
+    // dopiero INSERT trafia na unikalny indeks klucza.
+    let staleLookups = 0;
+    const racingDb = {
+      query: (...args) => db.query(...args),
+      transaction: (fn) => db.transaction((tx) => fn({
+        query: async (text, params) => {
+          if (staleLookups > 0 && /FROM payment_assignments WHERE idempotency_key/.test(text)) {
+            staleLookups -= 1;
+            return { rows: [] };
+          }
+          return tx.query(text, params);
+        },
+      })),
+    };
+    const fetch = (request) => handlePgRequest(request, { db: racingDb });
+    const paymentA = await createUnassignedPayment(fetch, cookie, 'k-pay-assign-race-001');
+    const paymentB = await createUnassignedPayment(fetch, cookie, 'k-pay-assign-race-002');
+    const assign = (paymentId, householdId) => fetch(req(`/api/payments/${paymentId}/assignment`, {
+      cookie, key: 'k-assign-race-0001', body: { householdId },
+    })).then(readJson);
+
+    assert.equal((await assign(paymentA, 'h1')).status, 201);
+    // Ta sama wpłata i treść, zwykły odczyt klucza: odtworzenie zapisanego wyniku.
+    const replayed = await assign(paymentA, 'h1');
+    assert.equal(replayed.status, 200);
+    // Ten sam klucz, inna wpłata: konflikt idempotencji, nie payment_already_assigned.
+    staleLookups = 1;
+    const otherPayment = await assign(paymentB, 'h1');
+    assert.deepEqual([otherPayment.status, otherPayment.body], [409, { error: 'idempotency_conflict' }]);
+    // Ten sam klucz, inne gospodarstwo tej samej wpłaty: konflikt idempotencji.
+    const otherHousehold = await assign(paymentA, 'h2');
+    assert.deepEqual([otherHousehold.status, otherHousehold.body], [409, { error: 'idempotency_conflict' }]);
+    // Inny klucz dla już przypisanej wpłaty: prawdziwe payment_already_assigned.
+    const late = await readJson(await fetch(req(`/api/payments/${paymentA}/assignment`, {
+      cookie, key: 'k-assign-race-0002', body: { householdId: 'h2' },
+    })));
+    assert.deepEqual([late.status, late.body], [409, { error: 'payment_already_assigned' }]);
+    assert.equal(staleLookups, 0);
+    assert.equal(await db.query('SELECT count(*)::int AS n FROM payment_assignments').then((r) => r.rows[0].n), 1);
+  } finally { await db.close(); }
+});
