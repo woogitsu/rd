@@ -700,6 +700,18 @@ test('zamknięty rok: odwołanie, zmiana terminu i zawiadomienia dają 409 schoo
       `INSERT INTO meeting_reschedules (id, meeting_id, school_year_id, from_scheduled_at, to_scheduled_at, reason, actor_id)
        VALUES ('r-x', $1, $2, now(), now() + interval '1 day', 'Powód testowy', 'u-bd')`, [meeting.id, YEAR]),
     /school_year_closed/);
+    // #80: trigger a0_year_freeze na trzech nowych tabelach — INSERT/UPDATE/DELETE
+    // zamkniętego roku daje school_year_closed (przed strażnikami tabel).
+    await assert.rejects(t.db.query(
+      `INSERT INTO meeting_agenda_versions (id, meeting_id, school_year_id, version, snapshot, content_hash, created_by)
+       VALUES ('av-x', $1, $2, 99, '[]'::jsonb, 'h', 'u-bd')`, [meeting.id, YEAR]), /school_year_closed/);
+    await assert.rejects(t.db.query('UPDATE meeting_agenda_versions SET content_hash = $1 WHERE meeting_id = $2', ['h2', meeting.id]), /school_year_closed/);
+    await assert.rejects(t.db.query('UPDATE meeting_notices SET title = $1 WHERE meeting_id = $2', ['Inny', meeting.id]), /school_year_closed/);
+    await assert.rejects(t.db.query('DELETE FROM meeting_notices WHERE meeting_id = $1', [meeting.id]), /school_year_closed/);
+    await assert.rejects(t.db.query('DELETE FROM meeting_agenda_versions WHERE meeting_id = $1', [meeting.id]), /school_year_closed/);
+    for (const table of ['meeting_agenda_versions', 'meeting_notices']) {
+      assert.ok(await t.count(`SELECT count(*) AS n FROM ${table} WHERE meeting_id = $1`, [meeting.id]) > 0, `${table}: wiersze nietknięte`);
+    }
     assert.equal((await t.view(meeting)).meeting.status, 'scheduled');
   } finally { await t.close(); }
 });
