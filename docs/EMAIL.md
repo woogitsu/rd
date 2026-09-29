@@ -1,6 +1,6 @@
 # Dobrowolne składki — przypomnienia e-mail
 
-Stan: prototyp na PostgreSQL (issues #10, #40). **Nie jest wdrożony i nie jest gotowy do pracy na danych rodzin.** Wysyłka do rodziców wymaga decyzji D-05, D-06, D-16 i D-17 ([DECISIONS.md](DECISIONS.md)) oraz osobnej zgody szkoły na produkcję (D-20).
+Status: API na PostgreSQL (`src/pg/routes/email.js`) i panel `email/` — prototyp (issues #10, #40). **Nie jest wdrożony i nie jest gotowy do pracy na danych rodzin.** Wysyłka do rodziców wymaga decyzji D-05, D-06, D-16 i D-17 ([DECISIONS.md](DECISIONS.md)) oraz osobnej zgody szkoły na produkcję (D-20).
 
 ## Dostawca i pojemność
 Brevo Free: do 300 wysłanych wiadomości dziennie, limit wspólny dla całego konta. Przy maksymalnie 2000 adresatach jednej kampanii potrzeba co najmniej 7 dni (6 × 300 + 200), jeżeli nie ma innych wiadomości. Liczba adresatów nie wynika wprost z liczby uczniów: liczymy unikalne adresy, politykę wysyłki do jednego lub obu opiekunów i brak duplikatów przy rodzeństwie. Przed produkcją sprawdzić bieżący regulamin dostawcy, domenę i warunki przetwarzania danych.
@@ -54,7 +54,7 @@ Serwer odrzuca słownictwo sugerujące zadłużenie (ten sam słownik co kartki 
 
 ## Bariery bezpieczeństwa wysyłki
 - `EMAIL_SENDING_ENABLED` musi mieć dokładnie wartość `true`; inaczej przebieg „live” zatrzymuje się bez zmian w kolejce.
-- Transport Brevo odmawia pracy przy `APP_ENV=test` i pod `node --test`, zanim wywoła sieć. Testy używają wyłącznie fałszywego transportu, a globalny `fetch` jest w nich pułapką.
+- Transport Brevo odmawia pracy przy `APP_ENV=test` i pod `node --test`, zanim wywoła sieć. Testy używają wyłącznie fałszywego transportu, a globalny `fetch` jest w nich pułapką: `tests/setup.js` (ładowany przez `--import` w `npm test` i w CI) blokuje `fetch` poza pętlą zwrotną w każdym pliku testowym, a próba użycia sieci oblewa cały przebieg nawet po połknięciu wyjątku (#214).
 - Poza rozpoznaną produkcją (`APP_ENV=production`/`prod`, dowolna wielkość liter; brak lub nieznana wartość NIE wyłącza allowlisty) każdy adres musi pasować do `EMAIL_TEST_ALLOWLIST` (adresy techniczne, np. `*@example.invalid,ops@example.test`); pusta lista blokuje wszystko. Odmowa jest zapisana jako `failed / recipient_not_allowlisted`.
 - Tuż przed wysyłką zadanie sprawdza ponownie: wpłatę (dla „brak wpisu wpłaty”), listę wyłączeń, zgodę na kontakt i zgodność adresu, skrót zatwierdzonej treści.
 - Podczas migracji na Railway nie ustawiamy `EMAIL_SENDING_ENABLED=true` na żadnym środowisku z danymi rodzin; staging ma tylko dane syntetyczne i listę adresów technicznych.

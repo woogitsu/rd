@@ -6,6 +6,10 @@ import {
   ACTION_LABELS, PENDING_DECISION_ROLES, ROLE_LABELS, roleNeedsPendingDecisionWarning, scopeLabel,
 } from '../admin/core.js';
 import { ROLE_STATUS } from '../src/pg/auth.js';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { ENTITY_TYPE_LABELS, REASON_LABELS, accountName, entityTypeLabel, reasonLabel } from '../admin/core.js';
+import { shortId } from '../shared/short-id.js';
 import { AUDIT_ACTIONS } from '../src/pg/routes/admin.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
@@ -84,7 +88,7 @@ test('labels, scope and audit descriptions are Polish and contain identifiers on
   assert.match(confirmationText('disable', 'u-1'), /sesje zostaną wycofane/);
   const described = describeAuditEvent({ action: 'role_grant.expired', metadata: { role: 'board', userId: 'u-1', schoolYearId: 'y-2026', reason: 'term_closed' } });
   assert.equal(described.label, 'Wygaszenie roli');
-  assert.equal(described.details, 'Zarząd, konto u-1, rok y-2026, powód: term_closed');
+  assert.equal(described.details, 'Zarząd, konto u-1, rok y-2026, powód: zakończenie kadencji');
 });
 
 // #224: pole potwierdzenia resetu MFA musi dokładnie odpowiadać identyfikatorowi
@@ -117,4 +121,38 @@ test('dziennik kont: każda akcja z AUDIT_ACTIONS ma polską etykietę (bez suro
   }
   assert.equal(ACTION_LABELS['user.created'], 'Utworzenie konta');
   assert.equal(ACTION_LABELS['auth.password_set'], 'Ustawienie hasła');
+});
+
+function sourceFiles(dir) {
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    return statSync(path).isDirectory() ? sourceFiles(path) : (path.endsWith('.js') ? [path] : []);
+  });
+}
+
+// Przegląd demo: dziennik pokazywał `role_grant` i `rotated`. Każdy typ obiektu i powód
+// użyty w src/pg/** ma polską etykietę (bez znaków kodu).
+test('dziennik kont: słowniki typów obiektów i powodów pokrywają wartości z src/pg', () => {
+  const code = sourceFiles(new URL('../src/pg', import.meta.url).pathname).map((file) => readFileSync(file, 'utf8')).join('\n');
+  const types = new Set([...code.matchAll(/entityType: '([a-z_]+)'/g)].map((m) => m[1]));
+  const reasons = new Set([...code.matchAll(/reason(?::| =) '([a-z_]+)'/g)].map((m) => m[1]));
+  assert.ok(types.size > 30 && reasons.size > 10, 'skan powinien coś znaleźć');
+  for (const type of types) assert.ok(ENTITY_TYPE_LABELS[type], `brak etykiety typu ${type}`);
+  for (const reason of reasons) assert.ok(REASON_LABELS[reason], `brak etykiety powodu ${reason}`);
+  for (const label of [...Object.values(ENTITY_TYPE_LABELS), ...Object.values(REASON_LABELS)]) {
+    assert.doesNotMatch(label, /[a-z]+_[a-z]+/, `etykieta wygląda jak kod: ${label}`);
+  }
+  assert.equal(entityTypeLabel('role_grant'), 'Przydział roli');
+  assert.equal(reasonLabel('rotated'), 'odnowienie sesji');
+  assert.equal(reasonLabel('nieznany_kod'), 'nieznany_kod');
+});
+
+test('dziennik kont: autor jako nazwa konta z listy kont albo skrócony identyfikator', () => {
+  const uuid = '3f2b8c1e-aaaa-bbbb-cccc-123456789012';
+  assert.equal(accountName(uuid, [{ id: uuid, displayName: 'Anna Demo', email: 'a@example.invalid' }]), 'Anna Demo');
+  assert.equal(accountName(uuid, [{ id: uuid, displayName: '', email: 'a@example.invalid' }]), 'a@example.invalid');
+  assert.equal(accountName(uuid, []), '3f2b8c1e…');
+  assert.equal(accountName(null, []), 'system');
+  assert.equal(shortId('abc'), 'abc');
+  assert.equal(shortId(undefined), '—');
 });

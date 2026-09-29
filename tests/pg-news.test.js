@@ -11,7 +11,8 @@ import {
 } from '../src/pg/news.js';
 import { newsItems } from '../site/core.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, lifecycleActors, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
 const board1 = { userId: 'board1', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
@@ -755,5 +756,82 @@ test('publiczne API aktualności: zdjęcie z wycofaną zgodą znika z danych str
     assert.equal(file.status, 404);
     const keptFile = await handlePgRequest(request(`/api/public/news-photos/${kept.id}/thumb`), env);
     assert.equal(keptFile.status, 200);
+  } finally { await db.close(); }
+});
+
+// #116: stały adres wpisu. Ten sam widok public_news co lista; szkic, wpis
+// zatwierdzony, ale nieopublikowany, wpis wycofany i nieistniejący dają
+// identyczne 404 (odpowiedź nie zdradza stanu wewnętrznego).
+test('publiczny wpis pod stałym adresem: tylko opublikowana wersja, identyczne 404 dla reszty (#116)', async () => {
+  const db = await newsDb();
+  try {
+    const env = { db };
+    const get = (id) => handlePgRequest(request(`/api/public/news/${encodeURIComponent(id)}`), env);
+
+    const draft = (await createDraft(db, board1, postInput({ title: 'Szkic tajny' }))).post;
+    const approved = (await createDraft(db, board1, postInput({ title: 'Zatwierdzony tajny' }))).post;
+    await submit(db, board1, { postId: approved.id, revision: 1 });
+    await approve(db, board2, { postId: approved.id, revision: 1 });
+    const missing = await get('brak-takiego-wpisu');
+    assert.equal(missing.status, 404);
+    const missingBody = await missing.json();
+    for (const hidden of [draft, approved]) {
+      const response = await get(hidden.id);
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), missingBody);
+    }
+
+    // Wpis klasy, opublikowany: w odpowiedzi brak classId i identyfikatorów wewnętrznych.
+    const photo = await verifiedPhoto(db);
+    const published = await publishedPost(db, { title: 'Wersja opublikowana', classId: `${year}-1a`, photoIds: [photo.id] });
+    const ok = await get(published.id);
+    assert.equal(ok.status, 200);
+    assert.equal(Number(/max-age=(\d+)/.exec(ok.headers.get('Cache-Control'))[1]), PUBLIC_CACHE_SECONDS);
+    const { post } = await ok.json();
+    assert.deepEqual(Object.keys(post).sort(), ['body', 'id', 'photos', 'publishedAt', 'title']);
+    assert.equal(post.id, published.id);
+    assert.deepEqual(post.photos.map((p) => p.id), [photo.id]);
+    assert.equal(JSON.stringify(post).includes(`${year}-1a`), false);
+
+    // Nowsza, niezatwierdzona wersja nie jest widoczna: publicznie wersja opublikowana.
+    await updateDraft(db, board1, { postId: published.id, revision: 1, title: 'Wersja robocza', body: 'Robocza treść' });
+    const stillFirst = (await (await get(published.id)).json()).post;
+    assert.equal(stillFirst.title, 'Wersja opublikowana');
+    assert.notEqual(stillFirst.body, 'Robocza treść');
+
+    // Znaki w adresie, które nie są identyfikatorem, i metody inne niż GET.
+    assert.equal((await handlePgRequest(request('/api/public/news/%E0%A4%A'), env)).status, 404);
+    assert.equal((await get('../../api/news')).status, 404);
+    assert.equal((await handlePgRequest(request(`/api/public/news/${published.id}`, { method: 'POST', body: {} }), env)).status, 405);
+
+    // Wycofanie: od następnego żądania to samo 404 co dla nieistniejącego.
+    await withdraw(db, board1, { postId: published.id, revision: 2, reason: 'Błąd w treści' });
+    const gone = await get(published.id);
+    assert.equal(gone.status, 404);
+    assert.deepEqual(await gone.json(), missingBody);
+    assert.deepEqual((await pub(db)).posts, []);
+  } finally { await db.close(); }
+});
+
+// #214: jak wyżej — aktor z prawdziwego ładowania sesji i przydziałów.
+test('aktualności: wygasły i cofnięty przydział oraz nieważna sesja nie dają dostępu (aktor z loadAuthorizationContext)', async () => {
+  const db = await newsDb();
+  try {
+    const actors = await lifecycleActors(db, { role: 'board', schoolYearId: year, prefix: 'nw' });
+    assert.ok(actors.active, 'aktor z ważną sesją i przydziałem ładuje się przez loadAuthorizationContext');
+    assert.deepEqual(actors.active.grants.map((grant) => grant.role), ['board']);
+    // Nieważna sesja / konto wyłączone: brak kontekstu (401), nie „pusty aktor”.
+    for (const name of ['expiredSession', 'revokedSession', 'disabledAccount']) {
+      assert.equal(actors[name], null, `${name}: brak aktora`);
+    }
+    // Wygasły lub cofnięty przydział: sesja ważna, ale bez ról.
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      assert.ok(actors[name], `${name}: sesja jest ważna`);
+      assert.deepEqual(actors[name].grants, [], `${name}: przydział odfiltrowany przez SQL`);
+    }
+    assert.deepEqual((await listInternal(db, actors.active, { schoolYearId: year })).posts, []);
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      await assert.rejects(listInternal(db, actors[name], { schoolYearId: year }), { code: 'forbidden', status: 403 }, name);
+    }
   } finally { await db.close(); }
 });

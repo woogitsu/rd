@@ -10,6 +10,7 @@ import {
   accountDay, campaignDailyCap, recordOtherSends, remainingQuota, runEmailBatch, ResultNotRecordedError,
 } from '../src/email/worker.js';
 import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 // Pułapka na sieć (#214) jest teraz instalowana globalnie przez
 // tests/helpers/network-guard.js (importowany przez helpers/pg.js), więc
 // ten plik tylko czyta wspólny licznik zamiast utrzymywać własną kopię.
@@ -277,7 +278,8 @@ test('no send before approval; author and snapshot builder cannot self-approve; 
     // Treasurer nie ma roli zatwierdzającej.
     const preview = (await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).body;
     const hashes = { contentHash: preview.contentHash, recipientsHash: preview.recipientsHash };
-    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/approve`, { method: 'POST', body: hashes })).status, 403);
+    const treasurerApprove = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/approve`, { method: 'POST', body: hashes });
+    assert.deepEqual([treasurerApprove.status, treasurerApprove.body], [403, { error: 'forbidden' }]);
 
     // Członek zarządu, który zbudował listę, jest współautorem.
     await snapshot(t, campaign.id, t.board);
@@ -400,7 +402,7 @@ test('campaign PUT without a valid revision: 400 invalid_revision, nothing writt
     }
     const rep = await seedUserSession(t.db, { userId: 'u-rep215', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
     const denied = await t.call(rep, `/api/email/campaigns/${campaign.id}`, { method: 'PUT', body: content });
-    assert.equal(denied.status, 403);
+    assert.deepEqual([denied.status, denied.body], [403, { error: 'forbidden' }]);
     assert.equal(await t.count("SELECT count(*) AS n FROM email_campaigns WHERE id = $1 AND subject = 'Temat bez wersji'", [campaign.id]), 0);
     assert.equal(await t.count('SELECT revision_no AS n FROM email_campaigns WHERE id = $1', [campaign.id]), 1);
   } finally { await t.close(); }
@@ -573,7 +575,7 @@ test('live run sends each message separately; rerun and double queue never dupli
     assert.equal(second.sent, 0);
     assert.equal(transport.calls.length, 3);
     assert.equal(new Set(transport.calls.map((m) => m.to)).size, 3);
-    assert.ok(transport.calls.every((m) => typeof m.to === 'string'));
+    assertEvery(transport.calls, (m) => typeof m.to === 'string');
     assert.deepEqual(transport.calls.map((m) => m.idempotencyKey).sort(), ['h1', 'h2', 'h3'].map((h) => `campaign:${campaign.id}:household:${h}`));
     assert.match(transport.calls[0].text, /dobrowolnej składki na rok test y2026/);
     assert.equal(await t.count("SELECT count(*)::int AS n FROM email_outbox WHERE state = 'sent' AND provider_message_id IS NOT NULL"), 3);
@@ -586,7 +588,7 @@ test('live run sends each message separately; rerun and double queue never dupli
     // #214: liczba dokładna zamiast >= — brak zdarzenia dla jednej z trzech
     // rodzin (np. email.sent) nie zostałby wykryty przez próg minimalny.
     assert.equal(rows.length, 8);
-    assert.ok(rows.every((row) => !row.m.includes('@')));
+    assertEvery(rows, (row) => !row.m.includes('@'));
   } finally { await t.close(); }
 });
 
@@ -709,7 +711,7 @@ test('about 2000 recipients are spread over at least 7 days, each exactly once',
       perDay.push(sentToday);
     }
     assert.ok(perDay.length >= 7, `days: ${perDay.length}`);
-    assert.ok(perDay.every((n) => n <= 286 && n <= 300));
+    assertEvery(perDay, (n) => n <= 286 && n <= 300);
     assert.equal(perDay.reduce((a, b) => a + b, 0), 2000);
     assert.equal(transport.calls.length, 2000);
     assert.equal(new Set(transport.calls.map((m) => m.idempotencyKey)).size, 2000);
@@ -870,8 +872,7 @@ test('consent withdrawn during a batch: message suppressed, no switch to the sec
     assert.equal(run.sent, 2);
     assert.equal(run.suppressed, 1);
     assert.equal(transport.calls.length, 2);
-    assert.ok(transport.calls.every((m) => householdOf(m) !== target && m.to.endsWith('-g1@example.invalid')),
-      'no message to the withdrawn guardian and no switch to the second guardian');
+    assertEvery(transport.calls, (m) => householdOf(m) !== target && m.to.endsWith('-g1@example.invalid'), 'no message to the withdrawn guardian and no switch to the second guardian');
     assert.deepEqual((await outboxStates(t, campaign.id)).find((r) => r.household_id === target),
       { household_id: target, state: 'suppressed', last_error: 'consent_or_address_changed' });
     assert.deepEqual(await auditFor(t, ids[target]), [{ action: 'email.suppressed', reason: 'consent_or_address_changed' }]);
@@ -976,7 +977,7 @@ test('job retried while the first run is still sending (lease valid): nothing is
     assert.equal(runs.second.planned, 0);
     assert.equal(new Set(transport.calls.map((m) => m.idempotencyKey)).size, 3);
     assert.equal(transport.calls.length, 3);
-    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'sent'));
+    assertEvery((await outboxStates(t, campaign.id)), (r) => r.state === 'sent');
   } finally { await t.close(); }
 });
 
@@ -1016,7 +1017,7 @@ test('second run during the first (valid lease, injected clock): takes over noth
     assert.equal(transport.calls.length, 3);
     assert.equal(new Set(transport.calls.map((m) => m.idempotencyKey)).size, 3);
     assert.equal(new Set(transport.calls.map(householdOf)).size, 3);
-    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'sent' && r.last_error === null));
+    assertEvery(await outboxStates(t, campaign.id), (r) => r.state === 'sent' && r.last_error === null, 'wszystkie wiadomości wysłane bez błędu');
     assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.sent'"), 3);
     assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action IN ('email.delivery_unknown', 'email.sent_after_lease_lost', 'email.lease_expired_requeued')"), 0);
   } finally { await t.close(); }
@@ -1091,7 +1092,7 @@ test('webhook: missing or wrong secret is rejected; bounce suppresses the addres
 
     // Webhook to jedyna trasa bez Origin; pozostałe nadal wymagają zgodnego Origin.
     const foreign = await handlePgRequest(request(`/api/email/campaigns/${next.id}/cancel`, { method: 'POST', cookie: t.treasurer, origin: false }), t.env);
-    assert.equal(foreign.status, 403);
+    assert.deepEqual([foreign.status, await foreign.json()], [403, { error: 'invalid_origin' }]);
     assert.equal(networkGuardCalls(), 0);
   } finally { await t.close(); }
 });
@@ -1143,7 +1144,7 @@ test('recoverStale: audit failure leaves rows in sending; the next run marks del
     // Awaria przy trzecim zdarzeniu — dwa pierwsze też muszą zostać wycofane.
     const faulty = { ...t.env, db: auditFaultDb(t.db, failOnce('email.delivery_unknown', { skip: 2 })) };
     await assert.rejects(runEmailBatch(faulty, { transport, dryRun: false, now: later }), /simulated_connection_drop/);
-    assert.ok((await outboxStates(t, campaign.id)).every((row) => row.state === 'sending'));
+    assertEvery((await outboxStates(t, campaign.id)), (row) => row.state === 'sending');
     assert.equal(await auditCount(t, 'email.delivery_unknown'), 0);
     assert.equal(await auditCount(t, 'email.campaign.done'), 0);
 
@@ -1215,9 +1216,9 @@ test('approval_mismatch: content changed in the database after approval → no s
     for (let i = 0; i < 3; i += 1) {
       runs.push(await runEmailBatch(t.env, { transport, dryRun: i === 1 ? true : false, now: new Date(DAY1.getTime() + i * 60_000) }));
     }
-    assert.ok(runs.every((run) => run.stoppedReason === 'approval_mismatch' && run.planned === 0));
+    assertEvery(runs, (run) => run.stoppedReason === 'approval_mismatch' && run.planned === 0);
     assert.equal(transport.calls.length, 0);
-    assert.ok((await outboxStates(t, campaign.id)).every((row) => row.state === 'queued'));
+    assertEvery((await outboxStates(t, campaign.id)), (row) => row.state === 'queued');
     assert.equal(await auditCount(t, 'email.campaign.integrity_mismatch', campaign.id), 1);
     const { rows: [event] } = await t.db.query(
       "SELECT metadata_json AS m FROM audit_events WHERE action = 'email.campaign.integrity_mismatch'",
@@ -1302,7 +1303,7 @@ test('send accepted, first write of "sent" fails once: row ends sent with email.
     assert.equal(await auditCount(t, 'email.failed'), 0);
     assert.equal(await auditCount(t, 'email.sent'), 2);
     assert.equal(await ledgerCount(t), transport.calls.length);
-    assert.ok(Object.values(callsPerOutbox(transport)).every((n) => n === 1));
+    assertEvery(Object.values(callsPerOutbox(transport)), (n) => n === 1);
   } finally { await t.close(); }
 });
 
@@ -1321,7 +1322,7 @@ test('database down after the first send: rest of the batch stays unsent, at mos
     assert.ok(!JSON.stringify(error.run).includes('@'), 'no addresses in the run report');
     assert.equal(transport.calls.length, 1);
     assert.equal(await campaignStatus(t, campaign.id), 'sending');
-    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'sending'));
+    assertEvery((await outboxStates(t, campaign.id)), (r) => r.state === 'sending');
 
     // Baza wraca; kolejny przebieg po wygaśnięciu dzierżawy.
     db.state.down = false;
@@ -1331,7 +1332,7 @@ test('database down after the first send: rest of the batch stays unsent, at mos
     assert.equal(states.filter((r) => r.last_error === 'delivery_unknown').length, 1);
     assert.equal(states.filter((r) => r.state === 'sent').length, 2);
     assert.equal(states.filter((r) => r.last_error === 'transport_error').length, 0);
-    assert.ok(Object.values(callsPerOutbox(transport)).every((n) => n === 1));
+    assertEvery(Object.values(callsPerOutbox(transport)), (n) => n === 1);
     assert.equal(transport.calls.length, 3);
     assert.equal(await ledgerCount(t), transport.calls.length, 'ledger counts messages that may have left');
     // Niewysłane wiersze nie zużyły próby.
@@ -1489,7 +1490,7 @@ test('short database outage: result written after recovery in the same run, unse
     const next = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60_000) });
     assert.equal(next.sent, 2);
     assert.equal(await campaignStatus(t, campaign.id), 'done');
-    assert.ok(Object.values(callsPerOutbox(transport)).every((n) => n === 1));
+    assertEvery(Object.values(callsPerOutbox(transport)), (n) => n === 1);
     assert.equal(await ledgerCount(t), 3);
     assert.equal(await auditCount(t, 'email.failed'), 0);
   } finally { await t.close(); }
@@ -1520,7 +1521,7 @@ test('SIGTERM during the loop: current message finishes, rest is queued, run sto
     assert.equal(next.sent, 3);
     assert.equal(transport.calls.length, 4);
     assert.equal(new Set(transport.calls.map(householdOf)).size, 4);
-    assert.ok(Object.values(callsPerOutbox(transport)).every((n) => n === 1));
+    assertEvery(Object.values(callsPerOutbox(transport)), (n) => n === 1);
     assert.equal(await ledgerCount(t), 4);
   } finally { await t.close(); }
 });
@@ -1590,7 +1591,7 @@ test('Brevo rejects the account (401): one call per run, nothing failed, campaig
       assert.equal(run.requeued, 4);
       assert.equal(transport.requests.length, i + 1, 'one provider call per run');
     }
-    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'queued' && r.last_error !== null));
+    assertEvery((await outboxStates(t, campaign.id)), (r) => r.state === 'queued' && r.last_error !== null);
     assert.equal(await t.count("SELECT max(attempts)::int AS n FROM email_outbox"), 0);
     assert.equal(await campaignStatus(t, campaign.id), 'sending');
     assert.equal(await ledgerCount(t), 0);
@@ -1687,16 +1688,16 @@ test('Brevo keeps answering 429: one call per run, daily limit untouched, rows s
     const transport = brevoResponses(() => 429);
     const runs = [];
     for (let i = 0; i <= 12; i += 1) runs.push(await runEmailBatch(t.env, { transport, dryRun: false, now: minutes(i * 10) }));
-    assert.ok(runs.every((run) => run.remainingQuota === 10), JSON.stringify(runs.map((r) => r.remainingQuota)));
-    assert.ok(runs.every((run) => run.retried <= 1 && run.failed === 0));
+    assertEvery(runs, (run) => run.remainingQuota === 10, JSON.stringify(runs.map((r) => r.remainingQuota)));
+    assertEvery(runs, (run) => run.retried <= 1 && run.failed === 0);
     assert.equal(transport.requests.length, 13, 'one provider call per run');
     assert.equal(runs[0].stoppedReason, 'provider_rate_limited');
-    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'queued' && r.last_error !== 'delivery_unknown'));
+    assertEvery((await outboxStates(t, campaign.id)), (r) => r.state === 'queued' && r.last_error !== 'delivery_unknown');
     assert.equal(await t.count('SELECT max(attempts)::int AS n FROM email_outbox'), 0);
     assert.equal(await ledgerCount(t), 0);
     assert.equal(await campaignStatus(t, campaign.id), 'sending');
     const { rows } = await t.db.query("SELECT stopped_reason FROM email_worker_runs WHERE mode = 'live' ORDER BY started_at");
-    assert.ok(rows.every((row) => row.stopped_reason === 'provider_rate_limited'));
+    assertEvery(rows, (row) => row.stopped_reason === 'provider_rate_limited');
   } finally { await t.close(); }
 });
 
@@ -1768,8 +1769,8 @@ test('connection refused before the request: message back to queue, not delivery
     assert.equal(run.stoppedReason, 'provider_unreachable');
     assert.equal(transport.requests.length, 1);
     const states = await outboxStates(t, campaign.id);
-    assert.ok(states.every((r) => r.state === 'queued'));
-    assert.ok(states.every((r) => r.last_error === 'provider_unreachable'), 'current and released rows carry the reason');
+    assertEvery(states, (r) => r.state === 'queued');
+    assertEvery(states, (r) => r.last_error === 'provider_unreachable', 'current and released rows carry the reason');
     assert.equal(await auditCount(t, 'email.delivery_unknown'), 0);
     assert.equal(await ledgerCount(t), 0);
     down = false;
@@ -1839,7 +1840,8 @@ test('#139 report: only counts and codes, no addresses/names/household ids', asy
     assert.deepEqual(res.body.resolutions, {});
     for (const cookie of [null]) assert.equal((await t.call(cookie, `/api/email/campaigns/${campaign.id}/report`)).status, 401);
     const rep = await seedUserSession(t.db, { userId: 'u-rep139', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
-    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/report`)).status, 403);
+    const repReport = await t.call(rep, `/api/email/campaigns/${campaign.id}/report`);
+    assert.deepEqual([repReport.status, repReport.body], [403, { error: 'forbidden' }]);
   } finally { await t.close(); }
 });
 
@@ -1860,7 +1862,8 @@ test('#139 attention list: failed/delivery_unknown and ≥3 soft_bounce rows, ma
     assert.match(res.body.rows[0].email, /^h\*\*\*@example\.invalid$/);
     assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.attention_list.viewed' AND entity_id = $1`, [campaign.id]), 1);
     const rep = await seedUserSession(t.db, { userId: 'u-rep139b', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
-    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/attention`)).status, 403);
+    const repAttention = await t.call(rep, `/api/email/campaigns/${campaign.id}/attention`);
+    assert.deepEqual([repAttention.status, repAttention.body], [403, { error: 'forbidden' }]);
   } finally { await t.close(); }
 });
 
@@ -1939,7 +1942,8 @@ test('#130 pause/resume: role boundaries, invalid transitions, idempotent double
       assert.deepEqual([denied.status, denied.body], [403, { error: 'forbidden' }]);
     }
     // Trasy kampanii dotyczą całej szkoły — przydział klasowy ich nie otwiera.
-    assert.equal((await t.call(classTreasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' })).status, 403);
+    const classPause = await t.call(classTreasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' });
+    assert.deepEqual([classPause.status, classPause.body], [403, { error: 'forbidden' }]);
 
     const draft = await createDraft(t, { key: crypto.randomUUID() });
     assert.deepEqual((await t.call(t.treasurer, `/api/email/campaigns/${draft.id}/pause`, { method: 'POST' })).body, { error: 'campaign_locked' });
@@ -2174,7 +2178,8 @@ test('#130 preview shows planned start and estimated end in Brussels time; role 
     assert.equal(res.body.sends, false);
     assert.ok(!/@/.test(JSON.stringify(schedule)), 'harmonogram bez danych osobowych');
     const rep = await seedUserSession(t.db, { userId: 'u-rep130p', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
-    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/preview`)).status, 403);
+    const repPreview = await t.call(rep, `/api/email/campaigns/${campaign.id}/preview`);
+    assert.deepEqual([repPreview.status, repPreview.body], [403, { error: 'forbidden' }]);
   } finally { await t.close(); }
 });
 
