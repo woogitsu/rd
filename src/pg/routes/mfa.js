@@ -2,7 +2,7 @@
 // Metoda MFA (TOTP) jest proponowaną wartością domyślną do decyzji D-10.
 // Zgodność Origin sprawdza wcześniej handlePgRequest; sesję sprawdza każda trasa.
 
-import { clearSessionCookie } from '../../auth.js';
+import { clearSessionCookies } from '../../auth.js';
 import { listOwnSessions, loadSession, revokeOwnSession } from '../auth.js';
 import { attemptFactor, enrollFactor, MfaError, revokeAllOwnSessions } from '../mfa.js';
 
@@ -61,12 +61,12 @@ export async function handle(request, env, url, json) {
       if (!revoked) return json({ error: 'not_found' }, 404);
       // Cofnięcie BIEŻĄCEJ sesji od razu czyści cookie (jak /api/logout); inne
       // urządzenie zostaje wycofane w bazie, cookie tego żądania jest bez zmian.
-      const headers = revokeMatch[1] === session.sessionId ? { 'Set-Cookie': clearSessionCookie() } : {};
+      const headers = revokeMatch[1] === session.sessionId ? { 'Set-Cookie': clearSessionCookies() } : {};
       return json({ revoked: true }, 200, headers);
     }
     if (isRevokeAll) {
       const { revoked, scope } = await revokeAllOwnSessions(env, session);
-      return json({ revoked, scope }, 200, { 'Set-Cookie': clearSessionCookie() });
+      return json({ revoked, scope }, 200, { 'Set-Cookie': clearSessionCookies() });
     }
     if (isEnroll) {
       return json(await enrollFactor(env, session), 201);

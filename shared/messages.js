@@ -360,6 +360,7 @@ export const MESSAGES = Object.freeze({
   event_task_not_found: "Nie znaleziono zadania albo nie masz do niego dostępu.",
   event_task_already_cancelled: "To zadanie zostało już odwołane.",
   event_task_signup_not_found: "Nie znaleziono zapisu.",
+  guardian_shared_outside_scope: "Ten opiekun ma też dziecko poza Twoją klasą. Zmianę kontaktu wykonuje zarząd bez ograniczenia do klasy.",
   guardian_outside_class: "Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku.",
   invalid_signup_target: "Wskaż dokładnie jedną osobę: opiekuna albo konto.",
 

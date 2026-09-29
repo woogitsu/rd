@@ -171,12 +171,12 @@ export function createRequestMetrics() {
 
 // Co intervalMs zapisuje zdarzenie `http_metrics` i zeruje liczniki; pomija
 // okresy bez ruchu. Timer nie blokuje zamknięcia procesu (unref).
-export function startMetricsReporter({ metrics, logger = log, intervalMs = 5 * 60 * 1000 } = {}) {
+export function startMetricsReporter({ metrics, logger = log, intervalMs = 5 * 60 * 1000, extraFields = null } = {}) {
   const timer = setInterval(() => {
     const counters = metrics.reset();
     if (!counters.requests) return;
     const { duration_ms_total: total, ...rest } = counters;
-    logger.info('http_metrics', { ...rest, duration_ms_avg: Math.round(total / counters.requests), interval_s: Math.round(intervalMs / 1000) });
+    logger.info('http_metrics', { ...rest, duration_ms_avg: Math.round(total / counters.requests), ...(extraFields ? extraFields() : {}), interval_s: Math.round(intervalMs / 1000) });
   }, intervalMs);
   timer.unref?.();
   return () => clearInterval(timer);

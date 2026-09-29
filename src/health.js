@@ -89,13 +89,20 @@ async function performReadinessCheck(db, {
 } = {}) {
   try {
     const expected = await migrationsProvider();
-    const result = await withTimeout((async () => {
-      await db.query('SELECT 1');
-      const table = await db.query("SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present");
+    const runChecks = async (q) => {
+      await q.query('SELECT 1');
+      const table = await q.query("SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present");
       if (!table.rows?.[0]?.present) return { applied: null };
-      const { rows } = await db.query('SELECT name, checksum FROM schema_migrations');
+      const { rows } = await q.query('SELECT name, checksum FROM schema_migrations');
       return { applied: new Map(rows.map((row) => [row.name, row.checksum])) };
-    })(), timeoutMs);
+    };
+    // Prawdziwa pula (src/db.js) udostępnia `probe`: zapytania mają budżet
+    // czasu po stronie serwera (SET LOCAL statement_timeout), więc po
+    // przekroczeniu 2 s PostgreSQL je anuluje, a połączenie wraca do puli (#244).
+    // Atrapy i PGlite nie mają `probe` — wtedy sam wyścig z czasem.
+    const result = typeof db.probe === 'function'
+      ? await db.probe(runChecks, { timeoutMs })
+      : await withTimeout(runChecks(db), timeoutMs);
     const missing = result.applied ? expected.filter((item) => !result.applied.has(item.name)).map((item) => item.name) : expected.map((item) => item.name);
     // Suma kontrolna nałożonego pliku ≠ suma w repozytorium (#79): plik scalonej
     // migracji został potem zmieniony. Odpowiedź nie zawiera treści SQL ani sum.
@@ -120,6 +127,6 @@ async function performReadinessCheck(db, {
   } catch (error) {
     const detail = describeError(error);
     logger.error('readiness_database_error', detail);
-    return { ready: false, body: { status: 'not_ready', checks: { database: detail.code === 'timeout' ? 'timeout' : 'error' } } };
+    return { ready: false, body: { status: 'not_ready', checks: { database: ['timeout', 'probe_busy', '57014', '55P03'].includes(detail.code) ? 'timeout' : 'error' } } };
   }
 }
