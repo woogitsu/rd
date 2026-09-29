@@ -39,7 +39,7 @@
           <form id="filters-form">
             <label>
               Rok szkolny
-              <input id="school-year-id" name="schoolYearId" list="school-years" autocomplete="off" required placeholder="np. 2026-2027" />
+              <select id="school-year-id" name="schoolYearId" required></select>
             </label>
             <label>
               Status
@@ -54,8 +54,6 @@
             </label>
             <button type="submit">Pokaż</button>
           </form>
-          <datalist id="school-years"></datalist>
-          <datalist id="class-ids"></datalist>
         </section>
 
         <section class="block" aria-labelledby="list-title">
@@ -130,11 +128,11 @@
 
         <div class="field-row" id="scope-fields">
           <div class="field"><label>Rok szkolny
-            <input name="schoolYearId" list="school-years" autocomplete="off" required aria-describedby="err-schoolYearId" />
+            <select name="schoolYearId" required aria-describedby="err-schoolYearId"></select>
           </label>
             <span class="field-error" id="err-schoolYearId"></span></div>
           <div class="field"><label>Klasa (opcjonalnie)
-            <input name="classId" list="class-ids" autocomplete="off" aria-describedby="hint-classId err-classId" />
+            <select name="classId" aria-describedby="hint-classId err-classId"></select>
           </label>
             <span class="hint" id="hint-classId">Puste pole oznacza wydarzenie ogólnoszkolne.</span>
             <span class="field-error" id="err-classId"></span></div>
