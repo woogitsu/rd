@@ -31,7 +31,7 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
-import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
+import { panelYearState, yearOptionsHtml } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
@@ -317,13 +317,13 @@ filtersForm.addEventListener("submit", (event) => {
 (async function initFilters() {
   const restored = filtersFromQuery(window.location.search, FILTER_KEYS);
   let years = [];
+  let year = "";
   try {
     const access = await api("/api/access");
-    years = yearsFromGrants(access && access.grants);
+    ({ years, year } = panelYearState(access && access.grants, restored.schoolYearId));
   } catch {
     years = [];
   }
-  const year = defaultYear(years, restored.schoolYearId);
   yearInput.innerHTML = yearOptionsHtml(years, year);
   if (restored.direction && [...directionInput.options].some((o) => o.value === restored.direction)) {
     directionInput.value = restored.direction;
