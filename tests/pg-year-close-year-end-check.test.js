@@ -18,7 +18,7 @@ async function setup({ lateEntries = [] } = {}) {
   await seedClass(db, { id: 'c-ye-1a', schoolYearId: OLD, name: '1A' });
   const cookies = {
     boardA: await seedUserSession(db, { userId: 'u-ye-board-a', roles: [{ role: 'board', schoolYearId: OLD }], mfa: true }),
-    boardB: await seedUserSession(db, { userId: 'u-ye-board-b', roles: [{ role: 'board', schoolYearId: OLD }], mfa: true }),
+    boardB: await seedUserSession(db, { userId: 'u-ye-board-b', roles: [{ role: 'board' }], mfa: true }),
     treasurer: await seedUserSession(db, { userId: 'u-ye-treasurer', roles: [{ role: 'treasurer', schoolYearId: OLD }], mfa: true }),
     rep: await seedUserSession(db, { userId: 'u-ye-rep', roles: [{ role: 'representative', schoolYearId: OLD, classId: 'c-ye-1a' }], mfa: true }),
   };
