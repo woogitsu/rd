@@ -66,6 +66,7 @@ logach, zgłoszeniach ani buildzie frontendu.
 | `DATABASE_URL` | aplikacja | referencja do prywatnego adresu PostgreSQL (`*.railway.internal`), nie publiczny TCP proxy |
 | `BUCKET`, `ENDPOINT`, `REGION`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` | aplikacja | referencje do zmiennych Storage Bucket (#39) |
 | `BREVO_API_KEY` | aplikacja / worker | dopiero w #40; na stagingu klucz bez możliwości wysyłki do rodziców |
+| `APP_WRITE_MODE` | aplikacja i worker e-mail | `normal` (domyślnie, także gdy brak) albo `read_only` (#143); inna wartość to błąd konfiguracji — serwer nie startuje, worker kończy z błędem. Procedura: sekcja „Tryb tylko do odczytu” |
 
 Sesje i MFA mogą wymagać dodatkowych sekretów — ich nazwy dopisuje PR #35.
 
@@ -484,6 +485,69 @@ w bucketach. Dlatego:
 |---|---|---|---|---|
 | do wykonania | | | | |
 
+## Tryb tylko do odczytu (#143)
+
+Wstrzymanie zapisów bez wyłączania panelu: okno serwisowe, cutover, incydent.
+Sterowanie wyłącznie zmienną `APP_WRITE_MODE` (`normal` domyślnie, `read_only`).
+To opis procedury do wykonania po decyzji zarządu — repozytorium nie zmienia
+zmiennych ani nie wykonuje redeployu Railway.
+
+**Zachowanie w `read_only`** (kod: `src/write-mode.js`, `src/pg/app.js`):
+
+- Każde żądanie `/api/*` metodą zmieniającą stan (`POST`, `PUT`, `PATCH`, `DELETE`)
+  dostaje `503` z `{ "error": "read_only" }` i nagłówkiem `Retry-After`
+  (300 s), **przed** routingiem modułów i przed jakimkolwiek zapisem — także dla
+  webhooka Brevo (dostawca ponowi zdarzenie). Kod `read_only` jest inny niż
+  `service_unavailable`; komunikat w `shared/messages.js`, opis w
+  [API_ERRORS.md](API_ERRORS.md). Odrzucenie jest logowane jako
+  `write_mode_rejected` (metoda i ścieżka, bez danych osobowych).
+- `GET` i `/health` działają bez zmian, z zachowaniem granic ról; przedstawiciel
+  klasy nadal widzi wyłącznie przypisane klasy. `/health/ready` dodaje
+  `write_mode`, ale pozostaje `200`, gdy proces i baza są zdrowe.
+- Odchylenie od pierwotnej propozycji: poza `/api/logout` zwolnione jest też
+  `/api/login` (logowanie hasłem), by w oknie serwisowym dało się sprawdzić
+  dostęp. Logowanie zapisuje sesję, więc to świadomy wyjątek; inne trasy konta
+  (zaproszenia, zmiana i reset hasła, MFA) są blokowane.
+- Worker e-mail (`scripts/email-worker.js`) kończy przebieg z
+  `stoppedReason: 'read_only'`, bez połączenia z bazą i bez zmian w
+  `email_outbox`. **Worker jest osobnym procesem** — zmienna musi być ustawiona
+  także w jego usłudze (lub jako zmienna współdzielona), inaczej kolejka będzie
+  dalej wysyłana.
+- `GET /api/session` zwraca `writeMode`; wspólna powłoka paneli
+  (`shared/shell.js`) pokazuje wtedy baner „Trwają prace serwisowe — zapisy
+  wstrzymane”. Baner to tylko informacja; kontrolę wykonuje serwer. Przyciski
+  zapisu nie są osobno wyłączane — użytkownik po próbie zapisu widzi komunikat
+  `read_only`.
+- Nieznana wartość zmiennej: serwer nie startuje (log błędu konfiguracji), nie
+  przyjmuje po cichu `normal`. Przy starcie tryb `read_only` jest logowany
+  (`write_mode_active`). Administrator widzi tryb w `GET /api/admin/ops-status`.
+- Brak licznika odrzuconych zapisów w `http_metrics` — jest tylko log
+  `write_mode_rejected`. Czy licznik jest wymagany, to decyzja do podjęcia
+  (nie ma dla niej wpisu w [DECISIONS.md](DECISIONS.md)).
+
+**Włączenie (po decyzji, wykonuje administrator techniczny):**
+
+1. Uzgodnić z zarządem okno i osobę ogłaszającą je użytkownikom panelu (nie
+   rodzicom). Wpis w protokole otwierany przed zmianą: kto, kiedy, powód,
+   przewidywany czas.
+2. W Railway ustawić `APP_WRITE_MODE=read_only` w usłudze aplikacji **i** workera
+   e-mail. Zmiana zmiennej powoduje redeploy (kilka minut) — założenie:
+   akceptowalne dla okna serwisowego; w incydencie przełącznik w bazie z
+   wpisem do `audit_events` byłby szybszy, ale to osobny krok, nieobjęty tym PR.
+3. Sprawdzić: `/health/ready` zwraca `write_mode: "read_only"`, panel pokazuje
+   baner, próba zapisu na koncie testowym daje `503 read_only`, log zawiera
+   `write_mode_active`.
+4. Zapisy przyjęte przed redeployem są w bazie; żądania w trakcie redeployu
+   mogły zostać przerwane — po powrocie sprawdzić ostatnie wpłaty w panelu
+   (ponowienie z tym samym `Idempotency-Key` nie tworzy duplikatu).
+
+**Wyłączenie:** ustawić `APP_WRITE_MODE=normal` (lub usunąć zmienną) w obu
+usługach, poczekać na redeploy, sprawdzić `/health/ready` (`write_mode:
+"normal"`), zniknięcie banera i jeden zapis testowy na koncie testowym.
+Dopisać do protokołu: kto, kiedy, wynik. Po wyłączeniu worker wznawia wysyłkę
+z kolejki — przejrzeć ją, jeśli okno trwało długo (nie wysyłać przypomnień bez
+zatwierdzenia, AGENTS.md).
+
 ## Plan cutover (do wykonania po D-20)
 
 Warunki wstępne: wszystkie punkty listy odbioru poniżej zielone, decyzja
@@ -493,7 +557,12 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
 2. Wykonać backup D1 i PostgreSQL produkcji (pusta baza po migracjach);
    zapisać identyfikatory.
 3. Zatrzymać zapisy w starym Workerze (tryb tylko do odczytu lub wyłączenie
-   tras zapisu).
+   tras zapisu). Nowe API na Railway w trakcie importu i porównania raportu
+   trzymać w `APP_WRITE_MODE=read_only` (sekcja „Tryb tylko do odczytu”);
+   powrót do `normal` dopiero po podpisanym raporcie zgodności (pkt 5) i
+   udanym pierwszym logowaniu administratora (pkt 6–7). Pierwszy administrator
+   powstaje skryptem (`auth:bootstrap-admin`), nie trasą API, więc tryb go nie
+   blokuje.
 4. Eksport D1, snapshot i transakcyjny import do pustej bazy wg
    [D1_POSTGRES_MIGRATION.md](D1_POSTGRES_MIGRATION.md).
 5. Porównać raport zgodności (liczności, sumy wpłat, przychody/wydatki);
@@ -514,7 +583,8 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
   niezmienionym D1. Nie scalać baz.
 - **Po przełączeniu, błąd aplikacji bez utraty danych**: rollback do
   poprzedniego deploymentu w Railway (Deployments → Redeploy/Rollback).
-- **Po przełączeniu, uszkodzenie danych**: wstrzymać zapisy, przywrócić
+- **Po przełączeniu, uszkodzenie danych**: wstrzymać zapisy (`APP_WRITE_MODE=read_only`,
+  sekcja „Tryb tylko do odczytu”; odczyt dla skarbnika pozostaje), przywrócić
   PostgreSQL z backupu sprzed operacji (wolumen lub PITR do nowej usługi),
   porównać raport, dopiero potem wznowić. Zapisy wykonane po backupie
   odtworzyć ręcznie z dziennika zdarzeń jako nowe wpisy/korekty.
