@@ -19,7 +19,7 @@ import { createMeeting, createResolution, determineQuorum, recordAttendance } fr
 import { runEmailBatch } from '../src/email/worker.js';
 import { hashPassword } from '../src/pg/password.js';
 import { LOGIN_POLICY } from '../src/pg/login.js';
-import { createRealTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createRealTestDb, request, seedClass, seedEnrolledHousehold, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import { updateMeeting } from './helpers/with-revision.js';
 
 const skip = process.env.RD_TEST_PG_URL ? false : 'brak RD_TEST_PG_URL (wymaga prawdziwego PostgreSQL)';
@@ -107,7 +107,8 @@ async function withReal(fn) {
 
 async function paymentsSetup(db) {
   await seedSchoolYear(db, YEAR);
-  await db.query("INSERT INTO households (id) VALUES ('h1'), ('h2')");
+  // #205: wpłata wymaga gospodarstwa z uczniem zapisanym w roku wpłaty.
+  for (const household of ['h1', 'h2']) await seedEnrolledHousehold(db, household, [YEAR]);
   const cookie = await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   return cookie;
 }
@@ -192,7 +193,8 @@ const admin = { userId: 'u-meet-admin', grants: [{ role: 'admin', classId: null,
 async function ledgerSetup(db) {
   await seedSchoolYear(db, YEAR, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedClass(db, { id: 'c-1a', schoolYearId: YEAR });
-  await seedUser(db, { userId: admin.userId });
+  // #205: osoba na liście obecności musi mieć aktywny przydział roli (trigger 0150).
+  await seedRoleGrant(db, { userId: admin.userId, role: 'board', schoolYearId: YEAR });
   const cookies = {
     treasurer: await seedUserSession(db, { userId: 'u-treasurer', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] }),
     board: await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] }),
