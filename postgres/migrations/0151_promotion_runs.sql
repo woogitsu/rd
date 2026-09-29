@@ -33,3 +33,13 @@ CREATE INDEX promotion_runs_years_idx ON promotion_runs(to_school_year_id, from_
 
 CREATE TRIGGER promotion_runs_no_change BEFORE UPDATE OR DELETE ON promotion_runs
   FOR EACH ROW EXECUTE FUNCTION family_history_immutable();
+
+-- Niezmienność zgodna z lintem z 0144 (#204 pkt 6, #457): blokada TRUNCATE
+-- (deny_truncate() z 0095) i stempel czasu zapisu z zegara bazy
+-- (stamp_created_now() z 0144, poza trybem odtworzenia rd.restore = 'on').
+-- Skutek dla danych: żaden wiersz nie jest zmieniany; przyszły INSERT dostaje
+-- created_at = now(), a TRUNCATE promotion_runs jest odrzucany.
+CREATE TRIGGER promotion_runs_no_truncate BEFORE TRUNCATE ON promotion_runs
+  FOR EACH STATEMENT EXECUTE FUNCTION deny_truncate();
+CREATE TRIGGER a0_stamp_created_now BEFORE INSERT ON promotion_runs
+  FOR EACH ROW EXECUTE FUNCTION stamp_created_now('created_at');

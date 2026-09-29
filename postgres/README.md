@@ -1111,7 +1111,10 @@ docelowy, `idempotency_key` UNIQUE, skrót planu, liczby przeniesionych,
 kończących, pominiętych, wykluczonych, konfliktów i odchodzących). Służy
 idempotencji `POST /api/admin/promotions/apply` (ponowienie z tym samym kluczem
 zwraca zapisany wynik bez nowych wierszy); wiersze są tylko do dopisywania
-(trigger `family_history_immutable`). Bez imion, nazwisk i list uczniów.
+(trigger `family_history_immutable`), z blokadą TRUNCATE (`promotion_runs_no_truncate`,
+`deny_truncate()` z 0095) i stemplem `created_at` z zegara bazy
+(`a0_stamp_created_now`, `stamp_created_now()` z 0144) — wymóg lintu niezmienności
+#204 pkt 6. Bez imion, nazwisk i list uczniów.
 Skutki dla danych: wyłącznie nowa tabela — istniejące `enrollments`,
 `enrollment_history`, klasy i przydziały nie są zmieniane; zamrożenie zamkniętego
 roku dla `enrollments` działa od 0054. Wycofanie na pustej bazie: usunięcie
