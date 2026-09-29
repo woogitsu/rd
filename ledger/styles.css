@@ -5,3 +5,4 @@
 @media(max-width:480px){.summary-grid{grid-template-columns:1fr}.site-header{display:block}.site-header nav{display:flex;overflow:auto;margin-top:13px}.site-header nav a{white-space:nowrap}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 .over-budget{color:#9b1a23;font-weight:700}
+.hint{margin:0;font-size:.83rem;color:var(--muted)}.hint.warning{color:#9b1a23;font-weight:700}

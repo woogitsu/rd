@@ -1007,7 +1007,7 @@ export async function handle(request, env, url, json) {
       return json(result, 200, { 'Cache-Control': 'public, max-age=60' });
     }
     if (isPublicIcs) {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
       if (isPublicIcsChannel) {
         const limitText = url.searchParams.get('limit');
         if (limitText !== null && !/^\d{1,3}$/.test(limitText)) throw new EventError('invalid_limit');

@@ -12,6 +12,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Tabela | Kolumna | Podmiot | Rodzaj | Kategoria | Cel | Retencja (kategoria) | Wolny tekst | Eksport roczny |
 |---|---|---|---|---|---|---|---|---|
+|`account_recovery_requests`|`decided_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`account_recovery_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`account_recovery_requests`|`target_user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`bank_reconciliation_group_match_revocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_group_match_revocations`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania zbiorczego|document_financial|tak|tak|
 |`bank_reconciliation_group_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -194,9 +197,24 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **181**, w tym wolnego tekstu: **51** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **184**, w tym wolnego tekstu: **51** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
+
+### `account_recovery_requests`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | nie |
+| `decided_at` | none | — | nie |
+| `decided_by` | pseudonymous | board_member | nie |
+| `expires_at` | none | — | nie |
+| `id` | none | — | nie |
+| `kind` | none | — | nie |
+| `requested_by` | pseudonymous | board_member | nie |
+| `status` | none | — | nie |
+| `target_user_id` | pseudonymous | board_member | nie |
+| `ttl_seconds` | none | — | nie |
 
 ### `audit_events`
 
@@ -1344,6 +1362,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `created_by` | pseudonymous | board_member | nie |
 | `expires_at` | none | — | nie |
 | `id` | none | — | nie |
+| `request_id` | none | — | nie |
 | `revoked_at` | none | — | nie |
 | `token_hash` | none | — | nie |
 | `used_at` | none | — | nie |

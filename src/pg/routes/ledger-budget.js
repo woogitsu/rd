@@ -39,7 +39,7 @@ import { isoTimestamp } from '../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
-import { csvCell, csvHeader } from '../csv.js';
+import { csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
 import { renderBudgetExecutionHtml } from '../budget-report.js';
 import { reportContentSecurityPolicy } from '../audit-report.js';
 import { toSafeInteger } from './payments.js';
@@ -547,22 +547,21 @@ export async function buildBudgetExecution(executor, schoolYearId, { asOf = null
 
 const DIRECTION_LABELS = { income: 'Przychód', expense: 'Wydatek' };
 export const BUDGET_CSV_COLUMNS = [
-  ['rodzaj', 'text'], ['kategoria', 'text'], ['aktywna', 'text'], ['plan_przyjety_eur', 'amount'],
-  ['plan_biezacy_eur', 'amount'], ['wykonanie_netto_eur', 'amount'], ['roznica_eur', 'amount'],
+  ['rodzaj', 'text'], ['kategoria', 'text'], ['aktywna', 'text'], ['plan_przyjety_eur', 'amount_or_blank'],
+  ['plan_biezacy_eur', 'amount_or_blank'], ['wykonanie_netto_eur', 'amount'], ['roznica_eur', 'amount_or_blank'],
   ['procent_wykonania', 'text'], ['poza_planem', 'text'], ['przekroczenie', 'text'], ['liczba_wpisow', 'text'],
 ].map(([header, type]) => ({ header, type }));
 
 // Pusta komórka (a nie „0,00”), gdy planu nie ma — brak planu to nie plan zerowy.
-export function budgetCsvLine(item) {
-  const values = [
+export function budgetCsvValues(item) {
+  return [
     DIRECTION_LABELS[item.direction], item.categoryName, item.active ? 'tak' : 'nie', item.adoptedPlanCents,
     item.currentPlanCents, item.executedNetCents, item.differenceCents,
     item.executionPercent === null ? '' : String(item.executionPercent).replace('.', ','),
     item.outsidePlan ? 'tak' : 'nie', item.overBudget ? 'tak' : 'nie', String(item.entryCount),
   ];
-  return BUDGET_CSV_COLUMNS.map((column, index) => (values[index] === null && column.type === 'amount'
-    ? '' : csvCell(values[index], column.type))).join(';');
 }
+export function budgetCsvLine(item) { return csvRow(BUDGET_CSV_COLUMNS, budgetCsvValues(item)); }
 
 async function execution(request, env, url, json) {
   const schoolYearId = readYear(url);
@@ -585,16 +584,8 @@ async function execution(request, env, url, json) {
   }
   if (format === 'json') return json({ execution: report });
   if (format === 'csv') {
-    const lines = [csvHeader(BUDGET_CSV_COLUMNS), ...report.items.map(budgetCsvLine)];
-    return new Response(`﻿${lines.join('\r\n')}\r\n`, {
-      status: 200,
-      headers: {
-        'Cache-Control': 'no-store',
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="preliminarz-${schoolYearId.replace(/[^A-Za-z0-9_-]/g, '_')}.csv"`,
-        'X-Content-Type-Options': 'nosniff',
-      },
-    });
+    return csvResponse(toCsv(BUDGET_CSV_COLUMNS, report.items.map(budgetCsvValues)),
+      `preliminarz-${safeFileSegment(schoolYearId)}.csv`);
   }
   const html = renderBudgetExecutionHtml({
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },

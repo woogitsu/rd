@@ -56,6 +56,7 @@ wpisów).
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
+| `campaign_test_send_required` | Najpierw wyślij wiadomość testową z bieżącą treścią kampanii. Po zmianie treści test trzeba powtórzyć. | Nie — popraw dane żądania. |
 | `cannot_disable_self` | Nie można wyłączyć własnego konta. | Zależy od kontekstu (patrz moduł trasy). |
 | `cannot_grant_self` | Nie można nadać roli własnemu kontu. Potrzeba drugiej osoby z dostępem do panelu. | Zależy od kontekstu (patrz moduł trasy). |
 | `cannot_reset_own_mfa` | Nie można zresetować weryfikacji dwuetapowej własnego konta. Poproś innego administratora. | Zależy od kontekstu (patrz moduł trasy). |
@@ -71,6 +72,7 @@ wpisów).
 | `class_scope_not_supported` | Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste. | Nie — popraw dane żądania. |
 | `class_year_mismatch` | Klasa należy do innego roku szkolnego. | Nie — popraw dane żądania. |
 | `closing_balance_out_of_range` | Saldo zamknięcia jest poza dozwolonym zakresem. | Zależy od kontekstu (patrz moduł trasy). |
+| `commit_outcome_unknown` | Nie wiadomo, czy zapis został utrwalony (połączenie z bazą zerwało się przy zatwierdzaniu). Sprawdź aktualny stan i dopiero wtedy ponów operację. | Nie automatycznie — najpierw sprawdź stan (odśwież widok); ponowienie z tym samym `Idempotency-Key` jest bezpieczne tam, gdzie trasa go obsługuje. |
 | `concurrent_version` | Ktoś inny zapisał zmianę w tym samym czasie. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
 | `confirmation_required` | Potwierdź operację, wpisując wymagany identyfikator. | Nie — popraw dane żądania. |
 | `conflict` | Dane zmieniły się w międzyczasie. Odśwież widok i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -328,6 +330,10 @@ wpisów).
 | `reconciliation_confirmed` | Uzgodnienie jest już potwierdzone i nie można go zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `reconciliation_has_active_matches` | Szkic ma aktywne dopasowania — cofnij je, zanim porzucisz szkic. | Tak — po cofnięciu dopasowań. |
 | `reconciliation_not_found` | Nie znaleziono uzgodnienia. | Nie — popraw dane żądania. |
+| `recovery_four_eyes_required` | Reset hasła lub MFA konta z rolą zarządu, skarbnika albo administratora zatwierdza inna osoba niż wnioskodawca i właściciel konta. | Nie — zatwierdza inny administrator. |
+| `recovery_request_closed` | Ten wniosek został już zatwierdzony, odrzucony lub wygasł. | Nie — odśwież listę wniosków. |
+| `recovery_request_expired` | Wniosek wygasł. Złóż nowy wniosek o reset konta. | Nie — złóż nowy wniosek. |
+| `recovery_request_not_found` | Nie znaleziono wniosku o reset konta. | Nie — popraw dane żądania. |
 | `refund_exceeds_remaining_amount` | Zwrot przekracza kwotę pozostałą po wcześniejszych korektach i zwrotach. | Zależy od kontekstu (patrz moduł trasy). |
 | `relation_ended` | Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa. | Zależy od kontekstu (patrz moduł trasy). |
 | `release_reason_not_allowed` | Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”. | Zależy od kontekstu (patrz moduł trasy). |
@@ -393,6 +399,41 @@ wpisów).
 | `webhook_not_configured` | Powiadomienia zwrotne nie są skonfigurowane na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_already_started` | Zamknięcie roku zostało już rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_not_started` | Zamknięcie roku nie zostało rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
+
+## Błędy bazy w routerze: klasy, ponowienia, limity (#156)
+
+Sieć bezpieczeństwa w `src/pg/app.js` (`classifyDbError`, `src/pg/db-errors.js`)
+i transakcje z `src/db.js`:
+
+| Zdarzenie | Odpowiedź | Klasa w logu | Zachowanie serwera |
+|---|---|---|---|
+| `school_year_closed`, `school_year_closure_is_final` (trigger) | `409 school_year_closed` | `business` | bez ponowienia |
+| `40001`, `40P01` | wewnątrz transakcji ponawiane do 3 prób łącznie (losowy odstęp ok. 10-30 ms, potem 20-60 ms); po wyczerpaniu `503 retry_later` + `Retry-After: 1` | `transient` | ponawiana jest cała funkcja transakcji, więc nie ma podwójnego zapisu ani zdarzenia audytu |
+| `55P03` (przekroczony `lock_timeout`) | `503 retry_later` + `Retry-After: 1` | `transient` | bez ponowienia w transakcji |
+| `57014` (`statement_timeout`) | `503 timeout` + `Retry-After: 5` | `transient` | bez ponowienia |
+| błąd w trakcie `COMMIT` z nieznanym wynikiem (zerwane połączenie, klasa `08`, `57P0x`, timeout) | `503 commit_outcome_unknown`, bez `Retry-After` | `outcome_unknown` | bez ponowienia; połączenie wyrzucane z puli |
+| pozostałe | `503 service_unavailable` | `bug` | bez ponowienia |
+
+- **Ponowienie tylko dla transakcji bez efektów zewnętrznych.** Funkcja
+  przekazana do `db.transaction(fn, { retries })` jest uruchamiana ponownie,
+  więc musi być czysto bazodanowa (bez Brevo, Storage, sieci). Transakcja
+  z takim efektem przekazuje `{ retries: 0 }`. Dziś żadna transakcja w
+  `src/**` nie woła transportu ani Storage wewnątrz funkcji (wysyłka i
+  `putObject` są PRZED albo PO transakcji; test
+  `tests/pg-tx-retry.test.js` pilnuje tego statycznie); jawnie wyłączone jest
+  ponowienie tylko przy odtworzeniu kopii (`restoreBundle`).
+- **`lock_timeout`.** Każda transakcja zaczyna od `SET LOCAL lock_timeout`
+  (`PG_LOCK_TIMEOUT_MS`, domyślnie 3000 ms, najwyżej 60000 — wartość do
+  zmierzenia na stagingu, #41). Czekanie na `FOR UPDATE` albo blokadę doradczą
+  kończy się więc po ok. 3 s kodem `55P03`, a nie dopiero po `statement_timeout`
+  (10 s).
+- **`commit_outcome_unknown`: sprawdź stan przed ponowieniem.** Serwer nie wie,
+  czy transakcja została zatwierdzona. Klient nie powtarza operacji na ślepo:
+  odświeża widok albo, przy trasie z `Idempotency-Key`, powtarza żądanie z tym
+  samym kluczem (odtworzy zapis albo wykona go raz). Operacje bez klucza
+  (np. wysyłka) wymagają sprawdzenia stanu przez osobę.
+- **`405` zawsze z `Allow`.** `tests/pg-tx-retry.test.js` skanuje `src/pg/**`
+  i sprawdza odpowiedzi na nieobsługiwane metody.
 
 ## Czego nie obejmuje ten dokument
 

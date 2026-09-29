@@ -3,7 +3,12 @@
 // - 403 mfa_required / mfa_enrollment_required → /login/ (ekran logowania sam wybiera
 //   krok kodu albo konfiguracji na podstawie GET /api/auth/state) z tym samym `next`;
 // - błąd jako { error: "<kod>" } (napis) → ApiError z polskim komunikatem;
-// - brak połączenia → ApiError { network: true, status: 0 }.
+// - brak połączenia → ApiError { network: true, status: 0 };
+// - 429/503 z nagłówkiem Retry-After → ApiError.retryAfter (sekundy) i czytelny komunikat;
+// - 401 przy niezapisanym formularzu: bez przekierowania (dane zostają na stronie), jedno
+//   ostrzeżenie role="alert" z linkiem „zaloguj się w nowej karcie”;
+// - 403 mfa_stale (krok w górę) NIE przekierowuje: kod trafia do panelu (ApiError.code),
+//   który sam pokaże okno z kodem — panel admin może później przejść na ten moduł.
 // Nic nie jest zapisywane w localStorage ani sessionStorage. Kontrola dostępu jest
 // wyłącznie po stronie serwera — klient tylko prowadzi użytkownika do logowania.
 
@@ -16,9 +21,35 @@ export const LOGIN_PATH = "/login/";
 const CHECK_ORIGIN = "https://rd.invalid";
 const MAX_NEXT_LENGTH = 512;
 
+const MAX_RETRY_AFTER_SECONDS = 3600;
+
+// Retry-After: liczba sekund albo data HTTP. Zwraca całkowite sekundy 1…3600 albo null.
+export function parseRetryAfter(value, now = Date.now()) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const text = value.trim();
+  let seconds;
+  if (/^\d{1,7}$/.test(text)) seconds = Number(text);
+  else {
+    const at = Date.parse(text);
+    if (!Number.isFinite(at)) return null;
+    seconds = Math.ceil((at - now) / 1000);
+  }
+  if (!Number.isFinite(seconds) || seconds < 1) return null;
+  return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
+}
+
+function waitText(seconds) {
+  if (seconds < 60) return `${seconds} s`;
+  return `${Math.ceil(seconds / 60)} min`;
+}
+
 export class ApiError extends Error {
-  constructor({ status = 0, code = "", network = false, data = null, messages = null } = {}) {
-    super(errorMessage(network ? "" : code, network ? 0 : status, messages));
+  constructor({ status = 0, code = "", network = false, data = null, messages = null, retryAfter = null } = {}) {
+    let text = errorMessage(network ? "" : code, network ? 0 : status, messages);
+    const wait = !network && (status === 429 || status === 503) ? retryAfter : null;
+    if (wait) text += ` Spróbuj ponownie za ok. ${waitText(wait)}.`;
+    super(text);
+    this.retryAfter = wait || null;
     this.name = "ApiError";
     this.status = network ? 0 : status;
     this.code = network ? "network" : code;
@@ -30,7 +61,7 @@ export class ApiError extends Error {
 
 // Czy to samo żądanie warto ponowić z tym samym kluczem idempotencji.
 export function isRetryable(error) {
-  return Boolean(error?.network || error?.status >= 500);
+  return Boolean(error?.network || error?.status === 429 || error?.status >= 500);
 }
 
 // Co zrobić z odpowiedzią: "login" (401), "mfa" / "enroll" (403 z bramki MFA) albo null.
@@ -72,6 +103,48 @@ function isPlainBody(body) {
     && !(body instanceof ArrayBuffer) && !ArrayBuffer.isView(body);
 }
 
+// Śledzenie niezapisanych formularzy (WCAG 3.3.7): pole zmienione przez użytkownika
+// oznacza formularz jako „brudny”; `reset` albo usunięcie formularza ze strony to czyści.
+// Ostrożnie: fałszywy alarm daje tylko ostrzeżenie zamiast automatycznego przekierowania.
+function domUnsavedTracker(doc) {
+  const dirty = new Set();
+  if (doc?.addEventListener) {
+    const mark = (event) => {
+      const form = event?.target?.closest?.("form");
+      if (form) dirty.add(form);
+    };
+    doc.addEventListener("input", mark, true);
+    doc.addEventListener("change", mark, true);
+    doc.addEventListener("reset", (event) => dirty.delete(event?.target), true);
+  }
+  return () => {
+    for (const form of [...dirty]) if (form.isConnected === false) dirty.delete(form);
+    return dirty.size > 0;
+  };
+}
+
+export const SESSION_EXPIRED_WARNING = "Sesja wygasła, a formularz ma niezapisane zmiany. Nie odświeżaj strony: zaloguj się w nowej karcie, wróć tu i zapisz ponownie.";
+
+// Jedno ostrzeżenie na stronie (role="alert") z linkiem do logowania w nowej karcie.
+function domSessionWarning(doc) {
+  return (url, message) => {
+    if (!doc?.createElement || !doc.body) return;
+    const box = doc.createElement("div");
+    box.setAttribute("role", "alert");
+    box.dataset.apiSessionWarning = "true";
+    box.style.cssText = "position:sticky;top:0;z-index:1000;padding:12px 16px;background:#fff;border-bottom:2px solid #b3001b;color:#111";
+    const text = doc.createElement("span");
+    text.textContent = `${message} `;
+    const link = doc.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "Zaloguj się w nowej karcie";
+    box.append(text, link);
+    doc.body.prepend(box);
+  };
+}
+
 // Klient z wstrzykiwanymi zależnościami (testy). W przeglądarce używaj `api`.
 export function createApiClient({
   fetchImpl = (...args) => globalThis.fetch(...args),
@@ -79,6 +152,8 @@ export function createApiClient({
   navigate = (url) => globalThis.location.assign(url),
   // #152: pytanie o potwierdzenie przy 422 possible_personal_data; bez funkcji — brak ponowienia.
   confirmPersonalData = null,
+  hasUnsavedChanges = domUnsavedTracker(globalThis.document),
+  warnUnsaved = domSessionWarning(globalThis.document),
 } = {}) {
   let redirecting = false;
 
@@ -91,7 +166,9 @@ export function createApiClient({
     const path = location?.pathname ?? "";
     if (!redirecting && !(path === "/login" || path.startsWith("/login/"))) {
       redirecting = true;
-      navigate(loginUrl(currentPath(location)));
+      const url = loginUrl(currentPath(location));
+      if (hasUnsavedChanges()) warnUnsaved(url, SESSION_EXPIRED_WARNING);
+      else navigate(url);
     }
     return action;
   }
@@ -153,7 +230,8 @@ export function createApiClient({
           return execute(url, { method, body: retryBody, headers, idempotencyKey, messages, redirect, ...init }, true);
         }
       }
-      throw new ApiError({ status: response.status, code, data, messages });
+      const retryAfter = parseRetryAfter(response.headers?.get?.("Retry-After") ?? null);
+      throw new ApiError({ status: response.status, code, data, messages, retryAfter });
     }
     return data ?? {};
   }

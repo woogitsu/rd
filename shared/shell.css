@@ -10,7 +10,8 @@
   font-size: .9rem;
 }
 #shell-account .shell-account-name { font-weight: 600; }
-#shell-account .shell-account-scope { color: #5a5f63; }
+#shell-account .shell-account-scope,
+#shell-account .shell-account-year { color: #5a5f63; }
 #shell-account a,
 #shell-account button {
   background: none;

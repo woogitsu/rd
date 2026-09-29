@@ -30,6 +30,7 @@ import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { buildBudgetExecution } from './ledger-budget.js';
+import { costCenterReport } from './ledger-cost-centers.js';
 import { readSnapshot } from '../db-snapshot.js';
 import { StatementFileError, normalizeIban } from '../bank/common.js';
 import { parseCoda } from '../bank/coda.js';
@@ -857,12 +858,25 @@ async function importLines(request, env, id, json) {
       // ale jedna podróż do bazy zamiast MAX_LINES. Kolejność z tablic JS
       // (tożsama z kolejnością w pliku, `index + 1`) jest zachowana przez
       // unnest na równoległych tablicach — bez polegania na WITH ORDINALITY.
+      // Możliwe duplikaty z wcześniejszych importów (ta sama data, kwota i skrót
+      // tytułu) liczy to samo zapytanie (CTE z RETURNING): porównanie idzie do
+      // migawki sprzed instrukcji, więc widzi tylko wiersze INNYCH importów —
+      // tak jak wcześniejsze osobne zapytanie z `o.import_id <> l.import_id`.
+      let possibleDuplicateCount = 0;
       if (hashed.length > 0) {
-        await tx.query(
-          `INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents, reference_hash, created_by)
-           SELECT t.id, $1, $2, t.line_no, t.booked_on, t.amount_cents, t.reference_hash, $3
-             FROM unnest($4::text[], $5::int[], $6::date[], $7::bigint[], $8::text[])
-                  AS t(id, line_no, booked_on, amount_cents, reference_hash)`,
+        const inserted = await tx.query(
+          `WITH ins AS (
+             INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents, reference_hash, created_by)
+             SELECT t.id, $1, $2, t.line_no, t.booked_on, t.amount_cents, t.reference_hash, $3
+               FROM unnest($4::text[], $5::int[], $6::date[], $7::bigint[], $8::text[])
+                    AS t(id, line_no, booked_on, amount_cents, reference_hash)
+             RETURNING booked_on, amount_cents, reference_hash
+           )
+           SELECT count(*) AS n FROM ins l WHERE EXISTS (
+             SELECT 1 FROM bank_statement_lines o
+              WHERE o.reconciliation_id = $1 AND o.import_id <> $2
+                AND o.booked_on = l.booked_on AND o.amount_cents = l.amount_cents
+                AND o.reference_hash IS NOT DISTINCT FROM l.reference_hash)`,
           [id, importId, actorId,
             hashed.map(() => crypto.randomUUID()),
             hashed.map((_, index) => index + 1),
@@ -870,24 +884,15 @@ async function importLines(request, env, id, json) {
             hashed.map((line) => line.amountCents),
             hashed.map((line) => line.referenceHash)],
         );
+        possibleDuplicateCount = toSafeInteger(inserted.rows[0].n);
       }
-      // Możliwe duplikaty z wcześniejszych importów (ta sama data, kwota i skrót tytułu).
-      const duplicates = await tx.query(
-        `SELECT count(*) AS n FROM bank_statement_lines l
-          WHERE l.import_id = $1 AND EXISTS (
-            SELECT 1 FROM bank_statement_lines o
-             WHERE o.reconciliation_id = l.reconciliation_id AND o.import_id <> l.import_id
-               AND o.booked_on = l.booked_on AND o.amount_cents = l.amount_cents
-               AND o.reference_hash IS NOT DISTINCT FROM l.reference_hash)`,
-        [importId],
-      );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.lines.imported', entityType: 'bank_statement_import', entityId: importId,
         metadata: { reconciliationId: id, source: input.source, lineCount: hashed.length, schoolYearId: row.school_year_id },
       });
       return json({
         import: { id: importId, reconciliationId: id, source: input.source, lineCount: hashed.length },
-        possibleDuplicateCount: toSafeInteger(duplicates.rows[0].n),
+        possibleDuplicateCount,
       }, 201, CREATED);
     });
   } catch (error) {
@@ -1974,6 +1979,9 @@ export async function buildAuditReport(executor, schoolYearId) {
     createdBy: row.created_by, createdAt: isoTimestamp(row.created_at),
   }));
 
+  // #117: wynik wydarzeń z centrów kosztów (przypisania bieżących wersji), z tej samej
+  // migawki co reszta raportu. Tylko nazwa wydarzenia i kwoty — bez danych osobowych.
+  const eventResults = await costCenterReport(executor, schoolYearId, 'event');
   const resolutionExecution = await buildResolutionExecution(executor, schoolYearId);
   const expenseReviews = await buildExpenseReviews(executor, schoolYearId);
 
@@ -2037,6 +2045,14 @@ export async function buildAuditReport(executor, schoolYearId) {
     budgetExecution,
     largeExpenseThresholdCents: LARGE_EXPENSE_CENTS,
     largeExpenses,
+    eventResults: {
+      events: eventResults.centers.map((c) => ({
+        id: c.id, title: c.name, status: c.status, entryCount: c.entryCount,
+        incomeCents: c.incomeCents, expenseCents: c.expenseCents, resultCents: c.resultCents,
+      })),
+      unallocated: eventResults.general,
+      totals: eventResults.totals,
+    },
     resolutionExecution,
     expenseReviews,
     corrections,

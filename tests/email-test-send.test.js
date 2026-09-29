@@ -29,6 +29,7 @@ async function setup(extraEnv = {}) {
   const treasurer = await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   const board = await seedUserSession(db, { userId: 'u-bd', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] });
   const representative = await seedUserSession(db, { userId: 'u-rep', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+  const board2 = await seedUserSession(db, { userId: 'u-bd2', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] });
   const admin = await seedUserSession(db, { userId: 'u-admin', mfa: true, roles: [{ role: 'admin' }] });
   const classBoard = await seedUserSession(db, { userId: 'u-cbd', mfa: true, roles: [{ role: 'board', classId: 'c1', schoolYearId: YEAR }] });
   const env = {
@@ -44,7 +45,7 @@ async function setup(extraEnv = {}) {
     return { status: response.status, body: text ? JSON.parse(text) : null };
   };
   const count = async (sql, params = []) => Number((await db.query(sql, params)).rows[0].n);
-  return { db, env, treasurer, board, representative, admin, classBoard, call, count, close: () => db.close() };
+  return { db, env, treasurer, board, board2, representative, admin, classBoard, call, count, close: () => db.close() };
 }
 
 async function createDraft(t, { cookie = t.treasurer, key = crypto.randomUUID() } = {}) {
@@ -184,5 +185,135 @@ test('test-send does not change campaign status, snapshot or approval', async ()
     assert.equal(status.status, 200);
     assert.equal(status.body.campaign.status, 'draft');
     assert.equal(status.body.campaign.recipientsHash, null);
+  } finally { await t.close(); }
+});
+
+// --- Bramka „test przed zatwierdzeniem” (#104 pkt 5, D-16) ------------------
+
+// Jedna rodzina syntetyczna z jednym opiekunem (adres @example.invalid),
+// żeby migawka miała odbiorcę i zatwierdzenie mogło dojść do bramki.
+async function seedFamily(t) {
+  await t.db.query("INSERT INTO households (id) VALUES ('h-gate')");
+  await t.db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('s-gate', 'h-gate', 'Uczeń', 'Testowy')");
+  await t.db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)', ['e-gate', 's-gate', 'c1', YEAR]);
+  await t.db.query(
+    `INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed)
+     VALUES ('g-gate', 'h-gate', 'Opiekun', 'Testowy', 'opiekun-gate@example.invalid', true)`,
+  );
+  await t.db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES (\'s-gate\', \'g-gate\', true, true)');
+}
+
+async function snapshotAndApprove(t, id) {
+  const snap = await t.call(t.treasurer, `/api/email/campaigns/${id}/snapshot`, { method: 'POST' });
+  assert.equal(snap.status, 200, JSON.stringify(snap.body));
+  const preview = await t.call(t.board, `/api/email/campaigns/${id}/preview`);
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  return t.call(t.board2, `/api/email/campaigns/${id}/approve`, {
+    method: 'POST', body: { contentHash: preview.body.contentHash, recipientsHash: preview.body.recipientsHash },
+  });
+}
+
+async function editBody(t, id, bodyText) {
+  // #215: PUT wymaga bieżącej `revision` kampanii.
+  const current = await t.call(t.treasurer, `/api/email/campaigns/${id}`);
+  const res = await t.call(t.treasurer, `/api/email/campaigns/${id}`, {
+    method: 'PUT',
+    body: {
+      title: 'Przypomnienie jesienne', audience: 'all_households', subject: 'Dobrowolna składka {rok}', bodyText,
+      revision: current.body.campaign.revisionNo,
+    },
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  return res.body.campaign;
+}
+
+test('approve gate: flag on — no test send -> 409 campaign_test_send_required, then test unlocks approval', async () => {
+  const t = await setup({ EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL: 'true' });
+  try {
+    await seedFamily(t);
+    const campaign = await createDraft(t);
+    t.env.emailTransport = fakeTransport();
+    const blocked = await snapshotAndApprove(t, campaign.id);
+    assert.equal(blocked.status, 409, JSON.stringify(blocked.body));
+    assert.equal(blocked.body.error, 'campaign_test_send_required');
+    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`)).body.campaign.status, 'draft');
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.campaign.approved'`), 0);
+
+    const sent = await testSendCall(t, campaign.id);
+    assert.equal(sent.status, 201, JSON.stringify(sent.body));
+    const approved = await snapshotAndApprove(t, campaign.id);
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    assert.equal(approved.body.campaign.status, 'approved');
+    // Wyłącznie transport wstrzyknięty: jedna wiadomość testowa, żadna do opiekuna.
+    assert.equal(t.env.emailTransport.calls.length, 1);
+    assert.equal(t.env.emailTransport.calls[0].to, PREVIEW_ADDRESS);
+  } finally { await t.close(); }
+});
+
+test('approve gate: content changed after the test requires a new test', async () => {
+  const t = await setup({ EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL: 'true' });
+  try {
+    await seedFamily(t);
+    const campaign = await createDraft(t);
+    t.env.emailTransport = fakeTransport();
+    assert.equal((await testSendCall(t, campaign.id)).status, 201);
+    const edited = await editBody(t, campaign.id, `${BODY} Dodatkowe zdanie po teście.`);
+    assert.notEqual(edited.contentHash, campaign.contentHash);
+
+    const stale = await snapshotAndApprove(t, campaign.id);
+    assert.equal(stale.status, 409, JSON.stringify(stale.body));
+    assert.equal(stale.body.error, 'campaign_test_send_required');
+
+    assert.equal((await testSendCall(t, campaign.id)).status, 201);
+    const approved = await snapshotAndApprove(t, campaign.id);
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    assert.equal(t.env.emailTransport.calls.length, 2);
+  } finally { await t.close(); }
+});
+
+test('approve gate: a test attempt rejected by the provider does not satisfy the gate', async () => {
+  const t = await setup({ EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL: 'true' });
+  try {
+    await seedFamily(t);
+    const campaign = await createDraft(t);
+    t.env.emailTransport = fakeTransport({ fail: new EmailTransportError('delivery_unknown', { uncertain: true }) });
+    assert.equal((await testSendCall(t, campaign.id)).status, 502);
+    const blocked = await snapshotAndApprove(t, campaign.id);
+    assert.equal(blocked.status, 409, JSON.stringify(blocked.body));
+    assert.equal(blocked.body.error, 'campaign_test_send_required');
+  } finally { await t.close(); }
+});
+
+test('approve gate: flag off (default, D-16 undecided) — approval works without a test send', async () => {
+  const t = await setup();
+  try {
+    await seedFamily(t);
+    const campaign = await createDraft(t);
+    t.env.emailTransport = fakeTransport();
+    const approved = await snapshotAndApprove(t, campaign.id);
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    assert.equal(t.env.emailTransport.calls.length, 0);
+  } finally { await t.close(); }
+});
+
+test('test-send audit: contentHash and recipient index, never the address', async () => {
+  const t = await setup();
+  try {
+    const campaign = await createDraft(t);
+    t.env.emailTransport = fakeTransport();
+    const res = await testSendCall(t, campaign.id, { recipientEmail: 'biuro@rada.example.invalid' });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    const { rows } = await t.db.query(
+      `SELECT actor_id, entity_id, metadata_json AS metadata FROM audit_events WHERE action = 'email.preview.sent'`,
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].actor_id, 'u-tr');
+    assert.equal(rows[0].entity_id, campaign.id);
+    const metadata = typeof rows[0].metadata === 'string' ? JSON.parse(rows[0].metadata) : rows[0].metadata;
+    assert.equal(metadata.contentHash, campaign.contentHash);
+    assert.equal(metadata.recipientIndex, 1);
+    assert.equal(metadata.schoolYearId, YEAR);
+    assert.equal(metadata.ok, true);
+    assert.doesNotMatch(JSON.stringify(rows[0]), /example\.invalid/);
   } finally { await t.close(); }
 });
