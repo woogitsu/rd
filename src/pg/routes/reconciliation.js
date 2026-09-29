@@ -28,6 +28,7 @@ import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
+import { detectDelimiter, parseCsvMatrix } from '../../../import/csv.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { buildBudgetExecution } from './ledger-budget.js';
@@ -164,30 +165,18 @@ const HEADER_ALIASES = new Map([
   ['description', 'reference'], ['communication', 'reference'],
 ]);
 
+// #77: wspólny parser RFC 4180 (import/csv.js) — separator ; , albo tabulator liczony poza
+// cudzysłowami w pierwszej linii. Remis nie jest zgadywany po cichu: błąd zamiast domyślnego przecinka.
 function parseCsvRows(text) {
-  const source = text.replace(/^﻿/, '');
-  const firstLine = source.split(/\r?\n/, 1)[0] ?? '';
-  const delimiter = (firstLine.match(/;/g)?.length ?? 0) > (firstLine.match(/,/g)?.length ?? 0) ? ';' : ',';
-  const rows = [];
-  let row = [];
-  let field = '';
-  let quoted = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    if (quoted) {
-      if (char === '"' && source[index + 1] === '"') { field += '"'; index += 1; }
-      else if (char === '"') quoted = false;
-      else field += char;
-    } else if (char === '"' && field === '') quoted = true;
-    else if (char === delimiter) { row.push(field); field = ''; }
-    else if (char === '\n' || char === '\r') {
-      if (char === '\r' && source[index + 1] === '\n') index += 1;
-      row.push(field); rows.push(row); row = []; field = '';
-    } else field += char;
+  if (text.includes('\uFFFD') || text.includes('\u0000')) throw new RequestError('invalid_csv_encoding');
+  const detected = detectDelimiter(text);
+  if (detected.tie) throw new RequestError('ambiguous_csv_delimiter');
+  try {
+    return parseCsvMatrix(text, { delimiter: detected.delimiter });
+  } catch {
+    // Komunikat parsera zawiera tylko pozycję znaku, ale kod błędu API pozostaje ogólny.
+    throw new RequestError('invalid_csv');
   }
-  if (quoted) throw new RequestError('invalid_csv');
-  if (field !== '' || row.length) { row.push(field); rows.push(row); }
-  return rows.filter((cells) => cells.some((cell) => cell.trim() !== ''));
 }
 
 function parseCsvDate(value) {
