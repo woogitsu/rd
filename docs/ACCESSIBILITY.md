@@ -182,7 +182,11 @@ Nawigacja różni się realnie między aplikacjami (statyczne linki w czterech p
 
 Aplikacje z kilkoma wzajemnie wykluczającymi się widokami pod jednym `main` (`families/`: klasy / klasa / gospodarstwo) mogą mieć po jednym `<h1>` na widok, o ile każdy jest wewnątrz elementu z atrybutem `hidden` — test liczy tylko `<h1>`, które nigdy nie są `hidden` (musi być ich najwyżej jeden).
 
-**Poza zakresem tej zmiany** (patrz #112, pkt. 3–4 propozycji): reguła `forced-colors` jest dodana tylko tam, gdzie już poprawiałem CSS (`admin/`, `families/`, `site/`) — nie ma jeszcze testu statycznego wymuszającego ją we wszystkich aplikacjach; `docs/a11y/audit.mjs` (zrzuty Playwright 320/1280 px) nadal renderuje tylko cztery pierwotne aplikacje — rozszerzenie o pozostałe wymaga uruchomienia z Playwright (nie jest zależnością projektu) i jest osobnym, ręcznym krokiem.
+**`forced-colors` we wszystkich aplikacjach (#112, pkt. 3).** Każdy `styles.css`, który zaznacza aktywną zakładkę przez `box-shadow` albo używa `.badge`, musi mieć `@media (forced-colors: active)` z obramowaniem/podkreśleniem zastępującym tło i cień — pilnuje tego `tests/a11y-static.test.js` (dla wszystkich aplikacji z `STATIC_PREFIXES`). Reguła dodana w `events/`, `panel/`, `ledger/`, `email/`, `reconciliation/`, `year-close/`, `audit/`, `data-export/`, `news/`, `import/`, `print/`. Reguły nie sprawdzono w przeglądarce z włączonym trybem wysokiego kontrastu Windows — do sprawdzenia ręcznie.
+
+**Klawiatura w oknach `families/` (#112, Playwright).** `tests/e2e/families-keyboard.spec.js`: skip link jako pierwszy Tab, dojście do karty gospodarstwa samą klawiaturą, Enter otwiera okno „Edytuj kontakt” (nazwa dostępna, fokus w oknie), Tab nie ustawia fokusu poza oknem, Esc zamyka okno i zwraca fokus na przycisk. Test używa syntetycznej sesji administratora, bo edycja kontaktu wymaga roli admin/board.
+
+**Nadal poza zakresem** (patrz #112, pkt. 4 propozycji): `docs/a11y/audit.mjs` (zrzuty 320/1280 px) renderuje tylko cztery pierwotne aplikacje — rozszerzenie o `families/`, `documents/`, `events/` wymaga ręcznego uruchomienia z Playwright i danych syntetycznych; przegląd z NVDA/VoiceOver (tabela przydziałów ról w `admin/`, karta gospodarstwa z dwojgiem opiekunów i rodzeństwem) — do wykonania.
 
 ## Poza zakresem przeglądu
 
