@@ -5,7 +5,9 @@ import {
   buildLedgerUrl,
   buildNextLedgerUrl,
   budgetExecutionRow,
+  buildCostCentersUrl,
   buildOverviewUrl,
+  costCenterRows,
   buildResolutionsUrl,
   formatCents,
   isValidId,
@@ -133,6 +135,30 @@ function renderBudget(lines) {
   byId("budget-empty").hidden = rows.length !== 0;
 }
 
+function renderCostCenters(report, error) {
+  const body = byId("events-body");
+  const errorBox = byId("events-error");
+  errorBox.hidden = !error;
+  errorBox.textContent = error ? `Nie udało się pobrać wyniku wydarzeń: ${error}` : "";
+  const wrap = body.closest(".table-wrap");
+  if (error || !report) { body.replaceChildren(); wrap.hidden = true; byId("events-empty").hidden = true; byId("events-count").textContent = ""; return; }
+  const view = costCenterRows(report);
+  const build = (item, strong) => {
+    const row = document.createElement("tr");
+    const name = textCell(item.name);
+    if (strong) name.style.fontWeight = "700";
+    row.append(name, textCell(item.status || "—"), textCell(item.entryCount === null ? "—" : String(item.entryCount), "amount"),
+      textCell(item.income, "amount"), textCell(item.expense, "amount"),
+      // Wynik ujemny opisany też tekstem (znak minus), nie tylko kolorem.
+      textCell(item.result, item.negative ? "amount over-budget" : "amount"));
+    return row;
+  };
+  body.replaceChildren(...view.centers.map((item) => build(item, false)), build(view.general, false), build(view.totals, true));
+  byId("events-count").textContent = view.centers.length === 1 ? "1 wydarzenie" : `${view.centers.length} wydarzeń`;
+  byId("events-empty").hidden = view.centers.length !== 0;
+  wrap.hidden = false;
+}
+
 function renderSummary(summary) {
   byId("opening-balance").textContent = formatCents(summary.openingBalanceCents);
   byId("income-total").textContent = formatCents(summary.incomeCents);
@@ -196,10 +222,12 @@ async function loadOverview({ reload = false } = {}) {
   setBusy(true);
   try {
     const year = query.schoolYearId;
-    const [summaryData, budgetData, categoriesData, resolutionsData] = await Promise.all([
+    const [summaryData, budgetData, categoriesData, costCentersData, resolutionsData] = await Promise.all([
       api(buildOverviewUrl("summary", year)),
       api(buildOverviewUrl("budget/execution", year)),
       api(buildOverviewUrl("categories", year)),
+      // Widok pomocniczy: jego błąd nie blokuje podglądu księgi.
+      api(buildCostCentersUrl(year)).catch((error) => ({ error })),
       // Lista uchwał jest pomocnicza: jej błąd nie blokuje podglądu księgi.
       api(buildResolutionsUrl(year)).catch((error) => ({ error })),
       loadEntries({ query }),
@@ -209,6 +237,8 @@ async function loadOverview({ reload = false } = {}) {
     state.resolutions = Array.isArray(resolutionsData?.resolutions) ? resolutionsData.resolutions : [];
     state.resolutionsError = resolutionsData?.error ? resolutionsData.error.message : "";
     renderSummary(summaryData.summary ?? {});
+    renderCostCenters(costCentersData?.report ?? null, costCentersData?.error ? costCentersData.error.message : "");
+    byId("events-csv").href = buildCostCentersUrl(year, "csv");
     renderBudget(Array.isArray(budgetData.execution?.items) ? budgetData.execution.items : []);
     overview.hidden = false;
   } catch (error) {
