@@ -48,6 +48,26 @@ export async function seedClass(db, { id, schoolYearId = 'y-test', name = id }) 
   return id;
 }
 
+// #205: wpłaty przyjmują tylko gospodarstwo niezarchiwizowane z uczniem
+// zapisanym w roku wpłaty. Dopisuje gospodarstwo (idempotentnie) z jednym
+// syntetycznym uczniem zapisanym do klasy w każdym z podanych lat.
+export async function seedEnrolledHousehold(db, householdId, schoolYearIds) {
+  await db.query('INSERT INTO households (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [householdId]);
+  const studentId = `st-${householdId}`;
+  await db.query(
+    "INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Syntetyczny', 'Uczeń') ON CONFLICT (id) DO NOTHING",
+    [studentId, householdId],
+  );
+  for (const schoolYearId of schoolYearIds) {
+    const classId = await seedClass(db, { id: `cls-enr-${schoolYearId}`, schoolYearId, name: 'Klasa' });
+    await db.query(
+      'INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
+      [`enr-${householdId}-${schoolYearId}`, studentId, classId, schoolYearId],
+    );
+  }
+  return studentId;
+}
+
 // Użytkownik (idempotentnie). Domyślny e-mail jest syntetyczny.
 // Domyślny e-mail jest zawsze małymi literami (#198: users.email wymaga
 // lower(btrim(email))) niezależnie od wielkości liter w userId (np. klucze

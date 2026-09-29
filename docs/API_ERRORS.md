@@ -204,7 +204,7 @@ wpisów).
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
 | `invalid_received_on` | Podaj poprawną datę wpłynięcia żądania. | Nie — popraw dane żądania. |
 | `invalid_reference_text` | Opis wpłaty jest za długi albo zawiera niedozwolone znaki. | Nie — popraw dane żądania. |
-| `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje. | Nie — popraw dane żądania. |
+| `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje albo jest poza Twoim zakresem. | Nie — popraw dane żądania. |
 | `invalid_relation_kind` | Wybierz rodzaj powiązania uchwały z listy. | Nie — popraw dane. |
 | `invalid_release_reason` | Wybierz jeden z dopuszczalnych powodów zdjęcia blokady. | Nie — popraw dane. |
 | `invalid_replacement_document` | Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę. | Nie — popraw dane żądania. |

@@ -10,7 +10,7 @@ import { escapeHtml, formatEur, REPORT_CSS } from '../src/pg/audit-report.js';
 import {
   createMeeting, createResolution, determineQuorum, recordAttendance, updateMeeting,
 } from '../src/pg/meetings.js';
-import { request, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { request, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Wyłącznie dane syntetyczne. Rok 'y-test': 2026-09-01 – 2027-08-31.
 const YEAR = 'y-test';
@@ -470,7 +470,7 @@ test('generic CSV statement import: separators, decimals, replay and conflicts',
 test('suggestions include unbooked payments and flag a matching reference hash', async () => {
   const { db, cookies, call } = await setup();
   try {
-    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    await seedEnrolledHousehold(db, 'h-1', [YEAR]);
     await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
       reference, status, created_by, idempotency_key)
       VALUES ('p-1', 'h-1', $1, 2500, '2026-09-14', 'bank', 'SKŁADKA  RD-0001', 'recorded', 'u-treasurer', 'pay-key-0001'),
@@ -497,7 +497,7 @@ test('suggestions include unbooked payments and flag a matching reference hash',
 
 // Regresja #115: wpłata gotówkowa nie może być proponowana ani powiązana z pozycją wyciągu bankowego.
 async function seedPayments(db, rows) {
-  await db.query("INSERT INTO households (id) VALUES ('h-1'), ('h-2') ON CONFLICT DO NOTHING");
+  for (const householdId of ['h-1', 'h-2']) await seedEnrolledHousehold(db, householdId, [YEAR]);
   for (const [id, household, cents, date, method] of rows) {
     await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
       reference, status, created_by, idempotency_key)
@@ -986,7 +986,7 @@ test('suggestions hash a candidate payment reference at most once per request ev
   const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
   let digestCalls = 0;
   try {
-    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    await seedEnrolledHousehold(db, 'h-1', [YEAR]);
     await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method,
       reference, status, created_by, idempotency_key)
       VALUES ('p-1', 'h-1', $1, 2500, '2026-09-14', 'bank', 'SKŁADKA  RD-0001', 'recorded', 'u-treasurer', 'pay-key-0001'),
@@ -1078,7 +1078,7 @@ test('reconciliation detail paginates lines with a stable cursor and full summar
 test('suggestions still rank a reference match to the top even with many same-day candidates', async () => {
   const { db, cookies, call } = await setup();
   try {
-    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    await seedEnrolledHousehold(db, 'h-1', [YEAR]);
     // 15 wpłat tej samej kwoty i daty bez zgodnego tytułu (poniżej zapasu SQL
     // MAX_CANDIDATES*4=20), plus jedna dalsza dniowo (ale w oknie) ze zgodnym
     // tytułem — bez zapasu w SQL (samo LIMIT MAX_CANDIDATES po day_distance)
@@ -1116,7 +1116,7 @@ function linePaymentCall(call, cookie, reconciliationId, lineId, body = {}, idem
 test('a payment created from a statement line takes its amount and date from the server, not the client', async () => {
   const { db, cookies, call } = await setup();
   try {
-    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    await seedEnrolledHousehold(db, 'h-1', [YEAR]);
     const { id, lineIds } = await draftWithLines(call, cookies, [2500]);
     // Klient próbuje przemycić inną kwotę i datę — serwer ich nie czyta.
     const response = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], {
@@ -1248,7 +1248,7 @@ test('a confirmed reconciliation refuses a new payment from its line, like a man
 test('two guardians paying separate lines to the same household sum up in household_payment_totals', async () => {
   const { db, cookies, call } = await setup();
   try {
-    await db.query("INSERT INTO households (id) VALUES ('h-siblings')");
+    await seedEnrolledHousehold(db, 'h-siblings', [YEAR]);
     const { id, lineIds } = await draftWithLines(call, cookies, [1000, 1500]);
     const first = await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: 'h-siblings' });
     const second = await linePaymentCall(call, cookies.treasurer, id, lineIds[1], { householdId: 'h-siblings' });

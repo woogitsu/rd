@@ -789,6 +789,21 @@ zmienia się wyłącznie wynik funkcji (a więc dostępność pliku dla odczytu
 publicznego). Wycofanie: `CREATE OR REPLACE FUNCTION news_photo_is_public`
 z ciałem sprzed tej migracji (jak w 0084, bez warunku zgody).
 
+`0134_meeting_attendee_user_scope.sql` (#205, część) rozszerza
+`meeting_attendee_guard()` (od wersji z 0037): `user_id` nowego wpisu
+obecności musi mieć aktywny przydział (niecofnięty, niewygasły) w roku
+zebrania, a dla zebrania klasowego bez zawężenia do innej klasy; odmowa to
+ten sam `invalid_reference` co dla nieistniejącego konta, więc odpowiedź nie
+jest wyrocznią istnienia kont. Sprawdzenia zakresu (konto i opiekun w roli
+`guardian`) działają przy INSERT i przy zmianie capacity NA `guardian`;
+zwykła poprawka obecności osoby, której relacja albo przydział zakończyły się
+po zapisie, nie jest już odrzucana (odniesienie jest niezmienne). Skutki dla
+danych: żaden wiersz nie jest zmieniany ani usuwany; istniejące wpisy z
+kontami bez przydziału zostają i liczą się w quorum, nowych nie da się dodać
+(wariant zachowawczy do D-19: gość bez przydziału wymaga decyzji Rady).
+Wycofanie: `CREATE OR REPLACE FUNCTION meeting_attendee_guard` z ciałem z
+0037.
+
 `0073_ledger_budget_adoptions.sql` (#107) dodaje preliminarz przez API:
 `ledger_categories.idempotency_key` (klucz żądania tworzenia kategorii),
 `ledger_category_deactivations` (historia wyłączenia kategorii, tylko

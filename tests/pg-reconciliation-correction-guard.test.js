@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, seedSchoolYear, seedUserSession, TEST_ORIGIN } from './helpers/pg.js';
+import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession, TEST_ORIGIN } from './helpers/pg.js';
 
 const YEAR = 'y-165b';
 
@@ -27,7 +27,7 @@ async function readJson(response) {
 async function setup() {
   const db = await createTestDb();
   await seedSchoolYear(db, YEAR, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
-  await db.query("INSERT INTO households (id) VALUES ('h1')");
+  await seedEnrolledHousehold(db, 'h1', [YEAR]);
   const cookie = await seedUserSession(db, { userId: 'u-t', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   const cookie2 = await seedUserSession(db, { userId: 'u-t2', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   const env = { db };

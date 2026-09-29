@@ -23,6 +23,8 @@ Archiwizacja wymaga zatwierdzonego protokołu. Zebrania nie można usunąć.
 
 Wpis wskazuje osobę przez identyfikator konta (`users`) albo opiekuna (`guardians`) i funkcję na zebraniu (np. przedstawiciel, członek zarządu, gość). Nie przechowujemy imion, nazwisk ani adresów w tej tabeli. `votingEligible` jest polem obowiązkowym bez wartości domyślnej — prawo głosu wpisuje się jawnie. Obecność można poprawiać do zablokowania zebrania; każda zmiana trafia do dziennika zdarzeń.
 
+**Zakres identyfikatorów (#205).** Baza (trigger `meeting_attendee_guard`, migracje `0037` i `0123`) odrzuca wpis z `invalid_reference`, gdy: opiekun w funkcji `guardian` nie ma aktywnej relacji z uczniem zapisanym w klasie zebrania (klasowe) albo w klasie roku zebrania (pozostałe); konto (`userId`) nie ma aktywnego przydziału w roku zebrania (a dla zebrania klasowego — bez zawężenia do innej klasy). Ten sam kod dostaje identyfikator nieistniejący, więc odpowiedź nie ujawnia, czy konto lub opiekun istnieje w szkole; odrzucenie nie zostawia wpisu w `meeting_attendees` ani w dzienniku zdarzeń (transakcja). Zakres sprawdza się przy dodaniu wpisu i przy zmianie funkcji na `guardian`; zwykła poprawka istniejącego wpisu (odniesienie jest niezmienne) nie jest blokowana, gdy relacja lub przydział zakończyły się później. **Założenie do D-19 (wariant zachowawczy):** gość bez konta z przydziałem nie może być dziś wpisany przez `userId`; osobny wariant (wpis bez odniesienia i bez prawa głosu) wymaga decyzji Rady.
+
 ## Quorum
 
 Reguła jest konfigurowana dla każdego zebrania:

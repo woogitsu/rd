@@ -106,7 +106,7 @@ export const MESSAGES = Object.freeze({
   class_not_in_school_year: "Klasa nie należy do wskazanego roku szkolnego.",
   class_year_mismatch: "Klasa należy do innego roku szkolnego.",
   no_classes_in_school_year: "Rok szkolny nie ma zdefiniowanych klas.",
-  invalid_reference: "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje.",
+  invalid_reference: "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje albo jest poza Twoim zakresem.",
   relation_ended: "Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa.",
   guardian_not_found: "Nie znaleziono opiekuna.",
   invalid_or_expired_link: "Ten link jest nieprawidłowy albo już nieaktywny.",
