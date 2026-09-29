@@ -3,7 +3,7 @@
 //   POST /api/exports                         { "schoolYearId": "…" }
 //        admin albo zarząd (założenie do D-08/D-09), sesja z MFA, zakres roku.
 //        Zwraca deterministyczną paczkę JSON jako załącznik (docs/EXPORT.md).
-//   GET  /api/exports/class-roster?classId=…
+//   GET  /api/exports/class-roster?classId=…[&format=json|csv|xlsx]
 //        przedstawiciel wyłącznie własnej klasy (także admin/zarząd), MFA.
 //        Tylko lista uczniów i opiekunów klasy — bez wpłat i identyfikatorów rodzin.
 //
@@ -17,9 +17,10 @@ import {
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { csvResponse } from '../csv.js';
+import { xlsxResponse } from '../xlsx.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import {
-  buildClassRoster, buildClassRosterCsv, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
+  buildClassRoster, buildClassRosterCsv, buildClassRosterXlsx, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
 } from '../export.js';
 
 export const name = 'exports';
@@ -62,6 +63,22 @@ async function readJson(request) {
 
 function safeFilePart(value) {
   return value.replace(/[^A-Za-z0-9_.-]/g, '_');
+}
+
+// Ciało odpowiedzi z listy buforów (#216): każdy bufor jest zwalniany zaraz po
+// przekazaniu, więc pamięć paczki maleje w trakcie pobierania.
+function chunksBody(chunks) {
+  let index = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (index >= chunks.length) { controller.close(); return; }
+      const chunk = chunks[index];
+      chunks[index] = null;
+      index += 1;
+      controller.enqueue(chunk);
+    },
+    cancel() { chunks.fill(null); },
+  });
 }
 
 function attachment(body, filename, headers = {}, contentType = 'application/json; charset=utf-8') {
@@ -144,7 +161,12 @@ async function createYearlyExport(request, env, json) {
       // zakresem tego PR, patrz opis PR).
       const lock = await tx.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked', [`rd_export:${schoolYearId}`]);
       if (!lock.rows[0].locked) throw new RequestError('export_in_progress', 409);
-      const built = await buildYearlyExport(tx, schoolYearId);
+      // #216: budowa paczki idzie partiami przez kursor i oddaje pętlę zdarzeń;
+      // przerwy między zapytaniami są krótkie, ale limit „idle in transaction”
+      // (15 s w puli) podnosimy lokalnie dla tej jednej transakcji, żeby wolny
+      // współdzielony vCPU nie zrywał eksportu w trakcie.
+      await tx.query("SET LOCAL idle_in_transaction_session_timeout = '60s'");
+      const built = await buildYearlyExport(tx, schoolYearId, { stream: true });
       const runId = await recordRun(tx, {
         kind: 'yearly', schoolYearId, formatVersion: EXPORT_FORMAT_VERSION, actorId,
         sha256: built.manifestSha256, rowCounts: built.rowCounts,
@@ -159,20 +181,22 @@ async function createYearlyExport(request, env, json) {
     throw error;
   }
 
-  return attachment(result.body, `rd-eksport-${safeFilePart(schoolYearId)}-v${EXPORT_FORMAT_VERSION}.json`, {
+  return attachment(chunksBody(result.bodyChunks), `rd-eksport-${safeFilePart(schoolYearId)}-v${EXPORT_FORMAT_VERSION}.json`, {
     'X-Export-Run-Id': result.runId,
     'X-Export-Manifest-Sha256': result.manifestSha256,
+    // Znany rozmiar: adapter Node przesyła odpowiedź strumieniowo, bez kopii w pamięci.
+    'Content-Length': String(result.bodyBytes),
   });
 }
 
 async function exportClassRoster(request, env, url, json) {
   const classId = url.searchParams.get('classId');
   if (!classId || !ID_PATTERN.test(classId)) throw new RequestError('invalid_class');
-  // #132: format czytelny dla człowieka (CSV) obok kanonicznego JSON (domyślny,
-  // zgodność wsteczna). XLSX celowo pominięty — brak lekkiej biblioteki do zapisu
-  // bez nowej ciężkiej zależności (decyzja opisana w PR).
+  // #132: formaty czytelne dla człowieka (CSV, XLSX z src/pg/xlsx.js) obok
+  // kanonicznego JSON (domyślny, zgodność wsteczna). Zakres ról, klasy i MFA
+  // jest ten sam dla wszystkich formatów.
   const format = url.searchParams.get('format') ?? 'json';
-  if (format !== 'json' && format !== 'csv') throw new RequestError('invalid_format');
+  if (format !== 'json' && format !== 'csv' && format !== 'xlsx') throw new RequestError('invalid_format');
 
   // Najpierw zakres klasy: przedstawiciel innej klasy dostaje 403 niezależnie
   // od tego, czy klasa istnieje.
@@ -207,6 +231,13 @@ async function exportClassRoster(request, env, url, json) {
     return csvResponse(
       csv,
       `lista-klasy-${safeFilePart(result.roster.class.name)}-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}.csv`,
+      { 'X-Export-Run-Id': result.runId, 'X-Export-Manifest-Sha256': result.sha256 },
+    );
+  }
+  if (format === 'xlsx') {
+    return xlsxResponse(
+      buildClassRosterXlsx(result.roster),
+      `lista-klasy-${safeFilePart(result.roster.class.name)}-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}.xlsx`,
       { 'X-Export-Run-Id': result.runId, 'X-Export-Manifest-Sha256': result.sha256 },
     );
   }

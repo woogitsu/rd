@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { unzipSync, zipSync, strToU8 } from 'fflate';
 import readXlsxFileNode, { readSheet } from 'read-excel-file/node';
+import { selectSheet, validateRows, guessMapping } from '../import/core.js';
 import { readXlsxRows, readXlsxSheets, repackXlsxStored, XlsxReadError } from '../import/xlsx.js';
 
 const WORKER_THRESHOLD = 524288; // fflate: su < 524288 → inflateSync, inaczej worker
@@ -168,6 +169,30 @@ test('readXlsxSheets on a single-sheet file returns exactly one entry', async ()
   assert.equal(sheets.length, 1);
   assert.equal(sheets[0].name, 'Uczniowie');
   assert.equal(sheets[0].rows.length, 4);
+});
+
+test('pusty pierwszy arkusz nie blokuje wyboru drugiego (#88)', async () => {
+  const original = buildXlsxMultiSheet([
+    { name: 'Pusty', rows: [] },
+    { name: 'Uczniowie', rows: [['Imię ucznia', 'Nazwisko ucznia', 'Klasa', 'Opiekun 1', 'E-mail 1'], ['Ala', 'Testowa', '1A', 'Anna Testowa', 'anna@example.invalid']] },
+  ]);
+  const sheets = await readXlsxSheets(original, (buf) => readXlsxFileNode(Buffer.from(buf)));
+  assert.equal(sheets.length, 2);
+  // Pusty arkusz: komunikat, brak macierzy, ale lista arkuszy jest nienaruszona.
+  const empty = selectSheet(sheets, 0);
+  assert.equal(empty.matrix, null);
+  assert.match(empty.error, /od 1 do 5000 wierszy/);
+  assert.equal(sheets.length, 2);
+  // Wybór drugiego arkusza daje podgląd (walidacja wierszy bez błędów).
+  const picked = selectSheet(sheets, 1);
+  assert.equal(picked.error, null);
+  assert.equal(picked.sheet.name, 'Uczniowie');
+  const result = validateRows(picked.matrix, guessMapping(picked.matrix[0]));
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.validCount, 1);
+  // Nieistniejący indeks nie rzuca wyjątku.
+  assert.equal(selectSheet(sheets, 5).sheet, null);
 });
 
 // --- #88: limity rozmiaru po rozpakowaniu (zip bomb) ---

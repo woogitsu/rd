@@ -55,6 +55,8 @@ Wszystkie trasy `/api/admin/*` — także odczyt — wymagają aktywnego przydzi
 
 `createInvitation` (src/pg/auth.js) zapisuje wyłącznie SHA-256 tokenu. API zwraca surowy token jednorazowo w odpowiedzi `201` (`Cache-Control: no-store`); lista zaproszeń go nie zawiera. Moduł **nie wysyła e-maili** — operator przekazuje token osobnym, zaufanym kanałem. Utracony token: wycofać zaproszenie i utworzyć nowe. Ważność domyślnie 72 h, najwyżej 14 dni (założenie z AUTH.md).
 
+**Podgląd zaproszenia (#164):** `POST /api/invitations/preview` `{ token }` (bez sesji, tylko odczyt, token nie jest konsumowany) zwraca `{ email, role, className, schoolYear, expiresAt, accountExists }`: adres zamaskowany (`j…@domena`), bez zapraszającego i identyfikatorów; `accountExists` = konto ma już hasło (przyjęcie wymaga obecnego hasła). Limit prób jak przy `accept` (zakres IP); każda odmowa to `400 invalid_invitation`, błędy w audycie jako `auth.invitation_preview_failed`, sukces bez zdarzenia. Założenie do potwierdzenia przez IOD: posiadacz ważnego tokenu może zobaczyć zamaskowany adres (token i tak pozwala utworzyć konto na ten adres).
+
 **Przyjęcie zaproszenia przez HTTP:** `POST /api/invitations/accept` `{ token, password, displayName? }` — jednorazowe (blokada wiersza zaproszenia), sprawdza wygaśnięcie i wycofanie, tworzy konto (jeśli brak), zapisuje skrót hasła, nadaje rolę z zaproszenia i tworzy sesję bez MFA. Odmowa zawsze jako `400 invalid_invitation`. Metoda logowania (e-mail + hasło + TOTP) to wskazanie użytkownika do formalnego potwierdzenia (D-10); szczegóły w [AUTH.md](AUTH.md). Link dla zapraszanej osoby: `/login/#invite=<token>` (token w części po `#`, nie trafia do logów serwera).
 
 ## Audyt i dane osobowe
