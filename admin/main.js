@@ -1,5 +1,7 @@
 import {
   ACTION_LABELS,
+  accountName,
+  entityTypeLabel,
   GRANT_STATUS_LABELS,
   INVITATION_STATUS_LABELS,
   ROLE_LABELS,
@@ -21,6 +23,7 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
+import { shortId } from "../shared/short-id.js";
 import "../shared/shell.css";
 
 mountShell();
@@ -132,6 +135,8 @@ async function withStepUp(fn) {
   return fn();
 }
 
+const RECOVERY_REQUEST_MESSAGE = "Konto ma rolę chronioną: zapisano wniosek, nic jeszcze nie zmieniono. Kod resetu lub wyłączenie MFA wymaga zatwierdzenia przez innego administratora.";
+
 function userLabel(userId) {
   const user = state.users.find((item) => item.id === userId);
   return user ? user.email : userId;
@@ -196,6 +201,12 @@ function renderUsers() {
     buttons.push(button("Wydaj kod resetu hasła", (event) => runAction(event.currentTarget, confirmationText("password-reset", user.email), async () => {
       hideResetToken();
       const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, { method: "POST", body: {} });
+      // #146: konto z rolą chronioną — serwer (202) zapisał tylko wniosek, bez tokenu.
+      if (!result.token) {
+        showMessage(RECOVERY_REQUEST_MESSAGE);
+        await loadAudit();
+        return;
+      }
       showResetToken(result.token, result.reset.expiresAt);
       await loadAudit();
     }), {
@@ -304,7 +315,10 @@ async function runMfaReset(element, user) {
   element.disabled = true;
   try {
     const result = await withStepUp(() => api(`/api/admin/users/${encodeURIComponent(user.id)}/mfa-reset`, { method: "POST", body: { confirm: user.id } }));
-    showMessage(result.changed
+    // #146: konto z rolą chronioną — serwer (202) zapisał tylko wniosek; MFA nie zmieniono.
+    showMessage(result.request
+      ? RECOVERY_REQUEST_MESSAGE
+      : result.changed
       ? "Zresetowano weryfikację dwuetapową. Konto zostało wylogowane i zapisze nowy czynnik po zalogowaniu."
       : "Konto nie miało zapisanego czynnika ani kodów odzyskiwania — nic nie zmieniono.");
     await Promise.all([loadUsers(), loadAudit()]);
@@ -533,9 +547,13 @@ async function loadAudit({ append = false } = {}) {
   if (!events.length) return emptyRow(tbody, 5, "Brak zdarzeń.");
   tbody.replaceChildren(...events.map((item) => {
     const tr = document.createElement("tr");
-    const { label, details } = describeAuditEvent(item);
+    const { label, details } = describeAuditEvent(item, state.users);
     tr.append(cell(formatDateTime(item.occurredAt)), cell(ACTION_LABELS[item.action] ? label : item.action));
-    tr.append(cell(`${item.entityType} ${item.entityId}`, "mono"), cell(details || "—"), cell(item.actorId ?? "system", "mono"));
+    const object = cell(`${entityTypeLabel(item.entityType)} ${shortId(item.entityId)}`);
+    object.title = `${item.entityType} ${item.entityId}`;
+    const actor = cell(accountName(item.actorId, state.users));
+    if (item.actorId) actor.title = item.actorId;
+    tr.append(object, cell(details || "—"), actor);
     return tr;
   }));
 }

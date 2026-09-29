@@ -626,6 +626,35 @@ test('preview reports students enrolled this year but missing from the file, wit
   for (const fragment of ['Piotr', 'Próbny', 'ewa@']) assert.equal(text.includes(fragment), false, fragment);
 }));
 
+test('#98 błędny e-mail w drugim imporcie: opiekun nietknięty, brak nowego opiekuna', async () => withDb(async (db, env, admin) => {
+  await previewAndCommit(env, admin, payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;;')), 'key-e98-0007');
+  const bad = csvOf('S1;Ala;Testowa;1A;R1;Anna Testowa;zly-adres;;');
+  const p = await preview(env, admin, payloadFromCsv(bad));
+  assert.equal(p.body.counts.guardiansCreated, 0);
+  const done = await commit(env, admin, payloadFromCsv(bad, { skipConflicts: true }), p.body, 'key-e98-0008');
+  assert.ok([200, 201].includes(done.status), JSON.stringify(done.body));
+  assert.equal(await count(db, 'guardians'), 1);
+  const g = await db.query('SELECT email FROM guardians');
+  assert.equal(g.rows[0].email, 'anna@example.invalid');
+}));
+
+test('#98 audyt import.committed ma same liczby konfliktów opiekuna i „brak w pliku”', async () => withDb(async (db, env, admin) => {
+  await previewAndCommit(env, admin, payloadFromCsv(BASIC), 'key-e98-0009');
+  const changed = csvOf(
+    'S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan.nowy@example.invalid',
+    'S2;Ola;Testowa;2B;R1;Anna Testowa;anna@example.invalid;Jan Testowy;jan@example.invalid',
+  );
+  const payload = payloadFromCsv(changed, { skipConflicts: true });
+  const p = await preview(env, admin, payload);
+  assert.equal((await commit(env, admin, payload, p.body, 'key-e98-0010')).status, 201);
+  const { rows } = await db.query("SELECT metadata_json FROM audit_events WHERE action = 'import.committed' ORDER BY occurred_at DESC LIMIT 1");
+  const meta = rows[0].metadata_json;
+  assert.equal(meta.guardianConflictRows, 1);
+  assert.equal(meta.missingFromFileCount, 1);
+  assertNoPii(meta);
+  assert.equal(JSON.stringify(meta).includes('@'), false);
+}));
+
 test('a guardian name with a surname particle is split and stored correctly', async () => withDb(async (db, env, admin) => {
   const csv = csvOf('S1;Ala;Testowa;1A;R1;Anna Maria de Smet;anna@example.invalid;;');
   const result = await previewAndCommit(env, admin, payloadFromCsv(csv), 'key-e98-0007');

@@ -44,6 +44,10 @@ async function resolutionsDb({ pattern = null } = {}) {
     await db.query('INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)',
       [id, `${id}@example.invalid`, `Synthetic ${id}`]);
   }
+  // #205 (0150): osoba na liście obecności musi mieć w bazie aktywny przydział w roku zebrania.
+  for (const id of ['u1', 'u2', 'u3']) {
+    await db.query("INSERT INTO role_grants (id, user_id, role) VALUES ($1, $2, 'board')", [`grant-${id}`, id]);
+  }
   return db;
 }
 

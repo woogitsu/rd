@@ -3,23 +3,46 @@
 
 import qrcode from "qrcode-generator";
 import { safeNextPath } from "../shared/api.js";
+import { visiblePanels } from "../shared/shell.js";
 
 export const PASSWORD_MIN = 12;
 export const PASSWORD_MAX = 128;
 
-// Panele po zalogowaniu. Dostęp do każdego sprawdza serwer — lista to tylko skróty.
-export const PANELS = Object.freeze([
-  { href: "/panel/", label: "Wpłaty", hint: "Ewidencja dobrowolnych wpłat i korekt" },
-  { href: "/ledger/", label: "Księga", hint: "Przychody i wydatki Rady w EUR" },
-  { href: "/families/", label: "Rodziny", hint: "Gospodarstwa, opiekunowie i rodzeństwo" },
-  { href: "/import/", label: "Import uczniów", hint: "Wczytanie listy uczniów z pliku" },
-  { href: "/print/", label: "Kartki", hint: "Kartki informacyjne o składce" },
-  { href: "/events/", label: "Wydarzenia", hint: "Kalendarz i zatwierdzanie wydarzeń" },
-  { href: "/meetings/", label: "Zebrania", hint: "Protokoły i uchwały" },
-  { href: "/documents/", label: "Dokumenty", hint: "Prywatne dokumenty Rady" },
-  { href: "/admin/", label: "Konta i role", hint: "Zaproszenia, role, reset hasła i MFA" },
-  { href: "/site/", label: "Strona publiczna", hint: "Informacje dla rodziców" },
-]);
+// Ekran startowy: lista paneli wynika z przydziałów konta — visiblePanels z shared/shell.js
+// (jedno źródło prawdy, wspólne z nawigacją paneli). Tu są tylko opisy (podpowiedzi) do
+// każdego panelu, po identyfikatorze z shell.js PANELS. To wyłącznie nawigacja: dostęp do
+// każdego API sprawdza serwer, a ukrycie lub pokazanie linku nie jest kontrolą dostępu.
+export const PANEL_HINTS = Object.freeze({
+  panel: "Ewidencja dobrowolnych wpłat i korekt",
+  ledger: "Przychody i wydatki Rady w EUR",
+  families: "Gospodarstwa, opiekunowie i rodzeństwo",
+  import: "Wczytanie listy uczniów z pliku",
+  print: "Kartki informacyjne o składce",
+  events: "Kalendarz i zatwierdzanie wydarzeń",
+  meetings: "Protokoły i uchwały",
+  documents: "Prywatne dokumenty Rady",
+  email: "Kampanie e-mail: treść i lista odbiorców do zatwierdzenia",
+  reconciliation: "Uzgodnienie wyciągu bankowego z księgą",
+  "year-close": "Zamknięcie roku szkolnego",
+  audit: "Raport roczny dla Komisji Rewizyjnej (tylko odczyt)",
+  "data-export": "Eksport danych",
+  news: "Aktualności: wpisy do zatwierdzenia",
+  admin: "Zaproszenia, role, reset hasła i MFA",
+});
+
+// Strona publiczna nie wymaga przydziału — link jest zawsze.
+export const PUBLIC_PANEL = Object.freeze({ href: "/site/", label: "Strona publiczna", hint: "Informacje dla rodziców" });
+
+// Lista startowa dla przydziałów z GET /api/access: panele z visiblePanels (stała kolejność
+// z shell.js) z opisami, a na końcu strona publiczna. Czysta funkcja.
+export function startPanels(grants) {
+  const panels = visiblePanels(grants).map((panel) => ({
+    href: panel.href,
+    label: panel.label,
+    hint: PANEL_HINTS[panel.id] || "",
+  }));
+  return [...panels, PUBLIC_PANEL];
+}
 
 const MESSAGES = {
   invalid_credentials: "Nieprawidłowy adres e-mail lub hasło.",
@@ -94,6 +117,59 @@ export function normalizeRecoveryCode(value) {
 
 export function isRecoveryFormat(value) {
   return /^[A-Z2-7]{16}$/.test(normalizeRecoveryCode(value));
+}
+
+// --- Podgląd zaproszenia (#164) -----------------------------------------------------------
+// Odpowiedź POST /api/invitations/preview: { email (maska), role, className, schoolYear,
+// expiresAt, accountExists }. Bez zapraszającego i danych innych osób.
+
+const INVITE_ROLE_LABELS = Object.freeze({
+  admin: "Administrator",
+  board: "Zarząd",
+  treasurer: "Skarbnik",
+  representative: "Przedstawiciel klasy",
+  audit: "Komisja Rewizyjna",
+  principal: "Dyrekcja",
+});
+
+export function formatInviteExpiry(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("pl-PL", {
+    dateStyle: "long", timeStyle: "short", timeZone: "Europe/Brussels",
+  }).format(date);
+}
+
+// Wiersze podsumowania: tylko pola, które serwer zwrócił.
+export function inviteSummaryRows(preview) {
+  if (!preview || typeof preview !== "object") return [];
+  const rows = [];
+  if (preview.email) rows.push(["Adres e-mail konta", String(preview.email)]);
+  if (preview.role) rows.push(["Rola", INVITE_ROLE_LABELS[preview.role] ?? String(preview.role)]);
+  if (preview.className) rows.push(["Klasa", String(preview.className)]);
+  if (preview.schoolYear) rows.push(["Rok szkolny", String(preview.schoolYear)]);
+  const expiry = formatInviteExpiry(preview.expiresAt);
+  if (expiry) rows.push(["Ważne do", expiry]);
+  return rows;
+}
+
+// Wariant formularza: konto z hasłem — jedno pole „Obecne hasło”, bez powtórzenia;
+// nowe konto (albo brak podglądu) — nowe hasło dwa razy, oba obowiązkowe.
+export function inviteFormMode(preview) {
+  if (preview && preview.accountExists === true) {
+    return {
+      existing: true,
+      passwordLabel: "Obecne hasło",
+      passwordHint: "Masz już konto w panelu. Wpisz swoje obecne hasło — rola zostanie dodana do Twojego konta.",
+      autocomplete: "current-password",
+    };
+  }
+  return {
+    existing: false,
+    passwordLabel: "Nowe hasło",
+    passwordHint: `Co najmniej ${PASSWORD_MIN} znaków. Najłatwiej zapamiętać kilka niezwiązanych słów. Menedżer haseł i wklejanie są dozwolone.`,
+    autocomplete: "new-password",
+  };
 }
 
 // Token w części URL po „#” nie trafia do serwera ani jego logów.
@@ -223,7 +299,7 @@ export const SECRET_INPUT_IDS = Object.freeze([
 ]);
 const TOKEN_INPUT_IDS = Object.freeze(["invite-token", "reset-token"]);
 const SECRET_TEXT_IDS = Object.freeze(["manual-key"]);
-const SECRET_CONTAINER_IDS = Object.freeze(["qr-code", "recovery-codes"]);
+const SECRET_CONTAINER_IDS = Object.freeze(["qr-code", "recovery-codes", "invite-summary"]);
 
 export function resetPasswordToggle(doc, toggle) {
   const input = doc.getElementById(toggle.dataset.target);

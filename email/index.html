@@ -85,6 +85,19 @@
           <ul id="detail-outbox"></ul>
         </div>
 
+        <div id="detail-report-box" hidden>
+          <h3>Raport doręczeń</h3>
+          <div class="table-wrap" role="region" aria-label="Raport doręczeń" tabindex="0">
+            <table>
+              <caption class="sr-only">Raport doręczeń kampanii</caption>
+              <thead><tr><th scope="col">Stan</th><th scope="col" class="amount">Liczba wiadomości</th></tr></thead>
+              <tbody id="detail-report-body"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="detail-report-unknown" hidden></p>
+          <p class="empty">Same liczby, bez adresów i nazwisk. Stan „nie wiadomo” rozstrzyga zarząd po sprawdzeniu logów dostawcy; ponowna wysyłka jest możliwa wyłącznie w nowej kampanii.</p>
+        </div>
+
         <div class="dialog-actions detail-actions">
           <button id="edit-campaign" type="button">Edytuj szkic</button>
           <button id="build-snapshot" type="button">Utwórz migawkę odbiorców</button>
@@ -97,6 +110,21 @@
         </div>
         <p class="message" id="approve-waiting" hidden>Czeka na drugą osobę — kto przygotował treść lub migawkę, nie może zatwierdzić tej kampanii.</p>
         <p class="empty" id="approve-hint">Zatwierdzenie jest aktywne dopiero po aktualnej migawce odbiorców z co najmniej jednym adresem.</p>
+      </section>
+
+      <section class="card" id="suppressions" aria-labelledby="suppressions-title" hidden>
+        <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="suppressions-title">Lista wyłączeń adresów</h2></div><span id="suppressions-count" aria-live="polite"></span></div>
+        <p class="context">Adresy, na które aplikacja nie wysyła wiadomości po odbiciu, skardze lub blokadzie dostawcy. Adresy są zamaskowane; otwarcie listy jest zapisywane w dzienniku zdarzeń. To nie jest lista dłużników — składki są dobrowolne.</p>
+        <p class="context">Lista „do poprawy” zmniejsza się sama po poprawieniu adresu w danych opiekuna: nowy adres nie ma blokady. Blokadę tego samego adresu zdejmuje się osobno i nigdy automatycznie: jedna osoba składa wniosek z powodem, druga (z MFA) go zatwierdza. Zdjęcie blokady nie usuwa historii — powstaje nowy zapis. Blokadę po skardze można zdjąć wyłącznie na wniosek rodzica.</p>
+        <div class="message" id="suppressions-message" role="status"></div>
+        <div class="table-wrap" id="suppressions-table" role="region" aria-labelledby="suppressions-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Aktywne blokady adresów wybranego roku</caption>
+            <thead><tr><th scope="col">Rodzina</th><th scope="col">Adres</th><th scope="col">Powód</th><th scope="col">Od</th><th scope="col" class="amount">Zdarzenia</th><th scope="col">Wniosek o zdjęcie</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="suppressions-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="suppressions-empty" hidden>Brak aktywnych blokad adresów.</p>
       </section>
     </main>
 
@@ -136,6 +164,15 @@
       <p id="recipients-count" aria-live="polite"></p>
       <button class="load-more" id="recipients-load-more" type="button" hidden>Wczytaj następne</button>
     </dialog>
+    <dialog id="suppression-request-dialog" aria-labelledby="suppression-request-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Wniosek</p><h2 id="suppression-request-title">Zdjęcie blokady adresu</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context" id="suppression-request-target"></p>
+      <p class="context">Wniosek nie zdejmuje blokady. Zdejmuje ją dopiero zatwierdzenie przez inną osobę. Wiadomości nie są wysyłane.</p>
+      <label>Powód <select name="releaseReason" required></select></label>
+      <label>Kod sposobu potwierdzenia (bez treści rozmowy i adresów) <input name="confirmationNote" maxlength="40" pattern="[a-z0-9_]{1,40}" placeholder="np. parent_email_reply" autocomplete="off" /></label>
+      <div class="form-error" id="suppression-request-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="suppression-request-error">Złóż wniosek</button></div>
+    </form></dialog>
     <script type="module" src="/main.js"></script>
   </body>
 </html>

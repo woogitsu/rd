@@ -8,6 +8,7 @@
 //   POST /api/reconciliations/{id}/lines/{lineId}/payment      (Idempotency-Key) wpłata + powiązanie naraz (#115)
 //   GET  /api/reconciliations/{id}/suggestions?windowDays=…   tylko propozycje, nigdy zatwierdzenie
 //   POST /api/reconciliations/{id}/matches                    (Idempotency-Key)
+//   POST /api/reconciliations/{id}/matches/batch              (Idempotency-Key) jawna lista par, wszystko albo nic (#115)
 //   POST /api/reconciliations/{id}/matches/{matchId}/revocation
 //   POST /api/reconciliations/{id}/group-matches              (Idempotency-Key) przelew zbiorczy (#127)
 //   POST /api/reconciliations/{id}/group-matches/{groupId}/revocation
@@ -24,8 +25,10 @@ import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
+import { detectDelimiter, parseCsvMatrix } from '../../../import/csv.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { buildBudgetExecution } from './ledger-budget.js';
@@ -54,6 +57,12 @@ const MAX_CANDIDATES = 5;
 // Dopasowanie zbiorcze (#127, cz. 2): jedna pozycja wyciągu ↔ 2…50 wpłat/wpisów.
 const MIN_GROUP_ITEMS = 2;
 const MAX_GROUP_ITEMS = 50;
+const MAX_BATCH_MATCHES = 50;
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+function piiFail(code, categories) {
+  return new RequestError(code, 422, { categories });
+}
 
 class RequestError extends Error {
   constructor(code, status = 400, extra = {}) {
@@ -156,30 +165,18 @@ const HEADER_ALIASES = new Map([
   ['description', 'reference'], ['communication', 'reference'],
 ]);
 
+// #77: wspólny parser RFC 4180 (import/csv.js) — separator ; , albo tabulator liczony poza
+// cudzysłowami w pierwszej linii. Remis nie jest zgadywany po cichu: błąd zamiast domyślnego przecinka.
 function parseCsvRows(text) {
-  const source = text.replace(/^﻿/, '');
-  const firstLine = source.split(/\r?\n/, 1)[0] ?? '';
-  const delimiter = (firstLine.match(/;/g)?.length ?? 0) > (firstLine.match(/,/g)?.length ?? 0) ? ';' : ',';
-  const rows = [];
-  let row = [];
-  let field = '';
-  let quoted = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    if (quoted) {
-      if (char === '"' && source[index + 1] === '"') { field += '"'; index += 1; }
-      else if (char === '"') quoted = false;
-      else field += char;
-    } else if (char === '"' && field === '') quoted = true;
-    else if (char === delimiter) { row.push(field); field = ''; }
-    else if (char === '\n' || char === '\r') {
-      if (char === '\r' && source[index + 1] === '\n') index += 1;
-      row.push(field); rows.push(row); row = []; field = '';
-    } else field += char;
+  if (text.includes('\uFFFD') || text.includes('\u0000')) throw new RequestError('invalid_csv_encoding');
+  const detected = detectDelimiter(text);
+  if (detected.tie) throw new RequestError('ambiguous_csv_delimiter');
+  try {
+    return parseCsvMatrix(text, { delimiter: detected.delimiter });
+  } catch {
+    // Komunikat parsera zawiera tylko pozycję znaku, ale kod błędu API pozostaje ogólny.
+    throw new RequestError('invalid_csv');
   }
-  if (quoted) throw new RequestError('invalid_csv');
-  if (field !== '' || row.length) { row.push(field); rows.push(row); }
-  return rows.filter((cells) => cells.some((cell) => cell.trim() !== ''));
 }
 
 function parseCsvDate(value) {
@@ -474,6 +471,7 @@ async function createReconciliation(request, env, json) {
     const response = await env.db.transaction(async (tx) => {
       const replay = replayOrConflict(await byKey(tx));
       if (replay) return replay;
+      const gate = gateFreeText([['bank_reconciliations.notes', input.notes]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliations (id, school_year_id, statement_date, statement_balance_cents,
@@ -484,7 +482,7 @@ async function createReconciliation(request, env, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.created', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: input.schoolYearId },
+        metadata: { schoolYearId: input.schoolYearId, ...piiAuditMetadata(gate) },
       });
       const row = await loadReconciliation(tx, id);
       return json({ reconciliation: reconciliationFromRow(row) }, 201, CREATED);
@@ -1342,6 +1340,146 @@ async function confirmMatch(request, env, id, json) {
   }
 }
 
+// Wsadowe zatwierdzenie wybranych propozycji (#115): klient podaje jawną listę
+// par (statementLineId, paymentEntryId); serwer nigdy nie zatwierdza „wszystkich
+// propozycji”. Wariant zachowawczy: wszystko albo nic — jedna transakcja, a przy
+// jakiejkolwiek parze odrzuconej nic nie zostaje zapisane, odpowiedź wymienia
+// odrzucone pary (409 match_batch_rejected). Reguły par są takie same jak dla
+// POST …/matches (pozycja wolna, przelew, brak podwójnego ujęcia, kwota — baza).
+const WHOLE_BATCH_ERRORS = new Set(['school_year_closed', 'reconciliation_confirmed', 'reconciliation_abandoned']);
+
+function parseBatchPairs(data) {
+  const list = data.matches;
+  if (!Array.isArray(list) || list.length === 0) throw new RequestError('match_batch_empty');
+  if (list.length > MAX_BATCH_MATCHES) throw new RequestError('match_batch_too_large');
+  const lines = new Set();
+  const payments = new Set();
+  const pairs = list.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)
+        || Object.keys(item).some((key) => key !== 'statementLineId' && key !== 'paymentEntryId')
+        || !validId(item.statementLineId) || !validId(item.paymentEntryId)) {
+      throw new RequestError('invalid_request');
+    }
+    if (lines.has(item.statementLineId) || payments.has(item.paymentEntryId)) throw new RequestError('match_batch_duplicate');
+    lines.add(item.statementLineId);
+    payments.add(item.paymentEntryId);
+    return { statementLineId: item.statementLineId, paymentEntryId: item.paymentEntryId };
+  });
+  // Kolejność w żądaniu nie ma znaczenia: ten sam zbiór par daje te same klucze par.
+  return pairs.sort((a, b) => (a.statementLineId < b.statementLineId ? -1 : a.statementLineId > b.statementLineId ? 1 : 0));
+}
+
+// Klucze par wywodzą się z klucza żądania i pozycji na posortowanej liście.
+async function batchPairKeys(idempotencyKey, count) {
+  const prefix = `bm:${(await sha256Hex(idempotencyKey)).slice(0, 40)}`;
+  return Array.from({ length: count }, (_, index) => `${prefix}:${index}`);
+}
+
+async function confirmMatchBatch(request, env, id, json) {
+  const idempotencyKey = readIdempotencyKey(request);
+  const data = await readJson(request);
+  const pairs = parseBatchPairs(data);
+  const context = await requireContext(request, env, WRITE_ROLES);
+  const actorId = context.session.user.id;
+  const keys = await batchPairKeys(idempotencyKey, pairs.length);
+  const allKeys = await batchPairKeys(idempotencyKey, MAX_BATCH_MATCHES);
+
+  const byKey = async (executor) => (await executor.query(
+    'SELECT * FROM bank_reconciliation_matches WHERE idempotency_key = ANY($1::text[]) ORDER BY idempotency_key', [allKeys],
+  )).rows;
+  // Ten sam klucz i ten sam zbiór par → 200 z zapisanymi powiązaniami; inny zbiór → 409.
+  const replayOrConflict = (rows) => {
+    if (!rows.length) return null;
+    const byIdempotencyKey = new Map(rows.map((row) => [row.idempotency_key, row]));
+    const same = rows.length === pairs.length && pairs.every((pair, index) => {
+      const row = byIdempotencyKey.get(keys[index]);
+      return row && row.created_by === actorId && row.reconciliation_id === id
+        && row.statement_line_id === pair.statementLineId && row.payment_entry_id === pair.paymentEntryId;
+    });
+    if (!same) throw new RequestError('idempotency_conflict', 409);
+    return json({ matches: keys.map((key) => matchFromRow(byIdempotencyKey.get(key))) }, 200, REPLAYED);
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const row = await loadReconciliation(tx, id, { lock: true });
+      if (!row) throw new RequestError('reconciliation_not_found', 404);
+      requireYear(context, WRITE_ROLES, row.school_year_id);
+      const replay = replayOrConflict(await byKey(tx));
+      if (replay) return replay;
+      if (row.status !== 'draft') throw notDraftError(row);
+
+      const failures = [];
+      const created = [];
+      for (const [index, pair] of pairs.entries()) {
+        const fail = (code) => failures.push({ statementLineId: pair.statementLineId, paymentEntryId: pair.paymentEntryId, error: code });
+        const line = await tx.query('SELECT 1 FROM bank_statement_lines WHERE id = $1 AND reconciliation_id = $2',
+          [pair.statementLineId, id]);
+        if (!line.rows.length) { fail('statement_line_not_found'); continue; }
+        const taken = await tx.query(
+          `SELECT 1 FROM bank_reconciliation_matches
+            WHERE revoked_at IS NULL AND (statement_line_id = $1 OR (reconciliation_id = $2 AND payment_entry_id = $3))
+           UNION ALL
+           SELECT 1 FROM bank_reconciliation_group_matches_current g WHERE g.statement_line_id = $1
+           UNION ALL
+           SELECT 1 FROM bank_group_match_items_current i WHERE i.reconciliation_id = $2 AND i.payment_entry_id = $3
+           LIMIT 1`,
+          [pair.statementLineId, id, pair.paymentEntryId],
+        );
+        if (taken.rows.length) { fail('already_matched'); continue; }
+        const payment = await tx.query('SELECT method FROM payment_entries WHERE id = $1', [pair.paymentEntryId]);
+        if (!payment.rows[0]) { fail('invalid_match_target'); continue; }
+        if (payment.rows[0].method !== 'bank') { fail('match_method_mismatch'); continue; }
+        // Reszta reguł (kwota, podwójne ujęcie, inne uzgodnienie roku) to triggery bazy;
+        // punkt zapisu pozwala zebrać wszystkie odrzucone pary zamiast przerwać na pierwszej.
+        const matchId = crypto.randomUUID();
+        await tx.query('SAVEPOINT batch_pair');
+        try {
+          await tx.query(
+            `INSERT INTO bank_reconciliation_matches (id, reconciliation_id, statement_line_id, payment_entry_id, created_by, idempotency_key)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [matchId, id, pair.statementLineId, pair.paymentEntryId, actorId, keys[index]],
+          );
+          await tx.query('RELEASE SAVEPOINT batch_pair');
+          created.push({ matchId, pair });
+        } catch (error) {
+          await tx.query('ROLLBACK TO SAVEPOINT batch_pair');
+          if (isUniqueError(error)) { fail('already_matched'); continue; }
+          try {
+            mapDatabaseError(error);
+          } catch (mapped) {
+            if (!(mapped instanceof RequestError) || WHOLE_BATCH_ERRORS.has(mapped.code)) throw mapped;
+            fail(mapped.code);
+          }
+        }
+      }
+      if (failures.length) throw new RequestError('match_batch_rejected', 409, { failures });
+      for (const { matchId, pair } of created) {
+        // Bez kwot, tytułów i identyfikatorów gospodarstw (jak pojedyncze potwierdzenie).
+        await insertAuditEvent(tx, {
+          actorId, action: 'reconciliation.match.confirmed', entityType: 'bank_reconciliation_match', entityId: matchId,
+          metadata: {
+            reconciliationId: id, statementLineId: pair.statementLineId, paymentEntryId: pair.paymentEntryId,
+            schoolYearId: row.school_year_id, source: 'batch',
+          },
+        });
+      }
+      const { rows } = await tx.query(
+        'SELECT * FROM bank_reconciliation_matches WHERE id = ANY($1::text[])', [created.map((entry) => entry.matchId)],
+      );
+      const byId = new Map(rows.map((match) => [match.id, match]));
+      return json({ matches: created.map((entry) => matchFromRow(byId.get(entry.matchId))) }, 201, CREATED);
+    });
+  } catch (error) {
+    if (isUniqueError(error)) {
+      const replay = replayOrConflict(await byKey(env.db));
+      if (replay) return replay;
+      throw new RequestError('already_matched', 409);
+    }
+    mapDatabaseError(error);
+  }
+}
+
 async function revokeMatch(request, env, id, matchId, json) {
   const data = await readJson(request);
   const reason = optionalText(data.reason, 3, 500, 'invalid_reason');
@@ -1365,6 +1503,7 @@ async function revokeMatch(request, env, id, matchId, json) {
         throw new RequestError('match_already_revoked', 409);
       }
       if (row.status !== 'draft') throw notDraftError(row);
+      const gate = gateFreeText([['bank_reconciliation_matches.revoke_reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const updated = await tx.query(
         `UPDATE bank_reconciliation_matches SET revoked_at = now(), revoked_by = $2, revoke_reason = $3
           WHERE id = $1 RETURNING *`,
@@ -1372,7 +1511,7 @@ async function revokeMatch(request, env, id, matchId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.match.revoked', entityType: 'bank_reconciliation_match', entityId: matchId,
-        metadata: { reconciliationId: id, schoolYearId: row.school_year_id },
+        metadata: { reconciliationId: id, schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       return json({ match: matchFromRow(updated.rows[0]) }, 200, CREATED);
     });
@@ -1616,6 +1755,7 @@ async function revokeGroupMatch(request, env, id, groupId, json) {
         throw new RequestError('match_already_revoked', 409);
       }
       if (row.status !== 'draft') throw notDraftError(row);
+      const gate = gateFreeText([['bank_reconciliation_group_match_revocations.reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const revocationId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO bank_reconciliation_group_match_revocations (id, group_match_id, reconciliation_id, school_year_id,
@@ -1625,7 +1765,7 @@ async function revokeGroupMatch(request, env, id, groupId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.group_match.revoked', entityType: 'bank_reconciliation_group_match',
-        entityId: groupId, metadata: { reconciliationId: id, revocationId, schoolYearId: row.school_year_id },
+        entityId: groupId, metadata: { reconciliationId: id, revocationId, schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       const [updated] = await loadGroupMatches(tx, id, groupId);
       return json({ groupMatch: publicGroupMatch(updated) }, 200, CREATED);
@@ -1668,6 +1808,7 @@ async function confirmReconciliation(request, env, id, json) {
       }
       const current = reconciliationFromRow(row);
       if (current.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
+      const gate = gateFreeText([['bank_reconciliations.confirmation_note', note]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       await tx.query(
         `UPDATE bank_reconciliations
             SET status = 'confirmed', confirmed_by = $2, confirmed_at = now(), confirmation_note = $3
@@ -1680,7 +1821,7 @@ async function confirmReconciliation(request, env, id, json) {
       if (result.differenceCents !== 0 && !note) throw new RequestError('difference_requires_note');
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.confirmed', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: row.school_year_id, balanced: result.differenceCents === 0 },
+        metadata: { schoolYearId: row.school_year_id, balanced: result.differenceCents === 0, ...piiAuditMetadata(gate) },
       });
       return json({ reconciliation: result }, 200, CREATED);
     });
@@ -1732,6 +1873,7 @@ async function abandonReconciliation(request, env, id, json) {
         throw new RequestError('reconciliation_has_active_matches', 409, { activeMatchCount });
       }
       // Dopasowania zbiorcze (#390, jeśli są) sprawdza trigger bazy (0107).
+      const gate = gateFreeText([['bank_reconciliations.abandon_reason', reason]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       await tx.query(
         `UPDATE bank_reconciliations
             SET status = 'abandoned', abandoned_by = $2, abandoned_at = now(), abandon_reason = $3
@@ -1741,7 +1883,7 @@ async function abandonReconciliation(request, env, id, json) {
       const abandoned = await loadReconciliation(tx, id);
       await insertAuditEvent(tx, {
         actorId, action: 'reconciliation.abandoned', entityType: 'bank_reconciliation', entityId: id,
-        metadata: { schoolYearId: row.school_year_id },
+        metadata: { schoolYearId: row.school_year_id, ...piiAuditMetadata(gate) },
       });
       return json({ reconciliation: reconciliationFromRow(abandoned) }, 200, CREATED);
     });
@@ -1968,6 +2110,42 @@ export async function buildAuditReport(executor, schoolYearId) {
     createdBy: row.created_by, createdAt: isoTimestamp(row.created_at),
   }));
 
+  // #144: przeksięgowania (storno + wpis zastępczy). Bez danych osobowych: kategorie,
+  // kwoty, powód i identyfikatory. „Dotyka zatwierdzonego uzgodnienia” = stary wpis
+  // był powiązany z pozycją wyciągu w uzgodnieniu zatwierdzonym.
+  const reclassifications = (await executor.query(
+    `SELECT n.id, n.replaces_entry_id, n.created_by, n.created_at, n.direction, n.method,
+            n.amount_cents, to_char(n.occurred_on, 'YYYY-MM-DD') AS occurred_on,
+            o.direction AS old_direction, o.method AS old_method, o.amount_cents AS old_amount_cents,
+            to_char(o.occurred_on, 'YYYY-MM-DD') AS old_occurred_on,
+            oc.name AS old_category, nc.name AS new_category,
+            k.amount_cents AS storno_cents, k.reason AS storno_reason,
+            n.payment_entry_id IS NOT NULL AS payment_linked,
+            (EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                       JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+                      WHERE m.ledger_entry_id = o.id AND m.revoked_at IS NULL AND r.status = 'confirmed')
+             OR EXISTS (SELECT 1 FROM bank_group_match_items_current i
+                          JOIN bank_reconciliations r ON r.id = i.reconciliation_id
+                         WHERE i.ledger_entry_id = o.id AND r.status = 'confirmed')) AS in_confirmed_reconciliation
+       FROM ledger_entries n
+       JOIN ledger_entries o ON o.id = n.replaces_entry_id
+       JOIN ledger_categories oc ON oc.id = o.category_id
+       JOIN ledger_categories nc ON nc.id = n.category_id
+       LEFT JOIN ledger_corrections k ON k.ledger_entry_id = o.id AND k.idempotency_key LIKE 'ledrepl-storno-%'
+      WHERE n.school_year_id = $1
+      ORDER BY n.created_at, n.id`,
+    [schoolYearId],
+  )).rows.map((row) => ({
+    id: row.id, replacesEntryId: row.replaces_entry_id, createdAt: isoTimestamp(row.created_at), createdBy: row.created_by,
+    oldOccurredOn: row.old_occurred_on, occurredOn: row.occurred_on,
+    oldDirection: row.old_direction, direction: row.direction,
+    oldMethod: row.old_method, method: row.method,
+    oldCategory: row.old_category, newCategory: row.new_category,
+    stornoCents: toSafeInteger(row.storno_cents ?? 0), amountCents: toSafeInteger(row.amount_cents),
+    reason: String(row.storno_reason ?? '').replace(/^Przeksięgowanie: /, ''),
+    paymentLinked: row.payment_linked, inConfirmedReconciliation: row.in_confirmed_reconciliation,
+  }));
+
   // #117: wynik wydarzeń z centrów kosztów (przypisania bieżących wersji), z tej samej
   // migawki co reszta raportu. Tylko nazwa wydarzenia i kwoty — bez danych osobowych.
   const eventResults = await costCenterReport(executor, schoolYearId, 'event');
@@ -2045,6 +2223,7 @@ export async function buildAuditReport(executor, schoolYearId) {
     resolutionExecution,
     expenseReviews,
     corrections,
+    reclassifications,
     openingAdjustments,
     reconciliations: {
       items,
@@ -2262,13 +2441,15 @@ export async function handle(request, env, url, json) {
       if (method === 'POST') return await createReconciliation(request, env, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
-    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|group-matches|confirm|abandon))?(?:\/([^/]+)\/(revocation|payment))?$/);
+    const match = path.match(/^\/api\/reconciliations\/([^/]+)(?:\/(lines|suggestions|matches|group-matches|confirm|abandon))?(?:\/([^/]+)\/(revocation|payment)|\/(batch))?$/);
     if (!match) return null;
     const id = decodeId(match[1]);
     const action = match[2] ?? null;
     const subAction = match[4] ?? null;
     if (subAction === 'revocation' && action !== 'matches' && action !== 'group-matches') return null;
     if (subAction === 'payment' && action !== 'lines') return null;
+    const batch = match[5] === 'batch';
+    if (batch && action !== 'matches') return null;
     if (!action && method === 'GET') return await getReconciliation(request, env, id, url, json);
     if (action === 'suggestions' && method === 'GET') return await suggestMatches(request, env, id, url, json);
     if (method !== 'POST') {
@@ -2279,6 +2460,7 @@ export async function handle(request, env, url, json) {
     }
     if (action === 'lines' && subAction === 'payment') return await createPaymentFromLine(request, env, id, decodeId(match[3]), json);
     if (action === 'lines') return await importLines(request, env, id, json);
+    if (action === 'matches' && batch) return await confirmMatchBatch(request, env, id, json);
     if (action === 'matches' && subAction === 'revocation') return await revokeMatch(request, env, id, decodeId(match[3]), json);
     if (action === 'matches') return await confirmMatch(request, env, id, json);
     if (action === 'group-matches' && subAction === 'revocation') return await revokeGroupMatch(request, env, id, decodeId(match[3]), json);

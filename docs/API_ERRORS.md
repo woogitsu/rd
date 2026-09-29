@@ -35,6 +35,7 @@ wpisów).
 | --- | --- | --- |
 | `active_bank_match` | Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `admin_exists` | Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne. | Zależy od kontekstu (patrz moduł trasy). |
+| `agenda_item_not_found` | Nie znaleziono punktu porządku obrad. | Nie — popraw dane żądania. |
 | `agenda_position_taken` | Ta pozycja porządku obrad jest już zajęta. | Zależy od kontekstu (patrz moduł trasy). |
 | `allocation_exceeds_net` | Suma przypisań przekracza kwotę wpisu po korektach. Najpierw zmień przypisanie. | Nie — popraw dane żądania. |
 | `allocation_reason_required` | Zmiana przypisania wymaga podania powodu. | Nie — popraw dane żądania. |
@@ -43,6 +44,7 @@ wpisów).
 | `already_matched_via_payment` | Pozycja jest już dopasowana do wpłaty. | Nie — popraw dane żądania. |
 | `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
 | `alt_text_required` | Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne. | Zależy od kontekstu (patrz moduł trasy). |
+| `ambiguous_csv_delimiter` | Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem. | Nie — popraw dane żądania. |
 | `ambiguous_local_time` | Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi. | Zależy od kontekstu (patrz moduł trasy). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -53,6 +55,7 @@ wpisów).
 | `budget_line_exists` | Ta kategoria ma już linię preliminarza. Zmień ją nową wersją. | Zależy od kontekstu (patrz moduł trasy). |
 | `budget_line_not_found` | Nie znaleziono linii preliminarza. | Nie — popraw dane żądania. |
 | `budget_line_superseded` | Ta wersja linii preliminarza została już zmieniona. Odśwież widok i zmień aktualną wersję. | Zależy od kontekstu (patrz moduł trasy). |
+| `campaign_audience_locked` | Odbiorcy tej kampanii wynikają z zebrania i nie można ich zmienić. | Nie — popraw dane żądania. |
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
@@ -123,6 +126,7 @@ wpisów).
 | `import_disabled` | Import jest wyłączony na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `import_has_conflicts` | Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `inconsistent_matches` | Dopasowania są niespójne. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
+| `invalid_access_kind` | Wybierz rodzaj odczytu z listy. | Nie — popraw dane żądania. |
 | `invalid_allocation` | Niepoprawny podział wpisu na wydarzenia lub klasy. | Nie — popraw dane żądania. |
 | `invalid_alt_text` | Podaj opis zdjęcia (tekst alternatywny). | Nie — popraw dane żądania. |
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
@@ -149,6 +153,7 @@ wpisów).
 | `invalid_credentials` | Nieprawidłowy adres e-mail lub hasło. | Nie — popraw dane żądania. |
 | `invalid_csv_header` | Plik CSV ma niepoprawny nagłówek. | Nie — popraw dane żądania. |
 | `invalid_csv` | Nie udało się odczytać pliku CSV. | Nie — popraw dane żądania. |
+| `invalid_csv_encoding` | Plik CSV ma nieznane kodowanie (w tekście są znaki zastępcze). Zapisz go jako „CSV UTF-8” albo wybierz kodowanie i wgraj ponownie. | Nie — popraw dane żądania. |
 | `invalid_current_password` | Obecne hasło jest nieprawidłowe. | Nie — popraw dane żądania. |
 | `invalid_cursor` | Nie udało się wczytać kolejnej strony wyników. Odśwież listę. | Nie — popraw dane żądania. |
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
@@ -195,12 +200,15 @@ wpisów).
 | `invalid_method` | Wybierz sposób wpłaty z listy. | Nie — popraw dane żądania. |
 | `invalid_names` | Podaj nazwy klas (każda do 60 znaków). | Nie — popraw dane żądania. |
 | `invalid_next_school_year` | Niepoprawny następny rok szkolny. | Nie — popraw dane żądania. |
+| `invalid_notice_content` | Treść zawiadomienia nie nadaje się na wiadomość e-mail (znaki klamrowe, niedozwolone sformułowanie albo za długa treść). Popraw zebranie lub porządek obrad i przygotuj nową wersję. | Nie — popraw dane żądania. |
+| `invalid_notice_rule` | Podaj razem minimalną liczbę dni zawiadomienia i źródło tej reguły albo zostaw oba pola puste. | Nie — popraw dane żądania. |
 | `invalid_ogm_base` | Niepoprawna baza referencji płatności. | Nie — popraw dane żądania. |
 | `invalid_ogm_reference` | Niepoprawna referencja płatności (oczekiwano 12 cyfr). | Nie — popraw dane żądania. |
 | `invalid_options` | Niepoprawne ustawienia importu. | Nie — popraw dane żądania. |
 | `invalid_or_expired_link` | Ten link jest nieprawidłowy albo już nieaktywny. | Nie — poproś o nowy link. |
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_origin` | Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji. | Nie — popraw dane żądania. |
+| `invalid_outcome` | Wybierz wynik odczytu z listy. | Nie — popraw dane żądania. |
 | `invalid_overrides` | Lista zmian klasy docelowej jest niepoprawna. | Nie — popraw dane żądania. |
 | `invalid_payee_name` | Podaj nazwę odbiorcy (maksymalnie 70 znaków). | Nie — popraw dane żądania. |
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
@@ -214,7 +222,7 @@ wpisów).
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
 | `invalid_received_on` | Podaj poprawną datę wpłynięcia żądania. | Nie — popraw dane żądania. |
 | `invalid_reference_text` | Opis wpłaty jest za długi albo zawiera niedozwolone znaki. | Nie — popraw dane żądania. |
-| `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje. | Nie — popraw dane żądania. |
+| `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje albo jest poza Twoim zakresem. | Nie — popraw dane żądania. |
 | `invalid_relation_kind` | Wybierz rodzaj powiązania uchwały z listy. | Nie — popraw dane. |
 | `invalid_release_reason` | Wybierz jeden z dopuszczalnych powodów zdjęcia blokady. | Nie — popraw dane. |
 | `invalid_replacement_document` | Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę. | Nie — popraw dane żądania. |
@@ -261,10 +269,19 @@ wpisów).
 | `login_busy` | Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund. | Tak — po chwili. |
 | `match_already_revoked` | Dopasowanie zostało już wycofane. | Zależy od kontekstu (patrz moduł trasy). |
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
+| `match_batch_duplicate` | Ta sama pozycja lub wpłata występuje w partii więcej niż raz. | Nie — popraw dane żądania. |
+| `match_batch_empty` | Wybierz co najmniej jedną parę pozycji i wpłaty. | Nie — popraw dane żądania. |
+| `match_batch_rejected` | Nie zatwierdzono żadnej pary: część wybranych par jest niepoprawna. Odśwież propozycje i wybierz ponownie. | Tak, po odświeżeniu propozycji (lista `failures` wskazuje odrzucone pary). |
+| `match_batch_too_large` | Za dużo par w jednej partii. Zatwierdź mniejszą liczbę naraz. | Nie — popraw dane żądania. |
 | `match_method_mismatch` | Sposób wpłaty nie pasuje do pozycji wyciągu. | Nie — popraw dane żądania. |
 | `match_not_found` | Nie znaleziono dopasowania. | Nie — popraw dane żądania. |
 | `matched_in_other_reconciliation` | Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku. | Nie — popraw dane żądania. |
+| `meeting_cancelled` | Zebranie zostało odwołane i nie przyjmuje już zmian. | Nie — popraw dane żądania. |
 | `meeting_not_found` | Nie znaleziono zebrania. | Nie — popraw dane żądania. |
+| `meeting_not_reschedulable` | Termin można zmienić tylko dla zebrania w szkicu lub zaplanowanego. | Nie — popraw dane żądania. |
+| `meeting_not_scheduled` | Zawiadomienie można zatwierdzić dopiero dla zebrania w stanie „zaplanowane”. | Nie — popraw dane żądania. |
+| `meeting_notice_closed` | Dla tego zebrania nie można już przygotować zawiadomienia. | Nie — popraw dane żądania. |
+| `meeting_status_transition_invalid` | Ta zmiana stanu zebrania jest niedozwolona. | Nie — popraw dane żądania. |
 | `method_not_allowed` | Ta operacja jest niedostępna. | Zależy od kontekstu (patrz moduł trasy). |
 | `mfa_enrollment_required` | Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą. | Nie — popraw dane żądania. |
 | `mfa_key_missing` | Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem. | Nie — zależy od sesji i uprawnień. |
@@ -284,6 +301,14 @@ wpisów).
 | `not_found` | Nie znaleziono zasobu albo nie masz do niego dostępu. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_resolvable` | Tej wiadomości nie można jeszcze rozstrzygnąć. | Nie — popraw dane żądania. |
 | `nothing_to_promote` | Plan nie zawiera żadnego ucznia do przeniesienia. | Nie — popraw dane żądania. |
+| `notice_campaign_audience_unsupported` | Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana. | Nie — popraw dane żądania. |
+| `notice_four_eyes_required` | Zawiadomienie zatwierdza inna osoba niż jego autor. | Nie — popraw dane żądania. |
+| `notice_not_approved` | Szkic kampanii powstaje tylko z zatwierdzonego zawiadomienia. | Nie — popraw dane żądania. |
+| `notice_not_found` | Nie znaleziono zawiadomienia. | Nie — popraw dane żądania. |
+| `notice_not_latest` | Istnieje nowsza wersja zawiadomienia. Wróć do jej treści. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `notice_outdated` | Termin, miejsce albo porządek obrad zmieniły się po przygotowaniu zawiadomienia. Przygotuj nową wersję. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `notice_requires_agenda` | Zawiadomienie wymaga co najmniej jednego niewycofanego punktu porządku obrad. | Nie — popraw dane żądania. |
+| `notice_up_to_date` | Zatwierdzone zawiadomienie odpowiada aktualnemu zebraniu — nowa wersja nie jest potrzebna. | Nie — popraw dane żądania. |
 | `offset_not_valid_in_europe_brussels` | Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_exists` | Bilans otwarcia dla tego roku szkolnego już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_not_found` | Nie znaleziono bilansu otwarcia dla tego roku szkolnego. | Nie — popraw dane żądania. |
@@ -302,7 +327,6 @@ wpisów).
 | `payment_cannot_be_corrected` | Tej wpłaty nie można skorygować w obecnym stanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_cannot_be_refunded` | Tej wpłaty nie można zwrócić w obecnym stanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_has_allocations` | Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części. | Nie — popraw dane żądania. |
-| `payment_linked_entry_not_replaceable` | Wpisu powiązanego z wpłatą nie można przeksięgować. Skoryguj albo wpłatę, albo wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_not_assigned` | Wpłata nie jest przypisana do żadnej rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_not_found` | Nie znaleziono wpłaty albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
 | `payment_reassignment_household_mismatch` | Nie można przepisać wpłaty na tę rodzinę — powiązany wpis księgi wskazuje inną rodzinę. | Nie — popraw dane żądania. |
@@ -311,6 +335,7 @@ wpisów).
 | `payment_reference_already_revoked` | Ta referencja płatności jest już unieważniona. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_reference_not_found` | Nie znaleziono referencji płatności. | Nie — popraw dane żądania. |
 | `pending_admin_invitation` | Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
+| `personal_data_forbidden` | Tekst zawiera adres e-mail, numer rachunku (IBAN) albo numer rejestru krajowego. Ten zapis jest niezmienny i trafia do eksportu — usuń te dane osobowe i zapisz ponownie (nie można tego potwierdzić). | Nie — popraw dane żądania. |
 | `photo_file_exists` | To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik. | Nie — popraw dane żądania. |
 | `photo_file_integrity_mismatch` | Zapisany plik zdjęcia nie zgadza się z zapisanym skrótem. Zgłoś to administratorowi. | Zależy od kontekstu (patrz moduł trasy). |
 | `photo_file_malformed` | Plik zdjęcia odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi. | Nie — popraw dane żądania. |
@@ -358,6 +383,7 @@ wpisów).
 | `request_already_consumed` | Ten wniosek o zdjęcie blokady został już rozpatrzony. | Zależy od kontekstu (patrz moduł trasy). |
 | `request_not_found` | Nie znaleziono wniosku. | Nie — popraw dane żądania. |
 | `request_too_large` | Za dużo danych w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
+| `reschedule_no_change` | Podany termin jest taki sam jak obecny. | Nie — popraw dane żądania. |
 | `resolution_expense_only` | Uchwałę jako upoważnienie można wskazać tylko przy wydatku. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_final_immutable` | Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_adopted` | Wskazana uchwała nie jest przyjęta. | Zależy od kontekstu (patrz moduł trasy). |
@@ -369,6 +395,7 @@ wpisów).
 | `resolution_reference_mismatch` | Referencja uchwały nie zgadza się z numerem wskazanej uchwały. | Nie — popraw dane żądania. |
 | `resolution_required` | Ten wydatek wymaga wskazania uchwały. | Nie — popraw dane żądania. |
 | `restore_drill_failed` | Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
+| `restore_report_bad_identifier` | Raport zgodności odrzucił nieprawidłową nazwę tabeli. Sprawdź schemat bazy. | Zależy od kontekstu (patrz moduł trasy). |
 | `retry_later` | Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `review_expense_only` | Weryfikacja drugiej osoby dotyczy wyłącznie wydatków. | Zależy od kontekstu (patrz moduł trasy). |
 | `revision_conflict` | Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -415,6 +442,7 @@ wpisów).
 | `unsupported_value` | Eksport zawiera nieobsługiwaną wartość. | Nie — popraw dane żądania. |
 | `unsupported_version` | Nieobsługiwana wersja danych importu. Odśwież stronę. | Nie — popraw dane żądania. |
 | `upload_busy` | Za dużo równoczesnych przesyłań plików. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `use_reschedule_endpoint` | Po zatwierdzeniu zawiadomienia zmień termin przez „Zmień termin” — wymaga to powodu. | Nie — popraw dane żądania. |
 | `user_disabled` | Konto jest wyłączone. | Zależy od kontekstu (patrz moduł trasy). |
 | `user_not_found` | Nie znaleziono konta. | Nie — popraw dane żądania. |
 | `vote_record_required` | Wynik uchwały wymaga wszystkich trzech liczb głosów i ustalenia quorum. | Nie — popraw dane żądania. |

@@ -2279,6 +2279,39 @@
       "free_text": false,
       "exportable": false,
       "data_type": "text"
+    },
+    "meeting_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "meeting_notice_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "class_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
     }
   },
   "email_outbox": {
@@ -2944,13 +2977,13 @@
       "data_type": "text"
     },
     "confirmation_note": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uwaga do zwolnienia adresu z listy wykluczeń",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     },
@@ -3381,13 +3414,13 @@
       "data_type": "text"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
+      "personal": "direct",
+      "subject": "student",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany przypisania do klasy",
       "retention_category": null,
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -5656,13 +5689,13 @@
       "data_type": "text"
     },
     "note": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uwaga do linii preliminarza",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -6385,13 +6418,13 @@
       "data_type": "text"
     },
     "note": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uwaga do bilansu otwarcia",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -6453,13 +6486,13 @@
       "data_type": "text"
     },
     "description": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "opis przeniesienia gotówka–bank",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -6681,6 +6714,28 @@
       "subject": null,
       "category": null,
       "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "withdrawn_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "withdrawn_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
@@ -7004,13 +7059,13 @@
       "data_type": "text"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "board_member",
+      "category": "wolny tekst",
+      "purpose": "powód zmiany widoczności protokołu",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -7492,6 +7547,60 @@
       "free_text": false,
       "exportable": true,
       "data_type": "integer"
+    },
+    "cancellation_reason": {
+      "personal": "direct",
+      "subject": "board_member",
+      "category": "wolny tekst",
+      "purpose": "powód odwołania zebrania (wewnętrzny)",
+      "retention_category": "audit_event",
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "cancelled_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "cancelled_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "notice_min_days": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    },
+    "notice_rule_source": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
     }
   },
   "mfa_rate_limits": {
@@ -8021,13 +8130,13 @@
       "data_type": "text"
     },
     "source_detail": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "opis źródła zdjęcia",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     },
@@ -9141,13 +9250,13 @@
       "data_type": "text"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany przypisania wpłaty",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     }
@@ -9231,13 +9340,13 @@
       "data_type": "text"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zwrotu wpłaty",
+      "retention_category": "document_financial",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -10237,13 +10346,13 @@
       "data_type": "text"
     },
     "note": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "uwaga do punktu listy zamknięcia roku",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -10740,13 +10849,13 @@
       "data_type": "date"
     },
     "reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "guardian",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany relacji opiekun–uczeń",
+      "retention_category": "guardian_contact",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     },
@@ -10875,17 +10984,6 @@
       "exportable": true,
       "data_type": "text"
     },
-    "created_reason": {
-      "personal": "direct",
-      "subject": "student",
-      "category": "wolny tekst",
-      "purpose": "uzasadnienie zmiany",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": true,
-      "exportable": true,
-      "data_type": "text"
-    },
     "ended_at": {
       "personal": "none",
       "subject": null,
@@ -10905,17 +11003,6 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
-      "exportable": true,
-      "data_type": "text"
-    },
-    "ended_reason": {
-      "personal": "direct",
-      "subject": "student",
-      "category": "wolny tekst",
-      "purpose": "uzasadnienie zmiany",
-      "retention_category": null,
-      "visible_to": [],
-      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -10993,6 +11080,28 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "created_reason": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "ended_reason": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     }
@@ -11860,6 +11969,384 @@
       "free_text": false,
       "exportable": false,
       "data_type": "text"
+    }
+  },
+  "meeting_agenda_versions": {
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "meeting_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "version": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    },
+    "snapshot": {
+      "personal": "direct",
+      "subject": "board_member",
+      "category": "wolny tekst",
+      "purpose": "migawka porządku obrad (tytuły i opisy punktów)",
+      "retention_category": "audit_event",
+      "free_text": true,
+      "exportable": true,
+      "data_type": "jsonb"
+    },
+    "content_hash": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    }
+  },
+  "meeting_notices": {
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "meeting_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "version": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    },
+    "kind": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "title": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "scheduled_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "previous_scheduled_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "location": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "agenda_version_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "content_hash": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "status": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "created_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "approved_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "approved_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "notice_days_before": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "integer"
+    },
+    "notice_late": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "boolean"
+    }
+  },
+  "meeting_reschedules": {
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "meeting_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "from_scheduled_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "to_scheduled_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
+    },
+    "reason": {
+      "personal": "direct",
+      "subject": "board_member",
+      "category": "wolny tekst",
+      "purpose": "powód zmiany terminu zebrania (wewnętrzny)",
+      "retention_category": "audit_event",
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "actor_id": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "timestamp with time zone"
     }
   },
   "financial_report_snapshots": {

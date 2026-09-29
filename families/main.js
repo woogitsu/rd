@@ -1,12 +1,14 @@
 import {
   buildContactPatch,
   canEditFamilies,
+  hasRepresentativeGrant,
   classHref,
   ERROR_MESSAGES,
   filterStudentsByName,
   formatCents,
   fullName,
   groupClassesByYear,
+  overviewRows,
   householdHref,
   overviewRow,
   parseRoute,
@@ -22,8 +24,8 @@ let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const byId = (id) => document.getElementById(id);
-const state = { classes: null, canEdit: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
-const views = { classes: byId("classes-view"), class: byId("class-view"), household: byId("household-view") };
+const state = { classes: null, canEdit: false, isRepresentative: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
+const views = { classes: byId("classes-view"), overview: byId("overview-view"), class: byId("class-view"), household: byId("household-view") };
 const message = byId("message");
 const breadcrumbs = byId("breadcrumbs");
 const contactDialog = byId("contact-dialog");
@@ -105,6 +107,7 @@ async function renderClasses() {
     return section;
   }));
   byId("classes-empty").hidden = classes.length > 0;
+  byId("overview-link").hidden = !state.canEdit || classes.length === 0;
   showView("classes");
   await renderOverview(groupClassesByYear(classes));
 }
@@ -115,7 +118,8 @@ async function renderOverview(groups) {
   const section = byId("overview-card");
   const body = byId("overview-body");
   const rows = [];
-  for (const group of groups) {
+  // Tylko z przydziałem przedstawiciela — inne role dostałyby 403 w konsoli.
+  for (const group of state.isRepresentative ? groups : []) {
     try {
       const data = await apiRequest(`/api/representative/overview?schoolYearId=${encodeURIComponent(group.schoolYearId)}`);
       rows.push(...data.classes.map(overviewRow));
@@ -127,6 +131,52 @@ async function renderOverview(groups) {
     row.append(cell(link(item.name, classHref(item.id))), cell(item.paperCards), cell(item.lastPrinted), cell(item.events), cell(item.meeting), cell(item.documents));
     return row;
   }));
+}
+
+const BOARD_OVERVIEW_HEAD = ["Klasa", "Uczniowie", "Gospodarstwa", "Przedstawiciele", "Zaproszenia", "Kontakt e-mail", "Do kartki"];
+
+function boardOverviewCell(tag, text, numeric) {
+  const element = document.createElement(tag);
+  element.textContent = text;
+  if (tag === "th") element.scope = numeric === "row" ? "row" : "col";
+  if (numeric === true) element.className = "amount";
+  return element;
+}
+
+async function renderBoardOverview() {
+  const classes = await loadClasses();
+  const years = groupClassesByYear(classes);
+  const select = byId("board-overview-year");
+  if (!select.options.length) {
+    select.replaceChildren(...years.map((group) => new Option(group.label, group.schoolYearId)));
+    select.addEventListener("change", () => { renderBoardOverview().catch((error) => showMessage(error.message, true)); });
+  }
+  setBreadcrumbs([{ text: "Klasy", href: "#/" }, { text: "Statystyki klas" }]);
+  showView("overview");
+  if (!select.value) {
+    byId("board-overview-empty").hidden = false;
+    return;
+  }
+  const data = await api(`/api/board/overview?schoolYearId=${encodeURIComponent(select.value)}`);
+  const { withPayments, rows, total } = overviewRows(data);
+  const headers = withPayments ? [...BOARD_OVERVIEW_HEAD, "Wpisy wpłat (informacyjnie)"] : BOARD_OVERVIEW_HEAD;
+  const headRow = document.createElement("tr");
+  headRow.append(...headers.map((text, index) => boardOverviewCell("th", text, index > 0)));
+  byId("board-overview-head").replaceChildren(headRow);
+  const bodyRow = (values, tag) => {
+    const row = document.createElement("tr");
+    row.append(...values.map((text, index) => (index === 0 ? boardOverviewCell(tag, text, "row") : boardOverviewCell("td", text, true))));
+    return row;
+  };
+  byId("board-overview-body").replaceChildren(...rows.map((values) => bodyRow(values, "th")));
+  byId("board-overview-foot").replaceChildren(...(total ? [bodyRow(total, "th")] : []));
+  byId("board-overview-note").textContent = data.note;
+  const unmatched = byId("board-overview-unmatched");
+  unmatched.hidden = !Number.isFinite(data.totals.unmatchedPaymentsCount);
+  if (!unmatched.hidden) {
+    unmatched.textContent = `Wpłaty bez przypisania do rodziny: ${data.totals.unmatchedPaymentsCount}. Nie są ujęte w odsetkach, więc ewidencja może być niepełna.`;
+  }
+  byId("board-overview-empty").hidden = rows.length > 0;
 }
 
 function householdLinks(households) {
@@ -315,7 +365,8 @@ enrollmentDialog.querySelector("form").addEventListener("submit", (event) => sub
 async function route() {
   const target = parseRoute(location.hash);
   try {
-    if (target.view === "class") await renderClass(target.id);
+    if (target.view === "overview") await renderBoardOverview();
+    else if (target.view === "class") await renderClass(target.id);
     else if (target.view === "household") await renderHousehold(target.id);
     else await renderClasses();
   } catch (error) {
@@ -328,9 +379,12 @@ window.addEventListener("hashchange", () => { showMessage(""); route(); });
 
 (async () => {
   try {
-    state.canEdit = canEditFamilies((await api("/api/access")).grants);
+    const grants = (await api("/api/access")).grants;
+    state.canEdit = canEditFamilies(grants);
+    state.isRepresentative = hasRepresentativeGrant(grants);
   } catch {
     state.canEdit = false;
+    state.isRepresentative = false;
   }
   await route();
 })();

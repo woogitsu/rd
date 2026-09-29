@@ -325,7 +325,7 @@ test('#256: disable rolls back entirely when revoking sessions fails (no half-di
         query: (text, params) => {
           if (calls === 0 && typeof text === 'string' && text.includes('UPDATE sessions SET revoked_at')) {
             calls += 1;
-            throw Object.assign(new Error('injected_failure'), { code: '40001' });
+            throw Object.assign(new Error('injected_failure'), { code: '55P03' });
           }
           return tx.query(text, params);
         },
@@ -383,7 +383,7 @@ test('#256: an error after the session UPDATE rolls back disabled_at, audit and 
             // Zapytanie UPDATE sessions już się wykonało w tej transakcji.
             const inside = await tx.query("SELECT count(*)::int AS n FROM sessions WHERE user_id = 'u-victim3' AND revoked_at IS NOT NULL");
             seen.push(inside.rows[0].n);
-            throw Object.assign(new Error('injected_failure'), { code: '40001' });
+            throw Object.assign(new Error('injected_failure'), { code: '55P03' });
           }
           return tx.query(text, params);
         },

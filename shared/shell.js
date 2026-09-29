@@ -24,10 +24,10 @@ export const PANELS = Object.freeze([
   // src/pg/routes/ledger.js FINANCIAL_ROLES.
   { id: "ledger", href: "/ledger/", label: "Księga", roles: ["admin", "board", "treasurer"] },
   // src/pg/routes/email.js EDITOR_ROLES (admin nie ma dostępu do kampanii e-mail).
-  { id: "email", href: "/email/", label: "Kampanie e-mail", roles: ["board", "treasurer"] },
+  { id: "email", href: "/email/", label: "Kampanie", roles: ["board", "treasurer"] },
   // src/pg/routes/reconciliation.js WRITE_ROLES (widok tylko-do-odczytu Komisji
   // Rewizyjnej — REPORT_ROLES — nie ma dziś osobnego ekranu, patrz reconciliation/core.js).
-  { id: "reconciliation", href: "/reconciliation/", label: "Uzgodnienia wyciągu", roles: ["admin", "board", "treasurer"] },
+  { id: "reconciliation", href: "/reconciliation/", label: "Uzgodnienia", roles: ["admin", "board", "treasurer"] },
   // src/pg/routes/print.js PRINT_ROLES (FINANCIAL_ROLES + representative).
   { id: "print", href: "/print/", label: "Kartki", roles: ["admin", "board", "treasurer", "representative"] },
   // src/pg/events.js EVENT_POLICY (suma ról ze wszystkich akcji).
@@ -38,9 +38,9 @@ export const PANELS = Object.freeze([
   // src/pg/routes/documents.js DOCUMENT_POLICIES (suma ról wszystkich rodzajów dokumentów).
   { id: "documents", href: "/documents/", label: "Dokumenty", roles: ["admin", "board", "treasurer", "representative"] },
   // src/pg/routes/import.js IMPORT_ROLES.
-  { id: "import", href: "/import/", label: "Import uczniów", roles: ["admin", "board"] },
+  { id: "import", href: "/import/", label: "Import", roles: ["admin", "board"] },
   // src/pg/routes/year-close.js READ_ROLES (admin i Komisja Rewizyjna bez dostępu).
-  { id: "year-close", href: "/year-close/", label: "Zamknięcie roku", roles: ["board", "treasurer"] },
+  { id: "year-close", href: "/year-close/", label: "Zamknięcie", roles: ["board", "treasurer"] },
   // src/pg/routes/reconciliation.js REPORT_ROLES = audit, board, treasurer (GET
   // /api/reports/audit). Do nawigacji trafia wyłącznie Komisja Rewizyjna — zarząd i
   // skarbnik mają ten sam raport jako odnośnik w panelu uzgodnień. Tylko odczyt.
@@ -116,6 +116,31 @@ export function navItemsHtml(panels, pathname) {
     .join("");
 }
 
+// Tryb tylko do odczytu (#143): GET /api/session zwraca writeMode. Baner to wyłącznie
+// informacja dla użytkownika — zapisy i tak odrzuca serwer (503 read_only).
+export const READ_ONLY_BANNER_TEXT = "Trwają prace serwisowe — zapisy wstrzymane. Możesz przeglądać dane; zmiany będą możliwe po zakończeniu prac.";
+
+export function isReadOnlySession(session) {
+  return Boolean(session) && session.writeMode === "read_only";
+}
+
+// Wstawia (raz) baner na początek strony; usuwa go, gdy tryb wrócił do normalnego.
+function syncWriteModeBanner(doc, session) {
+  if (!doc || typeof doc.createElement !== "function" || !doc.body) return;
+  const existing = typeof doc.getElementById === "function" ? doc.getElementById("shell-write-mode") : null;
+  if (!isReadOnlySession(session)) {
+    if (existing && typeof existing.remove === "function") existing.remove();
+    return;
+  }
+  if (existing) return;
+  const banner = doc.createElement("div");
+  banner.id = "shell-write-mode";
+  banner.className = "shell-write-mode";
+  banner.setAttribute("role", "status");
+  banner.textContent = READ_ONLY_BANNER_TEXT;
+  doc.body.insertBefore(banner, doc.body.firstChild);
+}
+
 let logoutInFlight = null;
 
 async function logout() {
@@ -150,6 +175,7 @@ export async function mountShell({ document: doc = document, location: loc = win
   } catch {
     session = null;
   }
+  syncWriteModeBanner(doc, session);
   if (account) {
     if (!session) {
       account.innerHTML = "";

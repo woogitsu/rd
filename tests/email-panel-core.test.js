@@ -12,6 +12,8 @@ import {
   describeApiError,
   formatDayPlan,
   formatExclusions,
+  formatReportRows,
+  REPORT_LABELS,
   formatSchedule,
   STATUS_LABELS,
   sendNotBeforeFromInput,
@@ -20,6 +22,7 @@ import {
   hasApproverAccess,
   hasEditorAccess,
   isLikelyOwnCampaign,
+  isSnapshotStale,
   isValidId,
   makeIdempotencyKey,
   maskEmail,
@@ -126,6 +129,17 @@ test('describeApiError: komunikaty po polsku dla typowych kodów', () => {
   assert.equal(describeApiError(500, null), null);
 });
 
+test('raport doręczeń: kategorie panelu = kategorie raportu serwera, tylko liczby', () => {
+  const server = readFileSync(new URL('../src/pg/routes/email.js', import.meta.url), 'utf8');
+  const declared = server.match(/REPORT_CATEGORIES = Object\.freeze\(\[([^\]]+)\]/)[1].match(/'([a-z_]+)'/g).map((x) => x.slice(1, -1));
+  assert.deepEqual(Object.keys(REPORT_LABELS), declared);
+  const rows = formatReportRows({ sent: 2, delivered: '3', bogus: 9 });
+  assert.equal(rows.length, declared.length);
+  assert.deepEqual(rows.find((r) => r.key === 'delivered'), { key: 'delivered', label: REPORT_LABELS.delivered, count: 3 });
+  assert.equal(rows.find((r) => r.key === 'queued').count, 0);
+  assert.deepEqual(formatReportRows(null).map((r) => r.count), declared.map(() => 0));
+});
+
 test('buildCampaignsUrl: kursor kolejnej strony (#159)', () => {
   assert.equal(buildCampaignsUrl('y2026', 'abc_-9'), '/api/email/campaigns?schoolYearId=y2026&cursor=abc_-9');
 });
@@ -153,4 +167,19 @@ test('#130 formatSchedule: start, okno i szacowany koniec w strefie z odpowiedzi
   assert.equal(formatSchedule(null), '');
   // Plan dni zwracany przez API jest liczbą.
   assert.match(formatDayPlan({ days: 7, dailyCap: 286, reservedForOtherMail: 0 }), /7 dni/);
+});
+
+test('isSnapshotStale: komunikat tylko dla istniejącej migawki, która przestała być aktualna', () => {
+  assert.equal(isSnapshotStale(null), false);
+  assert.equal(isSnapshotStale({ recipientsHash: null, snapshotCurrent: null }), false, 'świeży szkic bez migawki');
+  assert.equal(isSnapshotStale({ recipientsHash: null, snapshotCurrent: false }), false, 'stara odpowiedź serwera bez migawki');
+  assert.equal(isSnapshotStale({ recipientsHash: 'a'.repeat(64), snapshotCurrent: true }), false);
+  assert.equal(isSnapshotStale({ recipientsHash: 'a'.repeat(64), snapshotCurrent: false }), true);
+});
+
+test('panel kampanii używa isSnapshotStale do komunikatu i do gotowości zatwierdzenia', () => {
+  const main = readFileSync(new URL('../email/main.js', import.meta.url), 'utf8');
+  assert.match(main, /byId\("detail-snapshot-current"\)\.hidden = !isSnapshotStale\(preview\)/);
+  assert.match(main, /!isSnapshotStale\(preview\);/);
+  assert.doesNotMatch(main, /snapshotCurrent/);
 });

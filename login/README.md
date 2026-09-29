@@ -1,6 +1,6 @@
 # Ekran logowania
 
-Lekki interfejs Vite do tras `POST /api/login`, `/api/mfa/*`, `/api/invitations/accept`, `/api/password/*` (src/pg/routes/login.js, src/pg/routes/mfa.js). Prototyp na danych syntetycznych; bez danych demonstracyjnych i bez obejścia logowania.
+Lekki interfejs Vite do tras `POST /api/login`, `/api/mfa/*`, `/api/invitations/preview`, `/api/invitations/accept`, `/api/password/*` (src/pg/routes/login.js, src/pg/routes/mfa.js). Prototyp na danych syntetycznych; bez danych demonstracyjnych i bez obejścia logowania.
 
 ## Uruchomienie
 
@@ -19,7 +19,7 @@ npm run build:login    # dist/login, serwowane przez src/node-app.js pod /login/
 4. **Zaproszenie** — `/login/#invite=<token>`: token w części po `#` nie trafia do serwera ani jego logów; skrypt przenosi go do pola i usuwa z paska adresu (`history.replaceState`). Nowe konto ustawia hasło; istniejące konto podaje obecne hasło.
 5. **Reset hasła** — `/login/#reset=<token>`; kod wydaje wyłącznie administrator (`POST /api/admin/users/{id}/password-reset`). Panel nie wysyła e-maili.
 6. **Zmiana hasła** — obecne i nowe hasło; pozostałe sesje zostają wylogowane.
-7. **Start** — lista paneli (dostęp sprawdza serwer), wylogowanie i wylogowanie ze wszystkich urządzeń.
+7. **Start** — lista paneli wynikająca z przydziałów konta (`visiblePanels` z `shared/shell.js`; to tylko nawigacja, dostęp sprawdza serwer) i link do strony publicznej, wylogowanie i wylogowanie ze wszystkich urządzeń.
 
 Wspólny komputer (#197): ekran to jedna strona, więc przy wylogowaniu, „Wróć do logowania”, zmianie części „#…”, przejściu do kolejnego etapu i `pagehide` funkcja `clearSensitiveViews` (login/core.js) usuwa z DOM klucz TOTP, kod QR, kody odzyskiwania i wszystkie pola haseł i kodów oraz wyłącza „Pokaż hasło”. Komunikat „Wylogowano” pojawia się tylko po odpowiedzi 204 lub 401; przy błędzie sieci lub serwera ekran mówi, że sesja może być nadal aktywna, i zostaje w bieżącym widoku. Wygasła lub zastąpiona konfiguracja MFA (`mfa_enrollment_not_found`) wraca do przycisku „Rozpocznij”. Poza zakresem: znikanie kodów odzyskiwania po czasie i potwierdzenie „Zapisałem kody” przed wylogowaniem (propozycja 2 w #197).
 

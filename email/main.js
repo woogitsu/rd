@@ -8,6 +8,8 @@ import {
   describeApiError,
   formatDayPlan,
   formatExclusions,
+  formatReportRows,
+  isSnapshotStale,
   formatSchedule,
   formatWarnings,
   hasApproverAccess,
@@ -25,11 +27,13 @@ import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
+import { mountSuppressions } from "./suppressions.js";
 
 mountShell();
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
+const suppressions = mountSuppressions({ api });
 
 const state = {
   schoolYearId: "",
@@ -38,6 +42,7 @@ const state = {
   selectedId: null,
   detail: null,
   preview: null,
+  report: null,
   recipients: [],
   recipientsOffset: null,
   actorId: null,
@@ -127,6 +132,7 @@ async function showYear(value) {
     await loadList();
     detailSection.hidden = true;
     state.selectedId = null;
+    await suppressions.load(value);
   } catch (error) {
     setMessage(`Nie udało się pobrać listy kampanii: ${error.message}`, true);
   } finally {
@@ -175,7 +181,7 @@ function renderDetail() {
   byId("detail-recipients-count").textContent = preview ? String(preview.recipientsCount) : "—";
   byId("detail-plan").textContent = preview ? formatDayPlan(preview.plan) : "Utwórz migawkę odbiorców, aby zobaczyć plan wysyłki.";
   byId("detail-schedule").textContent = preview?.schedule ? formatSchedule(preview.schedule) : "";
-  byId("detail-snapshot-current").hidden = !preview || preview.snapshotCurrent !== false;
+  byId("detail-snapshot-current").hidden = !isSnapshotStale(preview);
 
   const warningsList = byId("detail-warnings");
   const warnings = preview ? formatWarnings(preview.warnings) : [];
@@ -195,6 +201,20 @@ function renderDetail() {
   }));
   byId("detail-outbox-box").hidden = outboxEntries.length === 0;
 
+  const report = state.report;
+  byId("detail-report-box").hidden = !report;
+  if (report) {
+    byId("detail-report-body").replaceChildren(...formatReportRows(report.summary).map((row) => {
+      const tr = document.createElement("tr");
+      tr.append(textCell(row.label), textCell(String(row.count), "amount"));
+      return tr;
+    }));
+    const unresolved = Number(report.deliveryUnknownUnresolved) || 0;
+    const note = byId("detail-report-unknown");
+    note.hidden = unresolved === 0;
+    note.textContent = `Nierozstrzygnięte „nie wiadomo”: ${unresolved}.`;
+  }
+
   updateActionVisibility(campaign, preview);
 }
 
@@ -205,7 +225,7 @@ function updateActionVisibility(campaign, preview) {
   byId("view-recipients").hidden = !campaign.recipientsHash;
 
   const readyForApproval = canOfferApproval(campaign, state.actorId)
-    && preview && preview.recipientsCount > 0 && preview.snapshotCurrent !== false;
+    && preview && preview.recipientsCount > 0 && !isSnapshotStale(preview);
   const own = isLikelyOwnCampaign(campaign, state.actorId);
   const approveButton = byId("approve-campaign");
   const waitingNotice = byId("approve-waiting");
@@ -223,10 +243,12 @@ function updateActionVisibility(campaign, preview) {
 async function openDetail(id) {
   setMessage("");
   try {
-    const [statusData, previewData] = await Promise.all([
+    const [statusData, previewData, reportData] = await Promise.all([
       api(campaignUrl(id)),
       api(campaignActionUrl(id, "preview")).catch(() => null),
+      api(campaignActionUrl(id, "report")).catch(() => null),
     ]);
+    state.report = reportData;
     state.selectedId = id;
     state.detail = statusData;
     state.preview = previewData;
@@ -342,7 +364,13 @@ byId("edit-campaign").addEventListener("click", () => {
   const campaign = state.detail.campaign;
   const form = editDialog.form;
   form.elements.title.value = campaign.title;
-  form.elements.audience.value = campaign.audience;
+  // #113: szkic z zawiadomienia o zebraniu ma odbiorców wynikających z zebrania — bez zmiany ręcznej.
+  const select = form.elements.audience;
+  if (![...select.options].some((option) => option.value === campaign.audience)) {
+    select.append(new Option(AUDIENCE_LABELS[campaign.audience] ?? campaign.audience, campaign.audience));
+  }
+  select.value = campaign.audience;
+  for (const option of select.options) option.disabled = Boolean(campaign.meetingNoticeId) && option.value !== campaign.audience;
   form.elements.subject.value = campaign.subject;
   form.elements.bodyText.value = campaign.bodyText;
   form.dataset.revision = String(campaign.revisionNo ?? "");

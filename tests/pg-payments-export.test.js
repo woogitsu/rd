@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const BASE = 'https://rd.example';
 const DEBT_WORDS = /debt|due|owed|owing|outstanding|arrear|balance|receivable|d[lł]u[zż]n|zaleg|nale[zż]/i;
@@ -21,7 +21,7 @@ async function pgBackend({ role = 'treasurer', mfa = true, schoolYearId = 'y2026
   const db = await createTestDb();
   await seedSchoolYear(db, 'y2025', { startsOn: '2025-09-01', endsOn: '2026-08-31' });
   await seedSchoolYear(db, 'y2026');
-  await db.query("INSERT INTO households (id) VALUES ('h1'), ('h2')");
+  for (const householdId of ['h1', 'h2']) await seedEnrolledHousehold(db, householdId, ['y2025', 'y2026']);
   const cookie = await seedUserSession(db, { userId: 'u1', mfa, roles: [{ role, schoolYearId, classId }] });
   const env = { db };
   return {

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
-import { request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-127g';
 const OTHER = 'y-127g-inny';
@@ -39,7 +39,7 @@ async function setup(options = {}) {
   await seedSchoolYear(db, YEAR, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedSchoolYear(db, OTHER, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
   // h-a i h-b: rodzeństwo przyrodnie w dwóch gospodarstwach; h-c: trzecia rodzina z przelewu zbiorczego.
-  await db.query("INSERT INTO households (id) VALUES ('h-a'), ('h-b'), ('h-c')");
+  for (const householdId of ['h-a', 'h-b', 'h-c']) await seedEnrolledHousehold(db, householdId, [YEAR]);
   const cookies = {
     treasurer: await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: YEAR }], mfa: true }),
     board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board', schoolYearId: YEAR }], mfa: true }),

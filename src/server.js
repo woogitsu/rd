@@ -69,6 +69,11 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         // Webhook i plan kampanii e-mail (#40). Klucz API Brevo NIE trafia do serwera HTTP —
         // używa go wyłącznie zadanie scripts/email-worker.js.
         BREVO_WEBHOOK_SECRET: processEnv.BREVO_WEBHOOK_SECRET,
+        // #139: rotacja sekretu i opcjonalne ograniczenie do zakresów IP Brevo
+        // (CIDR sprawdzane tylko przy TRUST_PROXY=1, patrz src/pg/routes/email.js).
+        BREVO_WEBHOOK_SECRET_PREVIOUS: processEnv.BREVO_WEBHOOK_SECRET_PREVIOUS,
+        BREVO_WEBHOOK_ALLOWED_CIDRS: processEnv.BREVO_WEBHOOK_ALLOWED_CIDRS,
+        TRUST_PROXY: processEnv.TRUST_PROXY,
         EMAIL_DAILY_LIMIT: processEnv.EMAIL_DAILY_LIMIT,
         EMAIL_DAILY_RESERVED: processEnv.EMAIL_DAILY_RESERVED,
         EMAIL_CAMPAIGN_MIN_DAYS: processEnv.EMAIL_CAMPAIGN_MIN_DAYS,
@@ -83,6 +88,7 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         MFA_REQUIRED_ROLES: processEnv.MFA_REQUIRED_ROLES,
         SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
         LOGIN_EMAIL_DELAY_MS: processEnv.LOGIN_EMAIL_DELAY_MS,
+        LOGIN_PRESSURE_THRESHOLD: processEnv.LOGIN_PRESSURE_THRESHOLD,
         // Stan systemu i heartbeat zadań (#149) — tylko liczby/kody, żadnych
         // sekretów oprócz tokenu monitora (nigdy nie zwracanego w odpowiedzi).
         RAILWAY_GIT_COMMIT_SHA: processEnv.RAILWAY_GIT_COMMIT_SHA,

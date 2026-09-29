@@ -34,5 +34,5 @@ API zebrań istnieje tylko w routerze PostgreSQL, więc panel działa pod tym sa
 
 - Lista obecności pokazuje identyfikatory, nie imiona — API ich nie zwraca, a tabela obecności nie przechowuje danych osobowych.
 - Formularze są widoczne także dla ról tylko do odczytu (np. Komisja Rewizyjna); serwer odrzuci zapis (`403`).
-- Brak edycji i usuwania punktów porządku obrad (osobny zakres API).
+- Punkty porządku obrad można wycofać (wiersz zostaje), ale nie edytować, usuwać ani przestawiać (#113: zmiana kolejności — osobny zakres). Odwołanie, zmiana terminu i zawiadomienie: sekcja „Zawiadomienie, termin i odwołanie” panelu; panel niczego nie wysyła — szkic wiadomości trafia do modułu e-mail.
 - Treść protokołu nie jest sprawdzana pod kątem danych osobowych przed udostępnieniem — robi to człowiek.

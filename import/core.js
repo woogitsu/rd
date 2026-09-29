@@ -1,4 +1,4 @@
-import { detectDelimiter } from './csv.js';
+import { parseCsvMatrix } from './csv.js';
 export const FIELDS = [
   ['studentId', 'ID ucznia (jeśli jest)'], ['firstName', 'Imię ucznia *'],
   ['lastName', 'Nazwisko ucznia *'], ['className', 'Klasa *'],
@@ -35,35 +35,8 @@ export function guessMapping(headers) {
 }
 export function parseCsv(text) {
   if (typeof text !== 'string' || !text.trim()) throw new Error('Plik CSV jest pusty.');
-  const input = text.replace(/^\uFEFF/, '');
   // Separator liczony w nagłówku poza cudzysłowami: ; , albo tabulator (import/csv.js).
-  const { delimiter } = detectDelimiter(input);
-  const rows = []; let row = [], cell = '', quoted = false, afterQuote = false;
-  for (let i = 0; i < input.length; i++) {
-    const char = input[i];
-    if (quoted) {
-      if (char === '"' && input[i + 1] === '"') { cell += '"'; i++; }
-      else if (char === '"') { quoted = false; afterQuote = true; }
-      else cell += char;
-    } else if (afterQuote) {
-      if (char === delimiter) { row.push(cell); cell = ''; afterQuote = false; }
-      else if (char === '\r' || char === '\n') {
-        row.push(cell); rows.push(row); row = []; cell = ''; afterQuote = false;
-        if (char === '\r' && input[i + 1] === '\n') i++;
-      } else if (char !== ' ' && char !== '\t') throw new Error(`Niepoprawny cudzysłów w CSV przy znaku ${i + 1}.`);
-    } else if (char === '"') {
-      if (cell.trim()) throw new Error(`Niepoprawny cudzysłów w CSV przy znaku ${i + 1}.`);
-      cell = ''; quoted = true;
-    } else if (char === delimiter) { row.push(cell); cell = ''; }
-    else if (char === '\r' || char === '\n') {
-      row.push(cell); rows.push(row); row = []; cell = '';
-      if (char === '\r' && input[i + 1] === '\n') i++;
-    } else cell += char;
-    if (rows.length > 5001) throw new Error('Limit wynosi 5000 wierszy danych.');
-  }
-  if (quoted) throw new Error('Nie zamknięto cudzysłowu w CSV.');
-  if (cell !== '' || row.length || afterQuote) { row.push(cell); rows.push(row); }
-  return rows.filter(r => r.some(value => String(value).trim()));
+  return parseCsvMatrix(text, { maxRows: 5001, limitMessage: 'Limit wynosi 5000 wierszy danych.' });
 }
 export function validateRows(matrix, mapping, options = {}) {
   const { allowedClasses = [] } = options;
@@ -177,4 +150,21 @@ export function toServerPayload(result, schoolYearId, { allowNewHouseholds = fal
     rowNumbers: result.records.map(record => record.row),
     options: { allowNewHouseholds: Boolean(allowNewHouseholds), skipConflicts: Boolean(skipConflicts) },
   };
+}
+
+// #88: kontrola kształtu macierzy arkusza przed zbudowaniem mapowania. Zwraca komunikat
+// (albo null), zamiast rzucać wyjątek — pusty arkusz nie może zerować listy arkuszy.
+export function matrixShapeError(matrix) {
+  if (!Array.isArray(matrix) || matrix.length < 2 || matrix.length > 5001) return 'Plik musi zawierać od 1 do 5000 wierszy danych.';
+  if (!Array.isArray(matrix[0]) || matrix[0].length > 60) return 'Nagłówek ma więcej niż 60 kolumn.';
+  return null;
+}
+
+// #88: wybór arkusza z już wczytanej listy. Lista `sheets` nigdy nie jest zmieniana;
+// zły arkusz (pusty, za duży) daje `error` i `matrix: null`, a wybór innego arkusza dalej działa.
+export function selectSheet(sheets, index) {
+  const sheet = Array.isArray(sheets) ? sheets[Number(index)] : undefined;
+  if (!sheet) return { sheet: null, matrix: null, error: 'Nie ma takiego arkusza.' };
+  const error = matrixShapeError(sheet.rows);
+  return { sheet, matrix: error ? null : sheet.rows, error };
 }

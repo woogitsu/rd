@@ -1,6 +1,6 @@
 # Wydarzenia i publiczny kalendarz (#12)
 
-Stan: moduł dla nowego stosu Node.js + PostgreSQL. Nie jest jeszcze podłączony do rejestru tras ani do warstwy sesji PostgreSQL. To prototyp na danych syntetycznych, nie gotowa funkcja do pracy na danych rodzin.
+Status: API na PostgreSQL (`src/pg/routes/events.js`, w `ROUTES` routera `src/pg/app.js`) i panel `events/` — prototyp na danych syntetycznych, niewdrożony na Railway, nie gotowa funkcja do pracy na danych rodzin. Panel nie ma jeszcze widoku zadań i zapisów (tylko API).
 
 ## Przebieg
 
