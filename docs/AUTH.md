@@ -105,7 +105,12 @@ Pliki: `src/pg/password.js` (hasła), `src/pg/login.js` i `src/pg/routes/login.j
                 └─ pozostali (np. przedstawiciel bez czynnika) ─▶ panele; przycisk
                      „Włącz weryfikację dwuetapową” w widoku startowym pozwala
                      zapisać czynnik dobrowolnie (dowolna rola, ten sam
-                     POST /api/mfa/enroll + /api/mfa/confirm, #161)
+                     POST /api/mfa/enroll + /api/mfa/confirm, #161). Trasa wymagająca MFA
+                     (eksport listy klasy, raport KR) odmawia takiemu kontu kodem
+                     `mfa_enrollment_required`; `shared/api.js` odsyła je na
+                     /login/#next=<panel>&reason=enroll, gdzie widok zapisu MFA wyjaśnia
+                     powód, a po zapisie wraca do panelu (bez pętli panel → lista paneli).
+                     Lista ról z obowiązkowym MFA bez zmian (D-10).
    (c) zmiana hasła: POST /api/password/change {currentPassword, newPassword}
          └─ inne sesje wycofane (password_changed), bieżąca zrotowana
    (d) reset: administrator ─▶ POST /api/admin/users/{id}/password-reset ─▶ token (raz)
@@ -154,6 +159,7 @@ Zwolnione (uzasadnienia: `MFA_GATE_EXEMPT_REASONS` w `tests/helpers/route-matrix
 | `POST /api/login` | każdy (zgodny `Origin`) | cookie sesji bez MFA, `{mfaRequired, mfaEnrolled, mfaRequiredByRole, mustChangePassword, expiresAt}` | `auth.login_succeeded` (aktor = konto), `auth.login_failed` (aktor pusty; obiekt = konto, gdy znane, inaczej losowy identyfikator próby; powód) |
 | `GET /api/auth/state` | zalogowany | stan MFA i hasła bieżącej sesji | — |
 | `POST /api/invitations/accept` | posiadacz tokenu | `201`, cookie sesji, `created` | `user.created`, `auth.password_set`, `invitation.accepted`, `role_grant.created`, `auth.login_succeeded`; błędy `auth.invitation_accept_failed` |
+| `POST /api/invitations/preview` | posiadacz tokenu | `200` `{email (maska), role, className, schoolYear, expiresAt, accountExists}`; token nie jest konsumowany, bez sesji | bez zdarzenia przy sukcesie; błędy `auth.invitation_preview_failed` |
 | `POST /api/password/change` | zalogowany, po bramce MFA | nowe cookie, `revokedSessions` | `auth.password_changed`, `session.revoked` × n; błędy `auth.password_change_failed` |
 | `POST /api/password/reset` | posiadacz tokenu | `{ok: true}`, bez sesji | `auth.password_reset_completed`, `session.revoked` × n; błędy `auth.password_reset_failed` |
 | `POST /api/admin/users/{id}/password-reset` | admin + MFA | `201`, token **raz**, ważny 2 h (`ttlHours` 1–24) | `auth.password_reset_issued`, `auth.password_reset_revoked` (poprzedni token) |

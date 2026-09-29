@@ -2,6 +2,8 @@
 // storage. API data is rendered exclusively through textContent.
 import {
   NEWS_URL,
+  calendarFeedUrls,
+  eventIcsUrl,
   eventsUrl,
   formatDate,
   formatEventTime,
@@ -89,6 +91,15 @@ function renderEvents(events) {
       detailRow(details, "Organizator", event.organizer);
       if (details.childElementCount) item.append(details);
       if (event.description) item.append(el("p", event.description, "event-description"));
+      const icsUrl = event.cancelled ? null : eventIcsUrl(event.id);
+      if (icsUrl) {
+        const link = el("a", "Dodaj do kalendarza (.ics)");
+        link.href = icsUrl;
+        link.setAttribute("download", "");
+        const p = el("p", null, "event-calendar");
+        p.append(link);
+        item.append(p);
+      }
       list.append(item);
     }
     block.append(heading, list);
@@ -168,6 +179,14 @@ function renderNews(items) {
     list.append(entry);
   }
   container.append(list);
+}
+
+function showCalendarFeed() {
+  const urls = calendarFeedUrls(window.location.host);
+  if (!urls) return;
+  byId("calendar-webcal").href = urls.webcal;
+  byId("calendar-download").href = urls.https;
+  byId("calendar-feed").hidden = false;
 }
 
 async function loadEvents() {
@@ -317,5 +336,6 @@ window.addEventListener("afterprint", () => {
 });
 
 loadNews();
+showCalendarFeed();
 loadEvents();
 loadMinutes();

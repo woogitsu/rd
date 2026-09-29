@@ -4,7 +4,15 @@ import {
   METHOD_LABELS,
   buildLedgerUrl,
   buildNextLedgerUrl,
+  budgetAdoptionRequestBody,
   budgetExecutionRow,
+  budgetHistoryView,
+  budgetLineRequestBody,
+  budgetRevisionRequestBody,
+  buildBudgetHistoryUrl,
+  canAdoptBudget,
+  categoryRequestBody,
+  deactivationRequestBody,
   buildCostCentersUrl,
   buildOverviewUrl,
   costCenterRows,
@@ -23,7 +31,7 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
-import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
+import { panelYearState, yearOptionsHtml } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
@@ -33,7 +41,7 @@ let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const FILTER_KEYS = ["schoolYearId", "direction"];
-const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
+const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", grants: [], history: { rows: [], adoptionRows: [], currentLines: [] }, nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -135,6 +143,34 @@ function renderBudget(lines) {
   byId("budget-empty").hidden = rows.length !== 0;
 }
 
+// #107: historia wersji linii i przyjęcia (GET /api/ledger/budget/history).
+function renderHistory(history, error) {
+  const errorBox = byId("history-error");
+  errorBox.hidden = !error;
+  errorBox.textContent = error ? `Nie udało się pobrać historii preliminarza: ${error}` : "";
+  const view = budgetHistoryView(error ? null : history);
+  state.history = view;
+  const rows = view.rows.map((item) => {
+    const row = document.createElement("tr");
+    const state_ = [item.current ? "bieżąca" : "zastąpiona", item.adoptedOn.length ? `przyjęta ${item.adoptedOn.join(", ")}` : ""].filter(Boolean).join("; ");
+    row.append(textCell(item.categoryName), textCell(DIRECTION_LABELS[item.direction]), textCell(String(item.version), "amount"),
+      textCell(item.planned, "amount"), textCell(item.reason), textCell(`${item.createdAt} · ${item.createdBy}`), textCell(state_));
+    return row;
+  });
+  byId("history-body").replaceChildren(...rows);
+  byId("history-count").textContent = rows.length === 1 ? "1 wersja" : `${rows.length} wersji`;
+  byId("history-body").closest(".table-wrap").hidden = rows.length === 0;
+  byId("history-empty").hidden = error || rows.length !== 0;
+  const adoptions = view.adoptionRows.map((item) => {
+    const row = document.createElement("tr");
+    row.append(textCell(item.adoptedOn), textCell(item.note), textCell(item.resolution), textCell(String(item.lineCount), "amount"), textCell(item.adoptedBy));
+    return row;
+  });
+  byId("adoptions-body").replaceChildren(...adoptions);
+  byId("adoptions-body").closest(".table-wrap").hidden = adoptions.length === 0;
+  byId("adoptions-empty").hidden = error || adoptions.length !== 0;
+}
+
 function renderCostCenters(report, error) {
   const body = byId("events-body");
   const errorBox = byId("events-error");
@@ -186,6 +222,15 @@ function updateControls() {
   printButton.disabled = state.loading || state.printing || !state.query || changed || state.entries.length === 0;
 }
 
+// Skrót interfejsu: serwer i tak sprawdza rolę, MFA i rok przy każdym zapisie.
+function updateBudgetActions() {
+  const year = state.query?.schoolYearId ?? "";
+  const financial = hasFinancialAccess(state.grants, year);
+  byId("budget-actions").hidden = !financial;
+  byId("open-adoption").hidden = !canAdoptBudget(state.grants, year);
+  byId("open-line").disabled = state.history.rows.length === 0 && state.categories.length === 0;
+}
+
 function setBusy(busy) {
   state.loading = busy;
   filtersForm.querySelector("button").disabled = busy;
@@ -222,7 +267,7 @@ async function loadOverview({ reload = false } = {}) {
   setBusy(true);
   try {
     const year = query.schoolYearId;
-    const [summaryData, budgetData, categoriesData, costCentersData, resolutionsData] = await Promise.all([
+    const [summaryData, budgetData, categoriesData, costCentersData, resolutionsData, historyData] = await Promise.all([
       api(buildOverviewUrl("summary", year)),
       api(buildOverviewUrl("budget/execution", year)),
       api(buildOverviewUrl("categories", year)),
@@ -230,6 +275,8 @@ async function loadOverview({ reload = false } = {}) {
       api(buildCostCentersUrl(year)).catch((error) => ({ error })),
       // Lista uchwał jest pomocnicza: jej błąd nie blokuje podglądu księgi.
       api(buildResolutionsUrl(year)).catch((error) => ({ error })),
+      // Historia preliminarza jest pomocnicza: jej błąd nie blokuje podglądu księgi.
+      api(buildBudgetHistoryUrl(year)).catch((error) => ({ error })),
       loadEntries({ query }),
     ]);
     state.query = query;
@@ -237,6 +284,8 @@ async function loadOverview({ reload = false } = {}) {
     state.resolutions = Array.isArray(resolutionsData?.resolutions) ? resolutionsData.resolutions : [];
     state.resolutionsError = resolutionsData?.error ? resolutionsData.error.message : "";
     renderSummary(summaryData.summary ?? {});
+    renderHistory(historyData, historyData?.error ? historyData.error.message : "");
+    updateBudgetActions();
     renderCostCenters(costCentersData?.report ?? null, costCentersData?.error ? costCentersData.error.message : "");
     byId("events-csv").href = buildCostCentersUrl(year, "csv");
     renderBudget(Array.isArray(budgetData.execution?.items) ? budgetData.execution.items : []);
@@ -268,13 +317,13 @@ filtersForm.addEventListener("submit", (event) => {
 (async function initFilters() {
   const restored = filtersFromQuery(window.location.search, FILTER_KEYS);
   let years = [];
+  let year = "";
   try {
     const access = await api("/api/access");
-    years = yearsFromGrants(access && access.grants);
+    ({ years, year } = panelYearState(access && access.grants, restored.schoolYearId));
   } catch {
     years = [];
   }
-  const year = defaultYear(years, restored.schoolYearId);
   yearInput.innerHTML = yearOptionsHtml(years, year);
   if (restored.direction && [...directionInput.options].some((o) => o.value === restored.direction)) {
     directionInput.value = restored.direction;
@@ -327,6 +376,8 @@ async function applyAccess() {
     return;
   }
   const grants = Array.isArray(access.grants) ? access.grants : [];
+  state.grants = grants;
+  updateBudgetActions();
   if (hasFinancialAccess(grants)) return;
   byId("open-entry").hidden = true;
   byId("open-entry-hint").hidden = true;
@@ -534,3 +585,102 @@ entriesBody.addEventListener("click", (event) => {
 yearInput.addEventListener("input", updateControls);
 directionInput.addEventListener("change", updateControls);
 updateControls();
+
+// --- #107: formularze preliminarza (istniejące trasy ledger-budget.js) ---------------
+
+const post = (path, key, body) => api(path, { method: "POST", headers: { "Idempotency-Key": key }, body: JSON.stringify(body) });
+const centsText = (value) => { try { return formatCents(parseEuroAmount(value)); } catch { return String(value || ""); } };
+
+function fillSelect(select, items, placeholder) {
+  const options = items.map(({ value, label }) => {
+    const option = document.createElement("option"); option.value = value; option.textContent = label; return option;
+  });
+  select.replaceChildren(...options);
+  select.disabled = options.length === 0;
+  if (options.length === 0 && placeholder) { const empty = document.createElement("option"); empty.textContent = placeholder; select.replaceChildren(empty); }
+}
+
+const categoryDialog = configureDialog("category-dialog", "ledger-category", async (data, key) => {
+  await post("/api/ledger/categories", key, categoryRequestBody({
+    schoolYearId: data.get("schoolYearId"), direction: data.get("direction"), name: data.get("name"),
+  }));
+}, "Dodano kategorię.", (data) => ({
+  title: "Dodać kategorię?",
+  effects: [`Nazwa: ${String(data.get("name") || "").trim()}`, `Rodzaj: ${DIRECTION_LABELS[data.get("direction")] ?? "—"}`, "Nazwa kategorii jest trwała; kategorię można później wyłączyć, ale nie usunąć."],
+  confirmLabel: "Dodaj kategorię",
+}));
+
+const deactivateDialog = configureDialog("deactivate-dialog", "ledger-deactivate", async (data, key) => {
+  const { categoryId, body } = deactivationRequestBody({ categoryId: data.get("categoryId"), reason: data.get("reason") });
+  await post(`/api/ledger/categories/${encodeURIComponent(categoryId)}/deactivation`, key, body);
+}, "Wyłączono kategorię.", (data) => {
+  const category = state.categories.find((c) => c.id === data.get("categoryId"));
+  return {
+    title: "Wyłączyć kategorię?",
+    effects: [`Kategoria: ${category ? category.name : "—"}`, `Powód: ${String(data.get("reason") || "").trim() || "—"}`, "Kategoria nie przyjmie nowych wpisów; dotychczasowe wpisy i plan zostają widoczne."],
+    confirmLabel: "Wyłącz kategorię",
+  };
+});
+
+const lineDialog = configureDialog("line-dialog", "ledger-budget-line", async (data, key) => {
+  await post("/api/ledger/budget", key, budgetLineRequestBody({
+    schoolYearId: data.get("schoolYearId"), categoryId: data.get("categoryId"), amount: data.get("amount"), note: data.get("note"),
+  }));
+}, "Zapisano linię preliminarza.", (data) => {
+  const category = state.categories.find((c) => c.id === data.get("categoryId"));
+  return {
+    title: "Zapisać linię planu?",
+    effects: [`Kategoria: ${category ? category.name : "—"}`, `Plan: ${centsText(data.get("amount"))}`, "Kolejną zmianę zapiszesz jako nową wersję; historia zostaje."],
+    confirmLabel: "Zapisz linię",
+  };
+});
+
+const revisionDialog = configureDialog("revision-dialog", "ledger-budget-revision", async (data, key) => {
+  const { lineId, body } = budgetRevisionRequestBody({ lineId: data.get("lineId"), amount: data.get("amount"), reason: data.get("reason") });
+  await post(`/api/ledger/budget/${encodeURIComponent(lineId)}/revisions`, key, body);
+}, "Zapisano nową wersję linii.", (data) => {
+  const line = state.history.currentLines.find((item) => item.id === data.get("lineId"));
+  return {
+    title: "Zapisać nową wersję planu?",
+    effects: [`Kategoria: ${line ? line.categoryName : "—"}`, `Dotychczas: ${line ? line.planned : "—"}`, `Nowy plan: ${centsText(data.get("amount"))}`, `Powód: ${String(data.get("reason") || "").trim() || "—"}`, "Poprzednia wersja zostaje w historii."],
+    confirmLabel: "Zapisz nową wersję",
+  };
+});
+
+const adoptionDialog = configureDialog("adoption-dialog", "ledger-budget-adoption", async (data, key) => {
+  await post("/api/ledger/budget/adoptions", key, budgetAdoptionRequestBody({
+    schoolYearId: data.get("schoolYearId"), adoptedOn: data.get("adoptedOn"), note: data.get("note"), resolutionId: data.get("resolutionId"),
+  }));
+}, "Zapisano przyjęcie preliminarza.", (data) => ({
+  title: "Zapisać przyjęcie preliminarza?",
+  effects: [`Data przyjęcia: ${data.get("adoptedOn")}`, `Liczba linii: ${state.history.currentLines.length}`, "Zapis jest trwały; późniejsze zmiany planu tworzą nowe wersje i nie zmieniają przyjętego zestawu."],
+  confirmLabel: "Zapisz przyjęcie",
+}));
+
+function openBudgetDialog(dialogRef, prepare) {
+  if (!state.query || filterChanged()) return;
+  const form = dialogRef.form;
+  if (form.elements.schoolYearId) form.elements.schoolYearId.value = state.query.schoolYearId;
+  prepare(form);
+  dialogRef.dialog.showModal();
+}
+
+byId("open-category").addEventListener("click", () => openBudgetDialog(categoryDialog, () => {}));
+byId("open-deactivate").addEventListener("click", () => openBudgetDialog(deactivateDialog, (form) => {
+  fillSelect(form.elements.categoryId, state.categories.filter((c) => c.active !== false).map((c) => ({ value: c.id, label: `${c.name} (${DIRECTION_LABELS[c.direction] ?? "—"})` })), "Brak aktywnych kategorii");
+}));
+byId("open-line").addEventListener("click", () => openBudgetDialog(lineDialog, (form) => {
+  const withLine = new Set(state.history.rows.map((row) => row.categoryId));
+  fillSelect(form.elements.categoryId, state.categories.filter((c) => c.active !== false && !withLine.has(c.id)).map((c) => ({ value: c.id, label: `${c.name} (${DIRECTION_LABELS[c.direction] ?? "—"})` })), "Wszystkie kategorie mają już linię");
+}));
+byId("open-revision").addEventListener("click", () => openBudgetDialog(revisionDialog, (form) => {
+  fillSelect(form.elements.lineId, state.history.currentLines.map((row) => ({ value: row.id, label: `${row.categoryName} — plan ${row.planned} (wersja ${row.version})` })), "Brak linii preliminarza");
+}));
+byId("open-adoption").addEventListener("click", () => openBudgetDialog(adoptionDialog, (form) => {
+  form.elements.adoptedOn.value = localDate();
+  const select = form.elements.resolutionId;
+  const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "Bez uchwały";
+  select.replaceChildren(placeholder, ...state.resolutions.map((item) => {
+    const option = document.createElement("option"); option.value = item.id; option.textContent = resolutionOptionLabel(item); return option;
+  }));
+}));

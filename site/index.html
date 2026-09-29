@@ -39,6 +39,12 @@
       <section id="wydarzenia" aria-labelledby="events-title" aria-busy="true">
         <h2 id="events-title">Najbliższe wydarzenia</h2>
         <p class="status" id="events-status" role="status">Wczytywanie…</p>
+        <p class="section-note" id="calendar-feed" hidden>
+          Kalendarz wydarzeń:
+          <a id="calendar-webcal" href="/api/public/events.ics">subskrybuj (webcal)</a>,
+          <a id="calendar-download" href="/api/public/events.ics">pobierz plik .ics</a>.
+          Zawiera wyłącznie opublikowane wydarzenia publiczne.
+        </p>
         <div id="events-list"></div>
       </section>
 

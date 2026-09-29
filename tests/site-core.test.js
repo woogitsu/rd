@@ -7,6 +7,8 @@ import {
   brusselsDate,
   cleanText,
   defaultSchoolYearId,
+  calendarFeedUrls,
+  eventIcsUrl,
   eventsUrl,
   formatEventTime,
   groupByMonth,
@@ -242,4 +244,18 @@ test("main.js: wpis wybrany po adresie i archiwum nie używają innerHTML", asyn
   const source = await readFile(new URL("../site/main.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|outerHTML/);
   assert.match(source, /NEWS_UNAVAILABLE_MESSAGE/);
+});
+
+test("#122: adresy iCal wydarzenia i kanału są budowane tylko z bezpiecznych wartości", () => {
+  assert.equal(eventIcsUrl("evt-1"), "/api/public/events/evt-1.ics");
+  assert.equal(eventIcsUrl("a/b"), null);
+  assert.equal(eventIcsUrl("../x"), null);
+  assert.equal(eventIcsUrl(null), null);
+  assert.deepEqual(calendarFeedUrls("rada.example.invalid"), {
+    https: "https://rada.example.invalid/api/public/events.ics",
+    webcal: "webcal://rada.example.invalid/api/public/events.ics",
+  });
+  assert.equal(calendarFeedUrls("localhost:8787")?.webcal, "webcal://localhost:8787/api/public/events.ics");
+  assert.equal(calendarFeedUrls("evil.example/\"><x"), null);
+  assert.equal(calendarFeedUrls(""), null);
 });

@@ -1,6 +1,6 @@
 # Ekran logowania
 
-Lekki interfejs Vite do tras `POST /api/login`, `/api/mfa/*`, `/api/invitations/accept`, `/api/password/*` (src/pg/routes/login.js, src/pg/routes/mfa.js). Prototyp na danych syntetycznych; bez danych demonstracyjnych i bez obejścia logowania.
+Lekki interfejs Vite do tras `POST /api/login`, `/api/mfa/*`, `/api/invitations/preview`, `/api/invitations/accept`, `/api/password/*` (src/pg/routes/login.js, src/pg/routes/mfa.js). Prototyp na danych syntetycznych; bez danych demonstracyjnych i bez obejścia logowania.
 
 ## Uruchomienie
 

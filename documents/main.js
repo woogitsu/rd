@@ -55,7 +55,7 @@ function apiErrorText(status, body) {
 }
 
 const byId = (id) => document.getElementById(id);
-const state = { documents: [], query: null, offset: 0, pending: null, uploading: false, detailsRequest: null, grants: [], statusAction: null, statusPending: null };
+const state = { documents: [], query: null, cursor: "", pending: null, uploading: false, detailsRequest: null, grants: [], statusAction: null, statusPending: null };
 
 const filtersForm = byId("filters-form");
 const yearInput = byId("filter-year");
@@ -172,11 +172,11 @@ async function loadList({ append = false } = {}) {
       q: String(data.get("q") ?? ""),
       includeInactive: data.get("includeInactive") === "on",
     };
-    state.offset = 0;
+    state.cursor = "";
   }
   let url;
   try {
-    url = buildListUrl({ ...state.query, limit: LIST_LIMIT, offset: state.offset });
+    url = buildListUrl({ ...state.query, limit: LIST_LIMIT, cursor: append ? state.cursor : "" });
   } catch (error) {
     setMessage(listMessage, error.message, "error");
     return;
@@ -188,12 +188,11 @@ async function loadList({ append = false } = {}) {
     const result = await getJson(url);
     const items = Array.isArray(result.documents) ? result.documents : [];
     state.documents = append ? [...state.documents, ...items] : items;
-    const limit = Number(result.limit) || LIST_LIMIT;
-    state.offset += limit;
+    state.cursor = result.nextCursor ?? "";
     setMessage(listMessage, "");
     renderList();
-    // Serwer filtruje wiersze po LIMIT, więc pełna strona to jedyny sygnał dalszych wyników.
-    loadMore.hidden = items.length < limit;
+    // Serwer podaje kursor następnej strony; brak kursora = koniec listy.
+    loadMore.hidden = !state.cursor;
   } catch (error) {
     setMessage(listMessage, error.message, "error");
     if (!append) {

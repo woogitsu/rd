@@ -1399,3 +1399,130 @@ test('two guardians paying separate lines to the same household sum up in househ
     await db.close();
   }
 });
+
+// #115: dopełnienie testów wpłaty z pozycji wyciągu — kwota w centach bez zaokrągleń, audyt bez
+// danych z tytułu przelewu, przypisanie później, cofnięcie powiązania, granice ról i MFA.
+test('a line payment keeps odd cent amounts exactly and audits without the transfer title or amount', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    const secretTitle = 'SKLADKA-TYTUL-SYNTETYCZNY-123';
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await importLines(call, cookies.treasurer, reconciliation.id, [
+      { bookedOn: '2026-09-14', amountCents: 1, reference: secretTitle },
+      { bookedOn: '2026-09-15', amountCents: 1999 },
+      { bookedOn: '2026-09-16', amountCents: 1234567 },
+    ]);
+    const detail = await (await call(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer })).json();
+    const byAmount = Object.fromEntries(detail.lines.map((line) => [line.amountCents, line.id]));
+    for (const cents of [1, 1999, 1234567]) {
+      const response = await linePaymentCall(call, cookies.treasurer, reconciliation.id, byAmount[cents], { householdId: 'h-1' });
+      assert.equal(response.status, 201);
+      assert.equal((await response.json()).payment.amountCents, cents);
+    }
+    const stored = await db.query('SELECT amount_cents FROM payment_entries ORDER BY amount_cents');
+    assert.deepEqual(stored.rows.map((row) => Number(row.amount_cents)), [1, 1999, 1234567]);
+    // Payment z pozycji nie przenosi tytułu przelewu do wpłaty.
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM payment_entries WHERE reference IS NOT NULL')).rows[0].n, 0);
+
+    const events = (await db.query(
+      "SELECT action, entity_id, actor_id, metadata_json FROM audit_events WHERE action IN ('payment.created', 'reconciliation.match.confirmed') ORDER BY occurred_at",
+    )).rows;
+    assert.equal(events.filter((event) => event.action === 'payment.created').length, 3);
+    assert.equal(events.filter((event) => event.action === 'reconciliation.match.confirmed').length, 3);
+    for (const event of events) {
+      assert.equal(event.actor_id, 'u-treasurer');
+      assert.ok(event.entity_id);
+      assert.equal(event.metadata_json.schoolYearId, YEAR);
+    }
+    const serialized = JSON.stringify(events);
+    assert.ok(!serialized.includes(secretTitle), 'tytuł przelewu nie może trafić do audytu');
+    assert.ok(!/amountCents|reference/i.test(serialized), 'audyt nie zawiera kwoty ani tytułu');
+  } finally {
+    await db.close();
+  }
+});
+
+test('an unmatched line payment is assigned later through the payment assignment route and keeps its match', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-late')");
+    const { id, lineIds } = await draftWithLines(call, cookies, [1000]);
+    const created = await (await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: null })).json();
+    assert.equal(created.payment.status, 'unmatched');
+    // Bez automatycznego przypisania: brak gospodarstwa dopóki skarbnik nie wskaże go jawnie.
+    assert.equal((await db.query('SELECT household_id FROM payment_entries WHERE id = $1', [created.payment.id])).rows[0].household_id, null);
+    const assigned = await call(`/api/payments/${created.payment.id}/assignment`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('as') }, body: { householdId: 'h-late' },
+    });
+    assert.equal(assigned.status, 201);
+    const totals = await db.query(
+      'SELECT net_amount_cents FROM household_payment_totals WHERE household_id = $1 AND school_year_id = $2', ['h-late', YEAR],
+    );
+    assert.equal(Number(totals.rows[0].net_amount_cents), 1000);
+    const active = await db.query('SELECT payment_entry_id FROM bank_reconciliation_matches WHERE statement_line_id = $1 AND revoked_at IS NULL', [lineIds[0]]);
+    assert.equal(active.rows[0].payment_entry_id, created.payment.id);
+  } finally {
+    await db.close();
+  }
+});
+
+test('partial line payments (10 EUR then 15 EUR) stay independent payments of one household', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-part')");
+    const { id, lineIds } = await draftWithLines(call, cookies, [1000, 1500]);
+    const first = await (await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: 'h-part' })).json();
+    const second = await (await linePaymentCall(call, cookies.treasurer, id, lineIds[1], { householdId: 'h-part' })).json();
+    assert.notEqual(first.payment.id, second.payment.id);
+    assert.deepEqual([first.payment.amountCents, second.payment.amountCents], [1000, 1500]);
+    const count = await db.query('SELECT count(*)::int AS n FROM payment_entries WHERE household_id = $1', ['h-part']);
+    assert.equal(count.rows[0].n, 2);
+  } finally {
+    await db.close();
+  }
+});
+
+test('revoking the match of a line payment keeps the payment and lets the line be matched again', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query("INSERT INTO households (id) VALUES ('h-1')");
+    const { id, lineIds } = await draftWithLines(call, cookies, [2500]);
+    const created = await (await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: 'h-1' })).json();
+    const revoked = await call(`/api/reconciliations/${id}/matches/${created.match.id}/revocation`, {
+      method: 'POST', cookie: cookies.board, body: { reason: 'Pomyłka przy zapisie z pozycji' },
+    });
+    assert.equal(revoked.status, 200);
+    // Wpłata jest niezmienna i zostaje; cofnięte jest tylko powiązanie (z powodem).
+    const payment = await db.query('SELECT amount_cents, status FROM payment_entries WHERE id = $1', [created.payment.id]);
+    assert.equal(Number(payment.rows[0].amount_cents), 2500);
+    assert.equal(payment.rows[0].status, 'recorded');
+    const match = await db.query('SELECT revoked_at, revoke_reason FROM bank_reconciliation_matches WHERE id = $1', [created.match.id]);
+    assert.ok(match.rows[0].revoked_at);
+    assert.equal(match.rows[0].revoke_reason, 'Pomyłka przy zapisie z pozycji');
+    // Ta sama pozycja może być powiązana z istniejącą wpłatą, bez drugiej wpłaty z pozycji.
+    const rematch = await matchCall(call, cookies.treasurer, id, { statementLineId: lineIds[0], paymentEntryId: created.payment.id });
+    assert.equal(rematch.status, 201);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM payment_entries')).rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});
+
+test('a line payment is refused for representatives, auditors, missing MFA and anonymous users, writing nothing', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const { id, lineIds } = await draftWithLines(call, cookies, [2500]);
+    for (const cookie of [cookies.rep, cookies.audit, cookies.auditNoMfa, cookies.treasurerNoMfa]) {
+      const response = await linePaymentCall(call, cookie, id, lineIds[0], { householdId: null });
+      assert.equal(response.status, 403);
+    }
+    const anonymous = await linePaymentCall(call, undefined, id, lineIds[0], { householdId: null });
+    assert.ok([401, 403].includes(anonymous.status));
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM payment_entries')).rows[0].n, 0);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM bank_reconciliation_matches')).rows[0].n, 0);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'payment.created'")).rows[0].n, 0);
+  } finally {
+    await db.close();
+  }
+});

@@ -3,9 +3,12 @@ import {
   canOfferVoluntaryMfaEnrollment,
   clearSensitiveViews,
   enrollIntroText,
+  enrollReasonFromFragment,
   enrollmentConfirmError,
   errorMessage,
   formatSecret,
+  inviteFormMode,
+  inviteSummaryRows,
   isRecoveryFormat,
   isTotpFormat,
   logoutOutcome,
@@ -37,6 +40,7 @@ const globalMessage = byId("global-message");
 let lastState = null;
 // Ścieżka panelu, z którego przyszło przekierowanie (#99); tylko w pamięci strony.
 let returnTo = nextFromFragment(window.location.hash);
+let enrollReason = enrollReasonFromFragment(window.location.hash);
 
 class ApiError extends Error {
   constructor(code, status) { super(errorMessage(code, status)); this.code = code; this.status = status; }
@@ -97,8 +101,18 @@ async function goNext(state, { initial = false } = {}) {
   const view = nextView(state);
   // Przejście do kolejnego etapu: pola haseł puste, „Pokaż hasło” wyłączone (#197).
   clearSensitiveViews(document);
+  resetInvitePreview();
   if (view === "start" && returnTo && !initial) {
     window.location.replace(returnTo);
+    return;
+  }
+  // #161: panel odesłał tu konto bez czynnika (403 mfa_enrollment_required), którego rola
+  // nie jest na liście obowiązkowych — prowadzimy prosto do zapisu MFA z wyjaśnieniem,
+  // zamiast listy paneli, z której link „Powrót” kończyłby się tą samą odmową.
+  if (view === "start" && initial && returnTo && enrollReason && canOfferVoluntaryMfaEnrollment(state)) {
+    resetEnrollment();
+    renderEnrollIntro(false, { page: true });
+    showView("enroll");
     return;
   }
   if (view === "start") await renderStart();
@@ -108,8 +122,8 @@ async function goNext(state, { initial = false } = {}) {
 
 // #161: tekst i przycisk powrotu zależą od tego, czy widok wymusiła rola
 // (nextView → "enroll") czy konto weszło tu dobrowolnie z widoku startowego.
-function renderEnrollIntro(forced) {
-  byId("enroll-intro-text").textContent = enrollIntroText(forced);
+function renderEnrollIntro(forced, options) {
+  byId("enroll-intro-text").textContent = enrollIntroText(forced, options);
   byId("enroll-back").hidden = forced;
 }
 
@@ -318,6 +332,61 @@ byId("codes-done").addEventListener("click", async () => {
 
 // --- 4. Zaproszenie ----------------------------------------------------------------
 
+// #164: podgląd zaproszenia (rola, klasa, rok, termin, zamaskowany adres) przed
+// przyjęciem. Token nie jest konsumowany. Wariant formularza zależy od `accountExists`;
+// bez podglądu (błąd, brak kodu) obowiązuje wariant nowego konta z dwoma polami.
+let invitePreviewMode = inviteFormMode(null);
+let previewedToken = "";
+
+function applyInviteMode(preview) {
+  invitePreviewMode = inviteFormMode(preview);
+  const repeat = byId("invite-repeat");
+  byId("invite-password-label").textContent = invitePreviewMode.passwordLabel;
+  byId("invite-password-hint").textContent = invitePreviewMode.passwordHint;
+  byId("invite-password").autocomplete = invitePreviewMode.autocomplete;
+  byId("invite-repeat-group").hidden = invitePreviewMode.existing;
+  repeat.required = !invitePreviewMode.existing;
+  if (invitePreviewMode.existing) repeat.value = "";
+}
+
+function renderInvitePreview(preview) {
+  const summary = byId("invite-summary");
+  summary.replaceChildren(...inviteSummaryRows(preview).map(([label, value]) => {
+    const row = document.createElement("div");
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = value;
+    row.append(term, detail);
+    return row;
+  }));
+  applyInviteMode(preview);
+}
+
+function resetInvitePreview() {
+  previewedToken = "";
+  renderInvitePreview(null);
+}
+
+async function loadInvitePreview() {
+  const value = byId("invite-token").value.trim();
+  if (value === previewedToken) return;
+  resetInvitePreview();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(value)) return;
+  previewedToken = value;
+  try {
+    const preview = await api("/api/invitations/preview", { method: "POST", body: { token: value } });
+    if (previewedToken !== value) return; // kod zmieniony w trakcie żądania
+    renderInvitePreview(preview);
+    formError(byId("invite-form"), "invite-error", "");
+  } catch (error) {
+    if (previewedToken !== value) return;
+    formError(byId("invite-form"), "invite-error", error.message);
+  }
+}
+
+byId("invite-token").addEventListener("input", () => { loadInvitePreview(); });
+
 byId("invite-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -329,15 +398,18 @@ byId("invite-form").addEventListener("submit", (event) => {
   // nowego konta wychodzi na jaw dopiero przy kolejnym logowaniu (blokada,
   // reset przez admina). Serwer i tak sam wymusza zgodność dla nowego konta.
   if (!password.value) return formError(form, "invite-error", "Podaj hasło.", [password]);
-  if (!repeat.value) return formError(form, "invite-error", "Powtórz hasło.", [repeat]);
-  if (password.value !== repeat.value) return formError(form, "invite-error", "Hasła nie są takie same.", [repeat]);
+  if (!invitePreviewMode.existing) {
+    if (!repeat.value) return formError(form, "invite-error", "Powtórz hasło.", [repeat]);
+    if (password.value !== repeat.value) return formError(form, "invite-error", "Hasła nie są takie same.", [repeat]);
+  }
   return submitting(form, async () => {
     try {
       const displayName = byId("invite-name").value.trim();
       const result = await api("/api/invitations/accept", {
         method: "POST",
         body: {
-          token: token.value.trim(), password: password.value, passwordRepeat: repeat.value,
+          token: token.value.trim(), password: password.value,
+          ...(invitePreviewMode.existing ? {} : { passwordRepeat: repeat.value }),
           ...(displayName ? { displayName } : {}),
         },
       });
@@ -411,7 +483,18 @@ byId("enroll-voluntary").addEventListener("click", () => {
   renderEnrollIntro(false);
   showView("enroll");
 });
-byId("enroll-back").addEventListener("click", async () => goNext(lastState ?? await refreshState()));
+byId("enroll-back").addEventListener("click", async () => {
+  const state = lastState ?? await refreshState();
+  // Bez wymuszonego przekierowania: powrót do strony, która odesłała tu konto, kończyłby
+  // się tą samą odmową. Lista paneli zostaje, a link „Powrót” — do wyboru użytkownika.
+  if (nextView(state) === "start") {
+    lastState = state;
+    await renderStart();
+    showView("start");
+    return;
+  }
+  await goNext(state);
+});
 
 // --- 7. Start i wylogowanie ---------------------------------------------------------------
 
@@ -482,11 +565,13 @@ byId("logout-all").addEventListener("click", async () => {
 async function route() {
   const fragment = parseFragment(window.location.hash);
   returnTo = nextFromFragment(window.location.hash);
+  enrollReason = enrollReasonFromFragment(window.location.hash);
   if (fragment.view === "invite" || fragment.view === "reset") {
     // Token z części „#…” przenosimy do pola i usuwamy z paska adresu i historii.
     if (fragment.token) byId(`${fragment.view}-token`).value = fragment.token;
     if (window.location.hash.length > 1) history.replaceState(null, "", window.location.pathname);
     showView(fragment.view);
+    if (fragment.view === "invite") await loadInvitePreview();
     return;
   }
   try {
@@ -506,6 +591,7 @@ async function route() {
 for (const button of document.querySelectorAll(".back-to-login")) {
   button.addEventListener("click", () => {
     clearSensitiveViews(document);
+    resetInvitePreview();
     showView("login");
   });
 }
@@ -513,6 +599,7 @@ for (const button of document.querySelectorAll(".back-to-login")) {
 // Token z nowego „#…” wstawia route() dopiero po wyczyszczeniu pól.
 window.addEventListener("hashchange", () => {
   clearSensitiveViews(document, { keepTokens: false });
+  resetInvitePreview();
   resetEnrollment();
   route();
 });

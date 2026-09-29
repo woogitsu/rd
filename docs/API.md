@@ -1,0 +1,89 @@
+# Kontrakt list w API (kursor keyset)
+
+Ten dokument opisuje wspólny kontrakt list, które mogą urosnąć ponad jedną stronę
+(issue #159). Wcześniej część tras obcinała wynik po cichu (`LIMIT 500`/`LIMIT 100`
+bez sygnału) albo używała `OFFSET`; administrator po kilku kadencjach mógł
+oglądać niepełną historię przydziałów lub zdarzeń bez informacji, że to nie całość.
+
+Implementacja wspólna: `src/pg/list-cursor.js`. Wzorzec kursora zgodny z już
+istniejącymi `GET /api/payments` i `GET /api/ledger`.
+
+## Trasy objęte kontraktem
+
+| Trasa | Kolejność | Domyślny / maks. `limit` | Kursor związany z filtrem |
+| --- | --- | --- | --- |
+| `GET /api/admin/users` | `lower(email)`, `id` | 500 / 500 | — |
+| `GET /api/admin/grants` | `granted_at` malejąco, `id` | 500 / 500 | `userId`, `classId`, `schoolYearId`, `role`, `status` |
+| `GET /api/admin/invitations` | `created_at` malejąco, `id` | 500 / 500 | — |
+| `GET /api/admin/audit` | `occurred_at` malejąco, `id` | 100 / 500 | `domain`, `actorId`, `schoolYearId`, `from`, `to` |
+| `GET /api/email/campaigns?schoolYearId=` | `created_at` malejąco, `id` | 100 / 100 | rok szkolny |
+| `GET /api/documents?schoolYearId=` | `created_at` malejąco, `id` | 50 / 100 | rok, `kind`, `classId`, `status`, `category`, `q` |
+
+Uprawnienia tras nie zmieniły się: kursor niczego nie odblokowuje, a każde
+żądanie przechodzi to samo sprawdzenie sesji, roli, MFA i zakresu po stronie
+serwera (`docs/AUTHORIZATION.md`). Kursor nie zawiera danych osobowych: to
+znacznik czasu i identyfikator, a dla kont wyłącznie identyfikator konta (adres
+e-mail nie trafia do URL-a ani do logów dostępu).
+
+## Odpowiedź
+
+Dotychczasowe pola (`users`, `grants`, `invitations`, `events`, `campaigns`,
+`documents`) pozostają bez zmian. Doszły pola:
+
+- `nextCursor` — nieprzezroczysty tekst albo `null`, gdy to ostatnia strona;
+- `truncated` — `true` wtedy i tylko wtedy, gdy `nextCursor` nie jest `null`
+  (są dalsze wiersze, a lista NIE jest kompletna);
+- `limit` — zastosowana wielkość strony.
+
+Klient, który czyta tylko dotychczasowe pola, dostaje pierwszą stronę
+(o tej samej wielkości co dawny stały limit) i może sprawdzić `truncated`.
+`GET /api/documents` zwraca dodatkowo dotychczasowe `offset` (zawsze `0` przy
+kursorze).
+
+## Zapytanie
+
+- `limit` — liczba całkowita od 1 do maksimum trasy. Wartość spoza zakresu lub
+  nieliczbowa daje `400 invalid_limit` (wcześniej `GET /api/documents` przycinał
+  ją po cichu).
+- `cursor` — wartość `nextCursor` z poprzedniej odpowiedzi tej samej trasy z tymi
+  samymi filtrami. Uszkodzony kursor, kursor innej trasy albo wydany dla innego
+  filtru daje `400 invalid_cursor` — nigdy nie miesza wierszy dwóch zapytań.
+- `GET /api/documents`: parametr `offset` działa nadal, ale tylko bez `cursor`
+  (przestarzały; zostanie usunięty po aktualizacji klientów).
+
+## Stabilność
+
+Stronicowanie jest keyset, nie `OFFSET`:
+
+- remis znacznika czasu rozstrzyga `id`, więc kolejność jest całkowita;
+- znacznik czasu w kursorze ma mikrosekundy (tekst z bazy), a nie milisekundy z JS;
+- ponowne użycie tego samego kursora (podwójne kliknięcie) zwraca identyczną stronę;
+- zdarzenie dodane między stronami ma nowszy czas, więc nie powtarza się na
+  kolejnych stronach i nie przesuwa starszych; wiersze dodane „w przeszłości”
+  (czas wcześniejszy niż kursor) pojawią się na dalszych stronach.
+
+`GET /api/admin/audit` przy każdym odczycie zapisuje zdarzenie `audit.viewed`
+(bez parametrów zapytania) — dotyczy to także kolejnych stron.
+
+## Panele
+
+Panele `admin/` (konta, przydziały, zaproszenia, dziennik), `email/` (kampanie)
+i `documents/` pokazują przycisk „Pokaż więcej” / „Wczytaj następne”, gdy
+odpowiedź ma `nextCursor`. Zmiana filtra zaczyna listę od początku.
+
+## Indeksy i plany zapytań
+
+Migracja `0132_keyset_list_indexes.sql` dodaje indeksy zgodne z kolejnością list
+(tylko `CREATE INDEX`, bez zmian danych). `tests/pg-query-plans.test.js` zapełnia
+tabele ponad 10 000 wierszy, robi `ANALYZE` i sprawdza `EXPLAIN` zapytań
+faktycznie wysyłanych przez trasy (z kursorem): brak `Seq Scan` na tabeli listy.
+Zapytanie `GET /api/documents` łączy `document_status_events` bezpośrednio zamiast
+widoku `document_current_status` (ten sam wynik, bo najwyżej jedno zdarzenie na
+dokument), żeby planer mógł użyć indeksu.
+
+## Poza zakresem (nadal ograniczone)
+
+Listy poza powyższą tabelą (`GET /api/email/suppressions` z `LIMIT 500`,
+lista „do sprawdzenia” kampanii z `LIMIT 200`, odbiorcy kampanii z `OFFSET`,
+rejestr żądań osób) nie mają jeszcze kursora; ich przejście na ten kontrakt to
+osobny zakres.
