@@ -67,3 +67,45 @@ export function householdSummary(student, households) {
   const scope = count > 1 ? `${count} gospodarstwa (opieka dzielona)` : "1 gospodarstwo";
   return `${studentLabel(student)} · ${scope}`;
 }
+
+// Etykiety gospodarstw do list wpłat (#128): z listy klas i uczniów, którą serwer już
+// zwrócił temu użytkownikowi (GET /api/classes, /api/classes/{id}/students). Rola bez
+// dostępu do rodzin nie dostaje tych danych, więc dla niej etykieta się nie tworzy —
+// nic nie jest dopisywane do odpowiedzi API. Bez e-maili i adresów.
+export function buildHouseholdLabels(classStudents) {
+  const map = new Map();
+  for (const { className, students } of classStudents || []) {
+    for (const student of students || []) {
+      for (const household of student.households || []) {
+        if (!household || !household.householdId) continue;
+        const entry = map.get(household.householdId) || { students: new Map() };
+        const classes = entry.students.get(studentLabel(student)) || [];
+        if (className && !classes.includes(className)) classes.push(className);
+        entry.students.set(studentLabel(student), classes);
+        map.set(household.householdId, entry);
+      }
+    }
+  }
+  const labels = new Map();
+  for (const [householdId, entry] of map) {
+    const parts = [...entry.students].map(([name, classes]) => (classes.length ? `${name} (${classes.join(", ")})` : name));
+    labels.set(householdId, parts.join(", "));
+  }
+  return labels;
+}
+
+// Rodzina bez etykiety (brak dostępu albo poza wczytanymi klasami): skrócony numer, nie pełny UUID.
+export function householdLabel(labels, householdId) {
+  if (!householdId) return "Nie przypisano rodziny";
+  const known = labels && typeof labels.get === "function" ? labels.get(householdId) : null;
+  return known ? `Rodzina: ${known}` : `Rodzina nr ${String(householdId).slice(0, 8)}`;
+}
+
+// „Pokazano N wpłat” — łączna liczba nie jest znana przy paginacji kursorem.
+export function shownSummary(count, hasMore, noun = ["wpłatę", "wpłaty", "wpłat"]) {
+  if (count === 0) return "";
+  const last2 = count % 100;
+  const last = count % 10;
+  const word = count === 1 ? noun[0] : last >= 2 && last <= 4 && !(last2 >= 12 && last2 <= 14) ? noun[1] : noun[2];
+  return `Pokazano ${count} ${word}${hasMore ? ", są kolejne (użyj „Wczytaj następne”)" : " — to wszystkie dla wybranych filtrów"}.`;
+}
