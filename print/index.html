@@ -10,7 +10,7 @@
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
-      <a class="brand" href="../">Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></a>
+      <a class="brand" href="../">Rada Rodziców<br /><small data-school-name></small></a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
@@ -34,10 +34,10 @@
         <form id="config-form" novalidate>
           <div class="grid">
             <label>Nazwa Rady *
-              <input name="councilName" required maxlength="200" value="Rada Rodziców" aria-describedby="config-error" />
+              <input name="councilName" required maxlength="200" aria-describedby="config-error" />
             </label>
             <label>Szkoła
-              <input name="schoolName" maxlength="200" value="Szkoła Polska im. Joachima Lelewela w Brukseli" />
+              <input name="schoolName" maxlength="200" />
             </label>
             <label>Rok szkolny *
               <input name="schoolYear" required pattern="\d{4}/\d{4}" placeholder="2026/2027" aria-describedby="year-hint config-error" />

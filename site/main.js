@@ -9,6 +9,7 @@ import {
   formatDay,
   formatEventTime,
   formatTime,
+  RADA_NAME,
   formatSchoolYear,
   groupByMonth,
   minutesUrl,
@@ -19,6 +20,10 @@ import {
   schoolYearFromSearch,
   upcomingEvents,
 } from "./core.js";
+import { applySchoolName } from "../shared/school.js";
+
+applySchoolName();
+document.title = RADA_NAME;
 
 const byId = (id) => document.getElementById(id);
 

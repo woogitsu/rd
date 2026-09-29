@@ -2,6 +2,8 @@
 // src/pg/routes/year-close.js). Bez sieci, bez DOM: łatwe do przetestowania
 // (tests/year-close-panel-core.test.js).
 
+import { formatSchoolYear } from '../shared/school-year.js';
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 // Role z src/pg/routes/year-close.js (READ_ROLES/CHECKLIST_ROLES/CLOSE_ROLES) —
@@ -164,7 +166,7 @@ export function startConfirmation(schoolYearId, nextSchoolYearId) {
     destructive: true,
     confirmLabel: 'Rozpocznij zamknięcie',
     effects: [
-      `Rok ${schoolYearId} przejdzie w stan „zamykanie”, a rok docelowy ${nextSchoolYearId} zostanie na stałe zapisany w wierszu zamknięcia.`,
+      `Rok ${formatSchoolYear(schoolYearId)} przejdzie w stan „zamykanie”, a rok docelowy ${formatSchoolYear(nextSchoolYearId)} zostanie na stałe zapisany w wierszu zamknięcia.`,
       'Rozpoczęcia nie da się cofnąć ani usunąć — ani z tego ekranu, ani przez API. Zdarzenie trafia do dziennika z Twoim kontem.',
       'Samo rozpoczęcie niczego jeszcze nie zamyka. Zamknięcie roku (przeniesienie bilansu, wygaszenie ról tej kadencji) wymaga potwierdzenia całej listy kontrolnej i drugiej osoby.',
     ],

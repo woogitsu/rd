@@ -14,7 +14,7 @@ import {
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
-import { initialSchoolYearId, yearOptionsHtml } from "../shared/school-year.js";
+import { formatSchoolYear, initialSchoolYearId, yearOptionsHtml } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -277,7 +277,7 @@ byId("verify-file").addEventListener("change", async (event) => {
   const paragraph = document.createElement("p");
   paragraph.className = result.ok ? "verify-ok" : "verify-bad";
   paragraph.textContent = result.ok
-    ? `Zgodny: rok ${result.schoolYearId}, ${result.files} plików tabel, ${result.rows} wierszy.`
+    ? `Zgodny: rok ${formatSchoolYear(result.schoolYearId)}, ${result.files} plików tabel, ${result.rows} wierszy.`
     : "Plik jest niezgodny z manifestem.";
   box.append(paragraph);
   if (!result.ok) {
@@ -322,7 +322,7 @@ async function applyAccess() {
       select.replaceChildren(...classes.map((item) => {
         const option = document.createElement("option");
         option.value = item.id;
-        option.textContent = `${item.name} (${item.schoolYearLabel ?? item.schoolYearId})`;
+        option.textContent = `${item.name} (${formatSchoolYear(item.schoolYearLabel ?? item.schoolYearId)})`;
         return option;
       }));
       byId("roster-run").disabled = classes.length === 0;

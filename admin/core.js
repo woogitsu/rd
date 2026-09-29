@@ -1,5 +1,6 @@
 // Czyste funkcje panelu administracji kont (bez DOM i sieci) — testowane w tests/admin-core.test.js.
 import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
+import { formatSchoolYear } from "../shared/school-year.js";
 import { shortId } from "../shared/short-id.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -308,7 +309,7 @@ export function indexClasses(schoolYears = []) {
 export function scopeLabel(grant, classes = new Map(), years = new Map()) {
   const parts = [];
   if (grant.classId) parts.push(`klasa ${classes.get(grant.classId)?.name ?? grant.classId}`);
-  if (grant.schoolYearId) parts.push(`rok ${years.get(grant.schoolYearId)?.label ?? grant.schoolYearId}`);
+  if (grant.schoolYearId) parts.push(`rok ${formatSchoolYear(years.get(grant.schoolYearId)?.label ?? grant.schoolYearId)}`);
   return parts.length ? parts.join(", ") : "cała Rada";
 }
 
@@ -361,7 +362,7 @@ export function describeAuditEvent(event, users = []) {
   if (meta.role) details.push(ROLE_LABELS[meta.role] ?? meta.role);
   if (meta.userId) details.push(`konto ${accountName(meta.userId, users)}`);
   if (meta.classId) details.push(`klasa ${meta.classId}`);
-  if (meta.schoolYearId) details.push(`rok ${meta.schoolYearId}`);
+  if (meta.schoolYearId) details.push(`rok ${formatSchoolYear(meta.schoolYearId)}`);
   if (meta.reason) details.push(`powód: ${reasonLabel(meta.reason)}`);
   if (Number.isInteger(meta.count)) details.push(`liczba: ${meta.count}`);
   return { label, details: details.join(", ") };

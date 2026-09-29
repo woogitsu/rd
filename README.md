@@ -1,4 +1,4 @@
-# RD — Rada Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli
+# RD — Rada Rodziców Szkoły Polskiej w Brukseli
 
 Panel organizacyjny Rady Rodziców na rok szkolny 2026/2027 i następne. Repozytorium zawiera punkt startowy produktu i reguły implementacji. **Nie zawiera prawdziwych danych uczniów ani kluczy usług.**
 
