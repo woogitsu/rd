@@ -103,6 +103,7 @@ const money = (cents) => e(formatEur(cents));
 
 const DIRECTION = { income: 'przychód', expense: 'wydatek' };
 const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone', abandoned: 'porzucone' };
+const EVENT_STATUS = { draft: 'szkic', submitted: 'zgłoszone', approved: 'zatwierdzone', published: 'opublikowane', cancelled: 'odwołane' };
 const RESOLUTION_STATUS = { adopted: 'przyjęta', rejected: 'odrzucona', draft: 'projekt', withdrawn: 'wycofana' };
 
 function table(headers, rows, emptyText) {
@@ -143,6 +144,19 @@ export function renderAuditReportHtml(report) {
     [item.remainingCents === null ? '—' : item.remainingCents < 0 ? `<span class="flag">${money(item.remainingCents)}</span>` : money(item.remainingCents), 'num'],
     [e(item.entryCount), 'num'],
   ]));
+  // #117: raporty sprzed tej zmiany (np. z archiwum) nie mają sekcji wyniku wydarzeń.
+  const eventResults = report.eventResults ?? null;
+  const resultCell = (cents) => (cents < 0 ? `<span class="flag">${money(cents)}</span>` : money(cents));
+  const eventRows = eventResults ? [
+    ...eventResults.events.map((item) => row([
+      [e(item.title)], [e(EVENT_STATUS[item.status] ?? item.status ?? '—')], [e(item.entryCount), 'num'],
+      [money(item.incomeCents), 'num'], [money(item.expenseCents), 'num'], [resultCell(item.resultCents), 'num'],
+    ])),
+    row([['<em>Bez przypisania do wydarzenia</em>'], [''], [''], [money(eventResults.unallocated.incomeCents), 'num'],
+      [money(eventResults.unallocated.expenseCents), 'num'], [resultCell(eventResults.unallocated.resultCents), 'num']]),
+    row([['<strong>Razem rok</strong>'], [''], [''], [money(eventResults.totals.incomeCents), 'num'],
+      [money(eventResults.totals.expenseCents), 'num'], [resultCell(eventResults.totals.resultCents), 'num']]),
+  ] : [];
   const splitRows = (reviews?.possibleSplits ?? []).map((item) => row([
     [e(item.category)], [`${e(formatDate(item.fromDate))}–${e(formatDate(item.toDate))}`], [e(item.entryCount), 'num'],
     [money(item.netCents), 'num'], [item.ledgerEntryIds.map(e).join('<br>')],
@@ -248,6 +262,13 @@ ${reviews ? `
 </tbody></table>
 <p>Kilka wydatków do 3000 EUR w tej samej kategorii w ciągu ${e(reviews.splitWindowDays)} dni, razem powyżej 3000 EUR (informacja do sprawdzenia, nie zarzut):</p>
 ${table([['Kategoria'], ['Okres'], ['Wpisy', 'num'], ['Razem netto', 'num'], ['Wpisy księgi']], splitRows, 'Brak takich zestawień.')}
+` : ''}
+
+${eventResults ? `
+<h2>3c. Wynik wydarzeń</h2>
+${table([['Wydarzenie'], ['Stan'], ['Wpisy', 'num'], ['Przychody', 'num'], ['Wydatki', 'num'], ['Wynik', 'num']],
+    eventRows, '')}
+<p class="meta">Kwoty z przypisań wpisów księgi do wydarzeń (bieżące wersje przypisań). Przychody i wydatki „bez przypisania” to reszta netto roku, więc wiersz „Razem rok” zgadza się z bilansem roku. Wynik ujemny oznacza, że wydatki przypisane do wydarzenia przekraczają przypisane przychody; to informacja do sprawdzenia, nie ocena.</p>
 ` : ''}
 
 <h2>4. Korekty</h2>

@@ -29,6 +29,7 @@ import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { buildBudgetExecution } from './ledger-budget.js';
+import { costCenterReport } from './ledger-cost-centers.js';
 import { readSnapshot } from '../db-snapshot.js';
 import { StatementFileError, normalizeIban } from '../bank/common.js';
 import { parseCoda } from '../bank/coda.js';
@@ -2003,6 +2004,9 @@ export async function buildAuditReport(executor, schoolYearId) {
     paymentLinked: row.payment_linked, inConfirmedReconciliation: row.in_confirmed_reconciliation,
   }));
 
+  // #117: wynik wydarzeń z centrów kosztów (przypisania bieżących wersji), z tej samej
+  // migawki co reszta raportu. Tylko nazwa wydarzenia i kwoty — bez danych osobowych.
+  const eventResults = await costCenterReport(executor, schoolYearId, 'event');
   const resolutionExecution = await buildResolutionExecution(executor, schoolYearId);
   const expenseReviews = await buildExpenseReviews(executor, schoolYearId);
 
@@ -2066,6 +2070,14 @@ export async function buildAuditReport(executor, schoolYearId) {
     budgetExecution,
     largeExpenseThresholdCents: LARGE_EXPENSE_CENTS,
     largeExpenses,
+    eventResults: {
+      events: eventResults.centers.map((c) => ({
+        id: c.id, title: c.name, status: c.status, entryCount: c.entryCount,
+        incomeCents: c.incomeCents, expenseCents: c.expenseCents, resultCents: c.resultCents,
+      })),
+      unallocated: eventResults.general,
+      totals: eventResults.totals,
+    },
     resolutionExecution,
     expenseReviews,
     corrections,
