@@ -960,4 +960,3 @@ keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
 audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
 wiersz nie jest zmieniany; zapisy do tych tabel utrzymują dodatkowe indeksy.
 Wycofanie: `DROP INDEX` każdego z nich (bezpieczne). Kontrakt list: docs/API.md.
-||||||| 278f46e
