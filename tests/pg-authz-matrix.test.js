@@ -91,6 +91,8 @@ const isSuccess = (status) => status >= 200 && status < 300;
 export const AUDIT_EXEMPT_ROUTES = new Map([
   ['import.preview', 'podgląd: walidacja i różnica względem bazy, nic nie zapisuje (import.committed loguje commit)'],
   ['login.invitationPreview', 'podgląd zaproszenia (#164): tylko odczyt po tokenie, nic nie zapisuje; odmowy loguje auth.invitation_preview_failed — tests/pg-login.test.js'],
+  ['admin.promotionPreview', 'podgląd promocji (#78): plan i skrót, nic nie zapisuje; zapis loguje promotion.applied/enrollment.promoted — tests/pg-promotions.test.js'],
+  ['admin.promotionClassesPreview', 'podgląd kopii klas (#78): nic nie zapisuje; zapis loguje class.created — tests/pg-promotions.test.js'],
   ['ledger.categoryCopy', 'macierz wykonuje tylko podgląd (dryRun); rzeczywiste kopiowanie loguje ledger_category.copied — scenariusz w tests/audit-write-coverage.test.js'],
   ['families.enrollment', 'macierz przypisuje do tej samej klasy (powtórka, changed: false); utworzenie i zmiana logują enrollment.created/class_changed — tests/audit-write-coverage.test.js'],
   ['yearClose.start', 'baza grupy yearClose rozpoczyna zamknięcie w setupie, więc przypadki to powtórki; rozpoczęcie loguje year_close.started — tests/audit-write-coverage.test.js'],
@@ -568,6 +570,25 @@ async function makeAdminTarget(ctx, stage) {
     const schoolYearId = nextKey('y-pusty');
     await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
     return { schoolYearId };
+  }
+  if (stage === 'promotionYears') {
+    // Dwa syntetyczne lata z jedną klasą każdy (#78) — nigdy lata aktorów macierzy.
+    const fromSchoolYearId = nextKey('y-zrodlo');
+    const toSchoolYearId = nextKey('y-cel');
+    const fromClassId = nextKey('c-zrodlo');
+    const toClassId = nextKey('c-cel');
+    await seedSchoolYear(ctx.db, fromSchoolYearId, { startsOn: '2031-09-01', endsOn: '2032-08-31' });
+    await seedSchoolYear(ctx.db, toSchoolYearId, { startsOn: '2032-09-01', endsOn: '2033-08-31' });
+    await ctx.db.query('INSERT INTO classes (id, school_year_id, name) VALUES ($1, $2, $3), ($4, $5, $6)',
+      [fromClassId, fromSchoolYearId, `Z-${fromClassId}`, toClassId, toSchoolYearId, `C-${toClassId}`]);
+    const householdId = nextKey('hh-promocja');
+    const studentId = nextKey('s-promocja');
+    const enrollmentId = nextKey('e-promocja');
+    await ctx.db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+    await ctx.db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Test', 'Promocja')", [studentId, householdId]);
+    await ctx.db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
+      [enrollmentId, studentId, fromClassId, fromSchoolYearId]);
+    return { fromSchoolYearId, toSchoolYearId, fromClassId, toClassId, studentId, enrollmentId };
   }
   if (stage === 'dataRequest') {
     // Rejestr żądań osób (#100) — cel dla przejścia stanu; gospodarstwo ogólnoszkolne (hh-1).
