@@ -151,7 +151,7 @@ Zmiany w tym PR (#124):
 - `news_photos.alt_text` jest teraz obowiązkowy przy rejestracji zdjęcia (albo jawne `decorative = true`) — patrz `docs/NEWS.md` i migracja `0071_news_photo_alt_text_required.sql`. Publiczny JSON zwraca `altText: ""` (nie `null`) dla zdjęć dekoracyjnych.
 - Szkic deklaracji dostępności strony publicznej: `docs/ACCESSIBILITY_DECLARATION_DRAFT.md` — tekst do zatwierdzenia przez zarząd/szkołę, bez twierdzeń o zgodności.
 
-**Poza zakresem tego PR** (patrz #124, propozycja pkt. 3): `<figure>`/`<figcaption>` dla zdjęć z autorem i licencją nie jest jeszcze potrzebne — `site/` nie renderuje jeszcze żadnych zdjęć (wyświetlanie galerii, #96, nie jest zaimplementowane); model danych (`altText`/`decorative`) jest już gotowy na tę chwilę. Kontrast `site/styles.css` i `prefers-reduced-motion` — patrz PR dla #112 (ten sam plik, żeby uniknąć nakładania się zmian).
+**Poza zakresem tego PR** (patrz #124, propozycja pkt. 3): `<figure>`/`<figcaption>` dla zdjęć z autorem i licencją nie jest jeszcze potrzebne — w chwili pisania `site/` nie renderowała zdjęć; obecnie `site/main.js` renderuje galerię jako `<figure>` z `<figcaption>` (#96), a model danych (`altText`/`decorative`) jest już używany. Pełna weryfikacja z czytnikiem ekranu nie została wykonana. Kontrast `site/styles.css` i `prefers-reduced-motion` — patrz PR dla #112 (ten sam plik, żeby uniknąć nakładania się zmian).
 
 ## Rozszerzenie przeglądu na wszystkie aplikacje statyczne (#112)
 

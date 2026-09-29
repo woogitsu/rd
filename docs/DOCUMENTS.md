@@ -71,7 +71,7 @@ Dziennik: `document.described` zapisuje aktora, czas, identyfikator dokumentu, k
 
 Zamrożenie roku (issue #76/#313, `postgres/migrations/0106_document_descriptions_year_freeze.sql`): `document_descriptions` nie ma własnej kolumny `school_year_id` — rok ustala dokument-rodzic (`documents.school_year_id`, `FOR UPDATE` blokuje wiersz `documents` przed zapisem opisu, więc sprawdzenie jest spójne z numerowaniem wersji). Nowy opis dokumentu przypisanego do zamkniętego roku kończy się `409 school_year_closed`; dokumenty bez `school_year_id` (np. przywrócone z D1) nie są objęte — jak przy samym `documents` (`postgres/README.md`, `docs/YEAR_CLOSE.md`).
 
-**Poza zakresem tej wersji:** panel — wybór roku i klasy z listy serwera (dziś pole tekstowe) to osobny zakres.
+Panel (`documents/`) wybiera rok szkolny i klasę z list zwracanych przez serwer (`GET /api/classes` zawęża listę do zakresu roli), a nie z pola tekstowego.
 
 ## Walidacja pliku
 
