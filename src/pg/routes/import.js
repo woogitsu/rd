@@ -50,6 +50,7 @@ export const MESSAGES = Object.freeze({
   emailElsewhere: 'Ten sam adres e-mail opiekuna występuje w innej rodzinie — rodzin nie łączymy automatycznie.',
   noCurrentHousehold: 'Uczeń nie ma w bazie bieżącego głównego gospodarstwa — wymaga ręcznego powiązania.',
   noHouseholdLink: 'Wiersz bez ID rodziny: utworzono osobną rodzinę; rodzeństwo nie zostanie powiązane.',
+  idZeroVariant: 'ID ze źródła różni się od zapisu w bazie tylko zerami wiodących (np. 00123 i 123) — Excel mógł zamienić tekst na liczbę. Wymaga ręcznego sprawdzenia, nie utworzono duplikatu.',
   guardianMaybeChanged: 'Możliwa zmiana danych opiekuna (e-mail lub pisownia) — wymaga ręcznej decyzji. Nie utworzono nowego opiekuna.',
 });
 
@@ -63,6 +64,9 @@ class ImportError extends Error {
 }
 
 const norm = (value) => String(value ?? '').trim().toLocaleLowerCase('pl-PL').replace(/\s+/g, ' ');
+// #88: ID złożone z samych cyfr bez zer wiodących ("00123" -> "123"); służy wyłącznie
+// do wykrycia różnicy w zapisie zer (Excel zamienia tekst 00123 na liczbę 123).
+const digitsCanon = (ref) => (/^[0-9]+$/.test(ref) ? ref.replace(/^0+(?=[0-9])/, '') : null);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 // #166: poprzednia wersja porównywała TYLKO do dosłownego 'production' —
@@ -237,6 +241,26 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     );
     for (const row of rows) existingHouseholds.set(row.ref, row.id);
   }
+  // #88: istniejące ID różniące się od plikowego wyłącznie zerami wiodącymi. Takiego wiersza
+  // nie łączymy automatycznie ani nie dublujemy — trafia do konfliktów.
+  const zeroVariants = async (table, refs) => {
+    const canons = [...new Set(refs.map(digitsCanon).filter((c) => c !== null))];
+    const found = new Map();
+    if (!canons.length) return found;
+    const { rows } = await executor.query(
+      `SELECT lower(source_ref) AS ref FROM ${table}
+        WHERE source_ref ~ '^[0-9]+$' AND regexp_replace(source_ref, '^0+(?=[0-9])', '') = ANY($1::text[])`,
+      [canons],
+    );
+    for (const row of rows) found.set(row.ref, digitsCanon(row.ref));
+    return found;
+  };
+  const studentZeroVariants = await zeroVariants('students', studentRefs);
+  const householdZeroVariants = await zeroVariants('households', householdRefs);
+  const hasZeroVariant = (variants, ref) => {
+    const canon = digitsCanon(ref);
+    return canon !== null && [...variants].some(([existingRef, existingCanon]) => existingCanon === canon && existingRef !== ref);
+  };
   const studentIds = [...existingStudents.values()].map((s) => s.id);
   const householdIds = [...new Set([...existingStudents.values()].map((s) => s.household_id).filter(Boolean).concat([...existingHouseholds.values()]))];
 
@@ -317,6 +341,8 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     if (!studentRef) { conflict(MESSAGES.missingStudentId); continue; }
     const classId = classIds.get(record.className);
     const existing = existingStudents.get(studentRef);
+    if (!existing && hasZeroVariant(studentZeroVariants, studentRef)) { conflict(MESSAGES.idZeroVariant); continue; }
+    if (householdRef && !existingHouseholds.has(householdRef) && hasZeroVariant(householdZeroVariants, householdRef)) { conflict(MESSAGES.idZeroVariant); continue; }
     const changes = [];
     let studentId;
     let householdId;

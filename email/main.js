@@ -20,7 +20,7 @@ import { api as apiRequest } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
-import { initialSchoolYearId } from "../shared/school-year.js";
+import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 
 mountShell();
 
@@ -112,7 +112,7 @@ function setBusy(busy) {
 async function showYear(value) {
   if (!isValidId(value)) { setMessage("Podaj poprawny identyfikator roku szkolnego.", true); return; }
   setMessage("");
-  yearInput.value = value;
+  selectYearValue(yearInput, value);
   setBusy(true);
   try {
     state.schoolYearId = value;
@@ -250,6 +250,21 @@ function configureDialog(id, prefix, submit, successText) {
       errorBox.textContent = error.code === "idempotency_conflict"
         ? `${error.message} Zamknij okno i sprawdź stan kampanii, zanim spróbujesz ponownie.`
         : error.message;
+      if (error.code === "revision_conflict") {
+        // #215: ktoś zmienił kampanię w międzyczasie. Nic nie zapisujemy po
+        // cichu; użytkownik wczytuje aktualną wersję i sam poprawia jeszcze raz.
+        errorBox.textContent = "Ktoś zmienił tę kampanię w międzyczasie. Wczytaj ponownie, sprawdź zmiany i dopiero wtedy zapisz swoje. ";
+        const reload = document.createElement("button");
+        reload.type = "button";
+        reload.textContent = "Wczytaj ponownie";
+        reload.addEventListener("click", async () => {
+          reload.disabled = true;
+          dialog.close();
+          await refreshDetail();
+          if (state.detail?.campaign && id === "edit-dialog") byId("edit-campaign").click();
+        });
+        errorBox.append(reload);
+      }
     } finally {
       button.disabled = false;
     }
@@ -277,6 +292,8 @@ const editDialog = configureDialog("edit-dialog", "email-edit", async (data) => 
   const result = await api(campaignUrl(id), {
     method: "PUT",
     body: JSON.stringify({
+      // #215: wersja kampanii widziana w chwili otwarcia okna edycji.
+      revision: Number(editDialog.form.dataset.revision),
       title: String(data.get("title")),
       audience: String(data.get("audience")),
       subject: String(data.get("subject")),
@@ -298,6 +315,7 @@ byId("edit-campaign").addEventListener("click", () => {
   form.elements.audience.value = campaign.audience;
   form.elements.subject.value = campaign.subject;
   form.elements.bodyText.value = campaign.bodyText;
+  form.dataset.revision = String(campaign.revisionNo ?? "");
   editDialog.dialog.showModal();
 });
 
@@ -447,6 +465,6 @@ async function applyAccess() {
   }
   // Rok domyślny: najnowszy z przydziałów, awaryjnie heurystyka daty
   // (shared/school-year.js) — panel ładuje listę bez klikania „Pokaż”.
-  await showYear(initialSchoolYearId(state.grants));
+  await showYear(fillYearSelect(yearInput, state.grants));
 }
 applyAccess();

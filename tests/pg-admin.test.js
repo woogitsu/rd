@@ -361,6 +361,51 @@ test('#256: disable rolls back entirely when revoking sessions fails (no half-di
   }
 });
 
+// #256 (dowód atomowości bez RD_TEST_PG_URL): błąd wstrzyknięty PO wykonaniu
+// UPDATE sessions i zapisie user.disabled — czyli po drugim zapytaniu
+// transakcji — cofa całość: disabled_at, audyt i revoked_at sesji. Test
+// wyścigu na prawdziwym PostgreSQL (pg-disable-session-race) jest w CI
+// pomijany bez RD_TEST_PG_URL, a PGlite nie odtwarza przeplotu, więc to
+// jest dowód, że oba zapisy tworzą jedną transakcję.
+test('#256: an error after the session UPDATE rolls back disabled_at, audit and revoked_at together', async () => {
+  const { db, admin } = await setup();
+  try {
+    const victim = await seedUserSession(db, { userId: 'u-victim3' });
+    const seen = [];
+    let injected = 0;
+    const failingLate = {
+      query: (text, params) => db.query(text, params),
+      transaction: (fn) => db.transaction((tx) => fn({
+        query: async (text, params) => {
+          const isSessionAudit = typeof text === 'string' && Array.isArray(params) && params.includes('session.revoked');
+          if (isSessionAudit && injected === 0) {
+            injected += 1;
+            // Zapytanie UPDATE sessions już się wykonało w tej transakcji.
+            const inside = await tx.query("SELECT count(*)::int AS n FROM sessions WHERE user_id = 'u-victim3' AND revoked_at IS NOT NULL");
+            seen.push(inside.rows[0].n);
+            throw Object.assign(new Error('injected_failure'), { code: '40001' });
+          }
+          return tx.query(text, params);
+        },
+      })),
+    };
+
+    const disabled = await post({ db: failingLate }, '/api/admin/users/u-victim3/disable', admin);
+    assert.equal(disabled.status, 503);
+    assert.equal(injected, 1, 'błąd wstrzyknięty po zapytaniu UPDATE sessions');
+    assert.deepEqual(seen, [1], 'w chwili błędu sesja była już oznaczona jako wycofana (wewnątrz transakcji)');
+
+    assert.equal((await db.query("SELECT disabled_at FROM users WHERE id = 'u-victim3'")).rows[0].disabled_at, null);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM sessions WHERE user_id = 'u-victim3' AND revoked_at IS NOT NULL")).rows[0].n, 0,
+      'revoked_at sesji też cofnięte razem z disabled_at');
+    const events = (await auditRows(db)).filter((row) => row.entity_id === 'u-victim3' || row.action === 'session.revoked');
+    assert.equal(events.length, 0, 'żadne zdarzenie user.disabled / session.revoked nie przetrwało');
+    assert.equal((await call({ db }, '/api/session', { cookie: victim })).status, 200);
+  } finally {
+    await db.close();
+  }
+});
+
 test('invitations return the token once, block duplicates, can be revoked and never log the address', async () => {
   const { db, env, admin } = await setup();
   try {
@@ -461,8 +506,18 @@ test('password reset and MFA reset: single valid token, self-reset blocked, disa
       `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
        VALUES ('f-victim', 'u-mfa-victim', 'totp', 'AAAAAAAAAA', 'BBBBBBBBBBBBBBBB', 'CCCCCCCCCCCCCCCCCCCCCC', now())`,
     );
-    const reset = await post(env, '/api/admin/users/u-mfa-victim/mfa-reset', admin, { confirm: 'u-mfa-victim' });
+    // #146: konto zarządu — jedna osoba tylko składa wniosek; reset wykonuje drugi administrator.
+    const requested = await post(env, '/api/admin/users/u-mfa-victim/mfa-reset', admin, { confirm: 'u-mfa-victim' });
+    assert.equal(requested.status, 202);
+    assert.equal(
+      (await db.query("SELECT disabled_at FROM user_mfa_factors WHERE id = 'f-victim'")).rows[0].disabled_at, null,
+      'wniosek niczego nie zmienia',
+    );
+    const admin2 = await seedUserSession(db, { userId: 'u-admin2', roles: [{ role: 'admin' }], mfa: true });
+    const reset = await post(env, `/api/admin/account-requests/${requested.data.request.id}/approve`, admin2);
     assert.equal(reset.status, 200);
+    assert.equal(reset.data.mfa.changed, true);
+    reset.data = reset.data.mfa;
     assert.equal(reset.data.changed, true);
     assert.equal(reset.data.disabledFactors, 1);
     assert.equal(

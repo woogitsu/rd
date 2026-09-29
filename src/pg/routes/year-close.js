@@ -308,8 +308,12 @@ async function requireYear(executor, schoolYearId) {
 
 async function getStatus(request, env, schoolYearId, json) {
   await authorize(request, env, schoolYearId, READ_ROLES);
-  await requireYear(env.db, schoolYearId);
-  return json(await statusView(env.db, schoolYearId));
+  // #213: statusView składa się z kilku zapytań (zamknięcie, lista kontrolna,
+  // bilans, przegląd wydatków) — jedna migawka, by liczby były spójne.
+  return json(await readSnapshot(env.db, async (tx) => {
+    await requireYear(tx, schoolYearId);
+    return statusView(tx, schoolYearId);
+  }));
 }
 
 async function startClosing(request, env, schoolYearId, json) {
@@ -521,8 +525,10 @@ async function handover(request, env, schoolYearId, json) {
   // trafić na inne połączenie z puli i inną chwilę bazy). W transakcji nie ma
   // sensu Promise.all: jedno połączenie i tak kolejkuje zapytania, więc idą
   // sekwencyjnie na tx.
-  const { year, status, ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants } =
+  const { asOf, year, status, ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants } =
     await readSnapshot(env.db, async (tx) => {
+      // asOf = czas migawki (now() transakcji), nie zegar procesu Node.
+      const asOf = (await tx.query('SELECT now() AS now')).rows[0].now;
       const year = await requireYear(tx, schoolYearId);
       const status = await statusView(tx, schoolYearId);
       const ledgerCounts = await tx.query(
@@ -578,13 +584,14 @@ async function handover(request, env, schoolYearId, json) {
           [status.nextSchoolYearId],
         )
         : { rows: [] };
-      return { year, status, ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants };
+      return { asOf, year, status, ledgerCounts, payments, meetings, meetingsWithoutMinutes, resolutions, events, nextOpening, nextGrants };
     });
 
   const ledger = ledgerCounts.rows[0];
   const pay = payments.rows[0];
   const opening = nextOpening.rows[0];
   return json({
+    asOf: isoTimestamp(asOf),
     final: status.status === 'closed',
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },
     status: status.status,

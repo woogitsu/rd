@@ -37,6 +37,10 @@ zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv`. Każde pobranie
 (niezależnie od formatu) zapisuje `export_runs` i `export.created`; format
 trafia tylko do metadanych audytu, bez migracji schematu. XLSX celowo
 pominięty — brak lekkiej biblioteki do zapisu bez nowej ciężkiej zależności.
+Plik ma BOM UTF-8, separator `;` i CRLF jak pozostałe eksporty CSV (wspólny
+moduł `src/pg/csv.js`, #121: `toCsv`, `csvResponse`, `csvCell`). Pola tekstowe
+(nazwiska, e-maile) zaczynające się od `= + - @`, tabulatora lub CR — także po
+spacjach i w wersji pełnej szerokości — dostają prefiks `'`.
 
 Odpowiedź to plik JSON jako załącznik (`Content-Disposition: attachment`,
 `Cache-Control: no-store`). Nagłówki `X-Export-Run-Id` i
@@ -120,7 +124,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `document_status_events` | zastąpienie/unieważnienie dokumentu z powodem, wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id`/`replacement_document_id` po odtworzeniu nie mają odpowiednika, jak `source_document_id` (0066, #82) |
 | `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
-| `audit_events` | zdarzenia oznaczone tym rokiem (`schoolYearId`), a bez oznaczenia — z dat roku (Europe/Brussels); bez `export.*` |
+| `audit_events` | zdarzenia z `metadata.schoolYearId` = rok eksportu (nigdy wg daty); stare zdarzenia bez roku — wg roku obiektu (`entity_type`/`entity_id`: wpłaty, korekty, przypisania, zwroty, księga, przeniesienia, uzgodnienia, zamknięcie roku, klasy, zapisy, `school_year`); pozostałe (sesje, MFA, konta, role, dokumenty, importy) oraz zdarzenia typu rocznego z nieosiągalnym obiektem — wg dat roku (Europe/Brussels); bez `export.*`. Szczegóły niżej |
 
 Zdarzenia dotyczące obiektu przypisanego do roku (wiersz ma kolumnę
 `school_year_id`) niosą `metadata.schoolYearId` wzięte z TEGO wiersza, nie z
@@ -138,6 +142,23 @@ zdarzenie dało się powiązać z konkretną wysyłką, ale nie jest wymagane) i
 `email.webhook.previous_secret_used` (rotacja sekretu webhooka Brevo — zdarzenie
 bezpieczeństwa integracji, niezwiązane z żadną konkretną kampanią ani rokiem).
 Sesje, MFA i konta pozostają bez roku, jak dotąd.
+
+### Przypisanie zdarzeń audytu do roku (#174)
+
+Późna wpłata za rok poprzedni, korekta lub uzgodnienie wykonane po 31 sierpnia
+mają w dzienniku datę nowego roku kalendarzowego, ale należą do roku obiektu.
+Kolejność rozstrzygania: (1) `metadata.schoolYearId` (zdarzenia `payment.*`,
+`ledger.*`, `reconciliation.*` muszą go mieć — `insertAuditEvent` odrzuca
+zdarzenie bez niego); (2) dla starych zdarzeń bez roku — rok wiersza obiektu;
+(3) zdarzenia bez roku z natury (sesje, MFA, konta) lub o nieosiągalnym
+obiekcie trafiają do roku, w którego datach zapisano zdarzenie. Wybrano wariant
+zachowawczy: dziennik jest tylko do dopisywania, więc roku nie da się dopisać,
+a wyłączenie tych zdarzeń zgubiłoby ślad. Każde zdarzenie trafia do dokładnie
+jednego roku z rozłącznych dat. Zdarzenie z `schoolYearId` nie jest dołączane
+wg daty do żadnego innego roku. Skutek: eksport lat już wyeksportowanych może
+mieć inną zawartość `audit_events` i nowy SHA-256 manifestu (stare paczki
+zachowują własny manifest i nadal przechodzą weryfikację). Kolumna
+`audit_events.school_year_id` — nie wprowadzono (bez migracji).
 
 Tabele z modułów, których migracji nie ma w bazie, są pomijane (wykrywanie
 przez `information_schema`); tabele rdzenia są wymagane.

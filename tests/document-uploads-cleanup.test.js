@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertNoPii } from '../src/pg/audit.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { cleanupDocumentUploads } from '../scripts/document-uploads-cleanup.js';
+import { cleanupDocumentUploads, CLEANUP_ACTOR } from '../scripts/document-uploads-cleanup.js';
 import { createTestDb, seedUser } from './helpers/pg.js';
 
 const MINUTE = 60_000;
@@ -19,7 +19,7 @@ async function insertPendingUpload(db, { id, objectKey, ageMinutes, actorId = 'u
 }
 
 async function auditRows(db, action) {
-  return (await db.query('SELECT actor_id, entity_id, metadata_json FROM audit_events WHERE action = $1', [action])).rows;
+  return (await db.query('SELECT actor_id, entity_id, metadata_json, occurred_at FROM audit_events WHERE action = $1', [action])).rows;
 }
 
 test('orphaned object (put succeeded, insert never happened): deleted, marked abandoned, audited', async () => {
@@ -42,6 +42,14 @@ test('orphaned object (put succeeded, insert never happened): deleted, marked ab
     const [event] = await auditRows(db, 'document_upload.abandoned');
     assert.equal(event.entity_id, '00000000-0000-4000-8000-0000000000a1');
     assertNoPii(event.metadata_json);
+    // Kryterium 2 (#168): aktor i czas. Zadanie nie ma sesji, więc actor_id
+    // jest NULL (FK do users), a aktor techniczny stoi w metadata.actor.
+    assert.equal(event.actor_id, null);
+    const metadata = typeof event.metadata_json === 'string' ? JSON.parse(event.metadata_json) : event.metadata_json;
+    assert.equal(metadata.actor, CLEANUP_ACTOR);
+    assert.equal(metadata.actor, 'system:document-uploads-cleanup');
+    assert.equal(metadata.reason, 'orphaned_object');
+    assert.ok(event.occurred_at, 'zdarzenie ma czas');
   } finally { await db.close(); }
 });
 
@@ -55,6 +63,10 @@ test('crash before the object ever reached the bucket: marked abandoned, nothing
     const row = (await db.query('SELECT state, resolution FROM document_uploads')).rows[0];
     assert.equal(row.state, 'abandoned');
     assert.equal(row.resolution, 'no_object');
+    const [event] = await auditRows(db, 'document_upload.abandoned');
+    assert.equal(event.actor_id, null);
+    const metadata = typeof event.metadata_json === 'string' ? JSON.parse(event.metadata_json) : event.metadata_json;
+    assert.equal(metadata.actor, CLEANUP_ACTOR);
   } finally { await db.close(); }
 });
 

@@ -35,7 +35,7 @@ import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
   parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
 } from '../../email/content.js';
-import { campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
+import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
 
 export const name = 'email';
 
@@ -56,7 +56,7 @@ const SUPPRESS_EVENTS = Object.freeze({
   hard_bounce: 'hard_bounce', invalid_email: 'invalid_email', blocked: 'blocked',
   spam: 'complaint', complaint: 'complaint',
 });
-const BOUNCE_EVENTS = new Set(['hard_bounce', 'invalid_email', 'blocked']);
+const BOUNCE_EVENTS = new Set(BOUNCE_EVENT_NAMES);
 // Limit prostego, nieporozdzielanego licznika żądań na trasę publiczną (best
 // effort — jeden proces; docelowo wymaga trwałego licznika, patrz docs/EMAIL.md).
 // Konfigurowalny przez EMAIL_PREFERENCES_RATE_LIMIT (test dedykowany ustawia
@@ -287,21 +287,20 @@ function parseSendNotBefore(value, current) {
 // #215: PUT zastępowało całą treść kampanii bez wersji — autor, którego
 // poprawkę nadpisano, dostawał 200 i nie wiedział, że ktoś inny zmienił
 // kampanię w międzyczasie (zatwierdzający widział ostatnią wersję, więc
-// błąd był niewidoczny do czasu wysyłki). `revision`, gdy podane w treści
-// żądania, musi zgadzać się z bieżącym `revisionNo` kampanii (odczytanym
+// błąd był niewidoczny do czasu wysyłki). `revision` w treści
+// żądania musi zgadzać się z bieżącym `revisionNo` kampanii (odczytanym
 // pod blokadą wiersza) — niezgodność daje `409 revision_conflict` zamiast
-// cichego nadpisania. Pole opcjonalne na razie (etapowe wprowadzenie, patrz
-// "Ryzyko zmiany" w #215) — starzy klienci bez `revision` zachowują się jak
-// dawniej.
+// cichego nadpisania. Od etapu 2 pole jest WYMAGANE (brak → 400
+// invalid_revision).
 async function updateCampaign(request, env, id, json) {
   const data = await readJson(request);
   let input;
   try { input = parseCampaignContent(data); } catch (error) { mapContentError(error); }
-  const expectedRevision = data.revision !== undefined ? Number(data.revision) : null;
-  if (expectedRevision !== null && !Number.isSafeInteger(expectedRevision)) {
-    throw new RequestError('invalid_revision');
-  }
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
+  // Etap 2 #215: `revision` wymagane (po sprawdzeniu uprawnień). Brak lub
+  // nie-liczba całkowita → 400 invalid_revision.
+  const expectedRevision = data.revision;
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new RequestError('invalid_revision');
   const actorId = context.session.user.id;
   try {
     return await env.db.transaction(async (tx) => {
@@ -316,7 +315,7 @@ async function updateCampaign(request, env, id, json) {
       if (hash === campaign.content_hash && input.title === campaign.title && sendNotBefore === currentSendNotBefore) {
         return json({ campaign: campaignView(campaign), approvalInvalidated: false });
       }
-      if (expectedRevision !== null && campaign.revision_no !== expectedRevision) {
+      if (campaign.revision_no !== expectedRevision) {
         throw new RequestError('revision_conflict', 409);
       }
       // Każda zmiana (także tytułu i terminu startu — zmienia updated_by) cofa
@@ -609,13 +608,15 @@ async function approve(request, env, id, json) {
       if (!recipients.length) throw new RequestError('no_recipients', 409);
       // D-16 (domyślnie wyłączone, wariant zachowawczy): jeśli flaga jest
       // włączona, zatwierdzenie wymaga co najmniej jednej wysyłki testowej
-      // dla dokładnie bieżącej treści (#104).
+      // dla dokładnie bieżącej treści (#104). Liczy się tylko test przyjęty
+      // przez dostawcę (provider_message_id); próba zakończona błędem nie.
       if (emailConfig(env).previewRequiredBeforeApproval) {
         const { rows: previewRows } = await tx.query(
-          'SELECT 1 FROM email_preview_sends WHERE campaign_id = $1 AND content_hash = $2 LIMIT 1',
+          `SELECT 1 FROM email_preview_sends
+            WHERE campaign_id = $1 AND content_hash = $2 AND provider_message_id IS NOT NULL LIMIT 1`,
           [id, campaign.content_hash],
         );
-        if (!previewRows[0]) throw new RequestError('preview_required', 409);
+        if (!previewRows[0]) throw new RequestError('campaign_test_send_required', 409);
       }
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'approved', approved_by = $2, approved_at = now(),
@@ -734,13 +735,26 @@ async function resume(request, env, id, json) {
   }
 }
 
+// Wiadomości, których przekazanie do dostawcy już się rozpoczęło (#210):
+// anulowanie ich nie cofnie. Wiersze „sending” bez send_started_at worker
+// zatrzyma przy potwierdzeniu przed wysyłką.
+async function inFlightCount(tx, campaignId) {
+  const { rows } = await tx.query(
+    "SELECT COUNT(*)::int AS n FROM email_outbox WHERE campaign_id = $1 AND state = 'sending' AND send_started_at IS NOT NULL",
+    [campaignId],
+  );
+  return rows[0].n;
+}
+
 async function cancel(request, env, id, json) {
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   const actorId = context.session.user.id;
   try {
     return await env.db.transaction(async (tx) => {
       const campaign = await loadCampaign(tx, id, { lock: true });
-      if (campaign.status === 'cancelled') return json({ campaign: campaignView(campaign), cancelledMessages: 0 }, 200, { 'Idempotency-Replayed': 'true' });
+      if (campaign.status === 'cancelled') {
+        return json({ campaign: campaignView(campaign), cancelledMessages: 0, inFlight: await inFlightCount(tx, id) }, 200, { 'Idempotency-Replayed': 'true' });
+      }
       if (campaign.status === 'done') throw new RequestError('campaign_locked', 409);
       const { rows: cancelled } = await tx.query(
         `UPDATE email_outbox SET state = 'cancelled', last_error = 'campaign_cancelled', updated_at = now()
@@ -756,7 +770,8 @@ async function cancel(request, env, id, json) {
         actorId, action: 'email.campaign.cancelled', entityType: 'email_campaign', entityId: id,
         metadata: { schoolYearId: campaign.school_year_id, previousStatus: campaign.status, cancelledMessages: cancelled.length },
       });
-      return json({ campaign: campaignView(rows[0]), cancelledMessages: cancelled.length });
+      const inFlight = await inFlightCount(tx, id);
+      return json({ campaign: campaignView(rows[0]), cancelledMessages: cancelled.length, inFlight });
     });
   } catch (error) {
     return mapDatabaseError(error);
@@ -1374,7 +1389,7 @@ export async function handle(request, env, url, json) {
     if (url.pathname === PREFERENCES_PATH) {
       if (method === 'GET') return await preferencesShow(request, env, url, json);
       if (method === 'POST') return await preferencesOptOut(request, env, url, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     if (method !== 'GET' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     if (url.pathname === '/api/email/campaigns') {
@@ -1384,11 +1399,11 @@ export async function handle(request, env, url, json) {
     }
     if (url.pathname === '/api/email/suppressions') {
       if (method === 'GET') return await listSuppressions(request, env, url, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
     }
     const suppressionMatch = url.pathname.match(/^\/api\/email\/suppressions\/([0-9a-f]{64})\/(release-request|release)$/);
     if (suppressionMatch) {
-      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
       const [, emailHashParam, suppressionAction] = suppressionMatch;
       if (suppressionAction === 'release-request') return await releaseRequest(request, env, emailHashParam, json);
       return await release(request, env, emailHashParam, json);

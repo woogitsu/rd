@@ -52,6 +52,10 @@ import { brusselsDay } from '../pg/today.js';
 
 const QUOTA_LOCK_ID = 732481707;
 export const LEASE_MINUTES = 15;
+// Zdarzenia dostawcy oznaczające, że adres nie przyjął wiadomości (#210):
+// wiersz kończy jako „bounced”, nie „sent”. Wspólne dla webhooka i odzyskiwania.
+export const BOUNCE_EVENTS = Object.freeze(['hard_bounce', 'invalid_email', 'blocked']);
+
 const BACKOFF_BASE_MINUTES = 5;
 const BACKOFF_MAX_MINUTES = 6 * 60;
 
@@ -197,6 +201,21 @@ async function recordRun(db, run) {
   );
 }
 
+// Jeśli dla wiersza „sent” zapisano wcześniej zdarzenie bounce, ustawia
+// „bounced” (idempotentnie: tylko z „sent”). Zwraca nazwę zdarzenia albo null.
+async function applyStoredBounce(tx, outboxId) {
+  const { rows } = await tx.query(
+    `UPDATE email_outbox o SET state = 'bounced', last_error = w.event, updated_at = now()
+       FROM (SELECT event FROM email_webhook_events
+              WHERE outbox_id = $1 AND event = ANY($2::text[])
+              ORDER BY received_at, id LIMIT 1) w
+      WHERE o.id = $1 AND o.state = 'sent'
+      RETURNING w.event`,
+    [outboxId, BOUNCE_EVENTS],
+  );
+  return rows[0]?.event ?? null;
+}
+
 async function recoverStale(db, now) {
   return db.transaction(async (tx) => {
     // Wysyłka rozpoczęta, wynik niezapisany (#172), ale dostawca przysłał już
@@ -218,9 +237,16 @@ async function recoverStale(db, now) {
     );
     for (const row of accepted) {
       await recordLedger(tx, { day: row.day, campaignId: row.campaign_id, outboxId: row.id, attempt: row.attempts });
+      // Zdarzenie zapisane, gdy wiersz był jeszcze w „sending” (#210), musi być
+      // zastosowane teraz: bounce → „bounced” (przez „sent”, jedyną dozwoloną
+      // ścieżkę), a nie nadpisane przez „sent”.
+      const bounce = await applyStoredBounce(tx, row.id);
       await insertAuditEvent(tx, {
         action: 'email.sent_recovered', entityType: 'email_outbox', entityId: row.id,
-        metadata: { schoolYearId: row.school_year_id, campaignId: row.campaign_id, reason: 'provider_webhook' },
+        metadata: {
+          schoolYearId: row.school_year_id, campaignId: row.campaign_id, reason: 'provider_webhook',
+          ...(bounce ? { outcome: 'bounced', event: bounce } : {}),
+        },
       });
     }
     // Wiersz z tokenem, którego wysyłka się nie rozpoczęła, na pewno nie wyszedł —
@@ -344,7 +370,9 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
 }
 
 // Potwierdzenie wysyłki: jedna instrukcja UPDATE … RETURNING sprawdza atomowo
-// własność wiersza i wszystkie warunki. Zwraca null (wysyłaj) albo werdykt.
+// własność wiersza i wszystkie warunki. Gospodarstwo dziecka i relacje z opiekunem
+// dotyczą dnia item.memberDay (Bruksela, jak w recheckRow i migawce), a nie
+// kolumny students.household_id (#194) ani dnia UTC limitu Brevo. Zwraca null (wysyłaj) albo werdykt.
 async function confirmSend(db, item, { runToken, config, sendAt }) {
   return db.transaction(async (tx) => {
     const { rows } = await tx.query(
@@ -363,12 +391,12 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
               FROM email_campaign_recipients r
               JOIN guardians g ON g.id = r.guardian_id
               JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
-              JOIN students s ON s.id = sg.student_id
-             WHERE r.id = o.recipient_id AND s.household_id = o.household_id
+              JOIN student_primary_household_on($4::date) ph ON ph.student_id = sg.student_id
+             WHERE r.id = o.recipient_id AND ph.household_id = o.household_id
                AND g.contact_allowed AND sg.contact_allowed
                AND lower(btrim(g.email)) = r.email)
         RETURNING o.id`,
-      [item.id, runToken, sendAt.toISOString(), item.day],
+      [item.id, runToken, sendAt.toISOString(), item.memberDay],
     );
     if (rows[0]) return null;
     const { rows: current } = await tx.query(
@@ -453,6 +481,9 @@ async function recordSent(db, item, { messageId, now, runToken }) {
       action: 'email.sent', entityType: 'email_outbox', entityId: item.id,
       metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, householdId: item.household_id },
     });
+    // Webhook bounce mógł dotrzeć między przyjęciem wiadomości a tym zapisem
+    // (wiersz był w „sending”, więc tylko zapisał zdarzenie) — stosujemy go teraz.
+    await applyStoredBounce(tx, item.id);
     return 'sent';
   });
 }
