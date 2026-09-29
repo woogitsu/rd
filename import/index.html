@@ -32,13 +32,16 @@
       </select></label>
       <label id="sheet-field" hidden>Arkusz<select id="sheet" aria-describedby="file-status"></select></label>
     </div>
-    <p class="status muted" id="file-status" role="status">Maksymalnie 5 MB i 5000 wierszy. Plik .ods (LibreOffice) nie jest obsługiwany — zapisz jako .xlsx albo .csv. <a href="./template.csv" download="szablon-uczniowie.csv">Pobierz przykładowy CSV</a> — <a href="./template-instrukcja.txt" download="szablon-instrukcja.txt">instrukcja do szablonu</a>.</p>
+    <p class="status muted" id="file-status" role="status">Maksymalnie 5 MB i 5000 wierszy. Plik .ods (LibreOffice) nie jest obsługiwany — zapisz jako .xlsx albo .csv. <a href="./template.xlsx" download="szablon-uczniowie.xlsx">Pobierz szablon Excel (.xlsx)</a> (kolumny jako Tekst, arkusz „Instrukcja”) — <a href="./template.csv" download="szablon-uczniowie.csv">Pobierz przykładowy CSV</a> (UTF-8, separator „;”; w Excelu PL użyj Dane → Z tekstu/CSV, by nie zepsuć polskich znaków) — <a href="./template-instrukcja.txt" download="szablon-instrukcja.txt">instrukcja do szablonu</a>.</p>
   </section>
 
   <section id="mapping-section" aria-labelledby="mapping-title" hidden>
     <h2 id="mapping-title">2. Dopasuj kolumny</h2>
     <p class="muted" id="mapping-hint">Gwiazdka oznacza pole wymagane. Nie łączymy rodzeństwa ani rodzin na podstawie samego nazwiska.</p>
     <div id="mapping" class="mapping" role="group" aria-labelledby="mapping-title" aria-describedby="mapping-hint"></div>
+    <p class="muted" id="mapping-memory-note" role="status"></p>
+    <div class="actions-row"><button id="clear-mapping" type="button" hidden>Wyczyść zapamiętane mapowanie</button></div>
+    <p class="muted">Po „Sprawdź dane” ta przeglądarka zapamiętuje przypisania nagłówków do pól (same nazwy nagłówków, bez wartości z wierszy; kolumny PESEL, adres itp. nie są zapamiętywane).</p>
     <div id="unused-columns" role="status"></div>
     <div class="actions-row"><button id="preview" type="button">Sprawdź dane</button></div>
   </section>

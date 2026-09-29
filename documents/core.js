@@ -40,6 +40,16 @@ export const CATEGORY_LABELS = Object.freeze({
   inne: "Inne",
 });
 
+// Stan dokumentu (issue #82): wyliczany przez serwer ze zdarzeń statusu. Plik i wpis zostają
+// w archiwum także po zastąpieniu i unieważnieniu.
+export const STATUS_LABELS = Object.freeze({
+  active: "Aktualny",
+  superseded: "Zastąpiony",
+  voided: "Unieważniony",
+});
+export const REASON_MIN = 3;
+export const REASON_MAX = 500;
+
 export const LINK_LABELS = Object.freeze({
   ledger_entry: "Wpis księgi",
   payment_entry: "Wpłata",
@@ -204,7 +214,7 @@ export function buildUploadRequest(meta, mime, idempotencyKey) {
   };
 }
 
-export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", limit = LIST_LIMIT, offset = 0 }) {
+export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", includeInactive = false, limit = LIST_LIMIT, offset = 0, cursor = "" }) {
   const year = String(schoolYearId ?? "").trim();
   if (!isSafeId(year)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
   if (kind && !Object.hasOwn(KIND_LABELS, kind)) throw new Error("Nieznany rodzaj dokumentu.");
@@ -220,8 +230,12 @@ export function buildListUrl({ schoolYearId, kind = "", classId = "", category =
   if (cls) params.set("classId", cls);
   if (category) params.set("category", category);
   if (query) params.set("q", query);
+  // Domyślnie serwer zwraca tylko dokumenty aktualne; `status=all` dodaje zastąpione i unieważnione.
+  if (includeInactive) params.set("status", "all");
   params.set("limit", String(limit));
-  if (offset) params.set("offset", String(offset));
+  // #159: kursor keyset zastępuje offset (offset zostaje tylko dla zgodności).
+  if (cursor) params.set("cursor", String(cursor));
+  else if (offset) params.set("offset", String(offset));
   return `/api/documents?${params.toString()}`;
 }
 
@@ -308,7 +322,14 @@ export function normalizeDocument(doc) {
     title: doc?.title ? String(doc.title) : null,
     category: Object.hasOwn(CATEGORY_LABELS, doc?.category) ? doc.category : null,
     documentDate: doc?.documentDate ? String(doc.documentDate) : null,
+    // Stan i „zastąpiony przez” (issue #82); brak pola = dokument aktualny.
+    status: Object.hasOwn(STATUS_LABELS, doc?.status) ? doc.status : "active",
+    replacementDocumentId: isDocumentId(doc?.replacementDocumentId) ? doc.replacementDocumentId : null,
   };
+}
+
+export function statusLabel(doc) {
+  return STATUS_LABELS[doc?.status] ?? STATUS_LABELS.active;
 }
 
 export function titleLabel(doc) {
@@ -336,6 +357,7 @@ export function metadataRows(rawDoc) {
     ["Rozmiar", doc.byteSize === null ? "—" : formatBytes(doc.byteSize)],
     ["SHA-256", doc.sha256 ?? "—"],
     ["Powiązanie", linkLabel(doc)],
+    ["Stan", statusLabel(doc)],
     ["Tytuł", titleLabel(doc)],
     ["Kategoria", categoryLabel(doc)],
     ["Data dokumentu", doc.documentDate ?? "—"],
@@ -365,4 +387,79 @@ export function uploadableKinds(grants) {
 export function representativeClasses(grants) {
   const list = Array.isArray(grants) ? grants : [];
   return [...new Set(list.filter((g) => g?.role === "representative" && g.classId).map((g) => g.classId))].sort();
+}
+
+// Czy konto może zastąpić lub unieważnić dokument — podpowiedź dla przycisków; o dostępie
+// rozstrzyga serwer (canAccessDocument w src/pg/routes/documents.js: te same role, co przy
+// przesłaniu, D-08/D-09 — bez rozszerzania uprawnień). Materiał klasy: przydział ogólnoszkolny
+// albo przydział tej klasy; rodzaje ogólnoszkolne: wyłącznie przydział bez klasy.
+export function canChangeStatus(grants, rawDoc) {
+  const doc = normalizeDocument(rawDoc);
+  if (!doc.kind || doc.status !== "active" || !DOCUMENT_ROLES[doc.kind]) return false;
+  const list = Array.isArray(grants) ? grants : [];
+  return list.some((grant) => {
+    if (!DOCUMENT_ROLES[doc.kind].includes(grant?.role)) return false;
+    if (grant.schoolYearId && doc.schoolYearId && grant.schoolYearId !== doc.schoolYearId) return false;
+    if (doc.kind === "class") return !grant.classId || grant.classId === doc.classId;
+    return !grant.classId;
+  });
+}
+
+// Dokumenty, którymi można zastąpić `doc`: ten sam rodzaj, rok i klasa, aktualne, inne niż sam
+// dokument. Serwer sprawdza to samo i odrzuca resztę (400/409).
+export function replacementCandidates(documents, rawDoc) {
+  const doc = normalizeDocument(rawDoc);
+  return (Array.isArray(documents) ? documents : []).map(normalizeDocument).filter((other) => other.id
+    && other.id !== doc.id && other.status === "active" && other.kind === doc.kind
+    && other.schoolYearId === doc.schoolYearId && other.classId === doc.classId);
+}
+
+export function validateStatusReason(value) {
+  const reason = String(value ?? "").trim();
+  if (reason.length < REASON_MIN || reason.length > REASON_MAX) {
+    return { ok: false, error: `Powód musi mieć od ${REASON_MIN} do ${REASON_MAX} znaków.` };
+  }
+  return { ok: true, value: reason };
+}
+
+export function buildStatusRequest(action, id, { reason, replacementDocumentId } = {}, idempotencyKey) {
+  if (action !== "supersede" && action !== "void") throw new Error("Nieznana operacja na dokumencie.");
+  if (typeof idempotencyKey !== "string" || idempotencyKey.length < 8 || idempotencyKey.length > 128) {
+    throw new Error("Niepoprawny identyfikator operacji.");
+  }
+  const body = { reason };
+  if (action === "supersede") {
+    if (!isDocumentId(replacementDocumentId)) throw new Error("Wybierz dokument zastępujący.");
+    body.replacementDocumentId = replacementDocumentId;
+  }
+  return { method: "POST", url: `${metadataUrl(id)}/${action}`, body, idempotencyKey };
+}
+
+// Skutki pokazywane w oknie potwierdzenia (shared/confirm-dialog.js). Bez „usuń”: plik zostaje.
+export function statusConfirmation(action, label, replacementLabel = "") {
+  const keep = "Plik i wpis zostają w archiwum i nie są usuwane; operacja trafia do dziennika zdarzeń.";
+  if (action === "supersede") {
+    return {
+      title: "Zastąpić dokument?",
+      confirmLabel: "Zastąp dokument",
+      destructive: true,
+      effects: [
+        `Dokument „${label}” zostanie oznaczony jako zastąpiony przez „${replacementLabel}”.`,
+        "Zastąpiony dokument znika z domyślnej listy; widać go po wybraniu „Pokaż też zastąpione i unieważnione”.",
+        keep,
+        "Tej operacji nie można cofnąć w panelu.",
+      ],
+    };
+  }
+  return {
+    title: "Unieważnić dokument?",
+    confirmLabel: "Unieważnij dokument",
+    destructive: true,
+    effects: [
+      `Dokument „${label}” zostanie oznaczony jako unieważniony.`,
+      "Unieważniony dokument znika z domyślnej listy; widać go po wybraniu „Pokaż też zastąpione i unieważnione”.",
+      keep,
+      "Tej operacji nie można cofnąć w panelu.",
+    ],
+  };
 }

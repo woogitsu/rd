@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handlePgRequest } from '../src/pg/app.js';
-import { insertAuditEvent } from '../src/pg/audit.js';
+import { assertNoPii, insertAuditEvent } from '../src/pg/audit.js';
 import {
   assertRestoreAllowed, buildYearlyExport, canonicalJson, restoreBundle, sha256Hex, verifyBundle,
 } from '../src/pg/export.js';
@@ -284,13 +284,35 @@ test('restore into an empty PGlite reproduces counts and sums; non-empty target 
     await assert.rejects(restoreBundle(target, tampered), { code: 'file_hash_mismatch:students.jsonl' });
     assert.equal((await target.query('SELECT count(*)::int AS n FROM students')).rows[0].n, 0);
 
+    // Nieudane odtworzenie (paczka zmieniona) nie zostawia śladu w dzienniku.
+    assert.equal((await target.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'export.restored'")).rows[0].n, 0);
+
     const report = await restoreBundle(target, bundle);
     assert.equal(report.restored, true);
     assert.equal(report.reexportFilesMatch, true);
     assert.equal(report.reexportTotalsMatch, true);
 
+    // #184: udane odtworzenie zostawia dokładnie jedno zdarzenie export.restored
+    // (skrót manifestu, liczniki, bez danych osobowych), poza zakresem paczek.
+    const restoredEvents = (await target.query(
+      "SELECT actor_id, entity_type, entity_id, metadata_json FROM audit_events WHERE action = 'export.restored'",
+    )).rows;
+    assert.equal(restoredEvents.length, 1);
+    assert.equal(restoredEvents[0].actor_id, null);
+    assert.equal(restoredEvents[0].entity_type, 'export');
+    assert.equal(restoredEvents[0].entity_id, bundle.manifestSha256);
+    const restoredMeta = typeof restoredEvents[0].metadata_json === 'string' ? JSON.parse(restoredEvents[0].metadata_json) : restoredEvents[0].metadata_json;
+    assert.equal(restoredMeta.manifestSha256, bundle.manifestSha256);
+    assert.equal(restoredMeta.schoolYearId, YEAR);
+    assert.equal(restoredMeta.source, 'restore');
+    assertNoPii(restoredMeta);
+
     for (const [table, count] of Object.entries(rowCounts)) {
-      const { rows } = await target.query(`SELECT count(*)::int AS n FROM ${table}`);
+      const { rows } = await target.query(
+        table === 'audit_events'
+          ? "SELECT count(*)::int AS n FROM audit_events WHERE action NOT LIKE 'export.%'"
+          : `SELECT count(*)::int AS n FROM ${table}`,
+      );
       assert.equal(rows[0].n, count, table);
     }
     assert.deepEqual(await sums(target), sourceSums);
@@ -306,6 +328,7 @@ test('restore into an empty PGlite reproduces counts and sums; non-empty target 
     assert.equal(again.manifestSha256, bundle.manifestSha256);
 
     await assert.rejects(restoreBundle(target, bundle), (error) => error.code.startsWith('target_not_empty:'));
+    assert.equal((await target.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'export.restored'")).rows[0].n, 1, 'odmowa nie dopisuje drugiego zdarzenia');
     const counts = await target.query('SELECT count(*)::int AS n FROM students');
     assert.equal(counts.rows[0].n, 3, 'refused restore changed nothing');
 

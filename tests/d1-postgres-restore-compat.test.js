@@ -229,6 +229,42 @@ test('an unpublished D1 event with a leftover published_at is rejected with a cl
   } finally { await db.close(); }
 });
 
+test('D1 snapshot with a role grant whose class is from another school year is rejected with the row id and nothing is written (#198)', async () => {
+  const snapshot = snapshotFromD1();
+  snapshot.tables.role_grants.find((row) => row.id === 'rg-rep').school_year_id = 'y-2025';
+  resign(snapshot);
+  const db = await createTestDb();
+  try {
+    await assert.rejects(restoreSnapshot(db, snapshot), /Role grant class does not belong to its school year: rg-rep/);
+    for (const table of ['school_years', 'users', 'role_grants']) {
+      assert.equal((await db.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0, `nothing written: ${table}`);
+    }
+    const noYear = snapshotFromD1();
+    noYear.tables.role_grants.find((row) => row.id === 'rg-rep').school_year_id = null;
+    await assert.rejects(restoreSnapshot(db, resign(noYear)), /Role grant has a class but no school year: rg-rep/);
+  } finally { await db.close(); }
+});
+
+test('D1 snapshot with user e-mails differing only by case is rejected with both row ids and no e-mail in the error (#198)', async () => {
+  const snapshot = snapshotFromD1();
+  snapshot.tables.users.push({
+    id: 'u-dup', email: 'REP@example.invalid'.toLowerCase(), display_name: 'Test Duplikat', disabled_at: null, created_at: '2026-09-02 08:00:00',
+  });
+  resign(snapshot);
+  const db = await createTestDb();
+  try {
+    await assert.rejects(restoreSnapshot(db, snapshot), (error) => {
+      assert.match(error.message, /Duplicate user email \(case-insensitive\): u-dup, u-rep/);
+      assert.doesNotMatch(error.message, /example\.invalid/);
+      return true;
+    });
+    const upper = snapshotFromD1();
+    upper.tables.users.find((row) => row.id === 'u-rep').email = 'Rep@example.invalid';
+    await assert.rejects(restoreSnapshot(db, resign(upper)), /User email is not in lower\(btrim\(\)\) form: u-rep/);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM users')).rows[0].n, 0);
+  } finally { await db.close(); }
+});
+
 test('restore refuses a non-empty target that already holds new-schema rows (meetings)', async () => {
   const db = await createTestDb();
   try {

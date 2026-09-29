@@ -8,6 +8,10 @@ import { findForbiddenWording } from '../../print/core.js';
 export { findForbiddenWording };
 
 export const AUDIENCES = Object.freeze(['all_households', 'no_payment_record']);
+// #113: odbiorcy kampanii powiązanej z zebraniem klasowym (rodziny dzieci jednej
+// klasy w roku). Nie do wyboru w ręcznie tworzonym szkicu — powstaje wyłącznie
+// z zatwierdzonego zawiadomienia (src/pg/meetings.js) razem z class_id.
+export const MEETING_AUDIENCES = Object.freeze(['class_households']);
 // Kategoria komunikatu (#110). `organizational` bez linku wypisania wymaga
 // osobnej decyzji zarządu/szkoły (D-06) — do tego czasu każda kategoria ma link.
 export const CATEGORIES = Object.freeze(['contribution_reminder', 'organizational']);
@@ -52,12 +56,12 @@ function checkText(value, { min, max, field, allowNewlines, placeholders }) {
 }
 
 // Walidacja danych kampanii z żądania. Zwraca znormalizowane pola.
-export function parseCampaignContent(data) {
+export function parseCampaignContent(data, { audiences = AUDIENCES } = {}) {
   if (!data || typeof data !== 'object') throw new ContentError('invalid_request');
   const title = checkText(data.title, { min: 3, max: 200, field: 'title', allowNewlines: false, placeholders: [] });
   const subject = checkText(data.subject, { min: 3, max: 200, field: 'subject', allowNewlines: false, placeholders: SUBJECT_PLACEHOLDERS });
   const bodyText = checkText(data.bodyText, { min: 20, max: 10000, field: 'body', allowNewlines: true, placeholders: BODY_PLACEHOLDERS });
-  if (!AUDIENCES.includes(data.audience)) throw new ContentError('invalid_audience');
+  if (!audiences.includes(data.audience)) throw new ContentError('invalid_audience');
   const category = data.category === undefined ? DEFAULT_CATEGORY : data.category;
   if (!CATEGORIES.includes(category)) throw new ContentError('invalid_category');
   return { title, subject, bodyText, audience: data.audience, category };

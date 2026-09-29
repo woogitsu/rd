@@ -80,6 +80,30 @@ function orderBudgetLines(rows) {
   return ordered;
 }
 
+// #198: spójność, której pilnują ograniczenia PostgreSQL (0081/0143). Zamiast
+// ogólnego błędu FK/UNIQUE w środku transakcji — czytelny błąd z identyfikatorami
+// wierszy (bez e-maili). Niczego nie naprawiamy po cichu.
+function assertScopeConsistency(tables) {
+  const classYear = new Map(tables.classes.map((row) => [row.id, row.school_year_id]));
+  for (const row of tables.role_grants) {
+    if (row.class_id == null) continue;
+    if (row.school_year_id == null) throw new Error(`Role grant has a class but no school year: ${row.id}`);
+    if (classYear.get(row.class_id) !== row.school_year_id) {
+      throw new Error(`Role grant class does not belong to its school year: ${row.id}`);
+    }
+  }
+  const byEmail = new Map();
+  for (const row of tables.users) {
+    if (typeof row.email !== 'string') continue;
+    const normalized = row.email.trim().toLowerCase();
+    if (normalized !== row.email) throw new Error(`User email is not in lower(btrim()) form: ${row.id}`);
+    byEmail.set(normalized, [...(byEmail.get(normalized) ?? []), row.id]);
+  }
+  for (const ids of byEmail.values()) {
+    if (ids.length > 1) throw new Error(`Duplicate user email (case-insensitive): ${ids.sort().join(', ')}`);
+  }
+}
+
 export function normalizeSnapshot(snapshot) {
   verifySnapshot(snapshot);
   const tables = structuredClone(snapshot.tables);
@@ -95,6 +119,7 @@ export function normalizeSnapshot(snapshot) {
     row.idempotency_key ||= legacyKey('payment', row.id);
     return row;
   });
+  assertScopeConsistency(tables);
   tables.guardians.forEach((row) => { row.contact_allowed = bool(row.contact_allowed); });
   tables.student_guardians.forEach((row) => {
     row.contact_allowed = bool(row.contact_allowed);

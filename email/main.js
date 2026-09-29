@@ -34,6 +34,7 @@ const byId = (id) => document.getElementById(id);
 const state = {
   schoolYearId: "",
   campaigns: [],
+  campaignsCursor: null,
   selectedId: null,
   detail: null,
   preview: null,
@@ -97,10 +98,13 @@ function renderList() {
   byId("campaigns-empty").hidden = count !== 0;
 }
 
-async function loadList() {
-  const url = buildCampaignsUrl(state.schoolYearId);
+async function loadList({ append = false } = {}) {
+  const url = buildCampaignsUrl(state.schoolYearId, append ? state.campaignsCursor : '');
   const data = await api(url);
-  state.campaigns = Array.isArray(data.campaigns) ? data.campaigns : [];
+  const items = Array.isArray(data.campaigns) ? data.campaigns : [];
+  state.campaigns = append ? [...state.campaigns, ...items] : items;
+  state.campaignsCursor = data.nextCursor ?? null;
+  byId("campaigns-more").hidden = !state.campaignsCursor;
   renderList();
 }
 
@@ -129,6 +133,17 @@ async function showYear(value) {
     setBusy(false);
   }
 }
+
+byId("campaigns-more").addEventListener("click", async () => {
+  setBusy(true);
+  try {
+    await loadList({ append: true });
+  } catch (error) {
+    setMessage(`Nie udało się pobrać kolejnych kampanii: ${error.message}`, true);
+  } finally {
+    setBusy(false);
+  }
+});
 
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -327,7 +342,13 @@ byId("edit-campaign").addEventListener("click", () => {
   const campaign = state.detail.campaign;
   const form = editDialog.form;
   form.elements.title.value = campaign.title;
-  form.elements.audience.value = campaign.audience;
+  // #113: szkic z zawiadomienia o zebraniu ma odbiorców wynikających z zebrania — bez zmiany ręcznej.
+  const select = form.elements.audience;
+  if (![...select.options].some((option) => option.value === campaign.audience)) {
+    select.append(new Option(AUDIENCE_LABELS[campaign.audience] ?? campaign.audience, campaign.audience));
+  }
+  select.value = campaign.audience;
+  for (const option of select.options) option.disabled = Boolean(campaign.meetingNoticeId) && option.value !== campaign.audience;
   form.elements.subject.value = campaign.subject;
   form.elements.bodyText.value = campaign.bodyText;
   form.dataset.revision = String(campaign.revisionNo ?? "");

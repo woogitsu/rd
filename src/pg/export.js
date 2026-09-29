@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto';
 import { isProductionLikeEnv } from '../app-env.js';
 import { csvRow, toCsv } from './csv.js';
+import { insertAuditEvent } from './audit.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
 // Wersja 2 (#202): gospodarstwa i ich historia (0014), uzgodnienia rachunku
@@ -27,6 +28,8 @@ export const ROSTER_FORMAT = 'rd-class-roster';
 export const ROSTER_FORMAT_VERSION = 1;
 
 const MAX_ROWS_PER_TABLE = 500_000;
+// #216: liczba wierszy pobieranych i przetwarzanych naraz (kursor); po każdej partii pętla zdarzeń jest oddawana.
+export const EXPORT_BATCH_ROWS = 2000;
 const INSERT_BATCH_ROWS = 100;
 const IDENTIFIER = /^[a-z_][a-z0-9_]{0,62}$/;
 const PATH_PATTERN = /^[a-z][a-z0-9_]{0,62}\.jsonl$/;
@@ -287,6 +290,11 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'meeting_minutes_publications', requires: ['meeting_minutes', 'meetings'],
     where: () => `minutes_id IN (SELECT mm.id FROM meeting_minutes mm JOIN meetings m ON m.id = mm.meeting_id
       WHERE m.school_year_id = $1)` },
+  // 0139 (#113): wersje porządku obrad, zmiany terminu i zawiadomienia zebrań (własne school_year_id;
+  // agenda_versions przed notices — klucz obcy).
+  { table: 'meeting_agenda_versions', requires: ['meetings'], where: () => 'school_year_id = $1' },
+  { table: 'meeting_reschedules', requires: ['meetings'], where: () => 'school_year_id = $1' },
+  { table: 'meeting_notices', requires: ['meeting_agenda_versions', 'meetings'], where: () => 'school_year_id = $1' },
   { table: 'resolutions', where: () => 'school_year_id = $1' },
   // #102: wykonanie uchwał — historia zdarzeń powiązana z uchwałą roku.
   { table: 'resolution_execution_events', requires: ['resolutions'],
@@ -309,6 +317,12 @@ export const EXPORT_TABLES = Object.freeze([
   // odtworzeniu identyfikator zostaje bez odpowiednika, restoreBundle działa
   // z wyłączonymi kluczami obcymi (session_replication_role = replica).
   { table: 'document_descriptions', where: () => YEAR_TIME('created_at') },
+
+  // 0138 (#125): niezmienne migawki sprawozdania rocznego i ich zatwierdzenia — dowód tego, co
+  // przedstawiono zebraniu; treść zagregowana (bez opisów wpisów i danych osób). Przed
+  // school_year_closure_checklist (report_snapshot_id).
+  { table: 'financial_report_snapshots', where: () => 'school_year_id = $1' },
+  { table: 'financial_report_snapshot_approvals', requires: ['financial_report_snapshots'], where: () => 'school_year_id = $1' },
 
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },
@@ -531,12 +545,50 @@ async function exportTotals(executor, schoolYearId) {
 // ---------------------------------------------------------------------------
 // Eksport
 
+function yieldToEventLoop() {
+  return new Promise((resolve) => { setImmediate(resolve); });
+}
+
+// Partie wierszy tabeli. W transakcji (`options.cursor`) kursor bez kopii całej
+// tabeli w pamięci; poza transakcją (pula bez stałego połączenia) jedno zapytanie
+// jak dotąd. Przekroczenie limitu wierszy zgłasza table_too_large.
+async function* rowBatches(executor, sql, params, table, useCursor) {
+  if (!useCursor) {
+    const { rows } = await executor.query(`${sql} LIMIT ${MAX_ROWS_PER_TABLE + 1}`, params);
+    if (rows.length > MAX_ROWS_PER_TABLE) throw new ExportError(`table_too_large:${table}`);
+    yield rows;
+    return;
+  }
+  const cursor = 'rd_export_cursor';
+  await executor.query(`DECLARE ${cursor} NO SCROLL CURSOR FOR ${sql}`, params);
+  let total = 0;
+  try {
+    for (;;) {
+      const { rows } = await executor.query(`FETCH FORWARD ${EXPORT_BATCH_ROWS} FROM ${cursor}`);
+      if (!rows.length) break;
+      total += rows.length;
+      if (total > MAX_ROWS_PER_TABLE) throw new ExportError(`table_too_large:${table}`);
+      yield rows;
+      if (rows.length < EXPORT_BATCH_ROWS) break;
+    }
+  } finally {
+    await executor.query(`CLOSE ${cursor}`);
+  }
+}
+
 /**
  * Buduje deterministyczną paczkę roku szkolnego. Wywołuj w transakcji
  * REPEATABLE READ, żeby wszystkie pliki pochodziły z jednej migawki.
- * @returns {Promise<{ bundle, body, manifest, manifestSha256, rowCounts }>}
+ *
+ * Domyślnie zwraca `bundle` i `body` (string) — jak dotąd, dla testów i
+ * odtwarzania. Z `{ stream: true }` (trasa HTTP, #216) nie trzyma ani obiektów
+ * wierszy, ani pełnych tekstów plików: wiersze idą partiami przez kursor,
+ * skrót SHA-256 liczy się przyrostowo, a paczka powstaje jako lista buforów
+ * `bodyChunks` (bajt w bajt ten sam JSON co `body`, bez drugiej kopii).
+ * @returns {Promise<{ bundle?, body?, bodyChunks?, bodyBytes?, manifest, manifestSha256, rowCounts }>}
  */
-export async function buildYearlyExport(executor, schoolYearId) {
+export async function buildYearlyExport(executor, schoolYearId, options = {}) {
+  const stream = options.stream === true;
   if (typeof schoolYearId !== 'string' || !schoolYearId) throw new ExportError('invalid_school_year');
   const { rows: yearRows } = await executor.query('SELECT id FROM school_years WHERE id = $1', [schoolYearId]);
   if (!yearRows.length) throw new ExportError('school_year_not_found');
@@ -544,6 +596,7 @@ export async function buildYearlyExport(executor, schoolYearId) {
   const has = await listBaseTables(executor);
   const files = [];
   const contents = {};
+  const buffers = {};
   const rowCounts = {};
 
   for (const spec of EXPORT_TABLES) {
@@ -563,38 +616,40 @@ export async function buildYearlyExport(executor, schoolYearId) {
       return column && column.type === 'text' ? `${quoteIdent(name)} COLLATE "C"` : quoteIdent(name);
     }).join(', ');
 
-    const { rows } = await executor.query(
-      `SELECT ${selected.map(selectExpression).join(', ')} FROM ${quoteIdent(spec.table)}
-        WHERE ${spec.where(has)} ORDER BY ${orderBy} LIMIT ${MAX_ROWS_PER_TABLE + 1}`,
-      [schoolYearId],
-    );
-    if (rows.length > MAX_ROWS_PER_TABLE) throw new ExportError(`table_too_large:${spec.table}`);
-
-    const records = rows.map((row) => {
-      const record = {};
-      for (const column of selected) record[column.name] = normalizeValue(column, row[column.name]);
-      return record;
-    });
-    const content = records.map((record) => `${canonicalJson(record)}\n`).join('');
-    const path = `${spec.table}.jsonl`;
     const columnNames = selected.map((column) => column.name);
-    contents[path] = content;
-    rowCounts[spec.table] = records.length;
-    files.push({
-      path,
-      table: spec.table,
-      columns: columnNames,
-      rows: records.length,
-      sha256: sha256Hex(content),
-      sums: centsSums(columnNames, records),
-    });
-    // #216: oddaje pętlę zdarzeń między tabelami, żeby długi eksport (np.
-    // audit_events roku z ~200 tys. wierszy) nie blokował innych żądań
-    // (także /health/ready) przez cały czas budowania paczki. Nie dzieli
-    // jeszcze przetwarzania JEDNEJ dużej tabeli na partie — pełne
-    // strumieniowanie (format v2, kursor, licząca się przyrostowo suma
-    // kontrolna) zostaje do osobnego PR, patrz opis PR i issue #216 pkt 1.
-    await new Promise((resolve) => { setImmediate(resolve); });
+    const centsColumns = columnNames.filter((name) => name.endsWith('_cents'));
+    const sums = Object.fromEntries(centsColumns.map((name) => [name, 0]));
+    const hash = createHash('sha256');
+    const parts = [];
+    let count = 0;
+    const sql = `SELECT ${selected.map(selectExpression).join(', ')} FROM ${quoteIdent(spec.table)}
+        WHERE ${spec.where(has)} ORDER BY ${orderBy}`;
+    for await (const rows of rowBatches(executor, sql, [schoolYearId], spec.table, stream)) {
+      let text = '';
+      for (const row of rows) {
+        const record = {};
+        for (const column of selected) record[column.name] = normalizeValue(column, row[column.name]);
+        for (const name of centsColumns) {
+          const value = record[name];
+          if (value === null || value === undefined) continue;
+          if (!Number.isSafeInteger(value)) throw new ExportError('invalid_cents_value');
+          sums[name] += value;
+        }
+        text += `${canonicalJson(record)}\n`;
+      }
+      count += rows.length;
+      hash.update(text, 'utf8');
+      // Ucieczka znaków w JSON-owym stringu działa znak po znaku, więc
+      // sklejenie zakodowanych partii = zakodowany cały plik.
+      parts.push(stream ? Buffer.from(JSON.stringify(text).slice(1, -1), 'utf8') : text);
+      // #216: pętla zdarzeń wolna po każdej partii, także wewnątrz dużej tabeli (audit_events).
+      await yieldToEventLoop();
+    }
+    for (const name of centsColumns) if (!Number.isSafeInteger(sums[name])) throw new ExportError('unsafe_integer');
+    const path = `${spec.table}.jsonl`;
+    if (stream) buffers[path] = parts; else contents[path] = parts.join('');
+    rowCounts[spec.table] = count;
+    files.push({ path, table: spec.table, columns: columnNames, rows: count, sha256: hash.digest('hex'), sums });
   }
 
   const manifest = {
@@ -606,8 +661,23 @@ export async function buildYearlyExport(executor, schoolYearId) {
     totals: await exportTotals(executor, schoolYearId),
   };
   const manifestSha256 = sha256Hex(canonicalJson(manifest));
-  const bundle = { format: EXPORT_FORMAT, formatVersion: EXPORT_FORMAT_VERSION, manifest, manifestSha256, files: contents };
-  return { bundle, body: canonicalJson(bundle), manifest, manifestSha256, rowCounts };
+  if (!stream) {
+    const bundle = { format: EXPORT_FORMAT, formatVersion: EXPORT_FORMAT_VERSION, manifest, manifestSha256, files: contents };
+    return { bundle, body: canonicalJson(bundle), manifest, manifestSha256, rowCounts };
+  }
+  // Kolejność kluczy jak w canonicalJson: files, format, formatVersion, manifest, manifestSha256;
+  // ścieżki plików posortowane.
+  const chunks = [];
+  const piece = (text) => chunks.push(Buffer.from(text, 'utf8'));
+  piece('{"files":{');
+  Object.keys(buffers).sort().forEach((path, index) => {
+    piece(`${index ? ',' : ''}${JSON.stringify(path)}:"`);
+    for (const part of buffers[path]) chunks.push(part);
+    piece('"');
+  });
+  piece(`},"format":${JSON.stringify(EXPORT_FORMAT)},"formatVersion":${EXPORT_FORMAT_VERSION},"manifest":${canonicalJson(manifest)},"manifestSha256":${JSON.stringify(manifestSha256)}}`);
+  const bodyBytes = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  return { bodyChunks: chunks, bodyBytes, manifest, manifestSha256, rowCounts };
 }
 
 // ---------------------------------------------------------------------------
@@ -869,6 +939,20 @@ export async function restoreBundle(db, bundle) {
   const totalsMatch = canonicalJson(manifestTotals) === canonicalJson(againTotals);
   if (!filesMatch) fail('restore_verification_failed:files');
   if (!totalsMatch) fail('restore_verification_failed:totals');
+  // #184: ślad odtworzenia z paczki. Zapis dopiero po pozytywnej weryfikacji
+  // (nieudane odtworzenie wycofuje transakcję i nie zostawia śladu), bez aktora
+  // (operator z DATABASE_URL, jak przy bootstrapie), z samym skrótem manifestu
+  // i licznikami. Zdarzenia `export.*` nie wchodzą do kolejnych paczek (auditScope).
+  await db.transaction(async (tx) => {
+    await insertAuditEvent(tx, {
+      actorId: null, action: 'export.restored', entityType: 'export', entityId: bundle.manifestSha256,
+      metadata: {
+        source: 'restore', schoolYearId: manifest.schoolYearId, formatVersion: bundle.formatVersion,
+        manifestSha256: bundle.manifestSha256, tables: manifest.files.length,
+        rows: manifest.files.reduce((sum, entry) => sum + entry.rows, 0),
+      },
+    });
+  }, { retries: 0 });
   return {
     ...verified, warnings, ...(backfilled ? { backfilled } : {}),
     restored: true, reexportFilesMatch: filesMatch, reexportTotalsMatch: totalsMatch, countsMatch: true,

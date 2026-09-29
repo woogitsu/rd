@@ -105,7 +105,12 @@ Pliki: `src/pg/password.js` (hasła), `src/pg/login.js` i `src/pg/routes/login.j
                 └─ pozostali (np. przedstawiciel bez czynnika) ─▶ panele; przycisk
                      „Włącz weryfikację dwuetapową” w widoku startowym pozwala
                      zapisać czynnik dobrowolnie (dowolna rola, ten sam
-                     POST /api/mfa/enroll + /api/mfa/confirm, #161)
+                     POST /api/mfa/enroll + /api/mfa/confirm, #161). Trasa wymagająca MFA
+                     (eksport listy klasy, raport KR) odmawia takiemu kontu kodem
+                     `mfa_enrollment_required`; `shared/api.js` odsyła je na
+                     /login/#next=<panel>&reason=enroll, gdzie widok zapisu MFA wyjaśnia
+                     powód, a po zapisie wraca do panelu (bez pętli panel → lista paneli).
+                     Lista ról z obowiązkowym MFA bez zmian (D-10).
    (c) zmiana hasła: POST /api/password/change {currentPassword, newPassword}
          └─ inne sesje wycofane (password_changed), bieżąca zrotowana
    (d) reset: administrator ─▶ POST /api/admin/users/{id}/password-reset ─▶ token (raz)
@@ -145,7 +150,7 @@ Router (`src/pg/app.js`) przed modułami tras sprawdza bieżącą sesję (`src/p
 
 Trasa z `requireMfa: true`, której rola **nie** jest domyślnie na liście `MFA_REQUIRED_ROLES` (dziś: `representative` — lista klasy w eksportach, `audit` — raport dla Komisji Rewizyjnej), nie jest zatrzymywana przez bramkę powyżej — rolę i zakres sprawdza dopiero moduł trasy. Żeby taka odmowa też prowadziła do właściwego widoku logowania, a nie do ogólnego `403 forbidden` bez wyjaśnienia, te dwie trasy liczą powód osobno (`mfaAwareForbiddenCode`, docs/AUTHORIZATION.md, #161): sam brak roli/zakresu zostaje `forbidden`; gdy tylko MFA jest przeszkodą — `mfa_required` (czynnik zapisany) albo `mfa_enrollment_required` (brak czynnika). Nie zmienia to wymogu MFA — nie „luzuje” żadnej z tych tras.
 
-Zwolnione (uzasadnienia: `MFA_GATE_EXEMPT_REASONS` w `tests/helpers/route-matrix.js`, meta-test wymusza wpis dla każdego nowego zwolnienia): `/api/session`, `/api/access` (sesja czekająca na MFA dostaje `{ "grants": [], "mfaRequired": true }`, #189), `/api/auth/state`, `/api/logout`, `/api/sessions/revoke-all`, `/api/mfa/*`, `/api/login`, `/api/invitations/accept`, `/api/password/reset`, `/api/public/*`, `/api/meetings/public-minutes`, webhook Brevo. `/api/password/change` **nie** jest zwolnione — zmiana hasła wymaga wcześniej MFA. Domyślnie `MFA_REQUIRED_ROLES=admin,board,treasurer`; pusty ciąg wyłącza regułę 2 (reguła 1 działa zawsze). Wartość domyślna jest założeniem do D-10.
+Zwolnione (uzasadnienia: `MFA_GATE_EXEMPT_REASONS` w `tests/helpers/route-matrix.js`, meta-test wymusza wpis dla każdego nowego zwolnienia): `/api/session`, `/api/access` (sesja czekająca na MFA dostaje `{ "grants": [], "mfaRequired": true }`, #189), `/api/auth/state`, `/api/logout`, `/api/sessions/revoke-all`, `/api/mfa/*`, `/api/login`, `/api/invitations/accept`, `/api/password/reset`, `/api/public/*`, `/api/meetings/public-minutes`, `/api/meetings/public-notices`, webhook Brevo. `/api/password/change` **nie** jest zwolnione — zmiana hasła wymaga wcześniej MFA. Domyślnie `MFA_REQUIRED_ROLES=admin,board,treasurer`; pusty ciąg wyłącza regułę 2 (reguła 1 działa zawsze). Wartość domyślna jest założeniem do D-10.
 
 ### Trasy
 

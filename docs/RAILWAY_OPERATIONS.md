@@ -366,7 +366,8 @@ DATABASE_URL=<referencja z Railway> APP_ENV=staging \
 - Dziennik: `user.created` (gdy konto powstało), `invitation.created`
   i `auth.bootstrap_issued` z aktorem technicznym `system:bootstrap`
   (`actor_id = NULL`), identyfikatorem konta i zaproszenia — bez e-maila
-  i tokenu.
+  i tokenu. Przyjęcie zaproszenia zapisuje `role_grant.created` z
+  `metadata.source = 'bootstrap'`.
 - `APP_ENV=production` wymaga jawnego `--allow-production` i wolno go użyć
   tylko w ramach zatwierdzonego cutover (D-20).
 - Przyjęcie zaproszenia: `/login/#invite=<token>` (`POST /api/invitations/accept`)
