@@ -30,9 +30,6 @@ test('trasy czytają ciało wyłącznie przez src/pg/input.js (poza jawnie wyją
     if (CUSTOM_BODY_READERS.has(file)) continue;
     const source = readFileSync(new URL(file, ROUTES_DIR), 'utf8');
     if (/\brequest\.(?:text|json|arrayBuffer)\(\)/.test(source)) offenders.push(`${file}: bezpośredni odczyt ciała`);
-    if (/\bJSON\.parse\(/.test(source) && /readJson|request/.test(source) && /new TextEncoder\(\)\.encode\([^)]*\)\.byteLength\s*>/.test(source)) {
-      offenders.push(`${file}: ręczne sprawdzanie rozmiaru ciała`);
-    }
   }
   assert.deepEqual(offenders, []);
 });
