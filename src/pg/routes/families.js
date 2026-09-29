@@ -626,7 +626,8 @@ function parseEndRelationInput(data) {
 // gdy relacja już się zakończyła (ponowienie zwraca changed: false, nie 404).
 async function endRelation(request, env, guardianId, studentId, json) {
   const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
-  const input = parseEndRelationInput(await readJson(request));
+  const endData = await readJson(request);
+  const input = parseEndRelationInput(endData);
   const actorId = context.session.user.id;
   const result = await env.db.transaction(async (tx) => {
     const { rows } = await tx.query(
@@ -643,11 +644,14 @@ async function endRelation(request, env, guardianId, studentId, json) {
     if (current.ends_on) return { changed: false, endsOn: current.ends_on, campaignIds: [] };
     if (current.starts_on && input.endsOn < current.starts_on) throw new RequestError('invalid_ended_on');
     await assertYearsOpenOn(tx, input.endsOn);
+    // #152 (przegląd bezpieczeństwa 29.09): powód trafia przez setChangeContext do
+    // niezmiennej historii student_guardian_changes — ta sama bramka co przy zgodzie na kontakt.
+    const gate = gateFreeText([['student_guardian_changes.reason', input.reason]], { confirm: endData.confirmPersonalData === true, fail: piiFail });
     await setChangeContext(tx, { actorId, reason: input.reason });
     await tx.query('UPDATE student_guardians SET ends_on = $3 WHERE guardian_id = $1 AND student_id = $2', [guardianId, studentId, input.endsOn]);
     await insertAuditEvent(tx, {
       actorId, action: 'student_guardian.ended', entityType: 'student_guardian', entityId: `${studentId}:${guardianId}`,
-      metadata: { studentId, guardianId, endsOn: input.endsOn },
+      metadata: { studentId, guardianId, endsOn: input.endsOn, ...piiAuditMetadata(gate) },
     });
     return { changed: true, endsOn: input.endsOn, campaignIds: await activeCampaignsOfGuardian(tx, guardianId) };
   });
