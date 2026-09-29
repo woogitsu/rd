@@ -1293,6 +1293,8 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Przegląd dziennika odczytu danych rodzin (#133): wariant zachowawczy do D-04/D-07/D-08 — wyłącznie admin + MFA.
+  adminRoute('admin.accessLog', 'GET', '/api/admin/access-log', {}),
   // Rejestr żądań osób (#100): wariant zachowawczy, wyłącznie admin (jak cały moduł).
   adminRoute('admin.dataRequests', 'GET', '/api/admin/data-requests', {}),
   adminRoute('admin.dataRequestCreate', 'POST', '/api/admin/data-requests', {

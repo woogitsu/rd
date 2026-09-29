@@ -286,5 +286,9 @@
   {
     "name": "0121_import_batches_fingerprint_not_unique.sql",
     "sha256": "e636fe9f6e77fcd48f49865085737912a187774cf71062f4796f2028a7adba35"
+  },
+  {
+    "name": "0140_data_access_log_review.sql",
+    "sha256": "304aab73b8a25f23650bdbede67203c1513daadc28fc488aaf7c9d83c6d172af"
   }
 ]

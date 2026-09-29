@@ -16,6 +16,7 @@ import {
   MFA_STEP_UP_MAX_AGE_SECONDS,
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { recordDataAccess } from '../data-access.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import {
   buildClassRoster, buildClassRosterCsv, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
@@ -148,6 +149,11 @@ async function createYearlyExport(request, env, json) {
         kind: 'yearly', schoolYearId, formatVersion: EXPORT_FORMAT_VERSION, actorId,
         sha256: built.manifestSha256, rowCounts: built.rowCounts,
       });
+      // #133: dziennik odczytu w tej samej transakcji co eksport (strict).
+      await recordDataAccess({ db: tx }, {
+        actorId, accessKind: 'yearly_export', schoolYearId, outcome: 'ok',
+        rowCount: Object.values(built.rowCounts ?? {}).reduce((sum, n) => sum + (Number(n) || 0), 0),
+      }, { strict: true });
       if (archiveVia) {
         await recordArchiveRead(tx, { actorId, schoolYearId, viaSchoolYearId: archiveVia, route: 'exports.yearly' });
       }
@@ -196,9 +202,17 @@ async function exportClassRoster(request, env, url, json) {
       kind: 'class_roster', schoolYearId: built.schoolYearId, classId, formatVersion: ROSTER_FORMAT_VERSION,
       actorId, sha256: built.sha256, rowCounts: built.rowCounts, format,
     });
+    // #133: dziennik odczytu w tej samej transakcji co eksport (strict).
+    await recordDataAccess({ db: tx }, {
+      actorId, accessKind: 'class_roster_export', schoolYearId: built.schoolYearId, classId, outcome: 'ok',
+      rowCount: Object.values(built.rowCounts ?? {}).reduce((sum, n) => sum + (Number(n) || 0), 0),
+    }, { strict: true });
     return { ...built, runId };
   });
-  if (result.notFound) return json({ error: 'class_not_found' }, 404);
+  if (result.notFound) {
+    await recordDataAccess(env, { actorId, accessKind: 'class_roster_export', classId, outcome: 'not_found' });
+    return json({ error: 'class_not_found' }, 404);
+  }
   if (result.forbidden) return json({ error: 'forbidden' }, 403);
 
   if (format === 'csv') {
