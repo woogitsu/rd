@@ -943,7 +943,6 @@ zamkniętego, `TRUNCATE` jest zabroniony. Skutki dla danych: nowa pusta tabela;
 istniejące tokeny resetu mają `request_id` = NULL. Wniosek nie zawiera
 sekretów ani e-maili. Wycofanie na pustej tabeli: usunięcie kolumny, triggerów,
 funkcji i tabeli; z wnioskami — tylko po kopii zapasowej.
-||||||| 7804594
 
 
 `0121_import_batches_fingerprint_not_unique.sql` (#2) zamienia
