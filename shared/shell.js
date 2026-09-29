@@ -45,6 +45,9 @@ export const PANELS = Object.freeze([
   // /api/reports/audit). Do nawigacji trafia wyłącznie Komisja Rewizyjna — zarząd i
   // skarbnik mają ten sam raport jako odnośnik w panelu uzgodnień. Tylko odczyt.
   { id: "audit", href: "/audit/", label: "Komisja Rewizyjna", roles: ["audit"] },
+  // src/pg/routes/exports.js YEARLY_EXPORT_ROLES (admin, board) + ROSTER_ROLES
+  // (representative — wyłącznie lista własnej klasy; serwer weryfikuje klasę i MFA).
+  { id: "data-export", href: "/data-export/", label: "Eksport", roles: ["admin", "board", "representative"] },
   // src/pg/news.js NEWS_POLICY (suma draftSchoolWide, draftClass, review). Przedstawiciel
   // widzi wyłącznie wpisy własnej klasy — zakres egzekwuje serwer.
   { id: "news", href: "/news/", label: "Aktualności", roles: ["admin", "board", "representative"] },

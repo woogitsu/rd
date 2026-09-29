@@ -53,7 +53,7 @@ Część modułów ma kompletne trasy API, ale do niedawna żadna aplikacja ich 
 | Zamknięcie roku | `src/pg/routes/year-close.js` | **prototyp** — `year-close/` (stan, bilans, lista kontrolna, zestawienie przekazania; opis w `year-close/README.md`) |
 | Raport Komisji Rewizyjnej | `GET /api/reports/audit` (`src/pg/routes/reconciliation.js`) | **prototyp** — `audit/` (tylko odczyt: tabele z raportu JSON, odnośnik do wersji HTML do druku; opis w `audit/README.md`) |
 | Aktualności i galeria | `src/pg/routes/news.js` | **prototyp** — `news/` (szkic, zgłoszenie, zatwierdzenie, publikacja, wycofanie z powodem; rejestr zdjęć i status zgód tylko do odczytu). Rejestracja, przesyłanie i weryfikacja zdjęć: **tylko API — do decyzji D-18**; opis w `news/README.md` |
-| Eksport roczny i lista klasy | `src/pg/routes/exports.js` | brak — poza zakresem tej partii (issue #147, kolejna partia) |
+| Eksport roczny i lista klasy | `src/pg/routes/exports.js` | **prototyp** — `data-export/` (uruchomienie z krokiem w górę MFA, pobranie, weryfikacja w przeglądarce, lista klasy; lista dawnych eksportów: **tylko API — brak trasy**, ekran pokazuje pliki pobrane w tej karcie; opis w `data-export/README.md`) |
 | Preliminarz | `GET /api/ledger/budget` | gotowy — widoczny w `ledger/` |
 
 „Prototyp” oznacza tu: żaden przycisk nie wysyła poczty ani nie zmienia stanu produkcyjnie sam z siebie — panel tylko woła istniejące, autoryzowane trasy; zasady dostępu i cztery oczy egzekwuje wyłącznie serwer.
