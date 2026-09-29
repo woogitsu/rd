@@ -167,3 +167,17 @@ export function overviewRow(item) {
     documents: `${item.documents?.activeCount ?? 0}${item.documents?.latestAt ? `, najnowszy ${plDate(item.documents.latestAt)}` : ""}`,
   };
 }
+
+// #131: eksport tabeli „Statystyki klas” (te same uprawnienia co widok — serwer decyduje).
+export const OVERVIEW_EXPORT_FORMATS = Object.freeze(["csv", "xlsx"]);
+
+export function boardOverviewExportUrl(schoolYearId, format) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(String(schoolYearId ?? ""))) throw new Error("Wybierz rok szkolny.");
+  if (!OVERVIEW_EXPORT_FORMATS.includes(format)) throw new Error("Nieznany format eksportu.");
+  return `/api/board/overview/export.${format}?schoolYearId=${encodeURIComponent(schoolYearId)}`;
+}
+
+export function exportFilename(header, fallback) {
+  const match = /filename="([A-Za-z0-9_.-]{1,200})"/.exec(String(header ?? ""));
+  return match ? match[1] : fallback;
+}
