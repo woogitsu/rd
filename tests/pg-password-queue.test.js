@@ -6,7 +6,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_CONCURRENT, MAX_WAITING, scryptQueueDepth, ScryptQueueBusyError, WAIT_TIMEOUT_MS, withSlot,
+  dummyHash, loginQueueMetrics, MAX_CONCURRENT, MAX_PER_CLIENT, MAX_WAITING, scryptQueueDepth, ScryptQueueBusyError, WAIT_TIMEOUT_MS, withQueueClient, withSlot,
 } from '../src/pg/password.js';
 
 // Atrapa "scrypt": trzyma slot zajęty, dopóki test nie zwolni `release()`.
@@ -73,4 +73,68 @@ test('withSlot: błąd fn (np. złe hasło) zwalnia slot tak samo jak sukces —
   assert.deepEqual(scryptQueueDepth(), before, 'slot wraca do puli natychmiast po odrzuceniu fn');
   assert.equal(await withSlot(async () => 42), 42);
   assert.deepEqual(scryptQueueDepth(), before);
+});
+
+test('withSlot: limit per klient odrzuca nadmiar jednego klienta, inny klient dostaje miejsce, miejsca wracają po zwolnieniu', async () => {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  let ran = 0;
+  const flood = Array.from({ length: MAX_PER_CLIENT }, () => withQueueClient('klient-a', () => withSlot(async () => { ran += 1; await held; })));
+  const overflow = await Promise.allSettled(Array.from({ length: 10 }, () => withQueueClient('klient-a', () => withSlot(async () => { ran += 100; }))));
+  for (const result of overflow) {
+    assert.equal(result.status, 'rejected');
+    assert.ok(result.reason instanceof ScryptQueueBusyError);
+    assert.equal(result.reason.reason, 'clientQueueFull');
+  }
+  assert.equal(ran, MAX_CONCURRENT, 'nadmiar nie uruchomił fn');
+  assert.equal(scryptQueueDepth().waiting, MAX_PER_CLIENT - MAX_CONCURRENT);
+  // Inny klient nie jest odrzucony — czeka w kolejce globalnej (MAX_WAITING nie wyczerpane).
+  const other = withQueueClient('klient-b', () => withSlot(async () => 'b'));
+  assert.equal(scryptQueueDepth().waiting, MAX_PER_CLIENT - MAX_CONCURRENT + 1);
+  // Bez klienta (spoza HTTP) obowiązuje tylko limit globalny.
+  const anonymous = withSlot(async () => 'anon');
+  const before = loginQueueMetrics();
+  assert.equal(before.login_queue_depth, MAX_PER_CLIENT - MAX_CONCURRENT + 2);
+  release();
+  await Promise.all(flood);
+  assert.equal(await other, 'b');
+  assert.equal(await anonymous, 'anon');
+  assert.equal(loginQueueMetrics().login_queue_depth, 0);
+  // Miejsca klienta wróciły: kolejne wywołanie przechodzi.
+  assert.equal(await withQueueClient('klient-a', () => withSlot(async () => 'znowu')), 'znowu');
+});
+
+test('withSlot: miejsce klienta wraca po błędzie fn i po przekroczeniu czasu oczekiwania; login_busy_total rośnie tylko przy odrzuceniu', async () => {
+  const start = loginQueueMetrics().login_busy_total;
+  await assert.rejects(withQueueClient('klient-c', () => withSlot(async () => { throw new Error('x'); })), /x/);
+  assert.equal(loginQueueMetrics().login_busy_total, start);
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const running = Array.from({ length: MAX_CONCURRENT }, () => withSlot(() => held));
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const queued = withQueueClient('klient-c', () => withSlot(async () => 'nie'));
+    const settled = assert.rejects(queued, (error) => error.reason === 'waitTimeout');
+    mock.timers.tick(WAIT_TIMEOUT_MS + 1);
+    await settled;
+  } finally {
+    mock.timers.reset();
+  }
+  assert.equal(loginQueueMetrics().login_busy_total, start + 1);
+  release();
+  await Promise.all(running);
+  // Wszystkie MAX_PER_CLIENT miejsc klienta-c jest znowu wolnych.
+  const again = await Promise.all(Array.from({ length: MAX_PER_CLIENT }, () => withQueueClient('klient-c', () => withSlot(async () => 1))));
+  assert.equal(again.length, MAX_PER_CLIENT);
+});
+
+test('dummyHash: odrzucenie przez pełną kolejkę nie zostaje w cache (nie psuje kolejnych logowań nieznanym e-mailem)', async () => {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const occupied = Array.from({ length: MAX_CONCURRENT + MAX_WAITING }, () => withSlot(() => held).catch(() => {}));
+  const env = { SCRYPT_COST_LOG2: '16' }; // osobny zestaw parametrów, więc pusty cache
+  await assert.rejects(dummyHash(env), ScryptQueueBusyError);
+  release();
+  await Promise.all(occupied);
+  assert.match(await dummyHash(env), /^scrypt\$65536\$8\$1\$/);
 });

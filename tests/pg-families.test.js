@@ -517,32 +517,42 @@ describe('zmiana kontaktu opiekuna: zakres klasowy przez relację z uczniem (#20
     assert.deepEqual(await snapshot(), before);
     assert.deepEqual(await counts(), { history: 0, audit: 0 });
 
-    // Dwoje opiekunów ucznia 1A: obaj w zakresie (g-2 ma też dziecko w 1B; zasada
-    // „wszystkie relacje w zakresie” z #200 wymaga decyzji D-08 i nie jest tu wdrożona).
+    // Dwoje opiekunów ucznia 1A: g-1 tylko z 1A (200), g-2 ma też dziecko w 1B —
+    // zmiana globalnego kontaktu wymaga zakresu obejmującego wszystkie relacje (#200).
     const first = await call('/api/guardians/g-1/contact', boardA, body);
     assert.deepEqual(first, { status: 200, body: { guardian: { id: 'g-1', email: 'przejete@example.invalid', contactAllowed: false }, changed: true } });
     // Podwójne kliknięcie: bez nowej zmiany.
     assert.equal((await call('/api/guardians/g-1/contact', boardA, body)).body.changed, false);
-    const second = await call('/api/guardians/g-2/contact', boardA, { contactAllowed: false, reason: 'test zakresu' });
-    assert.equal(second.status, 200);
-    assert.equal(second.body.changed, true);
+    // g-2 (1A + 1B): 403 dla e-maila, zgody i obu naraz; bez zapisu i bez wyroczni 404 vs 403 dla własnego opiekuna.
+    const shared = { status: 403, body: { error: 'guardian_shared_outside_scope' } };
+    const afterFirst = await snapshot();
+    const countsAfterFirst = await counts();
+    for (const payload of [body, { contactAllowed: false, reason: 'test zakresu' }, { email: 'inny@example.invalid', reason: 'test zakresu' }]) {
+      assert.deepEqual(await call('/api/guardians/g-2/contact', boardA, payload), shared);
+    }
+    // Zmiana bez efektu też jest odmowa (jedna reguła, bez zależności od treści).
+    assert.deepEqual(await call('/api/guardians/g-2/contact', boardA, { contactAllowed: true, reason: 'test zakresu' }), shared);
+    assert.deepEqual(await snapshot(), afterFirst);
+    assert.deepEqual(await counts(), countsAfterFirst);
+    // Kampania czyta e-mail i zgodę z guardians — migawka odbiorców bez zmian.
+    const g2 = (await snapshot()).find((row) => row.id === 'g-2');
+    assert.deepEqual(g2, { id: 'g-2', email: 'g2@example.invalid', contact_allowed: true });
 
     const history = await db.query('SELECT guardian_id, changed_by, reason FROM guardian_contact_changes ORDER BY guardian_id');
     assert.deepEqual(history.rows, [
       { guardian_id: 'g-1', changed_by: 'u-board-1a', reason: 'test zakresu' },
-      { guardian_id: 'g-2', changed_by: 'u-board-1a', reason: 'test zakresu' },
     ]);
     const audit = await db.query(`SELECT actor_id, entity_id FROM audit_events WHERE action = 'guardian.contact.updated' ORDER BY entity_id`);
-    assert.deepEqual(audit.rows, [{ actor_id: 'u-board-1a', entity_id: 'g-1' }, { actor_id: 'u-board-1a', entity_id: 'g-2' }]);
+    assert.deepEqual(audit.rows, [{ actor_id: 'u-board-1a', entity_id: 'g-1' }]);
 
     // Zarząd bez przydziału klasy: bez zmian (także opiekun spoza 1A i partner bez relacji).
-    for (const id of ['g-4', 'g-q']) {
+    for (const id of ['g-2', 'g-4', 'g-q']) {
       const full = await call(`/api/guardians/${id}/contact`, board, body);
       assert.equal(full.status, 200, id);
       assert.equal(full.body.changed, true, id);
     }
-    const byBoard = await db.query(`SELECT changed_by FROM guardian_contact_changes WHERE guardian_id IN ('g-4', 'g-q')`);
-    assert.deepEqual(byBoard.rows.map((r) => r.changed_by), ['u-board', 'u-board']);
+    const byBoard = await db.query(`SELECT changed_by FROM guardian_contact_changes WHERE guardian_id IN ('g-2', 'g-4', 'g-q')`);
+    assert.deepEqual(byBoard.rows.map((r) => r.changed_by), ['u-board', 'u-board', 'u-board']);
   });
 });
 

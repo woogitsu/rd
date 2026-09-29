@@ -1318,6 +1318,107 @@ test('database down after the first send, provider webhook arrives: row is recov
   } finally { await t.close(); }
 });
 
+// --- Zdarzenie dostawcy zapisane dla wiersza „sending” (#210) ----------------
+
+async function providerEvent(t, message, event, id) {
+  const res = await handlePgRequest(webhookRequest(
+    { event, email: message.to, 'message-id': `<m-${id}@example.invalid>`, 'X-Mailin-custom': message.outboxId, ts_event: 1791187200, id },
+    `Bearer ${WEBHOOK_SECRET}`,
+  ), t.env);
+  assert.equal(res.status, 200);
+  return res.json();
+}
+
+// Awaria zapisu wyniku po przyjęciu wiadomości, potem zdarzenie dostawcy i
+// wygaśnięcie dzierżawy: stan ma odpowiadać zdarzeniu, nie zawsze „sent”.
+for (const [event, expected] of [['hard_bounce', 'bounced'], ['invalid_email', 'bounced'], ['blocked', 'bounced'], ['delivered', 'sent']]) {
+  test(`unrecorded result + webhook ${event} + lease expiry: row is recovered as ${expected}`, async () => {
+    const t = await setup();
+    try {
+      await family(t.db, 'h1');
+      await family(t.db, 'h2');
+      const campaign = await readyCampaign(t);
+      const db = flakyDb(t.db);
+      const transport = interleavingTransport(async () => { db.state.down = true; });
+      await assert.rejects(runEmailBatch({ ...t.env, db }, { transport, dryRun: false, now: DAY1, ...FAST }), ResultNotRecordedError);
+      db.state.down = false;
+      const first = transport.calls[0];
+      // Wiersz nadal „sending” — webhook zapisuje zdarzenie i blokadę, stanu nie zmienia.
+      await providerEvent(t, first, event, 21);
+      assert.equal((await t.db.query('SELECT state FROM email_outbox WHERE id = $1', [first.outboxId])).rows[0].state, 'sending');
+      const later = new Date(DAY1.getTime() + 30 * 60_000);
+      await runEmailBatch(t.env, { transport, dryRun: false, now: later });
+      const read = () => t.db.query('SELECT state, last_error, provider_message_id FROM email_outbox WHERE id = $1', [first.outboxId]);
+      const { rows } = await read();
+      assert.equal(rows[0].state, expected);
+      assert.equal(rows[0].last_error, expected === 'bounced' ? event : null);
+      assert.equal(rows[0].provider_message_id, '<m-21@example.invalid>');
+      assert.equal(await auditCount(t, 'email.sent_recovered', first.outboxId), 1);
+      assert.equal(await auditCount(t, 'email.delivery_unknown'), 0);
+      assert.equal(await ledgerCount(t), 2);
+      // Idempotencja: kolejne przebiegi nie zmieniają stanu, dziennika ani audytu.
+      await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(later.getTime() + 60 * 60_000) });
+      assert.equal((await read()).rows[0].state, expected);
+      assert.equal(await auditCount(t, 'email.sent_recovered', first.outboxId), 1);
+      assert.equal(await ledgerCount(t), 2);
+      assert.equal(transport.calls.length, 2);
+      assert.equal(await campaignStatus(t, campaign.id), 'done');
+    } finally { await t.close(); }
+  });
+}
+
+test('hard bounce webhook arriving before the result is written: row ends as bounced, not sent', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    // Zdarzenie dociera w trakcie transport.send, gdy wiersz jest jeszcze „sending”.
+    const transport = interleavingTransport(async (message) => { await providerEvent(t, message, 'hard_bounce', 31); });
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 1);
+    const { rows } = await t.db.query('SELECT state, last_error FROM email_outbox WHERE campaign_id = $1', [campaign.id]);
+    assert.deepEqual(rows, [{ state: 'bounced', last_error: 'hard_bounce' }]);
+    assert.equal(await t.count('SELECT count(*)::int AS n FROM email_suppressions WHERE email_hash = $1', [emailHash('h1-g1@example.invalid')]), 1);
+    assert.equal(await ledgerCount(t), 1);
+  } finally { await t.close(); }
+});
+
+test('cancel reports inFlight: only the message whose hand-over to the provider has started', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const responses = [];
+    const transport = interleavingTransport(async () => {
+      responses.push(await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' }));
+      responses.push(await t.call(t.board, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' }));
+    });
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.deepEqual(responses.map((r) => r.status), [200, 200]);
+    // Wiersze przejęte, ale niewysłane (send_started_at puste), nie liczą się jako „w locie”.
+    assert.equal(responses[0].body.inFlight, 1);
+    assert.equal(responses[0].body.cancelledMessages, 0);
+    assert.equal(responses[1].body.inFlight, 1);
+    assert.equal(transport.calls.length, 1);
+  } finally { await t.close(); }
+});
+
+test('cancel before any pickup: inFlight is 0 and queued rows are cancelled', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.cancelledMessages, 2);
+    assert.equal(res.body.inFlight, 0);
+    const again = await t.call(t.board, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' });
+    assert.equal(again.body.inFlight, 0);
+    assert.equal(again.body.cancelledMessages, 0);
+  } finally { await t.close(); }
+});
+
 test('short database outage: result written after recovery in the same run, unsent rest back to queued at once', async () => {
   const t = await setup();
   try {
