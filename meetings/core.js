@@ -324,6 +324,31 @@ export function describeQuorumCheck(check) {
   };
 }
 
+// ---------- lista kontrolna przed zatwierdzeniem protokołu (#81) ----------
+
+const CHECKLIST_LABELS = {
+  meeting_not_held: () => "Zebranie nie ma statusu „Odbyte”. Protokół można zatwierdzić dopiero po odbyciu zebrania.",
+  open_resolutions: (count) => `Otwarte projekty uchwał: ${count}. Rozstrzygnij albo wycofaj każdy projekt przed zatwierdzeniem.`,
+  quorum_rule_missing: () => "Reguła quorum nie została wpisana. Po zatwierdzeniu nie da się jej uzupełnić.",
+  quorum_rule_source_missing: () => "Brak źródła reguły quorum (np. paragrafu regulaminu).",
+  no_quorum_check: () => "Quorum nie zostało ustalone.",
+  stale_quorum_check: () => "Lista obecności zmieniła się po ostatnim ustaleniu quorum.",
+  resolutions_on_stale_check: (count) => `Uchwały oparte na nieaktualnym ustaleniu quorum: ${count}. Po zatwierdzeniu poprawi je tylko nowy zapis.`,
+};
+
+// Zamienia odpowiedź GET /api/meetings/:id/approval-checklist na pozycje do
+// wyświetlenia. Nieznany kod jest pomijany (serwer może być nowszy od panelu).
+export function describeApprovalChecklist(checklist) {
+  const items = Array.isArray(checklist?.items) ? checklist.items : [];
+  const described = items
+    .filter((item) => typeof CHECKLIST_LABELS[item?.code] === "function")
+    .map((item) => ({ code: item.code, blocking: item.blocking === true, text: CHECKLIST_LABELS[item.code](item.count) }));
+  return {
+    blocking: described.filter((item) => item.blocking),
+    warnings: described.filter((item) => !item.blocking),
+  };
+}
+
 // ---------- lista obecności ----------
 
 export function attendeeReference(attendee) {

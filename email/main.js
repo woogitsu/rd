@@ -26,15 +26,18 @@ import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
+import { mountSuppressions } from "./suppressions.js";
 
 mountShell();
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
+const suppressions = mountSuppressions({ api });
 
 const state = {
   schoolYearId: "",
   campaigns: [],
+  campaignsCursor: null,
   selectedId: null,
   detail: null,
   preview: null,
@@ -99,10 +102,13 @@ function renderList() {
   byId("campaigns-empty").hidden = count !== 0;
 }
 
-async function loadList() {
-  const url = buildCampaignsUrl(state.schoolYearId);
+async function loadList({ append = false } = {}) {
+  const url = buildCampaignsUrl(state.schoolYearId, append ? state.campaignsCursor : '');
   const data = await api(url);
-  state.campaigns = Array.isArray(data.campaigns) ? data.campaigns : [];
+  const items = Array.isArray(data.campaigns) ? data.campaigns : [];
+  state.campaigns = append ? [...state.campaigns, ...items] : items;
+  state.campaignsCursor = data.nextCursor ?? null;
+  byId("campaigns-more").hidden = !state.campaignsCursor;
   renderList();
 }
 
@@ -125,12 +131,24 @@ async function showYear(value) {
     await loadList();
     detailSection.hidden = true;
     state.selectedId = null;
+    await suppressions.load(value);
   } catch (error) {
     setMessage(`Nie udało się pobrać listy kampanii: ${error.message}`, true);
   } finally {
     setBusy(false);
   }
 }
+
+byId("campaigns-more").addEventListener("click", async () => {
+  setBusy(true);
+  try {
+    await loadList({ append: true });
+  } catch (error) {
+    setMessage(`Nie udało się pobrać kolejnych kampanii: ${error.message}`, true);
+  } finally {
+    setBusy(false);
+  }
+});
 
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();

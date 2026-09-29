@@ -139,6 +139,10 @@ test('raport doręczeń: kategorie panelu = kategorie raportu serwera, tylko lic
   assert.deepEqual(formatReportRows(null).map((r) => r.count), declared.map(() => 0));
 });
 
+test('buildCampaignsUrl: kursor kolejnej strony (#159)', () => {
+  assert.equal(buildCampaignsUrl('y2026', 'abc_-9'), '/api/email/campaigns?schoolYearId=y2026&cursor=abc_-9');
+});
+
 test('#130 harmonogram: pole startu to czas brukselski, także przy zmianie czasu', () => {
   assert.equal(sendNotBeforeFromInput('2026-03-30T09:00'), '2026-03-30T07:00:00.000Z');
   assert.equal(sendNotBeforeFromInput('2026-10-26T09:00'), '2026-10-26T08:00:00.000Z');

@@ -6,8 +6,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  apiCall, assertSafeEnvironment, DemoSeedRefused, runDemoSeed, SCHOOL_YEAR_ID,
+  apiCall, assertSafeEnvironment, DEMO_STATEMENT_DIFFERENCE_CENTS, DemoSeedRefused, runDemoSeed, SCHOOL_YEAR_ID,
 } from '../scripts/demo-seed.js';
+import { base32Decode, totp } from '../src/pg/mfa.js';
 
 test('demo-seed: odmawia działania gdy NODE_ENV=production', () => {
   assert.throws(
@@ -94,11 +95,38 @@ test('demo-seed: konta demo — jedna z każdej wymaganej roli', () => {
     assert.match(account.email, /@example\.invalid$/);
     assert.ok(account.password.length >= 12, 'hasło spełnia minimalną długość polityki (12 znaków)');
   }
-  // Role z domyślnego MFA_REQUIRED_ROLES (admin/board/treasurer) mają założony i potwierdzony czynnik.
-  const withMfa = seeded.accounts.filter((a) => ['admin', 'board', 'treasurer'].includes(a.role));
-  for (const account of withMfa) assert.ok(account.mfaSecret, `${account.role} ma czynnik MFA`);
-  const withoutMfa = seeded.accounts.filter((a) => ['representative', 'audit'].includes(a.role));
-  for (const account of withoutMfa) assert.equal(account.mfaSecret, null, `${account.role} nie ma wymuszonego MFA`);
+  // Wszystkie konta demo mają założony i potwierdzony czynnik TOTP: admin/board/treasurer
+  // wymusza MFA_REQUIRED_ROLES, a przedstawiciel klasy i Komisja Rewizyjna mają go
+  // zapisanego w seedzie (decyzja użytkownika; wymóg w kodzie bez zmian).
+  for (const account of seeded.accounts) assert.ok(account.mfaSecret, `${account.role} ma czynnik MFA`);
+});
+
+test('demo-seed: przedstawiciel klasy i Komisja Rewizyjna logują się hasłem + kodem TOTP', async () => {
+  for (const role of ['representative', 'audit']) {
+    const account = seeded.accounts.find((a) => a.role === role);
+    const { rows } = await seeded.env.db.query(
+      `SELECT count(*)::int AS n FROM user_mfa_factors
+        WHERE user_id = $1 AND confirmed_at IS NOT NULL AND disabled_at IS NULL`,
+      [account.userId],
+    );
+    assert.equal(rows[0].n, 1, `${role}: jeden potwierdzony czynnik`);
+    // Świeża sesja po samym haśle nie wpuszcza do chronionej trasy (mfa_required),
+    // dopiero kod TOTP z zapisanego sekretu ją odblokowuje.
+    const login = await apiCall(seeded.env, {
+      method: 'POST', path: '/api/login', body: { email: account.email, password: account.password },
+    });
+    await assert.rejects(
+      apiCall(seeded.env, { path: `/api/reports/audit?schoolYearId=${SCHOOL_YEAR_ID}`, cookie: login.cookie }),
+      /mfa_required/,
+    );
+    // Kod z następnego kroku czasowego — kod bieżącego kroku zużył zapis czynnika w seedzie.
+    const code = totp(base32Decode(account.mfaSecret), Date.now() + 30_000);
+    const verified = await apiCall(seeded.env, {
+      method: 'POST', path: '/api/mfa/verify', cookie: login.cookie, body: { code },
+    });
+    const state = await apiCall(seeded.env, { path: '/api/session', cookie: verified.cookie ?? login.cookie });
+    assert.equal(state.data.user.id, account.userId);
+  }
 });
 
 test('demo-seed: roster — kilka klas i ok. 20 rodzin z rodzeństwem i dwojgiem opiekunów', () => {
@@ -191,4 +219,99 @@ test('demo-start: z APP_ENV=production/prod odmawia przed otwarciem bazy', async
   } finally {
     if (saved === undefined) delete process.env.APP_ENV; else process.env.APP_ENV = saved;
   }
+});
+
+// Spójność liczb demo (przegląd demo 2026-09-29): raport roczny i raport Komisji
+// Rewizyjnej nie mogą pokazywać przypadkowego „niezgodne”. Jedyne celowe przykłady
+// do pokazu kontroli są opisane w docs/DEMO.md („Celowe przykłady”): wpłata bez
+// przypisanej rodziny, pozycja wyciągu bez wpisu księgi (opłata SWIFT) i wydatki
+// bez dowodu (demo nie ma magazynu plików, więc nie ma dokumentów).
+async function auditReport() {
+  const audit = seeded.accounts.find((a) => a.role === 'audit');
+  const response = await apiCall(seeded.env, {
+    path: `/api/reports/audit?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: audit.cookie,
+  });
+  return response.data.report;
+}
+
+test('demo-seed: raport Komisji Rewizyjnej — żadna kontrola nie jest „niezgodna”', async () => {
+  const report = await auditReport();
+  for (const check of report.checks.items) {
+    assert.notEqual(check.ok, false, `kontrola ${check.id} nie może być niezgodna`);
+  }
+  const byId = Object.fromEntries(report.checks.items.map((check) => [check.id, check]));
+  assert.equal(byId.payments_in_ledger.paymentsWithoutLedgerEntry, 0, 'każda przypisana wpłata jest w księdze');
+  assert.equal(byId.payments_in_ledger.differenceCents, 0);
+  assert.ok(byId.payments_in_ledger.paymentsNetCents > 0);
+  assert.equal(byId.year_end_balance.differenceCents, 0);
+  assert.equal(report.checks.largeExpensesWithoutAdoptedResolution, 0);
+});
+
+test('demo-seed: raport roczny — bilans z wpłatami w księdze, saldo kasy i rachunku nie jest ujemne', async () => {
+  const board = seeded.accounts.find((a) => a.role === 'board');
+  const response = await apiCall(seeded.env, {
+    path: `/api/reports/annual?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: board.cookie,
+  });
+  const { balance } = response.data.report;
+  assert.ok(balance.incomeCents > 0 && balance.expenseCents > 0);
+  assert.ok(balance.closingCashCents >= 0, `saldo kasy ${balance.closingCashCents} nie może być ujemne`);
+  assert.ok(balance.closingBankCents >= 0, 'saldo rachunku nie może być ujemne');
+  assert.equal(balance.closingBalanceCents, balance.closingBankCents + balance.closingCashCents);
+  assert.equal(balance.closingBalanceCents, balance.openingBalanceCents + balance.incomeCents - balance.expenseCents);
+  const report = await auditReport();
+  const skladki = report.categories.find((c) => c.id === 'cat-income-skladki');
+  assert.equal(skladki.netCents, report.checks.items.find((c) => c.id === 'payments_in_ledger').paymentsNetCents,
+    'przychód z składek = suma wpłat przypisanych do rodzin');
+  assert.ok(!Object.hasOwn(balance, 'debtCents'), 'brak pojęcia zadłużenia');
+});
+
+test('demo-seed: uzgodnienie wyciągu — różnica niewielka i w całości opisana dwiema pozycjami do wyjaśnienia', async () => {
+  const report = await auditReport();
+  const [draft] = report.reconciliations.items;
+  assert.equal(draft.status, 'draft');
+  assert.equal(draft.differenceCents, DEMO_STATEMENT_DIFFERENCE_CENTS);
+  assert.ok(Math.abs(draft.differenceCents) < 5000, 'różnica poniżej 50 EUR');
+  const treasurer = seeded.accounts.find((a) => a.role === 'treasurer');
+  const detail = await apiCall(seeded.env, {
+    path: `/api/reconciliations/${seeded.reconciliation.reconciliationId}`, cookie: treasurer.cookie,
+  });
+  const suggestions = await apiCall(seeded.env, {
+    path: `/api/reconciliations/${seeded.reconciliation.reconciliationId}/suggestions`, cookie: treasurer.cookie,
+  });
+  const withoutCandidate = suggestions.data.suggestions.filter((entry) => entry.candidates.length === 0);
+  assert.equal(withoutCandidate.length, 1, 'jedna pozycja (SWIFT) nie ma żadnego kandydata');
+  assert.equal(withoutCandidate[0].amountCents, -375);
+  const onlyPaymentCandidate = suggestions.data.suggestions.filter(
+    (entry) => entry.candidates.length > 0 && entry.candidates.every((c) => c.type === 'payment_entry'),
+  );
+  assert.equal(onlyPaymentCandidate.length, 1, 'jedna pozycja pasuje tylko do wpłaty bez wpisu księgi');
+  assert.equal(onlyPaymentCandidate[0].amountCents, 1550);
+  const unexplained = withoutCandidate[0].amountCents + onlyPaymentCandidate[0].amountCents;
+  assert.equal(unexplained, draft.differenceCents, 'różnica = suma dwóch pozycji do wyjaśnienia');
+  // Wszystkie pozostałe pozycje wyciągu mają propozycję wpisu księgi.
+  assert.equal(
+    suggestions.data.suggestions.filter((entry) => entry.candidates.some((c) => c.type === 'ledger_entry')).length,
+    detail.data.lines.length - 2,
+  );
+  // Saldo wyciągu = suma pozycji (bilans otwarcia rachunku wynosi 0).
+  assert.equal(detail.data.lines.reduce((sum, line) => sum + line.amountCents, 0), draft.statementBalanceCents);
+});
+
+test('demo-seed: celowa wpłata bez przypisanej rodziny nie jest ujęta w księdze i nie jest „niezgodna”', async () => {
+  const treasurer = seeded.accounts.find((a) => a.role === 'treasurer');
+  const list = await apiCall(seeded.env, {
+    path: `/api/payments?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}&limit=100`, cookie: treasurer.cookie,
+  });
+  const unassigned = list.data.payments.filter((payment) => !payment.householdId);
+  assert.equal(unassigned.length, 1, 'dokładnie jeden opisany przykład');
+  assert.equal(unassigned[0].id, seeded.unassignedPaymentId);
+  assert.equal(unassigned[0].status, 'unmatched');
+});
+
+test('demo-seed: wydatki bez dowodu to opisany brak magazynu plików w demo, nie przypadkowy bałagan', async () => {
+  const report = await auditReport();
+  const expenseEntries = report.categories.filter((c) => c.direction === 'expense')
+    .reduce((sum, c) => sum + c.entryCount, 0);
+  assert.equal(report.evidence.expensesWithoutEvidence.count, expenseEntries,
+    'demo nie zawiera dokumentów: brak dowodu przy każdym wydatku jest opisany w docs/DEMO.md');
 });

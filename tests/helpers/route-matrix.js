@@ -698,6 +698,13 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: `/api/meetings/${obj.meetingId}` }),
     contains: (_actor, target) => [target.key],
   },
+  {
+    // #81: tylko odczyt, uprawnienia jak przy GET zebrania; brak dostępu = 404 (SR-07).
+    id: 'meetings.approvalChecklist', module: 'meetings', method: 'GET',
+    path: '/api/meetings/:meetingId/approval-checklist', targets: CLASS_TARGETS,
+    allow: MEETING_READ, mfa: false, ok: 200, deny: 404, fixture: 'static', object: { kind: 'meeting', stage: 'shared' },
+    build: ({ obj }) => ({ path: `/api/meetings/${obj.meetingId}/approval-checklist` }),
+  },
   meetingRoute('meetings.update', 'PATCH', '/api/meetings/:meetingId', () => '', {
     body: (target) => ({ revision: 1, title: `Zmiana ${marker(target.key)}` }),
   }),
@@ -1349,6 +1356,10 @@ export const ROUTE_MATRIX = Object.freeze([
   reconciliationRoute('reconciliation.match', 'POST', '/matches', 'withLine', {
     ok: 201, withKey: true, body: (_target, obj) => ({ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }),
   }),
+  reconciliationRoute('reconciliation.matchBatch', 'POST', '/matches/batch', 'withLine', {
+    ok: 201, withKey: true,
+    body: (_target, obj) => ({ matches: [{ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }] }),
+  }),
   reconciliationRoute('reconciliation.matchRevocation', 'POST', '/matches/:matchId/revocation', 'matched', {
     suffix: (obj) => `/matches/${obj.matchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
   }),
@@ -1389,6 +1400,36 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/cash-flow?schoolYearId=${target.schoolYearId}` }),
+  },
+  // Migawki sprawozdania (0138, #125): tworzy zarząd albo skarbnik, zatwierdza wyłącznie zarząd
+  // (inna osoba niż autor migawki — autorem fixture jest konto pomocnicze). Świeży obiekt na
+  // przypadek, bo nowa migawka musi mieć inną treść niż poprzednia (zmiana księgi w fixture).
+  {
+    id: 'financialReports.snapshotList', module: 'financial-reports', method: 'GET', path: '/api/reports/annual/snapshots?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['reportSnapshot', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/annual/snapshots?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    id: 'financialReports.snapshotCreate', module: 'financial-reports', method: 'POST', path: '/api/reports/annual/snapshots',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshotPrep' },
+    build: ({ target, obj }) => ({
+      path: '/api/reports/annual/snapshots',
+      body: { schoolYearId: target.schoolYearId, ...(obj?.supersedesId ? { supersedesId: obj.supersedesId, reason: 'Korekta syntetyczna' } : {}) },
+    }),
+  },
+  {
+    id: 'financialReports.snapshotRead', module: 'financial-reports', method: 'GET', path: '/api/reports/annual/snapshots/:id?format=json',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshot' },
+    build: ({ obj }) => ({ path: `/api/reports/annual/snapshots/${obj.snapshotId}?format=json` }),
+  },
+  {
+    id: 'financialReports.snapshotApprove', module: 'financial-reports', method: 'POST', path: '/api/reports/annual/snapshots/:id/approve',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshot' },
+    build: ({ obj }) => ({ path: `/api/reports/annual/snapshots/${obj.snapshotId}/approve`, body: {} }),
   },
 
   // ---------- exports (#9) ----------
@@ -1456,6 +1497,34 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({
       path: `/api/students/${obj.studentId}/enrollments/${obj.enrollmentId}/end`,
       body: { endedOn: '2020-01-01', reason: 'Odejście ze szkoły (syntetyczne)' },
+    }),
+  },
+  {
+    id: 'families.relationEnd', module: 'families', method: 'POST', path: '/api/guardians/:guardianId/students/:studentId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    // Zmiana opieki (#86) — data w przeszłości poza zamkniętym rokiem; zarząd klasowy tylko dla dziecka własnej klasy.
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/students/${obj.studentId}/end`,
+      body: { endsOn: '2020-01-01', reason: 'Zmiana opieki (syntetyczne)' },
+    }),
+  },
+  {
+    id: 'families.studentHouseholdEnd', module: 'families', method: 'POST', path: '/api/students/:studentId/households/:membershipId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/households/${obj.membershipId}/end`,
+      body: { endsOn: '2020-01-01', reason: 'Zakończenie członkostwa (syntetyczne)' },
+    }),
+  },
+  {
+    // Dodanie członkostwa: wyłącznie zakres szeroki — zarząd z przydziałem klasy dostaje 403 (#86, wariant zachowawczy).
+    id: 'families.studentHouseholdAdd', module: 'families', method: 'POST', path: '/api/students/:studentId/households',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: false, ok: 201,
+    deny: (actor, targetKey, mfa) => (actor.key === 'boardA' ? 403 : familyEditDeny(actor, targetKey, mfa)),
+    fixture: 'fresh', object: { kind: 'householdSpare' },
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/households`,
+      body: { householdId: obj.spareHouseholdId, isPrimary: false, startsOn: '2020-01-01', reason: 'Dodanie gospodarstwa (syntetyczne)' },
     }),
   },
 
@@ -1550,7 +1619,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'board.overview', module: 'board', method: 'GET',
     path: '/api/board/overview?schoolYearId=:year',
-    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    targets: ['-'], allow: { admin: ['-'], board: ['-'], boardA: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
     build: () => ({ path: `/api/board/overview?schoolYearId=${YEAR_1}` }),
     check: ({ actor, json }) => classListCheck(actor, json),
   },
@@ -1598,6 +1667,12 @@ export const ROUTE_MATRIX = Object.freeze([
     allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'invitationToken' },
     // #164: nowe konto wymaga zgodnego powtórzenia hasła (bez niego: 400 password_mismatch).
     build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password, passwordRepeat: obj.password } }),
+  },
+  {
+    // #164: podgląd zaproszenia bez sesji; tylko odczyt, token nie jest konsumowany.
+    id: 'login.invitationPreview', module: 'login', method: 'POST', path: '/api/invitations/preview', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'invitationToken' },
+    build: ({ obj }) => ({ path: '/api/invitations/preview', body: { token: obj.token } }),
   },
   {
     id: 'login.passwordReset', module: 'login', method: 'POST', path: '/api/password/reset', targets: ['-'],
@@ -1695,6 +1770,7 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/login': 'działa bez sesji; tworzy nową sesję bez MFA',
   '/api/auth/state': 'stan własnej sesji dla ekranu logowania (bez ról)',
   '/api/invitations/accept': 'działa bez sesji; uwierzytelnia token zaproszenia',
+  '/api/invitations/preview': 'działa bez sesji; tylko odczyt po tokenie zaproszenia (zamaskowany adres, rola, klasa, rok, termin); nie konsumuje tokenu',
   '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
   '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
   '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
