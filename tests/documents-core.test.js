@@ -231,6 +231,12 @@ test("normalizeDocument i metadataRows pokazują tytuł, kategorię i datę doku
   assert.equal(Object.fromEntries(metadataRows(bare))["Tytuł"], "Bez tytułu");
 });
 
+test("buildListUrl przekazuje kursor zamiast offsetu (#159)", () => {
+  const url = buildListUrl({ schoolYearId: "2026-2027", cursor: "abc_-9", offset: 50 });
+  assert.match(url, /cursor=abc_-9/);
+  assert.doesNotMatch(url, /offset=/);
+});
+
 test('previewKind i previewUrl: tylko PDF/PNG/JPEG, adres bez tokenu (#89)', async () => {
   const core = await import('../documents/core.js');
   assert.equal(core.previewKind('application/pdf'), 'pdf');

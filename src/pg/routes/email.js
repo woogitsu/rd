@@ -1,6 +1,6 @@
 // Kampanie e-mail o dobrowolnej składce na PostgreSQL (issues #10, #40). Prototyp — nie jest wdrożony.
 //
-//   GET  /api/email/campaigns?schoolYearId=…         lista kampanii roku
+//   GET  /api/email/campaigns?schoolYearId=…[&limit=&cursor=]   lista kampanii roku (kursor keyset, #159)
 //   POST /api/email/campaigns                        szkic (Idempotency-Key)
 //   GET  /api/email/campaigns/{id}                   stan i liczniki kolejki
 //   PUT  /api/email/campaigns/{id}                   zmiana treści → szkic, zatwierdzenie traci ważność
@@ -29,6 +29,9 @@ import { timingSafeEqual } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import {
+  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+} from '../list-cursor.js';
 import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
 import {
@@ -217,11 +220,22 @@ async function listCampaigns(request, env, url, json) {
   if (!validId(schoolYearId)) throw new RequestError('invalid_request');
   const context = await requireContext(request, env, EDITOR_ROLES);
   requireYear(context, EDITOR_ROLES, schoolYearId);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 100, maxLimit: 100 }, fail);
+  const scope = JSON.stringify(['campaigns', schoolYearId]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const values = [schoolYearId];
+  const after = cursor ? `AND ${afterTimestampDescSql('c.created_at', 'c.id', cursor, values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT ${CAMPAIGN_COLUMNS} FROM email_campaigns c WHERE c.school_year_id = $1 ORDER BY c.created_at DESC, c.id LIMIT 100`,
-    [schoolYearId],
+    `SELECT ${CAMPAIGN_COLUMNS}, ${cursorTimestampSql('c.created_at')} AS cursor_ts
+       FROM email_campaigns c WHERE c.school_year_id = $1 ${after}
+      ORDER BY c.created_at DESC, c.id LIMIT ${limit + 1}`,
+    values,
   );
-  return json({ campaigns: rows.map(campaignView) });
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return json({
+    campaigns: page.items.map(campaignView), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
+  });
 }
 
 async function createCampaign(request, env, json) {
