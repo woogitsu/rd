@@ -311,6 +311,12 @@
         <input type="hidden" name="minutesId" />
         <p class="context"></p>
         <p>Pierwsze zatwierdzenie blokuje zebranie: listę obecności, porządek obrad, quorum, uchwały i dane zebrania. Zatwierdzonej wersji nie można zmienić.</p>
+        <section aria-labelledby="approve-checklist-title" id="approve-checklist">
+          <h3 id="approve-checklist-title">Lista kontrolna</h3>
+          <p class="muted" id="approve-checklist-status" role="status">Wczytywanie…</p>
+          <ul id="approve-checklist-blocking" class="checklist checklist-blocking" hidden></ul>
+          <ul id="approve-checklist-warnings" class="checklist" hidden></ul>
+        </section>
         <label>Uwaga o trybie przyjęcia (opcjonalnie) <input name="approvalNote" maxlength="500" /></label>
         <p class="form-error" id="approve-minutes-error" role="alert"></p>
         <div class="actions"><button type="button" data-close>Anuluj</button><button class="primary" type="submit">Zatwierdź</button></div>
