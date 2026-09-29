@@ -76,7 +76,7 @@ async function grantRole(db, userId, role, { classId = null, schoolYearId = null
 // (klucz odczytany z ekranu, kod TOTP policzony w teście — patrz admin-mfa.spec.js).
 async function seedPasswordAccount(db, { userId, role, password }) {
   await seedUser(db, userId);
-  await grantRole(db, userId, role);
+  if (role) await grantRole(db, userId, role);
   await db.query(
     `INSERT INTO user_passwords (user_id, hash, set_reason) VALUES ($1, $2, 'invitation')`,
     [userId, await hashPassword(password, { env: FAST_SCRYPT })],
@@ -214,9 +214,12 @@ async function main() {
   const adminStaleCookie2 = await seedCookieSession(db, { userId: 'e2e-admin-reset', mfa: true, mfaAgeMinutes: 60 });
   const adminFreshCookie = await seedCookieSession(db, { userId: 'e2e-admin-reset', mfa: true });
   const resetTargets = [];
-  for (const id of ['e2e-reset-a', 'e2e-reset-b']) {
+  // a i b: konta BEZ roli chronionej (reset od razu); c: rola „board” — chroniona
+  // (#146), więc reset hasła i MFA kończy się wnioskiem (202) do zatwierdzenia
+  // przez drugiego administratora, bez tokenu i bez zmiany czynnika.
+  for (const [id, role] of [['e2e-reset-a', null], ['e2e-reset-b', null], ['e2e-reset-c', 'board']]) {
     const password = `Syntetyczne haslo ${id} ${randomBytes(6).toString('hex')}`;
-    await seedPasswordAccount(db, { userId: id, role: 'board', password });
+    await seedPasswordAccount(db, { userId: id, role, password });
     await seedTotpFactor(db, { userId: id, factorId: `e2e-f-${id}`, encryptionKey: mfaKey });
     resetTargets.push({ userId: id, email: `${id}@example.invalid`, password });
   }
