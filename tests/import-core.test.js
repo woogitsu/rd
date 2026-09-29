@@ -115,3 +115,9 @@ test('template.csv parses with guessMapping and only fictional @example.invalid 
   assert.ok(csv.includes('@example.invalid'));
   assert.ok(!csv.includes('@example.org'));
 });
+
+test('#88: the same ID as text "00123" and as number 123 in one file is a duplicate, not two students', () => {
+  const r = validateRows([head, ['Ala', 'Nowak', '1A', '', '', '00123'], ['Ola', 'Kowal', '1A', '', '', 123]], guessMapping(head));
+  assert.equal(r.validCount, 1);
+  assert.match(r.errors[0].message, /Powtórzone ID ucznia z wiersza 2/);
+});

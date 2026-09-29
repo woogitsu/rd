@@ -1,4 +1,25 @@
-const SESSION_COOKIE = 'rd_session';
+// Nazwa historyczna. Lokalny dev na http://localhost (APP_ENV nieustawione,
+// development lub test) używa jej nadal: `__Host-` wymaga atrybutu Secure, a
+// nie każda przeglądarka przyjmuje Secure na http://localhost (#114).
+export const LEGACY_SESSION_COOKIE = 'rd_session';
+export const HOST_SESSION_COOKIE = '__Host-rd_session';
+// Wartości APP_ENV uznawane za lokalne. Każda inna (także literówka) jest
+// traktowana zachowawczo jak środowisko wystawione do sieci (#114, spójnie z #166).
+const LOCAL_APP_ENVS = new Set(['', 'development', 'test']);
+
+export function isLocalAppEnv(appEnv) {
+  return LOCAL_APP_ENVS.has(String(appEnv ?? '').trim().toLowerCase());
+}
+
+function processAppEnv() {
+  return typeof process !== 'undefined' ? process.env?.APP_ENV : undefined;
+}
+
+// Nazwa cookie do ZAPISU zależna od środowiska. `appEnv` jawnie (testy) albo
+// z process.env.APP_ENV (serwer Node; w Workerze bez `process` → lokalna nazwa).
+export function sessionCookieName(appEnv = processAppEnv()) {
+  return isLocalAppEnv(appEnv) ? LEGACY_SESSION_COOKIE : HOST_SESSION_COOKIE;
+}
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export function parseCookies(header = '') {
@@ -14,8 +35,16 @@ export function parseCookies(header = '') {
 }
 
 export function readSessionToken(request) {
-  const token = parseCookies(request.headers.get('Cookie'))[SESSION_COOKIE];
-  return token && TOKEN_PATTERN.test(token) ? token : null;
+  // Odczyt przyjmuje obie nazwy. Nazwa `__Host-` ma pierwszeństwo; stara
+  // `rd_session` działa w okresie przejściowym — sesja żyje najwyżej 24 h
+  // (SESSION_TTL_SECONDS), więc po tym czasie od wdrożenia nie ma już ważnych
+  // tokenów pod starą nazwą i odczyt można usunąć (#114).
+  const cookies = parseCookies(request.headers.get('Cookie'));
+  for (const name of [HOST_SESSION_COOKIE, LEGACY_SESSION_COOKIE]) {
+    const token = cookies[name];
+    if (token && TOKEN_PATTERN.test(token)) return token;
+  }
+  return null;
 }
 
 export async function hashSecret(secret) {
@@ -29,14 +58,23 @@ export async function createSessionSecret() {
   return { secret, tokenHash: await hashSecret(secret) };
 }
 
-export function sessionCookie(secret, maxAgeSeconds) {
+export function sessionCookie(secret, maxAgeSeconds, appEnv = processAppEnv()) {
   if (!TOKEN_PATTERN.test(secret)) throw new Error('Nieprawidłowy sekret sesji.');
   const maxAge = Math.max(1, Math.min(Number(maxAgeSeconds) || 0, 60 * 60 * 24));
-  return `${SESSION_COOKIE}=${secret}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+  return `${sessionCookieName(appEnv)}=${secret}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 }
 
-export function clearSessionCookie() {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+export function clearSessionCookie(appEnv = processAppEnv()) {
+  return `${sessionCookieName(appEnv)}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+// Wylogowanie czyści OBIE nazwy (okres przejściowy, #114): w środowisku
+// wystawionym do sieci nagłówki dla `__Host-rd_session` i `rd_session`; lokalnie
+// tylko `rd_session`. Wynik to tablica wartości nagłówków Set-Cookie.
+export function clearSessionCookies(appEnv = processAppEnv()) {
+  const cleared = [clearSessionCookie(appEnv)];
+  if (!isLocalAppEnv(appEnv)) cleared.push(`${LEGACY_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+  return cleared;
 }
 
 export function isSameOrigin(request) {

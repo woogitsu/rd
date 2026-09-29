@@ -279,10 +279,13 @@ function refundMatches(row, paymentEntryId, input, actorId) {
     && row.reason === input.reason;
 }
 
-function reassignmentMatches(row, paymentEntryId, oldHouseholdId, input, actorId) {
+// Porównuje wyłącznie treść żądania (wpłata, nowe gospodarstwo, powód, autor).
+// Stare gospodarstwo jest wynikiem operacji, nie jej wejściem: po udanym
+// przypisaniu bieżące household_id wpłaty to już nowe, więc jego porównanie
+// dawałoby fałszywe 409 przy ponowieniu z tym samym kluczem (#138).
+function reassignmentMatches(row, paymentEntryId, input, actorId) {
   return row.created_by === actorId
     && row.payment_entry_id === paymentEntryId
-    && row.old_household_id === oldHouseholdId
     && row.new_household_id === input.householdId
     && row.reason === input.reason;
 }
@@ -684,6 +687,10 @@ async function assignPayment(request, env, paymentEntryId, json) {
       if (replay && assignmentMatches(replay, paymentEntryId, householdId, actorId)) {
         return json({ assignment: assignmentFromRow(replay) }, 200, REPLAYED);
       }
+      // Ten sam klucz zapisał już inne przypisanie (inna wpłata, gospodarstwo
+      // lub osoba): to konflikt idempotencji (#6). Bez wiersza o tym kluczu
+      // naruszona została unikalność wpłaty — inny klucz już ją przypisał.
+      if (replay) throw new RequestError('idempotency_conflict', 409);
       throw new RequestError('payment_already_assigned', 409);
     }
     mapDatabaseError(error);
@@ -774,7 +781,6 @@ async function reassignPayment(request, env, paymentEntryId, json) {
   const actorId = context.session.user.id;
 
   let result;
-  let oldHouseholdId;
   try {
     result = await env.db.transaction(async (tx) => {
       const { rows } = await tx.query(
@@ -785,10 +791,10 @@ async function reassignPayment(request, env, paymentEntryId, json) {
       const payment = rows[0];
       if (!payment) throw new RequestError('payment_not_found', 404);
       requireYear(context, payment.school_year_id);
-      oldHouseholdId = payment.household_id;
+      const oldHouseholdId = payment.household_id;
       const replay = ((row) => {
         if (!row) return null;
-        if (!reassignmentMatches(row, paymentEntryId, oldHouseholdId, input, actorId)) {
+        if (!reassignmentMatches(row, paymentEntryId, input, actorId)) {
           throw new RequestError('idempotency_conflict', 409);
         }
         return new Replay({ reassignment: reassignmentFromRow(row) });
@@ -820,7 +826,7 @@ async function reassignPayment(request, env, paymentEntryId, json) {
   } catch (error) {
     if (isUniqueError(error)) {
       const replay = await loadReassignmentByKey(env.db, idempotencyKey);
-      if (replay && reassignmentMatches(replay, paymentEntryId, oldHouseholdId, input, actorId)) {
+      if (replay && reassignmentMatches(replay, paymentEntryId, input, actorId)) {
         return json({ reassignment: reassignmentFromRow(replay) }, 200, REPLAYED);
       }
       throw new RequestError('idempotency_conflict', 409);

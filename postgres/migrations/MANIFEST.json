@@ -284,6 +284,10 @@
     "sha256": "106255c7077b63bb9e46e8093e61d49c79017c9cfbecc9ac6753c7db27a04bf9"
   },
   {
+    "name": "0121_import_batches_fingerprint_not_unique.sql",
+    "sha256": "e636fe9f6e77fcd48f49865085737912a187774cf71062f4796f2028a7adba35"
+  },
+  {
     "name": "0134_meeting_attendee_user_scope.sql",
     "sha256": "154b3e71d4320c743ae4d9c3f6550c9a0d78c51064d377879250b9c20206ca44"
   }

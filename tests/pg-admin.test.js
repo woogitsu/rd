@@ -361,6 +361,51 @@ test('#256: disable rolls back entirely when revoking sessions fails (no half-di
   }
 });
 
+// #256 (dowód atomowości bez RD_TEST_PG_URL): błąd wstrzyknięty PO wykonaniu
+// UPDATE sessions i zapisie user.disabled — czyli po drugim zapytaniu
+// transakcji — cofa całość: disabled_at, audyt i revoked_at sesji. Test
+// wyścigu na prawdziwym PostgreSQL (pg-disable-session-race) jest w CI
+// pomijany bez RD_TEST_PG_URL, a PGlite nie odtwarza przeplotu, więc to
+// jest dowód, że oba zapisy tworzą jedną transakcję.
+test('#256: an error after the session UPDATE rolls back disabled_at, audit and revoked_at together', async () => {
+  const { db, admin } = await setup();
+  try {
+    const victim = await seedUserSession(db, { userId: 'u-victim3' });
+    const seen = [];
+    let injected = 0;
+    const failingLate = {
+      query: (text, params) => db.query(text, params),
+      transaction: (fn) => db.transaction((tx) => fn({
+        query: async (text, params) => {
+          const isSessionAudit = typeof text === 'string' && Array.isArray(params) && params.includes('session.revoked');
+          if (isSessionAudit && injected === 0) {
+            injected += 1;
+            // Zapytanie UPDATE sessions już się wykonało w tej transakcji.
+            const inside = await tx.query("SELECT count(*)::int AS n FROM sessions WHERE user_id = 'u-victim3' AND revoked_at IS NOT NULL");
+            seen.push(inside.rows[0].n);
+            throw Object.assign(new Error('injected_failure'), { code: '40001' });
+          }
+          return tx.query(text, params);
+        },
+      })),
+    };
+
+    const disabled = await post({ db: failingLate }, '/api/admin/users/u-victim3/disable', admin);
+    assert.equal(disabled.status, 503);
+    assert.equal(injected, 1, 'błąd wstrzyknięty po zapytaniu UPDATE sessions');
+    assert.deepEqual(seen, [1], 'w chwili błędu sesja była już oznaczona jako wycofana (wewnątrz transakcji)');
+
+    assert.equal((await db.query("SELECT disabled_at FROM users WHERE id = 'u-victim3'")).rows[0].disabled_at, null);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM sessions WHERE user_id = 'u-victim3' AND revoked_at IS NOT NULL")).rows[0].n, 0,
+      'revoked_at sesji też cofnięte razem z disabled_at');
+    const events = (await auditRows(db)).filter((row) => row.entity_id === 'u-victim3' || row.action === 'session.revoked');
+    assert.equal(events.length, 0, 'żadne zdarzenie user.disabled / session.revoked nie przetrwało');
+    assert.equal((await call({ db }, '/api/session', { cookie: victim })).status, 200);
+  } finally {
+    await db.close();
+  }
+});
+
 test('invitations return the token once, block duplicates, can be revoked and never log the address', async () => {
   const { db, env, admin } = await setup();
   try {
