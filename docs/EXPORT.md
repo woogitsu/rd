@@ -207,7 +207,7 @@ sum w centach.
 Odtworzenie:
 
 - odmawia bazy, w której jakakolwiek tabela (poza `schema_migrations`) ma
-  wiersze; odmawia `APP_ENV=production` bez `--allow-production`;
+  wiersze; odmawia `APP_ENV=production` (także `prod`, brak lub nieznaną wartość) bez `--allow-production`;
 - działa w jednej transakcji — pierwszy błąd wycofuje całość;
 - przyjmuje paczki w wersji 2 i 1 (patrz „Wersje formatu”);
 - na czas transakcji wyłącza triggery i klucze obce

@@ -28,6 +28,7 @@
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
+import { isProductionEnv } from '../src/app-env.js';
 import { startServer } from '../src/server.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { approve, createDraft, publish, submit } from '../src/pg/events.js';
@@ -119,8 +120,7 @@ export function parseArgs(argv) {
 
 export function validateRemoteTarget(target, { confirmStaging = false, env = process.env } = {}) {
   if (!confirmStaging) throw new UsageError('remote target requires --i-confirm-staging (synthetic staging only)');
-  const appEnv = String(env.APP_ENV ?? '').trim().toLowerCase();
-  if (appEnv === 'production' || appEnv === 'prod') throw new UsageError('refusing to run with APP_ENV=production');
+  if (isProductionEnv(env.APP_ENV)) throw new UsageError('refusing to run with APP_ENV=production');
   let url;
   try {
     url = new URL(target);

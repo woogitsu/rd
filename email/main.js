@@ -8,6 +8,7 @@ import {
   describeApiError,
   formatDayPlan,
   formatExclusions,
+  formatSchedule,
   formatWarnings,
   hasApproverAccess,
   hasEditorAccess,
@@ -15,6 +16,9 @@ import {
   isValidId,
   makeIdempotencyKey,
   maskEmail,
+  scheduleTimezone,
+  sendNotBeforeFromInput,
+  sendNotBeforeToInput,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
@@ -155,6 +159,7 @@ function renderDetail() {
 
   byId("detail-recipients-count").textContent = preview ? String(preview.recipientsCount) : "—";
   byId("detail-plan").textContent = preview ? formatDayPlan(preview.plan) : "Utwórz migawkę odbiorców, aby zobaczyć plan wysyłki.";
+  byId("detail-schedule").textContent = preview?.schedule ? formatSchedule(preview.schedule) : "";
   byId("detail-snapshot-current").hidden = !preview || preview.snapshotCurrent !== false;
 
   const warningsList = byId("detail-warnings");
@@ -195,7 +200,9 @@ function updateActionVisibility(campaign, preview) {
   waitingNotice.hidden = !(canSeeApprove && campaign.status === "draft" && own);
 
   byId("queue-campaign").hidden = campaign.status !== "approved";
-  byId("cancel-campaign").hidden = !["draft", "approved", "sending"].includes(campaign.status);
+  byId("pause-campaign").hidden = campaign.status !== "sending";
+  byId("resume-campaign").hidden = campaign.status !== "paused";
+  byId("cancel-campaign").hidden = !["draft", "approved", "sending", "paused"].includes(campaign.status);
 }
 
 async function openDetail(id) {
@@ -289,9 +296,17 @@ const createDialog = configureDialog("create-dialog", "email-create", async (dat
 
 const editDialog = configureDialog("edit-dialog", "email-edit", async (data) => {
   const id = state.selectedId;
+  // Pole terminu wysyłamy tylko po zmianie: pozostawione bez zmian nie może
+  // cofać zatwierdzenia przez zaokrąglenie sekund.
+  const rawStart = String(data.get("sendNotBefore") ?? "");
+  const startChanged = rawStart !== (editDialog.form.dataset.initialSendNotBefore ?? "");
+  const schedulePart = startChanged
+    ? { sendNotBefore: sendNotBeforeFromInput(rawStart, scheduleTimezone(state.preview?.schedule)) }
+    : {};
   const result = await api(campaignUrl(id), {
     method: "PUT",
     body: JSON.stringify({
+      ...schedulePart,
       // #215: wersja kampanii widziana w chwili otwarcia okna edycji.
       revision: Number(editDialog.form.dataset.revision),
       title: String(data.get("title")),
@@ -322,6 +337,9 @@ byId("edit-campaign").addEventListener("click", () => {
   form.elements.subject.value = campaign.subject;
   form.elements.bodyText.value = campaign.bodyText;
   form.dataset.revision = String(campaign.revisionNo ?? "");
+  const initialStart = sendNotBeforeToInput(campaign.sendNotBefore, scheduleTimezone(state.preview?.schedule));
+  form.elements.sendNotBefore.value = initialStart;
+  form.dataset.initialSendNotBefore = initialStart;
   editDialog.dialog.showModal();
 });
 
@@ -423,6 +441,27 @@ byId("queue-campaign").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
+
+// Wstrzymanie i wznowienie: przejścia stanu z audytem po stronie serwera,
+// idempotentne (drugie kliknięcie nie tworzy nowego zdarzenia).
+for (const [buttonId, action, done] of [
+  ["pause-campaign", "pause", "Wysyłka wstrzymana. Wiadomość, której wysyłka już trwa, zostanie dokończona."],
+  ["resume-campaign", "resume", "Wysyłka wznowiona."],
+]) {
+  byId(buttonId).addEventListener("click", async () => {
+    const button = byId(buttonId);
+    button.disabled = true;
+    try {
+      await api(campaignActionUrl(state.selectedId, action), { method: "POST" });
+      await refreshDetail();
+      setMessage(done);
+    } catch (error) {
+      setMessage(`Nie udało się zmienić stanu wysyłki: ${error.message}`, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
 
 byId("cancel-campaign").addEventListener("click", async () => {
   const confirmed = await confirmAction({

@@ -35,6 +35,7 @@ import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
   AUDIENCES, MEETING_AUDIENCES, parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
 } from '../../email/content.js';
+import { estimateSchedule } from '../../email/schedule.js';
 import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
 
 export const name = 'email';
@@ -559,6 +560,16 @@ async function preview(request, env, id, json) {
     plan: {
       dailyCap, days: planDays(count, dailyCap, config),
       accountDailyLimit: config.dailyLimit, reservedForOtherMail: config.dailyReserved,
+    },
+    // #130: planowany start i szacowany koniec w czasie okna wysyłki (domyślnie
+    // Europe/Brussels). Szacunek — nie zmienia harmonogramu i niczego nie wysyła.
+    schedule: {
+      sendNotBefore: iso(campaign.send_not_before),
+      window: {
+        enabled: config.sendWindow.enabled, timezone: config.sendWindow.timezone,
+        days: [...config.sendWindow.days].sort(), startMinutes: config.sendWindow.startMinutes, endMinutes: config.sendWindow.endMinutes,
+      },
+      ...estimateSchedule({ now: new Date(), sendNotBefore: campaign.send_not_before, days: planDays(count, dailyCap, config), sendWindow: config.sendWindow }),
     },
     warnings: contentWarnings({ bodyText: campaign.body_text }),
     sends: false,
