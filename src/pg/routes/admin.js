@@ -89,6 +89,7 @@ import {
   afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
 import { DATA_ACCESS_KINDS } from '../data-access.js';
+import { createJsonReader } from '../input.js';
 
 export const name = 'admin';
 
@@ -139,22 +140,12 @@ function optionalId(value, code) {
   return value;
 }
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const declared = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  if (!text.trim()) return {};
-  try {
-    const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  emptyBody: 'blank',
+  error: (code, status) => new RequestError(code, status),
+});
 
 function readExpiresAt(value) {
   if (value === undefined || value === null || value === '') return null;
