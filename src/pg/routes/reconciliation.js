@@ -2110,6 +2110,42 @@ export async function buildAuditReport(executor, schoolYearId) {
     createdBy: row.created_by, createdAt: isoTimestamp(row.created_at),
   }));
 
+  // #144: przeksięgowania (storno + wpis zastępczy). Bez danych osobowych: kategorie,
+  // kwoty, powód i identyfikatory. „Dotyka zatwierdzonego uzgodnienia” = stary wpis
+  // był powiązany z pozycją wyciągu w uzgodnieniu zatwierdzonym.
+  const reclassifications = (await executor.query(
+    `SELECT n.id, n.replaces_entry_id, n.created_by, n.created_at, n.direction, n.method,
+            n.amount_cents, to_char(n.occurred_on, 'YYYY-MM-DD') AS occurred_on,
+            o.direction AS old_direction, o.method AS old_method, o.amount_cents AS old_amount_cents,
+            to_char(o.occurred_on, 'YYYY-MM-DD') AS old_occurred_on,
+            oc.name AS old_category, nc.name AS new_category,
+            k.amount_cents AS storno_cents, k.reason AS storno_reason,
+            n.payment_entry_id IS NOT NULL AS payment_linked,
+            (EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                       JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+                      WHERE m.ledger_entry_id = o.id AND m.revoked_at IS NULL AND r.status = 'confirmed')
+             OR EXISTS (SELECT 1 FROM bank_group_match_items_current i
+                          JOIN bank_reconciliations r ON r.id = i.reconciliation_id
+                         WHERE i.ledger_entry_id = o.id AND r.status = 'confirmed')) AS in_confirmed_reconciliation
+       FROM ledger_entries n
+       JOIN ledger_entries o ON o.id = n.replaces_entry_id
+       JOIN ledger_categories oc ON oc.id = o.category_id
+       JOIN ledger_categories nc ON nc.id = n.category_id
+       LEFT JOIN ledger_corrections k ON k.ledger_entry_id = o.id AND k.idempotency_key LIKE 'ledrepl-storno-%'
+      WHERE n.school_year_id = $1
+      ORDER BY n.created_at, n.id`,
+    [schoolYearId],
+  )).rows.map((row) => ({
+    id: row.id, replacesEntryId: row.replaces_entry_id, createdAt: isoTimestamp(row.created_at), createdBy: row.created_by,
+    oldOccurredOn: row.old_occurred_on, occurredOn: row.occurred_on,
+    oldDirection: row.old_direction, direction: row.direction,
+    oldMethod: row.old_method, method: row.method,
+    oldCategory: row.old_category, newCategory: row.new_category,
+    stornoCents: toSafeInteger(row.storno_cents ?? 0), amountCents: toSafeInteger(row.amount_cents),
+    reason: String(row.storno_reason ?? '').replace(/^Przeksięgowanie: /, ''),
+    paymentLinked: row.payment_linked, inConfirmedReconciliation: row.in_confirmed_reconciliation,
+  }));
+
   // #117: wynik wydarzeń z centrów kosztów (przypisania bieżących wersji), z tej samej
   // migawki co reszta raportu. Tylko nazwa wydarzenia i kwoty — bez danych osobowych.
   const eventResults = await costCenterReport(executor, schoolYearId, 'event');
@@ -2187,6 +2223,7 @@ export async function buildAuditReport(executor, schoolYearId) {
     resolutionExecution,
     expenseReviews,
     corrections,
+    reclassifications,
     openingAdjustments,
     reconciliations: {
       items,

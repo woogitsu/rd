@@ -168,6 +168,17 @@ export function renderAuditReportHtml(report) {
     [e(item.createdBy)],
   ]));
 
+  // #144: raporty sprzed tej zmiany (np. z archiwum) nie mają sekcji przeksięgowań.
+  const reclassificationRows = (report.reclassifications ?? []).map((item) => row([
+    [e(formatDate(item.createdAt))], [`${e(item.replacesEntryId)}<br>&rarr; ${e(item.id)}`],
+    [`${e(item.oldCategory)} &rarr; ${e(item.newCategory)}`],
+    [`${e(formatDate(item.oldOccurredOn))} &rarr; ${e(formatDate(item.occurredOn))}`],
+    [money(item.stornoCents), 'num'], [money(item.amountCents), 'num'], [e(item.reason)],
+    [[item.paymentLinked ? 'powiązany z wpłatą' : '',
+      item.inConfirmedReconciliation ? '<span class="flag">dotyczy zatwierdzonego uzgodnienia</span>' : '']
+      .filter(Boolean).join('<br>') || '—'],
+  ]));
+
   const adjustmentRows = openingAdjustments.map((item) => row([
     [e(formatDate(item.createdAt))], [money(item.amountCents), 'num'], [e(item.reason)], [e(item.createdBy)],
   ]));
@@ -263,6 +274,7 @@ ${table([['Wydarzenie'], ['Stan'], ['Wpisy', 'num'], ['Przychody', 'num'], ['Wyd
 <h2>4. Korekty</h2>
 ${table([['Zapisano'], ['Wpis księgi'], ['Data wpisu'], ['Rodzaj'], ['Kwota korekty', 'num'], ['Powód'], ['Autor (id)']],
     correctionRows, 'Brak korekt wpisów księgi.')}
+${reclassificationRows.length ? `<p>Przeksięgowania (storno starego wpisu i wpis zastępczy — bilans zmienia tylko różnica kwot):</p>${table([['Zapisano'], ['Wpis stary → nowy'], ['Kategoria'], ['Data'], ['Storno', 'num'], ['Nowy wpis', 'num'], ['Powód'], ['Uwagi']], reclassificationRows, '')}` : ''}
 ${adjustmentRows.length ? `<p>Korekty bilansu otwarcia:</p>${table([['Zapisano'], ['Kwota', 'num'], ['Powód'], ['Autor (id)']], adjustmentRows, '')}` : ''}
 
 <h2>5. Uzgodnienia rachunku bankowego</h2>

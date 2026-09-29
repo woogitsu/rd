@@ -1018,6 +1018,20 @@ wysyłane. Wycofanie na pustej bazie: usunięcie tabel, widoku, triggerów i kol
 oraz przywrócenie funkcji z 0009; na bazie z danymi tylko po kopii (tabele niosą
 historię zmian terminu i zawiadomień).
 
+`0142_ledger_replacement_payment_link.sql` (#144) pozwala przeksięgować wpis
+księgi powiązany z wpłatą: wpis zastępczy przejmuje `payment_entry_id`, a
+wpłata pozostaje ujęta dokładnie raz. Unikalny indeks
+`ledger_entries_payment_entry_idx` zastępuje zwykły indeks wyszukiwania, a
+regułę „jedno ujęcie” (inne wpisy wpłaty tylko w łańcuchu przeksięgowań i z
+zerowym netto, blokada wiersza wpłaty) egzekwuje `ledger_entry_insert_guard`;
+`payment_ledger_link_consistent` porównuje netto wpłaty z sumą netto łańcucha.
+Kwota i kierunek nie zmieniają się przez przeksięgowanie (D-12 otwarte —
+wariant zachowawczy). Skutki dla danych: żaden wiersz nie jest zmieniany ani
+usuwany; istniejące wpłaty mają najwyżej jeden wpis. Wycofanie: przywrócenie
+unikalnego indeksu i funkcji z 0038/0040, możliwe przed pierwszym
+przeksięgowaniem wpisu powiązanego z wpłatą.
+
+
 `0124_login_rate_limit_pair_scope.sql` (#126) poszerza CHECK na
 `login_rate_limits.scope_type` o `'pair'` — SHA-256 pary (znormalizowany
 e-mail, IP) z osobną dziedziną skrótu. Blokada logowania zakładana jest teraz

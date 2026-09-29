@@ -210,7 +210,6 @@ export const MESSAGES = Object.freeze({
   invalid_ledger_entry_id: "Niepoprawny identyfikator wpisu księgi.",
   ledger_entry_not_found: "Nie znaleziono wpisu księgi.",
   active_bank_match: "Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis.",
-  payment_linked_entry_not_replaceable: "Wpisu powiązanego z wpłatą nie można przeksięgować. Skoryguj albo wpłatę, albo wpis.",
   ledger_entry_already_replaced: "Ten wpis został już przeksięgowany.",
   ledger_entry_already_corrected_to_zero: "Wpis jest już w pełni skorygowany do zera. Nie można go przeksięgować.",
   replacement_target_mismatch: "Przeksięgowanie nie zgadza się z zastępowanym wpisem. Odśwież widok i spróbuj ponownie.",

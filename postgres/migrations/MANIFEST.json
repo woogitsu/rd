@@ -296,8 +296,8 @@
     "sha256": "90b6b1439eb8bbf64cf526b3529db889136e3b4c2c452eb17050b9aaf636080b"
   },
   {
-    "name": "0140_data_access_log_review.sql",
-    "sha256": "304aab73b8a25f23650bdbede67203c1513daadc28fc488aaf7c9d83c6d172af"
+    "name": "0142_ledger_replacement_payment_link.sql",
+    "sha256": "89648113bd1a96487591db8412d53b99a2161e3fb44bed19097ee8ddede1b077"
   },
   {
     "name": "0130_year_freeze_remaining_tables.sql",
@@ -318,5 +318,9 @@
   {
     "name": "0139_meeting_cancel_notice.sql",
     "sha256": "43ac15730a4a7d290a6a34b6fdfdac229346c91ac5a55374c092bc6036fc1f75"
+  },
+  {
+    "name": "0140_data_access_log_review.sql",
+    "sha256": "304aab73b8a25f23650bdbede67203c1513daadc28fc488aaf7c9d83c6d172af"
   }
 ]
