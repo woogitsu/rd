@@ -942,3 +942,14 @@ pozostaje unikalny. Skutki dla danych: żaden wiersz nie jest zmieniany ani
 usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
+
+`0136_student_household_reasons.sql` (#86) dodaje do `student_households`
+kolumny tekstowe `created_reason` i `ended_reason` (powód dodania i zakończenia
+członkostwa ucznia w gospodarstwie; zapisują je trasy
+`POST /api/students/{id}/households` i `.../households/{membershipId}/end`).
+Odtwarza `student_household_check` (wersja z 0023) z jednym dodatkiem:
+`created_reason` jest niezmienne po utworzeniu. Skutki dla danych: istniejące
+wiersze dostają NULL, żaden nie jest zmieniany ani usuwany; kolumny to wolny
+tekst (inwentarz prywatności i lista DPIA jak dla `enrollments.ended_reason`).
+Wycofanie: na pustej bazie usunięcie kolumn i przywrócenie funkcji z 0023; na
+bazie z danymi tylko po kopii.

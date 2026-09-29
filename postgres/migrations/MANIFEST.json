@@ -286,5 +286,9 @@
   {
     "name": "0121_import_batches_fingerprint_not_unique.sql",
     "sha256": "e636fe9f6e77fcd48f49865085737912a187774cf71062f4796f2028a7adba35"
+  },
+  {
+    "name": "0136_student_household_reasons.sql",
+    "sha256": "3218cd324b178b652941e0072be775704adbd7512e98855204f609d4eea9dcdb"
   }
 ]

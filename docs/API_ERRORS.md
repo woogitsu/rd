@@ -369,6 +369,7 @@ wpisów).
 | `statement_multiple_not_supported` | Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno. | Nie — popraw dane żądania. |
 | `statement_transaction_id_missing` | Ruch w wyciągu nie ma identyfikatora transakcji banku. | Nie — popraw dane żądania. |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `student_household_overlap` | Uczeń ma już członkostwo w tym gospodarstwie (lub inne główne) w tym okresie. Zakończ poprzednie i dodaj nowe od tej samej daty. | Nie — popraw dane żądania. |
 | `student_not_found` | Nie znaleziono ucznia. | Nie — popraw dane żądania. |
 | `subject_required` | Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `suppression_not_active` | Ta blokada nie jest już aktywna. | Zależy od kontekstu (patrz moduł trasy). |

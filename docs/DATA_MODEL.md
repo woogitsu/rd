@@ -110,6 +110,14 @@ Poza zakresem tej migracji (patrz PR — „Część #78"): kopiowanie struktury
 
 Widok `enrollments_current` (`ended_on IS NULL OR ended_on > CURRENT_DATE` — ta sama konwencja co `student_households_current`) zastępuje `enrollments` w miejscach liczących/wyświetlających uczniów **dziś**: lista klasy i licznik uczniów (`families.js`), kartki (`print.js`), dobór adresatów kampanii (`computeSnapshot`, `email.js`) i eksport listy klasy dla przedstawiciela (`buildClassRoster`, `export.js`). Data zakończenia może być przyszła — uczeń pozostaje widoczny do tej daty. Wpłaty zapisane wcześniej nie są zmieniane; odejście nie tworzy ani nie usuwa żadnej należności (decyzja o ewentualnym zwrocie — Rada, D-04).
 
+#### Zmiana opieki w trakcie roku (0136, issue #86)
+
+Trzy trasy zamykają lukę „SQL bez aktora”: `POST /api/guardians/{id}/students/{studentId}/end` (relacja opiekun–dziecko; `ends_on` włącznie, historia w `student_guardian_changes` z aktorem i powodem), `POST /api/students/{id}/households/{membershipId}/end` oraz `POST /api/students/{id}/households` (członkostwo ucznia w gospodarstwie; `ends_on` wyłącznie). Żaden wiersz nie jest usuwany; zakończenie ustawia datę raz, korekta to nowy wiersz (zmiana głównego gospodarstwa = zakończenie starego od dnia D i nowe główne od D). Migracja 0136 dodaje `student_households.created_reason/ended_reason` (wolny tekst — DPIA jak `enrollments.ended_reason`; do `audit_events` powód nie trafia). Data zmiany w zamkniętym roku szkolnym: `409 school_year_closed`. Zakres klasowy: kończyć można tylko dla ucznia własnej klasy, dodawać członkostwo — tylko zakres szeroki (wariant zachowawczy do D-08).
+
+Kampanie zatwierdzone przed zmianą: worker (`recheckRow` i `confirmSend`) sprawdza przy wysyłce bieżącą relację (`student_guardians_current_on`), główne gospodarstwo i — od #86 — bieżące przypisanie ucznia (`enrollments_current`); wiadomość do opiekuna bez relacji albo do rodziny wyłącznie z dzieckiem, które odeszło, nie wychodzi (`suppressed`: `consent_or_address_changed` / `student_withdrawn`), a nowy adresat nie jest dobierany automatycznie — wymaga przebudowy migawki i nowego zatwierdzenia. Podgląd kampanii pokazuje `staleRecipients` (`{powód: liczba}`) przed wysyłką.
+
+Nie zrobione (Część #86): zakończenie członkostwa opiekuna w gospodarstwie (`guardian_households`), przełącznik „pokaż zakończone” w panelu i ponowne przyjęcie ucznia w tym samym roku (UNIQUE `student_id, school_year_id`) — do rozstrzygnięcia przez zarząd/szkołę.
+
 Poza zakresem tej migracji (patrz PR — „Część #86”): zakończenie relacji opiekun–dziecko i zakończenie członkostwa w gospodarstwie przez API (schemat z 0014 to obsługuje; trasy nie istnieją jeszcze), a także ostrzeżenie przy wysyłce kampanii zatwierdzonej przed odejściem.
 
 ### Jednostka ewidencji składki (D-11)
