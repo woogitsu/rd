@@ -27,7 +27,7 @@ test('visiblePanels: skarbnik widzi rodziny, wpłaty, księgę, kampanie e-mail,
 
 test('visiblePanels: przedstawiciel 1A nie widzi wpłat, księgi, uzgodnień, importu, e-maili, zamknięcia roku ani kont', () => {
   const ids = visiblePanels([{ role: 'representative', classId: '1A', schoolYearId: 'y1' }]).map((p) => p.id);
-  assert.deepEqual(ids, ['families', 'print', 'events', 'meetings', 'documents']);
+  assert.deepEqual(ids, ['families', 'print', 'events', 'meetings', 'documents', 'news']);
   assert.ok(!ids.includes('panel'));
   assert.ok(!ids.includes('ledger'));
   assert.ok(!ids.includes('reconciliation'));
@@ -43,7 +43,7 @@ test('visiblePanels: dwa przydziały (przedstawiciel 1A i 2B) — suma linków, 
     { role: 'representative', classId: '2B', schoolYearId: 'y1' },
   ];
   const ids = visiblePanels(grants).map((p) => p.id);
-  assert.deepEqual(ids, ['families', 'print', 'events', 'meetings', 'documents']);
+  assert.deepEqual(ids, ['families', 'print', 'events', 'meetings', 'documents', 'news']);
 });
 
 test('visiblePanels: skarbnik + przedstawiciel — suma uprawnień, stała kolejność', () => {
@@ -52,7 +52,12 @@ test('visiblePanels: skarbnik + przedstawiciel — suma uprawnień, stała kolej
     { role: 'representative', classId: '1A', schoolYearId: 'y1' },
   ];
   const ids = visiblePanels(grants).map((p) => p.id);
-  assert.deepEqual(ids, ['families', 'panel', 'ledger', 'email', 'reconciliation', 'print', 'events', 'meetings', 'documents', 'year-close']);
+  assert.deepEqual(ids, ['families', 'panel', 'ledger', 'email', 'reconciliation', 'print', 'events', 'meetings', 'documents', 'year-close', 'news']);
+});
+
+test('visiblePanels: aktualności widoczne dla admina, zarządu i przedstawiciela; nie dla skarbnika ani KR', () => {
+  for (const role of ['admin', 'board', 'representative']) assert.ok(visiblePanels([{ role, classId: role === 'representative' ? '1A' : undefined }]).some((p) => p.id === 'news'), role);
+  for (const role of ['treasurer', 'audit']) assert.ok(!visiblePanels([{ role }]).some((p) => p.id === 'news'), role);
 });
 
 test('visiblePanels: kampanie e-mail widoczne dla zarządu i skarbnika, nie dla administratora bez tych ról', () => {

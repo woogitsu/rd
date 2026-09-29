@@ -40,6 +40,9 @@ export const PANELS = Object.freeze([
   { id: "import", href: "/import/", label: "Import uczniów", roles: ["admin", "board"] },
   // src/pg/routes/year-close.js READ_ROLES (admin i Komisja Rewizyjna bez dostępu).
   { id: "year-close", href: "/year-close/", label: "Zamknięcie roku", roles: ["board", "treasurer"] },
+  // src/pg/news.js NEWS_POLICY (suma draftSchoolWide, draftClass, review). Przedstawiciel
+  // widzi wyłącznie wpisy własnej klasy — zakres egzekwuje serwer.
+  { id: "news", href: "/news/", label: "Aktualności", roles: ["admin", "board", "representative"] },
   // wyłącznie admin (docs/AUTHORIZATION.md: „wyłącznie admin”).
   { id: "admin", href: "/admin/", label: "Konta i role", roles: ["admin"] },
 ]);

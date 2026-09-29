@@ -130,6 +130,17 @@ test('year-close (Zamknięcie roku): role jak READ_ROLES w src/pg/routes/year-cl
   assert.ok(!panelById['year-close'].roles.includes('audit'), 'Komisja Rewizyjna: 403 na trasach /api/year-close/* (docs/AUTHORIZATION.md)');
 });
 
+test('news (Aktualności): suma ról draftSchoolWide, draftClass i review z NEWS_POLICY w src/pg/news.js (skarbnik i audit BEZ dostępu)', () => {
+  const policy = src('src/pg/news.js').match(/export const NEWS_POLICY = Object\.freeze\(\{([\s\S]*?)\}\);/)[1];
+  const roles = new Set();
+  for (const key of ['draftSchoolWide', 'draftClass', 'review']) {
+    for (const m of policy.match(new RegExp(`${key}: Object\\.freeze\\(\\[([^\\]]*)\\]`))[1].matchAll(/'([a-z_]+)'/g)) roles.add(m[1]);
+  }
+  assert.deepEqual([...panelById.news.roles].sort(), [...roles].sort());
+  assert.ok(!panelById.news.roles.includes('treasurer'));
+  assert.ok(!panelById.news.roles.includes('audit'));
+});
+
 test('admin (Konta i role): wyłącznie admin', () => {
   assert.deepEqual([...panelById.admin.roles], ['admin']);
 });
