@@ -25,7 +25,8 @@ function poolOver(pglite, inject = () => {}) {
       if (text === 'BEGIN') state.begins += 1;
       if (text === 'COMMIT') state.commits += 1;
       if (text === 'ROLLBACK') state.rollbacks += 1;
-      if (text.includes("set_config('lock_timeout'")) state.lockTimeouts.push(Number(params[0]));
+      const lockTimeout = /^SET LOCAL lock_timeout = (\d+)$/.exec(text);
+      if (lockTimeout) state.lockTimeouts.push(Number(lockTimeout[1]));
       state.queries.push(text);
       inject(text, state);
       return pglite.query(text, params);
@@ -179,7 +180,7 @@ describe('#156: lock_timeout w transakcjach', () => {
       await db.transaction(async (tx) => { await tx.query('SELECT 1'); });
       assert.deepEqual(state.lockTimeouts, [3000]);
       assert.equal(state.queries[0], 'BEGIN');
-      assert.ok(state.queries[1].includes("set_config('lock_timeout'"));
+      assert.match(state.queries[1], /^SET LOCAL lock_timeout = 3000$/);
     });
   });
 

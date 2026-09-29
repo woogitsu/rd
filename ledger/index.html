@@ -52,6 +52,24 @@
           <p class="empty" id="budget-empty" hidden>Brak preliminarza i wpisów dla tego roku.</p>
         </section>
 
+        <section class="card" aria-labelledby="history-title">
+          <div class="section-heading"><div><p class="eyebrow">Plan finansowy</p><h2 id="history-title">Historia preliminarza</h2></div><span id="history-count" aria-live="polite"></span></div>
+          <div class="budget-actions" id="budget-actions">
+            <button id="open-category" type="button">Nowa kategoria</button>
+            <button id="open-deactivate" type="button">Wyłącz kategorię</button>
+            <button id="open-line" type="button">Dodaj linię planu</button>
+            <button id="open-revision" type="button">Zmień plan linii</button>
+            <button id="open-adoption" type="button">Zapisz przyjęcie preliminarza</button>
+          </div>
+          <p class="hint">Zmiana planu tworzy nową wersję linii; poprzednie zostają w historii. Przyjęcie zapisuje zestaw bieżących wersji (wyłącznie zarząd). Uprawnienia sprawdza serwer.</p>
+          <p class="message error" id="history-error" hidden></p>
+          <div class="table-wrap" role="region" aria-labelledby="history-title" tabindex="0"><table><caption class="sr-only">Wersje linii preliminarza według kategorii</caption><thead><tr><th scope="col">Kategoria</th><th scope="col">Rodzaj</th><th scope="col" class="amount">Wersja</th><th scope="col" class="amount">Plan</th><th scope="col">Powód lub uwaga</th><th scope="col">Zapisano</th><th scope="col">Stan</th></tr></thead><tbody id="history-body"></tbody></table></div>
+          <p class="empty" id="history-empty" hidden>Brak wersji preliminarza dla tego roku.</p>
+          <h3 id="adoptions-title">Przyjęcia preliminarza</h3>
+          <div class="table-wrap" role="region" aria-labelledby="adoptions-title" tabindex="0"><table><caption class="sr-only">Przyjęcia preliminarza w wybranym roku</caption><thead><tr><th scope="col">Data</th><th scope="col">Opis</th><th scope="col">Uchwała</th><th scope="col" class="amount">Linie</th><th scope="col">Zapisał</th></tr></thead><tbody id="adoptions-body"></tbody></table></div>
+          <p class="empty" id="adoptions-empty" hidden>Preliminarz tego roku nie został jeszcze przyjęty.</p>
+        </section>
+
         <section class="card" aria-labelledby="events-title">
           <div class="section-heading"><div><p class="eyebrow">Centra kosztów</p><h2 id="events-title">Wynik wydarzeń</h2></div><span id="events-count" aria-live="polite"></span></div>
           <div class="table-wrap" role="region" aria-labelledby="events-title" tabindex="0"><table><caption class="sr-only">Przychody, wydatki i wynik według wydarzeń, z pozycją bez przypisania</caption><thead><tr><th scope="col">Wydarzenie</th><th scope="col">Stan</th><th scope="col" class="amount">Wpisy</th><th scope="col" class="amount">Przychody</th><th scope="col" class="amount">Wydatki</th><th scope="col" class="amount">Wynik</th></tr></thead><tbody id="events-body"></tbody></table></div>
@@ -93,6 +111,51 @@
       <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
       <div class="form-error" id="correction-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="correction-error">Dodaj korektę</button></div>
+    </form></dialog>
+
+    <dialog id="category-dialog" aria-labelledby="category-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Preliminarz</p><h2 id="category-dialog-title">Nowa kategoria</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <input type="hidden" name="schoolYearId" />
+      <div class="field-row"><label>Rodzaj <select name="direction"><option value="expense">Wydatek</option><option value="income">Przychód</option></select></label><label>Nazwa <input name="name" minlength="2" maxlength="100" required autofocus /></label></div>
+      <div class="form-error" id="category-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Dodaj kategorię</button></div>
+    </form></dialog>
+
+    <dialog id="deactivate-dialog" aria-labelledby="deactivate-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Preliminarz</p><h2 id="deactivate-dialog-title">Wyłącz kategorię</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <label>Kategoria <select name="categoryId" required autofocus></select></label>
+      <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <p class="hint">Kategoria zostaje widoczna w wykonaniu i w historii, ale nie przyjmuje nowych wpisów.</p>
+      <div class="form-error" id="deactivate-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Wyłącz kategorię</button></div>
+    </form></dialog>
+
+    <dialog id="line-dialog" aria-labelledby="line-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Preliminarz</p><h2 id="line-dialog-title">Dodaj linię planu</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <input type="hidden" name="schoolYearId" />
+      <div class="field-row"><label>Kategoria bez planu <select name="categoryId" required autofocus></select></label><label>Plan EUR <input name="amount" inputmode="decimal" required placeholder="1500,00" /></label></div>
+      <label>Uwaga <input name="note" maxlength="500" placeholder="Opcjonalnie" /></label>
+      <div class="form-error" id="line-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz linię</button></div>
+    </form></dialog>
+
+    <dialog id="revision-dialog" aria-labelledby="revision-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Historia zmian</p><h2 id="revision-dialog-title">Zmień plan linii</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <label>Linia (bieżąca wersja) <select name="lineId" required autofocus></select></label>
+      <label>Nowy plan EUR <input name="amount" inputmode="decimal" required /></label>
+      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <div class="form-error" id="revision-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz nową wersję</button></div>
+    </form></dialog>
+
+    <dialog id="adoption-dialog" aria-labelledby="adoption-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Zarząd</p><h2 id="adoption-dialog-title">Zapisz przyjęcie preliminarza</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <input type="hidden" name="schoolYearId" />
+      <div class="field-row"><label>Data przyjęcia <input name="adoptedOn" type="date" required autofocus /></label><label>Uchwała <select name="resolutionId"><option value="">Bez uchwały</option></select></label></div>
+      <label>Opis <textarea name="note" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <p class="hint">Zapisuje bieżące wersje wszystkich linii jako „plan przyjęty”. Uchwała jest opcjonalna; serwer przyjmie tylko przyjętą uchwałę zebrania ogólnego z tego roku.</p>
+      <div class="form-error" id="adoption-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz przyjęcie</button></div>
     </form></dialog>
     <script type="module" src="/main.js"></script>
   </body>

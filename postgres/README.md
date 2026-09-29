@@ -447,7 +447,21 @@ techniczne do zatwierdzenia przez zarząd i skarbnika, niezależne od `kind`
 dokumentu. Skutki dla danych: nowa, pusta tabela; istniejące dokumenty nie
 dostają wpisu opisu i panel pokazuje dla nich „Bez tytułu” (brak wpisu, nie
 błąd). Trigger zamrożenia roku szkolnego dla tej tabeli to osobny, świadomie
-odłożony PR — patrz `0106_document_descriptions_year_freeze.sql` niżej (żeby
+odłożony PR — patrz `0130_year_freeze_remaining_tables.sql` (#80) dokłada trigger `a0_year_freeze`
+do tabel z rokiem, które zamrożenie omijało: `school_years` (UPDATE/DELETE,
+nowa funkcja `year_freeze_school_year_row()`), `classes` (INSERT/UPDATE/DELETE)
+oraz INSERT do `enrollment_history`, `import_batches`, `invitations`,
+`payment_instructions`, `payment_references` (też UPDATE) i `news_posts`.
+Wyjątki bez triggera: `school_year_closures`, `export_runs`, `data_access_log`,
+`privacy_notices` (uzasadnienia w migracji i docs/YEAR_CLOSE.md; pilnuje ich test
+przeglądowy z katalogu bazy). Wariant zachowawczy dla `news_posts`/`invitations`
+(decyzja Rady): blokowany tylko INSERT, wycofanie/cofnięcie publikacji
+pozostaje możliwe. `year_freeze_via_parent()` bez zmian (najnowsza: 0106).
+Skutki dla danych: same triggery na przyszłe zapisy, żaden wiersz nie jest
+zmieniany. Wycofanie: `DROP TRIGGER a0_year_freeze` na tych tabelach i
+`DROP FUNCTION year_freeze_school_year_row()`.
+
+`0106_document_descriptions_year_freeze.sql` niżej (żeby
 wyjść od najnowszej wersji `year_freeze_via_parent` na `main` i nie powtórzyć
 incydentu z #279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch
 funkcji. Opis: [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
@@ -956,6 +970,30 @@ usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
 
+`0138_financial_report_snapshots.sql` (#125, część) dodaje niezmienne migawki
+sprawozdania rocznego: `financial_report_snapshots` (JSON zagregowany, SHA-256
+kanonicznego JSON-a, `supersedes_id` z powodem korekty) i
+`financial_report_snapshot_approvals` (zatwierdzenie przez inną osobę niż autor,
+tylko migawki bez następcy), widok `financial_report_snapshot_status` oraz
+opcjonalną kolumnę `school_year_closure_checklist.report_snapshot_id`. Tabele
+mają `immutable_financial_record`, `BEFORE TRUNCATE deny_truncate()` i
+zamrożenie roku; ta sama treść w roku może wystąpić raz (idempotencja),
+historia korekt jest łańcuchem. Skutki dla danych: tylko nowe obiekty i jedna
+kolumna NULL, żaden wiersz nie jest zmieniany. Wycofanie: usunięcie widoku,
+kolumny, tabel i funkcji strażników — na bazie z zatwierdzonymi migawkami
+wyłącznie po kopii zapasowej (retencja: D-04).
+
+`0136_student_household_reasons.sql` (#86) dodaje do `student_households`
+kolumny tekstowe `created_reason` i `ended_reason` (powód dodania i zakończenia
+członkostwa ucznia w gospodarstwie; zapisują je trasy
+`POST /api/students/{id}/households` i `.../households/{membershipId}/end`).
+Odtwarza `student_household_check` (wersja z 0023) z jednym dodatkiem:
+`created_reason` jest niezmienne po utworzeniu. Skutki dla danych: istniejące
+wiersze dostają NULL, żaden nie jest zmieniany ani usuwany; kolumny to wolny
+tekst (inwentarz prywatności i lista DPIA jak dla `enrollments.ended_reason`).
+Wycofanie: na pustej bazie usunięcie kolumn i przywrócenie funkcji z 0023; na
+bazie z danymi tylko po kopii.
+
 `0139_meeting_cancel_notice.sql` (#113) dodaje stan zebrania `cancelled`
 (przejścia `draft|scheduled → cancelled`, stan końcowy; kolumny
 `cancellation_reason` 3–500 znaków, `cancelled_by`, `cancelled_at`), reguły
@@ -988,3 +1026,10 @@ migracji są ignorowane i wygasają po dobie; w bazie nadal tylko skróty
 (retencja bez zmian: usuwanie po dobie). Wycofanie: usunięcie wierszy `'pair'` i
 przywrócenie CHECK `IN ('email','ip')` (kod aplikacji sprzed zmiany blokował
 konto po samym e-mailu).
+
+
+`0132_keyset_list_indexes.sql` (#159) dodaje pięć indeksów pod listy z kursorem
+keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
+audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
+wiersz nie jest zmieniany; zapisy do tych tabel utrzymują dodatkowe indeksy.
+Wycofanie: `DROP INDEX` każdego z nich (bezpieczne). Kontrakt list: docs/API.md.

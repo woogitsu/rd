@@ -55,9 +55,11 @@ export function hasApproverAccess(grants, schoolYearId = '') {
   return hasRoleAccess(grants, APPROVER_ROLES, schoolYearId);
 }
 
-export function buildCampaignsUrl(schoolYearId) {
+export function buildCampaignsUrl(schoolYearId, cursor = '') {
   if (!isValidId(schoolYearId)) throw new Error('Podaj poprawny identyfikator roku szkolnego.');
-  return `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  const base = `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  // #159: kolejna strona listy (kursor keyset z poprzedniej odpowiedzi).
+  return cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base;
 }
 
 export function campaignUrl(id) {

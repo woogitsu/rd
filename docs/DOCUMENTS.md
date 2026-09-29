@@ -49,6 +49,8 @@ Pobranie ma nagłówki `Content-Disposition: attachment; filename="dokument-<id>
 
 Dokument w `documents` jest i pozostaje niezmienny — „unieważnienie” albo „zastąpienie” **nie usuwa** pliku ani wpisu; dopisuje tylko zdarzenie stanu w osobnej, dopisywanej tabeli `document_status_events`. UI musi to jasno komunikować: to nie jest „Usuń”, plik zostaje w archiwum i nadal można go pobrać (dla ról z dostępem do danego rodzaju).
 
+**Panel (`documents/`):** stan w liście i szczegółach, filtr „Pokaż też zastąpione i unieważnione” (`status=all`), historia wersji (łańcuch „zastępuje” / „zastąpiony przez”, odczytywany z metadanych sąsiednich dokumentów) oraz akcje „Zastąp innym dokumentem…” i „Unieważnij…” z powodem i oknem potwierdzenia (`shared/confirm-dialog.js`). Przyciski widzą konta z rolą dopuszczoną przez `DOCUMENT_POLICIES` (jak przy przesłaniu; bez rozszerzania uprawnień, D-08/D-09) — to tylko podpowiedź, serwer i tak zwraca 404/403. Kandydaci na zastępstwo pochodzą z wczytanej listy (ten sam rodzaj, rok, klasa, aktualne).
+
 Zasady:
 - Dokument ma co najwyżej JEDNO zdarzenie stanu — pierwsza zmiana jest ostateczna. Próba unieważnienia już zastąpionego dokumentu (albo odwrotnie) kończy się `409 document_status_conflict`.
 - **Wyjątek — ponowne unieważnienie tym samym działaniem** (np. podwójne kliknięcie „Unieważnij” z innym kluczem idempotencji po błędzie sieci, albo dowolna kolejna próba unieważnienia już unieważnionego dokumentu) zwraca `200` z `replayed: true` i **tym samym** zdarzeniem — nie jest to błąd.

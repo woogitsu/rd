@@ -157,23 +157,40 @@ export function tryAcquireUploadSlot(max = DEFAULT_MAX_CONCURRENT_UPLOADS) {
 export function resetUploadSlotsForTests() { activeUploads = 0; }
 
 // Czyta ciało Web Request z twardym limitem (niezależnie od Content-Length).
+// #185 pkt 2: przy deklarowanym Content-Length (<= limit) bajty trafiają od
+// razu do jednej prealokowanej Uint8Array — bez listy chunków i drugiej kopii.
+// Ciało dłuższe niż deklaracja rośnie skokowo (nadal z twardym limitem); bez
+// Content-Length (chunked) zbieramy chunki i składamy je raz.
 export async function readLimited(request, limit) {
   const declared = Number(request.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > limit) throw new RangeError('document_too_large');
+  const hasDeclared = request.headers.get('content-length') != null && Number.isInteger(declared) && declared >= 0;
+  if (hasDeclared && declared > limit) throw new RangeError('document_too_large');
   if (!request.body) return new Uint8Array(0);
   const reader = request.body.getReader();
+  let buffer = hasDeclared ? new Uint8Array(declared) : null;
   const chunks = [];
   let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
+    if (size + value.byteLength > limit) {
       await reader.cancel().catch(() => {});
       throw new RangeError('document_too_large');
     }
-    chunks.push(value);
+    if (buffer) {
+      if (size + value.byteLength > buffer.byteLength) {
+        // Ciało dłuższe niż deklaracja: powiększamy (rzadkie, klient łamie protokół).
+        const grown = new Uint8Array(Math.min(limit, Math.max(buffer.byteLength * 2, size + value.byteLength)));
+        grown.set(buffer.subarray(0, size));
+        buffer = grown;
+      }
+      buffer.set(value, size);
+    } else {
+      chunks.push(value);
+    }
+    size += value.byteLength;
   }
+  if (buffer) return size === buffer.byteLength ? buffer : buffer.subarray(0, size);
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }

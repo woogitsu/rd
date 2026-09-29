@@ -847,6 +847,7 @@ export const ROUTE_MATRIX = Object.freeze([
   ledgerRead('ledger.summary', '/api/ledger/summary?schoolYearId=:year', '/summary', []),
   ledgerRead('ledger.budget', '/api/ledger/budget?schoolYearId=:year', '/budget', []),
   ledgerRead('ledger.exportCsv', '/api/ledger/export.csv?schoolYearId=:year', '/export.csv', ['W1']),
+  ledgerRead('ledger.exportXlsx', '/api/ledger/export.xlsx?schoolYearId=:year', '/export.xlsx', []),
   {
     id: 'ledger.create', module: 'ledger', method: 'POST', path: '/api/ledger', targets: YEAR_TARGETS,
     allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
@@ -1411,6 +1412,36 @@ export const ROUTE_MATRIX = Object.freeze([
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/cash-flow?schoolYearId=${target.schoolYearId}` }),
   },
+  // Migawki sprawozdania (0138, #125): tworzy zarząd albo skarbnik, zatwierdza wyłącznie zarząd
+  // (inna osoba niż autor migawki — autorem fixture jest konto pomocnicze). Świeży obiekt na
+  // przypadek, bo nowa migawka musi mieć inną treść niż poprzednia (zmiana księgi w fixture).
+  {
+    id: 'financialReports.snapshotList', module: 'financial-reports', method: 'GET', path: '/api/reports/annual/snapshots?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['reportSnapshot', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/annual/snapshots?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    id: 'financialReports.snapshotCreate', module: 'financial-reports', method: 'POST', path: '/api/reports/annual/snapshots',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshotPrep' },
+    build: ({ target, obj }) => ({
+      path: '/api/reports/annual/snapshots',
+      body: { schoolYearId: target.schoolYearId, ...(obj?.supersedesId ? { supersedesId: obj.supersedesId, reason: 'Korekta syntetyczna' } : {}) },
+    }),
+  },
+  {
+    id: 'financialReports.snapshotRead', module: 'financial-reports', method: 'GET', path: '/api/reports/annual/snapshots/:id?format=json',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshot' },
+    build: ({ obj }) => ({ path: `/api/reports/annual/snapshots/${obj.snapshotId}?format=json` }),
+  },
+  {
+    id: 'financialReports.snapshotApprove', module: 'financial-reports', method: 'POST', path: '/api/reports/annual/snapshots/:id/approve',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshot' },
+    build: ({ obj }) => ({ path: `/api/reports/annual/snapshots/${obj.snapshotId}/approve`, body: {} }),
+  },
 
   // ---------- exports (#9) ----------
   {
@@ -1477,6 +1508,34 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({
       path: `/api/students/${obj.studentId}/enrollments/${obj.enrollmentId}/end`,
       body: { endedOn: '2020-01-01', reason: 'Odejście ze szkoły (syntetyczne)' },
+    }),
+  },
+  {
+    id: 'families.relationEnd', module: 'families', method: 'POST', path: '/api/guardians/:guardianId/students/:studentId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    // Zmiana opieki (#86) — data w przeszłości poza zamkniętym rokiem; zarząd klasowy tylko dla dziecka własnej klasy.
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/students/${obj.studentId}/end`,
+      body: { endsOn: '2020-01-01', reason: 'Zmiana opieki (syntetyczne)' },
+    }),
+  },
+  {
+    id: 'families.studentHouseholdEnd', module: 'families', method: 'POST', path: '/api/students/:studentId/households/:membershipId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/households/${obj.membershipId}/end`,
+      body: { endsOn: '2020-01-01', reason: 'Zakończenie członkostwa (syntetyczne)' },
+    }),
+  },
+  {
+    // Dodanie członkostwa: wyłącznie zakres szeroki — zarząd z przydziałem klasy dostaje 403 (#86, wariant zachowawczy).
+    id: 'families.studentHouseholdAdd', module: 'families', method: 'POST', path: '/api/students/:studentId/households',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: false, ok: 201,
+    deny: (actor, targetKey, mfa) => (actor.key === 'boardA' ? 403 : familyEditDeny(actor, targetKey, mfa)),
+    fixture: 'fresh', object: { kind: 'householdSpare' },
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/households`,
+      body: { householdId: obj.spareHouseholdId, isPrimary: false, startsOn: '2020-01-01', reason: 'Dodanie gospodarstwa (syntetyczne)' },
     }),
   },
 
