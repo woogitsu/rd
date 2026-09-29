@@ -1608,7 +1608,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'board.overview', module: 'board', method: 'GET',
     path: '/api/board/overview?schoolYearId=:year',
-    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    targets: ['-'], allow: { admin: ['-'], board: ['-'], boardA: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
     build: () => ({ path: `/api/board/overview?schoolYearId=${YEAR_1}` }),
     check: ({ actor, json }) => classListCheck(actor, json),
   },
