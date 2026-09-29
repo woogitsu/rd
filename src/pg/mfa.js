@@ -381,12 +381,13 @@ export async function attemptFactor(env, session, { kind, code, nowMs = Date.now
     if (kind === 'recovery') {
       const hash = Buffer.from(hashRecoveryCode(code), 'hex');
       // #134: kody odzyskiwania wskazują `factor_id` czynnika, który je wydał —
-      // po rotacji klucza czynnik dostaje NOWY wiersz (id się zmienia), więc
-      // dopasowujemy też kody przepięte na bieżący czynnik (`rotated_to_factor_id`,
-      // ustawiane przez scripts/rotate-mfa-key.js). Niewykorzystany kod działa dalej.
+      // po rotacji klucza czynnik dostaje NOWY wiersz (id się zmienia). Bieżący
+      // czynnik kodu to COALESCE(rotated_to_factor_id, factor_id): `factor_id`
+      // zostaje niezmienny (trigger), a `rotated_to_factor_id` jest przepinany
+      // przy każdej rotacji (1->2->3), więc kod działa po dowolnej liczbie rotacji.
       const { rows } = await tx.query(
         `SELECT id, code_hash FROM mfa_recovery_codes
-          WHERE user_id = $1 AND (factor_id = $2 OR rotated_to_factor_id = $2)
+          WHERE user_id = $1 AND COALESCE(rotated_to_factor_id, factor_id) = $2
             AND used_at IS NULL AND invalidated_at IS NULL`,
         [session.user.id, factor.id],
       );
@@ -428,7 +429,8 @@ export async function attemptFactor(env, session, { kind, code, nowMs = Date.now
       if (!rows[0]) throw new Error('recovery_code_race');
       const remaining = (await tx.query(
         `SELECT count(*)::int AS n FROM mfa_recovery_codes
-          WHERE user_id = $1 AND factor_id = $2 AND used_at IS NULL AND invalidated_at IS NULL`,
+          WHERE user_id = $1 AND COALESCE(rotated_to_factor_id, factor_id) = $2
+            AND used_at IS NULL AND invalidated_at IS NULL`,
         [actorId, factor.id],
       )).rows[0].n;
       await insertAuditEvent(tx, { actorId, action: 'mfa.recovery_used', entityType: 'mfa_recovery_code', entityId: recoveryCodeId, metadata: { factorId: factor.id, remaining } });
@@ -440,7 +442,7 @@ export async function attemptFactor(env, session, { kind, code, nowMs = Date.now
       if (factors.confirmed) {
         await tx.query('UPDATE user_mfa_factors SET disabled_at = now() WHERE id = $1', [factors.confirmed.id]);
         await tx.query(
-          'UPDATE mfa_recovery_codes SET invalidated_at = now() WHERE factor_id = $1 AND used_at IS NULL AND invalidated_at IS NULL',
+          'UPDATE mfa_recovery_codes SET invalidated_at = now() WHERE COALESCE(rotated_to_factor_id, factor_id) = $1 AND used_at IS NULL AND invalidated_at IS NULL',
           [factors.confirmed.id],
         );
       }
