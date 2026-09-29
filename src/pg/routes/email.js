@@ -1387,7 +1387,7 @@ export async function handle(request, env, url, json) {
     if (url.pathname === PREFERENCES_PATH) {
       if (method === 'GET') return await preferencesShow(request, env, url, json);
       if (method === 'POST') return await preferencesOptOut(request, env, url, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     if (method !== 'GET' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     if (url.pathname === '/api/email/campaigns') {
@@ -1397,11 +1397,11 @@ export async function handle(request, env, url, json) {
     }
     if (url.pathname === '/api/email/suppressions') {
       if (method === 'GET') return await listSuppressions(request, env, url, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
     }
     const suppressionMatch = url.pathname.match(/^\/api\/email\/suppressions\/([0-9a-f]{64})\/(release-request|release)$/);
     if (suppressionMatch) {
-      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
       const [, emailHashParam, suppressionAction] = suppressionMatch;
       if (suppressionAction === 'release-request') return await releaseRequest(request, env, emailHashParam, json);
       return await release(request, env, emailHashParam, json);
