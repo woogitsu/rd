@@ -466,24 +466,73 @@ i testem odtworzenia do pustej bazy (`scripts/verify-export.js`), opisany w
 Railway nie oferuje automatycznych backupów, wersjonowania ani blokad obiektów
 w bucketach. Dlatego:
 
-1. Metadane (`documents`: klucz obiektu, typ, rozmiar, autor) są w PostgreSQL
-   i podlegają backupowi bazy.
-2. Obiekty kopiować narzędziem S3 (np. `rclone sync` lub `aws s3 sync` z
-   endpointem bucketu) do drugiej prywatnej lokalizacji w UE, zatwierdzonej
-   przez szkołę/IOD, z szyfrowaniem. Poświadczenia tylko do odczytu, w
-   zmiennych, nie w skryptach w repo. Częstotliwość: co najmniej tygodniowo
-   i przed każdą operacją masową.
-3. Kopia nie usuwa obiektów w miejscu docelowym automatycznie w tym samym
-   przebiegu (ochrona przed propagacją usunięcia); retencja kopii wg decyzji
-   szkoły.
-4. Próba odtworzenia (do wykonania): przywrócić próbkę obiektów do bucketu
-   stagingowego, porównać liczbę obiektów i sumy rozmiarów z tabelą
-   `documents`, pobrać wybrane pliki przez aplikację (autoryzacja + krótki
-   podpisany URL). Wynik zapisać w tabeli.
+1. Metadane (`documents`: klucz obiektu, typ, rozmiar, autor, `sha256`) są w
+   PostgreSQL i podlegają backupowi bazy.
+2. **Lokalizacja i dostawca drugiej kopii oraz umowa powierzenia nie są
+   wybrane (D-01, D-20, IOD).** Dopóki nie ma decyzji, procedura cykliczna
+   poniżej jest tylko opisem — nie jest uruchomiona ani zaplanowana, a
+   `railway.json` nie zawiera usługi cron kopii.
+3. Retencja kopii i usuwanie z kopii — D-04. **Usunięcie dokumentu po okresie
+   retencji musi objąć także kopię** (i kopie starszych przebiegów):
+   skrypt kopii celowo niczego nie usuwa w celu, więc usunięcie z kopii to
+   osobna, zatwierdzona i zapisana w dzienniku operacja operatora. Do czasu
+   decyzji D-04 nie usuwamy niczego ani ze źródła, ani z kopii.
+
+### Kopia cykliczna (do uruchomienia po decyzji D-01/D-20)
+
+Gotowe narzędzia (kod w repozytorium, testy na atrapie magazynu):
+
+- `npm run backup:storage` (`scripts/backup-storage.js`, `src/pg/storage-backup.js`)
+  kopiuje wyłącznie **nowe** obiekty `docs/*` z bucketu źródłowego (`BUCKET_*`,
+  poświadczenia tylko do odczytu) do drugiego magazynu S3 w UE
+  (`STORAGE_BACKUP_S3_ENDPOINT`, `_REGION`, `_BUCKET`, `_ACCESS_KEY_ID`,
+  `_SECRET_ACCESS_KEY`, opcjonalnie `_URL_STYLE`; poświadczenia celu tylko do
+  zapisu, bez `DeleteObject`, jeśli dostawca na to pozwala). Nigdy nie usuwa w
+  celu. Liczy SHA-256 źródła i kopii względem `documents.sha256`; niezgodny
+  skrót lub brak obiektu w źródle daje kod wyjścia 1. Odmawia pracy w
+  `APP_ENV=production` (lub nieznanym) bez `--allow-production`. Raport (liczby,
+  bez nazw plików) trafia na stdout i do `backup_runs` (`storage_backup`).
+- `npm run backup:storage:verify` (`scripts/verify-storage-backup.js`,
+  `src/pg/storage-backup-verify.js`) — niezależna weryfikacja kopii: buduje
+  manifest SHA-256 z faktycznej treści kopii (katalog pobrany przez operatora),
+  porównuje go z `documents` (brakujące obiekty, niezgodne skróty i rozmiary,
+  osierocone w kopii) i opcjonalnie wykonuje **próbę odtworzenia** próbki
+  (`--restore-dir`, `--sample N`) do lokalnego katalogu, sprawdzając SHA-256
+  odtworzonych bajtów. Cel odtworzenia może być tylko lokalny (katalog albo
+  pamięć) — narzędzie nie zapisuje do bucketu. Raport zawiera liczby i
+  identyfikatory techniczne wierszy `documents`, bez kluczy obiektów i nazw
+  plików. Kod wyjścia 1 przy brakach lub niezgodnościach. Osierocone obiekty w
+  kopii są tylko zgłaszane (nie psują wyniku).
+
+Procedura po decyzji (nie wykonana):
+
+1. Wybrać dostawcę i lokalizację (D-01/D-20), podpisać umowę powierzenia,
+   utworzyć prywatny bucket kopii z szyfrowaniem; włączyć wersjonowanie lub
+   Object Lock, jeśli dostawca je oferuje.
+2. Dodać osobną usługę cron Railway (`npm run backup:storage`, harmonogram co
+   najmniej tygodniowo oraz ręcznie przed operacją masową; wspólna z #90 albo
+   obok) ze zmiennymi `DATABASE_URL` (tylko odczyt), `BUCKET_*` (tylko odczyt),
+   `STORAGE_BACKUP_S3_*`. Najpierw staging na plikach syntetycznych.
+3. Po każdym przebiegu sprawdzić raport; niezerowy kod wyjścia lub brak wpisu
+   w `backup_runs` > 8 dni traktować jako alarm (`/api/admin/ops-status`).
+4. Co kwartał: pobrać kopię do katalogu roboczego i uruchomić
+   `npm run backup:storage:verify -- --backup-dir <kopia> --restore-dir <cel> --sample 20`
+   na bazie stagingowej lub odtworzonej; wynik wpisać do tabeli poniżej.
+5. Na stagingu dodatkowo: przywrócić próbkę do bucketu stagingu i pobrać przez
+   API aplikacji (autoryzacja + krótki podpisany URL); dla dokumentu klasowego i
+   finansowego próba przez przedstawiciela innej klasy musi dać `403` (kopia
+   nie omija autoryzacji — dostęp zależy wyłącznie od wiersza `documents` i
+   sesji, nie od pochodzenia obiektu).
+6. Ręczny `rclone sync`/`aws s3 sync` zostaje wyłącznie wariantem awaryjnym; nie
+   stosować `rclone copy` (nie `sync`) i nigdy opcji usuwania w celu.
+
+Zakres obecnej kopii to prefiks `docs/` (dokumenty z `documents`). Zdjęcia
+aktualności (`photos/`, `news_photos`) **nie są jeszcze objęte** ani kopią, ani
+weryfikacją — osobny follow-up po decyzji o publikacji zdjęć.
 
 | Data | Kto | Liczba obiektów źródło/kopia | Zgodność z `documents` | Wynik / uwagi |
 |---|---|---|---|---|
-| do wykonania | | | | |
+| do wykonania (po D-01/D-20) | | | | |
 
 ## Tryb tylko do odczytu (#143)
 

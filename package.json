@@ -33,6 +33,7 @@
     "db:restore:postgres": "node scripts/restore-postgres-snapshot.js",
     "storage:smoke": "node scripts/storage-smoke.js",
     "backup:storage": "node scripts/backup-storage.js",
+    "backup:storage:verify": "node scripts/verify-storage-backup.js",
     "cleanup:document-uploads": "node scripts/document-uploads-cleanup.js",
     "backup:postgres": "node scripts/backup-postgres.js",
     "restore:drill": "node scripts/restore-drill.js",
