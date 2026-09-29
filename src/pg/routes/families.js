@@ -340,6 +340,15 @@ const GUARDIAN_RELATED_IN_SCOPE = `EXISTS (
      WHERE sg.guardian_id = g.id
        AND ${STUDENT_IN_SCOPE('sg.student_id')})`;
 
+// Zakres klasowy (#200, SR-07): kontakt opiekuna jest jeden dla całej szkoły,
+// więc zmiana e-maila/zgody wymaga zakresu obejmującego WSZYSTKIE aktywne relacje
+// opiekuna. Opiekun jest już widoczny dla wywołującego (ma dziecko w zakresie),
+// więc odmowa to 403 z osobnym kodem, nie 404 (nic ponad to, co widzi karta).
+const GUARDIAN_HAS_RELATION_OUTSIDE_SCOPE = `EXISTS (
+    SELECT 1 FROM student_guardians_current sg
+     WHERE sg.guardian_id = g.id
+       AND NOT ${STUDENT_IN_SCOPE('sg.student_id')})`;
+
 function parseContactInput(data) {
   const input = { reason: readReason(data.reason) };
   if (Object.hasOwn(data, 'email')) {
@@ -372,13 +381,17 @@ async function updateGuardianContact(request, env, guardianId, json) {
   const actorId = context.session.user.id;
   const result = await env.db.transaction(async (tx) => {
     const { rows } = await tx.query(
-      `SELECT g.id, g.email, g.contact_allowed FROM guardians g
+      `SELECT g.id, g.email, g.contact_allowed,
+              ${isClassScoped(scope) ? GUARDIAN_HAS_RELATION_OUTSIDE_SCOPE : 'false'} AS shared_outside_scope
+         FROM guardians g
         WHERE g.id = $5 AND ${isClassScoped(scope) ? GUARDIAN_RELATED_IN_SCOPE : GUARDIAN_IN_SCOPE}
         FOR UPDATE OF g`,
       [...scopeParams(scope), guardianId],
     );
     const current = rows[0];
     if (!current) throw notFound();
+    // Przed jakimkolwiek zapisem: bez zmiany w guardians, historii i audycie.
+    if (current.shared_outside_scope) throw new RequestError('guardian_shared_outside_scope', 403);
     const next = {
       email: Object.hasOwn(input, 'email') ? input.email : current.email ?? null,
       contactAllowed: Object.hasOwn(input, 'contactAllowed') ? input.contactAllowed : current.contact_allowed,

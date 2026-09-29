@@ -124,8 +124,7 @@ kopii zapasowej i decyzji o retencji (D-04). Szczegóły:
 
 `0005_import.sql` (issue #36) dodaje tabelę `import_batches` — dziennik
 zatwierdzonych importów z aktorem, rokiem, licznikami, skrótem SHA-256
-znormalizowanych wierszy (`fingerprint`, unikalny — te same dane zapisują się
-najwyżej raz), skrótem planu i kluczem idempotencji. Tabela nie przechowuje
+znormalizowanych wierszy (`fingerprint`; do 0121 unikalny, od 0121 zwykły indeks — patrz niżej), skrótem planu i kluczem idempotencji. Tabela nie przechowuje
 imion, e-maili ani treści pliku i jest tylko do dopisywania (trigger).
 `households` i `students` dostają kolumny `source_ref` (stabilny
 identyfikator ze źródła szkoły, do 80 znaków, unikalny bez rozróżniania
@@ -448,7 +447,7 @@ techniczne do zatwierdzenia przez zarząd i skarbnika, niezależne od `kind`
 dokumentu. Skutki dla danych: nowa, pusta tabela; istniejące dokumenty nie
 dostają wpisu opisu i panel pokazuje dla nich „Bez tytułu” (brak wpisu, nie
 błąd). Trigger zamrożenia roku szkolnego dla tej tabeli to osobny, świadomie
-odłożony PR — patrz `0113_year_freeze_remaining_tables.sql` (#80) dokłada trigger `a0_year_freeze`
+odłożony PR — patrz `0130_year_freeze_remaining_tables.sql` (#80) dokłada trigger `a0_year_freeze`
 do tabel z rokiem, które zamrożenie omijało: `school_years` (UPDATE/DELETE,
 nowa funkcja `year_freeze_school_year_row()`), `classes` (INSERT/UPDATE/DELETE)
 oraz INSERT do `enrollment_history`, `import_batches`, `invitations`,
@@ -946,3 +945,14 @@ i istniejące wpłaty, korekty, przypisania i uzgodnienia pozostają bez
 zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów i
 funkcji; na bazie z wygenerowanymi referencjami — tylko po kopii
 zapasowej (historia referencji zniknie).
+
+`0121_import_batches_fingerprint_not_unique.sql` (#2) zamienia
+`UNIQUE(fingerprint)` w `import_batches` na zwykły indeks. Wcześniej ten sam plik
+mógł mieć tylko jedną partię, więc po usunięciu przyczyny konfliktu (import z
+pominięciem wierszy) ponowny import zwracał starą partię, a pominięte wiersze
+nigdy nie trafiały do bazy. Powtórki pilnuje teraz serwer (ten sam
+`Idempotency-Key` albo plan bez zapisów do wykonania); `idempotency_key`
+pozostaje unikalny. Skutki dla danych: żaden wiersz nie jest zmieniany ani
+usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
+`import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
+dwóch partii.

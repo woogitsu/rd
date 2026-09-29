@@ -18,6 +18,7 @@
 //   składu, odrzucenie haseł powszechnie używanych, powtórzeń i adresu e-mail,
 // - hasło nigdy nie trafia do logów, audytu ani odpowiedzi.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 
 export const PASSWORD_POLICY = Object.freeze({ minLength: 12, maxLength: 128 });
@@ -61,8 +62,41 @@ export class ScryptQueueBusyError extends Error {
 export const MAX_CONCURRENT = 2;
 export const MAX_WAITING = 20;
 export const WAIT_TIMEOUT_MS = 10_000;
+// #203 pkt 1: limit obliczeń (trwających + oczekujących) na jednego klienta
+// (adres IP ustalony przez serwer Node z uwzględnieniem TRUST_PROXY, nagłówek
+// x-rd-client-ip). Zalew z jednego adresu zajmuje najwyżej tyle miejsc, a reszta
+// kolejki (MAX_WAITING) zostaje dla innych. Wartość jest założeniem (D-10):
+// wspólny NAT szkoły widzi jeden adres, więc limit jest wyższy niż MAX_CONCURRENT,
+// ale niższy niż MAX_WAITING; zmiana przez LOGIN_QUEUE_MAX_PER_IP po sprawdzeniu
+// na stagingu (#41). Klucz istnieje tylko w pamięci procesu, nie trafia do logów ani metryk.
+export const MAX_PER_CLIENT = 5;
 let running = 0;
 const waiting = [];
+const perClient = new Map();
+const clientContext = new AsyncLocalStorage();
+let busyTotal = 0;
+
+function maxPerClient() {
+  const value = Number(process.env.LOGIN_QUEUE_MAX_PER_IP);
+  return Number.isInteger(value) && value >= 1 && value <= MAX_WAITING + MAX_CONCURRENT ? value : MAX_PER_CLIENT;
+}
+
+// Wykonuje `fn` tak, że każde obliczenie scrypt w jego trakcie (także po `await`)
+// jest przypisane do klienta `clientKey`. Pusty klucz = brak limitu per klient
+// (zostaje limit globalny) — np. wywołania spoza warstwy HTTP.
+export function withQueueClient(clientKey, fn) {
+  return clientContext.run(typeof clientKey === 'string' && clientKey ? clientKey : null, fn);
+}
+
+// Do metryk (src/log.js, zdarzenie http_metrics): bez adresów i e-maili.
+export function loginQueueMetrics() {
+  return { login_queue_depth: waiting.length, login_busy_total: busyTotal };
+}
+
+function busy(reason) {
+  busyTotal += 1;
+  return new ScryptQueueBusyError(reason);
+}
 
 // Do metryk/diagnostyki (bez adresów ani e-maili) — liczba trwających i
 // oczekujących obliczeń scrypt w tym procesie.
@@ -73,27 +107,38 @@ export function scryptQueueDepth() {
 // Wyeksportowane dla testów (tests/pg-password-queue.test.js) z atrapą `fn`,
 // żeby sprawdzić przepełnienie/FIFO/timeout bez prawdziwego, kosztownego scrypt.
 export async function withSlot(fn) {
-  if (running >= MAX_CONCURRENT) {
-    if (waiting.length >= MAX_WAITING) throw new ScryptQueueBusyError('queueFull');
-    await new Promise((resolve, reject) => {
-      const entry = {};
-      entry.settle = (ok) => {
-        clearTimeout(entry.timer);
-        const index = waiting.indexOf(entry);
-        if (index !== -1) waiting.splice(index, 1);
-        if (ok) resolve(); else reject(new ScryptQueueBusyError('waitTimeout'));
-      };
-      entry.timer = setTimeout(() => entry.settle(false), WAIT_TIMEOUT_MS);
-      entry.timer.unref?.();
-      waiting.push(entry);
-    });
-  }
-  running += 1;
+  const client = clientContext.getStore() ?? null;
+  if (client !== null && (perClient.get(client) ?? 0) >= maxPerClient()) throw busy('clientQueueFull');
+  if (running >= MAX_CONCURRENT && waiting.length >= MAX_WAITING) throw busy('queueFull');
+  if (client !== null) perClient.set(client, (perClient.get(client) ?? 0) + 1);
+  const releaseClient = () => {
+    if (client === null) return;
+    const left = (perClient.get(client) ?? 1) - 1;
+    if (left <= 0) perClient.delete(client); else perClient.set(client, left);
+  };
+  let counted = false;
   try {
+    if (running >= MAX_CONCURRENT) {
+      await new Promise((resolve, reject) => {
+        const entry = {};
+        entry.settle = (ok) => {
+          clearTimeout(entry.timer);
+          const index = waiting.indexOf(entry);
+          if (index !== -1) waiting.splice(index, 1);
+          if (ok) resolve(); else reject(busy('waitTimeout'));
+        };
+        entry.timer = setTimeout(() => entry.settle(false), WAIT_TIMEOUT_MS);
+        entry.timer.unref?.();
+        waiting.push(entry);
+      });
+    }
+    running += 1;
+    counted = true;
     return await fn();
   } finally {
-    running -= 1;
-    waiting.shift()?.settle(true);
+    if (counted) running -= 1;
+    releaseClient();
+    if (counted) waiting.shift()?.settle(true);
   }
 }
 
@@ -164,7 +209,14 @@ const dummyHashes = new Map();
 export async function dummyHash(env) {
   const params = currentParams(env);
   const cacheKey = `${params.N}:${params.r}:${params.p}`;
-  if (!dummyHashes.has(cacheKey)) dummyHashes.set(cacheKey, hashPassword(randomBytes(24).toString('base64url'), { params }));
+  if (!dummyHashes.has(cacheKey)) {
+    // Obliczenie jest wspólne dla wszystkich żądań, więc nie należy do limitu żadnego
+    // klienta (kontekst null). Odrzucenie (np. kolejka pełna) NIE może zostać w cache:
+    // inaczej jedno przepełnienie na zawsze psułoby logowanie nieznanym e-mailem.
+    const pending = clientContext.run(null, () => hashPassword(randomBytes(24).toString('base64url'), { params }));
+    dummyHashes.set(cacheKey, pending);
+    pending.catch(() => { if (dummyHashes.get(cacheKey) === pending) dummyHashes.delete(cacheKey); });
+  }
   return dummyHashes.get(cacheKey);
 }
 

@@ -59,8 +59,8 @@ Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe 
 - (#80, 0036) nowy dokument (`documents`, każdy rodzaj: `financial`, `board`, `class`) przypisany do zamkniętego roku — dokumenty bez `school_year_id` (np. przywrócone z D1) nie są objęte,
 - (#80, 0036) nowa kampania e-mail (`email_campaigns`) przypisana do zamkniętego roku. Zmiana stanu **istniejącej** kampanii (np. wysyłka rozpoczęta przed zamknięciem) NIE jest blokowana — decyzja, czy taką kampanię dokończyć czy wstrzymać, wymaga ustalenia Rady (D-13/D-21); wymuszenie blokady w złym miejscu kolejki mogłoby zdublować albo urwać wysyłkę w połowie.
 
-- (#80, 0113) `school_years` (UPDATE/DELETE granic, etykiety i samego wiersza zamkniętego roku) oraz `classes` (INSERT/UPDATE/DELETE: nazwy i skład klas zamkniętego roku),
-- (#80, 0113) nowe wiersze `enrollment_history`, `import_batches`, `invitations`, `payment_instructions`, `payment_references` (także jej unieważnienie) i `news_posts` przypisane do zamkniętego roku. Wariant zachowawczy do decyzji Rady: dla `invitations`, `import_batches`, `news_posts` i `enrollment_history` blokowany jest tylko INSERT — zmiana stanu istniejącego wiersza (wycofanie zaproszenia, cofnięcie publikacji aktualności, np. po wycofaniu zgody na wizerunek) pozostaje możliwa.
+- (#80, 0130) `school_years` (UPDATE/DELETE granic, etykiety i samego wiersza zamkniętego roku) oraz `classes` (INSERT/UPDATE/DELETE: nazwy i skład klas zamkniętego roku),
+- (#80, 0130) nowe wiersze `enrollment_history`, `import_batches`, `invitations`, `payment_instructions`, `payment_references` (także jej unieważnienie) i `news_posts` przypisane do zamkniętego roku. Wariant zachowawczy do decyzji Rady: dla `invitations`, `import_batches`, `news_posts` i `enrollment_history` blokowany jest tylko INSERT — zmiana stanu istniejącego wiersza (wycofanie zaproszenia, cofnięcie publikacji aktualności, np. po wycofaniu zgody na wizerunek) pozostaje możliwa.
 
 Świadome wyjątki (tabele z `school_year_id` lub `class_id`, bez triggera zamrożenia). Lista jest utrzymywana w `FREEZE_EXCEPTIONS` w `tests/pg-year-close-finance-freeze.test.js`; test wylicza z katalogu bazy wszystkie takie tabele i wymaga triggera `a0_year_freeze` albo wpisu wyjątku, więc nowa tabela bez decyzji psuje test:
 - `school_year_closures`: sam rekord zamknięcia, chroniony przez `year_close_guard` (0017).
@@ -71,7 +71,7 @@ Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe 
 
 Odczyt i dziennik audytu nie są blokowane przez triggery, ale po zamknięciu **dostęp** do odczytu zależy od przydziałów (sekcja „Odczyt archiwum”). **Korekta po zamknięciu nie ma ścieżki w aplikacji.** Pomyłkę wykrytą po zamknięciu ujmuje się w otwartym roku następnym (np. poprawka bilansu otwarcia z uzasadnieniem odwołującym się do uchwały) — sposób musi zatwierdzić Rada. Ponowne otwarcie roku wymagałoby osobnej migracji i decyzji.
 
-API wpłat, księgi, wydarzeń, zebrań, uzgodnień rachunku, kampanii e-mail i dokumentów tłumaczy odmowę triggera na `409 school_year_closed` (SR-14 w docs/SECURITY_REVIEW.md). Nowe wiersze aktualności (`news_posts`, `school_year_id NOT NULL`) są od 0113 objęte zamrożeniem (INSERT); odmowę tłumaczy sieć bezpieczeństwa routera (`src/pg/db-errors.js`) na `409 school_year_closed`.
+API wpłat, księgi, wydarzeń, zebrań, uzgodnień rachunku, kampanii e-mail i dokumentów tłumaczy odmowę triggera na `409 school_year_closed` (SR-14 w docs/SECURITY_REVIEW.md). Nowe wiersze aktualności (`news_posts`, `school_year_id NOT NULL`) są od 0130 objęte zamrożeniem (INSERT); odmowę tłumaczy sieć bezpieczeństwa routera (`src/pg/db-errors.js`) na `409 school_year_closed`.
 
 Data wpisu poza rokiem szkolnym (`occurred_on`/`received_on` księgi i wpłat) jest osobno pokryta triggerem `b0_date_within_school_year` (#169, 0027) — patrz `docs/DATA_MODEL.md`.
 

@@ -11,7 +11,7 @@ const NEW = 'y-next-test';
 
 // Świadome wyjątki od zamrożenia: tabele z kolumną school_year_id / class_id,
 // które NIE mają triggera a0_year_freeze. Każdy wpis wymaga uzasadnienia
-// (docs/YEAR_CLOSE.md, migracja 0113). Nowa tabela z rokiem/klasą bez triggera
+// (docs/YEAR_CLOSE.md, migracja 0130). Nowa tabela z rokiem/klasą bez triggera
 // i bez wpisu tutaj psuje test przeglądowy poniżej.
 const FREEZE_EXCEPTIONS = {
   school_year_closures: 'sam rekord zamknięcia; chroni go year_close_guard (0017)',
@@ -78,7 +78,7 @@ test('#80: każda tabela z school_year_id/class_id (i school_years) ma trigger z
   }
 });
 
-describe('#80 (0113): pozostałe tabele z rokiem i granice roku', () => {
+describe('#80 (0130): pozostałe tabele z rokiem i granice roku', () => {
   test('school_years i classes zamkniętego roku: UPDATE/DELETE/INSERT → school_year_closed; otwarty rok bez zmian', async () => {
     const db = await createTestDb();
     try {

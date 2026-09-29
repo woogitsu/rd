@@ -68,7 +68,7 @@ Limit ciała żądania wynosi 1 MB — tyle samo co globalny limit `src/node-app
 
 - Jeżeli podgląd ma konflikty lub błędy, zatwierdzenie zwraca `422 import_has_conflicts`, chyba że użytkownik zaznaczy pominięcie tych wierszy (`skipConflicts`). Pominięte wiersze są liczone w partii.
 - Serwer w transakcji, pod blokadą advisory lock, ponownie wylicza plan. Inny `fingerprint` niż w podglądzie → `409 fingerprint_mismatch`; inny plan (baza zmieniła się od podglądu) → `409 preview_stale`.
-- Ten sam zestaw danych (`fingerprint`) jest zapisywany najwyżej raz. Podwójne kliknięcie, ponowienie po zerwaniu połączenia lub ponowne wczytanie tego samego pliku zwraca zapisany wynik (`replayed: true`) bez dublowania. Ten sam `Idempotency-Key` z innymi danymi → `409 idempotency_key_reused`.
+- Powtórki (#2): ten sam `Idempotency-Key` (podwójne kliknięcie, ponowienie po zerwaniu połączenia) zwraca zapisany wynik (`replayed: true`). Ponowne wczytanie tego samego pliku z nowym kluczem zwraca zapisany wynik tylko wtedy, gdy plan nie ma już nic do zapisania. Jeżeli po usunięciu przyczyny konfliktu plan ma nowe zapisy (np. wcześniej pominięty wiersz), powstaje nowa partia (`replayed: false`) — pominięte wiersze nie znikają po cichu. Równoległe zatwierdzenia są szeregowane blokadą, więc drugie widzi już zapisany stan i nie dubluje rekordów. Ten sam `Idempotency-Key` z innymi danymi → `409 idempotency_key_reused`.
 - Błąd w trakcie zapisu wycofuje całą transakcję: partię, rodziny, opiekunów, uczniów, zapisy do klas, powiązania i audyt.
 - Dziennik: jedno zdarzenie `import.committed` z aktorem, identyfikatorem partii, rokiem i licznikami — bez imion, nazwisk, e-maili i identyfikatorów ze źródła.
 
