@@ -585,7 +585,8 @@ async function preview(request, env, id, json) {
     campaign: campaignView(campaign),
     contentHash: campaign.content_hash,
     recipientsHash: campaign.recipients_hash ?? null,
-    snapshotCurrent: campaign.recipients_hash ? recipientsHash(recipients) === campaign.recipients_hash : false,
+    // null = migawki jeszcze nie ma (świeży szkic); true/false tylko dla istniejącej migawki.
+    snapshotCurrent: campaign.recipients_hash ? recipientsHash(recipients) === campaign.recipients_hash : null,
     recipientsCount: count,
     exclusions: Object.fromEntries(exclusions.map((row) => [row.reason, row.n])),
     sample: { householdId: sampleHousehold, recipient: recipients[0] ? maskEmail(recipients[0].email) : null, ...sample },

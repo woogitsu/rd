@@ -341,13 +341,15 @@ export async function createInvitation(env, { actorId, email, role, classId = nu
 
 // Blokuje wiersz zaproszenia (FOR UPDATE) i sprawdza jego stan. Zwraca
 // { invitation } albo { deny } z `reason` wyłącznie do użytku wewnętrznego.
-export async function lockInvitation(tx, tokenHash) {
+// `now` (Date, opcjonalnie) to wstrzykiwany zegar — testy przesuwają czas zamiast
+// omijać trigger strażnika zaproszeń; produkcja go nie podaje (zegar bazy).
+export async function lockInvitation(tx, tokenHash, now = null) {
   const { rows } = await tx.query(
-    `SELECT id, email, role, class_id, school_year_id, created_by, expires_at <= now() AS expired,
+    `SELECT id, email, role, class_id, school_year_id, created_by, expires_at <= COALESCE($2::timestamptz, now()) AS expired,
             accepted_at, revoked_at
        FROM invitations WHERE token_hash = $1
        FOR UPDATE`,
-    [tokenHash],
+    [tokenHash, now ? now.toISOString() : null],
   );
   const invitation = rows[0];
   const deny = (reason) => ({ deny: { ok: false, error: 'invalid_invitation', reason } });
@@ -414,13 +416,13 @@ export const INVITATION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 // `reason` tylko do użytku wewnętrznego — odpowiedź HTTP podaje wyłącznie
 // `invalid_invitation`. Trasa HTTP z tworzeniem konta i hasłem:
 // POST /api/invitations/accept (src/pg/routes/login.js).
-export async function acceptInvitation(env, { token, userId }) {
+export async function acceptInvitation(env, { token, userId, now = null }) {
   if (typeof token !== 'string' || !INVITATION_TOKEN_PATTERN.test(token) || !userId) {
     return { ok: false, error: 'invalid_invitation', reason: 'malformed' };
   }
   const tokenHash = await hashSecret(token);
   return database(env).transaction(async (tx) => {
-    const locked = await lockInvitation(tx, tokenHash);
+    const locked = await lockInvitation(tx, tokenHash, now);
     if (locked.deny) return locked.deny;
     const { invitation } = locked;
     const deny = (reason) => ({ ok: false, error: 'invalid_invitation', reason });

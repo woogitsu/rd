@@ -9,6 +9,7 @@ import {
   formatDayPlan,
   formatExclusions,
   formatReportRows,
+  isSnapshotStale,
   formatSchedule,
   formatWarnings,
   hasApproverAccess,
@@ -180,7 +181,7 @@ function renderDetail() {
   byId("detail-recipients-count").textContent = preview ? String(preview.recipientsCount) : "—";
   byId("detail-plan").textContent = preview ? formatDayPlan(preview.plan) : "Utwórz migawkę odbiorców, aby zobaczyć plan wysyłki.";
   byId("detail-schedule").textContent = preview?.schedule ? formatSchedule(preview.schedule) : "";
-  byId("detail-snapshot-current").hidden = !preview || preview.snapshotCurrent !== false;
+  byId("detail-snapshot-current").hidden = !isSnapshotStale(preview);
 
   const warningsList = byId("detail-warnings");
   const warnings = preview ? formatWarnings(preview.warnings) : [];
@@ -224,7 +225,7 @@ function updateActionVisibility(campaign, preview) {
   byId("view-recipients").hidden = !campaign.recipientsHash;
 
   const readyForApproval = canOfferApproval(campaign, state.actorId)
-    && preview && preview.recipientsCount > 0 && preview.snapshotCurrent !== false;
+    && preview && preview.recipientsCount > 0 && !isSnapshotStale(preview);
   const own = isLikelyOwnCampaign(campaign, state.actorId);
   const approveButton = byId("approve-campaign");
   const waitingNotice = byId("approve-waiting");
