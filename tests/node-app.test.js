@@ -239,7 +239,8 @@ test('Node server: / przekierowuje na /login/, adres klienta nadpisuje nagłówe
 // API, przekierowanie 308, /health/ready, błąd 413/500) — nie tylko do plików statycznych.
 test('baselineSecurityHeaders: HSTS tylko przy https, reszta zawsze', () => {
   const withHttps = baselineSecurityHeaders('https://rd.example.invalid');
-  assert.equal(withHttps['Strict-Transport-Security'], 'max-age=31536000; includeSubDomains');
+  assert.equal(withHttps['Strict-Transport-Security'], 'max-age=31536000');
+  assert.doesNotMatch(withHttps['Strict-Transport-Security'], /includeSubDomains|preload/i, 'D-20: bez includeSubDomains/preload');
   assert.equal(withHttps['X-Content-Type-Options'], 'nosniff');
   assert.equal(withHttps['X-Frame-Options'], 'DENY');
   assert.equal(withHttps['Referrer-Policy'], 'no-referrer');
