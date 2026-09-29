@@ -41,6 +41,16 @@ export const PANELS = Object.freeze([
   { id: "import", href: "/import/", label: "Import uczniów", roles: ["admin", "board"] },
   // src/pg/routes/year-close.js READ_ROLES (admin i Komisja Rewizyjna bez dostępu).
   { id: "year-close", href: "/year-close/", label: "Zamknięcie roku", roles: ["board", "treasurer"] },
+  // src/pg/routes/reconciliation.js REPORT_ROLES = audit, board, treasurer (GET
+  // /api/reports/audit). Do nawigacji trafia wyłącznie Komisja Rewizyjna — zarząd i
+  // skarbnik mają ten sam raport jako odnośnik w panelu uzgodnień. Tylko odczyt.
+  { id: "audit", href: "/audit/", label: "Komisja Rewizyjna", roles: ["audit"] },
+  // src/pg/routes/exports.js YEARLY_EXPORT_ROLES (admin, board) + ROSTER_ROLES
+  // (representative — wyłącznie lista własnej klasy; serwer weryfikuje klasę i MFA).
+  { id: "data-export", href: "/data-export/", label: "Eksport", roles: ["admin", "board", "representative"] },
+  // src/pg/news.js NEWS_POLICY (suma draftSchoolWide, draftClass, review). Przedstawiciel
+  // widzi wyłącznie wpisy własnej klasy — zakres egzekwuje serwer.
+  { id: "news", href: "/news/", label: "Aktualności", roles: ["admin", "board", "representative"] },
   // wyłącznie admin (docs/AUTHORIZATION.md: „wyłącznie admin”).
   { id: "admin", href: "/admin/", label: "Konta i role", roles: ["admin"] },
 ]);

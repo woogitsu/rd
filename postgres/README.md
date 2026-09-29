@@ -254,7 +254,7 @@ uruchomienie pomija zapisane migracje, a zmiana sumy kontrolnej lub brak
 wcześniej wykonanej migracji zatrzymują proces. Nie należy edytować wykonanych
 plików SQL; zmianę schematu dodaje się jako następny plik.
 
-Na środowisku z `APP_ENV=production` trzeba dodatkowo przekazać argument
+Na środowisku z `APP_ENV=production` (także `prod`/`Production`, a zachowawczo również przy braku lub nieznanej wartości `APP_ENV`; `src/app-env.js`) trzeba dodatkowo przekazać argument
 `--allow-production`; użycie wymaga wcześniej kopii zapasowej, zatwierdzonego
 planu przywracania i decyzji administratora szkoły. Nie wpisywać URL bazy ani
 jej zawartości do repozytorium, logów czy zgłoszeń. Najpierw testować na

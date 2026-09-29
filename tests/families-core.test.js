@@ -5,6 +5,7 @@ import {
   canEditFamilies,
   filterStudentsByName,
   groupClassesByYear,
+  overviewRow,
   parseRoute,
   sortStudentsByName,
 } from '../families/core.js';
@@ -71,4 +72,15 @@ test('sortStudentsByName: sortuje po nazwisku, potem imieniu, wg polskiego alfab
   ];
   const sorted = sortStudentsByName(students).map((s) => `${s.lastName} ${s.firstName}`);
   assert.deepEqual(sorted, ['Adamski Ala', 'Adamski Jan', 'Żurek Ola']);
+});
+
+test('pulpit przedstawiciela: wiersz tabeli bez słów o zaległościach', () => {
+  const row = overviewRow({
+    id: 'c-1a', name: '1A', studentCount: 20, needsPaperCardCount: 3,
+    cards: { lastPrintedAt: null }, events: { draftCount: 1, submittedCount: 2 },
+    nextMeeting: null, documents: { activeCount: 0, latestAt: null },
+  });
+  assert.equal(row.paperCards, '3 z 20');
+  assert.equal(row.meeting, 'brak zaplanowanego');
+  assert.doesNotMatch(JSON.stringify(row), /dłużnik|zaległoś|brak wpłaty/i);
 });
