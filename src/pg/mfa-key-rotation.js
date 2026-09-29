@@ -5,7 +5,10 @@
 //      naruszyłby `user_mfa_factors_one_confirmed` (najwyżej jeden aktywny),
 //   3. wstawia nowy wiersz zaszyfrowany BIEŻĄCĄ wersją klucza, z przeniesionym
 //      confirmed_at i last_used_step (ochrona przed ponownym użyciem kroku),
-//   4. przepina nieużyte kody odzyskiwania na nowy wiersz (rotated_to_factor_id),
+//   4. przepina nieużyte kody odzyskiwania na nowy wiersz (rotated_to_factor_id).
+//      Bieżący czynnik kodu = COALESCE(rotated_to_factor_id, factor_id), więc
+//      przepinanie działa też przy kolejnych rotacjach (1->2->3); `factor_id`
+//      (niezmienny) zostaje wskazaniem historycznym,
 //   5. zapisuje zdarzenie audytu mfa.key_rotated (identyfikatory i wersje,
 //      bez sekretów).
 // Cały krok jednego konta biegnie w jednej transakcji z `SELECT … FOR UPDATE`
@@ -100,8 +103,9 @@ async function rotateOneAccount(tx, userId, keys, apply) {
   );
   await tx.query(
     `UPDATE mfa_recovery_codes SET rotated_to_factor_id = $2
-       WHERE factor_id = $1 AND used_at IS NULL AND invalidated_at IS NULL`,
-    [factor.id, newFactorId],
+       WHERE user_id = $3 AND COALESCE(rotated_to_factor_id, factor_id) = $1
+         AND used_at IS NULL AND invalidated_at IS NULL`,
+    [factor.id, newFactorId, userId],
   );
   await insertAuditEvent(tx, {
     actorId: null, action: 'mfa.key_rotated', entityType: 'mfa_factor', entityId: newFactorId,

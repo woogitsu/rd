@@ -6,6 +6,9 @@ import { createPgHandler, handlePgRequest, ROUTES } from '../src/pg/app.js';
 import { assertNoPii } from '../src/pg/audit.js';
 import { guessMapping, parseCsv, toServerPayload, validateRows } from '../import/core.js';
 import { MESSAGES, splitGuardianName } from '../src/pg/routes/import.js';
+import { strToU8, zipSync } from 'fflate';
+import readXlsxFileNode from 'read-excel-file/node';
+import { readXlsxSheets } from '../import/xlsx.js';
 import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
@@ -655,4 +658,73 @@ test('#2 parallel commits of the same file with different keys write once', asyn
   assert.equal(await count(db, 'import_batches'), 1);
   assert.equal(await count(db, 'students'), 3);
   assert.equal(await count(db, 'guardians'), 3);
+}));
+
+// --- #88: ten sam uczeń z CSV i z XLSX (ID liczbowe, wiele arkuszy) ---
+
+// Minimalny skoroszyt z komórkami liczbowymi (jak Excel po utracie formatu Tekst) i tekstowymi.
+function xlsxWithSheets(sheets) {
+  const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const cells = (rows) => rows.map((row, r) => `<row r="${r + 1}">${row.map((v, c) => {
+    if (v === '') return '';
+    const ref = `${String.fromCharCode(65 + c)}${r + 1}`;
+    return typeof v === 'number' ? `<c r="${ref}"><v>${v}</v></c>` : `<c r="${ref}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`;
+  }).join('')}</row>`).join('');
+  const files = {
+    '[Content_Types].xml': strToU8(`<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`),
+    '_rels/.rels': strToU8('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'),
+    'xl/workbook.xml': strToU8(`<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((sh, i) => `<sheet name="${esc(sh.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`),
+    'xl/_rels/workbook.xml.rels': strToU8(`<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}</Relationships>`),
+  };
+  sheets.forEach((sh, i) => { files[`xl/worksheets/sheet${i + 1}.xml`] = strToU8(`<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${cells(sh.rows)}</sheetData></worksheet>`); });
+  const zipped = zipSync(files, { level: 6 });
+  return zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength);
+}
+
+async function payloadFromXlsx(rows, sheetName, options = {}) {
+  const book = xlsxWithSheets([{ name: 'Instrukcja', rows: [['Nie wypełniaj']] }, { name: sheetName, rows }]);
+  const sheets = await readXlsxSheets(book, (buf) => readXlsxFileNode(Buffer.from(buf)));
+  const sheet = sheets.find((s) => s.name === sheetName);
+  const result = validateRows(sheet.rows, guessMapping(sheet.rows[0]));
+  return toServerPayload(result, YEAR, options);
+}
+
+const XLSX_HEADER = ['ID ucznia', 'Imię ucznia', 'Nazwisko ucznia', 'Klasa', 'ID rodziny', 'Opiekun 1', 'E-mail opiekuna 1'];
+
+test('#88 CSV then XLSX (numeric IDs, second sheet) does not create a duplicate student or family', async () => withDb(async (db, env, admin) => {
+  const csv = csvOf('00123;Ala;Testowa;1A;007;Anna Testowa;anna@example.invalid;;');
+  assert.equal((await previewAndCommit(env, admin, payloadFromCsv(csv), 'key-x88-0001')).status, 201);
+  const before = await tableCounts(db);
+
+  // XLSX: Excel zamienił tekst 00123 / 007 na liczby 123 / 7; dane w drugim arkuszu.
+  const payload = await payloadFromXlsx([XLSX_HEADER, [123, 'Ala', 'Testowa', '1a', 7, 'Anna Testowa', 'anna@example.invalid']], 'Uczniowie');
+  const p = await preview(env, admin, payload);
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  assert.equal(p.body.counts.studentsCreated, 0);
+  assert.equal(p.body.counts.householdsCreated, 0);
+  assert.equal(p.body.counts.rowsConflict, 1);
+  assert.ok(p.body.rows[0].messages.includes(MESSAGES.idZeroVariant));
+  assert.equal(p.body.commitAllowed, false);
+  const refused = await commit(env, admin, payload, p.body, 'key-x88-0002');
+  assert.equal(refused.status, 422);
+  const skipped = { ...payload, options: { ...payload.options, skipConflicts: true } };
+  const p2 = await preview(env, admin, skipped);
+  const done = await commit(env, admin, skipped, p2.body, 'key-x88-0003');
+  assert.equal(done.status, 201, JSON.stringify(done.body));
+  const after = await tableCounts(db);
+  for (const table of ['students', 'households', 'guardians', 'enrollments', 'student_guardians']) assert.equal(after[table], before[table], table);
+}));
+
+test('#88 the same student as text in CSV and as text in XLSX is unchanged; zero-variant household alone is a conflict', async () => withDb(async (db, env, admin) => {
+  assert.equal((await previewAndCommit(env, admin, payloadFromCsv(csvOf('00123;Ala;Testowa;1A;007;Anna Testowa;anna@example.invalid;;')), 'key-x88-0004')).status, 201);
+  const same = await payloadFromXlsx([XLSX_HEADER, ['00123', 'Ala', 'Testowa', '1A', '007', 'Anna Testowa', 'anna@example.invalid']], 'Uczniowie');
+  const p = await preview(env, admin, same);
+  assert.equal(p.body.counts.rowsUnchanged, 1);
+  assert.equal(p.body.counts.rowsConflict, 0);
+  // Nowy uczeń z rodziną zapisaną liczbą 7 (baza: 007) — nie tworzymy drugiej rodziny.
+  const sibling = await payloadFromXlsx([XLSX_HEADER, ['00124', 'Ola', 'Testowa', '1A', 7, 'Anna Testowa', 'anna@example.invalid']], 'Uczniowie');
+  const ps = await preview(env, admin, sibling);
+  assert.equal(ps.body.counts.rowsConflict, 1);
+  assert.equal(ps.body.counts.householdsCreated, 0);
+  assert.equal(ps.body.counts.studentsCreated, 0);
 }));

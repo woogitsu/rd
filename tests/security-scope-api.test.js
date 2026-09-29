@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { updateMeeting, createMeeting, createMinutesVersion } from '../src/pg/meetings.js';
+import { createMeeting, createMinutesVersion } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
@@ -222,7 +223,7 @@ test('zamknięty rok: wpłaty, księga, wydarzenia i zebrania odpowiadają 409 s
       method: 'PATCH', cookie: board, body: { revision: 1, title: 'Zmiana po zamknięciu' },
     }), closed);
     assert.deepEqual(await status(env, `/api/meetings/${meeting.body.meeting.id}`, {
-      method: 'PATCH', cookie: board, body: { title: 'Zmiana po zamknięciu' },
+      method: 'PATCH', cookie: board, body: { revision: 1, title: 'Zmiana po zamknięciu' },
     }), closed);
     assert.deepEqual(await status(env, '/api/meetings', {
       method: 'POST', cookie: board, headers: { 'Idempotency-Key': 'sc-closed-meeting-02' },
