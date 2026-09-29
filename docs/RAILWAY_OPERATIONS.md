@@ -585,6 +585,24 @@ bez potrzeby dostępu do Railway:
     zapisać tutaj z datą wpisu, numerem CVE/advisory, uzasadnieniem i datą
     przeglądu (maks. 90 dni); dziś lista jest pusta (`npm audit
     --package-lock-only`, 2026-09-27: 0 podatności, 177 pakietów);
+  - `npm ci --ignore-scripts` we wszystkich jobach CI: skrypty instalacyjne
+    zależności (`workerd`, `esbuild` z `wrangler`, `fsevents`) nie
+    uruchamiają się na runnerze. Sprawdzone lokalnie: `npm run build`,
+    `npm run smoke`, `npm audit signatures` i testy przechodzą bez nich
+    (binaria dostarczają pakiety platformowe). Nowa zależność wymagająca
+    skryptu instalacyjnego wymaga świadomej decyzji i wpisu tutaj;
+  - `npm audit signatures` działa w jobie `audit` po `npm ci` (wymaga dostępu
+    runnera do rejestru npm, nie do sieci lokalnej); `permissions` w
+    `ci.yml`: wyłącznie `contents: read` na poziomie workflow, brak
+    `pull_request_target` i sekretów (pilnuje `tests/ci-supply-chain.test.js`);
+  - **procedura dla administratora runnera/organizacji** (nie zmieniana z
+    repozytorium): (1) potwierdzić i zapisać tu, czy runner jest
+    efemeryczny lub czyszczony po jobie; (2) hook `actions-runner-cleanup.sh`
+    zgłasza `flock: Permission denied` na `docker-prune.lock` — naprawić
+    uprawnienia pliku blokady; (3) ustawić „Require approval for all outside
+    collaborators”; (4) po wdrożeniu Dependabota jednorazowo sprawdzić na
+    gałęzi testowej z celowo podatną wersją pakietu, że job `audit` oblewa
+    (bez scalania); (5) po #42 usunąć `wrangler`;
   - akcje GitHub w `ci.yml` przypięte do pełnego SHA (komentarz z numerem
     wersji obok); Dependabot aktualizuje SHA automatycznie.
   - po zamknięciu starej ścieżki Worker/D1 (#42): usunięcie `wrangler` z
