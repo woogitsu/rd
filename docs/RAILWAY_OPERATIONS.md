@@ -542,9 +542,12 @@ bez potrzeby dostępu do Railway:
   `email_worker_stale`, `email_queue_too_old`) — bez liczb i dat w
   odpowiedzi. Progi są konfiguracją (`BACKUP_MAX_AGE_HOURS`,
   `EMAIL_WORKER_MAX_AGE_HOURS`, `EMAIL_QUEUE_MAX_AGE_HOURS`), nie kodem.
-- Widok „Stan systemu” w panelu `admin/` (tabela nad danymi `ops-status`,
-  kolory tylko dla stanu) **nie jest jeszcze zaimplementowany** — poza
-  zakresem PR-a, który dodał te dwa punkty API.
+- Widok „Stan systemu” w panelu `admin/` (`admin/ops-status.js`, czyste
+  funkcje w `admin/ops-status-core.js`): tabela nad odpowiedzią `ops-status`,
+  kolor wyłącznie dla stanu (w normie / uwaga / błąd / brak danych, zawsze z
+  etykietą tekstową). Widok nie zna progów `/health/jobs` — stan „uwaga/błąd”
+  wynika tylko z faktów w odpowiedzi (nieudany przebieg, zaległa migracja,
+  wiadomości `failed`); widzi go wyłącznie `admin` (serwer sprawdza rolę).
 - Runbook incydentów, który się na to powołuje: [`RUNBOOK.md`](RUNBOOK.md).
 - Narzędzie monitora zewnętrznego, jego adresaci i dyżur/zastępstwa — do
   decyzji zarządu (nierozstrzygnięte tutaj).
