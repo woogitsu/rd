@@ -318,8 +318,9 @@ test('no email addresses reach audit metadata or console logs', async () => with
     const cookie = await seedUserSession(db, { userId: 'rep' });
     await handlePgRequest(request('/api/logout', { method: 'POST', cookie }), env);
     const failed = await probeHandler(request('/api/probe/fail'), env);
-    assert.equal(failed.status, 503);
-    assert.deepEqual(await failed.json(), { error: 'service_unavailable' });
+    // #156: naruszenie UNIQUE to stan biznesowy (409 conflict), a adres e-mail z detalu SQL nie trafia do odpowiedzi.
+    assert.equal(failed.status, 409);
+    assert.deepEqual(await failed.json(), { error: 'conflict' });
   } finally { Object.assign(console, original); }
   const { rows } = await db.query('SELECT metadata_json::text AS metadata FROM audit_events');
   assert.ok(rows.length >= 4);
