@@ -128,3 +128,8 @@ Wariant zachowawczy do czasu decyzji D-08/D-09 (zarząd jeszcze nie zdecydował)
 ## Decyzje do podjęcia
 
 D-04 (czas przechowywania archiwum), D-08/D-09 (kto rozpoczyna, potwierdza i zamyka, dostęp Komisji Rewizyjnej i dyrekcji do zestawienia), D-13 (uzgodnienie rachunku przed zamknięciem), D-21 (regulamin: termin i tryb przekazania kadencji, zatwierdzenie sprawozdania).
+
+
+## Punkt `financial_report` i migawka sprawozdania (#125, 0138)
+
+`POST /api/year-close/{rok}/checklist/financial_report` przyjmuje opcjonalne `reportSnapshotId`: zatwierdzoną (`POST /api/reports/annual/snapshots/{id}/approve`), bieżącą (niezastąpioną) migawkę tego roku; inne, cudze i nieistniejące dają `400 invalid_report_snapshot`. Dla pozostałych punktów pole jest odrzucane. Bez migawki punkt nadal można potwierdzić jak dotąd (wariant zachowawczy do D-21). Identyfikator trafia do listy kontrolnej, zestawienia przekazania i audytu.

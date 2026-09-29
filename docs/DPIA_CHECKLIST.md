@@ -91,6 +91,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `payment_reference_revocations.reason` | jw. |
 | `ledger_category_deactivations.reason` | powód wyłączenia kategorii może zawierać imię i nazwisko lub okoliczności rodzinne (#107) |
 | `ledger_budget_adoptions.note` | uwaga przy przyjęciu preliminarza może zawierać imię i nazwisko lub okoliczności rodzinne (#107) |
+| `financial_report_snapshots.supersede_reason` | powód korekty migawki sprawozdania rocznego jest wolnym tekstem i może zawierać imię i nazwisko; migawka jest niezmienna, więc treści nie da się usunąć (#125) |
 | `ledger_entry_reviews.note` | uwaga przy zakwestionowaniu wydatku może zawierać imię i nazwisko lub okoliczności rodzinne (#97) |
 | `resolution_spending_authorizations.note` | uzasadnienie kwoty upoważnienia może zawierać imię i nazwisko lub okoliczności rodzinne (#93) |
 | `event_tasks.title` | tytuł zadania wolontariackiego może zawierać imię i nazwisko lub okoliczności rodzinne (#142) |

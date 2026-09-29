@@ -651,6 +651,23 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // #125: przygotowanie do utworzenia migawki — zmiana księgi (nowa treść) i bieżąca migawka roku.
+  reportSnapshotPrep: async (ctx, target) => {
+    await MAKERS.ledgerEntry(ctx, target);
+    const { rows } = await ctx.db.query(
+      `SELECT id FROM financial_report_snapshot_status WHERE school_year_id = $1 AND superseded_by_id IS NULL`,
+      [target.schoolYearId],
+    );
+    return { supersedesId: rows[0]?.id ?? null };
+  },
+  // #125: migawka zapisana przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  reportSnapshot: async (ctx, target) => {
+    const { supersedesId } = await MAKERS.reportSnapshotPrep(ctx, target);
+    const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/reports/annual/snapshots', {
+      schoolYearId: target.schoolYearId, ...(supersedesId ? { supersedesId, reason: 'Korekta syntetyczna' } : {}),
+    });
+    return { snapshotId: json.snapshot.id };
+  },
   // #97: wydatek zapisany przez konto pomocnicze (autor inny niż każdy aktor macierzy).
   ledgerExpense: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
@@ -818,6 +835,7 @@ const WRITE_TABLES = [
   'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
   'bank_reconciliation_group_match_revocations',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
+  'financial_report_snapshots', 'financial_report_snapshot_approvals',
   'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
 

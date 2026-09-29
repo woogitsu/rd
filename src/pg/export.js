@@ -313,6 +313,12 @@ export const EXPORT_TABLES = Object.freeze([
   // z wyłączonymi kluczami obcymi (session_replication_role = replica).
   { table: 'document_descriptions', where: () => YEAR_TIME('created_at') },
 
+  // 0138 (#125): niezmienne migawki sprawozdania rocznego i ich zatwierdzenia — dowód tego, co
+  // przedstawiono zebraniu; treść zagregowana (bez opisów wpisów i danych osób). Przed
+  // school_year_closure_checklist (report_snapshot_id).
+  { table: 'financial_report_snapshots', where: () => 'school_year_id = $1' },
+  { table: 'financial_report_snapshot_approvals', requires: ['financial_report_snapshots'], where: () => 'school_year_id = $1' },
+
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },
   { table: 'school_year_closure_checklist', requires: ['school_year_closures'],

@@ -3,7 +3,7 @@
 //
 //   GET  /api/year-close/{schoolYearId}                    stan, lista kontrolna, bilans
 //   POST /api/year-close/{schoolYearId}/start              { nextSchoolYearId }
-//   POST /api/year-close/{schoolYearId}/checklist/{item}   { note?, documentId? }
+//   POST /api/year-close/{schoolYearId}/checklist/{item}   { note?, documentId?, reportSnapshotId? }  (reportSnapshotId: tylko punkt financial_report, zatwierdzona bieżąca migawka #125)
 //   POST /api/year-close/{schoolYearId}/close              zarząd + MFA, inna osoba niż rozpoczynająca; krok w górę MFA (#150)
 //   GET  /api/year-close/{schoolYearId}/handover           zestawienie przekazania (JSON, bez danych osobowych)
 //
@@ -199,7 +199,7 @@ async function loadClosure(executor, schoolYearId, { lock = false } = {}) {
 async function loadChecklist(executor, closureId) {
   if (!closureId) return [];
   const { rows } = await executor.query(
-    `SELECT item, note, document_id, confirmed_by, confirmed_at
+    `SELECT item, note, document_id, report_snapshot_id, confirmed_by, confirmed_at
        FROM school_year_closure_checklist WHERE closure_id = $1`,
     [closureId],
   );
@@ -275,6 +275,7 @@ function checklistView(rows) {
       confirmedAt: row ? isoTimestamp(row.confirmed_at) : null,
       note: row?.note ?? null,
       documentId: row?.document_id ?? null,
+      reportSnapshotId: row?.report_snapshot_id ?? null,
     };
   });
 }
@@ -399,6 +400,13 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
     if (typeof data.documentId !== 'string' || !ID_PATTERN.test(data.documentId)) throw new RequestError('invalid_document_id');
     documentId = data.documentId;
   }
+  let reportSnapshotId = null;
+  if (data.reportSnapshotId !== undefined && data.reportSnapshotId !== null) {
+    if (typeof data.reportSnapshotId !== 'string' || !ID_PATTERN.test(data.reportSnapshotId) || item !== 'financial_report') {
+      throw new RequestError('invalid_report_snapshot');
+    }
+    reportSnapshotId = data.reportSnapshotId;
+  }
   const result = await env.db.transaction(async (tx) => {
     await requireYear(tx, schoolYearId);
     const closure = await loadClosure(tx, schoolYearId, { lock: true });
@@ -414,6 +422,17 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
         throw new RequestError('invalid_document_id');
       }
     }
+    if (reportSnapshotId) {
+      // #125: punkt sprawozdania może wskazać wyłącznie zatwierdzoną, bieżącą (niezastąpioną)
+      // migawkę tego roku; inna, nieistniejąca i cudza dają ten sam kod (bez wyroczni istnienia).
+      const { rows: snapRows } = await tx.query(
+        `SELECT approved_at, superseded_by_id FROM financial_report_snapshot_status
+          WHERE id = $1 AND school_year_id = $2 AND kind = 'annual'`,
+        [reportSnapshotId, schoolYearId],
+      );
+      const snap = snapRows[0];
+      if (!snap || !snap.approved_at || snap.superseded_by_id) throw new RequestError('invalid_report_snapshot');
+    }
     const { rows } = await tx.query(
       'SELECT 1 FROM school_year_closure_checklist WHERE closure_id = $1 AND item = $2',
       [closure.id, item],
@@ -421,16 +440,16 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
     if (rows.length) return { replayed: true };
     try {
       await tx.query(
-        `INSERT INTO school_year_closure_checklist (closure_id, item, note, document_id, confirmed_by)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [closure.id, item, note, documentId, actorId],
+        `INSERT INTO school_year_closure_checklist (closure_id, item, note, document_id, report_snapshot_id, confirmed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [closure.id, item, note, documentId, reportSnapshotId, actorId],
       );
     } catch (error) {
       mapDatabaseError(error);
     }
     await insertAuditEvent(tx, {
       actorId, action: 'year_close.checklist_confirmed', entityType: 'school_year_closure', entityId: closure.id,
-      metadata: { schoolYearId, item, documentId },
+      metadata: { schoolYearId, item, documentId, reportSnapshotId },
     });
     return { replayed: false };
   });

@@ -1390,6 +1390,36 @@ export const ROUTE_MATRIX = Object.freeze([
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/cash-flow?schoolYearId=${target.schoolYearId}` }),
   },
+  // Migawki sprawozdania (0138, #125): tworzy zarząd albo skarbnik, zatwierdza wyłącznie zarząd
+  // (inna osoba niż autor migawki — autorem fixture jest konto pomocnicze). Świeży obiekt na
+  // przypadek, bo nowa migawka musi mieć inną treść niż poprzednia (zmiana księgi w fixture).
+  {
+    id: 'financialReports.snapshotList', module: 'financial-reports', method: 'GET', path: '/api/reports/annual/snapshots?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['reportSnapshot', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/annual/snapshots?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    id: 'financialReports.snapshotCreate', module: 'financial-reports', method: 'POST', path: '/api/reports/annual/snapshots',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshotPrep' },
+    build: ({ target, obj }) => ({
+      path: '/api/reports/annual/snapshots',
+      body: { schoolYearId: target.schoolYearId, ...(obj?.supersedesId ? { supersedesId: obj.supersedesId, reason: 'Korekta syntetyczna' } : {}) },
+    }),
+  },
+  {
+    id: 'financialReports.snapshotRead', module: 'financial-reports', method: 'GET', path: '/api/reports/annual/snapshots/:id?format=json',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshot' },
+    build: ({ obj }) => ({ path: `/api/reports/annual/snapshots/${obj.snapshotId}?format=json` }),
+  },
+  {
+    id: 'financialReports.snapshotApprove', module: 'financial-reports', method: 'POST', path: '/api/reports/annual/snapshots/:id/approve',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'reportSnapshot' },
+    build: ({ obj }) => ({ path: `/api/reports/annual/snapshots/${obj.snapshotId}/approve`, body: {} }),
+  },
 
   // ---------- exports (#9) ----------
   {
