@@ -23,6 +23,9 @@ const OLD_YEAR = 'y-2025';
 const scriptPath = fileURLToPath(new URL('../scripts/verify-export.js', import.meta.url));
 
 async function seedData(db) {
+  // #204 (0144): znaczniki zapisu (created_at) stempluje zegar bazy; dane seedowe z
+  // historycznymi datami wstawiamy w trybie odtworzenia, wyłączonym przed częścią API.
+  await db.query(`SET rd.restore = 'on'`);
   await seedSchoolYear(db, YEAR, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedSchoolYear(db, OLD_YEAR, { startsOn: '2025-09-01', endsOn: '2026-08-31' });
   await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
@@ -89,6 +92,8 @@ async function seedData(db) {
     VALUES ('ev-1', '${YEAR}', 'Piknik testowy', '2026-10-10T10:00:00Z', NULL, 'published', '2026-09-20T00:00:00Z', 'u-seed')`);
   await db.query(`COMMIT`);
 
+  await db.query(`RESET rd.restore`);
+
   // Zebranie z obecnością (także opiekuna), kworum, uchwałą i protokołem — przez moduł zebrań.
   await seedUser(db, { userId: 'u-voter' });
   const board = { userId: 'u-seed', grants: [{ role: 'board', classId: null, schoolYearId: YEAR, expiresAt: null }], mfaVerified: true };
@@ -107,8 +112,13 @@ async function seedData(db) {
   await insertAuditEvent(db, { actorId: 'u-seed', action: 'payment.created', entityType: 'payment_entry', entityId: 'p-1', metadata: { schoolYearId: YEAR } });
   await insertAuditEvent(db, { actorId: 'u-seed', action: 'payment.created', entityType: 'payment_entry', entityId: 'p-old', metadata: { schoolYearId: OLD_YEAR } });
   // Zdarzenie z czasem poza rokiem 2026/27 i bez oznaczenia roku (nie trafia do eksportu 2026/27).
+  // #204 (0144): occurred_at dziennika zapisu stempluje zegar bazy — historyczną datę
+  // da się wstawić tylko w trybie odtworzenia.
+  await db.query(`BEGIN`);
+  await db.query(`SET LOCAL rd.restore = 'on'`);
   await db.query(`INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, occurred_at, metadata_json)
     VALUES ('ae-old', 'u-seed', 'test.old', 'test', 'x', '2025-10-01T10:00:00Z', '{}'::jsonb)`);
+  await db.query(`COMMIT`);
   return { meetingId: meeting.id };
 }
 

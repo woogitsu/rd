@@ -296,8 +296,8 @@
     "sha256": "90b6b1439eb8bbf64cf526b3529db889136e3b4c2c452eb17050b9aaf636080b"
   },
   {
-    "name": "0143_news_photo_document_fk_and_role_grants_validate.sql",
-    "sha256": "f5eb32b993bbc6e1065520e6a41c916ea5aebe2fb49e417d84dd1dac0b2529a1"
+    "name": "0144_immutability_stamps_and_truncate.sql",
+    "sha256": "972bab7664ff26fe68be49aeb1a8b3cae7172642ff71698ab68a8f7976c2b0cb"
   },
   {
     "name": "0130_year_freeze_remaining_tables.sql",
@@ -326,5 +326,9 @@
   {
     "name": "0142_ledger_replacement_payment_link.sql",
     "sha256": "89648113bd1a96487591db8412d53b99a2161e3fb44bed19097ee8ddede1b077"
+  },
+  {
+    "name": "0143_news_photo_document_fk_and_role_grants_validate.sql",
+    "sha256": "f5eb32b993bbc6e1065520e6a41c916ea5aebe2fb49e417d84dd1dac0b2529a1"
   }
 ]
