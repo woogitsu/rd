@@ -49,6 +49,8 @@ Pobranie ma nagłówki `Content-Disposition: attachment; filename="dokument-<id>
 
 Dokument w `documents` jest i pozostaje niezmienny — „unieważnienie” albo „zastąpienie” **nie usuwa** pliku ani wpisu; dopisuje tylko zdarzenie stanu w osobnej, dopisywanej tabeli `document_status_events`. UI musi to jasno komunikować: to nie jest „Usuń”, plik zostaje w archiwum i nadal można go pobrać (dla ról z dostępem do danego rodzaju).
 
+**Panel (`documents/`):** stan w liście i szczegółach, filtr „Pokaż też zastąpione i unieważnione” (`status=all`), historia wersji (łańcuch „zastępuje” / „zastąpiony przez”, odczytywany z metadanych sąsiednich dokumentów) oraz akcje „Zastąp innym dokumentem…” i „Unieważnij…” z powodem i oknem potwierdzenia (`shared/confirm-dialog.js`). Przyciski widzą konta z rolą dopuszczoną przez `DOCUMENT_POLICIES` (jak przy przesłaniu; bez rozszerzania uprawnień, D-08/D-09) — to tylko podpowiedź, serwer i tak zwraca 404/403. Kandydaci na zastępstwo pochodzą z wczytanej listy (ten sam rodzaj, rok, klasa, aktualne).
+
 Zasady:
 - Dokument ma co najwyżej JEDNO zdarzenie stanu — pierwsza zmiana jest ostateczna. Próba unieważnienia już zastąpionego dokumentu (albo odwrotnie) kończy się `409 document_status_conflict`.
 - **Wyjątek — ponowne unieważnienie tym samym działaniem** (np. podwójne kliknięcie „Unieważnij” z innym kluczem idempotencji po błędzie sieci, albo dowolna kolejna próba unieważnienia już unieważnionego dokumentu) zwraca `200` z `replayed: true` i **tym samym** zdarzeniem — nie jest to błąd.
@@ -69,7 +71,7 @@ Dziennik: `document.described` zapisuje aktora, czas, identyfikator dokumentu, k
 
 Zamrożenie roku (issue #76/#313, `postgres/migrations/0106_document_descriptions_year_freeze.sql`): `document_descriptions` nie ma własnej kolumny `school_year_id` — rok ustala dokument-rodzic (`documents.school_year_id`, `FOR UPDATE` blokuje wiersz `documents` przed zapisem opisu, więc sprawdzenie jest spójne z numerowaniem wersji). Nowy opis dokumentu przypisanego do zamkniętego roku kończy się `409 school_year_closed`; dokumenty bez `school_year_id` (np. przywrócone z D1) nie są objęte — jak przy samym `documents` (`postgres/README.md`, `docs/YEAR_CLOSE.md`).
 
-**Poza zakresem tej wersji:** panel — wybór roku i klasy z listy serwera (dziś pole tekstowe) to osobny zakres.
+Panel (`documents/`) wybiera rok szkolny i klasę z list zwracanych przez serwer (`GET /api/classes` zawęża listę do zakresu roli), a nie z pola tekstowego.
 
 ## Walidacja pliku
 

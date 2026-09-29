@@ -239,7 +239,8 @@ test('Node server: / przekierowuje na /login/, adres klienta nadpisuje nagłówe
 // API, przekierowanie 308, /health/ready, błąd 413/500) — nie tylko do plików statycznych.
 test('baselineSecurityHeaders: HSTS tylko przy https, reszta zawsze', () => {
   const withHttps = baselineSecurityHeaders('https://rd.example.invalid');
-  assert.equal(withHttps['Strict-Transport-Security'], 'max-age=31536000; includeSubDomains');
+  assert.equal(withHttps['Strict-Transport-Security'], 'max-age=31536000');
+  assert.doesNotMatch(withHttps['Strict-Transport-Security'], /includeSubDomains|preload/i, 'D-20: bez includeSubDomains/preload');
   assert.equal(withHttps['X-Content-Type-Options'], 'nosniff');
   assert.equal(withHttps['X-Frame-Options'], 'DENY');
   assert.equal(withHttps['Referrer-Policy'], 'no-referrer');
@@ -287,6 +288,30 @@ test('każda odpowiedź serwera Node ma nosniff, X-Frame-Options i (przy https) 
   } finally {
     await close(http.server);
     await close(https.server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Node server odpowiada 204 na /favicon.ico bez delegowania do API (przegląd demo: 404 w konsoli na każdym ekranie)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
+  let delegated = 0;
+  const fetchHandler = async () => {
+    delegated += 1;
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  };
+  const { server, baseUrl } = await listen(createNodeHandler({ distRoot: root, fetchHandler }));
+  try {
+    const get = await fetch(`${baseUrl}/favicon.ico`);
+    assert.equal(get.status, 204);
+    assert.equal(await get.text(), '');
+    const head = await fetch(`${baseUrl}/favicon.ico`, { method: 'HEAD' });
+    assert.equal(head.status, 204);
+    assert.equal(delegated, 0);
+    // Inne metody nie są specjalnie traktowane (trafiają do zwykłej obsługi → 404 z API).
+    const post = await fetch(`${baseUrl}/favicon.ico`, { method: 'POST', body: '{}' });
+    assert.notEqual(post.status, 204);
+  } finally {
+    await close(server);
     await rm(root, { recursive: true, force: true });
   }
 });

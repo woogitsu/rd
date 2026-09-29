@@ -15,6 +15,8 @@
 import { createHash } from 'node:crypto';
 import { isProductionLikeEnv } from '../app-env.js';
 import { csvRow, toCsv } from './csv.js';
+import { toXlsx } from './xlsx.js';
+import { insertAuditEvent } from './audit.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
 // Wersja 2 (#202): gospodarstwa i ich historia (0014), uzgodnienia rachunku
@@ -311,6 +313,12 @@ export const EXPORT_TABLES = Object.freeze([
   // odtworzeniu identyfikator zostaje bez odpowiednika, restoreBundle działa
   // z wyłączonymi kluczami obcymi (session_replication_role = replica).
   { table: 'document_descriptions', where: () => YEAR_TIME('created_at') },
+
+  // 0138 (#125): niezmienne migawki sprawozdania rocznego i ich zatwierdzenia — dowód tego, co
+  // przedstawiono zebraniu; treść zagregowana (bez opisów wpisów i danych osób). Przed
+  // school_year_closure_checklist (report_snapshot_id).
+  { table: 'financial_report_snapshots', where: () => 'school_year_id = $1' },
+  { table: 'financial_report_snapshot_approvals', requires: ['financial_report_snapshots'], where: () => 'school_year_id = $1' },
 
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },
@@ -927,6 +935,20 @@ export async function restoreBundle(db, bundle) {
   const totalsMatch = canonicalJson(manifestTotals) === canonicalJson(againTotals);
   if (!filesMatch) fail('restore_verification_failed:files');
   if (!totalsMatch) fail('restore_verification_failed:totals');
+  // #184: ślad odtworzenia z paczki. Zapis dopiero po pozytywnej weryfikacji
+  // (nieudane odtworzenie wycofuje transakcję i nie zostawia śladu), bez aktora
+  // (operator z DATABASE_URL, jak przy bootstrapie), z samym skrótem manifestu
+  // i licznikami. Zdarzenia `export.*` nie wchodzą do kolejnych paczek (auditScope).
+  await db.transaction(async (tx) => {
+    await insertAuditEvent(tx, {
+      actorId: null, action: 'export.restored', entityType: 'export', entityId: bundle.manifestSha256,
+      metadata: {
+        source: 'restore', schoolYearId: manifest.schoolYearId, formatVersion: bundle.formatVersion,
+        manifestSha256: bundle.manifestSha256, tables: manifest.files.length,
+        rows: manifest.files.reduce((sum, entry) => sum + entry.rows, 0),
+      },
+    });
+  }, { retries: 0 });
   return {
     ...verified, warnings, ...(backfilled ? { backfilled } : {}),
     restored: true, reexportFilesMatch: filesMatch, reexportTotalsMatch: totalsMatch, countsMatch: true,
@@ -1010,12 +1032,14 @@ const ROSTER_CSV_COLUMNS = [
   { header: 'Uwagi', type: 'text' },
 ];
 
-export function buildClassRosterCsv(roster, { generatedAt = new Date() } = {}) {
+const ROSTER_FOOTER = 'Zawiera dane osobowe — nie przesyłać dalej, usunąć po wykorzystaniu.';
+
+// Wspólne wiersze dla CSV i XLSX: te same kolumny i kolejność (sortowanie polskie).
+function classRosterTable(roster, generatedAt) {
   const collator = new Intl.Collator('pl', { sensitivity: 'base' });
   const students = [...roster.students].sort((a, b) =>
     collator.compare(a.lastName, b.lastName) || collator.compare(a.firstName, b.firstName) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const isoDate = generatedAt.toISOString().slice(0, 10);
-  const oneCell = (text) => csvRow([{ header: '', type: 'text' }], [text]);
   const rows = students.map((student, index) => {
     const [g1, g2] = student.guardians;
     const primary = student.guardians.find((g) => g.primaryContact);
@@ -1031,8 +1055,25 @@ export function buildClassRosterCsv(roster, { generatedAt = new Date() } = {}) {
       '',
     ];
   });
+  return { rows, title: `Lista klasy ${roster.class.name} — rok szkolny ${roster.class.schoolYearId} — wygenerowano ${isoDate}` };
+}
+
+export function buildClassRosterCsv(roster, { generatedAt = new Date() } = {}) {
+  const { rows, title } = classRosterTable(roster, generatedAt);
+  const oneCell = (text) => csvRow([{ header: '', type: 'text' }], [text]);
   return toCsv(ROSTER_CSV_COLUMNS, rows, {
-    preamble: [oneCell(`Lista klasy ${roster.class.name} — rok szkolny ${roster.class.schoolYearId} — wygenerowano ${isoDate}`), ''],
-    trailer: ['', oneCell('Zawiera dane osobowe — nie przesyłać dalej, usunąć po wykorzystaniu.')],
+    preamble: [oneCell(title), ''],
+    trailer: ['', oneCell(ROSTER_FOOTER)],
+  });
+}
+
+// XLSX (#132): te same kolumny co CSV; tekst jako inlineStr, więc `=1+1` w
+// imieniu zostaje tekstem (src/pg/xlsx.js). Bez wpłat, kwot i ID rodzin.
+export function buildClassRosterXlsx(roster, { generatedAt = new Date() } = {}) {
+  const { rows, title } = classRosterTable(roster, generatedAt);
+  return toXlsx(ROSTER_CSV_COLUMNS, rows, {
+    sheetName: `Lista ${roster.class.name}`,
+    preamble: [title, ''],
+    trailer: ['', ROSTER_FOOTER],
   });
 }

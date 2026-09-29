@@ -215,6 +215,7 @@ wpisów).
 | `invalid_relation_kind` | Wybierz rodzaj powiązania uchwały z listy. | Nie — popraw dane. |
 | `invalid_release_reason` | Wybierz jeden z dopuszczalnych powodów zdjęcia blokady. | Nie — popraw dane. |
 | `invalid_replacement_document` | Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę. | Nie — popraw dane żądania. |
+| `invalid_report_snapshot` | Wskazana migawka sprawozdania nie istnieje, nie jest zatwierdzona albo została zastąpiona. | Nie — popraw dane żądania. |
 | `invalid_request` | Serwer odrzucił dane formularza. Sprawdź pola. | Nie — popraw dane żądania. |
 | `invalid_reversal` | Tego przeniesienia nie można cofnąć w obecnym stanie. | Nie — popraw dane żądania. |
 | `invalid_revision` | Brak numeru wersji. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -242,6 +243,7 @@ wpisów).
 | `invalid_ttl` | Ważność zaproszenia: od 1 do 336 godzin. | Nie — popraw dane żądania. |
 | `invalid_user_id` | Niepoprawny identyfikator konta. | Nie — popraw dane żądania. |
 | `invalid_window` | Niepoprawny zakres dat. | Nie — popraw dane żądania. |
+| `invalid_year_end_confirmation` | Potwierdzenie rozbieżności wymaga jednego z dozwolonych powodów i widzianych różnic w centach. | Nie — popraw dane żądania. |
 | `invitation_already_accepted` | Zaproszenie zostało już przyjęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `invitation_not_found` | Nie znaleziono zaproszenia. | Nie — popraw dane żądania. |
 | `invitation_not_pending` | To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -255,6 +257,10 @@ wpisów).
 | `login_busy` | Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund. | Tak — po chwili. |
 | `match_already_revoked` | Dopasowanie zostało już wycofane. | Zależy od kontekstu (patrz moduł trasy). |
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
+| `match_batch_duplicate` | Ta sama pozycja lub wpłata występuje w partii więcej niż raz. | Nie — popraw dane żądania. |
+| `match_batch_empty` | Wybierz co najmniej jedną parę pozycji i wpłaty. | Nie — popraw dane żądania. |
+| `match_batch_rejected` | Nie zatwierdzono żadnej pary: część wybranych par jest niepoprawna. Odśwież propozycje i wybierz ponownie. | Tak, po odświeżeniu propozycji (lista `failures` wskazuje odrzucone pary). |
+| `match_batch_too_large` | Za dużo par w jednej partii. Zatwierdź mniejszą liczbę naraz. | Nie — popraw dane żądania. |
 | `match_method_mismatch` | Sposób wpłaty nie pasuje do pozycji wyciągu. | Nie — popraw dane żądania. |
 | `match_not_found` | Nie znaleziono dopasowania. | Nie — popraw dane żądania. |
 | `matched_in_other_reconciliation` | Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku. | Nie — popraw dane żądania. |
@@ -341,6 +347,11 @@ wpisów).
 | `relation_ended` | Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa. | Zależy od kontekstu (patrz moduł trasy). |
 | `release_reason_not_allowed` | Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”. | Zależy od kontekstu (patrz moduł trasy). |
 | `replacement_target_mismatch` | Przeksięgowanie nie zgadza się z zastępowanym wpisem. Odśwież widok i spróbuj ponownie. | Nie — popraw dane żądania. |
+| `report_snapshot_content_exists` | Migawka o tej treści już istnieje i została zastąpiona. Sprawozdanie nie zmieniło się od tamtej wersji. | Nie — popraw dane żądania. |
+| `report_snapshot_integrity_failed` | Zapisana treść migawki nie zgadza się z jej skrótem SHA-256. Zgłoś to administratorowi. | Nie — wymaga interwencji administratora. |
+| `report_snapshot_not_found` | Nie znaleziono migawki sprawozdania. | Nie — popraw dane żądania. |
+| `report_snapshot_superseded` | Migawka została zastąpiona nowszą. Otwórz bieżącą migawkę roku. | Nie — odśwież widok. |
+| `report_snapshot_supersedes_required` | Rok ma już migawkę sprawozdania. Wskaż bieżącą migawkę i powód korekty. | Nie — popraw dane żądania. |
 | `request_already_consumed` | Ten wniosek o zdjęcie blokady został już rozpatrzony. | Zależy od kontekstu (patrz moduł trasy). |
 | `request_not_found` | Nie znaleziono wniosku. | Nie — popraw dane żądania. |
 | `request_too_large` | Za dużo danych w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
@@ -355,6 +366,7 @@ wpisów).
 | `resolution_reference_mismatch` | Referencja uchwały nie zgadza się z numerem wskazanej uchwały. | Nie — popraw dane żądania. |
 | `resolution_required` | Ten wydatek wymaga wskazania uchwały. | Nie — popraw dane żądania. |
 | `restore_drill_failed` | Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
+| `restore_report_bad_identifier` | Raport zgodności odrzucił nieprawidłową nazwę tabeli. Sprawdź schemat bazy. | Zależy od kontekstu (patrz moduł trasy). |
 | `retry_later` | Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `review_expense_only` | Weryfikacja drugiej osoby dotyczy wyłącznie wydatków. | Zależy od kontekstu (patrz moduł trasy). |
 | `revision_conflict` | Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -379,6 +391,7 @@ wpisów).
 | `statement_multiple_not_supported` | Plik zawiera kilka wyciągów. Zaimportuj każdy wyciąg osobno. | Nie — popraw dane żądania. |
 | `statement_transaction_id_missing` | Ruch w wyciągu nie ma identyfikatora transakcji banku. | Nie — popraw dane żądania. |
 | `storage_unavailable` | Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
+| `student_household_overlap` | Uczeń ma już członkostwo w tym gospodarstwie (lub inne główne) w tym okresie. Zakończ poprzednie i dodaj nowe od tej samej daty. | Nie — popraw dane żądania. |
 | `student_not_found` | Nie znaleziono ucznia. | Nie — popraw dane żądania. |
 | `subject_required` | Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `suppression_not_active` | Ta blokada nie jest już aktywna. | Zależy od kontekstu (patrz moduł trasy). |
@@ -402,6 +415,8 @@ wpisów).
 | `webhook_not_configured` | Powiadomienia zwrotne nie są skonfigurowane na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_already_started` | Zamknięcie roku zostało już rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_not_started` | Zamknięcie roku nie zostało rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
+| `year_end_balance_mismatch` | Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Potwierdź rozbieżność z powodem albo popraw wpisy. | Nie — popraw dane żądania. |
+| `year_end_confirmation_mismatch` | Rozbieżność salda końca roku jest inna niż potwierdzona. Sprawdź aktualne kwoty i potwierdź ponownie. | Nie — popraw dane żądania. |
 
 ## Błędy bazy w routerze: klasy, ponowienia, limity (#156)
 

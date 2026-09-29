@@ -151,3 +151,20 @@ export function toServerPayload(result, schoolYearId, { allowNewHouseholds = fal
     options: { allowNewHouseholds: Boolean(allowNewHouseholds), skipConflicts: Boolean(skipConflicts) },
   };
 }
+
+// #88: kontrola kształtu macierzy arkusza przed zbudowaniem mapowania. Zwraca komunikat
+// (albo null), zamiast rzucać wyjątek — pusty arkusz nie może zerować listy arkuszy.
+export function matrixShapeError(matrix) {
+  if (!Array.isArray(matrix) || matrix.length < 2 || matrix.length > 5001) return 'Plik musi zawierać od 1 do 5000 wierszy danych.';
+  if (!Array.isArray(matrix[0]) || matrix[0].length > 60) return 'Nagłówek ma więcej niż 60 kolumn.';
+  return null;
+}
+
+// #88: wybór arkusza z już wczytanej listy. Lista `sheets` nigdy nie jest zmieniana;
+// zły arkusz (pusty, za duży) daje `error` i `matrix: null`, a wybór innego arkusza dalej działa.
+export function selectSheet(sheets, index) {
+  const sheet = Array.isArray(sheets) ? sheets[Number(index)] : undefined;
+  if (!sheet) return { sheet: null, matrix: null, error: 'Nie ma takiego arkusza.' };
+  const error = matrixShapeError(sheet.rows);
+  return { sheet, matrix: error ? null : sheet.rows, error };
+}

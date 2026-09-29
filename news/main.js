@@ -392,7 +392,7 @@ function fillPhotoPicker(post) {
   if (!selectablePhotos(state.photos).length && !chosen.size) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "Brak zdjęć z zweryfikowanymi prawami.";
+    empty.textContent = "Brak zdjęć ze zweryfikowanymi prawami.";
     fieldset.append(empty);
     return;
   }

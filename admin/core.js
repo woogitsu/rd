@@ -1,5 +1,6 @@
 // Czyste funkcje panelu administracji kont (bez DOM i sieci) — testowane w tests/admin-core.test.js.
 import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
+import { shortId } from "../shared/short-id.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -50,7 +51,132 @@ export const ACTION_LABELS = Object.freeze({
   "user.disabled": "Wyłączenie konta",
   "user.enabled": "Włączenie konta",
   "session.revoked": "Wycofanie sesji",
+  // Przegląd demo: te zdarzenia dziennik pokazywał surowym kodem (np. „user.created”).
+  "user.created": "Utworzenie konta",
+  "auth.password_set": "Ustawienie hasła",
+  "auth.password_changed": "Zmiana hasła",
+  "auth.account_under_pressure": "Konto pod presją prób logowania",
+  "auth.password_reset_completed": "Ustawienie nowego hasła kodem resetu",
+  "invitation.reissued": "Ponowne wydanie zaproszenia",
+  "role_grant.school_year_backfilled": "Uzupełnienie roku szkolnego w przydziale roli",
+  "school_year.created": "Utworzenie roku szkolnego",
+  "class.created": "Utworzenie klasy",
+  "account_recovery.requested": "Prośba o odzyskanie konta",
+  "account_recovery.approved": "Zatwierdzenie odzyskania konta",
+  "account_recovery.rejected": "Odrzucenie odzyskania konta",
+  "account_recovery.expired": "Wygaśnięcie prośby o odzyskanie konta",
 });
+
+// Przegląd demo: dziennik pokazywał surowe typy obiektów (`role_grant`) i powody
+// (`rotated`). Zestawy pokrywa test tests/admin-core.test.js (skan src/pg/**).
+export const ENTITY_TYPE_LABELS = Object.freeze({
+  account_recovery_request: "Prośba o odzyskanie konta",
+  audit_log: "Dziennik zdarzeń",
+  bank_reconciliation: "Uzgodnienie wyciągu",
+  bank_reconciliation_group_match: "Dopasowanie grupowe wyciągu",
+  bank_reconciliation_match: "Dopasowanie pozycji wyciągu",
+  bank_statement_import: "Import wyciągu bankowego",
+  class: "Klasa",
+  data_subject_request: "Wniosek osoby, której dane dotyczą",
+  document: "Dokument",
+  email_campaign: "Kampania e-mail",
+  email_outbox: "Wiadomość w kolejce",
+  email_suppression_list: "Lista wstrzymanych adresów",
+  email_suppression_release: "Zwolnienie adresu z listy wstrzymanych",
+  email_suppression_release_request: "Prośba o zwolnienie adresu",
+  email_webhook_event: "Zdarzenie dostawcy e-mail",
+  enrollment: "Zapis do klasy",
+  export: "Eksport",
+  export_run: "Przebieg eksportu",
+  financial_report_snapshot: "Migawka sprawozdania",
+  guardian: "Opiekun",
+  guardian_update_link: "Link aktualizacji danych opiekuna",
+  guardian_update_request: "Prośba o aktualizację danych opiekuna",
+  import_batch: "Import uczniów",
+  invitation: "Zaproszenie",
+  ledger_budget_adoption: "Przyjęcie preliminarza",
+  ledger_budget_line: "Pozycja preliminarza",
+  ledger_category: "Kategoria księgi",
+  ledger_correction: "Korekta zapisu księgi",
+  ledger_entry: "Zapis księgi",
+  ledger_opening_balance: "Saldo otwarcia",
+  ledger_opening_balance_adjustment: "Korekta salda otwarcia",
+  ledger_transfer: "Przesunięcie środków",
+  meeting: "Zebranie",
+  meeting_agenda_item: "Punkt porządku obrad",
+  meeting_minutes: "Protokół zebrania",
+  meeting_minutes_publication: "Udostępnienie protokołu",
+  meeting_quorum_check: "Sprawdzenie kworum",
+  mfa_factor: "Weryfikacja dwuetapowa",
+  mfa_recovery_code: "Kod odzyskiwania weryfikacji",
+  password_reset: "Reset hasła",
+  payment_allocation: "Przypisanie wpłaty",
+  payment_assignment: "Przydział wpłaty",
+  payment_correction: "Korekta wpłaty",
+  payment_entry: "Wpłata",
+  payment_instructions: "Dane do wpłat",
+  payment_reassignment: "Zmiana przypisania wpłaty",
+  payment_reference: "Tytuł wpłaty",
+  payment_refund: "Zwrot wpłaty",
+  privacy_notice: "Informacja o prywatności",
+  resolution: "Uchwała",
+  resolution_execution_event: "Wykonanie uchwały",
+  role_grant: "Przydział roli",
+  route: "Trasa API",
+  school_year: "Rok szkolny",
+  school_year_closure: "Zamknięcie roku szkolnego",
+  session: "Sesja",
+  student_guardian: "Powiązanie ucznia z opiekunem",
+  student_household: "Powiązanie ucznia z gospodarstwem",
+  user: "Konto",
+});
+
+export const REASON_LABELS = Object.freeze({
+  admin: "wycofanie przez administratora",
+  change: "zmiana",
+  duplicate_address: "powtórzony adres",
+  idle: "bezczynność",
+  invalid_password: "błędne hasło",
+  invitation: "zaproszenie",
+  login_succeeded: "udane logowanie",
+  logout: "wylogowanie",
+  malformed: "błędny adres",
+  mfa_reset: "reset weryfikacji dwuetapowej",
+  no_consent: "brak zgody",
+  no_password: "konto bez hasła",
+  no_valid_email: "brak poprawnego adresu e-mail",
+  opted_out: "rezygnacja z wiadomości",
+  password_changed: "zmiana hasła",
+  password_reset: "reset hasła",
+  password_reset_completed: "ustawienie nowego hasła",
+  payment_recorded: "zapisanie wpłaty",
+  rehash: "aktualizacja zabezpieczenia hasła",
+  reset: "reset",
+  rotated: "odnowienie sesji",
+  superseded: "zastąpione nowszym",
+  suppressed: "adres wstrzymany",
+  term_closed: "zakończenie kadencji",
+  unknown_account: "nieznane konto",
+  user_disabled: "wyłączenie konta",
+  user_revoke_all: "wylogowanie ze wszystkich sesji",
+  year_close: "zamknięcie roku szkolnego",
+});
+
+export function entityTypeLabel(type) {
+  return ENTITY_TYPE_LABELS[type] ?? type ?? "—";
+}
+
+export function reasonLabel(reason) {
+  return REASON_LABELS[reason] ?? reason;
+}
+
+// Autor/konto w dzienniku: nazwa konta, jeśli administrator ma je już na liście
+// kont (GET /api/admin/users) — inaczej skrócony identyfikator. Brak nowych danych w API.
+export function accountName(userId, users = []) {
+  if (!userId) return "system";
+  const user = (Array.isArray(users) ? users : []).find((item) => item.id === userId);
+  return user ? (user.displayName || user.email) : shortId(userId);
+}
 
 export const ERROR_MESSAGES = Object.freeze({
   unauthenticated: "Sesja wygasła. Zaloguj się ponownie.",
@@ -224,15 +350,15 @@ export function passwordResetLink(token, origin) {
   return `${origin}/login/#reset=${token}`;
 }
 
-export function describeAuditEvent(event) {
+export function describeAuditEvent(event, users = []) {
   const label = ACTION_LABELS[event.action] ?? event.action;
   const meta = event.metadata ?? {};
   const details = [];
   if (meta.role) details.push(ROLE_LABELS[meta.role] ?? meta.role);
-  if (meta.userId) details.push(`konto ${meta.userId}`);
+  if (meta.userId) details.push(`konto ${accountName(meta.userId, users)}`);
   if (meta.classId) details.push(`klasa ${meta.classId}`);
   if (meta.schoolYearId) details.push(`rok ${meta.schoolYearId}`);
-  if (meta.reason) details.push(`powód: ${meta.reason}`);
+  if (meta.reason) details.push(`powód: ${reasonLabel(meta.reason)}`);
   if (Number.isInteger(meta.count)) details.push(`liczba: ${meta.count}`);
   return { label, details: details.join(", ") };
 }

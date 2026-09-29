@@ -11,6 +11,7 @@
 // Korekta liczy się z datą korygowanego wpisu — jak w ledger_balance_at (0015),
 // więc saldo narastające na koniec roku = bilans zamknięcia z ledger_year_summary.
 
+import { createHash } from 'node:crypto';
 import { REPORT_CSS, escapeHtml, formatDate, formatEur } from './audit-report.js';
 import { toSafeInteger } from './routes/payments.js';
 
@@ -194,8 +195,19 @@ function categoryTable(section, emptyText) {
   return table([['Kategoria'], ['Preliminarz', 'num'], ['Wykonanie', 'num'], ['Różnica', 'num']], rows, emptyText);
 }
 
-export function renderAnnualReportHtml(report) {
+// `snapshot` (opcjonalnie): { id, createdAt, sha256, approvedAt, supersededById } —
+// wydruk zapisanej migawki zamiast projektu z bieżących danych.
+export function renderAnnualReportHtml(report, { snapshot = null } = {}) {
   const { schoolYear, balance } = report;
+  const header = snapshot
+    ? `<p class="meta">Migawka ${e(snapshot.id)} z ${e(formatDate(snapshot.createdAt))}. Kwoty w EUR. Skrót SHA-256: ${e(snapshot.sha256)}. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
+<p class="notice">${snapshot.supersededById
+    ? 'Wersja zastąpiona późniejszą migawką (korektą) — nie używać jako aktualnej.'
+    : snapshot.approvedAt
+      ? `Wersja zatwierdzona przez zarząd (${e(formatDate(snapshot.approvedAt))}). Treść jest niezmienna; późniejsze korekty księgi jej nie zmieniają.`
+      : 'Migawka niezatwierdzona — wymaga zatwierdzenia przez zarząd (inna osoba niż autor). Nie przedstawiać zebraniu jako wersji ostatecznej.'}</p>`
+    : `<p class="meta">Wygenerowano: ${e(formatDate(report.generatedAt))}. Kwoty w EUR. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
+<p class="notice">Projekt sprawozdania z bieżących danych księgi. Nie jest wersją zatwierdzoną ani przedstawioną zebraniu; po korekcie wydruk może się różnić.</p>`;
   return `<!doctype html>
 <html lang="pl">
 <head>
@@ -209,8 +221,7 @@ export function renderAnnualReportHtml(report) {
 <header>
 <h1>Sprawozdanie finansowe Rady Rodziców</h1>
 <p>Rok szkolny ${e(schoolYear.label)} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
-<p class="meta">Wygenerowano: ${e(formatDate(report.generatedAt))}. Kwoty w EUR. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
-<p class="notice">Projekt sprawozdania z bieżących danych księgi. Nie jest wersją zatwierdzoną ani przedstawioną zebraniu; po korekcie wydruk może się różnić.</p>
+${header}
 </header>
 
 <h2>1. Bilans</h2>
@@ -242,4 +253,27 @@ ${categoryTable(report.expense, 'Brak wydatków w tym roku.')}
 </body>
 </html>
 `;
+}
+
+// --- Migawki (#125): kanoniczny JSON i skrót SHA-256 ---------------------------
+
+// JSON z posortowanymi kluczami — ten sam skrót niezależnie od kolejności kluczy
+// (jsonb w PostgreSQL nie zachowuje kolejności).
+export function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+// Treść migawki: sprawozdanie bez czasu generowania (czas zapisu to created_at
+// wiersza), dzięki czemu te same dane księgi dają ten sam skrót.
+export function snapshotPayload(report) {
+  const { generatedAt, ...payload } = report;
+  return payload;
+}
+
+export function payloadSha256(payload) {
+  return createHash('sha256').update(canonicalJson(payload)).digest('hex');
 }

@@ -52,3 +52,9 @@ code{background:#f0f1f1;padding:2px 4px}
 @media(max-width:780px){.mapping,.report,.report.wide{grid-template-columns:1fr}h1{font-size:26px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 .actions-row{margin-top:16px}
+
+/* Tryb wysokiego kontrastu Windows (#112): aktywna zakładka nie może polegać
+   na box-shadow, który w forced-colors znika. */
+@media (forced-colors: active) {
+  nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
+}

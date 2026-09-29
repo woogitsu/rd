@@ -1,11 +1,13 @@
 // Czyste funkcje ekranu logowania (login/core.js) i statyczne wymagania HTML/CSS.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { PANELS as shellPanels } from '../shared/shell.js';
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import {
-  PANELS, SECRET_INPUT_IDS, canOfferVoluntaryMfaEnrollment, clearSensitiveViews, enrollIntroText,
-  enrollmentConfirmError, errorMessage, formatSecret, isRecoveryFormat,
+  PANEL_HINTS, PUBLIC_PANEL, SECRET_INPUT_IDS, startPanels, canOfferVoluntaryMfaEnrollment, clearSensitiveViews, enrollIntroText,
+  enrollReasonFromFragment, enrollmentConfirmError, errorMessage, formatSecret, inviteFormMode, inviteSummaryRows,
+  isRecoveryFormat,
   isTotpFormat, logoutOutcome, nextView, normalizeRecoveryCode, normalizeTotp,
   parseFragment, parseOtpauthUri, passwordLength, qrMatrix, qrSvgPath, shouldShowNoAccessNotice,
   validateEmail, validateNewPassword,
@@ -120,8 +122,8 @@ test('komunikaty błędów po polsku, bez rozróżnienia nieznanego konta i złe
   assert.match(errorMessage(undefined, 429), /Zbyt wiele/);
   assert.match(errorMessage('mfa_enrollment_required', 403), /aplikację uwierzytelniającą/);
   assert.match(errorMessage('nieznany_kod', 503), /niedostępna/);
-  assert.ok(PANELS.every((panel) => panel.href.startsWith('/') && panel.href.endsWith('/')));
-  assert.ok(PANELS.some((panel) => panel.href === '/site/'));
+  assert.ok(startPanels([{ role: 'admin' }]).every((panel) => panel.href.startsWith('/') && panel.href.endsWith('/')));
+  assert.equal(PUBLIC_PANEL.href, '/site/');
 });
 
 test('HTML logowania: autouzupełnianie, wklejanie, brak CAPTCHA i zewnętrznych skryptów (WCAG 3.3.8)', () => {
@@ -263,4 +265,86 @@ test('#197: main.js czyści dane przy wylogowaniu, powrocie, hashchange i pagehi
   assert.match(main, /addEventListener\("hashchange"[\s\S]{0,160}clearSensitiveViews\(document, \{ keepTokens: false \}\)/);
   assert.match(main.slice(main.indexOf('.back-to-login')), /clearSensitiveViews\(document\)/);
   assert.match(main.slice(main.indexOf('"enroll-confirm-form"')), /enrollmentConfirmError\(/);
+});
+
+test('#164: podsumowanie zaproszenia: rola, klasa, rok, termin i zamaskowany adres; bez pól spoza odpowiedzi', () => {
+  const rows = inviteSummaryRows({
+    email: 'j…@example.invalid', role: 'representative', className: '1A', schoolYear: '2026/2027',
+    expiresAt: '2026-10-06T10:00:00.000Z', accountExists: false, createdBy: 'nie pokazuj',
+  });
+  assert.deepEqual(rows.map(([label]) => label), ['Adres e-mail konta', 'Rola', 'Klasa', 'Rok szkolny', 'Ważne do']);
+  assert.equal(rows[1][1], 'Przedstawiciel klasy');
+  assert.match(rows[4][1], /2026/);
+  assert.ok(!JSON.stringify(rows).includes('nie pokazuj'));
+  assert.deepEqual(inviteSummaryRows({ role: 'board', expiresAt: 'zla data' }).map(([label]) => label), ['Rola']);
+  assert.deepEqual(inviteSummaryRows(null), []);
+});
+
+test('#164: wariant formularza zaproszenia zależy od accountExists; domyślnie nowe konto z dwoma polami', () => {
+  assert.equal(inviteFormMode({ accountExists: true }).existing, true);
+  assert.equal(inviteFormMode({ accountExists: true }).passwordLabel, 'Obecne hasło');
+  assert.equal(inviteFormMode({ accountExists: true }).autocomplete, 'current-password');
+  for (const preview of [null, undefined, {}, { accountExists: false }]) {
+    const mode = inviteFormMode(preview);
+    assert.equal(mode.existing, false);
+    assert.equal(mode.passwordLabel, 'Nowe hasło');
+    assert.equal(mode.autocomplete, 'new-password');
+  }
+  assert.match(html, /id="invite-repeat-group"/);
+  assert.match(html, /id="invite-summary"/);
+  assert.match(css, /overflow-wrap: anywhere/);
+});
+
+test('#161: powrót z panelu po 403 mfa_enrollment_required prowadzi do zapisu MFA z wyjaśnieniem, nie do listy paneli', () => {
+  assert.equal(enrollReasonFromFragment('#next=%2Faudit%2F&reason=enroll'), true);
+  assert.equal(enrollReasonFromFragment('#next=%2Faudit%2F'), false);
+  assert.equal(enrollReasonFromFragment('#reason=inne'), false);
+  // Rola spoza MFA_REQUIRED_ROLES: nextView nadal daje „start” (lista ról bez zmian, D-10),
+  // a decyzję o widoku enroll podejmuje login/main.js na podstawie powodu z adresu.
+  const rep = { authenticated: true, mfaVerified: false, mfaEnrolled: false, mfaRequiredByRole: false, mfaRequired: false };
+  assert.equal(nextView(rep), 'start');
+  assert.equal(canOfferVoluntaryMfaEnrollment(rep), true);
+  assert.match(enrollIntroText(false, { page: true }), /wymaga weryfikacji dwuetapowej/);
+  assert.match(enrollIntroText(false, { page: true }), /wrócisz do tej strony/);
+  assert.notEqual(enrollIntroText(false, { page: true }), enrollIntroText(false));
+  const main = read('login/main.js');
+  assert.match(main, /view === "start" && initial && returnTo && enrollReason && canOfferVoluntaryMfaEnrollment\(state\)/);
+});
+
+test('ekran startowy: lista paneli z visiblePanels (przydziały), nie stała lista 10 paneli', () => {
+  const ids = (grants) => startPanels(grants).map((panel) => panel.href);
+  // Konto bez przydziałów: tylko strona publiczna.
+  assert.deepEqual(ids([]), ['/site/']);
+  assert.deepEqual(ids(undefined), ['/site/']);
+  // Skarbnik: kampanie, uzgodnienia i zamknięcie roku (były pomijane), bez kont i importu.
+  const treasurer = ids([{ role: 'treasurer', schoolYearId: 'y1' }]);
+  for (const href of ['/email/', '/reconciliation/', '/year-close/', '/panel/', '/ledger/']) assert.ok(treasurer.includes(href), href);
+  for (const href of ['/admin/', '/import/', '/audit/', '/news/']) assert.ok(!treasurer.includes(href), href);
+  // Komisja Rewizyjna: raport roczny i zebrania, bez paneli finansowych (bez odmów).
+  const audit = ids([{ role: 'audit' }]);
+  assert.ok(audit.includes('/audit/') && audit.includes('/meetings/'));
+  for (const href of ['/panel/', '/ledger/', '/families/', '/email/']) assert.ok(!audit.includes(href), href);
+  // Przedstawiciel klasy: bez finansów; dwa przydziały nie dublują linków.
+  const rep = ids([{ role: 'representative', classId: 'c1' }, { role: 'representative', classId: 'c2' }]);
+  assert.equal(new Set(rep).size, rep.length);
+  assert.ok(rep.includes('/families/') && rep.includes('/news/'));
+  for (const href of ['/panel/', '/ledger/', '/email/', '/admin/']) assert.ok(!rep.includes(href), href);
+  // Administrator: konta i aktualności, ale nie kampanie ani zamknięcie roku (serwer ich nie wpuszcza).
+  const admin = ids([{ role: 'admin' }]);
+  assert.ok(admin.includes('/admin/') && admin.includes('/news/'));
+  assert.ok(!admin.includes('/email/') && !admin.includes('/year-close/'));
+  // Strona publiczna zawsze na końcu.
+  assert.equal(ids([{ role: 'board' }]).at(-1), '/site/');
+});
+
+test('ekran startowy: wszystkie panele z shared/shell.js mają opis, a suma ról pokrywa każdy panel', () => {
+  assert.deepEqual(Object.keys(PANEL_HINTS).sort(), shellPanels.map((panel) => panel.id).sort());
+  assert.ok(shellPanels.every((panel) => PANEL_HINTS[panel.id]));
+  const everyRole = [...new Set(shellPanels.flatMap((panel) => panel.roles))].map((role) => ({ role }));
+  const hrefs = startPanels(everyRole).map((panel) => panel.href);
+  for (const panel of shellPanels) assert.ok(hrefs.includes(panel.href), panel.href);
+  // Kolejność i etykiety pochodzą z shell.js (jedno źródło prawdy).
+  assert.deepEqual(hrefs.slice(0, -1), shellPanels.map((panel) => panel.href));
+  assert.match(read('login/core.js'), /visiblePanels/);
+  assert.match(read('login/main.js'), /startPanels\(access && access\.grants\)/);
 });

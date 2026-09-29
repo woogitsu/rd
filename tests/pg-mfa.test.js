@@ -45,10 +45,12 @@ async function enroll(env, cookie) {
 async function enrollAndConfirm(db, env, userId) {
   const cookie = await seedUserSession(db, { userId });
   const enrolled = await enroll(env, cookie);
-  const confirm = await handlePgRequest(post('/api/mfa/confirm', cookie, { code: codeAt(enrolled.secret) }), env);
+  // Kod potwierdzenia zwracamy, by test replay użył dokładnie tego samego kodu (bez ponownego liczenia z Date.now()).
+  const confirmCode = codeAt(enrolled.secret);
+  const confirm = await handlePgRequest(post('/api/mfa/confirm', cookie, { code: confirmCode }), env);
   assert.equal(confirm.status, 200);
   const data = await confirm.json();
-  return { cookie: cookieFrom(confirm), secret: enrolled.secret, factorId: enrolled.factorId, recoveryCodes: data.recoveryCodes };
+  return { cookie: cookieFrom(confirm), secret: enrolled.secret, factorId: enrolled.factorId, recoveryCodes: data.recoveryCodes, confirmCode };
 }
 
 async function sessionState(env, cookie) {
@@ -201,13 +203,13 @@ test('enrollment stores the secret encrypted only and confirmation rotates the s
 }));
 
 test('verify sets MFA only on the calling session and refuses a replayed step', async () => withDb(async (db, env) => {
-  const { secret } = await enrollAndConfirm(db, env, 'u-verify');
+  const { secret, confirmCode } = await enrollAndConfirm(db, env, 'u-verify');
   const sessionA = await seedUserSession(db, { userId: 'u-verify' });
   const sessionB = await seedUserSession(db, { userId: 'u-verify' });
   const other = await seedUserSession(db, { userId: 'u-other' });
 
   // Kod bieżącego kroku został zużyty przy potwierdzeniu — ponowne użycie odrzucone.
-  const replay = await handlePgRequest(post('/api/mfa/verify', sessionA, { code: codeAt(secret) }), env);
+  const replay = await handlePgRequest(post('/api/mfa/verify', sessionA, { code: confirmCode }), env);
   assert.equal(replay.status, 400);
   assert.deepEqual(await replay.json(), { error: 'invalid_code' });
   const [failed] = await auditActions(db, 'mfa.failed', 'u-verify');

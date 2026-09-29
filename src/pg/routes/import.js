@@ -601,7 +601,12 @@ async function commit(env, actorId, payload, idempotencyKey) {
     // Audyt: aktor, rok i liczniki. Bez imion, nazwisk, adresów i identyfikatorów ze źródła.
     await insertAuditEvent(tx, {
       actorId, action: 'import.committed', entityType: 'import_batch', entityId: batchId,
-      metadata: { schoolYearId: payload.schoolYearId, skipConflicts: payload.skipConflicts, allowNewHouseholds: payload.allowNewHouseholds, counts: c },
+      metadata: {
+        schoolYearId: payload.schoolYearId, skipConflicts: payload.skipConflicts, allowNewHouseholds: payload.allowNewHouseholds, counts: c,
+        // #98: ile wierszy pominięto z powodu możliwej zmiany danych opiekuna (sama liczba).
+        guardianConflictRows: plan.rows.filter((row) => row.messages?.includes(MESSAGES.guardianMaybeChanged)).length,
+        missingFromFileCount: plan.missingFromFile.count,
+      },
     });
     return { status: 201, body: batchResult(rows[0], false) };
   });

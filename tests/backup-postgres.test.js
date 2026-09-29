@@ -212,3 +212,78 @@ test('sha256Hex is used consistently for the stored envelope (sanity check)', as
     await db.close();
   }
 });
+
+// Punkt odniesienia z chwili kopii (backup_runs.row_counts/sums): próba
+// odtworzenia porównuje z nim raport z bazy docelowej (#90).
+async function backupWithBaseline(db, storage, publicKey, report) {
+  await runBackup({
+    db, storage, encryptPublicKeyPem: publicKey, environment: 'test',
+    dump: async () => ({ plaintext: Buffer.from('dump syntetyczny'), report }),
+  });
+}
+
+const drillArgs = (db, storage, privateKey, restoredReport) => ({
+  db,
+  storage,
+  decryptPrivateKeyPem: privateKey,
+  sourceUrl: 'postgres://u:p@host/rd',
+  targetUrl: 'postgres://u:p@other-host/rd',
+  environment: 'staging',
+  restore: async () => {},
+  migrateTarget: async () => [],
+  reportQuery: async () => structuredClone(restoredReport),
+});
+
+test('runBackup/runRestoreDrill: raport z kopii jest punktem odniesienia — zgodność', async () => {
+  const db = await createTestDb();
+  try {
+    const { publicKey, privateKey } = keyPair();
+    const storage = createMemoryStorage();
+    const report = { rowCounts: { payment_entries: 3 }, sums: { 'sum.payment_entries.amount_cents': 4500, 'sha256.payment_entries': 'a'.repeat(64) } };
+    await backupWithBaseline(db, storage, publicKey, report);
+    const stored = await latestSuccessfulBackupRun(db, 'backup');
+    assert.deepEqual(stored.row_counts, report.rowCounts);
+    assert.deepEqual(stored.sums, report.sums);
+
+    const result = await runRestoreDrill(drillArgs(db, storage, privateKey, report));
+    assert.equal(result.comparison, 'matched');
+  } finally {
+    await db.close();
+  }
+});
+
+test('runRestoreDrill: niezgodny raport (brakująca wpłata) → błąd restore_report_mismatch, wpis failure', async () => {
+  const db = await createTestDb();
+  try {
+    const { publicKey, privateKey } = keyPair();
+    const storage = createMemoryStorage();
+    const report = { rowCounts: { payment_entries: 3 }, sums: { 'sum.payment_entries.amount_cents': 4500 } };
+    await backupWithBaseline(db, storage, publicKey, report);
+
+    const restored = { rowCounts: { payment_entries: 2 }, sums: { 'sum.payment_entries.amount_cents': 3000 } };
+    await assert.rejects(
+      runRestoreDrill(drillArgs(db, storage, privateKey, restored)),
+      (error) => error.code === 'restore_report_mismatch' && error.differences.length === 2,
+    );
+    const { rows } = await db.query("SELECT result, error_code, row_counts FROM backup_runs WHERE kind = 'restore_drill'");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].result, 'failure');
+    assert.equal(rows[0].error_code, 'restore_report_mismatch');
+    assert.equal(rows[0].row_counts, null, 'niezgodny raport nie jest zapisywany jako wynik');
+  } finally {
+    await db.close();
+  }
+});
+
+test('runRestoreDrill: kopia bez raportu → comparison no_baseline (nie „zgodna”)', async () => {
+  const db = await createTestDb();
+  try {
+    const { publicKey, privateKey } = keyPair();
+    const storage = createMemoryStorage();
+    await runBackup({ db, dump: async () => Buffer.from('x'), storage, encryptPublicKeyPem: publicKey, environment: 'test' });
+    const result = await runRestoreDrill(drillArgs(db, storage, privateKey, { rowCounts: { t: 1 }, sums: {} }));
+    assert.equal(result.comparison, 'no_baseline');
+  } finally {
+    await db.close();
+  }
+});

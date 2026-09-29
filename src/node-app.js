@@ -38,6 +38,9 @@ const MIME_TYPES = new Map([
   ['.webp', 'image/webp'],
 ]);
 
+const HSTS_VALUE = 'max-age=31536000';
+const PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()';
+
 const STATIC_SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; base-uri 'none'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'",
   'Referrer-Policy': 'no-referrer',
@@ -51,18 +54,26 @@ const STATIC_SECURITY_HEADERS = {
 // nigdzie. `baselineSecurityHeaders` daje te same podstawowe nagłówki KAŻDEJ odpowiedzi
 // serwera Node; HSTS tylko gdy PUBLIC_BASE_URL zaczyna się od `https://` (na stagingu za
 // TLS proxy Railway; lokalnie/w testach zwykle `http://` albo brak — bez HSTS). Bez
-// `preload` — to decyzja właściciela domeny (docs/AUTH.md).
+// `includeSubDomains` ani `preload` — to zależy od domeny docelowej (D-20, docs/SECURITY_REVIEW.md);
+// włączenie ich bez HTTPS na wszystkich subdomenach szkoły zablokowałoby inne usługi.
 export function baselineSecurityHeaders(publicBaseUrl) {
   const headers = {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'no-referrer',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Permissions-Policy': PERMISSIONS_POLICY,
   };
   if (/^https:\/\//i.test(String(publicBaseUrl ?? '').trim())) {
-    headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
+    headers['Strict-Transport-Security'] = HSTS_VALUE;
   }
   return headers;
 }
+
+// Odpowiedzi JSON nie renderują niczego: CSP odcina wszystko i zakazuje osadzenia.
+// Trasy z własnym CSP (pobranie/podgląd dokumentu, raporty HTML) go nie tracą.
+export const JSON_CSP = "default-src 'none'; frame-ancestors 'none'";
+function jsonBaseline(baseline) { return { ...baseline, 'Content-Security-Policy': JSON_CSP }; }
 
 async function requestBody(request, limit = MAX_BODY_BYTES) {
   const length = Number(request.headers['content-length'] ?? 0);
@@ -156,6 +167,10 @@ async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baselin
   for (const [name, value] of webResponse.headers) {
     if (name.toLowerCase() !== 'set-cookie') nodeResponse.setHeader(name, value);
   }
+  if (!nodeResponse.hasHeader('Content-Security-Policy')
+    && /^application\/(?:[\w.+-]+\+)?json\b/i.test(String(webResponse.headers.get('content-type') ?? ''))) {
+    nodeResponse.setHeader('Content-Security-Policy', JSON_CSP);
+  }
   const cookies = webResponse.headers.getSetCookie?.() ?? [];
   if (cookies.length) nodeResponse.setHeader('Set-Cookie', cookies);
   if (apiRequest) nodeResponse.setHeader('Cache-Control', 'no-store');
@@ -212,7 +227,7 @@ function logRequest(logger, metrics, request, response, started) {
 async function serveReadiness(response, env, readiness, baseline) {
   const { ready, body } = await readiness(env);
   response.writeHead(ready ? 200 : 503, {
-    ...baseline,
+    ...jsonBaseline(baseline),
     'Cache-Control': 'no-store',
     'Content-Type': 'application/json; charset=utf-8',
   });
@@ -223,17 +238,18 @@ async function serveReadiness(response, env, readiness, baseline) {
 // osobny od /health/ready — dla monitora zewnętrznego, nie dla Railway.
 // Brak konfiguracji tokenu = punkt wyłączony (401), żeby nie ujawnić stanu
 // zadań bez jawnej decyzji operacyjnej.
-async function serveJobsHealth(request, response, env, jobsHealth) {
+async function serveJobsHealth(request, response, env, jobsHealth, baseline) {
   const expected = env.HEALTH_JOBS_TOKEN;
   const header = request.headers.authorization;
   const provided = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!expected || !tokensMatch(provided, expected)) {
-    response.writeHead(401, { 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' });
+    response.writeHead(401, { ...jsonBaseline(baseline), 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({ status: 'unauthorized' }));
     return;
   }
   const { ok, failedThresholds } = await jobsHealth(env);
   response.writeHead(ok ? 200 : 503, {
+    ...jsonBaseline(baseline),
     'Cache-Control': 'no-store',
     'Content-Type': 'application/json; charset=utf-8',
     'X-Content-Type-Options': 'nosniff',
@@ -264,7 +280,7 @@ export function createNodeHandler({
         return;
       }
       if (url.pathname === '/health/jobs' && ['GET', 'HEAD'].includes(request.method)) {
-        await serveJobsHealth(request, response, env, jobsHealth);
+        await serveJobsHealth(request, response, env, jobsHealth, baseline);
         return;
       }
       // Strona startowa: osoby bez sesji trafiają na logowanie; strona publiczna jest pod /site/.
@@ -282,6 +298,13 @@ export function createNodeHandler({
         response.end(request.method === 'HEAD' ? undefined : ROBOTS_TXT_BODY);
         return;
       }
+      // Przegląd demo: przeglądarka pyta o /favicon.ico przy każdej stronie, a 404 kończył
+      // się błędem w konsoli na każdym ekranie. Aplikacja nie ma ikony — 204 bez treści.
+      if (url.pathname === '/favicon.ico' && ['GET', 'HEAD'].includes(request.method)) {
+        response.writeHead(204, { ...baseline, 'Cache-Control': 'public, max-age=86400' });
+        response.end();
+        return;
+      }
       if (await serveStatic(request, response, url, distRoot, baseline)) return;
       const method = request.method || 'GET';
       // #126 (SR-13): ogólny limiter PRZED odczytem ciała i zapytaniem do bazy.
@@ -290,7 +313,7 @@ export function createNodeHandler({
       });
       if (!slot.ok) {
         response.writeHead(429, {
-          ...baseline,
+          ...jsonBaseline(baseline),
           'Cache-Control': 'no-store',
           'Content-Type': 'application/json; charset=utf-8',
           'Retry-After': String(slot.retryAfter),
@@ -334,7 +357,7 @@ export function createNodeHandler({
       const tooLarge = error instanceof RangeError && error.message === 'request_too_large';
       if (!tooLarge) logger.error('http_handler_error', describeError(error));
       response.writeHead(tooLarge ? 413 : 500, {
-        ...baseline,
+        ...jsonBaseline(baseline),
         'Cache-Control': 'no-store',
         'Content-Type': 'application/json; charset=utf-8',
       });
