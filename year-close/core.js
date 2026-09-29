@@ -88,6 +88,29 @@ export function isLikelyOwnClosure(status, actorId) {
   return Boolean(status && actorId && status.initiatedBy === actorId);
 }
 
+// Rozpoczęcie zamknięcia: serwer (startClosing) wymaga roli CLOSE_ROLES i roku bez
+// wiersza zamknięcia (stan open). Lista kontrolna NIE jest warunkiem rozpoczęcia —
+// punkty można potwierdzać dopiero po rozpoczęciu (year_close_not_started), więc
+// jej brak nie może blokować przycisku. Warunek dotyczy dopiero „Zamknij rok”.
+export function canOfferStart(status, grants, schoolYearId = '') {
+  return Boolean(status) && status.status === 'open' && hasCloseAccess(grants, schoolYearId);
+}
+
+// Treść okna potwierdzenia rozpoczęcia (shared/confirm-dialog.js, destructive).
+export function startConfirmation(schoolYearId, nextSchoolYearId) {
+  return {
+    title: 'Rozpocząć zamknięcie roku?',
+    destructive: true,
+    confirmLabel: 'Rozpocznij zamknięcie',
+    effects: [
+      `Rok ${schoolYearId} przejdzie w stan „zamykanie”, a rok docelowy ${nextSchoolYearId} zostanie na stałe zapisany w wierszu zamknięcia.`,
+      'Rozpoczęcia nie da się cofnąć ani usunąć — ani z tego ekranu, ani przez API. Zdarzenie trafia do dziennika z Twoim kontem.',
+      'Samo rozpoczęcie niczego jeszcze nie zamyka. Zamknięcie roku (przeniesienie bilansu, wygaszenie ról tej kadencji) wymaga potwierdzenia całej listy kontrolnej i drugiej osoby.',
+    ],
+    warning: 'Na danych demonstracyjnych i próbnych nie rozpoczynaj zamknięcia.',
+  };
+}
+
 export function canOfferClose(status, actorId) {
   return Boolean(status)
     && status.status === 'closing'
