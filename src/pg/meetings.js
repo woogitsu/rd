@@ -613,35 +613,40 @@ export async function listMeetings(db, actor, input = {}) {
 }
 
 export async function getMeeting(db, actor, input = {}, env) {
-  const meeting = await loadMeeting(db, input.meetingId);
-  try {
-    authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
-  } catch (error) {
-    if (!(error instanceof MeetingError) || error.status !== 403
-        || !isClassHost(actor, env, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, kind: meeting.kind })) {
-      // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
-      if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
-      throw error;
+  // #158: zebranie i jego pięć list (porządek, obecność, kworum, protokoły,
+  // uchwały) czytane z JEDNEJ migawki REPEATABLE READ, READ ONLY, kolejno na
+  // jednym połączeniu (jak readSnapshot w db-snapshot.js, ale przez
+  // inTransaction, który obsługuje też gołego klienta) — wcześniej równoległe zapytania na puli dawały pięć migawek.
+  return inTransaction(db, async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    const meeting = await loadMeeting(tx, input.meetingId);
+    try {
+      authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
+    } catch (error) {
+      if (!(error instanceof MeetingError) || error.status !== 403
+          || !isClassHost(actor, env, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, kind: meeting.kind })) {
+        // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
+        if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
+        throw error;
+      }
     }
-  }
-  const [agenda, attendees, checks, minutes, resolutions] = await Promise.all([
-    db.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]),
-    db.query('SELECT * FROM meeting_attendees WHERE meeting_id = $1 ORDER BY recorded_at, id', [meeting.id]),
-    db.query(`${QUORUM_CHECK_SELECT} WHERE c.meeting_id = $1 ORDER BY c.seq`, [meeting.id]),
-    db.query(
+    const agenda = await tx.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]);
+    const attendees = await tx.query('SELECT * FROM meeting_attendees WHERE meeting_id = $1 ORDER BY recorded_at, id', [meeting.id]);
+    const checks = await tx.query(`${QUORUM_CHECK_SELECT} WHERE c.meeting_id = $1 ORDER BY c.seq`, [meeting.id]);
+    const minutes = await tx.query(
       `SELECT m.*, v.visibility FROM meeting_minutes m
          JOIN meeting_minutes_visibility v ON v.minutes_id = m.id
-        WHERE m.meeting_id = $1 ORDER BY m.version`, [meeting.id]),
-    db.query('SELECT * FROM resolutions WHERE meeting_id = $1 ORDER BY created_at, revision, id', [meeting.id]),
-  ]);
-  return {
-    meeting: meetingFromRow(meeting),
-    agenda: agenda.rows.map(agendaItemFromRow),
-    attendees: attendees.rows.map(attendeeFromRow),
-    quorumChecks: checks.rows.map(quorumCheckFromRow),
-    minutes: minutes.rows.map(minutesFromRow),
-    resolutions: resolutions.rows.map(resolutionFromRow),
-  };
+        WHERE m.meeting_id = $1 ORDER BY m.version`, [meeting.id]);
+    const resolutions = await tx.query('SELECT * FROM resolutions WHERE meeting_id = $1 ORDER BY created_at, revision, id', [meeting.id]);
+    return {
+      meeting: meetingFromRow(meeting),
+      agenda: agenda.rows.map(agendaItemFromRow),
+      attendees: attendees.rows.map(attendeeFromRow),
+      quorumChecks: checks.rows.map(quorumCheckFromRow),
+      minutes: minutes.rows.map(minutesFromRow),
+      resolutions: resolutions.rows.map(resolutionFromRow),
+    };
+  });
 }
 
 export async function createMeeting(db, actor, input = {}, env) {
