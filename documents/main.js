@@ -20,6 +20,8 @@ import {
   makeIdempotencyKey,
   metadataRows,
   metadataUrl,
+  previewKind,
+  previewUrl,
   normalizeDocument,
   submissionFingerprint,
   titleLabel,
@@ -58,6 +60,11 @@ const loadMore = byId("load-more");
 const details = byId("details");
 const detailsList = byId("details-list");
 const detailsDownload = byId("details-download");
+const detailsPreview = byId("details-preview");
+const previewArea = byId("preview-area");
+const previewMessage = byId("preview-message");
+const previewImage = byId("preview-image");
+const previewFrame = byId("preview-frame");
 const descriptionHistory = byId("description-history");
 const descriptionForm = byId("description-form");
 const descriptionStatus = byId("description-status");
@@ -212,6 +219,9 @@ async function showDetails(id, trigger) {
   descriptionForm.reset();
   setMessage(descriptionStatus, "");
   state.currentDocumentId = null;
+  state.currentDocument = null;
+  clearPreview();
+  detailsPreview.hidden = true;
   state.descriptionPending = null;
   // Link pobierania nigdy nie wskazuje poprzedniego dokumentu (#192).
   detailsDownload.hidden = true;
@@ -237,7 +247,9 @@ async function showDetails(id, trigger) {
     detailsList.replaceChildren(...rows);
     detailsDownload.href = contentUrl(result.document.id);
     detailsDownload.hidden = false;
+    detailsPreview.hidden = previewKind(result.document.mimeType) === null;
     state.currentDocumentId = result.document.id;
+    state.currentDocument = result.document;
     renderDescriptionHistory(result.descriptionHistory);
   } catch (error) {
     if (state.detailsRequest !== request) return;
@@ -246,7 +258,41 @@ async function showDetails(id, trigger) {
   }
 }
 
+function clearPreview() {
+  previewImage.hidden = true;
+  previewImage.removeAttribute("src");
+  previewFrame.hidden = true;
+  previewFrame.removeAttribute("src");
+  previewArea.hidden = true;
+  previewMessage.textContent = "";
+}
+
+// Podgląd (#89): obraz przez <img>, PDF w <iframe sandbox=""> (bez skryptów, bez
+// dostępu do originu panelu). Adres to autoryzowany endpoint serwera, nie token.
+detailsPreview.addEventListener("click", () => {
+  const id = state.currentDocumentId;
+  if (!id) return;
+  const kind = previewKind(state.currentDocument?.mimeType);
+  clearPreview();
+  if (!kind) return;
+  previewArea.hidden = false;
+  previewMessage.className = "message";
+  previewMessage.textContent = "Wczytywanie podglądu…";
+  const target = kind === "image" ? previewImage : previewFrame;
+  target.addEventListener("load", () => { previewMessage.textContent = ""; }, { once: true });
+  if (kind === "image") {
+    previewImage.addEventListener("error", () => {
+      previewMessage.className = "message error";
+      previewMessage.textContent = "Nie udało się wczytać podglądu. Sesja mogła wygasnąć albo brak dostępu — spróbuj pobrać plik.";
+      previewImage.hidden = true;
+    }, { once: true });
+  }
+  target.src = previewUrl(id);
+  target.hidden = false;
+});
+
 function closeDetails() {
+  clearPreview();
   details.hidden = true;
   details.returnFocus?.focus?.();
 }
