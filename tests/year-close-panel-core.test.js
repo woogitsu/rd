@@ -128,8 +128,8 @@ test('startConfirmation: okno destrukcyjne z opisem nieodwracalności i rokiem d
   const dialog = startConfirmation('2026-2027', '2027-2028');
   assert.equal(dialog.destructive, true);
   const text = dialog.effects.join(' ');
-  assert.match(text, /2026-2027/);
-  assert.match(text, /2027-2028/);
+  assert.match(text, /2026\/2027/);
+  assert.match(text, /2027\/2028/);
   assert.match(text, /nie da się cofnąć/);
   assert.match(text, /lista kontrolna|listy kontrolnej/);
 });

@@ -11,6 +11,7 @@
 // Korekta liczy się z datą korygowanego wpisu — jak w ledger_balance_at (0015),
 // więc saldo narastające na koniec roku = bilans zamknięcia z ledger_year_summary.
 
+import { formatSchoolYear } from '../../shared/school-year.js';
 import { createHash } from 'node:crypto';
 import { REPORT_CSS, escapeHtml, formatDate, formatEur } from './audit-report.js';
 import { toSafeInteger } from './routes/payments.js';
@@ -214,13 +215,13 @@ export function renderAnnualReportHtml(report, { snapshot = null } = {}) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Sprawozdanie finansowe — ${e(schoolYear.label)}</title>
+<title>Sprawozdanie finansowe — ${e(formatSchoolYear(schoolYear.label))}</title>
 <style>${REPORT_CSS}</style>
 </head>
 <body>
 <header>
 <h1>Sprawozdanie finansowe Rady Rodziców</h1>
-<p>Rok szkolny ${e(schoolYear.label)} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
+<p>Rok szkolny ${e(formatSchoolYear(schoolYear.label))} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
 ${header}
 </header>
 

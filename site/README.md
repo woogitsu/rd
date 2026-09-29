@@ -1,6 +1,6 @@
 # Strona publiczna
 
-Strona tylko do odczytu dla rodziców i gości: Rada Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli. Prototyp; nie jest to gotowe wdrożenie.
+Strona tylko do odczytu dla rodziców i gości: Rada Rodziców Szkoły Polskiej w Brukseli. Prototyp; nie jest to gotowe wdrożenie.
 
 ## Uruchomienie
 

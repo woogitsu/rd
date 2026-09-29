@@ -1,3 +1,4 @@
+import { applySchoolName } from "../shared/school.js";
 import {
   canOfferVoluntaryMfaEnrollment,
   clearSensitiveViews,
@@ -35,6 +36,8 @@ const TITLES = {
   change: "Zmiana hasła",
   start: "Panel Rady Rodziców",
 };
+applySchoolName();
+
 const byId = (id) => document.getElementById(id);
 const globalMessage = byId("global-message");
 let lastState = null;

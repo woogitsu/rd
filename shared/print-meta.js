@@ -1,6 +1,8 @@
 // Metadane wydruku (#151): widoczne wyłącznie w @media print (shared/print.css),
 // generowane w DOM tuż przed drukiem. Bez sieci, bez zależności od panelu —
 // testowane w tests/print-meta.test.js.
+import { formatSchoolYear } from "./school-year.js";
+
 export const TIME_ZONE = "Europe/Brussels";
 
 const DATE_FMT = new Intl.DateTimeFormat("pl-PL", {
@@ -38,7 +40,7 @@ export function printMetaLines({
   const lines = [];
   if (draft) lines.push({ text: "PROJEKT — dokument niezatwierdzony", strong: true });
   if (view) lines.push({ text: view, strong: true });
-  if (schoolYear) lines.push({ text: `Rok szkolny: ${schoolYear}` });
+  if (schoolYear) lines.push({ text: `Rok szkolny: ${formatSchoolYear(schoolYear)}` });
   if (filters) lines.push({ text: `Filtry: ${filters}` });
   lines.push({ text: `Wydrukowano: ${formatPrintedAt(now)}${printedBy ? ` przez ${printedBy}` : ""}` });
   if (incompleteCount != null) lines.push({ text: `Wydruk niepełny — pokazano ${incompleteCount} wpisów.` });

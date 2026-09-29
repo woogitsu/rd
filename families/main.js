@@ -15,6 +15,7 @@ import {
   sortStudentsByName,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { formatSchoolYear } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
@@ -90,7 +91,7 @@ async function renderClasses() {
     const section = document.createElement("section");
     section.className = "card";
     const heading = document.createElement("h2");
-    heading.textContent = `Rok szkolny ${group.label}`;
+    heading.textContent = `Rok szkolny ${formatSchoolYear(group.label)}`;
     const table = document.createElement("table");
     table.innerHTML = "<thead><tr><th>Klasa</th><th class=\"amount\">Uczniowie</th></tr></thead>";
     const body = document.createElement("tbody");
@@ -148,7 +149,7 @@ async function renderBoardOverview() {
   const years = groupClassesByYear(classes);
   const select = byId("board-overview-year");
   if (!select.options.length) {
-    select.replaceChildren(...years.map((group) => new Option(group.label, group.schoolYearId)));
+    select.replaceChildren(...years.map((group) => new Option(formatSchoolYear(group.label), group.schoolYearId)));
     select.addEventListener("change", () => { renderBoardOverview().catch((error) => showMessage(error.message, true)); });
   }
   setBreadcrumbs([{ text: "Klasy", href: "#/" }, { text: "Statystyki klas" }]);
@@ -217,13 +218,13 @@ async function renderClass(classId) {
   byId("student-search").value = "";
   setBreadcrumbs([{ text: "Klasy", href: "#/" }, { text: data.class.name }]);
   byId("class-title").textContent = `Klasa ${data.class.name}`;
-  byId("class-year").textContent = `Rok szkolny ${data.class.schoolYearLabel}`;
+  byId("class-year").textContent = `Rok szkolny ${formatSchoolYear(data.class.schoolYearLabel)}`;
   renderStudentRows();
   showView("class");
   // Dane rodzin są poufne (docs), więc każdy wydruk listy klasy dostaje znacznik (#151).
   mountPrintMeta(byId("print-meta"), {
     view: `Lista klasy ${data.class.name}`,
-    schoolYear: data.class.schoolYearLabel,
+    schoolYear: formatSchoolYear(data.class.schoolYearLabel),
     printedBy,
     confidential: true,
   });

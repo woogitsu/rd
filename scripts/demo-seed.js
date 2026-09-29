@@ -41,6 +41,8 @@ import { pad } from './lib/synthetic-seed.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createDirectoryStorage } from '../src/storage-dir.js';
 import { buildDemoPdf, DEMO_INVOICE_PDF, DEMO_MINUTES_PDF } from './lib/demo-pdf.js';
+import { SCHOOL_YEAR_ID, SCHOOL_YEAR_LABEL } from './lib/demo-constants.js';
+import { SCHOOL_NAME } from '../shared/school.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(HERE, '..');
@@ -62,8 +64,7 @@ export const DEMO_ORIGIN = 'http://localhost:3000';
 // zob. też druga asercja w tests/demo-seed.test.js (GET
 // /api/meetings/public-minutes zwraca ≥1 protokół) i wypisywany na konsoli
 // link z jawnym „?rok=”, gdyby demo działo się poza wrześniem bieżącego roku.
-export const SCHOOL_YEAR_ID = '2026-2027';
-export const SCHOOL_YEAR_LABEL = '2026/2027';
+export { SCHOOL_YEAR_ID, SCHOOL_YEAR_LABEL };
 export const HOUSEHOLD_COUNT = 20;
 export const CLASS_NAMES = ['0-A', 'I-A', 'II-A', 'III-A', 'IV-A'];
 
@@ -509,8 +510,8 @@ async function seedEvents(env, authorCookie, approverCookie) {
   const drafts = [
     {
       title: 'Zebranie ogólne rodziców (zapowiedź) — dane przykładowe',
-      description: 'Zapowiedź organizacyjna: termin i miejsce zebrania ogólnego Rady Rodziców na rok 2026/2027. To dane przykładowe do pokazu, nie zapis rzeczywistego wydarzenia.',
-      location: 'Sala gimnastyczna, Szkoła Polska im. J. Lelewela w Brukseli',
+      description: `Zapowiedź organizacyjna: termin i miejsce zebrania ogólnego Rady Rodziców na rok ${SCHOOL_YEAR_LABEL}. To dane przykładowe do pokazu, nie zapis rzeczywistego wydarzenia.`,
+      location: `Sala gimnastyczna, ${SCHOOL_NAME}`,
       startsAt: '2026-11-14T18:00',
       organizer: 'Rada Rodziców (dane przykładowe)',
     },
@@ -573,7 +574,7 @@ async function seedMeeting(env, hostCookie, hostUserId, approverCookie) {
   });
   const minutes = await apiCall(env, {
     method: 'POST', path: `/api/meetings/${meetingId}/minutes`, cookie: hostCookie, idempotencyKey: idKey('demo-minutes'),
-    body: { body: 'Protokół zebrania zarządu — dane przykładowe. Omówiono bieżące wpłaty i plan wydatków na rok szkolny 2026/2027. Bez uchwał na tym zebraniu.' },
+    body: { body: `Protokół zebrania zarządu — dane przykładowe. Omówiono bieżące wpłaty i plan wydatków na rok szkolny ${SCHOOL_YEAR_LABEL}. Bez uchwał na tym zebraniu.` },
   });
   const minutesId = minutes.data.minutes.id;
   // Zasada czterech oczu: zatwierdzający musi różnić się od autora wersji —
@@ -608,7 +609,7 @@ async function seedNews(env, authorCookie, approverCookie) {
     method: 'POST', path: '/api/news', cookie: authorCookie, idempotencyKey: idKey('demo-news'),
     body: {
       schoolYearId: SCHOOL_YEAR_ID,
-      title: '[DANE PRZYKŁADOWE] Rada Rodziców rozpoczyna rok szkolny 2026/2027',
+      title: `[DANE PRZYKŁADOWE] Rada Rodziców rozpoczyna rok szkolny ${SCHOOL_YEAR_LABEL}`,
       body: 'Neutralne ogłoszenie organizacyjne do pokazu (dane przykładowe): Rada Rodziców zaprasza na najbliższe zebranie ogólne — szczegóły w zakładce „Wydarzenia”.',
     },
   });

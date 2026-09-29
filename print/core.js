@@ -4,6 +4,7 @@ import { parseCsv } from "../import/core.js";
 import { decodeCsvBytes, detectDelimiter } from "../import/csv.js";
 import { formatCents, isValidId, parseEuroAmount } from "../panel/core.js";
 import { MoneyError, parseCentsCell } from "../panel/money.js";
+import { SCHOOL_YEAR_ID_PATTERN, formatSchoolYear } from "../shared/school-year.js";
 import { buildEpcPayload } from "./epc.js";
 import { qrSvgMarkup } from "./qr.js";
 
@@ -238,8 +239,7 @@ export function selectHouseholds(households, selectedIds) {
 // Identyfikator roku z API ("2026-2027") na format treści kartki ("2026/2027").
 // Inny kształt identyfikatora zwraca pusty tekst — pole zostaje do ręcznego uzupełnienia.
 export function schoolYearCardLabel(schoolYearId) {
-  const match = /^(\d{4})-(\d{4})$/.exec(String(schoolYearId ?? "").trim());
-  return match ? `${match[1]}/${match[2]}` : "";
+  return SCHOOL_YEAR_ID_PATTERN.test(String(schoolYearId ?? "").trim()) ? formatSchoolYear(schoolYearId) : "";
 }
 
 export function normalizeConfig(raw = {}) {

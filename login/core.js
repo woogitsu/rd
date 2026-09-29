@@ -3,6 +3,7 @@
 
 import qrcode from "qrcode-generator";
 import { safeNextPath } from "../shared/api.js";
+import { formatSchoolYear } from "../shared/school-year.js";
 import { visiblePanels } from "../shared/shell.js";
 
 export const PASSWORD_MIN = 12;
@@ -147,7 +148,7 @@ export function inviteSummaryRows(preview) {
   if (preview.email) rows.push(["Adres e-mail konta", String(preview.email)]);
   if (preview.role) rows.push(["Rola", INVITE_ROLE_LABELS[preview.role] ?? String(preview.role)]);
   if (preview.className) rows.push(["Klasa", String(preview.className)]);
-  if (preview.schoolYear) rows.push(["Rok szkolny", String(preview.schoolYear)]);
+  if (preview.schoolYear) rows.push(["Rok szkolny", formatSchoolYear(preview.schoolYear)]);
   const expiry = formatInviteExpiry(preview.expiresAt);
   if (expiry) rows.push(["Ważne do", expiry]);
   return rows;

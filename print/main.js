@@ -15,6 +15,7 @@ import { api as apiRequest } from "../shared/api.js";
 import { fillYearSelect } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { COUNCIL_SHORT_NAME, SCHOOL_NAME } from "../shared/school.js";
 
 mountShell();
 
@@ -31,6 +32,9 @@ const state = {
 };
 const byId = (id) => document.getElementById(id);
 const configForm = byId("config-form");
+// Domyślne nazwy z jednego źródła (shared/school.js); użytkownik może je zmienić.
+configForm.elements.councilName.value = COUNCIL_SHORT_NAME;
+configForm.elements.schoolName.value = SCHOOL_NAME;
 const configError = byId("config-error");
 const fileInput = byId("file-input");
 const fileEncoding = byId("file-encoding");
