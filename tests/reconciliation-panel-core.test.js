@@ -4,7 +4,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   WRITE_ROLES,
+  MAX_STATEMENT_FILE_BYTES,
   auditReportUrl,
+  buildStatementFileBody,
+  decodeStatementBytes,
+  describeImportWarnings,
+  describeStatementImportError,
+  detectStatementFormat,
+  statementFileProblem,
+  summarizeStatementImport,
   buildReconciliationsUrl,
   candidateLabel,
   canOfferConfirm,
@@ -133,4 +141,67 @@ test('describeApiError: komunikaty po polsku', () => {
   assert.match(describeApiError(403, 'four_eyes_required'), /inna osoba/);
   assert.match(describeApiError(403, 'forbidden'), /Nie masz uprawnień/);
   assert.equal(describeApiError(500, null), null);
+});
+
+// --- #105: import pliku CODA / CAMT.053 (dane wyłącznie syntetyczne) ---
+
+const SYNTHETIC_CODA_HEAD = `0000030126005${' '.repeat(115)}`.slice(0, 128);
+
+test('detectStatementFormat rozpoznaje CAMT.053 i CODA po treści, nie po nazwie', () => {
+  assert.equal(detectStatementFormat('<?xml version="1.0"?><Document></Document>'), 'camt053');
+  assert.equal(detectStatementFormat('\uFEFF  <Document/>'), 'camt053');
+  assert.equal(detectStatementFormat(`${SYNTHETIC_CODA_HEAD}\n1${' '.repeat(127)}`), 'coda');
+  assert.equal(detectStatementFormat('data;kwota;tytul\n2026-01-15;10,00;x'), null);
+  assert.equal(detectStatementFormat(''), null);
+  assert.equal(detectStatementFormat(null), null);
+});
+
+test('decodeStatementBytes: UTF-8 (także z BOM), a przy błędnym UTF-8 Windows-1252', () => {
+  const utf8 = new TextEncoder().encode('\uFEFF<Ustrd>Zażółć</Ustrd>');
+  assert.deepEqual(decodeStatementBytes(utf8), { text: '<Ustrd>Zażółć</Ustrd>', encoding: 'utf-8' });
+  const latin1 = Uint8Array.from([0x4d, 0xe9, 0x72, 0x69, 0x65]); // „Mérie” w Windows-1252
+  assert.deepEqual(decodeStatementBytes(latin1.buffer), { text: 'Mérie', encoding: 'windows-1252' });
+});
+
+test('statementFileProblem odrzuca brak pliku, pusty i za duży', () => {
+  assert.match(statementFileProblem(null), /Wybierz plik/);
+  assert.match(statementFileProblem({ size: 0 }), /pusty/);
+  assert.match(statementFileProblem({ size: MAX_STATEMENT_FILE_BYTES + 1 }), /200 KB/);
+  assert.equal(statementFileProblem({ size: 1024 }), '');
+  assert.ok(MAX_STATEMENT_FILE_BYTES < 256 * 1024, 'zapas pod limit MAX_IMPORT_BYTES serwera');
+});
+
+test('buildStatementFileBody wysyła treść pod kluczem formatu, jak API', () => {
+  assert.deepEqual(buildStatementFileBody('<Document/>', 'camt053'), { camt053: '<Document/>' });
+  assert.deepEqual(buildStatementFileBody('0000', 'coda'), { coda: '0000' });
+  assert.throws(() => buildStatementFileBody('x', 'csv'), /format pliku/);
+  assert.throws(() => buildStatementFileBody('x', 'auto'), /format pliku/);
+  assert.throws(() => buildStatementFileBody('  \n', 'coda'), /pusty/);
+  assert.throws(() => buildStatementFileBody('a\u0000b', 'coda'), /binarne/);
+  const source = readFileSync(new URL('../src/pg/routes/reconciliation.js', import.meta.url), 'utf8');
+  assert.match(source, /\['lines', 'csv', 'coda', 'camt053'\]/);
+});
+
+test('summarizeStatementImport: liczby, pominięte duplikaty, salda w centach i ostrzeżenia', () => {
+  const summary = summarizeStatementImport({
+    import: { lineCount: 3 },
+    skippedDuplicateCount: 2,
+    fileBalances: { openingBalanceCents: 100_00, closingBalanceCents: 125_50 },
+    warnings: ['closing_balance_mismatch', 'inne'],
+  });
+  assert.match(summary.text, /Wgrano 3 pozycji\./);
+  assert.match(summary.text, /Pominięto 2 ruchów/);
+  assert.match(summary.text, /początkowe 100,00/);
+  assert.match(summary.text, /końcowe 125,50/);
+  assert.equal(summary.warnings.length, 2);
+  assert.match(summary.warnings[0], /Saldo początkowe plus ruchy/);
+  const none = summarizeStatementImport({ import: null, lineCount: 0, skippedDuplicateCount: 4 });
+  assert.match(none.text, /Nie wgrano nowych pozycji/);
+  assert.deepEqual(describeImportWarnings(undefined), []);
+});
+
+test('describeStatementImportError podaje numer rekordu, nigdy treści', () => {
+  const error = Object.assign(new Error('Nie udało się odczytać pliku wyciągu. Sprawdź format pliku.'), { data: { error: 'invalid_statement_file', record: 7 } });
+  assert.match(describeStatementImportError(error), /rekord 7\)$/);
+  assert.equal(describeStatementImportError(new Error('Błąd.')), 'Błąd.');
 });
