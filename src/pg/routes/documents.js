@@ -2,8 +2,8 @@
 //
 //   POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]
 //        ciało = surowe bajty pliku, nagłówki Content-Type i Idempotency-Key
-//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&limit=…][&cursor=…]
-//        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`
+//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&from=…][&to=…][&sort=documentDate|createdAt][&limit=…][&cursor=…]
+//        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`; kursor działa tylko przy sort=createdAt
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
 //   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed
@@ -295,6 +295,18 @@ async function list(request, env, url, json) {
   if (rawQuery !== null && rawQuery.length > 200) return json({ error: 'invalid_request' }, 400);
   // Ucieczka znaków specjalnych ILIKE, żeby "%"/"_" w wyszukiwanej frazie nie działały jako wieloznaczniki.
   const searchQuery = rawQuery ? rawQuery.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`) : '';
+  // Issue #76: zakres daty dokumentu (najnowsza wersja opisu) i sortowanie.
+  // Dokument bez daty nie spełnia filtra from/to; przy sortowaniu po dacie trafia na koniec.
+  const fromDate = url.searchParams.get('from');
+  const toDate = url.searchParams.get('to');
+  if ((fromDate && !validDocumentDate(fromDate)) || (toDate && !validDocumentDate(toDate))) {
+    return json({ error: 'invalid_document_date' }, 400);
+  }
+  if (fromDate && toDate && fromDate > toDate) return json({ error: 'invalid_request' }, 400);
+  const sort = url.searchParams.get('sort') ?? 'createdAt';
+  if (sort !== 'createdAt' && sort !== 'documentDate') return json({ error: 'invalid_request' }, 400);
+  // Kursor keyset opiera się na created_at; przy sort=documentDate obowiązuje offset.
+  if (sort === 'documentDate' && url.searchParams.get('cursor')) return json({ error: 'invalid_request' }, 400);
   // #159: zły limit to 400 invalid_limit (wcześniej po cichu przycinany).
   const failList = (code) => { throw new ListError(code); };
   let limit;
@@ -302,7 +314,7 @@ async function list(request, env, url, json) {
   let cursorScope;
   try {
     limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 50, maxLimit: MAX_LIST_LIMIT }, failList);
-    cursorScope = JSON.stringify(['documents', schoolYearId, kindFilter, classFilter.value, statusFilter, categoryFilter, searchQuery]);
+    cursorScope = JSON.stringify(['documents', schoolYearId, kindFilter, classFilter.value, statusFilter, categoryFilter, searchQuery, fromDate || null, toDate || null]);
     cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope: cursorScope }, failList);
   } catch (error) {
     if (error instanceof ListError) return json({ error: error.code }, 400);
@@ -335,7 +347,7 @@ async function list(request, env, url, json) {
   // Wyszukiwanie i filtr kategorii zawężają zapytanie w SQL, PRZED LIMIT
   // (issue #76 wprost pilnuje tego, by pełna strona znaczyła realne wyniki).
   const queryValues = [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value,
-    limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null];
+    limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null, fromDate || null, toDate || null, sort];
   const after = cursor ? `AND ${afterTimestampDescSql('d.created_at', 'd.id', cursor, queryValues)}` : '';
   const { rows } = await env.db.query(
     `${SELECT_DOCUMENT}
@@ -346,8 +358,10 @@ async function list(request, env, url, json) {
         AND ($9::text = 'all' OR s.document_id IS NULL)
         AND ($10::text IS NULL OR dd.category = $10)
         AND ($11::text IS NULL OR dd.title ILIKE '%' || $11 || '%' OR dd.description ILIKE '%' || $11 || '%')
+        AND ($12::date IS NULL OR dd.document_date >= $12::date)
+        AND ($13::date IS NULL OR dd.document_date <= $13::date)
         ${after}
-      ORDER BY d.created_at DESC, d.id
+      ORDER BY CASE WHEN $14::text = 'documentDate' THEN dd.document_date END DESC NULLS LAST, d.created_at DESC, d.id
       LIMIT $7 OFFSET $8`,
     queryValues,
   );
@@ -355,7 +369,7 @@ async function list(request, env, url, json) {
   // zawężona filtrem uprawnień nie zgubiła dalszych wyników.
   const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), cursorScope);
   const documents = page.items.map(toDocument).filter((doc) => canAccessDocument(context, doc));
-  return json({ documents, limit, offset, nextCursor: page.nextCursor, truncated: page.truncated });
+  return json({ documents, limit, offset, nextCursor: sort === 'documentDate' ? null : page.nextCursor, truncated: page.truncated });
 }
 
 function tooLarge(json) {
