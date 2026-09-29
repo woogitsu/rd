@@ -235,6 +235,13 @@ export function selectHouseholds(households, selectedIds) {
   return households.filter((household) => selected.has(household.householdId));
 }
 
+// Identyfikator roku z API ("2026-2027") na format treści kartki ("2026/2027").
+// Inny kształt identyfikatora zwraca pusty tekst — pole zostaje do ręcznego uzupełnienia.
+export function schoolYearCardLabel(schoolYearId) {
+  const match = /^(\d{4})-(\d{4})$/.exec(String(schoolYearId ?? "").trim());
+  return match ? `${match[1]}/${match[2]}` : "";
+}
+
 export function normalizeConfig(raw = {}) {
   const config = {
     councilName: clean(raw.councilName),
