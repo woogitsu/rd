@@ -376,9 +376,18 @@ export async function grantInvitation(tx, invitation, userId) {
     actorId: userId, action: 'invitation.accepted', entityType: 'invitation', entityId: invitation.id,
     metadata: { grantId },
   });
+  // #184: pierwsza rola admin z bootstrapu (scripts/bootstrap-admin.js) jest
+  // rozpoznawana po zdarzeniu `auth.bootstrap_issued` tego zaproszenia.
+  const bootstrap = (await tx.query(
+    "SELECT 1 FROM audit_events WHERE action = 'auth.bootstrap_issued' AND entity_type = 'invitation' AND entity_id = $1 LIMIT 1",
+    [invitation.id],
+  )).rows[0];
   await insertAuditEvent(tx, {
     actorId: userId, action: 'role_grant.created', entityType: 'role_grant', entityId: grantId,
-    metadata: { role: invitation.role, classId: invitation.class_id, schoolYearId: invitation.school_year_id, invitationId: invitation.id },
+    metadata: {
+      role: invitation.role, classId: invitation.class_id, schoolYearId: invitation.school_year_id, invitationId: invitation.id,
+      ...(bootstrap ? { source: 'bootstrap' } : {}),
+    },
   });
   return grantId;
 }
