@@ -10,7 +10,7 @@ import { escapeHtml, formatEur, REPORT_CSS } from '../src/pg/audit-report.js';
 import {
   createMeeting, createResolution, determineQuorum, recordAttendance, updateMeeting,
 } from '../src/pg/meetings.js';
-import { request, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { request, seedEnrolledHousehold, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Wyłącznie dane syntetyczne. Rok 'y-test': 2026-09-01 – 2027-08-31.
 const YEAR = 'y-test';
@@ -289,8 +289,8 @@ test('reconciliation routes refuse representatives, auditors, missing MFA and an
 });
 
 async function adoptResolution(db, number) {
-  await seedUser(db, { userId: 'u-voter-1' });
-  await seedUser(db, { userId: 'u-voter-2' });
+  await seedRoleGrant(db, { userId: 'u-voter-1', schoolYearId: YEAR });
+  await seedRoleGrant(db, { userId: 'u-voter-2', schoolYearId: YEAR });
   const board = {
     userId: 'u-board', mfaVerified: true,
     grants: [{ role: 'board', classId: null, schoolYearId: YEAR, expiresAt: null }],

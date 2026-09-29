@@ -55,6 +55,10 @@ async function meetingsDb() {
     await db.query('INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)',
       [id, `${id}@example.invalid`, `Synthetic ${id}`]);
   }
+  // #205 (0134): osoba na liście obecności musi mieć w bazie aktywny przydział w roku (i klasie) zebrania.
+  await db.query(`INSERT INTO role_grants (id, user_id, role, class_id, school_year_id) VALUES
+    ('grant-board', 'board', 'board', NULL, 'year'),
+    ('grant-rep2-1a', 'rep2-1a', 'representative', 'class-a', 'year')`);
   return db;
 }
 
@@ -164,6 +168,13 @@ test('lista obecności nie ujawnia opiekunów spoza klasy: przedstawiciel 1A nie
     await assert.rejects(recordAttendance(db, rep1a,
       { meetingId: meeting.id, userId: 'rep2-1a', capacity: 'representative', votingEligible: true, present: true }, ON),
       /forbidden/);
+    // #205 (SR-07): opiekun z innej klasy i nieistniejący, a także konto cudze i nieistniejące,
+    // dostają identyczną odmowę — przedstawiciel nie sprawdzi, co istnieje w szkole.
+    const refusal = (input) => recordAttendance(db, rep1a, { meetingId: meeting.id, capacity: 'guardian', votingEligible: true, present: true, ...input }, ON)
+      .then(() => null, (error) => `${error.status}|${error.code}|${error.message}`);
+    assert.equal(await refusal({ guardianId: 'guardian-1b' }), await refusal({ guardianId: 'guardian-nie-istnieje' }));
+    assert.equal(await refusal({ userId: 'rep-1b' }), await refusal({ userId: 'user-nie-istnieje' }));
+    assert.match(await refusal({ userId: 'rep-1b' }), /^403\|forbidden/);
     // Zarząd (bez zawężenia) może zapisać dowolną osobę jak dotychczas.
     await recordAttendance(db, board,
       { meetingId: meeting.id, userId: 'rep2-1a', capacity: 'representative', votingEligible: true, present: true });

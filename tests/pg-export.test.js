@@ -14,7 +14,7 @@ import {
   assertRestoreAllowed, buildYearlyExport, canonicalJson, restoreBundle, sha256Hex, verifyBundle,
 } from '../src/pg/export.js';
 import { createMeeting, createMinutesVersion, createResolution, determineQuorum, recordAttendance, updateMeeting } from '../src/pg/meetings.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 const OLD_YEAR = 'y-2025';
@@ -88,7 +88,7 @@ async function seedData(db) {
   await db.query(`COMMIT`);
 
   // Zebranie z obecnością (także opiekuna), kworum, uchwałą i protokołem — przez moduł zebrań.
-  await seedUser(db, { userId: 'u-voter' });
+  await seedRoleGrant(db, { userId: 'u-voter', schoolYearId: YEAR });
   const board = { userId: 'u-seed', grants: [{ role: 'board', classId: null, schoolYearId: YEAR, expiresAt: null }], mfaVerified: true };
   const { meeting } = await createMeeting(db, board, {
     idempotencyKey: 'meeting-key-0001', schoolYearId: YEAR, kind: 'plenary', title: 'Zebranie testowe',

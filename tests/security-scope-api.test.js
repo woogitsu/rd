@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { updateMeeting, createMeeting, createMinutesVersion } from '../src/pg/meetings.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 const NEXT = 'y-2027';
@@ -21,7 +21,7 @@ async function baseDb() {
   const db = await createTestDb();
   await seedSchoolYear(db, YEAR);
   await seedClass(db, { id: CLASS, schoolYearId: YEAR });
-  await db.query("INSERT INTO households (id) VALUES ('h-sc-1')");
+  await seedEnrolledHousehold(db, 'h-sc-1', [YEAR]);
   await seedUser(db, { userId: 'u-sc-seed' });
   await db.query(`INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
     VALUES ('cat-sc-exp', $1, 'expense', 'Wydarzenia', 'u-sc-seed')`, [YEAR]);

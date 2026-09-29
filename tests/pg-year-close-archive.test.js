@@ -5,7 +5,7 @@ import test, { after, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const OLD = 'y-2026';
 const NEW = 'y-2027';
@@ -47,7 +47,7 @@ async function setup() {
   await db.query(`INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
     VALUES ('lc-out', 'le-out', 5000, 'Zwrot części kosztu', 'u-treasurer', 'lc-out-key-1')`);
 
-  await db.query("INSERT INTO households (id) VALUES ('h-1'), ('h-2')");
+  for (const householdId of ['h-1', 'h-2']) await seedEnrolledHousehold(db, householdId, [OLD]);
   await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
     VALUES ('p-1', 'h-1', $1, 2000, '2026-10-02', 'bank', 'recorded', 'u-treasurer', 'p-1-key-001'),
            ('p-2', NULL, $1, 1500, '2026-10-03', 'bank', 'unmatched', 'u-treasurer', 'p-2-key-001')`, [OLD]);

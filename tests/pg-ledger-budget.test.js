@@ -6,7 +6,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { renderAuditReportHtml, reportContentSecurityPolicy } from '../src/pg/audit-report.js';
 import { budgetCsvLine } from '../src/pg/routes/ledger-budget.js';
 import { createMeeting, createResolution, determineQuorum, recordAttendance, updateMeeting } from '../src/pg/meetings.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 const NEXT = 'y-2027';
@@ -52,6 +52,7 @@ async function adoptedResolution(db, { schoolYearId = YEAR, number = `P-${counte
     quorumRuleSource: 'Założenie testowe',
   });
   await updateMeeting(db, admin, { meetingId: meeting.id, status: 'held' });
+  await seedRoleGrant(db, { userId: admin.userId, role: 'admin' });
   await recordAttendance(db, admin, { meetingId: meeting.id, userId: admin.userId, capacity: 'board_member', votingEligible: true, present: true });
   const { quorumCheck } = await determineQuorum(db, admin, { idempotencyKey: key('quorum'), meetingId: meeting.id });
   const { resolution } = await createResolution(db, admin, {
