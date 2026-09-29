@@ -13,3 +13,5 @@
   .badge { border: 1px solid CanvasText; }
   nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
 }
+.budget-actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 10px}h3{margin:22px 0 0;font-size:1rem}
+@media print{.budget-actions{display:none}}

@@ -49,7 +49,6 @@ Uzgadnianie księgi z wyciągiem bankowym już istnieje — patrz [RECONCILIATIO
 
 - eksport PDF (eksport CSV: patrz niżej, tylko router PostgreSQL),
 - powiązanie wpisów z prywatnymi dokumentami w Railway Storage Bucket ([DOCUMENTS.md](DOCUMENTS.md)),
-- formularze kategorii, wersji preliminarza i przyjęcia w panelu (dziś tylko API: sekcja „Preliminarz przez API”),
 - formularz przesyłania prywatnego dokumentu w interfejsie księgi (API: [DOCUMENTS.md](DOCUMENTS.md)),
 - numer, data i wystawca dowodu oraz uzasadnienie wydatku bez dowodu (#87, wymaga migracji).
 
@@ -153,6 +152,6 @@ Moduł `src/pg/routes/ledger-budget.js`. Zapisy wymagają MFA, same-origin, `Ide
 | `GET /api/ledger/budget/history?schoolYearId=…` | admin, zarząd, skarbnik | wszystkie wersje linii (kto, kiedy, uzasadnienie, która bieżąca) i przyjęcia |
 | `GET /api/ledger/budget/execution?schoolYearId=…&asOf=…&format=json` (albo `csv`, `html`) | jak wyżej | per kategoria: plan przyjęty (ostatnie przyjęcie do `asOf`), plan bieżący, wykonanie netto (`ledger_entry_net`, wpisy do `asOf`), różnica, % wykonania, „poza planem”, przekroczenie; bez `asOf` `check` porównuje sumy z `ledger_year_summary`. CSV jak `export.csv` (brak planu = pusta komórka), HTML do druku z CSP raportu KR |
 
-Raport Komisji Rewizyjnej ma sekcję „2a. Preliminarz a wykonanie” z tym samym zestawieniem. Panel `ledger/` pokazuje plan bieżący, wykonanie, % i przekroczenie (tekst, nie tylko kolor). Założenia (D-08, D-09, D-21): kategorie i linie zapisują role finansowe, przyjęcie — wyłącznie zarząd; KR widzi zestawienie w raporcie, nie przez trasę; kto uchwala preliminarz — nierozstrzygnięte, dlatego uchwała jest opcjonalna. Sugerowana składka (D-14) nie jest częścią preliminarza; „planowane wpływy ze składek” to zwykła linia przychodów.
+Raport Komisji Rewizyjnej ma sekcję „2a. Preliminarz a wykonanie” z tym samym zestawieniem. Panel `ledger/` pokazuje plan bieżący, wykonanie, % i przekroczenie (tekst, nie tylko kolor). Sekcja „Historia preliminarza” (`GET /api/ledger/budget/history`) pokazuje wszystkie wersje linii (numer, kwota w EUR, powód, kto i kiedy zapisał, stan: bieżąca/zastąpiona/przyjęta) oraz przyjęcia. Formularze panelu (nowa kategoria, wyłączenie kategorii, linia planu, nowa wersja linii, przyjęcie) wołają wyłącznie powyższe trasy z `Idempotency-Key` i potwierdzeniem skutków; kwoty są zamieniane na centy EUR w przeglądarce, plan musi być większy od zera. Ukrycie przycisków (przyjęcie widoczne tylko z rolą zarządu) jest skrótem — rolę, MFA i rok sprawdza serwer. Założenia (D-08, D-09, D-21): kategorie i linie zapisują role finansowe, przyjęcie — wyłącznie zarząd; KR widzi zestawienie w raporcie, nie przez trasę; kto uchwala preliminarz — nierozstrzygnięte, dlatego uchwała jest opcjonalna. Sugerowana składka (D-14) nie jest częścią preliminarza; „planowane wpływy ze składek” to zwykła linia przychodów.
 
 To prototyp: router PostgreSQL działa tylko przy ustawionym `DATABASE_URL`, nie jest wdrożony na Railway i nie jest zatwierdzony do pracy na danych rodzin. Zasady księgowania, korekt, format referencji uchwały i dostęp dyrekcji oraz Komisji Rewizyjnej nadal wymagają decyzji Rady i szkoły.

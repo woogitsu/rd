@@ -59,6 +59,10 @@
           <label>Szukaj w tytule i opisie
             <input id="filter-search" name="q" autocomplete="off" placeholder="np. faktura wynajem" />
           </label>
+          <label class="check">
+            <input type="checkbox" id="filter-inactive" name="includeInactive" />
+            <span>Pokaż też zastąpione i unieważnione</span>
+          </label>
           <button type="submit">Pokaż</button>
         </form>
       </section>
@@ -76,6 +80,7 @@
               <tr>
                 <th scope="col">Tytuł</th>
                 <th scope="col">Kategoria</th>
+                <th scope="col">Stan</th>
                 <th scope="col">Dodano</th>
                 <th scope="col">Rodzaj</th>
                 <th scope="col">Klasa</th>
@@ -108,6 +113,28 @@
           <iframe id="preview-frame" class="preview-frame" title="Podgląd dokumentu PDF" sandbox="" referrerpolicy="no-referrer" hidden></iframe>
           <p class="hint">Jeśli przeglądarka nie wyświetli PDF w ramce bez skryptów, pobierz plik.</p>
         </div>
+
+        <h3>Wersje i stan dokumentu</h3>
+        <p class="hint">Zastąpienie i unieważnienie nie usuwają pliku: dokument zostaje w archiwum, znika tylko z domyślnej listy, a operacja trafia do dziennika zdarzeń. Powód jest wewnętrzny i nie trafia do dziennika.</p>
+        <ol id="version-history" class="versions" aria-label="Historia wersji dokumentu"></ol>
+        <div id="status-actions" class="actions" hidden>
+          <button id="status-supersede" type="button">Zastąp innym dokumentem…</button>
+          <button id="status-void" type="button">Unieważnij…</button>
+        </div>
+        <form id="status-form" novalidate hidden>
+          <label id="status-replacement-field">Dokument zastępujący
+            <select id="status-replacement" name="replacementDocumentId"></select>
+          </label>
+          <p class="hint" id="status-replacement-hint"></p>
+          <label>Powód (3–500 znaków, wewnętrzny)
+            <textarea id="status-reason" name="reason" rows="2" maxlength="500" autocomplete="off"></textarea>
+          </label>
+          <div class="actions">
+            <button class="primary" id="status-submit" type="submit">Dalej</button>
+            <button id="status-cancel" type="button">Anuluj</button>
+          </div>
+        </form>
+        <p class="message" id="status-message" role="status" aria-live="polite"></p>
 
         <h3>Tytuł i kategoria</h3>
         <p class="hint">Nie wpisuj imion i nazwisk uczniów ani rodziców — tytuł jest widoczny dla każdego z dostępem do dokumentów tego rodzaju. Zapis dodaje nową wersję opisu; poprzednia zostaje w historii.</p>
