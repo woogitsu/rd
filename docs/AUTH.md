@@ -105,7 +105,12 @@ Pliki: `src/pg/password.js` (hasła), `src/pg/login.js` i `src/pg/routes/login.j
                 └─ pozostali (np. przedstawiciel bez czynnika) ─▶ panele; przycisk
                      „Włącz weryfikację dwuetapową” w widoku startowym pozwala
                      zapisać czynnik dobrowolnie (dowolna rola, ten sam
-                     POST /api/mfa/enroll + /api/mfa/confirm, #161)
+                     POST /api/mfa/enroll + /api/mfa/confirm, #161). Trasa wymagająca MFA
+                     (eksport listy klasy, raport KR) odmawia takiemu kontu kodem
+                     `mfa_enrollment_required`; `shared/api.js` odsyła je na
+                     /login/#next=<panel>&reason=enroll, gdzie widok zapisu MFA wyjaśnia
+                     powód, a po zapisie wraca do panelu (bez pętli panel → lista paneli).
+                     Lista ról z obowiązkowym MFA bez zmian (D-10).
    (c) zmiana hasła: POST /api/password/change {currentPassword, newPassword}
          └─ inne sesje wycofane (password_changed), bieżąca zrotowana
    (d) reset: administrator ─▶ POST /api/admin/users/{id}/password-reset ─▶ token (raz)

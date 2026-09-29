@@ -108,3 +108,44 @@ test("#93: panel nie wysyła już wolnego tekstu referencji uchwały", async () 
   assert.match(main, /resolutionId: resolutionId \|\| null/);
   assert.doesNotMatch(main, /resolutionReference:/);
 });
+
+test("#107: historia preliminarza — wersje per kategoria, kwoty w centach, przyjęcia", async () => {
+  const { buildBudgetHistoryUrl, budgetHistoryView, canAdoptBudget } = await import("../ledger/core.js");
+  assert.equal(buildBudgetHistoryUrl("y2026"), "/api/ledger/budget/history?schoolYearId=y2026");
+  assert.throws(() => buildBudgetHistoryUrl("zły id"));
+  const view = budgetHistoryView({
+    lines: [
+      { id: "l1", categoryId: "c1", categoryName: "Wydarzenia", direction: "expense", plannedCents: 80000, note: null, createdBy: "u1", createdAt: "2026-10-01T09:30:00.000Z", current: false },
+      { id: "l2", categoryId: "c1", categoryName: "Wydarzenia", direction: "expense", plannedCents: 95050, note: "Zmiana", createdBy: "u1", createdAt: "2026-11-02T10:00:00.000Z", current: true },
+    ],
+    adoptions: [{ id: "a1", adoptedOn: "2026-10-15", note: "Zebranie", resolutionNumber: "U/1", adoptedBy: "u2", lineIds: ["l1"] }],
+  });
+  assert.deepEqual(view.rows.map((r) => r.version), [1, 2]);
+  assert.deepEqual(view.rows[0].adoptedOn, ["2026-10-15"]);
+  assert.deepEqual(view.rows[1].adoptedOn, []);
+  assert.equal(view.currentLines.length, 1);
+  assert.equal(view.currentLines[0].plannedCents, 95050);
+  assert.match(view.rows[1].planned, /950,50/);
+  assert.equal(view.rows[0].createdAt, "2026-10-01 09:30 UTC");
+  assert.equal(view.adoptionRows[0].lineCount, 1);
+  assert.equal(budgetHistoryView(null).rows.length, 0);
+  assert.equal(canAdoptBudget([{ role: "board" }], "y1"), true);
+  assert.equal(canAdoptBudget([{ role: "treasurer" }], "y1"), false);
+  assert.equal(canAdoptBudget([{ role: "board", classId: "c" }], "y1"), false);
+});
+
+test("#107: treści żądań preliminarza — centy EUR, walidacja przed wysyłką", async () => {
+  const c = await import("../ledger/core.js");
+  assert.deepEqual(c.budgetLineRequestBody({ schoolYearId: "y1", categoryId: "c1", amount: "1500,50", note: "" }), { schoolYearId: "y1", categoryId: "c1", plannedCents: 150050 });
+  assert.equal(c.budgetLineRequestBody({ schoolYearId: "y1", categoryId: "c1", amount: "10", note: " Uwaga " }).note, "Uwaga");
+  assert.throws(() => c.budgetLineRequestBody({ schoolYearId: "y1", categoryId: "c1", amount: "10,999" }), /dwoma/);
+  assert.throws(() => c.budgetLineRequestBody({ schoolYearId: "y1", categoryId: "", amount: "10" }), /kategorię/);
+  assert.deepEqual(c.budgetRevisionRequestBody({ lineId: "l2", amount: "20", reason: " Nowa wycena " }), { lineId: "l2", body: { plannedCents: 2000, reason: "Nowa wycena" } });
+  assert.throws(() => c.budgetRevisionRequestBody({ lineId: "l2", amount: "20", reason: "ab" }), /powód/i);
+  assert.deepEqual(c.categoryRequestBody({ schoolYearId: "y1", direction: "income", name: " Składki " }), { schoolYearId: "y1", direction: "income", name: "Składki" });
+  assert.throws(() => c.categoryRequestBody({ schoolYearId: "y1", direction: "x", name: "Składki" }));
+  assert.deepEqual(c.budgetAdoptionRequestBody({ schoolYearId: "y1", adoptedOn: "2026-10-15", note: "Zebranie", resolutionId: "" }), { schoolYearId: "y1", adoptedOn: "2026-10-15", note: "Zebranie" });
+  assert.equal(c.budgetAdoptionRequestBody({ schoolYearId: "y1", adoptedOn: "2026-10-15", note: "Zebranie", resolutionId: "r1" }).resolutionId, "r1");
+  assert.throws(() => c.budgetAdoptionRequestBody({ schoolYearId: "y1", adoptedOn: "", note: "Zebranie" }), /datę/);
+  assert.equal(c.deactivationRequestBody({ categoryId: "c1", reason: "Nieaktualna" }).body.reason, "Nieaktualna");
+});

@@ -4,7 +4,7 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { auditScope, buildYearlyExport, EXPORT_TABLES, verifyBundle } from '../src/pg/export.js';
+import { auditScope, buildYearlyExport, EXPORT_TABLES, restoreBundle, verifyBundle } from '../src/pg/export.js';
 import { createTestDb, request, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const OLD = 'y-old';
@@ -30,6 +30,7 @@ async function auditOf(schoolYearId) {
   return (bundle.files['audit_events.jsonl'] ?? '').split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
+const auditOfBundle = (bundle) => (bundle.files['audit_events.jsonl'] ?? '').split('\n').filter(Boolean).map((line) => JSON.parse(line));
 const actions = (rows) => rows.map((row) => row.action);
 
 before(async () => {
@@ -169,4 +170,27 @@ test('paczka roku poprzedniego przechodzi weryfikację, a ponowny eksport daje t
   verifyBundle(first.bundle);
   const again = await buildYearlyExport(db, OLD);
   assert.equal(again.manifestSha256, first.manifestSha256);
+});
+
+test('odtworzenie paczki roku poprzedniego: zdarzenia roku obiektu (także stare bez roku) wracają, a re-eksport jest identyczny', async () => {
+  const { bundle } = await buildYearlyExport(db, OLD);
+  const target = await createTestDb();
+  try {
+    const report = await restoreBundle(target, bundle);
+    assert.equal(report.restored, true);
+    assert.equal(report.reexportFilesMatch, true);
+    const restored = (await buildYearlyExport(target, OLD)).bundle;
+    assert.equal(restored.files['audit_events.jsonl'], bundle.files['audit_events.jsonl']);
+    const rows = auditOfBundle(restored);
+    const paymentActions = actions(rows).filter((a) => a.startsWith('payment.'));
+    assert.ok(paymentActions.includes('payment.created') && paymentActions.includes('payment.correction.created'));
+    // Stare zdarzenia bez roku (lg-pay, lg-corr, lg-match) po odtworzeniu nadal przypisane do roku obiektu.
+    const restoredIds = new Set(rows.map((row) => row.id));
+    for (const id of ['lg-pay', 'lg-corr', 'lg-match']) assert.ok(restoredIds.has(id), `${id} po odtworzeniu`);
+    // Zdarzenia nowego roku nie wracają do paczki starego roku.
+    assert.ok(!restoredIds.has('lg-fresh'));
+    assert.ok(!rows.some((row) => row.entity_id === ids.freshPayment));
+  } finally {
+    await target.close();
+  }
 });
