@@ -6,12 +6,10 @@
 // domeny (bez importów z authorization.js/audit.js), by dało się go
 // bezpiecznie użyć w każdej trasie.
 //
-// Migracja istniejących modułów (families.js, payments.js, ledger.js, …) na
-// ten moduł zostaje do kolejnych PR — każdy moduł osobno, z macierzą
-// autoryzacji (tests/pg-authz-matrix.test.js) jako siatką bezpieczeństwa,
-// zgodnie z opisem w issue #154. Ten PR naprawia tylko konkretny brak
-// (exports.js nie sprawdzał deklarowanego Content-Length) i dodaje moduł
-// gotowy do dalszej migracji.
+// Trasy z src/pg/routes korzystają z `createJsonReader` (czytnik zachowujący
+// dotychczasowy kontrakt każdej trasy) i `isUniqueError`; pilnuje tego
+// tests/pg-routes-input-static.test.js. Moduły domenowe w src/pg (events.js,
+// meetings.js, news.js) mają jeszcze własne kopie — osobny zakres.
 
 /** Jedna klasa błędu żądania dla całego `src/pg/**`. */
 export class ApiError extends Error {
