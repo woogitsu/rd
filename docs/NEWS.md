@@ -45,6 +45,7 @@ Przedstawiciel nie widzi wpisów innych klas (404 bez ujawniania istnienia). Ska
 ## API
 
 - `GET /api/public/news?schoolYearId=&limit=` — bez logowania; limit do 50. Pola: `id`, `title`, `body`, `publishedAt`, `photos[]` z `id`, `author`, `source`, `license`, `takenOn`, `altText`, `decorative` (`altText` jest pustym tekstem `""`, gdy `decorative = true`). Bez identyfikatorów użytkowników, klas, dokumentów, zgód i notatek wewnętrznych.
+- Strona publiczna `site/` (#96) wyświetla zdjęcia wyłącznie z `photos[]` tej odpowiedzi; adres pliku składa z `id` (`/api/public/news-photos/{id}/thumb|web`), `alt` bierze z `altText` (dekoracyjne: `alt=""`, zdjęcie bez opisu i bez `decorative` jest pomijane), używa `loading="lazy"` i podpisu (autor, źródło, licencja). Brak zdjęcia albo zgody = brak figury, bez komunikatu błędu; kontrola praw pozostaje po stronie serwera.
 - `GET /api/news?schoolYearId=` — lista wewnętrzna.
 - `POST /api/news` — szkic (`schoolYearId`, `classId?`, `title`, `body`, `photoIds?`); wymaga `Idempotency-Key`.
 - `GET /api/news/:id` — szczegóły z historią wersji.

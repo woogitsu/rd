@@ -1072,8 +1072,8 @@ function allowedMethodsFor(section, pathLength, action, path) {
     return null;
   }
   if (section === 'school-years') {
-    if (pathLength === 1) return ['GET'];
-    if (pathLength === 3 && action === 'expire-grants') return ['POST'];
+    if (pathLength === 1) return ['GET', 'POST'];
+    if (pathLength === 3 && ['expire-grants', 'classes'].includes(action)) return ['POST'];
     return null;
   }
   if (section === 'promotions') return promotionAllowedMethods(path);

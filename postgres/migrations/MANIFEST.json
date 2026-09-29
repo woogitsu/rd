@@ -288,6 +288,10 @@
     "sha256": "e636fe9f6e77fcd48f49865085737912a187774cf71062f4796f2028a7adba35"
   },
   {
+    "name": "0124_login_rate_limit_pair_scope.sql",
+    "sha256": "6946c2cb678946fcc171cc4a7928ac9816b9ecfee3d18fbb857c5178838a14f6"
+  },
+  {
     "name": "0137_promotion_runs.sql",
     "sha256": "1bdd80080bf2a49b227daba17c244af77e91f93c318060ab01b074984cb8550f"
   }

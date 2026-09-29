@@ -60,6 +60,7 @@ export const MESSAGES = Object.freeze({
   request_too_large: "Za dużo danych w jednym żądaniu.",
   service_unavailable: "Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę.",
   retry_later: "Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę.",
+  commit_outcome_unknown: "Nie wiadomo, czy zapis został utrwalony (połączenie z bazą zerwało się przy zatwierdzaniu). Sprawdź aktualny stan i dopiero wtedy ponów operację.",
   timeout: "Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres.",
   storage_unavailable: "Magazyn dokumentów jest niedostępny. Przesyłanie i pobieranie są wyłączone.",
   conflict: "Dane zmieniły się w międzyczasie. Odśwież widok i spróbuj ponownie.",
