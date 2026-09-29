@@ -138,7 +138,8 @@ test("komunikaty błędów są po polsku dla kodów i statusów API", () => {
   assert.match(errorMessage(404, { error: "not_found" }), /Nie znaleziono/);
   assert.match(errorMessage(409, { error: "idempotency_conflict" }), /inną treścią/);
   assert.match(errorMessage(0, null), /połączenia/);
-  assert.match(errorMessage(500, { error: "<script>" }), /Błąd serwera \(500\)/);
+  assert.match(errorMessage(500, { error: "<script>" }), /chwilowo niedostępna/);
+  assert.doesNotMatch(errorMessage(500, { error: "<script>" }), /Błąd serwera|script/);
   assert.equal(isRetryable(0), true);
   assert.equal(isRetryable(503), true);
   assert.equal(isRetryable(415), false);
@@ -223,4 +224,10 @@ test("normalizeDocument i metadataRows pokazują tytuł, kategorię i datę doku
   const bare = normalizeDocument({ id: DOC_ID, kind: "financial" });
   assert.equal(bare.title, null);
   assert.equal(Object.fromEntries(metadataRows(bare))["Tytuł"], "Bez tytułu");
+});
+
+test("buildListUrl przekazuje kursor zamiast offsetu (#159)", () => {
+  const url = buildListUrl({ schoolYearId: "2026-2027", cursor: "abc_-9", offset: 50 });
+  assert.match(url, /cursor=abc_-9/);
+  assert.doesNotMatch(url, /offset=/);
 });

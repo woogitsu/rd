@@ -168,7 +168,8 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   const classId = target.classId ?? await fallbackClassId(db, target.schoolYearId);
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
     [enrollmentId, studentId, classId, target.schoolYearId]);
-  return { householdId, guardianId, studentId, enrollmentId };
+  const membership = await db.query('SELECT id FROM student_households WHERE student_id = $1 AND is_primary', [studentId]);
+  return { householdId, guardianId, studentId, enrollmentId, membershipId: membership.rows[0].id };
 }
 
 async function seedFixtureSessions(db) {
@@ -485,6 +486,20 @@ async function makeAdminTarget(ctx, stage) {
     await makeMfaFactor(ctx, 'confirmed', { cookie });
     return { userId };
   }
+  if (stage === 'recoveryRequest') {
+    // #146: otwarty wniosek o reset hasła konta zarządu, złożony przez INNE konto niż aktor macierzy.
+    await seedUser(ctx.db, { userId });
+    const requesterId = nextKey('fx-wnioskodawca');
+    await seedUser(ctx.db, { userId: requesterId });
+    await ctx.db.query("INSERT INTO role_grants (id, user_id, role, school_year_id) VALUES ($1, $2, 'board', $3)", [randomUUID(), userId, YEAR_1]);
+    const requestId = randomUUID();
+    await ctx.db.query(
+      `INSERT INTO account_recovery_requests (id, kind, target_user_id, requested_by, ttl_seconds, expires_at)
+       VALUES ($1, 'password_reset', $2, $3, 7200, now() + interval '1 day')`,
+      [requestId, userId, requesterId],
+    );
+    return { requestId };
+  }
   if (stage === 'invitation') {
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations',
       { email: `${userId}@example.invalid`, role: 'board', schoolYearId: YEAR_1 });
@@ -701,6 +716,13 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #86: gospodarstwo fixture + drugie, puste — do dodania członkostwa ucznia.
+  householdSpare: async (ctx, target) => {
+    const made = await makeHousehold(ctx.db, target);
+    const spareHouseholdId = `${made.householdId}-spare`;
+    await ctx.db.query('INSERT INTO households (id) VALUES ($1)', [spareHouseholdId]);
+    return { ...made, spareHouseholdId };
+  },
   // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
   // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
   // pod TARGETS.A, niezależnie od przekazanego targetu.
@@ -832,7 +854,7 @@ async function matrixContext(group = 'main') {
     contexts.set(group, (async () => {
       const db = await createTestDb();
       const env = {
-        db, storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+        db, APP_ENV: 'test', storage: createMemoryStorage(), MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
         BREVO_WEBHOOK_SECRET: WEBHOOK_SECRET, EMAIL_UNSUBSCRIBE_SECRET: UNSUBSCRIBE_SECRET, ...FAST_SCRYPT,
         // Wysyłka testowa (#104): bramka bez sieci wyłączona, transport wstrzyknięty
         // (nigdy nie łączy się z siecią), adres z listy technicznej Rady.

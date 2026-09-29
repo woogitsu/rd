@@ -11,7 +11,7 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
 - Na czas ostatecznego eksportu zatrzymać zapisy do D1. Nie prowadzić dwóch
   produkcyjnych źródeł prawdy.
 - Import działa tylko do pustych tabel i w jednej transakcji. Pierwszy błąd
-  wycofuje całość. Produkcja wymaga dodatkowej flagi `--allow-production`.
+  wycofuje całość. Produkcja (a zachowawczo także brak lub nieznana wartość `APP_ENV`) wymaga dodatkowej flagi `--allow-production`. Flaga sprawdza tylko `APP_ENV` z powłoki operatora, nie oznaczenie docelowej bazy — nie jest ochroną przed podaniem `DATABASE_URL` produkcji z `APP_ENV=staging` (znacznik środowiska w bazie: poza zakresem, #166).
 - Sesje i niewykorzystane zaproszenia nie są przenoszone. Po cutover wszyscy
   użytkownicy logują się ponownie. Pliki dokumentów wymagają osobnego,
   kontrolowanego transferu do prywatnego Storage Bucket.

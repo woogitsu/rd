@@ -6,11 +6,12 @@ import { checkReadiness } from './health.js';
 import { checkJobsHealth, tokensMatch } from './pg/jobs-health.js';
 import { describeError, log, sanitizePath } from './log.js';
 import { UPLOAD_PATH } from './documents.js';
+import { createRateLimiter } from './rate-limit.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 // Jedyne źródło listy paneli statycznych (issue #119): smoke test i inne
 // narzędzia mają importować ten eksport zamiast wpisywać listę na sztywno.
-export const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close']);
+export const STATIC_PREFIXES = new Set(['import', 'panel', 'ledger', 'print', 'events', 'documents', 'site', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close', 'audit', 'data-export', 'news']);
 // Jedyny prefiks przeznaczony do indeksowania przez wyszukiwarki (#116).
 // Wszystkie pozostałe prefiksy z STATIC_PREFIXES i cały /api/ poza /api/public/
 // wymagają logowania do danych, więc dostają `X-Robots-Tag: noindex, nofollow`.
@@ -19,7 +20,7 @@ const ROBOTS_NOINDEX = 'noindex, nofollow';
 // Blokuje wszystkie prefiksy paneli i całe /api/ poza /api/public/ — to samo
 // rozróżnienie co X-Robots-Tag powyżej, na wypadek czytników, które nie patrzą
 // na nagłówki odpowiedzi (#116).
-const ROBOTS_TXT_BODY = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close']
+const ROBOTS_TXT_BODY = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close', 'audit', 'data-export', 'news']
   .map((prefix) => `Disallow: /${prefix}/`).join('\n')}\nDisallow: /api/\nAllow: /api/public/\nAllow: /${PUBLIC_STATIC_PREFIX}/\n`;
 // Nagłówek z adresem klienta dla limitów logowania (src/pg/login.js). Zawsze
 // nadpisywany przez serwer — wartość wysłana przez klienta jest ignorowana.
@@ -231,7 +232,7 @@ async function serveJobsHealth(request, response, env, jobsHealth) {
 // wskazanych tras (np. POST /api/documents). Domyślnie 1 MiB dla wszystkich.
 export function createNodeHandler({
   distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit, logger = log, metrics = null, readiness = checkReadiness,
-  jobsHealth = checkJobsHealth, trustProxy = false,
+  jobsHealth = checkJobsHealth, trustProxy = false, rateLimiter = createRateLimiter({ env: globalThis.process?.env }),
 } = {}) {
   if (!distRoot) throw new Error('distRoot is required');
   if (typeof fetchHandler !== 'function') throw new Error('fetchHandler is required');
@@ -270,6 +271,21 @@ export function createNodeHandler({
       }
       if (await serveStatic(request, response, url, distRoot, baseline)) return;
       const method = request.method || 'GET';
+      // #126 (SR-13): ogólny limiter PRZED odczytem ciała i zapytaniem do bazy.
+      const slot = rateLimiter.acquire({
+        pathname: url.pathname, cookieHeader: request.headers.cookie, address: clientAddress(request, trustProxy),
+      });
+      if (!slot.ok) {
+        response.writeHead(429, {
+          ...baseline,
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Retry-After': String(slot.retryAfter),
+        });
+        response.end(JSON.stringify({ error: 'rate_limited' }));
+        return;
+      }
+      response.once('close', slot.release);
       // #185: POST /api/documents buforowało całe ciało (do 25 MB) w pamięci
       // PRZED sprawdzeniem sesji/roli w documents.js — anonimowe żądanie z
       // dużym Content-Length kosztowało tyle samo pamięci co upload

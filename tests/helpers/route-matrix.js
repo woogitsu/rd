@@ -1253,6 +1253,14 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.userMfaReset', 'POST', '/api/admin/users/:userId/mfa-reset', {
     object: 'withFactor', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/mfa-reset`, body: { confirm: obj.userId } }),
   }),
+  // #146: wnioski o reset hasła/MFA kont chronionych — wyłącznie admin z MFA; zatwierdza nie wnioskodawca.
+  adminRoute('admin.accountRequests', 'GET', '/api/admin/account-requests', {}),
+  adminRoute('admin.accountRequestApprove', 'POST', '/api/admin/account-requests/:requestId/approve', {
+    object: 'recoveryRequest', build: ({ obj }) => ({ path: `/api/admin/account-requests/${obj.requestId}/approve`, body: {} }),
+  }),
+  adminRoute('admin.accountRequestReject', 'POST', '/api/admin/account-requests/:requestId/reject', {
+    object: 'recoveryRequest', build: ({ obj }) => ({ path: `/api/admin/account-requests/${obj.requestId}/reject`, body: {} }),
+  }),
   adminRoute('admin.grants', 'GET', '/api/admin/grants', {}),
   adminRoute('admin.grantCreate', 'POST', '/api/admin/grants', {
     ok: 201, object: 'active',
@@ -1477,6 +1485,34 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({
       path: `/api/students/${obj.studentId}/enrollments/${obj.enrollmentId}/end`,
       body: { endedOn: '2020-01-01', reason: 'Odejście ze szkoły (syntetyczne)' },
+    }),
+  },
+  {
+    id: 'families.relationEnd', module: 'families', method: 'POST', path: '/api/guardians/:guardianId/students/:studentId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    // Zmiana opieki (#86) — data w przeszłości poza zamkniętym rokiem; zarząd klasowy tylko dla dziecka własnej klasy.
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/students/${obj.studentId}/end`,
+      body: { endsOn: '2020-01-01', reason: 'Zmiana opieki (syntetyczne)' },
+    }),
+  },
+  {
+    id: 'families.studentHouseholdEnd', module: 'families', method: 'POST', path: '/api/students/:studentId/households/:membershipId/end',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/households/${obj.membershipId}/end`,
+      body: { endsOn: '2020-01-01', reason: 'Zakończenie członkostwa (syntetyczne)' },
+    }),
+  },
+  {
+    // Dodanie członkostwa: wyłącznie zakres szeroki — zarząd z przydziałem klasy dostaje 403 (#86, wariant zachowawczy).
+    id: 'families.studentHouseholdAdd', module: 'families', method: 'POST', path: '/api/students/:studentId/households',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: false, ok: 201,
+    deny: (actor, targetKey, mfa) => (actor.key === 'boardA' ? 403 : familyEditDeny(actor, targetKey, mfa)),
+    fixture: 'fresh', object: { kind: 'householdSpare' },
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/households`,
+      body: { householdId: obj.spareHouseholdId, isPrimary: false, startsOn: '2020-01-01', reason: 'Dodanie gospodarstwa (syntetyczne)' },
     }),
   },
 

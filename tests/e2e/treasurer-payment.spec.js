@@ -28,6 +28,8 @@ test('skarbnik zapisuje wpłatę w panel/ i widzi ją na liście', async ({ brow
   await page.locator('#open-payment').click();
   await expect(page.locator('#payment-dialog')).toBeVisible();
 
+  // Rok w oknie wpłaty to lista z przydziałów, nie pole tekstowe (#128).
+  await expect(page.locator('#payment-form select[name=schoolYearId]')).toHaveValue(runtime.schoolYearId);
   await page.locator('#payment-form input[name=amount]').fill('75,00');
   // receivedOn jest ustawiane automatycznie na dziś przez main.js.
   await page.locator('#payment-form input[name=reference]').fill(reference);
