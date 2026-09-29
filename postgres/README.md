@@ -1071,7 +1071,6 @@ migracji są ignorowane i wygasają po dobie; w bazie nadal tylko skróty
 przywrócenie CHECK `IN ('email','ip')` (kod aplikacji sprzed zmiany blokował
 konto po samym e-mailu).
 
-
 `0132_keyset_list_indexes.sql` (#159) dodaje pięć indeksów pod listy z kursorem
 keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
 audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
@@ -1105,3 +1104,19 @@ triggerów synchronizacji), `email_webhook_events.occurred_at` (czas u
 dostawcy). Skutki dla danych: żaden wiersz nie jest zmieniany; zmienia się
 zachowanie przyszłych INSERT/UPDATE/TRUNCATE. Wycofanie: usunięcie triggerów
 `a0_stamp_*`, `*_no_truncate` z tej migracji i obu funkcji.
+
+`0151_promotion_runs.sql` (#78) dodaje tabelę `promotion_runs`: rejestr
+zatwierdzonych promocji uczniów na nowy rok szkolny (aktor, rok źródłowy i
+docelowy, `idempotency_key` UNIQUE, skrót planu, liczby przeniesionych,
+kończących, pominiętych, wykluczonych, konfliktów i odchodzących). Służy
+idempotencji `POST /api/admin/promotions/apply` (ponowienie z tym samym kluczem
+zwraca zapisany wynik bez nowych wierszy); wiersze są tylko do dopisywania
+(trigger `family_history_immutable`), z blokadą TRUNCATE (`promotion_runs_no_truncate`,
+`deny_truncate()` z 0095) i stemplem `created_at` z zegara bazy
+(`a0_stamp_created_now`, `stamp_created_now()` z 0144) — wymóg lintu niezmienności
+#204 pkt 6. Bez imion, nazwisk i list uczniów.
+Skutki dla danych: wyłącznie nowa tabela — istniejące `enrollments`,
+`enrollment_history`, klasy i przydziały nie są zmieniane; zamrożenie zamkniętego
+roku dla `enrollments` działa od 0054. Wycofanie na pustej bazie: usunięcie
+tabeli i indeksu; na bazie z promocjami tylko po kopii zapasowej (znika rejestr
+idempotencji, przypisania zostają w `enrollments`).

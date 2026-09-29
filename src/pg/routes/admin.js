@@ -24,6 +24,8 @@
 //   GET  /api/admin/school-years                lata i klasy do formularzy
 //   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
 //   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
+//   POST /api/admin/promotions/classes/preview|apply   kopiowanie klas roku wg jawnej mapy (#78); patrz src/pg/promotions.js
+//   POST /api/admin/promotions/preview|apply           promocja uczniów z podglądem, planDigest i Idempotency-Key (#78)
 //   GET  /api/admin/class-coverage?schoolYearId= obsada klas roku: przydziały, oczekujące zaproszenia, ostatnie logowanie (#108)
 //   GET  /api/admin/audit?limit=&cursor=&domain=&actorId=&from=&to=&schoolYearId=
 //        dziennik zdarzeń; bez `domain` — jak dotąd (zmiany kont i ról).
@@ -82,6 +84,7 @@ import {
   approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, rejectRecoveryRequest, requiresRecoveryApproval,
 } from '../account-recovery.js';
 import { computeOpsStatus } from '../ops-status.js';
+import { promotionAllowedMethods, PromotionError, routePromotions } from '../promotions.js';
 import {
   afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
@@ -1244,7 +1247,7 @@ async function opsStatus(env, json) {
 // Zwraca dozwolone metody dla ROZPOZNANEGO kształtu ścieżki (#156, RFC 9110
 // §15.5.6 wymaga nagłówka Allow przy 405); null = ścieżka w ogóle nieznana
 // (404, nie 405).
-function allowedMethodsFor(section, pathLength, action) {
+function allowedMethodsFor(section, pathLength, action, path) {
   if (section === 'users') {
     if (pathLength === 1) return ['GET'];
     if (pathLength === 3 && ['disable', 'enable', 'revoke-sessions', 'password-reset', 'mfa-reset'].includes(action)) return ['POST'];
@@ -1270,6 +1273,7 @@ function allowedMethodsFor(section, pathLength, action) {
     if (pathLength === 3 && ['expire-grants', 'classes'].includes(action)) return ['POST'];
     return null;
   }
+  if (section === 'promotions') return promotionAllowedMethods(path);
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
   if (section === 'access-log' && pathLength === 1) return ['GET'];
@@ -1355,6 +1359,7 @@ async function route(request, env, url, json, actorId, context) {
       return createClasses(env, actorId, decodeId(rawId), request, json);
     }
   }
+  if (section === 'promotions') return routePromotions(env, actorId, request, path, json);
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId);
   if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
@@ -1372,7 +1377,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
@@ -1388,11 +1393,11 @@ export async function handle(request, env, url, json) {
     const response = await route(request, env, url, json, actorId, access.context);
     if (response === null) return null;
     if (response !== undefined) return response;
-    const allowed = rest.length ? null : allowedMethodsFor(section, path.length, action);
+    const allowed = rest.length ? null : allowedMethodsFor(section, path.length, action, path);
     if (!allowed) return null;
     return json({ error: 'method_not_allowed' }, 405, { Allow: allowed.join(', ') });
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError || error instanceof PromotionError) return json({ error: error.code }, error.status, error.headers);
     throw error;
   }
 }

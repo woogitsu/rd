@@ -334,5 +334,9 @@
   {
     "name": "0144_immutability_stamps_and_truncate.sql",
     "sha256": "972bab7664ff26fe68be49aeb1a8b3cae7172642ff71698ab68a8f7976c2b0cb"
+  },
+  {
+    "name": "0151_promotion_runs.sql",
+    "sha256": "6bf349bb00486b3bfd339cfd07c72512ab948985e0f9b3bb31f29ba1471da2c9"
   }
 ]
