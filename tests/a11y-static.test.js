@@ -93,6 +93,12 @@ for (const app of APPS) {
   test(`${app}: nawigacja (jeśli istnieje) ma etykietę i spójną strukturę (WCAG 3.2.3)`, () => {
     const match = html[app].match(/<nav aria-label="([^"]*)">([\s\S]*?)<\/nav>/);
     if (!match) return; // login/: brak panelu nawigacji, wyłącznie ekran logowania
+    // #85: każda aplikacja panelowa (poza site/, login/) używa wspólnej powłoki —
+    // brak ręcznie kopiowanych linków <nav>.
+    if (!['site', 'login'].includes(app)) {
+      assert.match(match[2], /id="shell-nav"/, `${app}: nawigacja bez wspólnej powłoki`);
+      assert.match(read(`${app}/main.js`), /mountShell\(/, `${app}: main.js nie wywołuje mountShell`);
+    }
     const [, label, inner] = match;
     assert.ok(label.length > 0, `${app}: nav bez aria-label`);
     if (/id="shell-nav"/.test(inner)) {

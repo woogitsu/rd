@@ -3,7 +3,7 @@
 // wiązany ręcznie; kontrolę dostępu i tak wykonuje wyłącznie serwer (docs/AUTHORIZATION.md).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PANELS, isActivePanel, navItemsHtml, roleLabel, scopeSummary, visiblePanels } from '../shared/shell.js';
+import { PANELS, activeYearLabel, isActivePanel, mountShell, navItemsHtml, roleLabel, scopeSummary, visiblePanels } from '../shared/shell.js';
 
 const PANEL_IDS = PANELS.map((p) => p.id);
 
@@ -92,13 +92,13 @@ test('scopeSummary: brak przydziału', () => {
   assert.equal(scopeSummary([]), 'Brak przydzielonej roli');
 });
 
-test('scopeSummary: role i lata bez duplikatów, posortowane', () => {
+test('scopeSummary: role bez duplikatów (rok pokazuje activeYearLabel)', () => {
   const grants = [
     { role: 'representative', classId: '1A', schoolYearId: '2026-2027' },
     { role: 'representative', classId: '2B', schoolYearId: '2026-2027' },
     { role: 'treasurer', schoolYearId: '2025-2026' },
   ];
-  assert.equal(scopeSummary(grants), 'Przedstawiciel klasy, Skarbnik · 2025-2026, 2026-2027');
+  assert.equal(scopeSummary(grants), 'Przedstawiciel klasy, Skarbnik');
 });
 
 test('isActivePanel: dopasowanie po ścieżce (prefiks)', () => {
@@ -119,4 +119,58 @@ test('navItemsHtml: etykiety są bezpiecznie zakodowane w HTML (bez wstrzyknięc
   const evil = [{ id: 'x', href: '/x/"><script>alert(1)</script>', label: '<script>alert(1)</script>' }];
   const html = navItemsHtml(evil, '/other/');
   assert.ok(!html.includes('<script>'));
+});
+
+test('activeYearLabel: najnowszy rok z przydziałów; bez roku pusty napis', () => {
+  const grants = [
+    { role: 'treasurer', schoolYearId: '2025-2026' },
+    { role: 'representative', classId: '1A', schoolYearId: '2026-2027' },
+  ];
+  assert.equal(activeYearLabel(grants), 'Rok szkolny 2026-2027');
+  assert.equal(activeYearLabel([{ role: 'admin' }]), '');
+  assert.equal(activeYearLabel(undefined), '');
+});
+
+// mountShell z atrapą DOM i fetch: nawigacja i konto z GET /api/access + /api/session
+// (kontrola dostępu i tak po stronie serwera — tu tylko prezentacja).
+function fakeDoc() {
+  const els = { 'shell-nav': { innerHTML: '' }, 'shell-account': { innerHTML: '' } };
+  return { els, getElementById: (id) => els[id] || null };
+}
+async function withFetch(routes, fn) {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const r = routes[url];
+    if (!r) throw new Error('no route ' + url);
+    return { ok: r.status < 400, status: r.status, json: async () => r.body };
+  };
+  try { return await fn(); } finally { globalThis.fetch = original; }
+}
+const loc = { pathname: '/families/', search: '', hash: '' };
+
+test('mountShell: przedstawiciel 1A — Rodziny/Kartki/Dokumenty/Wydarzenia, konto z rokiem', async () => {
+  const doc = fakeDoc();
+  await withFetch({
+    '/api/access': { status: 200, body: { grants: [{ role: 'representative', classId: '1A', schoolYearId: '2026-2027' }] } },
+    '/api/session': { status: 200, body: { displayName: 'Jan <b>Test</b>' } },
+  }, () => mountShell({ document: doc, location: loc }));
+  const nav = doc.els['shell-nav'].innerHTML;
+  for (const label of ['Rodziny', 'Kartki', 'Dokumenty', 'Wydarzenia']) assert.ok(nav.includes(`>${label}</a>`), label);
+  for (const label of ['Wpłaty', 'Księga', 'Import uczniów', 'Konta i role']) assert.ok(!nav.includes(`>${label}</a>`), label);
+  const acc = doc.els['shell-account'].innerHTML;
+  assert.match(acc, /Rok szkolny 2026-2027/);
+  assert.match(acc, /Przedstawiciel klasy/);
+  assert.ok(acc.includes('Jan &lt;b&gt;Test&lt;/b&gt;'));
+  assert.match(acc, /id="shell-logout"/);
+});
+
+test('mountShell: wygasła sesja/przydział — brak starej nazwy i linków', async () => {
+  const doc = fakeDoc();
+  doc.els['shell-account'].innerHTML = '<span>Stara Nazwa</span>';
+  await withFetch({
+    '/api/access': { status: 200, body: { grants: [] } },
+    '/api/session': { status: 500, body: {} },
+  }, () => mountShell({ document: doc, location: loc }));
+  assert.equal(doc.els['shell-nav'].innerHTML, '');
+  assert.equal(doc.els['shell-account'].innerHTML, '');
 });

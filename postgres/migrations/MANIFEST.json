@@ -292,6 +292,10 @@
     "sha256": "6946c2cb678946fcc171cc4a7928ac9816b9ecfee3d18fbb857c5178838a14f6"
   },
   {
+    "name": "0125_account_recovery_requests.sql",
+    "sha256": "90b6b1439eb8bbf64cf526b3529db889136e3b4c2c452eb17050b9aaf636080b"
+  },
+  {
     "name": "0137_promotion_runs.sql",
     "sha256": "1bdd80080bf2a49b227daba17c244af77e91f93c318060ab01b074984cb8550f"
   }
