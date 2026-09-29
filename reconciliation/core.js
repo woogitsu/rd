@@ -123,3 +123,81 @@ export function describeApiError(status, code) {
   if (status === 403 || code === 'forbidden') return 'Nie masz uprawnień do uzgodnień w wybranym roku szkolnym.';
   return null;
 }
+
+// --- import pliku wyciągu CODA / CAMT.053 (#105) ---------------------------------
+// Plik jest czytany w przeglądarce i wysyłany jako pole `coda` albo `camt053` trasy
+// POST /api/reconciliations/{id}/lines. Treść nie jest pokazywana ani zapisywana w
+// przeglądarce (zawiera dane kontrahentów); serwer nie zapisuje pliku, tylko skróty.
+
+// Limit żądania na serwerze to 256 KiB (MAX_IMPORT_BYTES); zapas na znaki ucieczki w JSON.
+export const MAX_STATEMENT_FILE_BYTES = 200 * 1024;
+
+export const STATEMENT_FORMAT_LABELS = Object.freeze({ coda: 'CODA', camt053: 'CAMT.053 (XML)' });
+
+// Format po treści, nie po rozszerzeniu: XML zaczyna się od „<”, CODA od rekordu „0”
+// (nagłówek, rekordy stałej długości 128 znaków). Niejednoznaczne = null (użytkownik wybiera).
+export function detectStatementFormat(text) {
+  const head = String(text ?? '').replace(/^\uFEFF/, '').trimStart();
+  if (head.startsWith('<')) return 'camt053';
+  const first = head.split(/\r?\n/, 1)[0] ?? '';
+  if (/^0/.test(first) && first.length >= 120 && first.length <= 130 && /^[\x20-\x7E\u00A0-\u00FF]+$/.test(first)) return 'coda';
+  return null;
+}
+
+// UTF-8 (także z BOM) albo, gdy bajty nie są poprawnym UTF-8, Windows-1252 (starsze CODA).
+export function decodeStatementBytes(input) {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes).replace(/^\uFEFF/, ''), encoding: 'utf-8' };
+  } catch {
+    return { text: new TextDecoder('windows-1252').decode(bytes), encoding: 'windows-1252' };
+  }
+}
+
+export function statementFileProblem(file) {
+  if (!file) return 'Wybierz plik wyciągu.';
+  if (file.size === 0) return 'Plik jest pusty.';
+  if (file.size > MAX_STATEMENT_FILE_BYTES) return 'Plik wyciągu przekracza 200 KB. Wyeksportuj krótszy okres.';
+  return '';
+}
+
+// Treść żądania; format podany ręcznie ma pierwszeństwo przed wykrytym.
+export function buildStatementFileBody(text, format) {
+  if (!Object.hasOwn(STATEMENT_FORMAT_LABELS, format)) throw new Error('Wybierz format pliku: CODA albo CAMT.053.');
+  if (typeof text !== 'string' || !text.trim()) throw new Error('Plik jest pusty.');
+  if (/\u0000/.test(text)) throw new Error('Plik zawiera znaki binarne. Wybierz plik tekstowy CODA albo XML CAMT.053.');
+  return { [format]: text };
+}
+
+// Ostrzeżenia z odpowiedzi importu (kontrola ciągłości sald) — nic nie blokują.
+export const IMPORT_WARNING_LABELS = Object.freeze({
+  closing_balance_mismatch: 'Saldo początkowe plus ruchy nie daje salda końcowego z pliku.',
+  opening_balance_discontinuity: 'Saldo początkowe nie zgadza się z saldem końcowym poprzedniego wyciągu w tym roku.',
+  statement_date_differs: 'Data zamknięcia wyciągu w pliku różni się od daty uzgodnienia.',
+  statement_balance_differs: 'Saldo końcowe z pliku różni się od salda wpisanego w uzgodnieniu.',
+});
+
+export function describeImportWarnings(warnings) {
+  return (Array.isArray(warnings) ? warnings : []).map((code) => IMPORT_WARNING_LABELS[code] ?? 'Nieznane ostrzeżenie kontroli wyciągu.');
+}
+
+// Podsumowanie po imporcie: liczby oraz salda z pliku (kwoty w centach).
+export function summarizeStatementImport(result) {
+  const imported = Number(result?.import?.lineCount ?? result?.lineCount ?? 0);
+  const skipped = Number(result?.skippedDuplicateCount ?? 0);
+  const parts = [];
+  parts.push(imported > 0 ? `Wgrano ${imported} pozycji.` : 'Nie wgrano nowych pozycji.');
+  if (skipped > 0) parts.push(`Pominięto ${skipped} ruchów już zaimportowanych wcześniej.`);
+  const balances = result?.fileBalances;
+  if (balances && Number.isSafeInteger(balances.openingBalanceCents) && Number.isSafeInteger(balances.closingBalanceCents)) {
+    parts.push(`Saldo z pliku: początkowe ${formatCents(balances.openingBalanceCents)}, końcowe ${formatCents(balances.closingBalanceCents)}.`);
+  }
+  return { text: parts.join(' '), warnings: describeImportWarnings(result?.warnings) };
+}
+
+// Komunikat błędu pliku: serwer zwraca numer rekordu, nigdy fragment treści.
+export function describeStatementImportError(error) {
+  const record = error?.data?.record;
+  const base = error?.message || 'Nie udało się wgrać pliku wyciągu.';
+  return Number.isInteger(record) && record > 0 ? `${base} (rekord ${record})` : base;
+}

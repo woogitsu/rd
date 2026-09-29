@@ -628,6 +628,17 @@
       "exportable": true,
       "data_type": "text"
     },
+    "payment_refund_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
     "reconciliation_id": {
       "personal": "none",
       "subject": null,

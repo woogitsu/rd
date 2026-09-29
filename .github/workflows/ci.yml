@@ -13,7 +13,9 @@ permissions:
 #
 # Anuluj poprzedni przebieg tej samej gałęzi/PR, gdy przyjdzie nowy push.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Prefiks „hosted-”: zablokowane uruchomienia z dawnych runnerów self-hosted
+  # (zadanie ci-ok w kolejce, anulowanie nie działa) trzymały starą grupę.
+  group: ci-hosted-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

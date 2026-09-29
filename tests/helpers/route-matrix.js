@@ -1709,6 +1709,24 @@ export const ROUTE_MATRIX = Object.freeze([
     build: () => ({ path: `/api/board/overview?schoolYearId=${YEAR_1}` }),
     check: ({ actor, json }) => classListCheck(actor, json),
   },
+  // Eksport tej samej tabeli (#131): te same role i zakres co widok; wiersze klas + „Razem”.
+  {
+    id: 'board.overviewExportCsv', module: 'board', method: 'GET',
+    path: '/api/board/overview/export.csv?schoolYearId=:year',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'], boardA: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: `/api/board/overview/export.csv?schoolYearId=${YEAR_1}` }),
+    check: ({ actor, text }) => {
+      const dataRows = text.split('\r\n').filter((line) => /^[^;]+;\d+;\d+;\d+;\d+;\d+;\d+/.test(line));
+      const expected = ((actor.ownClass ?? actor.classBoard) ? 1 : 2) + 1;
+      return dataRows.length === expected ? [] : [`wiersze eksportu: ${dataRows.length} zamiast ${expected}`];
+    },
+  },
+  {
+    id: 'board.overviewExportXlsx', module: 'board', method: 'GET',
+    path: '/api/board/overview/export.xlsx?schoolYearId=:year',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'], boardA: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: `/api/board/overview/export.xlsx?schoolYearId=${YEAR_1}` }),
+  },
 
   // ---------- mfa (#3) ----------
   // Każda sesja (także bez przydziału) zarządza wyłącznie własnym czynnikiem; nowy użytkownik na przypadek.
