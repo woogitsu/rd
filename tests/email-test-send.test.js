@@ -214,9 +214,14 @@ async function snapshotAndApprove(t, id) {
 }
 
 async function editBody(t, id, bodyText) {
+  // #215: PUT wymaga bieżącej `revision` kampanii.
+  const current = await t.call(t.treasurer, `/api/email/campaigns/${id}`);
   const res = await t.call(t.treasurer, `/api/email/campaigns/${id}`, {
     method: 'PUT',
-    body: { title: 'Przypomnienie jesienne', audience: 'all_households', subject: 'Dobrowolna składka {rok}', bodyText },
+    body: {
+      title: 'Przypomnienie jesienne', audience: 'all_households', subject: 'Dobrowolna składka {rok}', bodyText,
+      revision: current.body.campaign.revisionNo,
+    },
   });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   return res.body.campaign;
