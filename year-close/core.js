@@ -107,6 +107,8 @@ export function describeApiError(status, code) {
   if (code === 'mfa_required') return 'Potwierdź logowanie drugim składnikiem (MFA), aby zamknąć rok szkolny.';
   if (code === 'four_eyes_required') return 'Zamknąć musi inna osoba niż ta, która rozpoczęła zamknięcie roku.';
   if (code === 'checklist_incomplete') return 'Uzupełnij wszystkie punkty listy kontrolnej przed zamknięciem.';
+  if (code === 'year_end_balance_mismatch') return 'Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Wyjaśnij rozbieżność (wpisy datowane po końcu roku); potwierdzenie z powodem jest możliwe przez API.';
+  if (code === 'year_end_confirmation_mismatch') return 'Rozbieżność salda końca roku zmieniła się od ostatniego podglądu. Odśwież stan i sprawdź kwoty.';
   if (code === 'school_year_closed') return 'Ten rok szkolny jest już zamknięty.';
   if (code === 'year_close_not_started') return 'Zamknięcie roku nie zostało jeszcze rozpoczęte.';
   if (code === 'year_close_already_started') return 'Zamknięcie roku zostało już rozpoczęte z innym rokiem docelowym.';

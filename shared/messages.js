@@ -275,6 +275,9 @@ export const MESSAGES = Object.freeze({
   year_close_already_started: "Zamknięcie roku zostało już rozpoczęte.",
   checklist_incomplete: "Lista kontrolna nie jest ukończona.",
   invalid_checklist_item: "Niepoprawny punkt listy kontrolnej.",
+  year_end_balance_mismatch: "Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Potwierdź rozbieżność z powodem albo popraw wpisy.",
+  year_end_confirmation_mismatch: "Rozbieżność salda końca roku jest inna niż potwierdzona. Sprawdź aktualne kwoty i potwierdź ponownie.",
+  invalid_year_end_confirmation: "Potwierdzenie rozbieżności wymaga jednego z dozwolonych powodów i widzianych różnic w centach.",
   snapshot_required: "Najpierw utwórz kopię stanu danych.",
 
   // --- Wysyłki e-mail --------------------------------------------------------------------------
