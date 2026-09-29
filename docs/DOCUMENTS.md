@@ -117,7 +117,7 @@ Brak wszystkich zmiennych `BUCKET_*` oznacza brak magazynu (trasy dokumentów zw
 ## Staging na syntetycznym pliku
 
 1. Utworzyć bucket w środowisku staging (region UE) i przekazać zmienne `BUCKET_*` usłudze staging. Nie używać bucketu produkcyjnego.
-2. `APP_ENV=staging npm run storage:smoke` — zapisuje wygenerowany syntetyczny PDF pod `smoke/<uuid>`, odczytuje go, porównuje SHA-256 i usuwa. Skrypt odmawia działania przy `APP_ENV=production` i nie wypisuje adresu, nazwy bucketu ani kluczy.
+2. `APP_ENV=staging npm run storage:smoke` — zapisuje wygenerowany syntetyczny PDF pod `smoke/<uuid>`, odczytuje go, porównuje SHA-256 i usuwa. Skrypt odmawia działania przy `APP_ENV=production` oraz przy braku lub nieznanej wartości `APP_ENV` i nie wypisuje adresu, nazwy bucketu ani kluczy.
 3. Po migracji `0006` na bazie staging i zalogowaniu syntetycznego skarbnika z MFA: przesłać syntetyczny PDF przez `POST /api/documents`, pobrać go, sprawdzić nagłówki, a następnie potwierdzić `404` dla konta przedstawiciela klasy i dla losowego identyfikatora oraz wpisy w `audit_events`.
 4. Nie używać prawdziwych faktur, wyciągów, protokołów ani plików z nazwiskami.
 
