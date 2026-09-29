@@ -60,6 +60,7 @@ Sekrety i `DATABASE_URL` nie są potrzebne do testu samego serwera. Serwer **nie
 
 1. gdy `env.db` nie istnieje (brak `DATABASE_URL`) — `503` i `checks.database: "not_configured"`,
 2. `SELECT 1` z limitem 2 s — przy błędzie `503` i `database: "error"`, przy przekroczeniu czasu `database: "timeout"`,
+   Limit jest realny po stronie bazy (#244): sonda działa przez `db.probe` (`src/db.js`) na jednym własnym połączeniu, w transakcji z `SET LOCAL statement_timeout`/`lock_timeout` równym pozostałemu budżetowi 2 s, więc PostgreSQL sam anuluje zapytanie, a połączenie wraca do puli po ≤ 2 s (nie po `statement_timeout` puli, 10 s). Równoległe sondy dzielą jedno sprawdzenie (single-flight), a sonda uruchomiona, gdy poprzednia jeszcze trwa, kończy się `database: "timeout"` bez zajmowania kolejnego połączenia ani miejsca w kolejce puli. Atrapy i PGlite (bez `probe`) używają samego wyścigu z czasem.
 3. porównanie `schema_migrations` z plikami `postgres/migrations/*.sql` — przy brakach `503`, `migrations: "pending"` oraz liczba i nazwy brakujących plików migracji,
 4. w trakcie zamykania procesu — `503` i `checks.server: "shutting_down"`.
 
