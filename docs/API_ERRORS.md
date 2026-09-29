@@ -125,6 +125,7 @@ wpisów).
 | `import_disabled` | Import jest wyłączony na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `import_has_conflicts` | Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `inconsistent_matches` | Dopasowania są niespójne. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
+| `invalid_access_kind` | Wybierz rodzaj odczytu z listy. | Nie — popraw dane żądania. |
 | `invalid_allocation` | Niepoprawny podział wpisu na wydarzenia lub klasy. | Nie — popraw dane żądania. |
 | `invalid_alt_text` | Podaj opis zdjęcia (tekst alternatywny). | Nie — popraw dane żądania. |
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
@@ -204,6 +205,7 @@ wpisów).
 | `invalid_or_expired_link` | Ten link jest nieprawidłowy albo już nieaktywny. | Nie — poproś o nowy link. |
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_origin` | Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji. | Nie — popraw dane żądania. |
+| `invalid_outcome` | Wybierz wynik odczytu z listy. | Nie — popraw dane żądania. |
 | `invalid_payee_name` | Podaj nazwę odbiorcy (maksymalnie 70 znaków). | Nie — popraw dane żądania. |
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
 | `invalid_payment_id` | Niepoprawny identyfikator wpłaty. | Nie — popraw dane żądania. |

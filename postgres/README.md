@@ -1035,3 +1035,13 @@ keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
 audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
 wiersz nie jest zmieniany; zapisy do tych tabel utrzymują dodatkowe indeksy.
 Wycofanie: `DROP INDEX` każdego z nich (bezpieczne). Kontrakt list: docs/API.md.
+
+`0140_data_access_log_review.sql` (#133) rozszerza CHECK `access_kind` w
+`data_access_log` o `class_roster_export`, `yearly_export` i `payment_export`
+(wpisy eksportów, zapisywane w tej samej transakcji co eksport) oraz dodaje
+indeksy pod przegląd `GET /api/admin/access-log` (kursor po
+`(occurred_at, id)`, filtr po rodzaju). Skutki dla danych: żaden wiersz nie
+jest zmieniany ani usuwany; trigger `data_access_log_guard` bez zmian;
+retencja nadal nieustalona (D-04). Wycofanie: przywrócenie CHECK z czterema
+dotychczasowymi wartościami możliwe tylko dopóki nie ma wierszy z nowymi
+rodzajami; indeksy można usunąć bez skutków dla danych.

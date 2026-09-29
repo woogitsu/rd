@@ -89,6 +89,7 @@ export const MESSAGES = Object.freeze({
   idempotency_conflict: "Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie.",
   idempotency_key_required: "Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie.",
   invalid_idempotency_key: "Niepoprawny identyfikator operacji. Zamknij formularz i otwórz go ponownie.",
+  invalid_access_kind: "Wybierz rodzaj odczytu z listy.",
   invalid_cursor: "Nie udało się wczytać kolejnej strony wyników. Odśwież listę.",
   invalid_limit: "Niepoprawna liczba wyników na stronę.",
   invalid_id: "Niepoprawny identyfikator.",
@@ -109,6 +110,7 @@ export const MESSAGES = Object.freeze({
 
   invalid_domain: "Wybierz obszar dziennika z listy.",
   invalid_entity_type: "Nieznany rodzaj obiektu w dzienniku.",
+  invalid_outcome: "Wybierz wynik odczytu z listy.",
   invalid_from: "Podaj poprawną datę początkową (RRRR-MM-DD).",
   invalid_to: "Podaj poprawną datę końcową (RRRR-MM-DD).",
 
