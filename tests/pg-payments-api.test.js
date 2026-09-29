@@ -7,6 +7,7 @@ import { handlePgRequest, ROUTES } from '../src/pg/app.js';
 import * as paymentsRoutes from '../src/pg/routes/payments.js';
 import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 import { createLegacyDb, createNormalizer, d1Adapter } from './helpers/parity.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const BASE = 'https://rd.example';
 const DEBT_WORDS = /debt|due|owed|owing|outstanding|arrear|balance|receivable|d[lł]u[zż]n|zaleg|nale[zż]/i;
@@ -404,7 +405,7 @@ test('partial payments, siblings and two guardians sum per household without any
   assert.equal(list.cacheControl, 'no-store');
   const h1 = list.body.payments.filter((p) => p.householdId === 'h1');
   assert.deepEqual(h1.map((p) => [p.amountCents, p.correctedCents, p.netAmountCents]), [[1500, 0, 1500], [2000, 500, 1500]]);
-  assert.ok(list.body.payments.every((p) => Number.isSafeInteger(p.correctedCents) && typeof p.netAmountCents === 'number'));
+  assertEvery(list.body.payments, (p) => Number.isSafeInteger(p.correctedCents) && typeof p.netAmountCents === 'number');
   assert.deepEqual(Object.keys(list.body.payments[0]).sort(),
     ['amountCents', 'correctedCents', 'householdId', 'id', 'method', 'netAmountCents', 'receivedOn', 'reference', 'schoolYearId', 'status']);
   assert.equal(list.body.payments.find((p) => p.id === unmatched.id).status, 'unmatched');
@@ -449,7 +450,7 @@ test('audit events are atomic with the write and carry no amounts, references or
   }
   // #214: kontrola pozytywna — bez niej test przechodzi także wtedy, gdy logger przestaje pisać na console.error.
   assert.ok(errors.length > 0, 'awaria triggera audytu musi zostać zalogowana przez console.error');
-  assert.ok(errors.every((line) => !line.includes('synthetic-reference') && !line.includes('@')));
+  assertEvery(errors, (line) => !line.includes('synthetic-reference') && !line.includes('@'));
   assert.equal(await backend.count('payment_entries', "idempotency_key = 'audit-fail-0001'"), 0);
 
   // #211: ponowienie tym samym kluczem po usunięciu awarii — dokładnie ten krok

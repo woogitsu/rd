@@ -15,13 +15,16 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
-import { defaultYear, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
+import { panelYearState, yearOptionsHtml } from "../shared/school-year.js";
 import {
+  buildHouseholdLabels,
   classOptionsHtml,
+  householdLabel,
   householdOptionsHtml,
   householdSummary,
   householdsForStudent,
   requiresExplicitHouseholdChoice,
+  shownSummary,
   studentOptionsHtml,
 } from "../shared/household-picker.js";
 import { mountShell } from "../shared/shell.js";
@@ -33,7 +36,7 @@ let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const FILTER_KEYS = ["schoolYearId", "status"];
-const state = { payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
+const state = { householdLabels: new Map(), labelsYear: null, payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -78,7 +81,7 @@ function paymentRow(rawPayment) {
 
   const reference = textCell(payment.reference || "Bez opisu", "reference");
   const family = document.createElement("small");
-  family.textContent = payment.householdId ? `Rodzina: ${payment.householdId}` : "Nie przypisano rodziny";
+  family.textContent = householdLabel(state.householdLabels, payment.householdId);
   reference.append(family);
   row.append(reference);
   row.append(textCell(METHOD_LABELS[payment.method]));
@@ -106,7 +109,7 @@ function paymentRow(rawPayment) {
 function render() {
   body.replaceChildren(...state.payments.map(paymentRow));
   const count = state.payments.length;
-  summary.textContent = count === 1 ? "1 widoczna wpłata" : `${count} widocznych wpłat`;
+  summary.textContent = count === 0 ? "Brak wpłat." : shownSummary(count, Boolean(state.nextCursor));
   tableWrap.hidden = count === 0;
   message.className = "message";
   message.textContent = count === 0 ? "Brak wpłat dla wybranych filtrów." : "";
@@ -149,6 +152,24 @@ function setBusy(busy) {
   updateFilterHint();
 }
 
+// Czytelne etykiety rodzin (#128) z tych samych tras klas/uczniów co wybór rodziny. Serwer
+// decyduje o zakresie: rola bez dostępu (403) zostaje przy skróconym numerze, bez PII.
+async function loadHouseholdLabels(schoolYearId) {
+  if (state.labelsYear === schoolYearId) return;
+  state.householdLabels = new Map();
+  state.labelsYear = schoolYearId;
+  try {
+    const { classes = [] } = await api(`/api/classes?schoolYearId=${encodeURIComponent(schoolYearId)}`);
+    const loaded = await Promise.all(classes.map(async (cls) => {
+      const result = await api(`/api/classes/${encodeURIComponent(cls.id)}/students`);
+      return { className: cls.name, students: Array.isArray(result.students) ? result.students : [] };
+    }));
+    state.householdLabels = buildHouseholdLabels(loaded);
+  } catch {
+    state.householdLabels = new Map();
+  }
+}
+
 // append: następna strona zapamiętanego zapytania; bez append: pierwsza strona
 // z pól formularza albo (reload) ponownie zapamiętane zapytanie po zapisie.
 async function loadPayments({ append = false, reload = false } = {}) {
@@ -173,6 +194,7 @@ async function loadPayments({ append = false, reload = false } = {}) {
   setBusy(true);
   try {
     const result = await api(url);
+    await loadHouseholdLabels(query.schoolYearId);
     if (!append) state.query = query;
     const items = Array.isArray(result.payments) ? result.payments : [];
     state.payments = append ? [...state.payments, ...items] : items;
@@ -210,13 +232,13 @@ filtersForm.addEventListener("submit", (event) => {
 (async function initFilters() {
   const restored = filtersFromQuery(window.location.search, FILTER_KEYS);
   let years = [];
+  let year = "";
   try {
     const access = await api("/api/access");
-    years = yearsFromGrants(access && access.grants);
+    ({ years, year } = panelYearState(access && access.grants, restored.schoolYearId));
   } catch {
     years = [];
   }
-  const year = defaultYear(years, restored.schoolYearId);
   yearInput.innerHTML = yearOptionsHtml(years, year);
   if (restored.status && [...statusInput.options].some((o) => o.value === restored.status)) {
     statusInput.value = restored.status;
@@ -416,7 +438,7 @@ const paymentDialog = configureDialog("payment-dialog", "payment", async (data, 
       `Kwota: ${amountText}`,
       `Data wpływu: ${data.get("receivedOn")}`,
       `Metoda: ${METHOD_LABELS[data.get("method")] ?? data.get("method")}`,
-      householdId ? `Rodzina: ${householdId}` : "Bez przypisania rodziny — wpłata trafi do „Do przypisania”.",
+      householdId ? householdLabel(state.householdLabels, householdId) : "Bez przypisania rodziny — wpłata trafi do „Do przypisania”.",
       "Zapis jest trwały; pomyłkę poprawisz korektą widoczną w historii.",
     ],
     warning,

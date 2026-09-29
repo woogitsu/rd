@@ -50,6 +50,20 @@ export const ACTION_LABELS = Object.freeze({
   "user.disabled": "Wyłączenie konta",
   "user.enabled": "Włączenie konta",
   "session.revoked": "Wycofanie sesji",
+  // Przegląd demo: te zdarzenia dziennik pokazywał surowym kodem (np. „user.created”).
+  "user.created": "Utworzenie konta",
+  "auth.password_set": "Ustawienie hasła",
+  "auth.password_changed": "Zmiana hasła",
+  "auth.account_under_pressure": "Konto pod presją prób logowania",
+  "auth.password_reset_completed": "Ustawienie nowego hasła kodem resetu",
+  "invitation.reissued": "Ponowne wydanie zaproszenia",
+  "role_grant.school_year_backfilled": "Uzupełnienie roku szkolnego w przydziale roli",
+  "school_year.created": "Utworzenie roku szkolnego",
+  "class.created": "Utworzenie klasy",
+  "account_recovery.requested": "Prośba o odzyskanie konta",
+  "account_recovery.approved": "Zatwierdzenie odzyskania konta",
+  "account_recovery.rejected": "Odrzucenie odzyskania konta",
+  "account_recovery.expired": "Wygaśnięcie prośby o odzyskanie konta",
 });
 
 export const ERROR_MESSAGES = Object.freeze({

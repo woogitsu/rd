@@ -12,12 +12,13 @@ const read = (file) => readFileSync(fileURLToPath(new URL(`../${file}`, import.m
 // Pola formularzy paneli, które zapisują wolny tekst do tabel niezmiennych.
 const FIELDS = {
   'panel/index.html': ['reference', 'reason'],
-  'ledger/index.html': ['description', 'reason'],
+  'ledger/index.html': ['description', 'reason', 'note'],
   'reconciliation/index.html': ['notes', 'reason', 'confirmationNote'],
   'meetings/index.html': ['description', 'body', 'changeNote', 'approvalNote', 'reason'],
   'year-close/index.html': ['note'],
   'families/index.html': ['reason'],
-  'documents/index.html': ['title', 'description'],
+  'documents/index.html': ['title', 'description', 'reason'],
+  'events/index.html': ['title', 'reason'],
 };
 
 test('każde pole wolnego tekstu z niezmiennej tabeli ma w panelu krótką podpowiedź o danych osobowych', () => {

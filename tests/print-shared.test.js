@@ -89,3 +89,35 @@ test('formatPrintedAt: data po polsku, godzina Europe/Brussels', () => {
 test('printMeta.js nie odwołuje się do sieci ani DOM poza mountPrintMeta', () => {
   assert.ok(!/fetch\(/.test(printMeta));
 });
+
+// #151 (reszta): układ podpisów (D-21, wariant zachowawczy) i granica danych wydruku.
+test('meetings: protokół do druku ma dwa puste pola podpisu (D-21, założenie) i wiersze listy z komórką podpisu', () => {
+  const section = html.meetings.match(/<section id="print-minutes"[\s\S]*?<\/section>/)[0];
+  assert.equal((section.match(/<div><span>[^<]*podpis, data<\/span><\/div>/g) ?? []).length, 2);
+  assert.match(printCss, /\.print-signatures\s*\{[^}]*break-inside:\s*avoid/);
+  assert.match(mainJs.meetings, /className: "signature"/);
+});
+
+test('meetings: wydruk protokołu bierze dane wyłącznie z już pobranego state.detail (bez nowych tras i pól osobowych)', () => {
+  const fn = mainJs.meetings.match(/function fillPrintMinutes\(item\) \{[\s\S]*?\n\}\n/)[0];
+  assert.ok(!/api\(|fetch\(/.test(fn), 'wydruk nie woła sieci');
+  for (const forbidden of ['email', 'displayName', 'userId', 'guardian', 'phone', 'address']) {
+    assert.ok(!fn.includes(forbidden), `wydruk protokołu nie może używać pola ${forbidden}`);
+  }
+  assert.match(fn, /attendee\.capacity/);
+});
+
+test('ledger i panel: wydruk używa tego samego formatu kwot co ekran („1 234,56 €”)', async () => {
+  const { formatEur } = await import('../panel/money.js');
+  assert.equal(formatEur(123456), '1\u00a0234,56\u00a0€');
+  assert.equal(formatEur(-5000), '−50,00\u00a0€');
+  const ledger = await import('../ledger/core.js');
+  assert.equal(ledger.formatCents(123456), '1\u00a0234,56\u00a0€');
+});
+
+test('raport KR (GET /api/reports/audit?format=html) ma własny arkusz druku i pola podpisów', () => {
+  const report = read('src/pg/audit-report.js');
+  assert.match(report, /@page \{ size: A4/);
+  assert.match(report, /tr \{ break-inside: avoid; \}/);
+  assert.match(report, /\.signatures/);
+});

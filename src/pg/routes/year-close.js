@@ -3,7 +3,7 @@
 //
 //   GET  /api/year-close/{schoolYearId}                    stan, lista kontrolna, bilans
 //   POST /api/year-close/{schoolYearId}/start              { nextSchoolYearId }
-//   POST /api/year-close/{schoolYearId}/checklist/{item}   { note?, documentId? }
+//   POST /api/year-close/{schoolYearId}/checklist/{item}   { note?, documentId?, reportSnapshotId? }  (reportSnapshotId: tylko punkt financial_report, zatwierdzona bieżąca migawka #125)
 //   POST /api/year-close/{schoolYearId}/close              zarząd + MFA, inna osoba niż rozpoczynająca; krok w górę MFA (#150)
 //   GET  /api/year-close/{schoolYearId}/handover           zestawienie przekazania (JSON, bez danych osobowych)
 //
@@ -200,7 +200,7 @@ async function loadClosure(executor, schoolYearId, { lock = false } = {}) {
 async function loadChecklist(executor, closureId) {
   if (!closureId) return [];
   const { rows } = await executor.query(
-    `SELECT item, note, document_id, confirmed_by, confirmed_at
+    `SELECT item, note, document_id, report_snapshot_id, confirmed_by, confirmed_at
        FROM school_year_closure_checklist WHERE closure_id = $1`,
     [closureId],
   );
@@ -231,6 +231,40 @@ async function liveSummary(executor, schoolYearId) {
   };
 }
 
+// #169: kontrola salda końca roku. Dwa niezależnie liczone salda tego samego
+// dnia: bilans zamknięcia (ledger_year_summary/ledger_year_cash_summary — wszystkie
+// wpisy roku bez względu na datę) i saldo księgi na ends_on (ledger_balance_at /
+// ledger_non_bank_net_at, jak w uzgodnieniu rachunku). Różnica ≠ 0 oznacza wpis
+// datowany po końcu roku (wiersz sprzed walidacji 0027 albo zapis z pominięciem
+// API). Rozbicie: rachunek = całość − kasa (D-13, #199), więc różnica gotówkowa
+// i bankowa są podane osobno. Tylko liczby, bez danych osobowych.
+async function yearEndCheck(executor, schoolYearId, live) {
+  const { rows } = await executor.query(
+    `SELECT ledger_balance_at(y.id, y.ends_on) AS balance_at_end,
+            ledger_non_bank_net_at(y.id, y.ends_on) AS cash_at_end
+       FROM school_years y WHERE y.id = $1`,
+    [schoolYearId],
+  );
+  const balanceAtYearEndCents = toSafeInteger(rows[0]?.balance_at_end) ?? 0;
+  const cashAtYearEndCents = toSafeInteger(rows[0]?.cash_at_end) ?? 0;
+  const bankAtYearEndCents = balanceAtYearEndCents - cashAtYearEndCents;
+  const balanceDifferenceCents = live.closingBalanceCents - balanceAtYearEndCents;
+  const cashDifferenceCents = live.closingCashCents - cashAtYearEndCents;
+  const bankDifferenceCents = live.closingBankCents - bankAtYearEndCents;
+  return {
+    ok: balanceDifferenceCents === 0 && cashDifferenceCents === 0,
+    closingBalanceCents: live.closingBalanceCents,
+    balanceAtYearEndCents,
+    balanceDifferenceCents,
+    closingCashCents: live.closingCashCents,
+    cashAtYearEndCents,
+    cashDifferenceCents,
+    closingBankCents: live.closingBankCents,
+    bankAtYearEndCents,
+    bankDifferenceCents,
+  };
+}
+
 function checklistView(rows) {
   const byItem = new Map(rows.map((row) => [row.item, row]));
   return CHECKLIST_ITEMS.map((item) => {
@@ -242,6 +276,7 @@ function checklistView(rows) {
       confirmedAt: row ? isoTimestamp(row.confirmed_at) : null,
       note: row?.note ?? null,
       documentId: row?.document_id ?? null,
+      reportSnapshotId: row?.report_snapshot_id ?? null,
     };
   });
 }
@@ -282,6 +317,9 @@ async function statusView(executor, schoolYearId) {
     checklist,
     missingChecklistItems: checklist.filter((entry) => !entry.confirmed).map((entry) => entry.item),
     balance: balanceView(closure, live),
+    // #169: zgodność bilansu zamknięcia z saldem księgi na koniec roku.
+    // Rozbieżność wymaga jawnego potwierdzenia z powodem przy zamknięciu.
+    yearEndCheck: await yearEndCheck(executor, schoolYearId, live),
     // #97: informacja przed zamknięciem roku — wydatki bez weryfikacji drugiej
     // osoby lub zakwestionowane. Nie blokuje zamknięcia (D-08).
     expenseReviews: await expenseReviewSummary(executor, schoolYearId),
@@ -363,6 +401,13 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
     if (typeof data.documentId !== 'string' || !ID_PATTERN.test(data.documentId)) throw new RequestError('invalid_document_id');
     documentId = data.documentId;
   }
+  let reportSnapshotId = null;
+  if (data.reportSnapshotId !== undefined && data.reportSnapshotId !== null) {
+    if (typeof data.reportSnapshotId !== 'string' || !ID_PATTERN.test(data.reportSnapshotId) || item !== 'financial_report') {
+      throw new RequestError('invalid_report_snapshot');
+    }
+    reportSnapshotId = data.reportSnapshotId;
+  }
   const result = await env.db.transaction(async (tx) => {
     await requireYear(tx, schoolYearId);
     const closure = await loadClosure(tx, schoolYearId, { lock: true });
@@ -378,6 +423,17 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
         throw new RequestError('invalid_document_id');
       }
     }
+    if (reportSnapshotId) {
+      // #125: punkt sprawozdania może wskazać wyłącznie zatwierdzoną, bieżącą (niezastąpioną)
+      // migawkę tego roku; inna, nieistniejąca i cudza dają ten sam kod (bez wyroczni istnienia).
+      const { rows: snapRows } = await tx.query(
+        `SELECT approved_at, superseded_by_id FROM financial_report_snapshot_status
+          WHERE id = $1 AND school_year_id = $2 AND kind = 'annual'`,
+        [reportSnapshotId, schoolYearId],
+      );
+      const snap = snapRows[0];
+      if (!snap || !snap.approved_at || snap.superseded_by_id) throw new RequestError('invalid_report_snapshot');
+    }
     const { rows } = await tx.query(
       'SELECT 1 FROM school_year_closure_checklist WHERE closure_id = $1 AND item = $2',
       [closure.id, item],
@@ -389,16 +445,16 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
     });
     try {
       await tx.query(
-        `INSERT INTO school_year_closure_checklist (closure_id, item, note, document_id, confirmed_by)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [closure.id, item, note, documentId, actorId],
+        `INSERT INTO school_year_closure_checklist (closure_id, item, note, document_id, report_snapshot_id, confirmed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [closure.id, item, note, documentId, reportSnapshotId, actorId],
       );
     } catch (error) {
       mapDatabaseError(error);
     }
     await insertAuditEvent(tx, {
       actorId, action: 'year_close.checklist_confirmed', entityType: 'school_year_closure', entityId: closure.id,
-      metadata: { schoolYearId, item, documentId, ...piiAuditMetadata(gate) },
+      metadata: { schoolYearId, item, documentId, reportSnapshotId, ...piiAuditMetadata(gate) },
     });
     return { replayed: false };
   });
@@ -406,11 +462,35 @@ async function confirmChecklistItem(request, env, schoolYearId, item, json) {
   return json(body, result.replayed ? 200 : 201);
 }
 
+// #169: powody potwierdzenia rozbieżności salda końca roku — kody, nie wolny
+// tekst: dziennik audytu nie przyjmuje wolnego tekstu w metadanych (src/pg/audit.js,
+// klucz `reason` = tylko kod), a osobnej kolumny na wyjaśnienie nie dodajemy bez
+// decyzji Rady (wariant zachowawczy; opis tekstowy to ewentualny follow-up).
+export const YEAR_END_DISCREPANCY_REASONS = Object.freeze([
+  'entry_dated_after_year_end', // wpis z datą po końcu roku do poprawy w roku następnym
+  'explained_by_resolution', // rozbieżność wyjaśniona uchwałą/protokołem zarządu
+  'explained_outside_system', // wyjaśniona poza systemem (dokumentacja u skarbnika)
+]);
+
+// #169: jawne potwierdzenie rozbieżności salda końca roku. Powtarza widziane
+// różnice (kwoty w centach), żeby nie zatwierdzić rozbieżności innej niż
+// oglądana; kod powodu trafia do dziennika zdarzeń (bez danych osobowych).
+function parseYearEndConfirmation(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new RequestError('invalid_year_end_confirmation');
+  const { reason, balanceDifferenceCents, cashDifferenceCents } = value;
+  if (!YEAR_END_DISCREPANCY_REASONS.includes(reason) || !Number.isSafeInteger(balanceDifferenceCents) || !Number.isSafeInteger(cashDifferenceCents)) {
+    throw new RequestError('invalid_year_end_confirmation');
+  }
+  return { reason, balanceDifferenceCents, cashDifferenceCents };
+}
+
 async function closeYear(request, env, schoolYearId, json) {
   const actorId = await authorize(request, env, schoolYearId, CLOSE_ROLES, {
     requireFreshMfa: true, allowExpiredByOwnClosure: true,
   });
-  await readJson(request);
+  const body = await readJson(request);
+  const confirmation = parseYearEndConfirmation(body.confirmYearEndDiscrepancy);
   const year = await requireYear(env.db, schoolYearId);
 
   const precheck = await loadClosure(env.db, schoolYearId);
@@ -461,6 +541,20 @@ async function closeYear(request, env, schoolYearId, json) {
       throw new RequestError('closing_balance_out_of_range', 409);
     }
 
+    // #169: bilans zamknięcia musi zgadzać się z saldem księgi na koniec roku;
+    // inaczej zamknięcie wymaga jawnego potwierdzenia z powodem, które powtarza
+    // aktualne różnice. Liczone pod blokadą księgi, więc bez wyścigu.
+    const endCheck = await yearEndCheck(tx, schoolYearId, summary);
+    if (!endCheck.ok) {
+      if (!confirmation) {
+        throw new RequestError('year_end_balance_mismatch', 409, { yearEndCheck: endCheck });
+      }
+      if (confirmation.balanceDifferenceCents !== endCheck.balanceDifferenceCents
+        || confirmation.cashDifferenceCents !== endCheck.cashDifferenceCents) {
+        throw new RequestError('year_end_confirmation_mismatch', 409, { yearEndCheck: endCheck });
+      }
+    }
+
     const openingId = crypto.randomUUID();
     try {
       await tx.query(
@@ -507,9 +601,23 @@ async function closeYear(request, env, schoolYearId, json) {
     } catch (error) {
       mapDatabaseError(error);
     }
+    if (!endCheck.ok) {
+      await insertAuditEvent(tx, {
+        actorId, action: 'year_close.year_end_discrepancy_confirmed', entityType: 'school_year_closure', entityId: closure.id,
+        metadata: {
+          schoolYearId, closureId: closure.id, reason: confirmation.reason,
+          balanceDifferenceCents: endCheck.balanceDifferenceCents,
+          cashDifferenceCents: endCheck.cashDifferenceCents,
+          bankDifferenceCents: endCheck.bankDifferenceCents,
+          closingBalanceCents: endCheck.closingBalanceCents,
+          balanceAtYearEndCents: endCheck.balanceAtYearEndCents,
+        },
+      });
+    }
     await insertAuditEvent(tx, {
       actorId, action: 'year_close.closed', entityType: 'school_year_closure', entityId: closure.id,
-      metadata: { schoolYearId, nextSchoolYearId: closure.next_school_year_id, openingBalanceId: openingId, expiredGrantCount: expired.length },
+      metadata: { schoolYearId, nextSchoolYearId: closure.next_school_year_id, openingBalanceId: openingId, expiredGrantCount: expired.length,
+        yearEndDiscrepancyConfirmed: !endCheck.ok },
     });
     return { replayed: false };
   });

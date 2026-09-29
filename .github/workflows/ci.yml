@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      - run: node --test --test-concurrency=2 --test-shard=${{ matrix.shard }}/4 tests/*.test.js
+      - run: node --test --test-concurrency=2 --test-shard=${{ matrix.shard }}/4 --import ./tests/setup.js tests/*.test.js
 
   # #153: łańcuch dostaw. Blokuje przy podatnościach high/critical w
   # zależnościach produkcyjnych, przy podatnościach critical w całym drzewie

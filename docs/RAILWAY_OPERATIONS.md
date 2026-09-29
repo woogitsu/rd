@@ -66,6 +66,7 @@ logach, zgłoszeniach ani buildzie frontendu.
 | `DATABASE_URL` | aplikacja | referencja do prywatnego adresu PostgreSQL (`*.railway.internal`), nie publiczny TCP proxy |
 | `BUCKET`, `ENDPOINT`, `REGION`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` | aplikacja | referencje do zmiennych Storage Bucket (#39) |
 | `BREVO_API_KEY` | aplikacja / worker | dopiero w #40; na stagingu klucz bez możliwości wysyłki do rodziców |
+| `APP_WRITE_MODE` | aplikacja i worker e-mail | `normal` (domyślnie, także gdy brak) albo `read_only` (#143); inna wartość to błąd konfiguracji — serwer nie startuje, worker kończy z błędem. Procedura: sekcja „Tryb tylko do odczytu” |
 
 Sesje i MFA mogą wymagać dodatkowych sekretów — ich nazwy dopisuje PR #35.
 
@@ -130,7 +131,7 @@ dopóki serwer czyta starą nazwę; przy jej usunięciu skrypty trzeba przełąc
 | Storage Bucket | rozmiar, liczba obiektów, odrzucone uploady | metryki bucketu, audyt aplikacji | przegląd retencji |
 | Brevo | dzienny limit planu, odbicia, błędne adresy, błędy API | panel Brevo, stan kolejki (#40) | wstrzymanie kampanii, korekta adresów |
 | Zadania | zadania w stanie błędu lub zbyt długo w kolejce | tabela kolejki (#40) | ponowienie z tym samym kluczem idempotencji |
-| Backup | brak nowego backupu > 26 h, nieudana próba odtworzenia | Railway Backups, protokół | ręczny backup, eskalacja |
+| Backup | brak nowego backupu > 26 h, nieudana próba odtworzenia | `backup_runs` (po uruchomieniu usług cron), Railway Backups, protokół | ręczny backup, eskalacja |
 | Koszty | alerty Usage | Railway | patrz wyżej |
 
 **Liveness a readiness.** `/health` potwierdza tylko działanie procesu i
@@ -366,7 +367,8 @@ DATABASE_URL=<referencja z Railway> APP_ENV=staging \
 - Dziennik: `user.created` (gdy konto powstało), `invitation.created`
   i `auth.bootstrap_issued` z aktorem technicznym `system:bootstrap`
   (`actor_id = NULL`), identyfikatorem konta i zaproszenia — bez e-maila
-  i tokenu.
+  i tokenu. Przyjęcie zaproszenia zapisuje `role_grant.created` z
+  `metadata.source = 'bootstrap'`.
 - `APP_ENV=production` wymaga jawnego `--allow-production` i wolno go użyć
   tylko w ramach zatwierdzonego cutover (D-20).
 - Przyjęcie zaproszenia: `/login/#invite=<token>` (`POST /api/invitations/accept`)
@@ -419,35 +421,96 @@ przy innych wysyłkach).
 
 ## Backup PostgreSQL
 
+Stan: skrypty i dziennik przebiegów są w repozytorium (#90, `npm run backup:postgres`,
+`npm run restore:drill`, tabela `backup_runs`); **żadna usługa cron nie jest
+uruchomiona** — nie ma deploymentu Railway, a miejsce kopii poza Railway to
+decyzje D-01/D-20 (nierozstrzygnięte).
+
 1. Włączyć w usłudze PostgreSQL harmonogram backupów wolumenu
    (dzienny/tygodniowy/miesięczny; retencja wg Railway: ok. 6 dni / 1 miesiąc /
-   3 miesiące). Sprawdzić, czy plan workspace obejmuje backupy i PITR.
+   3 miesiące). Sprawdzić, czy plan workspace obejmuje backupy — dokumentacja
+   Railway nie opisuje PITR dla wolumenów, więc **nie zakładać PITR**: bez niego
+   RPO = odstęp między kopiami (backup wolumenu: do doby, zrzut logiczny: wg
+   harmonogramu poniżej).
 2. Przed każdą migracją schematu lub importem wykonać ręczny backup i zapisać
-   jego identyfikator w protokole.
-3. Co tydzień (produkcja) wykonać dodatkowo logiczny zrzut
-   `pg_dump --format=custom` przez tunel Railway na szyfrowany nośnik poza
-   Railway, prawa `0600`. Nie przechowywać zrzutu w repo, CI ani na
-   prywatnych laptopach bez szyfrowania. Czas przechowywania zrzutów
-   — decyzja szkoły (retencja).
+   jego identyfikator w protokole (ręczny backup wolumenu nie może przekroczyć
+   50% pojemności wolumenu; funkcja Railway jest oznaczona jako „w rozwoju”).
+3. Kopia logiczna poza Railway — `npm run backup:postgres` (usługa cron
+   `rd-backup`, **do uruchomienia po decyzji D-01/D-20**): `pg_dump --format=custom`
+   w migawce (`pg_export_snapshot`), szyfrowanie po stronie klienta kluczem
+   publicznym, zapis do drugiego magazynu S3 poza Railway, wpis w `backup_runs`.
+   Skrypt odmawia działania bez klucza szyfrującego i celu, nie loguje adresu
+   bazy, nazwy bucketu ani kluczy, a plik tymczasowy (katalog 0700) usuwa też
+   przy błędzie. Klucz prywatny jest poza Railway; kto go trzyma — decyzja
+   zarządu. Czas przechowywania kopii — D-04 (retencja).
+   Wraz z kopią zapisywany jest **raport zgodności** (liczności wszystkich
+   tabel, sumy kwot w centach, skróty SHA-256 zawartości tabel finansowych,
+   powiązań rodzina–uczeń–opiekun i audytu, lista wyzwalaczy i migracji) —
+   z tej samej migawki co zrzut, bez danych osobowych (`backup_runs.row_counts`,
+   `backup_runs.sums`).
+4. Harmonogram do uruchomienia po decyzji (propozycja, nie konfiguracja):
 
-## Próbne odtworzenie PostgreSQL (do wykonania)
+   | Usługa | Harmonogram (UTC) | Polecenie | Uwagi |
+   |---|---|---|---|
+   | `rd-backup` | codziennie, np. `17 2 * * *` | `npm run backup:postgres` | osobna usługa Railway z własnym plikiem konfiguracji z `cronSchedule` (np. `railway.backup.json`); `railway.json` aplikacji zostaje bez crona (`tests/railway-config.test.js`); przebieg nakładający się w tym samym dniu jest pomijany (klucz dnia) |
+   | `rd-restore-drill` | co tydzień, np. `43 4 * * 1`, najpierw staging | `npm run restore:drill` | odtwarza do OSOBNEJ bazy „drill” (inny host lub nazwa bazy niż `DATABASE_URL` — twarda kontrola); na produkcji wymaga `--allow-production` |
 
-Najpierw na stagingu z danymi syntetycznymi, potem przed cutover.
+   Alert „brak udanej kopii > 26 h” ma źródło danych: ostatni wiersz
+   `kind = 'backup'`, `result = 'success'` w `backup_runs`
+   (`GET /health/jobs`, `backup_too_old`; opis w sekcji „Stan systemu”).
+   Pliki usług cron i zmienne (`BACKUP_*`, `RESTORE_DRILL_*`) dodać dopiero
+   po wyborze magazynu; do tego czasu skrypty można uruchamiać wyłącznie
+   lokalnie (patrz niżej).
 
-1. Zapisać stan źródła: liczności tabel, suma `household_payment_totals`,
-   `ledger_year_summary`, lista `schema_migrations` (raport bez danych
-   osobowych).
-2. Utworzyć backup (ręczny) i zanotować jego czas.
-3. Wariant A — backup wolumenu: przywrócić w usłudze testowej lub w
-   stagingu (Railway montuje nowy wolumen jako staged change; poprzedni
-   wolumen zostaje zachowany). Wariant B — `pg_restore` zrzutu do pustej
-   bazy tymczasowej.
-4. Uruchomić `npm run db:migrate:postgres` na odtworzonej bazie — oczekiwany
-   wynik: `No pending migrations.` (sumy kontrolne zgodne).
-5. Porównać raport z punktu 1; sprawdzić ręcznie rodzinę z rodzeństwem,
-   dziecko z dwojgiem opiekunów, wpłatę częściową z korektą.
-6. Zmierzyć czas odtworzenia (RTO) i wiek backupu (RPO).
-7. Usunąć bazę/usługę tymczasową. Wpisać wynik do tabeli.
+## Próbne odtworzenie PostgreSQL
+
+**Zasada:** backupu wolumenu Railway nie da się przywrócić do innego projektu
+ani środowiska — przywrócenie montuje nowy wolumen w TEJ SAMEJ usłudze
+(staged change). Dlatego „próba odtworzenia” wolumenu na stagingu jest
+niemożliwa, a na produkcji podmieniłaby wolumen produkcyjny. Przywrócenie
+wolumenu (wariant A) jest wyłącznie **awaryjnym odtworzeniem w miejscu**, po
+osobnej decyzji zarządu/szkoły i backupie stanu bieżącego — nigdy próbą.
+Próby wykonujemy wariantem B (zrzut logiczny) lub C (eksport roczny).
+Źródło: [Railway: backup i odtworzenie PostgreSQL](https://docs.railway.com/guides/postgres-backups-restores)
+(sprawdzone 27.09.2026; dokumentacja zmienia się — przed decyzją sprawdzić ponownie).
+
+### Lokalnie na danych syntetycznych (można uruchamiać dziś)
+
+`npm run restore:drill:local` (wymaga lokalnego PostgreSQL z `pg_dump`/`pg_restore`
+i zmiennej `RD_LOCAL_PG_ADMIN_URL` albo `RD_TEST_PG_URL`; odmawia hosta innego
+niż lokalny, nie używa Railway ani sekretów produkcji). Skrypt tworzy dwie
+tymczasowe bazy, nakłada migracje i zestaw `scripts/lib/synthetic-seed.js`
+(rodzeństwo, dwoje opiekunów przy dziecku, wpłaty częściowe, korekty, wpisy
+księgi i audytu), wykonuje kopię z szyfrowaniem, odtwarza ją prawdziwym
+`pg_restore` i porównuje raport zgodności. Niezgodność, uszkodzona kopia
+(zła suma SHA-256) albo zaległe migracje = kod wyjścia 1. Test:
+`RD_TEST_PG_URL=… node --test tests/restore-drill-local.test.js` (bez zmiennej
+pomijany; testy raportu na PGlite działają zawsze). Tabele tylko do
+dopisywania odtwarzają się z zachowanymi wyzwalaczami bez `--disable-triggers`
+(format custom ładuje dane przed utworzeniem wyzwalaczy) — test sprawdza, że
+`UPDATE` na `audit_events` po odtworzeniu nadal jest odrzucany.
+Ograniczenia: w zestawie syntetycznym `email_outbox` jest pusty (jego
+wyzwalacze są sprawdzane, wiersze nie), a lokalna baza nie odtwarza
+parametrów Railway ani czasu przez sieć — RTO z tej próby to tylko dolna granica.
+
+### Procedura na stagingu i przed cutover (`npm run restore:drill`, po decyzji D-01/D-20)
+
+1. Kopia z punktu 3 wyżej (raport zgodności jest zapisany razem z kopią).
+2. Pobrać kopię z drugiego magazynu, sprawdzić SHA-256, odszyfrować kluczem
+   prywatnym (poza Railway), `pg_restore` do **osobnej, jednorazowej** bazy
+   „drill” — skrypt to robi i sam sprawdza, że baza docelowa różni się od źródłowej.
+3. Migrator na odtworzonej bazie — oczekiwany wynik: `No pending migrations.`
+   (sumy kontrolne migracji zgodne); zaległe migracje = błąd próby.
+4. Raport z odtworzonej bazy jest porównywany z raportem z chwili kopii;
+   jakakolwiek różnica = błąd. Wynik (`kind = 'restore_drill'`) trafia do
+   `backup_runs` bez danych osobowych.
+5. Sprawdzić ręcznie rodzinę z rodzeństwem, dziecko z dwojgiem opiekunów,
+   wpłatę częściową z korektą (lokalnie robi to test).
+6. Zmierzyć czas odtworzenia (RTO) i wiek kopii (RPO); usunąć bazę „drill”.
+   Wpisać wynik do tabeli.
+
+Kopia bez raportu (sprzed tego mechanizmu) daje wynik `comparison: no_baseline`
+— to nie jest zgodność i nie zamyka pozycji „próbne odtworzenie” na liście odbioru.
 
 Uzupełnieniem backupu jest wersjonowany eksport roczny z manifestem SHA-256
 i testem odtworzenia do pustej bazy (`scripts/verify-export.js`), opisany w
@@ -456,6 +519,7 @@ i testem odtworzenia do pustej bazy (`scripts/verify-export.js`), opisany w
 
 | Data | Środowisko | Kto | Backup (id/czas) | Wariant | Czas odtworzenia | Zgodność raportu | Wynik / uwagi |
 |---|---|---|---|---|---|---|---|
+| 29.09.2026 | lokalnie, PostgreSQL 16, dane syntetyczne (`npm run restore:drill:local`) | agent (test automatyczny) | tymczasowa baza źródłowa | B (zrzut logiczny, szyfrowany) | ok. 3 s (dolna granica, lokalnie) | zgodny (liczności, sumy, skróty) | nie zastępuje próby na stagingu |
 | do wykonania | staging | | | | | | |
 | do wykonania | production (przed cutover) | | | | | | |
 
@@ -464,24 +528,136 @@ i testem odtworzenia do pustej bazy (`scripts/verify-export.js`), opisany w
 Railway nie oferuje automatycznych backupów, wersjonowania ani blokad obiektów
 w bucketach. Dlatego:
 
-1. Metadane (`documents`: klucz obiektu, typ, rozmiar, autor) są w PostgreSQL
-   i podlegają backupowi bazy.
-2. Obiekty kopiować narzędziem S3 (np. `rclone sync` lub `aws s3 sync` z
-   endpointem bucketu) do drugiej prywatnej lokalizacji w UE, zatwierdzonej
-   przez szkołę/IOD, z szyfrowaniem. Poświadczenia tylko do odczytu, w
-   zmiennych, nie w skryptach w repo. Częstotliwość: co najmniej tygodniowo
-   i przed każdą operacją masową.
-3. Kopia nie usuwa obiektów w miejscu docelowym automatycznie w tym samym
-   przebiegu (ochrona przed propagacją usunięcia); retencja kopii wg decyzji
-   szkoły.
-4. Próba odtworzenia (do wykonania): przywrócić próbkę obiektów do bucketu
-   stagingowego, porównać liczbę obiektów i sumy rozmiarów z tabelą
-   `documents`, pobrać wybrane pliki przez aplikację (autoryzacja + krótki
-   podpisany URL). Wynik zapisać w tabeli.
+1. Metadane (`documents`: klucz obiektu, typ, rozmiar, autor, `sha256`) są w
+   PostgreSQL i podlegają backupowi bazy.
+2. **Lokalizacja i dostawca drugiej kopii oraz umowa powierzenia nie są
+   wybrane (D-01, D-20, IOD).** Dopóki nie ma decyzji, procedura cykliczna
+   poniżej jest tylko opisem — nie jest uruchomiona ani zaplanowana, a
+   `railway.json` nie zawiera usługi cron kopii.
+3. Retencja kopii i usuwanie z kopii — D-04. **Usunięcie dokumentu po okresie
+   retencji musi objąć także kopię** (i kopie starszych przebiegów):
+   skrypt kopii celowo niczego nie usuwa w celu, więc usunięcie z kopii to
+   osobna, zatwierdzona i zapisana w dzienniku operacja operatora. Do czasu
+   decyzji D-04 nie usuwamy niczego ani ze źródła, ani z kopii.
+
+### Kopia cykliczna (do uruchomienia po decyzji D-01/D-20)
+
+Gotowe narzędzia (kod w repozytorium, testy na atrapie magazynu):
+
+- `npm run backup:storage` (`scripts/backup-storage.js`, `src/pg/storage-backup.js`)
+  kopiuje wyłącznie **nowe** obiekty `docs/*` z bucketu źródłowego (`BUCKET_*`,
+  poświadczenia tylko do odczytu) do drugiego magazynu S3 w UE
+  (`STORAGE_BACKUP_S3_ENDPOINT`, `_REGION`, `_BUCKET`, `_ACCESS_KEY_ID`,
+  `_SECRET_ACCESS_KEY`, opcjonalnie `_URL_STYLE`; poświadczenia celu tylko do
+  zapisu, bez `DeleteObject`, jeśli dostawca na to pozwala). Nigdy nie usuwa w
+  celu. Liczy SHA-256 źródła i kopii względem `documents.sha256`; niezgodny
+  skrót lub brak obiektu w źródle daje kod wyjścia 1. Odmawia pracy w
+  `APP_ENV=production` (lub nieznanym) bez `--allow-production`. Raport (liczby,
+  bez nazw plików) trafia na stdout i do `backup_runs` (`storage_backup`).
+- `npm run backup:storage:verify` (`scripts/verify-storage-backup.js`,
+  `src/pg/storage-backup-verify.js`) — niezależna weryfikacja kopii: buduje
+  manifest SHA-256 z faktycznej treści kopii (katalog pobrany przez operatora),
+  porównuje go z `documents` (brakujące obiekty, niezgodne skróty i rozmiary,
+  osierocone w kopii) i opcjonalnie wykonuje **próbę odtworzenia** próbki
+  (`--restore-dir`, `--sample N`) do lokalnego katalogu, sprawdzając SHA-256
+  odtworzonych bajtów. Cel odtworzenia może być tylko lokalny (katalog albo
+  pamięć) — narzędzie nie zapisuje do bucketu. Raport zawiera liczby i
+  identyfikatory techniczne wierszy `documents`, bez kluczy obiektów i nazw
+  plików. Kod wyjścia 1 przy brakach lub niezgodnościach. Osierocone obiekty w
+  kopii są tylko zgłaszane (nie psują wyniku).
+
+Procedura po decyzji (nie wykonana):
+
+1. Wybrać dostawcę i lokalizację (D-01/D-20), podpisać umowę powierzenia,
+   utworzyć prywatny bucket kopii z szyfrowaniem; włączyć wersjonowanie lub
+   Object Lock, jeśli dostawca je oferuje.
+2. Dodać osobną usługę cron Railway (`npm run backup:storage`, harmonogram co
+   najmniej tygodniowo oraz ręcznie przed operacją masową; wspólna z #90 albo
+   obok) ze zmiennymi `DATABASE_URL` (tylko odczyt), `BUCKET_*` (tylko odczyt),
+   `STORAGE_BACKUP_S3_*`. Najpierw staging na plikach syntetycznych.
+3. Po każdym przebiegu sprawdzić raport; niezerowy kod wyjścia lub brak wpisu
+   w `backup_runs` > 8 dni traktować jako alarm (`/api/admin/ops-status`).
+4. Co kwartał: pobrać kopię do katalogu roboczego i uruchomić
+   `npm run backup:storage:verify -- --backup-dir <kopia> --restore-dir <cel> --sample 20`
+   na bazie stagingowej lub odtworzonej; wynik wpisać do tabeli poniżej.
+5. Na stagingu dodatkowo: przywrócić próbkę do bucketu stagingu i pobrać przez
+   API aplikacji (autoryzacja + krótki podpisany URL); dla dokumentu klasowego i
+   finansowego próba przez przedstawiciela innej klasy musi dać `403` (kopia
+   nie omija autoryzacji — dostęp zależy wyłącznie od wiersza `documents` i
+   sesji, nie od pochodzenia obiektu).
+6. Ręczny `rclone sync`/`aws s3 sync` zostaje wyłącznie wariantem awaryjnym; nie
+   stosować `rclone copy` (nie `sync`) i nigdy opcji usuwania w celu.
+
+Zakres obecnej kopii to prefiks `docs/` (dokumenty z `documents`). Zdjęcia
+aktualności (`photos/`, `news_photos`) **nie są jeszcze objęte** ani kopią, ani
+weryfikacją — osobny follow-up po decyzji o publikacji zdjęć.
 
 | Data | Kto | Liczba obiektów źródło/kopia | Zgodność z `documents` | Wynik / uwagi |
 |---|---|---|---|---|
-| do wykonania | | | | |
+| do wykonania (po D-01/D-20) | | | | |
+
+## Tryb tylko do odczytu (#143)
+
+Wstrzymanie zapisów bez wyłączania panelu: okno serwisowe, cutover, incydent.
+Sterowanie wyłącznie zmienną `APP_WRITE_MODE` (`normal` domyślnie, `read_only`).
+To opis procedury do wykonania po decyzji zarządu — repozytorium nie zmienia
+zmiennych ani nie wykonuje redeployu Railway.
+
+**Zachowanie w `read_only`** (kod: `src/write-mode.js`, `src/pg/app.js`):
+
+- Każde żądanie `/api/*` metodą zmieniającą stan (`POST`, `PUT`, `PATCH`, `DELETE`)
+  dostaje `503` z `{ "error": "read_only" }` i nagłówkiem `Retry-After`
+  (300 s), **przed** routingiem modułów i przed jakimkolwiek zapisem — także dla
+  webhooka Brevo (dostawca ponowi zdarzenie). Kod `read_only` jest inny niż
+  `service_unavailable`; komunikat w `shared/messages.js`, opis w
+  [API_ERRORS.md](API_ERRORS.md). Odrzucenie jest logowane jako
+  `write_mode_rejected` (metoda i ścieżka, bez danych osobowych).
+- `GET` i `/health` działają bez zmian, z zachowaniem granic ról; przedstawiciel
+  klasy nadal widzi wyłącznie przypisane klasy. `/health/ready` dodaje
+  `write_mode`, ale pozostaje `200`, gdy proces i baza są zdrowe.
+- Odchylenie od pierwotnej propozycji: poza `/api/logout` zwolnione jest też
+  `/api/login` (logowanie hasłem), by w oknie serwisowym dało się sprawdzić
+  dostęp. Logowanie zapisuje sesję, więc to świadomy wyjątek; inne trasy konta
+  (zaproszenia, zmiana i reset hasła, MFA) są blokowane.
+- Worker e-mail (`scripts/email-worker.js`) kończy przebieg z
+  `stoppedReason: 'read_only'`, bez połączenia z bazą i bez zmian w
+  `email_outbox`. **Worker jest osobnym procesem** — zmienna musi być ustawiona
+  także w jego usłudze (lub jako zmienna współdzielona), inaczej kolejka będzie
+  dalej wysyłana.
+- `GET /api/session` zwraca `writeMode`; wspólna powłoka paneli
+  (`shared/shell.js`) pokazuje wtedy baner „Trwają prace serwisowe — zapisy
+  wstrzymane”. Baner to tylko informacja; kontrolę wykonuje serwer. Przyciski
+  zapisu nie są osobno wyłączane — użytkownik po próbie zapisu widzi komunikat
+  `read_only`.
+- Nieznana wartość zmiennej: serwer nie startuje (log błędu konfiguracji), nie
+  przyjmuje po cichu `normal`. Przy starcie tryb `read_only` jest logowany
+  (`write_mode_active`). Administrator widzi tryb w `GET /api/admin/ops-status`.
+- Brak licznika odrzuconych zapisów w `http_metrics` — jest tylko log
+  `write_mode_rejected`. Czy licznik jest wymagany, to decyzja do podjęcia
+  (nie ma dla niej wpisu w [DECISIONS.md](DECISIONS.md)).
+
+**Włączenie (po decyzji, wykonuje administrator techniczny):**
+
+1. Uzgodnić z zarządem okno i osobę ogłaszającą je użytkownikom panelu (nie
+   rodzicom). Wpis w protokole otwierany przed zmianą: kto, kiedy, powód,
+   przewidywany czas.
+2. W Railway ustawić `APP_WRITE_MODE=read_only` w usłudze aplikacji **i** workera
+   e-mail. Zmiana zmiennej powoduje redeploy (kilka minut) — założenie:
+   akceptowalne dla okna serwisowego; w incydencie przełącznik w bazie z
+   wpisem do `audit_events` byłby szybszy, ale to osobny krok, nieobjęty tym PR.
+3. Sprawdzić: `/health/ready` zwraca `write_mode: "read_only"`, panel pokazuje
+   baner, próba zapisu na koncie testowym daje `503 read_only`, log zawiera
+   `write_mode_active`.
+4. Zapisy przyjęte przed redeployem są w bazie; żądania w trakcie redeployu
+   mogły zostać przerwane — po powrocie sprawdzić ostatnie wpłaty w panelu
+   (ponowienie z tym samym `Idempotency-Key` nie tworzy duplikatu).
+
+**Wyłączenie:** ustawić `APP_WRITE_MODE=normal` (lub usunąć zmienną) w obu
+usługach, poczekać na redeploy, sprawdzić `/health/ready` (`write_mode:
+"normal"`), zniknięcie banera i jeden zapis testowy na koncie testowym.
+Dopisać do protokołu: kto, kiedy, wynik. Po wyłączeniu worker wznawia wysyłkę
+z kolejki — przejrzeć ją, jeśli okno trwało długo (nie wysyłać przypomnień bez
+zatwierdzenia, AGENTS.md).
 
 ## Plan cutover (do wykonania po D-20)
 
@@ -492,7 +668,12 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
 2. Wykonać backup D1 i PostgreSQL produkcji (pusta baza po migracjach);
    zapisać identyfikatory.
 3. Zatrzymać zapisy w starym Workerze (tryb tylko do odczytu lub wyłączenie
-   tras zapisu).
+   tras zapisu). Nowe API na Railway w trakcie importu i porównania raportu
+   trzymać w `APP_WRITE_MODE=read_only` (sekcja „Tryb tylko do odczytu”);
+   powrót do `normal` dopiero po podpisanym raporcie zgodności (pkt 5) i
+   udanym pierwszym logowaniu administratora (pkt 6–7). Pierwszy administrator
+   powstaje skryptem (`auth:bootstrap-admin`), nie trasą API, więc tryb go nie
+   blokuje.
 4. Eksport D1, snapshot i transakcyjny import do pustej bazy wg
    [D1_POSTGRES_MIGRATION.md](D1_POSTGRES_MIGRATION.md).
 5. Porównać raport zgodności (liczności, sumy wpłat, przychody/wydatki);
@@ -513,7 +694,8 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
   niezmienionym D1. Nie scalać baz.
 - **Po przełączeniu, błąd aplikacji bez utraty danych**: rollback do
   poprzedniego deploymentu w Railway (Deployments → Redeploy/Rollback).
-- **Po przełączeniu, uszkodzenie danych**: wstrzymać zapisy, przywrócić
+- **Po przełączeniu, uszkodzenie danych**: wstrzymać zapisy (`APP_WRITE_MODE=read_only`,
+  sekcja „Tryb tylko do odczytu”; odczyt dla skarbnika pozostaje), przywrócić
   PostgreSQL z backupu sprzed operacji (wolumen lub PITR do nowej usługi),
   porównać raport, dopiero potem wznowić. Zapisy wykonane po backupie
   odtworzyć ręcznie z dziennika zdarzeń jako nowe wpisy/korekty.
@@ -532,7 +714,10 @@ bez potrzeby dostępu do Railway:
   (`email_outbox`), ostatnia udana kopia PostgreSQL/bucketu/próba odtworzenia
   (#90, #103 — dziennik `backup_runs`, jeśli już scalone; w przeciwnym razie
   `no_data`, nie fałszywe „w normie”), ostatni eksport roczny, tryb pracy
-  (`APP_WRITE_MODE`, #143) i wersja aplikacji (`RAILWAY_GIT_COMMIT_SHA`).
+  (`APP_WRITE_MODE`, #143), wersja aplikacji (`RAILWAY_GIT_COMMIT_SHA`) i
+  `loginPressure` — konta z wieloma błędnymi próbami logowania w oknie (#126;
+  identyfikator konta i liczby, bez e-maili i adresów IP; próg
+  `LOGIN_PRESSURE_THRESHOLD`, domyślnie 15; to sygnał, nie blokada).
   Tylko liczby, znaczniki czasu i kody — bez adresów, nazw rodzin i treści.
 - **`GET /health/jobs`** — heartbeat dla monitora zewnętrznego, osobny od
   `/health/ready` (Railway). Chroniony tokenem stałej długości porównania
@@ -541,9 +726,12 @@ bez potrzeby dostępu do Railway:
   `email_worker_stale`, `email_queue_too_old`) — bez liczb i dat w
   odpowiedzi. Progi są konfiguracją (`BACKUP_MAX_AGE_HOURS`,
   `EMAIL_WORKER_MAX_AGE_HOURS`, `EMAIL_QUEUE_MAX_AGE_HOURS`), nie kodem.
-- Widok „Stan systemu” w panelu `admin/` (tabela nad danymi `ops-status`,
-  kolory tylko dla stanu) **nie jest jeszcze zaimplementowany** — poza
-  zakresem PR-a, który dodał te dwa punkty API.
+- Widok „Stan systemu” w panelu `admin/` (`admin/ops-status.js`, czyste
+  funkcje w `admin/ops-status-core.js`): tabela nad odpowiedzią `ops-status`,
+  kolor wyłącznie dla stanu (w normie / uwaga / błąd / brak danych, zawsze z
+  etykietą tekstową). Widok nie zna progów `/health/jobs` — stan „uwaga/błąd”
+  wynika tylko z faktów w odpowiedzi (nieudany przebieg, zaległa migracja,
+  wiadomości `failed`); widzi go wyłącznie `admin` (serwer sprawdza rolę).
 - Runbook incydentów, który się na to powołuje: [`RUNBOOK.md`](RUNBOOK.md).
 - Narzędzie monitora zewnętrznego, jego adresaci i dyżur/zastępstwa — do
   decyzji zarządu (nierozstrzygnięte tutaj).

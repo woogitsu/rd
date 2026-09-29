@@ -83,6 +83,7 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         MFA_REQUIRED_ROLES: processEnv.MFA_REQUIRED_ROLES,
         SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
         LOGIN_EMAIL_DELAY_MS: processEnv.LOGIN_EMAIL_DELAY_MS,
+        LOGIN_PRESSURE_THRESHOLD: processEnv.LOGIN_PRESSURE_THRESHOLD,
         // Stan systemu i heartbeat zadań (#149) — tylko liczby/kody, żadnych
         // sekretów oprócz tokenu monitora (nigdy nie zwracanego w odpowiedzi).
         RAILWAY_GIT_COMMIT_SHA: processEnv.RAILWAY_GIT_COMMIT_SHA,

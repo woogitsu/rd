@@ -51,3 +51,20 @@ export function unusedColumns(headers, mapping) {
     .map((header, index) => ({ index, header: header || '(bez nazwy)', excluded: excludedHeaderLabel(header) }))
     .filter((column) => !used.has(column.index));
 }
+
+// #98: sekcja podglądu „W bazie, brak w pliku”. Przyjmuje tylko to, co zwraca
+// serwer ({ count, refs }) — liczbę i identyfikatory źródłowe uczniów, bez imion.
+// Wyłącznie informacja: import niczego nie wypisuje ani nie archiwizuje.
+export const MISSING_FROM_FILE_LIMIT = 40;
+export function missingFromFileSummary(missing) {
+  const count = Number(missing?.count) || 0;
+  if (!count) return null;
+  const refs = (Array.isArray(missing.refs) ? missing.refs : []).map(String);
+  const shown = refs.slice(0, MISSING_FROM_FILE_LIMIT);
+  return {
+    title: 'W bazie, brak w pliku',
+    text: `W wybranym roku w bazie jest uczniów niewystępujących w pliku: ${count}. Import ich nie usuwa ani nie archiwizuje; to tylko informacja do ręcznego wyjaśnienia (np. odejście ze szkoły albo inny plik).`,
+    refs: shown,
+    more: Math.max(0, count - shown.length),
+  };
+}

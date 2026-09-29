@@ -78,6 +78,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`event_tasks`|`title`|Osoba trzecia|direct|wolny tekst|tytuł zadania wolontariackiego|audit_event|tak|tak|
 |`events`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`financial_report_snapshot_approvals`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia sprawozdania z osobą|nieustalona (D-04)|nie|tak|
+|`financial_report_snapshots`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie migawki sprawozdania z autorem (zasada dwóch osób)|nieustalona (D-04)|nie|tak|
+|`financial_report_snapshots`|`supersede_reason`|Osoba trzecia|direct|wolny tekst|powód korekty migawki sprawozdania|document_financial|tak|tak|
 |`guardian_contact_changes`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`guardian_contact_changes`|`new_email`|Opiekun|direct|kontakt|historia zmian kontaktu|guardian_contact|nie|nie|
 |`guardian_contact_changes`|`previous_email`|Opiekun|direct|kontakt|historia zmian kontaktu|guardian_contact|nie|nie|
@@ -189,6 +192,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`student_guardians`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`student_guardians`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`student_households`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`student_households`|`created_reason`|Uczeń|direct|wolny tekst|uzasadnienie zmiany|nieustalona (D-04)|tak|tak|
+|`student_households`|`ended_reason`|Uczeń|direct|wolny tekst|uzasadnienie zmiany|nieustalona (D-04)|tak|tak|
 |`student_households`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`students`|`first_name`|Uczeń|direct|identyfikacja|identyfikacja ucznia|student_identity|nie|tak|
 |`students`|`last_name`|Uczeń|direct|identyfikacja|identyfikacja ucznia|student_identity|nie|tak|
@@ -197,7 +202,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **184**, w tym wolnego tekstu: **51** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **189**, w tym wolnego tekstu: **54** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -788,6 +793,29 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `requested_by` | none | — | nie |
 | `row_counts` | none | — | nie |
 | `school_year_id` | none | — | nie |
+
+### `financial_report_snapshot_approvals`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `approved_at` | none | — | tak |
+| `approved_by` | pseudonymous | board_member | tak |
+| `school_year_id` | none | — | tak |
+| `snapshot_id` | none | — | tak |
+
+### `financial_report_snapshots`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `content_sha256` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `kind` | none | — | tak |
+| `payload` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `supersede_reason` | direct | third_party | tak |
+| `supersedes_id` | none | — | tak |
 
 ### `guardian_contact_changes`
 
@@ -1622,6 +1650,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `document_id` | none | — | tak |
 | `item` | none | — | tak |
 | `note` | direct | third_party | tak |
+| `report_snapshot_id` | none | — | tak |
 
 ### `school_year_closures`
 
@@ -1707,8 +1736,10 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |---|---|---|---|
 | `created_at` | none | — | tak |
 | `created_by` | pseudonymous | board_member | tak |
+| `created_reason` | direct | student | tak |
 | `ended_at` | none | — | tak |
 | `ended_by` | none | — | tak |
+| `ended_reason` | direct | student | tak |
 | `ends_on` | none | — | tak |
 | `household_id` | none | — | tak |
 | `id` | none | — | tak |
