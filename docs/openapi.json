@@ -135,6 +135,58 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/admin/access-log": {
+      "get": {
+        "operationId": "admin_accessLog",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.accessLog",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.accessLog"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/admin/account-requests": {
       "get": {
         "operationId": "admin_accountRequests",
@@ -2250,6 +2302,9 @@
           ],
           "board": [
             "-"
+          ],
+          "boardA": [
+            "-"
           ]
         },
         "x-rd-deny-status": [
@@ -2264,7 +2319,8 @@
         ],
         "x-rd-roles": [
           "admin",
-          "board"
+          "board",
+          "board:class"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
@@ -6266,6 +6322,7 @@
     },
     "/api/guardians/{guardianId}/contact": {
       "patch": {
+        "description": "Ta ścieżka i metoda ma kilka wpisów macierzy (rodzaj obiektu wybiera treść żądania); x-rd-roles to suma, szczegóły w x-rd-variants.",
         "operationId": "families_guardianContact",
         "parameters": [
           {
@@ -6315,25 +6372,13 @@
           "families"
         ],
         "x-rd-access": "role",
-        "x-rd-actor-scopes": {
-          "admin": [
-            "A",
-            "B"
-          ],
-          "board": [
-            "A",
-            "B"
-          ],
-          "boardA": [
-            "A"
-          ]
-        },
         "x-rd-deny-status": [
           403,
           404
         ],
         "x-rd-matrix-ids": [
-          "families.guardianContact"
+          "families.guardianContact",
+          "families.guardianContactShared"
         ],
         "x-rd-mfa": false,
         "x-rd-ok-status": [
@@ -6344,7 +6389,49 @@
           "board",
           "board:class"
         ],
-        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia",
+        "x-rd-variants": [
+          {
+            "id": "families.guardianContact",
+            "roles": [
+              "admin",
+              "board",
+              "board:class"
+            ],
+            "actorScopes": {
+              "admin": [
+                "A",
+                "B"
+              ],
+              "board": [
+                "A",
+                "B"
+              ],
+              "boardA": [
+                "A"
+              ]
+            }
+          },
+          {
+            "id": "families.guardianContactShared",
+            "roles": [
+              "admin",
+              "board",
+              "board:class"
+            ],
+            "actorScopes": {
+              "admin": [
+                "A",
+                "B"
+              ],
+              "board": [
+                "A",
+                "B"
+              ],
+              "boardA": []
+            }
+          }
+        ]
       }
     },
     "/api/guardians/{guardianId}/students/{studentId}": {
@@ -6425,6 +6512,97 @@
         ],
         "x-rd-matrix-ids": [
           "families.relationContact"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/guardians/{guardianId}/students/{studentId}/end": {
+      "post": {
+        "operationId": "families_relationEnd",
+        "parameters": [
+          {
+            "name": "guardianId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "studentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "families.relationEnd",
+        "tags": [
+          "families"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B"
+          ],
+          "board": [
+            "A",
+            "B"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "families.relationEnd"
         ],
         "x-rd-mfa": false,
         "x-rd-ok-status": [
@@ -6723,6 +6901,33 @@
         "x-rd-mfa": false,
         "x-rd-ok-status": [
           201
+        ],
+        "x-rd-roles": [],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/invitations/preview": {
+      "post": {
+        "operationId": "login_invitationPreview",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          }
+        },
+        "security": [],
+        "summary": "login.invitationPreview",
+        "tags": [
+          "login"
+        ],
+        "x-rd-access": "public",
+        "x-rd-actor-scopes": {},
+        "x-rd-deny-status": [],
+        "x-rd-matrix-ids": [
+          "login.invitationPreview"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
         ],
         "x-rd-roles": [],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
@@ -9016,6 +9221,43 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/meetings/public-notices": {
+      "get": {
+        "operationId": "meetings_publicNotices",
+        "parameters": [
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          }
+        },
+        "security": [],
+        "summary": "meetings.publicNotices",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "public",
+        "x-rd-actor-scopes": {},
+        "x-rd-deny-status": [],
+        "x-rd-matrix-ids": [
+          "meetings.publicNotices"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/meetings/resolutions": {
       "get": {
         "operationId": "meetings_resolutionRegister",
@@ -9549,6 +9791,168 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/meetings/{meetingId}/agenda-items/{itemId}/withdrawal": {
+      "post": {
+        "operationId": "meetings_agendaWithdrawal",
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.agendaWithdrawal",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.agendaWithdrawal"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/meetings/{meetingId}/approval-checklist": {
+      "get": {
+        "operationId": "meetings_approvalChecklist",
+        "parameters": [
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.approvalChecklist",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "audit": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.approvalChecklist"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "audit",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/meetings/{meetingId}/attendance": {
       "post": {
         "operationId": "meetings_attendance",
@@ -9610,6 +10014,80 @@
         ],
         "x-rd-matrix-ids": [
           "meetings.attendance"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/meetings/{meetingId}/cancellation": {
+      "post": {
+        "operationId": "meetings_cancel",
+        "parameters": [
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.cancel",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.cancel"
         ],
         "x-rd-mfa": true,
         "x-rd-ok-status": [
@@ -9861,6 +10339,244 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/meetings/{meetingId}/notices": {
+      "post": {
+        "operationId": "meetings_noticeCreate",
+        "parameters": [
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.noticeCreate",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.noticeCreate"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/meetings/{meetingId}/notices/{noticeId}/approval": {
+      "post": {
+        "operationId": "meetings_noticeApproval",
+        "parameters": [
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "noticeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.noticeApproval",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.noticeApproval"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/meetings/{meetingId}/notices/{noticeId}/campaign-draft": {
+      "post": {
+        "operationId": "meetings_noticeCampaignDraft",
+        "parameters": [
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "noticeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.noticeCampaignDraft",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.noticeCampaignDraft"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/meetings/{meetingId}/quorum-checks": {
       "post": {
         "operationId": "meetings_quorumCheck",
@@ -9926,6 +10642,80 @@
         "x-rd-mfa": true,
         "x-rd-ok-status": [
           201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/meetings/{meetingId}/reschedule": {
+      "post": {
+        "operationId": "meetings_reschedule",
+        "parameters": [
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.reschedule",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.reschedule"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
         ],
         "x-rd-roles": [
           "admin",
@@ -12838,6 +13628,43 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/public/news/{postId}": {
+      "get": {
+        "operationId": "news_publicItem",
+        "parameters": [
+          {
+            "name": "postId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          }
+        },
+        "security": [],
+        "summary": "news.publicItem",
+        "tags": [
+          "news"
+        ],
+        "x-rd-access": "public",
+        "x-rd-actor-scopes": {},
+        "x-rd-deny-status": [],
+        "x-rd-matrix-ids": [
+          "news.publicItem"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/public/privacy-notice": {
       "get": {
         "operationId": "privacyNotice_public",
@@ -13569,6 +14396,76 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/reconciliations/{reconciliationId}/matches/batch": {
+      "post": {
+        "operationId": "reconciliation_matchBatch",
+        "parameters": [
+          {
+            "name": "reconciliationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "reconciliation.matchBatch",
+        "tags": [
+          "reconciliation"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "W1"
+          ],
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "reconciliation.matchBatch"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/reconciliations/{reconciliationId}/matches/{matchId}/revocation": {
       "post": {
         "operationId": "reconciliation_matchRevocation",
@@ -13787,6 +14684,262 @@
         "x-rd-roles": [
           "board",
           "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/reports/annual/snapshots": {
+      "get": {
+        "operationId": "financialReports_snapshotList",
+        "parameters": [
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "financialReports.snapshotList",
+        "tags": [
+          "financial-reports"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "financialReports.snapshotList"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      },
+      "post": {
+        "operationId": "financialReports_snapshotCreate",
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "financialReports.snapshotCreate",
+        "tags": [
+          "financial-reports"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "financialReports.snapshotCreate"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/reports/annual/snapshots/{id}": {
+      "get": {
+        "operationId": "financialReports_snapshotRead",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "financialReports.snapshotRead",
+        "tags": [
+          "financial-reports"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "financialReports.snapshotRead"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/reports/annual/snapshots/{id}/approve": {
+      "post": {
+        "operationId": "financialReports_snapshotApprove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "financialReports.snapshotApprove",
+        "tags": [
+          "financial-reports"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "financialReports.snapshotApprove"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "board"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
@@ -14368,6 +15521,176 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/students/{studentId}/households": {
+      "post": {
+        "operationId": "families_studentHouseholdAdd",
+        "parameters": [
+          {
+            "name": "studentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "families.studentHouseholdAdd",
+        "tags": [
+          "families"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B"
+          ],
+          "board": [
+            "A",
+            "B"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "families.studentHouseholdAdd"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/students/{studentId}/households/{membershipId}/end": {
+      "post": {
+        "operationId": "families_studentHouseholdEnd",
+        "parameters": [
+          {
+            "name": "membershipId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "studentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "families.studentHouseholdEnd",
+        "tags": [
+          "families"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B"
+          ],
+          "board": [
+            "A",
+            "B"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "families.studentHouseholdEnd"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/year-close/{schoolYearId}": {
       "get": {
         "operationId": "yearClose_status",
@@ -14726,6 +16049,7 @@
         "enum": [
           "active_bank_match",
           "admin_exists",
+          "agenda_item_not_found",
           "agenda_position_taken",
           "allocation_exceeds_net",
           "allocation_reason_required",
@@ -14734,6 +16058,7 @@
           "already_matched_via_ledger",
           "already_matched_via_payment",
           "alt_text_required",
+          "ambiguous_csv_delimiter",
           "ambiguous_local_time",
           "approval_required",
           "approval_stale",
@@ -14744,6 +16069,7 @@
           "budget_line_exists",
           "budget_line_not_found",
           "budget_line_superseded",
+          "campaign_audience_locked",
           "campaign_locked",
           "campaign_not_draft",
           "campaign_not_found",
@@ -14813,6 +16139,7 @@
           "import_disabled",
           "import_has_conflicts",
           "inconsistent_matches",
+          "invalid_access_kind",
           "invalid_allocation",
           "invalid_alt_text",
           "invalid_amount",
@@ -14837,6 +16164,7 @@
           "invalid_cost_center",
           "invalid_credentials",
           "invalid_csv",
+          "invalid_csv_encoding",
           "invalid_csv_header",
           "invalid_current_password",
           "invalid_cursor",
@@ -14883,12 +16211,15 @@
           "invalid_method",
           "invalid_names",
           "invalid_next_school_year",
+          "invalid_notice_content",
+          "invalid_notice_rule",
           "invalid_ogm_base",
           "invalid_ogm_reference",
           "invalid_options",
           "invalid_or_expired_link",
           "invalid_organizer",
           "invalid_origin",
+          "invalid_outcome",
           "invalid_payee_name",
           "invalid_payload",
           "invalid_payment_id",
@@ -14904,6 +16235,7 @@
           "invalid_relation_kind",
           "invalid_release_reason",
           "invalid_replacement_document",
+          "invalid_report_snapshot",
           "invalid_request",
           "invalid_reversal",
           "invalid_revision",
@@ -14931,6 +16263,7 @@
           "invalid_ttl",
           "invalid_user_id",
           "invalid_window",
+          "invalid_year_end_confirmation",
           "invitation_already_accepted",
           "invitation_not_found",
           "invitation_not_pending",
@@ -14944,10 +16277,19 @@
           "login_busy",
           "match_already_revoked",
           "match_amount_mismatch",
+          "match_batch_duplicate",
+          "match_batch_empty",
+          "match_batch_rejected",
+          "match_batch_too_large",
           "match_method_mismatch",
           "match_not_found",
           "matched_in_other_reconciliation",
+          "meeting_cancelled",
           "meeting_not_found",
+          "meeting_not_reschedulable",
+          "meeting_not_scheduled",
+          "meeting_notice_closed",
+          "meeting_status_transition_invalid",
           "method_not_allowed",
           "mfa_enrollment_required",
           "mfa_key_missing",
@@ -14966,6 +16308,14 @@
           "not_first_school_year",
           "not_found",
           "not_resolvable",
+          "notice_campaign_audience_unsupported",
+          "notice_four_eyes_required",
+          "notice_not_approved",
+          "notice_not_found",
+          "notice_not_latest",
+          "notice_outdated",
+          "notice_requires_agenda",
+          "notice_up_to_date",
           "offset_not_valid_in_europe_brussels",
           "opening_balance_exists",
           "opening_balance_not_found",
@@ -14984,7 +16334,6 @@
           "payment_cannot_be_corrected",
           "payment_cannot_be_refunded",
           "payment_has_allocations",
-          "payment_linked_entry_not_replaceable",
           "payment_not_assigned",
           "payment_not_found",
           "payment_reassignment_household_mismatch",
@@ -14993,6 +16342,7 @@
           "payment_reference_already_revoked",
           "payment_reference_not_found",
           "pending_admin_invitation",
+          "personal_data_forbidden",
           "photo_file_exists",
           "photo_file_integrity_mismatch",
           "photo_file_malformed",
@@ -15030,9 +16380,15 @@
           "relation_ended",
           "release_reason_not_allowed",
           "replacement_target_mismatch",
+          "report_snapshot_content_exists",
+          "report_snapshot_integrity_failed",
+          "report_snapshot_not_found",
+          "report_snapshot_superseded",
+          "report_snapshot_supersedes_required",
           "request_already_consumed",
           "request_not_found",
           "request_too_large",
+          "reschedule_no_change",
           "resolution_expense_only",
           "resolution_final_immutable",
           "resolution_not_adopted",
@@ -15044,6 +16400,7 @@
           "resolution_reference_mismatch",
           "resolution_required",
           "restore_drill_failed",
+          "restore_report_bad_identifier",
           "retry_later",
           "review_expense_only",
           "revision_conflict",
@@ -15068,6 +16425,7 @@
           "statement_multiple_not_supported",
           "statement_transaction_id_missing",
           "storage_unavailable",
+          "student_household_overlap",
           "student_not_found",
           "subject_required",
           "suppression_not_active",
@@ -15085,12 +16443,15 @@
           "unsupported_value",
           "unsupported_version",
           "upload_busy",
+          "use_reschedule_endpoint",
           "user_disabled",
           "user_not_found",
           "vote_record_required",
           "webhook_not_configured",
           "year_close_already_started",
-          "year_close_not_started"
+          "year_close_not_started",
+          "year_end_balance_mismatch",
+          "year_end_confirmation_mismatch"
         ],
         "description": "Kody z docs/API_ERRORS.md."
       },
@@ -15117,6 +16478,11 @@
         "code": "admin_exists",
         "meaning": "Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "agenda_item_not_found",
+        "meaning": "Nie znaleziono punktu porządku obrad.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "agenda_position_taken",
@@ -15157,6 +16523,11 @@
         "code": "alt_text_required",
         "meaning": "Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "ambiguous_csv_delimiter",
+        "meaning": "Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "ambiguous_local_time",
@@ -15207,6 +16578,11 @@
         "code": "budget_line_superseded",
         "meaning": "Ta wersja linii preliminarza została już zmieniona. Odśwież widok i zmień aktualną wersję.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "campaign_audience_locked",
+        "meaning": "Odbiorcy tej kampanii wynikają z zebrania i nie można ich zmienić.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "campaign_locked",
@@ -15554,6 +16930,11 @@
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {
+        "code": "invalid_access_kind",
+        "meaning": "Wybierz rodzaj odczytu z listy.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_allocation",
         "meaning": "Niepoprawny podział wpisu na wydarzenia lub klasy.",
         "retry": "Nie — popraw dane żądania."
@@ -15671,6 +17052,11 @@
       {
         "code": "invalid_csv",
         "meaning": "Nie udało się odczytać pliku CSV.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_csv_encoding",
+        "meaning": "Plik CSV ma nieznane kodowanie (w tekście są znaki zastępcze). Zapisz go jako „CSV UTF-8” albo wybierz kodowanie i wgraj ponownie.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -15904,6 +17290,16 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_notice_content",
+        "meaning": "Treść zawiadomienia nie nadaje się na wiadomość e-mail (znaki klamrowe, niedozwolone sformułowanie albo za długa treść). Popraw zebranie lub porządek obrad i przygotuj nową wersję.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_notice_rule",
+        "meaning": "Podaj razem minimalną liczbę dni zawiadomienia i źródło tej reguły albo zostaw oba pola puste.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_ogm_base",
         "meaning": "Niepoprawna baza referencji płatności.",
         "retry": "Nie — popraw dane żądania."
@@ -15931,6 +17327,11 @@
       {
         "code": "invalid_origin",
         "meaning": "Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_outcome",
+        "meaning": "Wybierz wynik odczytu z listy.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -15985,7 +17386,7 @@
       },
       {
         "code": "invalid_reference",
-        "meaning": "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje.",
+        "meaning": "Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje albo jest poza Twoim zakresem.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -16006,6 +17407,11 @@
       {
         "code": "invalid_replacement_document",
         "meaning": "Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_report_snapshot",
+        "meaning": "Wskazana migawka sprawozdania nie istnieje, nie jest zatwierdzona albo została zastąpiona.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -16144,6 +17550,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_year_end_confirmation",
+        "meaning": "Potwierdzenie rozbieżności wymaga jednego z dozwolonych powodów i widzianych różnic w centach.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invitation_already_accepted",
         "meaning": "Zaproszenie zostało już przyjęte.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
@@ -16209,6 +17620,26 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "match_batch_duplicate",
+        "meaning": "Ta sama pozycja lub wpłata występuje w partii więcej niż raz.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "match_batch_empty",
+        "meaning": "Wybierz co najmniej jedną parę pozycji i wpłaty.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "match_batch_rejected",
+        "meaning": "Nie zatwierdzono żadnej pary: część wybranych par jest niepoprawna. Odśwież propozycje i wybierz ponownie.",
+        "retry": "Tak, po odświeżeniu propozycji (lista `failures` wskazuje odrzucone pary)."
+      },
+      {
+        "code": "match_batch_too_large",
+        "meaning": "Za dużo par w jednej partii. Zatwierdź mniejszą liczbę naraz.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "match_method_mismatch",
         "meaning": "Sposób wpłaty nie pasuje do pozycji wyciągu.",
         "retry": "Nie — popraw dane żądania."
@@ -16224,8 +17655,33 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "meeting_cancelled",
+        "meaning": "Zebranie zostało odwołane i nie przyjmuje już zmian.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "meeting_not_found",
         "meaning": "Nie znaleziono zebrania.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "meeting_not_reschedulable",
+        "meaning": "Termin można zmienić tylko dla zebrania w szkicu lub zaplanowanego.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "meeting_not_scheduled",
+        "meaning": "Zawiadomienie można zatwierdzić dopiero dla zebrania w stanie „zaplanowane”.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "meeting_notice_closed",
+        "meaning": "Dla tego zebrania nie można już przygotować zawiadomienia.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "meeting_status_transition_invalid",
+        "meaning": "Ta zmiana stanu zebrania jest niedozwolona.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -16319,6 +17775,46 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "notice_campaign_audience_unsupported",
+        "meaning": "Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "notice_four_eyes_required",
+        "meaning": "Zawiadomienie zatwierdza inna osoba niż jego autor.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "notice_not_approved",
+        "meaning": "Szkic kampanii powstaje tylko z zatwierdzonego zawiadomienia.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "notice_not_found",
+        "meaning": "Nie znaleziono zawiadomienia.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "notice_not_latest",
+        "meaning": "Istnieje nowsza wersja zawiadomienia. Wróć do jej treści.",
+        "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "notice_outdated",
+        "meaning": "Termin, miejsce albo porządek obrad zmieniły się po przygotowaniu zawiadomienia. Przygotuj nową wersję.",
+        "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "notice_requires_agenda",
+        "meaning": "Zawiadomienie wymaga co najmniej jednego niewycofanego punktu porządku obrad.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "notice_up_to_date",
+        "meaning": "Zatwierdzone zawiadomienie odpowiada aktualnemu zebraniu — nowa wersja nie jest potrzebna.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "offset_not_valid_in_europe_brussels",
         "meaning": "Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
@@ -16409,11 +17905,6 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
-        "code": "payment_linked_entry_not_replaceable",
-        "meaning": "Wpisu powiązanego z wpłatą nie można przeksięgować. Skoryguj albo wpłatę, albo wpis.",
-        "retry": "Zależy od kontekstu (patrz moduł trasy)."
-      },
-      {
         "code": "payment_not_assigned",
         "meaning": "Wpłata nie jest przypisana do żadnej rodziny.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
@@ -16452,6 +17943,11 @@
         "code": "pending_admin_invitation",
         "meaning": "Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "personal_data_forbidden",
+        "meaning": "Tekst zawiera adres e-mail, numer rachunku (IBAN) albo numer rejestru krajowego. Ten zapis jest niezmienny i trafia do eksportu — usuń te dane osobowe i zapisz ponownie (nie można tego potwierdzić).",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "photo_file_exists",
@@ -16639,6 +18135,31 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "report_snapshot_content_exists",
+        "meaning": "Migawka o tej treści już istnieje i została zastąpiona. Sprawozdanie nie zmieniło się od tamtej wersji.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "report_snapshot_integrity_failed",
+        "meaning": "Zapisana treść migawki nie zgadza się z jej skrótem SHA-256. Zgłoś to administratorowi.",
+        "retry": "Nie — wymaga interwencji administratora."
+      },
+      {
+        "code": "report_snapshot_not_found",
+        "meaning": "Nie znaleziono migawki sprawozdania.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "report_snapshot_superseded",
+        "meaning": "Migawka została zastąpiona nowszą. Otwórz bieżącą migawkę roku.",
+        "retry": "Nie — odśwież widok."
+      },
+      {
+        "code": "report_snapshot_supersedes_required",
+        "meaning": "Rok ma już migawkę sprawozdania. Wskaż bieżącą migawkę i powód korekty.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "request_already_consumed",
         "meaning": "Ten wniosek o zdjęcie blokady został już rozpatrzony.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
@@ -16652,6 +18173,11 @@
         "code": "request_too_large",
         "meaning": "Za dużo danych w jednym żądaniu.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "reschedule_no_change",
+        "meaning": "Podany termin jest taki sam jak obecny.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "resolution_expense_only",
@@ -16706,6 +18232,11 @@
       {
         "code": "restore_drill_failed",
         "meaning": "Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny.",
+        "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "restore_report_bad_identifier",
+        "meaning": "Raport zgodności odrzucił nieprawidłową nazwę tabeli. Sprawdź schemat bazy.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {
@@ -16829,6 +18360,11 @@
         "retry": "Tak, po chwili (usługa/zasób chwilowo niedostępne)."
       },
       {
+        "code": "student_household_overlap",
+        "meaning": "Uczeń ma już członkostwo w tym gospodarstwie (lub inne główne) w tym okresie. Zakończ poprzednie i dodaj nowe od tej samej daty.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "student_not_found",
         "meaning": "Nie znaleziono ucznia.",
         "retry": "Nie — popraw dane żądania."
@@ -16914,6 +18450,11 @@
         "retry": "Tak, po chwili (usługa/zasób chwilowo niedostępne)."
       },
       {
+        "code": "use_reschedule_endpoint",
+        "meaning": "Po zatwierdzeniu zawiadomienia zmień termin przez „Zmień termin” — wymaga to powodu.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "user_disabled",
         "meaning": "Konto jest wyłączone.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
@@ -16942,6 +18483,16 @@
         "code": "year_close_not_started",
         "meaning": "Zamknięcie roku nie zostało rozpoczęte.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "year_end_balance_mismatch",
+        "meaning": "Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Potwierdź rozbieżność z powodem albo popraw wpisy.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "year_end_confirmation_mismatch",
+        "meaning": "Rozbieżność salda końca roku jest inna niż potwierdzona. Sprawdź aktualne kwoty i potwierdź ponownie.",
+        "retry": "Nie — popraw dane żądania."
       }
     ]
   }
