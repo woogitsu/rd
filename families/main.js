@@ -9,6 +9,7 @@ import {
   groupClassesByYear,
   overviewRows,
   householdHref,
+  overviewRow,
   parseRoute,
   sortStudentsByName,
 } from "./core.js";
@@ -107,11 +108,32 @@ async function renderClasses() {
   byId("classes-empty").hidden = classes.length > 0;
   byId("overview-link").hidden = !state.canEdit || classes.length === 0;
   showView("classes");
+  await renderOverview(groupClassesByYear(classes));
 }
 
-const OVERVIEW_HEAD = ["Klasa", "Uczniowie", "Gospodarstwa", "Przedstawiciele", "Zaproszenia", "Kontakt e-mail", "Do kartki"];
+// Pulpit przedstawiciela (#118). Trasa zwraca 403 dla kont bez przydziału
+// przedstawiciela — wtedy sekcja pozostaje ukryta; bez komunikatu o błędzie.
+async function renderOverview(groups) {
+  const section = byId("overview-card");
+  const body = byId("overview-body");
+  const rows = [];
+  for (const group of groups) {
+    try {
+      const data = await apiRequest(`/api/representative/overview?schoolYearId=${encodeURIComponent(group.schoolYearId)}`);
+      rows.push(...data.classes.map(overviewRow));
+    } catch { /* brak roli przedstawiciela lub błąd — sekcja opcjonalna */ }
+  }
+  section.hidden = rows.length === 0;
+  body.replaceChildren(...rows.map((item) => {
+    const row = document.createElement("tr");
+    row.append(cell(link(item.name, classHref(item.id))), cell(item.paperCards), cell(item.lastPrinted), cell(item.events), cell(item.meeting), cell(item.documents));
+    return row;
+  }));
+}
 
-function overviewCell(tag, text, numeric) {
+const BOARD_OVERVIEW_HEAD = ["Klasa", "Uczniowie", "Gospodarstwa", "Przedstawiciele", "Zaproszenia", "Kontakt e-mail", "Do kartki"];
+
+function boardOverviewCell(tag, text, numeric) {
   const element = document.createElement(tag);
   element.textContent = text;
   if (tag === "th") element.scope = numeric === "row" ? "row" : "col";
@@ -119,40 +141,40 @@ function overviewCell(tag, text, numeric) {
   return element;
 }
 
-async function renderOverview() {
+async function renderBoardOverview() {
   const classes = await loadClasses();
   const years = groupClassesByYear(classes);
-  const select = byId("overview-year");
+  const select = byId("board-overview-year");
   if (!select.options.length) {
     select.replaceChildren(...years.map((group) => new Option(group.label, group.schoolYearId)));
-    select.addEventListener("change", () => { renderOverview().catch((error) => showMessage(error.message, true)); });
+    select.addEventListener("change", () => { renderBoardOverview().catch((error) => showMessage(error.message, true)); });
   }
   setBreadcrumbs([{ text: "Klasy", href: "#/" }, { text: "Statystyki klas" }]);
   showView("overview");
   if (!select.value) {
-    byId("overview-empty").hidden = false;
+    byId("board-overview-empty").hidden = false;
     return;
   }
   const data = await api(`/api/board/overview?schoolYearId=${encodeURIComponent(select.value)}`);
   const { withPayments, rows, total } = overviewRows(data);
-  const headers = withPayments ? [...OVERVIEW_HEAD, "Wpisy wpłat (informacyjnie)"] : OVERVIEW_HEAD;
+  const headers = withPayments ? [...BOARD_OVERVIEW_HEAD, "Wpisy wpłat (informacyjnie)"] : BOARD_OVERVIEW_HEAD;
   const headRow = document.createElement("tr");
-  headRow.append(...headers.map((text, index) => overviewCell("th", text, index > 0)));
-  byId("overview-head").replaceChildren(headRow);
+  headRow.append(...headers.map((text, index) => boardOverviewCell("th", text, index > 0)));
+  byId("board-overview-head").replaceChildren(headRow);
   const bodyRow = (values, tag) => {
     const row = document.createElement("tr");
-    row.append(...values.map((text, index) => (index === 0 ? overviewCell(tag, text, "row") : overviewCell("td", text, true))));
+    row.append(...values.map((text, index) => (index === 0 ? boardOverviewCell(tag, text, "row") : boardOverviewCell("td", text, true))));
     return row;
   };
-  byId("overview-body").replaceChildren(...rows.map((values) => bodyRow(values, "th")));
-  byId("overview-foot").replaceChildren(...(total ? [bodyRow(total, "th")] : []));
-  byId("overview-note").textContent = data.note;
-  const unmatched = byId("overview-unmatched");
+  byId("board-overview-body").replaceChildren(...rows.map((values) => bodyRow(values, "th")));
+  byId("board-overview-foot").replaceChildren(...(total ? [bodyRow(total, "th")] : []));
+  byId("board-overview-note").textContent = data.note;
+  const unmatched = byId("board-overview-unmatched");
   unmatched.hidden = !Number.isFinite(data.totals.unmatchedPaymentsCount);
   if (!unmatched.hidden) {
     unmatched.textContent = `Wpłaty bez przypisania do rodziny: ${data.totals.unmatchedPaymentsCount}. Nie są ujęte w odsetkach, więc ewidencja może być niepełna.`;
   }
-  byId("overview-empty").hidden = rows.length > 0;
+  byId("board-overview-empty").hidden = rows.length > 0;
 }
 
 function householdLinks(households) {
@@ -341,7 +363,7 @@ enrollmentDialog.querySelector("form").addEventListener("submit", (event) => sub
 async function route() {
   const target = parseRoute(location.hash);
   try {
-    if (target.view === "overview") await renderOverview();
+    if (target.view === "overview") await renderBoardOverview();
     else if (target.view === "class") await renderClass(target.id);
     else if (target.view === "household") await renderHousehold(target.id);
     else await renderClasses();

@@ -8,6 +8,7 @@ import {
   groupClassesByYear,
   hasPaymentColumn,
   overviewRows,
+  overviewRow,
   parseRoute,
   sortStudentsByName,
 } from '../families/core.js';
@@ -95,4 +96,15 @@ test('pulpit zarządu (#131): trasa, wiersze bez sortowania, „—” zamiast b
   assert.equal(hasPaymentColumn({ classes: [], totals: entry('Razem') }), false);
   assert.equal(formatPercent(undefined), '—');
   assert.doesNotMatch(JSON.stringify(view), /dłużnik|zaległoś/i);
+});
+
+test('pulpit przedstawiciela: wiersz tabeli bez słów o zaległościach', () => {
+  const row = overviewRow({
+    id: 'c-1a', name: '1A', studentCount: 20, needsPaperCardCount: 3,
+    cards: { lastPrintedAt: null }, events: { draftCount: 1, submittedCount: 2 },
+    nextMeeting: null, documents: { activeCount: 0, latestAt: null },
+  });
+  assert.equal(row.paperCards, '3 z 20');
+  assert.equal(row.meeting, 'brak zaplanowanego');
+  assert.doesNotMatch(JSON.stringify(row), /dłużnik|zaległoś|brak wpłaty/i);
 });

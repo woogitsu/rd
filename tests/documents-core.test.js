@@ -7,7 +7,12 @@ import {
   TYPES,
   buildDescriptionRequest,
   buildListUrl,
+  buildStatusRequest,
   buildUploadRequest,
+  canChangeStatus,
+  replacementCandidates,
+  statusConfirmation,
+  validateStatusReason,
   categoryLabel,
   checkFile,
   contentUrl,
@@ -224,4 +229,95 @@ test("normalizeDocument i metadataRows pokazują tytuł, kategorię i datę doku
   const bare = normalizeDocument({ id: DOC_ID, kind: "financial" });
   assert.equal(bare.title, null);
   assert.equal(Object.fromEntries(metadataRows(bare))["Tytuł"], "Bez tytułu");
+});
+
+test('previewKind i previewUrl: tylko PDF/PNG/JPEG, adres bez tokenu (#89)', async () => {
+  const core = await import('../documents/core.js');
+  assert.equal(core.previewKind('application/pdf'), 'pdf');
+  assert.equal(core.previewKind('image/png'), 'image');
+  assert.equal(core.previewKind('image/jpeg'), 'image');
+  for (const mime of ['text/html', 'image/svg+xml', 'application/zip', '', undefined, '__proto__', 'constructor']) {
+    assert.equal(core.previewKind(mime), null);
+  }
+  const id = '11111111-2222-4333-8444-555555555555';
+  assert.equal(core.previewUrl(id), `/api/documents/${id}/content?disposition=inline`);
+  assert.throws(() => core.previewUrl('../x'));
+});
+
+// --- Wersje i unieważnienie (issue #82) ---
+const ID_A = "11111111-1111-4111-8111-111111111111";
+const ID_B = "22222222-2222-4222-8222-222222222222";
+const doc = (over) => ({ id: ID_A, kind: "board", schoolYearId: "2026-2027", classId: null, status: "active", mimeType: "application/pdf", byteSize: 10, ...over });
+
+test("normalizeDocument: stan domyślnie aktualny, nieznany stan też", () => {
+  assert.equal(normalizeDocument(doc({ status: undefined })).status, "active");
+  assert.equal(normalizeDocument(doc({ status: "hacked" })).status, "active");
+  assert.equal(normalizeDocument(doc({ status: "voided" })).status, "voided");
+  assert.equal(normalizeDocument(doc({ status: "superseded", replacementDocumentId: ID_B })).replacementDocumentId, ID_B);
+  assert.equal(normalizeDocument(doc({ replacementDocumentId: "x" })).replacementDocumentId, null);
+  assert.ok(metadataRows(doc({ status: "voided" })).some(([label, value]) => label === "Stan" && value === "Unieważniony"));
+});
+
+test("buildListUrl: status=all tylko po zaznaczeniu filtra", () => {
+  assert.ok(!buildListUrl({ schoolYearId: "2026-2027" }).includes("status"));
+  assert.ok(buildListUrl({ schoolYearId: "2026-2027", includeInactive: true }).includes("status=all"));
+});
+
+test("canChangeStatus: te same role co przy przesłaniu, bez rozszerzania", () => {
+  const board = [{ role: "board", classId: null, schoolYearId: "2026-2027" }];
+  const treasurer = [{ role: "treasurer", classId: null, schoolYearId: "2026-2027" }];
+  const rep3a = [{ role: "representative", classId: "3a", schoolYearId: "2026-2027" }];
+  assert.equal(canChangeStatus(board, doc()), true);
+  assert.equal(canChangeStatus(treasurer, doc()), false, "skarbnik nie zmienia dokumentu zarządu");
+  assert.equal(canChangeStatus(treasurer, doc({ kind: "financial" })), true);
+  assert.equal(canChangeStatus(board, doc({ schoolYearId: "2025-2026" })), false, "inny rok");
+  assert.equal(canChangeStatus(rep3a, doc({ kind: "class", classId: "3a" })), true);
+  assert.equal(canChangeStatus(rep3a, doc({ kind: "class", classId: "3b" })), false, "inna klasa");
+  assert.equal(canChangeStatus(rep3a, doc()), false, "przedstawiciel nie zmienia dokumentu zarządu");
+  assert.equal(canChangeStatus(rep3a, doc({ kind: "financial" })), false);
+  assert.equal(canChangeStatus(board, doc({ kind: "class", classId: "3a" })), true);
+  assert.equal(canChangeStatus([{ role: "board", classId: "3a" }], doc()), false, "przydział klasowy nie otwiera dokumentu całej Rady");
+  assert.equal(canChangeStatus(board, doc({ status: "voided" })), false, "unieważnionego nie zmieniamy");
+  assert.equal(canChangeStatus(board, doc({ status: "superseded" })), false);
+  assert.equal(canChangeStatus([], doc()), false);
+  assert.equal(canChangeStatus(undefined, doc()), false);
+});
+
+test("replacementCandidates: ten sam rodzaj, rok, klasa, aktualne, nie sam dokument", () => {
+  const list = [
+    doc(), doc({ id: ID_B }),
+    doc({ id: "33333333-3333-4333-8333-333333333333", status: "voided" }),
+    doc({ id: "44444444-4444-4444-8444-444444444444", kind: "class", classId: "3a" }),
+    doc({ id: "55555555-5555-4555-8555-555555555555", schoolYearId: "2025-2026" }),
+  ];
+  assert.deepEqual(replacementCandidates(list, doc()).map((d) => d.id), [ID_B]);
+});
+
+test("validateStatusReason: 3-500 znaków po przycięciu", () => {
+  assert.equal(validateStatusReason("  ab ").ok, false);
+  assert.deepEqual(validateStatusReason("  poprawka  "), { ok: true, value: "poprawka" });
+  assert.equal(validateStatusReason("x".repeat(501)).ok, false);
+  assert.equal(validateStatusReason("x".repeat(500)).ok, true);
+});
+
+test("buildStatusRequest: adresy, treść i klucz idempotencji", () => {
+  const key = "document-12345678";
+  assert.deepEqual(buildStatusRequest("void", ID_A, { reason: "omyłka" }, key), {
+    method: "POST", url: `/api/documents/${ID_A}/void`, body: { reason: "omyłka" }, idempotencyKey: key,
+  });
+  assert.deepEqual(buildStatusRequest("supersede", ID_A, { reason: "poprawka", replacementDocumentId: ID_B }, key).body,
+    { reason: "poprawka", replacementDocumentId: ID_B });
+  assert.throws(() => buildStatusRequest("supersede", ID_A, { reason: "poprawka" }, key), /zastępujący/);
+  assert.throws(() => buildStatusRequest("delete", ID_A, { reason: "x" }, key));
+  assert.throws(() => buildStatusRequest("void", "../x", { reason: "omyłka" }, key));
+  assert.throws(() => buildStatusRequest("void", ID_A, { reason: "omyłka" }, "krótki"));
+});
+
+test("statusConfirmation: mówi, że plik zostaje w archiwum", () => {
+  for (const action of ["supersede", "void"]) {
+    const c = statusConfirmation(action, "Protokół", "Protokół po poprawkach");
+    assert.ok(c.destructive);
+    assert.ok(c.effects.some((e) => e.includes("zostają w archiwum")));
+    assert.ok(!/usun(i|ię)ęt|zostanie usunięty/.test(c.effects.join(" ")));
+  }
 });
