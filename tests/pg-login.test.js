@@ -8,7 +8,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { createInvitation } from '../src/pg/auth.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import {
-  checkPasswordPolicy, hashPassword, MAX_CONCURRENT, MAX_WAITING, needsRehash, parseHash, verifyPassword,
+  checkPasswordPolicy, hashPassword, dummyHash, loginQueueMetrics, MAX_CONCURRENT, MAX_PER_CLIENT, MAX_WAITING, needsRehash, parseHash, verifyPassword, withQueueClient,
   verifyPasswordOrDummy, withSlot,
 } from '../src/pg/password.js';
 import { LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
@@ -890,6 +890,46 @@ test('#203: pełna kolejka scrypt daje 503 login_busy z Retry-After, bez wpływu
     )).rows;
     assert.deepEqual(after.map((r) => r.failure_count), [0], 'login_busy nie liczy się jako próba');
     assert.equal((await auditRows('auth.login_failed')).filter((row) => JSON.stringify(row).includes(ip)).length, 0);
+  } finally {
+    release();
+    await Promise.all(occupied);
+  }
+});
+
+// #203 pkt 1: zalew z jednego IP zajmuje najwyżej MAX_PER_CLIENT miejsc kolejki;
+// nadmiar dostaje 503 login_busy natychmiast (bez scrypt), a logowanie z innego IP
+// czeka w kolejce i kończy się sukcesem po zwolnieniu miejsc.
+test('#203: zalew logowań z jednego IP nie zajmuje kolejki innym adresom (limit per IP)', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-203ip' });
+  const floodIp = nextIp();
+  const otherIp = nextIp();
+  await dummyHash(env); // jak przy starcie serwera (src/server.js): fikcyjny hash gotowy przed zalewem
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  // Adres zalewający zajmuje cały swój budżet (2 trwające + reszta oczekujących).
+  const occupied = Array.from({ length: MAX_PER_CLIENT }, () => withQueueClient(floodIp, () => withSlot(() => held)).catch(() => {}));
+  const busyBefore = loginQueueMetrics().login_busy_total;
+  try {
+    // Prawowite logowanie z innego adresu wchodzi do kolejki (nie jest odrzucone).
+    const legitimate = login(account, { ip: otherIp });
+    const started = Date.now();
+    const flood = await Promise.all(Array.from({ length: 15 }, (_, i) => post('/api/login', { email: `flood${i}@example.invalid`, password: 'Syntetyczne haslo zalew' }, { ip: floodIp })));
+    for (const response of flood) {
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).error, 'login_busy');
+      assert.equal(response.headers.get('Retry-After'), '5');
+    }
+    assert.ok(Date.now() - started < 2000, 'odrzucenia są natychmiastowe (bez scrypt)');
+    assert.equal(loginQueueMetrics().login_busy_total - busyBefore, 15);
+    assert.equal(loginQueueMetrics().login_queue_depth, MAX_PER_CLIENT - MAX_CONCURRENT + 1, 'oczekują: nadmiar zalewającego + jedno prawowite logowanie');
+    release();
+    await Promise.all(occupied);
+    const response = await legitimate;
+    assert.equal(response.status, 200);
+    // Odrzucone żądania nie zostawiły śladu w liczniku prób ani w audycie.
+    const counts = (await db.query("SELECT failure_count FROM login_rate_limits WHERE scope_type = 'ip' AND scope_hash = $1", [scopeHash('ip', floodIp)])).rows;
+    assert.ok(counts.every((row) => row.failure_count === 0));
+    assert.equal((await auditRows('auth.login_failed')).filter((row) => JSON.stringify(row).includes(floodIp)).length, 0);
   } finally {
     release();
     await Promise.all(occupied);

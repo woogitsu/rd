@@ -8,8 +8,19 @@ export const JSON_HEADERS = Object.freeze({
   'X-Content-Type-Options': 'nosniff',
 });
 
+// Wartość tablicowa (np. dwa nagłówki Set-Cookie przy wylogowaniu, #114) daje
+// osobne nagłówki — jeden łączony przecinkiem byłby niepoprawnym Set-Cookie.
+export function buildHeaders(headers = {}) {
+  const result = new Headers();
+  for (const [name, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) { result.delete(name); for (const item of value) result.append(name, item); }
+    else result.set(name, value);
+  }
+  return result;
+}
+
 export function json(data, status = 200, headers = {}) {
-  return new Response(JSON.stringify(data), { status, headers: { ...JSON_HEADERS, ...headers } });
+  return new Response(JSON.stringify(data), { status, headers: buildHeaders({ ...JSON_HEADERS, ...headers }) });
 }
 
 export const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);

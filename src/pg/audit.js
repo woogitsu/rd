@@ -16,7 +16,7 @@ const CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
 
 // #174: zdarzenia dotyczące obiektów przypisanych do roku szkolnego muszą
 // nieść metadata.schoolYearId, inaczej eksport roczny (src/pg/export.js,
-// AUDIT_SCOPE) przypisuje je do roku wg daty zapisu zamiast roku obiektu
+// auditScope) przypisuje je do roku wg daty zapisu zamiast roku obiektu
 // (wpłata/korekta zapisana po zamknięciu roku trafia do eksportu złego roku).
 // Część 1 (#174) ograniczyła to do tras finansowych i uzgodnień; część 2
 // dokłada e-mail (kampanie i zdarzenia workera), zebrania/uchwały i wydarzenia

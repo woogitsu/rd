@@ -597,3 +597,62 @@ test('a guardian name with a surname particle is split and stored correctly', as
   const g = await db.query("SELECT first_name, last_name FROM guardians WHERE email = 'anna@example.invalid'");
   assert.deepEqual(g.rows[0], { first_name: 'Anna Maria', last_name: 'de Smet' });
 }));
+
+// #2: replay wyłącznie przy tym samym kluczu albo gdy plan nie ma już nic do zapisania.
+test('#2 skipped row -> conflict removed -> same file with a new key is committed as a new batch', async () => withDb(async (db, env, admin) => {
+  await previewAndCommit(env, admin, payloadFromCsv(csvOf('S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;;')), 'key-r2-00001');
+  // Wiersz S1: inne nazwisko ucznia niż w bazie (konflikt) + nowy drugi opiekun.
+  const file = csvOf('S1;Ala;Inna;1A;R1;Anna Testowa;anna@example.invalid;Nowy Opiekun;nowy@example.invalid');
+  const payload = payloadFromCsv(file, { skipConflicts: true });
+  const p1 = await preview(env, admin, payload);
+  assert.equal(p1.body.counts.rowsConflict, 1);
+  const first = await commit(env, admin, payload, p1.body, 'key-r2-00002');
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  assert.equal(first.body.counts.rowsConflict, 1);
+  assert.equal(await count(db, 'guardians'), 1);
+
+  // Konflikt nadal istnieje, nowy klucz: nic do zapisania, więc zapisany wynik bez nowej partii.
+  const p2 = await preview(env, admin, payload);
+  const stillConflict = await commit(env, admin, payload, p2.body, 'key-r2-00003');
+  assert.equal(stillConflict.status, 200);
+  assert.equal(stillConflict.body.replayed, true);
+  assert.equal(stillConflict.body.batchId, first.body.batchId);
+  assert.equal(await count(db, 'import_batches'), 2);
+
+  // Poprawka danych w bazie usuwa przyczynę konfliktu.
+  await db.query("UPDATE students SET last_name = 'Inna' WHERE source_ref = 'S1'");
+  const p3 = await preview(env, admin, payload);
+  assert.equal(p3.body.counts.rowsConflict, 0);
+  assert.equal(p3.body.counts.rowsUpdated, 1);
+  const second = await commit(env, admin, payload, p3.body, 'key-r2-00004');
+  assert.equal(second.status, 201, JSON.stringify(second.body));
+  assert.equal(second.body.replayed, false);
+  assert.notEqual(second.body.batchId, first.body.batchId);
+  assert.equal(await count(db, 'guardians'), 2, 'pominięty wiersz został zastosowany');
+  assert.equal(await count(db, 'import_batches'), 3);
+
+  // Ten sam klucz to nadal podwójne kliknięcie; nowy klucz bez zmian w bazie to powtórka ostatniej partii.
+  const dbl = await commit(env, admin, payload, p3.body, 'key-r2-00004');
+  assert.equal(dbl.body.replayed, true);
+  assert.equal(dbl.body.batchId, second.body.batchId);
+  const p4 = await preview(env, admin, payload);
+  const again = await commit(env, admin, payload, p4.body, 'key-r2-00005');
+  assert.equal(again.body.replayed, true);
+  assert.equal(again.body.batchId, second.body.batchId);
+  assert.equal(await count(db, 'guardians'), 2);
+  assert.equal(await count(db, 'import_batches'), 3);
+}));
+
+test('#2 parallel commits of the same file with different keys write once', async () => withDb(async (db, env, admin) => {
+  const payload = payloadFromCsv(BASIC);
+  const p = await preview(env, admin, payload);
+  const [a, b] = await Promise.all([
+    commit(env, admin, payload, p.body, 'key-r2-par-01'),
+    commit(env, admin, payload, p.body, 'key-r2-par-02'),
+  ]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 201]);
+  assert.equal(a.body.batchId, b.body.batchId);
+  assert.equal(await count(db, 'import_batches'), 1);
+  assert.equal(await count(db, 'students'), 3);
+  assert.equal(await count(db, 'guardians'), 3);
+}));

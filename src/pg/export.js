@@ -116,15 +116,64 @@ const YEAR_TIME = (column) => `${column} >= (SELECT (starts_on::timestamp AT TIM
       AND ${column} < (SELECT ((ends_on + 1)::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)`;
 const YEAR_RECONCILIATIONS = 'SELECT id FROM bank_reconciliations WHERE school_year_id = $1';
 
-// Zakres audytu: zdarzenia jawnie oznaczone tym rokiem w metadanych
-// (schoolYearId), a bez oznaczenia — z dat roku szkolnego (Europe/Brussels). Zdarzenia eksportu (`export.*`) są
+// Zakres audytu (#174). Przynależność zdarzenia do roku ustala, w kolejności:
+//  1. `metadata.schoolYearId` (zdarzenia zapisane po #387 — wartość z wiersza obiektu, nie z daty zapisu);
+//  2. dla starych zdarzeń BEZ roku — rok wiersza obiektu (entity_type/entity_id → tabela z school_year_id).
+//     Dziennik jest tylko do dopisywania, więc brakującego roku nie da się dopisać; późna wpłata za rok
+//     poprzedni, zapisana po 31.08, trafia tu do roku wpłaty, a nie roku daty zapisu;
+//  3. zdarzenia, których obiektu nie da się przypisać do roku (sesje, MFA, konta, role, dokumenty, importy)
+//     albo obiekt jest nieosiągalny — zachowawczo wg daty roku szkolnego (Europe/Brussels), by nie zgubić
+//     zdarzenia. To jedyna ścieżka oparta na dacie; opisana w docs/EXPORT.md.
+// Zdarzeń z rokiem w metadanych NIGDY nie dołącza się według daty. Zdarzenia eksportu (`export.*`) są
 // pominięte, żeby kolejny eksport nie zmieniał wyniku poprzedniego.
-const AUDIT_SCOPE = `action NOT LIKE 'export.%' AND (
+// Rok obiektu: entity_type → zapytanie zwracające id obiektów roku ($1), z wymaganymi tabelami.
+const AUDIT_ENTITY_YEAR = Object.freeze([
+  ['payment_entry', ['payment_entries'], 'SELECT id FROM payment_entries WHERE school_year_id = $1'],
+  ...['payment_correction:payment_corrections', 'payment_assignment:payment_assignments',
+    'payment_refund:payment_refunds', 'payment_reassignment:payment_reassignments'].map((pair) => {
+    const [type, table] = pair.split(':');
+    return [type, ['payment_entries', table],
+      `SELECT x.id FROM ${table} x JOIN payment_entries p ON p.id = x.payment_entry_id WHERE p.school_year_id = $1`];
+  }),
+  ['ledger_entry', ['ledger_entries'], 'SELECT id FROM ledger_entries WHERE school_year_id = $1'],
+  ['ledger_correction', ['ledger_corrections', 'ledger_entries'],
+    'SELECT c.id FROM ledger_corrections c JOIN ledger_entries e ON e.id = c.ledger_entry_id WHERE e.school_year_id = $1'],
+  ['ledger_transfer', ['ledger_transfers'], 'SELECT id FROM ledger_transfers WHERE school_year_id = $1'],
+  ['ledger_opening_balance', ['ledger_opening_balances'], 'SELECT id FROM ledger_opening_balances WHERE school_year_id = $1'],
+  ['ledger_opening_balance_adjustment', ['ledger_opening_balance_adjustments', 'ledger_opening_balances'],
+    `SELECT a.id FROM ledger_opening_balance_adjustments a
+       JOIN ledger_opening_balances o ON o.id = a.opening_balance_id WHERE o.school_year_id = $1`],
+  ['bank_reconciliation', ['bank_reconciliations'], 'SELECT id FROM bank_reconciliations WHERE school_year_id = $1'],
+  ['bank_statement_import', ['bank_statement_imports', 'bank_reconciliations'],
+    `SELECT i.id FROM bank_statement_imports i JOIN bank_reconciliations r ON r.id = i.reconciliation_id
+       WHERE r.school_year_id = $1`],
+  ['bank_reconciliation_match', ['bank_reconciliation_matches', 'bank_reconciliations'],
+    `SELECT m.id FROM bank_reconciliation_matches m JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+       WHERE r.school_year_id = $1`],
+  ['school_year_closure', ['school_year_closures'], 'SELECT id FROM school_year_closures WHERE school_year_id = $1'],
+  ['class', [], 'SELECT id FROM classes WHERE school_year_id = $1'],
+  ['enrollment', [], 'SELECT id FROM enrollments WHERE school_year_id = $1'],
+]);
+// `school_year` wskazuje rok wprost (entity_id = id roku).
+const AUDIT_YEAR_TIME = `occurred_at >= (SELECT (starts_on::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)
+      AND occurred_at < (SELECT ((ends_on + 1)::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)`;
+
+export function auditScope(has = new Set(AUDIT_ENTITY_YEAR.flatMap(([, tables]) => tables))) {
+  const usable = AUDIT_ENTITY_YEAR.filter(([, tables]) => tables.every((table) => has.has(table)));
+  const byObject = usable.map(([type, , query]) => `(entity_type = '${type}' AND entity_id IN (${query}))`);
+  byObject.push("(entity_type = 'school_year' AND entity_id = $1)");
+  // Typ „roczny”, ale obiekt nieosiągalny w żadnym roku (np. brak wiersza): też wg daty, żeby nie zginął.
+  const unreachable = usable.map(([type, , query]) => `(entity_type = '${type}'
+      AND entity_id NOT IN (${query.replaceAll('school_year_id = $1', 'school_year_id IS NOT NULL')}))`);
+  const resolvable = ['school_year', ...usable.map(([type]) => type)].map((type) => `'${type}'`).join(', ');
+  return `action NOT LIKE 'export.%' AND (
   metadata_json->>'schoolYearId' = $1
-  OR (metadata_json->>'schoolYearId' IS NULL
-      AND occurred_at >= (SELECT (starts_on::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)
-      AND occurred_at < (SELECT ((ends_on + 1)::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1))
+  OR (metadata_json->>'schoolYearId' IS NULL AND (
+    ${byObject.join('\n    OR ')}
+    OR ((entity_type NOT IN (${resolvable})${unreachable.map((u) => `\n        OR ${u}`).join('')}) AND ${AUDIT_YEAR_TIME})
+  ))
 )`;
+}
 
 // Kolejność = kolejność odtwarzania (zgodna z kluczami obcymi).
 // `columns` = jawna lista dozwolonych pól (dane osobowe, projekt listy D-03);
@@ -265,7 +314,7 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'school_year_closure_checklist', requires: ['school_year_closures'],
     where: () => 'closure_id IN (SELECT id FROM school_year_closures WHERE school_year_id = $1)' },
 
-  { table: 'audit_events', where: () => AUDIT_SCOPE },
+  { table: 'audit_events', where: (has) => auditScope(has) },
 ]);
 
 const KNOWN_TABLES = new Set(EXPORT_TABLES.map((spec) => spec.table));

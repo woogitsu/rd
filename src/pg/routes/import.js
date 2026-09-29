@@ -434,6 +434,10 @@ async function prepare(executor, payload) {
   return { fingerprint, plan };
 }
 
+function hasPendingWrites(inserts) {
+  return Object.values(inserts).some((list) => list.length > 0);
+}
+
 function batchResult(row, replayed) {
   return {
     batchId: row.id,
@@ -526,13 +530,20 @@ async function commit(env, actorId, payload, idempotencyKey) {
     const { fingerprint, plan } = await prepare(tx, payload);
     if (fingerprint !== payload.fingerprint) throw new ImportError(409, 'fingerprint_mismatch');
     const previous = await tx.query(
-      'SELECT * FROM import_batches WHERE fingerprint = $1 OR idempotency_key = $2',
+      'SELECT * FROM import_batches WHERE fingerprint = $1 OR idempotency_key = $2 ORDER BY created_at DESC, id',
       [fingerprint, idempotencyKey],
     );
     const byKey = previous.rows.find((row) => row.idempotency_key === idempotencyKey);
     if (byKey && byKey.fingerprint !== fingerprint) throw new ImportError(409, 'idempotency_key_reused');
-    const same = previous.rows.find((row) => row.fingerprint === fingerprint);
-    if (same) return { status: 200, body: batchResult(same, true) };
+    // Ten sam klucz = podwójne kliknięcie/ponowienie po zerwaniu połączenia: zapisany wynik.
+    if (byKey) return { status: 200, body: batchResult(byKey, true) };
+    // #2: sam fingerprint (te same wiersze) NIE wystarcza do powtórki. Nowy klucz
+    // dostaje zapisany wynik tylko wtedy, gdy plan nie ma już nic do zapisania
+    // (dane z pliku są w bazie albo pominięte wiersze nadal są w konflikcie).
+    // Jeżeli po poprawce (np. usunięciu konfliktu) plan ma nowe zapisy, powstaje
+    // nowa partia — pominięte wiersze nie giną po cichu.
+    const sameData = previous.rows.find((row) => row.fingerprint === fingerprint);
+    if (sameData && !hasPendingWrites(plan.inserts)) return { status: 200, body: batchResult(sameData, true) };
 
     // #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu
     // danych. Sprawdzane dopiero tutaj (nie w preview) — podgląd nie zapisuje
