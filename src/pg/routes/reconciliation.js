@@ -1045,6 +1045,9 @@ async function suggestMatches(request, env, id, url, json) {
            JOIN ledger_entry_net e ON e.school_year_id = $2
             AND (CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END) = l.amount_cents
             AND e.occurred_on BETWEEN l.booked_on - $3::int AND l.booked_on + $3::int
+            -- Wyciąg dotyczy rachunku: wpis gotówkowy (kasa) nie jest kandydatem, tak jak
+            -- saldo księgi (rachunek) i lista „wpisy bez pozycji wyciągu” liczą tylko method = 'bank'.
+            AND e.method = 'bank'
           WHERE ${openLine}
             -- #105: wpis powiązany w dowolnym uzgodnieniu roku nie jest już kandydatem.
             AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
