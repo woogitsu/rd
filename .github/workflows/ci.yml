@@ -17,9 +17,11 @@ jobs:
   # joby (node --test --test-shard=i/N). Każdy shard uruchamia cały zestaw
   # tests/*.test.js z --test-concurrency=2, żeby ograniczyć liczbę
   # równoległych instancji PGlite (każda ~550 MB, #111).
+  # Limit 25 min: shard 3 zbliżał się do 15 min (14 min na main 29.09, dwa
+  # przebiegi przerwane limitem bez żadnego padającego testu).
   test:
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
