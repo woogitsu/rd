@@ -18,7 +18,7 @@ import {
 } from "./core.js";
 import { formatEur } from "../panel/money.js";
 import { api as apiRequest } from "../shared/api.js";
-import { initialSchoolYearId } from "../shared/school-year.js";
+import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -138,7 +138,7 @@ function textCell(value) {
 async function showYear(value) {
   if (!isValidId(value)) { setMessage("Podaj poprawny identyfikator roku szkolnego.", true); return; }
   setMessage("");
-  yearInput.value = value;
+  selectYearValue(yearInput, value);
   try {
     await loadStatus(value);
   } catch (error) {
@@ -295,6 +295,6 @@ async function applyAccess() {
   }
   // Rok domyślny: najnowszy z przydziałów, awaryjnie heurystyka daty
   // (shared/school-year.js) — panel ładuje dane bez klikania „Pokaż”.
-  await showYear(initialSchoolYearId(state.grants));
+  await showYear(fillYearSelect(yearInput, state.grants));
 }
 applyAccess();

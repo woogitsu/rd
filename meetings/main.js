@@ -34,17 +34,18 @@ import {
   validateVotes,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { classChoiceOptionsHtml, fillClassSelect } from "../shared/class-choice.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
-import { initialSchoolYearId } from "../shared/school-year.js";
+import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 
 let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const byId = (id) => document.getElementById(id);
-const state = { schoolYearId: "", meetings: [], detail: null, keys: new Map() };
+const state = { grants: [], schoolYearId: "", meetings: [], detail: null, keys: new Map() };
 
 class ApiError extends Error {
   constructor(code, status, network = false) {
@@ -135,12 +136,37 @@ function handleSubmit(form, work) {
       await work(fields(form), form);
     } catch (error) {
       errorBox.textContent = error.message;
-      if (error instanceof ApiError && error.status === 409 && state.detail) await reloadDetail({ quiet: true });
+      if (error instanceof ApiError && error.code === "revision_conflict") {
+        // #215: nie wczytujemy po cichu nowej wersji do formularza — użytkownik
+        // najpierw widzi komunikat i sam wybiera odświeżenie (inaczej ponowne
+        // kliknięcie nadpisałoby cudzą zmianę już z nowym numerem wersji).
+        showRevisionConflict(errorBox, form);
+      } else if (error instanceof ApiError && error.status === 409 && state.detail) await reloadDetail({ quiet: true });
     } finally {
       form.dataset.busy = "false";
       buttons.forEach((button) => { button.disabled = false; });
     }
   });
+}
+
+// #215: komunikat o konflikcie wersji z przyciskiem odświeżenia. Zamknięcie
+// okna uchwały i ponowne jego otwarcie z aktualnym wierszem robi `onConflict`.
+function showRevisionConflict(errorBox, form) {
+  errorBox.textContent = "Ktoś zmienił ten wpis w międzyczasie. Wczytaj ponownie, sprawdź zmiany i dopiero wtedy zapisz swoje. ";
+  const button = el("button", { type: "button", className: "secondary" }, "Wczytaj ponownie");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    const resolutionId = form === resolutionForm ? form.elements.resolutionId.value : null;
+    await reloadDetail({ quiet: true, refill: true });
+    if (resolutionId) {
+      resolutionDialog.dialog.close();
+      const fresh = state.detail?.resolutions.find((item) => item.id === resolutionId);
+      if (fresh && fresh.status === "draft") openResolutionDialog("edit", fresh);
+    }
+    errorBox.textContent = "";
+    if (form === editForm) setMessage(detailMessage, "Wczytano aktualne dane zebrania.", "ok");
+  });
+  errorBox.append(button);
 }
 
 // ---------- reguła quorum (wspólny fragment formularzy) ----------
@@ -402,6 +428,7 @@ function renderDetail({ refill = false } = {}) {
   byId("locked-note").hidden = !locked;
 
   if (refill) {
+    editForm.dataset.revision = String(meeting.revisionNo ?? "");
     editForm.elements.title.value = meeting.title;
     editForm.elements.scheduledAt.value = isoToBrusselsLocal(meeting.scheduledAt);
     editForm.elements.location.value = meeting.location ?? "";
@@ -517,6 +544,7 @@ handleSubmit(editForm, async (data) => {
   const result = await api(meetingUrl(state.detail.meeting.id), {
     method: "PATCH",
     body: {
+      revision: Number(editForm.dataset.revision),
       title: data.title.trim(),
       scheduledAt: brusselsLocalToIso(data.scheduledAt),
       location: trimmed(data.location),
@@ -529,7 +557,16 @@ handleSubmit(editForm, async (data) => {
 });
 
 handleSubmit(statusForm, async (data) => {
-  await api(meetingUrl(state.detail.meeting.id), { method: "PATCH", body: { status: data.status } });
+  const previous = state.detail.meeting.revisionNo;
+  const result = await api(meetingUrl(state.detail.meeting.id), {
+    method: "PATCH",
+    body: { revision: previous, status: data.status },
+  });
+  // Własna zmiana statusu podbiła wersję; formularz danych zebrania (z ewentualnie
+  // niezapisanymi zmianami) przejmuje ją tylko, gdy nikt inny nie zmienił wiersza.
+  if (Number(editForm.dataset.revision) === previous && result.meeting?.revisionNo) {
+    editForm.dataset.revision = String(result.meeting.revisionNo);
+  }
   await reloadDetail({ quiet: true });
   setMessage(detailMessage, `Status zmieniony: ${STATUS_LABELS[data.status]}.`, "ok");
 });
@@ -718,9 +755,22 @@ const createQuorum = buildQuorumFieldset(meetingDialog.form.querySelector("[data
 byId("open-meeting").addEventListener("click", () => {
   meetingDialog.form.reset();
   createQuorum.fill({});
-  meetingDialog.form.elements.schoolYearId.value = state.schoolYearId || yearInput.value.trim();
+  fillYearSelect(meetingDialog.form.elements.schoolYearId, state.grants, { value: state.schoolYearId || yearInput.value.trim() });
+  syncMeetingClassChoice();
   meetingDialog.dialog.showModal();
 });
+
+// Klasa zebrania klasowego z listy (GET /api/classes — serwer zawęża do zakresu roli),
+// zamiast wpisywania identyfikatora (#128). Pole jest aktywne tylko dla rodzaju „klasowe”.
+async function syncMeetingClassChoice() {
+  const { schoolYearId, kind, classId } = meetingDialog.form.elements;
+  const isClass = kind.value === "class";
+  classId.disabled = !isClass;
+  if (!isClass) { classId.innerHTML = classChoiceOptionsHtml([], { optional: true, emptyLabel: "—" }); return; }
+  await fillClassSelect(classId, api, schoolYearId.value, { selected: classId.value });
+}
+meetingDialog.form.elements.kind.addEventListener("change", syncMeetingClassChoice);
+meetingDialog.form.elements.schoolYearId.addEventListener("change", syncMeetingClassChoice);
 
 handleSubmit(meetingDialog.form, async (data) => {
   const classId = trimmed(data.classId);
@@ -738,7 +788,7 @@ handleSubmit(meetingDialog.form, async (data) => {
     ...buildQuorumRule(data),
   });
   meetingDialog.dialog.close();
-  yearInput.value = result.meeting.schoolYearId;
+  selectYearValue(yearInput, result.meeting.schoolYearId);
   await loadList();
   await openDetail(result.meeting.id, { focus: true });
   setMessage(detailMessage, "Zebranie utworzone.", "ok");
@@ -765,6 +815,8 @@ quorumSelect.addEventListener("change", updateVoteLimit);
 function openResolutionDialog(mode, resolution = null) {
   resolutionForm.reset();
   resolutionForm.dataset.mode = mode;
+  // #215: wersja wiersza w chwili otwarcia okna (nie w chwili zapisu).
+  resolutionForm.dataset.revision = String(resolution?.revisionNo ?? "");
   const elements = resolutionForm.elements;
   const checks = [...(state.detail.quorumChecks ?? [])].reverse();
   options(quorumSelect, checks.map((check) => [check.id,
@@ -829,7 +881,7 @@ handleSubmit(resolutionForm, async (data, form) => {
   } else if (mode === "edit") {
     await api(meetingUrl(meetingId, "resolutions", data.resolutionId), {
       method: "PATCH",
-      body: { ...common, ...votes, number },
+      body: { revision: Number(resolutionForm.dataset.revision), ...common, ...votes, number },
     });
   } else {
     await create("resolution", "correction", meetingUrl(meetingId, "resolutions", data.resolutionId, "corrections"), {
@@ -852,7 +904,7 @@ byId("shared-section").hidden = true;
 
 const initial = new URLSearchParams(location.search);
 let hasInitialYear = isValidId(initial.get("rok") ?? "");
-if (hasInitialYear) yearInput.value = initial.get("rok");
+if (hasInitialYear) selectYearValue(yearInput, initial.get("rok"));
 
 api("/api/access").then(
   (access) => {
@@ -862,10 +914,9 @@ api("/api/access").then(
     // Rok domyślny (#128/#UI: puste ekrany): jeśli adres nie wskazuje roku,
     // wypełnij najnowszym z przydziałów (awaryjnie heurystyka daty) i wczytaj
     // od razu — tylko gdy panel w ogóle pokazuje listę (viewMode != "none").
-    if (!hasInitialYear && state.viewMode !== "none") {
-      yearInput.value = initialSchoolYearId(grants);
-      hasInitialYear = true;
-    }
+    state.grants = Array.isArray(grants) ? grants : [];
+    fillYearSelect(yearInput, state.grants, { value: hasInitialYear ? yearInput.value : "" });
+    if (!hasInitialYear && state.viewMode !== "none") hasInitialYear = true;
     if (!hasInitialYear) return;
     if (state.viewMode === "shared") {
       loadSharedList();
