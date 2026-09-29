@@ -523,6 +523,30 @@ async function paymentSuggestions(call, cookie, reconciliationId) {
   return Object.fromEntries(suggestions.map((s) => [s.amountCents, s]));
 }
 
+// Przegląd demo 3: przy pozycji wyciągu 50,00 € panel proponował też wpis gotówkowy
+// (kasa) tej samej kwoty i daty — nieodróżnialny w oknie „Dopasuj pozycję”. Wyciąg
+// dotyczy rachunku, więc kandydatem jest wyłącznie wpis księgi z method = 'bank'.
+test('suggestions offer only bank ledger entries; a cash ledger entry of the same amount and date is not proposed', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description,
+      occurred_on, method, created_by, idempotency_key)
+      VALUES ('le-bank-3000', $1, 'income', 3000, 'cat-dues', 'Wpis syntetyczny le-bank-3000', '2026-09-12', 'bank',
+        'u-treasurer', 'le-key-le-bank-3000')`, [YEAR]);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await importLines(call, cookies.treasurer, reconciliation.id, [{ bookedOn: '2026-09-12', amountCents: 3000 }]);
+    const byAmount = await paymentSuggestions(call, cookies.treasurer, reconciliation.id);
+    // le-cash (3000, 2026-09-12, gotówka) ma tę samą kwotę i datę, ale nie jest kandydatem.
+    assert.deepEqual(byAmount[3000].candidates.map((c) => [c.type, c.id, c.method]), [
+      ['ledger_entry', 'le-bank-3000', 'bank'],
+    ]);
+    // Propozycje niczego nie zapisują.
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM bank_reconciliation_matches')).rows[0].n, 0);
+  } finally {
+    await db.close();
+  }
+});
+
 test('suggestions offer only bank payments; a cash payment of the same amount and date is not proposed', async () => {
   const { db, cookies, call } = await setup();
   try {

@@ -539,7 +539,11 @@ async function seedEvents(env, authorCookie, approverCookie) {
 }
 
 // --- Zebranie z protokołem zatwierdzonym do publikacji --------------------------
-async function seedMeeting(env, hostCookie, hostUserId, approverCookie) {
+// Przegląd demo 3: z jedną osobą na liście obecności panel pokazywał „Quorum
+// nieosiągnięte (1 z 3)” obok zatwierdzonego protokołu. Na liście są teraz trzy konta
+// zarządu z prawem głosu (prowadzący, drugi członek zarządu, skarbnik), więc reguła
+// „co najmniej 3” jest spełniona. Wyłącznie konta demo, bez opiekunów z katalogu.
+async function seedMeeting(env, hostCookie, hostUserId, approverCookie, otherVoterIds = []) {
   const created = await apiCall(env, {
     method: 'POST', path: '/api/meetings', cookie: hostCookie, idempotencyKey: idKey('demo-meeting'),
     body: {
@@ -563,10 +567,12 @@ async function seedMeeting(env, hostCookie, hostUserId, approverCookie) {
     method: 'POST', path: `/api/meetings/${meetingId}/agenda-items`, cookie: hostCookie, idempotencyKey: idKey('demo-agenda'),
     body: { title: 'Podsumowanie wpłat i planu wydatków (dane przykładowe)', position: 1 },
   });
-  await apiCall(env, {
-    method: 'POST', path: `/api/meetings/${meetingId}/attendance`, cookie: hostCookie,
-    body: { userId: hostUserId, capacity: 'board_member', votingEligible: true, present: true },
-  });
+  for (const userId of [hostUserId, ...otherVoterIds]) {
+    await apiCall(env, {
+      method: 'POST', path: `/api/meetings/${meetingId}/attendance`, cookie: hostCookie,
+      body: { userId, capacity: 'board_member', votingEligible: true, present: true },
+    });
+  }
   await apiCall(env, {
     method: 'POST', path: `/api/meetings/${meetingId}/quorum-checks`, cookie: hostCookie, idempotencyKey: idKey('demo-quorum'),
     body: {},
@@ -691,7 +697,7 @@ export async function runDemoSeed({
     const eventsPublished = await seedEvents(env, admin.cookie, board1.cookie);
     log(`Wydarzenia: ${eventsPublished} zapowiedzi opublikowanych.`);
 
-    const meeting = await seedMeeting(env, board1.cookie, board1.userId, board2.cookie);
+    const meeting = await seedMeeting(env, board1.cookie, board1.userId, board2.cookie, [board2.userId, treasurer.userId]);
     log(`Zebranie: ${meeting.meetingId}, protokół ${meeting.minutesId} zatwierdzony i udostępniony publicznie.`);
 
     // Samokontrola: protokół zatwierdzony i „public” ma się rzeczywiście pojawić

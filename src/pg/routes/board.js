@@ -5,6 +5,16 @@
 // same liczby na tych samych danych.
 //
 //   GET /api/board/overview?schoolYearId=
+//   GET /api/board/overview/export.csv?schoolYearId=     (#131) ta sama tabela, moduł src/pg/csv.js
+//   GET /api/board/overview/export.xlsx?schoolYearId=    (#131) ta sama tabela, moduł src/pg/xlsx.js
+//
+// Eksport ma dokładnie te same uprawnienia, zakres i ograniczenia co widok
+// (te same funkcje wyboru zakresu i ta sama odpowiedź): kolumna wpisów wpłat
+// tylko dla roli finansowej z MFA i przydziału szerokiego, próg 5 gospodarstw,
+// brak sortowania po odsetku. Plik ma nagłówek z rokiem i stałą notą o
+// dobrowolności składki, bez list rodzin i identyfikatorów. Każdy eksport
+// zapisuje zdarzenie `board.overview.exported` (osoba, rok, format, liczba
+// wierszy, czy z kolumną wpłat) w tej samej transakcji co odczyt.
 //
 // Zakres: admin i zarząd. Przydział szeroki (bez klasy) widzi wszystkie klasy
 // roku przydziału (zarząd przydzielony do jednego roku widzi tylko ten rok —
@@ -29,6 +39,9 @@
 
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { readSnapshot } from '../db-snapshot.js';
+import { insertAuditEvent } from '../audit.js';
+import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
+import { toXlsx, xlsxResponse } from '../xlsx.js';
 import { scopeFromGrants } from './families.js';
 
 export const name = 'board';
@@ -51,24 +64,115 @@ function paymentRate(householdCount, householdsWithEntry) {
   return Math.round((householdsWithEntry / householdCount) * 100);
 }
 
-export async function handle(request, env, url, json) {
-  if (url.pathname !== '/api/board/overview') return null;
-  if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+const EXPORT_FORMATS = { '/api/board/overview/export.csv': 'csv', '/api/board/overview/export.xlsx': 'xlsx' };
 
+// Kolumny eksportu: wyłącznie liczności i odsetek jako tekst (jak w widoku). Nagłówki
+// jak w tabeli „Statystyki klas” (families/main.js, BOARD_OVERVIEW_HEAD).
+const BASE_COLUMNS = [
+  'Klasa', 'Uczniowie', 'Gospodarstwa', 'Przedstawiciele', 'Zaproszenia', 'Kontakt e-mail', 'Do kartki',
+];
+const PAYMENT_COLUMN = 'Wpisy wpłat (informacyjnie)';
+
+function formatRate(value) {
+  return Number.isFinite(value) ? `${value}%` : '—';
+}
+
+function exportRow(label, entry, withPayments) {
+  const cells = [
+    label, String(entry.studentCount), String(entry.householdCount), String(entry.representative.active),
+    String(entry.representative.pendingInvites), String(entry.contactEmailCount), String(entry.noContactCount),
+  ];
+  if (withPayments) cells.push(formatRate(entry.paymentEntryRatePercent));
+  return cells;
+}
+
+// Zwraca { columns, rows, preamble, trailer } z odpowiedzi widoku — bez własnych zapytań,
+// więc liczby w pliku są identyczne z tabelą na ekranie.
+export function buildOverviewExport(overview) {
+  const withPayments = Boolean(overview.totals) && Object.hasOwn(overview.totals, 'paymentEntryRatePercent');
+  const columns = [...BASE_COLUMNS, ...(withPayments ? [PAYMENT_COLUMN] : [])].map((header) => ({ header, type: 'text' }));
+  const rows = overview.classes.map((entry) => exportRow(entry.name, entry, withPayments));
+  rows.push(exportRow('Razem', overview.totals, withPayments));
+  const preamble = [
+    'Statystyki klas — informacja pomocnicza, nie ocena klas ani rodzin',
+    `Rok szkolny: ${overview.schoolYearLabel}`,
+    overview.note,
+    '',
+  ];
+  const trailer = [
+    '',
+    'Uczeń z rodzeństwem w kilku klasach jest liczony w każdej z tych klas; w wierszu „Razem” gospodarstwo liczy się raz. '
+      + '„Do kartki” to uczniowie bez opiekuna ze zgodą na kontakt i adresem e-mail. Lista może być nieaktualna.',
+  ];
+  if (withPayments && Number.isFinite(overview.totals.unmatchedPaymentsCount)) {
+    trailer.push(`Wpłaty bez przypisania do rodziny: ${overview.totals.unmatchedPaymentsCount}. Nie są ujęte w odsetkach, więc ewidencja może być niepełna.`);
+  }
+  return { columns, rows, preamble, trailer, withPayments };
+}
+
+export function overviewExportFilename(schoolYearId, format, now = new Date()) {
+  return `statystyki-klas-${safeFileSegment(schoolYearId)}-${now.toISOString().slice(0, 10).replaceAll('-', '')}.${format}`;
+}
+
+// Wspólna kontrola dostępu widoku i eksportu (jedno miejsce, żeby nie rozjechały się uprawnienia).
+async function authorize(request, env, url, json) {
   const context = await loadAuthorizationContext(request, env);
-  if (!context) return json({ error: 'unauthenticated' }, 401);
+  if (!context) return { response: json({ error: 'unauthenticated' }, 401) };
 
   // Przydział szeroki (admin/zarząd całej szkoły lub roku) albo klasowy
   // (zarząd klasy): klasowy zawęża wyniki do przypisanych klas.
   const scope = scopeFromGrants(context.grants, BASE_ROLES);
-  if (!scope.any) return json({ error: 'forbidden' }, 403);
+  if (!scope.any) return { response: json({ error: 'forbidden' }, 403) };
 
   const schoolYearId = url.searchParams.get('schoolYearId');
-  if (!ID_PATTERN.test(schoolYearId ?? '')) return json({ error: 'invalid_request' }, 400);
+  if (!ID_PATTERN.test(schoolYearId ?? '')) return { response: json({ error: 'invalid_request' }, 400) };
   // Kolumna wpłat: rola finansowa + MFA; dodatkowo (w buildOverview) tylko
   // przy przydziale szerokim dla tego roku.
   const financial = isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, requireMfa: true });
+  return { context, scope, schoolYearId, financial };
+}
 
+async function exportOverview(env, auth, format, json) {
+  const { context, scope, schoolYearId, financial } = auth;
+  const actorId = context.session.user.id;
+  // Odczyt i zdarzenie audytu w jednej transakcji (jedna migawka REPEATABLE READ, bez READ ONLY).
+  const built = await env.db.transaction(async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    const overview = await buildOverview(tx, { schoolYearId, scope, financial });
+    if (!overview) return null;
+    const prepared = buildOverviewExport(overview);
+    await insertAuditEvent(tx, {
+      actorId, action: 'board.overview.exported', entityType: 'school_year', entityId: schoolYearId,
+      metadata: {
+        schoolYearId, format, rowCount: prepared.rows.length, scope: overview.scope, withPaymentColumn: prepared.withPayments,
+      },
+    });
+    return { overview, prepared };
+  });
+  if (!built) return json({ error: 'school_year_not_found' }, 404);
+  const { prepared } = built;
+  const filename = overviewExportFilename(schoolYearId, format);
+  if (format === 'xlsx') {
+    return xlsxResponse(toXlsx(prepared.columns, prepared.rows, {
+      sheetName: 'Statystyki klas', preamble: prepared.preamble, trailer: prepared.trailer,
+    }), filename);
+  }
+  return csvResponse(toCsv(prepared.columns, prepared.rows, {
+    preamble: prepared.preamble.map((text) => csvCell(text)),
+    trailer: prepared.trailer.map((text) => csvCell(text)),
+  }), filename);
+}
+
+export async function handle(request, env, url, json) {
+  const exportFormat = EXPORT_FORMATS[url.pathname];
+  if (url.pathname !== '/api/board/overview' && !exportFormat) return null;
+  if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+
+  const auth = await authorize(request, env, url, json);
+  if (auth.response) return auth.response;
+  if (exportFormat) return exportOverview(env, auth, exportFormat, json);
+
+  const { scope, schoolYearId, financial } = auth;
   const result = await readSnapshot(env.db, (tx) => buildOverview(tx, { schoolYearId, scope, financial }));
   if (!result) return json({ error: 'school_year_not_found' }, 404);
   return json(result);

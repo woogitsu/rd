@@ -23,7 +23,7 @@ export function mountSuppressions({ api }) {
   const dialog = byId("suppression-request-dialog");
   const form = dialog.querySelector("form");
   const errorBox = byId("suppression-request-error");
-  const state = { schoolYearId: "", items: [], target: null, busy: false };
+  const state = { schoolYearId: "", items: [], nextCursor: null, target: null, busy: false };
 
   function setMessage(text, isError = false) {
     const box = byId("suppressions-message");
@@ -78,18 +78,23 @@ export function mountSuppressions({ api }) {
     byId("suppressions-count").textContent = formatSuppressionCount(state.items.length);
     byId("suppressions-table").hidden = state.items.length === 0;
     byId("suppressions-empty").hidden = state.items.length !== 0;
+    byId("suppressions-load-more").hidden = !state.nextCursor;
   }
 
-  async function load(schoolYearId) {
+  // append: następna strona z kursora serwera (#159); bez append: pierwsza strona roku.
+  async function load(schoolYearId, { append = false } = {}) {
+    if (append && (!state.nextCursor || state.schoolYearId !== schoolYearId)) return;
     state.schoolYearId = schoolYearId;
     section.hidden = false;
     try {
-      const data = await api(suppressionsUrl(schoolYearId));
-      state.items = Array.isArray(data.suppressions) ? data.suppressions : [];
+      const data = await api(suppressionsUrl(schoolYearId, append ? state.nextCursor : ""));
+      const items = Array.isArray(data.suppressions) ? data.suppressions : [];
+      state.items = append ? [...state.items, ...items] : items;
+      state.nextCursor = data.nextCursor || null;
       setMessage("");
       render();
     } catch (error) {
-      state.items = [];
+      if (!append) { state.items = []; state.nextCursor = null; }
       render();
       setMessage(`Nie udało się pobrać listy wyłączeń: ${messageFor(error)}`, true);
     }
@@ -143,6 +148,7 @@ export function mountSuppressions({ api }) {
       event.submitter.disabled = false;
     }
   });
+  byId("suppressions-load-more").addEventListener("click", () => load(state.schoolYearId, { append: true }));
   dialog.addEventListener("close", () => { errorBox.textContent = ""; state.target = null; });
 
   async function approve(item) {
