@@ -41,6 +41,10 @@ export const PANELS = Object.freeze([
   { id: "import", href: "/import/", label: "Import uczniów", roles: ["admin", "board"] },
   // src/pg/routes/year-close.js READ_ROLES (admin i Komisja Rewizyjna bez dostępu).
   { id: "year-close", href: "/year-close/", label: "Zamknięcie roku", roles: ["board", "treasurer"] },
+  // src/pg/routes/reconciliation.js REPORT_ROLES = audit, board, treasurer (GET
+  // /api/reports/audit). Do nawigacji trafia wyłącznie Komisja Rewizyjna — zarząd i
+  // skarbnik mają ten sam raport jako odnośnik w panelu uzgodnień. Tylko odczyt.
+  { id: "audit", href: "/audit/", label: "Komisja Rewizyjna", roles: ["audit"] },
   // wyłącznie admin (docs/AUTHORIZATION.md: „wyłącznie admin”).
   { id: "admin", href: "/admin/", label: "Konta i role", roles: ["admin"] },
 ]);
