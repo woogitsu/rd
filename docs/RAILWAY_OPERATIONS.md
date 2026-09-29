@@ -104,7 +104,7 @@ Sesje i MFA mogą wymagać dodatkowych sekretów — ich nazwy dopisuje PR #35.
 pozostaje healthcheckiem Railway: gdyby healthcheck zależał od bazy, awaria
 PostgreSQL albo nienałożona migracja blokowałaby deploy poprawnej wersji lub
 wywoływała pętlę restartów, która nie naprawia bazy. Stan bazy sprawdza
-`/health/ready` (`SELECT 1` z limitem 2 s i porównanie `schema_migrations` z
+`/health/ready` (`SELECT 1` z limitem 2 s egzekwowanym przez PostgreSQL — `SET LOCAL statement_timeout` na jednym połączeniu sondy, #244 — i porównanie `schema_migrations` z
 `postgres/migrations`); `503` oznacza brak bazy, błąd lub timeout, brakujące
 migracje albo zamykanie procesu. Odpowiedź zawiera tylko stan techniczny oraz
 liczbę i nazwy brakujących plików migracji. Po każdym deployu i każdej

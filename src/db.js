@@ -54,6 +54,10 @@ export function createPgDatabase(poolOrConfig = {}) {
     log.error('db_idle_client_error', { code: typeof error?.code === 'string' ? error.code : 'unknown' });
   });
 
+  // Sondy diagnostyczne (/health/ready): co najwyżej jedna naraz na pulę, na
+  // własnym połączeniu z budżetem czasu po stronie serwera PostgreSQL (#244).
+  let probeActive = false;
+
   return {
     async query(text, params = []) {
       const result = await pool.query(text, params);
@@ -72,6 +76,60 @@ export function createPgDatabase(poolOrConfig = {}) {
         throw error;
       } finally {
         client.release(broken);
+      }
+    },
+    /**
+     * Zapytania diagnostyczne z twardym budżetem czasu. `Promise.race` kończy
+     * tylko oczekiwanie, więc tu każde zapytanie sondy dostaje w transakcji
+     * `SET LOCAL statement_timeout` równe POZOSTAŁEMU budżetowi: serwer sam
+     * anuluje zapytanie i połączenie wraca do puli najpóźniej po `timeoutMs`
+     * (a nie po statement_timeout puli, domyślnie 10 s). Sonda zajmuje
+     * najwyżej jedno połączenie; kolejna, gdy poprzednia jeszcze trwa
+     * (np. czeka na wolne połączenie), kończy się kodem `probe_busy` bez
+     * tworzenia kolejnego oczekującego klienta puli.
+     */
+    async probe(fn, { timeoutMs = 2000 } = {}) {
+      if (probeActive) throw Object.assign(new Error('probe busy'), { code: 'probe_busy' });
+      probeActive = true;
+      const deadline = Date.now() + timeoutMs;
+      let abandoned = false;
+      let timer;
+      const run = (async () => {
+        const client = await pool.connect();
+        let broken = false;
+        try {
+          if (abandoned) return undefined;
+          await client.query('BEGIN');
+          const result = await fn({
+            async query(text, params = []) {
+              const remaining = deadline - Date.now();
+              if (abandoned || remaining < 1) throw Object.assign(new Error('probe timeout'), { code: 'timeout' });
+              await client.query("SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $1, true)", [String(remaining)]);
+              const out = await client.query(text, params);
+              return { rows: out.rows };
+            },
+          });
+          await client.query('COMMIT');
+          return result;
+        } catch (error) {
+          try { await client.query('ROLLBACK'); } catch { broken = true; }
+          throw error;
+        } finally {
+          client.release(broken);
+        }
+      })().finally(() => { probeActive = false; });
+      // Późny wynik/błąd porzuconej sondy nie może zostać nieobsłużony.
+      run.catch(() => {});
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          abandoned = true;
+          reject(Object.assign(new Error('readiness timeout'), { code: 'timeout' }));
+        }, timeoutMs);
+      });
+      try {
+        return await Promise.race([run, timeout]);
+      } finally {
+        clearTimeout(timer);
       }
     },
     async close() {
