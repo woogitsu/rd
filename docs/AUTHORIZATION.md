@@ -169,8 +169,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/email/campaigns/:campaignId/cancel` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/email/campaigns/:campaignId/test-send` | zarząd, skarbnik — jak wyżej | tak | 403 | tylko adres z `EMAIL_PREVIEW_RECIPIENTS`, nie adres opiekuna; `EMAIL_SENDING_ENABLED≠true` → 409 bez sieci; limit 5/kampanię i 20/konto na dobę → 429 (#104) |
 | `POST /api/email/webhooks/brevo` | bez sesji; wspólny sekret w `Authorization` | nie | — | brak lub zły sekret: 401 bez zapisu (test uzupełniający) |
-| `GET /api/email/suppressions?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | adres tylko maskowany; odczyt w dzienniku (#94) |
-| `POST /api/email/suppressions/:emailHash/release-request` | zarząd, skarbnik — jak wyżej | tak | 403 | blokada po `complaint`/`unsubscribed`: tylko powód `parent_request`, inaczej 409 (#94) |
+| `GET /api/email/suppressions?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | adres tylko maskowany; odczyt w dzienniku; `pendingRequest` bez identyfikatora zgłaszającego (#94) |
+| `POST /api/email/suppressions/:emailHash/release-request` | zarząd, skarbnik — jak wyżej | tak | 403 | blokada po `complaint`/`unsubscribed`: tylko powód `parent_request`, inaczej 409; powtórzenie tego samego wniosku zwraca istniejący (#94) |
 | `POST /api/email/suppressions/:emailHash/release` | zarząd, skarbnik — jak wyżej; inna osoba niż zgłaszająca wniosek | tak | 403 | ta sama osoba: 403 `self_approval_forbidden`; zużyty wniosek: 409 (#94) |
 | `GET /api/email/preferences?t=:token` | publiczna, bez sesji | nie | — | tylko odczyt kategorii z tokenu, bez skutku; zły/zmieniony token → 400; limit żądań → 429 (#110) |
 | `POST /api/email/preferences?t=:token` | publiczna, bez sesji; zwolniona z `Origin` (jak webhook) | nie | — | wypisanie z kategorii kampanii, idempotentne; zły/zmieniony token → 400; limit żądań → 429 (#110) |
