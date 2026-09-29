@@ -31,6 +31,7 @@ import { CLIENT_IP_HEADER } from './login.js';
 import { isSameOrigin } from '../../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import {
   afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
@@ -90,12 +91,16 @@ function prefRateLimited(key, env) {
 }
 
 class RequestError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
 }
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+const piiFail = (code, categories) => new RequestError(code, 422, { categories });
 
 function validId(value) {
   return typeof value === 'string' && ID_PATTERN.test(value);
@@ -1387,6 +1392,8 @@ async function releaseRequest(request, env, hashValue, json) {
         [hashValue, actorId, data.releaseReason],
       );
       if (existing[0]) return json({ requestId: existing[0].id }, 200);
+      // #152: uwaga trafia (przez zatwierdzenie) do niezmiennej tabeli zwolnień.
+      const gate = gateFreeText([['email_suppression_releases.confirmation_note', note ?? null]], { confirm: data.confirmPersonalData === true, fail: piiFail });
       const id = crypto.randomUUID();
       await tx.query(
         `INSERT INTO email_suppression_release_requests (id, email_hash, suppression_reason, release_reason, confirmation_note, requested_by)
@@ -1395,7 +1402,7 @@ async function releaseRequest(request, env, hashValue, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'email.suppression.release_requested', entityType: 'email_suppression_release_request', entityId: id,
-        metadata: { hashValue, releaseReason: data.releaseReason, suppressionReason, schoolYearId: data.schoolYearId },
+        metadata: { hashValue, releaseReason: data.releaseReason, suppressionReason, schoolYearId: data.schoolYearId, ...piiAuditMetadata(gate) },
       });
       return json({ requestId: id }, 201);
     });
@@ -1511,7 +1518,7 @@ async function preferencesOptOut(request, env, url, json) {
       return json({ category: payload.category, optedOut: true });
     });
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }
@@ -1593,7 +1600,7 @@ export async function handle(request, env, url, json) {
     if (action === 'test-send') return await testSend(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }

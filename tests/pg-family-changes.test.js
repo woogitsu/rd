@@ -236,6 +236,34 @@ test('zmiana głównego gospodarstwa: koniec starego + nowe od tej samej daty; z
   } finally { await t.db.close(); }
 });
 
+test('#152 członkostwo w gospodarstwie: powód z e-mailem odrzucony, z telefonem wymaga potwierdzenia, bez zapisu przy odmowie', async () => {
+  const t = await setup();
+  try {
+    const before = (await t.db.query('SELECT count(*)::int AS n FROM student_households')).rows[0].n;
+    const addBody = { householdId: 'h-3', startsOn: '2020-01-01' };
+    const addCall = (body) => t.call('/api/students/s-1/households', { method: 'POST', cookie: t.cookies.board, body });
+    const email = await addCall({ ...addBody, reason: 'Kontakt rodzic@example.invalid', confirmPersonalData: true });
+    assert.equal(email.status, 422);
+    assert.equal(email.body.error, 'personal_data_forbidden');
+    const phone = await addCall({ ...addBody, reason: 'Kontakt +32 470 12 34 56' });
+    assert.equal(phone.status, 422);
+    assert.equal(phone.body.error, 'possible_personal_data');
+    assert.equal((await t.db.query('SELECT count(*)::int AS n FROM student_households')).rows[0].n, before);
+    const ok = await addCall({ ...addBody, reason: 'Kontakt +32 470 12 34 56', confirmPersonalData: true });
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+
+    const primary = (await t.db.query(`SELECT id FROM student_households WHERE student_id = 's-1' AND is_primary`)).rows[0].id;
+    const endCall = (body) => t.call(`/api/students/s-1/households/${primary}/end`, { method: 'POST', cookie: t.cookies.board, body });
+    const endEmail = await endCall({ endsOn: '2020-01-01', reason: 'Zmiana, pisać na rodzic@example.invalid' });
+    assert.equal(endEmail.status, 422);
+    assert.equal(endEmail.body.error, 'personal_data_forbidden');
+    assert.equal((await t.db.query('SELECT ends_on FROM student_households WHERE id = $1', [primary])).rows[0].ends_on, null);
+    assert.equal((await endCall({ endsOn: '2020-01-01', reason: 'Zmiana gospodarstwa (syntetyczna)' })).status, 200);
+    const audit = JSON.stringify((await t.db.query(`SELECT metadata_json FROM audit_events WHERE action IN ('student_household.added','student_household.ended')`)).rows);
+    assert.ok(audit.includes('piiConfirmed') && !audit.includes('470') && !audit.includes('example.invalid'));
+  } finally { await t.db.close(); }
+});
+
 // Kampania zatwierdzona i zakolejkowana PRZED zmianą — worker i podgląd.
 async function approvedCampaign(t) {
   const created = await t.call('/api/email/campaigns', {

@@ -18,6 +18,7 @@
 
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvResponse, safeFileSegment, toCsv } from '../csv.js';
@@ -195,7 +196,9 @@ const sameItems = (a, b) => JSON.stringify(a.map((i) => [i.eventId, i.classId, i
 
 async function createAllocation(request, env, entryId, json) {
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseAllocationInput(await readJson(request));
+  const allocationData = await readJson(request);
+  const input = parseAllocationInput(allocationData);
+  const confirmPersonalData = allocationData.confirmPersonalData === true;
   const context = await requireFinancial(request, env);
   const actorId = context.session.user.id;
 
@@ -242,6 +245,10 @@ async function createAllocation(request, env, entryId, json) {
       const total = input.items.reduce((sum, item) => sum + item.amountCents, 0);
       if (total > toSafeInteger(entry.net_amount_cents)) throw new RequestError('allocation_exceeds_net', 409);
 
+      // #152: powód wersji przypisania jest zapisem niezmiennym — bramka na dane osobowe.
+      const gate = gateFreeText([['ledger_allocation_versions.reason', input.reason]], {
+        confirm: confirmPersonalData, fail: (code, categories) => new RequestError(code, 422, { categories }),
+      });
       const versionId = crypto.randomUUID();
       const versionNo = (current?.versionNo ?? 0) + 1;
       await tx.query(
@@ -259,7 +266,7 @@ async function createAllocation(request, env, entryId, json) {
       }
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.allocation.created', entityType: 'ledger_entry', entityId: entryId,
-        metadata: { schoolYearId: entry.school_year_id, versionId, versionNo, supersedesId: input.supersedesId, itemCount: input.items.length },
+        metadata: { schoolYearId: entry.school_year_id, versionId, versionNo, supersedesId: input.supersedesId, itemCount: input.items.length, ...piiAuditMetadata(gate) },
       });
       const entryAfter = await loadEntry(tx, entryId);
       return json({ allocation: allocationView(entryAfter, await loadVersions(tx, entryId)), versionId }, 201,

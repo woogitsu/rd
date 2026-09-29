@@ -167,6 +167,7 @@ export const MESSAGES = Object.freeze({
   payment_cannot_be_corrected: "Tej wpłaty nie można skorygować w obecnym stanie.",
   correction_exceeds_remaining_amount: "Korekta przekracza kwotę pozostałą po wcześniejszych korektach.",
   possible_personal_data: "Ten tekst zostanie zapisany na stałe i trafi do eksportu. Usuń dane osobowe albo potwierdź, że to konieczne.",
+  personal_data_forbidden: "Tekst zawiera adres e-mail, numer rachunku (IBAN) albo numer rejestru krajowego. Ten zapis jest niezmienny i trafia do eksportu — usuń te dane osobowe i zapisz ponownie (nie można tego potwierdzić).",
   minutes_contain_personal_data: "Protokół zawiera możliwe dane osobowe (imię i nazwisko, e-mail albo IBAN) — publikacja publiczna jest zablokowana.",
   payment_amount_mismatch: "Kwota wpłaty nie zgadza się z powiązanym wpisem księgi. Odśwież widok i sprawdź dane.",
   payment_cannot_be_refunded: "Tej wpłaty nie można zwrócić w obecnym stanie.",

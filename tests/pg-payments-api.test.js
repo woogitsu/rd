@@ -520,7 +520,15 @@ test('#152 correction reason with an e-mail address is refused without confirmat
   const res = await read(await backend.fetch(call(backend.cookie, path,
     { body: { amountCents: 50, reason: 'Prosba od rodzic@example.invalid o zwrot' }, key: 'pii-corr-0002' })));
   assert.equal(res.status, 422);
+  assert.equal(res.body.error, 'personal_data_forbidden');
   assert.deepEqual(res.body.categories, ['email']);
+  assert.equal(await backend.count('payment_corrections'), 0);
+  // Wariant zachowawczy: e-mail nie ma obejścia — potwierdzenie nie pomaga.
+  const confirmed = await read(await backend.fetch(call(backend.cookie, path, {
+    body: { amountCents: 50, reason: 'Prosba od rodzic@example.invalid o zwrot', confirmPersonalData: true }, key: 'pii-corr-0002',
+  })));
+  assert.equal(confirmed.status, 422);
+  assert.equal(confirmed.body.error, 'personal_data_forbidden');
   assert.equal(await backend.count('payment_corrections'), 0);
 }));
 
