@@ -4,7 +4,8 @@
 // bo służy testom wolumenu/wydajności). Ten skrypt buduje mały, czytelny zestaw do
 // pokazu: kilka klas, ok. 20 rodzin (z rodzeństwem i dwojgiem opiekunów), wpłaty
 // częściowe i pełne, wpisy księgi, zapowiedzi wydarzeń, jedno zebranie z protokołem
-// zatwierdzonym do publikacji, jeden SZKIC kampanii e-mail (nigdy nie wysyłany) oraz
+// zatwierdzonym do publikacji, dwa syntetyczne PDF-y (faktura jako dowód jednego wydatku i protokół)
+// w lokalnym katalogu zamiast magazynu Railway, jeden SZKIC kampanii e-mail (nigdy nie wysyłany) oraz
 // konta ról demo z hasłami wypisywanymi tylko na konsoli.
 //
 //   npm run demo:seed     — tworzy/nadpisuje bazę demo (domyślnie PGlite w .demo-data/)
@@ -37,11 +38,17 @@ import { bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { pad } from './lib/synthetic-seed.js';
+import { createMemoryStorage } from '../src/storage.js';
+import { createDirectoryStorage } from '../src/storage-dir.js';
+import { buildDemoPdf, DEMO_INVOICE_PDF, DEMO_MINUTES_PDF } from './lib/demo-pdf.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(HERE, '..');
 export const DEMO_DATA_DIR = join(REPO_ROOT, '.demo-data');
 export const DEMO_PGLITE_DIR = join(DEMO_DATA_DIR, 'pgdata');
+// Lokalna atrapa prywatnego magazynu dokumentów (src/storage-dir.js) — zwykły katalog
+// obok bazy, bez sieci, Railway i bucketu. Seed i `demo:start` używają tego samego katalogu.
+export const DEMO_DOCUMENTS_DIR = join(DEMO_DATA_DIR, 'documents');
 export const DEMO_MFA_KEY_FILE = join(DEMO_DATA_DIR, 'mfa-encryption-key.local');
 
 export const DEMO_ORIGIN = 'http://localhost:3000';
@@ -159,7 +166,7 @@ function extractCookie(response) {
 
 // Wyeksportowane dla testów (tests/demo-seed.test.js), żeby sprawdzić publiczny
 // endpoint po seedzie tym samym mechanizmem, którego seed sam używa.
-export async function apiCall(env, { method = 'GET', path, cookie, body, idempotencyKey } = {}) {
+export async function apiCall(env, { method = 'GET', path, cookie, body, idempotencyKey, rawBody, contentType } = {}) {
   const headers = new Headers();
   if (cookie) headers.set('Cookie', cookie);
   if (idempotencyKey) headers.set('Idempotency-Key', idempotencyKey);
@@ -167,6 +174,11 @@ export async function apiCall(env, { method = 'GET', path, cookie, body, idempot
   if (body !== undefined) {
     payload = JSON.stringify(body);
     headers.set('Content-Type', 'application/json');
+  }
+  // rawBody: surowe bajty pliku (POST /api/documents) z jawnym Content-Type — bez obejścia walidacji.
+  if (rawBody !== undefined) {
+    payload = rawBody;
+    headers.set('Content-Type', contentType);
   }
   if (method !== 'GET' && method !== 'HEAD') headers.set('Origin', DEMO_ORIGIN);
   const request = new Request(new URL(path, DEMO_ORIGIN), { method, headers, body: payload });
@@ -449,13 +461,47 @@ async function seedLedger(env, cookie, actorUserId, payments) {
     { direction: 'expense', categoryId: 'cat-expense-wydarzenia', amountCents: 18000, description: 'Poczęstunek na spotkanie andrzejkowe (dane przykładowe)', occurredOn: '2026-11-25', method: 'cash' },
     { direction: 'expense', categoryId: 'cat-expense-oplaty', amountCents: 1200, description: 'Opłata za prowadzenie rachunku Rady (dane przykładowe)', occurredOn: '2026-12-01', method: 'bank' },
   ];
+  const created = [];
   for (const entry of entries) {
-    await apiCall(env, {
+    const response = await apiCall(env, {
       method: 'POST', path: '/api/ledger', cookie, idempotencyKey: idKey('demo-ledger'),
       body: { schoolYearId: SCHOOL_YEAR_ID, ...entry },
     });
+    created.push({ ...entry, id: response.data.entry.id });
   }
-  return entries.length;
+  return { count: entries.length, created };
+}
+
+// --- Dokumenty: 2 syntetyczne PDF-y w lokalnej atrapie magazynu ------------------
+// Przez POST /api/documents (walidacja typu, sygnatury, struktury i rozmiaru jak w
+// produkcji) i POST /api/documents/{id}/description. Faktura jest dowodem JEDNEGO
+// wydatku (materiały, 150,00 EUR) — pozostałe wydatki celowo zostają bez dowodu.
+async function uploadDemoDocument(env, cookie, { query, pdf, description }) {
+  const uploaded = await apiCall(env, {
+    method: 'POST', path: `/api/documents?${new URLSearchParams(query)}`, cookie,
+    idempotencyKey: idKey('demo-document'), rawBody: buildDemoPdf(pdf), contentType: 'application/pdf',
+  });
+  const id = uploaded.data.document.id;
+  await apiCall(env, {
+    method: 'POST', path: `/api/documents/${id}/description`, cookie, idempotencyKey: idKey('demo-document-desc'),
+    body: description,
+  });
+  return id;
+}
+
+async function seedDocuments(env, { treasurerCookie, boardCookie, ledgerEntries }) {
+  const expense = ledgerEntries.find((entry) => entry.categoryId === 'cat-expense-materialy');
+  const invoiceId = await uploadDemoDocument(env, treasurerCookie, {
+    query: { kind: 'financial', schoolYearId: SCHOOL_YEAR_ID, linkedEntityType: 'ledger_entry', linkedEntityId: expense.id },
+    pdf: DEMO_INVOICE_PDF,
+    description: { title: 'Faktura — przykład demo', category: 'faktura', documentDate: '2026-11-05', description: 'Dokument syntetyczny, dowód wydatku na materiały plastyczne (dane przykładowe).' },
+  });
+  const minutesId = await uploadDemoDocument(env, boardCookie, {
+    query: { kind: 'board', schoolYearId: SCHOOL_YEAR_ID },
+    pdf: DEMO_MINUTES_PDF,
+    description: { title: 'Protokół — przykład demo', category: 'protokol', documentDate: '2026-11-20', description: 'Dokument syntetyczny (dane przykładowe), nie jest prawdziwym protokołem.' },
+  });
+  return { invoiceId, minutesId };
 }
 
 // --- Wydarzenia: zapowiedzi z datą/miejscem/opisem organizacyjnym, NIE sprawozdania
@@ -586,8 +632,11 @@ export async function runDemoSeed({
   assertSafeEnvironment(processEnv);
   const { db, mode, close } = await openDemoDatabase({ databaseUrl: databaseUrl ?? processEnv.DATABASE_URL, inMemory });
   const mfaEncryptionKey = randomBytes(32).toString('hex');
+  // Atrapa magazynu: pamięć (testy) albo katalog .demo-data/documents (czyszczony jak baza).
+  if (!inMemory) await rm(DEMO_DOCUMENTS_DIR, { recursive: true, force: true });
   const env = {
     db,
+    storage: inMemory ? createMemoryStorage() : createDirectoryStorage(DEMO_DOCUMENTS_DIR),
     MFA_ENCRYPTION_KEY: mfaEncryptionKey,
     APP_ENV: demoAppEnv(processEnv),
     // Origin sprawdzany przez handlePgRequest — apiCall() zawsze wysyła DEMO_ORIGIN.
@@ -627,8 +676,14 @@ export async function runDemoSeed({
     const paymentsCreated = payments.length + 1;
     log(`Wpłaty: ${paymentsCreated} wpisów (częściowe i pełne, w tym 1 celowo nieprzypisana; bez statusu „dłużnik”).`);
 
-    const ledgerCreated = await seedLedger(env, treasurer.cookie, treasurer.userId, payments);
+    const ledger = await seedLedger(env, treasurer.cookie, treasurer.userId, payments);
+    const ledgerCreated = ledger.count;
     log(`Księga: ${ledgerCreated} wpisów (wpłaty rodzin ujęte w księdze).`);
+
+    const documents = await seedDocuments(env, {
+      treasurerCookie: treasurer.cookie, boardCookie: board1.cookie, ledgerEntries: ledger.created,
+    });
+    log(`Dokumenty: 2 syntetyczne PDF-y w lokalnym magazynie (${inMemory ? 'pamięć' : DEMO_DOCUMENTS_DIR}); faktura jest dowodem jednego wydatku.`);
 
     const reconciliation = await seedReconciliation(env, treasurer.cookie, payments);
     log(`Uzgodnienie wyciągu: ${reconciliation.reconciliationId}, ${reconciliation.lineCount} pozycji zaimportowanych (SZKIC, nie zatwierdzony).`);
@@ -660,7 +715,7 @@ export async function runDemoSeed({
     log(`Aktualności: wpis ${newsId} opublikowany.`);
 
     return {
-      mode, accounts, roster, meeting, campaignId, newsId, reconciliation, unassignedPaymentId,
+      mode, accounts, roster, meeting, documents, campaignId, newsId, reconciliation, unassignedPaymentId,
       counts: { payments: paymentsCreated, ledger: ledgerCreated, events: eventsPublished },
       // Tylko gdy keepOpen: true (testy) — env.db zostaje otwarty, wywołujący
       // odpowiada za close(). W zwykłym użyciu (CLI, demo:seed) undefined.

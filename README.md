@@ -136,7 +136,7 @@ Ekran `/login/` (`/` przekierowuje tutaj, strona publiczna jest pod `/site/`): e
 
 ## Pokaz dla zarządu (dane demo, wyłącznie lokalnie)
 
-Osobny, mały zestaw danych do pokazania panelu zarządowi — nie do mylenia z `scripts/lib/synthetic-seed.js` (ten służy testom wolumenu/wydajności i zostaje bez zmian). `scripts/demo-seed.js` zakłada bazę od zera (domyślnie PGlite trwałe na dysku w `.demo-data/`, poza repo) i przechodzi przez te same trasy API co prawdziwe panele — konta ról, wpłaty, księgę, wydarzenia, zebranie z protokołem i szkic kampanii e-mail:
+Osobny, mały zestaw danych do pokazania panelu zarządowi — nie do mylenia z `scripts/lib/synthetic-seed.js` (ten służy testom wolumenu/wydajności i zostaje bez zmian). `scripts/demo-seed.js` zakłada bazę od zera (domyślnie PGlite trwałe na dysku w `.demo-data/`, poza repo) i przechodzi przez te same trasy API co prawdziwe panele — konta ról, wpłaty, księgę, dwa syntetyczne PDF-y w panelu Dokumenty (lokalny katalog `.demo-data/documents/` zamiast Railway Storage Bucket), wydarzenia, zebranie z protokołem i szkic kampanii e-mail:
 
 ```bash
 npm ci

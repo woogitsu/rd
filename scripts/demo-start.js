@@ -11,11 +11,12 @@
 
 import { access, readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import { createDirectoryStorage } from '../src/storage-dir.js';
 import { startServer } from '../src/server.js';
 import { createPgDatabase } from '../src/db.js';
 import { dummyHash } from '../src/pg/password.js';
 import {
-  assertSafeEnvironment, demoAppEnv, DemoSeedRefused, DEMO_MFA_KEY_FILE, DEMO_PGLITE_DIR, SCHOOL_YEAR_ID,
+  assertSafeEnvironment, demoAppEnv, DemoSeedRefused, DEMO_DOCUMENTS_DIR, DEMO_MFA_KEY_FILE, DEMO_PGLITE_DIR, SCHOOL_YEAR_ID,
 } from './demo-seed.js';
 
 async function readMfaKey() {
@@ -46,8 +47,15 @@ export async function startDemoServer({ port = Number(process.env.PORT || 3000) 
   assertSafeEnvironment(process.env);
   const mfaEncryptionKey = await readMfaKey();
   const { db, close } = await openRuntimeDatabase(process.env.DATABASE_URL);
+  // Lokalna atrapa magazynu dokumentów (katalog z seeda) — nie Railway Storage Bucket.
+  try {
+    await access(DEMO_DOCUMENTS_DIR);
+  } catch {
+    throw new DemoSeedRefused('demo_not_seeded', `Brak magazynu dokumentów demo (${DEMO_DOCUMENTS_DIR}). Uruchom najpierw „npm run demo:seed”.`);
+  }
   const env = {
     db,
+    storage: createDirectoryStorage(DEMO_DOCUMENTS_DIR),
     MFA_ENCRYPTION_KEY: mfaEncryptionKey,
     APP_ENV: demoAppEnv(process.env),
     // Brak BREVO_WEBHOOK_SECRET/klucza Brevo — assertSafeEnvironment już odmówił,
