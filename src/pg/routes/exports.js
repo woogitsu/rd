@@ -17,6 +17,7 @@ import {
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { csvResponse } from '../csv.js';
+import { recordDataAccess } from '../data-access.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import {
   buildClassRoster, buildClassRosterCsv, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
@@ -62,6 +63,22 @@ async function readJson(request) {
 
 function safeFilePart(value) {
   return value.replace(/[^A-Za-z0-9_.-]/g, '_');
+}
+
+// Ciało odpowiedzi z listy buforów (#216): każdy bufor jest zwalniany zaraz po
+// przekazaniu, więc pamięć paczki maleje w trakcie pobierania.
+function chunksBody(chunks) {
+  let index = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (index >= chunks.length) { controller.close(); return; }
+      const chunk = chunks[index];
+      chunks[index] = null;
+      index += 1;
+      controller.enqueue(chunk);
+    },
+    cancel() { chunks.fill(null); },
+  });
 }
 
 function attachment(body, filename, headers = {}, contentType = 'application/json; charset=utf-8') {
@@ -144,11 +161,21 @@ async function createYearlyExport(request, env, json) {
       // zakresem tego PR, patrz opis PR).
       const lock = await tx.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked', [`rd_export:${schoolYearId}`]);
       if (!lock.rows[0].locked) throw new RequestError('export_in_progress', 409);
-      const built = await buildYearlyExport(tx, schoolYearId);
+      // #216: budowa paczki idzie partiami przez kursor i oddaje pętlę zdarzeń;
+      // przerwy między zapytaniami są krótkie, ale limit „idle in transaction”
+      // (15 s w puli) podnosimy lokalnie dla tej jednej transakcji, żeby wolny
+      // współdzielony vCPU nie zrywał eksportu w trakcie.
+      await tx.query("SET LOCAL idle_in_transaction_session_timeout = '60s'");
+      const built = await buildYearlyExport(tx, schoolYearId, { stream: true });
       const runId = await recordRun(tx, {
         kind: 'yearly', schoolYearId, formatVersion: EXPORT_FORMAT_VERSION, actorId,
         sha256: built.manifestSha256, rowCounts: built.rowCounts,
       });
+      // #133: dziennik odczytu w tej samej transakcji co eksport (strict).
+      await recordDataAccess({ db: tx }, {
+        actorId, accessKind: 'yearly_export', schoolYearId, outcome: 'ok',
+        rowCount: Object.values(built.rowCounts ?? {}).reduce((sum, n) => sum + (Number(n) || 0), 0),
+      }, { strict: true });
       if (archiveVia) {
         await recordArchiveRead(tx, { actorId, schoolYearId, viaSchoolYearId: archiveVia, route: 'exports.yearly' });
       }
@@ -159,9 +186,11 @@ async function createYearlyExport(request, env, json) {
     throw error;
   }
 
-  return attachment(result.body, `rd-eksport-${safeFilePart(schoolYearId)}-v${EXPORT_FORMAT_VERSION}.json`, {
+  return attachment(chunksBody(result.bodyChunks), `rd-eksport-${safeFilePart(schoolYearId)}-v${EXPORT_FORMAT_VERSION}.json`, {
     'X-Export-Run-Id': result.runId,
     'X-Export-Manifest-Sha256': result.manifestSha256,
+    // Znany rozmiar: adapter Node przesyła odpowiedź strumieniowo, bez kopii w pamięci.
+    'Content-Length': String(result.bodyBytes),
   });
 }
 
@@ -197,9 +226,17 @@ async function exportClassRoster(request, env, url, json) {
       kind: 'class_roster', schoolYearId: built.schoolYearId, classId, formatVersion: ROSTER_FORMAT_VERSION,
       actorId, sha256: built.sha256, rowCounts: built.rowCounts, format,
     });
+    // #133: dziennik odczytu w tej samej transakcji co eksport (strict).
+    await recordDataAccess({ db: tx }, {
+      actorId, accessKind: 'class_roster_export', schoolYearId: built.schoolYearId, classId, outcome: 'ok',
+      rowCount: Object.values(built.rowCounts ?? {}).reduce((sum, n) => sum + (Number(n) || 0), 0),
+    }, { strict: true });
     return { ...built, runId };
   });
-  if (result.notFound) return json({ error: 'class_not_found' }, 404);
+  if (result.notFound) {
+    await recordDataAccess(env, { actorId, accessKind: 'class_roster_export', classId, outcome: 'not_found' });
+    return json({ error: 'class_not_found' }, 404);
+  }
   if (result.forbidden) return json({ error: 'forbidden' }, 403);
 
   if (format === 'csv') {
