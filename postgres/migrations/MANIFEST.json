@@ -292,6 +292,10 @@
     "sha256": "6946c2cb678946fcc171cc4a7928ac9816b9ecfee3d18fbb857c5178838a14f6"
   },
   {
+    "name": "0125_account_recovery_requests.sql",
+    "sha256": "90b6b1439eb8bbf64cf526b3529db889136e3b4c2c452eb17050b9aaf636080b"
+  },
+  {
     "name": "0140_data_access_log_review.sql",
     "sha256": "304aab73b8a25f23650bdbede67203c1513daadc28fc488aaf7c9d83c6d172af"
   }

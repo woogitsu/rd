@@ -1253,6 +1253,14 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.userMfaReset', 'POST', '/api/admin/users/:userId/mfa-reset', {
     object: 'withFactor', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/mfa-reset`, body: { confirm: obj.userId } }),
   }),
+  // #146: wnioski o reset hasła/MFA kont chronionych — wyłącznie admin z MFA; zatwierdza nie wnioskodawca.
+  adminRoute('admin.accountRequests', 'GET', '/api/admin/account-requests', {}),
+  adminRoute('admin.accountRequestApprove', 'POST', '/api/admin/account-requests/:requestId/approve', {
+    object: 'recoveryRequest', build: ({ obj }) => ({ path: `/api/admin/account-requests/${obj.requestId}/approve`, body: {} }),
+  }),
+  adminRoute('admin.accountRequestReject', 'POST', '/api/admin/account-requests/:requestId/reject', {
+    object: 'recoveryRequest', build: ({ obj }) => ({ path: `/api/admin/account-requests/${obj.requestId}/reject`, body: {} }),
+  }),
   adminRoute('admin.grants', 'GET', '/api/admin/grants', {}),
   adminRoute('admin.grantCreate', 'POST', '/api/admin/grants', {
     ok: 201, object: 'active',
