@@ -942,3 +942,16 @@ pozostaje unikalny. Skutki dla danych: żaden wiersz nie jest zmieniany ani
 usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
+
+`0138_financial_report_snapshots.sql` (#125, część) dodaje niezmienne migawki
+sprawozdania rocznego: `financial_report_snapshots` (JSON zagregowany, SHA-256
+kanonicznego JSON-a, `supersedes_id` z powodem korekty) i
+`financial_report_snapshot_approvals` (zatwierdzenie przez inną osobę niż autor,
+tylko migawki bez następcy), widok `financial_report_snapshot_status` oraz
+opcjonalną kolumnę `school_year_closure_checklist.report_snapshot_id`. Tabele
+mają `immutable_financial_record`, `BEFORE TRUNCATE deny_truncate()` i
+zamrożenie roku; ta sama treść w roku może wystąpić raz (idempotencja),
+historia korekt jest łańcuchem. Skutki dla danych: tylko nowe obiekty i jedna
+kolumna NULL, żaden wiersz nie jest zmieniany. Wycofanie: usunięcie widoku,
+kolumny, tabel i funkcji strażników — na bazie z zatwierdzonymi migawkami
+wyłącznie po kopii zapasowej (retencja: D-04).
