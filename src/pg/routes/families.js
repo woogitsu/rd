@@ -616,10 +616,12 @@ async function endRelation(request, env, guardianId, studentId, json) {
   const actorId = context.session.user.id;
   const result = await env.db.transaction(async (tx) => {
     const { rows } = await tx.query(
-      `SELECT to_char(sg.ends_on, 'YYYY-MM-DD') AS ends_on, to_char(sg.starts_on, 'YYYY-MM-DD') AS starts_on
-         FROM student_guardians sg
-        WHERE sg.guardian_id = $5 AND sg.student_id = $6 AND ${STUDENT_IN_SCOPE('sg.student_id')}
-        FOR UPDATE OF sg`,
+      // Surowa tabela (alias rel, nie sg): to nie jest sprawdzenie „aktualności” relacji,
+      // tylko odczyt zapisanej daty końca przed jej jednorazowym ustawieniem.
+      `SELECT to_char(rel.ends_on, 'YYYY-MM-DD') AS ends_on, to_char(rel.starts_on, 'YYYY-MM-DD') AS starts_on
+         FROM student_guardians rel
+        WHERE rel.guardian_id = $5 AND rel.student_id = $6 AND ${STUDENT_IN_SCOPE('rel.student_id')}
+        FOR UPDATE OF rel`,
       [...scopeParams(scope), guardianId, studentId],
     );
     const current = rows[0];
