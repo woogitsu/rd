@@ -3,9 +3,13 @@ import {
   STATUS_LABELS,
   auditReportUrl,
   buildReconciliationsUrl,
+  buildStatementFileBody,
   candidateLabel,
   canOfferConfirm,
+  decodeStatementBytes,
   describeApiError,
+  describeStatementImportError,
+  detectStatementFormat,
   formatCents,
   formatDifference,
   hasWriteAccess,
@@ -17,7 +21,10 @@ import {
   reconciliationActionUrl,
   reconciliationUrl,
   requiresConfirmationNote,
+  STATEMENT_FORMAT_LABELS,
+  statementFileProblem,
   summarizeInconsistencies,
+  summarizeStatementImport,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
@@ -197,6 +204,7 @@ function renderDetail() {
   const canWrite = hasWriteAccess(state.grants, state.schoolYearId);
   const draft = reconciliation.status === "draft";
   byId("import-lines-box").hidden = !(draft && canWrite);
+  byId("import-statement-box").hidden = !(draft && canWrite);
   byId("confirm-reconciliation").hidden = !(draft && canWrite) || own || inconsistent.length > 0;
   byId("confirm-waiting").hidden = !(draft && canWrite && own);
   byId("confirm-inconsistent").hidden = !(draft && canWrite && inconsistent.length > 0);
@@ -223,6 +231,7 @@ async function openDetail(id) {
   setMessage("");
   try {
     const data = await fetchFullDetail(id);
+    if (state.selectedId !== id) clearStatementFile();
     state.selectedId = id;
     state.detail = data;
     detailSection.hidden = false;
@@ -353,6 +362,92 @@ byId("import-lines-form").addEventListener("submit", async (event) => {
     errorBox.textContent = error.message;
   } finally {
     button.disabled = false;
+  }
+});
+
+// --- import pliku wyciągu CODA / CAMT.053 (#105) --------------------------------
+
+// Treść pliku trzymamy tylko w pamięci tej karty do momentu wysłania; nie trafia do pola
+// tekstowego (zawiera dane kontrahentów), a po wysłaniu jest zerowana.
+const statementFile = { text: "", format: null };
+
+function statementFormat() {
+  const chosen = byId("statement-format").value;
+  return chosen === "auto" ? statementFile.format : chosen;
+}
+
+function clearStatementFile() {
+  statementFile.text = "";
+  statementFile.format = null;
+  byId("statement-file").value = "";
+  byId("statement-error").textContent = "";
+  byId("statement-result").textContent = "";
+  refreshStatementSubmit();
+}
+
+function refreshStatementSubmit() {
+  byId("statement-submit").disabled = !(statementFile.text && statementFormat());
+}
+
+async function readStatementFileBytes() {
+  const file = byId("statement-file").files?.[0];
+  const status = byId("statement-file-status");
+  const errorBox = byId("statement-error");
+  errorBox.textContent = "";
+  byId("statement-result").textContent = "";
+  statementFile.text = "";
+  statementFile.format = null;
+  if (!file) { refreshStatementSubmit(); return; }
+  const problem = statementFileProblem(file);
+  if (problem) { errorBox.textContent = problem; refreshStatementSubmit(); return; }
+  try {
+    const decoded = decodeStatementBytes(await file.arrayBuffer());
+    statementFile.text = decoded.text;
+    statementFile.format = detectStatementFormat(decoded.text);
+    const format = statementFormat();
+    status.textContent = format
+      ? `Odczytano plik (${Math.max(1, Math.round(file.size / 1024))} KB), format: ${STATEMENT_FORMAT_LABELS[format]}. Sprawdź, że to wyciąg z właściwego okresu, i wgraj.`
+      : "Odczytano plik, ale nie rozpoznano formatu. Wybierz format ręcznie.";
+    if (!format) errorBox.textContent = "Nie rozpoznano formatu pliku (CODA albo CAMT.053).";
+  } catch (error) {
+    errorBox.textContent = error.message;
+  }
+  refreshStatementSubmit();
+}
+byId("statement-file").addEventListener("change", readStatementFileBytes);
+byId("statement-format").addEventListener("change", () => {
+  byId("statement-error").textContent = statementFormat() || !statementFile.text ? "" : "Nie rozpoznano formatu pliku (CODA albo CAMT.053).";
+  refreshStatementSubmit();
+});
+
+byId("import-statement-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const errorBox = byId("statement-error");
+  const resultBox = byId("statement-result");
+  errorBox.textContent = "";
+  resultBox.textContent = "";
+  const button = byId("statement-submit");
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const body = buildStatementFileBody(statementFile.text, statementFormat());
+    const key = makeIdempotencyKey("reconciliation-file");
+    const result = await api(reconciliationActionUrl(state.selectedId, "lines"), {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: JSON.stringify(body),
+    });
+    statementFile.text = "";
+    statementFile.format = null;
+    byId("statement-file").value = "";
+    await refreshDetail();
+    const summary = summarizeStatementImport(result);
+    resultBox.textContent = summary.warnings.length ? `${summary.text} Uwaga: ${summary.warnings.join(" ")}` : summary.text;
+    setMessage(summary.text);
+  } catch (error) {
+    errorBox.textContent = describeStatementImportError(error);
+  } finally {
+    refreshStatementSubmit();
   }
 });
 
