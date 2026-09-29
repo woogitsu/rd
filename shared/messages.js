@@ -144,6 +144,7 @@ export const MESSAGES = Object.freeze({
   invalid_due_on: "Podaj poprawną datę terminu odpowiedzi.",
   invalid_decision_note_ref: "Odwołanie do decyzji może mieć od 1 do 200 znaków.",
   household_not_found: "Nie znaleziono gospodarstwa.",
+  student_household_overlap: "Uczeń ma już członkostwo w tym gospodarstwie (lub inne główne) w tym okresie. Zakończ poprzednie i dodaj nowe od tej samej daty.",
   student_not_found: "Nie znaleziono ucznia.",
   data_request_not_found: "Nie znaleziono żądania.",
   data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",

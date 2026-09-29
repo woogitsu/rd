@@ -168,7 +168,8 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   const classId = target.classId ?? await fallbackClassId(db, target.schoolYearId);
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
     [enrollmentId, studentId, classId, target.schoolYearId]);
-  return { householdId, guardianId, studentId, enrollmentId };
+  const membership = await db.query('SELECT id FROM student_households WHERE student_id = $1 AND is_primary', [studentId]);
+  return { householdId, guardianId, studentId, enrollmentId, membershipId: membership.rows[0].id };
 }
 
 async function seedFixtureSessions(db) {
@@ -698,6 +699,13 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #86: gospodarstwo fixture + drugie, puste — do dodania członkostwa ucznia.
+  householdSpare: async (ctx, target) => {
+    const made = await makeHousehold(ctx.db, target);
+    const spareHouseholdId = `${made.householdId}-spare`;
+    await ctx.db.query('INSERT INTO households (id) VALUES ($1)', [spareHouseholdId]);
+    return { ...made, spareHouseholdId };
+  },
   // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
   // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
   // pod TARGETS.A, niezależnie od przekazanego targetu.

@@ -970,6 +970,17 @@ usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
 
+`0136_student_household_reasons.sql` (#86) dodaje do `student_households`
+kolumny tekstowe `created_reason` i `ended_reason` (powód dodania i zakończenia
+członkostwa ucznia w gospodarstwie; zapisują je trasy
+`POST /api/students/{id}/households` i `.../households/{membershipId}/end`).
+Odtwarza `student_household_check` (wersja z 0023) z jednym dodatkiem:
+`created_reason` jest niezmienne po utworzeniu. Skutki dla danych: istniejące
+wiersze dostają NULL, żaden nie jest zmieniany ani usuwany; kolumny to wolny
+tekst (inwentarz prywatności i lista DPIA jak dla `enrollments.ended_reason`).
+Wycofanie: na pustej bazie usunięcie kolumn i przywrócenie funkcji z 0023; na
+bazie z danymi tylko po kopii.
+
 `0124_login_rate_limit_pair_scope.sql` (#126) poszerza CHECK na
 `login_rate_limits.scope_type` o `'pair'` — SHA-256 pary (znormalizowany
 e-mail, IP) z osobną dziedziną skrótu. Blokada logowania zakładana jest teraz

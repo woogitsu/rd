@@ -10719,6 +10719,17 @@
       "exportable": true,
       "data_type": "text"
     },
+    "created_reason": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
     "ended_at": {
       "personal": "none",
       "subject": null,
@@ -10738,6 +10749,17 @@
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
+      "exportable": true,
+      "data_type": "text"
+    },
+    "ended_reason": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },

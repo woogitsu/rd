@@ -452,6 +452,43 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
   return { recipients, exclusions, hash: recipientsHash(recipients) };
 }
 
+// Ostrzeżenie o zmianach po zbudowaniu migawki (#86): adresaci, którzy według
+// DZISIEJSZYCH danych nie kwalifikowaliby się już do wysyłki — opiekun stracił
+// relację z dzieckiem z tej rodziny, dziecko odeszło ze szkoły (enrollments_current)
+// albo zmienił się kontakt/zgoda. Te same warunki co ponowne sprawdzenie w workerze
+// (recheckRow), więc kampania i tak nie wyśle do takiej osoby; ostrzeżenie pokazuje
+// to zarządowi PRZED wysyłką i zachęca do przebudowania migawki (nowe zatwierdzenie).
+// Zwraca liczniki wg powodu, bez identyfikatorów osób.
+export async function staleRecipientCounts(executor, campaign, { on = null } = {}) {
+  const { rows } = await executor.query(
+    `WITH d AS (SELECT COALESCE($3::date, rd_today()) AS on_date)
+     SELECT CASE
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
+                THEN 'guardian_relation_ended'
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
+                THEN 'student_withdrawn'
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                 JOIN guardians g ON g.id = sg.guardian_id
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id
+                                  AND g.contact_allowed AND sg.contact_allowed AND lower(btrim(g.email)) = r.email)
+                THEN 'consent_or_address_changed'
+            END AS reason
+       FROM email_campaign_recipients r
+      WHERE r.campaign_id = $1`,
+    [campaign.id, campaign.school_year_id, on],
+  );
+  const counts = {};
+  for (const row of rows) if (row.reason) counts[row.reason] = (counts[row.reason] ?? 0) + 1;
+  return counts;
+}
+
 async function buildSnapshot(request, env, id, json) {
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   const actorId = context.session.user.id;
@@ -565,6 +602,8 @@ async function preview(request, env, id, json) {
       ...estimateSchedule({ now: new Date(), sendNotBefore: campaign.send_not_before, days: planDays(count, dailyCap, config), sendWindow: config.sendWindow }),
     },
     warnings: contentWarnings({ bodyText: campaign.body_text }),
+    // Adresaci, którzy po zbudowaniu migawki przestali się kwalifikować (#86); { powód: liczba }.
+    staleRecipients: campaign.recipients_hash ? await staleRecipientCounts(env.db, campaign, { on: effectiveDay(env) }) : {},
     sends: false,
   });
 }

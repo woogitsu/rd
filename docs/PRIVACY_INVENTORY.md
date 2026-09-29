@@ -178,6 +178,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`student_guardians`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`student_guardians`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`student_households`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`student_households`|`created_reason`|Uczeń|direct|wolny tekst|uzasadnienie zmiany|nieustalona (D-04)|tak|tak|
+|`student_households`|`ended_reason`|Uczeń|direct|wolny tekst|uzasadnienie zmiany|nieustalona (D-04)|tak|tak|
 |`student_households`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`students`|`first_name`|Uczeń|direct|identyfikacja|identyfikacja ucznia|student_identity|nie|tak|
 |`students`|`last_name`|Uczeń|direct|identyfikacja|identyfikacja ucznia|student_identity|nie|tak|
@@ -186,7 +188,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **173**, w tym wolnego tekstu: **40** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **175**, w tym wolnego tekstu: **42** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -1696,8 +1698,10 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |---|---|---|---|
 | `created_at` | none | — | tak |
 | `created_by` | pseudonymous | board_member | tak |
+| `created_reason` | direct | student | tak |
 | `ended_at` | none | — | tak |
 | `ended_by` | none | — | tak |
+| `ended_reason` | direct | student | tak |
 | `ends_on` | none | — | tak |
 | `household_id` | none | — | tak |
 | `id` | none | — | tak |
