@@ -95,21 +95,53 @@ export function resolutionLimitInfo(item, amountCents, occurredOn = "") {
   return { text, exceeded, expired };
 }
 
-export function buildLedgerUrl({ schoolYearId, direction = "", cursor = "", limit = 50 }) {
+function isValidDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+// Filtry księgi poza rokiem i rodzajem (#128); puste wartości są pomijane w adresie.
+const EXTRA_FILTERS = Object.freeze(["category", "dateFrom", "dateTo"]);
+
+function normalizeExtraFilters(filters) {
+  const out = {};
+  for (const key of EXTRA_FILTERS) out[key] = String(filters?.[key] ?? "").trim();
+  return out;
+}
+
+// Zapytanie zawiera tylko wypełnione filtry dodatkowe (puste nie zmieniają kształtu).
+function filledExtraFilters(filters) {
+  return Object.fromEntries(Object.entries(normalizeExtraFilters(filters)).filter(([, value]) => value !== ""));
+}
+
+export function buildLedgerUrl({ schoolYearId, direction = "", cursor = "", limit = 50, ...filters }) {
   if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
   if (direction && !Object.hasOwn(DIRECTION_LABELS, direction)) throw new Error("Nieznany rodzaj wpisu.");
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Niepoprawny limit wyników.");
+  const extra = normalizeExtraFilters(filters);
+  if ((extra.dateFrom && !isValidDate(extra.dateFrom)) || (extra.dateTo && !isValidDate(extra.dateTo))) {
+    throw new Error("Podaj poprawną datę.");
+  }
+  if (extra.dateFrom && extra.dateTo && extra.dateFrom > extra.dateTo) {
+    throw new Error("Data końca nie może być wcześniejsza niż data początku.");
+  }
+  if (extra.category && !isValidId(extra.category)) throw new Error("Niepoprawny wybór kategorii.");
   const params = new URLSearchParams({ schoolYearId: schoolYearId.trim(), limit: String(limit) });
   if (direction) params.set("direction", direction);
+  for (const key of EXTRA_FILTERS) if (extra[key]) params.set(key, extra[key]);
   if (cursor) params.set("cursor", cursor);
   return `/api/ledger?${params}`;
 }
 
 // Zapytanie listy zapamiętywane przy wczytaniu roku (#192); „Wczytaj następne”
 // używa tylko tego zapytania i kursora, nie bieżących pól formularza.
-export function ledgerQuery({ schoolYearId, direction = "" }) {
-  buildLedgerUrl({ schoolYearId, direction });
-  return Object.freeze({ schoolYearId: String(schoolYearId).trim(), direction: String(direction ?? "") });
+export function ledgerQuery({ schoolYearId, direction = "", ...filters }) {
+  buildLedgerUrl({ schoolYearId, direction, ...filters });
+  return Object.freeze({
+    schoolYearId: String(schoolYearId).trim(),
+    direction: String(direction ?? ""),
+    ...filledExtraFilters(filters),
+  });
 }
 
 // Adres następnej strony albo null, gdy nie ma kursora lub zapytania.
@@ -121,8 +153,10 @@ export function buildNextLedgerUrl(query, cursor) {
 // true, gdy pola formularza różnią się od zapytania wyświetlonej księgi.
 export function ledgerFilterChanged(query, current) {
   if (!query) return false;
+  const extra = normalizeExtraFilters(current);
   return String(current?.schoolYearId ?? "").trim() !== query.schoolYearId
-    || String(current?.direction ?? "") !== query.direction;
+    || String(current?.direction ?? "") !== query.direction
+    || EXTRA_FILTERS.some((key) => extra[key] !== (query[key] ?? ""));
 }
 
 export function buildOverviewUrl(resource, schoolYearId, direction = "") {

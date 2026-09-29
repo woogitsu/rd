@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import {
   buildLedgerUrl,
   buildOverviewUrl,
+  buildNextLedgerUrl,
+  ledgerFilterChanged,
+  ledgerQuery,
   formatCents,
   makeIdempotencyKey,
   needsResolution,
@@ -148,4 +151,21 @@ test("#107: treści żądań preliminarza — centy EUR, walidacja przed wysyłk
   assert.equal(c.budgetAdoptionRequestBody({ schoolYearId: "y1", adoptedOn: "2026-10-15", note: "Zebranie", resolutionId: "r1" }).resolutionId, "r1");
   assert.throws(() => c.budgetAdoptionRequestBody({ schoolYearId: "y1", adoptedOn: "", note: "Zebranie" }), /datę/);
   assert.equal(c.deactivationRequestBody({ categoryId: "c1", reason: "Nieaktualna" }).body.reason, "Nieaktualna");
+});
+
+test("filtry księgi trafiają do adresu, walidacja odrzuca złe wartości, zmiana filtra jest wykrywana (#128)", () => {
+  const filters = { schoolYearId: "y2026", direction: "income", category: "cat-fees", dateFrom: "2026-09-01", dateTo: "2026-09-30" };
+  const params = new URL(buildLedgerUrl(filters), "https://rd.example").searchParams;
+  assert.equal(params.get("category"), "cat-fees");
+  assert.equal(params.get("dateFrom"), "2026-09-01");
+  assert.equal(params.get("dateTo"), "2026-09-30");
+  assert.equal(new URL(buildLedgerUrl({ schoolYearId: "y2026" }), "https://rd.example").searchParams.has("category"), false);
+  assert.throws(() => buildLedgerUrl({ ...filters, category: "a b" }));
+  assert.throws(() => buildLedgerUrl({ ...filters, dateTo: "2026-13-01" }));
+  assert.throws(() => buildLedgerUrl({ ...filters, dateFrom: "2026-10-01", dateTo: "2026-09-01" }));
+  const query = ledgerQuery(filters);
+  assert.equal(ledgerFilterChanged(query, filters), false);
+  assert.equal(ledgerFilterChanged(query, { ...filters, category: "" }), true);
+  assert.equal(ledgerFilterChanged(query, { ...filters, dateFrom: "2026-09-02" }), true);
+  assert.equal(new URL(buildNextLedgerUrl(query, "kursor"), "https://rd.example").searchParams.get("category"), "cat-fees");
 });

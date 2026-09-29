@@ -35,12 +35,44 @@ import "../shared/print.css";
 let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
-const FILTER_KEYS = ["schoolYearId", "status"];
+const FILTER_KEYS = ["schoolYearId", "status", "method", "householdId", "dateFrom", "dateTo", "q"];
 const state = { householdLabels: new Map(), labelsYear: null, payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
 const statusInput = byId("status-filter");
+const methodInput = byId("method-filter");
+const householdInput = byId("household-filter");
+const dateFromInput = byId("date-from-filter");
+const dateToInput = byId("date-to-filter");
+const searchInput = byId("q-filter");
+
+// Wszystkie pola filtrów w jednym obiekcie (formularz, adres, zapytanie).
+function currentFilters() {
+  return {
+    schoolYearId: yearInput.value,
+    status: statusInput.value,
+    method: methodInput.value,
+    householdId: householdInput.value,
+    dateFrom: dateFromInput.value,
+    dateTo: dateToInput.value,
+    q: searchInput.value,
+  };
+}
+
+// Lista rodzin filtra z etykiet już wczytanych do wyboru rodziny (bez e-maili). Zapamiętana z adresu
+// rodzina zostaje wybrana także bez etykiety (skrócony numer).
+function fillHouseholdFilter(selected) {
+  const options = [new Option("Wszystkie", "")];
+  const ids = new Set();
+  for (const [id, label] of [...state.householdLabels].sort((a, b) => a[1].localeCompare(b[1], "pl"))) {
+    options.push(new Option(label, id));
+    ids.add(id);
+  }
+  if (selected && !ids.has(selected)) options.push(new Option(householdLabel(state.householdLabels, selected), selected));
+  householdInput.replaceChildren(...options);
+  householdInput.value = selected || "";
+}
 const body = byId("payments-body");
 const message = byId("message");
 const tableWrap = byId("table-wrap");
@@ -119,7 +151,7 @@ function render() {
 }
 
 function filterChanged() {
-  return paymentsFilterChanged(state.query, { schoolYearId: yearInput.value, status: statusInput.value });
+  return paymentsFilterChanged(state.query, currentFilters());
 }
 
 // Zmienione, niezatwierdzone pola filtra blokują dociąganie strony (#192).
@@ -135,7 +167,15 @@ function updatePrintMeta() {
   const container = byId("print-meta");
   if (!container) return;
   const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
-  const filters = state.query?.status ? STATUS_LABELS[state.query.status] : null;
+  const query = state.query;
+  const filters = [
+    query?.status ? STATUS_LABELS[query.status] : null,
+    query?.method ? METHOD_LABELS[query.method] : null,
+    query?.householdId ? householdLabel(state.householdLabels, query.householdId) : null,
+    query?.dateFrom ? `od ${query.dateFrom}` : null,
+    query?.dateTo ? `do ${query.dateTo}` : null,
+    query?.q ? `tytuł zawiera: ${query.q}` : null,
+  ].filter(Boolean).join(", ") || null;
   mountPrintMeta(container, {
     view: "Dobrowolne wpłaty",
     schoolYear: yearLabel,
@@ -181,7 +221,7 @@ async function loadPayments({ append = false, reload = false } = {}) {
       url = buildNextPaymentsUrl(state.query, state.nextCursor);
       if (!url || filterChanged()) return;
     } else {
-      if (!reload || !query) query = paymentsQuery({ schoolYearId: yearInput.value, status: statusInput.value });
+      if (!reload || !query) query = paymentsQuery(currentFilters());
       url = buildPaymentsUrl(query);
     }
   } catch (error) {
@@ -195,6 +235,7 @@ async function loadPayments({ append = false, reload = false } = {}) {
   try {
     const result = await api(url);
     await loadHouseholdLabels(query.schoolYearId);
+    fillHouseholdFilter(query.householdId);
     if (!append) state.query = query;
     const items = Array.isArray(result.payments) ? result.payments : [];
     state.payments = append ? [...state.payments, ...items] : items;
@@ -216,7 +257,7 @@ async function loadPayments({ append = false, reload = false } = {}) {
 }
 
 function syncFiltersToUrl() {
-  const query = filtersToQuery({ schoolYearId: yearInput.value, status: statusInput.value });
+  const query = filtersToQuery(currentFilters());
   const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
   window.history.replaceState(null, "", url);
 }
@@ -243,6 +284,14 @@ filtersForm.addEventListener("submit", (event) => {
   if (restored.status && [...statusInput.options].some((o) => o.value === restored.status)) {
     statusInput.value = restored.status;
   }
+  if (restored.method && [...methodInput.options].some((o) => o.value === restored.method)) {
+    methodInput.value = restored.method;
+  }
+  // Wartości spoza formatu odrzuca walidacja zapytania (komunikat w #message), nie wykonanie.
+  if (restored.householdId) fillHouseholdFilter(restored.householdId);
+  if (restored.dateFrom) dateFromInput.value = restored.dateFrom;
+  if (restored.dateTo) dateToInput.value = restored.dateTo;
+  if (restored.q) searchInput.value = restored.q.slice(0, 100);
   if (year) {
     syncFiltersToUrl();
     loadPayments();
@@ -267,8 +316,10 @@ printButton.addEventListener("click", async () => {
     updateFilterHint();
   }
 });
-yearInput.addEventListener("input", updateFilterHint);
-statusInput.addEventListener("change", updateFilterHint);
+// Rodziny należą do roku: zmiana roku czyści wybór rodziny (lista wróci po wczytaniu roku).
+yearInput.addEventListener("input", () => { householdInput.replaceChildren(new Option("Wszystkie", "")); updateFilterHint(); });
+for (const input of [statusInput, methodInput, householdInput, dateFromInput, dateToInput]) input.addEventListener("change", updateFilterHint);
+searchInput.addEventListener("input", updateFilterHint);
 
 // Po zapisie tabela jest renderowana od nowa, więc przycisk otwierający okno może zniknąć.
 // Wtedy przenosimy fokus na nagłówek listy, aby nie spadł na <body> (WCAG 2.4.3).
