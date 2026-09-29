@@ -68,6 +68,14 @@
         <div id="import-lines-box" hidden>
           <h3>Wgraj pozycje wyciągu (CSV)</h3>
           <form id="import-lines-form">
+            <label>Plik CSV z wyciągiem<input id="import-file" type="file" accept=".csv,text/csv,.txt" aria-describedby="import-file-status"></label>
+            <label>Kodowanie pliku<select id="import-encoding" aria-describedby="import-file-status">
+              <option value="auto">Wykryj automatycznie</option>
+              <option value="utf-8">UTF-8</option>
+              <option value="windows-1250">Windows-1250 (Excel PL)</option>
+              <option value="windows-1252">Windows-1252 (Excel BE/FR)</option>
+            </select></label>
+            <p class="context" id="import-file-status" role="status">Plik jest odczytywany w tej przeglądarce i trafia do pola poniżej — sprawdź tekst przed wgraniem. Separator: średnik, przecinek lub tabulator.</p>
             <label>Wklej CSV (kolumny: data, kwota, tytuł) <textarea id="import-csv" rows="5" required placeholder="data;kwota;tytul&#10;2026-01-15;150,00;skladka 1a"></textarea></label>
             <div class="form-error" id="import-error" role="alert"></div>
             <button class="primary" type="submit">Wgraj linie</button>
