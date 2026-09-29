@@ -1010,3 +1010,153 @@ test('trigger a0_year_freeze na document_descriptions pomija dokument bez school
     await db.close();
   }
 });
+
+// --- Podgląd inline (issue #89) -----------------------------------------------------
+
+const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]);
+const preview = (env, id, cookie, extra = '') => get(env, `/api/documents/${id}/content?disposition=inline${extra}`, cookie);
+
+test('inline preview of PDF, PNG and JPEG: safe headers, byte-identical body, audited as document.viewed only', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const samples = [[PDF, 'application/pdf', 'pdf'], [PNG, 'image/png', 'png'], [JPEG, 'image/jpeg', 'jpg']];
+  for (const [bytes, type, extension] of samples) {
+    const { data } = await upload(env, { cookie, bytes, type });
+    const response = await preview(env, data.document.id, cookie);
+    assert.equal(response.status, 200, type);
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+    assert.equal(response.headers.get('Content-Type'), type);
+    assert.equal(response.headers.get('Content-Disposition'), `inline; filename="dokument-${data.document.id}.${extension}"`);
+    assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.equal(response.headers.get('Cross-Origin-Resource-Policy'), 'same-origin');
+    const csp = response.headers.get('Content-Security-Policy');
+    assert.match(csp, /^sandbox;/);
+    assert.doesNotMatch(csp, /allow-scripts|allow-same-origin/);
+    assert.match(csp, /default-src 'none'/);
+    assert.equal(response.headers.get('X-Frame-Options'), 'SAMEORIGIN');
+  }
+  const viewed = await auditRows(db, 'document.viewed');
+  assert.equal(viewed.length, 3);
+  assert.ok(viewed.every((event) => event.actor_id === 'u-treasurer'));
+  viewed.forEach((event) => assertNoPii(event.metadata_json));
+  assert.equal((await auditRows(db, 'document.downloaded')).length, 0);
+  // Pobranie nadal jest załącznikiem, bez zgody na ramkę i osobnym zdarzeniem.
+  const { data } = await upload(env, { cookie });
+  const download = await get(env, `/api/documents/${data.document.id}/content`, cookie);
+  assert.match(download.headers.get('Content-Disposition'), /^attachment;/);
+  assert.equal(download.headers.get('X-Frame-Options'), null);
+  assert.equal((await auditRows(db, 'document.downloaded')).length, 1);
+  assert.equal((await auditRows(db, 'document.viewed')).length, 3);
+}));
+
+test('explicit disposition=attachment behaves as a download; unknown values are 400 without touching the bucket or the log', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const attachment = await get(env, `/api/documents/${data.document.id}/content?disposition=attachment`, cookie);
+  assert.equal(attachment.status, 200);
+  assert.match(attachment.headers.get('Content-Disposition'), /^attachment;/);
+  for (const value of ['', 'INLINE', 'inline;x', 'script', 'inline%00']) {
+    const response = await get(env, `/api/documents/${data.document.id}/content?disposition=${value}`, cookie);
+    assert.equal(response.status, 400, value);
+    assert.equal((await response.json()).error, 'invalid_disposition');
+  }
+  assert.equal((await auditRows(db, 'document.viewed')).length, 0);
+}));
+
+test('preview without a session is 401, unknown id is 404, nothing is logged as viewed', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  assert.equal((await preview(env, data.document.id)).status, 401);
+  assert.equal((await preview(env, crypto.randomUUID(), cookie)).status, 404);
+  assert.equal((await preview(env, '../x', cookie)).status, 404);
+  assert.equal((await auditRows(db, 'document.viewed')).length, 0);
+}));
+
+test('preview role boundaries: class rep only sees own class; board and financial documents give 404 (+ access_denied); no MFA is stopped', async () => withEnv(async (db, env) => {
+  const owner = await treasurer(db);
+  const board = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] });
+  const financial = (await upload(env, { cookie: owner })).data.document.id;
+  const boardDoc = (await upload(env, { cookie: board, kind: 'board' })).data.document.id;
+  const classDoc = (await upload(env, { cookie: board, kind: 'class', classId: 'c-1a', bytes: PNG, type: 'image/png' })).data.document.id;
+  const rep = await repA(db);
+
+  assert.equal((await preview(env, boardDoc, rep)).status, 404);
+  assert.equal((await preview(env, financial, rep)).status, 404);
+  assert.equal((await preview(env, classDoc, await repB(db))).status, 404);
+  assert.equal((await preview(env, classDoc, rep)).status, 200);
+  const denied = await auditRows(db, 'document.access_denied');
+  assert.deepEqual(denied.map((event) => event.entity_id).sort(), [boardDoc, classDoc, financial].sort());
+
+  // Skarbnik bez MFA nie otwiera podglądu dokumentu finansowego (bramka MFA routera),
+  // a skarbnik z MFA — nie widzi dokumentu zarządu.
+  const noMfa = await seedUserSession(db, { userId: 'u-nomfa', roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
+  assert.equal((await preview(env, financial, noMfa)).status, 403);
+  assert.equal((await preview(env, boardDoc, owner)).status, 404);
+  assert.equal((await preview(env, financial, owner)).status, 200);
+  // Tylko udane podglądy trafiają do dziennika jako „viewed”.
+  assert.deepEqual((await auditRows(db, 'document.viewed')).map((event) => event.entity_id).sort(), [classDoc, financial].sort());
+}));
+
+test('preview access expires with the grant and with the session (no reusable link)', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+  assert.equal((await preview(env, id, cookie)).status, 200);
+  // Ten sam adres bez ciasteczka sesji nic nie wydaje: URL nie niesie uprawnienia.
+  assert.equal((await preview(env, id)).status, 401);
+  const expiredGrant = await seedUserSession(db, { userId: 'u-expired', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR, expiresAt: new Date(Date.now() - HOUR) }] });
+  assert.equal((await preview(env, id, expiredGrant)).status, 404);
+  const expiredSession = await treasurer(db, { userId: 'u-t2', expiresAt: new Date(Date.now() - HOUR) });
+  assert.equal((await preview(env, id, expiredSession)).status, 401);
+  const [grant] = (await db.query("SELECT id FROM role_grants WHERE user_id = 'u-treasurer'")).rows;
+  assert.equal(await revokeRoleGrant(env, { grantId: grant.id, actorId: 'u-treasurer' }), true);
+  assert.equal((await preview(env, id, cookie)).status, 404);
+}));
+
+test('preview of a tampered or missing object is not served and not logged as viewed', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const [key] = storage.keys();
+  storage.raw(key).body[10] ^= 0xff;
+  const original = console.error;
+  console.error = () => {};
+  try {
+    assert.equal((await preview(env, data.document.id, cookie)).status, 503);
+  } finally { console.error = original; }
+  await storage.deleteObject(key);
+  assert.equal((await preview(env, data.document.id, cookie)).status, 409);
+  assert.equal((await auditRows(db, 'document.viewed')).length, 0);
+}));
+
+test('malicious synthetic files are refused with 415 before putObject, also on retry (#89)', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const pdfWith = (body) => encoder.encode(`%PDF-1.4\n1 0 obj << ${body} >> endobj\n%%EOF\n`);
+  const zip = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
+  const polyglot = new Uint8Array([...PDF, ...new Uint8Array(1500).fill(0x20), ...zip]);
+  const pngTrailer = new Uint8Array([...PNG, ...encoder.encode('<script>x</script>')]);
+  const jpegTrailer = new Uint8Array([...JPEG, ...encoder.encode('<html>')]);
+  const cases = [
+    ['pdf /JavaScript', pdfWith('/S /JavaScript /JS (app.alert(1))'), 'application/pdf', 'document_active_content'],
+    ['pdf hex-escaped name', pdfWith('/S /J#61vaScript'), 'application/pdf', 'document_active_content'],
+    ['pdf /Launch', pdfWith('/S /Launch'), 'application/pdf', 'document_active_content'],
+    ['pdf /EmbeddedFile', pdfWith('/Type /EmbeddedFile'), 'application/pdf', 'document_active_content'],
+    ['pdf encrypted', pdfWith('/Encrypt 9 0 R'), 'application/pdf', 'document_active_content'],
+    ['pdf inline OpenAction', pdfWith('/OpenAction << /S /URI /URI (x) >>'), 'application/pdf', 'document_active_content'],
+    ['pdf+zip polyglot', polyglot, 'application/pdf', 'document_malformed'],
+    ['png with data after IEND', pngTrailer, 'image/png', 'document_malformed'],
+    ['jpeg with data after FFD9', jpegTrailer, 'image/jpeg', 'document_malformed'],
+  ];
+  for (const [label, bytes, type, code] of cases) {
+    const key = `malicious-${label}`;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const { response, data } = await upload(env, { cookie, bytes, type, key });
+      assert.equal(response.status, 415, `${label} #${attempt}`);
+      assert.equal(data.error, code, label);
+    }
+  }
+  // Magic bytes niezgodne z deklarowanym typem: PNG deklarowany jako PDF i odwrotnie.
+  assert.equal((await upload(env, { cookie, bytes: PNG, type: 'application/pdf' })).response.status, 415);
+  assert.equal((await upload(env, { cookie, bytes: PDF, type: 'image/png' })).response.status, 415);
+  assert.equal(storage.keys().length, 0);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 0);
+}));

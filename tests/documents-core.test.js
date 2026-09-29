@@ -225,3 +225,16 @@ test("normalizeDocument i metadataRows pokazują tytuł, kategorię i datę doku
   assert.equal(bare.title, null);
   assert.equal(Object.fromEntries(metadataRows(bare))["Tytuł"], "Bez tytułu");
 });
+
+test('previewKind i previewUrl: tylko PDF/PNG/JPEG, adres bez tokenu (#89)', async () => {
+  const core = await import('../documents/core.js');
+  assert.equal(core.previewKind('application/pdf'), 'pdf');
+  assert.equal(core.previewKind('image/png'), 'image');
+  assert.equal(core.previewKind('image/jpeg'), 'image');
+  for (const mime of ['text/html', 'image/svg+xml', 'application/zip', '', undefined, '__proto__', 'constructor']) {
+    assert.equal(core.previewKind(mime), null);
+  }
+  const id = '11111111-2222-4333-8444-555555555555';
+  assert.equal(core.previewUrl(id), `/api/documents/${id}/content?disposition=inline`);
+  assert.throws(() => core.previewUrl('../x'));
+});
