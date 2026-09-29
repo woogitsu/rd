@@ -86,3 +86,19 @@ test('typ spoza dozwolonej trójki jest zawsze odrzucony', () => {
   assert.deepEqual(validateStructure(encoder.encode('x'), 'text/csv'), { ok: false, code: 'document_malformed' });
   assert.deepEqual(validateStructure('not bytes', 'application/pdf'), { ok: false, code: 'document_malformed' });
 });
+
+test('nazwy PDF zapisane szesnastkowo (/J#61vaScript, /La#75nch) nie omijają kontroli (#89)', () => {
+  for (const key of ['/J#61vaScript', '/#4AS', '/La#75nch', '/Embedded#46ile', '/#45ncrypt']) {
+    const bytes = encoder.encode(`%PDF-1.4\n1 0 obj << ${key} 2 0 R >> endobj\n%%EOF\n`);
+    assert.deepEqual(validateStructure(bytes, 'application/pdf'), { ok: false, code: 'document_active_content' }, key);
+  }
+});
+
+test('/OpenAction: akcja wpisana w miejscu odrzucona, cel-strona (tablica/odnośnik) przechodzi (#89)', () => {
+  const pdf = (body) => encoder.encode(`%PDF-1.4\n1 0 obj << ${body} >> endobj\n%%EOF\n`);
+  assert.deepEqual(validateStructure(pdf('/OpenAction << /S /URI /URI (x) >>'), 'application/pdf'), { ok: false, code: 'document_active_content' });
+  assert.deepEqual(validateStructure(pdf('/OpenAction [3 0 R /Fit]'), 'application/pdf'), { ok: true });
+  assert.deepEqual(validateStructure(pdf('/OpenAction 5 0 R'), 'application/pdf'), { ok: true });
+  // Odnośnik do akcji ze skryptem jest wychwycony przez słowo kluczowe akcji.
+  assert.deepEqual(validateStructure(pdf('/OpenAction 5 0 R') && encoder.encode('%PDF-1.4\n<< /OpenAction 5 0 R >>\n5 0 obj << /S /JavaScript /JS (x) >>\n%%EOF\n'), 'application/pdf'), { ok: false, code: 'document_active_content' });
+});

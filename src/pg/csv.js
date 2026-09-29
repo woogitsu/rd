@@ -20,8 +20,8 @@
 //
 // Jedyne miejsce składania CSV w aplikacji (issue #121): toCsv (wiersze, CRLF),
 // csvBytes/csvResponse (BOM UTF-8 + nagłówki załącznika). Separator pól:
-// średnik (Excel PL/BE), przecinek dziesiętny. XLSX nie jest generowany —
-// repo ma tylko odczyt (import), a zapis wymagałby nowej zależności.
+// średnik (Excel PL/BE), przecinek dziesiętny. XLSX składa src/pg/xlsx.js na
+// tych samych definicjach kolumn.
 
 import { toSafeInteger } from './routes/payments.js';
 import { formatEur } from '../../panel/money.js';

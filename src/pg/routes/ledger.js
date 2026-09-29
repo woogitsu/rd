@@ -10,6 +10,7 @@
 //   POST /api/ledger/{id}/corrections       (Idempotency-Key)
 // Nowa trasa (issue #7, tylko w routerze PostgreSQL):
 //   GET  /api/ledger/export.csv?schoolYearId=…
+//   GET  /api/ledger/export.xlsx?schoolYearId=…
 // Nowa trasa (#144): przeksięgowanie (storno pełnej pozostałej kwoty + wpis
 // zastępczy), jedna operacja atomowa.
 //   POST /api/ledger/{id}/replacement       (Idempotency-Key)
@@ -39,6 +40,7 @@ import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvCell, csvResponse, csvRow, formatEuro, safeFileSegment, toCsv } from '../csv.js';
+import { toXlsx, xlsxResponse } from '../xlsx.js';
 
 export const name = 'ledger';
 
@@ -1387,7 +1389,12 @@ export function ledgerCsvValues(row) {
 }
 export function ledgerCsvLine(row) { return csvRow(LEDGER_CSV_COLUMNS, ledgerCsvValues(row)); }
 
-async function exportCsv(request, env, url) {
+// Nazwa pliku: rok + data pobrania (YYYYMMDD, UTC), bez danych osobowych.
+export function ledgerExportFilename(schoolYearId, format, now = new Date()) {
+  return `ksiega-${safeFileSegment(schoolYearId)}-${now.toISOString().slice(0, 10).replaceAll('-', '')}.${format}`;
+}
+
+async function exportLedger(request, env, url, format) {
   const { schoolYearId } = readOverviewFilters(url);
   const context = await requireFinancialContext(request, env, schoolYearId);
   const actorId = context.session.user.id;
@@ -1411,12 +1418,13 @@ async function exportCsv(request, env, url) {
     // Dziennik: kto i kiedy wyeksportował który rok; bez kwot i treści wpisów.
     await insertAuditEvent(tx, {
       actorId, action: 'ledger.exported', entityType: 'school_year', entityId: schoolYearId,
-      metadata: { format: 'csv', rowCount: result.rows.length, schoolYearId },
+      metadata: { format, rowCount: result.rows.length, schoolYearId },
     });
     return result.rows;
   });
-  return csvResponse(toCsv(LEDGER_CSV_COLUMNS, rows.map(ledgerCsvValues)),
-    `ksiega-${safeFileSegment(schoolYearId)}.csv`);
+  const filename = ledgerExportFilename(schoolYearId, format);
+  if (format === 'xlsx') return xlsxResponse(toXlsx(LEDGER_CSV_COLUMNS, rows.map(ledgerCsvValues), { sheetName: `Księga ${schoolYearId}` }), filename);
+  return csvResponse(toCsv(LEDGER_CSV_COLUMNS, rows.map(ledgerCsvValues)), filename);
 }
 
 export async function handle(request, env, url, json) {
@@ -1434,7 +1442,8 @@ export async function handle(request, env, url, json) {
   const isCategoryCopy = request.method === 'POST' && url.pathname === '/api/ledger/categories/copy';
   const isSummary = request.method === 'GET' && url.pathname === '/api/ledger/summary';
   const isBudget = request.method === 'GET' && url.pathname === '/api/ledger/budget';
-  const isExport = request.method === 'GET' && url.pathname === '/api/ledger/export.csv';
+  const exportFormat = request.method === 'GET' ? ({ '/api/ledger/export.csv': 'csv', '/api/ledger/export.xlsx': 'xlsx' })[url.pathname] : undefined;
+  const isExport = Boolean(exportFormat);
   const isMutation = request.method === 'POST' && (isEntryRoute || correctionMatch || replacementMatch
     || reviewMatch || authorizationMatch || isCategoryCreate || isCategoryCopy || categoryDeactivateMatch);
   if (!isList && !isCategories && !isSummary && !isBudget && !isExport && !isMutation
@@ -1447,7 +1456,7 @@ export async function handle(request, env, url, json) {
     if (isCategories) return await listCategories(request, env, url, json);
     if (isSummary) return await readSummary(request, env, url, json);
     if (isBudget) return await listBudget(request, env, url, json);
-    if (isExport) return await exportCsv(request, env, url);
+    if (isExport) return await exportLedger(request, env, url, exportFormat);
     if (isReviews) return await listReviews(request, env, url, json);
     if (isResolutions) return await listResolutions(request, env, url, json);
     if (isCategoryCreate) return await createCategory(request, env, json);
