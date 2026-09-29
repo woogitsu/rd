@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { unzipSync, strFromU8 } from 'fflate';
 import { readSheet } from 'read-excel-file/node';
 import { guessMapping, parseCsv, validateRows } from '../import/core.js';
@@ -94,4 +95,10 @@ test('pamięć mapowania: wyczyszczenie oraz zablokowany albo uszkodzony localSt
   assert.equal(clearRememberedMapping(blocked), false);
   assert.deepEqual(loadRememberedMapping(memoryStorage({ [MAPPING_STORAGE_KEY]: '{oops' })), {});
   assert.deepEqual(loadRememberedMapping(memoryStorage({ [MAPPING_STORAGE_KEY]: '{"x":"__proto__","y":"firstName"}' })), { y: 'firstName' });
+});
+
+test('generator szablonu XLSX daje te same bajty w każdej strefie czasowej (fflate używa czasu lokalnego)', () => {
+  const skrot = (tz) => execFileSync(process.execPath, ['-e', "import('./import/template-xlsx.js').then((m) => process.stdout.write(Buffer.from(m.buildTemplateXlsx()).toString('base64')))"], { cwd: new URL('..', import.meta.url), env: { ...process.env, TZ: tz }, encoding: 'utf8' });
+  const wzorzec = Buffer.from(readFileSync(url('template.xlsx'))).toString('base64');
+  for (const tz of ['UTC', 'Europe/Warsaw', 'America/Los_Angeles', 'Pacific/Kiritimati']) assert.equal(skrot(tz), wzorzec, tz);
 });

@@ -57,6 +57,8 @@ export function buildTemplateXlsx() {
     'xl/worksheets/sheet1.xml': dataSheet,
     'xl/worksheets/sheet2.xml': sheetXml(TEMPLATE_INSTRUCTIONS, { textStyle: 0, widths: [120] }),
   };
-  const entries = Object.fromEntries(Object.entries(files).map(([name, xml]) => [name, [strToU8(xml), { mtime: new Date('2026-01-01T00:00:00Z'), level: 6 }]]));
+  // fflate zapisuje czas DOS z lokalnych składników daty, więc stała data musi być lokalna (nie UTC) — inaczej bajty zależą od strefy czasowej maszyny.
+  const ZIP_MTIME = new Date(2026, 0, 1, 0, 0, 0);
+  const entries = Object.fromEntries(Object.entries(files).map(([name, xml]) => [name, [strToU8(xml), { mtime: ZIP_MTIME, level: 6 }]]));
   return zipSync(entries);
 }
