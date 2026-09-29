@@ -280,7 +280,7 @@ async function createAllocation(request, env, entryId, json) {
 
 // Wynik per centrum z bieżących wersji przypisania; pozycja „ogólne” = reszta
 // netto wpisów roku, więc suma centrów + ogólne = ledger_year_summary.
-async function costCenterReport(executor, schoolYearId, type) {
+export async function costCenterReport(executor, schoolYearId, type) {
   const column = type === 'event' ? 'event_id' : 'class_id';
   const centers = await executor.query(
       type === 'event'

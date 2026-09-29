@@ -25,8 +25,11 @@ Wszystkie trasy `/api/admin/*` — także odczyt — wymagają aktywnego przydzi
 | `POST /api/admin/users/{id}/disable` | wyłączenie konta i wycofanie wszystkich sesji | `user.disabled`, `session.revoked` × n |
 | `POST /api/admin/users/{id}/enable` | ponowne włączenie; sesje nie wracają, przydziały bez zmian | `user.enabled` |
 | `POST /api/admin/users/{id}/revoke-sessions` | wylogowanie ze wszystkich urządzeń | `session.revoked` × n |
-| `POST /api/admin/users/{id}/password-reset` | `{ ttlHours? }` (1–24, domyślnie 2), zwraca jednorazowy token resetu hasła **jeden raz**; nowy token unieważnia poprzedni; konto wyłączone: `409 user_disabled` | `auth.password_reset_issued`, `auth.password_reset_revoked` |
-| `POST /api/admin/users/{id}/mfa-reset` | `{ confirm: "<id>" }`; wyłącza czynniki MFA i niewykorzystane kody odzyskiwania, zeruje limity MFA, wylogowuje konto; nie dla własnego konta (`409 cannot_reset_own_mfa`); ponowienie: `changed: false` | `mfa.reset`, `session.revoked` × n |
+| `POST /api/admin/users/{id}/password-reset` | `{ ttlHours? }` (1–24, domyślnie 2), zwraca jednorazowy token resetu hasła **jeden raz**; nowy token unieważnia poprzedni; konto wyłączone: `409 user_disabled`; **konto z rolą `admin`/`board`/`treasurer` (poza własnym) — `202` i wniosek do zatwierdzenia przez drugą osobę, bez tokenu (#146)** | `auth.password_reset_issued`, `auth.password_reset_revoked`, dla kont chronionych `account_recovery.requested` |
+| `POST /api/admin/users/{id}/mfa-reset` | `{ confirm: "<id>" }`; wyłącza czynniki MFA i niewykorzystane kody odzyskiwania, zeruje limity MFA, wylogowuje konto; nie dla własnego konta (`409 cannot_reset_own_mfa`); ponowienie: `changed: false`; konto z rolą `admin`/`board`/`treasurer` — `202` i wniosek do zatwierdzenia przez drugą osobę (#146) | `mfa.reset`, `session.revoked` × n, dla kont chronionych `account_recovery.requested` |
+| `GET /api/admin/account-requests` | `?status=` (`pending` domyślnie, `approved`, `rejected`, `expired`, `all`): wnioski o reset hasła/MFA kont chronionych (#146); bez tokenów i e-maili | — |
+| `POST /api/admin/account-requests/{id}/approve` | zatwierdza INNY administrator niż wnioskodawca i właściciel konta (`403 recovery_four_eyes_required`); wykonuje reset w tej samej transakcji; token resetu hasła dostaje zatwierdzający, jeden raz; wniosek zamknięty: `409 recovery_request_closed`, wygasły (24 h): `409 recovery_request_expired`; krok w górę MFA | `account_recovery.approved` + zdarzenia resetu z `requestId`, `requestedBy`, `approvedBy` |
+| `POST /api/admin/account-requests/{id}/reject` | odrzucenie albo wycofanie wniosku przez dowolnego administratora | `account_recovery.rejected` |
 | `GET /api/admin/grants` | filtry `userId`, `role`, `schoolYearId`, `classId`, `status` (`active` domyślnie, `expired`, `revoked`, `all`) | — |
 | `POST /api/admin/grants` | nadanie roli `{ userId, role, classId?, schoolYearId?, expiresAt? }` | `role_grant.created` |
 | `POST /api/admin/grants/{id}/revoke` | wycofanie przydziału (wiersz zostaje) | `role_grant.revoked` |
@@ -68,3 +71,25 @@ Adres e-mail i nazwa wyświetlana konta są pokazywane wyłącznie administrator
 - Sprawdzenie „oczekującego zaproszenia” nie jest w jednej transakcji z `createInvitation`; dwa równoczesne żądania mogą utworzyć dwa zaproszenia (oba ważne, oba w audycie). Ryzyko niskie; można je usunąć indeksem częściowym w osobnej migracji.
 - Lista kont i przydziałów ma limit 500 wierszy bez stronicowania — wystarcza dla Rady, do przeglądu przy większej skali.
 - Limity prób logowania istnieją (AUTH.md); brak alertów na wielokrotne zmiany ról i nieudane logowania (zależne od monitoringu Railway).
+
+## Reset hasła i MFA kont chronionych (#146, wariant zachowawczy)
+
+Konto z aktywną rolą `admin`, `board` lub `treasurer` (`PROTECTED_ACCOUNT_ROLES`
+w `src/pg/account-recovery.js`) nie może mieć hasła ani MFA zresetowanego przez
+jedną osobę: pierwszy administrator zapisuje wniosek (`202`, ważny 24 h, jeden
+otwarty wniosek na konto i rodzaj), a token resetu lub wyłączenie MFA powstaje
+dopiero przy zatwierdzeniu przez innego administratora, który nie jest
+właścicielem konta. Zasadę pilnuje też baza (`CHECK` w
+`account_recovery_requests`, migracja 0125). Token dostaje zatwierdzający i
+przekazuje go właścicielowi osobnym, zaufanym kanałem.
+
+`auth.password_reset_completed` niesie `metadata.issuedBy` (kto wydał token) i
+`requestId`, więc dziennik odróżnia konto po resecie administracyjnym; wpisy
+resetu zawierają `requestedBy` i `approvedBy`. Reset hasła własnego konta oraz
+konta bez roli chronionej działają bezpośrednio jak dotąd.
+
+Poza zakresem (zależy od decyzji): powiadomienie właściciela konta (D-16/D-17 —
+brak zatwierdzonego szablonu i nadawcy, moduł nic nie wysyła), ścieżka awaryjna
+przy jednym administratorze (D-10), zakres ról zatwierdzających (D-08; dziś
+wyłącznie administrator), sekcja „operacje administracyjne na kontach” w
+raporcie audytu oraz odebranie roli `admin` z modułów finansowych (D-08).

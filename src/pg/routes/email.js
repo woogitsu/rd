@@ -608,13 +608,15 @@ async function approve(request, env, id, json) {
       if (!recipients.length) throw new RequestError('no_recipients', 409);
       // D-16 (domyślnie wyłączone, wariant zachowawczy): jeśli flaga jest
       // włączona, zatwierdzenie wymaga co najmniej jednej wysyłki testowej
-      // dla dokładnie bieżącej treści (#104).
+      // dla dokładnie bieżącej treści (#104). Liczy się tylko test przyjęty
+      // przez dostawcę (provider_message_id); próba zakończona błędem nie.
       if (emailConfig(env).previewRequiredBeforeApproval) {
         const { rows: previewRows } = await tx.query(
-          'SELECT 1 FROM email_preview_sends WHERE campaign_id = $1 AND content_hash = $2 LIMIT 1',
+          `SELECT 1 FROM email_preview_sends
+            WHERE campaign_id = $1 AND content_hash = $2 AND provider_message_id IS NOT NULL LIMIT 1`,
           [id, campaign.content_hash],
         );
-        if (!previewRows[0]) throw new RequestError('preview_required', 409);
+        if (!previewRows[0]) throw new RequestError('campaign_test_send_required', 409);
       }
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'approved', approved_by = $2, approved_at = now(),
