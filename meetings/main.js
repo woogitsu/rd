@@ -40,6 +40,7 @@ import {
   validateVotes,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { classChoiceOptionsHtml, fillClassSelect } from "../shared/class-choice.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
@@ -717,7 +718,13 @@ handleSubmit(rescheduleForm, async (data) => {
 });
 
 handleSubmit(cancelForm, async (data) => {
-  if (!window.confirm("Odwołać zebranie? Tej operacji nie można cofnąć.")) return;
+  const confirmed = await confirmAction({
+    title: "Odwołać zebranie?",
+    effects: ["Tej operacji nie można cofnąć.", "Powód odwołania zostanie zapisany w historii zebrania."],
+    confirmLabel: "Odwołaj zebranie",
+    destructive: true,
+  });
+  if (!confirmed) return;
   const result = await api(meetingUrl(state.detail.meeting.id, "cancellation"), {
     method: "POST",
     body: { reason: data.reason.trim(), revision: state.detail.meeting.revisionNo },
@@ -753,7 +760,7 @@ byId("create-notice").addEventListener("click", (event) => noticeAction(event.cu
   () => api(meetingUrl(state.detail.meeting.id, "notices"), { method: "POST", body: {} }),
   "Przygotowano szkic zawiadomienia. Zatwierdza go inna osoba niż autor."));
 
-byId("notice-body").addEventListener("click", (event) => {
+byId("notice-body").addEventListener("click", async (event) => {
   const approve = event.target.closest("button[data-notice-approve]");
   if (approve) {
     noticeAction(approve,
@@ -763,17 +770,28 @@ byId("notice-body").addEventListener("click", (event) => {
   }
   const campaign = event.target.closest("button[data-notice-campaign]");
   if (campaign) {
-    if (!window.confirm("Utworzyć SZKIC wiadomości do rodziców? Nic nie zostanie wysłane — treść i listę odbiorców trzeba jeszcze zatwierdzić w module e-mail.")) return;
+    const confirmed = await confirmAction({
+      title: "Utworzyć szkic wiadomości do rodziców?",
+      effects: ["Nic nie zostanie wysłane.", "Treść i listę odbiorców trzeba jeszcze zatwierdzić w module e-mail."],
+      confirmLabel: "Utwórz szkic",
+    });
+    if (!confirmed) return;
     noticeAction(campaign,
       () => api(meetingUrl(state.detail.meeting.id, "notices", campaign.dataset.noticeCampaign, "campaign-draft"), { method: "POST", body: {} }),
       "Utworzono szkic wiadomości. Nic nie zostało wysłane — przejdź do modułu e-mail, aby zatwierdzić treść i odbiorców.");
   }
 });
 
-byId("agenda-body").addEventListener("click", (event) => {
+byId("agenda-body").addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-withdraw-item]");
   if (!button) return;
-  if (!window.confirm("Wycofać punkt z porządku obrad? Punkt zostanie w historii, a zawiadomienie wymaga nowej wersji.")) return;
+  const confirmed = await confirmAction({
+    title: "Wycofać punkt z porządku obrad?",
+    effects: ["Punkt zostanie w historii.", "Zawiadomienie wymaga nowej wersji."],
+    confirmLabel: "Wycofaj punkt",
+    destructive: true,
+  });
+  if (!confirmed) return;
   noticeAction(button,
     () => api(meetingUrl(state.detail.meeting.id, "agenda-items", button.dataset.withdrawItem, "withdrawal"), { method: "POST", body: {} }),
     "Punkt wycofany. Zawiadomienie wymaga nowej wersji.");
