@@ -61,3 +61,20 @@ test("#107: wiersz plan vs wykonanie — brak planu to „poza planem”, przekr
   const outside = budgetExecutionRow({ categoryName: "Inne", direction: "expense", currentPlanCents: null, executedNetCents: 1500, executionPercent: null, active: false });
   assert.deepEqual([outside.planned, outside.percent, outside.note], ["—", "—", "kategoria wyłączona, poza planem"]);
 });
+
+test("#117: wynik wydarzeń w panelu — adres, wiersze i pozycja bez przypisania", async () => {
+  const { buildCostCentersUrl, costCenterRows } = await import("../ledger/core.js");
+  assert.equal(buildCostCentersUrl("y2026"), "/api/ledger/cost-centers?schoolYearId=y2026&type=event&format=json");
+  assert.equal(buildCostCentersUrl("y2026", "csv"), "/api/ledger/cost-centers?schoolYearId=y2026&type=event&format=csv");
+  assert.throws(() => buildCostCentersUrl("../x"));
+  assert.throws(() => buildCostCentersUrl("y2026", "xml"));
+  const view = costCenterRows({
+    centers: [{ id: "ev-1", name: "Bal testowy", status: "cancelled", entryCount: 1, incomeCents: 0, expenseCents: 9000, resultCents: -9000 }],
+    general: { incomeCents: 100, expenseCents: 0, resultCents: 100 },
+    totals: { incomeCents: 100, expenseCents: 9000, resultCents: -8900 },
+  });
+  assert.deepEqual([view.centers[0].name, view.centers[0].status, view.centers[0].entryCount, view.centers[0].negative], ["Bal testowy", "odwołane", 1, true]);
+  assert.equal(view.general.name, "Bez przypisania");
+  assert.equal(view.totals.negative, true);
+  assert.deepEqual(costCenterRows(null).centers, []);
+});

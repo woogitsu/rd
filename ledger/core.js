@@ -31,6 +31,32 @@ export function needsResolution(direction, amountCents) {
   return direction === "expense" && Number(amountCents) > 300_000;
 }
 
+// #117: wynik wydarzeń (centra kosztów) — GET /api/ledger/cost-centers.
+export function buildCostCentersUrl(schoolYearId, format = "json") {
+  if (!isValidId(schoolYearId) || !["json", "csv"].includes(format)) throw new Error("Niepoprawne parametry wyniku wydarzeń.");
+  return `/api/ledger/cost-centers?${new URLSearchParams({ schoolYearId: schoolYearId.trim(), type: "event", format })}`;
+}
+
+const EVENT_STATUS_LABELS = Object.freeze({ draft: "szkic", submitted: "zgłoszone", approved: "zatwierdzone", published: "opublikowane", cancelled: "odwołane" });
+
+// Wiersze tabeli: wydarzenia, potem „Bez przypisania” i „Razem rok” (suma = bilans roku).
+export function costCenterRows(report) {
+  const toRow = (name, status, entryCount, item) => ({
+    name, status, entryCount,
+    income: formatCents(Number(item?.incomeCents) || 0),
+    expense: formatCents(Number(item?.expenseCents) || 0),
+    result: formatCents(Number(item?.resultCents) || 0),
+    negative: Number(item?.resultCents) < 0,
+  });
+  const centers = (Array.isArray(report?.centers) ? report.centers : [])
+    .map((c) => toRow(String(c.name ?? c.id ?? ""), EVENT_STATUS_LABELS[c.status] ?? "—", Number(c.entryCount) || 0, c));
+  return {
+    centers,
+    general: toRow("Bez przypisania", "", null, report?.general),
+    totals: toRow("Razem rok", "", null, report?.totals),
+  };
+}
+
 export function buildLedgerUrl({ schoolYearId, direction = "", cursor = "", limit = 50 }) {
   if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
   if (direction && !Object.hasOwn(DIRECTION_LABELS, direction)) throw new Error("Nieznany rodzaj wpisu.");

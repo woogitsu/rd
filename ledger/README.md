@@ -4,4 +4,6 @@ Uruchom razem z API według „Uruchomienie lokalne” w [README głównym](../R
 
 Panel udostępnia podsumowanie roku, aktualny preliminarz, filtrowaną listę wpisów, formularz przychodu lub wydatku oraz addytywne korekty. Wydatki powyżej 3000 EUR wymagają referencji uchwały. Identyfikator dokumentu można podać wyłącznie dla dokumentu już utworzonego w chronionym magazynie — przesyłanie plików będzie osobnym etapem.
 
+Tabela „Wynik wydarzeń” pokazuje przypisania wpisów do wydarzeń (centra kosztów, tylko odczyt, z pozycją „Bez przypisania” i eksportem CSV).
+
 Nie używać na danych rzeczywistych przed zatwierdzeniem zasad dostępu, księgowania i korekt.
