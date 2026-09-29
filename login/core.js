@@ -117,6 +117,12 @@ export function nextFromFragment(hash) {
   return safeNextPath(params.get("next"));
 }
 
+// #161: powód przekierowania z panelu — tylko „enroll” (403 mfa_enrollment_required).
+export function enrollReasonFromFragment(hash) {
+  const params = new URLSearchParams(String(hash ?? "").replace(/^#/, ""));
+  return params.get("reason") === "enroll";
+}
+
 // Następny widok po zalogowaniu lub odczycie stanu sesji.
 export function nextView(state) {
   if (!state || state.authenticated === false) return "login";
@@ -143,7 +149,12 @@ export function shouldShowNoAccessNotice(access) {
 
 // Treść widoku konfiguracji: inna, gdy rola jej wymaga (nie można pominąć),
 // niż gdy konto włącza ją z własnej inicjatywy (można wrócić do paneli).
-export function enrollIntroText(forced) {
+// `page` (#161): przekierowanie z panelu, który wymaga MFA mimo że rola konta nie jest
+// na liście obowiązkowych — wyjaśnia powód i obiecuje powrót po zapisaniu.
+export function enrollIntroText(forced, { page = false } = {}) {
+  if (page) {
+    return "Strona, którą otwierasz, wymaga weryfikacji dwuetapowej (drugiego składnika logowania). Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP). Po zapisaniu wrócisz do tej strony.";
+  }
   return forced
     ? "Twoja rola wymaga drugiego składnika logowania. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP)."
     : "Dodaj drugi składnik logowania dla własnego bezpieczeństwa. Zainstaluj na telefonie Google Authenticator albo Microsoft Authenticator (lub inną aplikację zgodną z TOTP).";
