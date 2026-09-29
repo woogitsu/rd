@@ -5,6 +5,7 @@ import {
   canEditFamilies,
   filterStudentsByName,
   groupClassesByYear,
+  hasRepresentativeGrant,
   overviewRow,
   parseRoute,
   sortStudentsByName,
@@ -83,4 +84,14 @@ test('pulpit przedstawiciela: wiersz tabeli bez słów o zaległościach', () =>
   assert.equal(row.paperCards, '3 z 20');
   assert.equal(row.meeting, 'brak zaplanowanego');
   assert.doesNotMatch(JSON.stringify(row), /dłużnik|zaległoś|brak wpłaty/i);
+});
+
+test('pulpit przedstawiciela jest wołany tylko z przydziałem representative (bez 403 dla zarządu)', async () => {
+  assert.equal(hasRepresentativeGrant([{ role: 'representative', classId: 'c-1' }]), true);
+  assert.equal(hasRepresentativeGrant([{ role: 'board' }, { role: 'treasurer' }, { role: 'admin' }]), false);
+  assert.equal(hasRepresentativeGrant([]), false);
+  assert.equal(hasRepresentativeGrant(undefined), false);
+  const { readFile } = await import('node:fs/promises');
+  const main = await readFile(new URL('../families/main.js', import.meta.url), 'utf8');
+  assert.match(main, /state\.isRepresentative \? groups : \[\]/);
 });
