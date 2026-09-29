@@ -43,6 +43,7 @@ import {
 import { hashSecret } from '../src/auth.js';
 import { emailHash as suppressionEmailHash } from '../src/email/content.js';
 import { createSession } from '../src/pg/auth.js';
+import { assertNoPii } from '../src/pg/audit.js';
 import { MFA_GATE_EXEMPT_EXACT, MFA_GATE_EXEMPT_PREFIXES } from '../src/pg/mfa-policy.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
@@ -78,6 +79,29 @@ const syntheticPassword = () => `Syntetyczne haslo ${randomBytes(6).toString('he
 let seq = 0;
 const nextKey = (prefix) => `${prefix}-${String(++seq).padStart(5, '0')}`;
 const isSuccess = (status) => status >= 200 && status < 300;
+
+// #184: meta-test pokrycia audytem (AGENTS.md: trwały dziennik z aktorem, czasem i
+// identyfikatorem obiektu). Trasa zapisu (metoda != GET), której UDANE wywołania w
+// macierzy nie zostawiły ANI JEDNEGO zdarzenia audytu z actor_id, entity_type i
+// entity_id, oblewa test. Wystarcza jedno zdarzenie na trasę, bo część przypadków
+// macierzy to powtórki idempotentne (ta sama klasa, sesja już wygasła, kategorie już
+// skopiowane) i słusznie nie tworzą nowego wpisu. Metadane każdego zdarzenia przechodzą
+// assertNoPii. Wyjątki są jawne i uzasadnione; nie dopisuj tu trasy zmieniającej dane
+// biznesowe — wtedy dopisz insertAuditEvent(tx, …) w trasie.
+export const AUDIT_EXEMPT_ROUTES = new Map([
+  ['import.preview', 'podgląd: walidacja i różnica względem bazy, nic nie zapisuje (import.committed loguje commit)'],
+  ['ledger.categoryCopy', 'macierz wykonuje tylko podgląd (dryRun); rzeczywiste kopiowanie loguje ledger_category.copied — scenariusz w tests/audit-write-coverage.test.js'],
+  ['families.enrollment', 'macierz przypisuje do tej samej klasy (powtórka, changed: false); utworzenie i zmiana logują enrollment.created/class_changed — tests/audit-write-coverage.test.js'],
+  ['yearClose.start', 'baza grupy yearClose rozpoczyna zamknięcie w setupie, więc przypadki to powtórki; rozpoczęcie loguje year_close.started — tests/audit-write-coverage.test.js'],
+  ['email.webhook', 'macierz wysyła zdarzenie „opened” (tylko dziennik techniczny email_webhook_events z kluczem deduplikacji); zmiana stanu adresu (bounce/spam) loguje email.address_suppressed'],
+]);
+// Trasy publiczne (bez sesji): zdarzenie musi mieć entity_type i entity_id, ale aktora
+// nie ma kto wskazać — działa właściciel tokenu albo osoba spoza systemu.
+export const AUDIT_ACTORLESS_ROUTES = new Map([
+  ['email.preferences.post', 'publiczny link z podpisanym tokenem rodzica; zdarzenie email.preference.* bez konta'],
+  ['guardianUpdates.submitPublic', 'publiczny formularz aktualizacji danych opiekuna; zdarzenie guardian_update_request.created bez konta'],
+]);
+const auditStats = new Map();
 const withKey = (key) => ({ 'Idempotency-Key': key });
 
 // ---------- fixtures ----------
@@ -859,6 +883,11 @@ async function caseCookie(ctx, route, actor, mfa) {
   return ctx.sessions[actor.key][mfa];
 }
 
+async function auditIds(db) {
+  const { rows } = await db.query('SELECT id FROM audit_events');
+  return rows.map((row) => row.id);
+}
+
 async function runCase(ctx, route, actor, mfa, targetKey) {
   const expected = expectedStatus(route, actor, mfa, targetKey);
   let cookie = await caseCookie(ctx, route, actor, mfa);
@@ -869,6 +898,7 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
   // Odczyty (GET) sprawdzamy pod kątem wycieku; ślad zapisu — dla metod zmieniających stan.
   const tracksWrites = route.method !== 'GET';
   const before = tracksWrites ? await writeFingerprint(ctx.db) : null;
+  const auditBefore = tracksWrites && isSuccess(expected) ? await auditIds(ctx.db) : null;
   const response = await handlePgRequest(request(built.path, {
     method: route.method, body: built.body, headers: built.headers ?? {}, cookie,
   }), ctx.env);
@@ -893,6 +923,21 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
       try { json = JSON.parse(text); } catch { /* treść nie-JSON */ }
       problems.push(...route.check({ actor, mfa, targetKey, json, text }));
     }
+  }
+  if (auditBefore && isSuccess(response.status)) {
+    const { rows } = await ctx.db.query(
+      `SELECT actor_id, action, entity_type, entity_id, metadata_json FROM audit_events WHERE id <> ALL($1::text[])`,
+      [auditBefore],
+    );
+    const stats = auditStats.get(route.id) ?? { successes: 0, complete: 0, actions: new Set() };
+    auditStats.set(route.id, stats);
+    stats.successes += 1;
+    const needsActor = !AUDIT_ACTORLESS_ROUTES.has(route.id);
+    for (const row of rows) {
+      stats.actions.add(row.action);
+      try { assertNoPii(row.metadata_json ?? {}); } catch (error) { problems.push(`zdarzenie ${row.action}: ${error.message}`); }
+    }
+    if (rows.some((row) => (row.actor_id || !needsActor) && row.entity_type && row.entity_id)) stats.complete += 1;
   }
   if (!isSuccess(expected) && tracksWrites) {
     const after = await writeFingerprint(ctx.db);
@@ -940,6 +985,10 @@ for (const route of ROUTE_MATRIX) {
       else failures.push(...problems);
     }
     assert.equal(cases.length, route.targets.length * ACTORS.length * 2);
+    const stats = auditStats.get(route.id);
+    if (stats && !AUDIT_EXEMPT_ROUTES.has(route.id) && !stats.complete) {
+      failures.push(`${route.method} ${route.path}: ${stats.successes} udanych zapisów bez zdarzenia audytu z ${AUDIT_ACTORLESS_ROUTES.has(route.id) ? '' : 'actor_id, '}entity_type i entity_id (zdarzenia: ${[...stats.actions].join(', ') || 'brak'}) — dopisz insertAuditEvent(tx, …) w trasie`);
+    }
     assert.deepEqual(failures, [], `\n${failures.join('\n')}`);
   });
   if (todoReasons.length) {
@@ -1172,4 +1221,15 @@ test('events: zmiana cudzego szkicu odpowiada jak brak wydarzenia (bez wyroczni 
     assert.equal(missing.status, 404, `${method} ${suffix}`);
     assert.equal(other.status, missing.status, `${method} ${suffix}: odmowa dla cudzej klasy powinna być nieodróżnialna od braku obiektu`);
   }
+});
+
+test('meta: wyjątki od pokrycia audytem wskazują istniejące trasy zapisu i mają uzasadnienie (#184)', () => {
+  const writes = new Map(ROUTE_MATRIX.filter((route) => route.method !== 'GET').map((route) => [route.id, route]));
+  for (const [name, list] of [['AUDIT_EXEMPT_ROUTES', AUDIT_EXEMPT_ROUTES], ['AUDIT_ACTORLESS_ROUTES', AUDIT_ACTORLESS_ROUTES]]) {
+    for (const [id, reason] of list) {
+      assert.ok(writes.has(id), `${name}: ${id} nie jest trasą zapisu w macierzy`);
+      assert.ok(reason.length >= 30, `${name}: ${id} bez uzasadnienia`);
+    }
+  }
+  for (const id of AUDIT_EXEMPT_ROUTES.keys()) assert.ok(!AUDIT_ACTORLESS_ROUTES.has(id), `${id} na obu listach`);
 });

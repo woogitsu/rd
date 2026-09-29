@@ -71,7 +71,8 @@
       <div class="field-row"><label>Metoda <select name="method"><option value="bank">Przelew</option><option value="cash">Gotówka</option><option value="card">Karta</option><option value="other">Inna</option></select></label><label>Źródło <input name="source" maxlength="200" placeholder="Opcjonalnie" /></label></div>
       <label>Dowód (PDF, PNG lub JPEG) <input name="evidenceFile" type="file" accept="application/pdf,image/png,image/jpeg" aria-describedby="evidence-hint" /><small id="evidence-hint">Opcjonalnie. Plik trafia do prywatnego magazynu i zostaje dołączony do wpisu po jego zapisaniu.</small></label>
       <label>ID dokumentu źródłowego <input name="sourceDocumentId" autocomplete="off" placeholder="Opcjonalnie — dokument finansowy tego roku" /></label>
-      <label id="resolution-field" hidden>Referencja uchwały <input name="resolutionReference" maxlength="200" aria-describedby="resolution-hint" /><small id="resolution-hint">Wymagana dla wydatku powyżej 3000 EUR.</small></label>
+      <label id="resolution-field" hidden>Uchwała <select name="resolutionId" aria-describedby="resolution-hint"><option value="">Wybierz uchwałę</option></select></label>
+      <p class="hint" id="resolution-hint">Wymagana dla wydatku powyżej 3000 EUR. Na liście są przyjęte uchwały zebrań ogólnych z tego i poprzedniego roku.</p>
       <div class="form-error" id="entry-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="entry-error">Zapisz wpis</button></div>
     </form></dialog>
