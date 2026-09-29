@@ -139,7 +139,8 @@ test('kontrakt API → strona: newsItems czyta rzeczywistą odpowiedź listPubli
       assert.equal(item.id, payload.posts[index].id);
       assert.equal(item.body, payload.posts[index].body);
       assert.equal(item.publishedAt.toISOString(), new Date(payload.posts[index].publishedAt).toISOString());
-      assert.deepEqual(Object.keys(item).sort(), ['body', 'id', 'publishedAt', 'title']);
+      assert.deepEqual(Object.keys(item).sort(), ['body', 'id', 'photos', 'publishedAt', 'title']);
+      assert.deepEqual(item.photos, []);
     }
   } finally { await db.close(); }
 });
@@ -725,5 +726,43 @@ test('plik zdjęcia: ponowienie po awarii w połowie generowania wariantów nie 
     const { rows } = await db.query('SELECT 1 FROM news_photo_files WHERE photo_id = $1', [photo.id]);
     assert.equal(rows.length, 0, 'żaden wariant nie powinien zostać zapisany w bazie po częściowej awarii');
     assert.equal(realStorage.keys().length, 0, 'obiekt zapisany przed awarią powinien zostać posprzątany best effort');
+  } finally { await db.close(); }
+});
+
+// #96: strona publiczna renderuje zdjęcia wyłącznie z odpowiedzi
+// /api/public/news. Zdjęcie z wycofaną zgodą nie może się w niej znaleźć
+// (a więc site/core.js nie ma z czego zbudować adresu), a plik daje 404.
+test('publiczne API aktualności: zdjęcie z wycofaną zgodą znika z danych strony i z trasy pliku (#96)', async () => {
+  const db = await newsDb();
+  const storage = createMemoryStorage();
+  const env = { db, storage };
+  try {
+    const source = await sharp({ create: { width: 6, height: 6, channels: 3, background: { r: 1, g: 2, b: 3 } } }).jpeg().toBuffer();
+    const { photo: kept } = await registerPhoto(db, admin, photoInput());
+    const { photo: withdrawn } = await registerPhoto(db, admin, photoInput({ depictsChildren: true, identifiableChildren: 1 }));
+    await addConsent(db, admin, {
+      photoId: withdrawn.id, subjectNo: 1, subjectKind: 'child', consentDocumentRef: 'consent-doc-site-render-01',
+    });
+    for (const p of [kept, withdrawn]) {
+      await uploadPhotoFile(db, storage, admin, { photoId: p.id, bytes: source, contentType: 'image/jpeg', idempotencyKey: key('file') });
+      await verifyPhoto(db, board1, { photoId: p.id });
+    }
+    await publishedPost(db, { photoIds: [kept.id, withdrawn.id] });
+
+    const fetchSite = async () => {
+      const response = await handlePgRequest(request('/api/public/news'), env);
+      assert.equal(response.status, 200);
+      return newsItems(await response.json());
+    };
+    assert.deepEqual((await fetchSite())[0].photos.map((p) => p.id).sort(), [kept.id, withdrawn.id].sort());
+
+    await withdrawConsent(db, board1, { consentDocumentRef: 'consent-doc-site-render-01' });
+    const [post] = await fetchSite();
+    assert.deepEqual(post.photos.map((p) => p.id), [kept.id]);
+    assert.ok(!JSON.stringify(post).includes(withdrawn.id));
+    const file = await handlePgRequest(request(`/api/public/news-photos/${withdrawn.id}/thumb`), env);
+    assert.equal(file.status, 404);
+    const keptFile = await handlePgRequest(request(`/api/public/news-photos/${kept.id}/thumb`), env);
+    assert.equal(keptFile.status, 200);
   } finally { await db.close(); }
 });

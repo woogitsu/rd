@@ -52,3 +52,32 @@ export function heuristicSchoolYearId(now = new Date()) {
 export function initialSchoolYearId(grants, { previous = "", now = new Date() } = {}) {
   return defaultYear(yearsFromGrants(grants), previous) || heuristicSchoolYearId(now);
 }
+
+// Lista wyboru roku (issue #128): lata z przydziałów, plus ewentualne wartości
+// dodatkowe (np. rok z linku lub świeżo utworzonego obiektu — serwer i tak
+// autoryzuje każde żądanie). Gdy przydziały nie mają roku (rola o zasięgu
+// globalnym), lista zawiera rok z heurystyki daty — bez pola tekstowego.
+export function yearChoices(grants, extra = [], now = new Date()) {
+  const years = yearsFromGrants(grants);
+  for (const year of extra) {
+    if (year && !years.includes(year)) years.push(year);
+  }
+  if (!years.length) years.push(heuristicSchoolYearId(now));
+  return years.sort((a, b) => b.localeCompare(a));
+}
+
+// Wypełnia <select> latami i zwraca wybrany rok (poprzedni, jeśli jest na liście).
+export function fillYearSelect(select, grants, { value = "", now } = {}) {
+  const years = yearChoices(grants, value ? [value] : [], now);
+  const chosen = defaultYear(years, value);
+  select.innerHTML = yearOptionsHtml(years, chosen);
+  select.value = chosen;
+  return chosen;
+}
+
+// Ustawia rok w <select>; brakującą opcję (np. rok z linku) dodaje, by wartość nie zniknęła.
+export function selectYearValue(select, value) {
+  if (!value) return;
+  if (![...select.options].some((option) => option.value === value)) select.add(new Option(value, value));
+  select.value = value;
+}

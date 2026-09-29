@@ -5,6 +5,8 @@
 // (D-19). Wynik quorum oblicza serwer z ręcznie wpisanej reguły i listy obecności;
 // liczby głosów wpisuje sekretarz po głosowaniu przeprowadzonym na zebraniu.
 
+import { statusMessage } from "../shared/messages.js";
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 export const TIME_ZONE = "Europe/Brussels";
 
@@ -131,7 +133,7 @@ export const ERROR_MESSAGES = Object.freeze({
 export function errorMessage(code, status) {
   if (typeof code === "string" && Object.hasOwn(ERROR_MESSAGES, code)) return ERROR_MESSAGES[code];
   if (status === 409) return ERROR_MESSAGES.conflict;
-  if (status >= 500) return `Błąd serwera (${status}). Spróbuj ponownie.`;
+  if (status >= 500) return statusMessage(status);
   return `Operacja nie powiodła się${status ? ` (${status})` : ""}.`;
 }
 

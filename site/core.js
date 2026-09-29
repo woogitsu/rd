@@ -187,7 +187,44 @@ export function normalizeNews(raw) {
   const body = cleanText(raw.body) ?? cleanText(raw.summary);
   if (!title || !body) return null;
   const id = typeof raw.id === "string" && ID_PATTERN.test(raw.id) ? raw.id : null;
-  return { id, title, body, publishedAt: toDate(raw.publishedAt) };
+  return { id, title, body, publishedAt: toDate(raw.publishedAt), photos: normalizePhotos(raw.photos) };
+}
+
+// #96: adresy zdjęć budujemy WYŁĄCZNIE z identyfikatora, na stałych trasach
+// publicznego API (`/api/public/news-photos/{id}/{web|thumb}`); adresu
+// z odpowiedzi nie przyjmujemy. Serwer i tak wydaje plik tylko dla zdjęcia
+// zweryfikowanego, z ważną zgodą i z opublikowanej wersji wpisu — tu tylko
+// nie pokazujemy niczego, czego API nie zwróciło. Zdjęcie bez opisu i bez
+// znacznika `decorative` pomijamy (WCAG 1.1.1); dekoracyjne dostaje `alt=""`.
+const MAX_PHOTOS_PER_POST = 20;
+
+export function newsPhotoUrl(id, variant) {
+  if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error("invalid_photo_id");
+  if (variant !== "web" && variant !== "thumb") throw new Error("invalid_photo_variant");
+  return `/api/public/news-photos/${encodeURIComponent(id)}/${variant}`;
+}
+
+export function normalizePhoto(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (typeof raw.id !== "string" || !ID_PATTERN.test(raw.id)) return null;
+  const decorative = raw.decorative === true;
+  const alt = decorative ? "" : cleanText(raw.altText, 500);
+  if (alt === null || alt === undefined) return null;
+  const caption = [cleanText(raw.author, 200), cleanText(raw.source, 200), cleanText(raw.license, 300)]
+    .filter(Boolean);
+  return {
+    id: raw.id,
+    alt,
+    decorative,
+    caption: caption.join(" · "),
+    thumbUrl: newsPhotoUrl(raw.id, "thumb"),
+    webUrl: newsPhotoUrl(raw.id, "web"),
+  };
+}
+
+export function normalizePhotos(list) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, MAX_PHOTOS_PER_POST).map(normalizePhoto).filter(Boolean);
 }
 
 export function newsItems(payload) {

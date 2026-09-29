@@ -701,7 +701,7 @@ export const ROUTE_MATRIX = Object.freeze([
     contains: (_actor, target) => [target.key],
   },
   meetingRoute('meetings.update', 'PATCH', '/api/meetings/:meetingId', () => '', {
-    body: (target) => ({ title: `Zmiana ${marker(target.key)}` }),
+    body: (target) => ({ revision: 1, title: `Zmiana ${marker(target.key)}` }),
   }),
   meetingRoute('meetings.agendaItem', 'POST', '/api/meetings/:meetingId/agenda-items', () => '/agenda-items', {
     ok: 201, create: true, body: (target) => ({ title: `Punkt ${marker(target.key)}` }),
@@ -730,7 +730,7 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   meetingRoute('meetings.resolutionUpdate', 'PATCH', '/api/meetings/:meetingId/resolutions/:resolutionId',
     (obj) => `/resolutions/${obj.resolutionId}`, {
-      stage: 'draftResolution', body: (target) => ({ title: `Poprawiony tytuł ${marker(target.key)}` }),
+      stage: 'draftResolution', body: (target) => ({ revision: 1, title: `Poprawiony tytuł ${marker(target.key)}` }),
     }),
   // #135: korekta zawsze zapisuje rozstrzygnięcie (adopted/rejected); #150: MFA
   // wymagane niezależnie od tej reguły.
@@ -1052,7 +1052,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   emailRoute('email.status', 'GET', '', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
   emailRoute('email.update', 'PUT', '', 'draft', {
-    body: (target) => ({ ...campaignBody(target), title: `Zmiana ${marker(target.key)}` }),
+    body: (target) => ({ ...campaignBody(target), revision: 1, title: `Zmiana ${marker(target.key)}` }),
   }),
   emailRoute('email.snapshot', 'POST', '/snapshot', 'draft', {}),
   emailRoute('email.preview', 'GET', '/preview', 'snapshot', { fixture: 'static', contains: () => ['W1'] }),
@@ -1254,6 +1254,14 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   adminRoute('admin.userMfaReset', 'POST', '/api/admin/users/:userId/mfa-reset', {
     object: 'withFactor', build: ({ obj }) => ({ path: `/api/admin/users/${obj.userId}/mfa-reset`, body: { confirm: obj.userId } }),
+  }),
+  // #146: wnioski o reset hasła/MFA kont chronionych — wyłącznie admin z MFA; zatwierdza nie wnioskodawca.
+  adminRoute('admin.accountRequests', 'GET', '/api/admin/account-requests', {}),
+  adminRoute('admin.accountRequestApprove', 'POST', '/api/admin/account-requests/:requestId/approve', {
+    object: 'recoveryRequest', build: ({ obj }) => ({ path: `/api/admin/account-requests/${obj.requestId}/approve`, body: {} }),
+  }),
+  adminRoute('admin.accountRequestReject', 'POST', '/api/admin/account-requests/:requestId/reject', {
+    object: 'recoveryRequest', build: ({ obj }) => ({ path: `/api/admin/account-requests/${obj.requestId}/reject`, body: {} }),
   }),
   adminRoute('admin.grants', 'GET', '/api/admin/grants', {}),
   adminRoute('admin.grantCreate', 'POST', '/api/admin/grants', {

@@ -29,7 +29,7 @@ import { loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { recordDataAccess } from '../data-access.js';
 import { toSafeInteger } from './payments.js';
-import { effectiveDay } from '../today.js';
+import { brusselsDay, effectiveDay } from '../today.js';
 
 export const name = 'print';
 
@@ -57,6 +57,16 @@ export function printScope(context, { schoolYearId, classId }) {
   const paymentInfo = Boolean(context.session.mfaVerified) && grants.some((grant) => FINANCIAL_ROLES.includes(grant.role)
     && (!grant.classId || grant.classId === classId));
   return { full, paymentInfo };
+}
+
+// Dzień, dla którego wyznaczamy gospodarstwo na kartce (#194): dziś ograniczone
+// do zakresu roku szkolnego. Kartka starszego roku pokazuje gospodarstwo z końca
+// tamtego roku (ends_on roku jako ostatni dzień), a rok przyszły — z jego początku,
+// a nie dzisiejsze gospodarstwo. Daty jako 'YYYY-MM-DD' (porównanie tekstowe).
+export function cardDay(year, today) {
+  if (today < year.starts_on) return year.starts_on;
+  if (today > year.ends_on) return year.ends_on;
+  return today;
 }
 
 // Rodzina ucznia = główne gospodarstwo obowiązujące w dniu `on` (domyślnie
@@ -154,15 +164,15 @@ export async function handle(request, env, url, json) {
       await recordDataAccess(env, { actorId, accessKind: 'print_cards', schoolYearId, classId, outcome: 'not_found' });
       return json({ error: 'class_not_found' }, 404);
     }
-  } else {
-    const { rows } = await env.db.query('SELECT 1 FROM school_years WHERE id = $1', [schoolYearId]);
-    if (!rows.length) {
-      await recordDataAccess(env, { actorId, accessKind: 'print_cards', schoolYearId, outcome: 'not_found' });
-      return json({ error: 'school_year_not_found' }, 404);
-    }
+  }
+  const { rows: years } = await env.db.query('SELECT starts_on::text AS starts_on, ends_on::text AS ends_on FROM school_years WHERE id = $1', [schoolYearId]);
+  if (!years.length) {
+    await recordDataAccess(env, { actorId, accessKind: 'print_cards', schoolYearId, outcome: 'not_found' });
+    return json({ error: 'school_year_not_found' }, 404);
   }
 
-  const rows = await loadRows(env.db, { schoolYearId, classId, ...scope, on: effectiveDay(env) });
+  const on = cardDay(years[0], effectiveDay(env) ?? brusselsDay());
+  const rows = await loadRows(env.db, { schoolYearId, classId, ...scope, on });
   if (rows.length > MAX_PRINT_ROWS) return json({ error: 'too_many_rows' }, 413);
 
   const households = new Set(rows.map((row) => row.household_id));

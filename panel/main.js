@@ -463,8 +463,12 @@ const assignmentDialog = configureDialog("assignment-dialog", "assignment", asyn
   });
 }, "Przypisano rodzinę.");
 
+paymentDialog.form.elements.schoolYearId.addEventListener("change", () => paymentPicker.loadClasses());
 byId("open-payment").addEventListener("click", () => {
-  paymentDialog.form.elements.schoolYearId.value = state.query?.schoolYearId ?? yearInput.value;
+  // Rok z listy filtra (lata z przydziałów użytkownika), bez wpisywania (#128).
+  const dialogYear = paymentDialog.form.elements.schoolYearId;
+  dialogYear.innerHTML = yearInput.innerHTML;
+  dialogYear.value = state.query?.schoolYearId ?? yearInput.value;
   paymentDialog.form.elements.receivedOn.value = localDate();
   paymentPicker.loadClasses();
   paymentDialog.dialog.showModal();

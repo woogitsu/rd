@@ -13,6 +13,8 @@ import {
   isPast,
   minutesUrl,
   newsItems,
+  newsPhotoUrl,
+  normalizePhotos,
   normalizeEvent,
   publicMinutes,
   schoolYearFromSearch,
@@ -145,4 +147,48 @@ test("rok szkolny i adresy API", () => {
   assert.equal(eventsUrl(NOW), "/api/public/events?from=2026-09-27&limit=200");
   assert.equal(minutesUrl("2026-2027"), "/api/meetings/public-minutes?schoolYearId=2026-2027");
   assert.throws(() => minutesUrl("../x"));
+});
+
+test("aktualności: zdjęcia — adresy tylko ze stałych tras publicznego API, alt z bazy, dekoracyjne z pustym alt (#96)", () => {
+  const [post] = newsItems({ posts: [{
+    id: "p1", title: "Piknik", body: "Treść", publishedAt: "2026-09-20T10:00:00Z",
+    photos: [
+      { id: "ph-1", author: "Autor Testowy", source: "Archiwum Rady", license: "CC BY 4.0", altText: "Stoły na dziedzińcu", decorative: false, url: "https://evil.example.invalid/x.jpg" },
+      { id: "ph-2", author: "Autor", source: "Rada", license: "własność Rady", altText: "", decorative: true },
+    ],
+  }] });
+  assert.equal(post.photos.length, 2);
+  const [a, b] = post.photos;
+  assert.equal(a.alt, "Stoły na dziedzińcu");
+  assert.equal(a.thumbUrl, "/api/public/news-photos/ph-1/thumb");
+  assert.equal(a.webUrl, "/api/public/news-photos/ph-1/web");
+  assert.equal(a.caption, "Autor Testowy · Archiwum Rady · CC BY 4.0");
+  assert.equal(b.alt, "");
+  assert.equal(b.decorative, true);
+  assert.ok(!JSON.stringify(post.photos).includes("evil.example"));
+});
+
+test("aktualności: brak zdjęć, zdjęcia bez opisu i z niepoprawnym id → brak zdjęć bez błędu (#96)", () => {
+  for (const photos of [undefined, null, [], "x", {}]) {
+    const [post] = newsItems({ posts: [{ id: "p", title: "A", body: "B", photos }] });
+    assert.deepEqual(post.photos, []);
+  }
+  assert.deepEqual(normalizePhotos([
+    { id: "ph-1", altText: "  ", decorative: false },
+    { id: "ph-2", decorative: false },
+    { id: "../etc", altText: "Opis" },
+    { id: "a/b", altText: "Opis" },
+    null,
+    42,
+  ]), []);
+  assert.throws(() => newsPhotoUrl("../x", "web"), /invalid_photo_id/);
+  assert.throws(() => newsPhotoUrl("ok", "original"), /invalid_photo_variant/);
+});
+
+test("kod strony: zdjęcia leniwe, thumb/web, znikają po błędzie ładowania, bez innerHTML (#96)", async () => {
+  const source = await readFile(new URL("../site/main.js", import.meta.url), "utf8");
+  assert.match(source, /img\.loading = "lazy"/);
+  assert.match(source, /img\.srcset = /);
+  assert.match(source, /addEventListener\("error", \(\) => figure\.remove\(\)\)/);
+  assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML/);
 });

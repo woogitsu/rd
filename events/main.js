@@ -34,7 +34,8 @@ import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
-import { initialSchoolYearId } from "../shared/school-year.js";
+import { classChoiceOptionsHtml, fillClassSelect } from "../shared/class-choice.js";
+import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 
 mountShell();
 
@@ -108,15 +109,6 @@ function setMessage(element, text, kind = "") {
 
 // ---------- start: sesja i przydziały ----------
 
-function fillDatalist(id, values) {
-  const list = byId(id);
-  list.replaceChildren(...[...new Set(values)].sort().map((value) => {
-    const option = document.createElement("option");
-    option.value = value;
-    return option;
-  }));
-}
-
 async function start() {
   try {
     const access = await api({ url: "/api/access" });
@@ -124,18 +116,12 @@ async function start() {
     const grants = Array.isArray(access.grants) ? access.grants : [];
     state.grants = grants;
     state.userId = grants.length ? await api({ url: "/api/session" }).then((s) => s?.user?.id ?? null, () => null) : null;
-    const years = grants.map((g) => g.schoolYearId).filter(isValidId);
-    fillDatalist("school-years", years);
-    fillDatalist("class-ids", grants.map((g) => g.classId).filter(isValidId));
     app.hidden = false;
     openCreate.hidden = !canDraftEvents(grants);
     // Rok domyślny (puste ekrany bez klikania): najnowszy z przydziałów, awaryjnie
     // heurystyka daty (shared/school-year.js). Użytkownik nadal może zmienić rok.
-    const year = initialSchoolYearId(grants);
-    if (year) {
-      yearInput.value = year;
-      await loadList();
-    }
+    const year = fillYearSelect(yearInput, grants);
+    if (year) await loadList();
   } catch (error) {
     if (!isUnauthenticated(error)) setMessage(globalMessage, error.message, "error");
   }
@@ -495,21 +481,39 @@ function prepareForm(editing) {
   const scopeFields = byId("scope-fields");
   const context = byId("event-context");
   scopeFields.hidden = Boolean(editing);
-  for (const input of scopeFields.querySelectorAll("input")) input.disabled = Boolean(editing);
+  for (const input of scopeFields.querySelectorAll("select")) input.disabled = Boolean(editing);
   byId("edit-note").hidden = !editing;
   if (editing) {
     byId("event-dialog-title").textContent = "Edytuj wydarzenie";
     eventSubmit.textContent = "Zapisz nową wersję";
     context.hidden = false;
     context.textContent = `Edytujesz wersję ${editing.revision} (${STATUS_LABELS[editing.status]}). Rok ${editing.schoolYearId}, ${editing.classId ? `klasa ${editing.classId}` : "wydarzenie ogólnoszkolne"}.`;
+    // Zakres jest tylko do odczytu — opcje zawierają wyłącznie bieżące wartości wydarzenia.
+    fields("schoolYearId").innerHTML = "";
+    selectYearValue(fields("schoolYearId"), editing.schoolYearId);
+    fields("classId").innerHTML = classChoiceOptionsHtml(
+      editing.classId ? [{ id: editing.classId, name: editing.classId }] : [],
+      { optional: true, emptyLabel: "Ogólnoszkolne", selected: editing.classId || "" },
+    );
     fillForm(formValuesFromEvent(editing));
   } else {
+    fillYearSelect(fields("schoolYearId"), state.grants, { value: yearInput.value.trim() });
+    syncEventClassChoice();
     byId("event-dialog-title").textContent = "Nowy szkic";
     eventSubmit.textContent = "Zapisz szkic";
     context.hidden = true;
-    fillForm({ schoolYearId: yearInput.value.trim(), audience: "internal" });
+    fillForm({ schoolYearId: fields("schoolYearId").value, audience: "internal" });
   }
 }
+
+// Klasa wydarzenia z listy (GET /api/classes — serwer zawęża do zakresu roli), #128.
+// Puste = wydarzenie ogólnoszkolne.
+function syncEventClassChoice() {
+  return fillClassSelect(fields("classId"), (url) => api({ url }), fields("schoolYearId").value, {
+    optional: true, emptyLabel: "Ogólnoszkolne (bez klasy)", selected: fields("classId").value,
+  });
+}
+eventForm.elements.namedItem("schoolYearId").addEventListener("change", syncEventClassChoice);
 
 function openEdit(event) {
   prepareForm(event);
