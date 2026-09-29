@@ -3,23 +3,46 @@
 
 import qrcode from "qrcode-generator";
 import { safeNextPath } from "../shared/api.js";
+import { visiblePanels } from "../shared/shell.js";
 
 export const PASSWORD_MIN = 12;
 export const PASSWORD_MAX = 128;
 
-// Panele po zalogowaniu. Dostęp do każdego sprawdza serwer — lista to tylko skróty.
-export const PANELS = Object.freeze([
-  { href: "/panel/", label: "Wpłaty", hint: "Ewidencja dobrowolnych wpłat i korekt" },
-  { href: "/ledger/", label: "Księga", hint: "Przychody i wydatki Rady w EUR" },
-  { href: "/families/", label: "Rodziny", hint: "Gospodarstwa, opiekunowie i rodzeństwo" },
-  { href: "/import/", label: "Import uczniów", hint: "Wczytanie listy uczniów z pliku" },
-  { href: "/print/", label: "Kartki", hint: "Kartki informacyjne o składce" },
-  { href: "/events/", label: "Wydarzenia", hint: "Kalendarz i zatwierdzanie wydarzeń" },
-  { href: "/meetings/", label: "Zebrania", hint: "Protokoły i uchwały" },
-  { href: "/documents/", label: "Dokumenty", hint: "Prywatne dokumenty Rady" },
-  { href: "/admin/", label: "Konta i role", hint: "Zaproszenia, role, reset hasła i MFA" },
-  { href: "/site/", label: "Strona publiczna", hint: "Informacje dla rodziców" },
-]);
+// Ekran startowy: lista paneli wynika z przydziałów konta — visiblePanels z shared/shell.js
+// (jedno źródło prawdy, wspólne z nawigacją paneli). Tu są tylko opisy (podpowiedzi) do
+// każdego panelu, po identyfikatorze z shell.js PANELS. To wyłącznie nawigacja: dostęp do
+// każdego API sprawdza serwer, a ukrycie lub pokazanie linku nie jest kontrolą dostępu.
+export const PANEL_HINTS = Object.freeze({
+  panel: "Ewidencja dobrowolnych wpłat i korekt",
+  ledger: "Przychody i wydatki Rady w EUR",
+  families: "Gospodarstwa, opiekunowie i rodzeństwo",
+  import: "Wczytanie listy uczniów z pliku",
+  print: "Kartki informacyjne o składce",
+  events: "Kalendarz i zatwierdzanie wydarzeń",
+  meetings: "Protokoły i uchwały",
+  documents: "Prywatne dokumenty Rady",
+  email: "Kampanie e-mail: treść i lista odbiorców do zatwierdzenia",
+  reconciliation: "Uzgodnienie wyciągu bankowego z księgą",
+  "year-close": "Zamknięcie roku szkolnego",
+  audit: "Raport roczny dla Komisji Rewizyjnej (tylko odczyt)",
+  "data-export": "Eksport danych",
+  news: "Aktualności: wpisy do zatwierdzenia",
+  admin: "Zaproszenia, role, reset hasła i MFA",
+});
+
+// Strona publiczna nie wymaga przydziału — link jest zawsze.
+export const PUBLIC_PANEL = Object.freeze({ href: "/site/", label: "Strona publiczna", hint: "Informacje dla rodziców" });
+
+// Lista startowa dla przydziałów z GET /api/access: panele z visiblePanels (stała kolejność
+// z shell.js) z opisami, a na końcu strona publiczna. Czysta funkcja.
+export function startPanels(grants) {
+  const panels = visiblePanels(grants).map((panel) => ({
+    href: panel.href,
+    label: panel.label,
+    hint: PANEL_HINTS[panel.id] || "",
+  }));
+  return [...panels, PUBLIC_PANEL];
+}
 
 const MESSAGES = {
   invalid_credentials: "Nieprawidłowy adres e-mail lub hasło.",
