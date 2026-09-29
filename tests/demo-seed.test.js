@@ -5,8 +5,10 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { handlePgRequest } from '../src/pg/app.js';
+import { buildDemoPdf, DEMO_INVOICE_PDF, DEMO_MINUTES_PDF } from '../scripts/lib/demo-pdf.js';
 import {
-  apiCall, assertSafeEnvironment, DEMO_STATEMENT_DIFFERENCE_CENTS, DemoSeedRefused, runDemoSeed, SCHOOL_YEAR_ID,
+  apiCall, assertSafeEnvironment, DEMO_ORIGIN, DEMO_STATEMENT_DIFFERENCE_CENTS, DemoSeedRefused, runDemoSeed, SCHOOL_YEAR_ID,
 } from '../scripts/demo-seed.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 
@@ -226,7 +228,7 @@ test('demo-start: z APP_ENV=production/prod odmawia przed otwarciem bazy', async
 // Rewizyjnej nie mogą pokazywać przypadkowego „niezgodne”. Jedyne celowe przykłady
 // do pokazu kontroli są opisane w docs/DEMO.md („Celowe przykłady”): wpłata bez
 // przypisanej rodziny, pozycja wyciągu bez wpisu księgi (opłata SWIFT) i wydatki
-// bez dowodu (demo nie ma magazynu plików, więc nie ma dokumentów).
+// bez dowodu (faktura demo dołączona tylko do jednego wydatku).
 async function auditReport() {
   const audit = seeded.accounts.find((a) => a.role === 'audit');
   const response = await apiCall(seeded.env, {
@@ -309,10 +311,107 @@ test('demo-seed: celowa wpłata bez przypisanej rodziny nie jest ujęta w księd
   assert.equal(unassigned[0].status, 'unmatched');
 });
 
-test('demo-seed: wydatki bez dowodu to opisany brak magazynu plików w demo, nie przypadkowy bałagan', async () => {
+test('demo-seed: faktura demo jest dowodem jednego wydatku, pozostałe wydatki celowo bez dowodu', async () => {
   const report = await auditReport();
   const expenseEntries = report.categories.filter((c) => c.direction === 'expense')
     .reduce((sum, c) => sum + c.entryCount, 0);
-  assert.equal(report.evidence.expensesWithoutEvidence.count, expenseEntries,
-    'demo nie zawiera dokumentów: brak dowodu przy każdym wydatku jest opisany w docs/DEMO.md');
+  assert.equal(expenseEntries, 3);
+  assert.equal(report.evidence.expensesWithoutEvidence.count, 2, 'dwa wydatki bez dowodu (poczęstunek, opłata bankowa)');
+  assert.equal(report.evidence.expensesWithoutEvidence.netCents, 18000 + 1200);
+  assert.deepEqual(report.evidence.possibleDuplicateEvidence, []);
+});
+
+test('demo-seed: panel Dokumenty — 2 syntetyczne PDF-y, podgląd, zastąpienie i unieważnienie działają', async () => {
+  const board = seeded.accounts.find((a) => a.role === 'board');
+  const treasurer = seeded.accounts.find((a) => a.role === 'treasurer');
+  const audit = seeded.accounts.find((a) => a.role === 'audit');
+  const list = await apiCall(seeded.env, {
+    path: `/api/documents?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: treasurer.cookie,
+  });
+  const boardList = await apiCall(seeded.env, {
+    path: `/api/documents?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: board.cookie,
+  });
+  assert.equal(boardList.data.documents.length, 2, 'zarząd (z MFA) widzi oba dokumenty');
+  assert.equal(list.data.documents.length, 1, 'skarbnik widzi tylko dowód finansowy');
+  const all = new Map([...list.data.documents, ...boardList.data.documents].map((d) => [d.id, d]));
+  assert.equal(all.size, 2);
+  const invoice = all.get(seeded.documents.invoiceId);
+  const minutes = all.get(seeded.documents.minutesId);
+  assert.equal(invoice.title, 'Faktura — przykład demo');
+  assert.equal(invoice.kind, 'financial');
+  assert.equal(invoice.linkedEntityType, 'ledger_entry');
+  assert.equal(minutes.title, 'Protokół — przykład demo');
+  assert.equal(minutes.category, 'protokol');
+  for (const doc of all.values()) {
+    assert.equal(doc.mimeType, 'application/pdf');
+    assert.equal(doc.status, 'active');
+  }
+  // Podgląd inline (#466): treść przechodzi przez atrapę magazynu i ma sygnaturę PDF.
+  const content = await handlePgRequest(new Request(
+    new URL(`/api/documents/${invoice.id}/content?disposition=inline`, DEMO_ORIGIN),
+    { headers: { Cookie: treasurer.cookie } },
+  ), seeded.env);
+  assert.equal(content.status, 200);
+  assert.equal(content.headers.get('Content-Type'), 'application/pdf');
+  const bytes = new Uint8Array(await content.arrayBuffer());
+  assert.equal(new TextDecoder().decode(bytes.slice(0, 5)), '%PDF-');
+  assert.equal(bytes.length, invoice.byteSize);
+  // Dyrekcja/KR bez dostępu do dokumentów (macierz z documents.js).
+  const denied = await handlePgRequest(new Request(
+    new URL(`/api/documents/${invoice.id}`, DEMO_ORIGIN), { headers: { Cookie: audit.cookie } },
+  ), seeded.env);
+  assert.equal(denied.status, 404);
+  // Zastąp/Unieważnij (#477) działają na dokumentach z tego samego magazynu. Dokumenty
+  // demo zostają nietknięte — akcje wykonujemy na dwóch dodatkowych plikach testowych.
+  const upload = (key) => apiCall(seeded.env, {
+    method: 'POST', path: `/api/documents?kind=board&schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: board.cookie,
+    idempotencyKey: key, rawBody: buildDemoPdf(DEMO_MINUTES_PDF), contentType: 'application/pdf',
+  });
+  const first = (await upload('demo-test-first')).data.document;
+  const second = (await upload('demo-test-second')).data.document;
+  const superseded = await apiCall(seeded.env, {
+    method: 'POST', path: `/api/documents/${first.id}/supersede`, cookie: board.cookie, idempotencyKey: 'demo-test-supersede',
+    body: { replacementDocumentId: second.id, reason: 'Zastąpienie w teście demo' },
+  });
+  assert.equal(superseded.status, 201);
+  const voided = await apiCall(seeded.env, {
+    method: 'POST', path: `/api/documents/${second.id}/void`, cookie: board.cookie, idempotencyKey: 'demo-test-void',
+    body: { reason: 'Unieważnienie w teście demo' },
+  });
+  assert.equal(voided.status, 201);
+  const active = await apiCall(seeded.env, {
+    path: `/api/documents?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}&kind=board`, cookie: board.cookie,
+  });
+  assert.deepEqual(active.data.documents.map((d) => d.id), [minutes.id], 'aktywny zostaje tylko protokół demo');
+});
+
+test('demo-seed: PDF-y demo odrzuca ta sama walidacja co w produkcji (typ, sygnatura)', async () => {
+  const board = seeded.accounts.find((a) => a.role === 'board');
+  const response = await handlePgRequest(new Request(
+    new URL(`/api/documents?kind=board&schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, DEMO_ORIGIN),
+    {
+      method: 'POST', body: new TextEncoder().encode('to nie jest PDF'),
+      headers: { Cookie: board.cookie, Origin: DEMO_ORIGIN, 'Content-Type': 'application/pdf', 'Idempotency-Key': 'demo-test-not-pdf' },
+    },
+  ), seeded.env);
+  assert.equal(response.status, 415);
+});
+
+test('demo-pdf: PDF ma poprawną tabelę xref, brak aktywnej treści i przechodzi walidację struktury', async () => {
+  const { validateStructure, detectType } = await import('../src/documents.js');
+  for (const pdf of [DEMO_MINUTES_PDF, DEMO_INVOICE_PDF]) {
+    const bytes = buildDemoPdf(pdf);
+    assert.equal(detectType(bytes), 'application/pdf');
+    assert.deepEqual(validateStructure(bytes, 'application/pdf'), { ok: true });
+    const text = new TextDecoder('latin1').decode(bytes);
+    const startxref = Number(/startxref\n(\d+)\n%%EOF\n$/.exec(text)[1]);
+    assert.equal(text.slice(startxref, startxref + 4), 'xref');
+    const entries = [...text.slice(startxref).matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
+    assert.equal(entries.length, 5);
+    entries.forEach((offset, index) => assert.ok(text.startsWith(`${index + 1} 0 obj`, offset), `obiekt ${index + 1}`));
+    const length = Number(/\/Length (\d+)/.exec(text)[1]);
+    const stream = /stream\n([\s\S]*)\nendstream/.exec(text)[1];
+    assert.equal(stream.length, length);
+    assert.doesNotMatch(text, /[^\x00-\x7f]/);
+  }
 });
