@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
-import { createMeeting, updateMeeting } from '../src/pg/meetings.js';
+import { createMeeting } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 

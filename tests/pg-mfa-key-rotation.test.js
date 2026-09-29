@@ -161,3 +161,126 @@ test('#134: brak klucza starej wersji w pierścieniu -> mfa_key_missing w raporc
   const stillActive = (await db.query("SELECT disabled_at FROM user_mfa_factors WHERE id = 'f-ghost'")).rows[0];
   assert.equal(stillActive.disabled_at, null, 'konto bez klucza starej wersji zostaje nietknięte, nie ryzykujemy jego zablokowania');
 });
+
+const KEY_V3 = randomBytes(32).toString('base64');
+const RING3 = `3:${KEY_V3},2:${KEY_V2},1:${KEY_V1}`;
+const envRing3 = () => ({ db, MFA_ENCRYPTION_KEYS: RING3 });
+const activeConfirmed = async (userId) => (await db.query(
+  'SELECT id, key_version FROM user_mfa_factors WHERE user_id = $1 AND confirmed_at IS NOT NULL AND disabled_at IS NULL', [userId],
+)).rows;
+
+test('#134: rotacja 1->2->3 zachowuje nieużyty kod odzyskiwania (200), użyty pozostaje użyty (400), historia factor_id bez zmian', async () => {
+  const account = await enrollAndConfirm('u-rot-chain');
+  // Użyj jednego kodu jeszcze przed rotacjami.
+  const first = await postWith('/api/mfa/recovery', account.cookie, { code: account.recoveryCodes[0] }, envV1());
+  assert.equal(first.status, 200);
+  const cookie = cookieFrom(first);
+
+  assert.ok((await rotateMfaKeys(envRing(), { apply: true })).rotated >= 1);
+  assert.ok((await rotateMfaKeys(envRing3(), { apply: true })).rotated >= 1);
+  const [active] = await activeConfirmed('u-rot-chain');
+  assert.equal(Number(active.key_version), 3);
+
+  const codes = (await db.query(
+    'SELECT factor_id, rotated_to_factor_id, used_at FROM mfa_recovery_codes WHERE user_id = $1', ['u-rot-chain'],
+  )).rows;
+  assert.equal(codes.length, account.recoveryCodes.length);
+  assert.ok(codes.every((c) => c.factor_id === account.factorId), 'factor_id (historia) niezmienione');
+  assert.ok(codes.filter((c) => !c.used_at).every((c) => c.rotated_to_factor_id === active.id), 'nieużyte kody wskazują bieżący czynnik v3');
+
+  const unused = await postWith('/api/mfa/recovery', cookie, { code: account.recoveryCodes[1] }, envRing3());
+  assert.equal(unused.status, 200, 'nieużyty kod działa po rotacji 1->2->3');
+  const cookie2 = cookieFrom(unused);
+  const used = await postWith('/api/mfa/recovery', cookie2, { code: account.recoveryCodes[0] }, envRing3());
+  assert.equal(used.status, 400, 'kod użyty przed rotacjami pozostaje użyty');
+  const usedAfter = await postWith('/api/mfa/recovery', cookie2, { code: account.recoveryCodes[1] }, envRing3());
+  assert.equal(usedAfter.status, 400, 'kod użyty po rotacji pozostaje użyty');
+});
+
+test('#134: przerwanie rotacji w połowie cofa konto w całości, wznowienie kończy rotację idempotentnie', async () => {
+  const account = await enrollAndConfirm('u-rot-abort');
+  // Błąd w środku transakcji konta (przy zapisie audytu, po wstawieniu nowego wiersza i przepięciu kodów).
+  const failingDb = {
+    query: (...a) => db.query(...a),
+    transaction: (fn) => db.transaction((tx) => fn({
+      query: (sql, params) => {
+        if (/audit_events/.test(sql)) return Promise.reject(new Error('przerwanie testowe'));
+        return tx.query(sql, params);
+      },
+    })),
+  };
+  await assert.rejects(rotateMfaKeys({ db: failingDb, MFA_ENCRYPTION_KEYS: RING }, { apply: true }), /przerwanie testowe/);
+  const after = await activeConfirmed('u-rot-abort');
+  assert.equal(after.length, 1);
+  assert.equal(after[0].id, account.factorId, 'stary czynnik nadal aktywny');
+  assert.equal(Number(after[0].key_version), 1);
+  const untouched = (await db.query('SELECT count(*)::int AS n FROM mfa_recovery_codes WHERE user_id = $1 AND rotated_to_factor_id IS NOT NULL', ['u-rot-abort'])).rows[0].n;
+  assert.equal(untouched, 0, 'kody nie zostały częściowo przepięte');
+
+  await rotateMfaKeys(envRing(), { apply: true });
+  const resumed = await activeConfirmed('u-rot-abort');
+  assert.equal(resumed.length, 1, 'dokładnie jeden aktywny potwierdzony czynnik');
+  assert.equal(Number(resumed[0].key_version), 2);
+  const again = await rotateMfaKeys(envRing(), { apply: true });
+  assert.equal(again.rotated, 0);
+  assert.equal((await activeConfirmed('u-rot-abort')).length, 1);
+  const ok = await postWith('/api/mfa/recovery', account.cookie, { code: account.recoveryCodes[0] }, envRing());
+  assert.equal(ok.status, 200);
+});
+
+test('#134: równoległe uruchomienia rotacji — konto rotuje się raz, zostaje jeden aktywny czynnik', async () => {
+  const account = await enrollAndConfirm('u-rot-parallel');
+  const reports = await Promise.all([
+    rotateMfaKeys(envRing(), { apply: true }),
+    rotateMfaKeys(envRing(), { apply: true }),
+  ]);
+  const rotatedTotal = reports.flatMap((r) => r.accounts).filter((a) => a.userId === 'u-rot-parallel' && a.status === 'rotated').length;
+  assert.equal(rotatedTotal, 1, 'jedno uruchomienie wygrywa');
+  const factors = (await db.query('SELECT id, disabled_at FROM user_mfa_factors WHERE user_id = $1', ['u-rot-parallel'])).rows;
+  assert.equal(factors.length, 2, 'stary (wyłączony) i jeden nowy wiersz');
+  assert.equal((await activeConfirmed('u-rot-parallel')).length, 1);
+  const audits = (await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'mfa.key_rotated' AND metadata_json->>'previousFactorId' = $1", [account.factorId])).rows[0].n;
+  assert.equal(audits, 1);
+});
+
+test('#134: czynnik oczekujący jest pomijany przez rotację i nadal da się go potwierdzić; kody starego czynnika po potwierdzeniu są unieważnione', async () => {
+  const account = await enrollAndConfirm('u-rot-pending');
+  const enrolled = await postWith('/api/mfa/enroll', account.cookie, undefined, envV1());
+  // Ponowny zapis przy potwierdzonym czynniku wymaga zweryfikowanej sesji — jeśli API odmawia, test kończy się na tej asercji.
+  assert.equal(enrolled.status, 201);
+  const pending = await enrolled.json();
+  await rotateMfaKeys(envRing(), { apply: true });
+  const pendingRow = (await db.query('SELECT confirmed_at, disabled_at, key_version FROM user_mfa_factors WHERE id = $1', [pending.factorId])).rows[0];
+  assert.equal(pendingRow.confirmed_at, null);
+  assert.equal(pendingRow.disabled_at, null, 'oczekujący czynnik nie jest rotowany ani unieważniany');
+  assert.equal(Number(pendingRow.key_version), 1);
+  assert.equal((await activeConfirmed('u-rot-pending')).length, 1);
+
+  const confirmed = await postWith('/api/mfa/confirm', account.cookie, { code: codeAt(pending.secret) }, envRing());
+  assert.equal(confirmed.status, 200, 'oczekujący czynnik v1 potwierdza się kluczem v1 z pierścienia');
+  const stale = (await db.query(
+    `SELECT count(*)::int AS n FROM mfa_recovery_codes WHERE user_id = 'u-rot-pending' AND used_at IS NULL AND invalidated_at IS NULL
+        AND COALESCE(rotated_to_factor_id, factor_id) <> $1`, [pending.factorId],
+  )).rows[0].n;
+  assert.equal(stale, 0, 'kody poprzedniego (zrotowanego) czynnika unieważnione po potwierdzeniu nowego');
+  const oldCode = await postWith('/api/mfa/recovery', cookieFrom(confirmed), { code: account.recoveryCodes[0] }, envRing());
+  assert.equal(oldCode.status, 400);
+});
+
+test('#134: konto z 0 kodów odzyskiwania i brak kont do rotacji — rotacja przechodzi bez błędu', async () => {
+  const emptyDb = await createTestDb();
+  const empty = await rotateMfaKeys({ db: emptyDb, MFA_ENCRYPTION_KEYS: RING }, { apply: true });
+  await emptyDb.close();
+  assert.equal(empty.rotated, 0);
+  assert.equal(empty.missingKey, 0);
+  const account = await enrollAndConfirm('u-rot-nocodes');
+  await db.query(
+    "UPDATE mfa_recovery_codes SET invalidated_at = now() WHERE user_id = 'u-rot-nocodes' AND used_at IS NULL AND invalidated_at IS NULL",
+  );
+  const report = await rotateMfaKeys(envRing(), { apply: true });
+  assert.ok(report.accounts.some((a) => a.userId === 'u-rot-nocodes' && a.status === 'rotated'));
+  const [active] = await activeConfirmed('u-rot-nocodes');
+  assert.equal(Number(active.key_version), 2);
+  const verify = await postWith('/api/mfa/verify', account.cookie, { code: codeAt(account.secret, 1) }, envRing());
+  assert.equal(verify.status, 200);
+});

@@ -461,11 +461,14 @@ async function seedMeeting(env, hostCookie, hostUserId, approverCookie) {
     },
   });
   const meetingId = created.data.meeting.id;
-  await apiCall(env, {
-    method: 'PATCH', path: `/api/meetings/${meetingId}`, cookie: hostCookie, body: { status: 'scheduled' },
+  // #215: PATCH wymaga `revision` — kolejne zmiany statusu podbijają wersję.
+  const scheduled = await apiCall(env, {
+    method: 'PATCH', path: `/api/meetings/${meetingId}`, cookie: hostCookie,
+    body: { revision: created.data.meeting.revisionNo, status: 'scheduled' },
   });
   await apiCall(env, {
-    method: 'PATCH', path: `/api/meetings/${meetingId}`, cookie: hostCookie, body: { status: 'held' },
+    method: 'PATCH', path: `/api/meetings/${meetingId}`, cookie: hostCookie,
+    body: { revision: scheduled.data.meeting.revisionNo, status: 'held' },
   });
   await apiCall(env, {
     method: 'POST', path: `/api/meetings/${meetingId}/agenda-items`, cookie: hostCookie, idempotencyKey: idKey('demo-agenda'),

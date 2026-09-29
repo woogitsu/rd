@@ -37,6 +37,10 @@ zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv`. Każde pobranie
 (niezależnie od formatu) zapisuje `export_runs` i `export.created`; format
 trafia tylko do metadanych audytu, bez migracji schematu. XLSX celowo
 pominięty — brak lekkiej biblioteki do zapisu bez nowej ciężkiej zależności.
+Plik ma BOM UTF-8, separator `;` i CRLF jak pozostałe eksporty CSV (wspólny
+moduł `src/pg/csv.js`, #121: `toCsv`, `csvResponse`, `csvCell`). Pola tekstowe
+(nazwiska, e-maile) zaczynające się od `= + - @`, tabulatora lub CR — także po
+spacjach i w wersji pełnej szerokości — dostają prefiks `'`.
 
 Odpowiedź to plik JSON jako załącznik (`Content-Disposition: attachment`,
 `Cache-Control: no-store`). Nagłówki `X-Export-Run-Id` i
