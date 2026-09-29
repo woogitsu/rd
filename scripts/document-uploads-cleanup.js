@@ -11,8 +11,9 @@
 //     albo bucketu nie da się sprawdzić dziś; oznaczamy 'abandoned' bez
 //     usuwania niczego z bucketu;
 //   - jeśli obiekt jest, a wiersza documents nie ma -> naprawdę osierocony;
-//     usuwamy obiekt i oznaczamy 'abandoned', ze zdarzeniem audytu (aktor,
-//     czas, identyfikator uploadu — bez adresu ani nazwy pliku).
+//     usuwamy obiekt i oznaczamy 'abandoned', ze zdarzeniem audytu (aktor
+//     techniczny `system:document-uploads-cleanup` w metadata.actor przy
+//     actor_id = NULL, czas, identyfikator uploadu — bez adresu ani nazwy pliku).
 // Jeżeli bucketu nie da się w ogóle sprawdzić (błąd headObject), wiersz
 // zostaje 'pending' do następnego przebiegu — nie zgadujemy.
 //
@@ -25,6 +26,11 @@ import { fileURLToPath } from 'node:url';
 import { insertAuditEvent } from '../src/pg/audit.js';
 
 const DEFAULT_PENDING_MINUTES = 30;
+// Aktor techniczny zadania. Konwencja repozytorium (jak `system:bootstrap`,
+// src/pg/bootstrap-admin.js): audit_events.actor_id wskazuje users, więc dla
+// zadania bez sesji jest NULL, a aktora zapisuje metadata.actor. Czas to
+// occurred_at zdarzenia.
+export const CLEANUP_ACTOR = 'system:document-uploads-cleanup';
 
 export async function cleanupDocumentUploads(db, storage, { pendingMinutes = DEFAULT_PENDING_MINUTES, now = new Date(), dryRun = false } = {}) {
   const cutoff = new Date(now.getTime() - pendingMinutes * 60_000);
@@ -64,7 +70,7 @@ export async function cleanupDocumentUploads(db, storage, { pendingMinutes = DEF
       if (!updated[0]) return; // ktoś inny (kolejny przebieg) już to rozstrzygnął
       await insertAuditEvent(tx, {
         action: 'document_upload.abandoned', entityType: 'document_upload', entityId: row.id,
-        metadata: { reason: exists ? 'orphaned_object' : 'no_object' },
+        metadata: { actor: CLEANUP_ACTOR, reason: exists ? 'orphaned_object' : 'no_object' },
       });
     });
     if (exists) report.abandonedOrphanedObject += 1; else report.abandonedNoObject += 1;

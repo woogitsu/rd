@@ -169,8 +169,8 @@ test('podwójne kliknięcie: dwa równoległe uruchomienia dają co najwyżej je
 
 test('APP_ENV=production bez --allow-production → odmowa bez kontaktu z bazą', async () => {
   await withDb(async (db) => {
-    for (const appEnv of ['production', 'PRODUCTION', ' prod ']) {
-      const run = await runCli(db, [EMAIL], { APP_ENV: appEnv });
+    for (const appEnv of ['production', 'PRODUCTION', ' prod ', undefined, '', 'prodution']) {
+      const run = await runCli(db, [EMAIL], appEnv === undefined ? {} : { APP_ENV: appEnv });
       assert.equal(run.code, 2);
       assert.equal(run.token, null);
       assert.match(run.stderr, /--allow-production/);

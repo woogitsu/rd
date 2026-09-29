@@ -15,7 +15,7 @@ import { startServer } from '../src/server.js';
 import { createPgDatabase } from '../src/db.js';
 import { dummyHash } from '../src/pg/password.js';
 import {
-  assertSafeEnvironment, DemoSeedRefused, DEMO_MFA_KEY_FILE, DEMO_PGLITE_DIR, SCHOOL_YEAR_ID,
+  assertSafeEnvironment, demoAppEnv, DemoSeedRefused, DEMO_MFA_KEY_FILE, DEMO_PGLITE_DIR, SCHOOL_YEAR_ID,
 } from './demo-seed.js';
 
 async function readMfaKey() {
@@ -49,7 +49,7 @@ export async function startDemoServer({ port = Number(process.env.PORT || 3000) 
   const env = {
     db,
     MFA_ENCRYPTION_KEY: mfaEncryptionKey,
-    APP_ENV: process.env.APP_ENV,
+    APP_ENV: demoAppEnv(process.env),
     // Brak BREVO_WEBHOOK_SECRET/klucza Brevo — assertSafeEnvironment już odmówił,
     // gdyby BREVO_API_KEY był ustawiony; trasy e-mail działają tylko jako szkice.
   };

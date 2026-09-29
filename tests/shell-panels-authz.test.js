@@ -130,6 +130,25 @@ test('year-close (Zamknięcie roku): role jak READ_ROLES w src/pg/routes/year-cl
   assert.ok(!panelById['year-close'].roles.includes('audit'), 'Komisja Rewizyjna: 403 na trasach /api/year-close/* (docs/AUTHORIZATION.md)');
 });
 
+test('exports (Eksport): suma ról YEARLY_EXPORT_ROLES i ROSTER_ROLES w src/pg/routes/exports.js (skarbnik i audit BEZ dostępu)', () => {
+  const yearly = rolesConst('src/pg/routes/exports.js', 'YEARLY_EXPORT_ROLES');
+  const roster = rolesConst('src/pg/routes/exports.js', 'ROSTER_ROLES');
+  assert.deepEqual([...panelById['data-export'].roles].sort(), [...new Set([...yearly, ...roster])].sort());
+  assert.ok(!panelById['data-export'].roles.includes('treasurer'));
+  assert.ok(!panelById['data-export'].roles.includes('audit'));
+});
+
+test('news (Aktualności): suma ról draftSchoolWide, draftClass i review z NEWS_POLICY w src/pg/news.js (skarbnik i audit BEZ dostępu)', () => {
+  const policy = src('src/pg/news.js').match(/export const NEWS_POLICY = Object\.freeze\(\{([\s\S]*?)\}\);/)[1];
+  const roles = new Set();
+  for (const key of ['draftSchoolWide', 'draftClass', 'review']) {
+    for (const m of policy.match(new RegExp(`${key}: Object\\.freeze\\(\\[([^\\]]*)\\]`))[1].matchAll(/'([a-z_]+)'/g)) roles.add(m[1]);
+  }
+  assert.deepEqual([...panelById.news.roles].sort(), [...roles].sort());
+  assert.ok(!panelById.news.roles.includes('treasurer'));
+  assert.ok(!panelById.news.roles.includes('audit'));
+});
+
 test('admin (Konta i role): wyłącznie admin', () => {
   assert.deepEqual([...panelById.admin.roles], ['admin']);
 });
@@ -145,9 +164,20 @@ test('meetings (Zebrania): admin/board/audit widzą pełne zebrania (MANAGE_ROLE
   assert.deepEqual([...panelById.meetings.roles].sort(), ['admin', 'audit', 'board', 'representative']);
 });
 
-test('Komisja Rewizyjna (audit) widzi wyłącznie Zebrania — nie widzi Uzgodnień, Kampanii e-mail ani Zamknięcia roku', () => {
+test('audit (Komisja Rewizyjna): tylko rola audit, a ta rola jest w REPORT_ROLES trasy raportu', () => {
+  assert.deepEqual([...panelById.audit.roles], ['audit']);
+  assert.ok(rolesConst('src/pg/routes/reconciliation.js', 'REPORT_ROLES').includes('audit'));
+});
+
+test('Komisja Rewizyjna (audit) widzi wyłącznie Zebrania i swój raport — nie widzi Uzgodnień, Kampanii e-mail ani Zamknięcia roku', () => {
   const ids = visiblePanels([{ role: 'audit' }]).map((p) => p.id);
-  assert.deepEqual(ids, ['meetings']);
+  assert.deepEqual(ids, ['meetings', 'audit']);
+});
+
+test('ekran Komisji Rewizyjnej nie jest widoczny dla zarządu, skarbnika, przedstawiciela ani admina', () => {
+  for (const role of ['board', 'treasurer', 'admin', 'representative']) {
+    assert.ok(!visiblePanels([{ role, classId: role === 'representative' ? '1A' : undefined }]).some((p) => p.id === 'audit'), role);
+  }
 });
 
 test('przedstawiciel klasy widzi wyłącznie moduły klasowe — nigdy finansów ogólnoszkolnych ani administracji', () => {
