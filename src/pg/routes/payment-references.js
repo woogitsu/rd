@@ -17,6 +17,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { generateStructuredReference, isValidStructuredReference } from '../ogm.js';
 
 export const name = 'payment-references';
@@ -215,6 +216,7 @@ async function revokeReference(request, env, referenceId, json) {
   const data = await readJson(request);
   const reason = textOrNull(data.reason, 500);
   if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
+  const confirmPersonalData = data.confirmPersonalData === true;
 
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
@@ -249,6 +251,10 @@ async function revokeReference(request, env, referenceId, json) {
         throw new RequestError('forbidden', 403);
       }
       if (reference.revoked_at !== null) throw new RequestError('payment_reference_already_revoked', 409);
+      // #152: powód wpisu niezmiennego — bramka na dane osobowe (src/pg/pii-gate.js).
+      const gate = gateFreeText([['payment_reference_revocations.reason', reason]], {
+        confirm: confirmPersonalData, fail: (code, categories) => new RequestError(code, 422, { categories }),
+      });
       const revocationId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO payment_reference_revocations (id, payment_reference_id, reason, created_by, idempotency_key)
@@ -258,7 +264,7 @@ async function revokeReference(request, env, referenceId, json) {
       // Zdarzenie bez samej referencji (pseudonim gospodarstwa) w metadanych.
       await insertAuditEvent(tx, {
         actorId, action: 'payment_reference.revoked', entityType: 'payment_reference', entityId: referenceId,
-        metadata: { householdId: reference.household_id, schoolYearId: reference.school_year_id },
+        metadata: { householdId: reference.household_id, schoolYearId: reference.school_year_id, ...piiAuditMetadata(gate) },
       });
       const updated = await tx.query(
         `SELECT id, school_year_id, household_id, structured_reference, revoked_at, revoke_reason

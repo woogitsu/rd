@@ -26,7 +26,7 @@ Macierz jest **założeniem technicznym do zatwierdzenia** przez zarząd i szko�
 | Metoda i ścieżka | Opis |
 |---|---|
 | `POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]` | Przesłanie pliku. Ciało to surowe bajty pliku; wymagane nagłówki `Content-Type` i `Idempotency-Key` (8–128 znaków). `classId` wyłącznie dla `class`. Powiązanie (`ledger_entry` albo `payment_entry` z tego samego roku) wyłącznie dla `financial`. |
-| `GET /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&category=…][&q=…][&limit=…][&offset=…]` | Lista metadanych dostępnych użytkownikowi (najwyżej 100 na stronę), z tytułem i kategorią najnowszej wersji opisu. Domyślnie (`status=active`, też brak parametru) pokazuje tylko dokumenty aktywne; `status=all` pokazuje też zastąpione i unieważnione. `q` szuka w tytule i opisie (`ILIKE`, znaki specjalne wzorca uciekane); filtry i paginacja liczą się w SQL przed `LIMIT`. |
+| `GET /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&category=…][&q=…][&from=YYYY-MM-DD][&to=YYYY-MM-DD][&sort=documentDate|createdAt][&limit=…][&offset=…]` | Lista metadanych dostępnych użytkownikowi (najwyżej 100 na stronę), z tytułem i kategorią najnowszej wersji opisu. Domyślnie (`status=active`, też brak parametru) pokazuje tylko dokumenty aktywne; `status=all` pokazuje też zastąpione i unieważnione. `q` szuka w tytule i opisie (`ILIKE`, znaki specjalne wzorca uciekane); `from`/`to` zawężają po dacie dokumentu (najnowsza wersja opisu; dokument bez daty nie spełnia filtra; `from` > `to` → `400 invalid_request`, zła data → `400 invalid_document_date`). `sort=documentDate` sortuje malejąco po dacie dokumentu (bez daty na końcu), domyślnie `createdAt`; inna wartość → `400 invalid_request`. Filtry i paginacja liczą się w SQL przed `LIMIT`. |
 | `GET /api/documents/{id}` | Metadane jednego dokumentu: `status` (`active`/`superseded`/`voided`), `replacementDocumentId` („zastąpiony przez”, dla `superseded`), `supersedes` („zastępuje” — inny dokument, którego zastępstwem jest ten, jeśli istnieje) i pełna historia opisu (`descriptionHistory`, najnowsza wersja pierwsza). |
 | `GET /api/documents/{id}/content` | Pobranie pliku po autoryzacji (działa niezależnie od stanu — unieważniony dokument zostaje w archiwum, nie znika). |
 | `POST /api/documents/{id}/supersede` | Issue #82: `{ replacementDocumentId, reason }`, JSON, `Idempotency-Key`. Zastępstwo musi mieć ten sam rodzaj, rok szkolny i klasę oraz być aktywne (cykl A→B→A jest przez to niemożliwy). |
@@ -71,7 +71,7 @@ Dziennik: `document.described` zapisuje aktora, czas, identyfikator dokumentu, k
 
 Zamrożenie roku (issue #76/#313, `postgres/migrations/0106_document_descriptions_year_freeze.sql`): `document_descriptions` nie ma własnej kolumny `school_year_id` — rok ustala dokument-rodzic (`documents.school_year_id`, `FOR UPDATE` blokuje wiersz `documents` przed zapisem opisu, więc sprawdzenie jest spójne z numerowaniem wersji). Nowy opis dokumentu przypisanego do zamkniętego roku kończy się `409 school_year_closed`; dokumenty bez `school_year_id` (np. przywrócone z D1) nie są objęte — jak przy samym `documents` (`postgres/README.md`, `docs/YEAR_CLOSE.md`).
 
-**Poza zakresem tej wersji:** panel — wybór roku i klasy z listy serwera (dziś pole tekstowe) to osobny zakres.
+Panel (`documents/`) wybiera rok szkolny i klasę z list zwracanych przez serwer (`GET /api/classes` zawęża listę do zakresu roli), a nie z pola tekstowego.
 
 ## Walidacja pliku
 

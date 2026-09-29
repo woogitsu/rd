@@ -87,7 +87,7 @@
       <input type="hidden" name="guardianId" /><p class="context"></p>
       <label>E-mail <input name="email" type="email" maxlength="254" autocomplete="off" /></label>
       <label class="checkbox"><input name="contactAllowed" type="checkbox" /> Zgoda na kontakt</label>
-      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
       <div class="form-error" id="contact-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz</button></div>
     </form></dialog>
@@ -97,7 +97,7 @@
       <input type="hidden" name="studentId" /><input type="hidden" name="schoolYearId" /><p class="context"></p>
       <label>Nowa klasa <select name="classId" required></select></label>
       <label>Data zmiany <input name="effectiveOn" type="date" required /></label>
-      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
       <div class="form-error" id="enrollment-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz</button></div>
     </form></dialog>

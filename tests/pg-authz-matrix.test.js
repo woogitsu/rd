@@ -189,6 +189,23 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   return { householdId, guardianId, studentId, enrollmentId, membershipId: membership.rows[0].id };
 }
 
+// #200: opiekun z aktywnymi relacjami z DWOMA uczniami z różnych klas tego samego roku
+// (rodzeństwo we wspólnym gospodarstwie). Zarząd z przydziałem jednej klasy nie zmienia
+// jego globalnego kontaktu (403 guardian_shared_outside_scope). Dla roku bez drugiej klasy
+// (Y2) drugi uczeń trafia do tej samej klasy — trasa i tak odmawia poza zakresem roku.
+async function makeSharedGuardianHousehold(db, target) {
+  const base = await makeHousehold(db, target);
+  const otherClassId = { A: TARGETS.B.classId, B: TARGETS.A.classId }[target.key] ?? target.classId;
+  const studentId = `${base.householdId}-s2`;
+  await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Jan', $3)",
+    [studentId, base.householdId, 'Syntetyczny']);
+  await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, false)',
+    [studentId, base.guardianId]);
+  await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
+    [`${base.householdId}-e2`, studentId, otherClassId, target.schoolYearId]);
+  return base;
+}
+
 async function seedFixtureSessions(db) {
   const cookies = {};
   for (const [name, account] of Object.entries(FX_ACCOUNTS)) {
@@ -757,6 +774,7 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  sharedGuardianHousehold: (ctx, target) => makeSharedGuardianHousehold(ctx.db, target),
   // #86: gospodarstwo fixture + drugie, puste — do dodania członkostwa ucznia.
   householdSpare: async (ctx, target) => {
     const made = await makeHousehold(ctx.db, target);
@@ -1069,12 +1087,44 @@ for (const route of ROUTE_MATRIX) {
 }
 
 // #214: `todo` w macierzy nie oblewa CI, więc bez limitu jest wygodnym miejscem
-// na ukrycie nowej regresji uprawnień. Dziś macierz nie ma żadnego wpisu — ten
-// meta-test to zabezpiecza: dodanie `todo` do route-matrix.js musi być świadome
-// i opisane w PR/issue, nie przejść bez zauważenia.
-test('macierz uprawnień: zero wpisów `todo` (znana luka wymaga świadomej decyzji, patrz #214)', () => {
-  const allTodoReasons = ROUTE_MATRIX.flatMap((route) => caseList(route).map((item) => item.todo).filter(Boolean));
-  assert.deepEqual(allTodoReasons, [], `macierz ma ${allTodoReasons.length} wpis(y) todo — opisz je w PR i w issue: ${allTodoReasons.join(' | ')}`);
+// na ukrycie nowej regresji uprawnień. Dopuszczalne `todo` to WYŁĄCZNIE wpisy
+// z listy poniżej: klucz to id trasy, wartość to numer otwartego issue. Lista
+// jest dziś pusta. Nowe `todo` bez wpisu oraz wpis bez `todo` w macierzy (lub bez
+// numeru issue) oblewają test — luka musi być zgłoszona, nie schowana.
+export const ALLOWED_TODO = Object.freeze({
+  // 'route.id': '#NNN',
+});
+
+export function todoViolations(routes, allowed, listCases = caseList) {
+  const problems = [];
+  const withTodo = new Set();
+  for (const route of routes) {
+    if (listCases(route).some((item) => item.todo)) withTodo.add(route.id);
+  }
+  for (const id of withTodo) {
+    if (!Object.hasOwn(allowed, id)) problems.push(`trasa ${id} ma \`todo\` bez wpisu w ALLOWED_TODO`);
+  }
+  for (const [id, issue] of Object.entries(allowed)) {
+    if (!/^#\d+$/.test(String(issue))) problems.push(`wpis ${id} nie wskazuje numeru issue (#NNN)`);
+    if (!withTodo.has(id)) problems.push(`wpis ${id} w ALLOWED_TODO nie ma odpowiadającego \`todo\` w macierzy`);
+  }
+  return problems;
+}
+
+test('macierz uprawnień: `todo` tylko z listy ALLOWED_TODO wskazującej issue (#214)', () => {
+  assert.deepEqual(todoViolations(ROUTE_MATRIX, ALLOWED_TODO), []);
+});
+
+test('meta-test `todo` wykrywa nowe `todo` bez wpisu, wpis martwy i wpis bez issue (kontrola pozytywna)', () => {
+  const fakeRoutes = [
+    { id: 'a.route', targets: [], todo: () => 'luka' },
+    { id: 'b.route', targets: [] },
+  ];
+  const listCases = (route) => [{ todo: route.todo?.() }];
+  assert.equal(todoViolations(fakeRoutes, {}, listCases).length, 1, 'todo bez wpisu');
+  assert.deepEqual(todoViolations(fakeRoutes, { 'a.route': '#214' }, listCases), []);
+  assert.equal(todoViolations(fakeRoutes, { 'a.route': 'kiedyś' }, listCases).length, 1, 'wpis bez numeru issue');
+  assert.equal(todoViolations(fakeRoutes, { 'a.route': '#214', 'b.route': '#1' }, listCases).length, 1, 'martwy wpis');
 });
 
 // ---------- identyfikatory w treści żądania: spoza zakresu = nieistniejący (#205, SR-07) ----------
@@ -1178,8 +1228,10 @@ test('meta: każdy moduł z ROUTES ma wpisy w macierzy i odwrotnie', () => {
 test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
   const ids = ROUTE_MATRIX.map((route) => route.id);
   assert.equal(new Set(ids).size, ids.length, 'id tras w macierzy muszą być unikalne');
-  const signatures = ROUTE_MATRIX.map((route) => `${route.method} ${route.path}`);
-  assert.equal(new Set(signatures).size, signatures.length, 'para metoda + ścieżka musi być unikalna');
+  // `variant` (opcjonalny): druga pozycja tej samej trasy z innym obiektem fixture (np. #200 —
+  // opiekun z dziećmi z dwóch klas), z własną tabelą oczekiwanych statusów.
+  const signatures = ROUTE_MATRIX.map((route) => `${route.method} ${route.path}${route.variant ? ` [${route.variant}]` : ''}`);
+  assert.equal(new Set(signatures).size, signatures.length, 'para metoda + ścieżka (+ variant) musi być unikalna');
   for (const route of ROUTE_MATRIX) {
     assert.ok(route.targets.length > 0 && route.targets.every((key) => key in TARGETS), route.id);
     assert.ok([200, 201, 204].includes(route.ok), `${route.id}: ok`);

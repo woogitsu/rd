@@ -1035,6 +1035,8 @@ UPDATE/DELETE: `meeting_agenda_versions` (migawka JSON + skrót),
 `meeting_id`, `meeting_notice_id`, `class_id` i `audience = 'class_households'`;
 trigger dopuszcza wiersz powiązany z zebraniem wyłącznie jako szkic z
 zatwierdzonego zawiadomienia, dla odbiorców zgodnych z rodzajem zebrania.
+Trzy nowe tabele mają trigger `a0_year_freeze` (`year_freeze_direct()` z 0017):
+zapis w zamkniętym roku daje `school_year_closed` (#80).
 Widok `public_meeting_notices` zawiera tylko najnowsze zatwierdzone
 zawiadomienie zebrania ogólnego (bez powodu odwołania i opisów punktów).
 `meeting_guard()` i `meeting_assert_editable()` wychodzą z wersji z

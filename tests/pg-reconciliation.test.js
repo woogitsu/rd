@@ -15,6 +15,7 @@ import {
 } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
 import { request, seedEnrolledHousehold, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 // Wyłącznie dane syntetyczne. Rok 'y-test': 2026-09-01 – 2027-08-31.
 const YEAR = 'y-test';
@@ -129,7 +130,7 @@ test('draft reconciliation computes the ledger balance and the difference on the
     assert.equal(stored.length, 3, 'wszystkie 3 zaimportowane pozycje mają wiersz w bank_statement_lines');
     // #214: kontrola pozytywna — inaczej hashowanie zepsute na NULL przechodziłoby test „poprawny format”.
     assert.ok(stored.some((row) => row.reference_hash !== null), 'przynajmniej jedna pozycja z referencją ma ustawiony hash');
-    assert.ok(stored.every((row) => row.reference_hash === null || /^[0-9a-f]{64}$/.test(row.reference_hash)));
+    assertEvery(stored, (row) => row.reference_hash === null || /^[0-9a-f]{64}$/.test(row.reference_hash));
     const detailResponse = await call(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer });
     const detailText = await detailResponse.text();
     assert.doesNotMatch(detailText, /Rodzina Testowa|Autokar/);
@@ -824,7 +825,7 @@ test('a correction after matching blocks confirmation with a list of inconsisten
     assert.deepEqual([byMatch[matchIds[0]].lineAmountCents, byMatch[matchIds[0]].targetNetCents], [4000, 2500]);
     assert.deepEqual([byMatch[matchIds[1]].lineAmountCents, byMatch[matchIds[1]].targetNetCents], [-10000, -7000]);
     assert.deepEqual([byMatch[matchIds[2]].lineAmountCents, byMatch[matchIds[2]].targetNetCents], [1200, 0]);
-    assert.ok(body.matches.every((m) => m.reasons.includes('amount_mismatch')));
+    assertEvery(body.matches, (m) => m.reasons.includes('amount_mismatch'));
     assert.doesNotMatch(JSON.stringify(body), /Autokar|syntetyczn/);
 
     // Bezpośredni UPDATE w bazie też jest odrzucany.
@@ -932,7 +933,7 @@ test('pre-existing double-counted matches are reported and block confirmation wi
     // poprawnie dopasowane — mają własną kategorię, nie wchodzą do matchedLineCount.
     assert.equal(detail.summary.matchedLineCount, 0);
     assert.equal(detail.summary.unmatchedLineCount, 0);
-    assert.ok(detail.inconsistentMatches.every((m) => m.reasons.includes('double_counted') && !m.reasons.includes('amount_mismatch')));
+    assertEvery(detail.inconsistentMatches, (m) => m.reasons.includes('double_counted') && !m.reasons.includes('amount_mismatch'));
     const refused = await call(`/api/reconciliations/${draft.id}/confirm`, {
       method: 'POST', cookie: cookies.board, body: { confirmationNote: 'Sprawdzone z wyciągiem' },
     });

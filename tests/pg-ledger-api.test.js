@@ -9,6 +9,7 @@ import { handlePgRequest, ROUTES } from '../src/pg/app.js';
 import * as ledgerRoutes from '../src/pg/routes/ledger.js';
 import { unzipSync, strFromU8 } from 'fflate';
 import { buildLedgerUrl, buildOverviewUrl, normalizeEntry } from '../ledger/core.js';
+import { assertEvery } from './helpers/assertions.js';
 import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const BASE = 'https://rd.example';
@@ -624,7 +625,7 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
   }
   // #214: kontrola pozytywna — bez niej test przechodzi także wtedy, gdy logger przestaje pisać na console.error.
   assert.ok(errors.length > 0, 'awarie triggera audytu muszą zostać zalogowane przez console.error');
-  assert.ok(errors.every((line) => !line.includes('Syntetyczny') && !line.includes('@')));
+  assertEvery(errors, (line) => !line.includes('Syntetyczny') && !line.includes('@'));
   assert.equal(await backend.count('ledger_entries', "idempotency_key = 'audit-fail-0001'"), 0);
   assert.equal(await backend.count('ledger_corrections'), 1);
 
