@@ -135,12 +135,37 @@ function handleSubmit(form, work) {
       await work(fields(form), form);
     } catch (error) {
       errorBox.textContent = error.message;
-      if (error instanceof ApiError && error.status === 409 && state.detail) await reloadDetail({ quiet: true });
+      if (error instanceof ApiError && error.code === "revision_conflict") {
+        // #215: nie wczytujemy po cichu nowej wersji do formularza — użytkownik
+        // najpierw widzi komunikat i sam wybiera odświeżenie (inaczej ponowne
+        // kliknięcie nadpisałoby cudzą zmianę już z nowym numerem wersji).
+        showRevisionConflict(errorBox, form);
+      } else if (error instanceof ApiError && error.status === 409 && state.detail) await reloadDetail({ quiet: true });
     } finally {
       form.dataset.busy = "false";
       buttons.forEach((button) => { button.disabled = false; });
     }
   });
+}
+
+// #215: komunikat o konflikcie wersji z przyciskiem odświeżenia. Zamknięcie
+// okna uchwały i ponowne jego otwarcie z aktualnym wierszem robi `onConflict`.
+function showRevisionConflict(errorBox, form) {
+  errorBox.textContent = "Ktoś zmienił ten wpis w międzyczasie. Wczytaj ponownie, sprawdź zmiany i dopiero wtedy zapisz swoje. ";
+  const button = el("button", { type: "button", className: "secondary" }, "Wczytaj ponownie");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    const resolutionId = form === resolutionForm ? form.elements.resolutionId.value : null;
+    await reloadDetail({ quiet: true, refill: true });
+    if (resolutionId) {
+      resolutionDialog.dialog.close();
+      const fresh = state.detail?.resolutions.find((item) => item.id === resolutionId);
+      if (fresh && fresh.status === "draft") openResolutionDialog("edit", fresh);
+    }
+    errorBox.textContent = "";
+    if (form === editForm) setMessage(detailMessage, "Wczytano aktualne dane zebrania.", "ok");
+  });
+  errorBox.append(button);
 }
 
 // ---------- reguła quorum (wspólny fragment formularzy) ----------
@@ -402,6 +427,7 @@ function renderDetail({ refill = false } = {}) {
   byId("locked-note").hidden = !locked;
 
   if (refill) {
+    editForm.dataset.revision = String(meeting.revisionNo ?? "");
     editForm.elements.title.value = meeting.title;
     editForm.elements.scheduledAt.value = isoToBrusselsLocal(meeting.scheduledAt);
     editForm.elements.location.value = meeting.location ?? "";
@@ -517,6 +543,7 @@ handleSubmit(editForm, async (data) => {
   const result = await api(meetingUrl(state.detail.meeting.id), {
     method: "PATCH",
     body: {
+      revision: Number(editForm.dataset.revision),
       title: data.title.trim(),
       scheduledAt: brusselsLocalToIso(data.scheduledAt),
       location: trimmed(data.location),
@@ -529,7 +556,16 @@ handleSubmit(editForm, async (data) => {
 });
 
 handleSubmit(statusForm, async (data) => {
-  await api(meetingUrl(state.detail.meeting.id), { method: "PATCH", body: { status: data.status } });
+  const previous = state.detail.meeting.revisionNo;
+  const result = await api(meetingUrl(state.detail.meeting.id), {
+    method: "PATCH",
+    body: { revision: previous, status: data.status },
+  });
+  // Własna zmiana statusu podbiła wersję; formularz danych zebrania (z ewentualnie
+  // niezapisanymi zmianami) przejmuje ją tylko, gdy nikt inny nie zmienił wiersza.
+  if (Number(editForm.dataset.revision) === previous && result.meeting?.revisionNo) {
+    editForm.dataset.revision = String(result.meeting.revisionNo);
+  }
   await reloadDetail({ quiet: true });
   setMessage(detailMessage, `Status zmieniony: ${STATUS_LABELS[data.status]}.`, "ok");
 });
@@ -765,6 +801,8 @@ quorumSelect.addEventListener("change", updateVoteLimit);
 function openResolutionDialog(mode, resolution = null) {
   resolutionForm.reset();
   resolutionForm.dataset.mode = mode;
+  // #215: wersja wiersza w chwili otwarcia okna (nie w chwili zapisu).
+  resolutionForm.dataset.revision = String(resolution?.revisionNo ?? "");
   const elements = resolutionForm.elements;
   const checks = [...(state.detail.quorumChecks ?? [])].reverse();
   options(quorumSelect, checks.map((check) => [check.id,
@@ -829,7 +867,7 @@ handleSubmit(resolutionForm, async (data, form) => {
   } else if (mode === "edit") {
     await api(meetingUrl(meetingId, "resolutions", data.resolutionId), {
       method: "PATCH",
-      body: { ...common, ...votes, number },
+      body: { revision: Number(resolutionForm.dataset.revision), ...common, ...votes, number },
     });
   } else {
     await create("resolution", "correction", meetingUrl(meetingId, "resolutions", data.resolutionId, "corrections"), {

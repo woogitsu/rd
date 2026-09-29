@@ -8,8 +8,12 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { parseStatementCsv } from '../src/pg/routes/reconciliation.js';
 import { escapeHtml, formatEur, REPORT_CSS } from '../src/pg/audit-report.js';
 import {
-  createMeeting, createResolution, determineQuorum, recordAttendance, updateMeeting,
+  createMeeting,
+  createResolution,
+  determineQuorum,
+  recordAttendance,
 } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 import { request, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Wyłącznie dane syntetyczne. Rok 'y-test': 2026-09-01 – 2027-08-31.

@@ -333,6 +333,11 @@ test('campaign approval requires FRESH MFA (step-up): stale confirmation is 403 
   } finally { await t.close(); }
 });
 
+// #215 etap 2: PUT wymaga `revision` — klient wczytuje bieżącą wersję tuż przed zapisem.
+async function currentRevision(t, id) {
+  return (await t.call(t.board, `/api/email/campaigns/${id}`)).body.campaign.revisionNo;
+}
+
 // #215: PUT zastępowało treść bez wersji — druga osoba, która wczytała tę
 // samą bazową wersję, po cichu nadpisywała poprawkę pierwszej. `revision`
 // opcjonalnie w treści żądania: niezgodność z bieżącym revisionNo daje
@@ -381,6 +386,54 @@ test('two board members editing the same campaign: treasurer 200, board 409 on s
   } finally { await t.close(); }
 });
 
+// #215 etap 2: `revision` wymagane przy PUT kampanii.
+test('campaign PUT without a valid revision: 400 invalid_revision, nothing written; roles checked first', async () => {
+  const t = await setup();
+  try {
+    const campaign = await createDraft(t);
+    const content = { title: campaign.title, audience: 'all_households', subject: 'Temat bez wersji', bodyText: campaign.bodyText };
+    for (const revision of [undefined, null, 'x', '1', 0, 1.5]) {
+      const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+        method: 'PUT', body: revision === undefined ? content : { ...content, revision },
+      });
+      assert.deepEqual(res, { status: 400, body: { error: 'invalid_revision' } }, `revision=${String(revision)}`);
+    }
+    const rep = await seedUserSession(t.db, { userId: 'u-rep215', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    const denied = await t.call(rep, `/api/email/campaigns/${campaign.id}`, { method: 'PUT', body: content });
+    assert.equal(denied.status, 403);
+    assert.equal(await t.count("SELECT count(*) AS n FROM email_campaigns WHERE id = $1 AND subject = 'Temat bez wersji'", [campaign.id]), 0);
+    assert.equal(await t.count('SELECT revision_no AS n FROM email_campaigns WHERE id = $1', [campaign.id]), 1);
+  } finally { await t.close(); }
+});
+
+test('two parallel campaign PUTs with the same revision: one 200, one 409, one audit event; approved campaign stays approved on 409', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await createDraft(t);
+    const put = (cookie, extra) => t.call(cookie, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT',
+      body: { title: campaign.title, audience: 'all_households', subject: campaign.subject, bodyText: campaign.bodyText, revision: 1, ...extra },
+    });
+    const [a, b] = await Promise.all([
+      put(t.treasurer, { subject: 'Temat skarbnika do kampanii' }),
+      put(t.board, { bodyText: 'Treść członka zarządu, wystarczająco długa na walidację.' }),
+    ]);
+    assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+    assert.equal([a, b].find((r) => r.status === 409).body.error, 'revision_conflict');
+    assert.equal(await t.count(
+      "SELECT count(*) AS n FROM audit_events WHERE action = 'email.campaign.updated' AND entity_id = $1", [campaign.id]), 1);
+    assert.equal(await t.count('SELECT revision_no AS n FROM email_campaigns WHERE id = $1', [campaign.id]), 2);
+
+    // Zatwierdzona kampania: nieaktualna edycja nie cofa zatwierdzenia.
+    await snapshot(t, campaign.id);
+    assert.equal((await approve(t, campaign.id)).status, 200);
+    const stale = await put(t.board, { subject: 'Spóźniona poprawka' });
+    assert.deepEqual(stale, { status: 409, body: { error: 'revision_conflict' } });
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}`)).body.campaign.status, 'approved');
+  } finally { await t.close(); }
+});
+
 test('any change after approval invalidates it (content or recipient snapshot)', async () => {
   const t = await setup();
   try {
@@ -390,7 +443,7 @@ test('any change after approval invalidates it (content or recipient snapshot)',
     assert.equal((await approve(t, campaign.id)).status, 200);
 
     const edit = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
-      method: 'PUT', body: { title: 'Przypomnienie jesienne', audience: 'all_households', subject: 'Dobrowolna składka – rok {rok}', bodyText: BODY },
+      method: 'PUT', body: { revision: await currentRevision(t, campaign.id), title: 'Przypomnienie jesienne', audience: 'all_households', subject: 'Dobrowolna składka – rok {rok}', bodyText: BODY },
     });
     assert.equal(edit.status, 200);
     assert.equal(edit.body.approvalInvalidated, true);
@@ -412,7 +465,7 @@ test('any change after approval invalidates it (content or recipient snapshot)',
     assert.equal(queued.status, 200);
     assert.equal(queued.body.queued, 2);
     const locked = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
-      method: 'PUT', body: { title: 'X y z', audience: 'all_households', subject: 'Nowy temat', bodyText: BODY },
+      method: 'PUT', body: { revision: await currentRevision(t, campaign.id), title: 'X y z', audience: 'all_households', subject: 'Nowy temat', bodyText: BODY },
     });
     assert.deepEqual(locked, { status: 409, body: { error: 'campaign_locked' } });
     await assert.rejects(t.db.query('DELETE FROM email_campaign_recipients WHERE campaign_id = $1', [campaign.id]), /email_snapshot_locked/);
@@ -1821,7 +1874,7 @@ test('#130 send_not_before delays the run; changing it after approval requires r
     await snapshot(t, campaign.id);
     const future = new Date(DAY1.getTime() + 24 * 3600_000).toISOString();
     const updated = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
-      method: 'PUT', body: { title: campaign.title, subject: campaign.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
+      method: 'PUT', body: { revision: await currentRevision(t, campaign.id), title: campaign.title, subject: campaign.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
     });
     assert.equal(updated.status, 200, JSON.stringify(updated.body));
     assert.equal(updated.body.campaign.sendNotBefore, future);
@@ -1845,7 +1898,7 @@ test('#130 send_not_before delays the run; changing it after approval requires r
     const approved2 = await approve(t, draft2.id);
     assert.equal(approved2.status, 200);
     const changed = await t.call(t.treasurer, `/api/email/campaigns/${draft2.id}`, {
-      method: 'PUT', body: { title: draft2.title, subject: draft2.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
+      method: 'PUT', body: { revision: await currentRevision(t, draft2.id), title: draft2.title, subject: draft2.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
     });
     assert.equal(changed.status, 200);
     assert.equal(changed.body.campaign.status, 'draft');

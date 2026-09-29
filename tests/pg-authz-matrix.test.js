@@ -24,9 +24,15 @@ import {
   approve, cancelTask, createDraft, createSignup, createTask, publish, submit, withdrawSignup,
 } from '../src/pg/events.js';
 import {
-  approveMinutes, createMeeting, createMinutesVersion, createResolution, determineQuorum,
-  recordAttendance, setMinutesVisibility, updateMeeting,
+  approveMinutes,
+  createMeeting,
+  createMinutesVersion,
+  createResolution,
+  determineQuorum,
+  recordAttendance,
+  setMinutesVisibility,
 } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 import {
   addConsent, approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto,
   submit as submitNews, uploadPhotoFile, verifyPhoto,
