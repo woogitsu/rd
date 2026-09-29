@@ -20,7 +20,7 @@ import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '.
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
-import { csvHeader, csvRow } from '../csv.js';
+import { csvResponse, safeFileSegment, toCsv } from '../csv.js';
 import { readSnapshot } from '../db-snapshot.js';
 
 export const name = 'ledger-cost-centers';
@@ -357,24 +357,14 @@ async function readCostCenters(request, env, url, json) {
   // Jedna migawka: centra i ledger_year_summary z tej samej chwili (suma = bilans roku).
   const report = await readSnapshot(env.db, (tx) => costCenterReport(tx, schoolYearId, type));
   if (format === 'json') return json({ report });
-  const lines = [
-    csvHeader(COST_CENTER_CSV_COLUMNS),
-    ...report.centers.map((row) => csvRow(COST_CENTER_CSV_COLUMNS,
-      [TYPE_LABEL[type], row.id, row.name, row.status ?? '', row.incomeCents, row.expenseCents, row.resultCents])),
-    csvRow(COST_CENTER_CSV_COLUMNS, ['ogólne', '', 'Bez przypisania', '', report.general.incomeCents,
-      report.general.expenseCents, report.general.resultCents]),
-    csvRow(COST_CENTER_CSV_COLUMNS, ['razem', '', 'Razem rok', '', report.totals.incomeCents,
-      report.totals.expenseCents, report.totals.resultCents]),
+  const rows = [
+    ...report.centers.map((row) =>
+      [TYPE_LABEL[type], row.id, row.name, row.status ?? '', row.incomeCents, row.expenseCents, row.resultCents]),
+    ['ogólne', '', 'Bez przypisania', '', report.general.incomeCents, report.general.expenseCents,
+      report.general.resultCents],
+    ['razem', '', 'Razem rok', '', report.totals.incomeCents, report.totals.expenseCents, report.totals.resultCents],
   ];
-  return new Response(`﻿${lines.join('\r\n')}\r\n`, {
-    status: 200,
-    headers: {
-      'Cache-Control': 'no-store',
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="centra-${type}-${schoolYearId.replace(/[^A-Za-z0-9_-]/g, '_')}.csv"`,
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  return csvResponse(toCsv(COST_CENTER_CSV_COLUMNS, rows), `centra-${type}-${safeFileSegment(schoolYearId)}.csv`);
 }
 
 async function readEventFinance(request, env, eventId, json) {
