@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, seedClass, seedSchoolYear, seedUserSession, TEST_ORIGIN } from './helpers/pg.js';
+import { createTestDb, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession, TEST_ORIGIN } from './helpers/pg.js';
 
 const YEAR = 'y-144l';
 
@@ -28,7 +28,9 @@ async function setup() {
   const db = await createTestDb();
   await seedSchoolYear(db, YEAR, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
-  await db.query("INSERT INTO households (id) VALUES ('h1'), ('h2')");
+  // #205: wpłata przyjmuje gospodarstwo z uczniem zapisanym w roku wpłaty.
+  await seedEnrolledHousehold(db, 'h1', [YEAR], { classIds: { [YEAR]: 'c-1a' } });
+  await seedEnrolledHousehold(db, 'h2', [YEAR], { classIds: { [YEAR]: 'c-1a' } });
   const cookies = {
     treasurer: await seedUserSession(db, { userId: 'u-t', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] }),
     board: await seedUserSession(db, { userId: 'u-b', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] }),

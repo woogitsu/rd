@@ -16,7 +16,8 @@
 --    wartość serwera) na tabelach append-only: wpłaty i ich korekty/
 --    przypisania/zwroty/alokacje, księga i jej korekty/przelewy/salda
 --    otwarcia, uzgodnienia bankowe, dzienniki (audit_events, data_access_log), zdarzenia statusu dokumentów, zgody na wizerunek i
---    ich wycofania, potwierdzenia doręczenia informacji o prywatności.
+--    ich wycofania, potwierdzenia doręczenia informacji o prywatności, migawki
+--    sprawozdania rocznego i ich zatwierdzenia (0138).
 -- 2. stamp_transition_now() — BEFORE UPDATE: przy przejściu z NULL na wartość
 --    NEW.<kolumna> := now() dla revoked_at (sessions, role_grants,
 --    invitations, password_reset_tokens, bank_reconciliation_matches,
@@ -91,7 +92,8 @@ DECLARE
     ['email_suppression_releases', 'created_at'], ['email_outbox_resolutions', 'created_at'],
     ['email_preferences_events', 'created_at'],
     ['news_photo_consents', 'recorded_at'], ['news_photo_consent_withdrawals', 'recorded_at'],
-    ['privacy_notice_deliveries', 'recorded_at']
+    ['privacy_notice_deliveries', 'recorded_at'],
+    ['financial_report_snapshots', 'created_at'], ['financial_report_snapshot_approvals', 'approved_at']
   ];
   transition_stamps TEXT[][] := ARRAY[
     ['sessions', 'revoked_at'], ['role_grants', 'revoked_at'], ['invitations', 'revoked_at'],
