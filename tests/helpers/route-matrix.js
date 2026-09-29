@@ -1658,6 +1658,12 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password, passwordRepeat: obj.password } }),
   },
   {
+    // #164: podgląd zaproszenia bez sesji; tylko odczyt, token nie jest konsumowany.
+    id: 'login.invitationPreview', module: 'login', method: 'POST', path: '/api/invitations/preview', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'invitationToken' },
+    build: ({ obj }) => ({ path: '/api/invitations/preview', body: { token: obj.token } }),
+  },
+  {
     id: 'login.passwordReset', module: 'login', method: 'POST', path: '/api/password/reset', targets: ['-'],
     allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'passwordResetToken' },
     build: ({ obj }) => ({ path: '/api/password/reset', body: { token: obj.token, newPassword: obj.newPassword } }),
@@ -1753,6 +1759,7 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/login': 'działa bez sesji; tworzy nową sesję bez MFA',
   '/api/auth/state': 'stan własnej sesji dla ekranu logowania (bez ról)',
   '/api/invitations/accept': 'działa bez sesji; uwierzytelnia token zaproszenia',
+  '/api/invitations/preview': 'działa bez sesji; tylko odczyt po tokenie zaproszenia (zamaskowany adres, rola, klasa, rok, termin); nie konsumuje tokenu',
   '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
   '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
   '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',

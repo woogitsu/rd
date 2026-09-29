@@ -361,6 +361,54 @@ function cleanDisplayName(value, email) {
   return text;
 }
 
+// Maska adresu dla posiadacza tokenu (#164): pierwszy znak części lokalnej,
+// wielokropek i pełna domena — wystarcza do wykrycia literówki admina, nie
+// ujawnia całego adresu.
+export function maskEmail(email) {
+  const text = String(email ?? '');
+  const at = text.lastIndexOf('@');
+  if (at < 1) return '…';
+  return `${[...text.slice(0, at)][0]}…${text.slice(at)}`;
+}
+
+// POST /api/invitations/preview (#164): co zobaczy zapraszany przed przyjęciem
+// — rola, klasa, rok, termin ważności, zamaskowany adres i to, czy trzeba podać
+// obecne hasło. Bez sesji; token NIE jest konsumowany (tylko odczyt). Limit prób
+// i odpowiedź odmowna identyczne jak przy accept: każda odmowa (zły format,
+// nieznany, wygasły, wycofany, wykorzystany, konto wyłączone) to ten sam
+// 400 invalid_invitation, liczona do limitu adresu IP. Poprawny podgląd nie
+// zapisuje zdarzenia; nie zwraca zapraszającego, identyfikatorów ani pełnego adresu.
+export async function previewInvitation(env, { token, clientIp }) {
+  const ipScopes = loginScopes({ ip: clientIp });
+  const invalid = (reason) => failAttempt(env, {
+    scopes: ipScopes, action: 'auth.invitation_preview_failed', reason, code: 'invalid_invitation', status: 400,
+  });
+  return withAttempt(env, ipScopes, async () => {
+    if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) throw await invalid('malformed');
+    const { rows } = await database(env).query(
+      `SELECT lower(i.email) AS email, i.role, i.expires_at, c.name AS class_name, y.label AS school_year_label
+         FROM invitations i
+         LEFT JOIN classes c ON c.id = i.class_id
+         LEFT JOIN school_years y ON y.id = COALESCE(i.school_year_id, c.school_year_id)
+        WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()`,
+      [await hashSecret(token)],
+    );
+    const invitation = rows[0];
+    if (!invitation) throw await invalid('not_available');
+    const account = await findAccountByEmail(database(env), invitation.email);
+    if (account?.disabled_at) throw await invalid('user_unavailable');
+    return {
+      email: maskEmail(invitation.email),
+      role: invitation.role,
+      className: invitation.class_name ?? null,
+      schoolYear: invitation.school_year_label ?? null,
+      expiresAt: isoTimestamp(invitation.expires_at),
+      // true = konto ma już hasło: przyjęcie wymaga obecnego hasła, rola zostanie dopisana.
+      accountExists: Boolean(account?.hash),
+    };
+  });
+}
+
 // Tworzy konto (jeśli nie istnieje) z adresem z zaproszenia, ustawia hasło,
 // nadaje rolę i tworzy sesję. Gdy konto z tym adresem ma już hasło, pole
 // `password` musi być jego obecnym hasłem (zaproszenie nie może przejąć konta).
