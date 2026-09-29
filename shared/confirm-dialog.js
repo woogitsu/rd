@@ -2,9 +2,9 @@
 // przed operacjami trwałymi lub publicznymi. Oparte na natywnym <dialog> (jak w meetings/),
 // więc Esc zamyka okno i liczy się jako anulowanie, a przeglądarka zarządza focus-trap.
 //
-// Część z DOM (confirmAction, ensureDialog) nie ma testu jednostkowego — jak reszta main.js
-// w tym repozytorium, gdzie testowana jest wyłącznie logika czysta (buildEffectsHtml niżej,
-// tests/confirm-dialog-core.test.js).
+// Logika czysta (buildEffectsHtml) ma test jednostkowy: tests/confirm-dialog-core.test.js.
+// Interakcje okna (Esc, fokus, anulowanie, podsumowanie skutków, podwójne kliknięcie)
+// testuje przeglądarka: tests/e2e/confirm-dialog.spec.js.
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
