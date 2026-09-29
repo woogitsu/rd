@@ -48,5 +48,5 @@ test('błędy konfiguracji nadal blokują podgląd/druk niezależnie od tego, cz
   // Nie ogłaszać błędu ≠ ignorować go: przycisk potwierdzenia ma zostać
   // zablokowany, dopóki konfiguracja jest niepoprawna, także przed dotknięciem formularza.
   const block = mainJs.slice(mainJs.indexOf('function renderPreview'), mainJs.indexOf('function resetData'));
-  assert.match(block, /if \(errors\.length\) \{\s*\n\s*preview\.replaceChildren\(\);\s*\n\s*setText\(previewMessage, "Uzupełnij treść kartki, aby zobaczyć podgląd\."\);\s*\n\s*confirmBox\.disabled = true;/);
+  assert.match(block, /if \(errors\.length\) \{\s*\n\s*preview\.replaceChildren\(\);\s*\n\s*setText\(previewMessage, previewBlockedMessage\(errors\)\);\s*\n\s*confirmBox\.disabled = true;/);
 });
