@@ -224,3 +224,9 @@ test("normalizeDocument i metadataRows pokazują tytuł, kategorię i datę doku
   assert.equal(bare.title, null);
   assert.equal(Object.fromEntries(metadataRows(bare))["Tytuł"], "Bez tytułu");
 });
+
+test("buildListUrl przekazuje kursor zamiast offsetu (#159)", () => {
+  const url = buildListUrl({ schoolYearId: "2026-2027", cursor: "abc_-9", offset: 50 });
+  assert.match(url, /cursor=abc_-9/);
+  assert.doesNotMatch(url, /offset=/);
+});

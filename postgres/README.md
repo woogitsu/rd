@@ -942,3 +942,9 @@ pozostaje unikalny. Skutki dla danych: żaden wiersz nie jest zmieniany ani
 usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
+
+`0132_keyset_list_indexes.sql` (#159) dodaje pięć indeksów pod listy z kursorem
+keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
+audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
+wiersz nie jest zmieniany; zapisy do tych tabel utrzymują dodatkowe indeksy.
+Wycofanie: `DROP INDEX` każdego z nich (bezpieczne). Kontrakt list: docs/API.md.

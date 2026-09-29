@@ -121,3 +121,7 @@ test('describeApiError: komunikaty po polsku dla typowych kodów', () => {
   assert.match(describeApiError(403, 'self_approval_forbidden'), /inna osoba/);
   assert.equal(describeApiError(500, null), null);
 });
+
+test('buildCampaignsUrl: kursor kolejnej strony (#159)', () => {
+  assert.equal(buildCampaignsUrl('y2026', 'abc_-9'), '/api/email/campaigns?schoolYearId=y2026&cursor=abc_-9');
+});
