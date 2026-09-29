@@ -17,8 +17,12 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { guessMapping, parseCsv, toServerPayload, validateRows } from '../import/core.js';
 import {
-  createMeeting, createResolution, determineQuorum, recordAttendance, updateMeeting,
+  createMeeting,
+  createResolution,
+  determineQuorum,
+  recordAttendance,
 } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 import { buildYearlyExport, restoreBundle } from '../src/pg/export.js';
 import { buildHouseholds, parseInputRows } from '../print/core.js';
 import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
@@ -35,7 +39,7 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     async function call(path, cookie, { method = 'GET', body, key } = {}) {
       const response = await handlePgRequest(request(path, {
         method, cookie, body, headers: key ? { 'Idempotency-Key': key } : {},
-      }), { db });
+      }), { db, APP_ENV: 'test' });
       const text = await response.text();
       return { status: response.status, body: text ? JSON.parse(text) : null };
     }

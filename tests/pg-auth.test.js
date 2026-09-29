@@ -335,11 +335,13 @@ test('database wrapper bounds the pool and runs transactions on one client', asy
   const db = createPgDatabase(pool);
   assert.deepEqual(await db.query('SELECT 1', []), { rows: [{ sql: 'SELECT 1' }] });
   assert.equal(await db.transaction(async (tx) => (await tx.query('SELECT $1', [1])).rows[0].ok), 1);
-  assert.deepEqual(calls, ['BEGIN', 'SELECT $1', 'COMMIT']);
+  // #156: po BEGIN transakcja ustawia lock_timeout (SET LOCAL).
+  const lockTimeout = "SELECT set_config('lock_timeout', $1, true)";
+  assert.deepEqual(calls, ['BEGIN', lockTimeout, 'SELECT $1', 'COMMIT']);
   assert.equal(released, false);
   calls.length = 0;
   await assert.rejects(db.transaction(async () => { throw new Error('boom'); }), /boom/);
-  assert.deepEqual(calls, ['BEGIN', 'ROLLBACK']);
+  assert.deepEqual(calls, ['BEGIN', lockTimeout, 'ROLLBACK']);
   await db.close();
   assert.ok(calls.includes('END'));
 });

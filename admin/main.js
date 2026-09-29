@@ -19,13 +19,16 @@ import {
   scopeLabel,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
-import { confirmAction } from "../shared/confirm-dialog.js";
+import { confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
 mountShell();
 
-const state = { me: null, users: [], grants: [], invitations: [], years: [], classes: new Map(), yearMap: new Map() };
+const state = {
+  me: null, users: [], grants: [], invitations: [], auditEvents: [],
+  usersCursor: null, grantsCursor: null, invitationsCursor: null, auditCursor: null,
+  years: [], classes: new Map(), yearMap: new Map() };
 const byId = (id) => document.getElementById(id);
 const globalMessage = byId("global-message");
 
@@ -97,12 +100,36 @@ async function runAction(element, confirmText, fn) {
   }
   element.disabled = true;
   try {
-    await fn();
+    await withStepUp(fn);
   } catch (error) {
     showMessage(error.message, true);
   } finally {
     element.disabled = false;
   }
+}
+
+// Krok w górę MFA (#150, #224): reset hasła i MFA wymagają kodu potwierdzonego
+// od niedawna. Serwer odpowiada 403 mfa_stale; panel prosi o kod z aplikacji
+// (POST /api/mfa/verify) i ponawia operację dokładnie raz. Anulowanie okna kończy
+// operację bez żadnej zmiany; kod nie jest nigdzie zapisywany.
+async function withStepUp(fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error?.code !== "mfa_stale") throw error;
+  }
+  const code = await promptAction({
+    title: "Potwierdź kodem z aplikacji",
+    effects: [
+      "Ta operacja wymaga świeżego potwierdzenia weryfikacji dwuetapowej.",
+      "Wpisz aktualny 6-cyfrowy kod. Jeśli właśnie użyto go do logowania, poczekaj na kolejny.",
+    ],
+    confirmLabel: "Potwierdź kodem",
+    input: { label: "Kod z aplikacji", inputMode: "numeric", autocomplete: "one-time-code" },
+  });
+  if (code === null) throw new Error("Operacja wstrzymana: brak potwierdzenia kodem. Nic nie zmieniono.");
+  await api("/api/mfa/verify", { method: "POST", body: { code: code.replace(/\s+/g, "") } });
+  return fn();
 }
 
 function userLabel(userId) {
@@ -148,7 +175,8 @@ function fillDictionaries() {
 
 function renderUsers() {
   const tbody = byId("users-body");
-  byId("users-summary").textContent = `${state.users.length} kont. Konta tworzy wyłącznie przyjęcie zaproszenia.`;
+  const more = state.usersCursor ? " Lista jest niepełna — użyj „Pokaż więcej”." : "";
+  byId("users-summary").textContent = `${state.users.length} kont. Konta tworzy wyłącznie przyjęcie zaproszenia.${more}`;
   if (!state.users.length) return emptyRow(tbody, 7, "Brak kont.");
   tbody.replaceChildren(...state.users.map((user) => {
     const tr = document.createElement("tr");
@@ -198,8 +226,22 @@ function renderUsers() {
   }));
 }
 
-async function loadUsers() {
-  state.users = (await api("/api/admin/users")).users;
+// #159: listy mają kursor (`nextCursor`); przycisk „Pokaż więcej” dociąga kolejną stronę
+// zamiast pokazywać obciętą listę bez informacji.
+function withCursor(url, cursor) {
+  if (!cursor) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}cursor=${encodeURIComponent(cursor)}`;
+}
+
+function toggleMore(id, cursor) {
+  byId(id).hidden = !cursor;
+}
+
+async function loadUsers({ append = false } = {}) {
+  const result = await api(withCursor("/api/admin/users", append ? state.usersCursor : null));
+  state.users = append ? [...state.users, ...result.users] : result.users;
+  state.usersCursor = result.nextCursor ?? null;
+  toggleMore("users-more", state.usersCursor);
   renderUsers();
   fillDictionaries();
 }
@@ -243,7 +285,16 @@ byId("copy-reset-token").addEventListener("click", async (event) => {
 // Reset MFA wymaga wpisania identyfikatora konta (kontrakt API) — chroni przed
 // przypadkowym wyłączeniem cudzego czynnika jednym kliknięciem.
 async function runMfaReset(element, user) {
-  const typed = window.prompt(`Aby zresetować weryfikację dwuetapową konta ${user.email}, wpisz jego identyfikator:\n${user.id}`);
+  const typed = await promptAction({
+    title: "Zresetować weryfikację dwuetapową?",
+    effects: [
+      `Konto ${user.email}: czynnik i kody odzyskiwania zostaną wyłączone, a sesje wycofane.`,
+      "Konto zapisze nowy czynnik po następnym logowaniu.",
+    ],
+    confirmLabel: "Zresetuj MFA",
+    destructive: true,
+    input: { label: `Aby potwierdzić, wpisz identyfikator konta: ${user.id}`, expected: user.id },
+  });
   const check = mfaResetConfirmation(typed, user.id);
   if (check.cancelled) return;
   if (!check.ok) {
@@ -252,7 +303,7 @@ async function runMfaReset(element, user) {
   }
   element.disabled = true;
   try {
-    const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/mfa-reset`, { method: "POST", body: { confirm: user.id } });
+    const result = await withStepUp(() => api(`/api/admin/users/${encodeURIComponent(user.id)}/mfa-reset`, { method: "POST", body: { confirm: user.id } }));
     showMessage(result.changed
       ? "Zresetowano weryfikację dwuetapową. Konto zostało wylogowane i zapisze nowy czynnik po zalogowaniu."
       : "Konto nie miało zapisanego czynnika ani kodów odzyskiwania — nic nie zmieniono.");
@@ -291,9 +342,12 @@ function renderGrants() {
   }));
 }
 
-async function loadGrants() {
+async function loadGrants({ append = false } = {}) {
   const filters = Object.fromEntries(new FormData(byId("grant-filters")));
-  state.grants = (await api(buildGrantsUrl(filters))).grants;
+  const result = await api(withCursor(buildGrantsUrl(filters), append ? state.grantsCursor : null));
+  state.grants = append ? [...state.grants, ...result.grants] : result.grants;
+  state.grantsCursor = result.nextCursor ?? null;
+  toggleMore("grants-more", state.grantsCursor);
   renderGrants();
 }
 
@@ -365,8 +419,11 @@ function renderInvitations() {
   }));
 }
 
-async function loadInvitations() {
-  state.invitations = (await api("/api/admin/invitations")).invitations;
+async function loadInvitations({ append = false } = {}) {
+  const result = await api(withCursor("/api/admin/invitations", append ? state.invitationsCursor : null));
+  state.invitations = append ? [...state.invitations, ...result.invitations] : result.invitations;
+  state.invitationsCursor = result.nextCursor ?? null;
+  toggleMore("invitations-more", state.invitationsCursor);
   renderInvitations();
 }
 
@@ -466,8 +523,12 @@ byId("term-form").addEventListener("submit", async (event) => {
 
 // --- Dziennik -------------------------------------------------------------------
 
-async function loadAudit() {
-  const { events } = await api("/api/admin/audit?limit=100");
+async function loadAudit({ append = false } = {}) {
+  const result = await api(withCursor("/api/admin/audit?limit=100", append ? state.auditCursor : null));
+  state.auditEvents = append ? [...state.auditEvents, ...result.events] : result.events;
+  state.auditCursor = result.nextCursor ?? null;
+  toggleMore("audit-more", state.auditCursor);
+  const events = state.auditEvents;
   const tbody = byId("audit-body");
   if (!events.length) return emptyRow(tbody, 5, "Brak zdarzeń.");
   tbody.replaceChildren(...events.map((item) => {
@@ -479,6 +540,9 @@ async function loadAudit() {
   }));
 }
 
+for (const [id, load] of [["users-more", loadUsers], ["grants-more", loadGrants], ["invitations-more", loadInvitations], ["audit-more", loadAudit]]) {
+  byId(id).addEventListener("click", () => load({ append: true }).catch((error) => showMessage(error.message, true)));
+}
 byId("reload-audit").addEventListener("click", () => loadAudit().catch((error) => showMessage(error.message, true)));
 
 // --- Start ----------------------------------------------------------------------

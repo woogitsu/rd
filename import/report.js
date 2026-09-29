@@ -2,7 +2,7 @@
 // Generowany w przeglądarce, bez zapisu na serwerze. Zawiera wyłącznie numer
 // wiersza źródłowego, etap, rodzaj i komunikat — nigdy imię, nazwisko ani
 // e-mail (patrz AGENTS.md: brak danych osobowych w raportach/logach).
-import { csvHeader, csvRow } from '../src/pg/csv.js';
+import { toCsv } from '../src/pg/csv.js';
 
 const REPORT_COLUMNS = [
   { header: 'Wiersz', type: 'text' },
@@ -16,17 +16,13 @@ const KIND_LABELS = { error: 'błąd', warning: 'uwaga', conflict: 'konflikt', s
 
 // entries: [{ row, stage: 'file'|'server', kind: 'error'|'warning'|'conflict'|'skipped', message }]
 export function buildErrorReportCsv(entries) {
-  const lines = [csvHeader(REPORT_COLUMNS)];
-  for (const entry of entries) {
-    lines.push(csvRow(REPORT_COLUMNS, [
-      String(entry.row ?? ''),
-      STAGE_LABELS[entry.stage] ?? String(entry.stage ?? ''),
-      KIND_LABELS[entry.kind] ?? String(entry.kind ?? ''),
-      String(entry.message ?? ''),
-    ]));
-  }
-  // CRLF: zgodnie z RFC 4180 i zachowaniem Excela dla CSV.
-  return `${lines.join('\r\n')}\r\n`;
+  // BOM dodaje dopiero pobieranie pliku (csvBytes w import/main.js).
+  return toCsv(REPORT_COLUMNS, entries.map((entry) => [
+    String(entry.row ?? ''),
+    STAGE_LABELS[entry.stage] ?? String(entry.stage ?? ''),
+    KIND_LABELS[entry.kind] ?? String(entry.kind ?? ''),
+    String(entry.message ?? ''),
+  ]));
 }
 
 // Nagłówki wskazujące dane, których Rada nie powinna dostawać importem

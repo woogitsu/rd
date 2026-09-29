@@ -12,6 +12,7 @@
 // (kind=restore_drill) w bazie ŹRÓDŁOWEJ; baza docelowa jest czyszczona przez
 // operatora usługi (osobna, jednorazowa baza „drill” — poza zakresem skryptu).
 
+import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -66,8 +67,10 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  if (env.APP_ENV === 'production' && !process.argv.includes('--allow-production')) {
-    console.error('Restore drill in production requires explicit --allow-production.');
+  if (guardDangerousOperation(env.APP_ENV, { allowProduction: process.argv.includes('--allow-production') }).refused) {
+    const warning = appEnvWarning(env.APP_ENV);
+    if (warning) console.error(warning);
+    console.error('Restore drill in production (or with unrecognised APP_ENV) requires explicit --allow-production.');
     process.exitCode = 1;
     return;
   }

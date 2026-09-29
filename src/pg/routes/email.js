@@ -1,6 +1,6 @@
 // Kampanie e-mail o dobrowolnej składce na PostgreSQL (issues #10, #40). Prototyp — nie jest wdrożony.
 //
-//   GET  /api/email/campaigns?schoolYearId=…         lista kampanii roku
+//   GET  /api/email/campaigns?schoolYearId=…[&limit=&cursor=]   lista kampanii roku (kursor keyset, #159)
 //   POST /api/email/campaigns                        szkic (Idempotency-Key)
 //   GET  /api/email/campaigns/{id}                   stan i liczniki kolejki
 //   PUT  /api/email/campaigns/{id}                   zmiana treści → szkic, zatwierdzenie traci ważność
@@ -29,6 +29,9 @@ import { timingSafeEqual } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import {
+  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+} from '../list-cursor.js';
 import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
 import {
@@ -216,11 +219,22 @@ async function listCampaigns(request, env, url, json) {
   if (!validId(schoolYearId)) throw new RequestError('invalid_request');
   const context = await requireContext(request, env, EDITOR_ROLES);
   requireYear(context, EDITOR_ROLES, schoolYearId);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 100, maxLimit: 100 }, fail);
+  const scope = JSON.stringify(['campaigns', schoolYearId]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const values = [schoolYearId];
+  const after = cursor ? `AND ${afterTimestampDescSql('c.created_at', 'c.id', cursor, values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT ${CAMPAIGN_COLUMNS} FROM email_campaigns c WHERE c.school_year_id = $1 ORDER BY c.created_at DESC, c.id LIMIT 100`,
-    [schoolYearId],
+    `SELECT ${CAMPAIGN_COLUMNS}, ${cursorTimestampSql('c.created_at')} AS cursor_ts
+       FROM email_campaigns c WHERE c.school_year_id = $1 ${after}
+      ORDER BY c.created_at DESC, c.id LIMIT ${limit + 1}`,
+    values,
   );
-  return json({ campaigns: rows.map(campaignView) });
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return json({
+    campaigns: page.items.map(campaignView), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
+  });
 }
 
 async function createCampaign(request, env, json) {
@@ -287,21 +301,20 @@ function parseSendNotBefore(value, current) {
 // #215: PUT zastępowało całą treść kampanii bez wersji — autor, którego
 // poprawkę nadpisano, dostawał 200 i nie wiedział, że ktoś inny zmienił
 // kampanię w międzyczasie (zatwierdzający widział ostatnią wersję, więc
-// błąd był niewidoczny do czasu wysyłki). `revision`, gdy podane w treści
-// żądania, musi zgadzać się z bieżącym `revisionNo` kampanii (odczytanym
+// błąd był niewidoczny do czasu wysyłki). `revision` w treści
+// żądania musi zgadzać się z bieżącym `revisionNo` kampanii (odczytanym
 // pod blokadą wiersza) — niezgodność daje `409 revision_conflict` zamiast
-// cichego nadpisania. Pole opcjonalne na razie (etapowe wprowadzenie, patrz
-// "Ryzyko zmiany" w #215) — starzy klienci bez `revision` zachowują się jak
-// dawniej.
+// cichego nadpisania. Od etapu 2 pole jest WYMAGANE (brak → 400
+// invalid_revision).
 async function updateCampaign(request, env, id, json) {
   const data = await readJson(request);
   let input;
   try { input = parseCampaignContent(data); } catch (error) { mapContentError(error); }
-  const expectedRevision = data.revision !== undefined ? Number(data.revision) : null;
-  if (expectedRevision !== null && !Number.isSafeInteger(expectedRevision)) {
-    throw new RequestError('invalid_revision');
-  }
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
+  // Etap 2 #215: `revision` wymagane (po sprawdzeniu uprawnień). Brak lub
+  // nie-liczba całkowita → 400 invalid_revision.
+  const expectedRevision = data.revision;
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new RequestError('invalid_revision');
   const actorId = context.session.user.id;
   try {
     return await env.db.transaction(async (tx) => {
@@ -316,7 +329,7 @@ async function updateCampaign(request, env, id, json) {
       if (hash === campaign.content_hash && input.title === campaign.title && sendNotBefore === currentSendNotBefore) {
         return json({ campaign: campaignView(campaign), approvalInvalidated: false });
       }
-      if (expectedRevision !== null && campaign.revision_no !== expectedRevision) {
+      if (campaign.revision_no !== expectedRevision) {
         throw new RequestError('revision_conflict', 409);
       }
       // Każda zmiana (także tytułu i terminu startu — zmienia updated_by) cofa
@@ -648,13 +661,15 @@ async function approve(request, env, id, json) {
       if (!recipients.length) throw new RequestError('no_recipients', 409);
       // D-16 (domyślnie wyłączone, wariant zachowawczy): jeśli flaga jest
       // włączona, zatwierdzenie wymaga co najmniej jednej wysyłki testowej
-      // dla dokładnie bieżącej treści (#104).
+      // dla dokładnie bieżącej treści (#104). Liczy się tylko test przyjęty
+      // przez dostawcę (provider_message_id); próba zakończona błędem nie.
       if (emailConfig(env).previewRequiredBeforeApproval) {
         const { rows: previewRows } = await tx.query(
-          'SELECT 1 FROM email_preview_sends WHERE campaign_id = $1 AND content_hash = $2 LIMIT 1',
+          `SELECT 1 FROM email_preview_sends
+            WHERE campaign_id = $1 AND content_hash = $2 AND provider_message_id IS NOT NULL LIMIT 1`,
           [id, campaign.content_hash],
         );
-        if (!previewRows[0]) throw new RequestError('preview_required', 409);
+        if (!previewRows[0]) throw new RequestError('campaign_test_send_required', 409);
       }
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'approved', approved_by = $2, approved_at = now(),
@@ -1427,7 +1442,7 @@ export async function handle(request, env, url, json) {
     if (url.pathname === PREFERENCES_PATH) {
       if (method === 'GET') return await preferencesShow(request, env, url, json);
       if (method === 'POST') return await preferencesOptOut(request, env, url, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     if (method !== 'GET' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     if (url.pathname === '/api/email/campaigns') {
@@ -1437,11 +1452,11 @@ export async function handle(request, env, url, json) {
     }
     if (url.pathname === '/api/email/suppressions') {
       if (method === 'GET') return await listSuppressions(request, env, url, json);
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
     }
     const suppressionMatch = url.pathname.match(/^\/api\/email\/suppressions\/([0-9a-f]{64})\/(release-request|release)$/);
     if (suppressionMatch) {
-      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
       const [, emailHashParam, suppressionAction] = suppressionMatch;
       if (suppressionAction === 'release-request') return await releaseRequest(request, env, emailHashParam, json);
       return await release(request, env, emailHashParam, json);

@@ -37,7 +37,9 @@ i decyzje.
 
 - **Diagnoza:** `http_metrics.status_5xx`, zdarzenia `api_route_error` w
   logu (pole `class`: `bug` = błąd programu, `transient` = przejściowy,
-  `business` = odmowa stanu — nie jest awarią).
+  `outcome_unknown` = błąd przy COMMIT, wynik zapisu nieznany (#156: sprawdzić
+  stan danych, nie ponawiać na ślepo), `business` = odmowa stanu — nie jest
+  awarią).
 - **Działanie:** rollback deploymentu do poprzedniej wersji w Railway
   (zakładka Deployments → poprzedni udany deploy → Redeploy). Nie naprawiać
   na gorąco na produkcji.

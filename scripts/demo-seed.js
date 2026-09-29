@@ -32,7 +32,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations, applyMigrations } from '../src/postgres-migrations.js';
 import { pgliteClient } from './smoke-postgres.js';
 import { createPgDatabase } from '../src/db.js';
-import { isProductionEnv, bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
+import { isProductionEnv } from '../src/app-env.js';
+import { bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { pad } from './lib/synthetic-seed.js';
@@ -65,6 +66,14 @@ export class DemoSeedRefused extends Error {
     this.code = code;
     this.name = 'DemoSeedRefused';
   }
+}
+
+// #166: demo działa zawsze lokalnie na PGlite i danych syntetycznych, więc brak
+// APP_ENV oznacza 'development' (bez ręcznego ustawiania zmiennych; import w demie
+// nie wymaga IMPORT_ENABLED). Jawnie ustawiona produkcja jest odrzucana wcześniej
+// przez assertSafeEnvironment; nieznana wartość zostaje bez zmian (zachowawczo).
+export function demoAppEnv(env = process.env) {
+  return env.APP_ENV || 'development';
 }
 
 // --- Bezpieczeństwo -----------------------------------------------------------
@@ -194,7 +203,7 @@ async function createDemoAccount(env, { email, displayName, role, classId, schoo
   const password = demoPassword();
   let token;
   if (!adminCookie) {
-    const bootstrap = await bootstrapAdmin(env.db, { email, appEnv: process.env.APP_ENV, ttlSeconds: 3600 });
+    const bootstrap = await bootstrapAdmin(env.db, { email, appEnv: 'development' /* produkcję odrzucono wyżej */, ttlSeconds: 3600 });
     token = bootstrap.secret;
   } else {
     const invitation = await apiCall(env, {
@@ -452,11 +461,14 @@ async function seedMeeting(env, hostCookie, hostUserId, approverCookie) {
     },
   });
   const meetingId = created.data.meeting.id;
-  await apiCall(env, {
-    method: 'PATCH', path: `/api/meetings/${meetingId}`, cookie: hostCookie, body: { status: 'scheduled' },
+  // #215: PATCH wymaga `revision` — kolejne zmiany statusu podbijają wersję.
+  const scheduled = await apiCall(env, {
+    method: 'PATCH', path: `/api/meetings/${meetingId}`, cookie: hostCookie,
+    body: { revision: created.data.meeting.revisionNo, status: 'scheduled' },
   });
   await apiCall(env, {
-    method: 'PATCH', path: `/api/meetings/${meetingId}`, cookie: hostCookie, body: { status: 'held' },
+    method: 'PATCH', path: `/api/meetings/${meetingId}`, cookie: hostCookie,
+    body: { revision: scheduled.data.meeting.revisionNo, status: 'held' },
   });
   await apiCall(env, {
     method: 'POST', path: `/api/meetings/${meetingId}/agenda-items`, cookie: hostCookie, idempotencyKey: idKey('demo-agenda'),
@@ -534,7 +546,7 @@ export async function runDemoSeed({
   const env = {
     db,
     MFA_ENCRYPTION_KEY: mfaEncryptionKey,
-    APP_ENV: processEnv.APP_ENV,
+    APP_ENV: demoAppEnv(processEnv),
     // Origin sprawdzany przez handlePgRequest — apiCall() zawsze wysyła DEMO_ORIGIN.
   };
   try {

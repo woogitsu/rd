@@ -9,6 +9,8 @@
 export const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 export const LIST_LIMIT = 50;
 
+import { statusMessage } from "../shared/messages.js";
+
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -89,7 +91,7 @@ export function errorMessage(status, body) {
   if (Object.hasOwn(ERROR_MESSAGES, code)) return ERROR_MESSAGES[code];
   if (Object.hasOwn(STATUS_FALLBACK, status)) return STATUS_FALLBACK[status];
   if (status === 0) return "Brak połączenia z serwerem. Spróbuj ponownie — ponowienie nie utworzy duplikatu.";
-  return `Błąd serwera (${status}). Spróbuj ponownie.`;
+  return statusMessage(status);
 }
 
 // Czy warto ponowić to samo żądanie z tym samym kluczem idempotencji.
@@ -200,7 +202,7 @@ export function buildUploadRequest(meta, mime, idempotencyKey) {
   };
 }
 
-export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", limit = LIST_LIMIT, offset = 0 }) {
+export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", limit = LIST_LIMIT, offset = 0, cursor = "" }) {
   const year = String(schoolYearId ?? "").trim();
   if (!isSafeId(year)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
   if (kind && !Object.hasOwn(KIND_LABELS, kind)) throw new Error("Nieznany rodzaj dokumentu.");
@@ -217,7 +219,9 @@ export function buildListUrl({ schoolYearId, kind = "", classId = "", category =
   if (category) params.set("category", category);
   if (query) params.set("q", query);
   params.set("limit", String(limit));
-  if (offset) params.set("offset", String(offset));
+  // #159: kursor keyset zastępuje offset (offset zostaje tylko dla zgodności).
+  if (cursor) params.set("cursor", String(cursor));
+  else if (offset) params.set("offset", String(offset));
   return `/api/documents?${params.toString()}`;
 }
 

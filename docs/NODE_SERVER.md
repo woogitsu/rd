@@ -26,6 +26,9 @@ Dostępne ścieżki (pełna lista `STATIC_PREFIXES` w `src/node-app.js`):
 - `/email/` — korespondencja i kampanie,
 - `/reconciliation/` — uzgodnienie z wyciągiem bankowym,
 - `/year-close/` — zamknięcie roku szkolnego,
+- `/data-export/` — eksport roczny i lista klasy (pobranie, weryfikacja),
+- `/news/` — aktualności: szkic, zatwierdzenie, publikacja, wycofanie (rejestr zdjęć tylko do odczytu),
+- `/audit/` — raport roczny dla Komisji Rewizyjnej (tylko odczyt),
 - `/health` — liveness: wyłącznie techniczny status procesu (`{"status":"ok"}`), bez danych użytkowników i bez zapytań do bazy,
 - `/health/ready` — readiness: stan bazy i migracji (opis niżej); `200` gdy gotowy, `503` gdy nie.
 
@@ -41,6 +44,7 @@ Brakujący plik zwraca odpowiedź `404`; serwer nie zastępuje go plikiem `index
 | `DATABASE_URL` | opcjonalna | Gdy ustawiona, API obsługuje router PostgreSQL (`src/pg/app.js`); bez niej działa dotychczasowy router Workera |
 | `PG_POOL_MAX` | opcjonalna | Maksymalna liczba połączeń w puli (domyślnie 10, najwyżej 50) |
 | `PG_STATEMENT_TIMEOUT_MS` | opcjonalna | Limit czasu pojedynczego zapytania (domyślnie 10000 ms) |
+| `PG_LOCK_TIMEOUT_MS` | opcjonalna | `lock_timeout` każdej transakcji (domyślnie 3000 ms, najwyżej 60000): oczekiwanie na blokadę wiersza kończy się `503 retry_later` zamiast dopiero po limicie zapytania — [API_ERRORS.md](API_ERRORS.md#błędy-bazy-w-routerze-klasy-ponowienia-limity-156) |
 | `BUCKET_*`, `DOCUMENT_MAX_BYTES` | opcjonalne | Prywatny Storage Bucket i limit pliku — [DOCUMENTS.md](DOCUMENTS.md) |
 | `LOG_LEVEL` | opcjonalna | `debug`, `info` (domyślnie), `warn`, `error` lub `silent` |
 | `SHUTDOWN_TIMEOUT_MS` | opcjonalna | Maksymalny czas łagodnego zamknięcia po SIGTERM (domyślnie 10000 ms); musi być krótszy niż `drainingSeconds` w `railway.json` |

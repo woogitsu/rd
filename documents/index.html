@@ -29,7 +29,7 @@
         <h2 id="filters-title">Widok dokumentów</h2>
         <form id="filters-form" novalidate>
           <label>Rok szkolny
-            <input id="filter-year" name="schoolYearId" autocomplete="off" required placeholder="np. 2026-2027" />
+            <select id="filter-year" name="schoolYearId" required></select>
           </label>
           <label>Rodzaj
             <select id="filter-kind" name="kind">
@@ -40,7 +40,7 @@
             </select>
           </label>
           <label>Klasa
-            <input id="filter-class" name="classId" autocomplete="off" placeholder="opcjonalnie" />
+            <select id="filter-class" name="classId"><option value="">Wszystkie klasy</option></select>
           </label>
           <label>Kategoria
             <select id="filter-category" name="category">
@@ -158,12 +158,12 @@
               </select>
             </label>
             <label>Rok szkolny
-              <input name="schoolYearId" id="upload-year" autocomplete="off" required placeholder="np. 2026-2027" />
+              <select name="schoolYearId" id="upload-year" required></select>
             </label>
           </div>
           <p class="hint" id="kind-hint"></p>
           <label id="class-field" hidden>Klasa
-            <input name="classId" id="upload-class" autocomplete="off" placeholder="identyfikator klasy" />
+            <select name="classId" id="upload-class"></select>
           </label>
           <fieldset id="link-field" hidden>
             <legend>Powiązanie (opcjonalne)</legend>

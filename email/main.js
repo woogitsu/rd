@@ -20,7 +20,7 @@ import { api as apiRequest } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
-import { initialSchoolYearId } from "../shared/school-year.js";
+import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 
 mountShell();
 
@@ -30,6 +30,7 @@ const byId = (id) => document.getElementById(id);
 const state = {
   schoolYearId: "",
   campaigns: [],
+  campaignsCursor: null,
   selectedId: null,
   detail: null,
   preview: null,
@@ -93,10 +94,13 @@ function renderList() {
   byId("campaigns-empty").hidden = count !== 0;
 }
 
-async function loadList() {
-  const url = buildCampaignsUrl(state.schoolYearId);
+async function loadList({ append = false } = {}) {
+  const url = buildCampaignsUrl(state.schoolYearId, append ? state.campaignsCursor : '');
   const data = await api(url);
-  state.campaigns = Array.isArray(data.campaigns) ? data.campaigns : [];
+  const items = Array.isArray(data.campaigns) ? data.campaigns : [];
+  state.campaigns = append ? [...state.campaigns, ...items] : items;
+  state.campaignsCursor = data.nextCursor ?? null;
+  byId("campaigns-more").hidden = !state.campaignsCursor;
   renderList();
 }
 
@@ -112,7 +116,7 @@ function setBusy(busy) {
 async function showYear(value) {
   if (!isValidId(value)) { setMessage("Podaj poprawny identyfikator roku szkolnego.", true); return; }
   setMessage("");
-  yearInput.value = value;
+  selectYearValue(yearInput, value);
   setBusy(true);
   try {
     state.schoolYearId = value;
@@ -125,6 +129,17 @@ async function showYear(value) {
     setBusy(false);
   }
 }
+
+byId("campaigns-more").addEventListener("click", async () => {
+  setBusy(true);
+  try {
+    await loadList({ append: true });
+  } catch (error) {
+    setMessage(`Nie udało się pobrać kolejnych kampanii: ${error.message}`, true);
+  } finally {
+    setBusy(false);
+  }
+});
 
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -250,6 +265,21 @@ function configureDialog(id, prefix, submit, successText) {
       errorBox.textContent = error.code === "idempotency_conflict"
         ? `${error.message} Zamknij okno i sprawdź stan kampanii, zanim spróbujesz ponownie.`
         : error.message;
+      if (error.code === "revision_conflict") {
+        // #215: ktoś zmienił kampanię w międzyczasie. Nic nie zapisujemy po
+        // cichu; użytkownik wczytuje aktualną wersję i sam poprawia jeszcze raz.
+        errorBox.textContent = "Ktoś zmienił tę kampanię w międzyczasie. Wczytaj ponownie, sprawdź zmiany i dopiero wtedy zapisz swoje. ";
+        const reload = document.createElement("button");
+        reload.type = "button";
+        reload.textContent = "Wczytaj ponownie";
+        reload.addEventListener("click", async () => {
+          reload.disabled = true;
+          dialog.close();
+          await refreshDetail();
+          if (state.detail?.campaign && id === "edit-dialog") byId("edit-campaign").click();
+        });
+        errorBox.append(reload);
+      }
     } finally {
       button.disabled = false;
     }
@@ -277,6 +307,8 @@ const editDialog = configureDialog("edit-dialog", "email-edit", async (data) => 
   const result = await api(campaignUrl(id), {
     method: "PUT",
     body: JSON.stringify({
+      // #215: wersja kampanii widziana w chwili otwarcia okna edycji.
+      revision: Number(editDialog.form.dataset.revision),
       title: String(data.get("title")),
       audience: String(data.get("audience")),
       subject: String(data.get("subject")),
@@ -298,6 +330,7 @@ byId("edit-campaign").addEventListener("click", () => {
   form.elements.audience.value = campaign.audience;
   form.elements.subject.value = campaign.subject;
   form.elements.bodyText.value = campaign.bodyText;
+  form.dataset.revision = String(campaign.revisionNo ?? "");
   editDialog.dialog.showModal();
 });
 
@@ -447,6 +480,6 @@ async function applyAccess() {
   }
   // Rok domyślny: najnowszy z przydziałów, awaryjnie heurystyka daty
   // (shared/school-year.js) — panel ładuje listę bez klikania „Pokaż”.
-  await showYear(initialSchoolYearId(state.grants));
+  await showYear(fillYearSelect(yearInput, state.grants));
 }
 applyAccess();

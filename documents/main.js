@@ -1,4 +1,4 @@
-import { representativeClasses, uploadableKinds } from "./core.js";
+import { uploadableKinds } from "./core.js";
 import {
   DEFAULT_MAX_BYTES,
   ERROR_MESSAGES,
@@ -30,7 +30,8 @@ import {
 import { MESSAGES, api, errorMessage as sharedErrorMessage, handleAuthFailure } from "../shared/api.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
-import { initialSchoolYearId } from "../shared/school-year.js";
+import { fillClassSelect } from "../shared/class-choice.js";
+import { fillYearSelect } from "../shared/school-year.js";
 
 mountShell();
 
@@ -45,7 +46,7 @@ function apiErrorText(status, body) {
 }
 
 const byId = (id) => document.getElementById(id);
-const state = { documents: [], query: null, offset: 0, pending: null, uploading: false, detailsRequest: null };
+const state = { documents: [], query: null, cursor: "", pending: null, uploading: false, detailsRequest: null };
 
 const filtersForm = byId("filters-form");
 const yearInput = byId("filter-year");
@@ -151,11 +152,11 @@ async function loadList({ append = false } = {}) {
       category: String(data.get("category") ?? ""),
       q: String(data.get("q") ?? ""),
     };
-    state.offset = 0;
+    state.cursor = "";
   }
   let url;
   try {
-    url = buildListUrl({ ...state.query, limit: LIST_LIMIT, offset: state.offset });
+    url = buildListUrl({ ...state.query, limit: LIST_LIMIT, cursor: append ? state.cursor : "" });
   } catch (error) {
     setMessage(listMessage, error.message, "error");
     return;
@@ -167,12 +168,11 @@ async function loadList({ append = false } = {}) {
     const result = await getJson(url);
     const items = Array.isArray(result.documents) ? result.documents : [];
     state.documents = append ? [...state.documents, ...items] : items;
-    const limit = Number(result.limit) || LIST_LIMIT;
-    state.offset += limit;
+    state.cursor = result.nextCursor ?? "";
     setMessage(listMessage, "");
     renderList();
-    // Serwer filtruje wiersze po LIMIT, więc pełna strona to jedyny sygnał dalszych wyników.
-    loadMore.hidden = items.length < limit;
+    // Serwer podaje kursor następnej strony; brak kursora = koniec listy.
+    loadMore.hidden = !state.cursor;
   } catch (error) {
     setMessage(listMessage, error.message, "error");
     if (!append) {
@@ -304,6 +304,20 @@ details.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeDetails();
 });
 
+// Klasy z listy (GET /api/classes — serwer zawęża do zakresu roli), zamiast wpisywania
+// identyfikatora (#128). Błąd 403 (rola bez dostępu do klas) daje pustą listę.
+const classApi = (url) => api(url);
+function syncFilterClassChoice() {
+  return fillClassSelect(byId("filter-class"), classApi, yearInput.value, {
+    optional: true, emptyLabel: "Wszystkie klasy", selected: byId("filter-class").value,
+  });
+}
+function syncUploadClassChoice() {
+  return fillClassSelect(byId("upload-class"), classApi, byId("upload-year").value, { selected: byId("upload-class").value });
+}
+yearInput.addEventListener("change", syncFilterClassChoice);
+byId("upload-year").addEventListener("change", syncUploadClassChoice);
+
 // Formularz przesyłania
 
 function syncKindFields() {
@@ -313,6 +327,7 @@ function syncKindFields() {
   linkField.hidden = kind !== "financial";
   byId("upload-class").required = kind === "class";
   if (kind !== "class") byId("upload-class").value = "";
+  else syncUploadClassChoice();
   if (kind !== "financial") {
     byId("upload-link-type").value = "";
     byId("upload-link-id").value = "";
@@ -450,13 +465,20 @@ async function applyAccess() {
     const access = await getJson("/api/access");
     grants = Array.isArray(access.grants) ? access.grants : [];
   } catch {
-    return; // bez informacji o rolach formularz zostaje; serwer i tak autoryzuje
+    // Bez informacji o rolach formularz zostaje; serwer i tak autoryzuje. Listy roku
+    // dostają rok z heurystyki daty, żeby panel nie został z pustym wyborem.
+    fillYearSelect(yearInput, []);
+    fillYearSelect(byId("upload-year"), []);
+    return;
   }
   // Rok domyślny (puste ekrany bez klikania „Pokaż”): najnowszy z przydziałów,
   // awaryjnie heurystyka daty (shared/school-year.js). Bez tego pole zostaje puste,
   // dopóki użytkownik sam nie wpisze roku. Użytkownik nadal może go zmienić.
+  fillYearSelect(byId("upload-year"), grants);
+  await syncUploadClassChoice();
   if (!yearInput.value.trim()) {
-    yearInput.value = initialSchoolYearId(grants);
+    fillYearSelect(yearInput, grants);
+    await syncFilterClassChoice();
     if (yearInput.value) await loadList();
   }
   const allowed = new Set(uploadableKinds(grants));
@@ -465,14 +487,6 @@ async function applyAccess() {
   }
   if (allowed.size === 1) kindSelect.value = [...allowed][0];
   syncKindFields();
-  const classes = representativeClasses(grants);
-  if (classes.length) {
-    const list = document.createElement("datalist");
-    list.id = "upload-class-list";
-    list.append(...classes.map((id) => Object.assign(document.createElement("option"), { value: id })));
-    uploadForm.append(list);
-    byId("upload-class").setAttribute("list", list.id);
-  }
   if (allowed.size === 0) {
     const note = document.createElement("p");
     note.className = "message";
