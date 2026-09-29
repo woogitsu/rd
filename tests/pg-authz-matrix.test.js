@@ -87,6 +87,7 @@ const isSuccess = (status) => status >= 200 && status < 300;
 // biznesowe — wtedy dopisz insertAuditEvent(tx, …) w trasie.
 export const AUDIT_EXEMPT_ROUTES = new Map([
   ['import.preview', 'podgląd: walidacja i różnica względem bazy, nic nie zapisuje (import.committed loguje commit)'],
+  ['login.invitationPreview', 'podgląd zaproszenia (#164): tylko odczyt po tokenie, nic nie zapisuje; odmowy loguje auth.invitation_preview_failed — tests/pg-login.test.js'],
   ['ledger.categoryCopy', 'macierz wykonuje tylko podgląd (dryRun); rzeczywiste kopiowanie loguje ledger_category.copied — scenariusz w tests/audit-write-coverage.test.js'],
   ['families.enrollment', 'macierz przypisuje do tej samej klasy (powtórka, changed: false); utworzenie i zmiana logują enrollment.created/class_changed — tests/audit-write-coverage.test.js'],
   ['yearClose.start', 'baza grupy yearClose rozpoczyna zamknięcie w setupie, więc przypadki to powtórki; rozpoczęcie loguje year_close.started — tests/audit-write-coverage.test.js'],

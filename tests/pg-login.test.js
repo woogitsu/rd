@@ -5,13 +5,13 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { createSessionSecret } from '../src/auth.js';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createInvitation } from '../src/pg/auth.js';
+import { createInvitation, revokeInvitation } from '../src/pg/auth.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import {
   checkPasswordPolicy, hashPassword, dummyHash, loginQueueMetrics, MAX_CONCURRENT, MAX_PER_CLIENT, MAX_WAITING, needsRehash, parseHash, verifyPassword, withQueueClient,
   verifyPasswordOrDummy, withSlot,
 } from '../src/pg/password.js';
-import { emailDelayMs, LOGIN_POLICY, scopeHash } from '../src/pg/login.js';
+import { emailDelayMs, LOGIN_POLICY, maskEmail, scopeHash } from '../src/pg/login.js';
 import { freshMfaForbiddenCode, loadAuthorizationContext } from '../src/pg/authorization.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
@@ -594,6 +594,127 @@ test('przyjęcie zaproszenia: wygasłe odrzucone; istniejące konto wymaga obecn
   assert.equal((await right.json()).created, false);
   const grants = await db.query("SELECT role FROM role_grants WHERE user_id = 'u-login-existing'");
   assert.deepEqual(grants.rows.map((row) => row.role), ['representative']);
+});
+
+// #164: podgląd zaproszenia przed przyjęciem — bez sesji, bez konsumowania tokenu.
+test('#164: podgląd zaproszenia: zamaskowany adres, rola, klasa, rok, termin; token nie jest konsumowany', async () => {
+  assert.equal(maskEmail('jan.kowalski@example.invalid'), 'j…@example.invalid');
+  await seedClass(db, { id: 'c-login-prev-1a', name: '1A' });
+  const email = 'podglad.osoba@example.invalid';
+  const { secret, invitationId } = await invite(email, 'representative', { classId: 'c-login-prev-1a', schoolYearId: 'y-test' });
+  const auditBefore = (await db.query('SELECT count(*)::int AS n FROM audit_events')).rows[0].n;
+  const ip = nextIp();
+  const first = await post('/api/invitations/preview', { token: secret }, { ip });
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('Set-Cookie'), null, 'podgląd nie tworzy sesji');
+  const body = await first.json();
+  assert.deepEqual(Object.keys(body).sort(), ['accountExists', 'className', 'email', 'expiresAt', 'role', 'schoolYear']);
+  assert.equal(body.email, 'p…@example.invalid');
+  assert.equal(body.role, 'representative');
+  assert.equal(body.className, '1A');
+  assert.equal(body.schoolYear, 'test y-test');
+  assert.equal(body.accountExists, false);
+  assert.ok(Date.parse(body.expiresAt) > Date.now());
+  const text = JSON.stringify(body);
+  assert.ok(!text.includes('podglad.osoba') && !text.includes('u-login-inviter') && !text.includes(invitationId), 'bez pełnego adresu, zapraszającego i identyfikatorów');
+  // Powtórzenie działa, nic nie zmienia w bazie (bez konta, przydziału, zdarzenia audytu).
+  assert.equal((await post('/api/invitations/preview', { token: secret }, { ip })).status, 200);
+  const state = await db.query('SELECT accepted_at, revoked_at FROM invitations WHERE id = $1', [invitationId]);
+  assert.deepEqual(state.rows[0], { accepted_at: null, revoked_at: null });
+  assert.equal((await db.query('SELECT 1 FROM users WHERE email = $1', [email])).rows.length, 0);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM audit_events')).rows[0].n, auditBefore, 'sukces podglądu nie zapisuje zdarzenia');
+  assert.equal((await limitRow('ip', ip))?.failure_count ?? 0, 0, 'udany podgląd nie liczy się do limitu');
+  // Po podglądzie zaproszenie nadal daje się przyjąć.
+  const password = newPassword();
+  const accept = await post('/api/invitations/accept', { token: secret, password, passwordRepeat: password });
+  assert.equal(accept.status, 201);
+  // Po przyjęciu podgląd jest odmową jak każda inna.
+  const used = await post('/api/invitations/preview', { token: secret }, { ip });
+  assert.equal(used.status, 400);
+  assert.deepEqual(await used.json(), { error: 'invalid_invitation' });
+});
+
+test('#164: podgląd — konto z hasłem (accountExists), dwa zaproszenia jednej osoby, rola bez klasy', async () => {
+  const existing = await seedPasswordUser({ userId: 'u-login-prevacc' });
+  await seedClass(db, { id: 'c-login-prev-1a', name: '1A' });
+  await seedClass(db, { id: 'c-login-prev-2b', name: '2B' });
+  const one = await invite(existing.email, 'representative', { classId: 'c-login-prev-1a', schoolYearId: 'y-test' });
+  const two = await invite(existing.email, 'representative', { classId: 'c-login-prev-2b', schoolYearId: 'y-test' });
+  const ip = nextIp();
+  const a = await (await post('/api/invitations/preview', { token: one.secret }, { ip })).json();
+  const b = await (await post('/api/invitations/preview', { token: two.secret }, { ip })).json();
+  assert.equal(a.accountExists, true);
+  assert.equal(b.accountExists, true);
+  assert.deepEqual([a.className, b.className], ['1A', '2B']);
+  assert.equal(a.email, `u…@example.invalid`);
+  const board = await (await post('/api/invitations/preview', { token: (await invite('zarzad.podglad@example.invalid', 'board')).secret }, { ip })).json();
+  assert.equal(board.className, null);
+  assert.equal(board.schoolYear, 'test y-test');
+  assert.equal(board.accountExists, false);
+});
+
+test('#164: podgląd — każda odmowa to ten sam 400 invalid_invitation, audyt i limit jak przy accept', async () => {
+  const ip = nextIp();
+  const cases = [];
+  cases.push(['nieznany', randomBytes(32).toString('base64url')]);
+  cases.push(['zły format', 'krotki']);
+  const { secret: expiredSecret } = await createSessionSecret().then(async ({ secret, tokenHash }) => {
+    await seedUser(db, { userId: 'u-login-inviter' });
+    await db.query(
+      `INSERT INTO invitations (id, email, token_hash, role, school_year_id, created_by, created_at, expires_at)
+       VALUES ($1, 'wygasle.podglad@example.invalid', $2, 'board', 'y-test', 'u-login-inviter', now() - interval '4 days', now() - interval '1 day')`,
+      [crypto.randomUUID(), tokenHash],
+    );
+    return { secret };
+  });
+  cases.push(['wygasły', expiredSecret]);
+  const revoked = await invite('wycofane.podglad@example.invalid', 'board');
+  await revokeInvitation(env, { invitationId: revoked.invitationId, actorId: 'u-login-inviter' });
+  cases.push(['wycofany', revoked.secret]);
+  const disabled = await seedPasswordUser({ userId: 'u-login-prevdis', disabled: true });
+  cases.push(['konto wyłączone', (await invite(disabled.email, 'board')).secret]);
+  const before = (await auditRows('auth.invitation_preview_failed')).length;
+  for (const [label, token] of cases) {
+    const response = await post('/api/invitations/preview', { token }, { ip });
+    assert.equal(response.status, 400, label);
+    assert.deepEqual(await response.json(), { error: 'invalid_invitation' }, label);
+    const accept = await post('/api/invitations/accept', { token, password: newPassword() }, { ip: nextIp() });
+    assert.equal(accept.status, 400, `accept: ${label}`);
+  }
+  const rows = (await auditRows('auth.invitation_preview_failed')).slice(before);
+  assert.equal(rows.length, cases.length, 'każda odmowa zapisana w audycie');
+  assert.ok(rows.every((row) => row.actor_id === null && !JSON.stringify(row.metadata_json).includes('@')), 'bez aktora, adresu i tokenu');
+  // Ten sam zakres IP co przy accept: po serii błędów podgląd i accept zwracają 429.
+  const flood = [];
+  for (let i = 0; i < LOGIN_POLICY.ipMaxFailures + 2; i += 1) {
+    flood.push((await post('/api/invitations/preview', { token: randomBytes(32).toString('base64url') }, { ip })).status);
+  }
+  assert.ok(flood.includes(429), flood.join(','));
+  assert.equal((await limitRow('ip', ip)).locked, true);
+  assert.equal((await post('/api/invitations/accept', { token: randomBytes(32).toString('base64url'), password: newPassword() }, { ip })).status, 429);
+});
+
+test('#164: podgląd — wycofanie w trakcie wypełniania: accept odmawia, konto nie powstaje', async () => {
+  const email = 'wycofane.wtrakcie@example.invalid';
+  const { secret, invitationId } = await invite(email, 'board');
+  assert.equal((await post('/api/invitations/preview', { token: secret }, { ip: nextIp() })).status, 200);
+  await revokeInvitation(env, { invitationId, actorId: 'u-login-inviter' });
+  const password = newPassword();
+  const accept = await post('/api/invitations/accept', { token: secret, password, passwordRepeat: password }, { ip: nextIp() });
+  assert.equal(accept.status, 400);
+  assert.deepEqual(await accept.json(), { error: 'invalid_invitation' });
+  assert.equal((await db.query('SELECT 1 FROM users WHERE email = $1', [email])).rows.length, 0);
+});
+
+test('#164: podgląd — metoda, typ treści i pole token walidowane jak przy accept', async () => {
+  const get405 = await get('/api/invitations/preview');
+  assert.equal(get405.status, 405);
+  assert.equal(get405.headers.get('Allow'), 'POST');
+  const bad = await post('/api/invitations/preview', {});
+  assert.equal(bad.status, 400);
+  assert.deepEqual(await bad.json(), { error: 'invalid_json' });
+  const wrongOrigin = await post('/api/invitations/preview', { token: 'x' }, { origin: 'https://evil.example.invalid' });
+  assert.equal(wrongOrigin.status, 403);
 });
 
 // #146: admin zaprasza WŁASNY adres i przyjmuje zaproszenie własnym hasłem —

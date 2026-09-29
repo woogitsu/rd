@@ -96,6 +96,59 @@ export function isRecoveryFormat(value) {
   return /^[A-Z2-7]{16}$/.test(normalizeRecoveryCode(value));
 }
 
+// --- Podgląd zaproszenia (#164) -----------------------------------------------------------
+// Odpowiedź POST /api/invitations/preview: { email (maska), role, className, schoolYear,
+// expiresAt, accountExists }. Bez zapraszającego i danych innych osób.
+
+const INVITE_ROLE_LABELS = Object.freeze({
+  admin: "Administrator",
+  board: "Zarząd",
+  treasurer: "Skarbnik",
+  representative: "Przedstawiciel klasy",
+  audit: "Komisja Rewizyjna",
+  principal: "Dyrekcja",
+});
+
+export function formatInviteExpiry(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("pl-PL", {
+    dateStyle: "long", timeStyle: "short", timeZone: "Europe/Brussels",
+  }).format(date);
+}
+
+// Wiersze podsumowania: tylko pola, które serwer zwrócił.
+export function inviteSummaryRows(preview) {
+  if (!preview || typeof preview !== "object") return [];
+  const rows = [];
+  if (preview.email) rows.push(["Adres e-mail konta", String(preview.email)]);
+  if (preview.role) rows.push(["Rola", INVITE_ROLE_LABELS[preview.role] ?? String(preview.role)]);
+  if (preview.className) rows.push(["Klasa", String(preview.className)]);
+  if (preview.schoolYear) rows.push(["Rok szkolny", String(preview.schoolYear)]);
+  const expiry = formatInviteExpiry(preview.expiresAt);
+  if (expiry) rows.push(["Ważne do", expiry]);
+  return rows;
+}
+
+// Wariant formularza: konto z hasłem — jedno pole „Obecne hasło”, bez powtórzenia;
+// nowe konto (albo brak podglądu) — nowe hasło dwa razy, oba obowiązkowe.
+export function inviteFormMode(preview) {
+  if (preview && preview.accountExists === true) {
+    return {
+      existing: true,
+      passwordLabel: "Obecne hasło",
+      passwordHint: "Masz już konto w panelu. Wpisz swoje obecne hasło — rola zostanie dodana do Twojego konta.",
+      autocomplete: "current-password",
+    };
+  }
+  return {
+    existing: false,
+    passwordLabel: "Nowe hasło",
+    passwordHint: `Co najmniej ${PASSWORD_MIN} znaków. Najłatwiej zapamiętać kilka niezwiązanych słów. Menedżer haseł i wklejanie są dozwolone.`,
+    autocomplete: "new-password",
+  };
+}
+
 // Token w części URL po „#” nie trafia do serwera ani jego logów.
 export function parseFragment(hash) {
   const text = String(hash ?? "").replace(/^#/, "");
@@ -212,7 +265,7 @@ export const SECRET_INPUT_IDS = Object.freeze([
 ]);
 const TOKEN_INPUT_IDS = Object.freeze(["invite-token", "reset-token"]);
 const SECRET_TEXT_IDS = Object.freeze(["manual-key"]);
-const SECRET_CONTAINER_IDS = Object.freeze(["qr-code", "recovery-codes"]);
+const SECRET_CONTAINER_IDS = Object.freeze(["qr-code", "recovery-codes", "invite-summary"]);
 
 export function resetPasswordToggle(doc, toggle) {
   const input = doc.getElementById(toggle.dataset.target);

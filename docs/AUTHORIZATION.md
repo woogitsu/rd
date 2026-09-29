@@ -262,6 +262,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/login` | publiczna (bez sesji; uwierzytelnia e-mail i hasło) | nie | — | cookie żądania ignorowane; zgodny `Origin`; zwolniona z bramki MFA; sesja bez MFA |
 | `GET /api/auth/state` | każdy zalogowany (stan własnej sesji) | nie | — | zwolniona z bramki MFA |
 | `POST /api/invitations/accept` | publiczna (uwierzytelnia jednorazowy token zaproszenia) | nie | — | zgodny `Origin`; zwolniona z bramki MFA; istniejące konto z hasłem: wymagane jego obecne hasło |
+| `POST /api/invitations/preview` | publiczna (odczyt po jednorazowym tokenie zaproszenia; nie konsumuje go) | nie | — | zgodny `Origin`; zwolniona z bramki MFA; limit prób jak `accept` (zakres IP); każda odmowa to `400 invalid_invitation`; bez zapraszającego, identyfikatorów i pełnego adresu (maska `j…@domena`) |
 | `POST /api/password/reset` | publiczna (uwierzytelnia jednorazowy token od administratora) | nie | — | zgodny `Origin`; zwolniona z bramki MFA; wylogowuje wszystkie sesje konta |
 | `POST /api/password/change` | każdy zalogowany (własne hasło) | nie | — | **nie** jest zwolniona z bramki MFA: admin, zarząd, skarbnik bez MFA — 403; wylogowuje inne sesje konta |
 | `GET /api/year-close/:schoolYearId` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin, Komisja Rewizyjna: 403 |
