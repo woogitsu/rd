@@ -5,11 +5,14 @@ import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
 import { confirmAction } from '../shared/confirm-dialog.js';
 import { buildErrorReportCsv, unusedColumns } from './report.js';
+import { applyRememberedMapping, clearRememberedMapping, hasRememberedMapping, loadRememberedMapping, saveRememberedMapping } from './mapping-memory.js';
 import { mountShell } from '../shared/shell.js';
 import '../shared/shell.css';
 
 mountShell();
 const fileInput = document.querySelector('#file');
+const clearMappingButton = document.querySelector('#clear-mapping');
+const mappingMemoryNote = document.querySelector('#mapping-memory-note');
 const unusedColumnsBox = document.querySelector('#unused-columns');
 const downloadReportButton = document.querySelector('#download-report');
 const encodingSelect = document.querySelector('#encoding');
@@ -38,6 +41,10 @@ let currentFileName = '';
 // bez imion, nazwisk i e-maili.
 let reportEntries = [];
 function updateReportButton() { downloadReportButton.disabled = reportEntries.length === 0; }
+function updateMemoryControls(message = '') {
+  clearMappingButton.hidden = !hasRememberedMapping();
+  mappingMemoryNote.textContent = message;
+}
 function showError(message) { status.className = 'status error'; status.textContent = message; fileInput.setAttribute('aria-invalid', 'true'); }
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 // Buduje sekcję mapowania kolumn dla aktualnego `matrix` — wywoływane po wczytaniu
@@ -47,7 +54,8 @@ function applyMatrix(note = '') {
   if (matrix.length < 2 || matrix.length > 5001) throw new Error('Plik musi zawierać od 1 do 5000 wierszy danych.');
   if (!Array.isArray(matrix[0]) || matrix[0].length > 60) throw new Error('Nagłówek ma więcej niż 60 kolumn.');
   const headers = matrix[0].map(v => String(v ?? '').trim());
-  const suggested = guessMapping(headers);
+  // #109: aliasy mają pierwszeństwo, potem mapowanie zapamiętane w tej przeglądarce (tylko nagłówek → pole).
+  const suggested = applyRememberedMapping(headers, guessMapping(headers), loadRememberedMapping());
   for (const [field, label] of FIELDS) {
     const wrapper = document.createElement('label'); wrapper.textContent = label;
     const select = document.createElement('select'); select.dataset.field = field;
@@ -56,7 +64,7 @@ function applyMatrix(note = '') {
     if (suggested[field] !== undefined) select.value = String(suggested[field]);
     wrapper.append(select); mapArea.append(wrapper);
   }
-  mappingSection.hidden = false;
+  mappingSection.hidden = false; updateMemoryControls();
   status.className = 'status muted';
   status.textContent = `Odczytano ${matrix.length - 1} wierszy z pliku ${currentFileName}.${note}`;
 }
@@ -108,6 +116,7 @@ document.querySelector('#preview').addEventListener('click', () => {
   const mapping = Object.fromEntries(Array.from(mapArea.querySelectorAll('select')).map(el => [el.dataset.field, el.value]));
   try {
     const result = validateRows(matrix, mapping);
+    saveRememberedMapping(matrix[0].map((v) => String(v ?? '').trim()), mapping); updateMemoryControls();
     lastResult = result; resetServer(); serverSection.hidden = false;
     // #109: raport per wiersz (bez danych osobowych) i wykaz kolumn, których mapowanie nie użyje.
     reportEntries = [
@@ -156,6 +165,10 @@ document.querySelector('#preview').addEventListener('click', () => {
     resultSection.hidden = false; resultSection.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth' });
     document.querySelector('#result-title').focus({ preventScroll: true });
   } catch (error) { lastResult = null; reportEntries = []; updateReportButton(); resetServer(); resultSection.hidden = true; serverSection.hidden = true; showError(error.message); }
+});
+clearMappingButton.addEventListener('click', () => {
+  clearRememberedMapping();
+  updateMemoryControls(matrix ? 'Zapamiętane mapowanie wyczyszczone. Dotyczy kolejnych plików; wybór na tej stronie się nie zmienił.' : 'Zapamiętane mapowanie wyczyszczone.');
 });
 downloadReportButton.addEventListener('click', () => {
   if (!reportEntries.length) return;
