@@ -736,7 +736,8 @@ test('powód odwołania i zmiany terminu przechodzi bramkę: e-mail odrzucony, t
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
     const audit = (await t.db.query(`SELECT metadata_json FROM audit_events WHERE action = 'meeting.rescheduled'`)).rows[0].metadata_json;
     assert.equal(audit.piiConfirmed, true);
-    assert.ok(!JSON.stringify(audit).includes('470'), 'audyt bez treści powodu');
+    // Treść powodu (nie przypadkowe cyfry w identyfikatorach/datach) nie trafia do audytu.
+    assert.ok(!/Kontakt|12 34 56|w sprawie sali/.test(JSON.stringify(audit)), 'audyt bez treści powodu');
     const rev2 = await t.revision(meeting);
     const cancelMail = await t.call(t.cookies.board, 'POST', `${base}/cancellation`, { reason: 'Pisać na jan@example.invalid', revision: rev2 });
     assert.deepEqual([cancelMail.status, cancelMail.body.error], [422, 'personal_data_forbidden']);
