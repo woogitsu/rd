@@ -21,6 +21,7 @@ Po zbudowaniu serwer Node udostępnia panel pod `/documents/` z tego samego orig
 - lista dokumentów widocznych dla użytkownika w danym roku szkolnym, z filtrami rodzaju i klasy — zakres widoczności wylicza serwer z ról i przydziałów,
 - widok metadanych (rodzaj, rok, klasa, typ, rozmiar, SHA-256, powiązanie, autor, czas),
 - pobranie przez link do `/api/documents/{id}/content` (załącznik z nazwą techniczną, zdarzenie w dzienniku),
+- wersje i stan (issue #82): stan dokumentu (aktualny, zastąpiony, unieważniony) w liście i szczegółach, historia wersji (łańcuch „zastępuje” / „zastąpiony przez” z odnośnikami), filtr „Pokaż też zastąpione i unieważnione” (`status=all`), akcje „Zastąp innym dokumentem…” i „Unieważnij…” z powodem (3–500 znaków, wewnętrzny) i oknem potwierdzenia z `shared/confirm-dialog.js`. Plik zostaje w archiwum — żadna z akcji go nie usuwa. Przyciski widzą tylko konta z rolą, którą API już dopuszcza do zapisu danego rodzaju (jak przy przesłaniu, D-08/D-09 bez rozszerzania); rozstrzyga serwer (404 poza zakresem, MFA dla dowodów finansowych),
 - przesłanie pliku PDF, PNG lub JPEG z metadanymi: rodzaj, rok szkolny, klasa (tylko materiały klasy), powiązanie z wpisem księgi lub wpłatą (tylko dowody finansowe).
 
 ## Zasady

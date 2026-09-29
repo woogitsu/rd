@@ -296,6 +296,10 @@
     "sha256": "90b6b1439eb8bbf64cf526b3529db889136e3b4c2c452eb17050b9aaf636080b"
   },
   {
+    "name": "0130_year_freeze_remaining_tables.sql",
+    "sha256": "a206e630b58d1e3132ce0fe1eb4d6b706b3e623098b8428db34ad195440c4892"
+  },
+  {
     "name": "0150_meeting_attendee_user_scope.sql",
     "sha256": "154b3e71d4320c743ae4d9c3f6550c9a0d78c51064d377879250b9c20206ca44"
   }
