@@ -151,7 +151,20 @@ Zmiany w tym PR (#124):
 - `news_photos.alt_text` jest teraz obowiązkowy przy rejestracji zdjęcia (albo jawne `decorative = true`) — patrz `docs/NEWS.md` i migracja `0071_news_photo_alt_text_required.sql`. Publiczny JSON zwraca `altText: ""` (nie `null`) dla zdjęć dekoracyjnych.
 - Szkic deklaracji dostępności strony publicznej: `docs/ACCESSIBILITY_DECLARATION_DRAFT.md` — tekst do zatwierdzenia przez zarząd/szkołę, bez twierdzeń o zgodności.
 
-**Poza zakresem tego PR** (patrz #124, propozycja pkt. 3): `<figure>`/`<figcaption>` dla zdjęć z autorem i licencją nie jest jeszcze potrzebne — `site/` nie renderuje jeszcze żadnych zdjęć (wyświetlanie galerii, #96, nie jest zaimplementowane); model danych (`altText`/`decorative`) jest już gotowy na tę chwilę. Kontrast `site/styles.css` i `prefers-reduced-motion` — patrz PR dla #112 (ten sam plik, żeby uniknąć nakładania się zmian).
+**Stan po #96 i kolejnym PR dla #124** (`site/`, aktualności i galeria; `documents/` poza tym zakresem):
+
+| Kryterium | Stan | Weryfikacja |
+|---|---|---|
+| Język strony, skip link, jeden `h1`, `main#main`, nawigacja z etykietą, sekcje nazwane przez `h2` | spełnione | `tests/a11y-static.test.js`, `tests/site-a11y.test.js` |
+| Kontrast tekstu (`--text`, `--muted`, `--red`, `--red-dark`) ≥ 4,5:1 na białym i jasnoszarym tle; obrys fokusu ≥ 3:1 | spełnione | `tests/site-a11y.test.js` (tokeny czytane z `site/styles.css`) |
+| Fokus widoczny (`:focus-visible`, 3 px), `prefers-reduced-motion`, `forced-colors` | spełnione | `tests/a11y-static.test.js` |
+| Błąd wczytywania ogłaszany (`role="alert"`), stan pusty grzeczny (`role="status"`), nawigacja bez zmian po wczytaniu | spełnione | `tests/site-a11y.test.js` |
+| Zdjęcia: `<figure>` + `<figcaption>` (autor · źródło · licencja), `alt` wyłącznie z pola `altText` zatwierdzonego wpisu, `alt=""` tylko dla `decorative`; zdjęcie bez opisu i bez `decorative` nie jest pokazywane; tekst nie jest nigdzie wymyślany | spełnione | `tests/site-a11y.test.js`, `tests/site-core.test.js` |
+| Długie tytuły i 20 wpisów przy 320 px: `overflow-wrap: anywhere`, `max-width: 100%` obrazów, brak sztywnych szerokości | sprawdzone statycznie (CSS + logika), **nie renderowane w przeglądarce** | `tests/site-a11y.test.js` |
+| Renderowanie 320/640/1280 px w Playwright (`docs/a11y/audit.mjs`) dla `site/` | **do wykonania ręcznie** (Playwright nie jest zależnością projektu; skrypt nadal obsługuje `import`, `panel`, `ledger`, `print`) | — |
+| NVDA / VoiceOver dla strony publicznej i galerii | **niewykonane** | lista kontrolna powyżej |
+
+Reguła opisu zdjęć (bez imion i nazwisk dzieci) jest zasadą redakcyjną, nie da się jej wymusić technicznie; jej treść czeka na D-18 (docs/DECISIONS.md) i nie jest tu rozstrzygana. Poprzedni akapit „site/ nie renderuje zdjęć” jest nieaktualny — galeria działa od #96.
 
 ## Rozszerzenie przeglądu na wszystkie aplikacje statyczne (#112)
 
