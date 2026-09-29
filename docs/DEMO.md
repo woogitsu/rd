@@ -1,12 +1,12 @@
 # Scenariusz pokazu prototypu dla zarządu
 
-Zakres: uzupełnia [#404](https://github.com/woogitsu/rd/pull/404) (`scripts/demo-seed.js`, sekcja README „Pokaz dla zarządu”). Ten dokument nie zmienia kodu ani danych demo — opisuje wyłącznie kolejność ekranów, role i pytania do zarządu na spotkaniu ok. 20–25 minut.
+Zakres: uzupełnia [#404](https://github.com/woogitsu/rd/pull/404) (`scripts/demo-seed.js`, sekcja README „Pokaz dla zarządu”). Ten dokument opisuje kolejność ekranów, role, liczby w danych demo (sekcja „Liczby w danych demo i celowe przykłady”) i pytania do zarządu na spotkaniu ok. 20–25 minut.
 
 **Zanim ktokolwiek uruchomi pokaz: to jest prototyp na danych wyłącznie syntetycznych, uruchamiany lokalnie, nigdzie niewdrożony.** Żaden krok poniżej nie wysyła e-maila, nie łączy się z prawdziwym bankiem ani z systemem szkoły — `scripts/demo-seed.js` odmawia działania poza `localhost` i przy ustawionym `BREVO_API_KEY` (README, sekcja „Pokaz dla zarządu”, `#404`). Każdy ekran poniżej istnieje dziś na `origin/main`; jedyną rzeczą, którą dodaje `#404`, są dane demo (konta ról, wpłaty, wpisy księgi, zapowiedzi wydarzeń, zebranie z protokołem, szkic kampanii e-mail) — bez scalenia `#404` te same ekrany są puste albo wymagają ręcznego zapisu do bazy (README: „sesję zakłada się ręcznym zapisem do PostgreSQL”).
 
 Zweryfikowano lokalnie 28.09.2026 (`origin/main` + merge `origin/claude/new-session-v02wnl-demo-seed`, Playwright/Chromium): kroki 1–9 poniżej przechodzą z danymi z `npm run demo:seed`. Usterki i rzeczy do poprawienia przed pokazem są opisane w raporcie PR, nie w tym dokumencie.
 
-`npm run demo:seed` zakłada też SZKIC uzgodnienia wyciągu bankowego (nigdy nie zatwierdzany — żadne zadanie testowe nie potwierdza uzgodnienia w cudzym imieniu, AGENTS.md) z 8 pozycjami zaimportowanymi z CSV przez tę samą trasę importu co panel `/reconciliation/`. 6 z 8 pozycji odpowiada wpłatom lub wpisom księgi z pozostałych danych demo — panel może więc zaproponować dopasowania tak jak przy prawdziwych danych; 2 pozycje (2026-11-18 i 2026-11-25) celowo NIE odpowiadają niczemu, do pokazu stanu „niedopasowana” / „do wyjaśnienia” w kroku 4.
+`npm run demo:seed` zakłada też SZKIC uzgodnienia wyciągu bankowego (nigdy nie zatwierdzany — żadne zadanie testowe nie potwierdza uzgodnienia w cudzym imieniu, AGENTS.md) z 17 pozycjami zaimportowanymi z CSV przez tę samą trasę importu co panel `/reconciliation/`. 15 z 17 pozycji odpowiada wpisom księgi (wpłaty przelewem, darowizna, materiały, opłata za rachunek) — panel może więc zaproponować dopasowania tak jak przy prawdziwych danych; 2 pozycje (2026-11-18 i 2026-11-25) celowo NIE mają wpisu księgi, do pokazu stanu „do wyjaśnienia” w kroku 4 (szczegóły: „Liczby w danych demo i celowe przykłady”).
 
 ## Przygotowanie (nie pokazywać zarządowi, zrobić wcześniej)
 
@@ -18,7 +18,7 @@ npm run demo:start     # PORT=3000 npm start na tej samej bazie
 
 Zmiennych środowiskowych nie trzeba ustawiać: demo działa wyłącznie lokalnie, więc bez `APP_ENV` skrypty przyjmują `development` (import w demie nie wymaga `IMPORT_ENABLED`). Jawnie ustawione `APP_ENV=production`/`prod` albo `NODE_ENV=production` powoduje odmowę uruchomienia (`demo:seed` i `demo:start`), tak samo obecność `BREVO_API_KEY` (#166).
 
-Konta powstałe z seeda (hasła i sekrety TOTP tylko na konsoli, nigdzie indziej): `admin@example.invalid` (administrator), `zarzad1@example.invalid` i `zarzad2@example.invalid` (zarząd, prezes/sekretarz), `skarbnik@example.invalid` (skarbnik), `przedstawiciel@example.invalid` (przedstawiciel klasy 0-A), `komisja-rewizyjna@example.invalid` (Komisja Rewizyjna). MFA jest skonfigurowane dla `admin`, `board` i `treasurer` (`MFA_REQUIRED_ROLES`, docs/AUTH.md); dla przedstawiciela i komisji rewizyjnej — nie.
+Konta powstałe z seeda (hasła i sekrety TOTP tylko na konsoli, nigdzie indziej): `admin@example.invalid` (administrator), `zarzad1@example.invalid` i `zarzad2@example.invalid` (zarząd, prezes/sekretarz), `skarbnik@example.invalid` (skarbnik), `przedstawiciel@example.invalid` (przedstawiciel klasy 0-A), `komisja-rewizyjna@example.invalid` (Komisja Rewizyjna). MFA (TOTP) jest zapisane w seedzie dla WSZYSTKICH sześciu kont: dla `admin`, `board` i `treasurer` wymaga go `MFA_REQUIRED_ROLES` (docs/AUTH.md), a dla przedstawiciela klasy i Komisji Rewizyjnej seed zakłada czynnik z własnej decyzji przygotowującego pokaz (wymóg MFA w kodzie dla tych ról się nie zmienia; Komisja Rewizyjna potrzebuje potwierdzonego czynnika do raportu `/api/reports/audit`). Logowanie każdego z tych kont: e-mail i hasło, potem 6-cyfrowy kod z aplikacji uwierzytelniającej; sekret TOTP (base32) każdego konta jest wypisywany na konsoli przez `npm run demo:seed` obok hasła — dodać go do aplikacji uwierzytelniającej przed pokazem (tak samo dla wszystkich kont). Uwaga: kod z tego samego 30-sekundowego kroku nie zadziała dwa razy — przy przełączaniu kont poczekać na nowy kod.
 
 Dziś (przed scaleniem [#408](https://github.com/woogitsu/rd/pull/408)) kilka ekranów (Uzgodnienia wyciągu, Zebrania, Zamknięcie roku) pokazuje dane dopiero po wpisaniu roku szkolnego `2026-2027` w polu „Rok szkolny” i kliknięciu „Pokaż” — zrobić to przed pokazem, żeby nie szukać tego na żywo. Po scaleniu `#408` panele same wypełniają to pole najnowszym rokiem z przydziałów konta (albo, gdy przydział nie wskazuje roku, heurystyką daty 1 września) i ładują dane od razu po wejściu — pole zostaje edytowalne, więc krok „Pokaż” nadal działa, jeśli ktoś chce zmienić rok.
 
@@ -39,18 +39,18 @@ Dziś (przed scaleniem [#408](https://github.com/woogitsu/rd/pull/408)) kilka ek
 
 ### 3. Księga (ok. 3 min)
 **Ekran:** `/ledger/` (ta sama sesja skarbnika albo zarządu).
-**Co pokazać:** bilans otwarcia/zamknięcia, przychody i wydatki za rok demo, listę wpisów z kategoriami; wskazać przycisk „Korekta” przy wpisie — korekta jest osobnym zapisem, oryginał zostaje.
+**Co pokazać:** bilans otwarcia/zamknięcia (0,00 / 450,00 EUR), przychody 792,00 EUR i wydatki 342,00 EUR za rok demo (wpłaty rodzin są ujęte w księdze jako osobne wpisy powiązane z wpłatą), listę wpisów z kategoriami; wskazać przycisk „Korekta” przy wpisie — korekta jest osobnym zapisem, oryginał zostaje.
 **Co powiedzieć:** Każdy wpis księgi jest niezmienny — poprawka to nowy zapis, więc historia zawsze pokazuje, co się zmieniło i kto to zmienił.
 **Pytania na koniec:** **D-13** (rachunek bankowy, gotówka, kto uzgadnia), **D-15** (format referencji i tryb zatwierdzania wydatku powyżej 3000 EUR).
 
 ### 4. Uzgodnienie wyciągu (ok. 2 min)
 **Ekran:** `/reconciliation/` — wpisać rok szkolny `2026-2027` i kliknąć „Pokaż”.
-**Co pokazać:** SZKIC uzgodnienia z danych demo — 8 pozycji zaimportowanych z wyciągu, 6 z propozycją dopasowania do wpłaty albo wpisu księgi, 2 oznaczone jako „niedopasowana” / „do wyjaśnienia” (2026-11-18, 2026-11-25 — celowo nie odpowiadają niczemu w danych demo). Zdanie na ekranie: „Dopasowania są wyłącznie propozycjami — zatwierdzenie i potwierdzenie są ręczne.” Uzgodnienie jest szkicem — nie zostało i nie zostanie zatwierdzone przez seed.
-**Co powiedzieć:** System tylko podpowiada, które wpłaty i wpisy księgi pasują do pozycji z wyciągu banku — nikt nie jest automatycznie uznawany za rozliczonego bez ręcznego potwierdzenia; pozycje bez dopasowania (jak te dwie) wymagają ręcznego wyjaśnienia przez skarbnika, zanim uzgodnienie zostanie zatwierdzone.
+**Co pokazać:** SZKIC uzgodnienia z danych demo — 17 pozycji zaimportowanych z wyciągu (saldo wyciągu 461,75 EUR, saldo księgi 450,00 EUR, różnica 11,75 EUR), 15 z propozycją dopasowania do wpisu księgi, 2 „do wyjaśnienia” (2026-11-18: wpłata bez przypisanej rodziny, propozycja tylko do wpłaty; 2026-11-25: opłata SWIFT, brak kandydata). Obie razem dają dokładnie różnicę 11,75 EUR. Zdanie na ekranie: „Dopasowania są wyłącznie propozycjami — zatwierdzenie i potwierdzenie są ręczne.” Uzgodnienie jest szkicem — nie zostało i nie zostanie zatwierdzone przez seed.
+**Co powiedzieć:** System tylko podpowiada, które wpłaty i wpisy księgi pasują do pozycji z wyciągu banku — nikt nie jest automatycznie uznawany za rozliczonego bez ręcznego potwierdzenia; pozycje bez wpisu księgi (jak te dwie) wymagają ręcznego wyjaśnienia przez skarbnika, zanim uzgodnienie zostanie zatwierdzone.
 **Pytanie na koniec:** **D-13** (kto i jak często uzgadnia księgę z wyciągiem, ten sam punkt co w kroku 3).
 
 ### 5. Przedstawiciel widzi tylko swoją klasę (ok. 3 min)
-**Ekran:** wylogować skarbnika, zalogować `przedstawiciel@example.invalid` (bez MFA — ta rola go nie wymaga), `/families/`.
+**Ekran:** wylogować skarbnika, zalogować `przedstawiciel@example.invalid` (hasło + kod TOTP z sekretu wypisanego przez seed; ta rola nie musi mieć MFA według kodu, ale konto demo je ma), `/families/`.
 **Co pokazać:** listę „Klasy” pokazuje wyłącznie „Klasa 0-A (dane przykładowe)”, ze zdaniem na ekranie „Widoczne są wyłącznie klasy z Twojego zakresu uprawnień.” Podkreślić, że to sprawdzenie serwera, nie tylko ukryty link w interfejsie (AGENTS.md).
 **Eksport listy klasy i raport KR (dodatek do kroku 5, #161):** konta `przedstawiciel@…` i `komisja-rewizyjna@…` nie mają zapisanego MFA, a eksport listy klasy (`/data-export/`) i raport KR (`/audit/`) go wymagają. Wejście tam kończy się odesłaniem na `/login/` z komunikatem „Strona, którą otwierasz, wymaga weryfikacji dwuetapowej…” i przyciskiem „Rozpocznij konfigurację”; po zapisie MFA (kod QR skanowany aplikacją uwierzytelniającą, 10 kodów odzyskiwania) następuje powrót do strony. Przed pokazem zapisać MFA tych dwóch kont albo pokazać to przejście jako świadomy element (wymóg MFA dla tych ról pozostaje do decyzji D-10).
 **Co powiedzieć:** Przedstawiciel klasy widzi wyłącznie przypisaną klasę — to sprawdza serwer przy każdym żądaniu, więc nawet znajomość adresu innej klasy nic nie daje.
@@ -79,6 +79,27 @@ Dziś (przed scaleniem [#408](https://github.com/woogitsu/rd/pull/408)) kilka ek
 **Co pokazać:** listę kontrolną (raport finansowy, raport Komisji Rewizyjnej, protokoły zatwierdzone, uchwały zarchiwizowane, uzgodnienie z rachunkiem, dokumenty przekazane) i informację, że zamknięcie wymaga innej osoby niż ta, która je rozpoczęła.
 **Co powiedzieć:** To jest tylko podgląd checklisty — na danych demo nic tu nie zamykamy, bo zamknięcie jest nieodwracalne i wygasza role poprzedniej kadencji; pokazujemy to, żeby zarząd zobaczył, jakie punkty aplikacja pilnuje przy przekazaniu dokumentacji nowej Radzie.
 **Pytanie na koniec:** **D-20** (kto i na jakiej podstawie zgadza się na produkcyjne uruchomienie — ten ekran pokazuje tylko, co prototyp dziś potrafi, nie zgodę na wdrożenie).
+
+## Liczby w danych demo i celowe przykłady
+
+Dane demo są spójne: raport roczny (`/api/reports/annual`) i raport Komisji Rewizyjnej (`/api/reports/audit`) nie pokazują żadnej kontroli „niezgodne”, a saldo kasy nie jest ujemne. Pilnuje tego `tests/demo-seed.test.js`. Kwoty w EUR (w bazie w centach), rok szkolny 2026-2027, wyłącznie dane syntetyczne.
+
+| Pozycja | Wartość | Jak powstaje |
+|---|---|---|
+| Wpłaty rodzin (16 wpłat, 12 rodzin, 4 rodziny w dwóch ratach) | 592,00 EUR | 412,00 EUR przelewem, 180,00 EUR gotówką; każda wpłata ma powiązany wpis księgi tej samej kwoty i metody |
+| Darowizna | 200,00 EUR | wpis księgi, przelew |
+| Wydatki | 342,00 EUR | materiały 150,00 (przelew), poczęstunek 180,00 (gotówka), opłata za rachunek 12,00 (przelew) |
+| Bilans otwarcia / zamknięcia | 0,00 / 450,00 EUR | rachunek 450,00, kasa 0,00 (gotówka ze składek wydana na poczęstunek) |
+| Saldo wyciągu 2026-12-05 | 461,75 EUR | suma 17 pozycji wyciągu (bilans otwarcia rachunku 0) |
+| Różnica uzgodnienia (szkic) | 11,75 EUR | 15,50 (wpłata bez rodziny) − 3,75 (opłata SWIFT) |
+
+**Celowe przykłady do pokazu kontroli** (jedyne miejsca, gdzie panel coś oznacza; wszystko inne ma się zgadzać):
+
+1. **Wpłata bez przypisanej rodziny** — 15,50 EUR, przelew z 2026-11-18, status „nieprzypisana”. Nie ma wpisu księgi (księga przyjmuje tylko wpłaty przypisane do rodziny), więc nie wpływa na kontrolę „wpłaty ujęte w księdze”. Na wyciągu to pozycja „Wpłata nieznanego nadawcy”. Do pokazania: skarbnik przypisuje wpłatę do rodziny — w pokazie tego NIE robić, żeby dane pozostały takie same przy kolejnym pokazie.
+2. **Opłata SWIFT bez wpisu księgi** — −3,75 EUR z 2026-11-25 na wyciągu. Skarbnik ma ją zaksięgować albo wyjaśnić; do tego czasu różnica uzgodnienia to 11,75 EUR, opisana w notatce uzgodnienia. Uzgodnienie jest szkicem i nie jest zatwierdzane.
+3. **Wydatki bez dowodu** — raport Komisji Rewizyjnej pokazuje „Wydatki bez dowodu: 3” (342,00 EUR), bo demo nie ma dokumentów: dowody wymagają magazynu plików (docelowo prywatny Railway Storage Bucket), którego lokalne demo nie uruchamia. To nie jest błąd danych — powiedzieć wprost, że skan faktury dołącza się do wpisu w panelu „Dokumenty”, a tu tego nie pokazujemy.
+
+Uwaga do dziennika zdarzeń: daty zdarzeń w dzienniku (`audit_events`) to chwila uruchomienia seeda, nie daty z danych demo (wpłaty i wpisy księgi mają własne daty z 2026-10…12); dziennik zapisuje faktyczny czas zapisu, seed nie wpisuje do niego historycznych czasów.
 
 ## Pytania do zarządu — lista do zadania na końcu spotkania
 
