@@ -235,6 +235,7 @@ wpisów).
 | `invalid_ttl` | Ważność zaproszenia: od 1 do 336 godzin. | Nie — popraw dane żądania. |
 | `invalid_user_id` | Niepoprawny identyfikator konta. | Nie — popraw dane żądania. |
 | `invalid_window` | Niepoprawny zakres dat. | Nie — popraw dane żądania. |
+| `invalid_year_end_confirmation` | Potwierdzenie rozbieżności wymaga jednego z dozwolonych powodów i widzianych różnic w centach. | Nie — popraw dane żądania. |
 | `invitation_already_accepted` | Zaproszenie zostało już przyjęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `invitation_not_found` | Nie znaleziono zaproszenia. | Nie — popraw dane żądania. |
 | `invitation_not_pending` | To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -391,6 +392,8 @@ wpisów).
 | `webhook_not_configured` | Powiadomienia zwrotne nie są skonfigurowane na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_already_started` | Zamknięcie roku zostało już rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_not_started` | Zamknięcie roku nie zostało rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
+| `year_end_balance_mismatch` | Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Potwierdź rozbieżność z powodem albo popraw wpisy. | Nie — popraw dane żądania. |
+| `year_end_confirmation_mismatch` | Rozbieżność salda końca roku jest inna niż potwierdzona. Sprawdź aktualne kwoty i potwierdź ponownie. | Nie — popraw dane żądania. |
 
 ## Czego nie obejmuje ten dokument
 
