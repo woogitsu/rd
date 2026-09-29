@@ -206,3 +206,103 @@ export function budgetExecutionRow(item) {
     overBudget: Boolean(item?.overBudget),
   };
 }
+
+// #107 (panel): historia wersji preliminarza i formularze zapisu. Wszystkie trasy są
+// istniejące i autoryzowane po stronie serwera; ukrywanie przycisków to tylko skrót.
+export function buildBudgetHistoryUrl(schoolYearId) {
+  if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
+  return `/api/ledger/budget/history?${new URLSearchParams({ schoolYearId: schoolYearId.trim() })}`;
+}
+
+// Przyjęcie preliminarza zapisuje wyłącznie zarząd (ADOPTION_ROLES w ledger-budget.js).
+export function canAdoptBudget(grants, schoolYearId = "") {
+  return (Array.isArray(grants) ? grants : []).some((grant) => grant?.role === "board"
+    && !grant.classId
+    && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === String(schoolYearId).trim()));
+}
+
+function shortTimestamp(value) {
+  return typeof value === "string" && value.length >= 16 ? `${value.slice(0, 10)} ${value.slice(11, 16)} UTC` : String(value ?? "—");
+}
+
+// Wersje linii per kategoria (numer wersji 1…n według kolejności zapisu) i przyjęcia,
+// w których dana wersja weszła do „planu przyjętego”. Kwoty w centach EUR.
+export function budgetHistoryView(history) {
+  const lines = Array.isArray(history?.lines) ? history.lines : [];
+  const adoptions = Array.isArray(history?.adoptions) ? history.adoptions : [];
+  const versionOf = new Map();
+  const perCategory = new Map();
+  for (const line of lines) {
+    const count = (perCategory.get(line.categoryId) ?? 0) + 1;
+    perCategory.set(line.categoryId, count);
+    versionOf.set(line.id, count);
+  }
+  const adoptedOn = (lineId) => adoptions.filter((a) => Array.isArray(a.lineIds) && a.lineIds.includes(lineId)).map((a) => a.adoptedOn);
+  const rows = lines.map((line) => ({
+    id: String(line.id),
+    categoryId: String(line.categoryId ?? ""),
+    categoryName: String(line.categoryName ?? "Bez kategorii"),
+    direction: Object.hasOwn(DIRECTION_LABELS, line.direction) ? line.direction : "expense",
+    version: versionOf.get(line.id),
+    planned: Number.isSafeInteger(line.plannedCents) ? formatCents(line.plannedCents) : "—",
+    plannedCents: Number.isSafeInteger(line.plannedCents) ? line.plannedCents : null,
+    reason: line.note ? String(line.note) : "—",
+    createdBy: String(line.createdBy ?? "—"),
+    createdAt: shortTimestamp(line.createdAt),
+    current: line.current === true,
+    adoptedOn: adoptedOn(line.id),
+  }));
+  const adoptionRows = adoptions.map((a) => ({
+    id: String(a.id),
+    adoptedOn: String(a.adoptedOn ?? "—"),
+    note: String(a.note ?? "—"),
+    resolution: a.resolutionNumber ? String(a.resolutionNumber) : "—",
+    adoptedBy: String(a.adoptedBy ?? "—"),
+    lineCount: Array.isArray(a.lineIds) ? a.lineIds.length : 0,
+  }));
+  return { rows, adoptionRows, currentLines: rows.filter((row) => row.current) };
+}
+
+function trimmedText(value, min, max, message) {
+  const text = String(value ?? "").trim();
+  if (text.length < min || text.length > max) throw new Error(message);
+  return text;
+}
+
+// Treści żądań; kwoty zawsze w centach (parseEuroAmount), plan musi być większy od zera.
+export function categoryRequestBody({ schoolYearId, direction, name }) {
+  if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
+  if (!Object.hasOwn(DIRECTION_LABELS, direction)) throw new Error("Nieznany rodzaj kategorii.");
+  return { schoolYearId: schoolYearId.trim(), direction, name: trimmedText(name, 2, 100, "Nazwa kategorii ma 2–100 znaków.") };
+}
+
+export function deactivationRequestBody({ categoryId, reason }) {
+  if (!isValidId(categoryId)) throw new Error("Wybierz kategorię.");
+  return { categoryId, body: { reason: trimmedText(reason, 3, 500, "Podaj powód (3–500 znaków).") } };
+}
+
+export function budgetLineRequestBody({ schoolYearId, categoryId, amount, note }) {
+  if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
+  if (!isValidId(categoryId)) throw new Error("Wybierz kategorię.");
+  const body = { schoolYearId: schoolYearId.trim(), categoryId, plannedCents: parseEuroAmount(amount) };
+  const text = String(note ?? "").trim();
+  if (text) body.note = trimmedText(text, 3, 500, "Uwaga ma 3–500 znaków.");
+  return body;
+}
+
+export function budgetRevisionRequestBody({ lineId, amount, reason }) {
+  if (!isValidId(lineId)) throw new Error("Wybierz linię preliminarza.");
+  return { lineId, body: { plannedCents: parseEuroAmount(amount), reason: trimmedText(reason, 3, 500, "Podaj powód (3–500 znaków).") } };
+}
+
+export function budgetAdoptionRequestBody({ schoolYearId, adoptedOn, note, resolutionId }) {
+  if (!isValidId(schoolYearId)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(adoptedOn ?? ""))) throw new Error("Podaj datę przyjęcia.");
+  const body = { schoolYearId: schoolYearId.trim(), adoptedOn, note: trimmedText(note, 3, 500, "Podaj opis przyjęcia (3–500 znaków).") };
+  const resolution = String(resolutionId ?? "").trim();
+  if (resolution) {
+    if (!isValidId(resolution)) throw new Error("Niepoprawny identyfikator uchwały.");
+    body.resolutionId = resolution;
+  }
+  return body;
+}
