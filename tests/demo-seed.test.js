@@ -169,3 +169,26 @@ test('demo-seed: nazwiska rodzin/uczniów są jawnie syntetyczne', () => {
   for (const [, , , lastName] of roster.students) assert.match(lastName, /^Przykładowy /);
   for (const [, , , lastName] of roster.guardians) assert.match(lastName, /^Przykładowy /);
 });
+
+// #166: demo bez ręcznego ustawiania zmiennych.
+test('demoAppEnv: brak APP_ENV daje development (import bez IMPORT_ENABLED), jawna wartość zostaje', async () => {
+  const { demoAppEnv } = await import('../scripts/demo-seed.js');
+  const { isProductionLikeEnv } = await import('../src/app-env.js');
+  assert.equal(demoAppEnv({}), 'development');
+  assert.equal(demoAppEnv({ APP_ENV: '' }), 'development');
+  assert.equal(isProductionLikeEnv(demoAppEnv({})), false);
+  assert.equal(demoAppEnv({ APP_ENV: 'staging' }), 'staging');
+});
+
+test('demo-start: z APP_ENV=production/prod odmawia przed otwarciem bazy', async () => {
+  const { startDemoServer } = await import('../scripts/demo-start.js');
+  const saved = process.env.APP_ENV;
+  try {
+    for (const value of ['production', 'Prod']) {
+      process.env.APP_ENV = value;
+      await assert.rejects(startDemoServer({ port: 0 }), (error) => error instanceof DemoSeedRefused && error.code === 'production_env');
+    }
+  } finally {
+    if (saved === undefined) delete process.env.APP_ENV; else process.env.APP_ENV = saved;
+  }
+});

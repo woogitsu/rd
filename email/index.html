@@ -67,6 +67,7 @@
           <div><span>Liczba odbiorców po migawce</span><strong id="detail-recipients-count">—</strong></div>
           <div><span>Plan wysyłki</span><strong id="detail-plan">—</strong></div>
         </div>
+        <p class="context" id="detail-schedule"></p>
         <p class="message error" id="detail-snapshot-current" hidden>Dane od migawki zmieniły się (nowe wpłaty albo przydziały). Utwórz migawkę ponownie przed zatwierdzeniem.</p>
 
         <h3>Wykluczenia z listy odbiorców</h3>
@@ -102,6 +103,8 @@
           <button id="view-recipients" type="button" hidden>Pokaż listę odbiorców</button>
           <button id="approve-campaign" type="button" class="primary" aria-describedby="approve-hint">Zatwierdź kampanię</button>
           <button id="queue-campaign" type="button" class="primary" hidden>Zakolejkuj</button>
+          <button id="pause-campaign" type="button" hidden>Wstrzymaj wysyłkę</button>
+          <button id="resume-campaign" type="button" class="primary" hidden>Wznów wysyłkę</button>
           <button id="cancel-campaign" type="button" hidden>Anuluj kampanię</button>
         </div>
         <p class="message" id="approve-waiting" hidden>Czeka na drugą osobę — kto przygotował treść lub migawkę, nie może zatwierdzić tej kampanii.</p>
@@ -126,6 +129,8 @@
       <label>Odbiorcy <select name="audience"><option value="all_households">Wszystkie rodziny roku</option><option value="no_payment_record">Rodziny bez odnotowanej wpłaty</option></select></label>
       <label>Temat wiadomości <input name="subject" minlength="3" maxlength="200" required /></label>
       <label>Treść wiadomości <textarea name="bodyText" rows="8" minlength="20" maxlength="10000" required></textarea></label>
+      <label>Start wysyłki nie wcześniej niż (czas w Brukseli, opcjonalnie) <input name="sendNotBefore" type="datetime-local" /></label>
+      <p class="context">Termin startu jest częścią zatwierdzanej treści: jego zmiana cofa zatwierdzenie i wymaga ponownej zgody.</p>
       <div class="form-error" id="edit-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="edit-error">Zapisz zmiany</button></div>
     </form></dialog>

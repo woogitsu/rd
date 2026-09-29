@@ -35,8 +35,9 @@ wierszem nagłówkowym (klasa, rok, data wygenerowania) i stopką „Zawiera dan
 osobowe — nie przesyłać dalej, usunąć po wykorzystaniu”. Nazwa pliku nie
 zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv`. Każde pobranie
 (niezależnie od formatu) zapisuje `export_runs` i `export.created`; format
-trafia tylko do metadanych audytu, bez migracji schematu. XLSX celowo
-pominięty — brak lekkiej biblioteki do zapisu bez nowej ciężkiej zależności.
+trafia tylko do metadanych audytu, bez migracji schematu. XLSX dla listy
+klasy pominięty (osobny zakres); moduł zapisu `src/pg/xlsx.js` (#121) na razie
+obsługuje tylko eksport księgi (docs/LEDGER.md).
 Plik ma BOM UTF-8, separator `;` i CRLF jak pozostałe eksporty CSV (wspólny
 moduł `src/pg/csv.js`, #121: `toCsv`, `csvResponse`, `csvCell`). Pola tekstowe
 (nazwiska, e-maile) zaczynające się od `= + - @`, tabulatora lub CR — także po
@@ -207,7 +208,7 @@ sum w centach.
 Odtworzenie:
 
 - odmawia bazy, w której jakakolwiek tabela (poza `schema_migrations`) ma
-  wiersze; odmawia `APP_ENV=production` bez `--allow-production`;
+  wiersze; odmawia `APP_ENV=production` (także `prod`, brak lub nieznaną wartość) bez `--allow-production`;
 - działa w jednej transakcji — pierwszy błąd wycofuje całość;
 - przyjmuje paczki w wersji 2 i 1 (patrz „Wersje formatu”);
 - na czas transakcji wyłącza triggery i klucze obce

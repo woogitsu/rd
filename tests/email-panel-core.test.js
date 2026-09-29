@@ -14,6 +14,10 @@ import {
   formatExclusions,
   formatReportRows,
   REPORT_LABELS,
+  formatSchedule,
+  STATUS_LABELS,
+  sendNotBeforeFromInput,
+  sendNotBeforeToInput,
   formatWarnings,
   hasApproverAccess,
   hasEditorAccess,
@@ -133,4 +137,29 @@ test('raport doręczeń: kategorie panelu = kategorie raportu serwera, tylko lic
   assert.deepEqual(rows.find((r) => r.key === 'delivered'), { key: 'delivered', label: REPORT_LABELS.delivered, count: 3 });
   assert.equal(rows.find((r) => r.key === 'queued').count, 0);
   assert.deepEqual(formatReportRows(null).map((r) => r.count), declared.map(() => 0));
+});
+
+test('#130 harmonogram: pole startu to czas brukselski, także przy zmianie czasu', () => {
+  assert.equal(sendNotBeforeFromInput('2026-03-30T09:00'), '2026-03-30T07:00:00.000Z');
+  assert.equal(sendNotBeforeFromInput('2026-10-26T09:00'), '2026-10-26T08:00:00.000Z');
+  assert.equal(sendNotBeforeFromInput(''), null);
+  assert.throws(() => sendNotBeforeFromInput('jutro'), /startu wysyłki/);
+  assert.equal(sendNotBeforeToInput('2026-10-26T08:00:00.000Z'), '2026-10-26T09:00');
+  assert.equal(sendNotBeforeToInput(null), '');
+});
+
+test('#130 formatSchedule: start, okno i szacowany koniec w strefie z odpowiedzi; stan wstrzymania ma etykietę', () => {
+  assert.equal(STATUS_LABELS.paused, 'Wstrzymana');
+  const text = formatSchedule({
+    sendNotBefore: '2026-03-27T08:00:00.000Z', timezone: 'Europe/Brussels', estimated: true,
+    window: { enabled: true, timezone: 'Europe/Brussels', days: [1, 2, 3, 4, 5], startMinutes: 540, endMinutes: 1080 },
+    startsAtLocal: '2026-03-27 09:00', endsAtLocal: '2026-04-06 18:00',
+  });
+  assert.match(text, /Start nie wcześniej niż: 2026-03-27 09:00 \(Europe\/Brussels\)/);
+  assert.match(text, /09:00–18:00/);
+  assert.match(text, /Szacowane zakończenie: do 2026-04-06 18:00/);
+  assert.match(formatSchedule({ sendNotBefore: null, window: { enabled: false }, timezone: 'Europe/Brussels' }), /wyłączone/);
+  assert.equal(formatSchedule(null), '');
+  // Plan dni zwracany przez API jest liczbą.
+  assert.match(formatDayPlan({ days: 7, dailyCap: 286, reservedForOtherMail: 0 }), /7 dni/);
 });
