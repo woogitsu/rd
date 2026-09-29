@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { renderAuditReportHtml } from '../src/pg/audit-report.js';
-import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const BASE = 'https://rd.example';
 const YEAR = 'y-2026'; // 2026-09-01 .. 2027-08-31
@@ -27,8 +27,8 @@ async function setup() {
   const treasurer = await seedUserSession(db, { userId: 'u-treasurer', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   const rep = await seedUserSession(db, { userId: 'u-rep', mfa: true, roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }] });
   const audit = await seedUserSession(db, { userId: 'u-audit', mfa: true, roles: [{ role: 'audit', schoolYearId: YEAR }] });
+  for (const householdId of ['h-1', 'h-2']) await seedEnrolledHousehold(db, householdId, [YEAR]);
   await db.exec(`
-    INSERT INTO households (id) VALUES ('h-1'), ('h-2');
     INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES
       ('cat-in', '${YEAR}', 'income', 'Składki dobrowolne', 'u-treasurer'),
       ('cat-out', '${YEAR}', 'expense', 'Wydarzenia', 'u-treasurer');

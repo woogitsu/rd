@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 async function call(env, path, { cookie, method = 'GET', body, key } = {}) {
   const headers = key ? { 'Idempotency-Key': key } : undefined;
@@ -16,7 +16,7 @@ async function call(env, path, { cookie, method = 'GET', body, key } = {}) {
 async function setup() {
   const db = await createTestDb();
   await seedSchoolYear(db, 'y-1', { startsOn: '2026-09-01', endsOn: '2027-08-31' });
-  await db.exec(`INSERT INTO households (id) VALUES ('h-1')`);
+  await seedEnrolledHousehold(db, 'h-1', ['y-1']);
   const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
   const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: 'y-1' }], mfa: true });
   return { db, env: { db }, admin, treasurer };

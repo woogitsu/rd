@@ -10,6 +10,7 @@ import {
   getApprovalChecklist, handle, recordAttendance,
 } from '../src/pg/meetings.js';
 import { updateMeeting, updateResolution } from './helpers/with-revision.js';
+import { seedRoleGrant } from './helpers/pg.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
@@ -32,6 +33,8 @@ async function meetingsDb() {
     await db.query('INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)',
       [id, `${id}@example.invalid`, `Synthetic ${id}`]);
   }
+  // #205: osoba na liście obecności musi mieć aktywny przydział w roku zebrania (0150).
+  for (const id of ['u1', 'u2', 'u3']) await seedRoleGrant(db, { userId: id });
   return db;
 }
 

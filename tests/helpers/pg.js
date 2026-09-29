@@ -108,6 +108,41 @@ export async function seedClass(db, { id, schoolYearId = 'y-test', name = id }) 
   return id;
 }
 
+// #205: wpłaty przyjmują tylko gospodarstwo niezarchiwizowane z uczniem
+// zapisanym w roku wpłaty. Dopisuje gospodarstwo (idempotentnie) z jednym
+// syntetycznym uczniem zapisanym do klasy w każdym z podanych lat.
+export async function seedEnrolledHousehold(db, householdId, schoolYearIds, { classIds = {} } = {}) {
+  await db.query('INSERT INTO households (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [householdId]);
+  const studentId = `st-${householdId}`;
+  await db.query(
+    "INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Syntetyczny', 'Uczeń') ON CONFLICT (id) DO NOTHING",
+    [studentId, householdId],
+  );
+  for (const schoolYearId of schoolYearIds) {
+    const classId = classIds[schoolYearId] ?? await seedClass(db, { id: `cls-enr-${schoolYearId}`, schoolYearId, name: 'Klasa' });
+    await db.query(
+      'INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
+      [`enr-${householdId}-${schoolYearId}`, studentId, classId, schoolYearId],
+    );
+  }
+  return studentId;
+}
+
+// #205: osoba na liście obecności zebrania (userId) musi mieć w bazie aktywny
+// przydział obowiązujący w roku zebrania (trigger meeting_attendee_guard, 0150).
+// Dopisuje konto i przydział (domyślnie zarząd bez zawężenia roku i klasy).
+export async function seedRoleGrant(db, { userId, role = 'board', schoolYearId = null, classId = null }) {
+  await seedUser(db, { userId });
+  await db.query(
+    `INSERT INTO role_grants (id, user_id, role, class_id, school_year_id)
+     SELECT $1, $2, $3, $4::text, $5::text
+      WHERE NOT EXISTS (
+        SELECT 1 FROM role_grants WHERE user_id = $2 AND role = $3 AND revoked_at IS NULL
+          AND class_id IS NOT DISTINCT FROM $4::text AND school_year_id IS NOT DISTINCT FROM $5::text)`,
+    [crypto.randomUUID(), userId, role, classId, schoolYearId],
+  );
+}
+
 // Użytkownik (idempotentnie). Domyślny e-mail jest syntetyczny.
 // Domyślny e-mail jest zawsze małymi literami (#198: users.email wymaga
 // lower(btrim(email))) niezależnie od wielkości liter w userId (np. klucze

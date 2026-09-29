@@ -5,7 +5,7 @@ import worker from '../src/index.js';
 import { hashSecret } from '../src/auth.js';
 import { handlePgRequest, ROUTES } from '../src/pg/app.js';
 import * as paymentsRoutes from '../src/pg/routes/payments.js';
-import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 import { createLegacyDb, createNormalizer, d1Adapter } from './helpers/parity.js';
 import { assertEvery } from './helpers/assertions.js';
 
@@ -41,7 +41,7 @@ async function pgBackend({ role = 'treasurer', mfa = true, schoolYearId = 'y2026
   const db = await createTestDb();
   await seedSchoolYear(db, 'y2025', { startsOn: '2025-09-01', endsOn: '2026-08-31' });
   await seedSchoolYear(db, 'y2026');
-  await db.query("INSERT INTO households (id) VALUES ('h1'), ('h2'), ('h3')");
+  for (const householdId of ['h1', 'h2', 'h3']) await seedEnrolledHousehold(db, householdId, ['y2025', 'y2026']);
   const cookie = await seedUserSession(db, {
     userId: 'u1', mfa, roles: [{ role, schoolYearId, classId }],
   });

@@ -7,7 +7,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { cancelTask, createDraft, createTask } from '../src/pg/events.js';
-import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const BASE = 'https://rd.example';
 const EMAIL_TEXT = 'Zwrot dla rodzic@example.invalid za wycieczkę';
@@ -31,8 +31,10 @@ async function backendWithFinance() {
   await seedSchoolYear(db, 'y2026');
   const treasurer = await seedUserSession(db, { userId: 'u-treasurer', mfa: true, roles: [{ role: 'treasurer', schoolYearId: 'y2026' }] });
   const board = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board', schoolYearId: 'y2026' }] });
+  // #205: wpłata przyjmuje gospodarstwo z uczniem zapisanym w roku wpłaty.
+  await seedEnrolledHousehold(db, 'h1', ['y2026']);
+  await seedEnrolledHousehold(db, 'h2', ['y2026']);
   await db.exec(`
-    INSERT INTO households (id) VALUES ('h1'), ('h2');
     INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by, active)
       VALUES ('expense-events', 'y2026', 'expense', 'Wydarzenia', 'u-treasurer', true);
     INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)

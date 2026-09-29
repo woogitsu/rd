@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, seedSchoolYear, seedUserSession, TEST_ORIGIN } from './helpers/pg.js';
+import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession, TEST_ORIGIN } from './helpers/pg.js';
 
 const YEAR = 'y-144';
 
@@ -156,7 +156,7 @@ test('podwójne kliknięcie (ten sam klucz) odtwarza jedno storno i jeden wpis; 
 test('wpis powiązany z wpłatą jest przeksięgowany z zachowaniem powiązania (0142)', async () => {
   const { db, cookie, fetch } = await setup();
   try {
-    await db.query("INSERT INTO households (id) VALUES ('h1')");
+    await seedEnrolledHousehold(db, 'h1', [YEAR]);
     const payment = await readJson(await fetch(req('/api/payments', {
       cookie, key: 'k-pay-144-005',
       body: { schoolYearId: YEAR, householdId: 'h1', amountCents: 5000, receivedOn: '2026-10-01', method: 'bank', reference: 'Wpłata' },

@@ -1790,6 +1790,46 @@ export const ROUTE_MATRIX = Object.freeze([
   },
 ].map((route) => Object.freeze(route)));
 
+// #205 / SR-07: identyfikator w TREŚCI żądania (nie w ścieżce). Odpowiedź na identyfikator
+// spoza zakresu aktora i na nieistniejący MUSI być nieodróżnialna (status i treść), a odmowa
+// nie może zmienić żadnej tabeli z WRITE_TABLES. `routeId` wskazuje wpis macierzy, z którego
+// pochodzi obiekt (spotkanie / wpłata), `body(value, ctx)` buduje treść żądania z wartością
+// identyfikatora. Fixture'y (konta, gospodarstwa, opiekunowie) tworzy seedBase w macierzy:
+//   u-fx-nogrant  konto bez przydziału; u-fx-rok2 — konto z przydziałem tylko w roku 2;
+//   hh-A-g / hh-B-g  opiekunowie dzieci z 1A / 1B; hh-Y2-g — opiekun dziecka z roku 2;
+//   hh-fx-arch  gospodarstwo zarchiwizowane; hh-fx-empty  gospodarstwo bez ucznia;
+//   hh-Y2  gospodarstwo z dzieckiem tylko w roku 2 (wpłata w roku 1).
+export const REFERENCE_CASES = Object.freeze([
+  {
+    id: 'meetings.attendance:guardianId', routeId: 'meetings.attendance', target: 'A',
+    actors: ['admin', 'board', 'boardA'], ok: 200,
+    inScope: 'hh-A-g',
+    outOfScope: ['hh-B-g', 'hh-Y2-g'], missing: 'gd-nie-istnieje',
+    denied: 400, deniedError: 'invalid_reference',
+    body: (value) => ({ guardianId: value, capacity: 'guardian', votingEligible: true, present: true }),
+  },
+  {
+    id: 'meetings.attendance:userId', routeId: 'meetings.attendance', target: 'A',
+    actors: ['admin', 'board', 'boardA'], ok: 200,
+    inScope: 'u-fx-treasurer',
+    outOfScope: ['u-fx-nogrant', 'u-fx-rok2'], missing: 'u-nie-istnieje',
+    denied: 400, deniedError: 'invalid_reference',
+    body: (value) => ({ userId: value, capacity: 'guest', votingEligible: false, present: true }),
+  },
+  ...['payments.create', 'payments.assignment', 'payments.allocations.create'].map((routeId) => ({
+    id: `${routeId}:householdId`, routeId, target: 'W1', actors: ['admin', 'board', 'treasurer'],
+    ok: 201,
+    inScope: 'hh-A',
+    outOfScope: ['hh-fx-arch', 'hh-fx-empty', 'hh-Y2'], missing: 'hh-nie-istnieje',
+    denied: 400, deniedError: 'invalid_reference',
+    body: (value, { target }) => ({
+      householdId: value,
+      ...(routeId === 'payments.create' ? { schoolYearId: target.schoolYearId, amountCents: 1000, receivedOn: '2026-10-05', method: 'bank' } : {}),
+      ...(routeId === 'payments.allocations.create' ? { amountCents: 100 } : {}),
+    }),
+  })),
+]);
+
 export function requiresMfa(route, actor) {
   return typeof route.mfa === 'function' ? Boolean(route.mfa(actor)) : Boolean(route.mfa);
 }

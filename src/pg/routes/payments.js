@@ -63,6 +63,26 @@ function validId(value) {
   return typeof value === 'string' && ID_PATTERN.test(value);
 }
 
+// #205: householdId z treści żądania musi wskazywać gospodarstwo w zakresie roku
+// wpłaty: niezarchiwizowane i z uczniem zapisanym w tym roku (wariant zachowawczy
+// do D-11 — bez ostrzeżenia i "powodu"). Nieistniejące gospodarstwo i gospodarstwo
+// spoza zakresu dają ten sam kod (`invalid_reference`), sprawdzany przed zapisem,
+// więc odpowiedź nie jest wyrocznią istnienia. Kto chce zapisać wpłatę na rodzinę
+// bez ucznia w roku, zostawia ją jako nieprzypisaną (`unmatched`).
+async function assertHouseholdInScope(tx, householdId, schoolYearId) {
+  const { rows } = await tx.query(
+    `SELECT 1 FROM households h
+      WHERE h.id = $1 AND h.archived_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM student_households sh
+            JOIN enrollments e ON e.student_id = sh.student_id
+           WHERE sh.household_id = h.id AND e.school_year_id = $2
+        )`,
+    [householdId, schoolYearId],
+  );
+  if (!rows.length) throw new RequestError('invalid_reference');
+}
+
 function decodeId(value) {
   try {
     return decodeURIComponent(value);
@@ -484,6 +504,7 @@ async function createPayment(request, env, json) {
     result = await env.db.transaction(async (tx) => {
       const replay = replayOrConflict(await loadPaymentByKey(tx, idempotencyKey));
       if (replay) return replay;
+      if (input.householdId) await assertHouseholdInScope(tx, input.householdId, input.schoolYearId);
       // #152: tytuł przelewu przepisany z wyciągu często zawiera imię dziecka lub IBAN nadawcy.
       const gate = gateFreeText([['payment_entries.reference', input.reference]], {
         confirm: confirmPersonalData, knownNames: await loadKnownNames(tx, input.schoolYearId), fail: piiFail,
@@ -639,6 +660,7 @@ async function assignPayment(request, env, paymentEntryId, json) {
       if (payment.status !== 'unmatched' || payment.household_id !== null) {
         throw new RequestError('payment_already_assigned', 409);
       }
+      await assertHouseholdInScope(tx, householdId, payment.school_year_id);
       const assignmentId = crypto.randomUUID();
       // Trigger payment_assignments_apply_insert ustawia household_id i status 'recorded'.
       await tx.query(
@@ -780,9 +802,7 @@ async function reassignPayment(request, env, paymentEntryId, json) {
       if (payment.household_id === input.householdId) {
         throw new RequestError('payment_reassignment_same_household', 409);
       }
-      if (!(await tx.query('SELECT 1 FROM households WHERE id = $1', [input.householdId])).rows.length) {
-        throw new RequestError('invalid_reference');
-      }
+      await assertHouseholdInScope(tx, input.householdId, payment.school_year_id);
       const gate = gateFreeText([['payment_reassignments.reason', input.reason]], {
         confirm: input.confirmPersonalData, knownNames: await loadKnownNames(tx, payment.school_year_id), fail: piiFail,
       });
@@ -943,9 +963,7 @@ async function createAllocation(request, env, paymentEntryId, json) {
       if (payment.status !== 'unmatched' || payment.household_id !== null) {
         throw new RequestError('payment_already_assigned', 409);
       }
-      if (!(await tx.query('SELECT 1 FROM households WHERE id = $1', [input.householdId])).rows.length) {
-        throw new RequestError('invalid_reference');
-      }
+      await assertHouseholdInScope(tx, input.householdId, payment.school_year_id);
       const allocationId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO payment_allocations (id, payment_entry_id, school_year_id, household_id, amount_cents, created_by, idempotency_key)

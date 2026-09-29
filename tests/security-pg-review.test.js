@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { createNodeHandler } from '../src/node-app.js';
 import { createPgHandler, handlePgRequest, ROUTES } from '../src/pg/app.js';
 import { isAuthorizedScoped, requireAccess } from '../src/pg/authorization.js';
-import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const paymentInput = {
   householdId: 'h-sec-1', schoolYearId: 'y-2026', amountCents: 2500,
@@ -28,7 +28,7 @@ test('SR-01: class-scoped treasurer/board/admin grant gives no access to payment
   const db = await createTestDb();
   try {
     await seedSchoolYear(db, 'y-2026');
-    await db.query("INSERT INTO households (id) VALUES ('h-sec-1')");
+    await seedEnrolledHousehold(db, 'h-sec-1', ['y-2026']);
     const env = { db };
     const school = await seedUserSession(db, { userId: 'u-sec-school', mfa: true, roles: [{ role: 'treasurer', schoolYearId: 'y-2026' }] });
     const created = await handlePgRequest(payment(school, 'sec-key-school-01'), env);

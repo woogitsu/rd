@@ -49,9 +49,9 @@ import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
 import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { createTestDb, request, seedClass, seedDocument, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedDocument, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
-  ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
+  ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, REFERENCE_CASES, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
   campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
   pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
@@ -107,6 +107,9 @@ const withKey = (key) => ({ 'Idempotency-Key': key });
 
 // ---------- fixtures ----------
 
+// Zapisy gospodarstw hh-1/hh-2 idą do istniejących klas macierzy (bez nowych klas na listach).
+const MATRIX_CLASSES = { [YEAR_1]: TARGETS.A.classId, [YEAR_2]: TARGETS.Y2.classId };
+
 async function seedBase(db) {
   await seedSchoolYear(db, YEAR_1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedSchoolYear(db, YEAR_2, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
@@ -115,9 +118,10 @@ async function seedBase(db) {
   }
   for (const account of Object.values(FX_ACCOUNTS)) await seedUser(db, { userId: account.userId });
   await seedDocument(db, { id: PHOTO_SOURCE_DOCUMENT_ID, createdBy: 'u-fx-admin' });
-  await db.query("INSERT INTO households (id) VALUES ('hh-1')");
+  // #205: gospodarstwo we wpłacie musi mieć ucznia zapisanego w roku wpłaty (oba lata macierzy).
+  await seedEnrolledHousehold(db, 'hh-1', [YEAR_1, YEAR_2], { classIds: MATRIX_CLASSES });
   // #138: cel ponownego przypisania wpłaty (payments.reassignment).
-  await db.query("INSERT INTO households (id) VALUES ('hh-2')");
+  await seedEnrolledHousehold(db, 'hh-2', [YEAR_1, YEAR_2], { classIds: MATRIX_CLASSES });
   // Kategorie księgi z nazwą niosącą znacznik roku (W1 = rok 1, Y2 = rok 2).
   for (const [year, scope] of [[YEAR_1, 'W1'], [YEAR_2, 'Y2']]) {
     await db.query(
@@ -128,6 +132,14 @@ async function seedBase(db) {
   }
   // Rodziny: jedna na klasę + rodzeństwo w 1A i 1B (opiekun ze zgodą na kontakt).
   for (const key of ['A', 'B', 'Y2']) await makeHousehold(db, TARGETS[key], `hh-${key}`);
+  // #205 (REFERENCE_CASES): identyfikatory spoza zakresu — konta bez przydziału w roku,
+  // gospodarstwo zarchiwizowane i bez ucznia. hh-Y2 (wyżej) ma dziecko tylko w roku 2.
+  await seedUser(db, { userId: 'u-fx-nogrant' });
+  await seedUser(db, { userId: 'u-fx-rok2' });
+  await db.query("INSERT INTO role_grants (id, user_id, role, school_year_id) VALUES ('rg-fx-rok2', 'u-fx-rok2', 'treasurer', $1)", [YEAR_2]);
+  await makeHousehold(db, TARGETS.A, 'hh-fx-arch');
+  await db.query("UPDATE households SET archived_at = now() WHERE id = 'hh-fx-arch'");
+  await db.query("INSERT INTO households (id) VALUES ('hh-fx-empty')");
   await db.query("INSERT INTO households (id) VALUES ('hh-sib')");
   await db.query(`INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed)
     VALUES ('gd-sib', 'hh-sib', 'Ewa', 'Opiekunka', 'opiekun-rodzenstwo@example.invalid', true)`);
@@ -1114,6 +1126,47 @@ test('meta-test `todo` wykrywa nowe `todo` bez wpisu, wpis martwy i wpis bez iss
   assert.equal(todoViolations(fakeRoutes, { 'a.route': 'kiedyś' }, listCases).length, 1, 'wpis bez numeru issue');
   assert.equal(todoViolations(fakeRoutes, { 'a.route': '#214', 'b.route': '#1' }, listCases).length, 1, 'martwy wpis');
 });
+
+// ---------- identyfikatory w treści żądania: spoza zakresu = nieistniejący (#205, SR-07) ----------
+
+for (const item of REFERENCE_CASES) {
+  test(`identyfikator w treści: ${item.id} — spoza zakresu i nieistniejący dają tę samą odmowę, bez zapisu`, async () => {
+    const ctx = await matrixContext();
+    const route = ROUTE_MATRIX.find((entry) => entry.id === item.routeId);
+    assert.ok(route, `brak trasy ${item.routeId} w macierzy`);
+    const target = TARGETS[item.target];
+    for (const actorKey of item.actors) {
+      const cookie = ctx.sessions[actorKey][true];
+      const values = [...item.outOfScope, item.missing, item.inScope];
+      // Obiekty (zebranie, wpłata nieprzypisana) powstają PRZED zdjęciem śladu zapisu.
+      const objects = new Map();
+      for (const value of values) {
+        objects.set(value, route.object ? await makeObject(ctx, route.object, target, { cookie, route: route.id, success: true }) : null);
+      }
+      const send = async (value) => {
+        const built = await route.build({ target, obj: objects.get(value), key: nextKey(`ref-${item.id}`), fx: ctx.fx });
+        const response = await handlePgRequest(request(built.path, {
+          method: route.method, body: item.body(value, { target, actorKey }),
+          headers: { 'Idempotency-Key': nextKey(`ref-key-${actorKey}`) }, cookie,
+        }), ctx.env);
+        const text = await response.text();
+        return { status: response.status, text };
+      };
+      const before = await writeFingerprint(ctx.db);
+      const refused = [];
+      for (const value of [...item.outOfScope, item.missing]) refused.push({ value, ...(await send(value)) });
+      for (const result of refused) {
+        assert.equal(result.status, item.denied, `${actorKey}/${result.value}: ${result.text}`);
+        assert.equal(JSON.parse(result.text).error, item.deniedError, `${actorKey}/${result.value}`);
+        assert.equal(result.text, refused[refused.length - 1].text, `${actorKey}/${result.value}: odpowiedź odróżnia spoza zakresu od nieistniejącego`);
+        for (const scope of SCOPED_MARKER_KEYS) assert.ok(!MARKERS[scope].some((value) => result.text.includes(value)), `${actorKey}: odmowa zawiera dane ${scope}`);
+      }
+      assert.deepEqual(await writeFingerprint(ctx.db), before, `${actorKey}: odmowa zmieniła dane`);
+      const accepted = await send(item.inScope);
+      assert.equal(accepted.status, item.ok, `${actorKey}/${item.inScope}: ${accepted.text}`);
+    }
+  });
+}
 
 test.after(async () => {
   for (const pending of contexts.values()) await (await pending).db.close();

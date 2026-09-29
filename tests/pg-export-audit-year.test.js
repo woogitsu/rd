@@ -5,7 +5,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { auditScope, buildYearlyExport, EXPORT_TABLES, restoreBundle, verifyBundle } from '../src/pg/export.js';
-import { createTestDb, request, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const OLD = 'y-old';
 const NEW = 'y-new';
@@ -39,7 +39,7 @@ before(async () => {
   await seedSchoolYear(db, OLD, { startsOn: isoDate(-400), endsOn: isoDate(-30) });
   await seedSchoolYear(db, NEW, { startsOn: isoDate(-29), endsOn: isoDate(335) });
   await seedUser(db, { userId: 'u-seed' });
-  await db.query("INSERT INTO households (id) VALUES ('h-1')");
+  await seedEnrolledHousehold(db, 'h-1', [OLD, NEW]);
   cookie = await seedUserSession(db, {
     userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: OLD }, { role: 'treasurer', schoolYearId: NEW }], mfa: true,
   });
