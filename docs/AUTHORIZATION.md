@@ -231,7 +231,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | #181: filtry `domain`/`actorId`/`from`/`to`/`schoolYearId`; sam zapisuje `audit.viewed` |
 | `GET /api/admin/access-log` | wyłącznie admin | tak | 403 | #133: przegląd `data_access_log` (tylko odczyt): filtry `kind`/`actorId`/`householdId`/`classId`/`schoolYearId`/`outcome`/`from`/`to`, kursor; bez imion, e-maili i adresów IP; sam zapisuje `access_log.viewed`. Zarząd, skarbnik, audit, principal, przedstawiciel: 403 (D-04/D-07/D-08/D-09 nierozstrzygnięte) |
 | `GET /api/admin/audit/entity/:entityType/:entityId` | wyłącznie admin | tak | 403 | #181: wariant zachowawczy — role finansowe/kampanii własnego zakresu do D-08/D-09; nieistniejący obiekt: 404 |
-| `GET /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: wariant zachowawczy — zakres do D-08/D-09 |
+| `GET /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: wariant zachowawczy — zakres do D-08/D-09; #159: kursor keyset (`limit`, `cursor`, `nextCursor`, `truncated`), kursor związany z filtrami `status`/`kind` |
 | `POST /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: rejestr żądania, bez eksportu danych rodziny |
 | `POST /api/admin/data-requests/:requestId/status` | wyłącznie admin | tak | 403 | #100: przejście stanu bez cofania; nieistniejące żądanie: 404 |
 | `GET /api/admin/retention/preview` | wyłącznie admin | tak | 403 | rejestr polityk retencji i raport kandydatów (D-04, #91); bez adresów i nazw rodzin |
