@@ -8,6 +8,7 @@ import {
   describeApiError,
   formatDayPlan,
   formatExclusions,
+  formatReportRows,
   formatWarnings,
   hasApproverAccess,
   hasEditorAccess,
@@ -33,6 +34,7 @@ const state = {
   selectedId: null,
   detail: null,
   preview: null,
+  report: null,
   recipients: [],
   recipientsOffset: null,
   actorId: null,
@@ -175,6 +177,20 @@ function renderDetail() {
   }));
   byId("detail-outbox-box").hidden = outboxEntries.length === 0;
 
+  const report = state.report;
+  byId("detail-report-box").hidden = !report;
+  if (report) {
+    byId("detail-report-body").replaceChildren(...formatReportRows(report.summary).map((row) => {
+      const tr = document.createElement("tr");
+      tr.append(textCell(row.label), textCell(String(row.count), "amount"));
+      return tr;
+    }));
+    const unresolved = Number(report.deliveryUnknownUnresolved) || 0;
+    const note = byId("detail-report-unknown");
+    note.hidden = unresolved === 0;
+    note.textContent = `Nierozstrzygnięte „nie wiadomo”: ${unresolved}.`;
+  }
+
   updateActionVisibility(campaign, preview);
 }
 
@@ -201,10 +217,12 @@ function updateActionVisibility(campaign, preview) {
 async function openDetail(id) {
   setMessage("");
   try {
-    const [statusData, previewData] = await Promise.all([
+    const [statusData, previewData, reportData] = await Promise.all([
       api(campaignUrl(id)),
       api(campaignActionUrl(id, "preview")).catch(() => null),
+      api(campaignActionUrl(id, "report")).catch(() => null),
     ]);
+    state.report = reportData;
     state.selectedId = id;
     state.detail = statusData;
     state.preview = previewData;
