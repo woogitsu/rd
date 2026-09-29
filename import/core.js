@@ -19,6 +19,9 @@ const ALIASES = {
 };
 const normalize = value => String(value ?? '').trim().toLocaleLowerCase('pl-PL').replace(/\s+/g, ' ');
 const normalizeClass = value => String(value ?? '').trim().replace(/\s+/g, ' ').toLocaleUpperCase('pl-PL');
+// Tożsamość ID w obrębie pliku: same cyfry porównujemy bez zer wiodących, żeby "00123"
+// (tekst) i 123 (liczba z Excela) nie były dwoma różnymi uczniami (#88).
+const idIdentity = value => { const text = normalize(value); return /^[0-9]+$/.test(text) ? text.replace(/^0+(?=[0-9])/, '') : text; };
 const FIELD_LABELS = Object.fromEntries(FIELDS);
 // Kolumny identyfikatorów: komórka XLSX sformatowana jako liczba traci zera wiodące (#88).
 const ID_FIELD_KEYS = new Set(['studentId', 'householdId']);
@@ -136,11 +139,11 @@ export function validateRows(matrix, mapping, options = {}) {
       else if (classCanonical.has(classKey)) record.className = classCanonical.get(classKey);
       else issues.push('Nieznana klasa.');
     }
-    const idKey = normalize(record.studentId);
+    const idKey = idIdentity(record.studentId);
     const nameKey = [record.firstName, record.lastName, record.className].map(normalize).join('|');
     if (idKey && seenId.has(idKey)) issues.push(`Powtórzone ID ucznia z wiersza ${seenId.get(idKey)}.`);
     if (nameKey && seenName.has(nameKey)) warnings.push({ row: number, message: `Możliwy duplikat imienia, nazwiska i klasy (wiersz ${seenName.get(nameKey)}). Sprawdź ręcznie.` });
-    const householdKey = normalize(record.householdId);
+    const householdKey = idIdentity(record.householdId);
     const contacts = [[record.guardian1, record.email1], [record.guardian2, record.email2]]
       .map(pair => pair.map(normalize).join('|')).sort().join(';');
     if (householdKey && seenHousehold.has(householdKey)) {

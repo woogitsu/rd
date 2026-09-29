@@ -169,3 +169,53 @@ test('readXlsxSheets on a single-sheet file returns exactly one entry', async ()
   assert.equal(sheets[0].name, 'Uczniowie');
   assert.equal(sheets[0].rows.length, 4);
 });
+
+// --- #88: limity rozmiaru po rozpakowaniu (zip bomb) ---
+
+function zipWithSheet(sheetXml, extra = {}) {
+  const zipped = zipSync({ 'xl/worksheets/sheet1.xml': strToU8(sheetXml), ...extra }, { level: 9 });
+  return zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength);
+}
+
+test('an archive that inflates past the total limit is refused before unpacking', () => {
+  // ~60 MB zer kompresuje się do kilkudziesięciu KB — plik przechodzi limit 5 MB skompresowanego.
+  const bomb = zipWithSheet(`<worksheet>${' '.repeat(60 * 1024 * 1024)}</worksheet>`);
+  assert.ok(bomb.byteLength < 200 * 1024, `skompresowany rozmiar ${bomb.byteLength}`);
+  assert.throws(() => repackXlsxStored(bomb), (error) => {
+    assert.ok(error instanceof XlsxReadError);
+    assert.match(error.message, /zbyt duży po rozpakowaniu/);
+    return true;
+  });
+});
+
+test('several parts that together exceed the total limit are refused', () => {
+  const chunk = `<x>${' '.repeat(20 * 1024 * 1024)}</x>`;
+  const zipped = zipWithSheet(chunk, { 'xl/sharedStrings.xml': strToU8(chunk), 'xl/worksheets/sheet2.xml': strToU8(chunk) });
+  assert.throws(() => repackXlsxStored(zipped), /zbyt duży po rozpakowaniu/);
+});
+
+test('too many archive entries are refused; non-sheet parts do not count towards the size limit', () => {
+  const many = {};
+  for (let i = 0; i < 1001; i += 1) many[`xl/media/f${i}.bin`] = new Uint8Array(1);
+  const zipped = zipSync(many, { level: 0 });
+  assert.throws(() => repackXlsxStored(zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength)), /zbyt wiele elementów|zbyt duży po rozpakowaniu/);
+  // Duży obraz (nie XML) nie jest rozpakowywany ani liczony.
+  const withImage = zipWithSheet('<worksheet/>', { 'xl/media/big.png': new Uint8Array(60 * 1024 * 1024) });
+  assert.doesNotThrow(() => repackXlsxStored(withImage));
+});
+
+test('a header lying about the size cannot get past the limit', () => {
+  const zipped = new Uint8Array(zipWithSheet(`<worksheet>${' '.repeat(60 * 1024 * 1024)}</worksheet>`));
+  // Zaniżenie originalSize w nagłówku lokalnym i centralnym do 100 bajtów.
+  const view = new DataView(zipped.buffer);
+  for (let i = 0; i < zipped.length - 4; i += 1) {
+    const sig = view.getUint32(i, true);
+    if (sig === 0x04034b50) view.setUint32(i + 22, 100, true);
+    if (sig === 0x02014b50) view.setUint32(i + 24, 100, true);
+  }
+  // Deklarowany rozmiar mieści się w limicie, ale odczyt kończy się błędem lub obciętym plikiem — nie 60 MB w pamięci.
+  let result;
+  try { result = repackXlsxStored(zipped.buffer); } catch (error) { assert.ok(error instanceof XlsxReadError); return; }
+  const sheet = unzipSync(new Uint8Array(result))['xl/worksheets/sheet1.xml'];
+  assert.ok(sheet.length <= 100, `rozmiar ${sheet.length}`);
+});
