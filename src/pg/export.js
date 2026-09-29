@@ -13,7 +13,7 @@
 // zapisywać jej w repo, CI, logach ani zgłoszeniach.
 
 import { createHash } from 'node:crypto';
-import { csvHeader, csvRow } from './csv.js';
+import { csvRow, toCsv } from './csv.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
 // Wersja 2 (#202): gospodarstwa i ich historia (0014), uzgodnienia rachunku
@@ -958,16 +958,12 @@ export function buildClassRosterCsv(roster, { generatedAt = new Date() } = {}) {
   const collator = new Intl.Collator('pl', { sensitivity: 'base' });
   const students = [...roster.students].sort((a, b) =>
     collator.compare(a.lastName, b.lastName) || collator.compare(a.firstName, b.firstName) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const lines = [];
   const isoDate = generatedAt.toISOString().slice(0, 10);
   const oneCell = (text) => csvRow([{ header: '', type: 'text' }], [text]);
-  lines.push(oneCell(`Lista klasy ${roster.class.name} — rok szkolny ${roster.class.schoolYearId} — wygenerowano ${isoDate}`));
-  lines.push('');
-  lines.push(csvHeader(ROSTER_CSV_COLUMNS));
-  students.forEach((student, index) => {
+  const rows = students.map((student, index) => {
     const [g1, g2] = student.guardians;
     const primary = student.guardians.find((g) => g.primaryContact);
-    lines.push(csvRow(ROSTER_CSV_COLUMNS, [
+    return [
       String(index + 1),
       student.lastName,
       student.firstName,
@@ -977,9 +973,10 @@ export function buildClassRosterCsv(roster, { generatedAt = new Date() } = {}) {
       g2?.email ?? '',
       primary ? `${primary.firstName} ${primary.lastName}` : '',
       '',
-    ]));
+    ];
   });
-  lines.push('');
-  lines.push(oneCell('Zawiera dane osobowe — nie przesyłać dalej, usunąć po wykorzystaniu.'));
-  return `${lines.join('\r\n')}\r\n`;
+  return toCsv(ROSTER_CSV_COLUMNS, rows, {
+    preamble: [oneCell(`Lista klasy ${roster.class.name} — rok szkolny ${roster.class.schoolYearId} — wygenerowano ${isoDate}`), ''],
+    trailer: ['', oneCell('Zawiera dane osobowe — nie przesyłać dalej, usunąć po wykorzystaniu.')],
+  });
 }

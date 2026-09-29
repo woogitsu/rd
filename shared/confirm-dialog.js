@@ -2,9 +2,9 @@
 // przed operacjami trwałymi lub publicznymi. Oparte na natywnym <dialog> (jak w meetings/),
 // więc Esc zamyka okno i liczy się jako anulowanie, a przeglądarka zarządza focus-trap.
 //
-// Część z DOM (confirmAction, ensureDialog) nie ma testu jednostkowego — jak reszta main.js
-// w tym repozytorium, gdzie testowana jest wyłącznie logika czysta (buildEffectsHtml niżej,
-// tests/confirm-dialog-core.test.js).
+// Logika czysta (buildEffectsHtml) ma test jednostkowy: tests/confirm-dialog-core.test.js.
+// Interakcje okna (Esc, fokus, anulowanie, podsumowanie skutków, podwójne kliknięcie)
+// testuje przeglądarka: tests/e2e/confirm-dialog.spec.js.
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -29,6 +29,8 @@ function ensureDialog() {
     '<form method="dialog" class="stack">' +
     '<h2 id="shared-confirm-title"></h2>' +
     '<div id="shared-confirm-body"></div>' +
+    '<p id="shared-confirm-field" hidden><label for="shared-confirm-input" id="shared-confirm-label"></label> ' +
+    '<input id="shared-confirm-input" type="text" autocomplete="off" spellcheck="false"></p>' +
     '<p id="shared-confirm-warning" role="alert" hidden></p>' +
     '<div class="actions">' +
     '<button type="button" data-role="cancel"></button>' +
@@ -44,13 +46,27 @@ function ensureDialog() {
 // startuje na „Anuluj” (kryterium a11y z issue). Fokus wraca do przycisku wywołującego.
 // Klucz idempotencji do samego żądania generuje wywołujący PRZED otwarciem okna (nie tutaj),
 // żeby ponowienie po błędzie sieci używało tego samego klucza — patrz panel/main.js, ledger/main.js.
-export function confirmAction({
+export function confirmAction(options = {}) {
+  return openDialog(options).then((result) => result.confirmed);
+}
+
+// Wariant z polem tekstowym (issue #224): reset MFA wymaga wpisania identyfikatora
+// konta (`expected`), a krok w górę MFA — kodu z aplikacji (`inputMode: "numeric"`).
+// „Potwierdź” jest nieaktywne, dopóki pole nie zgadza się z `expected` (albo, gdy
+// `expected` nie podano, dopóki nie jest niepuste). Zwraca wpisany tekst po
+// potwierdzeniu albo null po anulowaniu (Esc, „Anuluj”).
+export function promptAction(options = {}) {
+  return openDialog({ ...options, input: options.input ?? {} }).then((result) => (result.confirmed ? result.value : null));
+}
+
+function openDialog({
   title = "Potwierdzić operację?",
   effects = [],
   warning = "",
   confirmLabel = "Potwierdź",
   cancelLabel = "Anuluj",
   destructive = false,
+  input = null,
 } = {}) {
   return new Promise((resolve) => {
     const dialog = ensureDialog();
@@ -66,17 +82,39 @@ export function confirmAction({
     confirmBtn.textContent = confirmLabel;
     confirmBtn.disabled = false;
     dialog.classList.toggle("destructive", Boolean(destructive));
+    const field = dialog.querySelector("#shared-confirm-field");
+    const inputEl = dialog.querySelector("#shared-confirm-input");
+    field.hidden = !input;
+    inputEl.value = "";
+    if (input) {
+      dialog.querySelector("#shared-confirm-label").textContent = input.label ?? "";
+      inputEl.setAttribute("inputmode", input.inputMode ?? "text");
+      inputEl.setAttribute("autocomplete", input.autocomplete ?? "off");
+      inputEl.setAttribute("aria-describedby", "shared-confirm-body");
+      confirmBtn.disabled = true;
+    }
+    const inputValid = () => {
+      const value = inputEl.value.trim();
+      return input?.expected !== undefined ? value === input.expected : value.length > 0;
+    };
+    function onInput() {
+      confirmBtn.disabled = !inputValid();
+    }
 
     let settled = false;
+    let enteredValue = "";
     function cleanup(value) {
       if (settled) return;
       settled = true;
+      enteredValue = inputEl.value.trim();
+      inputEl.removeEventListener("input", onInput);
+      inputEl.value = ""; // kod/identyfikator nie zostaje w DOM po zamknięciu
       dialog.removeEventListener("close", onClose);
       cancelBtn.removeEventListener("click", onCancel);
       confirmBtn.removeEventListener("click", onConfirm);
       if (dialog.open) dialog.close();
       if (invoker && typeof invoker.focus === "function") invoker.focus();
-      resolve(value);
+      resolve({ confirmed: value, value: input ? enteredValue : "" });
     }
     function onCancel() {
       cleanup(false);
@@ -84,6 +122,7 @@ export function confirmAction({
     function onConfirm(event) {
       event.preventDefault();
       if (settled) return; // podwójne kliknięcie „Potwierdź”: jedno rozstrzygnięcie
+      if (input && !inputValid()) return;
       confirmBtn.disabled = true;
       cleanup(true);
     }
@@ -94,8 +133,9 @@ export function confirmAction({
     cancelBtn.addEventListener("click", onCancel);
     confirmBtn.addEventListener("click", onConfirm);
     dialog.addEventListener("close", onClose);
+    inputEl.addEventListener("input", onInput);
 
     dialog.showModal();
-    (destructive ? cancelBtn : confirmBtn).focus();
+    (input ? inputEl : destructive ? cancelBtn : confirmBtn).focus();
   });
 }
