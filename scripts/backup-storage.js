@@ -10,6 +10,7 @@
 // Raport (liczby, bez nazw plików i adresów) trafia na stdout i, jeśli
 // tabela istnieje (patrz #90), do backup_runs.
 
+import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
 import { createPgDatabase } from '../src/db.js';
 import { createS3Storage, storageFromEnv } from '../src/storage.js';
 import { recordStorageBackupRun, runStorageBackup } from '../src/pg/storage-backup.js';
@@ -19,8 +20,10 @@ const REQUIRED_TARGET_ENV = ['STORAGE_BACKUP_S3_ENDPOINT', 'STORAGE_BACKUP_S3_RE
 
 async function main() {
   const env = process.env;
-  if (env.APP_ENV === 'production' && !process.argv.includes('--allow-production')) {
-    console.error('Storage backup in production requires explicit --allow-production. Nothing was copied.');
+  if (guardDangerousOperation(env.APP_ENV, { allowProduction: process.argv.includes('--allow-production') }).refused) {
+    const warning = appEnvWarning(env.APP_ENV);
+    if (warning) console.error(warning);
+    console.error('Storage backup in production (or with unrecognised APP_ENV) requires explicit --allow-production. Nothing was copied.');
     process.exitCode = 1;
     return;
   }

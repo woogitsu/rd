@@ -3,6 +3,7 @@
 // porównuje SHA-256 i usuwa. Nie dotyka dokumentów (docs/…) ani bazy.
 // Wypisuje wyłącznie wynik — bez adresu, nazwy bucketu i kluczy dostępu.
 
+import { appEnvWarning, isProductionLikeEnv } from '../src/app-env.js';
 import { sha256Hex, storageFromEnv } from '../src/storage.js';
 
 function syntheticPdf() {
@@ -10,8 +11,10 @@ function syntheticPdf() {
   return new TextEncoder().encode(`%PDF-1.4\n% RD storage smoke test ${stamp} - dane syntetyczne\n1 0 obj <<>> endobj\ntrailer <<>>\n%%EOF\n`);
 }
 
-if (process.env.APP_ENV === 'production') {
-  console.error('Storage smoke test is for staging only. Nothing was written.');
+if (isProductionLikeEnv(process.env.APP_ENV)) {
+  const warning = appEnvWarning(process.env.APP_ENV);
+  if (warning) console.error(warning);
+  console.error('Storage smoke test is for staging only (set APP_ENV=staging). Nothing was written.');
   process.exitCode = 1;
 } else {
   let storage = null;

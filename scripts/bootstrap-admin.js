@@ -8,6 +8,7 @@
 // idą na stderr bez adresu e-mail i bez tokenu. Szczegóły:
 // docs/RAILWAY_OPERATIONS.md, „Pierwszy administrator (bootstrap)”.
 
+import { appEnvWarning } from '../src/app-env.js';
 import { fileURLToPath } from 'node:url';
 import { createPgDatabase } from '../src/db.js';
 import { BootstrapRefused, bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
@@ -17,7 +18,7 @@ const USAGE = 'Usage: npm run auth:bootstrap-admin -- <email> [--ttl-hours=24] [
 const REFUSALS = {
   admin_exists: 'An active administrator already exists. Bootstrap refused; use the admin panel to invite further accounts.',
   pending_admin_invitation: 'An unused admin invitation is still valid. Bootstrap refused; accept it or wait until it expires',
-  production_requires_flag: 'APP_ENV=production requires explicit --allow-production (only within an approved cutover, D-20). Nothing was changed.',
+  production_requires_flag: 'APP_ENV=production (or missing/unrecognised APP_ENV) requires explicit --allow-production (only within an approved cutover, D-20). Nothing was changed.',
   user_disabled: 'The account with this address is disabled. Bootstrap refused.',
   invalid_email: 'The e-mail address is invalid. Nothing was changed.',
 };
@@ -52,6 +53,7 @@ export async function runBootstrapCli({ argv, env, db, stdout = process.stdout, 
   } catch (error) {
     if (error instanceof BootstrapRefused) {
       const suffix = error.code === 'pending_admin_invitation' ? ` (${error.detail.expiresAt}).` : '';
+      if (error.code === 'production_requires_flag') { const w = appEnvWarning(env.APP_ENV); if (w) stderr.write(`${w}\n`); }
       stderr.write(`${REFUSALS[error.code] ?? error.code}${suffix}\n`);
       return 2;
     }
