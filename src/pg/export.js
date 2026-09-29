@@ -338,6 +338,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   user_passwords: 'skróty haseł kont — sekrety, nigdy w paczce',
   login_rate_limits: 'limity prób logowania — dane techniczne',
   password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
+  account_recovery_requests: 'wnioski o reset hasła/MFA kont chronionych (#146) — operacje na kontach, nie dane roku; poza paczką jak role_grants i tokeny resetu',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
   retention_policies: 'rejestr polityk retencji (D-04) — konfiguracja/decyzje zarządu, nie dane roku do odtworzenia (0074, #91)',
   privacy_notices: 'wersjonowana informacja o przetwarzaniu danych (D-06) — dokument organizacji, nie zawsze przypisany do jednego roku (school_year_id nullable); zakres i retencja do decyzji D-06 (0075, #145)',

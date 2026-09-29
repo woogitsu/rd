@@ -727,15 +727,24 @@ test('reset MFA przez administratora: wyłącza czynnik i kody, wylogowuje; potw
   const selfReset = await post('/api/admin/users/u-login-admin3/mfa-reset', { confirm: 'u-login-admin3' }, { cookie: admin });
   assert.equal(selfReset.status, 409);
 
-  const reset = await post(path, { confirm: account.userId }, { cookie: admin });
+  // #146: konto zarządu — pierwszy administrator składa wniosek, reset wykonuje drugi.
+  const requested = await post(path, { confirm: account.userId }, { cookie: admin });
+  assert.equal(requested.status, 202);
+  assert.equal((await get('/api/session', mfaCookie)).status, 200, 'wniosek niczego nie zmienia');
+  const requestPath = `/api/admin/account-requests/${(await requested.json()).request.id}`;
+  assert.equal((await post(`${requestPath}/approve`, {}, { cookie: admin })).status, 403, 'wnioskodawca nie zatwierdza');
+  const admin4 = await seedUserSession(db, { userId: 'u-login-admin4', roles: [{ role: 'admin' }], mfa: true });
+  const reset = await post(`${requestPath}/approve`, {}, { cookie: admin4 });
   assert.equal(reset.status, 200);
-  const body = await reset.json();
+  const body = (await reset.json()).mfa;
   assert.equal(body.changed, true);
   assert.equal(body.disabledFactors, 1);
   assert.equal(body.invalidatedRecoveryCodes, 10);
   assert.ok(body.revokedSessions >= 1);
   assert.equal((await get('/api/session', mfaCookie)).status, 401);
-  const again = await (await post(path, { confirm: account.userId }, { cookie: admin })).json();
+  // Ponowny wniosek po resecie: zatwierdzenie nic już nie zmienia.
+  const againRequest = await (await post(path, { confirm: account.userId }, { cookie: admin })).json();
+  const again = (await (await post(`/api/admin/account-requests/${againRequest.request.id}/approve`, {}, { cookie: admin4 })).json()).mfa;
   assert.equal(again.changed, false);
 
   const relogin = await (await login(account)).json();
@@ -743,7 +752,8 @@ test('reset MFA przez administratora: wyłącza czynnik i kody, wylogowuje; potw
   assert.equal(relogin.mfaRequired, true, 'zarząd musi zapisać nowy czynnik');
   const events = await auditRows('mfa.reset');
   assert.equal(events.filter((row) => row.entity_id === account.userId).length, 1);
-  assert.equal(events[0].actor_id, 'u-login-admin3');
+  assert.equal(events[0].actor_id, 'u-login-admin4');
+  assert.equal(events[0].metadata_json.requestedBy, 'u-login-admin3');
 });
 
 // --- Brak danych jawnych w audycie i logach ---------------------------------------------
@@ -857,8 +867,16 @@ test('#189: konto bez czynnika — revoke-all jak dotąd; rola wymagająca MFA b
 
 test('#193: token resetu unieważniany po zmianie hasła, logowaniu, wyłączeniu konta, resecie MFA i udanym resecie', async () => {
   const admin = await seedUserSession(db, { userId: 'u-login-193adm', roles: [{ role: 'admin' }], mfa: true });
+  const admin2 = await seedUserSession(db, { userId: 'u-login-193adm-b', roles: [{ role: 'admin' }], mfa: true });
   const issue = async (userId) => {
     const response = await post(`/api/admin/users/${userId}/password-reset`, {}, { cookie: admin });
+    if (response.status === 202) {
+      // #146: konto zarządu — token wydaje dopiero drugi administrator.
+      const { request } = await response.json();
+      const approved = await post(`/api/admin/account-requests/${request.id}/approve`, {}, { cookie: admin2 });
+      assert.equal(approved.status, 200);
+      return (await approved.json()).token;
+    }
     assert.equal(response.status, 201);
     return (await response.json()).token;
   };
@@ -902,7 +920,9 @@ test('#193: token resetu unieważniany po zmianie hasła, logowaniu, wyłączeni
   const lost = await seedPasswordUser({ userId: 'u-login-193mfa', roles: [{ role: 'board', schoolYearId: 'y-test' }] });
   await enrollAndConfirm(cookieFrom(await login(lost)));
   const t3 = await issue(lost.userId);
-  assert.equal((await post(`/api/admin/users/${lost.userId}/mfa-reset`, { confirm: lost.userId }, { cookie: admin })).status, 200);
+  const lostRequest = await post(`/api/admin/users/${lost.userId}/mfa-reset`, { confirm: lost.userId }, { cookie: admin });
+  assert.equal(lostRequest.status, 202, '#146: konto zarządu — wniosek');
+  assert.equal((await post(`/api/admin/account-requests/${(await lostRequest.json()).request.id}/approve`, {}, { cookie: admin2 })).status, 200);
   assert.equal((await resetWith(t3)).status, 400);
   assert.ok((await revokedReasons(lost.userId)).includes('mfa_reset'));
   // Nowy token + hasło nadal wymaga zapisu MFA dla zarządu.
