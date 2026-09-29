@@ -17,7 +17,7 @@
     "build:import": "vite build import --outDir ../dist/import --base ./ --emptyOutDir",
     "dev:panel": "vite panel",
     "build:panel": "vite build panel --outDir ../dist/panel --base ./ --emptyOutDir",
-    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test": "node --test --test-concurrency=1 --import ./tests/setup.js tests/*.test.js",
     "smoke": "node scripts/smoke-postgres.js",
     "smoke:remote": "node scripts/smoke-remote.js",
     "load:test": "node scripts/load-test.js",
