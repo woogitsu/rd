@@ -1664,6 +1664,8 @@ function requireReason(value) {
 export async function cancelMeeting(db, actor, input = {}) {
   const meeting = await meetingForManage(db, actor, input.meetingId);
   const reason = requireReason(input.reason);
+  // #152: powód odwołania trafia do niezmiennej historii — bramka danych osobowych.
+  const gate = gatePii([['meetings.cancellation_reason', reason]], input);
   const expectedRevision = requiredRevision(input.revision);
   const result = await mutate(db, async tx => {
     const locked = await lockMeeting(tx, meeting.id);
@@ -1681,7 +1683,7 @@ export async function cancelMeeting(db, actor, input = {}) {
         WHERE id = $1`, [meeting.id, reason, actor.userId]);
     await audit(tx, actor, 'meeting.cancelled', 'meeting', meeting.id, {
       schoolYearId: meeting.school_year_id, fromStatus: locked.status,
-      scheduledAt: iso(locked.scheduled_at), hadApprovedNotice,
+      scheduledAt: iso(locked.scheduled_at), hadApprovedNotice, ...piiAuditMetadata(gate),
     });
     let notice = null;
     if (hadApprovedNotice) {
@@ -1704,6 +1706,8 @@ export async function rescheduleMeeting(db, actor, input = {}) {
   const meeting = await meetingForManage(db, actor, input.meetingId);
   const scheduledAt = timestamp(input.scheduledAt);
   const reason = requireReason(input.reason);
+  // #152: powód zmiany terminu trafia do niezmiennej historii — bramka danych osobowych.
+  const gate = gatePii([['meeting_reschedules.reason', reason]], input);
   const expectedRevision = requiredRevision(input.revision);
   const result = await mutate(db, async tx => {
     const locked = await lockMeeting(tx, meeting.id);
@@ -1733,7 +1737,7 @@ export async function rescheduleMeeting(db, actor, input = {}) {
     await tx.query('UPDATE meetings SET scheduled_at = $2 WHERE id = $1', [meeting.id, scheduledAt]);
     await audit(tx, actor, 'meeting.rescheduled', 'meeting', meeting.id, {
       schoolYearId: meeting.school_year_id, fromScheduledAt: iso(locked.scheduled_at),
-      toScheduledAt: iso(scheduledAt), rescheduleId, hadApprovedNotice,
+      toScheduledAt: iso(scheduledAt), rescheduleId, hadApprovedNotice, ...piiAuditMetadata(gate),
     });
     let notice = null;
     if (hadApprovedNotice) {

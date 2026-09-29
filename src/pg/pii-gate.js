@@ -54,6 +54,8 @@ export const GATED_FIELDS = Object.freeze([
   'event_tasks.title',
   'event_tasks.cancellation_reason',
   'meeting_agenda_items.description',
+  'meetings.cancellation_reason',
+  'meeting_reschedules.reason',
   'meeting_minutes.body',
   'meeting_minutes.change_note',
   'meeting_minutes.approval_note',
@@ -83,6 +85,7 @@ export const EXEMPT_FIELDS = Object.freeze({
   'email_campaigns.subject': 'treść wiadomości do rodziców, zatwierdzana jawnie razem z listą odbiorców; adres kontaktowy Rady jest zamierzony',
   'email_campaigns.body_text': 'treść wiadomości do rodziców, zatwierdzana jawnie razem z listą odbiorców; adres kontaktowy Rady jest zamierzony',
   'privacy_notices.body_text': 'tekst klauzuli informacyjnej, nie zawiera danych osobowych (personal: none)',
+  'meeting_agenda_versions.snapshot': 'migawka JSON kopiuje tytuły i opisy punktów porządku; opis przechodzi bramkę przy zapisie punktu (meeting_agenda_items.description), a migawka niczego nie dodaje',
   'payment_references.revoke_reason': 'kopiowane z payment_reference_revocations.reason, które przechodzi przez bramkę',
 });
 

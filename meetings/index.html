@@ -154,7 +154,7 @@
           <form id="reschedule-form" class="stack" novalidate>
             <div class="field-row">
               <label>Nowy termin (Bruksela) <input name="scheduledAt" type="datetime-local" required /></label>
-              <label>Powód zmiany terminu (3–500 znaków, wewnętrzny) <input name="reason" minlength="3" maxlength="500" required /></label>
+              <label>Powód zmiany terminu (3–500 znaków, wewnętrzny) <input name="reason" minlength="3" maxlength="500" required /><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
             </div>
             <p class="form-error" id="reschedule-error" role="alert"></p>
             <div><button type="submit">Zmień termin</button></div>
@@ -162,6 +162,7 @@
           <form id="cancel-form" class="stack" novalidate>
             <label>Powód odwołania zebrania (3–500 znaków, wewnętrzny — nie trafia na stronę publiczną)
               <textarea name="reason" rows="2" minlength="3" maxlength="500" required></textarea>
+              <small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small>
             </label>
             <p class="muted">Odwołanie jest ostateczne: zebranie nie przyjmie już obecności, quorum, protokołu ani uchwał. Nic nie jest wysyłane automatycznie.</p>
             <p class="form-error" id="cancel-error" role="alert"></p>
