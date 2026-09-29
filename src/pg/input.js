@@ -140,3 +140,90 @@ export function decodeCursor(schema, raw) {
   schema.forEach((key, index) => { values[key] = payload[index]; });
   return values;
 }
+
+// --- Czytniki zgodne z dotychczasowym zachowaniem tras (issue #154) ---------
+//
+// Trasy miały własne kopie `readJson`, które różniły się drobiazgami (kolejność
+// kontroli, sprawdzanie Content-Length, traktowanie pustego ciała). Ta warstwa
+// zbiera je w jednym miejscu, ale KAŻDA różnica jest jawną opcją, żeby migracja
+// trasy nie zmieniała jej kontraktu (kody błędów, limity, kolejność odmów).
+// Nowe trasy powinny używać `readJsonObject` powyżej.
+
+/** @param {string|null} raw wartość nagłówka Content-Type @returns {boolean} */
+export function isJsonContentType(raw) {
+  return raw?.split(';', 1)[0].trim().toLowerCase() === 'application/json';
+}
+
+/** @param {unknown} error @returns {boolean} naruszenie ograniczenia UNIQUE (SQLSTATE 23505) */
+export function isUniqueError(error) {
+  return error?.code === '23505';
+}
+
+function bodyTooLarge(text, maxBytes) {
+  return new TextEncoder().encode(text).byteLength > maxBytes;
+}
+
+/**
+ * Odczyt ciała jako tekstu z limitem: deklarowany Content-Length przed
+ * odczytem, rzeczywisty rozmiar po odczycie.
+ * @param {Request} request
+ * @param {number} maxBytes
+ * @param {(code: string, status: number) => Error} makeError
+ * @returns {Promise<string>}
+ */
+export async function readBodyText(request, maxBytes, makeError) {
+  const declared = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declared) && declared > maxBytes) throw makeError('request_too_large', 413);
+  const text = await request.text();
+  if (bodyTooLarge(text, maxBytes)) throw makeError('request_too_large', 413);
+  return text;
+}
+
+/**
+ * Buduje czytnik JSON o ustalonym zachowaniu trasy.
+ *
+ * @param {object} config
+ * @param {number} config.maxBytes domyślny limit ciała
+ * @param {(code: string, status: number) => Error} config.error fabryka błędu trasy (jej własna klasa)
+ * @param {boolean} [config.declaredLength] sprawdzaj Content-Length przed odczytem
+ * @param {'error'|'blank'|'exact'} [config.emptyBody]
+ *   `error` — puste ciało to `invalid_json` (domyślnie); `blank` — ciało puste
+ *   lub złożone z białych znaków daje `{}`; `exact` — tylko ciało dokładnie
+ *   puste daje `{}` (samo białe znaki to `invalid_json`)
+ * @param {boolean} [config.typeAfterEmpty] kontroluj Content-Type dopiero po
+ *   odczycie i sprawdzeniu rozmiaru, a puste ciało (`blank`) przepuszczaj bez niego
+ * @param {(raw: string|null) => boolean} [config.isJsonType] własny test Content-Type
+ * @param {[string, number]} [config.typeError] kod i status odmowy typu
+ * @param {boolean} [config.requireObject] wymagaj obiektu (domyślnie tak; `false` zwraca dowolny poprawny JSON)
+ * @returns {(request: Request, maxBytes?: number) => Promise<any>}
+ */
+export function createJsonReader({
+  maxBytes: defaultMaxBytes,
+  error: makeError,
+  declaredLength = false,
+  emptyBody = 'error',
+  typeAfterEmpty = false,
+  isJsonType = isJsonContentType,
+  typeError = ['invalid_content_type', 415],
+  requireObject = true,
+}) {
+  const checkType = (request) => {
+    if (!isJsonType(request.headers.get('Content-Type'))) throw makeError(typeError[0], typeError[1]);
+  };
+  return async function readJson(request, maxBytes = defaultMaxBytes) {
+    if (!typeAfterEmpty) checkType(request);
+    const declared = Number(request.headers.get('Content-Length'));
+    if (declaredLength && Number.isFinite(declared) && declared > maxBytes) throw makeError('request_too_large', 413);
+    const text = await request.text();
+    if (bodyTooLarge(text, maxBytes)) throw makeError('request_too_large', 413);
+    if (emptyBody === 'blank' && !text.trim()) return {};
+    if (typeAfterEmpty) checkType(request);
+    try {
+      const data = JSON.parse(emptyBody === 'exact' && text === '' ? '{}' : text);
+      if (requireObject && (!data || typeof data !== 'object' || Array.isArray(data))) throw new Error();
+      return data;
+    } catch {
+      throw makeError('invalid_json', 400);
+    }
+  };
+}
