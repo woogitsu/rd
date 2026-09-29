@@ -12,6 +12,8 @@ import {
   describeApiError,
   formatDayPlan,
   formatExclusions,
+  formatReportRows,
+  REPORT_LABELS,
   formatSchedule,
   STATUS_LABELS,
   sendNotBeforeFromInput,
@@ -125,6 +127,17 @@ test('describeApiError: komunikaty po polsku dla typowych kodów', () => {
   assert.match(describeApiError(403, 'forbidden'), /Nie masz uprawnień/);
   assert.match(describeApiError(403, 'self_approval_forbidden'), /inna osoba/);
   assert.equal(describeApiError(500, null), null);
+});
+
+test('raport doręczeń: kategorie panelu = kategorie raportu serwera, tylko liczby', () => {
+  const server = readFileSync(new URL('../src/pg/routes/email.js', import.meta.url), 'utf8');
+  const declared = server.match(/REPORT_CATEGORIES = Object\.freeze\(\[([^\]]+)\]/)[1].match(/'([a-z_]+)'/g).map((x) => x.slice(1, -1));
+  assert.deepEqual(Object.keys(REPORT_LABELS), declared);
+  const rows = formatReportRows({ sent: 2, delivered: '3', bogus: 9 });
+  assert.equal(rows.length, declared.length);
+  assert.deepEqual(rows.find((r) => r.key === 'delivered'), { key: 'delivered', label: REPORT_LABELS.delivered, count: 3 });
+  assert.equal(rows.find((r) => r.key === 'queued').count, 0);
+  assert.deepEqual(formatReportRows(null).map((r) => r.count), declared.map(() => 0));
 });
 
 test('buildCampaignsUrl: kursor kolejnej strony (#159)', () => {

@@ -1075,9 +1075,9 @@ test('webhook: missing or wrong secret is rejected; bounce suppresses the addres
     assert.equal(await t.count('SELECT count(*)::int AS n FROM email_webhook_events'), 0);
 
     const ok = await send(event, `Bearer ${WEBHOOK_SECRET}`);
-    assert.deepEqual(ok, { status: 200, body: { received: 1, recorded: 1, suppressed: 1 } });
+    assert.deepEqual(ok, { status: 200, body: { received: 1, recorded: 1, suppressed: 1, ignored: 0 } });
     const duplicate = await send(event, `Basic ${Buffer.from(`brevo:${WEBHOOK_SECRET}`).toString('base64')}`);
-    assert.deepEqual(duplicate.body, { received: 1, recorded: 0, suppressed: 0 });
+    assert.deepEqual(duplicate.body, { received: 1, recorded: 0, suppressed: 0, ignored: 0 });
     assert.equal(await t.count('SELECT count(*)::int AS n FROM email_webhook_events'), 1);
     assert.equal(await t.count('SELECT count(*)::int AS n FROM email_suppressions WHERE email_hash = $1', [emailHash('h1-g1@example.invalid')]), 1);
     assert.equal((await outboxStates(t, campaign.id))[0].state, 'bounced');
@@ -1921,7 +1921,7 @@ test('#139 webhook secret rotation: previous secret still accepted, logged; remo
     const rotatedEnv = { ...t.env, BREVO_WEBHOOK_SECRET: 'n'.repeat(48), BREVO_WEBHOOK_SECRET_PREVIOUS: WEBHOOK_SECRET };
     const res = await handlePgRequest(webhookRequest(event, `Bearer ${WEBHOOK_SECRET}`), rotatedEnv);
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { received: 1, recorded: 1, suppressed: 0 });
+    assert.deepEqual(await res.json(), { received: 1, recorded: 1, suppressed: 0, ignored: 0 });
     assert.equal(await t.count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.webhook.previous_secret_used'`), 1);
     // Sekret usunięty z env: stary klucz znowu jest zwykłym złym sekretem.
     const withoutPrevious = await handlePgRequest(webhookRequest({ ...event, id: 2 }, `Bearer ${WEBHOOK_SECRET}`), { ...t.env, BREVO_WEBHOOK_SECRET: 'n'.repeat(48) });
@@ -2185,4 +2185,116 @@ test('#130 preview shows planned start and estimated end in Brussels time; role 
 
 test('no test in this file touched the network', () => {
   assert.equal(networkGuardCalls(), 0);
+});
+
+// --- #139: raport w podziale na stany, rozstrzyganie, utwardzenie webhooka ------
+
+test('#139 report summary: partition into queued/sent/delivered/bounced/delivery_unknown/suppressed, counts only', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3', 'h4']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const transport = fakeTransport();
+    // h3: wiersz „sending” z wygasłą dzierżawą po rozpoczęciu wysyłki → delivery_unknown.
+    await t.db.query("UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2, claim_token = $3, send_started_at = $2 WHERE campaign_id = $1 AND household_id = 'h3'", [campaign.id, DAY1.toISOString(), crypto.randomUUID()]);
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    const byHousehold = Object.fromEntries((await t.db.query('SELECT household_id, id, provider_message_id FROM email_outbox WHERE campaign_id = $1', [campaign.id])).rows.map((r) => [r.household_id, r]));
+    const hook = async (event, household, id) => {
+      const res = await handlePgRequest(webhookRequest(
+        { event, email: `${household}-g1@example.invalid`, 'message-id': byHousehold[household].provider_message_id, ts_event: 1791187200, id },
+        `Bearer ${WEBHOOK_SECRET}`,
+      ), t.env);
+      assert.equal(res.status, 200);
+    };
+    await hook('delivered', 'h1', 1);
+    await hook('hard_bounce', 'h2', 2);
+    const before = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/report`);
+    assert.equal(before.status, 200);
+    assert.deepEqual(before.body.summary, {
+      queued: 0, sending: 0, sent: 1, delivered: 1, bounced: 1, delivery_unknown: 1, failed: 0, suppressed: 0, skipped: 0, cancelled: 0,
+    });
+    assert.equal(before.body.deliveryUnknownUnresolved, 1);
+    const text = JSON.stringify(before.body);
+    assert.ok(!/@|example\.invalid|h[1-4]-g/.test(text), `raport nie może zawierać danych osobowych: ${text}`);
+
+    // Ponowione zdarzenie webhooka (ten sam ładunek) nie zmienia raportu.
+    await hook('delivered', 'h1', 1);
+    const again = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/report`);
+    assert.deepEqual(again.body.summary, before.body.summary);
+
+    // Rozstrzygnięcie nie zmienia stanu wiersza; zmniejsza tylko licznik nierozstrzygniętych.
+    const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId: byHousehold.h3.id, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
+    });
+    assert.equal(res.status, 201);
+    const after = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/report`);
+    assert.equal(after.body.summary.delivery_unknown, 1);
+    assert.equal(after.body.deliveryUnknownUnresolved, 0);
+    assert.deepEqual(after.body.resolutions, { confirmed_delivered: 1 });
+    assert.equal((await t.db.query('SELECT state, last_error FROM email_outbox WHERE id = $1', [byHousehold.h3.id])).rows[0].last_error, 'delivery_unknown');
+    // Rozstrzygnięcie nie wysyła niczego.
+    assert.equal(transport.calls.length, 3);
+
+    // Granice ról: przedstawiciel, admin i skarbnik klasowy dostają 403.
+    const rep = await seedUserSession(t.db, { userId: 'u-rep139s', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    const admin = await seedUserSession(t.db, { userId: 'u-adm139s', mfa: true, roles: [{ role: 'admin' }] });
+    const classBoard = await seedUserSession(t.db, { userId: 'u-cbd139s', mfa: true, roles: [{ role: 'board', classId: 'c1', schoolYearId: YEAR }] });
+    for (const cookie of [rep, admin, classBoard]) {
+      assert.equal((await t.call(cookie, `/api/email/campaigns/${campaign.id}/report`)).status, 403);
+      const denied = await t.call(cookie, `/api/email/campaigns/${campaign.id}/resolutions`, {
+        method: 'POST', body: { outboxId: byHousehold.h3.id, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
+      });
+      assert.equal(denied.status, 403);
+    }
+  } finally { await t.close(); }
+});
+
+test('#139 webhook: unknown event type is ignored with 200 (no 5xx), oversized body 413, replay stays a single event', async () => {
+  const t = await setup();
+  try {
+    const auth = `Bearer ${WEBHOOK_SECRET}`;
+    const unknown = await handlePgRequest(webhookRequest({ event: 'future_kind', email: 'x@example.invalid', ts_event: 1, id: 1 }, auth), t.env);
+    assert.equal(unknown.status, 200);
+    assert.deepEqual(await unknown.json(), { received: 1, recorded: 0, suppressed: 0, ignored: 1 });
+    const weird = await handlePgRequest(webhookRequest([{ event: 42 }, { event: 'DROP TABLE' }], auth), t.env);
+    assert.equal(weird.status, 200);
+    assert.equal((await weird.json()).ignored, 2);
+    assert.equal(await t.count('SELECT count(*)::int AS n FROM email_webhook_events'), 0);
+
+    const huge = await handlePgRequest(request('/api/email/webhooks/brevo', {
+      method: 'POST', origin: false,
+      headers: { 'Content-Type': 'application/json', Authorization: auth, 'Content-Length': String(70 * 1024) },
+      body: JSON.stringify({ event: 'delivered', pad: 'x'.repeat(70 * 1024) }),
+    }), t.env);
+    assert.equal(huge.status, 413);
+
+    const event = { event: 'soft_bounce', email: 'z@example.invalid', ts_event: 5, id: 9 };
+    for (let i = 0; i < 3; i += 1) assert.equal((await handlePgRequest(webhookRequest(event, auth), t.env)).status, 200);
+    assert.equal(await t.count(`SELECT count(*)::int AS n FROM email_webhook_events WHERE event = 'soft_bounce'`), 1);
+  } finally { await t.close(); }
+});
+
+test('#139 webhook CIDR: outside range gets 401 before parsing, inside passes, only with TRUST_PROXY=1, bad config fails closed', async () => {
+  const t = await setup();
+  try {
+    const auth = `Bearer ${WEBHOOK_SECRET}`;
+    const event = { event: 'delivered', email: 'z@example.invalid', ts_event: 7, id: 3 };
+    const from = (ip, body = JSON.stringify(event), headers = {}) => request('/api/email/webhooks/brevo', {
+      method: 'POST', origin: false, headers: { 'Content-Type': 'application/json', Authorization: auth, 'x-rd-client-ip': ip, ...headers }, body,
+    });
+    const env = { ...t.env, TRUST_PROXY: '1', BREVO_WEBHOOK_ALLOWED_CIDRS: '198.51.100.0/24, 2001:db8::/32' };
+    assert.equal((await handlePgRequest(from('198.51.100.7'), env)).status, 200);
+    assert.equal((await handlePgRequest(from('::ffff:198.51.100.8', JSON.stringify({ ...event, id: 4 })), env)).status, 200);
+    assert.equal((await handlePgRequest(from('2001:db8::5', JSON.stringify({ ...event, id: 5 })), env)).status, 200);
+    const outside = await handlePgRequest(from('203.0.113.9', '{not json'), env);
+    assert.deepEqual([outside.status, await outside.json()], [401, { error: 'invalid_signature' }], 'źródło spoza zakresu odrzucone przed parsowaniem treści');
+    assert.equal((await handlePgRequest(from('', '{}'), env)).status, 401);
+    // Bez TRUST_PROXY=1 adres nie jest wiarygodny — kontrola nie działa.
+    assert.equal((await handlePgRequest(from('203.0.113.9', JSON.stringify({ ...event, id: 6 })), { ...env, TRUST_PROXY: undefined })).status, 200);
+    // Niepoprawny wpis: fail closed.
+    const bad = await handlePgRequest(from('198.51.100.7'), { ...env, BREVO_WEBHOOK_ALLOWED_CIDRS: '198.51.100.0/99' });
+    assert.equal(bad.status, 503);
+    // Pusta zmienna = brak ograniczenia.
+    assert.equal((await handlePgRequest(from('203.0.113.9', JSON.stringify({ ...event, id: 8 })), { ...env, BREVO_WEBHOOK_ALLOWED_CIDRS: '' })).status, 200);
+  } finally { await t.close(); }
 });
