@@ -24,8 +24,11 @@ import {
   approve, cancelTask, createDraft, createSignup, createTask, publish, submit, withdrawSignup,
 } from '../src/pg/events.js';
 import {
+  addAgendaItem,
+  approveMeetingNotice,
   approveMinutes,
   createMeeting,
+  createMeetingNotice,
   createMinutesVersion,
   createResolution,
   determineQuorum,
@@ -46,10 +49,10 @@ import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
 import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedDocument, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
   ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, REFERENCE_CASES, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
-  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
+  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
   pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
@@ -113,6 +116,7 @@ async function seedBase(db) {
     await seedClass(db, { id: target.classId, schoolYearId: target.schoolYearId });
   }
   for (const account of Object.values(FX_ACCOUNTS)) await seedUser(db, { userId: account.userId });
+  await seedDocument(db, { id: PHOTO_SOURCE_DOCUMENT_ID, createdBy: 'u-fx-admin' });
   // #205: gospodarstwo we wpłacie musi mieć ucznia zapisanego w roku wpłaty (oba lata macierzy).
   await seedEnrolledHousehold(db, 'hh-1', [YEAR_1, YEAR_2], { classIds: MATRIX_CLASSES });
   // #138: cel ponownego przypisania wpłaty (payments.reassignment).
@@ -180,7 +184,8 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   const classId = target.classId ?? await fallbackClassId(db, target.schoolYearId);
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
     [enrollmentId, studentId, classId, target.schoolYearId]);
-  return { householdId, guardianId, studentId, enrollmentId };
+  const membership = await db.query('SELECT id FROM student_households WHERE student_id = $1 AND is_primary', [studentId]);
+  return { householdId, guardianId, studentId, enrollmentId, membershipId: membership.rows[0].id };
 }
 
 async function seedFixtureSessions(db) {
@@ -244,7 +249,7 @@ async function makeEventTaskSignup(db, target, stage) {
   return { eventId, taskId, signupId: signup.id };
 }
 
-async function makeMeeting(db, target, stage, { title, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
+async function makeMeeting(db, target, stage, { title, itemTitle, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
   const scopeMarker = marker(target.key);
   const { meeting } = await createMeeting(db, fxAdmin, {
     idempotencyKey: nextKey('fx-meeting'), schoolYearId: target.schoolYearId,
@@ -255,6 +260,18 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
   });
   const obj = { meetingId: meeting.id };
   if (stage === 'draft') return obj;
+  // #113: zebranie zaplanowane z punktem porządku, szkicem i zatwierdzonym zawiadomieniem
+  // (autor fxAdmin, zatwierdza fxBoard — inna osoba, zasada czterech oczu).
+  if (['agendaItem', 'draftNotice', 'approvedNotice'].includes(stage)) {
+    const { agendaItem } = await addAgendaItem(db, fxAdmin, {
+      idempotencyKey: nextKey('fx-item'), meetingId: meeting.id, title: itemTitle ?? `Punkt ${scopeMarker}`,
+    });
+    const withItem = { ...obj, agendaItemId: agendaItem.id };
+    if (stage === 'agendaItem') return withItem;
+    const { notice } = await createMeetingNotice(db, fxAdmin, { meetingId: meeting.id });
+    if (stage === 'approvedNotice') await approveMeetingNotice(db, fxBoard, { meetingId: meeting.id, noticeId: notice.id });
+    return { ...withItem, noticeId: notice.id };
+  }
   await updateMeeting(db, fxAdmin, { meetingId: meeting.id, status: 'held' });
   if (stage === 'held') return obj;
   if (stage === 'draftResolution') {
@@ -662,6 +679,23 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // #125: przygotowanie do utworzenia migawki — zmiana księgi (nowa treść) i bieżąca migawka roku.
+  reportSnapshotPrep: async (ctx, target) => {
+    await MAKERS.ledgerEntry(ctx, target);
+    const { rows } = await ctx.db.query(
+      `SELECT id FROM financial_report_snapshot_status WHERE school_year_id = $1 AND superseded_by_id IS NULL`,
+      [target.schoolYearId],
+    );
+    return { supersedesId: rows[0]?.id ?? null };
+  },
+  // #125: migawka zapisana przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  reportSnapshot: async (ctx, target) => {
+    const { supersedesId } = await MAKERS.reportSnapshotPrep(ctx, target);
+    const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/reports/annual/snapshots', {
+      schoolYearId: target.schoolYearId, ...(supersedesId ? { supersedesId, reason: 'Korekta syntetyczna' } : {}),
+    });
+    return { snapshotId: json.snapshot.id };
+  },
   // #97: wydatek zapisany przez konto pomocnicze (autor inny niż każdy aktor macierzy).
   ledgerExpense: async (ctx, target) => {
     const { json } = await api(ctx, ctx.fxCookies.treasurer, 'POST', '/api/ledger', {
@@ -710,6 +744,13 @@ const MAKERS = {
   suppression: makeSuppression,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
+  // #86: gospodarstwo fixture + drugie, puste — do dodania członkostwa ucznia.
+  householdSpare: async (ctx, target) => {
+    const made = await makeHousehold(ctx.db, target);
+    const spareHouseholdId = `${made.householdId}-spare`;
+    await ctx.db.query('INSERT INTO households (id) VALUES ($1)', [spareHouseholdId]);
+    return { ...made, spareHouseholdId };
+  },
   // #140: trasy nie są przypisane do konkretnej klasy (target W1 ma
   // classId=null — dane ogólnoszkolne) — gospodarstwo fixture zawsze
   // pod TARGETS.A, niezależnie od przekazanego targetu.
@@ -774,6 +815,12 @@ async function seedStatic(ctx) {
   await makeMeeting(ctx.db, TARGETS.W1, 'shared', {
     title: `Zebranie jawne ${marker('PUBLIC')}`, minutesBody: `Protokół ${marker('PUBLIC')} — treść jawna.`, visibility: 'public',
   });
+  // #113: jawne zawiadomienie zebrania ogólnego (bez znaczników klas) oraz zatwierdzone zawiadomienie
+  // zebrania klasowego A, które nie może pojawić się na stronie publicznej.
+  await makeMeeting(ctx.db, TARGETS.W1, 'approvedNotice', {
+    title: `Zebranie jawne ${marker('PUBLIC')}`, itemTitle: `Punkt jawny ${marker('PUBLIC')}`,
+  });
+  await makeMeeting(ctx.db, TARGETS.A, 'approvedNotice');
   // Kampania istniejąca w bazie (#110): email_preferences_events.campaign_id
   // ma FK do email_campaigns, więc token wypisania w macierzy musi wskazywać
   // na prawdziwy wiersz, nie dowolny ciąg znaków.
@@ -822,6 +869,7 @@ const WRITE_TABLES = [
   'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',
   'bank_reconciliation_group_match_revocations',
   'export_runs', 'school_year_closures', 'school_year_closure_checklist',
+  'financial_report_snapshots', 'financial_report_snapshot_approvals',
   'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
 

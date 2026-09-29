@@ -1,6 +1,6 @@
 // Kampanie e-mail o dobrowolnej składce na PostgreSQL (issues #10, #40). Prototyp — nie jest wdrożony.
 //
-//   GET  /api/email/campaigns?schoolYearId=…         lista kampanii roku
+//   GET  /api/email/campaigns?schoolYearId=…[&limit=&cursor=]   lista kampanii roku (kursor keyset, #159)
 //   POST /api/email/campaigns                        szkic (Idempotency-Key)
 //   GET  /api/email/campaigns/{id}                   stan i liczniki kolejki
 //   PUT  /api/email/campaigns/{id}                   zmiana treści → szkic, zatwierdzenie traci ważność
@@ -29,11 +29,14 @@ import { timingSafeEqual } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import {
+  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+} from '../list-cursor.js';
 import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
 import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
-  parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
+  AUDIENCES, MEETING_AUDIENCES, parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
 } from '../../email/content.js';
 import { estimateSchedule } from '../../email/schedule.js';
 import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
@@ -134,7 +137,8 @@ const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.categor
   c.status, c.recipients_hash, c.recipients_count, c.created_by, c.updated_by, c.snapshot_built_by,
   c.approved_by, c.approved_at, c.approved_content_hash, c.approved_recipients_hash, c.daily_cap,
   c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key, c.send_not_before,
-  c.paused_by, c.paused_at, c.resumed_by, c.resumed_at, c.revision_no`;
+  c.paused_by, c.paused_at, c.resumed_by, c.resumed_at, c.revision_no,
+  c.meeting_id, c.meeting_notice_id, c.class_id`;
 
 async function loadCampaign(executor, id, { lock = false } = {}) {
   const { rows } = await executor.query(
@@ -177,6 +181,10 @@ function campaignView(row) {
     pausedAt: iso(row.paused_at),
     resumedBy: row.resumed_by ?? null,
     resumedAt: iso(row.resumed_at),
+    // #113: szkic powstały z zatwierdzonego zawiadomienia o zebraniu (tylko odczyt).
+    meetingId: row.meeting_id ?? null,
+    meetingNoticeId: row.meeting_notice_id ?? null,
+    classId: row.class_id ?? null,
   };
 }
 
@@ -217,11 +225,22 @@ async function listCampaigns(request, env, url, json) {
   if (!validId(schoolYearId)) throw new RequestError('invalid_request');
   const context = await requireContext(request, env, EDITOR_ROLES);
   requireYear(context, EDITOR_ROLES, schoolYearId);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 100, maxLimit: 100 }, fail);
+  const scope = JSON.stringify(['campaigns', schoolYearId]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const values = [schoolYearId];
+  const after = cursor ? `AND ${afterTimestampDescSql('c.created_at', 'c.id', cursor, values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT ${CAMPAIGN_COLUMNS} FROM email_campaigns c WHERE c.school_year_id = $1 ORDER BY c.created_at DESC, c.id LIMIT 100`,
-    [schoolYearId],
+    `SELECT ${CAMPAIGN_COLUMNS}, ${cursorTimestampSql('c.created_at')} AS cursor_ts
+       FROM email_campaigns c WHERE c.school_year_id = $1 ${after}
+      ORDER BY c.created_at DESC, c.id LIMIT ${limit + 1}`,
+    values,
   );
-  return json({ campaigns: rows.map(campaignView) });
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return json({
+    campaigns: page.items.map(campaignView), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
+  });
 }
 
 async function createCampaign(request, env, json) {
@@ -296,7 +315,11 @@ function parseSendNotBefore(value, current) {
 async function updateCampaign(request, env, id, json) {
   const data = await readJson(request);
   let input;
-  try { input = parseCampaignContent(data); } catch (error) { mapContentError(error); }
+  // #113: szkic powiązany z zebraniem klasowym ma audience class_households, którego nie da się
+  // wybrać ręcznie; dopuszczamy go tylko przy edycji takiego szkicu (patrz niżej).
+  try {
+    input = parseCampaignContent(data, { audiences: [...AUDIENCES, ...MEETING_AUDIENCES] });
+  } catch (error) { mapContentError(error); }
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   // Etap 2 #215: `revision` wymagane (po sprawdzeniu uprawnień). Brak lub
   // nie-liczba całkowita → 400 invalid_revision.
@@ -307,6 +330,14 @@ async function updateCampaign(request, env, id, json) {
     return await env.db.transaction(async (tx) => {
       const campaign = await loadCampaign(tx, id, { lock: true });
       if (!['draft', 'approved'].includes(campaign.status)) throw new RequestError('campaign_locked', 409);
+      // #113: odbiorcy kampanii z zawiadomienia o zebraniu wynikają z zebrania; nie zmienia się ich
+      // ręcznie (i nie da się nadać audience klasowego zwykłej kampanii).
+      if (campaign.meeting_notice_id && input.audience !== campaign.audience) {
+        throw new RequestError('campaign_audience_locked', 409);
+      }
+      if (!campaign.meeting_notice_id && MEETING_AUDIENCES.includes(input.audience)) {
+        throw new RequestError('invalid_audience');
+      }
       const hash = contentHash({ schoolYearId: campaign.school_year_id, ...input });
       const currentSendNotBefore = campaign.send_not_before ? new Date(campaign.send_not_before).toISOString() : null;
       const sendNotBefore = parseSendNotBefore(data.sendNotBefore, currentSendNotBefore);
@@ -359,6 +390,7 @@ async function updateCampaign(request, env, id, json) {
 // Przy opiece naprzemiennej drugie gospodarstwo nie dostaje osobnej wiadomości
 // (założenie do D-11/D-17). `on` ('YYYY-MM-DD') domyślnie = rd_today() (Bruksela).
 export async function computeSnapshot(executor, campaign, { on = null } = {}) {
+  if (campaign.audience === 'class_households' && !campaign.class_id) throw new Error('class_households_requires_class');
   const { rows: candidates } = await executor.query(
     `WITH d AS (SELECT COALESCE($2::date, rd_today()) AS on_date)
      SELECT p.household_id, g.id AS guardian_id, g.email,
@@ -374,9 +406,12 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
        LEFT JOIN student_guardians_current_on((SELECT on_date FROM d)) sg ON sg.student_id = e.student_id
        LEFT JOIN guardians g ON g.id = sg.guardian_id
       WHERE e.school_year_id = $1
+        -- #113: zebranie klasowe — tylko rodziny dzieci zapisanych do tej klasy w roku;
+        -- rodzeństwo z innej klasy nie zwiększa listy, a rodzina liczy się raz.
+        AND ($3::text IS NULL OR e.class_id = $3)
       GROUP BY p.household_id, g.id, g.email, g.contact_allowed
       ORDER BY p.household_id, g.id`,
-    [campaign.school_year_id, on],
+    [campaign.school_year_id, on, campaign.audience === 'class_households' ? campaign.class_id : null],
   );
   const paid = new Set();
   if (campaign.audience === 'no_payment_record') {
@@ -436,6 +471,43 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     recipients.push({ householdId, guardianId: chosen.guardian_id, email: chosen.normalized, emailHash: chosen.hash });
   }
   return { recipients, exclusions, hash: recipientsHash(recipients) };
+}
+
+// Ostrzeżenie o zmianach po zbudowaniu migawki (#86): adresaci, którzy według
+// DZISIEJSZYCH danych nie kwalifikowaliby się już do wysyłki — opiekun stracił
+// relację z dzieckiem z tej rodziny, dziecko odeszło ze szkoły (enrollments_current)
+// albo zmienił się kontakt/zgoda. Te same warunki co ponowne sprawdzenie w workerze
+// (recheckRow), więc kampania i tak nie wyśle do takiej osoby; ostrzeżenie pokazuje
+// to zarządowi PRZED wysyłką i zachęca do przebudowania migawki (nowe zatwierdzenie).
+// Zwraca liczniki wg powodu, bez identyfikatorów osób.
+export async function staleRecipientCounts(executor, campaign, { on = null } = {}) {
+  const { rows } = await executor.query(
+    `WITH d AS (SELECT COALESCE($3::date, rd_today()) AS on_date)
+     SELECT CASE
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
+                THEN 'guardian_relation_ended'
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
+                THEN 'student_withdrawn'
+              WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                 JOIN guardians g ON g.id = sg.guardian_id
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id
+                                  AND g.contact_allowed AND sg.contact_allowed AND lower(btrim(g.email)) = r.email)
+                THEN 'consent_or_address_changed'
+            END AS reason
+       FROM email_campaign_recipients r
+      WHERE r.campaign_id = $1`,
+    [campaign.id, campaign.school_year_id, on],
+  );
+  const counts = {};
+  for (const row of rows) if (row.reason) counts[row.reason] = (counts[row.reason] ?? 0) + 1;
+  return counts;
 }
 
 async function buildSnapshot(request, env, id, json) {
@@ -551,6 +623,8 @@ async function preview(request, env, id, json) {
       ...estimateSchedule({ now: new Date(), sendNotBefore: campaign.send_not_before, days: planDays(count, dailyCap, config), sendWindow: config.sendWindow }),
     },
     warnings: contentWarnings({ bodyText: campaign.body_text }),
+    // Adresaci, którzy po zbudowaniu migawki przestali się kwalifikować (#86); { powód: liczba }.
+    staleRecipients: campaign.recipients_hash ? await staleRecipientCounts(env.db, campaign, { on: effectiveDay(env) }) : {},
     sends: false,
   });
 }

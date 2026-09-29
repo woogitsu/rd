@@ -87,6 +87,18 @@ export async function seedRoleGrant(db, { userId, role = 'board', schoolYearId =
 // Domyślny e-mail jest zawsze małymi literami (#198: users.email wymaga
 // lower(btrim(email))) niezależnie od wielkości liter w userId (np. klucze
 // aktorów macierzy uprawnień 'repA', 'boardA').
+// Dokument źródłowy zdjęcia galerii (0143, #198): dokument zarządu (jedyny
+// rodzaj dozwolony dla news_photos.document_id), bez pliku i bez danych osobowych.
+// Idempotentnie; wiersz spoza API (school_year_id NULL) — patrz documents_api_row.
+export async function seedDocument(db, { id, kind = 'board', createdBy = 'admin' }) {
+  await db.query(
+    `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by)
+     VALUES ($1, $2, 'application/pdf', 10, $3, $4) ON CONFLICT (id) DO NOTHING`,
+    [id, `test/${id}`, kind, createdBy],
+  );
+  return id;
+}
+
 export async function seedUser(db, { userId, email = `${String(userId).toLowerCase()}@example.invalid`, displayName = `Test ${userId}`, disabled = false }) {
   await db.query(
     `INSERT INTO users (id, email, display_name, disabled_at) VALUES ($1, $2, $3, CASE WHEN $4::boolean THEN now() END)

@@ -23,6 +23,7 @@ export const STATUS_LABELS = Object.freeze({
 export const AUDIENCE_LABELS = Object.freeze({
   all_households: 'Wszystkie rodziny roku',
   no_payment_record: 'Rodziny bez odnotowanej wpłaty',
+  class_households: 'Rodziny dzieci jednej klasy (zebranie klasowe)',
 });
 
 // Kody z computeSnapshot w src/pg/routes/email.js.
@@ -54,9 +55,11 @@ export function hasApproverAccess(grants, schoolYearId = '') {
   return hasRoleAccess(grants, APPROVER_ROLES, schoolYearId);
 }
 
-export function buildCampaignsUrl(schoolYearId) {
+export function buildCampaignsUrl(schoolYearId, cursor = '') {
   if (!isValidId(schoolYearId)) throw new Error('Podaj poprawny identyfikator roku szkolnego.');
-  return `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  const base = `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  // #159: kolejna strona listy (kursor keyset z poprzedniej odpowiedzi).
+  return cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base;
 }
 
 export function campaignUrl(id) {

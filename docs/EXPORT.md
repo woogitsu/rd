@@ -110,7 +110,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `ledger_*` | kategorie i historia ich wyłączenia, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku i jego przyjęcie przez zebranie (0073, #107) |
 | `events`, `event_revisions` | wydarzenia roku i ich rewizje |
 | `event_tasks`, `event_task_signups` | zadania i zapisy wolontariuszy wydarzeń roku (0076, #142) |
-| `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102) |
+| `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102), wersje porządku obrad, zmiany terminu i zawiadomienia zebrań (0139, #113) |
 | `student_households`, `guardian_households` | członkostwo uczniów roku (także drugie gospodarstwo przy opiece dzielonej, `is_primary`) i opiekunów z zakresu w gospodarstwach, z historią (0014) |
 | `enrollment_history` | historia przypisań do klas w danym roku (0014) |
 | `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
@@ -124,6 +124,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
 | `document_status_events` | zastąpienie/unieważnienie dokumentu z powodem, wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id`/`replacement_document_id` po odtworzeniu nie mają odpowiednika, jak `source_document_id` (0066, #82) |
 | `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
+| `financial_report_snapshots`, `financial_report_snapshot_approvals` | niezmienne migawki sprawozdania rocznego (JSON zagregowany, SHA-256, poprzednia migawka i powód korekty) oraz ich zatwierdzenia roku (0138, #125) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia z `metadata.schoolYearId` = rok eksportu (nigdy wg daty); stare zdarzenia bez roku — wg roku obiektu (`entity_type`/`entity_id`: wpłaty, korekty, przypisania, zwroty, księga, przeniesienia, uzgodnienia, zamknięcie roku, klasy, zapisy, `school_year`); pozostałe (sesje, MFA, konta, role, dokumenty, importy) oraz zdarzenia typu rocznego z nieosiągalnym obiektem — wg dat roku (Europe/Brussels); bez `export.*`. Szczegóły niżej |
 

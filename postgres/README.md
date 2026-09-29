@@ -802,6 +802,19 @@ zmienia się wyłącznie wynik funkcji (a więc dostępność pliku dla odczytu
 publicznego). Wycofanie: `CREATE OR REPLACE FUNCTION news_photo_is_public`
 z ciałem sprzed tej migracji (jak w 0084, bez warunku zgody).
 
+`0143_news_photo_document_fk_and_role_grants_validate.sql` (#198, część 2)
+dodaje klucz obcy `news_photos.document_id -> documents(id)` i trigger
+`news_photo_document_guard` (dokument musi istnieć i mieć rodzaj z
+`news_photo_document_kind_allowed()`; WARIANT ZACHOWAWCZY: tylko `board`,
+rodzaj `gallery` należy do #96 i decyzji zarządu) oraz waliduje
+`role_grants_class_in_year` (0081). Migracja najpierw sprawdza istniejące
+dane i przy naruszeniu zatrzymuje się z błędem wymieniającym identyfikatory
+wierszy (przydziały poza rokiem klasy, zdjęcia z nieistniejącym lub
+niedozwolonym dokumentem) — niczego nie naprawia po cichu; zapytania kontrolne
+są w nagłówku migracji i w `scripts/check-schema-consistency.mjs`. Skutki dla
+danych: żaden wiersz nie jest zmieniany ani usuwany. Wycofanie: patrz nagłówek
+migracji.
+
 `0150_meeting_attendee_user_scope.sql` (#205, część) rozszerza
 `meeting_attendee_guard()` (od wersji z 0037): `user_id` nowego wpisu
 obecności musi mieć aktywny przydział (niecofnięty, niewygasły) w roku
@@ -985,6 +998,66 @@ usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
 
+`0138_financial_report_snapshots.sql` (#125, część) dodaje niezmienne migawki
+sprawozdania rocznego: `financial_report_snapshots` (JSON zagregowany, SHA-256
+kanonicznego JSON-a, `supersedes_id` z powodem korekty) i
+`financial_report_snapshot_approvals` (zatwierdzenie przez inną osobę niż autor,
+tylko migawki bez następcy), widok `financial_report_snapshot_status` oraz
+opcjonalną kolumnę `school_year_closure_checklist.report_snapshot_id`. Tabele
+mają `immutable_financial_record`, `BEFORE TRUNCATE deny_truncate()` i
+zamrożenie roku; ta sama treść w roku może wystąpić raz (idempotencja),
+historia korekt jest łańcuchem. Skutki dla danych: tylko nowe obiekty i jedna
+kolumna NULL, żaden wiersz nie jest zmieniany. Wycofanie: usunięcie widoku,
+kolumny, tabel i funkcji strażników — na bazie z zatwierdzonymi migawkami
+wyłącznie po kopii zapasowej (retencja: D-04).
+
+`0136_student_household_reasons.sql` (#86) dodaje do `student_households`
+kolumny tekstowe `created_reason` i `ended_reason` (powód dodania i zakończenia
+członkostwa ucznia w gospodarstwie; zapisują je trasy
+`POST /api/students/{id}/households` i `.../households/{membershipId}/end`).
+Odtwarza `student_household_check` (wersja z 0023) z jednym dodatkiem:
+`created_reason` jest niezmienne po utworzeniu. Skutki dla danych: istniejące
+wiersze dostają NULL, żaden nie jest zmieniany ani usuwany; kolumny to wolny
+tekst (inwentarz prywatności i lista DPIA jak dla `enrollments.ended_reason`).
+Wycofanie: na pustej bazie usunięcie kolumn i przywrócenie funkcji z 0023; na
+bazie z danymi tylko po kopii.
+
+`0139_meeting_cancel_notice.sql` (#113) dodaje stan zebrania `cancelled`
+(przejścia `draft|scheduled → cancelled`, stan końcowy; kolumny
+`cancellation_reason` 3–500 znaków, `cancelled_by`, `cancelled_at`), reguły
+terminu zawiadomienia `notice_min_days` + `notice_rule_source` (serwer tylko
+odnotowuje spóźnienie), wycofanie punktu porządku (`meeting_agenda_items.
+withdrawn_at/by`, raz ustawione nie wraca) oraz trzy tabele dopisywane bez
+UPDATE/DELETE: `meeting_agenda_versions` (migawka JSON + skrót),
+`meeting_reschedules` (stara/nowa data, powód, aktor) i `meeting_notices`
+(zawiadomienie w wersjach; treść niezmienna, jedyne przejście to
+`draft → approved` przez osobę inną niż autor). `email_campaigns` dostaje
+`meeting_id`, `meeting_notice_id`, `class_id` i `audience = 'class_households'`;
+trigger dopuszcza wiersz powiązany z zebraniem wyłącznie jako szkic z
+zatwierdzonego zawiadomienia, dla odbiorców zgodnych z rodzajem zebrania.
+Widok `public_meeting_notices` zawiera tylko najnowsze zatwierdzone
+zawiadomienie zebrania ogólnego (bez powodu odwołania i opisów punktów).
+`meeting_guard()` i `meeting_assert_editable()` wychodzą z wersji z
+`0009_meetings.sql` (jedyna definicja). Skutki dla danych: istniejące wiersze
+bez zmian (nowe kolumny NULL, żaden stan nie zmienia się wstecz); nic nie jest
+wysyłane. Wycofanie na pustej bazie: usunięcie tabel, widoku, triggerów i kolumn
+oraz przywrócenie funkcji z 0009; na bazie z danymi tylko po kopii (tabele niosą
+historię zmian terminu i zawiadomień).
+
+`0142_ledger_replacement_payment_link.sql` (#144) pozwala przeksięgować wpis
+księgi powiązany z wpłatą: wpis zastępczy przejmuje `payment_entry_id`, a
+wpłata pozostaje ujęta dokładnie raz. Unikalny indeks
+`ledger_entries_payment_entry_idx` zastępuje zwykły indeks wyszukiwania, a
+regułę „jedno ujęcie” (inne wpisy wpłaty tylko w łańcuchu przeksięgowań i z
+zerowym netto, blokada wiersza wpłaty) egzekwuje `ledger_entry_insert_guard`;
+`payment_ledger_link_consistent` porównuje netto wpłaty z sumą netto łańcucha.
+Kwota i kierunek nie zmieniają się przez przeksięgowanie (D-12 otwarte —
+wariant zachowawczy). Skutki dla danych: żaden wiersz nie jest zmieniany ani
+usuwany; istniejące wpłaty mają najwyżej jeden wpis. Wycofanie: przywrócenie
+unikalnego indeksu i funkcji z 0038/0040, możliwe przed pierwszym
+przeksięgowaniem wpisu powiązanego z wpłatą.
+
+
 `0124_login_rate_limit_pair_scope.sql` (#126) poszerza CHECK na
 `login_rate_limits.scope_type` o `'pair'` — SHA-256 pary (znormalizowany
 e-mail, IP) z osobną dziedziną skrótu. Blokada logowania zakładana jest teraz
@@ -995,3 +1068,38 @@ migracji są ignorowane i wygasają po dobie; w bazie nadal tylko skróty
 (retencja bez zmian: usuwanie po dobie). Wycofanie: usunięcie wierszy `'pair'` i
 przywrócenie CHECK `IN ('email','ip')` (kod aplikacji sprzed zmiany blokował
 konto po samym e-mailu).
+
+
+`0132_keyset_list_indexes.sql` (#159) dodaje pięć indeksów pod listy z kursorem
+keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
+audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
+wiersz nie jest zmieniany; zapisy do tych tabel utrzymują dodatkowe indeksy.
+Wycofanie: `DROP INDEX` każdego z nich (bezpieczne). Kontrakt list: docs/API.md.
+
+`0140_data_access_log_review.sql` (#133) rozszerza CHECK `access_kind` w
+`data_access_log` o `class_roster_export`, `yearly_export` i `payment_export`
+(wpisy eksportów, zapisywane w tej samej transakcji co eksport) oraz dodaje
+indeksy pod przegląd `GET /api/admin/access-log` (kursor po
+`(occurred_at, id)`, filtr po rodzaju). Skutki dla danych: żaden wiersz nie
+jest zmieniany ani usuwany; trigger `data_access_log_guard` bez zmian;
+retencja nadal nieustalona (D-04). Wycofanie: przywrócenie CHECK z czterema
+dotychczasowymi wartościami możliwe tylko dopóki nie ma wierszy z nowymi
+rodzajami; indeksy można usunąć bez skutków dla danych.
+
+`0144_immutability_stamps_and_truncate.sql` (#204, punkty 3, 4, 6) dopina
+niezmienność dzienników. `stamp_created_now()` (BEFORE INSERT, trigger
+`a0_stamp_created_now`) ustawia `created_at`/`occurred_at`/`recorded_at` na
+`now()` w tabelach append-only (wpłaty i ich korekty, księga i korekty, salda
+otwarcia, uzgodnienia, `audit_events`, `data_access_log`,
+zgody na wizerunek i in.), więc antydatowany INSERT nie zmienia raportów KR.
+`stamp_transition_now()` (BEFORE UPDATE, `a0_stamp_transition_now`) ustawia
+`now()` przy pierwszym wpisie `revoked_at`/`cancelled_at`/`withdrawn_at`/
+`abandoned_at`/`enrollments.ended_at`. Jedyna furtka: `SET LOCAL rd.restore =
+'on'` (odtworzenie migawki D1 i import eksportu) — zachowuje oryginalne
+znaczniki. Dodatkowo `BEFORE TRUNCATE` (`deny_truncate()`) na pozostałych
+tabelach ze strażnikiem UPDATE/DELETE, m.in. z 0090. Poza zakresem:
+`ended_at` w `guardian_households`/`student_households` (data biznesowa z
+triggerów synchronizacji), `email_webhook_events.occurred_at` (czas u
+dostawcy). Skutki dla danych: żaden wiersz nie jest zmieniany; zmienia się
+zachowanie przyszłych INSERT/UPDATE/TRUNCATE. Wycofanie: usunięcie triggerów
+`a0_stamp_*`, `*_no_truncate` z tej migracji i obu funkcji.

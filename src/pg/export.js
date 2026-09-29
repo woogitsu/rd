@@ -290,6 +290,11 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'meeting_minutes_publications', requires: ['meeting_minutes', 'meetings'],
     where: () => `minutes_id IN (SELECT mm.id FROM meeting_minutes mm JOIN meetings m ON m.id = mm.meeting_id
       WHERE m.school_year_id = $1)` },
+  // 0139 (#113): wersje porządku obrad, zmiany terminu i zawiadomienia zebrań (własne school_year_id;
+  // agenda_versions przed notices — klucz obcy).
+  { table: 'meeting_agenda_versions', requires: ['meetings'], where: () => 'school_year_id = $1' },
+  { table: 'meeting_reschedules', requires: ['meetings'], where: () => 'school_year_id = $1' },
+  { table: 'meeting_notices', requires: ['meeting_agenda_versions', 'meetings'], where: () => 'school_year_id = $1' },
   { table: 'resolutions', where: () => 'school_year_id = $1' },
   // #102: wykonanie uchwał — historia zdarzeń powiązana z uchwałą roku.
   { table: 'resolution_execution_events', requires: ['resolutions'],
@@ -312,6 +317,12 @@ export const EXPORT_TABLES = Object.freeze([
   // odtworzeniu identyfikator zostaje bez odpowiednika, restoreBundle działa
   // z wyłączonymi kluczami obcymi (session_replication_role = replica).
   { table: 'document_descriptions', where: () => YEAR_TIME('created_at') },
+
+  // 0138 (#125): niezmienne migawki sprawozdania rocznego i ich zatwierdzenia — dowód tego, co
+  // przedstawiono zebraniu; treść zagregowana (bez opisów wpisów i danych osób). Przed
+  // school_year_closure_checklist (report_snapshot_id).
+  { table: 'financial_report_snapshots', where: () => 'school_year_id = $1' },
+  { table: 'financial_report_snapshot_approvals', requires: ['financial_report_snapshots'], where: () => 'school_year_id = $1' },
 
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },

@@ -151,7 +151,9 @@ test('podwójne kliknięcie (ten sam klucz) odtwarza jedno storno i jeden wpis; 
   } finally { await db.close(); }
 });
 
-test('wpis powiązany z wpłatą nie może być przeksięgowany (409)', async () => {
+// Wpis powiązany z wpłatą (0142): przeksięgowanie przenosi powiązanie — pełne scenariusze
+// w tests/pg-ledger-replacement-links.test.js.
+test('wpis powiązany z wpłatą jest przeksięgowany z zachowaniem powiązania (0142)', async () => {
   const { db, cookie, fetch } = await setup();
   try {
     await seedEnrolledHousehold(db, 'h1', [YEAR]);
@@ -171,10 +173,10 @@ test('wpis powiązany z wpłatą nie może być przeksięgowany (409)', async ()
 
     const res = await readJson(await fetch(req(`/api/ledger/${entry.body.entry.id}/replacement`, {
       cookie, key: 'k-repl-144-005',
-      body: { schoolYearId: YEAR, direction: 'income', amountCents: 5000, categoryId: 'cat-in-b', description: 'Próba', occurredOn: '2026-10-01', method: 'bank', reason: 'Próba' },
+      body: { schoolYearId: YEAR, direction: 'income', amountCents: 5000, categoryId: 'cat-in-b', description: 'Poprawiona kategoria', occurredOn: '2026-10-01', method: 'bank', reason: 'Zła kategoria' },
     })));
-    assert.equal(res.status, 409);
-    assert.equal(res.body.error, 'payment_linked_entry_not_replaceable');
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(res.body.entry.paymentEntryId, payment.body.payment.id);
   } finally { await db.close(); }
 });
 

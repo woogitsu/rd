@@ -16,7 +16,9 @@ import {
   newsPhotoUrl,
   normalizePhotos,
   normalizeEvent,
+  noticesUrl,
   publicMinutes,
+  publicNotices,
   schoolYearFromSearch,
   upcomingEvents,
 } from "../site/core.js";
@@ -147,6 +149,25 @@ test("rok szkolny i adresy API", () => {
   assert.equal(eventsUrl(NOW), "/api/public/events?from=2026-09-27&limit=200");
   assert.equal(minutesUrl("2026-2027"), "/api/meetings/public-minutes?schoolYearId=2026-2027");
   assert.throws(() => minutesUrl("../x"));
+});
+
+// #113: zawiadomienia o zebraniach ogólnych — wyłącznie pola zatwierdzone, bez powodu odwołania.
+test("zawiadomienia: URL, normalizacja, sortowanie i odrzucenie niepoprawnych wpisów", () => {
+  assert.equal(noticesUrl("2026-2027"), "/api/meetings/public-notices?schoolYearId=2026-2027");
+  assert.throws(() => noticesUrl("../x"), /invalid_school_year/);
+  const list = publicNotices([
+    { id: "n2", title: "Zebranie późniejsze", scheduledAt: "2026-11-20T18:00:00Z", location: "Aula",
+      agenda: [{ position: 1, title: "Sprawozdanie" }, { position: 2, title: " " }] },
+    { id: "n1", title: "Zebranie wcześniejsze", scheduledAt: "2026-10-20T18:00:00Z", cancelled: true, agenda: [] },
+    { id: "bad id", title: "Zły identyfikator", scheduledAt: "2026-10-20T18:00:00Z" },
+    { id: "n3", title: "Bez daty" },
+    null,
+  ]);
+  assert.deepEqual(list.map((item) => item.id), ["n1", "n2"]);
+  assert.equal(list[0].cancelled, true);
+  assert.deepEqual(list[1].agenda, ["Sprawozdanie"]);
+  assert.equal(list[1].location, "Aula");
+  assert.deepEqual(publicNotices(undefined), []);
 });
 
 test("aktualności: zdjęcia — adresy tylko ze stałych tras publicznego API, alt z bazy, dekoracyjne z pustym alt (#96)", () => {

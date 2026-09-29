@@ -132,12 +132,17 @@ test('zdarzenia historyczne bez schoolYearId: rok obiektu, nie data zapisu; brak
     // Obiekt nieznany (usunięty/nieosiągalny) typu rocznego: także wg daty (zachowawczo), nie ginie.
     ['lg-orphan', 'payment.created', 'payment_entry', 'p-nieistniejaca'],
   ];
+  // #204 (0144): occurred_at jest stemplowany zegarem bazy; historyczna data zapisu
+  // (odtworzenie starego dziennika) jest możliwa wyłącznie w trybie odtworzenia.
+  await db.query('BEGIN');
+  await db.query(`SET LOCAL rd.restore = 'on'`);
   for (const [id, action, entityType, entityId] of legacy) {
     const at = id === 'lg-session-old' ? `${isoDate(-100)}T10:00:00Z` : new Date().toISOString();
     await db.query(
       `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json, occurred_at)
        VALUES ($1, 'u-treasurer', $2, $3, $4, '{}'::jsonb, $5)`, [id, action, entityType, entityId, at]);
   }
+  await db.query('COMMIT');
   const old = new Set((await auditOf(OLD)).map((row) => row.id));
   const fresh = new Set((await auditOf(NEW)).map((row) => row.id));
   for (const id of ['lg-pay', 'lg-corr', 'lg-match', 'lg-session-old']) assert.ok(old.has(id), `${id} w roku starym`);

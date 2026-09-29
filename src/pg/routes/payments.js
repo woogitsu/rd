@@ -1159,6 +1159,10 @@ async function exportCsv(request, env, url) {
         schoolYearId, format: 'csv', entryCount: entries.rows.length, correctionCount: corrections.rows.length,
       },
     });
+    // #133: eksport z identyfikatorami gospodarstw — wpis w tej samej transakcji (strict).
+    await recordDataAccess({ db: tx }, {
+      actorId, accessKind: 'payment_export', schoolYearId, outcome: 'ok', rowCount: entries.rows.length + corrections.rows.length,
+    }, { strict: true });
     return { entryRows: entries.rows, correctionRows: corrections.rows };
   });
 

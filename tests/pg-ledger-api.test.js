@@ -477,12 +477,12 @@ test('a linked payment is never recorded twice, also in parallel with different 
   assert.equal(await backend.count('audit_events', "action = 'ledger.entry.created'"), 1);
   const later = await createEntry(backend, { ...incomeInput, categoryId: 'income-other' }, 'link-par-0004');
   assert.deepEqual([later.status, later.body], [409, { error: 'payment_already_linked' }]);
-  // Baza sama odrzuca drugie ujęcie (unikalny indeks z 0003_ledger.sql).
+  // Baza sama odrzuca drugie ujęcie (trigger ledger_entry_insert_guard, 0142; wcześniej unikalny indeks z 0003).
   await assert.rejects(backend.db.query(
     `INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description, occurred_on,
        method, payment_entry_id, created_by, idempotency_key)
      VALUES ('direct', 'y2026', 'income', 5000, 'income-fees', 'Bezpośrednio', '2026-09-20', 'bank', 'p1', 'u1', 'direct-link-0001')`,
-  ), /duplicate key|unique/i);
+  ), /ledger_payment_already_linked/);
 }));
 
 test('an expense above 3000 EUR without a resolution reference is refused; exactly 3000 EUR is allowed', async () => withPg({}, async (backend) => {

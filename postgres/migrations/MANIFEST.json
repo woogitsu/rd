@@ -302,5 +302,37 @@
   {
     "name": "0150_meeting_attendee_user_scope.sql",
     "sha256": "154b3e71d4320c743ae4d9c3f6550c9a0d78c51064d377879250b9c20206ca44"
+  },
+  {
+    "name": "0132_keyset_list_indexes.sql",
+    "sha256": "3d944e3f55db082b29db4e26de58cddd95e3ba7deb2f12332b5042de6d7945d2"
+  },
+  {
+    "name": "0136_student_household_reasons.sql",
+    "sha256": "3218cd324b178b652941e0072be775704adbd7512e98855204f609d4eea9dcdb"
+  },
+  {
+    "name": "0138_financial_report_snapshots.sql",
+    "sha256": "8be6c123cf7abe5f7bad6af731875f305318331d54e94511962a0486d6337610"
+  },
+  {
+    "name": "0139_meeting_cancel_notice.sql",
+    "sha256": "478c97966715984909b36d05bb8272662362314350c69cd623b89ac7905d8114"
+  },
+  {
+    "name": "0140_data_access_log_review.sql",
+    "sha256": "304aab73b8a25f23650bdbede67203c1513daadc28fc488aaf7c9d83c6d172af"
+  },
+  {
+    "name": "0142_ledger_replacement_payment_link.sql",
+    "sha256": "89648113bd1a96487591db8412d53b99a2161e3fb44bed19097ee8ddede1b077"
+  },
+  {
+    "name": "0143_news_photo_document_fk_and_role_grants_validate.sql",
+    "sha256": "f5eb32b993bbc6e1065520e6a41c916ea5aebe2fb49e417d84dd1dac0b2529a1"
+  },
+  {
+    "name": "0144_immutability_stamps_and_truncate.sql",
+    "sha256": "de01241c09a6ae9eae50085809fa9e226627ee0a20d0f67a819e7f2fd093537e"
   }
 ]
