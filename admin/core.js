@@ -77,6 +77,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   bank_reconciliation_match: "Dopasowanie pozycji wyciągu",
   bank_statement_import: "Import wyciągu bankowego",
   class: "Klasa",
+  data_access_log: "Dziennik dostępu do danych",
   data_subject_request: "Wniosek osoby, której dane dotyczą",
   document: "Dokument",
   email_campaign: "Kampania e-mail",
