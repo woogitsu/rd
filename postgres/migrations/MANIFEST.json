@@ -286,5 +286,9 @@
   {
     "name": "0121_import_batches_fingerprint_not_unique.sql",
     "sha256": "e636fe9f6e77fcd48f49865085737912a187774cf71062f4796f2028a7adba35"
+  },
+  {
+    "name": "0129_immutability_stamps_and_truncate.sql",
+    "sha256": "de01241c09a6ae9eae50085809fa9e226627ee0a20d0f67a819e7f2fd093537e"
   }
 ]

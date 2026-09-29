@@ -942,3 +942,21 @@ pozostaje unikalny. Skutki dla danych: żaden wiersz nie jest zmieniany ani
 usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
+
+`0144_immutability_stamps_and_truncate.sql` (#204, punkty 3, 4, 6) dopina
+niezmienność dzienników. `stamp_created_now()` (BEFORE INSERT, trigger
+`a0_stamp_created_now`) ustawia `created_at`/`occurred_at`/`recorded_at` na
+`now()` w tabelach append-only (wpłaty i ich korekty, księga i korekty, salda
+otwarcia, uzgodnienia, `audit_events`, `data_access_log`,
+zgody na wizerunek i in.), więc antydatowany INSERT nie zmienia raportów KR.
+`stamp_transition_now()` (BEFORE UPDATE, `a0_stamp_transition_now`) ustawia
+`now()` przy pierwszym wpisie `revoked_at`/`cancelled_at`/`withdrawn_at`/
+`abandoned_at`/`enrollments.ended_at`. Jedyna furtka: `SET LOCAL rd.restore =
+'on'` (odtworzenie migawki D1 i import eksportu) — zachowuje oryginalne
+znaczniki. Dodatkowo `BEFORE TRUNCATE` (`deny_truncate()`) na pozostałych
+tabelach ze strażnikiem UPDATE/DELETE, m.in. z 0090. Poza zakresem:
+`ended_at` w `guardian_households`/`student_households` (data biznesowa z
+triggerów synchronizacji), `email_webhook_events.occurred_at` (czas u
+dostawcy). Skutki dla danych: żaden wiersz nie jest zmieniany; zmienia się
+zachowanie przyszłych INSERT/UPDATE/TRUNCATE. Wycofanie: usunięcie triggerów
+`a0_stamp_*`, `*_no_truncate` z tej migracji i obu funkcji.
