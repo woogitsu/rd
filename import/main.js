@@ -4,7 +4,7 @@ import { csvBytes } from '../src/pg/csv.js';
 import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
 import { confirmAction } from '../shared/confirm-dialog.js';
-import { buildErrorReportCsv, unusedColumns } from './report.js';
+import { buildErrorReportCsv, missingFromFileSummary, unusedColumns } from './report.js';
 import { applyRememberedMapping, clearRememberedMapping, hasRememberedMapping, loadRememberedMapping, saveRememberedMapping } from './mapping-memory.js';
 import { mountShell } from '../shared/shell.js';
 import '../shared/shell.css';
@@ -248,6 +248,19 @@ function messageList(title, entries) {
   if (entries.length > 40) { const p = document.createElement('p'); p.textContent = `Pokazano 40 z ${entries.length} komunikatów.`; nodes.push(p); }
   return nodes;
 }
+function missingFromFileNodes(missing) {
+  const summary = missingFromFileSummary(missing);
+  if (!summary) return [];
+  const heading = document.createElement('h3'); heading.textContent = summary.title;
+  const text = document.createElement('p'); text.textContent = summary.text;
+  const nodes = [heading, text];
+  if (summary.refs.length) {
+    const list = document.createElement('p'); list.className = 'muted';
+    list.textContent = `ID ucznia: ${summary.refs.join(', ')}${summary.more ? ` i ${summary.more} kolejnych` : ''}.`;
+    nodes.push(list);
+  }
+  return nodes;
+}
 function renderServerPreview(data) {
   const c = data.counts;
   const info = document.createElement('p'); info.className = 'muted';
@@ -257,6 +270,7 @@ function renderServerPreview(data) {
   serverReport.replaceChildren(
     reportBoxes([['Nowe', c.rowsAdded], ['Aktualizacje', c.rowsUpdated], ['Bez zmian', c.rowsUnchanged], ['Konflikty', c.rowsConflict], ['Pominięte (błędy)', c.rowsSkipped]]),
     info,
+    ...missingFromFileNodes(data.missingFromFile),
     ...messageList('Wymaga ręcznej decyzji', problems),
     ...messageList('Uwagi serwera', data.warnings.map(w => [w.row, w.message])),
   );
