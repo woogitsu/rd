@@ -344,7 +344,9 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
 }
 
 // Potwierdzenie wysyłki: jedna instrukcja UPDATE … RETURNING sprawdza atomowo
-// własność wiersza i wszystkie warunki. Zwraca null (wysyłaj) albo werdykt.
+// własność wiersza i wszystkie warunki. Gospodarstwo dziecka i relacje z opiekunem
+// dotyczą dnia item.memberDay (Bruksela, jak w recheckRow i migawce), a nie
+// kolumny students.household_id (#194) ani dnia UTC limitu Brevo. Zwraca null (wysyłaj) albo werdykt.
 async function confirmSend(db, item, { runToken, config, sendAt }) {
   return db.transaction(async (tx) => {
     const { rows } = await tx.query(
@@ -363,12 +365,12 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
               FROM email_campaign_recipients r
               JOIN guardians g ON g.id = r.guardian_id
               JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
-              JOIN students s ON s.id = sg.student_id
-             WHERE r.id = o.recipient_id AND s.household_id = o.household_id
+              JOIN student_primary_household_on($4::date) ph ON ph.student_id = sg.student_id
+             WHERE r.id = o.recipient_id AND ph.household_id = o.household_id
                AND g.contact_allowed AND sg.contact_allowed
                AND lower(btrim(g.email)) = r.email)
         RETURNING o.id`,
-      [item.id, runToken, sendAt.toISOString(), item.day],
+      [item.id, runToken, sendAt.toISOString(), item.memberDay],
     );
     if (rows[0]) return null;
     const { rows: current } = await tx.query(
