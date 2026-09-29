@@ -262,14 +262,30 @@ wersję (`rd-eksport-<rok>-v2.json`).
 
 ## Ryzyka i ograniczenia
 
-- Paczka jest budowana w pamięci (limit 500 000 wierszy na tabelę). Dla
-  jednej szkoły wystarcza; przy większych danych potrzebny będzie strumień.
-  **Nie jest jeszcze zaimplementowane** (#216, poza zakresem PR, który dodał
-  punkty niżej): strumieniowy format v2 (kursor, partie, SHA-256 przyrostowo),
-  odpowiedź HTTP jako `ReadableStream` bez buforowania w `node-app.js` i
-  podniesienie/pilnowanie `idle_in_transaction_session_timeout` w trakcie
-  budowania paczki. Rok z ok. 200 tys. zdarzeń audytu nadal może wyczerpać
-  stertę procesu przy niskim limicie pamięci usługi.
+- **Pamięć i pętla zdarzeń** (#216): trasa `POST /api/exports` czyta każdą
+  tabelę partiami po 2000 wierszy przez kursor w transakcji (limit 500 000
+  wierszy na tabelę bez zmian), liczy SHA-256 pliku i sumy `*_cents`
+  przyrostowo i po każdej partii oddaje pętlę zdarzeń (`setImmediate`), także
+  wewnątrz `audit_events`. Paczka powstaje od razu jako lista buforów (poza
+  stertą JS) — bez obiektów wierszy, pełnych tekstów plików i drugiej kopii
+  `canonicalJson(bundle)`; bajty są te same co dotąd (format i SHA-256
+  manifestu bez zmian, `formatVersion` 2). Odpowiedź ma `Content-Length` i
+  adapter Node (`src/node-app.js`) przesyła ją strumieniowo z obsługą
+  przeciążenia gniazda; zerwanie pobierania przez klienta anuluje strumień
+  (transakcja i wiersz `export_runs` są wtedy już zatwierdzone — paczka
+  powstaje przed wysyłką). Transakcja dostaje lokalnie
+  `idle_in_transaction_session_timeout = 60s`. Pomiar (PGlite, dane
+  syntetyczne, 200 tys. zdarzeń audytu, paczka 52 MB): szczyt sterty JS
+  252 MB → 39 MB przy `--max-old-space-size=256` (skrypt
+  `scripts/measure-export-memory.js`; czasy i blokada pętli PGlite nie są
+  reprezentatywne, bo silnik działa w procesie — pomiar na Railway zależy od
+  #41). Test wolumenowy (nocny): `RD_EXPORT_VOLUME_EVENTS=200000 node
+  --max-old-space-size=256 --test tests/pg-export-streaming.test.js`.
+  **Nadal nieobsłużone**: `scripts/verify-export.js` wczytuje całą paczkę
+  jednym `JSON.parse` (weryfikacja i odtworzenie); paczka w buforach nadal
+  zajmuje ok. jednej kopii rozmiaru pliku w pamięci procesu (poza stertą),
+  a `restoreBundle` i tryb bez `{ stream: true }` (testy) budują ją jak dotąd
+  w stringach.
 - **Blokada jednego eksportu na rok** (#216): `POST /api/exports` bierze
   `pg_try_advisory_xact_lock(hashtext('rd_export:'||rok))` na czas transakcji
   budującej paczkę. Drugi równoczesny przebieg tego samego roku dostaje od
@@ -277,9 +293,7 @@ wersję (`rd-eksport-<rok>-v2.json`).
   naraz — to zapobiega podwójnemu zużyciu pamięci i dwóm wierszom
   `export_runs` przy podwójnym kliknięciu „Eksportuj”. Blokada zwalnia się
   sama na COMMIT/ROLLBACK; różne lata eksportują się równolegle bez
-  przeszkód. Między kolejnymi tabelami paczki proces oddaje pętlę zdarzeń
-  (`setImmediate`) — zmniejsza to, ale nie eliminuje, blokowanie innych
-  żądań podczas budowania bardzo dużej paczki (patrz punkt wyżej).
+  przeszkód.
 - Zmiana schematu wymaga oceny, czy trzeba podnieść `formatVersion`.
   Weryfikator odrzuca nieznaną wersję; odtworzenie wymaga, by docelowy
   schemat miał wszystkie kolumny z manifestu.

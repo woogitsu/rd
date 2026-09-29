@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { checkReadiness } from './health.js';
 import { checkJobsHealth, tokensMatch } from './pg/jobs-health.js';
 import { describeError, log, sanitizePath } from './log.js';
@@ -174,6 +175,18 @@ async function writeFetchResponse(nodeResponse, webResponse, apiRequest, baselin
   // do gniazda mógłby uciąć jej ostatnie bajty u klienta.
   if (streamedRequestBody) nodeResponse.once('finish', () => nodeResponse.socket?.destroy());
   if (!webResponse.body) return nodeResponse.end();
+  // #216: odpowiedź o znanym rozmiarze (Content-Length; dziś tylko eksport roczny)
+  // idzie strumieniowo z obsługą przeciążenia gniazda, bez kopii całego ciała.
+  // Pozostałe odpowiedzi zachowują dotychczasowe buforowanie.
+  if (webResponse.headers.has('content-length')) {
+    try {
+      await pipeline(Readable.fromWeb(webResponse.body), nodeResponse);
+    } catch {
+      // Klient przerwał pobieranie — gniazdo jest już zniszczone, nic do zapisania.
+      nodeResponse.destroy();
+    }
+    return undefined;
+  }
   const data = Buffer.from(await webResponse.arrayBuffer());
   nodeResponse.end(data);
 }
