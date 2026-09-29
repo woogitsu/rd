@@ -254,7 +254,7 @@ uruchomienie pomija zapisane migracje, a zmiana sumy kontrolnej lub brak
 wcześniej wykonanej migracji zatrzymują proces. Nie należy edytować wykonanych
 plików SQL; zmianę schematu dodaje się jako następny plik.
 
-Na środowisku z `APP_ENV=production` trzeba dodatkowo przekazać argument
+Na środowisku z `APP_ENV=production` (także `prod`/`Production`, a zachowawczo również przy braku lub nieznanej wartości `APP_ENV`; `src/app-env.js`) trzeba dodatkowo przekazać argument
 `--allow-production`; użycie wymaga wcześniej kopii zapasowej, zatwierdzonego
 planu przywracania i decyzji administratora szkoły. Nie wpisywać URL bazy ani
 jej zawartości do repozytorium, logów czy zgłoszeń. Najpierw testować na
@@ -447,7 +447,21 @@ techniczne do zatwierdzenia przez zarząd i skarbnika, niezależne od `kind`
 dokumentu. Skutki dla danych: nowa, pusta tabela; istniejące dokumenty nie
 dostają wpisu opisu i panel pokazuje dla nich „Bez tytułu” (brak wpisu, nie
 błąd). Trigger zamrożenia roku szkolnego dla tej tabeli to osobny, świadomie
-odłożony PR — patrz `0106_document_descriptions_year_freeze.sql` niżej (żeby
+odłożony PR — patrz `0130_year_freeze_remaining_tables.sql` (#80) dokłada trigger `a0_year_freeze`
+do tabel z rokiem, które zamrożenie omijało: `school_years` (UPDATE/DELETE,
+nowa funkcja `year_freeze_school_year_row()`), `classes` (INSERT/UPDATE/DELETE)
+oraz INSERT do `enrollment_history`, `import_batches`, `invitations`,
+`payment_instructions`, `payment_references` (też UPDATE) i `news_posts`.
+Wyjątki bez triggera: `school_year_closures`, `export_runs`, `data_access_log`,
+`privacy_notices` (uzasadnienia w migracji i docs/YEAR_CLOSE.md; pilnuje ich test
+przeglądowy z katalogu bazy). Wariant zachowawczy dla `news_posts`/`invitations`
+(decyzja Rady): blokowany tylko INSERT, wycofanie/cofnięcie publikacji
+pozostaje możliwe. `year_freeze_via_parent()` bez zmian (najnowsza: 0106).
+Skutki dla danych: same triggery na przyszłe zapisy, żaden wiersz nie jest
+zmieniany. Wycofanie: `DROP TRIGGER a0_year_freeze` na tych tabelach i
+`DROP FUNCTION year_freeze_school_year_row()`.
+
+`0106_document_descriptions_year_freeze.sql` niżej (żeby
 wyjść od najnowszej wersji `year_freeze_via_parent` na `main` i nie powtórzyć
 incydentu z #279). Wycofanie na pustej bazie: usunięcie tabeli i dwóch
 funkcji. Opis: [`docs/DOCUMENTS.md`](../docs/DOCUMENTS.md).
@@ -931,6 +945,19 @@ i istniejące wpłaty, korekty, przypisania i uzgodnienia pozostają bez
 zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów i
 funkcji; na bazie z wygenerowanymi referencjami — tylko po kopii
 zapasowej (historia referencji zniknie).
+
+`0125_account_recovery_requests.sql` (#146) dodaje tabelę
+`account_recovery_requests` (wniosek o reset hasła albo MFA konta z rolą
+`admin`/`board`/`treasurer`, zatwierdzany przez drugą osobę) i nullable kolumnę
+`password_reset_tokens.request_id`. Wariant zachowawczy, bez rozstrzygania
+D-08/D-10: czterech oczu pilnuje także `CHECK` (zatwierdza ktoś inny niż
+wnioskodawca i właściciel konta), jeden otwarty wniosek na konto i rodzaj
+(częściowy unikalny indeks), trigger blokuje `DELETE` i zmianę wniosku
+zamkniętego, `TRUNCATE` jest zabroniony. Skutki dla danych: nowa pusta tabela;
+istniejące tokeny resetu mają `request_id` = NULL. Wniosek nie zawiera
+sekretów ani e-maili. Wycofanie na pustej tabeli: usunięcie kolumny, triggerów,
+funkcji i tabeli; z wnioskami — tylko po kopii zapasowej.
+
 
 `0121_import_batches_fingerprint_not_unique.sql` (#2) zamienia
 `UNIQUE(fingerprint)` w `import_batches` na zwykły indeks. Wcześniej ten sam plik

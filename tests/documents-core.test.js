@@ -138,7 +138,8 @@ test("komunikaty błędów są po polsku dla kodów i statusów API", () => {
   assert.match(errorMessage(404, { error: "not_found" }), /Nie znaleziono/);
   assert.match(errorMessage(409, { error: "idempotency_conflict" }), /inną treścią/);
   assert.match(errorMessage(0, null), /połączenia/);
-  assert.match(errorMessage(500, { error: "<script>" }), /Błąd serwera \(500\)/);
+  assert.match(errorMessage(500, { error: "<script>" }), /chwilowo niedostępna/);
+  assert.doesNotMatch(errorMessage(500, { error: "<script>" }), /Błąd serwera|script/);
   assert.equal(isRetryable(0), true);
   assert.equal(isRetryable(503), true);
   assert.equal(isRetryable(415), false);

@@ -35,7 +35,7 @@ Board lub skarbnik z MFA mogą wysłać jedną wiadomość z bieżącą treści�
 - Limit: 5 testów na kampanię i 20 na konto na dobę (UTC), liczone z `email_preview_sends`; przekroczenie daje `429`. Każda próba (udana albo zakończona błędem dostawcy) zużywa pulę dnia Brevo (`email_send_ledger`, `source = 'preview'`) — to prawdziwa wiadomość wychodząca z tego samego konta.
 - `Idempotency-Key` jak przy szkicu kampanii: powtórzone żądanie z tym samym kluczem nie wysyła drugiej wiadomości.
 - Test nie zmienia stanu kampanii, migawki ani zatwierdzenia.
-- Flaga `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` (domyślnie wyłączona — brak decyzji D-16): gdy włączona, `POST …/approve` odrzuca zatwierdzenie treści, dla której nie było jeszcze udanej próby wysyłki testowej (`preview_required`).
+- Flaga `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` (domyślnie wyłączona — brak decyzji D-16): gdy włączona, `POST …/approve` odrzuca zatwierdzenie treści, dla której nie było jeszcze udanej wysyłki testowej (przyjętej przez dostawcę; próba zakończona błędem się nie liczy) — kod `409 campaign_test_send_required`. Zmiana treści zmienia `content_hash`, więc wymaga nowego testu.
 - Audyt (`email.preview.sent`) zawiera skrót treści i indeks adresu na liście `EMAIL_PREVIEW_RECIPIENTS`, nigdy sam adres.
 
 Anulowanie (`POST …/cancel`) zatrzymuje wiersze oczekujące w kolejce (`cancelledMessages`) i podaje w `inFlight` liczbę wiadomości, których przekazanie do Brevo już się rozpoczęło (`sending` z `send_started_at`) — te mogą jeszcze wyjść; odpowiedź nie obiecuje więcej. Wiersze już przejęte przez zadanie (`sending`) zadanie samo oznacza jako `cancelled` przy potwierdzeniu przed wysyłką — wyjść może najwyżej wiadomość, której przekazanie do Brevo już trwa (jedna na proces zadania). Wiadomości przyjętej przez Brevo nie da się cofnąć.
@@ -54,7 +54,7 @@ Serwer odrzuca słownictwo sugerujące zadłużenie (ten sam słownik co kartki 
 ## Bariery bezpieczeństwa wysyłki
 - `EMAIL_SENDING_ENABLED` musi mieć dokładnie wartość `true`; inaczej przebieg „live” zatrzymuje się bez zmian w kolejce.
 - Transport Brevo odmawia pracy przy `APP_ENV=test` i pod `node --test`, zanim wywoła sieć. Testy używają wyłącznie fałszywego transportu, a globalny `fetch` jest w nich pułapką.
-- Poza `APP_ENV=production` każdy adres musi pasować do `EMAIL_TEST_ALLOWLIST` (adresy techniczne, np. `*@example.invalid,ops@example.test`); pusta lista blokuje wszystko. Odmowa jest zapisana jako `failed / recipient_not_allowlisted`.
+- Poza rozpoznaną produkcją (`APP_ENV=production`/`prod`, dowolna wielkość liter; brak lub nieznana wartość NIE wyłącza allowlisty) każdy adres musi pasować do `EMAIL_TEST_ALLOWLIST` (adresy techniczne, np. `*@example.invalid,ops@example.test`); pusta lista blokuje wszystko. Odmowa jest zapisana jako `failed / recipient_not_allowlisted`.
 - Tuż przed wysyłką zadanie sprawdza ponownie: wpłatę (dla „brak wpisu wpłaty”), listę wyłączeń, zgodę na kontakt i zgodność adresu, skrót zatwierdzonej treści.
 - Podczas migracji na Railway nie ustawiamy `EMAIL_SENDING_ENABLED=true` na żadnym środowisku z danymi rodzin; staging ma tylko dane syntetyczne i listę adresów technicznych.
 

@@ -13,6 +13,7 @@
 // zapisywać jej w repo, CI, logach ani zgłoszeniach.
 
 import { createHash } from 'node:crypto';
+import { isProductionLikeEnv } from '../app-env.js';
 import { csvRow, toCsv } from './csv.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
@@ -338,6 +339,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   user_passwords: 'skróty haseł kont — sekrety, nigdy w paczce',
   login_rate_limits: 'limity prób logowania — dane techniczne',
   password_reset_tokens: 'tokeny resetu hasła — sekrety, nigdy w paczce',
+  account_recovery_requests: 'wnioski o reset hasła/MFA kont chronionych (#146) — operacje na kontach, nie dane roku; poza paczką jak role_grants i tokeny resetu',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
   retention_policies: 'rejestr polityk retencji (D-04) — konfiguracja/decyzje zarządu, nie dane roku do odtworzenia (0074, #91)',
   privacy_notices: 'wersjonowana informacja o przetwarzaniu danych (D-06) — dokument organizacji, nie zawsze przypisany do jednego roku (school_year_id nullable); zakres i retencja do decyzji D-06 (0075, #145)',
@@ -699,9 +701,9 @@ export function verifyBundle(bundle) {
 // ---------------------------------------------------------------------------
 // Odtworzenie do pustej bazy (test odtworzenia)
 
-// Blokada środowiska produkcyjnego dla skryptów odtwarzania.
+// Blokada środowiska produkcyjnego dla skryptów odtwarzania (#166: także brak/nieznany APP_ENV).
 export function assertRestoreAllowed({ appEnv, allowProduction = false } = {}) {
-  if (appEnv === 'production' && !allowProduction) throw new ExportError('production_restore_requires_allow_production');
+  if (isProductionLikeEnv(appEnv) && !allowProduction) throw new ExportError('production_restore_requires_allow_production');
 }
 
 async function assertEmptyTarget(tx) {
@@ -792,6 +794,8 @@ export async function restoreBundle(db, bundle) {
   const warnings = [...verified.warnings];
   let backfilled = null;
 
+  // #156: odtworzenie jest ciężkie i operatorskie — bez automatycznego
+  // ponowienia przy 40001/40P01 (błąd ma być widoczny, próbę powtarza operator).
   await db.transaction(async (tx) => {
     await tx.query("SET LOCAL session_replication_role = 'replica'");
     // Triggery z własnym warunkiem odtworzenia (0027/0028: daty w roku) — i tak wyłączone.
@@ -850,7 +854,7 @@ export async function restoreBundle(db, bundle) {
     }
     // (3) Dane pochodne triggerów.
     await derivedRowsCheck(tx, existing);
-  });
+  }, { retries: 0 });
 
   // Kontrola po odtworzeniu: ten sam eksport z odtworzonej bazy.
   const again = await buildYearlyExport(db, manifest.schoolYearId);

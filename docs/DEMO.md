@@ -16,6 +16,8 @@ npm run demo:seed      # tworzy bazę .demo-data/ i wypisuje na konsoli hasła +
 npm run demo:start     # PORT=3000 npm start na tej samej bazie
 ```
 
+Zmiennych środowiskowych nie trzeba ustawiać: demo działa wyłącznie lokalnie, więc bez `APP_ENV` skrypty przyjmują `development` (import w demie nie wymaga `IMPORT_ENABLED`). Jawnie ustawione `APP_ENV=production`/`prod` albo `NODE_ENV=production` powoduje odmowę uruchomienia (`demo:seed` i `demo:start`), tak samo obecność `BREVO_API_KEY` (#166).
+
 Konta powstałe z seeda (hasła i sekrety TOTP tylko na konsoli, nigdzie indziej): `admin@example.invalid` (administrator), `zarzad1@example.invalid` i `zarzad2@example.invalid` (zarząd, prezes/sekretarz), `skarbnik@example.invalid` (skarbnik), `przedstawiciel@example.invalid` (przedstawiciel klasy 0-A), `komisja-rewizyjna@example.invalid` (Komisja Rewizyjna). MFA jest skonfigurowane dla `admin`, `board` i `treasurer` (`MFA_REQUIRED_ROLES`, docs/AUTH.md); dla przedstawiciela i komisji rewizyjnej — nie.
 
 Dziś (przed scaleniem [#408](https://github.com/woogitsu/rd/pull/408)) kilka ekranów (Uzgodnienia wyciągu, Zebrania, Zamknięcie roku) pokazuje dane dopiero po wpisaniu roku szkolnego `2026-2027` w polu „Rok szkolny” i kliknięciu „Pokaż” — zrobić to przed pokazem, żeby nie szukać tego na żywo. Po scaleniu `#408` panele same wypełniają to pole najnowszym rokiem z przydziałów konta (albo, gdy przydział nie wskazuje roku, heurystyką daty 1 września) i ładują dane od razu po wejściu — pole zostaje edytowalne, więc krok „Pokaż” nadal działa, jeśli ktoś chce zmienić rok.
