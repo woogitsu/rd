@@ -4,12 +4,16 @@ import {
   NEWS_URL,
   eventsUrl,
   formatDate,
+  formatDay,
   formatEventTime,
+  formatTime,
   formatSchoolYear,
   groupByMonth,
   minutesUrl,
   newsItems,
+  noticesUrl,
   publicMinutes,
+  publicNotices,
   schoolYearFromSearch,
   upcomingEvents,
 } from "./core.js";
@@ -122,6 +126,42 @@ function renderMinutes(minutes) {
   container.append(list);
 }
 
+function renderNotices(notices) {
+  const container = byId("notices-list");
+  container.replaceChildren();
+  if (!notices.length) {
+    setStatus("notices-status", "Brak opublikowanych zawiadomień o zebraniach.");
+    return;
+  }
+  setStatus("notices-status", "");
+  const list = el("ol", null, "event-list");
+  for (const notice of notices) {
+    const item = el("li", null, notice.cancelled ? "event cancelled" : "event");
+    const title = el("h3", null, "event-title");
+    if (notice.cancelled) title.append(el("span", "odwołane", "badge"), " ");
+    title.append(el("span", notice.title));
+    const time = el("p", null, "event-time");
+    const timeNode = el("time", `${formatDay(notice.scheduledAt)}, ${formatTime(notice.scheduledAt)}`);
+    timeNode.dateTime = notice.scheduledAt.toISOString();
+    time.append(timeNode);
+    item.append(time, title);
+    const details = el("dl", null, "event-details");
+    if (!notice.cancelled && notice.previousScheduledAt) {
+      detailRow(details, "Poprzedni termin", `${formatDay(notice.previousScheduledAt)}, ${formatTime(notice.previousScheduledAt)}`);
+    }
+    if (!notice.cancelled) detailRow(details, "Miejsce", notice.location);
+    if (details.childElementCount) item.append(details);
+    if (!notice.cancelled && notice.agenda.length) {
+      item.append(el("p", "Porządek obrad:", "event-description"));
+      const agenda = el("ol", null, "agenda-list");
+      for (const point of notice.agenda) agenda.append(el("li", point));
+      item.append(agenda);
+    }
+    list.append(item);
+  }
+  container.append(list);
+}
+
 function renderNews(items) {
   const container = byId("news-list");
   container.replaceChildren();
@@ -170,6 +210,20 @@ async function loadMinutes() {
   }
 }
 
+async function loadNotices() {
+  const schoolYearId = schoolYearFromSearch(window.location.search);
+  try {
+    const data = await getJson(noticesUrl(schoolYearId));
+    renderNotices(publicNotices(data?.notices));
+  } catch (error) {
+    // Starsze wdrożenie bez trasy albo nieznany rok: nic nie opublikowano.
+    if (error instanceof HttpError && [400, 404, 405].includes(error.status)) renderNotices([]);
+    else setStatus("notices-status", "Nie udało się wczytać zawiadomień. Spróbuj ponownie później.", true);
+  } finally {
+    done("zawiadomienia");
+  }
+}
+
 // #124: pozycja "Aktualności" jest teraz zawsze widoczna w nawigacji i na
 // stronie (WCAG 3.2.3 — nawigacja nie zmienia się po załadowaniu). Brak
 // trasy API (404/405 — starsze wdrożenie bez tego modułu) i brak
@@ -201,3 +255,4 @@ window.addEventListener("afterprint", () => {
 loadNews();
 loadEvents();
 loadMinutes();
+loadNotices();

@@ -20,6 +20,7 @@ export const STATUS_LABELS = Object.freeze({
 export const AUDIENCE_LABELS = Object.freeze({
   all_households: 'Wszystkie rodziny roku',
   no_payment_record: 'Rodziny bez odnotowanej wpłaty',
+  class_households: 'Rodziny dzieci jednej klasy (zebranie klasowe)',
 });
 
 // Kody z computeSnapshot w src/pg/routes/email.js.

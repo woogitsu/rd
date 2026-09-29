@@ -22,6 +22,26 @@ export const MESSAGES = Object.freeze({
   resolution_not_decided: "Stan wykonania można zapisać tylko dla podjętej uchwały.",
   // --- Protokół zebrania: zasada czterech oczu (#135) -------------------------------
   minutes_four_eyes_required: "Protokół zatwierdza inna osoba niż jego autor.",
+  // --- Odwołanie, zmiana terminu i zawiadomienie o zebraniu (#113) ---------------------
+  agenda_item_not_found: "Nie znaleziono punktu porządku obrad.",
+  invalid_notice_content: "Treść zawiadomienia nie nadaje się na wiadomość e-mail (znaki klamrowe, niedozwolone sformułowanie albo za długa treść). Popraw zebranie lub porządek obrad i przygotuj nową wersję.",
+  invalid_notice_rule: "Podaj razem minimalną liczbę dni zawiadomienia i źródło tej reguły albo zostaw oba pola puste.",
+  meeting_cancelled: "Zebranie zostało odwołane i nie przyjmuje już zmian.",
+  meeting_not_reschedulable: "Termin można zmienić tylko dla zebrania w szkicu lub zaplanowanego.",
+  meeting_not_scheduled: "Zawiadomienie można zatwierdzić dopiero dla zebrania w stanie „zaplanowane”.",
+  meeting_notice_closed: "Dla tego zebrania nie można już przygotować zawiadomienia.",
+  meeting_status_transition_invalid: "Ta zmiana stanu zebrania jest niedozwolona.",
+  notice_campaign_audience_unsupported: "Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana.",
+  notice_four_eyes_required: "Zawiadomienie zatwierdza inna osoba niż jego autor.",
+  notice_not_approved: "Szkic kampanii powstaje tylko z zatwierdzonego zawiadomienia.",
+  notice_not_found: "Nie znaleziono zawiadomienia.",
+  notice_not_latest: "Istnieje nowsza wersja zawiadomienia. Wróć do jej treści.",
+  notice_outdated: "Termin, miejsce albo porządek obrad zmieniły się po przygotowaniu zawiadomienia. Przygotuj nową wersję.",
+  notice_requires_agenda: "Zawiadomienie wymaga co najmniej jednego niewycofanego punktu porządku obrad.",
+  notice_up_to_date: "Zatwierdzone zawiadomienie odpowiada aktualnemu zebraniu — nowa wersja nie jest potrzebna.",
+  reschedule_no_change: "Podany termin jest taki sam jak obecny.",
+  use_reschedule_endpoint: "Po zatwierdzeniu zawiadomienia zmień termin przez „Zmień termin” — wymaga to powodu.",
+  campaign_audience_locked: "Odbiorcy tej kampanii wynikają z zebrania i nie można ich zmienić.",
   // --- Tryb tylko do odczytu (#143) ------------------------------------------------
   read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------

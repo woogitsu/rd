@@ -111,6 +111,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`ledger_transfers`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meeting_agenda_items`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meeting_agenda_items`|`description`|Członek Rady|direct|wolny tekst|punkt porządku obrad|audit_event|tak|tak|
+|`meeting_agenda_items`|`withdrawn_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`meeting_agenda_versions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`meeting_agenda_versions`|`snapshot`|Członek Rady|direct|wolny tekst|migawka porządku obrad (tytuły i opisy punktów)|audit_event|tak|tak|
 |`meeting_attendees`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie opiekuna z zebraniem|audit_event|nie|tak|
 |`meeting_attendees`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meeting_attendees`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -120,6 +123,12 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`meeting_minutes`|`change_note`|Członek Rady|direct|wolny tekst|opis zmiany wersji protokołu|audit_event|tak|tak|
 |`meeting_minutes`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meeting_minutes_publications`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`meeting_notices`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`meeting_notices`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`meeting_reschedules`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`meeting_reschedules`|`reason`|Członek Rady|direct|wolny tekst|powód zmiany terminu zebrania (wewnętrzny)|audit_event|tak|tak|
+|`meetings`|`cancellation_reason`|Członek Rady|direct|wolny tekst|powód odwołania zebrania (wewnętrzny)|audit_event|tak|tak|
+|`meetings`|`cancelled_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`meetings`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`mfa_recovery_codes`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`news_photo_consent_withdrawals`|`recorded_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -183,7 +192,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **170**, w tym wolnego tekstu: **40** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **179**, w tym wolnego tekstu: **43** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -463,6 +472,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `cancelled_at` | none | — | nie |
 | `cancelled_by` | none | — | nie |
 | `category` | none | — | nie |
+| `class_id` | none | — | nie |
 | `completed_at` | none | — | nie |
 | `content_hash` | none | — | nie |
 | `created_at` | none | — | nie |
@@ -470,6 +480,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `daily_cap` | none | — | nie |
 | `id` | none | — | nie |
 | `idempotency_key` | none | — | nie |
+| `meeting_id` | none | — | nie |
+| `meeting_notice_id` | none | — | nie |
 | `paused_at` | none | — | nie |
 | `paused_by` | pseudonymous | board_member | nie |
 | `queued_at` | none | — | nie |
@@ -1081,6 +1093,21 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `meeting_id` | none | — | tak |
 | `position` | none | — | tak |
 | `title` | none | — | tak |
+| `withdrawn_at` | none | — | tak |
+| `withdrawn_by` | pseudonymous | board_member | tak |
+
+### `meeting_agenda_versions`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `content_hash` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `meeting_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `snapshot` | direct | board_member | tak |
+| `version` | none | — | tak |
 
 ### `meeting_attendance_state`
 
@@ -1133,6 +1160,29 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `seq` | none | — | tak |
 | `visibility` | none | — | tak |
 
+### `meeting_notices`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `agenda_version_id` | none | — | tak |
+| `approved_at` | none | — | tak |
+| `approved_by` | pseudonymous | board_member | tak |
+| `content_hash` | none | — | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `kind` | none | — | tak |
+| `location` | none | — | tak |
+| `meeting_id` | none | — | tak |
+| `notice_days_before` | none | — | tak |
+| `notice_late` | none | — | tak |
+| `previous_scheduled_at` | none | — | tak |
+| `scheduled_at` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `status` | none | — | tak |
+| `title` | none | — | tak |
+| `version` | none | — | tak |
+
 ### `meeting_quorum_checks`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
@@ -1165,16 +1215,34 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `operation` | none | — | nie |
 | `request_hash` | none | — | nie |
 
+### `meeting_reschedules`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `actor_id` | pseudonymous | board_member | tak |
+| `created_at` | none | — | tak |
+| `from_scheduled_at` | none | — | tak |
+| `id` | none | — | tak |
+| `meeting_id` | none | — | tak |
+| `reason` | direct | board_member | tak |
+| `school_year_id` | none | — | tak |
+| `to_scheduled_at` | none | — | tak |
+
 ### `meetings`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
+| `cancellation_reason` | direct | board_member | tak |
+| `cancelled_at` | none | — | tak |
+| `cancelled_by` | pseudonymous | board_member | tak |
 | `class_id` | none | — | tak |
 | `created_at` | none | — | tak |
 | `created_by` | pseudonymous | board_member | tak |
 | `id` | none | — | tak |
 | `kind` | none | — | tak |
 | `location` | none | — | tak |
+| `notice_min_days` | none | — | tak |
+| `notice_rule_source` | none | — | tak |
 | `quorum_denominator` | none | — | tak |
 | `quorum_inclusive` | none | — | tak |
 | `quorum_min_count` | none | — | tak |

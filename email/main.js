@@ -312,7 +312,13 @@ byId("edit-campaign").addEventListener("click", () => {
   const campaign = state.detail.campaign;
   const form = editDialog.form;
   form.elements.title.value = campaign.title;
-  form.elements.audience.value = campaign.audience;
+  // #113: szkic z zawiadomienia o zebraniu ma odbiorców wynikających z zebrania — bez zmiany ręcznej.
+  const select = form.elements.audience;
+  if (![...select.options].some((option) => option.value === campaign.audience)) {
+    select.append(new Option(AUDIENCE_LABELS[campaign.audience] ?? campaign.audience, campaign.audience));
+  }
+  select.value = campaign.audience;
+  for (const option of select.options) option.disabled = Boolean(campaign.meetingNoticeId) && option.value !== campaign.audience;
   form.elements.subject.value = campaign.subject;
   form.elements.bodyText.value = campaign.bodyText;
   form.dataset.revision = String(campaign.revisionNo ?? "");

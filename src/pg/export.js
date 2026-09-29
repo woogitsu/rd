@@ -286,6 +286,11 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'meeting_minutes_publications', requires: ['meeting_minutes', 'meetings'],
     where: () => `minutes_id IN (SELECT mm.id FROM meeting_minutes mm JOIN meetings m ON m.id = mm.meeting_id
       WHERE m.school_year_id = $1)` },
+  // 0139 (#113): wersje porządku obrad, zmiany terminu i zawiadomienia zebrań (własne school_year_id;
+  // agenda_versions przed notices — klucz obcy).
+  { table: 'meeting_agenda_versions', requires: ['meetings'], where: () => 'school_year_id = $1' },
+  { table: 'meeting_reschedules', requires: ['meetings'], where: () => 'school_year_id = $1' },
+  { table: 'meeting_notices', requires: ['meeting_agenda_versions', 'meetings'], where: () => 'school_year_id = $1' },
   { table: 'resolutions', where: () => 'school_year_id = $1' },
   // #102: wykonanie uchwał — historia zdarzeń powiązana z uchwałą roku.
   { table: 'resolution_execution_events', requires: ['resolutions'],
