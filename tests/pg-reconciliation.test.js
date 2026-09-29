@@ -850,6 +850,64 @@ test('a correction after matching blocks confirmation with a list of inconsisten
   }
 });
 
+// #165 kryterium 3: korekta PO zatwierdzeniu uzgodnienia (zatwierdzone
+// uzgodnienie jest niezmienne, więc korekta nie jest blokowana) sprawia, że
+// aktywne powiązanie przestaje się zgadzać kwotowo. Raport KR musi to pokazać
+// osobnym licznikiem amountMismatchConfirmedCount, a karta uzgodnienia — pozycją.
+test('a correction after confirmation shows up in the audit report as a confirmed-but-mismatched link', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description,
+      occurred_on, method, created_by, idempotency_key)
+      VALUES ('le-conf', $1, 'income', 4000, 'cat-dues', 'Wpis syntetyczny zatwierdzony', '2026-09-14', 'bank', 'u-treasurer', 'le-key-conf')`, [YEAR]);
+    const draft = await draftWithLines(call, cookies, [4000]);
+    const matched = await matchCall(call, cookies.treasurer, draft.id, { statementLineId: draft.lineIds[0], ledgerEntryId: 'le-conf' });
+    assert.equal(matched.status, 201);
+    const matchId = (await matched.json()).match.id;
+
+    const reportChecks = async () => {
+      const response = await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie: cookies.audit });
+      assert.equal(response.status, 200);
+      return Object.fromEntries((await response.json()).report.checks.items.map((item) => [item.id, item]));
+    };
+    // Przed korektą: powiązanie zgodne, liczniki zerowe.
+    const before = (await reportChecks()).reconciliation_matches;
+    assert.deepEqual([before.ok, before.amountMismatchCount, before.amountMismatchConfirmedCount], [true, 0, 0]);
+
+    const confirmed = await call(`/api/reconciliations/${draft.id}/confirm`, {
+      method: 'POST', cookie: cookies.board, body: { confirmationNote: 'Sprawdzone z wyciągiem' },
+    });
+    assert.equal(confirmed.status, 200);
+
+    // Korekta po zatwierdzeniu nie jest blokowana (blokuje tylko powiązanie w szkicu).
+    const correction = await call('/api/ledger/le-conf/corrections', {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('corr') },
+      body: { amountCents: 1000, reason: 'Korekta syntetyczna po zatwierdzeniu' },
+    });
+    assert.equal(correction.status, 201);
+
+    const after = (await reportChecks()).reconciliation_matches;
+    assert.equal(after.ok, false);
+    assert.equal(after.amountMismatchCount, 1);
+    assert.equal(after.amountMismatchConfirmedCount, 1, 'niezgodność w zatwierdzonym uzgodnieniu liczona osobno');
+    assert.equal(after.doubleCountedCount, 0);
+
+    // Pozycja: karta zatwierdzonego uzgodnienia wskazuje powiązanie z kwotą pozycji i dzisiejszym netto.
+    const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(detail.reconciliation.status, 'confirmed');
+    assert.equal(detail.summary.inconsistentMatchCount, 1);
+    assert.deepEqual(detail.inconsistentMatches.map((m) => [m.matchId, m.ledgerEntryId, m.lineAmountCents, m.targetNetCents, m.reasons]),
+      [[matchId, 'le-conf', 4000, 3000, ['amount_mismatch']]]);
+
+    // Zatwierdzone uzgodnienie zostaje niezmienione (historia nie jest zacierana).
+    assert.equal((await db.query('SELECT status FROM bank_reconciliations WHERE id = $1', [draft.id])).rows[0].status, 'confirmed');
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM bank_reconciliation_matches WHERE reconciliation_id = $1 AND revoked_at IS NULL',
+      [draft.id])).rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});
+
 test('pre-existing double-counted matches are reported and block confirmation without being changed', async () => {
   const { db, cookies, call } = await setup();
   try {
