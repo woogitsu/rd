@@ -94,6 +94,27 @@ function loginScopes({ email, ip }) {
 
 const isHard = (scope) => scope.max !== null;
 
+// Próg agregatu „konto pod presją” (#126): liczba błędnych prób na jedno konto
+// (zakres e-mail, ze wszystkich adresów IP razem) w oknie logowania, od której
+// administrator dostaje sygnał. To WYŁĄCZNIE sygnał — nie blokuje konta, więc
+// prawowity właściciel nadal się loguje (blokuje tylko para e-mail+IP, #423).
+// Zmienna LOGIN_PRESSURE_THRESHOLD; wartość spoza 6–1000 albo nieliczbowa
+// wraca do bezpiecznego domyślnego progu. Dolna granica > pairMaxFailures:
+// poniżej niej pojedynczy adres IP (limit pary) mógłby sam przekroczyć próg.
+export const LOGIN_PRESSURE_DEFAULT_THRESHOLD = 15;
+export function loginPressureThreshold(env) {
+  const raw = env?.LOGIN_PRESSURE_THRESHOLD;
+  if (raw === undefined || raw === null || raw === '') return LOGIN_PRESSURE_DEFAULT_THRESHOLD;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > LOGIN_POLICY.pairMaxFailures && value <= 1000 ? value : LOGIN_PRESSURE_DEFAULT_THRESHOLD;
+}
+
+// Dolne oszacowanie liczby różnych adresów IP, z których pochodzą próby: jedna
+// para (e-mail, IP) zużywa najwyżej pairMaxFailures prób w oknie, więc N prób
+// oznacza co najmniej ceil(N / pairMaxFailures) źródeł. Szacunek (okna par i
+// e-maila mogą się przesuwać względem siebie) — bez zapisu adresów.
+export const estimatedMinSources = (failures) => Math.max(1, Math.ceil(Number(failures) / LOGIN_POLICY.pairMaxFailures));
+
 // Opóźnienie (ms) dla miękkiego zakresu e-maila po zarezerwowaniu próby.
 export function emailDelayMs(count, env) {
   const configured = env?.LOGIN_EMAIL_DELAY_MS;
@@ -159,6 +180,9 @@ async function reserveAttempt(env, scopes) {
          RETURNING window_started_at, failure_count`,
         [scope.type, scope.hash, LOGIN_POLICY.windowSeconds],
       );
+      // Licznik po rezerwacji: failAttempt wykrywa po nim dokładne przekroczenie
+      // progu „konta pod presją” (jedno zdarzenie na przekroczenie, #126).
+      scope.reservedCount = Number(updated[0].failure_count);
       reserved.push({ ...scope, windowStartedAt: updated[0].window_started_at, count: Number(updated[0].failure_count) });
     }
     return reserved;
@@ -239,11 +263,51 @@ async function failAttempt(env, { scopes, action, userId = null, reason, code = 
       entityType: userId ? 'user' : 'login_attempt', entityId: userId ?? crypto.randomUUID(),
       metadata: { reason, locked: isLocked },
     });
+    // #126: przekroczenie progu „konta pod presją” — jedno zdarzenie na
+    // przekroczenie (licznik z rezerwacji równy progowi), tylko dla konta, które
+    // istnieje; identyfikator konta i liczby, bez e-maila i adresu IP.
+    const emailScope = scopes.find((scope) => scope.type === 'email');
+    const threshold = loginPressureThreshold(env);
+    if (action === 'auth.login_failed' && userId && emailScope?.reservedCount === threshold) {
+      await insertAuditEvent(tx, {
+        actorId: null, action: 'auth.account_under_pressure', entityType: 'user', entityId: userId,
+        metadata: { threshold, windowSeconds: LOGIN_POLICY.windowSeconds, estimatedMinSources: estimatedMinSources(threshold) },
+      });
+    }
     return isLocked;
   });
   return locked
     ? new LoginError('too_many_attempts', 429, { retryAfter: LOGIN_POLICY.lockSeconds, counted: true })
     : new LoginError(code, status, { counted: true });
+}
+
+// Konta pod presją (#126) dla /api/admin/ops-status: konta, których licznik
+// e-maila w bieżącym oknie osiągnął próg. Odpowiedź: identyfikator konta,
+// liczba prób, dolne oszacowanie liczby źródeł, początek okna — bez e-maili i
+// adresów IP. Skróty e-maili bez konta (zgadywane adresy) tylko w liczbie.
+// `now` jest wstrzykiwany (bez zegara ściennego w testach).
+export async function accountsUnderPressure(db, { env = {}, now = () => new Date() } = {}) {
+  const threshold = loginPressureThreshold(env);
+  const { rows } = await db.query(
+    `SELECT scope_hash, failure_count, window_started_at FROM login_rate_limits
+      WHERE scope_type = 'email' AND failure_count >= $1
+        AND window_started_at > $2::timestamptz - make_interval(secs => $3)
+      ORDER BY failure_count DESC, scope_hash LIMIT 50`,
+    [threshold, now().toISOString(), LOGIN_POLICY.windowSeconds],
+  );
+  const result = { thresholdFailures: threshold, windowSeconds: LOGIN_POLICY.windowSeconds, accounts: [], unmatchedTargets: 0 };
+  if (!rows.length) return result;
+  const { rows: users } = await db.query('SELECT id, email FROM users');
+  const byHash = new Map(users.map((user) => [scopeHash('email', normalizeLoginEmail(user.email)), user.id]));
+  for (const row of rows) {
+    const accountId = byHash.get(row.scope_hash);
+    if (!accountId) { result.unmatchedTargets += 1; continue; }
+    result.accounts.push({
+      accountId, failures: Number(row.failure_count),
+      estimatedMinSources: estimatedMinSources(row.failure_count), windowStartedAt: isoTimestamp(row.window_started_at),
+    });
+  }
+  return result;
 }
 
 async function findAccountByEmail(executor, normalizedEmail) {

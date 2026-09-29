@@ -714,7 +714,10 @@ bez potrzeby dostępu do Railway:
   (`email_outbox`), ostatnia udana kopia PostgreSQL/bucketu/próba odtworzenia
   (#90, #103 — dziennik `backup_runs`, jeśli już scalone; w przeciwnym razie
   `no_data`, nie fałszywe „w normie”), ostatni eksport roczny, tryb pracy
-  (`APP_WRITE_MODE`, #143) i wersja aplikacji (`RAILWAY_GIT_COMMIT_SHA`).
+  (`APP_WRITE_MODE`, #143), wersja aplikacji (`RAILWAY_GIT_COMMIT_SHA`) i
+  `loginPressure` — konta z wieloma błędnymi próbami logowania w oknie (#126;
+  identyfikator konta i liczby, bez e-maili i adresów IP; próg
+  `LOGIN_PRESSURE_THRESHOLD`, domyślnie 15; to sygnał, nie blokada).
   Tylko liczby, znaczniki czasu i kody — bez adresów, nazw rodzin i treści.
 - **`GET /health/jobs`** — heartbeat dla monitora zewnętrznego, osobny od
   `/health/ready` (Railway). Chroniony tokenem stałej długości porównania

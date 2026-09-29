@@ -54,6 +54,7 @@ export const ACTION_LABELS = Object.freeze({
   "user.created": "Utworzenie konta",
   "auth.password_set": "Ustawienie hasła",
   "auth.password_changed": "Zmiana hasła",
+  "auth.account_under_pressure": "Konto pod presją prób logowania",
   "auth.password_reset_completed": "Ustawienie nowego hasła kodem resetu",
   "invitation.reissued": "Ponowne wydanie zaproszenia",
   "role_grant.school_year_backfilled": "Uzupełnienie roku szkolnego w przydziale roli",
