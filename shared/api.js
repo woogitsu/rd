@@ -196,6 +196,7 @@ export function createApiClient({
     idempotencyKey,
     messages = null,
     redirect = true,
+    binary = false,
     ...init
   } = {}, confirmed) {
     const finalHeaders = { Accept: "application/json", ...headers };
@@ -219,6 +220,9 @@ export function createApiClient({
     } catch {
       throw new ApiError({ network: true, messages });
     }
+    // `binary: true` — pobranie pliku (eksport): sukces zwraca { blob, headers } bez
+    // ponownego kodowania bajtów; błędy nadal są JSON-em i idą zwykłą ścieżką.
+    if (binary && response.ok) return { blob: await response.blob(), headers: response.headers };
     const data = response.status === 204 ? {} : await response.json().catch(() => ({}));
     if (!response.ok) {
       const code = errorCode(data?.error);
