@@ -932,3 +932,15 @@ i istniejące wpłaty, korekty, przypisania i uzgodnienia pozostają bez
 zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów i
 funkcji; na bazie z wygenerowanymi referencjami — tylko po kopii
 zapasowej (historia referencji zniknie).
+
+`0125_account_recovery_requests.sql` (#146) dodaje tabelę
+`account_recovery_requests` (wniosek o reset hasła albo MFA konta z rolą
+`admin`/`board`/`treasurer`, zatwierdzany przez drugą osobę) i nullable kolumnę
+`password_reset_tokens.request_id`. Wariant zachowawczy, bez rozstrzygania
+D-08/D-10: czterech oczu pilnuje także `CHECK` (zatwierdza ktoś inny niż
+wnioskodawca i właściciel konta), jeden otwarty wniosek na konto i rodzaj
+(częściowy unikalny indeks), trigger blokuje `DELETE` i zmianę wniosku
+zamkniętego, `TRUNCATE` jest zabroniony. Skutki dla danych: nowa pusta tabela;
+istniejące tokeny resetu mają `request_id` = NULL. Wniosek nie zawiera
+sekretów ani e-maili. Wycofanie na pustej tabeli: usunięcie kolumny, triggerów,
+funkcji i tabeli; z wnioskami — tylko po kopii zapasowej.

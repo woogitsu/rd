@@ -326,6 +326,10 @@ wpisów).
 | `reconciliation_confirmed` | Uzgodnienie jest już potwierdzone i nie można go zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `reconciliation_has_active_matches` | Szkic ma aktywne dopasowania — cofnij je, zanim porzucisz szkic. | Tak — po cofnięciu dopasowań. |
 | `reconciliation_not_found` | Nie znaleziono uzgodnienia. | Nie — popraw dane żądania. |
+| `recovery_four_eyes_required` | Reset hasła lub MFA konta z rolą zarządu, skarbnika albo administratora zatwierdza inna osoba niż wnioskodawca i właściciel konta. | Nie — zatwierdza inny administrator. |
+| `recovery_request_closed` | Ten wniosek został już zatwierdzony, odrzucony lub wygasł. | Nie — odśwież listę wniosków. |
+| `recovery_request_expired` | Wniosek wygasł. Złóż nowy wniosek o reset konta. | Nie — złóż nowy wniosek. |
+| `recovery_request_not_found` | Nie znaleziono wniosku o reset konta. | Nie — popraw dane żądania. |
 | `refund_exceeds_remaining_amount` | Zwrot przekracza kwotę pozostałą po wcześniejszych korektach i zwrotach. | Zależy od kontekstu (patrz moduł trasy). |
 | `relation_ended` | Ta relacja opiekuna z uczniem została już zakończona. Zmiana nie jest możliwa. | Zależy od kontekstu (patrz moduł trasy). |
 | `release_reason_not_allowed` | Blokadę po skardze lub wypisaniu można zgłosić do zdjęcia wyłącznie z powodem „na wniosek rodzica”. | Zależy od kontekstu (patrz moduł trasy). |

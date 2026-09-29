@@ -461,8 +461,18 @@ test('password reset and MFA reset: single valid token, self-reset blocked, disa
       `INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
        VALUES ('f-victim', 'u-mfa-victim', 'totp', 'AAAAAAAAAA', 'BBBBBBBBBBBBBBBB', 'CCCCCCCCCCCCCCCCCCCCCC', now())`,
     );
-    const reset = await post(env, '/api/admin/users/u-mfa-victim/mfa-reset', admin, { confirm: 'u-mfa-victim' });
+    // #146: konto zarządu — jedna osoba tylko składa wniosek; reset wykonuje drugi administrator.
+    const requested = await post(env, '/api/admin/users/u-mfa-victim/mfa-reset', admin, { confirm: 'u-mfa-victim' });
+    assert.equal(requested.status, 202);
+    assert.equal(
+      (await db.query("SELECT disabled_at FROM user_mfa_factors WHERE id = 'f-victim'")).rows[0].disabled_at, null,
+      'wniosek niczego nie zmienia',
+    );
+    const admin2 = await seedUserSession(db, { userId: 'u-admin2', roles: [{ role: 'admin' }], mfa: true });
+    const reset = await post(env, `/api/admin/account-requests/${requested.data.request.id}/approve`, admin2);
     assert.equal(reset.status, 200);
+    assert.equal(reset.data.mfa.changed, true);
+    reset.data = reset.data.mfa;
     assert.equal(reset.data.changed, true);
     assert.equal(reset.data.disabledFactors, 1);
     assert.equal(

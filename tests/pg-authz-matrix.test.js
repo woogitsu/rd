@@ -455,6 +455,20 @@ async function makeAdminTarget(ctx, stage) {
     await makeMfaFactor(ctx, 'confirmed', { cookie });
     return { userId };
   }
+  if (stage === 'recoveryRequest') {
+    // #146: otwarty wniosek o reset hasła konta zarządu, złożony przez INNE konto niż aktor macierzy.
+    await seedUser(ctx.db, { userId });
+    const requesterId = nextKey('fx-wnioskodawca');
+    await seedUser(ctx.db, { userId: requesterId });
+    await ctx.db.query("INSERT INTO role_grants (id, user_id, role, school_year_id) VALUES ($1, $2, 'board', $3)", [randomUUID(), userId, YEAR_1]);
+    const requestId = randomUUID();
+    await ctx.db.query(
+      `INSERT INTO account_recovery_requests (id, kind, target_user_id, requested_by, ttl_seconds, expires_at)
+       VALUES ($1, 'password_reset', $2, $3, 7200, now() + interval '1 day')`,
+      [requestId, userId, requesterId],
+    );
+    return { requestId };
+  }
   if (stage === 'invitation') {
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations',
       { email: `${userId}@example.invalid`, role: 'board', schoolYearId: YEAR_1 });
