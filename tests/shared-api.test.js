@@ -55,6 +55,13 @@ test('safeNextPath przyjmuje tylko ścieżkę względną tego samego origin', ()
   ]) assert.equal(safeNextPath(bad), null, String(bad));
 });
 
+test('#161: loginUrl z powodem enroll dopisuje reason tylko przy poprawnym celu', () => {
+  assert.equal(loginUrl('/audit/', { reason: 'enroll' }), '/login/#next=%2Faudit%2F&reason=enroll');
+  assert.equal(loginUrl('/audit/', { reason: 'inne' }), '/login/#next=%2Faudit%2F');
+  assert.equal(loginUrl('//example.invalid', { reason: 'enroll' }), '/login/');
+  assert.equal(nextFromFragment('#next=%2Faudit%2F&reason=enroll'), '/audit/');
+});
+
 test('loginUrl koduje powrót, a zły cel daje sam /login/', () => {
   assert.equal(loginUrl('/panel/'), '/login/#next=%2Fpanel%2F');
   assert.equal(loginUrl('/families/#household=h1'), '/login/#next=%2Ffamilies%2F%23household%3Dh1');
@@ -112,7 +119,7 @@ test('403 mfa_required i mfa_enrollment_required prowadzą na /login/ z osobnymi
 
   const enroll = client({ status: 403, body: { error: 'mfa_enrollment_required' }, location: fakeLocation('/admin/') });
   await assert.rejects(enroll.request('/api/admin/users'), (error) => error.authAction === 'enroll' && error.message === MESSAGES.mfa_enrollment_required);
-  assert.deepEqual(enroll.navigations, ['/login/#next=%2Fadmin%2F']);
+  assert.deepEqual(enroll.navigations, ['/login/#next=%2Fadmin%2F&reason=enroll']);
   assert.notEqual(MESSAGES.mfa_required, MESSAGES.mfa_enrollment_required);
 });
 

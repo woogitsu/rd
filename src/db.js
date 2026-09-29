@@ -119,7 +119,11 @@ export function createPgDatabase(poolOrConfig = {}, options = {}) {
     let committing = false;
     try {
       await client.query('BEGIN');
-      await client.query("SELECT set_config('lock_timeout', $1, true)", [String(lockTimeoutMs)]);
+      // SET LOCAL (instrukcja narzędziowa) NIE otwiera migawki, więc funkcja fn może jeszcze
+      // wydać SET TRANSACTION ISOLATION LEVEL ... (readSnapshot, eksport). Zapytanie
+      // SELECT set_config(...) otwierało migawkę i na PostgreSQL kończyło się 25001
+      // („must be called before any query”). lockTimeoutMs jest liczbą całkowitą (positiveInt).
+      await client.query(`SET LOCAL lock_timeout = ${lockTimeoutMs}`);
       const result = await fn(wrapClient(client));
       committing = true;
       await client.query('COMMIT');
