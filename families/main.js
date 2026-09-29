@@ -8,6 +8,7 @@ import {
   fullName,
   groupClassesByYear,
   householdHref,
+  overviewRow,
   parseRoute,
   sortStudentsByName,
 } from "./core.js";
@@ -105,6 +106,27 @@ async function renderClasses() {
   }));
   byId("classes-empty").hidden = classes.length > 0;
   showView("classes");
+  await renderOverview(groupClassesByYear(classes));
+}
+
+// Pulpit przedstawiciela (#118). Trasa zwraca 403 dla kont bez przydziału
+// przedstawiciela — wtedy sekcja pozostaje ukryta; bez komunikatu o błędzie.
+async function renderOverview(groups) {
+  const section = byId("overview-card");
+  const body = byId("overview-body");
+  const rows = [];
+  for (const group of groups) {
+    try {
+      const data = await apiRequest(`/api/representative/overview?schoolYearId=${encodeURIComponent(group.schoolYearId)}`);
+      rows.push(...data.classes.map(overviewRow));
+    } catch { /* brak roli przedstawiciela lub błąd — sekcja opcjonalna */ }
+  }
+  section.hidden = rows.length === 0;
+  body.replaceChildren(...rows.map((item) => {
+    const row = document.createElement("tr");
+    row.append(cell(link(item.name, classHref(item.id))), cell(item.paperCards), cell(item.lastPrinted), cell(item.events), cell(item.meeting), cell(item.documents));
+    return row;
+  }));
 }
 
 function householdLinks(households) {

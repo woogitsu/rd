@@ -2032,6 +2032,108 @@ test('#130 EMAIL_SEND_WINDOW: a run outside the configured window stops without 
   } finally { await t.close(); }
 });
 
+const BRUSSELS_WINDOW_ENV = {
+  EMAIL_SEND_WINDOW_ENABLED: 'true', EMAIL_SEND_WINDOW_TIMEZONE: 'Europe/Brussels',
+  EMAIL_SEND_WINDOW_DAYS: '1-5', EMAIL_SEND_WINDOW_START: '09:00', EMAIL_SEND_WINDOW_END: '18:00',
+};
+
+// Sztuczny zegar: kolejne przebiegi w tygodniu zmiany czasu. Okno 9:00-18:00
+// w Brukseli to 08:00Z-17:00Z zimą, 07:00Z-16:00Z latem — bez przesunięcia o godzinę.
+for (const [label, sequence] of [
+  ['29.03.2026 (czas letni)', [
+    ['2026-03-29T10:00:00Z', 'niedziela zmiany czasu', false],
+    ['2026-03-30T06:59:00Z', '08:59 CEST', false],
+    ['2026-03-30T07:00:00Z', '09:00 CEST', true],
+  ]],
+  ['25.10.2026 (czas zimowy)', [
+    ['2026-10-25T10:00:00Z', 'niedziela zmiany czasu', false],
+    ['2026-10-26T07:59:00Z', '08:59 CET', false],
+    ['2026-10-26T08:00:00Z', '09:00 CET', true],
+  ]],
+]) {
+  test(`#130 window in Brussels time around the clock change ${label}: worker sends only inside the window`, async () => {
+    const t = await setup(BRUSSELS_WINDOW_ENV);
+    try {
+      await family(t.db, 'h1');
+      const campaign = await readyCampaign(t);
+      // Zegar testu jest sztuczny: wiersz zakolejkowany "teraz" (prawdziwy czas)
+      // musi być już dojrzały w dniach sprzed tego terminu.
+      await t.db.query("UPDATE email_outbox SET next_attempt_at = '2026-01-01T00:00:00Z' WHERE campaign_id = $1", [campaign.id]);
+      const transport = fakeTransport();
+      for (const [instant, description, shouldSend] of sequence) {
+        const run = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(instant) });
+        if (shouldSend) {
+          assert.equal(run.stoppedReason, null, description);
+          assert.equal(run.sent, 1, description);
+        } else {
+          assert.equal(run.stoppedReason, 'outside_send_window', description);
+          assert.equal(run.sent, 0, description);
+          assert.equal(transport.calls.length, 0, `${description}: kolejka nietknięta`);
+          assert.deepEqual((await outboxStates(t, campaign.id)).map((r) => r.state), ['queued'], description);
+        }
+      }
+      assert.equal(transport.calls.length, 1);
+    } finally { await t.close(); }
+  });
+}
+
+test('#130 send_not_before inside the window still needs the window; pause/resume keep daily_cap and respect it', async () => {
+  const t = await setup({ ...BRUSSELS_WINDOW_ENV, EMAIL_CAMPAIGN_MIN_DAYS: '3', EMAIL_CAMPAIGN_MIN_DAILY: '1' });
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const capBefore = await t.count('SELECT daily_cap AS n FROM email_campaigns WHERE id = $1', [campaign.id]);
+    assert.equal(capBefore, 1, 'trzy wiadomości rozłożone na trzy dni');
+    const transport = fakeTransport();
+    const day1 = new Date('2026-10-26T09:00:00Z');
+    assert.equal((await runEmailBatch(t.env, { transport, dryRun: false, now: day1 })).sent, 1);
+
+    // Pauza i wznowienie tego samego dnia nie odnawiają dziennego limitu.
+    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/pause`, { method: 'POST' })).status, 200);
+    const during = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date('2026-10-26T10:00:00Z') });
+    assert.equal(during.sent, 0);
+    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resume`, { method: 'POST' })).status, 200);
+    const same = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date('2026-10-26T11:00:00Z') });
+    assert.equal(same.sent, 0, 'limit dnia kampanii wyczerpany mimo wznowienia');
+    assert.equal(await t.count('SELECT daily_cap AS n FROM email_campaigns WHERE id = $1', [campaign.id]), capBefore);
+
+    // Kolejny dzień w oknie: kolejna jedna wiadomość, bez duplikatów.
+    const next = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date('2026-10-27T09:00:00Z') });
+    assert.equal(next.sent, 1);
+    const keys = transport.calls.map((call) => call.outboxId);
+    assert.equal(new Set(keys).size, transport.calls.length, 'żadna rodzina nie dostała dwóch wiadomości');
+    assert.equal(await campaignStatus(t, campaign.id), 'sending');
+  } finally { await t.close(); }
+});
+
+test('#130 preview shows planned start and estimated end in Brussels time; role boundary kept', async () => {
+  const t = await setup(BRUSSELS_WINDOW_ENV);
+  try {
+    await family(t.db, 'h1');
+    const campaign = await createDraft(t);
+    // Sobota 30.03.2030 22:00Z; start wypada w najbliższy poniedziałek o 09:00 CEST.
+    const notBefore = '2030-03-30T22:00:00.000Z';
+    const updated = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT', body: { revision: await currentRevision(t, campaign.id), title: campaign.title, subject: campaign.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: notBefore },
+    });
+    assert.equal(updated.status, 200, JSON.stringify(updated.body));
+    await snapshot(t, campaign.id);
+    const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/preview`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const { schedule } = res.body;
+    assert.equal(schedule.sendNotBefore, notBefore);
+    assert.equal(schedule.timezone, 'Europe/Brussels');
+    assert.equal(schedule.startsAtLocal, '2030-04-01 09:00');
+    assert.equal(schedule.endsAtLocal, '2030-04-01 18:00');
+    assert.equal(schedule.estimated, true);
+    assert.equal(schedule.window.enabled, true);
+    assert.equal(res.body.sends, false);
+    assert.ok(!/@/.test(JSON.stringify(schedule)), 'harmonogram bez danych osobowych');
+    const rep = await seedUserSession(t.db, { userId: 'u-rep130p', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/preview`)).status, 403);
+  } finally { await t.close(); }
+});
+
 test('no test in this file touched the network', () => {
   assert.equal(networkGuardCalls(), 0);
 });
