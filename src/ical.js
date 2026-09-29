@@ -3,9 +3,13 @@
 // (src/pg/events.js). Docelowo posłuży też załącznikowi zawiadomienia o zebraniu
 // (osobne issue #113).
 //
-// Zakres: tylko strefa Europe/Brussels (jedyna używana w projekcie,
-// zob. EVENT_TIMEZONE w src/pg/events.js). VTIMEZONE opisuje regułę UE
-// (ostatnia niedziela marca/października), obowiązującą od 1996 r.
+// Czasy DTSTART/DTEND/DTSTAMP są emitowane w UTC (przyrostek Z). Wydarzenia są
+// w bazie timestamptz (chwila w czasie), więc UTC jest jednoznaczne także dla
+// powtórzonej godziny 02:00-02:59 (25.10.2026, koniec czasu letniego) i nie
+// wymaga VTIMEZONE. Czas lokalny z TZID byłby tam niejednoznaczny (CEST i CET
+// dają ten sam zapis), a godzina 02:00-02:59 z 29.03.2026 w ogóle nie istnieje.
+// Kalendarze subskrybentów przeliczają UTC na własną strefę. ICAL_TIMEZONE
+// zostaje tylko jako podpowiedź wyświetlania (X-WR-TIMEZONE).
 
 export const ICAL_TIMEZONE = 'Europe/Brussels';
 
@@ -58,47 +62,10 @@ function line(name, value, params = '') {
 
 function utcStamp(date) {
   const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) throw new RangeError('invalid_ical_date');
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T`
     + `${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
-}
-
-const partsFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: ICAL_TIMEZONE,
-  hourCycle: 'h23',
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', second: '2-digit',
-});
-
-function localStamp(date) {
-  const d = date instanceof Date ? date : new Date(date);
-  const parts = Object.fromEntries(partsFormatter.formatToParts(d).map((p) => [p.type, p.value]));
-  return `${parts.year}${parts.month}${parts.day}T${parts.hour}${parts.minute}${parts.second}`;
-}
-
-// VTIMEZONE dla Europe/Brussels: reguła UE, ostatnia niedziela marca (CET->CEST)
-// i ostatnia niedziela października (CEST->CET), obowiązuje od 1996.
-function vtimezoneBlock() {
-  return [
-    'BEGIN:VTIMEZONE',
-    `TZID:${ICAL_TIMEZONE}`,
-    'X-LIC-LOCATION:Europe/Brussels',
-    'BEGIN:DAYLIGHT',
-    'TZOFFSETFROM:+0100',
-    'TZOFFSETTO:+0200',
-    'TZNAME:CEST',
-    'DTSTART:19700329T020000',
-    'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU',
-    'END:DAYLIGHT',
-    'BEGIN:STANDARD',
-    'TZOFFSETFROM:+0200',
-    'TZOFFSETTO:+0100',
-    'TZNAME:CET',
-    'DTSTART:19701025T030000',
-    'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU',
-    'END:STANDARD',
-    'END:VTIMEZONE',
-  ].map(foldLine);
 }
 
 // event: { id, title, description, location, organizer, startsAtUtc, endsAtUtc,
@@ -107,8 +74,8 @@ export function buildEventComponent(event, { uidDomain = 'rd.example.invalid' } 
   const lines = ['BEGIN:VEVENT'];
   lines.push(line('UID', `event-${event.id}@${uidDomain}`));
   lines.push(line('DTSTAMP', utcStamp(event.dtstamp ?? event.startsAtUtc)));
-  lines.push(line('DTSTART', localStamp(event.startsAtUtc), `;TZID=${ICAL_TIMEZONE}`));
-  if (event.endsAtUtc) lines.push(line('DTEND', localStamp(event.endsAtUtc), `;TZID=${ICAL_TIMEZONE}`));
+  lines.push(line('DTSTART', utcStamp(event.startsAtUtc)));
+  if (event.endsAtUtc) lines.push(line('DTEND', utcStamp(event.endsAtUtc)));
   lines.push(line('SUMMARY', escapeText(event.title)));
   if (event.description) lines.push(line('DESCRIPTION', escapeText(event.description)));
   if (event.location) lines.push(line('LOCATION', escapeText(event.location)));
@@ -123,7 +90,6 @@ export function buildEventComponent(event, { uidDomain = 'rd.example.invalid' } 
 }
 
 export function buildCalendar(events, { calName = 'Kalendarz Rady Rodziców', uidDomain = 'rd.example.invalid', method = 'PUBLISH' } = {}) {
-  const usesTimezone = events.length > 0;
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -133,7 +99,6 @@ export function buildCalendar(events, { calName = 'Kalendarz Rady Rodziców', ui
     line('X-WR-CALNAME', escapeText(calName)),
     line('X-WR-TIMEZONE', ICAL_TIMEZONE),
   ];
-  if (usesTimezone) lines.push(...vtimezoneBlock());
   for (const event of events) lines.push(...buildEventComponent(event, { uidDomain }));
   lines.push('END:VCALENDAR');
   return lines.join(CRLF) + CRLF;
