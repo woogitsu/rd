@@ -15,6 +15,9 @@
 //   transient — błąd bazy, który zwykle znika przy ponowieniu tej samej
 //               operacji (rywalizacja o blokadę, timeout instrukcji):
 //               503 + Retry-After.
+//   outcome_unknown — błąd w trakcie COMMIT (src/db.js): nie wiadomo, czy zapis
+//               się utrwalił. 503 `commit_outcome_unknown` BEZ Retry-After;
+//               klient sprawdza stan, dopiero potem ponawia.
 //   bug       — coś nieprzewidzianego: 503 bez Retry-After, jak dotychczas.
 
 // Wyjątki triggerów (RAISE EXCEPTION 'komunikat') zgłaszane samym tekstem
@@ -41,6 +44,7 @@ export function classifyDbError(error) {
   const business = BUSINESS_MESSAGES.get(message);
   if (business) return { ...business, class: 'business' };
   const code = typeof error?.code === 'string' ? error.code : null;
+  if (code === 'commit_outcome_unknown') return { error: 'commit_outcome_unknown', status: 503, class: 'outcome_unknown' };
   const transient = code ? TRANSIENT_CODES.get(code) : undefined;
   if (transient) return { ...transient, class: 'transient' };
   return { error: 'service_unavailable', status: 503, class: 'bug' };

@@ -153,9 +153,20 @@ test('meetings (Zebrania): admin/board/audit widzą pełne zebrania (MANAGE_ROLE
   assert.deepEqual([...panelById.meetings.roles].sort(), ['admin', 'audit', 'board', 'representative']);
 });
 
-test('Komisja Rewizyjna (audit) widzi wyłącznie Zebrania — nie widzi Uzgodnień, Kampanii e-mail ani Zamknięcia roku', () => {
+test('audit (Komisja Rewizyjna): tylko rola audit, a ta rola jest w REPORT_ROLES trasy raportu', () => {
+  assert.deepEqual([...panelById.audit.roles], ['audit']);
+  assert.ok(rolesConst('src/pg/routes/reconciliation.js', 'REPORT_ROLES').includes('audit'));
+});
+
+test('Komisja Rewizyjna (audit) widzi wyłącznie Zebrania i swój raport — nie widzi Uzgodnień, Kampanii e-mail ani Zamknięcia roku', () => {
   const ids = visiblePanels([{ role: 'audit' }]).map((p) => p.id);
-  assert.deepEqual(ids, ['meetings']);
+  assert.deepEqual(ids, ['meetings', 'audit']);
+});
+
+test('ekran Komisji Rewizyjnej nie jest widoczny dla zarządu, skarbnika, przedstawiciela ani admina', () => {
+  for (const role of ['board', 'treasurer', 'admin', 'representative']) {
+    assert.ok(!visiblePanels([{ role, classId: role === 'representative' ? '1A' : undefined }]).some((p) => p.id === 'audit'), role);
+  }
 });
 
 test('przedstawiciel klasy widzi wyłącznie moduły klasowe — nigdy finansów ogólnoszkolnych ani administracji', () => {

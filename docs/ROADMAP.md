@@ -51,6 +51,7 @@ Część modułów ma kompletne trasy API, ale do niedawna żadna aplikacja ich 
 | Kampanie e-mail | `src/pg/routes/email.js` | **prototyp** — `email/` (ta zmiana) |
 | Uzgodnienie wyciągu i raport KR | `src/pg/routes/reconciliation.js` | **prototyp** — `reconciliation/` (ta zmiana) |
 | Zamknięcie roku | `src/pg/routes/year-close.js` | **prototyp** — `year-close/` (stan, bilans, lista kontrolna, zestawienie przekazania; opis w `year-close/README.md`) |
+| Raport Komisji Rewizyjnej | `GET /api/reports/audit` (`src/pg/routes/reconciliation.js`) | **prototyp** — `audit/` (tylko odczyt: tabele z raportu JSON, odnośnik do wersji HTML do druku; opis w `audit/README.md`) |
 | Aktualności i galeria | `src/pg/routes/news.js` | brak — poza zakresem tej partii (issue #147, kolejna partia) |
 | Eksport roczny i lista klasy | `src/pg/routes/exports.js` | **prototyp** — `data-export/` (uruchomienie z krokiem w górę MFA, pobranie, weryfikacja w przeglądarce, lista klasy; lista dawnych eksportów: **tylko API — brak trasy**, ekran pokazuje pliki pobrane w tej karcie; opis w `data-export/README.md`) |
 | Preliminarz | `GET /api/ledger/budget` | gotowy — widoczny w `ledger/` |

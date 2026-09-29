@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
+import { renderAuditReportHtml } from '../src/pg/audit-report.js';
 import { request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-test';
@@ -244,4 +245,52 @@ test('closed school year: new allocation version is refused with 409', async () 
   const response = await allocate(call, cookies.treasurer, 'le-general', { items: [{ eventId: 'ev-fair', amountCents: 100 }] });
   assert.equal(response.status, 409);
   assert.equal((await response.json()).error, 'school_year_closed');
+});
+
+test('#117: raport KR ma sekcję „Wynik wydarzeń” zgodną z bilansem roku, bez danych osobowych; stary raport bez sekcji się renderuje', async () => {
+  const { db, cookies, call } = await setup();
+  assert.equal((await allocate(call, cookies.treasurer, 'le-fair-in', { items: [{ eventId: 'ev-fair', amountCents: 40000 }] })).status, 201);
+  assert.equal((await allocate(call, cookies.treasurer, 'le-fair-out', { items: [{ eventId: 'ev-fair', amountCents: 15000 }] })).status, 201);
+  // Wydarzenie z wynikiem ujemnym: cały wydatek 9000 na balu.
+  assert.equal((await allocate(call, cookies.treasurer, 'le-shared', { items: [{ eventId: 'ev-ball', amountCents: 9000 }] })).status, 201);
+  await db.exec(`SET session_replication_role = replica;
+    UPDATE events SET status = 'cancelled', cancelled_at = now(), cancelled_by = 'u-board',
+      cancellation_reason = 'Odwołane — syntetyczne' WHERE id = 'ev-ball';
+    SET session_replication_role = origin;`);
+
+  const response = await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie: cookies.audit });
+  assert.equal(response.status, 200);
+  const { report } = await response.json();
+  assert.deepEqual(report.eventResults.events.map((e) => [e.id, e.title, e.status, e.entryCount, e.incomeCents, e.expenseCents, e.resultCents]), [
+    ['ev-ball', 'Bal testowy', 'cancelled', 1, 0, 9000, -9000],
+    ['ev-fair', 'Kiermasz testowy', 'draft', 2, 40000, 15000, 25000],
+  ]);
+  // Suma wydarzeń + bez przypisania = bilans roku z tego samego raportu.
+  const { events, unallocated, totals } = report.eventResults;
+  assert.equal(events.reduce((s, e) => s + e.incomeCents, unallocated.incomeCents), report.balance.incomeCents);
+  assert.equal(events.reduce((s, e) => s + e.expenseCents, unallocated.expenseCents), report.balance.expenseCents);
+  assert.deepEqual([totals.incomeCents, totals.expenseCents], [report.balance.incomeCents, report.balance.expenseCents]);
+  assert.doesNotMatch(JSON.stringify(report.eventResults), /example\.invalid|Wpis syntetyczny|createdBy|u-treasurer/);
+
+  const htmlResponse = await call(`/api/reports/audit?schoolYearId=${YEAR}&format=html`, { cookie: cookies.audit });
+  assert.equal(htmlResponse.status, 200);
+  const html = await htmlResponse.text();
+  assert.match(html, /3c\. Wynik wydarzeń/);
+  assert.match(html, /Kiermasz testowy/);
+  assert.match(html, /odwołane/);
+  assert.match(html, /Bez przypisania do wydarzenia/);
+  // Sekcja 3c (do następnego nagłówka) nie zawiera opisów wpisów ani adresów.
+  const section = html.slice(html.indexOf('3c. Wynik wydarzeń'), html.indexOf('<h2>4. Korekty'));
+  assert.doesNotMatch(section, /example\.invalid|Wpis syntetyczny|u-treasurer/);
+  // Tytuł wydarzenia jest escapowany.
+  const legacy = { ...report, eventResults: { ...report.eventResults, events: [{ ...events[0], title: '<script>x</script>' }] } };
+  assert.doesNotMatch(renderAuditReportHtml(legacy), /<script>x/);
+  // Raport sprzed zmiany (np. z archiwum) nie ma sekcji i nadal się renderuje.
+  const { eventResults, ...old } = report;
+  assert.doesNotMatch(renderAuditReportHtml(old), /3c\./);
+
+  // Reprezentant klasy i dyrekcja nie dostają raportu KR (granica ról bez zmian).
+  for (const cookie of [cookies.rep, cookies.principal]) {
+    assert.equal((await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie })).status, 403);
+  }
 });

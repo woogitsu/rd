@@ -513,7 +513,7 @@ export async function resetPasswordWithToken(env, { token, newPassword, clientIp
   const invalid = (reason) => failAttempt(env, {
     scopes: ipScopes, action: 'auth.password_reset_failed', reason, code: 'invalid_token', status: 400,
   });
-  const lookup = `SELECT t.id, t.user_id, lower(u.email) AS email
+  const lookup = `SELECT t.id, t.user_id, t.created_by, t.request_id, lower(u.email) AS email
                     FROM password_reset_tokens t JOIN users u ON u.id = t.user_id
                    WHERE t.token_hash = $1 AND t.used_at IS NULL AND t.revoked_at IS NULL
                      AND t.expires_at > now() AND u.disabled_at IS NULL`;
@@ -543,7 +543,9 @@ export async function resetPasswordWithToken(env, { token, newPassword, clientIp
     await clearLoginFailures(tx, loginScopes({ email: locked.email, ip: clientIp }));
     await insertAuditEvent(tx, {
       actorId: locked.user_id, action: 'auth.password_reset_completed', entityType: 'password_reset', entityId: locked.id,
-      metadata: { userId: locked.user_id, revokedSessions },
+      // #146: kto wydał token (issuedBy) odróżnia konto po resecie administracyjnym
+      // od zwykłych działań właściciela; actorId zostaje właścicielem konta.
+      metadata: { userId: locked.user_id, revokedSessions, issuedBy: locked.created_by, ...(locked.request_id ? { requestId: locked.request_id } : {}) },
     });
     return { ok: true };
   });
@@ -552,11 +554,19 @@ export async function resetPasswordWithToken(env, { token, newPassword, clientIp
 // --- Operacje administratora (uprawnienia sprawdza trasa: admin + MFA) ------------
 
 export async function issuePasswordReset(env, { actorId, userId, ttlSeconds = PASSWORD_RESET_DEFAULT_TTL_SECONDS }) {
+  return database(env).transaction((tx) => issuePasswordResetInTx(tx, { actorId, userId, ttlSeconds }));
+}
+
+// Wariant w cudzej transakcji: zatwierdzenie wniosku (#146) wydaje token i
+// zamyka wniosek atomowo. requestId/requestedBy trafiają do tokenu i audytu.
+export async function issuePasswordResetInTx(tx, {
+  actorId, userId, ttlSeconds = PASSWORD_RESET_DEFAULT_TTL_SECONDS, requestId = null, requestedBy = null,
+}) {
   if (!actorId) throw new Error('actor_required');
   const ttl = Math.max(60, Math.min(Number(ttlSeconds) || PASSWORD_RESET_DEFAULT_TTL_SECONDS, PASSWORD_RESET_MAX_TTL_SECONDS));
   const { secret, tokenHash } = await createSessionSecret();
   const resetId = crypto.randomUUID();
-  return database(env).transaction(async (tx) => {
+  {
     const user = (await tx.query('SELECT id, disabled_at FROM users WHERE id = $1 FOR UPDATE', [userId])).rows[0];
     if (!user) throw new LoginError('user_not_found', 404);
     if (user.disabled_at) throw new LoginError('user_disabled', 409);
@@ -573,26 +583,33 @@ export async function issuePasswordReset(env, { actorId, userId, ttlSeconds = PA
       });
     }
     const { rows } = await tx.query(
-      `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_by, expires_at)
-       VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5)) RETURNING expires_at`,
-      [resetId, userId, tokenHash, actorId, ttl],
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_by, expires_at, request_id)
+       VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5), $6) RETURNING expires_at`,
+      [resetId, userId, tokenHash, actorId, ttl, requestId],
     );
     const expiresAt = isoTimestamp(rows[0].expires_at);
     await insertAuditEvent(tx, {
       actorId, action: 'auth.password_reset_issued', entityType: 'password_reset', entityId: resetId,
-      metadata: { userId, expiresAt, superseded: superseded.rows.length },
+      metadata: {
+        userId, expiresAt, superseded: superseded.rows.length,
+        ...(requestId ? { requestId, requestedBy, approvedBy: actorId } : {}),
+      },
     });
     return { resetId, secret, expiresAt };
-  });
+  }
 }
 
 // Utrata telefonu i wszystkich kodów odzyskiwania: wyłącza czynniki, unieważnia
 // kody, zeruje limity MFA i wylogowuje konto. Po zalogowaniu hasłem osoba
 // zapisuje nowy czynnik (dla ról z MFA_REQUIRED_ROLES — obowiązkowo).
 export async function adminResetMfa(env, { actorId, userId }) {
+  return database(env).transaction((tx) => adminResetMfaInTx(tx, { actorId, userId }));
+}
+
+export async function adminResetMfaInTx(tx, { actorId, userId, requestId = null, requestedBy = null }) {
   if (!actorId) throw new Error('actor_required');
   if (actorId === userId) throw new LoginError('cannot_reset_own_mfa', 409);
-  return database(env).transaction(async (tx) => {
+  {
     const user = (await tx.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])).rows[0];
     if (!user) throw new LoginError('user_not_found', 404);
     const factors = await tx.query(
@@ -615,10 +632,11 @@ export async function adminResetMfa(env, { actorId, userId }) {
       actorId, action: 'mfa.reset', entityType: 'user', entityId: userId,
       metadata: {
         userId, factorIds: factors.rows.map((row) => row.id), invalidatedRecoveryCodes: codes.rows.length, revokedSessions,
+        ...(requestId ? { requestId, requestedBy, approvedBy: actorId } : {}),
       },
     });
     return {
       userId, changed: true, disabledFactors: factors.rows.length, invalidatedRecoveryCodes: codes.rows.length, revokedSessions,
     };
-  });
+  }
 }
