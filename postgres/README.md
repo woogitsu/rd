@@ -1076,7 +1076,7 @@ niezmienność dzienników. `stamp_created_now()` (BEFORE INSERT, trigger
 `a0_stamp_created_now`) ustawia `created_at`/`occurred_at`/`recorded_at` na
 `now()` w tabelach append-only (wpłaty i ich korekty, księga i korekty, salda
 otwarcia, uzgodnienia, `audit_events`, `data_access_log`,
-zgody na wizerunek i in.), więc antydatowany INSERT nie zmienia raportów KR.
+zgody na wizerunek, migawki sprawozdania z 0138 i in.), więc antydatowany INSERT nie zmienia raportów KR.
 `stamp_transition_now()` (BEFORE UPDATE, `a0_stamp_transition_now`) ustawia
 `now()` przy pierwszym wpisie `revoked_at`/`cancelled_at`/`withdrawn_at`/
 `abandoned_at`/`enrollments.ended_at`. Jedyna furtka: `SET LOCAL rd.restore =
