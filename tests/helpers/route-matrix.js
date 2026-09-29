@@ -1349,6 +1349,10 @@ export const ROUTE_MATRIX = Object.freeze([
   reconciliationRoute('reconciliation.match', 'POST', '/matches', 'withLine', {
     ok: 201, withKey: true, body: (_target, obj) => ({ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }),
   }),
+  reconciliationRoute('reconciliation.matchBatch', 'POST', '/matches/batch', 'withLine', {
+    ok: 201, withKey: true,
+    body: (_target, obj) => ({ matches: [{ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }] }),
+  }),
   reconciliationRoute('reconciliation.matchRevocation', 'POST', '/matches/:matchId/revocation', 'matched', {
     suffix: (obj) => `/matches/${obj.matchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
   }),

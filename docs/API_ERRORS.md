@@ -253,6 +253,10 @@ wpisów).
 | `login_busy` | Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund. | Tak — po chwili. |
 | `match_already_revoked` | Dopasowanie zostało już wycofane. | Zależy od kontekstu (patrz moduł trasy). |
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
+| `match_batch_duplicate` | Ta sama pozycja lub wpłata występuje w partii więcej niż raz. | Nie — popraw dane żądania. |
+| `match_batch_empty` | Wybierz co najmniej jedną parę pozycji i wpłaty. | Nie — popraw dane żądania. |
+| `match_batch_rejected` | Nie zatwierdzono żadnej pary: część wybranych par jest niepoprawna. Odśwież propozycje i wybierz ponownie. | Tak, po odświeżeniu propozycji (lista `failures` wskazuje odrzucone pary). |
+| `match_batch_too_large` | Za dużo par w jednej partii. Zatwierdź mniejszą liczbę naraz. | Nie — popraw dane żądania. |
 | `match_method_mismatch` | Sposób wpłaty nie pasuje do pozycji wyciągu. | Nie — popraw dane żądania. |
 | `match_not_found` | Nie znaleziono dopasowania. | Nie — popraw dane żądania. |
 | `matched_in_other_reconciliation` | Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku. | Nie — popraw dane żądania. |
