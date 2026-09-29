@@ -8,6 +8,7 @@ import {
   describeApiError,
   formatDayPlan,
   formatExclusions,
+  isSnapshotStale,
   formatSchedule,
   formatWarnings,
   hasApproverAccess,
@@ -25,11 +26,13 @@ import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
+import { mountSuppressions } from "./suppressions.js";
 
 mountShell();
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
+const suppressions = mountSuppressions({ api });
 
 const state = {
   schoolYearId: "",
@@ -127,6 +130,7 @@ async function showYear(value) {
     await loadList();
     detailSection.hidden = true;
     state.selectedId = null;
+    await suppressions.load(value);
   } catch (error) {
     setMessage(`Nie udało się pobrać listy kampanii: ${error.message}`, true);
   } finally {
@@ -175,7 +179,7 @@ function renderDetail() {
   byId("detail-recipients-count").textContent = preview ? String(preview.recipientsCount) : "—";
   byId("detail-plan").textContent = preview ? formatDayPlan(preview.plan) : "Utwórz migawkę odbiorców, aby zobaczyć plan wysyłki.";
   byId("detail-schedule").textContent = preview?.schedule ? formatSchedule(preview.schedule) : "";
-  byId("detail-snapshot-current").hidden = !preview || preview.snapshotCurrent !== false;
+  byId("detail-snapshot-current").hidden = !isSnapshotStale(preview);
 
   const warningsList = byId("detail-warnings");
   const warnings = preview ? formatWarnings(preview.warnings) : [];
@@ -205,7 +209,7 @@ function updateActionVisibility(campaign, preview) {
   byId("view-recipients").hidden = !campaign.recipientsHash;
 
   const readyForApproval = canOfferApproval(campaign, state.actorId)
-    && preview && preview.recipientsCount > 0 && preview.snapshotCurrent !== false;
+    && preview && preview.recipientsCount > 0 && !isSnapshotStale(preview);
   const own = isLikelyOwnCampaign(campaign, state.actorId);
   const approveButton = byId("approve-campaign");
   const waitingNotice = byId("approve-waiting");

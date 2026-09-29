@@ -188,8 +188,28 @@
         </div>
         <p><button type="button" id="audit-more" hidden>Pokaż więcej</button></p>
       </section>
+
+      <section class="card" aria-labelledby="ops-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="ops-title">Stan systemu</h2>
+            <p id="ops-summary">Wczytywanie…</p>
+          </div>
+          <button type="button" id="reload-ops">Odśwież</button>
+        </div>
+        <p class="hint">Tylko liczby, znaczniki czasu i kody — bez adresów i treści. Progi alarmowe i alerty do monitora zewnętrznego: <code>/health/jobs</code> (konfiguracja serwera). Reakcja na incydent: docs/RUNBOOK.md. Wybór narzędzia monitora i adresatów alertów należy do zarządu.</p>
+        <p class="form-error" id="ops-message" role="alert"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Stan systemu</caption>
+            <thead><tr><th scope="col">Element</th><th scope="col">Stan</th><th scope="col">Ostatnie zdarzenie</th><th scope="col">Szczegóły</th></tr></thead>
+            <tbody id="ops-body"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
 
     <script type="module" src="/main.js"></script>
+    <script type="module" src="/ops-status.js"></script>
   </body>
 </html>

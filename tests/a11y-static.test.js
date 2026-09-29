@@ -156,6 +156,18 @@ for (const app of APPS) {
     assert.match(css[app], /prefers-reduced-motion:\s*reduce/);
   });
 
+  test(`${app}: tryb wysokiego kontrastu (forced-colors)`, () => {
+    // Aktywna zakładka przez box-shadow i plakietki przez samo tło znikają w
+    // forced-colors — takie style wymagają reguły zastępczej (obramowanie/podkreślenie).
+    const usesShadowTab = /nav a\.active\s*\{[^}]*box-shadow/.test(css[app]);
+    const usesBadge = /\.badge\b/.test(css[app]);
+    if (!usesShadowTab && !usesBadge) return;
+    const block = css[app].match(/@media \(forced-colors: active\)\s*\{[\s\S]*$/);
+    assert.ok(block, 'brak @media (forced-colors: active)');
+    if (usesShadowTab) assert.match(block[0], /nav a\.active\s*\{[^}]*(border-bottom|text-decoration)/);
+    if (usesBadge) assert.match(block[0], /\.badge\s*\{[^}]*border:/);
+  });
+
   test(`${app}: minimalny rozmiar przycisków (WCAG 2.5.8)`, () => {
     if (!/<button[\s>]/.test(html[app])) return; // site/: strona publiczna bez przycisków
     assert.match(css[app], /button\s*\{[^}]*min-height:\s*44px/);

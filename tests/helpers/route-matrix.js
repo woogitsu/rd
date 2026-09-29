@@ -706,6 +706,13 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: `/api/meetings/${obj.meetingId}` }),
     contains: (_actor, target) => [target.key],
   },
+  {
+    // #81: tylko odczyt, uprawnienia jak przy GET zebrania; brak dostępu = 404 (SR-07).
+    id: 'meetings.approvalChecklist', module: 'meetings', method: 'GET',
+    path: '/api/meetings/:meetingId/approval-checklist', targets: CLASS_TARGETS,
+    allow: MEETING_READ, mfa: false, ok: 200, deny: 404, fixture: 'static', object: { kind: 'meeting', stage: 'shared' },
+    build: ({ obj }) => ({ path: `/api/meetings/${obj.meetingId}/approval-checklist` }),
+  },
   meetingRoute('meetings.update', 'PATCH', '/api/meetings/:meetingId', () => '', {
     body: (target) => ({ revision: 1, title: `Zmiana ${marker(target.key)}` }),
   }),
@@ -1375,6 +1382,10 @@ export const ROUTE_MATRIX = Object.freeze([
   reconciliationRoute('reconciliation.match', 'POST', '/matches', 'withLine', {
     ok: 201, withKey: true, body: (_target, obj) => ({ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }),
   }),
+  reconciliationRoute('reconciliation.matchBatch', 'POST', '/matches/batch', 'withLine', {
+    ok: 201, withKey: true,
+    body: (_target, obj) => ({ matches: [{ statementLineId: obj.statementLineId, paymentEntryId: obj.paymentEntryId }] }),
+  }),
   reconciliationRoute('reconciliation.matchRevocation', 'POST', '/matches/:matchId/revocation', 'matched', {
     suffix: (obj) => `/matches/${obj.matchId}/revocation`, body: () => ({ reason: 'Pomyłka syntetyczna' }),
   }),
@@ -1634,7 +1645,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'board.overview', module: 'board', method: 'GET',
     path: '/api/board/overview?schoolYearId=:year',
-    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    targets: ['-'], allow: { admin: ['-'], board: ['-'], boardA: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
     build: () => ({ path: `/api/board/overview?schoolYearId=${YEAR_1}` }),
     check: ({ actor, json }) => classListCheck(actor, json),
   },
@@ -1682,6 +1693,12 @@ export const ROUTE_MATRIX = Object.freeze([
     allow: 'public', mfa: false, ok: 201, deny: 201, fixture: 'fresh', object: { kind: 'invitationToken' },
     // #164: nowe konto wymaga zgodnego powtórzenia hasła (bez niego: 400 password_mismatch).
     build: ({ obj }) => ({ path: '/api/invitations/accept', body: { token: obj.token, password: obj.password, passwordRepeat: obj.password } }),
+  },
+  {
+    // #164: podgląd zaproszenia bez sesji; tylko odczyt, token nie jest konsumowany.
+    id: 'login.invitationPreview', module: 'login', method: 'POST', path: '/api/invitations/preview', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'invitationToken' },
+    build: ({ obj }) => ({ path: '/api/invitations/preview', body: { token: obj.token } }),
   },
   {
     id: 'login.passwordReset', module: 'login', method: 'POST', path: '/api/password/reset', targets: ['-'],
@@ -1819,6 +1836,7 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/login': 'działa bez sesji; tworzy nową sesję bez MFA',
   '/api/auth/state': 'stan własnej sesji dla ekranu logowania (bez ról)',
   '/api/invitations/accept': 'działa bez sesji; uwierzytelnia token zaproszenia',
+  '/api/invitations/preview': 'działa bez sesji; tylko odczyt po tokenie zaproszenia (zamaskowany adres, rola, klasa, rok, termin); nie konsumuje tokenu',
   '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
   '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
   '/api/meetings/public-notices': 'publiczne dane zatwierdzone',

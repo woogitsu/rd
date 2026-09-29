@@ -8,3 +8,10 @@
 @media(max-width:760px){.site-header{height:auto;padding:14px 18px;align-items:flex-start}.site-header nav{display:grid}.site-header nav a{padding:5px 9px}main{padding:26px 16px 50px}.page-heading{align-items:flex-start;flex-direction:column}.filters form,.summary-grid.two,.detail-grid{grid-template-columns:1fr}.filters form button{grid-column:1/-1}.page-heading .primary,.heading-action{width:100%}.heading-action{justify-items:stretch}}
 @media(max-width:480px){.site-header{display:block}.site-header nav{display:flex;overflow:auto;margin-top:13px}.site-header nav a{white-space:nowrap}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+/* Tryb wysokiego kontrastu Windows (#112): plakietki i aktywna zakładka nie
+   mogą polegać na tle ani box-shadow, które w forced-colors znikają. */
+@media (forced-colors: active) {
+  .badge { border: 1px solid CanvasText; }
+  nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
+}

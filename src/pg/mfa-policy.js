@@ -29,7 +29,7 @@ export function mfaRequiredRoles(env) {
 
 export const MFA_GATE_EXEMPT_EXACT = Object.freeze([
   '/api/session', '/api/access', '/api/logout', '/api/sessions', '/api/sessions/revoke-all',
-  '/api/login', '/api/auth/state', '/api/invitations/accept', '/api/password/reset',
+  '/api/login', '/api/auth/state', '/api/invitations/accept', '/api/invitations/preview', '/api/password/reset',
   // Trasy publiczne i webhook: działają bez sesji, więc cookie niczego tu nie zmienia.
   '/api/meetings/public-minutes', '/api/meetings/public-notices', '/api/email/webhooks/brevo',
   // Wypisanie jednym kliknięciem (#110): klika je klient poczty rodzica, nie

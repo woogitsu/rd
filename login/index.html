@@ -105,22 +105,24 @@
       <!-- 4. Przyjęcie zaproszenia -->
       <section class="card" id="view-invite" aria-labelledby="invite-title" hidden>
         <h2 id="invite-title">Przyjmij zaproszenie</h2>
-        <p class="hint">Adres e-mail konta pochodzi z zaproszenia. Jeśli masz już konto w panelu, wpisz swoje obecne hasło — nowa rola zostanie do niego dodana.</p>
+        <p class="hint">Adres e-mail konta pochodzi z zaproszenia. Po wpisaniu kodu zobaczysz, na co jest zaproszenie, zanim je przyjmiesz.</p>
         <form id="invite-form" novalidate>
           <label for="invite-token">Kod zaproszenia</label>
-          <input id="invite-token" name="token" type="text" autocomplete="off" spellcheck="false" required aria-describedby="invite-token-hint invite-error" />
+          <input id="invite-token" class="token-input" name="token" type="text" autocomplete="off" spellcheck="false" required aria-describedby="invite-token-hint invite-error" />
           <p class="hint" id="invite-token-hint">Wypełnione automatycznie, jeśli otworzyłeś link z zaproszenia.</p>
+          <dl class="summary" id="invite-summary" aria-live="polite"></dl>
           <label for="invite-name">Imię i nazwisko lub nazwa wyświetlana (opcjonalnie)</label>
           <input id="invite-name" name="displayName" type="text" autocomplete="name" maxlength="100" />
-          <label for="invite-password">Hasło</label>
+          <label for="invite-password" id="invite-password-label">Nowe hasło</label>
           <p class="hint" id="invite-password-hint">Co najmniej 12 znaków. Najłatwiej zapamiętać kilka niezwiązanych słów. Menedżer haseł i wklejanie są dozwolone.</p>
           <div class="password-row">
             <input id="invite-password" name="password" type="password" autocomplete="new-password" required aria-describedby="invite-password-hint invite-error" />
             <button type="button" class="toggle-password" data-target="invite-password" aria-pressed="false" aria-controls="invite-password">Pokaż hasło</button>
           </div>
-          <label for="invite-repeat">Powtórz hasło</label>
-          <p class="hint" id="invite-repeat-hint">Nowe konto: wpisz to samo nowe hasło. Konto już istnieje: wpisz obecne hasło jeszcze raz.</p>
-          <input id="invite-repeat" name="repeat" type="password" autocomplete="new-password" required aria-describedby="invite-repeat-hint invite-error" />
+          <div id="invite-repeat-group">
+            <label for="invite-repeat">Powtórz nowe hasło</label>
+            <input id="invite-repeat" name="repeat" type="password" autocomplete="new-password" required aria-describedby="invite-error" />
+          </div>
           <p class="form-error" id="invite-error" role="alert"></p>
           <button class="primary" type="submit">Przyjmij zaproszenie</button>
         </form>

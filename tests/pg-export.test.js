@@ -8,6 +8,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { strFromU8, unzipSync } from 'fflate';
 import { handlePgRequest } from '../src/pg/app.js';
 import { assertNoPii, insertAuditEvent } from '../src/pg/audit.js';
 import {
@@ -530,10 +531,77 @@ test('class roster as CSV: same access rules, Polish-readable format, no financi
   assert.match(lines.at(-1), /Zawiera dane osobowe/);
 
   assert.equal((await rosterCsv('c-2b')).status, 403, 'other class, same as JSON');
-  assert.equal((await rosterCsv('c-1a', 'xlsx')).status, 400, 'unsupported format is rejected, not silently ignored');
+  assert.equal((await rosterCsv('c-1a', 'pdf')).status, 400, 'unsupported format is rejected, not silently ignored');
 
   const runs = await db.query("SELECT class_id FROM export_runs WHERE kind = 'class_roster' AND requested_by = 'u-rep-csv'");
   assert.equal(runs.rows.length, 1, 'CSV download is recorded in export_runs like JSON');
   const audit = await db.query("SELECT metadata_json FROM audit_events WHERE action = 'export.created' AND metadata_json->>'kind' = 'class_roster' AND actor_id = 'u-rep-csv'");
   assert.equal(audit.rows[0].metadata_json.format, 'csv');
+});
+
+// --- #132: lista klasy jako XLSX --------------------------------------------
+
+test('class roster as XLSX: own class only, Polish order, formulas stay text, ended guardian omitted, audited without PII', async () => {
+  await seedClass(db, { id: 'c-xl', schoolYearId: YEAR, name: 'XL' });
+  await db.query(`INSERT INTO households (id, created_at) VALUES ('h-xl', '2026-09-02T08:00:00Z')`);
+  await db.query(`INSERT INTO students (id, household_id, first_name, last_name) VALUES
+    ('sx-1', 'h-xl', 'Anna', 'Żak'), ('sx-2', 'h-xl', '=1+1', 'Ćwik'), ('sx-3', 'h-xl', '@test', 'Zieliński'),
+    ('sx-4', 'h-xl', 'Beata', 'Adamska'), ('sx-5', 'h-xl', 'Celina', 'Łukasik')`);
+  await db.query(`INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES
+    ('gx-1', 'h-xl', 'Opiekun', 'Xl', 'gx1@example.invalid', true),
+    ('gx-2', 'h-xl', 'Dawny', 'Opiekun', 'gx2@example.invalid', true)`);
+  await db.query(`INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact, created_at, ends_on) VALUES
+    ('sx-1', 'gx-1', true, true, '2026-09-02T08:00:00Z', NULL),
+    ('sx-1', 'gx-2', true, false, '2026-09-02T08:00:00Z', '2026-09-03')`);
+  await db.query(`INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES
+    ('ex-1', 'sx-1', 'c-xl', '${YEAR}'), ('ex-2', 'sx-2', 'c-xl', '${YEAR}'), ('ex-3', 'sx-3', 'c-xl', '${YEAR}'),
+    ('ex-4', 'sx-4', 'c-xl', '${YEAR}'), ('ex-5', 'sx-5', 'c-xl', '${YEAR}')`);
+
+  const rep = await seedUserSession(db, { userId: 'u-rep-xl', roles: [{ role: 'representative', classId: 'c-xl', schoolYearId: YEAR }], mfa: true });
+  const repTwo = await seedUserSession(db, {
+    userId: 'u-rep-two',
+    roles: [{ role: 'representative', classId: 'c-xl', schoolYearId: YEAR }, { role: 'representative', classId: 'c-2b', schoolYearId: YEAR }],
+    mfa: true,
+  });
+  const get = (classId, cookie) => handlePgRequest(request(`/api/exports/class-roster?classId=${classId}&format=xlsx`, { cookie }), { db });
+
+  const own = await get('c-xl', rep);
+  assert.equal(own.status, 200);
+  assert.equal(own.headers.get('Content-Type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.match(own.headers.get('Content-Disposition'), /^attachment; filename="lista-klasy-XL-\d{8}\.xlsx"$/);
+  assert.equal(own.headers.get('Cache-Control'), 'no-store');
+  const sheet = strFromU8(unzipSync(new Uint8Array(await own.arrayBuffer()))['xl/worksheets/sheet1.xml']);
+  assert.ok(!/<f[\s>/]/.test(sheet), 'żadnej formuły');
+  const texts = [...sheet.matchAll(/<t xml:space="preserve">([^<]*)<\/t>/g)].map((m) => m[1]);
+  assert.match(texts[0], /^Lista klasy XL/);
+  const surnames = texts.filter((t) => ['Adamska', 'Ćwik', 'Łukasik', 'Zieliński', 'Żak'].includes(t));
+  assert.deepEqual(surnames, ['Adamska', 'Ćwik', 'Łukasik', 'Zieliński', 'Żak']);
+  assert.ok(texts.includes('=1+1') && texts.includes('@test'), 'imiona z = i @ zostają tekstem');
+  assert.ok(texts.includes('gx1@example.invalid'));
+  assert.ok(!texts.some((t) => /gx2@|Dawny/.test(t)), 'opiekun z zakończoną relacją nie jest na liście');
+  assert.match(texts.at(-1), /Zawiera dane osobowe/);
+  assert.doesNotMatch(sheet, /amount|cents|payment|household|h-xl|sx-1/);
+
+  assert.equal((await get('c-1a', rep)).status, 403, 'inna klasa');
+  assert.equal((await get('c-nie-ma', rep)).status, 403, 'nieistniejąca klasa bez wyroczni istnienia');
+  const treasurer = await seedUserSession(db, { userId: 'u-tr-xl', roles: [{ role: 'treasurer' }], mfa: true });
+  const audit = await seedUserSession(db, { userId: 'u-au-xl', roles: [{ role: 'audit' }], mfa: true });
+  const noMfa = await seedUserSession(db, { userId: 'u-rep-nomfa', roles: [{ role: 'representative', classId: 'c-xl', schoolYearId: YEAR }], mfa: false });
+  for (const cookie of [treasurer, audit]) assert.equal((await get('c-xl', cookie)).status, 403);
+  assert.equal((await get('c-xl', noMfa)).status, 403, 'bez MFA');
+  assert.equal((await get('c-xl', null)).status, 401);
+
+  // Przedstawiciel dwóch klas: obie dostępne, drugi plik nie zawiera uczniów z c-xl; podwójne kliknięcie = dwa przebiegi.
+  const other = await get('c-2b', repTwo);
+  assert.equal(other.status, 200);
+  const otherSheet = strFromU8(unzipSync(new Uint8Array(await other.arrayBuffer()))['xl/worksheets/sheet1.xml']);
+  assert.doesNotMatch(otherSheet, /Ćwik|Żak/);
+  assert.equal((await get('c-xl', rep)).status, 200);
+
+  const runs = await db.query("SELECT id FROM export_runs WHERE kind = 'class_roster' AND requested_by = 'u-rep-xl'");
+  assert.equal(runs.rows.length, 2);
+  const events = await db.query("SELECT metadata_json FROM audit_events WHERE action = 'export.created' AND actor_id = 'u-rep-xl'");
+  assert.equal(events.rows.length, 2);
+  assert.equal(events.rows[0].metadata_json.format, 'xlsx');
+  assert.doesNotMatch(JSON.stringify(events.rows), /@|Ćwik|Żak|=1\+1/);
 });
