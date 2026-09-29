@@ -59,6 +59,7 @@ export const MESSAGES = Object.freeze({
   document_malformed: "Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane).",
   request_too_large: "Za dużo danych w jednym żądaniu.",
   service_unavailable: "Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę.",
+  business_rule_violation: "Operacja jest niezgodna z aktualnym stanem danych (np. wpis jest zablokowany lub zatwierdzony). Odśwież widok i sprawdź stan.",
   retry_later: "Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę.",
   commit_outcome_unknown: "Nie wiadomo, czy zapis został utrwalony (połączenie z bazą zerwało się przy zatwierdzaniu). Sprawdź aktualny stan i dopiero wtedy ponów operację.",
   timeout: "Operacja trwała za długo i została przerwana. Spróbuj ponownie, ewentualnie zawęź zakres.",

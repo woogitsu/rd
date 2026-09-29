@@ -53,6 +53,7 @@ wpisów).
 | `budget_line_exists` | Ta kategoria ma już linię preliminarza. Zmień ją nową wersją. | Zależy od kontekstu (patrz moduł trasy). |
 | `budget_line_not_found` | Nie znaleziono linii preliminarza. | Nie — popraw dane żądania. |
 | `budget_line_superseded` | Ta wersja linii preliminarza została już zmieniona. Odśwież widok i zmień aktualną wersję. | Zależy od kontekstu (patrz moduł trasy). |
+| `business_rule_violation` | Operacja jest niezgodna z aktualnym stanem danych (np. wpis jest zablokowany lub zatwierdzony). Odśwież widok i sprawdź stan. | Nie automatycznie — najpierw odśwież widok i sprawdź stan (odmowa reguły biznesowej z triggera bazy). |
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
@@ -413,7 +414,11 @@ i transakcje z `src/db.js`:
 | `55P03` (przekroczony `lock_timeout`) | `503 retry_later` + `Retry-After: 1` | `transient` | bez ponowienia w transakcji |
 | `57014` (`statement_timeout`) | `503 timeout` + `Retry-After: 5` | `transient` | bez ponowienia |
 | błąd w trakcie `COMMIT` z nieznanym wynikiem (zerwane połączenie, klasa `08`, `57P0x`, timeout) | `503 commit_outcome_unknown`, bez `Retry-After` | `outcome_unknown` | bez ponowienia; połączenie wyrzucane z puli |
-| pozostałe | `503 service_unavailable` | `bug` | bez ponowienia |
+| `23505` (`unique_violation`), `23P01` | `409 conflict` | `business` | bez ponowienia; moduły z własnym mapowaniem nazwy ograniczenia zwracają swój kod wcześniej |
+| `23503` (`foreign_key_violation`) | `400 invalid_reference` | `business` | bez ponowienia |
+| `23514` (`check_violation`), `23502` (`not_null_violation`) | `400 invalid_request` | `business` | bez ponowienia |
+| `RAISE EXCEPTION 'nazwa_stanu'` z triggera (SQLSTATE `P0001`) z jawnej listy stanów biznesowych (`src/pg/business-state-codes.js`) lub kończący się na `_immutable`, `_cannot_be_changed`, `_cannot_be_deleted`, `_are_append_only`; `invalid_reference` -> `400 invalid_reference` | `409 business_rule_violation`; nazwa stanu trafia tylko do logu | `business` | bez ponowienia; nowy kod triggera bez klasyfikacji wywala `tests/pg-db-errors.test.js` |
+| pozostałe (m.in. kod triggera spoza listy, błąd nieznany; brak łączności z bazą; treść błędu SQL nigdy nie trafia do odpowiedzi) | `503 service_unavailable` | `bug` | bez ponowienia |
 
 - **Ponowienie tylko dla transakcji bez efektów zewnętrznych.** Funkcja
   przekazana do `db.transaction(fn, { retries })` jest uruchamiana ponownie,
