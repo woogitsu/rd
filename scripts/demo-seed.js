@@ -345,15 +345,14 @@ async function seedPayments(env, cookie, roster) {
 // uzgodnienia w cudzym imieniu, AGENTS.md). Wyciąg importowany jako CSV przez
 // ISTNIEJĄCĄ trasę importu (src/pg/routes/reconciliation.js#parseStatementCsv,
 // nagłówki PL/EN — patrz HEADER_ALIASES), tak jak w prawdziwym panelu
-// /reconciliation/. IBAN w treści notatek to publicznie znany testowy numer
-// (Stripe, dokumentacja testowa) — nie należy do żadnego prawdziwego rachunku.
+// /reconciliation/. Notatki NIE zawierają numeru rachunku (IBAN): pola wolnego
+// tekstu odrzucają go zawsze (422 personal_data_forbidden), także testowy.
 // Kwoty większości pozycji odpowiadają wpłatom z seedPayments (ten sam
 // harmonogram: częściowe raty h01/h04/h07/h10 i pełne wpłaty „bank” h03/h05/
 // h09/h11) oraz dwóm wpisom księgi (składki, darowizna, opłata bankowa) — dzięki
 // temu panel może zaproponować dopasowania tak jak przy prawdziwych danych.
 // Dwie pozycje (2026-11-18, 2026-11-25) celowo NIE odpowiadają żadnej wpłacie
 // ani wpisowi księgi — do pokazu stanu „niedopasowana” / „do wyjaśnienia”.
-const DEMO_TEST_IBAN = 'BE62 5100 0754 7061'; // testowy IBAN z dokumentacji Stripe — nie jest prawdziwym rachunkiem
 async function seedReconciliation(env, treasurerCookie) {
   const created = await apiCall(env, {
     method: 'POST', path: '/api/reconciliations', cookie: treasurerCookie, idempotencyKey: idKey('demo-reconciliation'),
@@ -361,7 +360,7 @@ async function seedReconciliation(env, treasurerCookie) {
       schoolYearId: SCHOOL_YEAR_ID,
       statementDate: '2026-12-05',
       statementBalanceCents: 274975,
-      notes: `Wyciąg testowy dla rachunku ${DEMO_TEST_IBAN} (IBAN testowy, dane syntetyczne — do pokazu importu i dopasowań). Szkic, nie zatwierdzony.`,
+      notes: 'Wyciąg testowy (dane syntetyczne — do pokazu importu i dopasowań). Szkic, nie zatwierdzony.',
     },
   });
   const reconciliationId = created.data.reconciliation.id;
