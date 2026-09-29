@@ -8,7 +8,7 @@ Pilnuje jej `tests/testing-matrix.test.js`. Dane w testach są wyłącznie synte
 (`@example.invalid`), czas jest wstrzykiwany (`env.now`) tam, gdzie wynik zależy od dnia.
 
 Legenda: `✓` pokryte testem wskazanym w rejestrze dowodów poniżej (dla kolumny „Role”
-dowodem jest `tests/pg-authz-matrix.test.js`, 16 modułów × aktorzy × MFA × zakres);
+dowodem jest `tests/pg-authz-matrix.test.js`, 27 modułów × aktorzy × MFA × zakres);
 `~` częściowo (tylko sekwencyjnie, bez skutków albo niesprawdzone pole po polu);
 `n/d (powód)` scenariusz nie dotyczy modułu; `— (#N)` puste pole z odwołaniem do zgłoszenia.
 Pole puste bez powodu i bez odwołania nie jest dozwolone.
