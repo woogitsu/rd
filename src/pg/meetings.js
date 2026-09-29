@@ -1432,9 +1432,9 @@ function route(method, pathname) {
   }
   // #102: rejestr uchwał roku i śledzenie wykonania — nie zebranie, więc
   // rozpoznawane przed traktowaniem `a` jako meetingId poniżej.
-  if (n === 1 && a === 'resolutions') return method === 'GET' ? { name: 'resolutionRegister' } : { name: 'method' };
+  if (n === 1 && a === 'resolutions') return method === 'GET' ? { name: 'resolutionRegister' } : { name: 'method', allowed: ['GET'] };
   if (n === 3 && a === 'resolutions' && c === 'execution') {
-    return method === 'POST' ? { name: 'resolutionExecution', resolutionId: b, create: true } : { name: 'method' };
+    return method === 'POST' ? { name: 'resolutionExecution', resolutionId: b, create: true } : { name: 'method', allowed: ['POST'] };
   }
   const meetingId = a;
   if (n === 1) {

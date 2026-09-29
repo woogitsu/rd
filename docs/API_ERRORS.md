@@ -71,6 +71,7 @@ wpisów).
 | `class_scope_not_supported` | Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste. | Nie — popraw dane żądania. |
 | `class_year_mismatch` | Klasa należy do innego roku szkolnego. | Nie — popraw dane żądania. |
 | `closing_balance_out_of_range` | Saldo zamknięcia jest poza dozwolonym zakresem. | Zależy od kontekstu (patrz moduł trasy). |
+| `commit_outcome_unknown` | Nie wiadomo, czy zapis został utrwalony (połączenie z bazą zerwało się przy zatwierdzaniu). Sprawdź aktualny stan i dopiero wtedy ponów operację. | Nie automatycznie — najpierw sprawdź stan (odśwież widok); ponowienie z tym samym `Idempotency-Key` jest bezpieczne tam, gdzie trasa go obsługuje. |
 | `concurrent_version` | Ktoś inny zapisał zmianę w tym samym czasie. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
 | `confirmation_required` | Potwierdź operację, wpisując wymagany identyfikator. | Nie — popraw dane żądania. |
 | `conflict` | Dane zmieniły się w międzyczasie. Odśwież widok i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -392,6 +393,41 @@ wpisów).
 | `webhook_not_configured` | Powiadomienia zwrotne nie są skonfigurowane na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_already_started` | Zamknięcie roku zostało już rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_not_started` | Zamknięcie roku nie zostało rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
+
+## Błędy bazy w routerze: klasy, ponowienia, limity (#156)
+
+Sieć bezpieczeństwa w `src/pg/app.js` (`classifyDbError`, `src/pg/db-errors.js`)
+i transakcje z `src/db.js`:
+
+| Zdarzenie | Odpowiedź | Klasa w logu | Zachowanie serwera |
+|---|---|---|---|
+| `school_year_closed`, `school_year_closure_is_final` (trigger) | `409 school_year_closed` | `business` | bez ponowienia |
+| `40001`, `40P01` | wewnątrz transakcji ponawiane do 3 prób łącznie (losowy odstęp ok. 10-30 ms, potem 20-60 ms); po wyczerpaniu `503 retry_later` + `Retry-After: 1` | `transient` | ponawiana jest cała funkcja transakcji, więc nie ma podwójnego zapisu ani zdarzenia audytu |
+| `55P03` (przekroczony `lock_timeout`) | `503 retry_later` + `Retry-After: 1` | `transient` | bez ponowienia w transakcji |
+| `57014` (`statement_timeout`) | `503 timeout` + `Retry-After: 5` | `transient` | bez ponowienia |
+| błąd w trakcie `COMMIT` z nieznanym wynikiem (zerwane połączenie, klasa `08`, `57P0x`, timeout) | `503 commit_outcome_unknown`, bez `Retry-After` | `outcome_unknown` | bez ponowienia; połączenie wyrzucane z puli |
+| pozostałe | `503 service_unavailable` | `bug` | bez ponowienia |
+
+- **Ponowienie tylko dla transakcji bez efektów zewnętrznych.** Funkcja
+  przekazana do `db.transaction(fn, { retries })` jest uruchamiana ponownie,
+  więc musi być czysto bazodanowa (bez Brevo, Storage, sieci). Transakcja
+  z takim efektem przekazuje `{ retries: 0 }`. Dziś żadna transakcja w
+  `src/**` nie woła transportu ani Storage wewnątrz funkcji (wysyłka i
+  `putObject` są PRZED albo PO transakcji; test
+  `tests/pg-tx-retry.test.js` pilnuje tego statycznie); jawnie wyłączone jest
+  ponowienie tylko przy odtworzeniu kopii (`restoreBundle`).
+- **`lock_timeout`.** Każda transakcja zaczyna od `SET LOCAL lock_timeout`
+  (`PG_LOCK_TIMEOUT_MS`, domyślnie 3000 ms, najwyżej 60000 — wartość do
+  zmierzenia na stagingu, #41). Czekanie na `FOR UPDATE` albo blokadę doradczą
+  kończy się więc po ok. 3 s kodem `55P03`, a nie dopiero po `statement_timeout`
+  (10 s).
+- **`commit_outcome_unknown`: sprawdź stan przed ponowieniem.** Serwer nie wie,
+  czy transakcja została zatwierdzona. Klient nie powtarza operacji na ślepo:
+  odświeża widok albo, przy trasie z `Idempotency-Key`, powtarza żądanie z tym
+  samym kluczem (odtworzy zapis albo wykona go raz). Operacje bez klucza
+  (np. wysyłka) wymagają sprawdzenia stanu przez osobę.
+- **`405` zawsze z `Allow`.** `tests/pg-tx-retry.test.js` skanuje `src/pg/**`
+  i sprawdza odpowiedzi na nieobsługiwane metody.
 
 ## Czego nie obejmuje ten dokument
 
