@@ -43,6 +43,7 @@ import { csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
 import { renderBudgetExecutionHtml } from '../budget-report.js';
 import { reportContentSecurityPolicy } from '../audit-report.js';
 import { toSafeInteger } from './payments.js';
+import { createJsonReader } from '../input.js';
 
 export const name = 'ledger-budget';
 
@@ -116,19 +117,10 @@ function decodeId(value) {
   }
 }
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const body = await request.text();
-  if (new TextEncoder().encode(body).byteLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  try {
-    const data = JSON.parse(body);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  error: (code, status) => new RequestError(code, status),
+});
 
 function readIdempotencyKey(request) {
   const key = request.headers.get('Idempotency-Key')?.trim();
