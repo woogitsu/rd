@@ -7,6 +7,8 @@ import {
   brusselsDate,
   cleanText,
   defaultSchoolYearId,
+  calendarFeedUrls,
+  eventIcsUrl,
   eventsUrl,
   formatEventTime,
   groupByMonth,
@@ -191,4 +193,18 @@ test("kod strony: zdjęcia leniwe, thumb/web, znikają po błędzie ładowania, 
   assert.match(source, /img\.srcset = /);
   assert.match(source, /addEventListener\("error", \(\) => figure\.remove\(\)\)/);
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML/);
+});
+
+test("#122: adresy iCal wydarzenia i kanału są budowane tylko z bezpiecznych wartości", () => {
+  assert.equal(eventIcsUrl("evt-1"), "/api/public/events/evt-1.ics");
+  assert.equal(eventIcsUrl("a/b"), null);
+  assert.equal(eventIcsUrl("../x"), null);
+  assert.equal(eventIcsUrl(null), null);
+  assert.deepEqual(calendarFeedUrls("rada.example.invalid"), {
+    https: "https://rada.example.invalid/api/public/events.ics",
+    webcal: "webcal://rada.example.invalid/api/public/events.ics",
+  });
+  assert.equal(calendarFeedUrls("localhost:8787")?.webcal, "webcal://localhost:8787/api/public/events.ics");
+  assert.equal(calendarFeedUrls("evil.example/\"><x"), null);
+  assert.equal(calendarFeedUrls(""), null);
 });

@@ -54,9 +54,11 @@ export function hasApproverAccess(grants, schoolYearId = '') {
   return hasRoleAccess(grants, APPROVER_ROLES, schoolYearId);
 }
 
-export function buildCampaignsUrl(schoolYearId) {
+export function buildCampaignsUrl(schoolYearId, cursor = '') {
   if (!isValidId(schoolYearId)) throw new Error('Podaj poprawny identyfikator roku szkolnego.');
-  return `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  const base = `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  // #159: kolejna strona listy (kursor keyset z poprzedniej odpowiedzi).
+  return cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base;
 }
 
 export function campaignUrl(id) {
@@ -99,6 +101,12 @@ export function canOfferApproval(campaign, actorId) {
     && Boolean(campaign.recipientsHash)
     && Number(campaign.recipientsCount) > 0
     && !isLikelyOwnCampaign(campaign, actorId);
+}
+
+// Komunikat „dane od migawki zmieniły się” tylko dla istniejącej migawki, która przestała
+// być aktualna (snapshotCurrent === false). Bez migawki serwer zwraca null.
+export function isSnapshotStale(preview) {
+  return Boolean(preview) && Boolean(preview.recipientsHash) && preview.snapshotCurrent === false;
 }
 
 export function formatExclusions(exclusions) {

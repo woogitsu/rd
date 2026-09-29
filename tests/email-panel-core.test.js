@@ -20,6 +20,7 @@ import {
   hasApproverAccess,
   hasEditorAccess,
   isLikelyOwnCampaign,
+  isSnapshotStale,
   isValidId,
   makeIdempotencyKey,
   maskEmail,
@@ -126,6 +127,10 @@ test('describeApiError: komunikaty po polsku dla typowych kodów', () => {
   assert.equal(describeApiError(500, null), null);
 });
 
+test('buildCampaignsUrl: kursor kolejnej strony (#159)', () => {
+  assert.equal(buildCampaignsUrl('y2026', 'abc_-9'), '/api/email/campaigns?schoolYearId=y2026&cursor=abc_-9');
+});
+
 test('#130 harmonogram: pole startu to czas brukselski, także przy zmianie czasu', () => {
   assert.equal(sendNotBeforeFromInput('2026-03-30T09:00'), '2026-03-30T07:00:00.000Z');
   assert.equal(sendNotBeforeFromInput('2026-10-26T09:00'), '2026-10-26T08:00:00.000Z');
@@ -149,4 +154,19 @@ test('#130 formatSchedule: start, okno i szacowany koniec w strefie z odpowiedzi
   assert.equal(formatSchedule(null), '');
   // Plan dni zwracany przez API jest liczbą.
   assert.match(formatDayPlan({ days: 7, dailyCap: 286, reservedForOtherMail: 0 }), /7 dni/);
+});
+
+test('isSnapshotStale: komunikat tylko dla istniejącej migawki, która przestała być aktualna', () => {
+  assert.equal(isSnapshotStale(null), false);
+  assert.equal(isSnapshotStale({ recipientsHash: null, snapshotCurrent: null }), false, 'świeży szkic bez migawki');
+  assert.equal(isSnapshotStale({ recipientsHash: null, snapshotCurrent: false }), false, 'stara odpowiedź serwera bez migawki');
+  assert.equal(isSnapshotStale({ recipientsHash: 'a'.repeat(64), snapshotCurrent: true }), false);
+  assert.equal(isSnapshotStale({ recipientsHash: 'a'.repeat(64), snapshotCurrent: false }), true);
+});
+
+test('panel kampanii używa isSnapshotStale do komunikatu i do gotowości zatwierdzenia', () => {
+  const main = readFileSync(new URL('../email/main.js', import.meta.url), 'utf8');
+  assert.match(main, /byId\("detail-snapshot-current"\)\.hidden = !isSnapshotStale\(preview\)/);
+  assert.match(main, /!isSnapshotStale\(preview\);/);
+  assert.doesNotMatch(main, /snapshotCurrent/);
 });

@@ -3,6 +3,7 @@ import {
   CHECKLIST_ITEM_LABELS,
   STATUS_LABELS,
   canOfferClose,
+  canOfferStart,
   checklistProgress,
   checklistUrl,
   closeUrl,
@@ -13,11 +14,13 @@ import {
   hasReadAccess,
   isLikelyOwnClosure,
   isValidId,
+  startConfirmation,
   startUrl,
   statusUrl,
 } from "./core.js";
 import { formatEur } from "../panel/money.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
@@ -76,8 +79,7 @@ function render() {
 
   renderChecklist(status);
 
-  const canStart = hasChecklistAccess(state.grants, state.schoolYearId);
-  byId("open-start").hidden = !canStart || status.status !== "open";
+  byId("open-start").hidden = !canOfferStart(status, state.grants, state.schoolYearId);
 
   const canClose = hasCloseAccess(state.grants, state.schoolYearId);
   const own = isLikelyOwnClosure(status, state.actorId);
@@ -169,6 +171,8 @@ startDialog.querySelector("form").addEventListener("submit", async (event) => {
   if (!form.reportValidity()) return;
   const nextSchoolYearId = String(new FormData(form).get("nextSchoolYearId")).trim();
   const button = event.submitter;
+  // Nieodwracalne: osobne okno potwierdzenia z opisem skutków (shared/confirm-dialog.js).
+  if (!(await confirmAction(startConfirmation(state.schoolYearId, nextSchoolYearId)))) return;
   button.disabled = true;
   const errorBox = byId("start-error");
   errorBox.textContent = "";

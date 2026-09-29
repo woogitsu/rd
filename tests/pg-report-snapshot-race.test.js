@@ -13,7 +13,8 @@ import pg from 'pg';
 import { createPgDatabase } from '../src/db.js';
 import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
 import { fileURLToPath } from 'node:url';
-import { seedSchoolYear } from './helpers/pg.js';
+import { request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { handlePgRequest } from '../src/pg/app.js';
 import { buildAuditReport } from '../src/pg/routes/reconciliation.js';
 import { readSnapshot } from '../src/pg/db-snapshot.js';
 
@@ -89,5 +90,88 @@ test('buildAuditReport w readSnapshot: zapis między zapytaniami nie zmienia wyn
     assert.equal(report.balance.incomeCents, 10000, 'migawka raportu nie widzi wpisu dopisanego w trakcie generowania');
     const categorySum = report.categories.reduce((sum, c) => sum + (c.direction === 'income' ? c.netCents : 0), 0);
     assert.equal(categorySum, report.balance.incomeCents, 'suma kategorii i bilans pochodzą z tej samej migawki — zawsze zgodne');
+  });
+});
+
+// Handlery HTTP na prawdziwym PostgreSQL: opakowanie db wstrzykuje zapis na
+// OSOBNYM połączeniu (i zatwierdza go) po pierwszym zapytaniu danych wewnątrz
+// migawki. Odpowiedź musi pokazywać stan sprzed zapisu w całości.
+function hookedEnv(db, { trigger, inject }) {
+  const state = { fired: 0, txQueries: [] };
+  const wrap = (tx) => ({
+    async query(sql, params) {
+      state.txQueries.push(String(sql));
+      const result = await tx.query(sql, params);
+      if (state.fired === 0 && trigger.test(String(sql))) {
+        state.fired += 1;
+        await inject();
+      }
+      return result;
+    },
+  });
+  return { state, env: { db: { query: (...a) => db.query(...a), transaction: (fn, o) => db.transaction((tx) => fn(wrap(tx)), o) } } };
+}
+
+async function seedSessions(db) {
+  return {
+    board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board', schoolYearId: YEAR }], mfa: true }),
+    treasurer: await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: YEAR }], mfa: true }),
+  };
+}
+
+test('GET /api/year-close/{rok}/handover: zapis na osobnym połączeniu w trakcie nie zmienia zestawienia', { skip }, async () => {
+  await withDatabase(async (db, url) => {
+    await seed(db);
+    const cookies = await seedSessions(db);
+    const { env, state } = hookedEnv(db, { trigger: /ledger_year_summary|ledger_entry_net/, inject: () => insertConcurrently(url) });
+    const response = await handlePgRequest(request(`/api/year-close/${YEAR}/handover`, { cookie: cookies.board }), env);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(state.fired, 1, 'zapis został wstrzyknięty w trakcie migawki');
+    assert.equal(state.txQueries[0], 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM ledger_entries WHERE school_year_id = $1', [YEAR])).rows[0].n, 2);
+    assert.equal(body.finance.incomeCents, 10000, 'bilans sprzed zapisu');
+    assert.equal(body.finance.ledgerEntryCount, 1, 'liczba wpisów z tej samej chwili co bilans');
+  });
+});
+
+test('GET /api/reconciliations/{id}: dopasowanie zatwierdzone w trakcie odczytu nie rozjeżdża pozycji i listy dopasowań', { skip }, async () => {
+  await withDatabase(async (db, url) => {
+    await seed(db);
+    const cookies = await seedSessions(db);
+    const call = (path, options = {}) => handlePgRequest(request(path, options), { db });
+    const created = await call('/api/reconciliations', {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': 'rec-snap-race-1' },
+      body: { schoolYearId: YEAR, statementDate: '2026-09-30', statementBalanceCents: 10000 },
+    });
+    assert.equal(created.status, 201);
+    const { reconciliation } = await created.json();
+    const imported = await call(`/api/reconciliations/${reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': 'imp-snap-race-1' },
+      body: { lines: [{ bookedOn: '2026-09-14', amountCents: 10000, reference: 'Syntetyczna pozycja' }] },
+    });
+    assert.equal(imported.status, 201);
+    const lineId = (await db.query('SELECT id FROM bank_statement_lines WHERE reconciliation_id = $1', [reconciliation.id])).rows[0].id;
+
+    const { env, state } = hookedEnv(db, {
+      trigger: /bank_statement_lines/,
+      inject: async () => {
+        const matched = await call(`/api/reconciliations/${reconciliation.id}/matches`, {
+          method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': 'm-snap-race-1' },
+          body: { statementLineId: lineId, ledgerEntryId: 'le-1' },
+        });
+        assert.equal(matched.status, 201, 'dopasowanie zatwierdzone na osobnej transakcji w trakcie migawki');
+      },
+    });
+    const response = await handlePgRequest(request(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer }), env);
+    assert.equal(response.status, 200);
+    const detail = await response.json();
+    assert.equal(state.fired, 1);
+    const matchedLines = detail.lines.filter((line) => line.matchId);
+    assert.equal(matchedLines.length, detail.matches.filter((m) => !m.revokedAt).length, 'pozycje z dopasowaniem = aktywne dopasowania');
+    assert.equal(detail.summary.unmatchedLineCount, detail.lines.length - matchedLines.length);
+    // Kontrola: po migawce dopasowanie już istnieje.
+    const after = await (await call(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(after.matches.filter((m) => !m.revokedAt).length, 1);
   });
 });

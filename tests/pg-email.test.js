@@ -488,8 +488,14 @@ test('snapshot: consent required, invalid e-mail excluded, siblings and two guar
     await family(t.db, 'h7', { guardians: [{ id: 'h1-g2', household: 'h1', primary: true }] });
     await t.db.query("INSERT INTO households (id) VALUES ('h8')");                // brak dzieci w roku
     const campaign = await createDraft(t);
+    // Świeży szkic bez migawki: snapshotCurrent = null (nie false), brak odbiorców.
+    const fresh = (await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).body;
+    assert.equal(fresh.recipientsHash, null);
+    assert.equal(fresh.snapshotCurrent, null);
+    assert.equal(fresh.recipientsCount, 0);
     const result = await snapshot(t, campaign.id);
     assert.equal(result.recipientsCount, 2);
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}/preview`)).body.snapshotCurrent, true);
     assert.deepEqual(result.exclusions, { no_consent: 2, no_valid_email: 2, duplicate_address: 1 });
     const { rows } = await t.db.query('SELECT household_id, guardian_id FROM email_campaign_recipients WHERE campaign_id = $1 ORDER BY household_id', [campaign.id]);
     assert.deepEqual(rows, [{ household_id: 'h1', guardian_id: 'h1-g2' }, { household_id: 'h6', guardian_id: 'h6-g2' }]);
@@ -971,6 +977,48 @@ test('job retried while the first run is still sending (lease valid): nothing is
     assert.equal(new Set(transport.calls.map((m) => m.idempotencyKey)).size, 3);
     assert.equal(transport.calls.length, 3);
     assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'sent'));
+  } finally { await t.close(); }
+});
+
+test('second run during the first (valid lease, injected clock): takes over nothing, sends nothing, changes no leased row (#177)', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id, { guardians: [{ primary: true }, {}] });   // dwoje opiekunów: nadal jedna wiadomość na rodzinę
+    const campaign = await readyCampaign(t);
+    const snapshot = async () => (await t.db.query(
+      "SELECT id, state, attempts, claim_token, claimed_at, send_started_at FROM email_outbox WHERE campaign_id = $1 AND state = 'sending' ORDER BY id",
+      [campaign.id],
+    )).rows;
+    const seen = [];
+    let leasedDuring = 0;
+    const transport = interleavingTransport(async () => {
+      const before = await snapshot();
+      leasedDuring = before.length;
+      // Sztuczny zegar: drugi przebieg 1 i 14 min po starcie pierwszego, czyli dzierżawa (15 min) jest ważna;
+      // ponowienie zadania i podwójne ręczne uruchomienie nic nie przejmują.
+      for (const minutes of [1, 14]) {
+        const callsBefore = transport.calls.length;
+        const second = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + minutes * 60_000) });
+        seen.push({
+          planned: second.planned, sent: second.sent, retried: second.retried, failed: second.failed, requeued: second.requeued,
+          callsDuring: transport.calls.length - callsBefore, unchanged: JSON.stringify(await snapshot()) === JSON.stringify(before),
+        });
+      }
+    });
+    const first = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.ok(leasedDuring >= 1, 'first run holds leased rows while the second runs');
+    assert.equal(seen.length, 2);
+    for (const result of seen) {
+      assert.deepEqual(result, { planned: 0, sent: 0, retried: 0, failed: 0, requeued: 0, callsDuring: 0, unchanged: true });
+    }
+    // Pierwszy przebieg dokończył całość, każda rodzina dostała dokładnie jedną wiadomość.
+    assert.equal(first.sent, 3);
+    assert.equal(transport.calls.length, 3);
+    assert.equal(new Set(transport.calls.map((m) => m.idempotencyKey)).size, 3);
+    assert.equal(new Set(transport.calls.map(householdOf)).size, 3);
+    assert.ok((await outboxStates(t, campaign.id)).every((r) => r.state === 'sent' && r.last_error === null));
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.sent'"), 3);
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action IN ('email.delivery_unknown', 'email.sent_after_lease_lost', 'email.lease_expired_requeued')"), 0);
   } finally { await t.close(); }
 });
 
