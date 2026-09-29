@@ -168,6 +168,17 @@ test('demo-seed: wpłaty, wpisy księgi, wydarzenia i zebranie mają nieliczne, 
   assert.ok(seeded.newsId);
 });
 
+// Przegląd demo 3 (krok 6): zebranie z zatwierdzonym protokołem nie może pokazywać
+// „Quorum nieosiągnięte” — lista obecności ma 3 osoby z prawem głosu, reguła wymaga 3.
+// Liczbę obecnych z prawem głosu liczy trigger bazy przy zapisie ustalenia quorum.
+test('demo-seed: ustalenie quorum zebrania demo jest osiągnięte (3 obecnych z prawem głosu)', async () => {
+  const { rows: checks } = await seeded.env.db.query(
+    'SELECT present_eligible, required_count, met FROM meeting_quorum_checks WHERE meeting_id = $1 ORDER BY seq',
+    [seeded.meeting.meetingId],
+  );
+  assert.deepEqual(checks, [{ present_eligible: 3, required_count: 3, met: true }]);
+});
+
 test('demo-seed: uzgodnienie wyciągu — szkic z zaimportowanym wyciągiem, NIE zatwierdzony', async () => {
   const { reconciliation } = seeded;
   assert.ok(reconciliation.reconciliationId, 'seed zwraca id utworzonego uzgodnienia');
@@ -296,6 +307,13 @@ test('demo-seed: uzgodnienie wyciągu — różnica niewielka i w całości opis
     suggestions.data.suggestions.filter((entry) => entry.candidates.some((c) => c.type === 'ledger_entry')).length,
     detail.data.lines.length - 2,
   );
+  // Przegląd demo 3: pozycja 2026-10-15 (50,00 €) miała trzech kandydatów, w tym
+  // gotówkowy wpis księgi tej samej kwoty i daty. Wyciąg dotyczy rachunku — każda
+  // propozycja jest przelewem, a każda pozycja ma co najwyżej jedną propozycję z tego samego dnia.
+  for (const entry of suggestions.data.suggestions) {
+    for (const candidate of entry.candidates) assert.equal(candidate.method, 'bank', `pozycja ${entry.bookedOn}: kandydat ${candidate.type}`);
+    assert.ok(entry.candidates.filter((c) => c.dayDistance === 0).length <= 1, `pozycja ${entry.bookedOn}: jedna propozycja z tego samego dnia`);
+  }
   // Saldo wyciągu = suma pozycji (bilans otwarcia rachunku wynosi 0).
   assert.equal(detail.data.lines.reduce((sum, line) => sum + line.amountCents, 0), draft.statementBalanceCents);
 });
