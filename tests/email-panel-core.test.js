@@ -12,6 +12,10 @@ import {
   describeApiError,
   formatDayPlan,
   formatExclusions,
+  formatSchedule,
+  STATUS_LABELS,
+  sendNotBeforeFromInput,
+  sendNotBeforeToInput,
   formatWarnings,
   hasApproverAccess,
   hasEditorAccess,
@@ -120,4 +124,33 @@ test('describeApiError: komunikaty po polsku dla typowych kodów', () => {
   assert.match(describeApiError(403, 'forbidden'), /Nie masz uprawnień/);
   assert.match(describeApiError(403, 'self_approval_forbidden'), /inna osoba/);
   assert.equal(describeApiError(500, null), null);
+});
+
+test('buildCampaignsUrl: kursor kolejnej strony (#159)', () => {
+  assert.equal(buildCampaignsUrl('y2026', 'abc_-9'), '/api/email/campaigns?schoolYearId=y2026&cursor=abc_-9');
+});
+
+test('#130 harmonogram: pole startu to czas brukselski, także przy zmianie czasu', () => {
+  assert.equal(sendNotBeforeFromInput('2026-03-30T09:00'), '2026-03-30T07:00:00.000Z');
+  assert.equal(sendNotBeforeFromInput('2026-10-26T09:00'), '2026-10-26T08:00:00.000Z');
+  assert.equal(sendNotBeforeFromInput(''), null);
+  assert.throws(() => sendNotBeforeFromInput('jutro'), /startu wysyłki/);
+  assert.equal(sendNotBeforeToInput('2026-10-26T08:00:00.000Z'), '2026-10-26T09:00');
+  assert.equal(sendNotBeforeToInput(null), '');
+});
+
+test('#130 formatSchedule: start, okno i szacowany koniec w strefie z odpowiedzi; stan wstrzymania ma etykietę', () => {
+  assert.equal(STATUS_LABELS.paused, 'Wstrzymana');
+  const text = formatSchedule({
+    sendNotBefore: '2026-03-27T08:00:00.000Z', timezone: 'Europe/Brussels', estimated: true,
+    window: { enabled: true, timezone: 'Europe/Brussels', days: [1, 2, 3, 4, 5], startMinutes: 540, endMinutes: 1080 },
+    startsAtLocal: '2026-03-27 09:00', endsAtLocal: '2026-04-06 18:00',
+  });
+  assert.match(text, /Start nie wcześniej niż: 2026-03-27 09:00 \(Europe\/Brussels\)/);
+  assert.match(text, /09:00–18:00/);
+  assert.match(text, /Szacowane zakończenie: do 2026-04-06 18:00/);
+  assert.match(formatSchedule({ sendNotBefore: null, window: { enabled: false }, timezone: 'Europe/Brussels' }), /wyłączone/);
+  assert.equal(formatSchedule(null), '');
+  // Plan dni zwracany przez API jest liczbą.
+  assert.match(formatDayPlan({ days: 7, dailyCap: 286, reservedForOtherMail: 0 }), /7 dni/);
 });

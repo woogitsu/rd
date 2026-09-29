@@ -10,14 +10,14 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const READ_ONLY_EXCEPTIONS = new Map([
-  ['src/pg/routes/documents.js', ['document.access_denied', 'document.downloaded', 'document.content_missing']],
+  ['src/pg/routes/documents.js', ['document.access_denied', 'document.downloaded', 'document.viewed', 'document.content_missing']],
   ['src/pg/routes/print.js', ['print.cards_requested']],
   ['src/pg/routes/email.js', ['email.recipients.viewed', 'email.suppressions.viewed', 'email.attention_list.viewed', 'email.webhook.previous_secret_used']],
   ['src/pg/routes/reconciliation.js', ['report.audit.generated']],
   // #107: wydruk/eksport wykonania preliminarza (format != json) — dziennik odczytu, bez zmiany stanu.
   ['src/pg/routes/ledger-budget.js', ['ledger.budget_execution.exported']],
   // #181: odczyt dziennika audytu sam zapisuje zdarzenie (bez parametrów zapytania).
-  ['src/pg/routes/admin.js', ['audit.viewed']],
+  ['src/pg/routes/admin.js', ['audit.viewed', 'access_log.viewed']],
   // #184: odmowa 403 nie jest częścią transakcji zmiany (nie ma zmiany) — zapis
   // nigdy nie blokuje ani nie zmienia odpowiedzi (patrz logAccessDenied).
   ['src/pg/authorization.js', ['access.denied']],

@@ -88,6 +88,13 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/meetings/:meetingId` | admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | nie | 404 | brak uprawnień nieodróżnialny od braku zebrania (SR-07); przedstawiciel: 404 także dla zebrania własnej klasy |
 | `PATCH /api/meetings/:meetingId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy; #171: przedstawiciel-gospodarz własnej klasy | tak (#150) | 403 | |
 | `POST /api/meetings/:meetingId/agenda-items` | jak wyżej | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/cancellation` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | #113: powód 3–500 znaków, przejście `draft|scheduled → cancelled`; przedstawiciel-gospodarz (#171) nie odwołuje; powtórka z tym samym powodem to `200` z `replayed` |
+| `POST /api/meetings/:meetingId/reschedule` | jak wyżej | tak (#150) | 403 | #113: nowy termin z powodem; po zatwierdzonym zawiadomieniu powstaje wyłącznie szkic zawiadomienia o zmianie terminu |
+| `POST /api/meetings/:meetingId/agenda-items/:itemId/withdrawal` | jak `POST …/agenda-items` | tak (#150) | 403 | #113: wycofanie punktu (wiersz zostaje) |
+| `POST /api/meetings/:meetingId/notices` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | #113: szkic zawiadomienia z migawką porządku obrad; przedstawiciel-gospodarz: 403 |
+| `POST /api/meetings/:meetingId/notices/:noticeId/approval` | jak wyżej | tak (#150) | 403 | #113: zatwierdza inna osoba niż autor (`403 notice_four_eyes_required`); odsłania zawiadomienie zebrania ogólnego na stronie publicznej |
+| `POST /api/meetings/:meetingId/notices/:noticeId/campaign-draft` | jak wyżej | tak (#150) | 403 | #113: wyłącznie SZKIC kampanii z zatwierdzonego zawiadomienia; listę odbiorców i wysyłkę zatwierdza się w module e-mail (`board`, cztery oczy) |
+| `GET /api/meetings/public-notices?schoolYearId=:year` | publiczna | nie | — | #113: tylko najnowsze zatwierdzone zawiadomienie zebrania ogólnego, bez powodu odwołania i opisów punktów |
 | `POST /api/meetings/:meetingId/attendance` | jak wyżej | tak (#150) | 403 | |
 | `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | |
 | `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy; #171: przedstawiciel-gospodarz własnej klasy | tak (#150) | 403 | |
@@ -108,7 +115,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/documents/:financialDocumentId` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | brak uprawnień lub MFA nieodróżnialny od braku dokumentu |
 | `GET /api/documents/:boardDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | |
 | `GET /api/documents/:classDocumentId` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | |
-| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded` |
+| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded`; `?disposition=inline` (podgląd PDF/PNG/JPEG, ta sama macierz) — `document.viewed` |
 | `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
 | `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |
 | `POST /api/documents/:financialDocumentId/supersede` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | issue #82: te same reguły dostępu co odczyt dokumentu finansowego (canAccessDocument); zastąpienie tylko dokumentem tego samego rodzaju/roku/klasy; powtórka tym samym kluczem — `replayed:true` |
@@ -125,9 +132,10 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/summary?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/budget?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/ledger/export.xlsx?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01; te same dane co CSV (#121), zdarzenie `ledger.exported` z `format: xlsx` |
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
-| `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
+| `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą przechodzi na wpis zastępczy (0142, kwota = netto wpłaty); szkic uzgodnienia z powiązaniem wpisu: 409 `active_bank_match`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
 | `POST /api/ledger/categories/:categoryId/deactivation` | jak wyżej, rok kategorii | tak | 403 | #107; wpis historii z powodem; już wyłączona: 409 `category_inactive` |
 | `POST /api/ledger/budget` | jak wyżej | tak | 403 | #107; pierwsza wersja linii; kolejna: 409 `budget_line_exists` |
 | `POST /api/ledger/budget/:lineId/revisions` | jak wyżej, rok linii | tak | 403 | #107; nowa wersja z `supersedes_id`; nieaktualna wersja lub równoległa rewizja: 409 `budget_line_superseded` |
@@ -213,6 +221,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |
 | `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | #181: filtry `domain`/`actorId`/`from`/`to`/`schoolYearId`; sam zapisuje `audit.viewed` |
+| `GET /api/admin/access-log` | wyłącznie admin | tak | 403 | #133: przegląd `data_access_log` (tylko odczyt): filtry `kind`/`actorId`/`householdId`/`classId`/`schoolYearId`/`outcome`/`from`/`to`, kursor; bez imion, e-maili i adresów IP; sam zapisuje `access_log.viewed`. Zarząd, skarbnik, audit, principal, przedstawiciel: 403 (D-04/D-07/D-08/D-09 nierozstrzygnięte) |
 | `GET /api/admin/audit/entity/:entityType/:entityId` | wyłącznie admin | tak | 403 | #181: wariant zachowawczy — role finansowe/kampanii własnego zakresu do D-08/D-09; nieistniejący obiekt: 404 |
 | `GET /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: wariant zachowawczy — zakres do D-08/D-09 |
 | `POST /api/admin/data-requests` | wyłącznie admin | tak | 403 | #100: rejestr żądania, bez eksportu danych rodziny |
@@ -234,6 +243,10 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/reports/audit?schoolYearId=:year&format=json` | Komisja Rewizyjna, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | admin: 403; SR-01. Zamknięty rok: także zarząd/skarbnik roku następnego i admin, tylko odczyt (#195, docs/YEAR_CLOSE.md). Rola i rok pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `GET /api/reports/annual?schoolYearId=:year&format=json` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | także `format=html`; admin, audit, principal, przedstawiciel: 403 (D-08/D-09, #125); SR-01. Brak MFA przy pasującej roli: `403 mfa_required`/`mfa_enrollment_required` |
 | `GET /api/reports/cash-flow?schoolYearId=:year` | jak wyżej | tak | 403 | przepływy per miesiąc i metoda, saldo kasy (#125); SR-01 |
+| `GET /api/reports/annual/snapshots?schoolYearId=:year` | zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | lista migawek sprawozdania rocznego bez treści (#125, 0138); admin, audit, principal, przedstawiciel: 403; SR-01 |
+| `POST /api/reports/annual/snapshots` | jak wyżej | tak | 403 | zapis niezmiennej migawki z bieżącej księgi (JSON + SHA-256) i zdarzenie audytu `report.snapshot.created` w jednej transakcji; ta sama treść = `200 replayed`; rok zamknięty: `409 school_year_closed`; następna migawka wymaga `supersedesId` i powodu (#125); SR-01 |
+| `GET /api/reports/annual/snapshots/:id?format=json` | jak wyżej (rok migawki) | tak | 403 | także `format=html` (druk); odczyt sprawdza skrót SHA-256 zapisanej treści; nieistniejąca migawka: `404` tylko dla aktora z rolą (#125); SR-01 |
+| `POST /api/reports/annual/snapshots/:id/approve` | wyłącznie zarząd — przydział bez klasy, rok migawki | tak (świeże MFA, `mfa_stale`) | 403 | zatwierdza inna osoba niż autor (`four_eyes_required` 403); skarbnik, admin, audit, principal, przedstawiciel: 403; powtórka `200 replayed`; zdarzenie `report.snapshot.approved`; kto zatwierdza — D-09/D-12/D-21, wariant zachowawczy (#125) |
 | `POST /api/exports` | admin, zarząd — przydział bez klasy, rok 1 | tak, krok w górę: ≤15 min (#150) | 403 | skarbnik: 403; SR-01. Zamknięty rok: także zarząd roku następnego (#195); MFA starsze niż 15 min → `403 mfa_stale` |
 | `GET /api/exports/class-roster?classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | tak | 403 | Rola i klasa pasują, jedyną przeszkodą jest MFA bieżącej sesji: `403 mfa_required`/`mfa_enrollment_required` zamiast `forbidden` (#161) |
 | `GET /api/classes` | admin, zarząd, skarbnik — klasy roku przydziału; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | Komisja Rewizyjna, dyrekcja: 403 |
@@ -243,8 +256,11 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `PATCH /api/guardians/:guardianId/students/:studentId` | jak wyżej; zakres klasowy — tylko aktywna relacja z uczniem własnej klasy | nie | 403 / 404 | zgoda na kontakt w relacji (#190); relacja poza zakresem lub nieistniejąca: 404; zakończona: 409 |
 | `POST /api/students/:studentId/enrollments` | jak wyżej | nie | 403 / 404 | macierz: przypisanie do tej samej klasy (200) |
 | `POST /api/students/:studentId/enrollments/:enrollmentId/end` | jak wyżej | nie | 403 / 404 | odejście ze szkoły (#86); po zakończeniu przypisanie niezmienne; ponowienie: `changed: false` |
+| `POST /api/guardians/:guardianId/students/:studentId/end` | jak wyżej; zakres klasowy — tylko relacja z uczniem własnej klasy | nie | 403 / 404 | zakończenie relacji opiekun–dziecko (#86), powód wymagany; data w zamkniętym roku: `409 school_year_closed`; ponowienie: `changed: false`; odpowiedź wymienia aktywne kampanie z tym opiekunem (`campaignsToReview`) |
+| `POST /api/students/:studentId/households/:membershipId/end` | jak wyżej | nie | 403 / 404 | zakończenie członkostwa ucznia w gospodarstwie (#86); zakończenie głównego bez następcy: `withoutPrimaryHousehold: true`; zamknięty rok: 409 |
+| `POST /api/students/:studentId/households` | admin, zarząd — zakres szeroki; zarząd z przydziałem klasy i przedstawiciel: 403 | nie | 403 / 404 | dodanie członkostwa (#86); nakładające się: `409 student_household_overlap`; ponowienie: 200 `changed: false` |
 | `GET /api/print/cards?schoolYearId=:year&classId=:class` | admin, zarząd, skarbnik — rok 1 (z klasą lub bez); przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 400 / 403 | przydział klasowy bez classId: 400; kwoty wpłat tylko rola finansowa z MFA |
-| `GET /api/representative/overview?schoolYearId=:year` | wyłącznie przedstawiciel (bez decyzji D-08: bez sekcji wpłat) | nie | 400 / 403 | konto bez żadnego przydziału `representative`: 403; przydział innego roku: `classes: []` (#118) |
+| `GET /api/representative/overview?schoolYearId=:year` | wyłącznie przedstawiciel (bez decyzji D-08: bez sekcji wpłat; tylko liczności, daty i tytuł najbliższego zebrania własnej klasy) | nie | 400 / 403 | konto bez żadnego przydziału `representative`: 403; przydział innego roku: `classes: []` (#118) |
 | `POST /api/admin/guardian-links` | admin, zarząd — przydział bez klasy (SR-01) | tak (już wymuszone bramką routera) | 403 / 404 | #140; token w treści odpowiedzi tylko raz, w bazie wyłącznie skrót SHA-256; nieistniejący opiekun: 404 |
 | `GET /api/public/guardian-update?token=:token` | publiczna (bez sesji) | nie dotyczy | — | zły/wygasły/zużyty token: 404 `invalid_or_expired_link` (bez wyroczni istnienia); odpowiedź: wyłącznie imię opiekuna i nazwy klas dzieci |
 | `POST /api/public/guardian-update` | publiczna (bez sesji) | nie dotyczy | — | tworzy WNIOSEK (`pending`), nie zmienia `guardians`; token jednorazowy: ponowne użycie → 409 `link_used`, bez drugiego wniosku |

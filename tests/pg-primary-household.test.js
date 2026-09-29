@@ -363,7 +363,7 @@ test('import: istniejący uczeń dopasowany do bieżącego głównego gospodarst
       return toServerPayload(validateRows(matrix, guessMapping(matrix[0])), YEAR, {});
     };
     const post = async (path, body, key) => {
-      const response = await handlePgRequest(request(path, { method: 'POST', cookie: admin, body, headers: key ? { 'Idempotency-Key': key } : {} }), { db });
+      const response = await handlePgRequest(request(path, { method: 'POST', cookie: admin, body, headers: key ? { 'Idempotency-Key': key } : {} }), { db, APP_ENV: 'test' });
       return { status: response.status, body: await response.json() };
     };
     const base = payload('S1;Ala;Testowa;1A;R1;Anna Testowa;anna@example.invalid;;', 'S2;Ola;Testowa;1A;R1;Anna Testowa;anna@example.invalid;;');
