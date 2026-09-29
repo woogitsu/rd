@@ -153,6 +153,21 @@ Zmiany w tym PR (#124):
 
 **Poza zakresem tego PR** (patrz #124, propozycja pkt. 3): `<figure>`/`<figcaption>` dla zdjęć z autorem i licencją nie jest jeszcze potrzebne — w chwili pisania `site/` nie renderowała zdjęć; obecnie `site/main.js` renderuje galerię jako `<figure>` z `<figcaption>` (#96), a model danych (`altText`/`decorative`) jest już używany. Pełna weryfikacja z czytnikiem ekranu nie została wykonana. Kontrast `site/styles.css` i `prefers-reduced-motion` — patrz PR dla #112 (ten sam plik, żeby uniknąć nakładania się zmian).
 
+**Stan po #96 i kolejnym PR dla #124** (`site/`, aktualności i galeria; `documents/` poza tym zakresem):
+
+| Kryterium | Stan | Weryfikacja |
+|---|---|---|
+| Język strony, skip link, jeden `h1`, `main#main`, nawigacja z etykietą, sekcje nazwane przez `h2` | spełnione | `tests/a11y-static.test.js`, `tests/site-a11y.test.js` |
+| Kontrast tekstu (`--text`, `--muted`, `--red`, `--red-dark`) ≥ 4,5:1 na białym i jasnoszarym tle; obrys fokusu ≥ 3:1 | spełnione | `tests/site-a11y.test.js` (tokeny czytane z `site/styles.css`) |
+| Fokus widoczny (`:focus-visible`, 3 px), `prefers-reduced-motion`, `forced-colors` | spełnione | `tests/a11y-static.test.js` |
+| Błąd wczytywania ogłaszany (`role="alert"`), stan pusty grzeczny (`role="status"`), nawigacja bez zmian po wczytaniu | spełnione | `tests/site-a11y.test.js` |
+| Zdjęcia: `<figure>` + `<figcaption>` (autor · źródło · licencja), `alt` wyłącznie z pola `altText` zatwierdzonego wpisu, `alt=""` tylko dla `decorative`; zdjęcie bez opisu i bez `decorative` nie jest pokazywane; tekst nie jest nigdzie wymyślany | spełnione | `tests/site-a11y.test.js`, `tests/site-core.test.js` |
+| Długie tytuły i 20 wpisów przy 320 px: `overflow-wrap: anywhere`, `max-width: 100%` obrazów, brak sztywnych szerokości | sprawdzone statycznie (CSS + logika), **nie renderowane w przeglądarce** | `tests/site-a11y.test.js` |
+| Renderowanie 320/640/1280 px w Playwright (`docs/a11y/audit.mjs`) dla `site/` | **do wykonania ręcznie** (Playwright nie jest zależnością projektu; skrypt nadal obsługuje `import`, `panel`, `ledger`, `print`) | — |
+| NVDA / VoiceOver dla strony publicznej i galerii | **niewykonane** | lista kontrolna powyżej |
+
+Reguła opisu zdjęć (bez imion i nazwisk dzieci) jest zasadą redakcyjną, nie da się jej wymusić technicznie; jej treść czeka na D-18 (docs/DECISIONS.md) i nie jest tu rozstrzygana.
+
 ## Rozszerzenie przeglądu na wszystkie aplikacje statyczne (#112)
 
 `tests/a11y-static.test.js` obejmował wcześniej tylko `import`, `panel`, `ledger`, `print` (na sztywno w kodzie testu). Lista `APPS` jest teraz wyprowadzana z `STATIC_PREFIXES` w `src/node-app.js`, więc obejmuje automatycznie każdą aplikację serwowaną przez serwer — dodanie nowej bez skip linku, `main#main`, `:focus-visible`, `prefers-reduced-motion` czy `caption`/`th[scope]` nie przejdzie CI.
@@ -169,7 +184,11 @@ Nawigacja różni się realnie między aplikacjami (statyczne linki w czterech p
 
 Aplikacje z kilkoma wzajemnie wykluczającymi się widokami pod jednym `main` (`families/`: klasy / klasa / gospodarstwo) mogą mieć po jednym `<h1>` na widok, o ile każdy jest wewnątrz elementu z atrybutem `hidden` — test liczy tylko `<h1>`, które nigdy nie są `hidden` (musi być ich najwyżej jeden).
 
-**Poza zakresem tej zmiany** (patrz #112, pkt. 3–4 propozycji): reguła `forced-colors` jest dodana tylko tam, gdzie już poprawiałem CSS (`admin/`, `families/`, `site/`) — nie ma jeszcze testu statycznego wymuszającego ją we wszystkich aplikacjach; `docs/a11y/audit.mjs` (zrzuty Playwright 320/1280 px) nadal renderuje tylko cztery pierwotne aplikacje — rozszerzenie o pozostałe wymaga uruchomienia z Playwright (nie jest zależnością projektu) i jest osobnym, ręcznym krokiem.
+**`forced-colors` we wszystkich aplikacjach (#112, pkt. 3).** Każdy `styles.css`, który zaznacza aktywną zakładkę przez `box-shadow` albo używa `.badge`, musi mieć `@media (forced-colors: active)` z obramowaniem/podkreśleniem zastępującym tło i cień — pilnuje tego `tests/a11y-static.test.js` (dla wszystkich aplikacji z `STATIC_PREFIXES`). Reguła dodana w `events/`, `panel/`, `ledger/`, `email/`, `reconciliation/`, `year-close/`, `audit/`, `data-export/`, `news/`, `import/`, `print/`. Reguły nie sprawdzono w przeglądarce z włączonym trybem wysokiego kontrastu Windows — do sprawdzenia ręcznie.
+
+**Klawiatura w oknach `families/` (#112, Playwright).** `tests/e2e/families-keyboard.spec.js`: skip link jako pierwszy Tab, dojście do karty gospodarstwa samą klawiaturą, Enter otwiera okno „Edytuj kontakt” (nazwa dostępna, fokus w oknie), Tab nie ustawia fokusu poza oknem, Esc zamyka okno i zwraca fokus na przycisk. Test używa syntetycznej sesji administratora, bo edycja kontaktu wymaga roli admin/board.
+
+**Nadal poza zakresem** (patrz #112, pkt. 4 propozycji): `docs/a11y/audit.mjs` (zrzuty 320/1280 px) renderuje tylko cztery pierwotne aplikacje — rozszerzenie o `families/`, `documents/`, `events/` wymaga ręcznego uruchomienia z Playwright i danych syntetycznych; przegląd z NVDA/VoiceOver (tabela przydziałów ról w `admin/`, karta gospodarstwa z dwojgiem opiekunów i rodzeństwem) — do wykonania.
 
 ## Poza zakresem przeglądu
 

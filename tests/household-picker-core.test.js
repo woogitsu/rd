@@ -2,6 +2,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildHouseholdLabels,
+  householdLabel,
+  shownSummary,
   classOptionsHtml,
   householdOptionsHtml,
   householdSummary,
@@ -75,4 +78,35 @@ test('householdSummary: bez e-maili ani adresów, pokazuje liczbę gospodarstw',
     'Nowak Jan · 2 gospodarstwa (opieka dzielona)'
   );
   assert.equal(householdSummary(null, []), '');
+});
+
+test('buildHouseholdLabels: rodzeństwo w 1A i 1B daje jedną etykietę z dwoma uczniami i klasami', () => {
+  const labels = buildHouseholdLabels([
+    { className: '1A', students: [{ id: 's-1', firstName: 'Anna', lastName: 'Kowalska', households: [{ householdId: 'h-1' }] }] },
+    { className: '1B', students: [{ id: 's-9', firstName: 'Piotr', lastName: 'Kowalski', households: [{ householdId: 'h-1' }, { householdId: 'h-7' }] }] },
+  ]);
+  assert.equal(labels.get('h-1'), 'Kowalska Anna (1A), Kowalski Piotr (1B)');
+  assert.equal(labels.get('h-7'), 'Kowalski Piotr (1B)');
+  assert.equal(labels.size, 2);
+});
+
+test('buildHouseholdLabels: brak danych (rola bez dostępu) daje pustą mapę', () => {
+  assert.equal(buildHouseholdLabels([]).size, 0);
+  assert.equal(buildHouseholdLabels(undefined).size, 0);
+});
+
+test('householdLabel: etykieta, skrócony numer zamiast pełnego UUID i brak przypisania', () => {
+  const labels = new Map([['h-1', 'Kowalska Anna (1A)']]);
+  assert.equal(householdLabel(labels, 'h-1'), 'Rodzina: Kowalska Anna (1A)');
+  assert.equal(householdLabel(labels, '0a1b2c3d-1111-2222-3333-444455556666'), 'Rodzina nr 0a1b2c3d');
+  assert.equal(householdLabel(labels, null), 'Nie przypisano rodziny');
+  assert.equal(householdLabel(null, 'h-1'), 'Rodzina nr h-1');
+});
+
+test('shownSummary: odmiana i informacja o kolejnych stronach', () => {
+  assert.equal(shownSummary(0, false), '');
+  assert.match(shownSummary(1, false), /^Pokazano 1 wpłatę — to wszystkie/);
+  assert.match(shownSummary(3, true), /^Pokazano 3 wpłaty, są kolejne/);
+  assert.match(shownSummary(12, true), /^Pokazano 12 wpłat,/);
+  assert.match(shownSummary(22, false), /^Pokazano 22 wpłaty /);
 });

@@ -24,6 +24,7 @@ Strona nie ma własnego API i nie zmienia danych.
 
 - Żądania z `credentials: "omit"`: brak ciasteczek sesji, brak `localStorage`.
 - Dane z API trafiają do DOM wyłącznie przez `textContent` (test w `tests/site-core.test.js`).
+- Kalendarz (#122): przy nieodwołanym wydarzeniu link „Dodaj do kalendarza (.ics)” (`/api/public/events/:id.ics`), nad listą linki „subskrybuj (webcal)” i „pobierz plik .ics” do `/api/public/events.ics` (host z bieżącego adresu; bez `schoolYearId` kanał zawiera opublikowane wydarzenia z wszystkich lat, do 200). Kanał prywatny (klasy, zebrania) poza zakresem (D-08).
 - Czas wyświetlany w strefie `Europe/Brussels`; wydarzenia zakończone są ukrywane (bez godziny końca: po zakończeniu dnia).
 - Puste stany: „Brak opublikowanych wydarzeń.”, „Brak opublikowanych protokołów.”.
 - Wydruk: nawigacja ukryta, treść protokołów rozwinięta.

@@ -5,8 +5,10 @@
 // pod obciążeniem współdzielonej maszyny CI), zgodnie z propozycją z issue.
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
 import {
-  dummyHash, loginQueueMetrics, MAX_CONCURRENT, MAX_PER_CLIENT, MAX_WAITING, scryptQueueDepth, ScryptQueueBusyError, WAIT_TIMEOUT_MS, withQueueClient, withSlot,
+  dummyHash, loginQueueMetrics, MAX_CONCURRENT, MAX_PER_CLIENT, MAX_WAITING, scryptQueueDepth, ScryptQueueBusyError, verifyPasswordOrDummy, WAIT_TIMEOUT_MS, withQueueClient, withSlot,
 } from '../src/pg/password.js';
 
 // Atrapa "scrypt": trzyma slot zajęty, dopóki test nie zwolni `release()`.
@@ -137,4 +139,29 @@ test('dummyHash: odrzucenie przez pełną kolejkę nie zostaje w cache (nie psuj
   release();
   await Promise.all(occupied);
   assert.match(await dummyHash(env), /^scrypt\$65536\$8\$1\$/);
+});
+
+// #203 pkt 4/5 (kryterium akceptacji „pierwsze żądanie z nieznanym e-mailem po starcie: jedno
+// obliczenie scrypt”): liczymy wywołania scrypt z node:crypto (atrapa deleguje do prawdziwej
+// funkcji), zamiast mierzyć czas — wynik nie zależy od obciążenia maszyny.
+test('verifyPasswordOrDummy: po rozgrzaniu dummyHash (jak przy starcie serwera) nieznany e-mail liczy dokładnie jedno scrypt; zimny cache dwa', async () => {
+  const env = { SCRYPT_COST_LOG2: '15' }; // osobny zestaw parametrów, więc pusty cache
+  const spy = mock.method(crypto, 'scrypt');
+  syncBuiltinESMExports();
+  try {
+    // Zimny start: hash fikcyjny + weryfikacja = 2 obliczenia (dlatego src/server.js rozgrzewa cache).
+    assert.equal(await verifyPasswordOrDummy('Syntetyczne haslo dlugie', '', env), false);
+    assert.equal(spy.mock.callCount(), 2);
+
+    // Rozgrzany cache: nieznany e-mail (brak hasha) i hash o niepoprawnych parametrach to po jednym scrypt.
+    spy.mock.resetCalls();
+    assert.equal(await verifyPasswordOrDummy('Syntetyczne haslo dlugie', null, env), false);
+    assert.equal(spy.mock.callCount(), 1);
+    spy.mock.resetCalls();
+    assert.equal(await verifyPasswordOrDummy('Syntetyczne haslo dlugie', 'scrypt$1048576$16$1$AAAA$AAAA', env), false);
+    assert.equal(spy.mock.callCount(), 1);
+  } finally {
+    spy.mock.restore();
+    syncBuiltinESMExports();
+  }
 });

@@ -123,14 +123,23 @@ Dostęp: admin, zarząd, skarbnik z MFA w zakresie roku (jak księga). **Przedst
 Raport KR ma już wersję HTML do druku (`GET /api/reports/audit?format=html`) i sekcję „Wynik wydarzeń”, a panel `ledger/` odczytuje wynik wydarzeń (`GET /api/ledger/cost-centers`). Nadal poza zakresem: widok dla przedstawiciela — czeka na decyzję D-08.
 ### Sprawozdanie roczne i przepływy środków (issue #125, część)
 
-Moduł `src/pg/annual-report.js`, trasy `src/pg/routes/financial-reports.js`. Bez migracji.
+Moduł `src/pg/annual-report.js`, trasy `src/pg/routes/financial-reports.js`. Migawki: migracja 0138.
 
 - `GET /api/reports/annual?schoolYearId=&format=json|html` — **projekt** sprawozdania dla zebrania ogólnego z bieżących danych: bilans otwarcia i zamknięcia (z podziałem rachunek/kasa jak `ledger_year_cash_summary`), przychody i wydatki według kategorii z preliminarzem (bieżąca linia `ledger_current_budget`) i różnicą, wynik roku, liczba wpisów i korekt, data ostatniego zatwierdzonego uzgodnienia (bez sald pośrednich). **Nie zawiera** opisów wpisów, powodów korekt, notatek preliminarza, identyfikatorów osób, danych rodzin ani wpłat per klasa. Kategoria bez wpisów i bez preliminarza jest pomijana. HTML A4 z `REPORT_CSS`, bez skryptów, CSP jak raport KR; PDF przez druk przeglądarki; nagłówek „Projekt sprawozdania … nie jest wersją zatwierdzoną”.
 - `GET /api/reports/cash-flow?schoolYearId=&granularity=month` — per miesiąc roku szkolnego i metoda (`bank`, `cash`, `card`, `other`): wpływy i wydatki netto, przeniesienia kasa ↔ rachunek, saldo narastające, saldo kasy (wszystko poza rachunkiem — jak `ledger_non_bank_net_at`) i rachunku. Korekta liczy się w miesiącu korygowanego wpisu (jak `ledger_balance_at`), więc saldo po ostatnim miesiącu = bilans zamknięcia.
 - Sumy obu raportów zgadzają się z `ledger_year_summary` (test).
 - Dostęp: zarząd i skarbnik z MFA w zakresie roku. `admin` (techniczny), `audit`, `principal` i przedstawiciel — `403` (D-08, D-09 nierozstrzygnięte; KR ma raport `/api/reports/audit`). Każde wygenerowanie zapisuje `report.annual.generated` / `report.cash_flow.generated` (rok, format — bez treści) w transakcji odczytu.
 
-Poza zakresem (wymaga migracji i decyzji D-21/D-04): niezmienne migawki `financial_report_snapshots` z SHA-256 i zatwierdzeniem przez drugą osobę, wskazanie migawki w punkcie `financial_report` zamknięcia roku, publikacja zatwierdzonej migawki, sekcja „Wynik wydarzeń” (po #117). Do tego czasu wydruk jest wyłącznie wewnętrznym projektem.
+Migawki sprawozdania (0138, `src/pg/report-snapshots.js`):
+
+- `POST /api/reports/annual/snapshots` `{ schoolYearId, supersedesId?, reason? }` — zapis niezmiennej migawki z bieżącej księgi (JSON zagregowany bez `generatedAt` + SHA-256 kanonicznego JSON-a) i zdarzenia `report.snapshot.created` w jednej transakcji REPEATABLE READ z odczytem sum. Zarząd lub skarbnik z MFA. Ta sama treść w roku = `200 replayed` (podwójne kliknięcie, ponowienie); rok z migawką wymaga `supersedesId` bieżącej migawki i powodu (`409 report_snapshot_supersedes_required`); zamknięty rok: `409 school_year_closed`.
+- `POST /api/reports/annual/snapshots/{id}/approve` — wyłącznie zarząd, świeże MFA, inna osoba niż autor (`403 four_eyes_required`), tylko migawka bez następcy; powtórka `200 replayed`; zdarzenie `report.snapshot.approved`.
+- `GET /api/reports/annual/snapshots?schoolYearId=` (lista bez treści) i `GET .../{id}?format=json|html` (druk A4; odczyt sprawdza SHA-256, przy niezgodności `500 report_snapshot_integrity_failed`).
+- Korekta = nowa migawka z `supersedes_id` i powodem (wolny tekst, poza audytem — DPIA); stara zostaje, w druku oznaczona jako zastąpiona. Późniejsze korekty księgi nie zmieniają zapisanej migawki. Tabele: `immutable_financial_record`, BEFORE TRUNCATE, zamrożenie roku; zasadę dwóch osób i łańcuch (jeden następca) pilnują też trigger i indeksy.
+- Punkt `financial_report` listy zamknięcia może wskazać zatwierdzoną bieżącą migawkę roku (`reportSnapshotId`, patrz YEAR_CLOSE.md). Migawki wchodzą do eksportu rocznego.
+- Wariant zachowawczy do decyzji D-09/D-12/D-21: zatwierdza tylko zarząd, KR i dyrekcja nie mają dostępu, opinia KR dołączana osobno, brak podpisu elektronicznego ani powiązania z uchwałą/dokumentem (kolumn `resolution_id`/`document_id` nie dodano).
+
+Poza zakresem: publikacja zatwierdzonej migawki w aktualnościach (decyzja zarządu), sekcja „Wynik wydarzeń” (po #117), widok w panelu (druk działa przez `format=html`).
 
 ### Eksport CSV (issue #7)
 

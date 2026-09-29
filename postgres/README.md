@@ -970,6 +970,30 @@ usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
 
+`0138_financial_report_snapshots.sql` (#125, część) dodaje niezmienne migawki
+sprawozdania rocznego: `financial_report_snapshots` (JSON zagregowany, SHA-256
+kanonicznego JSON-a, `supersedes_id` z powodem korekty) i
+`financial_report_snapshot_approvals` (zatwierdzenie przez inną osobę niż autor,
+tylko migawki bez następcy), widok `financial_report_snapshot_status` oraz
+opcjonalną kolumnę `school_year_closure_checklist.report_snapshot_id`. Tabele
+mają `immutable_financial_record`, `BEFORE TRUNCATE deny_truncate()` i
+zamrożenie roku; ta sama treść w roku może wystąpić raz (idempotencja),
+historia korekt jest łańcuchem. Skutki dla danych: tylko nowe obiekty i jedna
+kolumna NULL, żaden wiersz nie jest zmieniany. Wycofanie: usunięcie widoku,
+kolumny, tabel i funkcji strażników — na bazie z zatwierdzonymi migawkami
+wyłącznie po kopii zapasowej (retencja: D-04).
+
+`0136_student_household_reasons.sql` (#86) dodaje do `student_households`
+kolumny tekstowe `created_reason` i `ended_reason` (powód dodania i zakończenia
+członkostwa ucznia w gospodarstwie; zapisują je trasy
+`POST /api/students/{id}/households` i `.../households/{membershipId}/end`).
+Odtwarza `student_household_check` (wersja z 0023) z jednym dodatkiem:
+`created_reason` jest niezmienne po utworzeniu. Skutki dla danych: istniejące
+wiersze dostają NULL, żaden nie jest zmieniany ani usuwany; kolumny to wolny
+tekst (inwentarz prywatności i lista DPIA jak dla `enrollments.ended_reason`).
+Wycofanie: na pustej bazie usunięcie kolumn i przywrócenie funkcji z 0023; na
+bazie z danymi tylko po kopii.
+
 `0124_login_rate_limit_pair_scope.sql` (#126) poszerza CHECK na
 `login_rate_limits.scope_type` o `'pair'` — SHA-256 pary (znormalizowany
 e-mail, IP) z osobną dziedziną skrótu. Blokada logowania zakładana jest teraz
@@ -980,3 +1004,10 @@ migracji są ignorowane i wygasają po dobie; w bazie nadal tylko skróty
 (retencja bez zmian: usuwanie po dobie). Wycofanie: usunięcie wierszy `'pair'` i
 przywrócenie CHECK `IN ('email','ip')` (kod aplikacji sprzed zmiany blokował
 konto po samym e-mailu).
+
+
+`0132_keyset_list_indexes.sql` (#159) dodaje pięć indeksów pod listy z kursorem
+keyset (konta, przydziały, zaproszenia, dokumenty, kampanie e-mail; dziennik
+audytu ma indeksy z 0059). Skutki dla danych: wyłącznie `CREATE INDEX`, żaden
+wiersz nie jest zmieniany; zapisy do tych tabel utrzymują dodatkowe indeksy.
+Wycofanie: `DROP INDEX` każdego z nich (bezpieczne). Kontrakt list: docs/API.md.

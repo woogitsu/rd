@@ -127,3 +127,9 @@ td:first-child, th:first-child { width: 3rem; }
   body[data-layout="a5x2"] .print-card:nth-child(even) { break-after: page; page-break-after: always; }
   body[data-layout="a5x2"] .print-card:last-child { break-after: auto; page-break-after: auto; }
 }
+
+/* Tryb wysokiego kontrastu Windows (#112): aktywna zakładka nie może polegać
+   na box-shadow, który w forced-colors znika. */
+@media (forced-colors: active) {
+  nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
+}
