@@ -23,6 +23,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 ## Dokumentacja
 
 - [Plan rozwoju](docs/ROADMAP.md)
+- [Macierz testów: moduł × scenariusz](docs/TESTING.md)
 - [Model funkcjonalny i uprawnienia](docs/PRODUCT.md)
 - [Architektura i dane](docs/ARCHITECTURE.md)
 - [Migracja na Railway](docs/RAILWAY_MIGRATION.md)

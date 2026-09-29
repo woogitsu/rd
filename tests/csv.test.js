@@ -2,7 +2,7 @@
 // tekstowych, kwoty z centów jako liczby (także ujemne). Dane syntetyczne.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { csvCell, csvHeader, csvRow, formatEuro } from '../src/pg/csv.js';
+import { CSV_BOM, csvBytes, csvCell, csvHeader, csvResponse, csvRow, formatEuro, safeFileSegment, toCsv } from '../src/pg/csv.js';
 
 test('amount columns stay numbers, including negative corrections', () => {
   assert.equal(csvCell(-1250, 'amount'), '-12,50');
@@ -56,4 +56,46 @@ test('csvRow applies the column type per cell', () => {
   assert.equal(csvHeader(columns), 'opis;kwota_eur;korekty_eur');
   assert.equal(csvRow(columns, ['-korekta; "x"', 5000, -1250]), `"'-korekta; ""x""";50,00;-12,50`);
   assert.throws(() => csvRow(columns, ['x', 1]), /csv_row_length_mismatch/);
+});
+
+test('toCsv: CRLF, preamble/trailer, pusty zestaw wierszy, bez BOM', () => {
+  const columns = [{ header: 'opis', type: 'text' }, { header: 'kwota_eur', type: 'amount' }];
+  assert.equal(toCsv(columns, [['a', 100], ['=x', -250]]), "opis;kwota_eur\r\na;1,00\r\n'=x;-2,50\r\n");
+  assert.equal(toCsv(columns, []), 'opis;kwota_eur\r\n');
+  assert.equal(toCsv(columns, [['a', 1]], { preamble: ['P', ''], trailer: ['', 'T'] }), 'P\r\n\r\nopis;kwota_eur\r\na;0,01\r\n\r\nT\r\n');
+  assert.equal(toCsv(columns, [['a', 1]]).startsWith(CSV_BOM), false);
+});
+
+test('amount_or_blank: brak wartości to pusta komórka, zero i ujemne to liczby', () => {
+  assert.equal(csvCell(null, 'amount_or_blank'), '');
+  assert.equal(csvCell(undefined, 'amount_or_blank'), '');
+  assert.equal(csvCell(0, 'amount_or_blank'), '0,00');
+  assert.equal(csvCell(-1250, 'amount_or_blank'), '-12,50');
+});
+
+test('kolumna kwot nie przepuszcza tekstu-formuły, kolumna tekstu neutralizuje tę samą treść', () => {
+  const amountCol = [{ header: 'k', type: 'amount' }];
+  const textCol = [{ header: 'k', type: 'text' }];
+  assert.throws(() => toCsv(amountCol, [['=1+1']]), /unsafe_integer/);
+  assert.equal(toCsv(textCol, [['-12,50']]), "k\r\n'-12,50\r\n");
+  assert.equal(toCsv(amountCol, [[-1250]]), 'k\r\n-12,50\r\n');
+});
+
+test('csvBytes dodaje jeden BOM; csvResponse ustawia nagłówki załącznika', async () => {
+  assert.equal(csvBytes('a'), `${CSV_BOM}a`);
+  assert.equal(csvBytes(`${CSV_BOM}a`), `${CSV_BOM}a`);
+  const response = csvResponse('Żółć;1\r\n', 'plik.csv', { 'X-Test': '1' });
+  assert.equal(response.headers.get('content-type'), 'text/csv; charset=utf-8');
+  assert.equal(response.headers.get('content-disposition'), 'attachment; filename="plik.csv"');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(response.headers.get('x-test'), '1');
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf]);
+  assert.equal(new TextDecoder().decode(bytes.slice(3)), 'Żółć;1\r\n');
+});
+
+test('safeFileSegment zostawia tylko ASCII bezpieczne w nazwie pliku', () => {
+  assert.equal(safeFileSegment('y-2026_27'), 'y-2026_27');
+  assert.equal(safeFileSegment('../a"b\r\nżó'), '___a_b____');
 });
