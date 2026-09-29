@@ -6,6 +6,7 @@
 //        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
+//   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed
 //   POST /api/documents/{id}/supersede  { replacementDocumentId, reason } — issue #82
 //   POST /api/documents/{id}/void       { reason } — issue #82
 //   POST /api/documents/{id}/description  tytuł, kategoria, data dokumentu (issue #76)
@@ -70,6 +71,22 @@ const DOWNLOAD_HEADERS = Object.freeze({
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
+});
+
+// Podgląd (issue #89): tylko typy, które wcześniej przeszły walidację sygnatury i
+// struktury przy przesyłaniu. Lista zamknięta, niezależna od ALLOWED_TYPES.
+const PREVIEW_TYPES = Object.freeze(['application/pdf', 'image/png', 'image/jpeg']);
+// Podgląd PDF ładuje się w <iframe sandbox> tego samego originu, więc tylko ta odpowiedź
+// dopuszcza ramkę z własnego originu; baseline serwera (X-Frame-Options: DENY) zostaje
+// dla całej reszty. CSP `sandbox` bez `allow-scripts`: nawet gdyby plik zawierał aktywną
+// treść, którą heurystyka pominęła, nie ma skryptów ani dostępu do originu panelu.
+const PREVIEW_HEADERS = Object.freeze({
+  'Cache-Control': 'no-store',
+  'Content-Security-Policy': "sandbox; default-src 'none'; frame-ancestors 'self'",
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Referrer-Policy': 'no-referrer',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
 });
 
 // Czy kontekst (sesja + aktywne przydziały) pozwala na dostęp do dokumentu.
@@ -161,7 +178,7 @@ export async function handle(request, env, url, json) {
   const match = DOCUMENT_PATH.exec(url.pathname);
   if (!match) return null;
   if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
-  return match[2] ? download(request, env, match[1], json) : metadata(request, env, match[1], json);
+  return match[2] ? download(request, env, match[1], json, url) : metadata(request, env, match[1], json);
 }
 
 // Ładuje dokument i sprawdza dostęp. null = 404 (nieznany LUB niedozwolony).
@@ -200,13 +217,19 @@ async function metadata(request, env, id, json) {
   return json({ document: found.doc, supersedes, descriptionHistory: history.rows.map(toDescription) });
 }
 
-async function download(request, env, id, json) {
+async function download(request, env, id, json, url) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return json({ error: 'unauthenticated' }, 401);
+  // Parametr sprawdzamy po sesji (brak sesji = 401 bez ujawniania czegokolwiek),
+  // ale przed dostępem do bucketu. Wartość inna niż `inline`/`attachment` = 400.
+  const disposition = url.searchParams.has('disposition') ? url.searchParams.get('disposition') : 'attachment';
+  if (disposition !== 'inline' && disposition !== 'attachment') return json({ error: 'invalid_disposition' }, 400);
+  const inline = disposition === 'inline';
   if (!env.storage) return json({ error: 'storage_unavailable' }, 503);
   const found = await authorizedDocument(env, context, id, { auditDenied: true });
   if (!found) return json({ error: 'not_found' }, 404);
   const { doc, objectKey } = found;
+  if (inline && !PREVIEW_TYPES.includes(doc.mimeType)) return json({ error: 'document_preview_unsupported' }, 400);
 
   let object;
   try {
@@ -230,18 +253,24 @@ async function download(request, env, id, json) {
     error.code = 'document_integrity_mismatch';
     throw error;
   }
-  // Dziennik odczytu przed wydaniem treści; błąd zapisu = brak pobrania.
-  await insertAuditEvent(env.db, {
-    actorId: context.session.user.id, action: 'document.downloaded', entityType: 'document', entityId: doc.id,
-    metadata: { kind: doc.kind, schoolYearId: doc.schoolYearId, classId: doc.classId, sessionId: context.session.sessionId },
-  });
+  // Dziennik odczytu przed wydaniem treści; błąd zapisu = brak pobrania/podglądu.
+  const auditMetadata = { kind: doc.kind, schoolYearId: doc.schoolYearId, classId: doc.classId, sessionId: context.session.sessionId };
+  if (inline) {
+    await insertAuditEvent(env.db, {
+      actorId: context.session.user.id, action: 'document.viewed', entityType: 'document', entityId: doc.id, metadata: auditMetadata,
+    });
+  } else {
+    await insertAuditEvent(env.db, {
+      actorId: context.session.user.id, action: 'document.downloaded', entityType: 'document', entityId: doc.id, metadata: auditMetadata,
+    });
+  }
   return new Response(object.body, {
     status: 200,
     headers: {
-      ...DOWNLOAD_HEADERS,
+      ...(inline ? PREVIEW_HEADERS : DOWNLOAD_HEADERS),
       'Content-Type': doc.mimeType,
       'Content-Length': String(object.body.length),
-      'Content-Disposition': `attachment; filename="${downloadFilename(doc.id, doc.mimeType)}"`,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${downloadFilename(doc.id, doc.mimeType)}"`,
     },
   });
 }

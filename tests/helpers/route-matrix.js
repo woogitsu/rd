@@ -825,6 +825,7 @@ export const ROUTE_MATRIX = Object.freeze([
   ledgerRead('ledger.summary', '/api/ledger/summary?schoolYearId=:year', '/summary', []),
   ledgerRead('ledger.budget', '/api/ledger/budget?schoolYearId=:year', '/budget', []),
   ledgerRead('ledger.exportCsv', '/api/ledger/export.csv?schoolYearId=:year', '/export.csv', ['W1']),
+  ledgerRead('ledger.exportXlsx', '/api/ledger/export.xlsx?schoolYearId=:year', '/export.xlsx', []),
   {
     id: 'ledger.create', module: 'ledger', method: 'POST', path: '/api/ledger', targets: YEAR_TARGETS,
     allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
