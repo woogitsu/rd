@@ -761,7 +761,7 @@ async function listSchoolYears(env, json) {
   });
 }
 
-const AUDIT_ACTIONS = [
+export const AUDIT_ACTIONS = [
   'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
   'school_year.grants_expired', 'school_year.created', 'class.created',
   'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued',

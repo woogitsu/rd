@@ -94,7 +94,9 @@ async function submitting(form, work) {
 // żeby rozjazd stanu sesji z odpowiedzią panelu nie dał pętli przekierowań.
 async function goNext(state, { initial = false } = {}) {
   lastState = state;
-  const view = nextView(state);
+  // Wejście z „#next=…” (initial) przy koncie bez czynnika MFA to odesłanie z panelu
+  // kodem mfa_enrollment_required — od razu konfiguracja, nie lista paneli.
+  const view = nextView(state, { mfaWantedByPanel: initial && Boolean(returnTo) });
   // Przejście do kolejnego etapu: pola haseł puste, „Pokaż hasło” wyłączone (#197).
   clearSensitiveViews(document);
   if (view === "start" && returnTo && !initial) {

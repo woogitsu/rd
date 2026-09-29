@@ -269,6 +269,13 @@ export function createNodeHandler({
         response.end(request.method === 'HEAD' ? undefined : ROBOTS_TXT_BODY);
         return;
       }
+      // Przegląd demo: przeglądarka pyta o /favicon.ico przy każdej stronie, a 404 kończył
+      // się błędem w konsoli na każdym ekranie. Aplikacja nie ma ikony — 204 bez treści.
+      if (url.pathname === '/favicon.ico' && ['GET', 'HEAD'].includes(request.method)) {
+        response.writeHead(204, { ...baseline, 'Cache-Control': 'public, max-age=86400' });
+        response.end();
+        return;
+      }
       if (await serveStatic(request, response, url, distRoot, baseline)) return;
       const method = request.method || 'GET';
       // #126 (SR-13): ogólny limiter PRZED odczytem ciała i zapytaniem do bazy.

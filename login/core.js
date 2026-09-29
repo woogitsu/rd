@@ -118,12 +118,17 @@ export function nextFromFragment(hash) {
 }
 
 // Następny widok po zalogowaniu lub odczycie stanu sesji.
-export function nextView(state) {
+// `mfaWantedByPanel`: panel odesłał tu zalogowane konto kodem mfa_enrollment_required
+// (wejście na stronę z „#next=…”, bez wymogu MFA dla roli z MFA_REQUIRED_ROLES — np. Komisja
+// Rewizyjna i raport roczny). Bez tego konto lądowało na liście paneli bez żadnego
+// wyjaśnienia, a po kliknięciu „Powrót” wracało do odmowy.
+export function nextView(state, { mfaWantedByPanel = false } = {}) {
   if (!state || state.authenticated === false) return "login";
   if (state.mfaVerified) return state.mustChangePassword ? "change" : "start";
   if (state.mfaEnrolled) return "mfa";
   if (state.mfaRequiredByRole || state.mfaRequired) return "enroll";
-  return state.mustChangePassword ? "change" : "start";
+  if (state.mustChangePassword) return "change";
+  return mfaWantedByPanel ? "enroll" : "start";
 }
 
 // #161: dowolne zalogowane konto bez potwierdzonego czynnika może dobrowolnie

@@ -264,3 +264,17 @@ test('#197: main.js czyści dane przy wylogowaniu, powrocie, hashchange i pagehi
   assert.match(main.slice(main.indexOf('.back-to-login')), /clearSensitiveViews\(document\)/);
   assert.match(main.slice(main.indexOf('"enroll-confirm-form"')), /enrollmentConfirmError\(/);
 });
+
+// Przegląd demo: Komisja Rewizyjna bez MFA (rola poza MFA_REQUIRED_ROLES) dostawała 403
+// mfa_enrollment_required z raportu rocznego, wracała na /login/#next=/audit/ i widziała
+// zwykłą listę paneli — bez wyjaśnienia i bez drogi do konfiguracji.
+test('nextView: odesłanie z panelu (mfaWantedByPanel) prowadzi konto bez czynnika do konfiguracji MFA', () => {
+  const noFactor = { authenticated: true, mfaVerified: false, mfaEnrolled: false, mfaRequired: false };
+  assert.equal(nextView(noFactor), 'start');
+  assert.equal(nextView(noFactor, { mfaWantedByPanel: true }), 'enroll');
+  // Nie zmienia pozostałych przejść.
+  assert.equal(nextView({ authenticated: false }, { mfaWantedByPanel: true }), 'login');
+  assert.equal(nextView({ ...noFactor, mfaEnrolled: true }, { mfaWantedByPanel: true }), 'mfa');
+  assert.equal(nextView({ ...noFactor, mustChangePassword: true }, { mfaWantedByPanel: true }), 'change');
+  assert.equal(nextView({ authenticated: true, mfaVerified: true, mfaEnrolled: true }, { mfaWantedByPanel: true }), 'start');
+});
