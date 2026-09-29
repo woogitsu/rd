@@ -39,7 +39,7 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     async function call(path, cookie, { method = 'GET', body, key } = {}) {
       const response = await handlePgRequest(request(path, {
         method, cookie, body, headers: key ? { 'Idempotency-Key': key } : {},
-      }), { db });
+      }), { db, APP_ENV: 'test' });
       const text = await response.text();
       return { status: response.status, body: text ? JSON.parse(text) : null };
     }

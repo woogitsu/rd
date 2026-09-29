@@ -13,6 +13,7 @@
 // zapisywać jej w repo, CI, logach ani zgłoszeniach.
 
 import { createHash } from 'node:crypto';
+import { isProductionLikeEnv } from '../app-env.js';
 import { csvRow, toCsv } from './csv.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
@@ -758,9 +759,9 @@ export function verifyBundle(bundle) {
 // ---------------------------------------------------------------------------
 // Odtworzenie do pustej bazy (test odtworzenia)
 
-// Blokada środowiska produkcyjnego dla skryptów odtwarzania.
+// Blokada środowiska produkcyjnego dla skryptów odtwarzania (#166: także brak/nieznany APP_ENV).
 export function assertRestoreAllowed({ appEnv, allowProduction = false } = {}) {
-  if (appEnv === 'production' && !allowProduction) throw new ExportError('production_restore_requires_allow_production');
+  if (isProductionLikeEnv(appEnv) && !allowProduction) throw new ExportError('production_restore_requires_allow_production');
 }
 
 async function assertEmptyTarget(tx) {
