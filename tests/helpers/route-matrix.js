@@ -1150,6 +1150,14 @@ export const ROUTE_MATRIX = Object.freeze([
     build: () => ({ path: '/api/public/news' }),
     visible: () => [], contains: () => ['PUBLIC'],
   },
+  // #116: stały adres wpisu — ta sama zawartość dla każdego aktora (też bez sesji);
+  // szkic, nieopublikowany, wycofany i nieistniejący = identyczne 404 (test w pg-news.test.js).
+  {
+    id: 'news.publicItem', module: 'news', method: 'GET', path: '/api/public/news/:postId', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'static', object: { kind: 'newsPost', stage: 'published' },
+    build: ({ obj }) => ({ path: `/api/public/news/${obj.postId}` }),
+    visible: () => [], contains: () => ['PUBLIC'],
+  },
   {
     id: 'news.list', module: 'news', method: 'GET', path: '/api/news?schoolYearId=:year', targets: YEAR_TARGETS,
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, repA: SCHOOL_Y1, repB: SCHOOL_Y1 }, mfa: false, ok: 200, deny: 403,

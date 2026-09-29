@@ -262,3 +262,67 @@ export function minutesUrl(schoolYearId) {
 }
 
 export const NEWS_URL = "/api/public/news";
+
+// ---------- #116: stały adres wpisu i archiwum aktualności ----------
+//
+// Stały adres to fragment `#wpis-<id>` strony /site/ (bez nowej trasy HTML):
+// działa po wklejeniu do wiadomości, a identyfikator jest tym samym `id`, które
+// zwraca publiczne API. W adresie nie ma identyfikatorów użytkowników, klas,
+// dokumentów ani zgód. Treść wpisu pobiera GET /api/public/news/{id}, który
+// czyta wyłącznie widok public_news; wycofany, nieopublikowany i nieistniejący
+// wpis dają tę samą odpowiedź 404 i ten sam komunikat (bez treści).
+
+export const NEWS_UNAVAILABLE_MESSAGE =
+  "Ten wpis nie jest dostępny. Mógł zostać wycofany albo adres jest nieprawidłowy.";
+
+const POST_HASH_PATTERN = /^#wpis-([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/;
+
+export function newsAnchorId(id) {
+  if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error("invalid_post_id");
+  return `wpis-${id}`;
+}
+
+// Względny adres stałego linku (do atrybutu href): "#wpis-<id>".
+export function newsPermalink(id) {
+  return `#${newsAnchorId(id)}`;
+}
+
+// location.hash -> identyfikator wpisu albo null (inny fragment, np. #wydarzenia).
+export function newsIdFromHash(hash) {
+  const match = typeof hash === "string" ? POST_HASH_PATTERN.exec(hash) : null;
+  return match ? match[1] : null;
+}
+
+export function newsPostUrl(id) {
+  if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error("invalid_post_id");
+  return `/api/public/news/${encodeURIComponent(id)}`;
+}
+
+// Odpowiedź GET /api/public/news/{id}: { post } -> model widoku albo null.
+export function newsPostFromPayload(payload) {
+  return normalizeNews(payload?.post);
+}
+
+// Archiwum: rok wskazany jawnie w `?rok=`; bez niego strona pokazuje
+// najnowsze wpisy ze wszystkich lat (limit po stronie API).
+export function newsYearFromSearch(search) {
+  const value = new URLSearchParams(search).get("rok");
+  return value && ID_PATTERN.test(value) ? value : null;
+}
+
+export function newsListUrl(schoolYearId = null) {
+  if (schoolYearId === null) return NEWS_URL;
+  if (!ID_PATTERN.test(schoolYearId)) throw new Error("invalid_school_year");
+  return `${NEWS_URL}?${new URLSearchParams({ schoolYearId, limit: "50" })}`;
+}
+
+// ZAŁOŻENIE (do czasu publicznej listy lat szkolnych, #78): archiwum
+// proponuje bieżący rok szkolny i kilka poprzednich (RRRR-RRRR, rok od
+// 1 września). Rok bez wpisów pokazuje zwykły pusty stan.
+export function archiveYears(now = new Date(), count = 6) {
+  const current = defaultSchoolYearId(now);
+  const match = /^(\d{4})-(\d{4})$/.exec(current);
+  if (!match) return [current];
+  const start = Number(match[1]);
+  return Array.from({ length: count }, (_, i) => `${start - i}-${start - i + 1}`);
+}

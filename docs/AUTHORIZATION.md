@@ -174,6 +174,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/email/preferences?t=:token` | publiczna, bez sesji | nie | — | tylko odczyt kategorii z tokenu, bez skutku; zły/zmieniony token → 400; limit żądań → 429 (#110) |
 | `POST /api/email/preferences?t=:token` | publiczna, bez sesji; zwolniona z `Origin` (jak webhook) | nie | — | wypisanie z kategorii kampanii, idempotentne; zły/zmieniony token → 400; limit żądań → 429 (#110) |
 | `GET /api/public/news` | publiczna | nie | — | tylko opublikowane wpisy |
+| `GET /api/public/news/:postId` | publiczna | nie | 404 | tylko opublikowana wersja niewycofanego wpisu (widok `public_news`); szkic, nieopublikowany, wycofany i nieznany = identyczne 404 (#116) |
 | `GET /api/public/news-photos/:photoId/web` | publiczna | nie | 404 | tylko zdjęcie zweryfikowane w opublikowanej wersji; nieznane/niepubliczne = 404 identyczne (#96) |
 | `GET /api/public/news-photos/:photoId/thumb` | publiczna | nie | 404 | jak wyżej |
 | `GET /api/news?schoolYearId=:year` | admin, zarząd — cały rok 1; przedstawiciel — rok 1, tylko wpisy własnej klasy | nie | 403 | |

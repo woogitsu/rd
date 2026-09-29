@@ -202,16 +202,108 @@ async function loadMinutes() {
 // opublikowanych wpisów wyglądają dla odwiedzającego tak samo: pusty stan,
 // nie zniknięcie sekcji.
 async function loadNews() {
+  const schoolYearId = newsYearFromSearch(window.location.search);
   try {
-    const data = await getJson(NEWS_URL);
-    renderNews(newsItems(data));
+    const data = await getJson(newsListUrl(schoolYearId));
+    const items = newsItems(data);
+    renderNews(items);
+    decorateNews(items);
   } catch (error) {
     if (error instanceof HttpError && (error.status === 404 || error.status === 405)) renderNews([]);
     else setStatus("news-status", "Nie udało się wczytać aktualności. Spróbuj ponownie później.", true);
   } finally {
     done("aktualnosci");
   }
+  renderNewsArchive(schoolYearId);
+  await showLinkedPost();
 }
+
+// #116: stały adres wpisu (#wpis-<id>) i archiwum według roku szkolnego.
+// Nowe funkcje czyste są w core.js; tu tylko DOM (wyłącznie textContent).
+import {
+  NEWS_UNAVAILABLE_MESSAGE,
+  archiveYears,
+  newsIdFromHash,
+  newsAnchorId,
+  newsListUrl,
+  newsPermalink,
+  newsPostFromPayload,
+  newsPostUrl,
+  newsYearFromSearch,
+} from "./core.js";
+
+// Wpisy z listy dostają kotwicę i stały link; kolejność i filtr jak w renderNews.
+function decorateNews(items) {
+  const entries = byId("news-list").querySelectorAll("li.news");
+  items.forEach((item, index) => {
+    const entry = entries[index];
+    if (!entry || !item.id) return;
+    entry.id = newsAnchorId(item.id);
+    const link = el("a", "Stały link do wpisu", "news-permalink");
+    link.href = newsPermalink(item.id);
+    const p = el("p", null, "news-permalink-row");
+    p.append(link);
+    entry.append(p);
+  });
+}
+
+function renderNewsArchive(currentYear) {
+  const nav = byId("news-archive");
+  if (!nav) return;
+  nav.replaceChildren();
+  const list = el("ul", null, "news-archive-list");
+  const all = el("li");
+  const allLink = el("a", "Najnowsze");
+  allLink.href = "?#aktualnosci";
+  if (!currentYear) allLink.setAttribute("aria-current", "page");
+  all.append(allLink);
+  list.append(all);
+  for (const id of archiveYears()) {
+    const item = el("li");
+    const link = el("a", `Rok szkolny ${formatSchoolYear(id)}`);
+    link.href = `?${new URLSearchParams({ rok: id })}#aktualnosci`;
+    if (id === currentYear) link.setAttribute("aria-current", "page");
+    item.append(link);
+    list.append(item);
+  }
+  nav.append(list);
+  nav.hidden = false;
+}
+
+// Wybrany wpis pobieramy z GET /api/public/news/{id}. 404 (wycofany,
+// nieopublikowany, nieistniejący) i każdy inny błąd odpowiedzi dają ten sam
+// komunikat bez treści; nic nie jest pokazywane z pamięci podręcznej listy.
+async function showLinkedPost() {
+  const box = byId("news-linked");
+  if (!box) return;
+  box.replaceChildren();
+  box.hidden = true;
+  const id = newsIdFromHash(window.location.hash);
+  if (!id) return;
+  box.hidden = false;
+  try {
+    const post = newsPostFromPayload(await getJson(newsPostUrl(id)));
+    if (!post) throw new HttpError(404);
+    box.append(el("h3", "Wybrany wpis", "news-linked-title"));
+    const entry = el("article", null, "news");
+    if (post.publishedAt) {
+      const date = el("time", formatDate(post.publishedAt), "news-date");
+      date.dateTime = post.publishedAt.toISOString();
+      entry.append(date);
+    }
+    entry.append(el("h4", post.title, "news-title"), el("p", post.body, "news-body"));
+    const gallery = renderPhotos(post.photos);
+    if (gallery) entry.append(gallery);
+    box.append(entry);
+    box.scrollIntoView?.();
+  } catch (error) {
+    const unavailable = error instanceof HttpError && (error.status === 404 || error.status === 400);
+    box.append(el("p", unavailable ? NEWS_UNAVAILABLE_MESSAGE : "Nie udało się wczytać wpisu. Spróbuj ponownie później.", "status"));
+    box.firstChild.setAttribute("role", unavailable ? "status" : "alert");
+  }
+}
+
+window.addEventListener("hashchange", () => { showLinkedPost(); });
 
 // Closed <details> hide minutes on paper: open them for printing, then restore.
 let openedForPrint = [];
