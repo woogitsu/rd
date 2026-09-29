@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  ApiError, MESSAGES, authAction, createApiClient, errorMessage, isRetryable, loginUrl, safeNextPath,
+  ApiError, MESSAGES, authAction, createApiClient, errorMessage, isRetryable, loginUrl, parseRetryAfter, safeNextPath,
 } from '../shared/api.js';
 import { nextFromFragment } from '../login/core.js';
 
@@ -255,7 +255,7 @@ test('panele nie wołają fetch bezpośrednio — wszystkie żądania przez shar
     for (const name of sources) {
       const text = readFileSync(join(ROOT, panel, name), 'utf8');
       assert.doesNotMatch(text, /\bfetch\s*\(/, `${panel}/${name} woła fetch bezpośrednio`);
-      if (name === 'main.js') assert.doesNotMatch(text, /Błąd serwera \(\$\{/, `${panel}/${name} ma lokalny fallback „Błąd serwera (…)”`);
+      assert.doesNotMatch(text, /Błąd serwera \(\$\{/, `${panel}/${name} ma lokalny fallback „Błąd serwera (…)”`);
       if (name === 'main.js' && /from ["']\.\.\/shared\/api\.js["']/.test(text)) importsClient = true;
     }
     assert.ok(importsClient, `${panel}/main.js nie importuje shared/api.js`);
@@ -269,4 +269,143 @@ test('klient API nie używa localStorage ani sessionStorage', () => {
   for (const file of ['shared/api.js', 'shared/messages.js']) {
     assert.doesNotMatch(readFileSync(join(ROOT, file), 'utf8').replace(/^\s*\/\/.*$/gm, ''), /localStorage|sessionStorage|indexedDB|document\.cookie/);
   }
+});
+
+// --- Retry-After, sieć, mfa_stale, niezapisany formularz (#99) ---------------------------------
+
+function withHeaders(status, body, headers) {
+  const response = jsonResponse(status, body);
+  response.headers = { get: (name) => headers[name] ?? null };
+  return response;
+}
+
+function clientWith(response, extra = {}) {
+  const navigations = [];
+  const warnings = [];
+  const api = createApiClient({
+    fetchImpl: async () => (typeof response === 'function' ? response() : response),
+    getLocation: () => fakeLocation('/meetings/', '?y=2026-2027'),
+    navigate: (url) => navigations.push(url),
+    warnUnsaved: (url, message) => warnings.push({ url, message }),
+    ...extra,
+  });
+  return { ...api, navigations, warnings };
+}
+
+test('parseRetryAfter: sekundy i data HTTP, ograniczone do godziny', () => {
+  assert.equal(parseRetryAfter('30'), 30);
+  assert.equal(parseRetryAfter(' 900 '), 900);
+  assert.equal(parseRetryAfter('999999'), 3600);
+  assert.equal(parseRetryAfter('0'), null);
+  assert.equal(parseRetryAfter('-5'), null);
+  assert.equal(parseRetryAfter('jutro'), null);
+  assert.equal(parseRetryAfter(null), null);
+  assert.equal(parseRetryAfter('Thu, 01 Jan 2026 00:01:30 GMT', Date.parse('Thu, 01 Jan 2026 00:00:00 GMT')), 90);
+  assert.equal(parseRetryAfter('Thu, 01 Jan 2026 00:00:00 GMT', Date.parse('Thu, 01 Jan 2026 00:01:00 GMT')), null);
+});
+
+test('429 i 503 z Retry-After: komunikat z czasem oczekiwania, ponawialne, bez przekierowania', async () => {
+  const limited = clientWith(withHeaders(429, { error: 'rate_limited' }, { 'Retry-After': '45' }));
+  await assert.rejects(limited.request('/api/x'), (error) => {
+    assert.equal(error.status, 429);
+    assert.equal(error.retryAfter, 45);
+    assert.match(error.message, /Zbyt wiele prób/);
+    assert.match(error.message, /za ok\. 45 s\./);
+    assert.equal(isRetryable(error), true);
+    return true;
+  });
+  const busy = clientWith(withHeaders(503, { error: 'service_unavailable' }, { 'Retry-After': '120' }));
+  await assert.rejects(busy.request('/api/x'), (error) => error.retryAfter === 120 && /za ok\. 2 min\./.test(error.message));
+  const noHeader = clientWith(jsonResponse(503, { error: 'service_unavailable' }));
+  await assert.rejects(noHeader.request('/api/x'), (error) => error.retryAfter === null && !/za ok\./.test(error.message));
+  const other = clientWith(withHeaders(409, { error: 'conflict' }, { 'Retry-After': '10' }));
+  await assert.rejects(other.request('/api/x'), (error) => error.retryAfter === null && !/za ok\./.test(error.message));
+  assert.deepEqual([limited.navigations, busy.navigations], [[], []]);
+});
+
+test('sieć niedostępna: komunikat po polsku i ponawialne', async () => {
+  const offline = clientWith(() => { throw new TypeError('Failed to fetch'); });
+  await assert.rejects(offline.request('/api/x', { method: 'POST', body: { a: 1 }, idempotencyKey: 'k-1' }), (error) => {
+    assert.equal(error.network, true);
+    assert.match(error.message, /Brak połączenia/);
+    assert.equal(isRetryable(error), true);
+    return true;
+  });
+});
+
+test('403 mfa_stale (krok w górę) nie przekierowuje, panel dostaje kod', async () => {
+  const stale = clientWith(jsonResponse(403, { error: 'mfa_stale' }));
+  await assert.rejects(stale.request('/api/export'), (error) => {
+    assert.equal(error.code, 'mfa_stale');
+    assert.equal(error.authAction, null);
+    assert.equal(error.message, MESSAGES.mfa_stale);
+    return true;
+  });
+  assert.deepEqual(stale.navigations, []);
+});
+
+test('Idempotency-Key trafia do nagłówka POST, a ciało JSON jest serializowane', async () => {
+  const seen = [];
+  const api = createApiClient({
+    fetchImpl: async (url, init) => { seen.push(init); return jsonResponse(201, { ok: true }); },
+    getLocation: () => fakeLocation('/ledger/'),
+    navigate: () => {},
+    hasUnsavedChanges: () => false,
+  });
+  await api.request('/api/payments', { method: 'POST', body: { amountCents: 1000 }, idempotencyKey: 'pay-1' });
+  assert.equal(seen[0].headers['Idempotency-Key'], 'pay-1');
+  assert.equal(seen[0].body, '{"amountCents":1000}');
+});
+
+test('401 przy niezapisanym formularzu: ostrzeżenie zamiast przekierowania, raz na stronę', async () => {
+  const dirty = clientWith(jsonResponse(401, { error: 'unauthenticated' }), { hasUnsavedChanges: () => true });
+  for (let i = 0; i < 3; i += 1) {
+    await assert.rejects(dirty.request('/api/x', { method: 'POST', body: { a: 1 } }), (error) => error.authAction === 'login');
+  }
+  assert.deepEqual(dirty.navigations, []);
+  assert.equal(dirty.warnings.length, 1);
+  assert.equal(dirty.warnings[0].url, '/login/#next=%2Fmeetings%2F%3Fy%3D2026-2027');
+  assert.match(dirty.warnings[0].message, /niezapisane zmiany/);
+
+  const clean = clientWith(jsonResponse(401, { error: 'unauthenticated' }), { hasUnsavedChanges: () => false });
+  await assert.rejects(clean.request('/api/x'));
+  assert.deepEqual(clean.navigations, ['/login/#next=%2Fmeetings%2F%3Fy%3D2026-2027']);
+  assert.deepEqual(clean.warnings, []);
+});
+
+test('domyślne wykrywanie niezapisanego formularza reaguje na input, reset i usunięcie formularza', async () => {
+  const listeners = {};
+  const form = { isConnected: true, closest() { return this; } };
+  const doc = { addEventListener: (type, fn) => { listeners[type] = fn; } };
+  const previous = globalThis.document;
+  globalThis.document = doc;
+  try {
+    const warnings = [];
+    const navigations = [];
+    const api = createApiClient({
+      fetchImpl: async () => jsonResponse(401, { error: 'unauthenticated' }),
+      getLocation: () => fakeLocation('/panel/'),
+      navigate: (url) => navigations.push(url),
+      warnUnsaved: (url) => warnings.push(url),
+    });
+    listeners.input({ target: form });
+    await assert.rejects(api.request('/api/x'));
+    assert.equal(warnings.length, 1);
+    assert.deepEqual(navigations, []);
+  } finally { globalThis.document = previous; }
+
+  globalThis.document = doc;
+  try {
+    const navigations = [];
+    const api = createApiClient({
+      fetchImpl: async () => jsonResponse(401, { error: 'unauthenticated' }),
+      getLocation: () => fakeLocation('/panel/'),
+      navigate: (url) => navigations.push(url),
+      warnUnsaved: () => assert.fail('formularz po resecie nie jest brudny'),
+    });
+    listeners.input({ target: form });
+    listeners.reset({ target: form });
+    await assert.rejects(api.request('/api/x'));
+    assert.equal(navigations.length, 1);
+  } finally { globalThis.document = previous; }
 });
