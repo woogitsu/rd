@@ -18,7 +18,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - Brevo API: pojedyncze wiadomości do rodziców po zatwierdzeniu kampanii.
 - Frontend dostępny na telefonie i komputerze; WCAG 2.2 AA jako cel projektowy.
 
-[Decyzja i etapy migracji](docs/RAILWAY_MIGRATION.md) są zapisane osobno, a [procedury środowisk, backupu, monitoringu i odbioru](docs/RAILWAY_OPERATIONS.md) — w osobnym dokumencie; `railway.json` zawiera wyłącznie konfigurację buildu i startu, bez sekretów. Serwer Node.js (`src/server.js`, [docs/NODE_SERVER.md](docs/NODE_SERVER.md)) i większość API (`src/pg/app.js`, 16 modułów tras) działają dziś wyłącznie na PostgreSQL; oryginalny Cloudflare Worker/D1 (`src/index.js`) ma tylko 5 tras (sesja, przydziały, wpłaty, księga, wylogowanie) i służy jako kontrakt równoważności przy migracji ([docs/EQUIVALENCE.md](docs/EQUIVALENCE.md)), nie jako produkcyjna ścieżka — D1 nigdy nie miało danych szkoły. **To nadal nie jest gotowy deployment Railway** — patrz „Stan prac” wyżej i lista odbioru w [docs/RAILWAY_OPERATIONS.md](docs/RAILWAY_OPERATIONS.md). Nie dodawać poświadczeń dostawców do repo.
+[Decyzja i etapy migracji](docs/RAILWAY_MIGRATION.md) są zapisane osobno, a [procedury środowisk, backupu, monitoringu i odbioru](docs/RAILWAY_OPERATIONS.md) — w osobnym dokumencie; `railway.json` zawiera wyłącznie konfigurację buildu i startu, bez sekretów. Serwer Node.js (`src/server.js`, [docs/NODE_SERVER.md](docs/NODE_SERVER.md)) i większość API (`src/pg/app.js`, 27 modułów tras) działają dziś wyłącznie na PostgreSQL; oryginalny Cloudflare Worker/D1 (`src/index.js`) ma tylko 5 tras (sesja, przydziały, wpłaty, księga, wylogowanie) i służy jako kontrakt równoważności przy migracji ([docs/EQUIVALENCE.md](docs/EQUIVALENCE.md)), nie jako produkcyjna ścieżka — D1 nigdy nie miało danych szkoły. **To nadal nie jest gotowy deployment Railway** — patrz „Stan prac” wyżej i lista odbioru w [docs/RAILWAY_OPERATIONS.md](docs/RAILWAY_OPERATIONS.md). Nie dodawać poświadczeń dostawców do repo.
 
 ## Dokumentacja
 
@@ -26,6 +26,7 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Macierz testów: moduł × scenariusz](docs/TESTING.md)
 - [Model funkcjonalny i uprawnienia](docs/PRODUCT.md)
 - [Architektura i dane](docs/ARCHITECTURE.md)
+- [Kontrakt list z kursorem](docs/API.md)
 - [Migracja na Railway](docs/RAILWAY_MIGRATION.md)
 - [Railway: środowiska, backup, monitoring i odbiór](docs/RAILWAY_OPERATIONS.md)
 - [Przypomnienia e-mail](docs/EMAIL.md)
@@ -107,7 +108,27 @@ Chroniony katalog rodzin, uczniów i opiekunów (`/families/`, API na PostgreSQL
 
 ## Panel kont i ról
 
-Interfejs administratora (`/admin/`, API na PostgreSQL): konta, zaproszenia z jednorazowym tokenem, przydziały ról z zakresem roku/klasy, wygaszenie kadencji i dziennik zmian. Wymaga roli administratora z MFA. Buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej; `npm run dev:admin` samo nie łączy się z API. [Instrukcja panelu](admin/README.md), [zasady](docs/ACCOUNTS.md). Tokeny resetu hasła i reset MFA są na razie dostępne przez API (`/api/admin/users/{id}/password-reset`, `/mfa-reset`).
+Interfejs administratora (`/admin/`, API na PostgreSQL): konta, zaproszenia z jednorazowym tokenem, przydziały ról z zakresem roku/klasy, wygaszenie kadencji i dziennik zmian. Wymaga roli administratora z MFA. Buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej; `npm run dev:admin` samo nie łączy się z API. [Instrukcja panelu](admin/README.md), [zasady](docs/ACCOUNTS.md). Reset hasła (kod jednorazowy) i reset MFA są akcjami w panelu (`/api/admin/users/{id}/password-reset`, `/mfa-reset`); wymagają potwierdzenia i zapisują zdarzenie w dzienniku.
+
+## Kampanie e-mail
+
+Chroniony prototyp `/email/` (`src/pg/routes/email.js`): szkic treści, migawka odbiorców z powodami wykluczeń, plan wysyłki względem limitu Brevo i zatwierdzenie przez inną osobę z zarządu. Przycisk nie wysyła niczego sam z siebie; treść i listę odbiorców trzeba zatwierdzić jawnie. Szablon wiadomości, adres nadawcy i domena Brevo czekają na decyzje szkoły (D-16, D-17). [Instrukcja panelu](email/README.md), [zasady](docs/EMAIL.md).
+
+## Uzgodnienie wyciągu i raport Komisji Rewizyjnej
+
+Prototypy `/reconciliation/` (uzgodnienie wyciągu, cofnięcie dopasowania, potwierdzenie przez drugą osobę) i `/audit/` (raport roczny tylko do odczytu, wersja HTML do druku). Rachunek, format wyciągu i osoba uzgadniająca czekają na D-13. [Uzgodnienie](reconciliation/README.md), [raport KR](audit/README.md), [zasady](docs/RECONCILIATION.md).
+
+## Zamknięcie roku
+
+Prototyp `/year-close/`: stan zamknięcia, bilans, lista kontrolna i zestawienie przekazania kadencji. Dostęp do archiwum po zamknięciu jest w wariancie zachowawczym do decyzji D-08/D-09. [Instrukcja panelu](year-close/README.md), [zasady](docs/YEAR_CLOSE.md).
+
+## Eksport danych
+
+Prototyp `/data-export/`: eksport roczny (administrator, zarząd; wymaga świeżego MFA) i lista klasy dla przedstawiciela własnej klasy. Eksport zawiera dane osobowe — czas przechowywania plików i administrator danych czekają na D-01 i D-04. [Instrukcja panelu](data-export/README.md), [zasady](docs/EXPORT.md).
+
+## Aktualności i galeria
+
+Prototyp `/news/`: szkic, zgłoszenie, zatwierdzenie przez drugą osobę, publikacja i wycofanie z powodem; rejestr zdjęć ze zgodami tylko do odczytu (rejestracja i przesyłanie zdjęć — wyłącznie API). Zasady publikacji zdjęć czekają na D-18. [Instrukcja panelu](news/README.md), [zasady](docs/NEWS.md).
 
 ## Logowanie
 

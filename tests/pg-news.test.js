@@ -6,12 +6,12 @@ import sharp from 'sharp';
 import { handlePgRequest } from '../src/pg/app.js';
 import {
   addConsent, approve, createDraft, getInternal, getPhoto, listInternal, listPublic, publish,
-  registerPhoto, revokePhoto, submit, updateDraft, verifyPhoto, withdraw, withdrawConsent, PUBLIC_CACHE_SECONDS,
+  registerPhoto as registerPhotoRaw, revokePhoto, submit, updateDraft, verifyPhoto, withdraw, withdrawConsent, PUBLIC_CACHE_SECONDS,
   PHOTO_UPLOAD_MAX_BYTES, uploadPhotoFile,
 } from '../src/pg/news.js';
 import { newsItems } from '../site/core.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, lifecycleActors, request, seedClass, seedDocument, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
 const board1 = { userId: 'board1', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
@@ -49,6 +49,13 @@ async function newsDb() {
 const pub = async (db) => listPublic(db, { schoolYearId: year });
 
 after(async () => { if (shared) await shared.close(); });
+
+// 0143: news_photos.document_id wskazuje istniejący dokument zarządu — każda
+// rejestracja w testach najpierw zakłada dokument o podanym documentId.
+async function registerPhoto(db, actor, input) {
+  if (typeof input?.documentId === 'string') await seedDocument(db, { id: input.documentId });
+  return registerPhotoRaw(db, actor, input);
+}
 
 let counter = 0;
 const key = (prefix) => `${prefix}-${String(++counter).padStart(6, '0')}`;
@@ -271,6 +278,7 @@ test('copies from a public website are rejected without an explicit licence', as
   try {
     await assert.rejects(registerPhoto(db, admin, photoInput({ source: 'public_website_copy' })), { code: 'public_copy_requires_license' });
     await assert.rejects(registerPhoto(db, admin, photoInput({ source: 'public_website_copy', explicitLicenseGranted: true })), { code: 'public_copy_requires_license' });
+    await seedDocument(db, { id: 'doc-raw' });
     await assert.rejects(db.query(
       `INSERT INTO news_photos (id, document_id, author, source, taken_on, license_text, depicts_children, uploaded_by)
        VALUES ('p-raw','doc-raw','Autor','public_website_copy','2020-01-01','Skopiowano ze strony szkoły',false,'admin')`,
@@ -327,6 +335,7 @@ test('news_photo_alt_text_required is added with NOT VALID (does not retroactive
 test('a raw insert without alt text or decorative is rejected by the database, and the registry view stays empty otherwise', async () => {
   const db = await newsDb();
   try {
+    await seedDocument(db, { id: 'doc-no-alt' });
     await assert.rejects(db.query(
       `INSERT INTO news_photos (id, document_id, author, source, taken_on, license_text, depicts_children, uploaded_by)
        VALUES ('p-no-alt', 'doc-no-alt', 'Autor', 'own_work', '2020-01-01', 'Zdjęcie bez opisu', false, 'admin')`,
@@ -755,5 +764,192 @@ test('publiczne API aktualności: zdjęcie z wycofaną zgodą znika z danych str
     assert.equal(file.status, 404);
     const keptFile = await handlePgRequest(request(`/api/public/news-photos/${kept.id}/thumb`), env);
     assert.equal(keptFile.status, 200);
+  } finally { await db.close(); }
+});
+
+// Syntetyczny JPEG z ręcznie wstawionymi segmentami APP1 (EXIF z tagiem GPS
+// oraz XMP) tuż po SOI — sprawdzamy bajty wyjścia na poziomie segmentów,
+// niezależnie od tego, co o metadanych mówi biblioteka obrazu (#96).
+async function jpegWithGpsSegments() {
+  const base = await sharp({ create: { width: 16, height: 12, channels: 3, background: { r: 30, g: 90, b: 150 } } }).jpeg().toBuffer();
+  assert.equal(base[0], 0xff); assert.equal(base[1], 0xd8);
+  const segment = (payload) => {
+    const len = payload.length + 2;
+    return Buffer.concat([Buffer.from([0xff, 0xe1, len >> 8, len & 0xff]), payload]);
+  };
+  // Minimalny EXIF (TIFF little-endian, IFD0 ze wskaźnikiem GPS IFD 0x8825) — wartości fikcyjne.
+  const exif = Buffer.concat([
+    Buffer.from('Exif\0\0', 'latin1'),
+    Buffer.from([0x49, 0x49, 0x2a, 0, 8, 0, 0, 0, 1, 0, 0x25, 0x88, 4, 0, 1, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0]),
+    Buffer.from([1, 0, 1, 0, 2, 0, 2, 0, 0, 0, 0x4e, 0, 0, 0, 0, 0, 0, 0]),
+    Buffer.from('GPS-SYNTETYCZNY-52.0N-21.0E', 'latin1'),
+  ]);
+  const xmp = Buffer.from('http://ns.adobe.com/xap/1.0/\0<x:xmpmeta>syntetyczny-autor</x:xmpmeta>', 'latin1');
+  return Buffer.concat([base.subarray(0, 2), segment(exif), segment(xmp), base.subarray(2)]);
+}
+
+// Lista znaczników segmentów JPEG do SOS (dalej idą dane entropijne).
+function jpegSegmentMarkers(bytes) {
+  const markers = [];
+  let i = 2;
+  while (i + 4 <= bytes.length && bytes[i] === 0xff) {
+    const marker = bytes[i + 1];
+    markers.push(marker);
+    if (marker === 0xda) break;
+    i += 2 + ((bytes[i + 2] << 8) | bytes[i + 3]);
+  }
+  return markers;
+}
+
+test('plik zdjęcia (#96): publikowane warianty nie mają segmentów APP1/EXIF/XMP ani śladu GPS, oryginał nie trafia do magazynu', async () => {
+  const db = await newsDb();
+  const storage = createMemoryStorage();
+  const env = { db, storage };
+  try {
+    const source = await jpegWithGpsSegments();
+    assert.ok(jpegSegmentMarkers(source).filter((m) => m === 0xe1).length === 2, 'atrapa musi nieść dwa segmenty APP1');
+    assert.ok(Buffer.from(source).includes('GPS-SYNTETYCZNY'));
+
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    const boardCookie = await seedUserSession(db, { userId: 'u-board-gps', roles: [{ role: 'board', schoolYearId: year }], mfa: true });
+    const uploaded = await handlePgRequest(request(`/api/news-photos/${photo.id}/file`, {
+      method: 'POST', cookie: boardCookie, headers: { 'Content-Type': 'image/jpeg', 'Idempotency-Key': key('gps') }, body: source,
+    }), env);
+    assert.equal(uploaded.status, 201);
+
+    await verifyPhoto(db, board1, { photoId: photo.id });
+    await publishedPost(db, { title: 'Zdjęcie z GPS w źródle (syntetyczne)', photoIds: [photo.id] });
+
+    for (const variant of ['web', 'thumb']) {
+      const response = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/${variant}`), env);
+      assert.equal(response.status, 200);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const markers = jpegSegmentMarkers(bytes);
+      assert.ok(!markers.includes(0xe1), `${variant}: brak segmentu APP1 (EXIF/XMP)`);
+      assert.ok(!markers.includes(0xed), `${variant}: brak segmentu APP13 (IPTC)`);
+      assert.ok(!markers.includes(0xfe), `${variant}: brak komentarza COM`);
+      assert.ok(!bytes.includes('Exif'), `${variant}: brak łańcucha Exif`);
+      assert.ok(!bytes.includes('GPS-SYNTETYCZNY'), `${variant}: brak śladu współrzędnych`);
+      assert.ok(!bytes.includes('xmpmeta'), `${variant}: brak XMP`);
+    }
+
+    // W magazynie są wyłącznie obiekty wariantów pod photos/; oryginał nie jest zapisany.
+    const keys = storage.keys();
+    assert.equal(keys.length, 2);
+    assert.ok(keys.every((k) => k.startsWith('photos/')));
+    for (const k of keys) {
+      const stored = await storage.getObject(k);
+      assert.ok(!Buffer.from(stored.body ?? stored.bytes ?? stored).includes('GPS-SYNTETYCZNY'));
+    }
+    const original = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/original`), env);
+    assert.equal(original.status, 404);
+  } finally { await db.close(); }
+});
+
+test('rozdział prefiksów (#96): tabela dokumentów odrzuca klucz photos/, tabela plików zdjęć odrzuca klucz docs/', async () => {
+  const db = await newsDb();
+  try {
+    const uuid = '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f';
+    await seedSchoolYear(db, `${year}-doc`);
+    await assert.rejects(db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+       VALUES ($1, $2, 'image/jpeg', 10, 'board', 'admin', $3, $4, 'k-prefix-1')`,
+      [uuid, `photos/${uuid}`, `${year}-doc`, '0'.repeat(64)],
+    ), /documents_api_row/);
+    // Kontrola pozytywna: ten sam wiersz z kluczem docs/ przechodzi, więc odrzucenie wyżej wynika z prefiksu.
+    await db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+       VALUES ($1, $2, 'image/jpeg', 10, 'board', 'admin', $3, $4, 'k-prefix-2')`,
+      [uuid, `docs/${uuid}`, `${year}-doc`, '0'.repeat(64)],
+    );
+
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    await assert.rejects(db.query(
+      `INSERT INTO news_photo_files (id, photo_id, variant, object_key, mime_type, width, height, byte_size, sha256, source_sha256, created_by)
+       VALUES ($1, $2, 'web', $3, 'image/jpeg', 10, 10, 10, $4, $4, 'admin')`,
+      [uuid, photo.id, `docs/${uuid}`, '0'.repeat(64)],
+    ), /news_photo_files_object_key_check/);
+    await db.query(
+      `INSERT INTO news_photo_files (id, photo_id, variant, object_key, mime_type, width, height, byte_size, sha256, source_sha256, created_by)
+       VALUES ($1, $2, 'web', $3, 'image/jpeg', 10, 10, 10, $4, $4, 'admin')`,
+      [uuid, photo.id, `photos/${uuid}`, '0'.repeat(64)],
+    );
+  } finally { await db.close(); }
+});
+
+// #116: stały adres wpisu. Ten sam widok public_news co lista; szkic, wpis
+// zatwierdzony, ale nieopublikowany, wpis wycofany i nieistniejący dają
+// identyczne 404 (odpowiedź nie zdradza stanu wewnętrznego).
+test('publiczny wpis pod stałym adresem: tylko opublikowana wersja, identyczne 404 dla reszty (#116)', async () => {
+  const db = await newsDb();
+  try {
+    const env = { db };
+    const get = (id) => handlePgRequest(request(`/api/public/news/${encodeURIComponent(id)}`), env);
+
+    const draft = (await createDraft(db, board1, postInput({ title: 'Szkic tajny' }))).post;
+    const approved = (await createDraft(db, board1, postInput({ title: 'Zatwierdzony tajny' }))).post;
+    await submit(db, board1, { postId: approved.id, revision: 1 });
+    await approve(db, board2, { postId: approved.id, revision: 1 });
+    const missing = await get('brak-takiego-wpisu');
+    assert.equal(missing.status, 404);
+    const missingBody = await missing.json();
+    for (const hidden of [draft, approved]) {
+      const response = await get(hidden.id);
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), missingBody);
+    }
+
+    // Wpis klasy, opublikowany: w odpowiedzi brak classId i identyfikatorów wewnętrznych.
+    const photo = await verifiedPhoto(db);
+    const published = await publishedPost(db, { title: 'Wersja opublikowana', classId: `${year}-1a`, photoIds: [photo.id] });
+    const ok = await get(published.id);
+    assert.equal(ok.status, 200);
+    assert.equal(Number(/max-age=(\d+)/.exec(ok.headers.get('Cache-Control'))[1]), PUBLIC_CACHE_SECONDS);
+    const { post } = await ok.json();
+    assert.deepEqual(Object.keys(post).sort(), ['body', 'id', 'photos', 'publishedAt', 'title']);
+    assert.equal(post.id, published.id);
+    assert.deepEqual(post.photos.map((p) => p.id), [photo.id]);
+    assert.equal(JSON.stringify(post).includes(`${year}-1a`), false);
+
+    // Nowsza, niezatwierdzona wersja nie jest widoczna: publicznie wersja opublikowana.
+    await updateDraft(db, board1, { postId: published.id, revision: 1, title: 'Wersja robocza', body: 'Robocza treść' });
+    const stillFirst = (await (await get(published.id)).json()).post;
+    assert.equal(stillFirst.title, 'Wersja opublikowana');
+    assert.notEqual(stillFirst.body, 'Robocza treść');
+
+    // Znaki w adresie, które nie są identyfikatorem, i metody inne niż GET.
+    assert.equal((await handlePgRequest(request('/api/public/news/%E0%A4%A'), env)).status, 404);
+    assert.equal((await get('../../api/news')).status, 404);
+    assert.equal((await handlePgRequest(request(`/api/public/news/${published.id}`, { method: 'POST', body: {} }), env)).status, 405);
+
+    // Wycofanie: od następnego żądania to samo 404 co dla nieistniejącego.
+    await withdraw(db, board1, { postId: published.id, revision: 2, reason: 'Błąd w treści' });
+    const gone = await get(published.id);
+    assert.equal(gone.status, 404);
+    assert.deepEqual(await gone.json(), missingBody);
+    assert.deepEqual((await pub(db)).posts, []);
+  } finally { await db.close(); }
+});
+
+// #214: jak wyżej — aktor z prawdziwego ładowania sesji i przydziałów.
+test('aktualności: wygasły i cofnięty przydział oraz nieważna sesja nie dają dostępu (aktor z loadAuthorizationContext)', async () => {
+  const db = await newsDb();
+  try {
+    const actors = await lifecycleActors(db, { role: 'board', schoolYearId: year, prefix: 'nw' });
+    assert.ok(actors.active, 'aktor z ważną sesją i przydziałem ładuje się przez loadAuthorizationContext');
+    assert.deepEqual(actors.active.grants.map((grant) => grant.role), ['board']);
+    // Nieważna sesja / konto wyłączone: brak kontekstu (401), nie „pusty aktor”.
+    for (const name of ['expiredSession', 'revokedSession', 'disabledAccount']) {
+      assert.equal(actors[name], null, `${name}: brak aktora`);
+    }
+    // Wygasły lub cofnięty przydział: sesja ważna, ale bez ról.
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      assert.ok(actors[name], `${name}: sesja jest ważna`);
+      assert.deepEqual(actors[name].grants, [], `${name}: przydział odfiltrowany przez SQL`);
+    }
+    assert.deepEqual((await listInternal(db, actors.active, { schoolYearId: year })).posts, []);
+    for (const name of ['expiredGrant', 'revokedGrant']) {
+      await assert.rejects(listInternal(db, actors[name], { schoolYearId: year }), { code: 'forbidden', status: 403 }, name);
+    }
   } finally { await db.close(); }
 });

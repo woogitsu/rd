@@ -94,6 +94,27 @@ function loginScopes({ email, ip }) {
 
 const isHard = (scope) => scope.max !== null;
 
+// Próg agregatu „konto pod presją” (#126): liczba błędnych prób na jedno konto
+// (zakres e-mail, ze wszystkich adresów IP razem) w oknie logowania, od której
+// administrator dostaje sygnał. To WYŁĄCZNIE sygnał — nie blokuje konta, więc
+// prawowity właściciel nadal się loguje (blokuje tylko para e-mail+IP, #423).
+// Zmienna LOGIN_PRESSURE_THRESHOLD; wartość spoza 6–1000 albo nieliczbowa
+// wraca do bezpiecznego domyślnego progu. Dolna granica > pairMaxFailures:
+// poniżej niej pojedynczy adres IP (limit pary) mógłby sam przekroczyć próg.
+export const LOGIN_PRESSURE_DEFAULT_THRESHOLD = 15;
+export function loginPressureThreshold(env) {
+  const raw = env?.LOGIN_PRESSURE_THRESHOLD;
+  if (raw === undefined || raw === null || raw === '') return LOGIN_PRESSURE_DEFAULT_THRESHOLD;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > LOGIN_POLICY.pairMaxFailures && value <= 1000 ? value : LOGIN_PRESSURE_DEFAULT_THRESHOLD;
+}
+
+// Dolne oszacowanie liczby różnych adresów IP, z których pochodzą próby: jedna
+// para (e-mail, IP) zużywa najwyżej pairMaxFailures prób w oknie, więc N prób
+// oznacza co najmniej ceil(N / pairMaxFailures) źródeł. Szacunek (okna par i
+// e-maila mogą się przesuwać względem siebie) — bez zapisu adresów.
+export const estimatedMinSources = (failures) => Math.max(1, Math.ceil(Number(failures) / LOGIN_POLICY.pairMaxFailures));
+
 // Opóźnienie (ms) dla miękkiego zakresu e-maila po zarezerwowaniu próby.
 export function emailDelayMs(count, env) {
   const configured = env?.LOGIN_EMAIL_DELAY_MS;
@@ -156,22 +177,30 @@ async function reserveAttempt(env, scopes) {
            locked_until = CASE WHEN locked_until > now() THEN locked_until ELSE NULL END,
            updated_at = now()
          WHERE scope_type = $1 AND scope_hash = $2
-         RETURNING window_started_at, failure_count`,
+         RETURNING window_started_at::text AS window_started_at, failure_count`,
         [scope.type, scope.hash, LOGIN_POLICY.windowSeconds],
       );
+      // Licznik po rezerwacji: failAttempt wykrywa po nim dokładne przekroczenie
+      // progu „konta pod presją” (jedno zdarzenie na przekroczenie, #126).
+      scope.reservedCount = Number(updated[0].failure_count);
       reserved.push({ ...scope, windowStartedAt: updated[0].window_started_at, count: Number(updated[0].failure_count) });
     }
     return reserved;
   });
 }
 
+// #208: początek okna wraca do bazy jako TEKST (pełna precyzja mikrosekund).
+// Jako Date z węzła traci mikrosekundy, więc na prawdziwym PostgreSQL warunek
+// `window_started_at = $3` nigdy nie był prawdziwy i sukces nie zwalniał
+// rezerwacji (licznik IP rósł do blokady po 20 udanych logowaniach z jednego
+// adresu w 15 minut); PGlite zwraca milisekundy, więc test tego nie widział.
 // Zwolnienie rezerwacji (sukces albo odrzucenie niebędące zgadywaniem). Tylko w tym
 // samym oknie i bez trwającej blokady — nigdy nie zdejmuje blokady.
 async function releaseAttempt(env, reserved) {
   for (const scope of reserved) {
     await database(env).query(
       `UPDATE login_rate_limits SET failure_count = GREATEST(failure_count - 1, 0), updated_at = now()
-        WHERE scope_type = $1 AND scope_hash = $2 AND window_started_at = $3 AND locked_until IS NULL`,
+        WHERE scope_type = $1 AND scope_hash = $2 AND window_started_at = $3::timestamptz AND locked_until IS NULL`,
       [scope.type, scope.hash, scope.windowStartedAt],
     );
   }
@@ -239,11 +268,51 @@ async function failAttempt(env, { scopes, action, userId = null, reason, code = 
       entityType: userId ? 'user' : 'login_attempt', entityId: userId ?? crypto.randomUUID(),
       metadata: { reason, locked: isLocked },
     });
+    // #126: przekroczenie progu „konta pod presją” — jedno zdarzenie na
+    // przekroczenie (licznik z rezerwacji równy progowi), tylko dla konta, które
+    // istnieje; identyfikator konta i liczby, bez e-maila i adresu IP.
+    const emailScope = scopes.find((scope) => scope.type === 'email');
+    const threshold = loginPressureThreshold(env);
+    if (action === 'auth.login_failed' && userId && emailScope?.reservedCount === threshold) {
+      await insertAuditEvent(tx, {
+        actorId: null, action: 'auth.account_under_pressure', entityType: 'user', entityId: userId,
+        metadata: { threshold, windowSeconds: LOGIN_POLICY.windowSeconds, estimatedMinSources: estimatedMinSources(threshold) },
+      });
+    }
     return isLocked;
   });
   return locked
     ? new LoginError('too_many_attempts', 429, { retryAfter: LOGIN_POLICY.lockSeconds, counted: true })
     : new LoginError(code, status, { counted: true });
+}
+
+// Konta pod presją (#126) dla /api/admin/ops-status: konta, których licznik
+// e-maila w bieżącym oknie osiągnął próg. Odpowiedź: identyfikator konta,
+// liczba prób, dolne oszacowanie liczby źródeł, początek okna — bez e-maili i
+// adresów IP. Skróty e-maili bez konta (zgadywane adresy) tylko w liczbie.
+// `now` jest wstrzykiwany (bez zegara ściennego w testach).
+export async function accountsUnderPressure(db, { env = {}, now = () => new Date() } = {}) {
+  const threshold = loginPressureThreshold(env);
+  const { rows } = await db.query(
+    `SELECT scope_hash, failure_count, window_started_at FROM login_rate_limits
+      WHERE scope_type = 'email' AND failure_count >= $1
+        AND window_started_at > $2::timestamptz - make_interval(secs => $3)
+      ORDER BY failure_count DESC, scope_hash LIMIT 50`,
+    [threshold, now().toISOString(), LOGIN_POLICY.windowSeconds],
+  );
+  const result = { thresholdFailures: threshold, windowSeconds: LOGIN_POLICY.windowSeconds, accounts: [], unmatchedTargets: 0 };
+  if (!rows.length) return result;
+  const { rows: users } = await db.query('SELECT id, email FROM users');
+  const byHash = new Map(users.map((user) => [scopeHash('email', normalizeLoginEmail(user.email)), user.id]));
+  for (const row of rows) {
+    const accountId = byHash.get(row.scope_hash);
+    if (!accountId) { result.unmatchedTargets += 1; continue; }
+    result.accounts.push({
+      accountId, failures: Number(row.failure_count),
+      estimatedMinSources: estimatedMinSources(row.failure_count), windowStartedAt: isoTimestamp(row.window_started_at),
+    });
+  }
+  return result;
 }
 
 async function findAccountByEmail(executor, normalizedEmail) {
@@ -359,6 +428,54 @@ function cleanDisplayName(value, email) {
   const text = value.normalize('NFC').replace(/[\u0000-\u001f\u007f]/g, '').trim();
   if (!text || [...text].length > 100) throw new LoginError('invalid_display_name', 400);
   return text;
+}
+
+// Maska adresu dla posiadacza tokenu (#164): pierwszy znak części lokalnej,
+// wielokropek i pełna domena — wystarcza do wykrycia literówki admina, nie
+// ujawnia całego adresu.
+export function maskEmail(email) {
+  const text = String(email ?? '');
+  const at = text.lastIndexOf('@');
+  if (at < 1) return '…';
+  return `${[...text.slice(0, at)][0]}…${text.slice(at)}`;
+}
+
+// POST /api/invitations/preview (#164): co zobaczy zapraszany przed przyjęciem
+// — rola, klasa, rok, termin ważności, zamaskowany adres i to, czy trzeba podać
+// obecne hasło. Bez sesji; token NIE jest konsumowany (tylko odczyt). Limit prób
+// i odpowiedź odmowna identyczne jak przy accept: każda odmowa (zły format,
+// nieznany, wygasły, wycofany, wykorzystany, konto wyłączone) to ten sam
+// 400 invalid_invitation, liczona do limitu adresu IP. Poprawny podgląd nie
+// zapisuje zdarzenia; nie zwraca zapraszającego, identyfikatorów ani pełnego adresu.
+export async function previewInvitation(env, { token, clientIp }) {
+  const ipScopes = loginScopes({ ip: clientIp });
+  const invalid = (reason) => failAttempt(env, {
+    scopes: ipScopes, action: 'auth.invitation_preview_failed', reason, code: 'invalid_invitation', status: 400,
+  });
+  return withAttempt(env, ipScopes, async () => {
+    if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) throw await invalid('malformed');
+    const { rows } = await database(env).query(
+      `SELECT lower(i.email) AS email, i.role, i.expires_at, c.name AS class_name, y.label AS school_year_label
+         FROM invitations i
+         LEFT JOIN classes c ON c.id = i.class_id
+         LEFT JOIN school_years y ON y.id = COALESCE(i.school_year_id, c.school_year_id)
+        WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()`,
+      [await hashSecret(token)],
+    );
+    const invitation = rows[0];
+    if (!invitation) throw await invalid('not_available');
+    const account = await findAccountByEmail(database(env), invitation.email);
+    if (account?.disabled_at) throw await invalid('user_unavailable');
+    return {
+      email: maskEmail(invitation.email),
+      role: invitation.role,
+      className: invitation.class_name ?? null,
+      schoolYear: invitation.school_year_label ?? null,
+      expiresAt: isoTimestamp(invitation.expires_at),
+      // true = konto ma już hasło: przyjęcie wymaga obecnego hasła, rola zostanie dopisana.
+      accountExists: Boolean(account?.hash),
+    };
+  });
 }
 
 // Tworzy konto (jeśli nie istnieje) z adresem z zaproszenia, ustawia hasło,

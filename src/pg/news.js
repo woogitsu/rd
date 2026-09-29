@@ -29,6 +29,7 @@ import { isAuthorized } from '../authorization.js';
 import { declaredType, detectType, readLimited, validateStructure } from '../documents.js';
 import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
+import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
 
 export const NEWS_POLICY = Object.freeze({
   draftSchoolWide: Object.freeze(['admin', 'board']),
@@ -72,12 +73,17 @@ const MAX_BODY_BYTES = 64 * 1024;
 const MAX_PHOTOS = 20;
 
 export class NewsError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    // #152: pola dodatkowe odpowiedzi (kategorie bramki danych osobowych) — nigdy treść.
+    this.extra = extra;
   }
 }
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+const piiFail = (code, categories) => new NewsError(code, 422, { categories });
 
 // ---------- uprawnienia ----------
 
@@ -392,6 +398,9 @@ const DB_ERRORS = [
   ['news_photo_revoked_is_final', 'photo_revoked', 409],
   ['news_photo_consents_locked', 'consents_locked', 409],
   ['news_photo_alt_text_required', 'alt_text_required', 422],
+  // 0143: dokument źródłowy zdjęcia musi istnieć i być dozwolonego rodzaju.
+  ['news_photo_document_not_found', 'invalid_document_id', 400],
+  ['news_photo_document_not_allowed', 'invalid_document_id', 400],
 ];
 
 function mapDatabaseError(error) {
@@ -665,6 +674,20 @@ export async function listPublic(db, input = {}) {
   return { posts: rows.map(publicPost) };
 }
 
+// #116: stały adres pojedynczego wpisu. Wyłącznie z widoku public_news
+// (opublikowana wersja, wpis niewycofany). Nieznany identyfikator, szkic,
+// wpis zatwierdzony, ale nieopublikowany, i wpis wycofany dają TEN SAM błąd
+// 404, żeby odpowiedź nie zdradzała stanu wewnętrznego.
+export async function getPublicPost(db, input = {}) {
+  if (!validId(input.postId)) throw new NewsError('post_not_found', 404);
+  const { rows } = await db.query(
+    'SELECT id, title, body, published_at, photos FROM public_news WHERE id = $1',
+    [input.postId],
+  );
+  if (!rows[0]) throw new NewsError('post_not_found', 404);
+  return { post: publicPost(rows[0]) };
+}
+
 // ---------- zdjęcia ----------
 
 async function insertConsents(tx, actor, photoId, consents) {
@@ -705,6 +728,13 @@ export async function registerPhoto(db, actor, input) {
   const id = crypto.randomUUID();
   try {
     return await db.transaction(async (tx) => {
+      const gate = gateFreeText([
+        ['news_photos.author', photo.author],
+        ['news_photos.source_detail', photo.sourceDetail],
+        ['news_photos.license_text', photo.licenseText],
+        ['news_photos.rights_note', photo.rightsNote],
+        ['news_photos.alt_text', photo.altText],
+      ], { confirm: input.confirmPersonalData === true, fail: piiFail });
       const { rows } = await tx.query(
         `INSERT INTO news_photos (id, document_id, author, source, source_detail, taken_on, license_text,
            explicit_license_granted, license_document_ref, rights_note, alt_text, decorative, depicts_children,
@@ -719,6 +749,7 @@ export async function registerPhoto(db, actor, input) {
       await audit(tx, actor.userId, 'news_photo.registered', 'news_photo', id, {
         source: photo.source, depictsChildren: photo.depictsChildren,
         identifiableChildren: photo.identifiableChildren, identifiableAdults: photo.identifiableAdults,
+        ...piiAuditMetadata(gate),
       });
       await insertConsents(tx, actor, id, photo.consents);
       return { photo: internalPhoto(rows[0]), replayed: false };
@@ -787,12 +818,13 @@ export async function revokePhoto(db, actor, input) {
   return run(db, async (tx) => {
     const row = await lockPhoto(tx, input?.photoId);
     if (row.rights_status === 'revoked') return { photo: internalPhoto(row), replayed: true };
+    const gate = gateFreeText([['news_photos.revocation_reason', reason]], { confirm: input?.confirmPersonalData === true, fail: piiFail });
     const { rows } = await tx.query(
       `UPDATE news_photos SET rights_status = 'revoked', revoked_by = $2, revoked_at = now(), revocation_reason = $3
         WHERE id = $1 RETURNING ${PHOTO_COLUMNS}`,
       [row.id, actor.userId, reason],
     );
-    await audit(tx, actor.userId, 'news_photo.revoked', 'news_photo', row.id, { status: 'revoked' });
+    await audit(tx, actor.userId, 'news_photo.revoked', 'news_photo', row.id, { status: 'revoked', ...piiAuditMetadata(gate) });
     return { photo: internalPhoto(rows[0]), replayed: false };
   });
 }
@@ -812,12 +844,15 @@ export async function withdrawConsent(db, actor, input) {
       [consentDocumentRef],
     );
     if (affected.length === 0) throw new NewsError('consent_not_found', 404);
-    const { rowCount } = await tx.query(
+    // #208: kontrakt src/db.js zwraca tylko { rows } (bez rowCount, który daje
+    // PGlite), więc o nowym wpisie decyduje RETURNING, nie licznik wierszy.
+    const { rows: inserted } = await tx.query(
       `INSERT INTO news_photo_consent_withdrawals (consent_document_ref, recorded_by)
-       VALUES ($1, $2) ON CONFLICT (consent_document_ref) DO NOTHING`,
+       VALUES ($1, $2) ON CONFLICT (consent_document_ref) DO NOTHING
+       RETURNING consent_document_ref`,
       [consentDocumentRef, actor.userId],
     );
-    if (rowCount === 0) return { replayed: true, affectedPhotos: affected.length };
+    if (inserted.length === 0) return { replayed: true, affectedPhotos: affected.length };
     await audit(tx, actor.userId, 'image_consent.withdrawn', 'news_photo_consent', consentDocumentRef,
       { affectedPhotos: affected.length });
     return { replayed: false, affectedPhotos: affected.length };
@@ -1071,17 +1106,18 @@ function idempotencyHeader(request) {
 
 const PHOTO_FIELDS = ['documentId', 'author', 'source', 'sourceDetail', 'takenOn', 'licenseText',
   'explicitLicenseGranted', 'licenseDocumentRef', 'rightsNote', 'altText', 'decorative', 'depictsChildren',
-  'identifiableChildren', 'identifiableAdults', 'consents'];
+  'identifiableChildren', 'identifiableAdults', 'consents', 'confirmPersonalData'];
 
 // Obsługuje /api/public/news, /api/news… i /api/news-photos…; inne ścieżki -> null.
 export async function handle(request, env, url, json) {
   const path = url.pathname;
   const isPublic = path === '/api/public/news';
+  const publicItem = path.match(/^\/api\/public\/news\/([^/]+)$/);
   const publicPhotoFile = path.match(/^\/api\/public\/news-photos\/([^/]+)\/(web|thumb)$/);
   const isPosts = path === '/api/news' || path.startsWith('/api/news/');
   const isPhotos = path === '/api/news-photos' || path.startsWith('/api/news-photos/');
   const consentWithdraw = path.match(/^\/api\/news-photo-consents\/([^/]+)\/withdraw$/);
-  if (!isPublic && !publicPhotoFile && !isPosts && !isPhotos && !consentWithdraw) return null;
+  if (!isPublic && !publicItem && !publicPhotoFile && !isPosts && !isPhotos && !consentWithdraw) return null;
   try {
     if (!env?.db) throw new NewsError('service_unavailable', 503);
     if (consentWithdraw) {
@@ -1102,6 +1138,17 @@ export async function handle(request, env, url, json) {
       });
       // Krótkie buforowanie: wycofanie wpisu lub cofnięcie praw do zdjęcia
       // znika z widoku publicznego najpóźniej po PUBLIC_CACHE_SECONDS.
+      return json(result, 200, { 'Cache-Control': `public, max-age=${PUBLIC_CACHE_SECONDS}` });
+    }
+    if (publicItem) {
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+      let postId;
+      try {
+        postId = decodeURIComponent(publicItem[1]);
+      } catch {
+        throw new NewsError('post_not_found', 404);
+      }
+      const result = await getPublicPost(env.db, { postId });
       return json(result, 200, { 'Cache-Control': `public, max-age=${PUBLIC_CACHE_SECONDS}` });
     }
     if (publicPhotoFile) {
@@ -1200,10 +1247,10 @@ export async function handle(request, env, url, json) {
     }
     const result = action[2] === 'verify'
       ? await verifyPhoto(env.db, actor, { photoId })
-      : await revokePhoto(env.db, actor, { ...pick(data, ['reason']), photoId });
+      : await revokePhoto(env.db, actor, { ...pick(data, ['reason', 'confirmPersonalData']), photoId });
     return json({ photo: result.photo, replayed: result.replayed }, 200, noStore);
   } catch (error) {
-    if (error instanceof NewsError) return json({ error: error.code }, error.status);
+    if (error instanceof NewsError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;
   }
 }

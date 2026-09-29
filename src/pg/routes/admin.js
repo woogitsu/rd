@@ -1,7 +1,7 @@
 // Administracja kontami i przydziałami ról na PostgreSQL (issues #3, #4, #9).
 // Prototyp — nie jest wdrożony i nie jest gotowy do pracy na danych rodzin.
 //
-//   GET  /api/admin/users
+//   GET  /api/admin/users?limit=&cursor=       lista z kursorem keyset (#159, docs/API.md)
 //   POST /api/admin/users/{id}/disable          wyłącza konto i wycofuje wszystkie sesje
 //   POST /api/admin/users/{id}/enable
 //   POST /api/admin/users/{id}/revoke-sessions
@@ -13,11 +13,11 @@
 //   GET  /api/admin/account-requests?status=     wnioski o reset hasła/MFA kont chronionych (#146)
 //   POST /api/admin/account-requests/{id}/approve  zatwierdza (nie wnioskodawca, nie właściciel konta) i wykonuje; krok w górę MFA
 //   POST /api/admin/account-requests/{id}/reject   odrzuca lub wycofuje wniosek
-//   GET  /api/admin/grants?userId=&role=&schoolYearId=&classId=&status=
+//   GET  /api/admin/grants?userId=&role=&schoolYearId=&classId=&status=&limit=&cursor=
 //   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? } — krok w górę MFA (#150)
 //   POST /api/admin/grants/{id}/revoke
 //   POST /api/admin/school-years/{id}/expire-grants   { confirm: "<id roku>" } — wygaszenie kadencji
-//   GET  /api/admin/invitations
+//   GET  /api/admin/invitations?limit=&cursor=
 //   POST /api/admin/invitations                 { email, role, classId?, schoolYearId?, ttlHours? }
 //   POST /api/admin/invitations/{id}/revoke
 //   POST /api/admin/invitations/{id}/reissue    wycofuje i tworzy nowe zaproszenie (#108); tylko oczekujące
@@ -25,7 +25,7 @@
 //   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
 //   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
 //   GET  /api/admin/class-coverage?schoolYearId= obsada klas roku: przydziały, oczekujące zaproszenia, ostatnie logowanie (#108)
-//   GET  /api/admin/audit?limit=&domain=&actorId=&from=&to=&schoolYearId=
+//   GET  /api/admin/audit?limit=&cursor=&domain=&actorId=&from=&to=&schoolYearId=
 //        dziennik zdarzeń; bez `domain` — jak dotąd (zmiany kont i ról).
 //        Z `domain` (finance|email|access|security|documents|year_close) — akcje
 //        tej domeny (#181). `schoolYearId` filtruje tylko zdarzenia, które mają
@@ -33,6 +33,13 @@
 //   GET  /api/admin/audit/entity/{entityType}/{entityId}
 //        historia jednego obiektu (#181): payment_entry, ledger_entry,
 //        reconciliation, email_campaign. 404, gdy obiekt nie istnieje.
+//   GET  /api/admin/access-log?kind=&actorId=&householdId=&classId=&schoolYearId=&outcome=&from=&to=&limit=&cursor=
+//        przegląd dziennika odczytu danych dzieci i opiekunów (#133): tylko do
+//        odczytu, kursor (occurred_at, id) malejąco, BEZ danych osobowych i bez
+//        e-maili członków Rady (aktor = identyfikator + bieżące role). Sam
+//        zapisuje `access_log.viewed` (bez parametrów). Wyłącznie admin + MFA
+//        (wariant zachowawczy do D-04/D-07/D-08/D-09; zarząd, skarbnik, KR,
+//        dyrekcja i przedstawiciele: 403).
 //   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
 //   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
 //   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
@@ -75,6 +82,10 @@ import {
   approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, rejectRecoveryRequest, requiresRecoveryApproval,
 } from '../account-recovery.js';
 import { computeOpsStatus } from '../ops-status.js';
+import {
+  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+} from '../list-cursor.js';
+import { DATA_ACCESS_KINDS } from '../data-access.js';
 
 export const name = 'admin';
 
@@ -83,6 +94,12 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_GRANT_YEARS = 3;
 const MAX_LIST = 500;
+// #159: listy administracyjne mają kursor keyset i jawny `truncated`; domyślna
+// strona bez `limit` to jak dotąd MAX_LIST wierszy.
+const LIST_LIMITS = { defaultLimit: MAX_LIST, maxLimit: MAX_LIST };
+function failList(code) { throw new RequestError(code); }
+function listLimit(url, options = LIST_LIMITS) { return parseListLimit(url.searchParams.get('limit'), options, failList); }
+function listCursor(url, kind, scope) { return decodeListCursor(url.searchParams.get('cursor'), { kind, scope }, failList); }
 const GRANT_STATUSES = new Set(['active', 'expired', 'revoked', 'all']);
 // Stały klucz blokady doradczej dla zmian przydziałów (hashtext w SQL).
 const ADMIN_LOCK_KEY = 'rd:role_grants';
@@ -221,7 +238,15 @@ async function resolveScope(executor, { role, classId, schoolYearId }) {
 
 // --- Użytkownicy -----------------------------------------------------------
 
-async function listUsers(env, json) {
+async function listUsers(env, url, json) {
+  const limit = listLimit(url);
+  const cursor = listCursor(url, 'text', 'users');
+  const values = [];
+  // Kursor niesie tylko id konta (adres e-mail nie trafia do URL-a ani logów dostępu);
+  // pozycję w kolejności (lower(email), id) odczytujemy z bazy.
+  const after = cursor
+    ? (values.push(cursor.id), 'WHERE (lower(u.email), u.id) > (SELECT lower(p.email), p.id FROM users p WHERE p.id = $1)')
+    : '';
   // Adres i nazwa wyświetlana to jedyne dane osobowe w module (potrzebne
   // administratorowi do rozpoznania konta). Nie łączymy z danymi rodzin.
   const { rows } = await env.db.query(
@@ -234,11 +259,17 @@ async function listUsers(env, json) {
             EXISTS (SELECT 1 FROM user_mfa_factors f
                      WHERE f.user_id = u.id AND f.confirmed_at IS NOT NULL AND f.disabled_at IS NULL) AS mfa_enrolled
        FROM users u
-      ORDER BY lower(u.email)
-      LIMIT ${MAX_LIST}`,
+      ${after}
+      ORDER BY lower(u.email), u.id
+      LIMIT ${limit + 1}`,
+    values,
   );
+  const page = pageOf(rows, limit, (row) => ({ key: row.id, id: row.id }), 'users');
   return json({
-    users: rows.map((row) => ({
+    nextCursor: page.nextCursor,
+    truncated: page.truncated,
+    limit: page.limit,
+    users: page.items.map((row) => ({
       id: row.id,
       email: row.email,
       displayName: row.display_name,
@@ -369,14 +400,23 @@ async function listGrants(env, url, json) {
   if (schoolYearId) add('g.school_year_id = ?', schoolYearId);
   if (role) add('g.role = ?', role);
   if (status !== 'all') add(`${grantStatusSql('g')} = ?`, status);
+  const limit = listLimit(url);
+  // Kursor wiąże filtr (użytkownik, klasa, rok, rola, status) — inny filtr → 400 invalid_cursor.
+  const scope = JSON.stringify(['grants', userId, classId, schoolYearId, role, status]);
+  const cursor = listCursor(url, 'timestamp', scope);
+  if (cursor) conditions.push(afterTimestampDescSql('g.granted_at', 'g.id', cursor, values));
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await env.db.query(
-    `SELECT ${GRANT_COLUMNS} FROM role_grants g ${where}
+    `SELECT ${GRANT_COLUMNS}, ${cursorTimestampSql('g.granted_at')} AS cursor_ts
+       FROM role_grants g ${where}
       ORDER BY g.granted_at DESC, g.id
-      LIMIT ${MAX_LIST}`,
+      LIMIT ${limit + 1}`,
     values,
   );
-  return json({ grants: rows.map(grantFromRow) });
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return json({
+    grants: page.items.map(grantFromRow), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
+  });
 }
 
 async function createGrant(env, actorId, request, json) {
@@ -518,11 +558,22 @@ const INVITATION_COLUMNS = `i.id, i.email, i.role, i.class_id, i.school_year_id,
        WHEN i.expires_at <= now() THEN 'expired'
        ELSE 'pending' END AS status`;
 
-async function listInvitations(env, json) {
+async function listInvitations(env, url, json) {
+  const limit = listLimit(url);
+  const cursor = listCursor(url, 'timestamp', 'invitations');
+  const values = [];
+  const where = cursor ? `WHERE ${afterTimestampDescSql('i.created_at', 'i.id', cursor, values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT ${INVITATION_COLUMNS} FROM invitations i ORDER BY i.created_at DESC, i.id LIMIT ${MAX_LIST}`,
+    `SELECT ${INVITATION_COLUMNS}, ${cursorTimestampSql('i.created_at')} AS cursor_ts
+       FROM invitations i ${where}
+      ORDER BY i.created_at DESC, i.id LIMIT ${limit + 1}`,
+    values,
   );
-  return json({ invitations: rows.map(invitationFromRow) });
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), 'invitations');
+  return json({
+    invitations: page.items.map(invitationFromRow), nextCursor: page.nextCursor, truncated: page.truncated,
+    limit: page.limit,
+  });
 }
 
 async function createInvitationRoute(env, actorId, request, json) {
@@ -761,13 +812,13 @@ async function listSchoolYears(env, json) {
   });
 }
 
-const AUDIT_ACTIONS = [
+export const AUDIT_ACTIONS = [
   'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
   'school_year.grants_expired', 'school_year.created', 'class.created',
   'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued',
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
-  'auth.password_changed', 'mfa.reset',
+  'auth.password_changed', 'auth.account_under_pressure', 'mfa.reset',
   'account_recovery.requested', 'account_recovery.approved', 'account_recovery.rejected', 'account_recovery.expired',
 ];
 
@@ -796,10 +847,11 @@ function parseAuditFilters(url) {
 }
 
 async function listAudit(env, url, json, actorId) {
-  const limitParam = url.searchParams.get('limit');
-  const limit = limitParam === null ? 100 : Number(limitParam);
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST) throw new RequestError('invalid_limit');
+  const limit = listLimit(url, { defaultLimit: 100, maxLimit: MAX_LIST });
   const filters = parseAuditFilters(url);
+  // Kursor wiąże wszystkie filtry: zmiana `from`/`to`/`domain`… → 400 invalid_cursor.
+  const scope = JSON.stringify(['audit', filters.domain, filters.actorId, filters.schoolYearId, filters.from, filters.to]);
+  const cursor = listCursor(url, 'timestamp', scope);
   const values = [];
   const conditions = [];
   if (filters.domain) {
@@ -818,26 +870,127 @@ async function listAudit(env, url, json, actorId) {
     values.push(filters.schoolYearId);
     conditions.push(`metadata_json ->> 'schoolYearId' = $${values.length}`);
   }
-  values.push(limit);
+  if (cursor) conditions.push(afterTimestampDescSql('occurred_at', 'id', cursor, values));
+  values.push(limit + 1);
   const { rows } = await env.db.query(
-    `SELECT id, actor_id, action, entity_type, entity_id, occurred_at, metadata_json
+    `SELECT id, actor_id, action, entity_type, entity_id, occurred_at, metadata_json,
+            ${cursorTimestampSql('occurred_at')} AS cursor_ts
        FROM audit_events
       WHERE ${conditions.join(' AND ')}
       ORDER BY occurred_at DESC, id
       LIMIT $${values.length}`,
     values,
   );
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
   // #181 pkt 4: odczyt dziennika sam zapisuje zdarzenie, bez parametrów zapytania.
   await insertAuditEvent(env.db, {
     actorId, action: 'audit.viewed', entityType: 'audit_log', entityId: filters.domain ?? 'access',
     metadata: {},
   });
   return json({
-    events: rows.map((row) => ({
+    nextCursor: page.nextCursor,
+    truncated: page.truncated,
+    limit: page.limit,
+    events: page.items.map((row) => ({
       id: row.id, actorId: row.actor_id ?? null, action: row.action, entityType: row.entity_type,
       entityId: row.entity_id, occurredAt: isoTimestamp(row.occurred_at),
       metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
     })),
+  });
+}
+
+// --- Przegląd dziennika odczytu danych rodzin (#133) -----------------------
+
+const ACCESS_LOG_OUTCOMES = ['ok', 'not_found'];
+const ACCESS_LOG_TS = `to_char(l.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+function encodeAccessLogCursor(row) {
+  return Buffer.from(JSON.stringify({ t: row.occurred_key, i: row.id }), 'utf8').toString('base64url');
+}
+
+function decodeAccessLogCursor(value) {
+  if (value === null || value === '') return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (typeof parsed?.t !== 'string' || typeof parsed?.i !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(parsed.t) || !validId(parsed.i)) throw new Error();
+    return { occurredKey: parsed.t, id: parsed.i };
+  } catch {
+    throw new RequestError('invalid_cursor');
+  }
+}
+
+async function listAccessLog(env, url, json, actorId) {
+  const params = url.searchParams;
+  const limitParam = params.get('limit');
+  const limit = limitParam === null ? 100 : Number(limitParam);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST) throw new RequestError('invalid_limit');
+  const kind = params.get('kind');
+  if (kind !== null && !DATA_ACCESS_KINDS.includes(kind)) throw new RequestError('invalid_access_kind');
+  const outcome = params.get('outcome');
+  if (outcome !== null && !ACCESS_LOG_OUTCOMES.includes(outcome)) throw new RequestError('invalid_outcome');
+  const filterActor = optionalId(params.get('actorId'), 'invalid_actor_id');
+  const householdId = optionalId(params.get('householdId'), 'invalid_household_id');
+  const classId = optionalId(params.get('classId'), 'invalid_class_id');
+  const schoolYearId = optionalId(params.get('schoolYearId'), 'invalid_school_year_id');
+  const from = params.get('from');
+  const to = params.get('to');
+  if (from !== null && Number.isNaN(Date.parse(from))) throw new RequestError('invalid_from');
+  if (to !== null && Number.isNaN(Date.parse(to))) throw new RequestError('invalid_to');
+  const cursor = decodeAccessLogCursor(params.get('cursor'));
+
+  const values = [];
+  const conditions = ['TRUE'];
+  const add = (sql, value) => { values.push(value); conditions.push(sql.replace('?', `$${values.length}`)); };
+  if (kind) add('l.access_kind = ?', kind);
+  if (outcome) add('l.outcome = ?', outcome);
+  if (filterActor) add('l.actor_id = ?', filterActor);
+  if (householdId) add('l.household_id = ?', householdId);
+  if (classId) add('l.class_id = ?', classId);
+  if (schoolYearId) add('l.school_year_id = ?', schoolYearId);
+  if (from) add('l.occurred_at >= ?::timestamptz', new Date(from).toISOString());
+  if (to) add('l.occurred_at <= ?::timestamptz', new Date(to).toISOString());
+  if (cursor) {
+    values.push(cursor.occurredKey, cursor.id);
+    conditions.push(`(l.occurred_at, l.id) < ($${values.length - 1}::timestamptz, $${values.length})`);
+  }
+  values.push(limit + 1);
+  const { rows } = await env.db.query(
+    `SELECT l.id, l.actor_id, l.access_kind, l.school_year_id, l.class_id, l.household_id, l.outcome,
+            l.row_count, l.hit_count, ${ACCESS_LOG_TS} AS occurred_key, l.occurred_at, l.last_seen_at,
+            COALESCE((
+              SELECT array_agg(DISTINCT rg.role ORDER BY rg.role) FROM role_grants rg
+               WHERE rg.user_id = l.actor_id AND rg.revoked_at IS NULL
+                 AND (rg.expires_at IS NULL OR rg.expires_at > now())
+            ), ARRAY[]::text[]) AS actor_roles
+       FROM data_access_log l
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY l.occurred_at DESC, l.id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+  const visible = rows.slice(0, limit);
+  const nextCursor = rows.length > limit && visible.length ? encodeAccessLogCursor(visible[visible.length - 1]) : null;
+  // Odczyt przeglądu sam zostawia ślad, bez parametrów zapytania (jak audit.viewed).
+  await insertAuditEvent(env.db, {
+    actorId, action: 'access_log.viewed', entityType: 'data_access_log', entityId: 'data_access_log', metadata: {},
+  });
+  return json({
+    entries: visible.map((row) => ({
+      id: row.id,
+      actorId: row.actor_id,
+      actorRoles: row.actor_roles ?? [],
+      accessKind: row.access_kind,
+      schoolYearId: row.school_year_id ?? null,
+      classId: row.class_id ?? null,
+      householdId: row.household_id ?? null,
+      outcome: row.outcome,
+      rowCount: Number(row.row_count),
+      hitCount: Number(row.hit_count),
+      occurredAt: isoTimestamp(row.occurred_at),
+      lastSeenAt: isoTimestamp(row.last_seen_at),
+    })),
+    nextCursor,
   });
 }
 
@@ -1119,6 +1272,7 @@ function allowedMethodsFor(section, pathLength, action) {
   }
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
+  if (section === 'access-log' && pathLength === 1) return ['GET'];
   if (section === 'data-requests') {
     if (pathLength === 1) return ['GET', 'POST'];
     if (pathLength === 3 && action === 'status') return ['POST'];
@@ -1154,7 +1308,7 @@ async function route(request, env, url, json, actorId, context) {
   if (rest.length) return null;
 
   if (section === 'users') {
-    if (path.length === 1 && method === 'GET') return listUsers(env, json);
+    if (path.length === 1 && method === 'GET') return listUsers(env, url, json);
     if (path.length === 3 && method === 'POST') {
       const userId = decodeId(rawId);
       if (action === 'disable') return setUserDisabled(env, actorId, userId, true, json);
@@ -1180,7 +1334,7 @@ async function route(request, env, url, json, actorId, context) {
     if (path.length === 3 && action === 'revoke' && method === 'POST') return revokeGrant(env, actorId, decodeId(rawId), json);
   }
   if (section === 'invitations') {
-    if (path.length === 1 && method === 'GET') return listInvitations(env, json);
+    if (path.length === 1 && method === 'GET') return listInvitations(env, url, json);
     // Zaproszenie (i jego ponowne wydanie) nadaje rolę w chwili przyjęcia —
     // to też „nadanie roli”, więc ten sam krok w górę co POST /grants; bez tego
     // admin ze starym MFA (przejęta sesja) zapraszał dowolny adres do roli admin.
@@ -1203,6 +1357,7 @@ async function route(request, env, url, json, actorId, context) {
   }
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId);
+  if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
   if (section === 'data-requests') {
     if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);
     if (path.length === 1 && method === 'POST') return createDataRequest(env, actorId, request, json);
@@ -1217,7 +1372,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'data-requests', 'retention', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'school-years', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;

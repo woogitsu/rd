@@ -16,7 +16,7 @@ odtworzyć do pustej bazy.
 | Trasa | Kto | Zawartość |
 |---|---|---|
 | `POST /api/exports` z `{"schoolYearId": "…"}` | admin albo zarząd, sesja z MFA, przydział bez roku lub dla tego roku | pełna paczka roku (dane rodzin i finanse) |
-| `GET /api/exports/class-roster?classId=…&format=json\|csv` | przedstawiciel **wyłącznie własnej klasy** (i roku), a także admin i zarząd; MFA | lista uczniów klasy z opiekunami; bez wpłat, sum i identyfikatorów rodzin |
+| `GET /api/exports/class-roster?classId=…&format=json\|csv\|xlsx` | przedstawiciel **wyłącznie własnej klasy** (i roku), a także admin i zarząd; MFA | lista uczniów klasy z opiekunami; bez wpłat, sum i identyfikatorów rodzin |
 
 **Założenie do decyzji zarządu i szkoły (D-08, D-09):** pełny eksport mają
 tylko admin i zarząd. Skarbnik, Komisja Rewizyjna i dyrekcja nie mają
@@ -33,11 +33,16 @@ pusta kolumna „Uwagi”), posortowany `Intl.Collator('pl')` (Ćwik, Łukasik,
 Śliwa, Zieliński, Żak w kolejności alfabetu polskiego — nie bajtowo), z
 wierszem nagłówkowym (klasa, rok, data wygenerowania) i stopką „Zawiera dane
 osobowe — nie przesyłać dalej, usunąć po wykorzystaniu”. Nazwa pliku nie
-zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv`. Każde pobranie
+zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv` / `.xlsx`. Każde pobranie
 (niezależnie od formatu) zapisuje `export_runs` i `export.created`; format
-trafia tylko do metadanych audytu, bez migracji schematu. XLSX dla listy
-klasy pominięty (osobny zakres); moduł zapisu `src/pg/xlsx.js` (#121) na razie
-obsługuje tylko eksport księgi (docs/LEDGER.md).
+trafia tylko do metadanych audytu, bez migracji schematu. Format `xlsx` (#132)
+składa wspólny moduł `src/pg/xlsx.js` (#121) na tych samych kolumnach i wierszach
+co CSV (jeden arkusz, wiersz tytułu i stopka jak w CSV, tekst jako `inlineStr` —
+imię zaczynające się od `=` zostaje tekstem); zakres ról, klasy, roku i MFA jest
+identyczny jak dla JSON/CSV, a kolumny to wyłącznie dane, które ta rola widzi w
+JSON (bez nowych danych osobowych, D-03). Nie ma jeszcze zbiorczego pliku „arkusz
+na klasę” dla zarządu (pkt 5 issue #132 — osobny zakres, wymaga rozstrzygnięcia
+D-08).
 Plik ma BOM UTF-8, separator `;` i CRLF jak pozostałe eksporty CSV (wspólny
 moduł `src/pg/csv.js`, #121: `toCsv`, `csvResponse`, `csvCell`). Pola tekstowe
 (nazwiska, e-maile) zaczynające się od `= + - @`, tabulatora lub CR — także po
@@ -110,7 +115,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `ledger_*` | kategorie i historia ich wyłączenia, bilans otwarcia i jego korekty, wpisy, korekty wpisów, preliminarz roku i jego przyjęcie przez zebranie (0073, #107) |
 | `events`, `event_revisions` | wydarzenia roku i ich rewizje |
 | `event_tasks`, `event_task_signups` | zadania i zapisy wolontariuszy wydarzeń roku (0076, #142) |
-| `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102) |
+| `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102), wersje porządku obrad, zmiany terminu i zawiadomienia zebrań (0139, #113) |
 | `student_households`, `guardian_households` | członkostwo uczniów roku (także drugie gospodarstwo przy opiece dzielonej, `is_primary`) i opiekunów z zakresu w gospodarstwach, z historią (0014) |
 | `enrollment_history` | historia przypisań do klas w danym roku (0014) |
 | `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
@@ -124,6 +129,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `meeting_attendance_state` | licznik rewizji obecności zebrań roku (0021) |
 | `document_status_events` | zastąpienie/unieważnienie dokumentu z powodem, wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id`/`replacement_document_id` po odtworzeniu nie mają odpowiednika, jak `source_document_id` (0066, #82) |
 | `document_descriptions` | tytuł, kategoria, data i opis dokumentu (wszystkie wersje), wpisane w datach roku — dane Rady, w odróżnieniu od samego pliku (`documents` pozostaje poza paczką, patrz niżej); `document_id` po odtworzeniu nie ma odpowiednika, jak `source_document_id` (0065, #76/#313) |
+| `financial_report_snapshots`, `financial_report_snapshot_approvals` | niezmienne migawki sprawozdania rocznego (JSON zagregowany, SHA-256, poprzednia migawka i powód korekty) oraz ich zatwierdzenia roku (0138, #125) |
 | `school_year_closures`, `school_year_closure_checklist` | stan zamknięcia roku i lista kontrolna (0017) |
 | `audit_events` | zdarzenia z `metadata.schoolYearId` = rok eksportu (nigdy wg daty); stare zdarzenia bez roku — wg roku obiektu (`entity_type`/`entity_id`: wpłaty, korekty, przypisania, zwroty, księga, przeniesienia, uzgodnienia, zamknięcie roku, klasy, zapisy, `school_year`); pozostałe (sesje, MFA, konta, role, dokumenty, importy) oraz zdarzenia typu rocznego z nieosiągalnym obiektem — wg dat roku (Europe/Brussels); bez `export.*`. Szczegóły niżej |
 

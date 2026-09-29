@@ -21,13 +21,27 @@
       <div class="message" id="message" role="status"></div>
 
       <section id="classes-view" hidden>
-        <div class="page-heading"><div><p class="eyebrow">Katalog</p><h1>Klasy</h1><p>Widoczne są wyłącznie klasy z Twojego zakresu uprawnień.</p></div></div>
+        <div class="page-heading"><div><p class="eyebrow">Katalog</p><h1>Klasy</h1><p>Widoczne są wyłącznie klasy z Twojego zakresu uprawnień.</p></div><a id="overview-link" href="#/overview" hidden>Statystyki klas</a></div>
         <div id="years"></div>
         <p class="empty" id="classes-empty" hidden>Brak klas w Twoim zakresie.</p>
         <section class="card" id="overview-card" hidden>
           <h2>Do zrobienia w klasie</h2>
           <p class="note">Liczby dla Twoich klas. „Do kartki” to uczniowie bez opiekuna ze zgodą i działającym adresem e-mail; wypisanie z kategorii wiadomości nie jest tu liczone. Lista może być nieaktualna.</p>
           <div class="table-wrap"><table><caption class="sr-only">Zadania przedstawiciela w klasach</caption><thead><tr><th scope="col">Klasa</th><th scope="col">Do kartki papierowej</th><th scope="col">Ostatni wydruk kartek</th><th scope="col">Wydarzenia</th><th scope="col">Najbliższe zebranie</th><th scope="col">Dokumenty klasy</th></tr></thead><tbody id="overview-body"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="overview-view" hidden>
+        <div class="page-heading"><div><p class="eyebrow">Pulpit zarządu</p><h1>Statystyki klas</h1><p>Liczności dla klas z Twojego zakresu. To informacja pomocnicza, nie ocena klas ani rodzin.</p></div></div>
+        <section class="card">
+          <label for="board-overview-year">Rok szkolny
+            <select id="board-overview-year"></select>
+          </label>
+          <p class="note" id="board-overview-note"></p>
+          <div class="table-wrap"><table id="board-overview-table"><caption class="sr-only">Statystyki klas roku szkolnego</caption><thead id="board-overview-head"></thead><tbody id="board-overview-body"></tbody><tfoot id="board-overview-foot"></tfoot></table></div>
+          <p class="note">Uczeń z rodzeństwem w kilku klasach jest liczony w każdej z tych klas; w wierszu „Razem” gospodarstwo liczy się raz. Kolumna „Do kartki” to uczniowie bez opiekuna ze zgodą na kontakt i adresem e-mail. Lista może być nieaktualna.</p>
+          <p class="note" id="board-overview-unmatched" hidden></p>
+          <p class="empty" id="board-overview-empty" hidden>Brak klas w Twoim zakresie w tym roku.</p>
         </section>
       </section>
 
@@ -73,7 +87,7 @@
       <input type="hidden" name="guardianId" /><p class="context"></p>
       <label>E-mail <input name="email" type="email" maxlength="254" autocomplete="off" /></label>
       <label class="checkbox"><input name="contactAllowed" type="checkbox" /> Zgoda na kontakt</label>
-      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
       <div class="form-error" id="contact-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz</button></div>
     </form></dialog>
@@ -83,7 +97,7 @@
       <input type="hidden" name="studentId" /><input type="hidden" name="schoolYearId" /><p class="context"></p>
       <label>Nowa klasa <select name="classId" required></select></label>
       <label>Data zmiany <input name="effectiveOn" type="date" required /></label>
-      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea></label>
+      <label>Powód zmiany <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
       <div class="form-error" id="enrollment-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz</button></div>
     </form></dialog>

@@ -21,6 +21,7 @@ export const STATUS_LABELS = Object.freeze({
   scheduled: "Zaplanowane",
   held: "Odbyte",
   archived: "Zarchiwizowane",
+  cancelled: "Odwołane",
 });
 
 export const STATUS_ACTION_LABELS = Object.freeze({
@@ -35,6 +36,7 @@ const STATUS_TRANSITIONS = Object.freeze({
   scheduled: ["draft", "held"],
   held: ["archived"],
   archived: [],
+  cancelled: [],
 });
 
 export const CAPACITY_LABELS = Object.freeze({
@@ -220,8 +222,47 @@ export function allowedStatusTransitions(status) {
 
 // Zebranie jest zablokowane po archiwizacji lub pierwszym zatwierdzeniu protokołu.
 export function isMeetingLocked(detail) {
-  if (detail?.meeting?.status === "archived") return true;
+  // #113: odwołanie zamyka zebranie tak samo jak archiwum (serwer: 409 meeting_cancelled).
+  if (detail?.meeting?.status === "archived" || detail?.meeting?.status === "cancelled") return true;
   return Array.isArray(detail?.minutes) && detail.minutes.some((item) => item.status === "approved");
+}
+
+// ---------- zawiadomienie o zebraniu (#113) ----------
+
+export const NOTICE_KIND_LABELS = Object.freeze({
+  invitation: "Zawiadomienie",
+  update: "Zaktualizowane zawiadomienie",
+  reschedule: "Zmiana terminu",
+  cancellation: "Odwołanie",
+});
+
+export const NOTICE_STATUS_LABELS = Object.freeze({ draft: "Szkic", approved: "Zatwierdzone" });
+
+// Zatwierdzić można tylko najnowszy, aktualny szkic; autor (cztery oczy) dostaje odmowę z serwera.
+export function canApproveNotice(notice, meeting) {
+  if (!notice || notice.status !== "draft" || !notice.isLatest || notice.outdated) return false;
+  return notice.kind === "cancellation" ? meeting?.status === "cancelled" : meeting?.status === "scheduled";
+}
+
+// Szkic kampanii e-mail: tylko z zatwierdzonego, najnowszego i aktualnego zawiadomienia zebrania
+// ogólnego lub klasowego (zebranie zarządu — poza zakresem), raz na zawiadomienie.
+export function canDraftNoticeCampaign(notice, meeting) {
+  if (!notice || notice.status !== "approved" || !notice.isLatest || notice.outdated || notice.campaignId) return false;
+  if (meeting?.kind === "board") return false;
+  return notice.kind === "cancellation" ? meeting?.status === "cancelled" : meeting?.status === "scheduled";
+}
+
+export function canChangeSchedule(meeting) {
+  return meeting?.status === "draft" || meeting?.status === "scheduled";
+}
+
+// Ostrzeżenie o spóźnionym zawiadomieniu: serwer tylko odnotowuje (reguła D-21 wpisywana ręcznie).
+export function describeNoticeLateness(notice, meeting) {
+  if (!notice || notice.noticeLate !== true) return null;
+  const rule = meeting?.noticeRule ?? {};
+  const days = notice.noticeDaysBefore;
+  return `Zawiadomienie zatwierdzono ${days} dn. przed zebraniem, a reguła wymaga co najmniej ${rule.minDays ?? "?"}`
+    + `${rule.source ? ` (${rule.source})` : ""}. To tylko ostrzeżenie — nic nie jest blokowane.`;
 }
 
 // ---------- reguła quorum ----------
@@ -321,6 +362,31 @@ export function describeQuorumCheck(check) {
       + (check.current === false ? " Lista obecności zmieniła się po tym ustaleniu — nowa uchwała wymaga ponownego ustalenia quorum." : ""),
     stale: check.current === false,
     basis: QUORUM_BASIS_NOTE,
+  };
+}
+
+// ---------- lista kontrolna przed zatwierdzeniem protokołu (#81) ----------
+
+const CHECKLIST_LABELS = {
+  meeting_not_held: () => "Zebranie nie ma statusu „Odbyte”. Protokół można zatwierdzić dopiero po odbyciu zebrania.",
+  open_resolutions: (count) => `Otwarte projekty uchwał: ${count}. Rozstrzygnij albo wycofaj każdy projekt przed zatwierdzeniem.`,
+  quorum_rule_missing: () => "Reguła quorum nie została wpisana. Po zatwierdzeniu nie da się jej uzupełnić.",
+  quorum_rule_source_missing: () => "Brak źródła reguły quorum (np. paragrafu regulaminu).",
+  no_quorum_check: () => "Quorum nie zostało ustalone.",
+  stale_quorum_check: () => "Lista obecności zmieniła się po ostatnim ustaleniu quorum.",
+  resolutions_on_stale_check: (count) => `Uchwały oparte na nieaktualnym ustaleniu quorum: ${count}. Po zatwierdzeniu poprawi je tylko nowy zapis.`,
+};
+
+// Zamienia odpowiedź GET /api/meetings/:id/approval-checklist na pozycje do
+// wyświetlenia. Nieznany kod jest pomijany (serwer może być nowszy od panelu).
+export function describeApprovalChecklist(checklist) {
+  const items = Array.isArray(checklist?.items) ? checklist.items : [];
+  const described = items
+    .filter((item) => typeof CHECKLIST_LABELS[item?.code] === "function")
+    .map((item) => ({ code: item.code, blocking: item.blocking === true, text: CHECKLIST_LABELS[item.code](item.count) }));
+  return {
+    blocking: described.filter((item) => item.blocking),
+    warnings: described.filter((item) => !item.blocking),
   };
 }
 

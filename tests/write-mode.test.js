@@ -6,7 +6,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { checkReadiness } from '../src/health.js';
 import { resolveRuntime } from '../src/server.js';
 import { isWriteExempt, resolveWriteMode, WRITE_MODE_NORMAL, WRITE_MODE_READ_ONLY } from '../src/write-mode.js';
-import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 import { ROUTE_MATRIX } from './helpers/route-matrix.js';
 
 const BASE = 'https://rd.example';
@@ -121,7 +121,7 @@ test('read_only: webhook Brevo (POST, cross-origin dozwolony) też dostaje 503 �
 }));
 
 test('podwójne kliknięcie w chwili przełączenia na read_only: żądanie sprzed przełączenia zapisane raz, po — 503; ponowienie po powrocie do normal nie duplikuje', async () => withReadOnlyBackend(async ({ db, env, normalEnv, boardCookie }) => {
-  await db.query("INSERT INTO households (id) VALUES ('h1')");
+  await seedEnrolledHousehold(db, 'h1', ['y-test']);
   const key = `switch-${crypto.randomUUID()}`;
   const paymentBody = { householdId: 'h1', schoolYearId: 'y-test', amountCents: 5000, receivedOn: '2026-09-20', method: 'bank', reference: 'synthetic' };
   const treasurerCookie = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: 'y-test' }], mfa: true });

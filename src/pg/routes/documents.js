@@ -2,7 +2,8 @@
 //
 //   POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]
 //        ciało = surowe bajty pliku, nagłówki Content-Type i Idempotency-Key
-//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&limit=…][&offset=…]
+//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&from=…][&to=…][&sort=documentDate|createdAt][&limit=…][&cursor=…]
+//        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`; kursor działa tylko przy sort=createdAt
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
 //   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed
@@ -19,7 +20,11 @@
 
 import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { PersonalDataError, gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
+import {
+  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+} from '../list-cursor.js';
 import { sha256Hex } from '../../storage.js';
 import {
   ALLOWED_TYPES, declaredType, detectType, downloadFilename, maxUploadBytes, newObjectKey, readLimited,
@@ -56,6 +61,10 @@ const STATUS_ACTION_PATH = /^\/api\/documents\/([^/]+)\/(supersede|void)$/;
 const DESCRIPTION_PATH = /^\/api\/documents\/([^/]+)\/description$/;
 const MAX_LIST_LIMIT = 100;
 const MAX_OFFSET = 10_000;
+
+class ListError extends Error {
+  constructor(code) { super(code); this.code = code; }
+}
 
 const DOWNLOAD_HEADERS = Object.freeze({
   'Cache-Control': 'no-store',
@@ -131,11 +140,14 @@ function toDescription(row) {
 
 const SELECT_DOCUMENT = `SELECT d.id, d.object_key, d.kind, d.school_year_id, d.class_id, d.mime_type, d.byte_size,
        d.sha256, d.linked_entity_type, d.linked_entity_id, d.created_by, d.created_at, d.idempotency_key,
-       s.status, s.replacement_document_id,
+       COALESCE(s.action, 'active') AS status, s.replacement_document_id,
        dd.title AS description_title, dd.category AS description_category,
-       to_char(dd.document_date, 'YYYY-MM-DD') AS description_document_date
+       to_char(dd.document_date, 'YYYY-MM-DD') AS description_document_date,
+       ${cursorTimestampSql('d.created_at')} AS cursor_ts
   FROM documents d
-  LEFT JOIN document_current_status s ON s.document_id = d.id
+  -- Zamiast widoku document_current_status (ten sam wynik: co najwyżej jedno zdarzenie na
+  -- dokument): widok łączy tabelę documents drugi raz i uniemożliwia planerowi użycie indeksu kursora (#159).
+  LEFT JOIN document_status_events s ON s.document_id = d.id
   LEFT JOIN LATERAL (
     SELECT title, category, document_date, description FROM document_descriptions
      WHERE document_id = d.id ORDER BY revision_no DESC LIMIT 1
@@ -283,8 +295,33 @@ async function list(request, env, url, json) {
   if (rawQuery !== null && rawQuery.length > 200) return json({ error: 'invalid_request' }, 400);
   // Ucieczka znaków specjalnych ILIKE, żeby "%"/"_" w wyszukiwanej frazie nie działały jako wieloznaczniki.
   const searchQuery = rawQuery ? rawQuery.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`) : '';
-  const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit') ?? '50', 10) || 50, 1), MAX_LIST_LIMIT);
-  const offset = Math.min(Math.max(Number.parseInt(url.searchParams.get('offset') ?? '0', 10) || 0, 0), MAX_OFFSET);
+  // Issue #76: zakres daty dokumentu (najnowsza wersja opisu) i sortowanie.
+  // Dokument bez daty nie spełnia filtra from/to; przy sortowaniu po dacie trafia na koniec.
+  const fromDate = url.searchParams.get('from');
+  const toDate = url.searchParams.get('to');
+  if ((fromDate && !validDocumentDate(fromDate)) || (toDate && !validDocumentDate(toDate))) {
+    return json({ error: 'invalid_document_date' }, 400);
+  }
+  if (fromDate && toDate && fromDate > toDate) return json({ error: 'invalid_request' }, 400);
+  const sort = url.searchParams.get('sort') ?? 'createdAt';
+  if (sort !== 'createdAt' && sort !== 'documentDate') return json({ error: 'invalid_request' }, 400);
+  // Kursor keyset opiera się na created_at; przy sort=documentDate obowiązuje offset.
+  if (sort === 'documentDate' && url.searchParams.get('cursor')) return json({ error: 'invalid_request' }, 400);
+  // #159: zły limit to 400 invalid_limit (wcześniej po cichu przycinany).
+  const failList = (code) => { throw new ListError(code); };
+  let limit;
+  let cursor;
+  let cursorScope;
+  try {
+    limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 50, maxLimit: MAX_LIST_LIMIT }, failList);
+    cursorScope = JSON.stringify(['documents', schoolYearId, kindFilter, classFilter.value, statusFilter, categoryFilter, searchQuery, fromDate || null, toDate || null]);
+    cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope: cursorScope }, failList);
+  } catch (error) {
+    if (error instanceof ListError) return json({ error: error.code }, 400);
+    throw error;
+  }
+  // Przestarzałe: offset działa tylko bez kursora (zgodność ze starymi klientami).
+  const offset = cursor ? 0 : Math.min(Math.max(Number.parseInt(url.searchParams.get('offset') ?? '0', 10) || 0, 0), MAX_OFFSET);
 
   // Zakres widoczności z przydziałów; SQL zawęża, a canAccessDocument
   // sprawdza jeszcze każdy wiersz (obrona w głąb).
@@ -309,22 +346,30 @@ async function list(request, env, url, json) {
 
   // Wyszukiwanie i filtr kategorii zawężają zapytanie w SQL, PRZED LIMIT
   // (issue #76 wprost pilnuje tego, by pełna strona znaczyła realne wyniki).
+  const queryValues = [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value,
+    limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null, fromDate || null, toDate || null, sort];
+  const after = cursor ? `AND ${afterTimestampDescSql('d.created_at', 'd.id', cursor, queryValues)}` : '';
   const { rows } = await env.db.query(
     `${SELECT_DOCUMENT}
       WHERE d.school_year_id = $1
         AND (d.kind = ANY($2::text[]) OR (d.kind = 'class' AND ($3::boolean OR d.class_id = ANY($4::text[]))))
         AND ($5::text IS NULL OR d.kind = $5)
         AND ($6::text IS NULL OR d.class_id = $6)
-        AND ($9::text = 'all' OR COALESCE(s.status, 'active') = 'active')
+        AND ($9::text = 'all' OR s.document_id IS NULL)
         AND ($10::text IS NULL OR dd.category = $10)
         AND ($11::text IS NULL OR dd.title ILIKE '%' || $11 || '%' OR dd.description ILIKE '%' || $11 || '%')
-      ORDER BY d.created_at DESC, d.id
+        AND ($12::date IS NULL OR dd.document_date >= $12::date)
+        AND ($13::date IS NULL OR dd.document_date <= $13::date)
+        ${after}
+      ORDER BY CASE WHEN $14::text = 'documentDate' THEN dd.document_date END DESC NULLS LAST, d.created_at DESC, d.id
       LIMIT $7 OFFSET $8`,
-    [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value, limit, offset,
-      statusFilter, categoryFilter || null, searchQuery || null],
+    queryValues,
   );
-  const documents = rows.map(toDocument).filter((doc) => canAccessDocument(context, doc));
-  return json({ documents, limit, offset });
+  // Kursor liczymy z wierszy SQL (przed filtrem canAccessDocument), żeby strona
+  // zawężona filtrem uprawnień nie zgubiła dalszych wyników.
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), cursorScope);
+  const documents = page.items.map(toDocument).filter((doc) => canAccessDocument(context, doc));
+  return json({ documents, limit, offset, nextCursor: sort === 'documentDate' ? null : page.nextCursor, truncated: page.truncated });
 }
 
 function tooLarge(json) {
@@ -670,6 +715,8 @@ async function changeStatus(request, env, id, json, action) {
         return { conflict: true };
       }
 
+      // #152: powód zdarzenia niezmiennego — bramka na dane osobowe (422).
+      const gate = gateFreeText([['document_status_events.reason', reason]], { confirm: body.value?.confirmPersonalData === true });
       const eventId = crypto.randomUUID();
       const inserted = (await tx.query(
         `INSERT INTO document_status_events (id, document_id, action, replacement_document_id, reason, created_by, idempotency_key)
@@ -683,7 +730,7 @@ async function changeStatus(request, env, id, json, action) {
         entityType: 'document', entityId: id,
         metadata: {
           kind: doc.kind, schoolYearId: doc.school_year_id, classId: doc.class_id,
-          replacementDocumentId, sessionId: context.session.sessionId,
+          replacementDocumentId, sessionId: context.session.sessionId, ...piiAuditMetadata(gate),
         },
       });
       return { created: toStatusEvent(inserted) };
@@ -697,6 +744,7 @@ async function changeStatus(request, env, id, json, action) {
     if (result.replayed) return json({ statusEvent: result.replayed, replayed: true }, 200);
     return json({ statusEvent: result.created }, 201);
   } catch (error) {
+    if (error instanceof PersonalDataError) return json({ error: error.code, categories: error.categories }, 422);
     if (error?.code === '23505') {
       if (error?.constraint === 'document_status_events_idempotency_key_key') {
         return json({ error: 'idempotency_conflict' }, 409);
@@ -769,6 +817,10 @@ async function createDescription(request, env, id, json) {
         if (existing.document_id !== id || !sameInput(existing)) return { conflict: true };
         return { replayed: toDescription(existing) };
       }
+      const gate = gateFreeText([
+        ['document_descriptions.title', input.title],
+        ['document_descriptions.description', input.description],
+      ], { confirm: body.value?.confirmPersonalData === true });
       const nextRevision = Number((await tx.query(
         'SELECT COALESCE(MAX(revision_no), 0) + 1 AS next FROM document_descriptions WHERE document_id = $1', [id],
       )).rows[0].next);
@@ -787,6 +839,7 @@ async function createDescription(request, env, id, json) {
         metadata: {
           kind: doc.kind, schoolYearId: doc.school_year_id, classId: doc.class_id,
           category: input.category, revisionNo: nextRevision, sessionId: context.session.sessionId,
+          ...piiAuditMetadata(gate),
         },
       });
       return { created: toDescription(inserted) };
@@ -796,6 +849,7 @@ async function createDescription(request, env, id, json) {
     if (result.replayed) return json({ description: result.replayed, replayed: true }, 200);
     return json({ description: result.created }, 201);
   } catch (error) {
+    if (error instanceof PersonalDataError) return json({ error: error.code, categories: error.categories }, 422);
     if (error?.code === '23505') {
       // Równoległe podwójne kliknięcie: drugi zapis przegrał wyścig o klucz idempotencji.
       const existing = (await env.db.query(

@@ -17,7 +17,7 @@
     "build:import": "vite build import --outDir ../dist/import --base ./ --emptyOutDir",
     "dev:panel": "vite panel",
     "build:panel": "vite build panel --outDir ../dist/panel --base ./ --emptyOutDir",
-    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test": "node --test --test-concurrency=1 --import ./tests/setup.js tests/*.test.js",
     "smoke": "node scripts/smoke-postgres.js",
     "smoke:remote": "node scripts/smoke-remote.js",
     "load:test": "node scripts/load-test.js",
@@ -34,9 +34,11 @@
     "db:restore:postgres": "node scripts/restore-postgres-snapshot.js",
     "storage:smoke": "node scripts/storage-smoke.js",
     "backup:storage": "node scripts/backup-storage.js",
+    "backup:storage:verify": "node scripts/verify-storage-backup.js",
     "cleanup:document-uploads": "node scripts/document-uploads-cleanup.js",
     "backup:postgres": "node scripts/backup-postgres.js",
     "restore:drill": "node scripts/restore-drill.js",
+    "restore:drill:local": "node scripts/restore-drill-local.js",
     "dev:events": "vite events",
     "build:events": "vite build events --outDir ../dist/events --base ./ --emptyOutDir",
     "dev:documents": "vite documents",
@@ -71,6 +73,7 @@
     "demo:seed": "node scripts/demo-seed.js",
     "demo:start": "node scripts/demo-start.js",
     "pretest:e2e": "npm run build",
+    "test:pg-real": "node scripts/test-pg-real.js",
     "test:e2e": "playwright test"
   },
   "dependencies": {

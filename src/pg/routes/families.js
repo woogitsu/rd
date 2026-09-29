@@ -7,6 +7,9 @@
 //   PATCH /api/guardians/{id}/students/{studentId} zgoda na kontakt w relacji z dzieckiem (admin, zarząd; #190)
 //   POST  /api/students/{id}/enrollments           przypisanie lub zmiana klasy w roku (admin, zarząd)
 //   POST  /api/students/{id}/enrollments/{eid}/end zakończenie przypisania — odejście ze szkoły (admin, zarząd; #86)
+//   POST  /api/guardians/{id}/students/{studentId}/end zakończenie relacji opiekun–dziecko (admin, zarząd; #86)
+//   POST  /api/students/{id}/households            dodanie członkostwa ucznia w gospodarstwie (admin, zarząd bez zakresu klasowego; #86)
+//   POST  /api/students/{id}/households/{mid}/end  zakończenie członkostwa ucznia w gospodarstwie (admin, zarząd; #86)
 //
 // Listy klasy, kartka gospodarstwa i licznik uczniów pokazują wyłącznie
 // bieżące przypisania (enrollments_current, #86) — uczeń po odejściu znika
@@ -25,6 +28,7 @@
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { recordDataAccess } from '../data-access.js';
 
 export const name = 'families';
@@ -38,12 +42,16 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_BODY_BYTES = 8 * 1024;
 
 class RequestError extends Error {
-  constructor(code, status = 400) {
+  constructor(code, status = 400, extra = {}) {
     super(code);
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
 }
+
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+const piiFail = (code, categories) => new RequestError(code, 422, { categories });
 
 const notFound = () => new RequestError('not_found', 404);
 
@@ -377,7 +385,8 @@ async function setChangeContext(tx, { actorId, reason, effectiveOn = null }) {
 
 async function updateGuardianContact(request, env, guardianId, json) {
   const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
-  const input = parseContactInput(await readJson(request));
+  const contactData = await readJson(request);
+  const input = parseContactInput(contactData);
   const actorId = context.session.user.id;
   const result = await env.db.transaction(async (tx) => {
     const { rows } = await tx.query(
@@ -400,11 +409,13 @@ async function updateGuardianContact(request, env, guardianId, json) {
     if (next.email !== (current.email ?? null)) fields.push('email');
     if (next.contactAllowed !== current.contact_allowed) fields.push('contactAllowed');
     if (!fields.length) return { changed: false, next };
+    // #152: powód trafia do niezmiennej historii zmian — bramka na dane osobowe.
+    const gate = gateFreeText([['guardian_contact_changes.reason', input.reason]], { confirm: contactData.confirmPersonalData === true, fail: piiFail });
     await setChangeContext(tx, { actorId, reason: input.reason });
     await tx.query('UPDATE guardians SET email = $2, contact_allowed = $3 WHERE id = $1', [guardianId, next.email, next.contactAllowed]);
     await insertAuditEvent(tx, {
       actorId, action: 'guardian.contact.updated', entityType: 'guardian', entityId: guardianId,
-      metadata: { fields },
+      metadata: { fields, ...piiAuditMetadata(gate) },
     });
     return { changed: true, next };
   });
@@ -426,7 +437,8 @@ function parseRelationInput(data) {
 
 async function updateRelationContact(request, env, guardianId, studentId, json) {
   const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
-  const input = parseRelationInput(await readJson(request));
+  const relationData = await readJson(request);
+  const input = parseRelationInput(relationData);
   const actorId = context.session.user.id;
   const result = await env.db.transaction(async (tx) => {
     // Blokada wiersza relacji serializuje podwójne kliknięcie i ponowienie.
@@ -446,6 +458,7 @@ async function updateRelationContact(request, env, guardianId, studentId, json) 
     const guardianContactAllowed = current.guardian_contact_allowed;
     if (current.contact_allowed === input.contactAllowed) return { changed: false, guardianContactAllowed };
     if (current.ended) throw new RequestError('relation_ended', 409);
+    const gate = gateFreeText([['student_guardian_changes.reason', input.reason]], { confirm: relationData.confirmPersonalData === true, fail: piiFail });
     await setChangeContext(tx, { actorId, reason: input.reason });
     await tx.query(
       'UPDATE student_guardians SET contact_allowed = $3 WHERE guardian_id = $1 AND student_id = $2',
@@ -454,7 +467,7 @@ async function updateRelationContact(request, env, guardianId, studentId, json) 
     await insertAuditEvent(tx, {
       actorId, action: 'student_guardian.contact.updated', entityType: 'student_guardian',
       entityId: `${studentId}:${guardianId}`,
-      metadata: { studentId, guardianId, contactAllowed: input.contactAllowed },
+      metadata: { studentId, guardianId, contactAllowed: input.contactAllowed, ...piiAuditMetadata(gate) },
     });
     return { changed: true, guardianContactAllowed };
   });
@@ -477,7 +490,8 @@ function parseEnrollmentInput(data) {
 
 async function changeEnrollment(request, env, studentId, json) {
   const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
-  const input = parseEnrollmentInput(await readJson(request));
+  const enrollmentData = await readJson(request);
+  const input = parseEnrollmentInput(enrollmentData);
   const actorId = context.session.user.id;
   const result = await env.db.transaction(async (tx) => {
     // Blokada ucznia serializuje równoległe zmiany (np. podwójne kliknięcie).
@@ -497,12 +511,13 @@ async function changeEnrollment(request, env, studentId, json) {
     if (enrollment && enrollment.class_id === input.classId) {
       return { status: 200, changed: false, enrollmentId: enrollment.id };
     }
+    const gate = gateFreeText([['enrollment_history.reason', input.reason]], { confirm: enrollmentData.confirmPersonalData === true, fail: piiFail });
     await setChangeContext(tx, { actorId, reason: input.reason, effectiveOn: input.effectiveOn });
     if (enrollment) {
       await tx.query('UPDATE enrollments SET class_id = $2 WHERE id = $1', [enrollment.id, input.classId]);
       await insertAuditEvent(tx, {
         actorId, action: 'enrollment.class_changed', entityType: 'enrollment', entityId: enrollment.id,
-        metadata: { studentId, schoolYearId: input.schoolYearId, fromClassId: enrollment.class_id, toClassId: input.classId },
+        metadata: { studentId, schoolYearId: input.schoolYearId, fromClassId: enrollment.class_id, toClassId: input.classId, ...piiAuditMetadata(gate) },
       });
       return { status: 200, changed: true, enrollmentId: enrollment.id };
     }
@@ -513,7 +528,7 @@ async function changeEnrollment(request, env, studentId, json) {
     );
     await insertAuditEvent(tx, {
       actorId, action: 'enrollment.created', entityType: 'enrollment', entityId: enrollmentId,
-      metadata: { studentId, schoolYearId: input.schoolYearId, toClassId: input.classId },
+      metadata: { studentId, schoolYearId: input.schoolYearId, toClassId: input.classId, ...piiAuditMetadata(gate) },
     });
     return { status: 201, changed: true, enrollmentId };
   });
@@ -536,7 +551,8 @@ function parseEndEnrollmentInput(data) {
 
 async function endEnrollment(request, env, studentId, enrollmentId, json) {
   const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
-  const input = parseEndEnrollmentInput(await readJson(request));
+  const endData = await readJson(request);
+  const input = parseEndEnrollmentInput(endData);
   const actorId = context.session.user.id;
   const result = await env.db.transaction(async (tx) => {
     // Blokada wiersza serializuje podwójne kliknięcie i ponowienie.
@@ -550,13 +566,14 @@ async function endEnrollment(request, env, studentId, enrollmentId, json) {
     const enrollment = rows[0];
     if (!enrollment) throw notFound();
     if (enrollment.ended_on) return { changed: false, endedOn: enrollment.ended_on };
+    const gate = gateFreeText([['enrollments.ended_reason', input.reason]], { confirm: endData.confirmPersonalData === true, fail: piiFail });
     await tx.query(
       'UPDATE enrollments SET ended_on = $2, ended_reason = $3, ended_by = $4, ended_at = now() WHERE id = $1',
       [enrollmentId, input.endedOn, input.reason, actorId],
     );
     await insertAuditEvent(tx, {
       actorId, action: 'enrollment.withdrawn', entityType: 'enrollment', entityId: enrollmentId,
-      metadata: { studentId, endedOn: input.endedOn },
+      metadata: { studentId, endedOn: input.endedOn, ...piiAuditMetadata(gate) },
     });
     return { changed: true, endedOn: input.endedOn };
   });
@@ -566,12 +583,198 @@ async function endEnrollment(request, env, studentId, enrollmentId, json) {
   });
 }
 
+// Zmiana opieki w trakcie roku (#86). Trzy trasy, żadna nie usuwa wiersza —
+// zakończenie ustawia datę (raz), korekta to nowy zapis, nie edycja starego.
+// * Data zmiany nie może wypadać w zamkniętym roku szkolnym (409
+//   school_year_closed): sprawdzamy rok szkolny obejmujący tę datę.
+// * Aktor i powód trafiają do historii w bazie (student_guardian_changes,
+//   student_households.*_reason); audit_events dostaje wyłącznie identyfikatory
+//   i daty, bez powodu (wolny tekst może opisywać sytuację rodzinną).
+// * Ponowienie tej samej operacji (podwójne kliknięcie) zwraca changed: false
+//   bez drugiego wpisu; blokada wiersza serializuje równoległe żądania.
+// * Zakończenie relacji z jednym dzieckiem nie rusza relacji z rodzeństwem ani
+//   drugiego opiekuna. Kampanie zatwierdzone wcześniej: odpowiedź wymienia
+//   aktywne kampanie, w których ten opiekun jest adresatem; worker przy
+//   wysyłce sprawdza relację ponownie (src/email/worker.js), a podgląd
+//   kampanii pokazuje ostrzeżenie (src/pg/routes/email.js).
+async function assertYearsOpenOn(tx, date) {
+  const { rows } = await tx.query(
+    'SELECT id FROM school_years WHERE starts_on <= $1::date AND ends_on >= $1::date ORDER BY id',
+    [date],
+  );
+  for (const row of rows) await tx.query('SELECT school_year_assert_open($1)', [row.id]);
+}
+
+async function activeCampaignsOfGuardian(tx, guardianId) {
+  const { rows } = await tx.query(
+    `SELECT DISTINCT c.id FROM email_campaign_recipients r
+       JOIN email_campaigns c ON c.id = r.campaign_id
+      WHERE r.guardian_id = $1 AND c.status IN ('approved', 'sending')
+      ORDER BY c.id`,
+    [guardianId],
+  );
+  return rows.map((row) => row.id);
+}
+
+function parseEndRelationInput(data) {
+  if (!validDate(data.endsOn)) throw new RequestError('invalid_ended_on');
+  return { endsOn: data.endsOn, reason: readReason(data.reason) };
+}
+
+// Relacja ma przedział [starts_on, ends_on] — dzień ends_on jest jeszcze
+// obowiązującym dniem (0035). Zakres klasowy: wystarczy uczeń z zakresu, także
+// gdy relacja już się zakończyła (ponowienie zwraca changed: false, nie 404).
+async function endRelation(request, env, guardianId, studentId, json) {
+  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const input = parseEndRelationInput(await readJson(request));
+  const actorId = context.session.user.id;
+  const result = await env.db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      // Surowa tabela (alias rel, nie sg): to nie jest sprawdzenie „aktualności” relacji,
+      // tylko odczyt zapisanej daty końca przed jej jednorazowym ustawieniem.
+      `SELECT to_char(rel.ends_on, 'YYYY-MM-DD') AS ends_on, to_char(rel.starts_on, 'YYYY-MM-DD') AS starts_on
+         FROM student_guardians rel
+        WHERE rel.guardian_id = $5 AND rel.student_id = $6 AND ${STUDENT_IN_SCOPE('rel.student_id')}
+        FOR UPDATE OF rel`,
+      [...scopeParams(scope), guardianId, studentId],
+    );
+    const current = rows[0];
+    if (!current) throw notFound();
+    if (current.ends_on) return { changed: false, endsOn: current.ends_on, campaignIds: [] };
+    if (current.starts_on && input.endsOn < current.starts_on) throw new RequestError('invalid_ended_on');
+    await assertYearsOpenOn(tx, input.endsOn);
+    await setChangeContext(tx, { actorId, reason: input.reason });
+    await tx.query('UPDATE student_guardians SET ends_on = $3 WHERE guardian_id = $1 AND student_id = $2', [guardianId, studentId, input.endsOn]);
+    await insertAuditEvent(tx, {
+      actorId, action: 'student_guardian.ended', entityType: 'student_guardian', entityId: `${studentId}:${guardianId}`,
+      metadata: { studentId, guardianId, endsOn: input.endsOn },
+    });
+    return { changed: true, endsOn: input.endsOn, campaignIds: await activeCampaignsOfGuardian(tx, guardianId) };
+  });
+  return json({
+    relation: { guardianId, studentId, endsOn: result.endsOn },
+    changed: result.changed,
+    // Kampanie zatwierdzone/wysyłane, w których ten opiekun jest adresatem —
+    // wymagają przeglądu; wysyłka do niego jest blokowana przy ponownym sprawdzeniu.
+    campaignsToReview: result.campaignIds,
+  });
+}
+
+// Członkostwo ucznia w gospodarstwie ma przedział [starts_on, ends_on) — dzień
+// ends_on jest już poza gospodarstwem (0014). Zakończenie głównego członkostwa
+// bez następcy oznacza, że uczeń nie ma głównego gospodarstwa: wypada z kampanii
+// i kartek (wariant zachowawczy do D-11), co odpowiedź zgłasza flagą.
+async function endStudentHousehold(request, env, studentId, membershipId, json) {
+  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const endData = await readJson(request);
+  const input = parseEndRelationInput(endData);
+  const actorId = context.session.user.id;
+  const result = await env.db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `SELECT sh.household_id, sh.is_primary, to_char(sh.starts_on, 'YYYY-MM-DD') AS starts_on,
+              to_char(sh.ends_on, 'YYYY-MM-DD') AS ends_on
+         FROM student_households sh
+        WHERE sh.id = $5 AND sh.student_id = $6 AND ${STUDENT_IN_SCOPE('sh.student_id')}
+        FOR UPDATE OF sh`,
+      [...scopeParams(scope), membershipId, studentId],
+    );
+    const current = rows[0];
+    if (!current) throw notFound();
+    if (current.ends_on) return { changed: false, endsOn: current.ends_on, isPrimary: current.is_primary, householdId: current.household_id };
+    if (current.starts_on && input.endsOn < current.starts_on) throw new RequestError('invalid_ended_on');
+    await assertYearsOpenOn(tx, input.endsOn);
+    // #152: powód zakończenia członkostwa trafia do niezmiennej historii — bramka na dane osobowe.
+    const gate = gateFreeText([['student_households.ended_reason', input.reason]], { confirm: endData.confirmPersonalData === true, fail: piiFail });
+    await tx.query(
+      `UPDATE student_households SET ends_on = $2, ended_at = now(), ended_by = $3, ended_reason = $4 WHERE id = $1`,
+      [membershipId, input.endsOn, actorId, input.reason],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'student_household.ended', entityType: 'student_household', entityId: membershipId,
+      metadata: { studentId, householdId: current.household_id, isPrimary: current.is_primary, endsOn: input.endsOn, ...piiAuditMetadata(gate) },
+    });
+    return { changed: true, endsOn: input.endsOn, isPrimary: current.is_primary, householdId: current.household_id };
+  });
+  let withoutPrimary = false;
+  if (result.isPrimary) {
+    const { rows } = await env.db.query(
+      'SELECT 1 FROM student_primary_household_current WHERE student_id = $1',
+      [studentId],
+    );
+    withoutPrimary = !rows[0];
+  }
+  return json({
+    membership: { id: membershipId, studentId, householdId: result.householdId, endsOn: result.endsOn },
+    changed: result.changed,
+    withoutPrimaryHousehold: withoutPrimary,
+  });
+}
+
+function parseAddHouseholdInput(data) {
+  if (typeof data.householdId !== 'string' || !ID_PATTERN.test(data.householdId)) throw new RequestError('invalid_request');
+  if (data.isPrimary !== undefined && typeof data.isPrimary !== 'boolean') throw new RequestError('invalid_request');
+  if (!validDate(data.startsOn)) throw new RequestError('invalid_effective_on');
+  return { householdId: data.householdId, isPrimary: data.isPrimary === true, startsOn: data.startsOn, reason: readReason(data.reason) };
+}
+
+// Dodanie członkostwa: wyłącznie zakres szeroki (admin, zarząd bez ograniczenia
+// klasowego) — gospodarstwo może obejmować dzieci z innych klas, a zakres klasowy
+// nie ma jak sprawdzić, do kogo je dołącza (wariant zachowawczy do D-08).
+// Zmiana głównego gospodarstwa = zakończenie starego (endsOn = D) i dodanie
+// nowego (startsOn = D) — dwa zapisy w historii; nakładające się główne
+// członkostwo daje 409 student_household_overlap.
+async function addStudentHousehold(request, env, studentId, json) {
+  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  if (isClassScoped(scope)) throw new RequestError('forbidden', 403);
+  const addData = await readJson(request);
+  const input = parseAddHouseholdInput(addData);
+  const actorId = context.session.user.id;
+  const result = await env.db.transaction(async (tx) => {
+    const student = await tx.query(
+      `SELECT s.id FROM students s WHERE s.id = $5 AND ${STUDENT_IN_SCOPE('s.id')} FOR UPDATE OF s`,
+      [...scopeParams(scope), studentId],
+    );
+    if (!student.rows[0]) throw notFound();
+    const household = await tx.query('SELECT 1 FROM households WHERE id = $1', [input.householdId]);
+    if (!household.rows[0]) throw notFound();
+    // Powtórka (podwójne kliknięcie): to samo członkostwo dodane przez API.
+    const same = await tx.query(
+      `SELECT id FROM student_households
+        WHERE student_id = $1 AND household_id = $2 AND is_primary = $3 AND source = 'api'
+          AND starts_on = $4::date AND ends_on IS NULL`,
+      [studentId, input.householdId, input.isPrimary, input.startsOn],
+    );
+    if (same.rows[0]) return { status: 200, changed: false, membershipId: same.rows[0].id };
+    await assertYearsOpenOn(tx, input.startsOn);
+    // #152: powód dodania członkostwa trafia do niezmiennej historii — bramka na dane osobowe.
+    const gate = gateFreeText([['student_households.created_reason', input.reason]], { confirm: addData.confirmPersonalData === true, fail: piiFail });
+    const membershipId = crypto.randomUUID();
+    await tx.query(
+      `INSERT INTO student_households (id, student_id, household_id, is_primary, starts_on, source, created_by, created_reason)
+       VALUES ($1, $2, $3, $4, $5, 'api', $6, $7)`,
+      [membershipId, studentId, input.householdId, input.isPrimary, input.startsOn, actorId, input.reason],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'student_household.added', entityType: 'student_household', entityId: membershipId,
+      metadata: { studentId, householdId: input.householdId, isPrimary: input.isPrimary, startsOn: input.startsOn, ...piiAuditMetadata(gate) },
+    });
+    return { status: 201, changed: true, membershipId };
+  });
+  return json({
+    membership: { id: result.membershipId, studentId, householdId: input.householdId, isPrimary: input.isPrimary, startsOn: input.startsOn },
+    changed: result.changed,
+  }, result.status);
+}
+
 export async function handle(request, env, url, json) {
   const path = url.pathname;
   const studentsMatch = path.match(/^\/api\/classes\/([^/]+)\/students$/);
   const householdMatch = path.match(/^\/api\/households\/([^/]+)$/);
   const contactMatch = path.match(/^\/api\/guardians\/([^/]+)\/contact$/);
   const relationMatch = path.match(/^\/api\/guardians\/([^/]+)\/students\/([^/]+)$/);
+  const relationEndMatch = path.match(/^\/api\/guardians\/([^/]+)\/students\/([^/]+)\/end$/);
+  const householdEndMatch = path.match(/^\/api\/students\/([^/]+)\/households\/([^/]+)\/end$/);
+  const householdAddMatch = path.match(/^\/api\/students\/([^/]+)\/households$/);
   const enrollmentEndMatch = path.match(/^\/api\/students\/([^/]+)\/enrollments\/([^/]+)\/end$/);
   const enrollmentMatch = path.match(/^\/api\/students\/([^/]+)\/enrollments$/);
   const method = request.method;
@@ -583,6 +786,13 @@ export async function handle(request, env, url, json) {
   else if (method === 'PATCH' && relationMatch) {
     action = () => updateRelationContact(request, env, decodeId(relationMatch[1]), decodeId(relationMatch[2]), json);
   }
+  else if (method === 'POST' && relationEndMatch) {
+    action = () => endRelation(request, env, decodeId(relationEndMatch[1]), decodeId(relationEndMatch[2]), json);
+  }
+  else if (method === 'POST' && householdEndMatch) {
+    action = () => endStudentHousehold(request, env, decodeId(householdEndMatch[1]), decodeId(householdEndMatch[2]), json);
+  }
+  else if (method === 'POST' && householdAddMatch) action = () => addStudentHousehold(request, env, decodeId(householdAddMatch[1]), json);
   else if (method === 'POST' && enrollmentEndMatch) {
     action = () => endEnrollment(request, env, decodeId(enrollmentEndMatch[1]), decodeId(enrollmentEndMatch[2]), json);
   }
@@ -593,7 +803,11 @@ export async function handle(request, env, url, json) {
   try {
     return await action();
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code }, error.status);
+    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    // Odmowy triggerów bazy (#86): zamknięty rok i nakładające się członkostwo to 409, nie 503.
+    const message = String(error?.message ?? '');
+    if (message.includes('school_year_closed')) return json({ error: 'school_year_closed' }, 409);
+    if (message.includes('student_household_overlap')) return json({ error: 'student_household_overlap' }, 409);
     throw error;
   }
 }

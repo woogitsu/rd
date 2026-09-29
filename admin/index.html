@@ -65,6 +65,7 @@
             <tbody id="users-body"></tbody>
           </table>
         </div>
+        <p><button type="button" id="users-more" hidden>Pokaż więcej</button></p>
       </section>
 
       <section class="card" aria-labelledby="grants-title">
@@ -95,6 +96,7 @@
             <tbody id="grants-body"></tbody>
           </table>
         </div>
+        <p><button type="button" id="grants-more" hidden>Pokaż więcej</button></p>
 
         <h3>Nadaj rolę</h3>
         <form id="grant-form" class="grid-form">
@@ -158,6 +160,7 @@
             <tbody id="invitations-body"></tbody>
           </table>
         </div>
+        <p><button type="button" id="invitations-more" hidden>Pokaż więcej</button></p>
       </section>
 
       <section class="card" aria-labelledby="term-title">
@@ -173,7 +176,7 @@
 
       <section class="card" aria-labelledby="audit-title">
         <div class="section-heading">
-          <div><h2 id="audit-title">Dziennik zmian kont i ról</h2><p>Ostatnie 100 zdarzeń. Dziennik zawiera identyfikatory, bez adresów e-mail.</p></div>
+          <div><h2 id="audit-title">Dziennik zmian kont i ról</h2><p>Najnowsze zdarzenia, po 100 na stronę; starsze dociąga „Pokaż więcej”. Dziennik zawiera identyfikatory, bez adresów e-mail.</p></div>
           <button type="button" id="reload-audit">Odśwież</button>
         </div>
         <div class="table-wrap">
@@ -183,9 +186,30 @@
             <tbody id="audit-body"></tbody>
           </table>
         </div>
+        <p><button type="button" id="audit-more" hidden>Pokaż więcej</button></p>
+      </section>
+
+      <section class="card" aria-labelledby="ops-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="ops-title">Stan systemu</h2>
+            <p id="ops-summary">Wczytywanie…</p>
+          </div>
+          <button type="button" id="reload-ops">Odśwież</button>
+        </div>
+        <p class="hint">Tylko liczby, znaczniki czasu i kody — bez adresów i treści. Progi alarmowe i alerty do monitora zewnętrznego: <code>/health/jobs</code> (konfiguracja serwera). Reakcja na incydent: docs/RUNBOOK.md. Wybór narzędzia monitora i adresatów alertów należy do zarządu.</p>
+        <p class="form-error" id="ops-message" role="alert"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Stan systemu</caption>
+            <thead><tr><th scope="col">Element</th><th scope="col">Stan</th><th scope="col">Ostatnie zdarzenie</th><th scope="col">Szczegóły</th></tr></thead>
+            <tbody id="ops-body"></tbody>
+          </table>
+        </div>
       </section>
     </main>
 
     <script type="module" src="/main.js"></script>
+    <script type="module" src="/ops-status.js"></script>
   </body>
 </html>

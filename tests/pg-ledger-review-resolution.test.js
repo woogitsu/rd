@@ -12,7 +12,7 @@ import {
   recordAttendance,
 } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const PREV = 'y-2025';
 const YEAR = 'y-2026';
@@ -74,6 +74,7 @@ async function resolution(db, { schoolYearId = YEAR, number, status = 'adopted',
     });
     return row;
   }
+  await seedRoleGrant(db, { userId: admin.userId, role: 'admin' });
   await recordAttendance(db, admin, { meetingId: meeting.id, userId: admin.userId, capacity: 'board_member', votingEligible: true, present: true });
   const { quorumCheck } = await determineQuorum(db, admin, { idempotencyKey: key('quorum'), meetingId: meeting.id });
   const { resolution: row } = await createResolution(db, admin, {

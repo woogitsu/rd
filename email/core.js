@@ -23,6 +23,7 @@ export const STATUS_LABELS = Object.freeze({
 export const AUDIENCE_LABELS = Object.freeze({
   all_households: 'Wszystkie rodziny roku',
   no_payment_record: 'Rodziny bez odnotowanej wpłaty',
+  class_households: 'Rodziny dzieci jednej klasy (zebranie klasowe)',
 });
 
 // Kody z computeSnapshot w src/pg/routes/email.js.
@@ -54,9 +55,11 @@ export function hasApproverAccess(grants, schoolYearId = '') {
   return hasRoleAccess(grants, APPROVER_ROLES, schoolYearId);
 }
 
-export function buildCampaignsUrl(schoolYearId) {
+export function buildCampaignsUrl(schoolYearId, cursor = '') {
   if (!isValidId(schoolYearId)) throw new Error('Podaj poprawny identyfikator roku szkolnego.');
-  return `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  const base = `/api/email/campaigns?schoolYearId=${encodeURIComponent(schoolYearId.trim())}`;
+  // #159: kolejna strona listy (kursor keyset z poprzedniej odpowiedzi).
+  return cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base;
 }
 
 export function campaignUrl(id) {
@@ -99,6 +102,12 @@ export function canOfferApproval(campaign, actorId) {
     && Boolean(campaign.recipientsHash)
     && Number(campaign.recipientsCount) > 0
     && !isLikelyOwnCampaign(campaign, actorId);
+}
+
+// Komunikat „dane od migawki zmieniły się” tylko dla istniejącej migawki, która przestała
+// być aktualna (snapshotCurrent === false). Bez migawki serwer zwraca null.
+export function isSnapshotStale(preview) {
+  return Boolean(preview) && Boolean(preview.recipientsHash) && preview.snapshotCurrent === false;
 }
 
 export function formatExclusions(exclusions) {
@@ -174,4 +183,26 @@ export function describeApiError(status, code) {
   if (code === 'self_approval_forbidden') return 'Zatwierdzić musi inna osoba niż ta, która przygotowała szkic lub migawkę.';
   if (status === 403 || code === 'forbidden') return 'Nie masz uprawnień do kampanii e-mail w wybranym roku szkolnym.';
   return null;
+}
+
+// Raport doręczeń (#139): rozłączne kategorie z GET …/report (`summary`).
+// Kolejność i nazwy jak REPORT_CATEGORIES w src/pg/routes/email.js.
+export const REPORT_LABELS = Object.freeze({
+  queued: 'W kolejce',
+  sending: 'W trakcie wysyłki',
+  sent: 'Przyjęte przez dostawcę (bez potwierdzenia doręczenia)',
+  delivered: 'Doręczone',
+  bounced: 'Odrzucone po wysyłce (błędny adres)',
+  delivery_unknown: 'Nie wiadomo, czy wysłano (do ręcznego sprawdzenia)',
+  failed: 'Odrzucone przez dostawcę',
+  suppressed: 'Pominięte: adres wykluczony',
+  skipped: 'Pominięte: wpłata odnotowana',
+  cancelled: 'Anulowane',
+});
+
+// Wiersze tabeli liczności; tylko liczby, bez adresów i identyfikatorów.
+export function formatReportRows(summary) {
+  return Object.keys(REPORT_LABELS).map((key) => ({
+    key, label: REPORT_LABELS[key], count: Number(summary?.[key]) || 0,
+  }));
 }

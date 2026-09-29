@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildClassRoster } from '../src/pg/export.js';
+import { computeSnapshot } from '../src/pg/routes/email.js';
+import { DEFAULT_CATEGORY } from '../src/email/content.js';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
@@ -39,12 +41,13 @@ async function seedFamilies(db) {
   `);
 }
 
-// Jedna baza PGlite na grupę testów (każda instancja zajmuje kilkaset MB).
-// Testy w grupie wykonują się po kolei; kolejność ma znaczenie.
-let shared;
-async function setup() {
-  if (shared) return shared;
+// #214: osobna baza PGlite na KAŻDY test — testy nie dzielą stanu, więc ich
+// kolejność (także losowa, --test-shuffle) ani dopisanie nowego testu nie zmienia
+// wyników. Baza jest zamykana w `t.after`, więc naraz żyje jedna instancja
+// (każda zajmuje kilkaset MB).
+async function setup(t) {
   const db = await createTestDb();
+  t.after(() => db.close());
   await seedFamilies(db);
   const env = { db };
   const call = async (path, options = {}) => {
@@ -60,15 +63,12 @@ async function setup() {
     audit: await seedUserSession(db, { userId: 'u-audit', roles: [{ role: 'audit' }], mfa: true }),
     principal: await seedUserSession(db, { userId: 'u-principal', roles: [{ role: 'principal' }] }),
   };
-  shared = { db, call, cookies };
-  return shared;
+  return { db, call, cookies };
 }
 
-describe('katalog rodzin na wspólnej bazie', () => {
-  after(async () => { await shared?.db.close(); shared = null; });
-
-  test('przedstawiciel klasy A widzi tylko klasę A, także przy zgadywaniu identyfikatorów', async () => {
-    const { db, call, cookies } = await setup();
+describe('katalog rodzin (osobna baza na test)', () => {
+  test('przedstawiciel klasy A widzi tylko klasę A, także przy zgadywaniu identyfikatorów', async (t) => {
+    const { db, call, cookies } = await setup(t);
     const classes = await call('/api/classes', { cookie: cookies.repA });
     assert.equal(classes.status, 200);
     assert.deepEqual(classes.body.classes.map((c) => c.id), ['c-1a']);
@@ -117,8 +117,8 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.equal((await call('/api/classes?schoolYearId=bad%20id', { cookie: cookies.repA })).status, 400);
   });
 
-  test('zarząd widzi wszystkie klasy i rodzeństwo; audyt i dyrekcja nie mają dostępu (D-09)', async () => {
-    const { db, call, cookies } = await setup();
+  test('zarząd widzi wszystkie klasy i rodzeństwo; audyt i dyrekcja nie mają dostępu (D-09)', async (t) => {
+    const { db, call, cookies } = await setup(t);
     assert.equal((await call('/api/classes')).status, 401);
     for (const cookie of [cookies.audit, cookies.principal]) {
       assert.deepEqual(await call('/api/classes', { cookie }), { status: 403, body: { error: 'forbidden' } });
@@ -141,8 +141,8 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.deepEqual(treasurerClasses.body.classes.map((c) => c.id), ['c-1a', 'c-2b']);
   });
 
-  test('lista klas do wyboru w panelach (#128): filtr roku nie poszerza zakresu roli', async () => {
-    const { call, cookies } = await setup();
+  test('lista klas do wyboru w panelach (#128): filtr roku nie poszerza zakresu roli', async (t) => {
+    const { call, cookies } = await setup(t);
     // Przedstawiciel 1A: rok bez jego przydziału → pusta lista, nie klasy innych.
     assert.deepEqual((await call(`/api/classes?schoolYearId=${Y2}`, { cookie: cookies.repA })).body.classes, []);
     // Skarbnik roku Y1 pytający o Y2: pusta lista (bez ujawniania istnienia klas).
@@ -156,8 +156,8 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.equal((await call('/api/classes?schoolYearId=a%25b', { cookie: cookies.board })).status, 400);
   });
 
-  test('sumy wpłat netto tylko dla ról finansowych z MFA, bez pól zadłużenia', async () => {
-    const { db, call, cookies } = await setup();
+  test('sumy wpłat netto tylko dla ról finansowych z MFA, bez pól zadłużenia', async (t) => {
+    const { db, call, cookies } = await setup(t);
     await seedUser(db, { userId: 'u-writer' });
     await db.exec(`
       INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
@@ -181,8 +181,8 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.equal(rep.body.paymentTotals, undefined);
   });
 
-  test('zmiana kontaktu opiekuna: tylko zarząd/admin, historia i audyt bez danych osobowych', async () => {
-    const { db, call, cookies } = await setup();
+  test('zmiana kontaktu opiekuna: tylko zarząd/admin, historia i audyt bez danych osobowych', async (t) => {
+    const { db, call, cookies } = await setup(t);
     const path = '/api/guardians/g-2/contact';
     const body = { email: '  Nowy.Opiekun2@Example.INVALID ', contactAllowed: true, reason: 'Prośba opiekuna' };
     assert.deepEqual(await call(path, { method: 'PATCH', cookie: cookies.repA, body }), { status: 403, body: { error: 'forbidden' } });
@@ -248,8 +248,8 @@ describe('katalog rodzin na wspólnej bazie', () => {
   // FAMILIES.md nie istnieje, brak decyzji zarządu): „ostatni zapis wygrywa”,
   // obie zmiany zostają w historii — nic nie ginie bezpowrotnie, tylko
   // bieżąca wartość gospodarstwa. Test dokumentuje dzisiejsze zachowanie.
-  test('zmiana kontaktu: dwie osoby edytują ten sam kontakt jednocześnie — ostatni zapis wygrywa, obie zmiany w historii (#211, brak decyzji zarządu)', async () => {
-    const { db, call, cookies } = await setup();
+  test('zmiana kontaktu: dwie osoby edytują ten sam kontakt jednocześnie — ostatni zapis wygrywa, obie zmiany w historii (#211, brak decyzji zarządu)', async (t) => {
+    const { db, call, cookies } = await setup(t);
     const path = '/api/guardians/g-2/contact';
     // Druga osoba z zarządu (inne konto, ten sam poziom uprawnień) edytuje
     // ten sam kontakt równolegle — nie ma potrzeby konta z rolą 'admin'.
@@ -270,9 +270,7 @@ describe('katalog rodzin na wspólnej bazie', () => {
       'bieżąca wartość to jedna z dwóch wersji, nigdy mieszanka ani coś innego',
     );
 
-    // Zakres po tej samej wartości e-maila (nie po samym guardian_id): ten sam
-    // kontakt mógł już mieć wcześniejszą historię z poprzednich testów w tej
-    // samej współdzielonej bazie (opisanej w komentarzu describe() wyżej).
+    // Zakres po wartości e-maila: dokładnie dwie zmiany z tego testu.
     const history = await db.query(
       "SELECT new_email, changed_by, reason FROM guardian_contact_changes WHERE guardian_id = 'g-2' AND new_email IN ('wersja-a@example.invalid', 'wersja-b@example.invalid') ORDER BY changed_at",
     );
@@ -282,8 +280,8 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.equal(after.rows[0].n - before.rows[0].n, 2, 'dwa nowe zdarzenia audytu, jedno na zapis');
   });
 
-  test('zmiana klasy w roku zachowuje historię; nowy rok to nowe przypisanie', async () => {
-    const { db, call, cookies } = await setup();
+  test('zmiana klasy w roku zachowuje historię; nowy rok to nowe przypisanie', async (t) => {
+    const { db, call, cookies } = await setup(t);
     const path = '/api/students/s-1/enrollments';
     const body = { schoolYearId: Y1, classId: 'c-2b', effectiveOn: '2026-11-03', reason: 'Decyzja szkoły' };
     assert.equal((await call(path, { method: 'POST', cookie: cookies.repA, body })).status, 403);
@@ -327,8 +325,8 @@ describe('katalog rodzin na wspólnej bazie', () => {
     assert.doesNotMatch(JSON.stringify(audit.rows), /Ola|Testowa|@/);
   });
 
-  test('model gospodarstw: jedno główne na okres, brak usuwania, synchronizacja kolumny zgodności', async () => {
-    const { db } = await setup();
+  test('model gospodarstw: jedno główne na okres, brak usuwania, synchronizacja kolumny zgodności', async (t) => {
+    const { db } = await setup(t);
     await assert.rejects(db.query(
       `INSERT INTO student_households (id, student_id, household_id, is_primary) VALUES ('x', 's-1', 'h-3', true)`,
     ), /overlap|unique/);
@@ -568,6 +566,75 @@ describe('zmiana kontaktu opiekuna: zakres klasowy przez relację z uczniem (#20
     }
     const byBoard = await db.query(`SELECT changed_by FROM guardian_contact_changes WHERE guardian_id IN ('g-2', 'g-4', 'g-q')`);
     assert.deepEqual(byBoard.rows.map((r) => r.changed_by), ['u-board', 'u-board', 'u-board']);
+  });
+});
+
+describe('kampania e-mail po odmowie zmiany kontaktu (#200)', () => {
+  let db;
+  after(async () => { await db?.close(); });
+
+  // Migawka odbiorców (computeSnapshot) tylko czyta bazę — nic nie wysyła.
+  const recipientsOf = async () => {
+    const { recipients, hash } = await computeSnapshot(db, { school_year_id: Y1, audience: 'all_households', category: DEFAULT_CATEGORY });
+    return { recipients, hash };
+  };
+
+  test('odrzucona zmiana kontaktu (403/404) nie zmienia listy odbiorców; zmiana przez pełny zarząd — zmienia', async () => {
+    db = await createTestDb();
+    await seedSchoolYear(db, Y1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
+    await seedClass(db, { id: 'c-1a', schoolYearId: Y1, name: '1A' });
+    await seedClass(db, { id: 'c-1b', schoolYearId: Y1, name: '1B' });
+    // h-1: rodzeństwo s-a (1A), s-b (1B); g-2 (kontakt główny) ma relację z obojgiem,
+    // g-4 tylko z s-b. h-2: rodzina wyłącznie z 1B (opiekun poza zakresem 1A).
+    await db.exec(`
+      INSERT INTO households (id) VALUES ('h-1'), ('h-2');
+      INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES
+        ('g-2', 'h-1', 'Bogdan', 'Drugi', 'g2@example.invalid', true),
+        ('g-4', 'h-1', 'Dorota', 'Czwarta', 'g4@example.invalid', true),
+        ('g-5', 'h-2', 'Ewa', 'Piata', 'g5@example.invalid', true);
+      INSERT INTO students (id, household_id, first_name, last_name) VALUES
+        ('s-a', 'h-1', 'Ada', 'Wspolna'), ('s-b', 'h-1', 'Bartek', 'Wspolny'), ('s-c', 'h-2', 'Celina', 'Osobna');
+      INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES
+        ('s-a', 'g-2', true, true), ('s-b', 'g-2', true, true), ('s-b', 'g-4', true, false), ('s-c', 'g-5', true, true);
+      INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES
+        ('e-a', 's-a', 'c-1a', '${Y1}'), ('e-b', 's-b', 'c-1b', '${Y1}'), ('e-c', 's-c', 'c-1b', '${Y1}');
+    `);
+    const call = async (path, cookie, body) => {
+      const response = await handlePgRequest(request(path, { method: 'PATCH', cookie, body }), { db });
+      return { status: response.status, body: await response.json() };
+    };
+    const boardA = await seedUserSession(db, { userId: 'u-board-1a', roles: [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }], mfa: true });
+    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
+
+    const before = await recipientsOf();
+    assert.deepEqual(before.recipients.map((r) => [r.householdId, r.guardianId, r.email]), [
+      ['h-1', 'g-2', 'g2@example.invalid'], ['h-2', 'g-5', 'g5@example.invalid'],
+    ]);
+    const auditBefore = Number((await db.query('SELECT count(*) AS n FROM audit_events')).rows[0].n);
+
+    // g-2 (1A + 1B): 403; g-4 i g-5 (tylko 1B): 404. Zmiana e-maila i zgody, każda osobno i razem.
+    const payloads = [
+      { email: 'przejete@example.invalid', reason: 'test zakresu' },
+      { contactAllowed: false, reason: 'test zakresu' },
+      { email: 'przejete@example.invalid', contactAllowed: false, reason: 'test zakresu' },
+    ];
+    for (const payload of payloads) {
+      assert.deepEqual(await call('/api/guardians/g-2/contact', boardA, payload),
+        { status: 403, body: { error: 'guardian_shared_outside_scope' } });
+      for (const id of ['g-4', 'g-5']) {
+        assert.deepEqual(await call(`/api/guardians/${id}/contact`, boardA, payload), { status: 404, body: { error: 'not_found' } }, id);
+      }
+    }
+    assert.deepEqual(await recipientsOf(), before);
+    assert.equal(Number((await db.query('SELECT count(*) AS n FROM audit_events')).rows[0].n), auditBefore);
+    assert.equal(Number((await db.query('SELECT count(*) AS n FROM guardian_contact_changes')).rows[0].n), 0);
+
+    // Kontrola czułości: ta sama zmiana wykonana przez zarząd bez przydziału klasy zmienia migawkę.
+    const changed = await call('/api/guardians/g-2/contact', board, { email: 'nowy@example.invalid', reason: 'test zakresu' });
+    assert.equal(changed.status, 200);
+    const after = await recipientsOf();
+    assert.notEqual(after.hash, before.hash);
+    assert.equal(after.recipients[0].email, 'nowy@example.invalid');
   });
 });
 

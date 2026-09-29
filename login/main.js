@@ -1,5 +1,4 @@
 import {
-  PANELS,
   canOfferVoluntaryMfaEnrollment,
   clearSensitiveViews,
   enrollIntroText,
@@ -7,6 +6,8 @@ import {
   enrollmentConfirmError,
   errorMessage,
   formatSecret,
+  inviteFormMode,
+  inviteSummaryRows,
   isRecoveryFormat,
   isTotpFormat,
   logoutOutcome,
@@ -19,6 +20,7 @@ import {
   qrMatrix,
   qrSvgPath,
   shouldShowNoAccessNotice,
+  startPanels,
   validateEmail,
   validateNewPassword,
 } from "./core.js";
@@ -99,6 +101,7 @@ async function goNext(state, { initial = false } = {}) {
   const view = nextView(state);
   // Przejście do kolejnego etapu: pola haseł puste, „Pokaż hasło” wyłączone (#197).
   clearSensitiveViews(document);
+  resetInvitePreview();
   if (view === "start" && returnTo && !initial) {
     window.location.replace(returnTo);
     return;
@@ -329,6 +332,61 @@ byId("codes-done").addEventListener("click", async () => {
 
 // --- 4. Zaproszenie ----------------------------------------------------------------
 
+// #164: podgląd zaproszenia (rola, klasa, rok, termin, zamaskowany adres) przed
+// przyjęciem. Token nie jest konsumowany. Wariant formularza zależy od `accountExists`;
+// bez podglądu (błąd, brak kodu) obowiązuje wariant nowego konta z dwoma polami.
+let invitePreviewMode = inviteFormMode(null);
+let previewedToken = "";
+
+function applyInviteMode(preview) {
+  invitePreviewMode = inviteFormMode(preview);
+  const repeat = byId("invite-repeat");
+  byId("invite-password-label").textContent = invitePreviewMode.passwordLabel;
+  byId("invite-password-hint").textContent = invitePreviewMode.passwordHint;
+  byId("invite-password").autocomplete = invitePreviewMode.autocomplete;
+  byId("invite-repeat-group").hidden = invitePreviewMode.existing;
+  repeat.required = !invitePreviewMode.existing;
+  if (invitePreviewMode.existing) repeat.value = "";
+}
+
+function renderInvitePreview(preview) {
+  const summary = byId("invite-summary");
+  summary.replaceChildren(...inviteSummaryRows(preview).map(([label, value]) => {
+    const row = document.createElement("div");
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = value;
+    row.append(term, detail);
+    return row;
+  }));
+  applyInviteMode(preview);
+}
+
+function resetInvitePreview() {
+  previewedToken = "";
+  renderInvitePreview(null);
+}
+
+async function loadInvitePreview() {
+  const value = byId("invite-token").value.trim();
+  if (value === previewedToken) return;
+  resetInvitePreview();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(value)) return;
+  previewedToken = value;
+  try {
+    const preview = await api("/api/invitations/preview", { method: "POST", body: { token: value } });
+    if (previewedToken !== value) return; // kod zmieniony w trakcie żądania
+    renderInvitePreview(preview);
+    formError(byId("invite-form"), "invite-error", "");
+  } catch (error) {
+    if (previewedToken !== value) return;
+    formError(byId("invite-form"), "invite-error", error.message);
+  }
+}
+
+byId("invite-token").addEventListener("input", () => { loadInvitePreview(); });
+
 byId("invite-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -340,15 +398,18 @@ byId("invite-form").addEventListener("submit", (event) => {
   // nowego konta wychodzi na jaw dopiero przy kolejnym logowaniu (blokada,
   // reset przez admina). Serwer i tak sam wymusza zgodność dla nowego konta.
   if (!password.value) return formError(form, "invite-error", "Podaj hasło.", [password]);
-  if (!repeat.value) return formError(form, "invite-error", "Powtórz hasło.", [repeat]);
-  if (password.value !== repeat.value) return formError(form, "invite-error", "Hasła nie są takie same.", [repeat]);
+  if (!invitePreviewMode.existing) {
+    if (!repeat.value) return formError(form, "invite-error", "Powtórz hasło.", [repeat]);
+    if (password.value !== repeat.value) return formError(form, "invite-error", "Hasła nie są takie same.", [repeat]);
+  }
   return submitting(form, async () => {
     try {
       const displayName = byId("invite-name").value.trim();
       const result = await api("/api/invitations/accept", {
         method: "POST",
         body: {
-          token: token.value.trim(), password: password.value, passwordRepeat: repeat.value,
+          token: token.value.trim(), password: password.value,
+          ...(invitePreviewMode.existing ? {} : { passwordRepeat: repeat.value }),
           ...(displayName ? { displayName } : {}),
         },
       });
@@ -439,7 +500,7 @@ byId("enroll-back").addEventListener("click", async () => {
 
 async function renderStart() {
   // #176: rola bez żadnej aktywnej trasy (np. principal, decyzja D-09 w toku) nie
-  // dostaje listy 10 paneli kończących się odmową — serwer (hasActiveRole,
+  // dostaje listy paneli kończących się odmową; pozostałe konta — panele ze swoich przydziałów — serwer (hasActiveRole,
   // GET /api/access) rozstrzyga, czy jest co pokazać.
   let access = null;
   try { access = await api("/api/access"); } catch { access = null; }
@@ -451,7 +512,7 @@ async function renderStart() {
     list.replaceChildren();
   } else {
     const back = returnTo ? [{ href: returnTo, label: "Powrót do poprzedniej strony", hint: returnTo }] : [];
-    list.replaceChildren(...[...back, ...PANELS].map((panel) => {
+    list.replaceChildren(...[...back, ...startPanels(access && access.grants)].map((panel) => {
       const item = document.createElement("li");
       const link = document.createElement("a");
       link.href = panel.href;
@@ -510,6 +571,7 @@ async function route() {
     if (fragment.token) byId(`${fragment.view}-token`).value = fragment.token;
     if (window.location.hash.length > 1) history.replaceState(null, "", window.location.pathname);
     showView(fragment.view);
+    if (fragment.view === "invite") await loadInvitePreview();
     return;
   }
   try {
@@ -529,6 +591,7 @@ async function route() {
 for (const button of document.querySelectorAll(".back-to-login")) {
   button.addEventListener("click", () => {
     clearSensitiveViews(document);
+    resetInvitePreview();
     showView("login");
   });
 }
@@ -536,6 +599,7 @@ for (const button of document.querySelectorAll(".back-to-login")) {
 // Token z nowego „#…” wstawia route() dopiero po wyczyszczeniu pól.
 window.addEventListener("hashchange", () => {
   clearSensitiveViews(document, { keepTokens: false });
+  resetInvitePreview();
   resetEnrollment();
   route();
 });

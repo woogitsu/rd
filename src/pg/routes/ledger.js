@@ -37,6 +37,7 @@ import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvCell, csvResponse, csvRow, formatEuro, safeFileSegment, toCsv } from '../csv.js';
@@ -73,6 +74,11 @@ class RequestError extends Error {
 }
 
 // Wynik odtworzenia zapisu po kluczu idempotencji — kończy transakcję bez zapisu.
+// #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
+function piiFail(code, categories) {
+  return new RequestError(code, 422, { categories });
+}
+
 class Replay {
   constructor(body) {
     this.body = body;
@@ -201,13 +207,15 @@ function parseCorrectionInput(data) {
   return { amountCents: readAmount(data.amountCents), reason };
 }
 
-// Wpis zastępczy (#144): ta sama walidacja co nowy wpis księgi, ale bez
-// payment_entry_id (patrz ograniczenie zakresu w migracji 0040) i z własnym
-// powodem przeksięgowania (dla storna pierwotnego wpisu).
+// Wpis zastępczy (#144): ta sama walidacja co nowy wpis księgi plus własny
+// powód przeksięgowania (dla storna pierwotnego wpisu). paymentEntryId jest
+// dozwolone tylko jako potwierdzenie powiązania wpisu zastępowanego (0142) —
+// sprawdza to createReplacement po odczytaniu wpisu.
 function parseReplacementInput(data) {
   const input = parseEntryInput(data);
-  if (input.paymentEntryId) throw new RequestError('payment_linked_entry_not_replaceable', 409);
-  const reason = textOrNull(data.reason, 500);
+  // Storno dopisuje przedrostek „Przeksięgowanie: ” (17 znaków) do powodu, a CHECK
+  // ledger_corrections dopuszcza 500 znaków — stąd limit 480.
+  const reason = textOrNull(data.reason, 480);
   if (!reason || reason.length < 3) throw new RequestError('invalid_reason');
   return { ...input, reason };
 }
@@ -371,9 +379,9 @@ function mapDatabaseError(error) {
   // reguła w bazie, więc bezpośredni INSERT i API odrzucają to samo.
   if (message.includes('date_outside_school_year')) throw new RequestError('date_outside_school_year', 422);
   // #144: przeksięgowanie — backstop triggera dla bezpośredniego INSERT.
-  if (message.includes('payment_linked_entry_not_replaceable')) {
-    throw new RequestError('payment_linked_entry_not_replaceable', 409);
-  }
+  // 0142: wpłata ujęta dokładnie raz; przeksięgowanie zachowuje powiązanie z wpłatą.
+  if (message.includes('ledger_payment_already_linked')) throw new RequestError('payment_already_linked', 409);
+  if (message.includes('ledger_replacement_payment_link_mismatch')) throw new RequestError('invalid_payment_link');
   if (message.includes('ledger_replacement_mismatch')) throw new RequestError('replacement_target_mismatch', 409);
   // #117: korekta poniżej sumy przypisania do centrów kosztów — najpierw nowa wersja przypisania.
   if (message.includes('ledger_allocation_exceeds_net')) throw new RequestError('allocation_exceeds_net', 409);
@@ -774,7 +782,7 @@ async function validateResolution(tx, input) {
   return row.number;
 }
 
-async function validateEntryReferences(tx, input, payment) {
+async function validateEntryReferences(tx, input, payment, { replacing = false } = {}) {
   if (input.paymentEntryId && (!payment || payment.school_year_id !== input.schoolYearId
     || payment.status !== 'recorded' || input.direction !== 'income')) {
     throw new RequestError('invalid_payment_link');
@@ -810,7 +818,8 @@ async function validateEntryReferences(tx, input, payment) {
     [input.categoryId, input.schoolYearId, input.direction],
   );
   if (!category.rows.length) throw new RequestError('invalid_category');
-  if (input.paymentEntryId) {
+  // Przeksięgowanie (0142) przejmuje powiązanie z wpłatą po storno wpisu zastępowanego.
+  if (input.paymentEntryId && !replacing) {
     const linked = await tx.query('SELECT 1 FROM ledger_entries WHERE payment_entry_id = $1', [input.paymentEntryId]);
     if (linked.rows.length) throw new RequestError('payment_already_linked', 409);
   }
@@ -821,7 +830,9 @@ async function validateEntryReferences(tx, input, payment) {
 
 async function createEntry(request, env, json) {
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseEntryInput(await readJson(request));
+  const data = await readJson(request);
+  const input = parseEntryInput(data);
+  const confirmPersonalData = data.confirmPersonalData === true;
   const context = await requireFinancialContext(request, env, input.schoolYearId);
   const actorId = context.session.user.id;
 
@@ -850,6 +861,7 @@ async function createEntry(request, env, json) {
       const replay = replayOrConflict(await loadEntryByKey(tx, idempotencyKey));
       if (replay) return replay;
       const resolutionReference = await validateEntryReferences(tx, input, payment);
+      const gate = gateFreeText([['ledger_entries.description', input.description]], { confirm: confirmPersonalData, fail: piiFail });
       const entryId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_entries (
@@ -867,6 +879,7 @@ async function createEntry(request, env, json) {
         metadata: {
           schoolYearId: input.schoolYearId,
           ...(input.resolutionId ? { resolutionId: input.resolutionId } : {}),
+          ...piiAuditMetadata(gate),
         },
       });
       return { entry: createdEntry(entryId, { ...input, resolutionReference }) };
@@ -888,7 +901,9 @@ async function createEntry(request, env, json) {
 async function createCorrection(request, env, ledgerEntryId, json) {
   if (!validId(ledgerEntryId)) throw new RequestError('invalid_ledger_entry_id');
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseCorrectionInput(await readJson(request));
+  const correctionData = await readJson(request);
+  const input = parseCorrectionInput(correctionData);
+  const confirmPersonalData = correctionData.confirmPersonalData === true;
   const context = await requireFinancialContext(request, env);
   const actorId = context.session.user.id;
 
@@ -916,20 +931,9 @@ async function createCorrection(request, env, ledgerEntryId, json) {
       // #165: korekta z aktywnym powiązaniem w SZKICU uzgodnienia jest zachowawczo
       // zablokowana — skarbnik najpierw cofa powiązanie (z powodem), dopiero potem
       // koryguje wpis. Trigger ledger_correction_guard sprawdza to samo (0039).
-      const activeMatch = await tx.query(
-        `SELECT r.id AS reconciliation_id FROM bank_reconciliation_matches m
-           JOIN bank_reconciliations r ON r.id = m.reconciliation_id
-          WHERE m.ledger_entry_id = $1 AND m.revoked_at IS NULL AND r.status = 'draft'
-         UNION ALL
-         -- Pozycja aktywnego dopasowania zbiorczego (#127, 0105) blokuje tak samo.
-         SELECT r.id AS reconciliation_id FROM bank_group_match_items_current i
-           JOIN bank_reconciliations r ON r.id = i.reconciliation_id
-          WHERE i.ledger_entry_id = $1 AND r.status = 'draft'
-          LIMIT 1`,
-        [ledgerEntryId],
-      );
-      if (activeMatch.rows.length) {
-        throw new RequestError('active_bank_match', 409, { reconciliationId: activeMatch.rows[0].reconciliation_id });
+      const activeMatch = await findActiveBankMatch(tx, ledgerEntryId);
+      if (activeMatch) {
+        throw new RequestError('active_bank_match', 409, { reconciliationId: activeMatch });
       }
       const corrected = await tx.query(
         'SELECT COALESCE(SUM(amount_cents), 0) AS corrected_cents FROM ledger_corrections WHERE ledger_entry_id = $1',
@@ -938,6 +942,7 @@ async function createCorrection(request, env, ledgerEntryId, json) {
       if (toSafeInteger(corrected.rows[0].corrected_cents) + input.amountCents > toSafeInteger(entry.amount_cents)) {
         throw new RequestError('correction_exceeds_remaining_amount', 409);
       }
+      const gate = gateFreeText([['ledger_corrections.reason', input.reason]], { confirm: confirmPersonalData, fail: piiFail });
       const correctionId = crypto.randomUUID();
       await tx.query(
         `INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
@@ -946,7 +951,7 @@ async function createCorrection(request, env, ledgerEntryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.correction.created', entityType: 'ledger_correction',
-        entityId: correctionId, metadata: { ledgerEntryId, schoolYearId: entry.school_year_id },
+        entityId: correctionId, metadata: { ledgerEntryId, schoolYearId: entry.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { correction: { id: correctionId, ledgerEntryId, amountCents: input.amountCents, reason: input.reason } };
     });
@@ -975,30 +980,156 @@ async function loadReplacementByKey(executor, entryKey) {
   return rows[0] ?? null;
 }
 
+// #165: aktywne (niecofnięte) powiązanie wpisu w SZKICU uzgodnienia — 1:1 albo
+// pozycja dopasowania zbiorczego (#127, 0105). Zwraca id uzgodnienia albo null.
+async function findActiveBankMatch(executor, ledgerEntryId) {
+  const { rows } = await executor.query(
+    `SELECT r.id AS reconciliation_id FROM bank_reconciliation_matches m
+       JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+      WHERE m.ledger_entry_id = $1 AND m.revoked_at IS NULL AND r.status = 'draft'
+     UNION ALL
+     -- Pozycja aktywnego dopasowania zbiorczego (#127, 0105) blokuje tak samo.
+     SELECT r.id AS reconciliation_id FROM bank_group_match_items_current i
+       JOIN bank_reconciliations r ON r.id = i.reconciliation_id
+      WHERE i.ledger_entry_id = $1 AND r.status = 'draft'
+     LIMIT 1`,
+    [ledgerEntryId],
+  );
+  return rows[0]?.reconciliation_id ?? null;
+}
+
+// Przeksięgowanie po ZATWIERDZONYM uzgodnieniu (#144/#165): zatwierdzone
+// uzgodnienie jest niezmienne i nie blokuje operacji (jak korekta, 0039), ale
+// odpowiedź i dziennik wskazują uzgodnienia, na które przeksięgowanie wpływa:
+// (a) wpis był w nich powiązany z pozycją wyciągu, (b) zmiana daty, metody,
+// kwoty lub kierunku zmienia saldo księgi na dzień wyciągu (ledger_balance_at
+// / ledger_non_bank_net_at), więc zapisany stan nie odtworzy się już z księgi.
+// Wpis zastępczy nie dziedziczy powiązania z pozycją wyciągu — do ponownego
+// dopasowania w kolejnym uzgodnieniu.
+async function confirmedReconciliationImpact(tx, original, remainingCents, input) {
+  const { rows } = await tx.query(
+    `SELECT r.id, to_char(r.statement_date, 'YYYY-MM-DD') AS statement_date,
+            (EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                      WHERE m.reconciliation_id = r.id AND m.ledger_entry_id = $2 AND m.revoked_at IS NULL)
+             OR EXISTS (SELECT 1 FROM bank_group_match_items_current i
+                         WHERE i.reconciliation_id = r.id AND i.ledger_entry_id = $2)) AS matched
+       FROM bank_reconciliations r
+      WHERE r.school_year_id = $1 AND r.status = 'confirmed'
+      ORDER BY r.statement_date, r.id`,
+    [original.school_year_id, original.id],
+  );
+  const signed = (direction, cents) => (direction === 'income' ? cents : -cents);
+  const contribution = (entry, on) => {
+    const total = entry.occurredOn <= on ? signed(entry.direction, entry.cents) : 0;
+    return { total, nonBank: entry.method === 'bank' ? 0 : total };
+  };
+  const before = { direction: original.direction, method: original.method, occurredOn: original.occurred_on, cents: remainingCents };
+  const after = { direction: input.direction, method: input.method, occurredOn: input.occurredOn, cents: input.amountCents };
+  const ids = rows.filter((row) => {
+    if (row.matched) return true;
+    const a = contribution(before, row.statement_date);
+    const b = contribution(after, row.statement_date);
+    return a.total !== b.total || a.nonBank !== b.nonBank;
+  }).map((row) => row.id);
+  return ids;
+}
+
+// Bieżąca (bez następcy) wersja przypisania wpisu do centrów kosztów (0090) z pozycjami.
+async function currentAllocation(tx, ledgerEntryId) {
+  const { rows } = await tx.query(
+    `SELECT v.id, v.version_no FROM ledger_allocation_versions v
+      WHERE v.ledger_entry_id = $1
+        AND NOT EXISTS (SELECT 1 FROM ledger_allocation_versions n WHERE n.supersedes_id = v.id)`,
+    [ledgerEntryId],
+  );
+  if (!rows.length) return null;
+  const items = await tx.query(
+    'SELECT event_id, class_id, amount_cents FROM ledger_allocation_items WHERE version_id = $1 ORDER BY id',
+    [rows[0].id],
+  );
+  return {
+    versionId: rows[0].id,
+    versionNo: Number(rows[0].version_no),
+    items: items.rows.map((item) => ({
+      eventId: item.event_id, classId: item.class_id, amountCents: toSafeInteger(item.amount_cents),
+    })),
+  };
+}
+
+async function insertAllocationVersion(tx, actorId, { entryId, schoolYearId, versionNo, supersedesId, reason, key, items }) {
+  const versionId = crypto.randomUUID();
+  await tx.query(
+    `INSERT INTO ledger_allocation_versions (id, ledger_entry_id, school_year_id, version_no, supersedes_id, reason,
+       created_by, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [versionId, entryId, schoolYearId, versionNo, supersedesId, reason, actorId, key],
+  );
+  for (const item of items) {
+    await tx.query(
+      `INSERT INTO ledger_allocation_items (id, version_id, school_year_id, event_id, class_id, amount_cents)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [crypto.randomUUID(), versionId, schoolYearId, item.eventId, item.classId, item.amountCents],
+    );
+  }
+  await insertAuditEvent(tx, {
+    actorId, action: 'ledger.allocation.created', entityType: 'ledger_entry', entityId: entryId,
+    metadata: { schoolYearId, versionId, versionNo, supersedesId, itemCount: items.length, viaReplacement: true },
+  });
+  return versionId;
+}
+
 async function createReplacement(request, env, ledgerEntryId, json) {
   if (!validId(ledgerEntryId)) throw new RequestError('invalid_ledger_entry_id');
   const idempotencyKey = readIdempotencyKey(request);
   const body = await readJson(request);
-  const input = parseReplacementInput(body);
-  const context = await requireFinancialContext(request, env, input.schoolYearId);
+  const parsed = parseReplacementInput(body);
+  const context = await requireFinancialContext(request, env, parsed.schoolYearId);
   const actorId = context.session.user.id;
   const stornoKey = derivedIdempotencyKey(idempotencyKey, 'ledrepl-storno');
   const entryKey = derivedIdempotencyKey(idempotencyKey, 'ledrepl-entry');
+  let input = parsed;
 
   let result;
   try {
     result = await env.db.transaction(async (tx) => {
+      // Kolejność blokad jak w korekcie wpłaty (wpłata, potem wpis księgi), żeby
+      // równoległa korekta wpłaty i przeksięgowanie jej wpisu nie zakleszczyły się.
+      const probe = await tx.query('SELECT payment_entry_id FROM ledger_entries WHERE id = $1', [ledgerEntryId]);
+      if (!probe.rows.length) throw new RequestError('ledger_entry_not_found', 404);
+      let payment = null;
+      if (probe.rows[0].payment_entry_id) {
+        await tx.query('SELECT id FROM payment_entries WHERE id = $1 FOR UPDATE', [probe.rows[0].payment_entry_id]);
+        payment = (await tx.query(
+          'SELECT id, school_year_id, status, net_amount_cents FROM payment_entry_net WHERE id = $1',
+          [probe.rows[0].payment_entry_id],
+        )).rows[0] ?? null;
+      }
       // Blokada wiersza zastępowanego wpisu: równoległa korekta lub przeksięgowanie
       // tego samego wpisu czekają na siebie.
       const { rows } = await tx.query(
-        'SELECT id, school_year_id, amount_cents, payment_entry_id FROM ledger_entries WHERE id = $1 FOR UPDATE',
+        `SELECT id, school_year_id, direction, method, amount_cents, payment_entry_id,
+                to_char(occurred_on, 'YYYY-MM-DD') AS occurred_on
+           FROM ledger_entries WHERE id = $1 FOR UPDATE`,
         [ledgerEntryId],
       );
       const original = rows[0];
       if (!original) throw new RequestError('ledger_entry_not_found', 404);
       requireYear(context, original.school_year_id);
-      if (original.school_year_id !== input.schoolYearId) throw new RequestError('invalid_request');
-      if (original.payment_entry_id) throw new RequestError('payment_linked_entry_not_replaceable', 409);
+      if (original.school_year_id !== parsed.schoolYearId) throw new RequestError('invalid_request');
+
+      // Wpis powiązany z wpłatą (0142): przeksięgowanie kategorii/daty/metody
+      // dozwolone, powiązanie przechodzi na wpis zastępczy; kwota = netto wpłaty
+      // (zmiana kwoty tylko przez korektę wpłaty), kierunek zawsze przychód.
+      if (original.payment_entry_id) {
+        if ((parsed.paymentEntryId && parsed.paymentEntryId !== original.payment_entry_id)
+          || parsed.direction !== 'income') {
+          throw new RequestError('invalid_payment_link');
+        }
+        input = { ...parsed, paymentEntryId: original.payment_entry_id };
+      } else if (parsed.paymentEntryId) {
+        // Nowe powiązanie z wpłatą nie powstaje przez przeksięgowanie.
+        throw new RequestError('invalid_payment_link');
+      }
 
       const replayedEntry = await loadReplacementByKey(tx, entryKey);
       if (replayedEntry) {
@@ -1012,6 +1143,10 @@ async function createReplacement(request, env, ledgerEntryId, json) {
         .then((r) => r.rows.length)) {
         throw new RequestError('ledger_entry_already_replaced', 409);
       }
+      // #165: storno to korekta — z aktywnym powiązaniem w szkicu uzgodnienia
+      // zachowawczo odmawiamy (skarbnik najpierw cofa powiązanie), jak korekta.
+      const activeMatch = await findActiveBankMatch(tx, ledgerEntryId);
+      if (activeMatch) throw new RequestError('active_bank_match', 409, { reconciliationId: activeMatch });
       const corrected = await tx.query(
         'SELECT COALESCE(SUM(amount_cents), 0) AS corrected_cents FROM ledger_corrections WHERE ledger_entry_id = $1',
         [ledgerEntryId],
@@ -1019,7 +1154,29 @@ async function createReplacement(request, env, ledgerEntryId, json) {
       const remaining = toSafeInteger(original.amount_cents) - toSafeInteger(corrected.rows[0].corrected_cents);
       if (remaining <= 0) throw new RequestError('ledger_entry_already_corrected_to_zero', 409);
 
-      const resolutionReference = await validateEntryReferences(tx, input, null);
+      const resolutionReference = await validateEntryReferences(tx, input, payment, { replacing: true });
+      const gate = gateFreeText([
+        ['ledger_corrections.reason', input.reason],
+        ['ledger_entries.description', input.description],
+      ], { confirm: body.confirmPersonalData === true, fail: piiFail });
+
+      // Centra kosztów (0090): przypisanie przechodzi na wpis zastępczy, o ile
+      // kierunek się nie zmienia i suma mieści się w nowej kwocie; inaczej
+      // 409 allocation_exceeds_net (najpierw nowa wersja przypisania). Przy
+      // zmianie kierunku przypisanie wraca do „ogólne” (dziennik: allocationReleased).
+      // Storno bez zwolnienia przypisania odrzuciłby trigger 0090, więc wersja
+      // zwalniająca (bez pozycji) powstaje przed stornem; historia wersji zostaje.
+      const allocation = await currentAllocation(tx, ledgerEntryId);
+      const allocated = allocation ? allocation.items.reduce((sum, item) => sum + item.amountCents, 0) : 0;
+      const carryAllocation = allocated > 0 && input.direction === original.direction;
+      if (carryAllocation && allocated > input.amountCents) throw new RequestError('allocation_exceeds_net', 409);
+      if (allocated > 0) {
+        await insertAllocationVersion(tx, actorId, {
+          entryId: ledgerEntryId, schoolYearId: original.school_year_id, versionNo: allocation.versionNo + 1,
+          supersedesId: allocation.versionId, reason: `Przeksięgowanie: ${input.reason}`,
+          key: derivedIdempotencyKey(idempotencyKey, 'ledrepl-alloc-release'), items: [],
+        });
+      }
 
       const correctionId = crypto.randomUUID();
       await tx.query(
@@ -1033,21 +1190,36 @@ async function createReplacement(request, env, ledgerEntryId, json) {
            id, school_year_id, direction, amount_cents, category_id, description, occurred_on,
            payment_entry_id, source_document_id, replaces_entry_id, created_by, method, source,
            resolution_reference, idempotency_key, resolution_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13, $14, $15)`,
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [entryId, input.schoolYearId, input.direction, input.amountCents, input.categoryId,
-          input.description, input.occurredOn, input.sourceDocumentId, ledgerEntryId,
+          input.description, input.occurredOn, input.paymentEntryId, input.sourceDocumentId, ledgerEntryId,
           actorId, input.method, input.source, resolutionReference, entryKey, input.resolutionId],
       );
+      if (carryAllocation) {
+        await insertAllocationVersion(tx, actorId, {
+          entryId, schoolYearId: input.schoolYearId, versionNo: 1, supersedesId: null,
+          reason: `Przeksięgowanie wpisu ${ledgerEntryId}`,
+          key: derivedIdempotencyKey(idempotencyKey, 'ledrepl-alloc-carry'), items: allocation.items,
+        });
+      }
+      const affectedReconciliations = await confirmedReconciliationImpact(tx, original, remaining, input);
       await insertAuditEvent(tx, {
         actorId, action: 'ledger.entry.replaced', entityType: 'ledger_entry', entityId: entryId,
         metadata: {
           replacesEntryId: ledgerEntryId,
           correctionId,
           schoolYearId: input.schoolYearId,
+          ...(input.paymentEntryId ? { paymentEntryId: input.paymentEntryId } : {}),
+          ...(allocated > 0 ? { allocationCarried: carryAllocation, allocationReleased: !carryAllocation } : {}),
+          ...(affectedReconciliations.length ? { confirmedReconciliationIds: affectedReconciliations } : {}),
           ...(input.resolutionId ? { resolutionId: input.resolutionId } : {}),
+          ...piiAuditMetadata(gate),
         },
       });
-      return { entry: createdEntry(entryId, { ...input, resolutionReference }, { replacesEntryId: ledgerEntryId }) };
+      const created = createdEntry(entryId, { ...input, resolutionReference }, { replacesEntryId: ledgerEntryId });
+      return affectedReconciliations.length
+        ? { entry: created, warnings: [{ type: 'confirmed_reconciliation_affected', reconciliationIds: affectedReconciliations }] }
+        : { entry: created };
     });
   } catch (error) {
     if (isUniqueError(error)) {
@@ -1103,7 +1275,9 @@ async function loadReviewByKey(executor, key) {
 async function createReview(request, env, ledgerEntryId, json) {
   if (!validId(ledgerEntryId)) throw new RequestError('invalid_ledger_entry_id');
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseReviewInput(await readJson(request));
+  const reviewData = await readJson(request);
+  const input = parseReviewInput(reviewData);
+  const confirmPersonalData = reviewData.confirmPersonalData === true;
   const context = await requireFinancialContext(request, env);
   const actorId = context.session.user.id;
   const replayOrConflict = (row) => {
@@ -1129,6 +1303,7 @@ async function createReview(request, env, ledgerEntryId, json) {
       if (replay) return replay;
       if (entry.direction !== 'expense') throw new RequestError('review_expense_only', 409);
       if (entry.created_by === actorId) throw new RequestError('four_eyes_required', 403);
+      const gate = gateFreeText([['ledger_entry_reviews.note', input.note]], { confirm: confirmPersonalData, fail: piiFail });
       const id = crypto.randomUUID();
       const inserted = await tx.query(
         `INSERT INTO ledger_entry_reviews (id, school_year_id, ledger_entry_id, decision, note, reviewed_by, idempotency_key)
@@ -1139,7 +1314,7 @@ async function createReview(request, env, ledgerEntryId, json) {
       // Dziennik: aktor, czas, identyfikator wpisu i decyzja — bez kwoty, opisu i uwagi.
       await insertAuditEvent(tx, {
         actorId, action: `ledger.entry.${input.decision}`, entityType: 'ledger_entry', entityId: ledgerEntryId,
-        metadata: { reviewId: id, schoolYearId: entry.school_year_id },
+        metadata: { reviewId: id, schoolYearId: entry.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { review: reviewFromRow(inserted.rows[0]) };
     });
@@ -1287,7 +1462,9 @@ function authorizationFromRow(row) {
 async function createAuthorization(request, env, resolutionId, json) {
   if (!validId(resolutionId)) throw new RequestError('invalid_request');
   const idempotencyKey = readIdempotencyKey(request);
-  const input = parseAuthorizationInput(await readJson(request));
+  const authorizationData = await readJson(request);
+  const input = parseAuthorizationInput(authorizationData);
+  const confirmPersonalData = authorizationData.confirmPersonalData === true;
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   // Rola i MFA przed odczytem uchwały (bez wyroczni istnienia); rok po odczycie.
@@ -1334,6 +1511,7 @@ async function createAuthorization(request, env, resolutionId, json) {
       if ((current.rows[0]?.id ?? null) !== input.supersedesId) {
         throw new RequestError('authorization_superseded', 409, { currentAuthorizationId: current.rows[0]?.id ?? null });
       }
+      const gate = gateFreeText([['resolution_spending_authorizations.note', input.note]], { confirm: confirmPersonalData, fail: piiFail });
       const id = crypto.randomUUID();
       const inserted = await tx.query(
         `INSERT INTO resolution_spending_authorizations
@@ -1346,7 +1524,7 @@ async function createAuthorization(request, env, resolutionId, json) {
       // Dziennik bez kwoty (jak inne zapisy finansowe): aktor, czas, uchwała, poprzednia kwota.
       await insertAuditEvent(tx, {
         actorId, action: 'resolution.spending_authorization.recorded', entityType: 'resolution', entityId: resolutionId,
-        metadata: { authorizationId: id, supersedesId: input.supersedesId, schoolYearId: resolution.school_year_id },
+        metadata: { authorizationId: id, supersedesId: input.supersedesId, schoolYearId: resolution.school_year_id, ...piiAuditMetadata(gate) },
       });
       return { authorization: authorizationFromRow(inserted.rows[0]) };
     });

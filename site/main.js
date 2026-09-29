@@ -2,14 +2,20 @@
 // storage. API data is rendered exclusively through textContent.
 import {
   NEWS_URL,
+  calendarFeedUrls,
+  eventIcsUrl,
   eventsUrl,
   formatDate,
+  formatDay,
   formatEventTime,
+  formatTime,
   formatSchoolYear,
   groupByMonth,
   minutesUrl,
   newsItems,
+  noticesUrl,
   publicMinutes,
+  publicNotices,
   schoolYearFromSearch,
   upcomingEvents,
 } from "./core.js";
@@ -89,6 +95,15 @@ function renderEvents(events) {
       detailRow(details, "Organizator", event.organizer);
       if (details.childElementCount) item.append(details);
       if (event.description) item.append(el("p", event.description, "event-description"));
+      const icsUrl = event.cancelled ? null : eventIcsUrl(event.id);
+      if (icsUrl) {
+        const link = el("a", "Dodaj do kalendarza (.ics)");
+        link.href = icsUrl;
+        link.setAttribute("download", "");
+        const p = el("p", null, "event-calendar");
+        p.append(link);
+        item.append(p);
+      }
       list.append(item);
     }
     block.append(heading, list);
@@ -118,6 +133,42 @@ function renderMinutes(minutes) {
     details.append(el("summary", "Treść protokołu"), el("div", item.body, "minutes-text"));
     entry.append(details);
     list.append(entry);
+  }
+  container.append(list);
+}
+
+function renderNotices(notices) {
+  const container = byId("notices-list");
+  container.replaceChildren();
+  if (!notices.length) {
+    setStatus("notices-status", "Brak opublikowanych zawiadomień o zebraniach.");
+    return;
+  }
+  setStatus("notices-status", "");
+  const list = el("ol", null, "event-list");
+  for (const notice of notices) {
+    const item = el("li", null, notice.cancelled ? "event cancelled" : "event");
+    const title = el("h3", null, "event-title");
+    if (notice.cancelled) title.append(el("span", "odwołane", "badge"), " ");
+    title.append(el("span", notice.title));
+    const time = el("p", null, "event-time");
+    const timeNode = el("time", `${formatDay(notice.scheduledAt)}, ${formatTime(notice.scheduledAt)}`);
+    timeNode.dateTime = notice.scheduledAt.toISOString();
+    time.append(timeNode);
+    item.append(time, title);
+    const details = el("dl", null, "event-details");
+    if (!notice.cancelled && notice.previousScheduledAt) {
+      detailRow(details, "Poprzedni termin", `${formatDay(notice.previousScheduledAt)}, ${formatTime(notice.previousScheduledAt)}`);
+    }
+    if (!notice.cancelled) detailRow(details, "Miejsce", notice.location);
+    if (details.childElementCount) item.append(details);
+    if (!notice.cancelled && notice.agenda.length) {
+      item.append(el("p", "Porządek obrad:", "event-description"));
+      const agenda = el("ol", null, "agenda-list");
+      for (const point of notice.agenda) agenda.append(el("li", point));
+      item.append(agenda);
+    }
+    list.append(item);
   }
   container.append(list);
 }
@@ -170,6 +221,14 @@ function renderNews(items) {
   container.append(list);
 }
 
+function showCalendarFeed() {
+  const urls = calendarFeedUrls(window.location.host);
+  if (!urls) return;
+  byId("calendar-webcal").href = urls.webcal;
+  byId("calendar-download").href = urls.https;
+  byId("calendar-feed").hidden = false;
+}
+
 async function loadEvents() {
   try {
     const data = await getJson(eventsUrl());
@@ -196,22 +255,128 @@ async function loadMinutes() {
   }
 }
 
+async function loadNotices() {
+  const schoolYearId = schoolYearFromSearch(window.location.search);
+  try {
+    const data = await getJson(noticesUrl(schoolYearId));
+    renderNotices(publicNotices(data?.notices));
+  } catch (error) {
+    // Starsze wdrożenie bez trasy albo nieznany rok: nic nie opublikowano.
+    if (error instanceof HttpError && [400, 404, 405].includes(error.status)) renderNotices([]);
+    else setStatus("notices-status", "Nie udało się wczytać zawiadomień. Spróbuj ponownie później.", true);
+  } finally {
+    done("zawiadomienia");
+  }
+}
+
 // #124: pozycja "Aktualności" jest teraz zawsze widoczna w nawigacji i na
 // stronie (WCAG 3.2.3 — nawigacja nie zmienia się po załadowaniu). Brak
 // trasy API (404/405 — starsze wdrożenie bez tego modułu) i brak
 // opublikowanych wpisów wyglądają dla odwiedzającego tak samo: pusty stan,
 // nie zniknięcie sekcji.
 async function loadNews() {
+  const schoolYearId = newsYearFromSearch(window.location.search);
   try {
-    const data = await getJson(NEWS_URL);
-    renderNews(newsItems(data));
+    const data = await getJson(newsListUrl(schoolYearId));
+    const items = newsItems(data);
+    renderNews(items);
+    decorateNews(items);
   } catch (error) {
     if (error instanceof HttpError && (error.status === 404 || error.status === 405)) renderNews([]);
     else setStatus("news-status", "Nie udało się wczytać aktualności. Spróbuj ponownie później.", true);
   } finally {
     done("aktualnosci");
   }
+  renderNewsArchive(schoolYearId);
+  await showLinkedPost();
 }
+
+// #116: stały adres wpisu (#wpis-<id>) i archiwum według roku szkolnego.
+// Nowe funkcje czyste są w core.js; tu tylko DOM (wyłącznie textContent).
+import {
+  NEWS_UNAVAILABLE_MESSAGE,
+  archiveYears,
+  newsIdFromHash,
+  newsAnchorId,
+  newsListUrl,
+  newsPermalink,
+  newsPostFromPayload,
+  newsPostUrl,
+  newsYearFromSearch,
+} from "./core.js";
+
+// Wpisy z listy dostają kotwicę i stały link; kolejność i filtr jak w renderNews.
+function decorateNews(items) {
+  const entries = byId("news-list").querySelectorAll("li.news");
+  items.forEach((item, index) => {
+    const entry = entries[index];
+    if (!entry || !item.id) return;
+    entry.id = newsAnchorId(item.id);
+    const link = el("a", "Stały link do wpisu", "news-permalink");
+    link.href = newsPermalink(item.id);
+    const p = el("p", null, "news-permalink-row");
+    p.append(link);
+    entry.append(p);
+  });
+}
+
+function renderNewsArchive(currentYear) {
+  const nav = byId("news-archive");
+  if (!nav) return;
+  nav.replaceChildren();
+  const list = el("ul", null, "news-archive-list");
+  const all = el("li");
+  const allLink = el("a", "Najnowsze");
+  allLink.href = "?#aktualnosci";
+  if (!currentYear) allLink.setAttribute("aria-current", "page");
+  all.append(allLink);
+  list.append(all);
+  for (const id of archiveYears()) {
+    const item = el("li");
+    const link = el("a", `Rok szkolny ${formatSchoolYear(id)}`);
+    link.href = `?${new URLSearchParams({ rok: id })}#aktualnosci`;
+    if (id === currentYear) link.setAttribute("aria-current", "page");
+    item.append(link);
+    list.append(item);
+  }
+  nav.append(list);
+  nav.hidden = false;
+}
+
+// Wybrany wpis pobieramy z GET /api/public/news/{id}. 404 (wycofany,
+// nieopublikowany, nieistniejący) i każdy inny błąd odpowiedzi dają ten sam
+// komunikat bez treści; nic nie jest pokazywane z pamięci podręcznej listy.
+async function showLinkedPost() {
+  const box = byId("news-linked");
+  if (!box) return;
+  box.replaceChildren();
+  box.hidden = true;
+  const id = newsIdFromHash(window.location.hash);
+  if (!id) return;
+  box.hidden = false;
+  try {
+    const post = newsPostFromPayload(await getJson(newsPostUrl(id)));
+    if (!post) throw new HttpError(404);
+    box.append(el("h3", "Wybrany wpis", "news-linked-title"));
+    const entry = el("article", null, "news");
+    if (post.publishedAt) {
+      const date = el("time", formatDate(post.publishedAt), "news-date");
+      date.dateTime = post.publishedAt.toISOString();
+      entry.append(date);
+    }
+    entry.append(el("h4", post.title, "news-title"), el("p", post.body, "news-body"));
+    const gallery = renderPhotos(post.photos);
+    if (gallery) entry.append(gallery);
+    box.append(entry);
+    box.scrollIntoView?.();
+  } catch (error) {
+    const unavailable = error instanceof HttpError && (error.status === 404 || error.status === 400);
+    box.append(el("p", unavailable ? NEWS_UNAVAILABLE_MESSAGE : "Nie udało się wczytać wpisu. Spróbuj ponownie później.", "status"));
+    box.firstChild.setAttribute("role", unavailable ? "status" : "alert");
+  }
+}
+
+window.addEventListener("hashchange", () => { showLinkedPost(); });
 
 // Closed <details> hide minutes on paper: open them for printing, then restore.
 let openedForPrint = [];
@@ -225,5 +390,7 @@ window.addEventListener("afterprint", () => {
 });
 
 loadNews();
+showCalendarFeed();
 loadEvents();
 loadMinutes();
+loadNotices();

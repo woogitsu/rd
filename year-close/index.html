@@ -76,7 +76,7 @@
           <button id="open-handover" type="button">Zestawienie przekazania</button>
         </div>
         <p class="message" id="close-waiting" hidden>Czeka na drugą osobę — kto rozpoczął zamknięcie roku, nie może go zamknąć.</p>
-        <p class="empty" id="close-hint">Zamknięcie jest aktywne dopiero po potwierdzeniu wszystkich punktów listy kontrolnej.</p>
+        <p class="empty" id="close-hint">„Rozpocznij zamknięcie” otwiera listę kontrolną i jest nieodwracalne (wymaga potwierdzenia w osobnym oknie). „Zamknij rok” jest aktywne dopiero po potwierdzeniu wszystkich punktów listy kontrolnej przez drugą osobę.</p>
       </section>
     </main>
 
@@ -91,7 +91,7 @@
     <dialog id="checklist-dialog" aria-labelledby="checklist-dialog-title"><form method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">Lista kontrolna</p><h2 id="checklist-dialog-title">Potwierdź punkt</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
       <p class="context" id="checklist-dialog-item"></p>
-      <label>Notatka (opcjonalnie) <textarea name="note" rows="3" minlength="3" maxlength="500" placeholder="Bez danych osobowych uczniów i rodzin"></textarea></label>
+      <label>Notatka (opcjonalnie) <textarea name="note" rows="3" minlength="3" maxlength="500" placeholder="Bez danych osobowych uczniów i rodzin"></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
       <label>Identyfikator dokumentu (opcjonalnie) <input name="documentId" autocomplete="off" placeholder="np. doc-1" /></label>
       <div class="form-error" id="checklist-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="checklist-error">Potwierdź punkt</button></div>

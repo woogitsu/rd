@@ -51,8 +51,11 @@
 
 Każde poniższe pole może zostać wypełnione wolnym tekstem zawierającym dane osobowe
 (np. imię i nazwisko dziecka w tytule przelewu) i **nie da się go poprawić ani
-usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek: #152
-(`src/pg/pii-check.js`, bramka 422/409 przed zapisem i publikacją).
+usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek: #152 —
+wspólna bramka `src/pg/pii-gate.js` (oparta na `src/pg/pii-check.js`) przed zapisem
+we wszystkich trasach zapisu tych pól oraz blokada publikacji publicznej protokołu.
+Heurystyka nie wykrywa nazwisk poza znanymi z roku szkolnego, więc nie zastępuje
+odpowiedzialności osoby zapisującej.
 
 | Kolumna | Typowe ryzyko |
 |---|---|
@@ -69,6 +72,9 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `bank_reconciliation_matches.revoke_reason` | uzasadnienie cofnięcia dopasowania z wyciągu |
 | `bank_reconciliation_group_match_revocations.reason` | uzasadnienie cofnięcia dopasowania zbiorczego (przelew kilku rodzin, #127) |
 | `meeting_agenda_items.description` | sprawa konkretnego ucznia w porządku obrad |
+| `meetings.cancellation_reason` | powód odwołania zebrania (wewnętrzny, 3–500 znaków) — może wspomnieć osobę; nigdy nie trafia do dziennika zdarzeń ani na stronę publiczną (#113) |
+| `meeting_reschedules.reason` | powód zmiany terminu zebrania (wewnętrzny) — j.w. (#113) |
+| `meeting_agenda_versions.snapshot` | migawka tytułów i opisów punktów porządku obrad wysłanego w zawiadomieniu — może opisywać konkretne dzieci/rodziny; publicznie tylko tytuły zatwierdzonego zawiadomienia zebrania ogólnego (#113) |
 | `meeting_minutes.body` | treść protokołu — może opisywać konkretne dzieci/rodziny |
 | `meeting_minutes.change_note` | jw., przy poprawce protokołu |
 | `meeting_minutes.approval_note` | jw. |
@@ -78,6 +84,8 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `guardian_contact_changes.reason` | opis sytuacji rodzinnej przy zmianie kontaktu |
 | `guardian_update_requests.note` | uzasadnienie wniosku rodzica o zmianę kontaktu przez jednorazowy link (#140), może opisywać sytuację rodzinną |
 | `enrollments.ended_reason` | powód odejścia ucznia ze szkoły, może opisywać sytuację rodzinną (#86) |
+| `student_households.created_reason` | powód dodania członkostwa ucznia w gospodarstwie, może opisywać sytuację rodzinną (#86) |
+| `student_households.ended_reason` | powód zakończenia członkostwa ucznia w gospodarstwie, jw. (#86) |
 | `news_photos.author` | imię i nazwisko autora zdjęcia |
 | `news_photos.rights_note` | treść zgody/licencji, może zawierać imię i nazwisko |
 | `news_photos.license_text` | jw. |
@@ -89,6 +97,7 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `payment_reference_revocations.reason` | jw. |
 | `ledger_category_deactivations.reason` | powód wyłączenia kategorii może zawierać imię i nazwisko lub okoliczności rodzinne (#107) |
 | `ledger_budget_adoptions.note` | uwaga przy przyjęciu preliminarza może zawierać imię i nazwisko lub okoliczności rodzinne (#107) |
+| `financial_report_snapshots.supersede_reason` | powód korekty migawki sprawozdania rocznego jest wolnym tekstem i może zawierać imię i nazwisko; migawka jest niezmienna, więc treści nie da się usunąć (#125) |
 | `ledger_entry_reviews.note` | uwaga przy zakwestionowaniu wydatku może zawierać imię i nazwisko lub okoliczności rodzinne (#97) |
 | `resolution_spending_authorizations.note` | uzasadnienie kwoty upoważnienia może zawierać imię i nazwisko lub okoliczności rodzinne (#93) |
 | `event_tasks.title` | tytuł zadania wolontariackiego może zawierać imię i nazwisko lub okoliczności rodzinne (#142) |
@@ -96,6 +105,17 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 | `document_status_events.reason` | powód zastąpienia/unieważnienia dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#82) |
 | `document_descriptions.title` | tytuł dokumentu może zawierać imię i nazwisko (np. „Zwrot dla rodziny Kowalski”) (#76/#313) |
 | `document_descriptions.description` | opis dokumentu może zawierać imię i nazwisko lub okoliczności rodzinne (#76/#313) |
+| `payment_refunds.reason` | uzasadnienie zwrotu wpłaty, może opisywać rodzinę lub dziecko (#138) |
+| `payment_reassignments.reason` | uzasadnienie zmiany przypisania wpłaty do gospodarstwa (#138) |
+| `ledger_transfers.description` | opis przeniesienia gotówka–bank, może zawierać nazwisko osoby (#152) |
+| `ledger_opening_balances.note` | uwaga do bilansu otwarcia (#152) |
+| `ledger_budget_lines.note` | uwaga do linii preliminarza (#152) |
+| `meeting_minutes_publications.reason` | powód zmiany widoczności protokołu (#152) |
+| `school_year_closure_checklist.note` | uwaga do punktu listy zamknięcia roku (#152) |
+| `enrollment_history.reason` | uzasadnienie zmiany klasy, może opisywać sytuację rodzinną (#152) |
+| `student_guardian_changes.reason` | uzasadnienie zmiany relacji opiekun–uczeń (#152) |
+| `news_photos.source_detail` | opis źródła zdjęcia, może zawierać dane osoby przekazującej (#152) |
+| `email_suppression_releases.confirmation_note` | uwaga do zwolnienia adresu z listy wykluczeń (#152) |
 
 ## Środki już istniejące (do odwołania w DPIA)
 
@@ -105,6 +125,11 @@ usunąć** po zapisie (triggery `*_no_change` / brak triggera w ogóle). Środek
 - Solony SHA-256 referencji bankowej zamiast tekstu jawnego przy uzgodnieniu
   (`postgres/migrations/0015_reconciliation.sql`).
 - Klucze obiektów w Storage Bucket bez oryginalnej nazwy pliku (`docs/DOCUMENTS.md`).
+- Bramka danych osobowych po stronie serwera dla pól wolnego tekstu w tabelach niezmiennych
+  (`src/pg/pii-gate.js`, #152, `docs/PII_CHECK.md`): e-mail, IBAN i numer rejestru krajowego BE
+  są odrzucane bez możliwości obejścia (422 `personal_data_forbidden`), telefon i znane imię
+  wymagają potwierdzenia (422 `possible_personal_data`). Test
+  `tests/pii-gate-coverage.test.js` wymaga bramki dla każdego pola `free_text` z tabeli niezmiennej.
 
 ## Do ustalenia przez zarząd/IOD
 

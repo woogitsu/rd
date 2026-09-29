@@ -16,6 +16,7 @@
         <ul>
           <li><a href="#aktualnosci">Aktualności</a></li>
           <li><a href="#wydarzenia">Wydarzenia</a></li>
+          <li><a href="#zawiadomienia">Zebrania</a></li>
           <li><a href="#protokoly">Protokoły</a></li>
         </ul>
       </nav>
@@ -30,6 +31,8 @@
 
       <section id="aktualnosci" aria-labelledby="news-title" aria-busy="true">
         <h2 id="news-title">Aktualności</h2>
+        <div id="news-linked" class="news-linked" tabindex="-1" hidden></div>
+        <nav id="news-archive" class="news-archive" aria-label="Archiwum aktualności" hidden></nav>
         <p class="status" id="news-status" role="status">Wczytywanie…</p>
         <div id="news-list"></div>
       </section>
@@ -37,7 +40,19 @@
       <section id="wydarzenia" aria-labelledby="events-title" aria-busy="true">
         <h2 id="events-title">Najbliższe wydarzenia</h2>
         <p class="status" id="events-status" role="status">Wczytywanie…</p>
+        <p class="section-note" id="calendar-feed" hidden>
+          Kalendarz wydarzeń:
+          <a id="calendar-webcal" href="/api/public/events.ics">subskrybuj (webcal)</a>,
+          <a id="calendar-download" href="/api/public/events.ics">pobierz plik .ics</a>.
+          Zawiera wyłącznie opublikowane wydarzenia publiczne.
+        </p>
         <div id="events-list"></div>
+      </section>
+
+      <section id="zawiadomienia" aria-labelledby="notices-title" aria-busy="true">
+        <h2 id="notices-title">Zawiadomienia o zebraniach</h2>
+        <p class="status" id="notices-status" role="status">Wczytywanie…</p>
+        <div id="notices-list"></div>
       </section>
 
       <section id="protokoly" aria-labelledby="minutes-title" aria-busy="true">
