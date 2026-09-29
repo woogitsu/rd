@@ -72,6 +72,10 @@ const previewArea = byId("preview-area");
 const previewMessage = byId("preview-message");
 const previewImage = byId("preview-image");
 const previewFrame = byId("preview-frame");
+// Przegląd demo 3: Chromium blokuje PDF w <iframe sandbox=""> („This page has been
+// blocked”). Ramka zostaje (inne przeglądarki), a obok jest link do tego samego
+// adresu jako osobna karta — odpowiedź nadal ma CSP `sandbox`, więc bez skryptów.
+const previewOpenTab = byId("preview-open-tab");
 const descriptionHistory = byId("description-history");
 const descriptionForm = byId("description-form");
 const descriptionStatus = byId("description-status");
@@ -456,6 +460,8 @@ function clearPreview() {
   previewImage.removeAttribute("src");
   previewFrame.hidden = true;
   previewFrame.removeAttribute("src");
+  previewOpenTab.hidden = true;
+  previewOpenTab.setAttribute("href", "#");
   previewArea.hidden = true;
   previewMessage.textContent = "";
 }
@@ -482,6 +488,10 @@ detailsPreview.addEventListener("click", () => {
   }
   target.src = previewUrl(id);
   target.hidden = false;
+  if (kind === "pdf") {
+    previewOpenTab.setAttribute("href", previewUrl(id));
+    previewOpenTab.hidden = false;
+  }
 });
 
 function closeDetails() {

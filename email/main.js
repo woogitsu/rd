@@ -44,7 +44,7 @@ const state = {
   preview: null,
   report: null,
   recipients: [],
-  recipientsOffset: null,
+  recipientsCursor: null,
   actorId: null,
   grants: [],
   requestKey: null,
@@ -253,7 +253,7 @@ async function openDetail(id) {
     state.detail = statusData;
     state.preview = previewData;
     state.recipients = [];
-    state.recipientsOffset = null;
+    state.recipientsCursor = null;
     detailSection.hidden = false;
     renderDetail();
     detailSection.scrollIntoView({ block: "start" });
@@ -422,16 +422,16 @@ function recipientRow(entry) {
 }
 
 async function loadRecipients({ append = false } = {}) {
-  const offset = append ? state.recipientsOffset : 0;
+  // #159: kursor keyset z poprzedniej odpowiedzi zamiast przesunięcia (OFFSET).
   const url = new URL(campaignActionUrl(state.selectedId, "recipients"), window.location.origin);
-  url.searchParams.set("offset", String(offset ?? 0));
+  if (append && state.recipientsCursor) url.searchParams.set("cursor", state.recipientsCursor);
   const data = await api(`${url.pathname}${url.search}`);
   const items = Array.isArray(data.recipients) ? data.recipients : [];
   state.recipients = append ? [...state.recipients, ...items] : items;
-  state.recipientsOffset = data.nextOffset;
+  state.recipientsCursor = data.nextCursor || null;
   recipientsBody.replaceChildren(...state.recipients.map(recipientRow));
-  byId("recipients-load-more").hidden = !data.nextOffset;
-  byId("recipients-count").textContent = `${state.recipients.length} wczytanych`;
+  byId("recipients-load-more").hidden = !data.nextCursor;
+  byId("recipients-count").textContent = `${state.recipients.length} wczytanych${data.nextCursor ? ", są kolejne" : " — to wszyscy"}`;
 }
 
 byId("view-recipients").addEventListener("click", async () => {

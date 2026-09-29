@@ -1120,3 +1120,21 @@ Skutki dla danych: wyłącznie nowa tabela — istniejące `enrollments`,
 roku dla `enrollments` działa od 0054. Wycofanie na pustej bazie: usunięcie
 tabeli i indeksu; na bazie z promocjami tylko po kopii zapasowej (znika rejestr
 idempotencji, przypisania zostają w `enrollments`).
+
+`0152_reconciliation_refund_match.sql` (#138) pozwala powiązać zwrot wpłaty
+(`payment_refunds`) z ujemną pozycją wyciągu: nowa kolumna
+`bank_reconciliation_matches.payment_refund_id` (FK), CHECK
+`bank_match_single_target` = dokładnie jeden z trzech celów (wpis księgi,
+wpłata, zwrot), unikalny indeks aktywnych powiązań zwrotu w uzgodnieniu i
+nowa gałąź w `bank_match_guard` (kwota pozycji = −kwota zwrotu, metoda
+`bank`, rok wpłaty = rok uzgodnienia, jeden aktywny zwrot w roku pod blokadą
+doradczą roku). Wpływ i zwrot są osobnymi zdarzeniami bankowymi: kwota
+dodatniej pozycji ↔ wpłata to nadal kwota − korekty (bez zwrotów), a widok
+`bank_match_consistency` liczy tak samo (dotąd porównywał ją z netto po
+zwrotach, więc trigger i widok się rozjeżdżały).
+Skutki dla danych: żaden wiersz nie jest zmieniany; nowa kolumna jest NULL dla
+istniejących powiązań. Powiązania wpłat mające zwroty, raportowane dotąd jako
+`amount_mismatch` tylko z tego powodu, przestają nim być (zapytanie kontrolne
+w nagłówku migracji). Dopasowania zbiorcze (0105) i cele „wpis księgi” bez
+zmian. Wycofanie na bazie bez powiązań zwrotów: przywrócenie funkcji i widoku
+z 0024, CHECK z 0015, usunięcie indeksu i kolumny.
