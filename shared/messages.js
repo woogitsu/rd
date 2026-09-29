@@ -423,6 +423,19 @@ export const MESSAGES = Object.freeze({
   preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
   preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
   sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
+  class_map_required: "Podaj jawną mapę klas (klasa źródłowa → klasa docelowa albo null dla klasy końcowej). Bez mapy nic nie jest przenoszone.",
+  invalid_class_map: "Mapa klas jest niepoprawna (identyfikatory klas, nazwy do 60 znaków, najwyżej 200 wpisów).",
+  same_school_year: "Rok źródłowy i docelowy muszą być różne.",
+  invalid_year_order: "Rok docelowy musi zaczynać się później niż rok źródłowy.",
+  unknown_source_class: "Mapa klas wskazuje klasę, której nie ma w roku źródłowym.",
+  unknown_target_class: "Wskazana klasa docelowa nie istnieje w roku docelowym.",
+  unknown_student: "Wykluczenie lub zmiana klasy dotyczy ucznia, który nie ma przypisania w roku źródłowym.",
+  invalid_exclusions: "Lista wykluczonych uczniów jest niepoprawna.",
+  invalid_overrides: "Lista zmian klasy docelowej jest niepoprawna.",
+  plan_too_large: "Plan promocji jest zbyt duży (najwyżej 2000 uczniów). Skontaktuj się z administratorem.",
+  plan_stale: "Dane zmieniły się od podglądu promocji. Wygeneruj podgląd ponownie.",
+  nothing_to_promote: "Plan nie zawiera żadnego ucznia do przeniesienia.",
+  invalid_plan_digest: "Brak poprawnego skrótu planu (planDigest) z podglądu.",
 });
 
 // Tekst zastępczy według statusu HTTP (status 0 = brak połączenia).

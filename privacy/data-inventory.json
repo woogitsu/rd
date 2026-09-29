@@ -9343,6 +9343,151 @@
       "data_type": "integer"
     }
   },
+  "promotion_runs": {
+    "actor_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "conflict_count": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "created_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "excluded_count": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "from_school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "graduating_count": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "idempotency_key": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "plan_digest": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "promoted_count": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "to_school_year_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "unmapped_count": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    },
+    "withdrawn_count": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
+    }
+  },
   "resolution_execution_events": {
     "id": {
       "personal": "none",

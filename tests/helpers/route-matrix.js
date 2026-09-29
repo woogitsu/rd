@@ -32,6 +32,7 @@
 // Wszystkie dane są syntetyczne. Znaczniki zakresów wstawiamy do tytułów,
 // treści protokołów i opisów wpłat; odpowiedź odmowna nie może zawierać żadnego.
 
+import { createHash } from 'node:crypto';
 import { isMfaGateExempt } from '../../src/pg/mfa-policy.js';
 import { emailHash as prefEmailHash, preferencesToken } from '../../src/email/content.js';
 
@@ -310,12 +311,30 @@ function photoAction(id, action, allow, ok, body) {
   };
 }
 
-function adminRoute(id, method, path, { ok = 200, object, build }) {
+// Ciało tras promocji (#78): rok źródłowy z jedną klasą i rok docelowy z jedną klasą (fixture promotionYears).
+function promotionBody(obj, { toClass = false } = {}) {
+  return {
+    fromSchoolYearId: obj.fromSchoolYearId, toSchoolYearId: obj.toSchoolYearId,
+    classMap: { [obj.fromClassId]: toClass ? obj.toClassId : `Nowa-${obj.fromClassId}` },
+  };
+}
+
+// Skrót planu z src/pg/promotions.js dla fixture promotionYears: jeden uczeń, status 'promote'.
+function promotionDigest(obj) {
+  return createHash('sha256').update(JSON.stringify({
+    from: obj.fromSchoolYearId, to: obj.toSchoolYearId,
+    items: [[obj.studentId, obj.enrollmentId, 'promote', obj.fromClassId, obj.toClassId, null]],
+  })).digest('hex');
+}
+
+function adminRoute(id, method, path, { ok = 200, object, build, keyed = false }) {
   return {
     id, module: 'admin', method, path, targets: ['-'], allow: ADMIN_ONLY, mfa: true, ok, deny: 403,
     fixture: object ? 'fresh' : null, object: object ? { kind: 'adminTarget', stage: object } : undefined,
     visible: () => SCOPED_MARKER_KEYS,
-    build: build ?? (() => ({ path })),
+    build: keyed
+      ? (context) => ({ ...build(context), headers: withKey(context.key) })
+      : build ?? (() => ({ path })),
   };
 }
 
@@ -1291,6 +1310,20 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.classesCreate', 'POST', '/api/admin/school-years/:schoolYearId/classes', {
     ok: 201, object: 'emptySchoolYear',
     build: ({ obj, key }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/classes`, body: { names: [`Klasa-${safeKey(key)}`] } }),
+  }),
+  // Promocja uczniów i kopiowanie klas (#78): wyłącznie admin z MFA, jak cały moduł.
+  adminRoute('admin.promotionClassesPreview', 'POST', '/api/admin/promotions/classes/preview', {
+    object: 'promotionYears', build: ({ obj }) => ({ path: '/api/admin/promotions/classes/preview', body: promotionBody(obj) }),
+  }),
+  adminRoute('admin.promotionClassesApply', 'POST', '/api/admin/promotions/classes/apply', {
+    ok: 201, object: 'promotionYears', build: ({ obj }) => ({ path: '/api/admin/promotions/classes/apply', body: promotionBody(obj) }),
+  }),
+  adminRoute('admin.promotionPreview', 'POST', '/api/admin/promotions/preview', {
+    object: 'promotionYears', build: ({ obj }) => ({ path: '/api/admin/promotions/preview', body: promotionBody(obj, { toClass: true }) }),
+  }),
+  adminRoute('admin.promotionApply', 'POST', '/api/admin/promotions/apply', {
+    ok: 201, object: 'promotionYears', keyed: true,
+    build: ({ obj }) => ({ path: '/api/admin/promotions/apply', body: { ...promotionBody(obj, { toClass: true }), planDigest: promotionDigest(obj) } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
   // Rejestr żądań osób (#100): wariant zachowawczy, wyłącznie admin (jak cały moduł).

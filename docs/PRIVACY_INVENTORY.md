@@ -1497,6 +1497,24 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `status` | none | — | nie |
 | `version` | none | — | nie |
 
+### `promotion_runs`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `actor_id` | none | — | nie |
+| `conflict_count` | none | — | nie |
+| `created_at` | none | — | nie |
+| `excluded_count` | none | — | nie |
+| `from_school_year_id` | none | — | nie |
+| `graduating_count` | none | — | nie |
+| `id` | none | — | nie |
+| `idempotency_key` | none | — | nie |
+| `plan_digest` | none | — | nie |
+| `promoted_count` | none | — | nie |
+| `to_school_year_id` | none | — | nie |
+| `unmapped_count` | none | — | nie |
+| `withdrawn_count` | none | — | nie |
+
 ### `resolution_execution_events`
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |

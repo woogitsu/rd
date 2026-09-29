@@ -466,6 +466,25 @@ async function makeAdminTarget(ctx, stage) {
     await seedSchoolYear(ctx.db, schoolYearId, { startsOn: '2029-09-01', endsOn: '2030-08-31' });
     return { schoolYearId };
   }
+  if (stage === 'promotionYears') {
+    // Dwa syntetyczne lata z jedną klasą każdy (#78) — nigdy lata aktorów macierzy.
+    const fromSchoolYearId = nextKey('y-zrodlo');
+    const toSchoolYearId = nextKey('y-cel');
+    const fromClassId = nextKey('c-zrodlo');
+    const toClassId = nextKey('c-cel');
+    await seedSchoolYear(ctx.db, fromSchoolYearId, { startsOn: '2031-09-01', endsOn: '2032-08-31' });
+    await seedSchoolYear(ctx.db, toSchoolYearId, { startsOn: '2032-09-01', endsOn: '2033-08-31' });
+    await ctx.db.query('INSERT INTO classes (id, school_year_id, name) VALUES ($1, $2, $3), ($4, $5, $6)',
+      [fromClassId, fromSchoolYearId, `Z-${fromClassId}`, toClassId, toSchoolYearId, `C-${toClassId}`]);
+    const householdId = nextKey('hh-promocja');
+    const studentId = nextKey('s-promocja');
+    const enrollmentId = nextKey('e-promocja');
+    await ctx.db.query('INSERT INTO households (id) VALUES ($1)', [householdId]);
+    await ctx.db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Test', 'Promocja')", [studentId, householdId]);
+    await ctx.db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
+      [enrollmentId, studentId, fromClassId, fromSchoolYearId]);
+    return { fromSchoolYearId, toSchoolYearId, fromClassId, toClassId, studentId, enrollmentId };
+  }
   if (stage === 'dataRequest') {
     // Rejestr żądań osób (#100) — cel dla przejścia stanu; gospodarstwo ogólnoszkolne (hh-1).
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',

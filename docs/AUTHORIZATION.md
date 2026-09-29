@@ -208,6 +208,10 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/admin/school-years` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/school-years` | wyłącznie admin | tak | 403 | nowy rok szkolny (#78); zły zakres dat: 400; duplikat id/etykiety: 409 |
 | `POST /api/admin/school-years/:schoolYearId/classes` | wyłącznie admin | tak | 403 | nowe klasy roku (#78); nieistniejący rok: 404; duplikat nazwy: 409; bez trasy usuwania |
+| `POST /api/admin/promotions/classes/preview` | wyłącznie admin | tak | 403 | podgląd kopii klas wg jawnej mapy (#78); nic nie zapisuje; bez mapy: 422 |
+| `POST /api/admin/promotions/classes/apply` | wyłącznie admin | tak | 403 | tworzy brakujące klasy roku docelowego, audyt `class.created`; zamknięty rok docelowy: 409 |
+| `POST /api/admin/promotions/preview` | wyłącznie admin | tak | 403 | plan promocji uczniów (#78) z `planDigest`; nic nie zapisuje; bez jawnej mapy klas: 422 |
+| `POST /api/admin/promotions/apply` | wyłącznie admin | tak | 403 | nagłówek `Idempotency-Key`; nowe wiersze `enrollments` w jednej transakcji z audytem; zmiana danych od podglądu: `409 plan_stale`; zamknięty rok docelowy: 409 |
 | `GET /api/admin/class-coverage?schoolYearId=:year` | wyłącznie admin | tak | 403 | obsada klas roku, bez tokenów i e-maili (#108) |
 | `GET /api/admin/audit` | wyłącznie admin | tak | 403 | #181: filtry `domain`/`actorId`/`from`/`to`/`schoolYearId`; sam zapisuje `audit.viewed` |
 | `GET /api/admin/audit/entity/:entityType/:entityId` | wyłącznie admin | tak | 403 | #181: wariant zachowawczy — role finansowe/kampanii własnego zakresu do D-08/D-09; nieistniejący obiekt: 404 |

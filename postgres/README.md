@@ -942,3 +942,16 @@ pozostaje unikalny. Skutki dla danych: żaden wiersz nie jest zmieniany ani
 usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
+
+`0137_promotion_runs.sql` (#78) dodaje tabelę `promotion_runs`: rejestr
+zatwierdzonych promocji uczniów na nowy rok szkolny (aktor, rok źródłowy i
+docelowy, `idempotency_key` UNIQUE, skrót planu, liczby przeniesionych,
+kończących, pominiętych, wykluczonych, konfliktów i odchodzących). Służy
+idempotencji `POST /api/admin/promotions/apply` (ponowienie z tym samym kluczem
+zwraca zapisany wynik bez nowych wierszy); wiersze są tylko do dopisywania
+(trigger `family_history_immutable`). Bez imion, nazwisk i list uczniów.
+Skutki dla danych: wyłącznie nowa tabela — istniejące `enrollments`,
+`enrollment_history`, klasy i przydziały nie są zmieniane; zamrożenie zamkniętego
+roku dla `enrollments` działa od 0054. Wycofanie na pustej bazie: usunięcie
+tabeli i indeksu; na bazie z promocjami tylko po kopii zapasowej (znika rejestr
+idempotencji, przypisania zostają w `enrollments`).
