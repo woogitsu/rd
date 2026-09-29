@@ -290,3 +290,52 @@ test('każda odpowiedź serwera Node ma nosniff, X-Frame-Options i (przy https) 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('Node server (#216): odpowiedź z Content-Length idzie strumieniowo z nagłówkami; przerwanie pobierania nie psuje serwera', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rd-node-app-'));
+  const chunk = Buffer.alloc(64 * 1024, 0x61);
+  const chunks = 200; // ok. 12,5 MiB
+  let cancelled = false;
+  const fetchHandler = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname !== '/api/exports') return Response.json({ ok: true });
+    let index = 0;
+    const headers = new Headers({ 'Content-Type': 'application/octet-stream', 'Content-Length': String(chunk.length * chunks) });
+    headers.append('Set-Cookie', 'a=1; Path=/; HttpOnly');
+    headers.append('Set-Cookie', 'b=2; Path=/; HttpOnly');
+    const body = new ReadableStream({
+      pull(controller) {
+        if (index >= chunks) { controller.close(); return; }
+        index += 1;
+        controller.enqueue(chunk);
+      },
+      cancel() { cancelled = true; },
+    });
+    return new Response(body, { status: 200, headers });
+  };
+  const { server, baseUrl } = await listen(createNodeHandler({ distRoot: root, fetchHandler }));
+  try {
+    const full = await fetch(`${baseUrl}/api/exports`, { method: 'POST' });
+    assert.equal(full.status, 200);
+    assert.equal(full.headers.get('content-length'), String(chunk.length * chunks));
+    assert.equal(full.headers.get('cache-control'), 'no-store');
+    assert.equal(full.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(full.headers.getSetCookie().map((cookie) => cookie.split(';')[0]), ['a=1', 'b=2']);
+    assert.equal((await full.arrayBuffer()).byteLength, chunk.length * chunks);
+
+    // Klient czyta jeden kawałek i zrywa połączenie.
+    const partial = await fetch(`${baseUrl}/api/exports`, { method: 'POST' });
+    const reader = partial.body.getReader();
+    await reader.read();
+    await reader.cancel();
+    for (let attempt = 0; attempt < 50 && !cancelled; attempt += 1) await new Promise((resolve) => { setTimeout(resolve, 20); });
+    assert.equal(cancelled, true, 'źródło strumienia zostało anulowane po zerwaniu połączenia');
+
+    // Serwer nadal obsługuje żądania.
+    const after = await fetch(`${baseUrl}/api/other`);
+    assert.equal(after.status, 200);
+  } finally {
+    await close(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
