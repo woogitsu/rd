@@ -52,6 +52,7 @@ Dziś (przed scaleniem [#408](https://github.com/woogitsu/rd/pull/408)) kilka ek
 ### 5. Przedstawiciel widzi tylko swoją klasę (ok. 3 min)
 **Ekran:** wylogować skarbnika, zalogować `przedstawiciel@example.invalid` (bez MFA — ta rola go nie wymaga), `/families/`.
 **Co pokazać:** listę „Klasy” pokazuje wyłącznie „Klasa 0-A (dane przykładowe)”, ze zdaniem na ekranie „Widoczne są wyłącznie klasy z Twojego zakresu uprawnień.” Podkreślić, że to sprawdzenie serwera, nie tylko ukryty link w interfejsie (AGENTS.md).
+**Eksport listy klasy i raport KR (dodatek do kroku 5, #161):** konta `przedstawiciel@…` i `komisja-rewizyjna@…` nie mają zapisanego MFA, a eksport listy klasy (`/data-export/`) i raport KR (`/audit/`) go wymagają. Wejście tam kończy się odesłaniem na `/login/` z komunikatem „Strona, którą otwierasz, wymaga weryfikacji dwuetapowej…” i przyciskiem „Rozpocznij konfigurację”; po zapisie MFA (kod QR skanowany aplikacją uwierzytelniającą, 10 kodów odzyskiwania) następuje powrót do strony. Przed pokazem zapisać MFA tych dwóch kont albo pokazać to przejście jako świadomy element (wymóg MFA dla tych ról pozostaje do decyzji D-10).
 **Co powiedzieć:** Przedstawiciel klasy widzi wyłącznie przypisaną klasę — to sprawdza serwer przy każdym żądaniu, więc nawet znajomość adresu innej klasy nic nie daje.
 **Pytania na koniec:** **D-08** (czy zarząd zatwierdza macierz ról z PRODUCT.md — dziś to tylko założenie w kodzie), **D-09** (zakres dostępu dyrekcji i Komisji Rewizyjnej, dziś bez dostępu do rodzin).
 

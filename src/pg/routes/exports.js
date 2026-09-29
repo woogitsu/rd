@@ -64,6 +64,22 @@ function safeFilePart(value) {
   return value.replace(/[^A-Za-z0-9_.-]/g, '_');
 }
 
+// Ciało odpowiedzi z listy buforów (#216): każdy bufor jest zwalniany zaraz po
+// przekazaniu, więc pamięć paczki maleje w trakcie pobierania.
+function chunksBody(chunks) {
+  let index = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (index >= chunks.length) { controller.close(); return; }
+      const chunk = chunks[index];
+      chunks[index] = null;
+      index += 1;
+      controller.enqueue(chunk);
+    },
+    cancel() { chunks.fill(null); },
+  });
+}
+
 function attachment(body, filename, headers = {}, contentType = 'application/json; charset=utf-8') {
   return new Response(body, {
     status: 200,
@@ -144,7 +160,12 @@ async function createYearlyExport(request, env, json) {
       // zakresem tego PR, patrz opis PR).
       const lock = await tx.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked', [`rd_export:${schoolYearId}`]);
       if (!lock.rows[0].locked) throw new RequestError('export_in_progress', 409);
-      const built = await buildYearlyExport(tx, schoolYearId);
+      // #216: budowa paczki idzie partiami przez kursor i oddaje pętlę zdarzeń;
+      // przerwy między zapytaniami są krótkie, ale limit „idle in transaction”
+      // (15 s w puli) podnosimy lokalnie dla tej jednej transakcji, żeby wolny
+      // współdzielony vCPU nie zrywał eksportu w trakcie.
+      await tx.query("SET LOCAL idle_in_transaction_session_timeout = '60s'");
+      const built = await buildYearlyExport(tx, schoolYearId, { stream: true });
       const runId = await recordRun(tx, {
         kind: 'yearly', schoolYearId, formatVersion: EXPORT_FORMAT_VERSION, actorId,
         sha256: built.manifestSha256, rowCounts: built.rowCounts,
@@ -159,9 +180,11 @@ async function createYearlyExport(request, env, json) {
     throw error;
   }
 
-  return attachment(result.body, `rd-eksport-${safeFilePart(schoolYearId)}-v${EXPORT_FORMAT_VERSION}.json`, {
+  return attachment(chunksBody(result.bodyChunks), `rd-eksport-${safeFilePart(schoolYearId)}-v${EXPORT_FORMAT_VERSION}.json`, {
     'X-Export-Run-Id': result.runId,
     'X-Export-Manifest-Sha256': result.manifestSha256,
+    // Znany rozmiar: adapter Node przesyła odpowiedź strumieniowo, bez kopii w pamięci.
+    'Content-Length': String(result.bodyBytes),
   });
 }
 

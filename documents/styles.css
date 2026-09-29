@@ -17,7 +17,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; background: #fff; }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 
 .skip-link { position: absolute; left: -999px; top: 0; padding: .5rem 1rem; background: #fff; color: var(--red); }
 .skip-link:focus { left: 1rem; }
@@ -48,9 +48,16 @@ h2 { margin: 0 0 .75rem; font-size: 1.1rem; }
 form { display: grid; gap: 1rem; }
 .filters form { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; }
 label { display: grid; gap: .35rem; font-size: .9rem; font-weight: 600; }
-input, select { width: 100%; min-width: 0; padding: .6rem .7rem; color: var(--text); background: #fff; border: 1px solid #9a9ea1; border-radius: 0; }
+input, select, textarea { width: 100%; min-width: 0; padding: .6rem .7rem; color: var(--text); background: #fff; border: 1px solid #9a9ea1; border-radius: 0; }
+input[type="checkbox"] { width: auto; }
+label.check { display: flex; align-items: center; gap: .5rem; font-weight: 400; }
+.filters label.check { grid-column: 1 / -1; }
+.versions { margin: 1rem 0; padding-left: 1.25rem; }
+.versions li { margin: .3rem 0; }
+.versions li.current { font-weight: 600; }
+.versions button { margin-left: .5rem; padding: .2rem .6rem; min-height: 36px; font-size: .85rem; }
 input[type="file"] { padding: .5rem; }
-input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid var(--red-dark); outline-offset: 2px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid var(--red-dark); outline-offset: 2px; }
 fieldset { margin: 0; padding: .75rem 1rem 1rem; border: 1px solid var(--line); }
 legend { padding: 0 .25rem; font-size: .9rem; font-weight: 600; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
