@@ -69,6 +69,7 @@ wpisów).
 | `category_not_found` | Nie znaleziono kategorii księgi. | Nie — popraw dane żądania. |
 | `checklist_incomplete` | Lista kontrolna nie jest ukończona. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_exists` | Klasa o tej nazwie już istnieje w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
+| `class_map_required` | Podaj jawną mapę klas (klasa źródłowa → klasa docelowa albo null dla klasy końcowej). Bez mapy nic nie jest przenoszone. | Nie — popraw dane żądania. |
 | `class_not_found` | Nie znaleziono klasy albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
 | `class_not_in_school_year` | Klasa nie należy do wskazanego roku szkolnego. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_required` | Wskaż klasę. | Nie — popraw dane żądania. |
@@ -140,6 +141,7 @@ wpisów).
 | `invalid_cents_value` | Niepoprawna kwota w EUR. | Nie — popraw dane żądania. |
 | `invalid_checklist_item` | Niepoprawny punkt listy kontrolnej. | Nie — popraw dane żądania. |
 | `invalid_class` | Niepoprawny identyfikator klasy. | Nie — popraw dane żądania. |
+| `invalid_class_map` | Mapa klas jest niepoprawna (identyfikatory klas, nazwy do 60 znaków, najwyżej 200 wpisów). | Nie — popraw dane żądania. |
 | `invalid_code` | Kod jest nieprawidłowy. Sprawdź aplikację i wpisz aktualny kod. | Nie — popraw dane żądania. |
 | `invalid_columns` | Niepoprawne kolumny importu. | Nie — popraw dane żądania. |
 | `invalid_confirmation_note` | Podaj uzasadnienie (od 3 do 1000 znaków). | Nie — popraw dane. |
@@ -173,6 +175,7 @@ wpisów).
 | `invalid_ended_on` | Podaj poprawną datę odejścia (RRRR-MM-DD). | Nie — popraw dane. |
 | `invalid_entity_type` | Nieznany rodzaj obiektu w dzienniku. | Nie — popraw dane. |
 | `invalid_event_id` | Niepoprawny identyfikator wydarzenia. | Nie — popraw dane żądania. |
+| `invalid_exclusions` | Lista wykluczonych uczniów jest niepoprawna. | Nie — popraw dane żądania. |
 | `invalid_execution_status` | Wybierz stan wykonania uchwały z listy. | Nie — popraw dane. |
 | `invalid_expires_at` | Data wygaśnięcia musi być w przyszłości (najwyżej 3 lata). | Nie — popraw dane żądania. |
 | `invalid_explicit_license` | Niepoprawna licencja zdjęcia. | Nie — popraw dane żądania. |
@@ -206,12 +209,14 @@ wpisów).
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_origin` | Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji. | Nie — popraw dane żądania. |
 | `invalid_outcome` | Wybierz wynik odczytu z listy. | Nie — popraw dane żądania. |
+| `invalid_overrides` | Lista zmian klasy docelowej jest niepoprawna. | Nie — popraw dane żądania. |
 | `invalid_payee_name` | Podaj nazwę odbiorcy (maksymalnie 70 znaków). | Nie — popraw dane żądania. |
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
 | `invalid_payment_id` | Niepoprawny identyfikator wpłaty. | Nie — popraw dane żądania. |
 | `invalid_payment_link` | Niepoprawne powiązanie z wpłatą. | Nie — popraw dane żądania. |
 | `invalid_photo_id` | Niepoprawny identyfikator zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_photos` | Niepoprawna lista zdjęć. | Nie — popraw dane żądania. |
+| `invalid_plan_digest` | Brak poprawnego skrótu planu (planDigest) z podglądu. | Nie — popraw dane żądania. |
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
@@ -250,6 +255,7 @@ wpisów).
 | `invalid_user_id` | Niepoprawny identyfikator konta. | Nie — popraw dane żądania. |
 | `invalid_window` | Niepoprawny zakres dat. | Nie — popraw dane żądania. |
 | `invalid_year_end_confirmation` | Potwierdzenie rozbieżności wymaga jednego z dozwolonych powodów i widzianych różnic w centach. | Nie — popraw dane żądania. |
+| `invalid_year_order` | Rok docelowy musi zaczynać się później niż rok źródłowy. | Nie — popraw dane żądania. |
 | `invitation_already_accepted` | Zaproszenie zostało już przyjęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `invitation_not_found` | Nie znaleziono zaproszenia. | Nie — popraw dane żądania. |
 | `invitation_not_pending` | To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -294,6 +300,7 @@ wpisów).
 | `not_first_school_year` | Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_found` | Nie znaleziono zasobu albo nie masz do niego dostępu. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_resolvable` | Tej wiadomości nie można jeszcze rozstrzygnąć. | Nie — popraw dane żądania. |
+| `nothing_to_promote` | Plan nie zawiera żadnego ucznia do przeniesienia. | Nie — popraw dane żądania. |
 | `notice_campaign_audience_unsupported` | Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana. | Nie — popraw dane żądania. |
 | `notice_four_eyes_required` | Zawiadomienie zatwierdza inna osoba niż jego autor. | Nie — popraw dane żądania. |
 | `notice_not_approved` | Szkic kampanii powstaje tylko z zatwierdzonego zawiadomienia. | Nie — popraw dane żądania. |
@@ -336,6 +343,8 @@ wpisów).
 | `photo_not_found` | Nie znaleziono zdjęcia. | Nie — popraw dane żądania. |
 | `photo_revoked` | Zgoda na publikację zdjęcia została wycofana. | Zależy od kontekstu (patrz moduł trasy). |
 | `photos_require_school_wide_role` | Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły. | Zależy od kontekstu (patrz moduł trasy). |
+| `plan_stale` | Dane zmieniły się od podglądu promocji. Wygeneruj podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `plan_too_large` | Plan promocji jest zbyt duży (najwyżej 2000 uczniów). Skontaktuj się z administratorem. | Nie — popraw dane żądania. |
 | `possible_personal_data` | Ten tekst zostanie zapisany na stałe i trafi do eksportu. Usuń dane osobowe albo potwierdź, że to konieczne. | Nie — popraw dane żądania. |
 | `post_not_found` | Nie znaleziono wpisu. | Nie — popraw dane żądania. |
 | `post_withdrawn` | Wpis został wycofany. | Zależy od kontekstu (patrz moduł trasy). |
@@ -391,6 +400,7 @@ wpisów).
 | `review_expense_only` | Weryfikacja drugiej osoby dotyczy wyłącznie wydatków. | Zależy od kontekstu (patrz moduł trasy). |
 | `revision_conflict` | Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `role_pending_decision` | Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji. | Nie — popraw dane żądania. |
+| `same_school_year` | Rok źródłowy i docelowy muszą być różne. | Nie — popraw dane żądania. |
 | `school_year_closed` | Rok szkolny jest zamknięty. Zmiany nie są możliwe. | Zależy od kontekstu (patrz moduł trasy). |
 | `school_year_exists` | Taki rok szkolny już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `school_year_not_finished` | Rok szkolny jeszcze się nie zakończył. | Zależy od kontekstu (patrz moduł trasy). |
@@ -424,6 +434,9 @@ wpisów).
 | `transfer_not_found` | Nie znaleziono przeniesienia kasa ↔ rachunek. | Nie — popraw dane żądania. |
 | `unauthenticated` | Sesja wygasła lub nie jesteś zalogowany. Zaloguj się ponownie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `unknown_school_year` | Nie znaleziono roku szkolnego. | Zależy od kontekstu (patrz moduł trasy). |
+| `unknown_source_class` | Mapa klas wskazuje klasę, której nie ma w roku źródłowym. | Nie — popraw dane żądania. |
+| `unknown_student` | Wykluczenie lub zmiana klasy dotyczy ucznia, który nie ma przypisania w roku źródłowym. | Nie — popraw dane żądania. |
+| `unknown_target_class` | Wskazana klasa docelowa nie istnieje w roku docelowym. | Nie — popraw dane żądania. |
 | `unsafe_integer` | Eksport zawiera liczbę spoza obsługiwanego zakresu. | Zależy od kontekstu (patrz moduł trasy). |
 | `unsupported_media_type` | Niedozwolony typ danych lub pliku. | Nie — popraw dane żądania. |
 | `unsupported_value` | Eksport zawiera nieobsługiwaną wartość. | Nie — popraw dane żądania. |
