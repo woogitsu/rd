@@ -759,6 +759,116 @@ test('publiczne API aktualności: zdjęcie z wycofaną zgodą znika z danych str
   } finally { await db.close(); }
 });
 
+// Syntetyczny JPEG z ręcznie wstawionymi segmentami APP1 (EXIF z tagiem GPS
+// oraz XMP) tuż po SOI — sprawdzamy bajty wyjścia na poziomie segmentów,
+// niezależnie od tego, co o metadanych mówi biblioteka obrazu (#96).
+async function jpegWithGpsSegments() {
+  const base = await sharp({ create: { width: 16, height: 12, channels: 3, background: { r: 30, g: 90, b: 150 } } }).jpeg().toBuffer();
+  assert.equal(base[0], 0xff); assert.equal(base[1], 0xd8);
+  const segment = (payload) => {
+    const len = payload.length + 2;
+    return Buffer.concat([Buffer.from([0xff, 0xe1, len >> 8, len & 0xff]), payload]);
+  };
+  // Minimalny EXIF (TIFF little-endian, IFD0 ze wskaźnikiem GPS IFD 0x8825) — wartości fikcyjne.
+  const exif = Buffer.concat([
+    Buffer.from('Exif\0\0', 'latin1'),
+    Buffer.from([0x49, 0x49, 0x2a, 0, 8, 0, 0, 0, 1, 0, 0x25, 0x88, 4, 0, 1, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0]),
+    Buffer.from([1, 0, 1, 0, 2, 0, 2, 0, 0, 0, 0x4e, 0, 0, 0, 0, 0, 0, 0]),
+    Buffer.from('GPS-SYNTETYCZNY-52.0N-21.0E', 'latin1'),
+  ]);
+  const xmp = Buffer.from('http://ns.adobe.com/xap/1.0/\0<x:xmpmeta>syntetyczny-autor</x:xmpmeta>', 'latin1');
+  return Buffer.concat([base.subarray(0, 2), segment(exif), segment(xmp), base.subarray(2)]);
+}
+
+// Lista znaczników segmentów JPEG do SOS (dalej idą dane entropijne).
+function jpegSegmentMarkers(bytes) {
+  const markers = [];
+  let i = 2;
+  while (i + 4 <= bytes.length && bytes[i] === 0xff) {
+    const marker = bytes[i + 1];
+    markers.push(marker);
+    if (marker === 0xda) break;
+    i += 2 + ((bytes[i + 2] << 8) | bytes[i + 3]);
+  }
+  return markers;
+}
+
+test('plik zdjęcia (#96): publikowane warianty nie mają segmentów APP1/EXIF/XMP ani śladu GPS, oryginał nie trafia do magazynu', async () => {
+  const db = await newsDb();
+  const storage = createMemoryStorage();
+  const env = { db, storage };
+  try {
+    const source = await jpegWithGpsSegments();
+    assert.ok(jpegSegmentMarkers(source).filter((m) => m === 0xe1).length === 2, 'atrapa musi nieść dwa segmenty APP1');
+    assert.ok(Buffer.from(source).includes('GPS-SYNTETYCZNY'));
+
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    const boardCookie = await seedUserSession(db, { userId: 'u-board-gps', roles: [{ role: 'board', schoolYearId: year }], mfa: true });
+    const uploaded = await handlePgRequest(request(`/api/news-photos/${photo.id}/file`, {
+      method: 'POST', cookie: boardCookie, headers: { 'Content-Type': 'image/jpeg', 'Idempotency-Key': key('gps') }, body: source,
+    }), env);
+    assert.equal(uploaded.status, 201);
+
+    await verifyPhoto(db, board1, { photoId: photo.id });
+    await publishedPost(db, { title: 'Zdjęcie z GPS w źródle (syntetyczne)', photoIds: [photo.id] });
+
+    for (const variant of ['web', 'thumb']) {
+      const response = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/${variant}`), env);
+      assert.equal(response.status, 200);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const markers = jpegSegmentMarkers(bytes);
+      assert.ok(!markers.includes(0xe1), `${variant}: brak segmentu APP1 (EXIF/XMP)`);
+      assert.ok(!markers.includes(0xed), `${variant}: brak segmentu APP13 (IPTC)`);
+      assert.ok(!markers.includes(0xfe), `${variant}: brak komentarza COM`);
+      assert.ok(!bytes.includes('Exif'), `${variant}: brak łańcucha Exif`);
+      assert.ok(!bytes.includes('GPS-SYNTETYCZNY'), `${variant}: brak śladu współrzędnych`);
+      assert.ok(!bytes.includes('xmpmeta'), `${variant}: brak XMP`);
+    }
+
+    // W magazynie są wyłącznie obiekty wariantów pod photos/; oryginał nie jest zapisany.
+    const keys = storage.keys();
+    assert.equal(keys.length, 2);
+    assert.ok(keys.every((k) => k.startsWith('photos/')));
+    for (const k of keys) {
+      const stored = await storage.getObject(k);
+      assert.ok(!Buffer.from(stored.body ?? stored.bytes ?? stored).includes('GPS-SYNTETYCZNY'));
+    }
+    const original = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/original`), env);
+    assert.equal(original.status, 404);
+  } finally { await db.close(); }
+});
+
+test('rozdział prefiksów (#96): tabela dokumentów odrzuca klucz photos/, tabela plików zdjęć odrzuca klucz docs/', async () => {
+  const db = await newsDb();
+  try {
+    const uuid = '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f';
+    await seedSchoolYear(db, `${year}-doc`);
+    await assert.rejects(db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+       VALUES ($1, $2, 'image/jpeg', 10, 'board', 'admin', $3, $4, 'k-prefix-1')`,
+      [uuid, `photos/${uuid}`, `${year}-doc`, '0'.repeat(64)],
+    ), /documents_api_row/);
+    // Kontrola pozytywna: ten sam wiersz z kluczem docs/ przechodzi, więc odrzucenie wyżej wynika z prefiksu.
+    await db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+       VALUES ($1, $2, 'image/jpeg', 10, 'board', 'admin', $3, $4, 'k-prefix-2')`,
+      [uuid, `docs/${uuid}`, `${year}-doc`, '0'.repeat(64)],
+    );
+
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    await assert.rejects(db.query(
+      `INSERT INTO news_photo_files (id, photo_id, variant, object_key, mime_type, width, height, byte_size, sha256, source_sha256, created_by)
+       VALUES ($1, $2, 'web', $3, 'image/jpeg', 10, 10, 10, $4, $4, 'admin')`,
+      [uuid, photo.id, `docs/${uuid}`, '0'.repeat(64)],
+    ), /news_photo_files_object_key_check/);
+    await db.query(
+      `INSERT INTO news_photo_files (id, photo_id, variant, object_key, mime_type, width, height, byte_size, sha256, source_sha256, created_by)
+       VALUES ($1, $2, 'web', $3, 'image/jpeg', 10, 10, 10, $4, $4, 'admin')`,
+      [uuid, photo.id, `photos/${uuid}`, '0'.repeat(64)],
+    );
+  } finally { await db.close(); }
+});
+
 // #116: stały adres wpisu. Ten sam widok public_news co lista; szkic, wpis
 // zatwierdzony, ale nieopublikowany, wpis wycofany i nieistniejący dają
 // identyczne 404 (odpowiedź nie zdradza stanu wewnętrznego).
