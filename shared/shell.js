@@ -116,6 +116,31 @@ export function navItemsHtml(panels, pathname) {
     .join("");
 }
 
+// Tryb tylko do odczytu (#143): GET /api/session zwraca writeMode. Baner to wyłącznie
+// informacja dla użytkownika — zapisy i tak odrzuca serwer (503 read_only).
+export const READ_ONLY_BANNER_TEXT = "Trwają prace serwisowe — zapisy wstrzymane. Możesz przeglądać dane; zmiany będą możliwe po zakończeniu prac.";
+
+export function isReadOnlySession(session) {
+  return Boolean(session) && session.writeMode === "read_only";
+}
+
+// Wstawia (raz) baner na początek strony; usuwa go, gdy tryb wrócił do normalnego.
+function syncWriteModeBanner(doc, session) {
+  if (!doc || typeof doc.createElement !== "function" || !doc.body) return;
+  const existing = typeof doc.getElementById === "function" ? doc.getElementById("shell-write-mode") : null;
+  if (!isReadOnlySession(session)) {
+    if (existing && typeof existing.remove === "function") existing.remove();
+    return;
+  }
+  if (existing) return;
+  const banner = doc.createElement("div");
+  banner.id = "shell-write-mode";
+  banner.className = "shell-write-mode";
+  banner.setAttribute("role", "status");
+  banner.textContent = READ_ONLY_BANNER_TEXT;
+  doc.body.insertBefore(banner, doc.body.firstChild);
+}
+
 let logoutInFlight = null;
 
 async function logout() {
@@ -150,6 +175,7 @@ export async function mountShell({ document: doc = document, location: loc = win
   } catch {
     session = null;
   }
+  syncWriteModeBanner(doc, session);
   if (account) {
     if (!session) {
       account.innerHTML = "";

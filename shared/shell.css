@@ -55,3 +55,12 @@ nav:has(> #shell-nav) { min-width: 0; }
   #shell-nav li { white-space: nowrap; }
   #shell-account { flex-wrap: wrap; margin-left: 0; }
 }
+
+/* Baner trybu tylko do odczytu (#143): biały układ, czerwony akcent, bez ikon. */
+.shell-write-mode {
+  background: #fff;
+  border-bottom: 3px solid #b3262d;
+  color: #8e2026;
+  padding: .6rem 1rem;
+  font-weight: 600;
+}

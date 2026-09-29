@@ -255,6 +255,10 @@ wpisów).
 | `login_busy` | Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za kilka sekund. | Tak — po chwili. |
 | `match_already_revoked` | Dopasowanie zostało już wycofane. | Zależy od kontekstu (patrz moduł trasy). |
 | `match_amount_mismatch` | Kwoty dopasowania się nie zgadzają. | Nie — popraw dane żądania. |
+| `match_batch_duplicate` | Ta sama pozycja lub wpłata występuje w partii więcej niż raz. | Nie — popraw dane żądania. |
+| `match_batch_empty` | Wybierz co najmniej jedną parę pozycji i wpłaty. | Nie — popraw dane żądania. |
+| `match_batch_rejected` | Nie zatwierdzono żadnej pary: część wybranych par jest niepoprawna. Odśwież propozycje i wybierz ponownie. | Tak, po odświeżeniu propozycji (lista `failures` wskazuje odrzucone pary). |
+| `match_batch_too_large` | Za dużo par w jednej partii. Zatwierdź mniejszą liczbę naraz. | Nie — popraw dane żądania. |
 | `match_method_mismatch` | Sposób wpłaty nie pasuje do pozycji wyciągu. | Nie — popraw dane żądania. |
 | `match_not_found` | Nie znaleziono dopasowania. | Nie — popraw dane żądania. |
 | `matched_in_other_reconciliation` | Ten wpis lub wpłata jest już dopasowany w innym uzgodnieniu tego roku. | Nie — popraw dane żądania. |
@@ -360,6 +364,7 @@ wpisów).
 | `resolution_reference_mismatch` | Referencja uchwały nie zgadza się z numerem wskazanej uchwały. | Nie — popraw dane żądania. |
 | `resolution_required` | Ten wydatek wymaga wskazania uchwały. | Nie — popraw dane żądania. |
 | `restore_drill_failed` | Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
+| `restore_report_bad_identifier` | Raport zgodności odrzucił nieprawidłową nazwę tabeli. Sprawdź schemat bazy. | Zależy od kontekstu (patrz moduł trasy). |
 | `retry_later` | Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `review_expense_only` | Weryfikacja drugiej osoby dotyczy wyłącznie wydatków. | Zależy od kontekstu (patrz moduł trasy). |
 | `revision_conflict` | Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |

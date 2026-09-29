@@ -26,3 +26,7 @@ Role finansowe z potwierdzonym MFA widzą dodatkowo sumy wpłat netto na rok. In
 - Komisja Rewizyjna, dyrekcja — brak dostępu (403) do czasu decyzji D-09.
 
 Przyciski edycji są ukrywane na podstawie `/api/access`, ale o dostępie decyduje wyłącznie serwer. Obiekt spoza zakresu i nieistniejący dają ten sam komunikat („Nie znaleziono lub brak dostępu”).
+
+## Statystyki klas (pulpit zarządu, #131)
+
+Widok `#/overview` (odnośnik „Statystyki klas” na liście klas dla admina/zarządu) czyta `GET /api/board/overview` i pokazuje wyłącznie liczności: uczniowie, gospodarstwa, przedstawiciele i zaproszenia, kontakt e-mail, „do kartki” oraz — tylko dla roli finansowej z MFA i zakresu szerokiego — odsetek gospodarstw z odnotowanym wpisem wpłaty. Odsetek opisuje ewidencję, nie zobowiązania (składka jest dobrowolna, lista może być nieaktualna); brak sortowania i kolorowania po odsetku, brak list rodzin. Zarząd z przydziałem klasowym widzi tylko swoje klasy, bez kolumny wpłat. Nie ma eksportu CSV tej tabeli.

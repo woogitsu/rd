@@ -16,7 +16,7 @@ odtworzyć do pustej bazy.
 | Trasa | Kto | Zawartość |
 |---|---|---|
 | `POST /api/exports` z `{"schoolYearId": "…"}` | admin albo zarząd, sesja z MFA, przydział bez roku lub dla tego roku | pełna paczka roku (dane rodzin i finanse) |
-| `GET /api/exports/class-roster?classId=…&format=json\|csv` | przedstawiciel **wyłącznie własnej klasy** (i roku), a także admin i zarząd; MFA | lista uczniów klasy z opiekunami; bez wpłat, sum i identyfikatorów rodzin |
+| `GET /api/exports/class-roster?classId=…&format=json\|csv\|xlsx` | przedstawiciel **wyłącznie własnej klasy** (i roku), a także admin i zarząd; MFA | lista uczniów klasy z opiekunami; bez wpłat, sum i identyfikatorów rodzin |
 
 **Założenie do decyzji zarządu i szkoły (D-08, D-09):** pełny eksport mają
 tylko admin i zarząd. Skarbnik, Komisja Rewizyjna i dyrekcja nie mają
@@ -33,11 +33,16 @@ pusta kolumna „Uwagi”), posortowany `Intl.Collator('pl')` (Ćwik, Łukasik,
 Śliwa, Zieliński, Żak w kolejności alfabetu polskiego — nie bajtowo), z
 wierszem nagłówkowym (klasa, rok, data wygenerowania) i stopką „Zawiera dane
 osobowe — nie przesyłać dalej, usunąć po wykorzystaniu”. Nazwa pliku nie
-zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv`. Każde pobranie
+zawiera nazwisk: `lista-klasy-<nazwa-klasy>-<YYYYMMDD>.csv` / `.xlsx`. Każde pobranie
 (niezależnie od formatu) zapisuje `export_runs` i `export.created`; format
-trafia tylko do metadanych audytu, bez migracji schematu. XLSX dla listy
-klasy pominięty (osobny zakres); moduł zapisu `src/pg/xlsx.js` (#121) na razie
-obsługuje tylko eksport księgi (docs/LEDGER.md).
+trafia tylko do metadanych audytu, bez migracji schematu. Format `xlsx` (#132)
+składa wspólny moduł `src/pg/xlsx.js` (#121) na tych samych kolumnach i wierszach
+co CSV (jeden arkusz, wiersz tytułu i stopka jak w CSV, tekst jako `inlineStr` —
+imię zaczynające się od `=` zostaje tekstem); zakres ról, klasy, roku i MFA jest
+identyczny jak dla JSON/CSV, a kolumny to wyłącznie dane, które ta rola widzi w
+JSON (bez nowych danych osobowych, D-03). Nie ma jeszcze zbiorczego pliku „arkusz
+na klasę” dla zarządu (pkt 5 issue #132 — osobny zakres, wymaga rozstrzygnięcia
+D-08).
 Plik ma BOM UTF-8, separator `;` i CRLF jak pozostałe eksporty CSV (wspólny
 moduł `src/pg/csv.js`, #121: `toCsv`, `csvResponse`, `csvCell`). Pola tekstowe
 (nazwiska, e-maile) zaczynające się od `= + - @`, tabulatora lub CR — także po

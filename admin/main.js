@@ -135,6 +135,8 @@ async function withStepUp(fn) {
   return fn();
 }
 
+const RECOVERY_REQUEST_MESSAGE = "Konto ma rolę chronioną: zapisano wniosek, nic jeszcze nie zmieniono. Kod resetu lub wyłączenie MFA wymaga zatwierdzenia przez innego administratora.";
+
 function userLabel(userId) {
   const user = state.users.find((item) => item.id === userId);
   return user ? user.email : userId;
@@ -199,6 +201,12 @@ function renderUsers() {
     buttons.push(button("Wydaj kod resetu hasła", (event) => runAction(event.currentTarget, confirmationText("password-reset", user.email), async () => {
       hideResetToken();
       const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, { method: "POST", body: {} });
+      // #146: konto z rolą chronioną — serwer (202) zapisał tylko wniosek, bez tokenu.
+      if (!result.token) {
+        showMessage(RECOVERY_REQUEST_MESSAGE);
+        await loadAudit();
+        return;
+      }
       showResetToken(result.token, result.reset.expiresAt);
       await loadAudit();
     }), {
@@ -307,7 +315,10 @@ async function runMfaReset(element, user) {
   element.disabled = true;
   try {
     const result = await withStepUp(() => api(`/api/admin/users/${encodeURIComponent(user.id)}/mfa-reset`, { method: "POST", body: { confirm: user.id } }));
-    showMessage(result.changed
+    // #146: konto z rolą chronioną — serwer (202) zapisał tylko wniosek; MFA nie zmieniono.
+    showMessage(result.request
+      ? RECOVERY_REQUEST_MESSAGE
+      : result.changed
       ? "Zresetowano weryfikację dwuetapową. Konto zostało wylogowane i zapisze nowy czynnik po zalogowaniu."
       : "Konto nie miało zapisanego czynnika ani kodów odzyskiwania — nic nie zmieniono.");
     await Promise.all([loadUsers(), loadAudit()]);

@@ -37,6 +37,7 @@ export function parseRoute(hash) {
   if (householdMatch && isValidId(decodeURIComponent(householdMatch[1]))) {
     return { view: "household", id: decodeURIComponent(householdMatch[1]) };
   }
+  if (path === "/overview") return { view: "overview" };
   return { view: "classes" };
 }
 
@@ -112,6 +113,38 @@ export function buildContactPatch({ email, contactAllowed, reason }, current) {
   if (Boolean(contactAllowed) !== Boolean(current?.contactAllowed)) patch.contactAllowed = Boolean(contactAllowed);
   if (!("email" in patch) && !("contactAllowed" in patch)) return { error: "Brak zmian do zapisania." };
   return { patch };
+}
+
+// #131: pulpit zarządu — wiersze tabeli statystyk klas. Kolejność zostaje taka,
+// jak zwrócił serwer (po nazwie klasy); brak sortowania i kolorów po odsetku.
+// Odsetek wpisów wpłat to informacja o ewidencji, nie o zobowiązaniach: null
+// (klasa poniżej progu) i brak pola (brak dostępu do danych wpłat) → „—”.
+export function formatPercent(value) {
+  return Number.isFinite(value) ? `${value}%` : "—";
+}
+
+export function hasPaymentColumn(overview) {
+  return Boolean(overview?.classes?.length || overview?.totals) && Object.hasOwn(overview?.totals ?? {}, "paymentEntryRatePercent");
+}
+
+function boardOverviewRow(label, entry, withPayments) {
+  const cells = [
+    label,
+    String(entry.studentCount),
+    String(entry.householdCount),
+    String(entry.representative.active),
+    String(entry.representative.pendingInvites),
+    String(entry.contactEmailCount),
+    String(entry.noContactCount),
+  ];
+  if (withPayments) cells.push(formatPercent(entry.paymentEntryRatePercent));
+  return cells;
+}
+
+export function overviewRows(overview) {
+  const withPayments = hasPaymentColumn(overview);
+  const rows = (overview?.classes ?? []).map((item) => boardOverviewRow(item.name, item, withPayments));
+  return { withPayments, rows, total: overview?.totals ? boardOverviewRow("Razem", overview.totals, withPayments) : null };
 }
 
 // Pulpit przedstawiciela (#118): teksty komórek tabeli „Do zrobienia w klasie”.
