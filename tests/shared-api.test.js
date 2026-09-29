@@ -2,7 +2,7 @@
 // polskie komunikaty i test statyczny, że panele nie wołają fetch bezpośrednio.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,7 +12,7 @@ import {
 import { nextFromFragment } from '../login/core.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const PANELS = ['panel', 'admin', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close', 'data-export', 'news'];
+const PANELS = ['panel', 'admin', 'audit', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close', 'data-export', 'news'];
 
 function fakeLocation(pathname, search = '', hash = '') {
   return { pathname, search, hash };
@@ -279,6 +279,46 @@ test('panele nie wołają fetch bezpośrednio — wszystkie żądania przez shar
   // XMLHttpRequest (postęp przesyłania) tylko w dokumentach i z tą samą obsługą 401/403.
   const documents = readFileSync(join(ROOT, 'documents/main.js'), 'utf8');
   assert.match(documents, /handleAuthFailure\(xhr\.status/);
+});
+
+// Panele = katalogi z main.js i index.html poza stroną publiczną (site) i logowaniem (login/ ma
+// własny klient, bo nie może przekierowywać na siebie). Nowy panel bez wpisu w PANELS ma wywalić
+// test, a nie po cichu ominąć kontrolę.
+const NON_PANEL_DIRS = new Set(['login', 'site']);
+function panelDirs() {
+  return readdirSync(ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !NON_PANEL_DIRS.has(entry.name) && existsSync(join(ROOT, entry.name, 'main.js')))
+    .map((entry) => entry.name)
+    .filter((name) => existsSync(join(ROOT, name, 'index.html')));
+}
+
+test('lista PANELS w teście obejmuje każdy panel z main.js i index.html (#99)', () => {
+  assert.deepEqual(panelDirs().sort(), [...PANELS].sort());
+});
+
+test('panele nie pokazują użytkownikowi surowego kodu błędu ani statusText (#99)', () => {
+  const RAW = [
+    // ${error.code}, ${data.error}, ${response.statusText} wprost w tekście.
+    /\$\{\s*(?:error|err|failure|data|body|response|res|shared)\??\.(?:code|error|statusText)\s*\}/,
+    // textContent = error.code / data.error / response.statusText (pola odpowiedzi serwera; teksty
+    // walidacji z core.js, np. checked.error, są już po polsku).
+    /(?:textContent|innerText|innerHTML)\s*=\s*(?:error|err|failure|data|body|response|res|shared)\??\.(?:code|error|statusText)\s*[;)]/,
+    // setMessage(..., error.code) i podobne wywołania wyświetlające sam kod.
+    /\b(?:setMessage|showMessage|setStatus|setServerStatus|formError|showConflict)\(\s*[^(),;\n]*,\s*[\w$.?]*\.(?:code|statusText)\s*[,)]/,
+    // Lokalne składanie komunikatu z pola error/message odpowiedzi (jak dawne panel/main.js).
+    /\bdata\.error\?\.message\b|\bdata\.message\s*\|\|/,
+  ];
+  for (const panel of PANELS) {
+    for (const name of readdirSync(join(ROOT, panel)).filter((file) => file.endsWith('.js'))) {
+      const lines = readFileSync(join(ROOT, panel, name), 'utf8').split('\n');
+      lines.forEach((line, index) => {
+        if (/^\s*\/\//.test(line)) return;
+        for (const pattern of RAW) {
+          assert.doesNotMatch(line, pattern, `${panel}/${name}:${index + 1} pokazuje surowy kod błędu: ${line.trim()}`);
+        }
+      });
+    }
+  }
 });
 
 test('klient API nie używa localStorage ani sessionStorage', () => {
