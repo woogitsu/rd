@@ -9,6 +9,8 @@
 export const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 export const LIST_LIMIT = 50;
 
+import { statusMessage } from "../shared/messages.js";
+
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -89,7 +91,7 @@ export function errorMessage(status, body) {
   if (Object.hasOwn(ERROR_MESSAGES, code)) return ERROR_MESSAGES[code];
   if (Object.hasOwn(STATUS_FALLBACK, status)) return STATUS_FALLBACK[status];
   if (status === 0) return "Brak połączenia z serwerem. Spróbuj ponownie — ponowienie nie utworzy duplikatu.";
-  return `Błąd serwera (${status}). Spróbuj ponownie.`;
+  return statusMessage(status);
 }
 
 // Czy warto ponowić to samo żądanie z tym samym kluczem idempotencji.

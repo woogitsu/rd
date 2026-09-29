@@ -932,6 +932,19 @@ zmian. Wycofanie na pustej bazie: usunięcie obu tabel, triggerów i
 funkcji; na bazie z wygenerowanymi referencjami — tylko po kopii
 zapasowej (historia referencji zniknie).
 
+`0125_account_recovery_requests.sql` (#146) dodaje tabelę
+`account_recovery_requests` (wniosek o reset hasła albo MFA konta z rolą
+`admin`/`board`/`treasurer`, zatwierdzany przez drugą osobę) i nullable kolumnę
+`password_reset_tokens.request_id`. Wariant zachowawczy, bez rozstrzygania
+D-08/D-10: czterech oczu pilnuje także `CHECK` (zatwierdza ktoś inny niż
+wnioskodawca i właściciel konta), jeden otwarty wniosek na konto i rodzaj
+(częściowy unikalny indeks), trigger blokuje `DELETE` i zmianę wniosku
+zamkniętego, `TRUNCATE` jest zabroniony. Skutki dla danych: nowa pusta tabela;
+istniejące tokeny resetu mają `request_id` = NULL. Wniosek nie zawiera
+sekretów ani e-maili. Wycofanie na pustej tabeli: usunięcie kolumny, triggerów,
+funkcji i tabeli; z wnioskami — tylko po kopii zapasowej.
+
+
 `0121_import_batches_fingerprint_not_unique.sql` (#2) zamienia
 `UNIQUE(fingerprint)` w `import_batches` na zwykły indeks. Wcześniej ten sam plik
 mógł mieć tylko jedną partię, więc po usunięciu przyczyny konfliktu (import z
@@ -942,3 +955,14 @@ pozostaje unikalny. Skutki dla danych: żaden wiersz nie jest zmieniany ani
 usuwany. Wycofanie: usunięcie indeksu i ponowne dodanie ograniczenia
 `import_batches_fingerprint_key`, możliwe tylko dopóki żaden fingerprint nie ma
 dwóch partii.
+
+`0124_login_rate_limit_pair_scope.sql` (#126) poszerza CHECK na
+`login_rate_limits.scope_type` o `'pair'` — SHA-256 pary (znormalizowany
+e-mail, IP) z osobną dziedziną skrótu. Blokada logowania zakładana jest teraz
+na parę i na IP, a zakres `'email'` tylko liczy próby (miękkie opóźnienie), więc
+osoba znająca sam adres nie odetnie właściciela od konta. Skutki dla danych:
+żaden wiersz nie jest zmieniany ani usuwany; wiersze `'email'` z blokadą sprzed
+migracji są ignorowane i wygasają po dobie; w bazie nadal tylko skróty
+(retencja bez zmian: usuwanie po dobie). Wycofanie: usunięcie wierszy `'pair'` i
+przywrócenie CHECK `IN ('email','ip')` (kod aplikacji sprzed zmiany blokował
+konto po samym e-mailu).
