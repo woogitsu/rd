@@ -18,7 +18,11 @@
 //   outcome_unknown — błąd w trakcie COMMIT (src/db.js): nie wiadomo, czy zapis
 //               się utrwalił. 503 `commit_outcome_unknown` BEZ Retry-After;
 //               klient sprawdza stan, dopiero potem ponawia.
-//   bug       — coś nieprzewidzianego: 503 bez Retry-After, jak dotychczas.
+//   bug       — coś nieprzewidzianego (w tym brak łączności z bazą): 503
+//               service_unavailable bez szczegółów, jak dotychczas (kontrakt
+//               testów i paneli); treść błędu SQL trafia tylko do kodu w logu.
+
+import { BUSINESS_STATE_CODES, IMMUTABILITY_PATTERN } from './business-state-codes.js';
 
 // Wyjątki triggerów (RAISE EXCEPTION 'komunikat') zgłaszane samym tekstem
 // komunikatu, bez osobnego SQLSTATE — rozpoznajemy je po treści.
@@ -37,6 +41,23 @@ const TRANSIENT_CODES = new Map([
   ['57014', { error: 'timeout', status: 503, retryAfter: 5 }],
 ]);
 
+// Ograniczenia deklaratywne (klasa 23) — jedna tabela dla wszystkich tras.
+// Moduły z własnym mapowaniem (np. konkretna nazwa ograniczenia) rzucają
+// RequestError wcześniej; tu trafia to, czego nie przetłumaczyły.
+const CONSTRAINT_CODES = new Map([
+  ['23505', { error: 'conflict', status: 409 }], // unique_violation
+  ['23P01', { error: 'conflict', status: 409 }], // exclusion_violation
+  ['23503', { error: 'invalid_reference', status: 400 }], // foreign_key_violation
+  ['23514', { error: 'invalid_request', status: 400 }], // check_violation
+  ['23502', { error: 'invalid_request', status: 400 }], // not_null_violation
+]);
+
+// RAISE EXCEPTION 'nazwa_stanu' w triggerze ma SQLSTATE P0001. Za stan
+// biznesowy uznajemy tylko kody z jawnej listy (business-state-codes.js) albo
+// wzorca niezmienności; reszta to 503 bez szczegółów, a treść błędu trafia
+// wyłącznie do logu.
+const RAISE_EXCEPTION = 'P0001';
+
 // error: wyjątek złapany w app.js (błąd pg/PGlite albo Error z RAISE
 // EXCEPTION triggera). Zwraca { error, status, retryAfter?, class }.
 export function classifyDbError(error) {
@@ -47,5 +68,11 @@ export function classifyDbError(error) {
   if (code === 'commit_outcome_unknown') return { error: 'commit_outcome_unknown', status: 503, class: 'outcome_unknown' };
   const transient = code ? TRANSIENT_CODES.get(code) : undefined;
   if (transient) return { ...transient, class: 'transient' };
+  const constraint = code ? CONSTRAINT_CODES.get(code) : undefined;
+  if (constraint) return { ...constraint, class: 'business' };
+  if (code === RAISE_EXCEPTION && message === 'invalid_reference') return { error: 'invalid_reference', status: 400, class: 'business' };
+  if (code === RAISE_EXCEPTION && (BUSINESS_STATE_CODES.has(message) || IMMUTABILITY_PATTERN.test(message))) {
+    return { error: 'business_rule_violation', status: 409, class: 'business' };
+  }
   return { error: 'service_unavailable', status: 503, class: 'bug' };
 }
