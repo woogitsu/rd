@@ -107,3 +107,24 @@ export function buildContactPatch({ email, contactAllowed, reason }, current) {
   if (!("email" in patch) && !("contactAllowed" in patch)) return { error: "Brak zmian do zapisania." };
   return { patch };
 }
+
+// Pulpit przedstawiciela (#118): teksty komórek tabeli „Do zrobienia w klasie”.
+// Wyłącznie liczby i daty z GET /api/representative/overview — bez słów o
+// zaległościach i bez wpłat (D-08).
+function plDate(iso) {
+  return iso ? new Date(iso).toLocaleDateString("pl-PL", { timeZone: "Europe/Brussels" }) : null;
+}
+
+export function overviewRow(item) {
+  const events = item.events ?? {};
+  const meeting = item.nextMeeting;
+  return {
+    id: item.id,
+    name: item.name,
+    paperCards: `${item.needsPaperCardCount} z ${item.studentCount}`,
+    lastPrinted: plDate(item.cards?.lastPrintedAt) ?? "brak wydruku w dzienniku",
+    events: `robocze: ${events.draftCount ?? 0}, czekają na zarząd: ${events.submittedCount ?? 0}`,
+    meeting: meeting ? `${meeting.title}, ${plDate(meeting.scheduledAt)}` : "brak zaplanowanego",
+    documents: `${item.documents?.activeCount ?? 0}${item.documents?.latestAt ? `, najnowszy ${plDate(item.documents.latestAt)}` : ""}`,
+  };
+}
