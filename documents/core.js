@@ -72,6 +72,8 @@ export const ERROR_MESSAGES = Object.freeze({
   invalid_link: "Niepoprawne powiązanie. Wpis księgi lub wpłata musi istnieć w tym samym roku i dotyczy tylko dowodów finansowych.",
   empty_document: "Plik jest pusty.",
   method_not_allowed: "Operacja niedozwolona.",
+  invalid_disposition: "Nieznany sposób otwarcia pliku. Użyj podglądu albo pobrania.",
+  document_preview_unsupported: "Podglądu tego typu pliku nie ma. Pobierz plik.",
 });
 
 const STATUS_FALLBACK = Object.freeze({
@@ -230,6 +232,18 @@ export function metadataUrl(id) {
 
 export function contentUrl(id) {
   return `${metadataUrl(id)}/content`;
+}
+
+// Podgląd (#89): ten sam autoryzowany adres serwera, z `disposition=inline`.
+// Sesja i uprawnienia są sprawdzane przy każdym żądaniu; adres nie zawiera tokenu.
+export const PREVIEW_MIME = Object.freeze({ "application/pdf": "pdf", "image/png": "image", "image/jpeg": "image" });
+
+export function previewKind(mime) {
+  return Object.hasOwn(PREVIEW_MIME, mime) ? PREVIEW_MIME[mime] : null;
+}
+
+export function previewUrl(id) {
+  return `${contentUrl(id)}?disposition=inline`;
 }
 
 export function descriptionUrl(id) {
