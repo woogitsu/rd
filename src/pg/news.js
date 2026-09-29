@@ -392,6 +392,9 @@ const DB_ERRORS = [
   ['news_photo_revoked_is_final', 'photo_revoked', 409],
   ['news_photo_consents_locked', 'consents_locked', 409],
   ['news_photo_alt_text_required', 'alt_text_required', 422],
+  // 0128: dokument źródłowy zdjęcia musi istnieć i być dozwolonego rodzaju.
+  ['news_photo_document_not_found', 'invalid_document_id', 400],
+  ['news_photo_document_not_allowed', 'invalid_document_id', 400],
 ];
 
 function mapDatabaseError(error) {

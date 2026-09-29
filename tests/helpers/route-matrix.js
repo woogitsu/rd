@@ -200,9 +200,11 @@ export function campaignBody(target) {
     subject: 'Dobrowolna składka {rok}', bodyText: CAMPAIGN_TEXT };
 }
 
+// Dokument zarządu wstawiany przez seedBase (0128: FK news_photos.document_id).
+export const PHOTO_SOURCE_DOCUMENT_ID = 'dok-galeria-syntetyczny';
 export function photoBody(key) {
   return {
-    documentId: `dok-${safeKey(key)}`.slice(0, 120), author: 'Fotograf syntetyczny', source: 'own_work', takenOn: '2026-10-10',
+    documentId: PHOTO_SOURCE_DOCUMENT_ID, author: 'Fotograf syntetyczny', source: 'own_work', takenOn: '2026-10-10',
     licenseText: 'Zdjęcie własne autora, udostępnione Radzie do publikacji (syntetyczne).',
     altText: `Zdjęcie ${marker('W1')}`, depictsChildren: false,
   };

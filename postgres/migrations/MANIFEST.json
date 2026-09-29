@@ -282,5 +282,9 @@
   {
     "name": "0112_news_photo_is_public_consent.sql",
     "sha256": "106255c7077b63bb9e46e8093e61d49c79017c9cfbecc9ac6753c7db27a04bf9"
+  },
+  {
+    "name": "0128_news_photo_document_fk_and_role_grants_validate.sql",
+    "sha256": "8e7d81bd89970be259eb276f1eb0aa840516ba3abbc9cc7a21f99b27c7e60472"
   }
 ]
