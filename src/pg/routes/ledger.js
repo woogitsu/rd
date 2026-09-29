@@ -38,7 +38,7 @@ import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '.
 import { insertAuditEvent } from '../audit.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
-import { csvCell, csvHeader, csvRow, formatEuro } from '../csv.js';
+import { csvCell, csvResponse, csvRow, formatEuro, safeFileSegment, toCsv } from '../csv.js';
 
 export const name = 'ledger';
 
@@ -1377,14 +1377,15 @@ export const LEDGER_CSV_COLUMNS = [
 
 export { csvCell, formatEuro };
 
-export function ledgerCsvLine(row) {
-  return csvRow(LEDGER_CSV_COLUMNS, [
+export function ledgerCsvValues(row) {
+  return [
     row.id, row.occurred_on, DIRECTION_LABELS[row.direction], row.category_name, row.description,
     METHOD_LABELS[row.method], row.source, row.resolution_reference, row.payment_entry_id,
     row.source_document_id, row.replaces_entry_id, row.amount_cents, row.corrected_cents, row.net_amount_cents,
     String(attachmentIds(row).length), attachmentIds(row).join(' '),
-  ]);
+  ];
 }
+export function ledgerCsvLine(row) { return csvRow(LEDGER_CSV_COLUMNS, ledgerCsvValues(row)); }
 
 async function exportCsv(request, env, url) {
   const { schoolYearId } = readOverviewFilters(url);
@@ -1414,17 +1415,8 @@ async function exportCsv(request, env, url) {
     });
     return result.rows;
   });
-  const lines = [csvHeader(LEDGER_CSV_COLUMNS), ...rows.map(ledgerCsvLine)];
-  // BOM UTF-8, żeby arkusz poprawnie odczytał polskie znaki.
-  return new Response(`﻿${lines.join('\r\n')}\r\n`, {
-    status: 200,
-    headers: {
-      'Cache-Control': 'no-store',
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="ksiega-${schoolYearId.replace(/[^A-Za-z0-9_-]/g, '_')}.csv"`,
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  return csvResponse(toCsv(LEDGER_CSV_COLUMNS, rows.map(ledgerCsvValues)),
+    `ksiega-${safeFileSegment(schoolYearId)}.csv`);
 }
 
 export async function handle(request, env, url, json) {

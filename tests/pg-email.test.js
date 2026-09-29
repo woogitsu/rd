@@ -333,6 +333,11 @@ test('campaign approval requires FRESH MFA (step-up): stale confirmation is 403 
   } finally { await t.close(); }
 });
 
+// #215 etap 2: PUT wymaga `revision` — klient wczytuje bieżącą wersję tuż przed zapisem.
+async function currentRevision(t, id) {
+  return (await t.call(t.board, `/api/email/campaigns/${id}`)).body.campaign.revisionNo;
+}
+
 // #215: PUT zastępowało treść bez wersji — druga osoba, która wczytała tę
 // samą bazową wersję, po cichu nadpisywała poprawkę pierwszej. `revision`
 // opcjonalnie w treści żądania: niezgodność z bieżącym revisionNo daje
@@ -381,6 +386,54 @@ test('two board members editing the same campaign: treasurer 200, board 409 on s
   } finally { await t.close(); }
 });
 
+// #215 etap 2: `revision` wymagane przy PUT kampanii.
+test('campaign PUT without a valid revision: 400 invalid_revision, nothing written; roles checked first', async () => {
+  const t = await setup();
+  try {
+    const campaign = await createDraft(t);
+    const content = { title: campaign.title, audience: 'all_households', subject: 'Temat bez wersji', bodyText: campaign.bodyText };
+    for (const revision of [undefined, null, 'x', '1', 0, 1.5]) {
+      const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
+        method: 'PUT', body: revision === undefined ? content : { ...content, revision },
+      });
+      assert.deepEqual(res, { status: 400, body: { error: 'invalid_revision' } }, `revision=${String(revision)}`);
+    }
+    const rep = await seedUserSession(t.db, { userId: 'u-rep215', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    const denied = await t.call(rep, `/api/email/campaigns/${campaign.id}`, { method: 'PUT', body: content });
+    assert.equal(denied.status, 403);
+    assert.equal(await t.count("SELECT count(*) AS n FROM email_campaigns WHERE id = $1 AND subject = 'Temat bez wersji'", [campaign.id]), 0);
+    assert.equal(await t.count('SELECT revision_no AS n FROM email_campaigns WHERE id = $1', [campaign.id]), 1);
+  } finally { await t.close(); }
+});
+
+test('two parallel campaign PUTs with the same revision: one 200, one 409, one audit event; approved campaign stays approved on 409', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await createDraft(t);
+    const put = (cookie, extra) => t.call(cookie, `/api/email/campaigns/${campaign.id}`, {
+      method: 'PUT',
+      body: { title: campaign.title, audience: 'all_households', subject: campaign.subject, bodyText: campaign.bodyText, revision: 1, ...extra },
+    });
+    const [a, b] = await Promise.all([
+      put(t.treasurer, { subject: 'Temat skarbnika do kampanii' }),
+      put(t.board, { bodyText: 'Treść członka zarządu, wystarczająco długa na walidację.' }),
+    ]);
+    assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+    assert.equal([a, b].find((r) => r.status === 409).body.error, 'revision_conflict');
+    assert.equal(await t.count(
+      "SELECT count(*) AS n FROM audit_events WHERE action = 'email.campaign.updated' AND entity_id = $1", [campaign.id]), 1);
+    assert.equal(await t.count('SELECT revision_no AS n FROM email_campaigns WHERE id = $1', [campaign.id]), 2);
+
+    // Zatwierdzona kampania: nieaktualna edycja nie cofa zatwierdzenia.
+    await snapshot(t, campaign.id);
+    assert.equal((await approve(t, campaign.id)).status, 200);
+    const stale = await put(t.board, { subject: 'Spóźniona poprawka' });
+    assert.deepEqual(stale, { status: 409, body: { error: 'revision_conflict' } });
+    assert.equal((await t.call(t.board, `/api/email/campaigns/${campaign.id}`)).body.campaign.status, 'approved');
+  } finally { await t.close(); }
+});
+
 test('any change after approval invalidates it (content or recipient snapshot)', async () => {
   const t = await setup();
   try {
@@ -390,7 +443,7 @@ test('any change after approval invalidates it (content or recipient snapshot)',
     assert.equal((await approve(t, campaign.id)).status, 200);
 
     const edit = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
-      method: 'PUT', body: { title: 'Przypomnienie jesienne', audience: 'all_households', subject: 'Dobrowolna składka – rok {rok}', bodyText: BODY },
+      method: 'PUT', body: { revision: await currentRevision(t, campaign.id), title: 'Przypomnienie jesienne', audience: 'all_households', subject: 'Dobrowolna składka – rok {rok}', bodyText: BODY },
     });
     assert.equal(edit.status, 200);
     assert.equal(edit.body.approvalInvalidated, true);
@@ -412,7 +465,7 @@ test('any change after approval invalidates it (content or recipient snapshot)',
     assert.equal(queued.status, 200);
     assert.equal(queued.body.queued, 2);
     const locked = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
-      method: 'PUT', body: { title: 'X y z', audience: 'all_households', subject: 'Nowy temat', bodyText: BODY },
+      method: 'PUT', body: { revision: await currentRevision(t, campaign.id), title: 'X y z', audience: 'all_households', subject: 'Nowy temat', bodyText: BODY },
     });
     assert.deepEqual(locked, { status: 409, body: { error: 'campaign_locked' } });
     await assert.rejects(t.db.query('DELETE FROM email_campaign_recipients WHERE campaign_id = $1', [campaign.id]), /email_snapshot_locked/);
@@ -1265,6 +1318,107 @@ test('database down after the first send, provider webhook arrives: row is recov
   } finally { await t.close(); }
 });
 
+// --- Zdarzenie dostawcy zapisane dla wiersza „sending” (#210) ----------------
+
+async function providerEvent(t, message, event, id) {
+  const res = await handlePgRequest(webhookRequest(
+    { event, email: message.to, 'message-id': `<m-${id}@example.invalid>`, 'X-Mailin-custom': message.outboxId, ts_event: 1791187200, id },
+    `Bearer ${WEBHOOK_SECRET}`,
+  ), t.env);
+  assert.equal(res.status, 200);
+  return res.json();
+}
+
+// Awaria zapisu wyniku po przyjęciu wiadomości, potem zdarzenie dostawcy i
+// wygaśnięcie dzierżawy: stan ma odpowiadać zdarzeniu, nie zawsze „sent”.
+for (const [event, expected] of [['hard_bounce', 'bounced'], ['invalid_email', 'bounced'], ['blocked', 'bounced'], ['delivered', 'sent']]) {
+  test(`unrecorded result + webhook ${event} + lease expiry: row is recovered as ${expected}`, async () => {
+    const t = await setup();
+    try {
+      await family(t.db, 'h1');
+      await family(t.db, 'h2');
+      const campaign = await readyCampaign(t);
+      const db = flakyDb(t.db);
+      const transport = interleavingTransport(async () => { db.state.down = true; });
+      await assert.rejects(runEmailBatch({ ...t.env, db }, { transport, dryRun: false, now: DAY1, ...FAST }), ResultNotRecordedError);
+      db.state.down = false;
+      const first = transport.calls[0];
+      // Wiersz nadal „sending” — webhook zapisuje zdarzenie i blokadę, stanu nie zmienia.
+      await providerEvent(t, first, event, 21);
+      assert.equal((await t.db.query('SELECT state FROM email_outbox WHERE id = $1', [first.outboxId])).rows[0].state, 'sending');
+      const later = new Date(DAY1.getTime() + 30 * 60_000);
+      await runEmailBatch(t.env, { transport, dryRun: false, now: later });
+      const read = () => t.db.query('SELECT state, last_error, provider_message_id FROM email_outbox WHERE id = $1', [first.outboxId]);
+      const { rows } = await read();
+      assert.equal(rows[0].state, expected);
+      assert.equal(rows[0].last_error, expected === 'bounced' ? event : null);
+      assert.equal(rows[0].provider_message_id, '<m-21@example.invalid>');
+      assert.equal(await auditCount(t, 'email.sent_recovered', first.outboxId), 1);
+      assert.equal(await auditCount(t, 'email.delivery_unknown'), 0);
+      assert.equal(await ledgerCount(t), 2);
+      // Idempotencja: kolejne przebiegi nie zmieniają stanu, dziennika ani audytu.
+      await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(later.getTime() + 60 * 60_000) });
+      assert.equal((await read()).rows[0].state, expected);
+      assert.equal(await auditCount(t, 'email.sent_recovered', first.outboxId), 1);
+      assert.equal(await ledgerCount(t), 2);
+      assert.equal(transport.calls.length, 2);
+      assert.equal(await campaignStatus(t, campaign.id), 'done');
+    } finally { await t.close(); }
+  });
+}
+
+test('hard bounce webhook arriving before the result is written: row ends as bounced, not sent', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    const campaign = await readyCampaign(t);
+    // Zdarzenie dociera w trakcie transport.send, gdy wiersz jest jeszcze „sending”.
+    const transport = interleavingTransport(async (message) => { await providerEvent(t, message, 'hard_bounce', 31); });
+    const run = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(run.sent, 1);
+    const { rows } = await t.db.query('SELECT state, last_error FROM email_outbox WHERE campaign_id = $1', [campaign.id]);
+    assert.deepEqual(rows, [{ state: 'bounced', last_error: 'hard_bounce' }]);
+    assert.equal(await t.count('SELECT count(*)::int AS n FROM email_suppressions WHERE email_hash = $1', [emailHash('h1-g1@example.invalid')]), 1);
+    assert.equal(await ledgerCount(t), 1);
+  } finally { await t.close(); }
+});
+
+test('cancel reports inFlight: only the message whose hand-over to the provider has started', async () => {
+  const t = await setup();
+  try {
+    for (const id of ['h1', 'h2', 'h3']) await family(t.db, id);
+    const campaign = await readyCampaign(t);
+    const responses = [];
+    const transport = interleavingTransport(async () => {
+      responses.push(await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' }));
+      responses.push(await t.call(t.board, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' }));
+    });
+    await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.deepEqual(responses.map((r) => r.status), [200, 200]);
+    // Wiersze przejęte, ale niewysłane (send_started_at puste), nie liczą się jako „w locie”.
+    assert.equal(responses[0].body.inFlight, 1);
+    assert.equal(responses[0].body.cancelledMessages, 0);
+    assert.equal(responses[1].body.inFlight, 1);
+    assert.equal(transport.calls.length, 1);
+  } finally { await t.close(); }
+});
+
+test('cancel before any pickup: inFlight is 0 and queued rows are cancelled', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h1');
+    await family(t.db, 'h2');
+    const campaign = await readyCampaign(t);
+    const res = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.cancelledMessages, 2);
+    assert.equal(res.body.inFlight, 0);
+    const again = await t.call(t.board, `/api/email/campaigns/${campaign.id}/cancel`, { method: 'POST' });
+    assert.equal(again.body.inFlight, 0);
+    assert.equal(again.body.cancelledMessages, 0);
+  } finally { await t.close(); }
+});
+
 test('short database outage: result written after recovery in the same run, unsent rest back to queued at once', async () => {
   const t = await setup();
   try {
@@ -1821,7 +1975,7 @@ test('#130 send_not_before delays the run; changing it after approval requires r
     await snapshot(t, campaign.id);
     const future = new Date(DAY1.getTime() + 24 * 3600_000).toISOString();
     const updated = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}`, {
-      method: 'PUT', body: { title: campaign.title, subject: campaign.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
+      method: 'PUT', body: { revision: await currentRevision(t, campaign.id), title: campaign.title, subject: campaign.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
     });
     assert.equal(updated.status, 200, JSON.stringify(updated.body));
     assert.equal(updated.body.campaign.sendNotBefore, future);
@@ -1845,7 +1999,7 @@ test('#130 send_not_before delays the run; changing it after approval requires r
     const approved2 = await approve(t, draft2.id);
     assert.equal(approved2.status, 200);
     const changed = await t.call(t.treasurer, `/api/email/campaigns/${draft2.id}`, {
-      method: 'PUT', body: { title: draft2.title, subject: draft2.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
+      method: 'PUT', body: { revision: await currentRevision(t, draft2.id), title: draft2.title, subject: draft2.subject, bodyText: BODY, audience: 'all_households', sendNotBefore: future },
     });
     assert.equal(changed.status, 200);
     assert.equal(changed.body.campaign.status, 'draft');

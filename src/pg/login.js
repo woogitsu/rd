@@ -9,8 +9,11 @@
 // - hasło: src/pg/password.js (scrypt, polityka NIST); nigdy w logach i audycie,
 // - nieznany e-mail, złe hasło i konto wyłączone dają ten sam błąd
 //   `invalid_credentials` i ten sam koszt (fikcyjny hash),
-// - limity: 5 błędów / 15 min na skrót e-maila, 20 / 15 min na skrót IP
-//   → blokada 15 min (429 + Retry-After); w bazie tylko SHA-256, nigdy e-mail ani IP;
+// - limity (#126): twarda blokada 15 min (429 + Retry-After) po 5 błędach / 15 min na
+//   PARĘ (skrót e-maila, skrót IP) oraz po 20 na skrót IP; sam e-mail NIE blokuje
+//   konta (osoba trzecia znająca adres skarbnika nie może go odciąć) — od 10. błędu
+//   w oknie każda próba czeka po stronie serwera 1 s, od 20. — 2 s;
+//   w bazie tylko SHA-256, nigdy e-mail ani IP;
 //   próba jest rezerwowana atomowo przed sprawdzeniem hasła lub tokenu (#186),
 // - sesja po haśle ma mfa_verified_at = NULL; MFA potwierdza /api/mfa/verify,
 // - reset hasła wyłącznie tokenem wydanym przez administratora (brak resetu
@@ -19,6 +22,7 @@
 
 import { createHash } from 'node:crypto';
 import { createSessionSecret, hashSecret } from '../auth.js';
+import { log } from '../log.js';
 import { insertAuditEvent } from './audit.js';
 import {
   createSession, grantInvitation, INVITATION_TOKEN_PATTERN, isoTimestamp, isSelfInvitation, lockInvitation, revokeUserSessionsWith, rotateSession,
@@ -30,8 +34,13 @@ import {
 
 // Założenia do potwierdzenia (D-10).
 export const LOGIN_POLICY = Object.freeze({
-  emailMaxFailures: 5,
+  pairMaxFailures: 5,
   ipMaxFailures: 20,
+  // Miękkie opóźnienie dla samego e-maila (bez blokady): od `emailDelayAfter`-tej
+  // próby w oknie serwer czeka `emailDelayMs`, od dwukrotności progu — `emailDelayMaxMs`.
+  emailDelayAfter: 10,
+  emailDelayMs: 1000,
+  emailDelayMaxMs: 2000,
   windowSeconds: 15 * 60,
   lockSeconds: 15 * 60,
   retentionSeconds: 24 * 60 * 60,
@@ -70,11 +79,29 @@ export function scopeHash(type, value) {
   return createHash('sha256').update(`rd-login:${type}:${value}`).digest('hex');
 }
 
+// Zakresy: 'pair' (e-mail + IP) i 'ip' blokują twardo; 'email' jest miękki (`max: null`)
+// — tylko liczy próby na potrzeby opóźnienia i nigdy nie zakłada blokady (#126).
 function loginScopes({ email, ip }) {
   const scopes = [];
-  if (email !== undefined && email !== null) scopes.push({ type: 'email', hash: scopeHash('email', normalizeLoginEmail(email)), max: LOGIN_POLICY.emailMaxFailures });
+  const hasEmail = email !== undefined && email !== null;
+  if (hasEmail && ip !== undefined) {
+    scopes.push({ type: 'pair', hash: scopeHash('pair', `${normalizeLoginEmail(email)}|${normalizeIp(ip)}`), max: LOGIN_POLICY.pairMaxFailures });
+  }
+  if (hasEmail) scopes.push({ type: 'email', hash: scopeHash('email', normalizeLoginEmail(email)), max: null });
   if (ip !== undefined) scopes.push({ type: 'ip', hash: scopeHash('ip', normalizeIp(ip)), max: LOGIN_POLICY.ipMaxFailures });
   return scopes;
+}
+
+const isHard = (scope) => scope.max !== null;
+
+// Opóźnienie (ms) dla miękkiego zakresu e-maila po zarezerwowaniu próby.
+export function emailDelayMs(count, env) {
+  const configured = env?.LOGIN_EMAIL_DELAY_MS;
+  if (configured !== undefined && configured !== '' && Number.isFinite(Number(configured)) && Number(configured) >= 0) {
+    return count >= LOGIN_POLICY.emailDelayAfter ? Math.min(Number(configured), 10000) : 0;
+  }
+  if (count >= LOGIN_POLICY.emailDelayAfter * 2) return LOGIN_POLICY.emailDelayMaxMs;
+  return count >= LOGIN_POLICY.emailDelayAfter ? LOGIN_POLICY.emailDelayMs : 0;
 }
 
 // Limit prób (#186). Próba jest REZERWOWANA przed kosztownym sprawdzeniem
@@ -111,6 +138,7 @@ async function reserveAttempt(env, scopes) {
     const byKey = new Map(rows.map((row) => [`${row.scope_type}:${row.scope_hash}`, row]));
     let retryAfter = 0;
     for (const scope of scopes) {
+      if (!isHard(scope)) continue;
       const row = byKey.get(`${scope.type}:${scope.hash}`);
       if (row.locked) retryAfter = Math.max(retryAfter, Number(row.lock_retry));
       // Okno wypełnione rezerwacjami prób w toku: odmowa bez liczenia hasła (bez nowej blokady).
@@ -128,10 +156,10 @@ async function reserveAttempt(env, scopes) {
            locked_until = CASE WHEN locked_until > now() THEN locked_until ELSE NULL END,
            updated_at = now()
          WHERE scope_type = $1 AND scope_hash = $2
-         RETURNING window_started_at`,
+         RETURNING window_started_at, failure_count`,
         [scope.type, scope.hash, LOGIN_POLICY.windowSeconds],
       );
-      reserved.push({ ...scope, windowStartedAt: updated[0].window_started_at });
+      reserved.push({ ...scope, windowStartedAt: updated[0].window_started_at, count: Number(updated[0].failure_count) });
     }
     return reserved;
   });
@@ -155,6 +183,12 @@ async function withAttempt(env, scopes, fn) {
   const reserved = await reserveAttempt(env, scopes);
   let counted = false;
   try {
+    const soft = reserved.find((scope) => !isHard(scope));
+    const delay = soft ? emailDelayMs(soft.count, env) : 0;
+    // Sygnał „konto pod presją” (#126): jedno zdarzenie techniczne przy przekroczeniu progu
+    // w oknie; bez e-maila, IP i skrótów (nie ma tu jeszcze konta — sprawdzenie hasła nie zaszło).
+    if (soft && soft.count === LOGIN_POLICY.emailDelayAfter) log.warn('login_email_under_pressure', { module: 'login', count: soft.count });
+    if (delay > 0) await new Promise((resolve) => { setTimeout(resolve, delay); });
     return await fn();
   } catch (error) {
     // #203: kolejka scrypt pełna albo przekroczony czas oczekiwania — to nie jest
@@ -173,7 +207,7 @@ async function withAttempt(env, scopes, fn) {
 // blokady nie zmienia. Zwraca true, gdy któryś zakres jest zablokowany.
 async function lockExhaustedScopes(tx, scopes) {
   let locked = false;
-  for (const scope of scopes) {
+  for (const scope of scopes.filter(isHard)) {
     const { rows } = await tx.query(
       `UPDATE login_rate_limits SET
          locked_until = CASE WHEN locked_until > now() THEN locked_until ELSE now() + make_interval(secs => $4) END,
@@ -188,8 +222,11 @@ async function lockExhaustedScopes(tx, scopes) {
   return locked;
 }
 
-async function clearLoginFailures(tx, scope) {
-  await tx.query('DELETE FROM login_rate_limits WHERE scope_type = $1 AND scope_hash = $2', [scope.type, scope.hash]);
+// Sukces zeruje liczniki pary i e-maila (nie IP).
+async function clearLoginFailures(tx, scopes) {
+  for (const scope of scopes.filter((item) => item.type !== 'ip')) {
+    await tx.query('DELETE FROM login_rate_limits WHERE scope_type = $1 AND scope_hash = $2', [scope.type, scope.hash]);
+  }
 }
 
 // Błąd zarezerwowanej próby + audyt w jednej transakcji. Zwraca błąd do rzucenia
@@ -284,7 +321,7 @@ export async function passwordLogin(env, { email, password, clientIp }) {
   });
 
   const result = await database(env).transaction(async (tx) => {
-    await clearLoginFailures(tx, scopes[0]);
+    await clearLoginFailures(tx, scopes);
     await revokePasswordResetTokens(tx, { userId: account.id, actorId: account.id, reason: 'login_succeeded' });
     const session = await createSession(tx, { userId: account.id, mfaVerified: false });
     const status = await mfaStatus(tx, account.id, env);
@@ -458,7 +495,7 @@ export async function changePassword(env, session, { currentPassword, newPasswor
       userId: session.user.id, actorId: session.user.id, reason: 'password_changed', exceptSessionId: session.sessionId,
     });
     await revokePasswordResetTokens(tx, { userId: session.user.id, actorId: session.user.id, reason: 'password_changed' });
-    await clearLoginFailures(tx, scopes[0]);
+    await clearLoginFailures(tx, scopes);
     await insertAuditEvent(tx, {
       actorId: session.user.id, action: 'auth.password_changed', entityType: 'user', entityId: session.user.id,
       metadata: { revokedSessions },
@@ -503,7 +540,7 @@ export async function resetPasswordWithToken(env, { token, newPassword, clientIp
       [locked.user_id, newHash],
     );
     const revokedSessions = await revokeUserSessionsWith(tx, { userId: locked.user_id, actorId: locked.user_id, reason: 'password_reset' });
-    await clearLoginFailures(tx, loginScopes({ email: locked.email })[0]);
+    await clearLoginFailures(tx, loginScopes({ email: locked.email, ip: clientIp }));
     await insertAuditEvent(tx, {
       actorId: locked.user_id, action: 'auth.password_reset_completed', entityType: 'password_reset', entityId: locked.id,
       // #146: kto wydał token (issuedBy) odróżnia konto po resecie administracyjnym

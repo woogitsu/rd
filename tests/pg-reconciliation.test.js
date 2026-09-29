@@ -8,8 +8,12 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { parseStatementCsv } from '../src/pg/routes/reconciliation.js';
 import { escapeHtml, formatEur, REPORT_CSS } from '../src/pg/audit-report.js';
 import {
-  createMeeting, createResolution, determineQuorum, recordAttendance, updateMeeting,
+  createMeeting,
+  createResolution,
+  determineQuorum,
+  recordAttendance,
 } from '../src/pg/meetings.js';
+import { updateMeeting } from './helpers/with-revision.js';
 import { request, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Wyłącznie dane syntetyczne. Rok 'y-test': 2026-09-01 – 2027-08-31.
@@ -850,6 +854,64 @@ test('a correction after matching blocks confirmation with a list of inconsisten
   }
 });
 
+// #165 kryterium 3: korekta PO zatwierdzeniu uzgodnienia (zatwierdzone
+// uzgodnienie jest niezmienne, więc korekta nie jest blokowana) sprawia, że
+// aktywne powiązanie przestaje się zgadzać kwotowo. Raport KR musi to pokazać
+// osobnym licznikiem amountMismatchConfirmedCount, a karta uzgodnienia — pozycją.
+test('a correction after confirmation shows up in the audit report as a confirmed-but-mismatched link', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await db.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description,
+      occurred_on, method, created_by, idempotency_key)
+      VALUES ('le-conf', $1, 'income', 4000, 'cat-dues', 'Wpis syntetyczny zatwierdzony', '2026-09-14', 'bank', 'u-treasurer', 'le-key-conf')`, [YEAR]);
+    const draft = await draftWithLines(call, cookies, [4000]);
+    const matched = await matchCall(call, cookies.treasurer, draft.id, { statementLineId: draft.lineIds[0], ledgerEntryId: 'le-conf' });
+    assert.equal(matched.status, 201);
+    const matchId = (await matched.json()).match.id;
+
+    const reportChecks = async () => {
+      const response = await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie: cookies.audit });
+      assert.equal(response.status, 200);
+      return Object.fromEntries((await response.json()).report.checks.items.map((item) => [item.id, item]));
+    };
+    // Przed korektą: powiązanie zgodne, liczniki zerowe.
+    const before = (await reportChecks()).reconciliation_matches;
+    assert.deepEqual([before.ok, before.amountMismatchCount, before.amountMismatchConfirmedCount], [true, 0, 0]);
+
+    const confirmed = await call(`/api/reconciliations/${draft.id}/confirm`, {
+      method: 'POST', cookie: cookies.board, body: { confirmationNote: 'Sprawdzone z wyciągiem' },
+    });
+    assert.equal(confirmed.status, 200);
+
+    // Korekta po zatwierdzeniu nie jest blokowana (blokuje tylko powiązanie w szkicu).
+    const correction = await call('/api/ledger/le-conf/corrections', {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('corr') },
+      body: { amountCents: 1000, reason: 'Korekta syntetyczna po zatwierdzeniu' },
+    });
+    assert.equal(correction.status, 201);
+
+    const after = (await reportChecks()).reconciliation_matches;
+    assert.equal(after.ok, false);
+    assert.equal(after.amountMismatchCount, 1);
+    assert.equal(after.amountMismatchConfirmedCount, 1, 'niezgodność w zatwierdzonym uzgodnieniu liczona osobno');
+    assert.equal(after.doubleCountedCount, 0);
+
+    // Pozycja: karta zatwierdzonego uzgodnienia wskazuje powiązanie z kwotą pozycji i dzisiejszym netto.
+    const detail = await (await call(`/api/reconciliations/${draft.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(detail.reconciliation.status, 'confirmed');
+    assert.equal(detail.summary.inconsistentMatchCount, 1);
+    assert.deepEqual(detail.inconsistentMatches.map((m) => [m.matchId, m.ledgerEntryId, m.lineAmountCents, m.targetNetCents, m.reasons]),
+      [[matchId, 'le-conf', 4000, 3000, ['amount_mismatch']]]);
+
+    // Zatwierdzone uzgodnienie zostaje niezmienione (historia nie jest zacierana).
+    assert.equal((await db.query('SELECT status FROM bank_reconciliations WHERE id = $1', [draft.id])).rows[0].status, 'confirmed');
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM bank_reconciliation_matches WHERE reconciliation_id = $1 AND revoked_at IS NULL',
+      [draft.id])).rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});
+
 test('pre-existing double-counted matches are reported and block confirmation without being changed', async () => {
   const { db, cookies, call } = await setup();
   try {
@@ -927,14 +989,15 @@ test('summary counts split matched, unmatched and inconsistent lines into three 
 // zamiast pętli 1 INSERT na pozycję).
 function countingCall(db) {
   let calls = 0;
-  const countQuery = (fn) => (...args) => { calls += 1; return fn(...args); };
+  const calledSql = [];
+  const countQuery = (fn) => (...args) => { calls += 1; calledSql.push(String(args[0])); return fn(...args); };
   const wrapped = {
     query: countQuery(db.query.bind(db)),
     exec: db.exec.bind(db),
     close: db.close.bind(db),
     transaction: (fn) => db.transaction((tx) => fn({ query: countQuery(tx.query.bind(tx)) })),
   };
-  return { call: (path, options = {}) => handlePgRequest(request(path, options), { db: wrapped }), getCalls: () => calls, resetCalls: () => { calls = 0; } };
+  return { call: (path, options = {}) => handlePgRequest(request(path, options), { db: wrapped }), getCalls: () => calls, getSql: () => [...calledSql], resetCalls: () => { calls = 0; calledSql.length = 0; } };
 }
 
 test('importing statement lines runs a constant number of queries regardless of line count', async () => {
@@ -972,7 +1035,81 @@ test('importing statement lines runs a constant number of queries regardless of 
     // importowanych pozycji; sama stałość (smallCalls === largeCalls) nadal
     // jest sprawdzana wyżej.
     assert.equal(smallCalls, largeCalls);
-    assert.ok(largeCalls <= 11, `spodziewano się stałej, małej liczby zapytań, otrzymano ${largeCalls}`);
+    assert.ok(largeCalls <= 10, `spodziewano się stałej, małej liczby zapytań, otrzymano ${largeCalls}`);
+  } finally {
+    await db.close();
+  }
+});
+
+// #218 kryterium 1: import 500 pozycji (MAX_LINES) mieści się w ≤ 6 zapytaniach
+// SQL samego importu. Uwierzytelnienie (loadSession: sesja, MFA, UPDATE
+// last_seen_at, przydziały ról — 4 zapytania na żądanie, #150/#161) jest wspólne
+// dla wszystkich tras i nie zależy od liczby pozycji, więc jest liczone osobno.
+const AUTH_QUERY = /FROM sessions\b|UPDATE sessions\b|FROM user_mfa_factors|FROM role_grants\b/;
+
+test('importing 500 statement lines takes at most 6 import queries (session queries counted separately)', async () => {
+  const { db, cookies } = await setup();
+  const counting = countingCall(db);
+  try {
+    const draft = await (await counting.call('/api/reconciliations', {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key() },
+      body: { schoolYearId: YEAR, statementDate: '2026-09-30', statementBalanceCents: 0 },
+    })).json();
+    counting.resetCalls();
+    const lines = Array.from({ length: 500 }, (_, i) => ({ bookedOn: '2026-09-14', amountCents: 100 + i, reference: `Tytuł ${i}` }));
+    const response = await counting.call(`/api/reconciliations/${draft.reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') }, body: { lines },
+    });
+    assert.equal(response.status, 201);
+    const body = await response.json();
+    assert.equal(body.import.lineCount, 500);
+    assert.equal(body.possibleDuplicateCount, 0);
+    const sql = counting.getSql();
+    const importQueries = sql.filter((text) => !AUTH_QUERY.test(text));
+    assert.ok(importQueries.length <= 6, `import 500 pozycji: ${importQueries.length} zapytań (limit 6):\n${importQueries.map((t) => t.replace(/\s+/g, ' ').slice(0, 70)).join('\n')}`);
+    assert.equal(sql.length - importQueries.length, 4, 'stały koszt uwierzytelnienia');
+    assert.equal(sql.filter((text) => /INSERT INTO bank_statement_lines/.test(text)).length, 1, 'jeden INSERT dla wszystkich pozycji');
+    // Kolejność pliku zachowana (line_no), a wynik taki jak przy pętli.
+    const stored = (await db.query('SELECT line_no, amount_cents FROM bank_statement_lines WHERE reconciliation_id = $1 ORDER BY line_no',
+      [draft.reconciliation.id])).rows;
+    assert.equal(stored.length, 500);
+    assert.deepEqual(stored.map((row) => Number(row.amount_cents)), lines.map((line) => line.amountCents));
+    assert.deepEqual(stored.map((row) => row.line_no), Array.from({ length: 500 }, (_, i) => i + 1));
+
+    // Drugi import tych samych pozycji: możliwe duplikaty liczy to samo zapytanie co INSERT.
+    const again = await counting.call(`/api/reconciliations/${draft.reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('imp') }, body: { lines: lines.slice(0, 7) },
+    });
+    assert.equal(again.status, 201);
+    assert.equal((await again.json()).possibleDuplicateCount, 7);
+  } finally {
+    await db.close();
+  }
+});
+
+// #218 kryterium 3: przy > 1000 niedopasowanych wpisów księgi lista jest
+// obcięta do 1000 i odpowiedź jawnie to zgłasza (unmatchedLedgerEntriesTruncated).
+// Granica: dokładnie 1000 — bez obcięcia.
+test('reconciliation detail truncates unmatched ledger entries at 1000 and says so', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    // seedLedger daje 2 niedopasowane wpisy bankowe do daty wyciągu (le-in, le-out).
+    const addEntries = (count, prefix) => db.query(
+      `INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description,
+         occurred_on, method, created_by, idempotency_key)
+       SELECT $2 || g, $1, 'income', 100 + g, 'cat-dues', 'Wpis syntetyczny', '2026-09-11', 'bank', 'u-treasurer', 'bulk-key-' || $2 || g
+         FROM generate_series(1, $3::int) AS g`, [YEAR, prefix, count]);
+    await addEntries(998, 'bulk-a-');
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    const exact = await (await call(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(exact.unmatchedLedgerEntries.length, 1000);
+    assert.equal(exact.unmatchedLedgerEntriesTruncated, false, 'dokładnie 1000 wpisów to lista pełna');
+
+    await addEntries(1, 'bulk-b-');
+    const over = await (await call(`/api/reconciliations/${reconciliation.id}`, { cookie: cookies.treasurer })).json();
+    assert.equal(over.unmatchedLedgerEntries.length, 1000, 'lista ucięta do 1000, nie 1001');
+    assert.equal(over.unmatchedLedgerEntriesTruncated, true);
+    assert.equal(new Set(over.unmatchedLedgerEntries.map((entry) => entry.id)).size, 1000, 'bez duplikatów');
   } finally {
     await db.close();
   }
