@@ -11,6 +11,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { loadMigrations } from '../postgres-migrations.js';
+import { accountsUnderPressure } from './login.js';
 
 async function tableExists(db, name) {
   const { rows } = await db.query('SELECT to_regclass($1) AS t', [name]);
@@ -93,8 +94,13 @@ export function ageHours(finishedAt, now = new Date()) {
   return ms / (1000 * 60 * 60);
 }
 
+async function loginPressureStatus(db, env, now) {
+  if (!(await tableExists(db, 'login_rate_limits'))) return null;
+  return accountsUnderPressure(db, { env, now });
+}
+
 export async function computeOpsStatus({ db, env, now = () => new Date() }) {
-  const [migrations, emailWorker, emailQueue, backup, storageBackup, restoreDrill, exportRun] = await Promise.all([
+  const [migrations, emailWorker, emailQueue, backup, storageBackup, restoreDrill, exportRun, loginPressure] = await Promise.all([
     migrationsStatus(db),
     emailWorkerStatus(db),
     emailQueueStatus(db),
@@ -102,6 +108,7 @@ export async function computeOpsStatus({ db, env, now = () => new Date() }) {
     lastBackupRun(db, 'storage_backup'),
     lastBackupRun(db, 'restore_drill'),
     exportRunsStatus(db),
+    loginPressureStatus(db, env, now),
   ]);
   return {
     migrations,
@@ -111,6 +118,8 @@ export async function computeOpsStatus({ db, env, now = () => new Date() }) {
     storageBackup,
     restoreDrill,
     lastExport: exportRun,
+    // #126: sygnał, nie blokada; identyfikatory kont i liczby, bez e-maili i IP.
+    loginPressure,
     // #143 nie musi być scalone na tej gałęzi — czytamy zmienną wprost,
     // zamiast importować moduł, który może jeszcze nie istnieć.
     writeMode: env.APP_WRITE_MODE === 'read_only' ? 'read_only' : 'normal',

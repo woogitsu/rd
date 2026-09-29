@@ -84,3 +84,28 @@ test('wydajność: sprawdzenie przy ~1000 uczniach mieści się poniżej 50 ms',
   const elapsed = performance.now() - start;
   assert.ok(elapsed < 50, `sprawdzenie trwało ${elapsed.toFixed(1)} ms`);
 });
+
+// Syntetyczny numer rejestru krajowego BE o poprawnej sumie kontrolnej (nie należy do nikogo).
+function syntheticNationalId(base9, { bornFrom2000 = false } = {}) {
+  const n = bornFrom2000 ? 2_000_000_000 + Number(base9) : Number(base9);
+  const check = String(97 - (n % 97)).padStart(2, '0');
+  return `${base9}${check}`;
+}
+
+test('wykrywa numer rejestru krajowego BE (suma kontrolna), także z separatorami i po 2000 r.', () => {
+  const id = syntheticNationalId('850730033');
+  const formatted = `${id.slice(0, 2)}.${id.slice(2, 4)}.${id.slice(4, 6)}-${id.slice(6, 9)}.${id.slice(9)}`;
+  assert.deepEqual(detectPossiblePersonalData(`Numer ${formatted} w tytule.`).categories, ['national_id']);
+  assert.ok(detectPossiblePersonalData(`Numer ${id}.`).categories.includes('national_id'));
+  const young = syntheticNationalId('100315123', { bornFrom2000: true });
+  assert.ok(detectPossiblePersonalData(`RRN ${young}`).categories.includes('national_id'));
+});
+
+test('11 cyfr ze złą sumą kontrolną lub nieprawidłowym miesiącem nie jest numerem rejestru krajowego', () => {
+  const id = syntheticNationalId('850730033');
+  const wrongCheck = `${id.slice(0, 9)}${String((Number(id.slice(9)) + 1) % 100).padStart(2, '0')}`;
+  assert.ok(!detectPossiblePersonalData(`Nr ${wrongCheck}`).categories.includes('national_id'));
+  const badMonth = syntheticNationalId('851330033');
+  assert.ok(!detectPossiblePersonalData(`Nr ${badMonth}`).categories.includes('national_id'));
+  assert.ok(!detectPossiblePersonalData('Kwota 12345678901 EUR').categories.includes('national_id'));
+});

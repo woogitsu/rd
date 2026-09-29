@@ -151,6 +151,8 @@ Zmiany w tym PR (#124):
 - `news_photos.alt_text` jest teraz obowiązkowy przy rejestracji zdjęcia (albo jawne `decorative = true`) — patrz `docs/NEWS.md` i migracja `0071_news_photo_alt_text_required.sql`. Publiczny JSON zwraca `altText: ""` (nie `null`) dla zdjęć dekoracyjnych.
 - Szkic deklaracji dostępności strony publicznej: `docs/ACCESSIBILITY_DECLARATION_DRAFT.md` — tekst do zatwierdzenia przez zarząd/szkołę, bez twierdzeń o zgodności.
 
+**Poza zakresem tego PR** (patrz #124, propozycja pkt. 3): `<figure>`/`<figcaption>` dla zdjęć z autorem i licencją nie jest jeszcze potrzebne — w chwili pisania `site/` nie renderowała zdjęć; obecnie `site/main.js` renderuje galerię jako `<figure>` z `<figcaption>` (#96), a model danych (`altText`/`decorative`) jest już używany. Pełna weryfikacja z czytnikiem ekranu nie została wykonana. Kontrast `site/styles.css` i `prefers-reduced-motion` — patrz PR dla #112 (ten sam plik, żeby uniknąć nakładania się zmian).
+
 **Stan po #96 i kolejnym PR dla #124** (`site/`, aktualności i galeria; `documents/` poza tym zakresem):
 
 | Kryterium | Stan | Weryfikacja |
@@ -164,7 +166,7 @@ Zmiany w tym PR (#124):
 | Renderowanie 320/640/1280 px w Playwright (`docs/a11y/audit.mjs`) dla `site/` | **do wykonania ręcznie** (Playwright nie jest zależnością projektu; skrypt nadal obsługuje `import`, `panel`, `ledger`, `print`) | — |
 | NVDA / VoiceOver dla strony publicznej i galerii | **niewykonane** | lista kontrolna powyżej |
 
-Reguła opisu zdjęć (bez imion i nazwisk dzieci) jest zasadą redakcyjną, nie da się jej wymusić technicznie; jej treść czeka na D-18 (docs/DECISIONS.md) i nie jest tu rozstrzygana. Poprzedni akapit „site/ nie renderuje zdjęć” jest nieaktualny — galeria działa od #96.
+Reguła opisu zdjęć (bez imion i nazwisk dzieci) jest zasadą redakcyjną, nie da się jej wymusić technicznie; jej treść czeka na D-18 (docs/DECISIONS.md) i nie jest tu rozstrzygana.
 
 ## Rozszerzenie przeglądu na wszystkie aplikacje statyczne (#112)
 

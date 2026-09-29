@@ -1,3 +1,4 @@
+import { decodeCsvBytes, describeSource, detectDelimiter, parseCsvMatrix } from "../import/csv.js";
 import {
   STATUS_LABELS,
   auditReportUrl,
@@ -294,11 +295,45 @@ byId("open-create").addEventListener("click", () => {
 
 // --- import linii wyciągu (CSV) -----------------------------------------------
 
+// #77: plik jest dekodowany w przeglądarce (UTF-8/BOM, UTF-16, Windows-1250/1252) i trafia do pola
+// tekstowego, więc serwer dostaje już poprawny tekst. Niejednoznaczne kodowanie/separator = ostrzeżenie
+// albo blokada, nie ciche zgadywanie.
+function describeCsvText(text) {
+  const delimiter = detectDelimiter(text);
+  return { delimiter, blocked: delimiter.tie ? "Nie można ustalić separatora kolumn (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem." : "" };
+}
+
+async function readStatementFile() {
+  const file = byId("import-file").files?.[0];
+  const status = byId("import-file-status");
+  const errorBox = byId("import-error");
+  errorBox.textContent = "";
+  if (!file) return;
+  if (file.size > 1024 * 1024) { errorBox.textContent = "Plik przekracza 1 MB."; return; }
+  try {
+    const decoded = decodeCsvBytes(await file.arrayBuffer(), { encoding: byId("import-encoding").value });
+    const info = describeCsvText(decoded.text);
+    const rows = parseCsvMatrix(decoded.text, { delimiter: info.delimiter.delimiter }).length;
+    byId("import-csv").value = decoded.text;
+    status.textContent = `Odczytano: ${describeSource(decoded, info.delimiter)}, ${Math.max(rows - 1, 0)} wierszy.${decoded.warnings.length ? ` Uwaga: ${decoded.warnings.join(" ")}` : ""}`;
+    if (info.blocked) errorBox.textContent = info.blocked;
+  } catch (error) {
+    byId("import-csv").value = "";
+    status.textContent = "";
+    errorBox.textContent = error.message;
+  }
+}
+byId("import-file").addEventListener("change", readStatementFile);
+byId("import-encoding").addEventListener("change", readStatementFile);
+
 byId("import-lines-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const csv = byId("import-csv").value;
   const errorBox = byId("import-error");
   errorBox.textContent = "";
+  if (/[\uFFFD\u0000]/.test(csv)) { errorBox.textContent = "Tekst ma nieznane kodowanie (znaki zastępcze). Zapisz plik jako „CSV UTF-8” albo wybierz kodowanie i wczytaj plik ponownie."; return; }
+  const blocked = describeCsvText(csv).blocked;
+  if (blocked) { errorBox.textContent = blocked; return; }
   const button = event.submitter;
   button.disabled = true;
   try {
@@ -309,6 +344,7 @@ byId("import-lines-form").addEventListener("submit", async (event) => {
       body: JSON.stringify({ csv }),
     });
     byId("import-csv").value = "";
+    byId("import-file").value = "";
     await refreshDetail();
     setMessage(result.possibleDuplicateCount > 0
       ? `Wgrano ${result.import.lineCount} pozycji. Uwaga: ${result.possibleDuplicateCount} może powielać wcześniejszy import.`
