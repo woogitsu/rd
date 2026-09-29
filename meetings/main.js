@@ -3,6 +3,8 @@ import {
   CAPACITY_LABELS,
   KIND_LABELS,
   MINUTES_STATUS_LABELS,
+  NOTICE_KIND_LABELS,
+  NOTICE_STATUS_LABELS,
   QUORUM_MODE_LABELS,
   RESOLUTION_STATUS_LABELS,
   STATUS_ACTION_LABELS,
@@ -16,9 +18,13 @@ import {
   buildQuorumRule,
   buildSharedMinutesUrl,
   canApproveMinutes,
+  canApproveNotice,
+  canChangeSchedule,
+  canDraftNoticeCampaign,
   currentResolutions,
   describeApprovalChecklist,
   describeQuorumCheck,
+  describeNoticeLateness,
   describeQuorumRule,
   ERROR_MESSAGES,
   errorMessage,
@@ -35,6 +41,7 @@ import {
   validateVotes,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
+import { confirmAction } from "../shared/confirm-dialog.js";
 import { classChoiceOptionsHtml, fillClassSelect } from "../shared/class-choice.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
@@ -415,6 +422,60 @@ function setDisabled(form, disabled) {
   for (const control of form.elements) control.disabled = disabled;
 }
 
+// ---------- zawiadomienie, zmiana terminu, odwołanie (#113) ----------
+
+const rescheduleForm = byId("reschedule-form");
+const cancelForm = byId("cancel-form");
+
+function noticeRemarks(notice, meeting) {
+  return [
+    notice.outdated ? "Zebranie lub porządek zmieniły się po sporządzeniu — potrzebna nowa wersja." : null,
+    notice.status === "draft" && !notice.isLatest ? "Zastąpione nowszą wersją." : null,
+    notice.kind === "reschedule" && notice.previousScheduledAt ? `Poprzedni termin: ${formatBrussels(notice.previousScheduledAt)}.` : null,
+    notice.approvedAt ? `Zatwierdzono ${formatBrussels(notice.approvedAt)}.` : null,
+    describeNoticeLateness(notice, meeting),
+    notice.campaignId ? "Szkic kampanii e-mail utworzony — zatwierdzenie treści i odbiorców w module e-mail." : null,
+  ].filter(Boolean).join(" ");
+}
+
+function renderNotices() {
+  const { meeting, notices = [], reschedules = [] } = state.detail;
+  const cancelled = meeting.status === "cancelled";
+  const latestApproved = [...notices].reverse().find((notice) => notice.status === "approved");
+  const warning = byId("notice-late-warning");
+  const lateness = describeNoticeLateness(latestApproved, meeting);
+  warning.hidden = !lateness;
+  warning.textContent = lateness ?? "";
+  byId("notice-body").replaceChildren(...(notices.length ? [...notices].reverse().map((notice) => el("tr", {},
+    el("td", { className: "num" }, String(notice.version)),
+    el("td", {}, NOTICE_KIND_LABELS[notice.kind] ?? notice.kind),
+    el("td", { className: "nowrap" }, formatBrussels(notice.scheduledAt)),
+    el("td", {}, NOTICE_STATUS_LABELS[notice.status] ?? notice.status),
+    el("td", {}, noticeRemarks(notice, meeting)),
+    el("td", { className: "row-actions" },
+      canApproveNotice(notice, meeting)
+        ? el("button", { type: "button", dataset: { noticeApprove: notice.id }, "aria-label": `Zatwierdź zawiadomienie, wersja ${notice.version}` }, "Zatwierdź")
+        : null,
+      canDraftNoticeCampaign(notice, meeting)
+        ? el("button", { type: "button", dataset: { noticeCampaign: notice.id }, "aria-label": `Utwórz szkic wiadomości do rodziców, wersja ${notice.version}` }, "Szkic wiadomości")
+        : null,
+    ),
+  )) : [el("tr", {}, el("td", { colspan: "6", className: "muted" }, "Brak zawiadomienia."))]));
+  byId("create-notice").disabled = cancelled || !canChangeSchedule(meeting);
+  byId("reschedule-history-wrap").hidden = reschedules.length === 0;
+  byId("reschedule-body").replaceChildren(...[...reschedules].reverse().map((item) => el("tr", {},
+    el("td", { className: "nowrap" }, formatBrussels(item.createdAt)),
+    el("td", { className: "nowrap" }, formatBrussels(item.fromScheduledAt)),
+    el("td", { className: "nowrap" }, formatBrussels(item.toScheduledAt)),
+    el("td", {}, item.reason ?? ""),
+  )));
+  setDisabled(rescheduleForm, !canChangeSchedule(meeting));
+  setDisabled(cancelForm, !canChangeSchedule(meeting));
+  if (cancelled) {
+    byId("detail-meta").textContent += ` · odwołane ${formatBrussels(meeting.cancelledAt)}${meeting.cancellationReason ? `: ${meeting.cancellationReason}` : ""}`;
+  }
+}
+
 function renderDetail({ refill = false } = {}) {
   const { meeting, agenda = [], attendees = [], quorumChecks = [], minutes = [], resolutions = [] } = state.detail;
   const locked = isMeetingLocked(state.detail);
@@ -447,10 +508,16 @@ function renderDetail({ refill = false } = {}) {
 
   byId("agenda-body").replaceChildren(...(agenda.length ? agenda.map((item) => el("tr", {},
     el("td", { className: "num" }, String(item.position)),
-    el("td", {}, item.title),
+    el("td", {}, item.withdrawnAt ? el("s", {}, item.title) : item.title,
+      item.withdrawnAt ? el("small", {}, ` wycofany ${formatBrussels(item.withdrawnAt)}`) : null),
     el("td", {}, item.description ?? ""),
-  )) : [el("tr", {}, el("td", { colspan: "3", className: "muted" }, "Brak punktów."))]));
+    el("td", { className: "row-actions" }, locked || item.withdrawnAt ? null : el("button", {
+      type: "button", dataset: { withdrawItem: item.id }, "aria-label": `Wycofaj punkt: ${item.title}`,
+    }, "Wycofaj")),
+  )) : [el("tr", {}, el("td", { colspan: "4", className: "muted" }, "Brak punktów."))]));
   setDisabled(agendaForm, locked);
+
+  renderNotices();
 
   const summary = summarizeAttendance(attendees);
   byId("attendance-summary").textContent =
@@ -636,6 +703,99 @@ handleSubmit(minutesForm, async (data) => {
   });
   await reloadDetail({ quiet: true, refill: true });
   setMessage(detailMessage, `Zapisano wersję ${result.minutes?.version ?? ""} protokołu (projekt).`, "ok");
+});
+
+handleSubmit(rescheduleForm, async (data) => {
+  const scheduledAt = brusselsLocalToIso(data.scheduledAt);
+  if (!scheduledAt) throw new Error("Podaj poprawny termin.");
+  const result = await api(meetingUrl(state.detail.meeting.id, "reschedule"), {
+    method: "POST",
+    body: { scheduledAt, reason: data.reason.trim(), revision: state.detail.meeting.revisionNo },
+  });
+  await reloadDetail({ quiet: true, refill: true });
+  setMessage(detailMessage, result.rescheduleNotice
+    ? "Termin zmieniony. Przygotowano szkic zawiadomienia o zmianie terminu — wymaga zatwierdzenia; nic nie zostało wysłane."
+    : "Termin zmieniony.", "ok");
+});
+
+handleSubmit(cancelForm, async (data) => {
+  const confirmed = await confirmAction({
+    title: "Odwołać zebranie?",
+    effects: ["Tej operacji nie można cofnąć.", "Powód odwołania zostanie zapisany w historii zebrania."],
+    confirmLabel: "Odwołaj zebranie",
+    destructive: true,
+  });
+  if (!confirmed) return;
+  const result = await api(meetingUrl(state.detail.meeting.id, "cancellation"), {
+    method: "POST",
+    body: { reason: data.reason.trim(), revision: state.detail.meeting.revisionNo },
+  });
+  await reloadDetail({ quiet: true, refill: true });
+  setMessage(detailMessage, result.cancellationNotice
+    ? "Zebranie odwołane. Przygotowano szkic zawiadomienia o odwołaniu — wymaga zatwierdzenia; nic nie zostało wysłane."
+    : "Zebranie odwołane.", "ok");
+});
+
+// Operacje na zawiadomieniu: przycisk blokowany na czas żądania (podwójne kliknięcie);
+// serwer i tak zwraca powtórkę zamiast drugiego zapisu.
+async function noticeAction(button, work, successText) {
+  const errorBox = byId("notice-error");
+  if (button.dataset.busy === "true") return;
+  button.dataset.busy = "true";
+  button.disabled = true;
+  errorBox.textContent = "";
+  try {
+    await work();
+    await reloadDetail({ quiet: true });
+    setMessage(detailMessage, successText, "ok");
+  } catch (error) {
+    errorBox.textContent = error.message;
+    if (error instanceof ApiError && error.status === 409) await reloadDetail({ quiet: true });
+  } finally {
+    button.dataset.busy = "false";
+    if (state.detail) renderDetail();
+  }
+}
+
+byId("create-notice").addEventListener("click", (event) => noticeAction(event.currentTarget,
+  () => api(meetingUrl(state.detail.meeting.id, "notices"), { method: "POST", body: {} }),
+  "Przygotowano szkic zawiadomienia. Zatwierdza go inna osoba niż autor."));
+
+byId("notice-body").addEventListener("click", async (event) => {
+  const approve = event.target.closest("button[data-notice-approve]");
+  if (approve) {
+    noticeAction(approve,
+      () => api(meetingUrl(state.detail.meeting.id, "notices", approve.dataset.noticeApprove, "approval"), { method: "POST", body: {} }),
+      "Zawiadomienie zatwierdzone.");
+    return;
+  }
+  const campaign = event.target.closest("button[data-notice-campaign]");
+  if (campaign) {
+    const confirmed = await confirmAction({
+      title: "Utworzyć szkic wiadomości do rodziców?",
+      effects: ["Nic nie zostanie wysłane.", "Treść i listę odbiorców trzeba jeszcze zatwierdzić w module e-mail."],
+      confirmLabel: "Utwórz szkic",
+    });
+    if (!confirmed) return;
+    noticeAction(campaign,
+      () => api(meetingUrl(state.detail.meeting.id, "notices", campaign.dataset.noticeCampaign, "campaign-draft"), { method: "POST", body: {} }),
+      "Utworzono szkic wiadomości. Nic nie zostało wysłane — przejdź do modułu e-mail, aby zatwierdzić treść i odbiorców.");
+  }
+});
+
+byId("agenda-body").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-withdraw-item]");
+  if (!button) return;
+  const confirmed = await confirmAction({
+    title: "Wycofać punkt z porządku obrad?",
+    effects: ["Punkt zostanie w historii.", "Zawiadomienie wymaga nowej wersji."],
+    confirmLabel: "Wycofaj punkt",
+    destructive: true,
+  });
+  if (!confirmed) return;
+  noticeAction(button,
+    () => api(meetingUrl(state.detail.meeting.id, "agenda-items", button.dataset.withdrawItem, "withdrawal"), { method: "POST", body: {} }),
+    "Punkt wycofany. Zawiadomienie wymaga nowej wersji.");
 });
 
 // ---------- okna dialogowe ----------

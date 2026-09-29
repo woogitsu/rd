@@ -24,8 +24,11 @@ import {
   approve, cancelTask, createDraft, createSignup, createTask, publish, submit, withdrawSignup,
 } from '../src/pg/events.js';
 import {
+  addAgendaItem,
+  approveMeetingNotice,
   approveMinutes,
   createMeeting,
+  createMeetingNotice,
   createMinutesVersion,
   createResolution,
   determineQuorum,
@@ -263,7 +266,7 @@ async function makeEventTaskSignup(db, target, stage) {
   return { eventId, taskId, signupId: signup.id };
 }
 
-async function makeMeeting(db, target, stage, { title, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
+async function makeMeeting(db, target, stage, { title, itemTitle, minutesBody, visibility = 'parents', resolutionNumber } = {}) {
   const scopeMarker = marker(target.key);
   const { meeting } = await createMeeting(db, fxAdmin, {
     idempotencyKey: nextKey('fx-meeting'), schoolYearId: target.schoolYearId,
@@ -274,6 +277,18 @@ async function makeMeeting(db, target, stage, { title, minutesBody, visibility =
   });
   const obj = { meetingId: meeting.id };
   if (stage === 'draft') return obj;
+  // #113: zebranie zaplanowane z punktem porządku, szkicem i zatwierdzonym zawiadomieniem
+  // (autor fxAdmin, zatwierdza fxBoard — inna osoba, zasada czterech oczu).
+  if (['agendaItem', 'draftNotice', 'approvedNotice'].includes(stage)) {
+    const { agendaItem } = await addAgendaItem(db, fxAdmin, {
+      idempotencyKey: nextKey('fx-item'), meetingId: meeting.id, title: itemTitle ?? `Punkt ${scopeMarker}`,
+    });
+    const withItem = { ...obj, agendaItemId: agendaItem.id };
+    if (stage === 'agendaItem') return withItem;
+    const { notice } = await createMeetingNotice(db, fxAdmin, { meetingId: meeting.id });
+    if (stage === 'approvedNotice') await approveMeetingNotice(db, fxBoard, { meetingId: meeting.id, noticeId: notice.id });
+    return { ...withItem, noticeId: notice.id };
+  }
   await updateMeeting(db, fxAdmin, { meetingId: meeting.id, status: 'held' });
   if (stage === 'held') return obj;
   if (stage === 'draftResolution') {
@@ -818,6 +833,12 @@ async function seedStatic(ctx) {
   await makeMeeting(ctx.db, TARGETS.W1, 'shared', {
     title: `Zebranie jawne ${marker('PUBLIC')}`, minutesBody: `Protokół ${marker('PUBLIC')} — treść jawna.`, visibility: 'public',
   });
+  // #113: jawne zawiadomienie zebrania ogólnego (bez znaczników klas) oraz zatwierdzone zawiadomienie
+  // zebrania klasowego A, które nie może pojawić się na stronie publicznej.
+  await makeMeeting(ctx.db, TARGETS.W1, 'approvedNotice', {
+    title: `Zebranie jawne ${marker('PUBLIC')}`, itemTitle: `Punkt jawny ${marker('PUBLIC')}`,
+  });
+  await makeMeeting(ctx.db, TARGETS.A, 'approvedNotice');
   // Kampania istniejąca w bazie (#110): email_preferences_events.campaign_id
   // ma FK do email_campaigns, więc token wypisania w macierzy musi wskazywać
   // na prawdziwy wiersz, nie dowolny ciąg znaków.

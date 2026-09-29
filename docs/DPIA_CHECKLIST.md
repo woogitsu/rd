@@ -72,6 +72,9 @@ odpowiedzialności osoby zapisującej.
 | `bank_reconciliation_matches.revoke_reason` | uzasadnienie cofnięcia dopasowania z wyciągu |
 | `bank_reconciliation_group_match_revocations.reason` | uzasadnienie cofnięcia dopasowania zbiorczego (przelew kilku rodzin, #127) |
 | `meeting_agenda_items.description` | sprawa konkretnego ucznia w porządku obrad |
+| `meetings.cancellation_reason` | powód odwołania zebrania (wewnętrzny, 3–500 znaków) — może wspomnieć osobę; nigdy nie trafia do dziennika zdarzeń ani na stronę publiczną (#113) |
+| `meeting_reschedules.reason` | powód zmiany terminu zebrania (wewnętrzny) — j.w. (#113) |
+| `meeting_agenda_versions.snapshot` | migawka tytułów i opisów punktów porządku obrad wysłanego w zawiadomieniu — może opisywać konkretne dzieci/rodziny; publicznie tylko tytuły zatwierdzonego zawiadomienia zebrania ogólnego (#113) |
 | `meeting_minutes.body` | treść protokołu — może opisywać konkretne dzieci/rodziny |
 | `meeting_minutes.change_note` | jw., przy poprawce protokołu |
 | `meeting_minutes.approval_note` | jw. |

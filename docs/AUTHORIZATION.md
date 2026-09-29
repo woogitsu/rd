@@ -89,6 +89,13 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/meetings/:meetingId/approval-checklist` | jak `GET /api/meetings/:meetingId` (admin, zarząd, Komisja Rewizyjna — rok 1; zarząd z przydziałem klasy — zebrania tej klasy); tylko odczyt (#81) | nie | 404 | brak uprawnień nieodróżnialny od braku zebrania (SR-07); przedstawiciel: 404 także dla własnej klasy; bez wpisu w audit_events |
 | `PATCH /api/meetings/:meetingId` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy; #171: przedstawiciel-gospodarz własnej klasy | tak (#150) | 403 | |
 | `POST /api/meetings/:meetingId/agenda-items` | jak wyżej | tak (#150) | 403 | |
+| `POST /api/meetings/:meetingId/cancellation` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | #113: powód 3–500 znaków, przejście `draft|scheduled → cancelled`; przedstawiciel-gospodarz (#171) nie odwołuje; powtórka z tym samym powodem to `200` z `replayed` |
+| `POST /api/meetings/:meetingId/reschedule` | jak wyżej | tak (#150) | 403 | #113: nowy termin z powodem; po zatwierdzonym zawiadomieniu powstaje wyłącznie szkic zawiadomienia o zmianie terminu |
+| `POST /api/meetings/:meetingId/agenda-items/:itemId/withdrawal` | jak `POST …/agenda-items` | tak (#150) | 403 | #113: wycofanie punktu (wiersz zostaje) |
+| `POST /api/meetings/:meetingId/notices` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | #113: szkic zawiadomienia z migawką porządku obrad; przedstawiciel-gospodarz: 403 |
+| `POST /api/meetings/:meetingId/notices/:noticeId/approval` | jak wyżej | tak (#150) | 403 | #113: zatwierdza inna osoba niż autor (`403 notice_four_eyes_required`); odsłania zawiadomienie zebrania ogólnego na stronie publicznej |
+| `POST /api/meetings/:meetingId/notices/:noticeId/campaign-draft` | jak wyżej | tak (#150) | 403 | #113: wyłącznie SZKIC kampanii z zatwierdzonego zawiadomienia; listę odbiorców i wysyłkę zatwierdza się w module e-mail (`board`, cztery oczy) |
+| `GET /api/meetings/public-notices?schoolYearId=:year` | publiczna | nie | — | #113: tylko najnowsze zatwierdzone zawiadomienie zebrania ogólnego, bez powodu odwołania i opisów punktów |
 | `POST /api/meetings/:meetingId/attendance` | jak wyżej | tak (#150) | 403 | |
 | `POST /api/meetings/:meetingId/quorum-checks` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy | tak (#150) | 403 | |
 | `POST /api/meetings/:meetingId/minutes` | admin, zarząd — rok 1; zarząd z przydziałem klasy — zebrania tej klasy; #171: przedstawiciel-gospodarz własnej klasy | tak (#150) | 403 | |

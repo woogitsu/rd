@@ -994,6 +994,30 @@ tekst (inwentarz prywatności i lista DPIA jak dla `enrollments.ended_reason`).
 Wycofanie: na pustej bazie usunięcie kolumn i przywrócenie funkcji z 0023; na
 bazie z danymi tylko po kopii.
 
+`0139_meeting_cancel_notice.sql` (#113) dodaje stan zebrania `cancelled`
+(przejścia `draft|scheduled → cancelled`, stan końcowy; kolumny
+`cancellation_reason` 3–500 znaków, `cancelled_by`, `cancelled_at`), reguły
+terminu zawiadomienia `notice_min_days` + `notice_rule_source` (serwer tylko
+odnotowuje spóźnienie), wycofanie punktu porządku (`meeting_agenda_items.
+withdrawn_at/by`, raz ustawione nie wraca) oraz trzy tabele dopisywane bez
+UPDATE/DELETE: `meeting_agenda_versions` (migawka JSON + skrót),
+`meeting_reschedules` (stara/nowa data, powód, aktor) i `meeting_notices`
+(zawiadomienie w wersjach; treść niezmienna, jedyne przejście to
+`draft → approved` przez osobę inną niż autor). `email_campaigns` dostaje
+`meeting_id`, `meeting_notice_id`, `class_id` i `audience = 'class_households'`;
+trigger dopuszcza wiersz powiązany z zebraniem wyłącznie jako szkic z
+zatwierdzonego zawiadomienia, dla odbiorców zgodnych z rodzajem zebrania.
+Trzy nowe tabele mają trigger `a0_year_freeze` (`year_freeze_direct()` z 0017):
+zapis w zamkniętym roku daje `school_year_closed` (#80).
+Widok `public_meeting_notices` zawiera tylko najnowsze zatwierdzone
+zawiadomienie zebrania ogólnego (bez powodu odwołania i opisów punktów).
+`meeting_guard()` i `meeting_assert_editable()` wychodzą z wersji z
+`0009_meetings.sql` (jedyna definicja). Skutki dla danych: istniejące wiersze
+bez zmian (nowe kolumny NULL, żaden stan nie zmienia się wstecz); nic nie jest
+wysyłane. Wycofanie na pustej bazie: usunięcie tabel, widoku, triggerów i kolumn
+oraz przywrócenie funkcji z 0009; na bazie z danymi tylko po kopii (tabele niosą
+historię zmian terminu i zawiadomień).
+
 `0124_login_rate_limit_pair_scope.sql` (#126) poszerza CHECK na
 `login_rate_limits.scope_type` o `'pair'` — SHA-256 pary (znormalizowany
 e-mail, IP) z osobną dziedziną skrótu. Blokada logowania zakładana jest teraz

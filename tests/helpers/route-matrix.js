@@ -691,6 +691,12 @@ export const ROUTE_MATRIX = Object.freeze([
     visible: () => [], contains: () => ['PUBLIC'],
   },
   {
+    id: 'meetings.publicNotices', module: 'meetings', method: 'GET', path: '/api/meetings/public-notices?schoolYearId=:year',
+    targets: ['-'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null,
+    build: () => ({ path: `/api/meetings/public-notices?schoolYearId=${YEAR_1}` }),
+    visible: () => [], contains: () => ['PUBLIC'],
+  },
+  {
     id: 'meetings.resolutionLookup', module: 'meetings', method: 'GET',
     path: '/api/meetings/resolutions/lookup?schoolYearId=:year&number=:number', targets: YEAR_TARGETS,
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, treasurer: SCHOOL_Y1 },
@@ -719,6 +725,22 @@ export const ROUTE_MATRIX = Object.freeze([
   meetingRoute('meetings.agendaItem', 'POST', '/api/meetings/:meetingId/agenda-items', () => '/agenda-items', {
     ok: 201, create: true, body: (target) => ({ title: `Punkt ${marker(target.key)}` }),
   }),
+  // #113: odwołanie, zmiana terminu, wycofanie punktu, zawiadomienie i szkic kampanii.
+  meetingRoute('meetings.cancel', 'POST', '/api/meetings/:meetingId/cancellation', () => '/cancellation', {
+    body: () => ({ reason: 'Odwołanie syntetyczne', revision: 1 }),
+  }),
+  meetingRoute('meetings.reschedule', 'POST', '/api/meetings/:meetingId/reschedule', () => '/reschedule', {
+    body: () => ({ scheduledAt: '2026-10-17T17:00:00Z', reason: 'Zmiana syntetyczna', revision: 1 }),
+  }),
+  meetingRoute('meetings.agendaWithdrawal', 'POST', '/api/meetings/:meetingId/agenda-items/:itemId/withdrawal',
+    (obj) => `/agenda-items/${obj.agendaItemId}/withdrawal`, { stage: 'agendaItem', body: () => ({}) }),
+  meetingRoute('meetings.noticeCreate', 'POST', '/api/meetings/:meetingId/notices', () => '/notices', {
+    ok: 201, stage: 'agendaItem', body: () => ({}),
+  }),
+  meetingRoute('meetings.noticeApproval', 'POST', '/api/meetings/:meetingId/notices/:noticeId/approval',
+    (obj) => `/notices/${obj.noticeId}/approval`, { stage: 'draftNotice', body: () => ({}) }),
+  meetingRoute('meetings.noticeCampaignDraft', 'POST', '/api/meetings/:meetingId/notices/:noticeId/campaign-draft',
+    (obj) => `/notices/${obj.noticeId}/campaign-draft`, { ok: 201, stage: 'approvedNotice', body: () => ({}) }),
   meetingRoute('meetings.attendance', 'POST', '/api/meetings/:meetingId/attendance', () => '/attendance', {
     body: () => ({ userId: 'u-fx-board', capacity: 'board_member', votingEligible: true, present: true }),
   }),
@@ -1800,6 +1822,7 @@ export const MFA_GATE_EXEMPT_REASONS = Object.freeze({
   '/api/invitations/preview': 'działa bez sesji; tylko odczyt po tokenie zaproszenia (zamaskowany adres, rola, klasa, rok, termin); nie konsumuje tokenu',
   '/api/password/reset': 'działa bez sesji; uwierzytelnia token resetu',
   '/api/meetings/public-minutes': 'publiczne dane zatwierdzone',
+  '/api/meetings/public-notices': 'publiczne dane zatwierdzone',
   '/api/email/webhooks/brevo': 'webhook bez sesji (sekret Brevo)',
   '/api/email/preferences': 'wypisanie jednym kliknięciem: klika je klient poczty rodzica, nie przeglądarka z sesją (#110); token HMAC jest jedynym zabezpieczeniem',
   '/api/mfa/': 'zapis i potwierdzenie MFA; limity błędów per sesja, wyższy sufit per konto (#189)',

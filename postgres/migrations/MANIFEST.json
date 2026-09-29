@@ -296,6 +296,10 @@
     "sha256": "90b6b1439eb8bbf64cf526b3529db889136e3b4c2c452eb17050b9aaf636080b"
   },
   {
+    "name": "0139_meeting_cancel_notice.sql",
+    "sha256": "43ac15730a4a7d290a6a34b6fdfdac229346c91ac5a55374c092bc6036fc1f75"
+  },
+  {
     "name": "0130_year_freeze_remaining_tables.sql",
     "sha256": "a206e630b58d1e3132ce0fe1eb4d6b706b3e623098b8428db34ad195440c4892"
   },

@@ -15,6 +15,7 @@ npm run build:site    # dist/site, serwowane przez serwer Node pod /site/
 |---|---|---|
 | Najbliższe wydarzenia | `GET /api/public/events?from=RRRR-MM-DD&limit=200` | tylko opublikowane wersje; odwołane oznaczone „odwołane” |
 | Protokoły zebrań | `GET /api/meetings/public-minutes?schoolYearId=` | tylko zatwierdzone z widocznością `public` |
+| Zawiadomienia o zebraniach | `GET /api/meetings/public-notices?schoolYearId=` | tylko zatwierdzone zawiadomienia zebrań ogólnych (#113); odwołane oznaczone „odwołane”, bez powodu i opisów punktów |
 | Aktualności | `GET /api/public/news` | odpowiedź `{ posts: [...] }` (`listPublic`); przy 404 sekcja pozostaje ukryta |
 | Wpis pod stałym adresem | `GET /api/public/news/{id}` | adres `/site/#wpis-<id>`; wycofany, nieopublikowany i nieznany: 404 i komunikat bez treści |
 | Archiwum aktualności | `GET /api/public/news?schoolYearId=&limit=50` | `/site/?rok=RRRR-RRRR#aktualnosci`; lista lat: bieżący i 5 poprzednich (założenie do #78) |

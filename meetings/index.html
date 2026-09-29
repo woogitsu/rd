@@ -116,7 +116,7 @@
           <div class="table-wrap">
             <table>
               <caption class="sr-only">Punkty porządku obrad</caption>
-              <thead><tr><th scope="col">Nr</th><th scope="col">Punkt</th><th scope="col">Opis</th></tr></thead>
+              <thead><tr><th scope="col">Nr</th><th scope="col">Punkt</th><th scope="col">Opis</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
               <tbody id="agenda-body"></tbody>
             </table>
           </div>
@@ -128,6 +128,45 @@
             <label>Opis (opcjonalnie) <textarea name="description" rows="2" maxlength="2000"></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
             <p class="form-error" id="agenda-error" role="alert"></p>
             <div><button type="submit">Dodaj punkt</button></div>
+          </form>
+        </section>
+
+        <section class="sub" id="notice-section" aria-labelledby="notice-title">
+          <h3 id="notice-title">Zawiadomienie, termin i odwołanie</h3>
+          <p class="muted">Zawiadomienie ma wersje: każda zmiana terminu, miejsca lub porządku obrad wymaga nowej wersji i nowego zatwierdzenia przez inną osobę niż autor. Na stronie publicznej pojawia się wyłącznie zatwierdzone zawiadomienie zebrania ogólnego. Panel niczego nie wysyła: szkic wiadomości do rodziców trafia do modułu e-mail, gdzie osobno zatwierdza się treść i listę odbiorców.</p>
+          <p class="notice" id="notice-late-warning" role="status" hidden></p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Wersje zawiadomienia o zebraniu</caption>
+              <thead><tr><th scope="col">Wersja</th><th scope="col">Rodzaj</th><th scope="col">Termin</th><th scope="col">Status</th><th scope="col">Uwagi</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <tbody id="notice-body"></tbody>
+            </table>
+          </div>
+          <p class="form-error" id="notice-error" role="alert"></p>
+          <p><button type="button" id="create-notice">Przygotuj zawiadomienie (nowa wersja)</button></p>
+          <div class="table-wrap" id="reschedule-history-wrap" hidden>
+            <table>
+              <caption>Historia zmian terminu</caption>
+              <thead><tr><th scope="col">Zmieniono</th><th scope="col">Poprzedni termin</th><th scope="col">Nowy termin</th><th scope="col">Powód</th></tr></thead>
+              <tbody id="reschedule-body"></tbody>
+            </table>
+          </div>
+          <form id="reschedule-form" class="stack" novalidate>
+            <div class="field-row">
+              <label>Nowy termin (Bruksela) <input name="scheduledAt" type="datetime-local" required /></label>
+              <label>Powód zmiany terminu (3–500 znaków, wewnętrzny) <input name="reason" minlength="3" maxlength="500" required /><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
+            </div>
+            <p class="form-error" id="reschedule-error" role="alert"></p>
+            <div><button type="submit">Zmień termin</button></div>
+          </form>
+          <form id="cancel-form" class="stack" novalidate>
+            <label>Powód odwołania zebrania (3–500 znaków, wewnętrzny — nie trafia na stronę publiczną)
+              <textarea name="reason" rows="2" minlength="3" maxlength="500" required></textarea>
+              <small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small>
+            </label>
+            <p class="muted">Odwołanie jest ostateczne: zebranie nie przyjmie już obecności, quorum, protokołu ani uchwał. Nic nie jest wysyłane automatycznie.</p>
+            <p class="form-error" id="cancel-error" role="alert"></p>
+            <div><button type="submit">Odwołaj zebranie</button></div>
           </form>
         </section>
 

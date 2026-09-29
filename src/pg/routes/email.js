@@ -39,7 +39,7 @@ import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
 import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
-  parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
+  AUDIENCES, MEETING_AUDIENCES, parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
 } from '../../email/content.js';
 import { estimateSchedule } from '../../email/schedule.js';
 import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
@@ -144,7 +144,8 @@ const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.categor
   c.status, c.recipients_hash, c.recipients_count, c.created_by, c.updated_by, c.snapshot_built_by,
   c.approved_by, c.approved_at, c.approved_content_hash, c.approved_recipients_hash, c.daily_cap,
   c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key, c.send_not_before,
-  c.paused_by, c.paused_at, c.resumed_by, c.resumed_at, c.revision_no`;
+  c.paused_by, c.paused_at, c.resumed_by, c.resumed_at, c.revision_no,
+  c.meeting_id, c.meeting_notice_id, c.class_id`;
 
 async function loadCampaign(executor, id, { lock = false } = {}) {
   const { rows } = await executor.query(
@@ -187,6 +188,10 @@ function campaignView(row) {
     pausedAt: iso(row.paused_at),
     resumedBy: row.resumed_by ?? null,
     resumedAt: iso(row.resumed_at),
+    // #113: szkic powstały z zatwierdzonego zawiadomienia o zebraniu (tylko odczyt).
+    meetingId: row.meeting_id ?? null,
+    meetingNoticeId: row.meeting_notice_id ?? null,
+    classId: row.class_id ?? null,
   };
 }
 
@@ -317,7 +322,11 @@ function parseSendNotBefore(value, current) {
 async function updateCampaign(request, env, id, json) {
   const data = await readJson(request);
   let input;
-  try { input = parseCampaignContent(data); } catch (error) { mapContentError(error); }
+  // #113: szkic powiązany z zebraniem klasowym ma audience class_households, którego nie da się
+  // wybrać ręcznie; dopuszczamy go tylko przy edycji takiego szkicu (patrz niżej).
+  try {
+    input = parseCampaignContent(data, { audiences: [...AUDIENCES, ...MEETING_AUDIENCES] });
+  } catch (error) { mapContentError(error); }
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   // Etap 2 #215: `revision` wymagane (po sprawdzeniu uprawnień). Brak lub
   // nie-liczba całkowita → 400 invalid_revision.
@@ -328,6 +337,14 @@ async function updateCampaign(request, env, id, json) {
     return await env.db.transaction(async (tx) => {
       const campaign = await loadCampaign(tx, id, { lock: true });
       if (!['draft', 'approved'].includes(campaign.status)) throw new RequestError('campaign_locked', 409);
+      // #113: odbiorcy kampanii z zawiadomienia o zebraniu wynikają z zebrania; nie zmienia się ich
+      // ręcznie (i nie da się nadać audience klasowego zwykłej kampanii).
+      if (campaign.meeting_notice_id && input.audience !== campaign.audience) {
+        throw new RequestError('campaign_audience_locked', 409);
+      }
+      if (!campaign.meeting_notice_id && MEETING_AUDIENCES.includes(input.audience)) {
+        throw new RequestError('invalid_audience');
+      }
       const hash = contentHash({ schoolYearId: campaign.school_year_id, ...input });
       const currentSendNotBefore = campaign.send_not_before ? new Date(campaign.send_not_before).toISOString() : null;
       const sendNotBefore = parseSendNotBefore(data.sendNotBefore, currentSendNotBefore);
@@ -380,6 +397,7 @@ async function updateCampaign(request, env, id, json) {
 // Przy opiece naprzemiennej drugie gospodarstwo nie dostaje osobnej wiadomości
 // (założenie do D-11/D-17). `on` ('YYYY-MM-DD') domyślnie = rd_today() (Bruksela).
 export async function computeSnapshot(executor, campaign, { on = null } = {}) {
+  if (campaign.audience === 'class_households' && !campaign.class_id) throw new Error('class_households_requires_class');
   const { rows: candidates } = await executor.query(
     `WITH d AS (SELECT COALESCE($2::date, rd_today()) AS on_date)
      SELECT p.household_id, g.id AS guardian_id, g.email,
@@ -395,9 +413,12 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
        LEFT JOIN student_guardians_current_on((SELECT on_date FROM d)) sg ON sg.student_id = e.student_id
        LEFT JOIN guardians g ON g.id = sg.guardian_id
       WHERE e.school_year_id = $1
+        -- #113: zebranie klasowe — tylko rodziny dzieci zapisanych do tej klasy w roku;
+        -- rodzeństwo z innej klasy nie zwiększa listy, a rodzina liczy się raz.
+        AND ($3::text IS NULL OR e.class_id = $3)
       GROUP BY p.household_id, g.id, g.email, g.contact_allowed
       ORDER BY p.household_id, g.id`,
-    [campaign.school_year_id, on],
+    [campaign.school_year_id, on, campaign.audience === 'class_households' ? campaign.class_id : null],
   );
   const paid = new Set();
   if (campaign.audience === 'no_payment_record') {

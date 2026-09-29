@@ -8,7 +8,7 @@ Status: API na PostgreSQL i panel `meetings/` — prototyp na danych syntetyczny
 
 - **Nie ma głosowania elektronicznego** (D-19). Sekretarz wpisuje wyłącznie wyniki głosowania przeprowadzonego na zebraniu: liczby głosów „za”, „przeciw” i „wstrzymało się”.
 - **Nie koduje zasad regulaminu** (D-21). Regulaminu nie ma w repozytorium, więc próg quorum, liczebność składu uprawnionego do głosowania i prawo głosu każdej osoby wpisuje ręcznie uprawniona osoba dla konkretnego zebrania. Aplikacja nie ustala, czy uchwała przeszła — status „przyjęta” lub „odrzucona” wpisuje sekretarz.
-- **Nie wysyła zawiadomień.** Powiadomienie o zebraniu przejdzie przez moduł kampanii e-mail (#10, #40) z jawnym zatwierdzeniem treści i listy odbiorców. Status `scheduled` niczego nie wysyła.
+- **Nie wysyła zawiadomień.** Zawiadomienie o zebraniu przechodzi przez moduł kampanii e-mail (#10, #40) z jawnym zatwierdzeniem treści i listy odbiorców; z zebrania powstaje wyłącznie SZKIC kampanii (patrz „Zawiadomienie o zebraniu”). Status `scheduled`, zatwierdzenie zawiadomienia ani odwołanie niczego nie wysyłają.
 - **Nie ma kont rodziców.** Funkcja `listMinutesForParents` jest przygotowana dla przyszłej sesji rodzica; lista klas musi być wyliczona po stronie serwera z dzieci danego opiekuna.
 
 ## Zebranie
@@ -16,7 +16,7 @@ Status: API na PostgreSQL i panel `meetings/` — prototyp na danych syntetyczny
 | Pole | Znaczenie |
 |---|---|
 | rodzaj | `plenary` (ogólne), `board` (zarząd), `class` (klasowe — wymaga klasy z tego samego roku) |
-| status | `draft` → `scheduled` → `held` → `archived`; `scheduled` może wrócić do `draft` |
+| status | `draft` → `scheduled` → `held` → `archived`; `scheduled` może wrócić do `draft`; `draft` i `scheduled` mogą przejść do `cancelled` (odwołane, stan końcowy — #113) |
 | porządek obrad | punkty z numerem pozycji, dodawane do zablokowania zebrania; bez usuwania (API edycji punktu — osobny zakres) |
 
 Archiwizacja wymaga zatwierdzonego protokołu. Zebrania nie można usunąć.
@@ -163,6 +163,13 @@ Wszystkie mutacje wymagają nagłówka `Origin` zgodnego z serwerem. Odmowy regu
 | `GET /api/meetings/:id` | `getMeeting` (brak uprawnień = `404 meeting_not_found`, jak brak zebrania) |
 | `PATCH /api/meetings/:id` | `updateMeeting` (dane, status, reguła quorum — scalana z zapisaną) |
 | `POST /api/meetings/:id/agenda-items` | `addAgendaItem` |
+| `POST /api/meetings/:id/cancellation` | `cancelMeeting` (#113; powód 3–500 znaków, `revision`) |
+| `POST /api/meetings/:id/reschedule` | `rescheduleMeeting` (#113; `scheduledAt`, powód, `revision`) |
+| `POST /api/meetings/:id/agenda-items/:itemId/withdrawal` | `withdrawAgendaItem` (#113) |
+| `POST /api/meetings/:id/notices` | `createMeetingNotice` (#113; szkic zawiadomienia = nowa wersja) |
+| `POST /api/meetings/:id/notices/:noticeId/approval` | `approveMeetingNotice` (#113) |
+| `POST /api/meetings/:id/notices/:noticeId/campaign-draft` | `createNoticeCampaignDraft` (#113; wyłącznie szkic kampanii) |
+| `GET /api/meetings/public-notices?schoolYearId=` | `listPublicMeetingNotices` (#113; bez logowania) |
 | `POST /api/meetings/:id/attendance` | `recordAttendance` (wpis lub poprawka) |
 | `POST /api/meetings/:id/quorum-checks` | `determineQuorum` |
 | `POST /api/meetings/:id/minutes` | `createMinutesVersion` |
@@ -183,15 +190,20 @@ Każda zmiana zapisuje `audit_events` z aktorem, czasem, typem i identyfikatorem
 
 - **Zmiana terminu (#113):** `PATCH /api/meetings/:id` ze zmienionym `scheduledAt` zapisuje osobne zdarzenie `meeting.rescheduled` obok `meeting.updated`, z `fromScheduledAt`/`toScheduledAt` jako znacznikami czasu — bez tytułu, miejsca ani innej treści zebrania. Ponowienie tego samego `scheduledAt` (podwójne kliknięcie, ponowienie żądania) nie tworzy drugiego zdarzenia, bo porównanie jest z zapisaną wartością, nie z poprzednim żądaniem.
 
-## Zawiadomienie o zebraniu, odwołanie i zmiana terminu — projekt (#113)
+## Zawiadomienie o zebraniu, odwołanie i zmiana terminu (#113)
 
-Poniższe wymaga migracji schematu (`meetings.status` z wartością `cancelled`, wersje porządku obrad, nowe `audience` i kolumny w `email_campaigns`) i **nie jest zaimplementowane** w tym PR — w tym zadaniu wykorzystano oba dostępne numery migracji (0060, 0061) na #102 i #135. Zapisane tu jako projekt do wykonania w osobnym PR, żeby nie zgubić ustaleń:
+Migracja `0139_meeting_cancel_notice.sql`. **Prototyp — niczego nie wysyła i nie jest gotowy do pracy na danych rodzin.**
 
-- **Stan `cancelled`** zebrania z `cancellation_reason` (3–500 znaków, wewnętrzny), `cancelled_by`, `cancelled_at`; dozwolone przejście z `draft` i `scheduled`. Odwołane zebranie nie przyjmuje obecności, quorum, protokołu ani uchwał (409). Dziennik: `meeting.cancelled`.
-- **Wersje porządku obrad** (`meeting_agenda_versions`, migawka JSON + hash) zamiast edycji punktów w miejscu, żeby było wiadomo, która wersja porządku trafiła do zawiadomienia. Dziennik: `meeting.agenda_version.created`.
-- **Zawiadomienie jako kampania** w module e-mail: nowe `audience` (`meeting_invitees`, `class_households`), `email_campaigns.meeting_id`/`agenda_version_id`, z jawnym zatwierdzeniem treści i listy odbiorców (jak dziś), kluczem idempotencji `kampania + rodzina`/`kampania + konto`, osobnymi wiadomościami i limitem Brevo. Zmiana terminu lub odwołanie po wysłaniu zawiadomienia tworzy **nową kampanię-projekt** do zatwierdzenia — nic nie wychodzi automatycznie.
-- **Kontrola terminu zawiadomienia** (`notice_min_days`, `notice_rule_source`, jak `quorum_rule_source`): panel ostrzega, serwer tylko odnotowuje, bez blokady.
-- Zależy od D-16 (szablon wiadomości), D-17 (nadawca, jeden czy obaj opiekunowie), D-21 (termin i forma zawiadomienia, kto jest zapraszany), D-08 (kto zatwierdza wysyłkę), D-10 (konta rodziców). Założenie: e-mail do zarządu/przedstawicieli idzie na adres konta `users`, nie opiekuna.
+- **Odwołanie** (`POST …/cancellation`): przejście `draft|scheduled → cancelled` z powodem (3–500 znaków, wewnętrzny), `cancelled_by`, `cancelled_at`; wymaga `revision`. Stan jest końcowy: odwołane zebranie nie przyjmuje obecności, porządku obrad, quorum, protokołu, uchwał ani edycji (`409 meeting_cancelled`, także przy bezpośrednim `UPDATE` w bazie); zebrań nadal nie usuwa się. `PATCH` ze `status: "cancelled"` jest odrzucony — odwołuje się tylko tą trasą. Podwójne kliknięcie z tym samym powodem to `200` z `replayed: true` i bez drugiego zdarzenia; inny powód po odwołaniu to `409 meeting_cancelled`. Powód jest wolnym tekstem: zostaje w wierszu zebrania (widok wewnętrzny), nigdy w dzienniku ani na stronie publicznej. Odwołać może zarząd/admin z MFA (nie przedstawiciel-gospodarz z #171). Dziennik: `meeting.cancelled` (`fromStatus`, `scheduledAt`, `hadApprovedNotice`).
+- **Zmiana terminu** (`POST …/reschedule`): nowy termin z powodem (3–500 znaków) i `revision`; wpis w dopisywanej tabeli `meeting_reschedules` (stara i nowa data, aktor, powód) oraz zdarzenie `meeting.rescheduled` (znaczniki czasu, `rescheduleId`, `hadApprovedNotice`, bez treści). Dozwolona dla `draft` i `scheduled`. `PATCH scheduledAt` nadal działa, dopóki nie ma zatwierdzonego zawiadomienia; potem `409 use_reschedule_endpoint`, żeby zmiana zawsze miała powód i nowy szkic zawiadomienia.
+- **Porządek obrad**: punktu nie usuwa się — `POST …/agenda-items/:itemId/withdrawal` ustawia `withdrawn_at/by` (raz, nieodwracalnie; zdarzenie `meeting.agenda_item.withdrawn`). Wersją porządku jest niezmienna migawka (`meeting_agenda_versions`: JSON z niewycofanymi punktami + skrót SHA-256); nowa wersja powstaje przy przygotowaniu zawiadomienia, gdy treść porządku się zmieniła (`meeting.agenda_version.created`). Zmiana kolejności punktów **nie jest** zaimplementowana (unikalność `position`; osobny zakres).
+- **Zawiadomienie** (`meeting_notices`, wersje 1, 2, …): szkic (`POST …/notices`) zapisuje tytuł, termin, miejsce i wersję porządku; treść jest niezmienna, poprawka to nowa wersja. Rodzaje: `invitation`, `update` (po zmianie porządku/miejsca/tytułu), `reschedule`, `cancellation` — dwa ostatnie powstają automatycznie jako **szkic**, jeśli wcześniej było zatwierdzone zawiadomienie. Ponowienie identycznego szkicu to powtórka. Zatwierdza inna osoba niż autor (`403 notice_four_eyes_required`, wariant zachowawczy do D-08), tylko najnowszą wersję (`409 notice_not_latest`), aktualną wobec zebrania i porządku (`409 notice_outdated` — zmiana porządku po sporządzeniu unieważnia szkic i zatwierdzenie kampanii), dla zebrania `scheduled` i z co najmniej jednym niewycofanym punktem. Dziennik: `meeting.notice.created`, `meeting.notice.approved` (skrót treści, `noticeDaysBefore`, `noticeLate`).
+- **Termin zawiadomienia** (`notice_min_days` + `notice_rule_source`, jak `quorum_rule_source`; wartość z regulaminu — D-21): serwer zapisuje przy zatwierdzeniu `notice_days_before` i `notice_late` (tylko odnotowanie), panel ostrzega, nic nie blokuje.
+- **Szkic kampanii e-mail** (`POST …/notices/:noticeId/campaign-draft`): tylko z zatwierdzonego, najnowszego i aktualnego zawiadomienia; powstaje `email_campaigns` w stanie `draft`, kategoria `organizational`, klucz `meeting-notice-<id>` (jedna kampania na zawiadomienie; ponowienie zwraca istniejącą). Odbiorcy: zebranie ogólne — `all_households`; klasowe — `class_households` (rodziny dzieci zapisanych do tej klasy w roku; rodzeństwo z 1A i 2B daje jedną wiadomość na rodzinę, a dwoje opiekunów jednego dziecka — jedną wiadomość wg istniejącej reguły migawki, D-17). Zebranie zarządu: `409 notice_campaign_audience_unsupported`. Migawka odbiorców, zatwierdzenie treści i listy (cztery oczy), kolejka, limit Brevo i klucz `kampania + rodzina` zostają w module e-mail; trigger bazy nie pozwala utworzyć kampanii powiązanej z zebraniem w innym stanie niż szkic z zatwierdzonego zawiadomienia ani zmienić powiązania. Odbiorców takiej kampanii nie można zmienić (`409 campaign_audience_locked`), a zwykły szkic nie może dostać `class_households`.
+- **Widoczność:** panel `meetings/` pokazuje wersje zawiadomienia (także szkice) wyłącznie osobom z dostępem wewnętrznym; przedstawiciel-gospodarz klasy nie widzi powodów ani kampanii. Strona publiczna (`GET /api/meetings/public-notices`, widok `public_meeting_notices`) pokazuje wyłącznie najnowsze ZATWIERDZONE zawiadomienie zebrania OGÓLNEGO (nie klasowego i nie zarządu), bez powodu odwołania i bez opisów punktów; zebranie cofnięte do szkicu znika. Założenie zachowawcze: dopóki zawiadomienie o odwołaniu nie jest zatwierdzone, publicznie nadal widać ostatnie zatwierdzone.
+- **Zamknięty rok:** nowe tabele mają własny `school_year_id` i odrzucają zapis w zamkniętym roku (`409 school_year_closed`); to samo dla zmian samego zebrania.
+- **Poza zakresem (osobne PR-y):** audience `meeting_invitees` (członkowie zarządu, przedstawiciele klas i Komisja Rewizyjna jako konta `users` — dziś odbiorca kampanii to rodzina, więc wymaga to odbiorców-kont), zmiana kolejności punktów, załącznik `.ics` (`METHOD:REQUEST/CANCEL`), ponowne sprawdzenie klasy w workerze tuż przed wysyłką (migawka jest zamrożona przy zatwierdzeniu).
+- Zależy od D-16 (szablon wiadomości — treść szkicu jest robocza), D-17 (nadawca, jeden czy obaj opiekunowie), D-21 (termin i forma zawiadomienia, kto jest zapraszany), D-08 (kto zatwierdza wysyłkę), D-10 (konta rodziców).
 
 ## Ryzyka i otwarte sprawy
 

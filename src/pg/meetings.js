@@ -20,6 +20,7 @@ import { isAuthorized } from '../authorization.js';
 import { detectPossiblePersonalData } from './pii-check.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { insertAuditEvent } from './audit.js';
+import { ContentError, contentHash as emailContentHash, parseCampaignContent } from '../email/content.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
 export const READ_ROLES = Object.freeze(['admin', 'board', 'audit']);
@@ -58,6 +59,11 @@ const DATABASE_CONFLICTS = new Set([
   // #135: zasada czterech oczu w triggerze (bezpośredni UPDATE z pominięciem
   // serwisu, który tę samą regułę zwraca jako 403 — zob. approveMinutes).
   'minutes_four_eyes_required',
+  // 0139_meeting_cancel_notice.sql (#113): odwołanie, wycofanie punktu,
+  // zawiadomienie i szkic kampanii powiązany z zebraniem.
+  'meeting_cancelled', 'agenda_item_withdrawal_immutable', 'meeting_notice_closed',
+  'meeting_notice_immutable', 'meeting_notice_not_latest', 'meeting_notice_must_start_as_draft',
+  'email_campaign_meeting_requires_approved_notice', 'email_campaign_meeting_audience_mismatch',
 ]);
 
 // #135 (SR-10): operacje, które uzasadniają wydatek powyżej 3000 EUR albo
@@ -194,6 +200,15 @@ function parseQuorumRule(input) {
     throw error;
   }
   return rule;
+}
+
+// #113: reguła terminu zawiadomienia (D-21) — liczba dni i źródło wpisywane
+// razem (jak reguła quorum). Serwer tylko odnotowuje spóźnione zawiadomienie.
+function parseNoticeRule(input) {
+  const minDays = integer(input.noticeMinDays, 0, 365, { optional: true });
+  const source = text(input.noticeRuleSource, 3, 200, { optional: true });
+  if ((minDays === null) !== (source === null)) throw new MeetingError('invalid_notice_rule');
+  return { noticeMinDays: minDays, noticeRuleSource: source };
 }
 
 const QUORUM_FIELDS = [
@@ -463,6 +478,11 @@ function meetingFromRow(row) {
     status: row.status,
     // #215: optymistyczna kontrola wersji edycji PATCH — patrz updateMeeting.
     revisionNo: row.revision_no,
+    // #113: odwołanie (powód wewnętrzny, usuwany z widoku gospodarza klasy) i reguła terminu zawiadomienia.
+    cancelledAt: iso(row.cancelled_at),
+    cancelledBy: row.cancelled_by ?? null,
+    cancellationReason: row.cancellation_reason ?? null,
+    noticeRule: { minDays: row.notice_min_days ?? null, source: row.notice_rule_source ?? null },
     quorumRule: {
       mode: row.quorum_mode,
       numerator: row.quorum_numerator ?? null,
@@ -477,7 +497,39 @@ function meetingFromRow(row) {
 
 function agendaItemFromRow(row) {
   return { id: row.id, meetingId: row.meeting_id, position: row.position, title: row.title,
-    description: row.description ?? null };
+    description: row.description ?? null, withdrawnAt: iso(row.withdrawn_at) };
+}
+
+function agendaVersionFromRow(row) {
+  return { id: row.id, meetingId: row.meeting_id, version: row.version, contentHash: row.content_hash,
+    items: row.snapshot, createdAt: iso(row.created_at), createdBy: row.created_by };
+}
+
+function rescheduleFromRow(row, internalView) {
+  return {
+    id: row.id, meetingId: row.meeting_id,
+    fromScheduledAt: iso(row.from_scheduled_at), toScheduledAt: iso(row.to_scheduled_at),
+    reason: internalView ? row.reason : null, actorId: internalView ? row.actor_id : null,
+    createdAt: iso(row.created_at),
+  };
+}
+
+function noticeFromRow(row, { internalView = true, isLatest = false, outdated = false } = {}) {
+  return {
+    id: row.id, meetingId: row.meeting_id, version: row.version, kind: row.kind, title: row.title,
+    scheduledAt: iso(row.scheduled_at), previousScheduledAt: iso(row.previous_scheduled_at),
+    location: row.location ?? null, agendaVersionId: row.agenda_version_id ?? null,
+    contentHash: row.content_hash, status: row.status,
+    createdAt: iso(row.created_at), approvedAt: iso(row.approved_at),
+    noticeDaysBefore: row.notice_days_before ?? null, noticeLate: row.notice_late ?? null,
+    isLatest,
+    // true: zebranie (termin, miejsce, tytuł) albo porządek obrad zmieniły się po
+    // sporządzeniu tego zawiadomienia — potrzebna nowa wersja i nowe zatwierdzenie.
+    outdated: row.kind === 'cancellation' ? false : outdated,
+    campaignId: internalView ? row.campaign_id ?? null : null,
+    createdBy: internalView ? row.created_by : null,
+    approvedBy: internalView ? row.approved_by ?? null : null,
+  };
 }
 
 function attendeeFromRow(row) {
@@ -614,13 +666,16 @@ export async function listMeetings(db, actor, input = {}) {
 }
 
 export async function getMeeting(db, actor, input = {}, env) {
-  // #158: zebranie i jego pięć list (porządek, obecność, kworum, protokoły,
-  // uchwały) czytane z JEDNEJ migawki REPEATABLE READ, READ ONLY, kolejno na
-  // jednym połączeniu (jak readSnapshot w db-snapshot.js, ale przez
-  // inTransaction, który obsługuje też gołego klienta) — wcześniej równoległe zapytania na puli dawały pięć migawek.
+  // #158: zebranie i jego listy czytane z JEDNEJ migawki REPEATABLE READ, READ
+  // ONLY, kolejno na jednym połączeniu (jak readSnapshot w db-snapshot.js, ale
+  // przez inTransaction, który obsługuje też gołego klienta) — wcześniej
+  // równoległe zapytania na puli dawały kilka migawek.
   return inTransaction(db, async (tx) => {
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
     const meeting = await loadMeeting(tx, input.meetingId);
+    // #113: powody odwołania/zmiany terminu i powiązane kampanie widzą role
+    // wewnętrzne (READ_ROLES); przedstawiciel-gospodarz klasy (#171) — nie.
+    let internalView = true;
     try {
       authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
     } catch (error) {
@@ -630,6 +685,7 @@ export async function getMeeting(db, actor, input = {}, env) {
         if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
         throw error;
       }
+      internalView = false;
     }
     const agenda = await tx.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]);
     const attendees = await tx.query('SELECT * FROM meeting_attendees WHERE meeting_id = $1 ORDER BY recorded_at, id', [meeting.id]);
@@ -639,14 +695,34 @@ export async function getMeeting(db, actor, input = {}, env) {
          JOIN meeting_minutes_visibility v ON v.minutes_id = m.id
         WHERE m.meeting_id = $1 ORDER BY m.version`, [meeting.id]);
     const resolutions = await tx.query('SELECT * FROM resolutions WHERE meeting_id = $1 ORDER BY created_at, revision, id', [meeting.id]);
-    return {
+    const versions = await tx.query('SELECT * FROM meeting_agenda_versions WHERE meeting_id = $1 ORDER BY version', [meeting.id]);
+    const reschedules = await tx.query('SELECT * FROM meeting_reschedules WHERE meeting_id = $1 ORDER BY created_at, id', [meeting.id]);
+    const notices = await tx.query(
+      `SELECT n.*, c.id AS campaign_id FROM meeting_notices n
+         LEFT JOIN email_campaigns c ON c.meeting_notice_id = n.id
+        WHERE n.meeting_id = $1 ORDER BY n.version`, [meeting.id]);
+    const currentAgendaHash = agendaHash(activeAgendaSnapshot(agenda.rows));
+    const versionById = new Map(versions.rows.map(row => [row.id, row]));
+    const latestVersion = notices.rows.reduce((max, row) => Math.max(max, row.version), 0);
+    const view = {
       meeting: meetingFromRow(meeting),
       agenda: agenda.rows.map(agendaItemFromRow),
       attendees: attendees.rows.map(attendeeFromRow),
       quorumChecks: checks.rows.map(quorumCheckFromRow),
       minutes: minutes.rows.map(minutesFromRow),
       resolutions: resolutions.rows.map(resolutionFromRow),
+      agendaVersions: versions.rows.map(agendaVersionFromRow),
+      reschedules: reschedules.rows.map(row => rescheduleFromRow(row, internalView)),
+      notices: notices.rows.map(row => noticeFromRow(row, {
+        internalView, isLatest: row.version === latestVersion,
+        outdated: noticeOutdated(row, meeting, currentAgendaHash, versionById.get(row.agenda_version_id)),
+      })),
     };
+    if (!internalView) {
+      view.meeting.cancellationReason = null;
+      view.meeting.cancelledBy = null;
+    }
+    return view;
   });
 }
 
@@ -667,6 +743,7 @@ export async function createMeeting(db, actor, input = {}, env) {
     location: text(input.location, 1, 200, { optional: true }),
     status,
     ...parseQuorumRule(input),
+    ...parseNoticeRule(input),
   };
   // #150 (SR-10): tworzenie zebrania to zarządzanie — wymaga MFA niezależnie
   // od tego, czy aktor wchodzi przez rolę zarządu, czy przez #171 (przedstawiciel
@@ -681,11 +758,12 @@ export async function createMeeting(db, actor, input = {}, env) {
     await tx.query(
       `INSERT INTO meetings (id, school_year_id, kind, class_id, title, scheduled_at, location, status,
          quorum_mode, quorum_numerator, quorum_denominator, quorum_inclusive, quorum_min_count,
-         voting_body_size, quorum_rule_source, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         voting_body_size, quorum_rule_source, created_by, notice_min_days, notice_rule_source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [id, data.schoolYearId, data.kind, data.classId, data.title, data.scheduledAt, data.location, data.status,
         data.quorumMode, data.quorumNumerator, data.quorumDenominator, data.quorumInclusive,
-        data.quorumMinCount, data.votingBodySize, data.quorumRuleSource, actor.userId]);
+        data.quorumMinCount, data.votingBodySize, data.quorumRuleSource, actor.userId,
+        data.noticeMinDays, data.noticeRuleSource]);
     await audit(tx, actor, 'meeting.created', 'meeting', id,
       { schoolYearId: data.schoolYearId, kind: data.kind, status: data.status });
     return { entityType: 'meeting', entityId: id };
@@ -733,6 +811,14 @@ export async function updateMeeting(db, actor, input = {}, env) {
         quorum_rule_source: rule.quorumRuleSource,
       });
     }
+    if (input.noticeMinDays !== undefined || input.noticeRuleSource !== undefined) {
+      const rule = parseNoticeRule({
+        noticeMinDays: input.noticeMinDays !== undefined ? input.noticeMinDays : locked.notice_min_days,
+        noticeRuleSource: input.noticeRuleSource !== undefined ? input.noticeRuleSource : locked.notice_rule_source,
+      });
+      changes.notice_min_days = rule.noticeMinDays;
+      changes.notice_rule_source = rule.noticeRuleSource;
+    }
     if (!Object.keys(changes).length) throw new MeetingError('invalid_request');
     // Wartości identyczne z zapisanymi (poza scheduled_at, porównywanym jako
     // znacznik czasu) odfiltrowane — podwójne kliknięcie/powtórzenie tej
@@ -746,6 +832,11 @@ export async function updateMeeting(db, actor, input = {}, env) {
     if (!columns.length) return;
     if (locked.revision_no !== expectedRevision) {
       throw new MeetingError('revision_conflict', 409);
+    }
+    // #113: po zatwierdzeniu zawiadomienia zmiana terminu wymaga powodu i
+    // tworzy szkic nowego zawiadomienia — robi to POST .../reschedule.
+    if (columns.includes('scheduled_at') && await hasApprovedNotice(tx, meeting.id)) {
+      throw new MeetingError('use_reschedule_endpoint', 409);
     }
     // #113: termin zmieniony dostaje własne zdarzenie w dzienniku, ze starą i
     // nową datą jako znaczniki czasu (bez treści zebrania) — dziś nie ma jeszcze
@@ -1465,6 +1556,418 @@ export async function recordResolutionExecution(db, actor, input = {}) {
   return { execution: executionEventFromRow(rows[0]), replayed: result.replayed };
 }
 
+// ---------- odwołanie, zmiana terminu, zawiadomienie (#113) ----------
+//
+// Założenia (do decyzji zarządu, opisane w docs/MEETINGS.md): D-08 — zatwierdzenie
+// zawiadomienia wymaga innej osoby niż autor (wariant zachowawczy); D-21 — termin
+// zawiadomienia jest tylko odnotowywany; D-17 — szkic kampanii korzysta z istniejącej
+// migawki odbiorców (jedna wiadomość na rodzinę). NICZEGO tu nie wysyłamy: kampania
+// powstaje wyłącznie jako szkic i przechodzi zatwierdzenie treści oraz listy w module
+// e-mail (src/pg/routes/email.js).
+
+function activeAgendaSnapshot(rows) {
+  return rows
+    .filter(row => !row.withdrawn_at)
+    .sort((a, b) => a.position - b.position)
+    .map(row => ({ position: row.position, title: row.title, description: row.description ?? null }));
+}
+
+function agendaHash(snapshot) {
+  return createHash('sha256').update(`rd-meeting-agenda-v1\n${JSON.stringify(snapshot)}`).digest('hex');
+}
+
+function noticeContentHash({ kind, title, scheduledAt, previousScheduledAt, location, agendaContentHash }) {
+  return createHash('sha256').update(JSON.stringify([
+    'rd-meeting-notice-v1', kind, title, iso(scheduledAt), iso(previousScheduledAt), location ?? null,
+    agendaContentHash ?? null,
+  ])).digest('hex');
+}
+
+function noticeOutdated(notice, meeting, currentAgendaHash, agendaVersion) {
+  return notice.title !== meeting.title
+    || iso(notice.scheduled_at) !== iso(meeting.scheduled_at)
+    || (notice.location ?? null) !== (meeting.location ?? null)
+    || (agendaVersion ? agendaVersion.content_hash !== currentAgendaHash : false);
+}
+
+async function hasApprovedNotice(db, meetingId) {
+  return Boolean(await one(db,
+    "SELECT 1 FROM meeting_notices WHERE meeting_id = $1 AND status = 'approved' LIMIT 1", [meetingId]));
+}
+
+async function lockMeeting(tx, meetingId) {
+  const row = await one(tx, 'SELECT * FROM meetings WHERE id = $1 FOR UPDATE', [meetingId]);
+  if (!row) throw new MeetingError('meeting_not_found', 404);
+  return row;
+}
+
+// Migawka porządku obrad (bez wycofanych punktów). Ta sama treść = ta sama wersja.
+async function ensureAgendaVersion(tx, actor, meeting) {
+  const { rows } = await tx.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1', [meeting.id]);
+  const snapshot = activeAgendaSnapshot(rows);
+  const hash = agendaHash(snapshot);
+  const latest = await one(tx,
+    'SELECT * FROM meeting_agenda_versions WHERE meeting_id = $1 ORDER BY version DESC LIMIT 1', [meeting.id]);
+  if (latest && latest.content_hash === hash) return latest;
+  const id = randomUUID();
+  const version = (latest?.version ?? 0) + 1;
+  const created = await one(tx,
+    `INSERT INTO meeting_agenda_versions (id, meeting_id, school_year_id, version, snapshot, content_hash, created_by)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING *`,
+    [id, meeting.id, meeting.school_year_id, version, JSON.stringify(snapshot), hash, actor.userId]);
+  await audit(tx, actor, 'meeting.agenda_version.created', 'meeting_agenda_version', id,
+    { meetingId: meeting.id, schoolYearId: meeting.school_year_id, version, contentHash: hash });
+  return created;
+}
+
+// Szkic zawiadomienia (kolejna wersja). Identyczny szkic (ten sam skrót treści) jest
+// powtórką, nie drugą wersją. `meeting` musi być zablokowany (FOR UPDATE).
+async function createNoticeDraft(tx, actor, meeting, kind, { previousScheduledAt = null, requireAgenda = false } = {}) {
+  let agendaVersion = null;
+  if (kind !== 'cancellation') {
+    agendaVersion = await ensureAgendaVersion(tx, actor, meeting);
+    if (requireAgenda && !agendaVersion.snapshot.length) throw new MeetingError('notice_requires_agenda', 409);
+  }
+  const hash = noticeContentHash({
+    kind, title: meeting.title, scheduledAt: meeting.scheduled_at, previousScheduledAt,
+    location: meeting.location, agendaContentHash: agendaVersion?.content_hash ?? null,
+  });
+  const latest = await one(tx,
+    'SELECT * FROM meeting_notices WHERE meeting_id = $1 ORDER BY version DESC LIMIT 1', [meeting.id]);
+  if (latest && latest.status === 'draft' && latest.content_hash === hash) return { row: latest, replayed: true };
+  const id = randomUUID();
+  const version = (latest?.version ?? 0) + 1;
+  const row = await one(tx,
+    `INSERT INTO meeting_notices (id, meeting_id, school_year_id, version, kind, title, scheduled_at,
+       previous_scheduled_at, location, agenda_version_id, content_hash, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+    [id, meeting.id, meeting.school_year_id, version, kind, meeting.title, meeting.scheduled_at,
+      previousScheduledAt, meeting.location, agendaVersion?.id ?? null, hash, actor.userId]);
+  await audit(tx, actor, 'meeting.notice.created', 'meeting_notice', id,
+    { meetingId: meeting.id, schoolYearId: meeting.school_year_id, version, kind, contentHash: hash });
+  return { row, replayed: false };
+}
+
+function requireReason(value) {
+  try {
+    return text(value, 3, 500);
+  } catch {
+    throw new MeetingError('invalid_reason');
+  }
+}
+
+// Odwołanie: draft|scheduled -> cancelled, z powodem (3-500 znaków, wewnętrzny).
+// Stan zamyka zebranie (obecność, quorum, protokół, uchwały: 409 meeting_cancelled).
+// Ponowienie (podwójne kliknięcie) z tym samym powodem jest powtórką bez nowego
+// zdarzenia. Jeśli zawiadomienie było zatwierdzone, powstaje SZKIC zawiadomienia
+// o odwołaniu — wysyłka wymaga osobnego zatwierdzenia w module kampanii.
+export async function cancelMeeting(db, actor, input = {}) {
+  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const reason = requireReason(input.reason);
+  // #152: powód odwołania trafia do niezmiennej historii — bramka danych osobowych.
+  const gate = gatePii([['meetings.cancellation_reason', reason]], input);
+  const expectedRevision = requiredRevision(input.revision);
+  const result = await mutate(db, async tx => {
+    const locked = await lockMeeting(tx, meeting.id);
+    if (locked.status === 'cancelled') {
+      if (locked.cancellation_reason === reason) return { replayed: true, notice: null };
+      throw new MeetingError('meeting_cancelled', 409);
+    }
+    if (locked.status !== 'draft' && locked.status !== 'scheduled') {
+      throw new MeetingError('meeting_status_transition_invalid', 409);
+    }
+    if (locked.revision_no !== expectedRevision) throw new MeetingError('revision_conflict', 409);
+    const hadApprovedNotice = await hasApprovedNotice(tx, meeting.id);
+    await tx.query(
+      `UPDATE meetings SET status = 'cancelled', cancellation_reason = $2, cancelled_by = $3, cancelled_at = now()
+        WHERE id = $1`, [meeting.id, reason, actor.userId]);
+    await audit(tx, actor, 'meeting.cancelled', 'meeting', meeting.id, {
+      schoolYearId: meeting.school_year_id, fromStatus: locked.status,
+      scheduledAt: iso(locked.scheduled_at), hadApprovedNotice, ...piiAuditMetadata(gate),
+    });
+    let notice = null;
+    if (hadApprovedNotice) {
+      const cancelled = await lockMeeting(tx, meeting.id);
+      notice = (await createNoticeDraft(tx, actor, cancelled, 'cancellation')).row;
+    }
+    return { replayed: false, notice };
+  });
+  return {
+    meeting: meetingFromRow(await loadMeeting(db, meeting.id)),
+    cancellationNotice: result.notice ? noticeFromRow(result.notice, { isLatest: true }) : null,
+    replayed: result.replayed,
+  };
+}
+
+// Zmiana terminu z powodem: wpis w meeting_reschedules (stara i nowa data, aktor, powód)
+// + zdarzenie meeting.rescheduled. Po zatwierdzonym zawiadomieniu powstaje SZKIC
+// zawiadomienia o zmianie terminu (nic nie jest wysyłane).
+export async function rescheduleMeeting(db, actor, input = {}) {
+  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const scheduledAt = timestamp(input.scheduledAt);
+  const reason = requireReason(input.reason);
+  // #152: powód zmiany terminu trafia do niezmiennej historii — bramka danych osobowych.
+  const gate = gatePii([['meeting_reschedules.reason', reason]], input);
+  const expectedRevision = requiredRevision(input.revision);
+  const result = await mutate(db, async tx => {
+    const locked = await lockMeeting(tx, meeting.id);
+    if (locked.status === 'cancelled') throw new MeetingError('meeting_cancelled', 409);
+    if (locked.status !== 'draft' && locked.status !== 'scheduled') {
+      throw new MeetingError('meeting_not_reschedulable', 409);
+    }
+    const same = new Date(locked.scheduled_at).getTime() === new Date(scheduledAt).getTime();
+    const previous = await one(tx,
+      'SELECT * FROM meeting_reschedules WHERE meeting_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1',
+      [meeting.id]);
+    if (same) {
+      // Podwójne kliknięcie / ponowienie: ten sam termin i powód co ostatnia zmiana.
+      if (previous && previous.reason === reason
+          && new Date(previous.to_scheduled_at).getTime() === new Date(scheduledAt).getTime()) {
+        return { replayed: true, notice: null };
+      }
+      throw new MeetingError('reschedule_no_change', 409);
+    }
+    if (locked.revision_no !== expectedRevision) throw new MeetingError('revision_conflict', 409);
+    const rescheduleId = randomUUID();
+    await tx.query(
+      `INSERT INTO meeting_reschedules (id, meeting_id, school_year_id, from_scheduled_at, to_scheduled_at, reason, actor_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [rescheduleId, meeting.id, meeting.school_year_id, locked.scheduled_at, scheduledAt, reason, actor.userId]);
+    const hadApprovedNotice = await hasApprovedNotice(tx, meeting.id);
+    await tx.query('UPDATE meetings SET scheduled_at = $2 WHERE id = $1', [meeting.id, scheduledAt]);
+    await audit(tx, actor, 'meeting.rescheduled', 'meeting', meeting.id, {
+      schoolYearId: meeting.school_year_id, fromScheduledAt: iso(locked.scheduled_at),
+      toScheduledAt: iso(scheduledAt), rescheduleId, hadApprovedNotice, ...piiAuditMetadata(gate),
+    });
+    let notice = null;
+    if (hadApprovedNotice) {
+      const moved = await lockMeeting(tx, meeting.id);
+      notice = (await createNoticeDraft(tx, actor, moved, 'reschedule',
+        { previousScheduledAt: locked.scheduled_at })).row;
+    }
+    return { replayed: false, notice };
+  });
+  return {
+    meeting: meetingFromRow(await loadMeeting(db, meeting.id)),
+    rescheduleNotice: result.notice ? noticeFromRow(result.notice, { isLatest: true }) : null,
+    replayed: result.replayed,
+  };
+}
+
+// Wycofanie punktu porządku obrad (wiersz zostaje, punkt znika z nowych migawek).
+export async function withdrawAgendaItem(db, actor, input = {}, env) {
+  const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
+  const itemId = requireId(input.itemId, 'invalid_agenda_item_id');
+  const row = await mutate(db, async tx => {
+    await lockMeeting(tx, meeting.id);
+    const item = await one(tx, 'SELECT * FROM meeting_agenda_items WHERE id = $1 AND meeting_id = $2 FOR UPDATE',
+      [itemId, meeting.id]);
+    if (!item) throw new MeetingError('agenda_item_not_found', 404);
+    if (item.withdrawn_at) return { item, replayed: true };
+    const updated = await one(tx,
+      'UPDATE meeting_agenda_items SET withdrawn_at = now(), withdrawn_by = $2 WHERE id = $1 RETURNING *',
+      [itemId, actor.userId]);
+    await audit(tx, actor, 'meeting.agenda_item.withdrawn', 'meeting_agenda_item', itemId,
+      { meetingId: meeting.id, schoolYearId: meeting.school_year_id });
+    return { item: updated, replayed: false };
+  });
+  return { agendaItem: agendaItemFromRow(row.item), replayed: row.replayed };
+}
+
+// Szkic zawiadomienia (nowa wersja porządku obrad + treść). Bez zatwierdzenia nie jest
+// widoczne poza panelem zarządzania i nie tworzy kampanii.
+export async function createMeetingNotice(db, actor, input = {}) {
+  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const result = await mutate(db, async tx => {
+    const locked = await lockMeeting(tx, meeting.id);
+    if (locked.status === 'cancelled') throw new MeetingError('meeting_cancelled', 409);
+    if (locked.status !== 'draft' && locked.status !== 'scheduled') {
+      throw new MeetingError('meeting_notice_closed', 409);
+    }
+    const approved = await one(tx,
+      `SELECT n.*, v.content_hash AS agenda_hash FROM meeting_notices n
+         LEFT JOIN meeting_agenda_versions v ON v.id = n.agenda_version_id
+        WHERE n.meeting_id = $1 AND n.status = 'approved' ORDER BY n.version DESC LIMIT 1`, [meeting.id]);
+    if (approved) {
+      const { rows } = await tx.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1', [meeting.id]);
+      const stale = noticeOutdated(approved, locked, agendaHash(activeAgendaSnapshot(rows)),
+        approved.agenda_version_id ? { content_hash: approved.agenda_hash } : null);
+      if (!stale) throw new MeetingError('notice_up_to_date', 409);
+    }
+    return createNoticeDraft(tx, actor, locked, approved ? 'update' : 'invitation', { requireAgenda: true });
+  });
+  return { notice: noticeFromRow(result.row, { isLatest: true }), replayed: result.replayed };
+}
+
+async function loadNotice(tx, meetingId, noticeId, { lock = false } = {}) {
+  const row = await one(tx,
+    `SELECT * FROM meeting_notices WHERE id = $1 AND meeting_id = $2 ${lock ? 'FOR UPDATE' : ''}`,
+    [requireId(noticeId, 'invalid_notice_id'), meetingId]);
+  if (!row) throw new MeetingError('notice_not_found', 404);
+  return row;
+}
+
+// Sprawdzenie, że zawiadomienie jest najnowsze i zgodne z aktualnym zebraniem.
+async function assertNoticeCurrent(tx, notice, meeting) {
+  const newer = await one(tx,
+    'SELECT 1 FROM meeting_notices WHERE meeting_id = $1 AND version > $2 LIMIT 1', [meeting.id, notice.version]);
+  if (newer) throw new MeetingError('notice_not_latest', 409);
+  if (notice.kind === 'cancellation') {
+    if (meeting.status !== 'cancelled') throw new MeetingError('invalid_request');
+    return;
+  }
+  if (meeting.status !== 'scheduled') throw new MeetingError('meeting_not_scheduled', 409);
+  const version = notice.agenda_version_id
+    ? await one(tx, 'SELECT * FROM meeting_agenda_versions WHERE id = $1', [notice.agenda_version_id]) : null;
+  if (!version || !version.snapshot.length) throw new MeetingError('notice_requires_agenda', 409);
+  const { rows } = await tx.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1', [meeting.id]);
+  if (noticeOutdated(notice, meeting, agendaHash(activeAgendaSnapshot(rows)), version)) {
+    throw new MeetingError('notice_outdated', 409);
+  }
+}
+
+// Zatwierdzenie treści zawiadomienia (widoczność w panelu jako zatwierdzone i na stronie
+// publicznej dla zebrań ogólnych). Zatwierdza inna osoba niż autor; MFA — jak każde
+// zarządzanie zebraniem (meetingForManage). Nie wysyła niczego.
+export async function approveMeetingNotice(db, actor, input = {}) {
+  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const result = await mutate(db, async tx => {
+    const locked = await lockMeeting(tx, meeting.id);
+    const notice = await loadNotice(tx, meeting.id, input.noticeId, { lock: true });
+    if (notice.status === 'approved') return { row: notice, replayed: true };
+    if (notice.created_by === actor.userId) throw new MeetingError('notice_four_eyes_required', 403);
+    await assertNoticeCurrent(tx, notice, locked);
+    const row = await one(tx,
+      `UPDATE meeting_notices
+          SET status = 'approved', approved_by = $2, approved_at = now(),
+              notice_days_before = floor(extract(epoch FROM (scheduled_at - now())) / 86400)::int,
+              notice_late = CASE WHEN kind = 'cancellation' OR $3::int IS NULL THEN NULL
+                ELSE floor(extract(epoch FROM (scheduled_at - now())) / 86400) < $3::int END
+        WHERE id = $1 RETURNING *`, [notice.id, actor.userId, locked.notice_min_days]);
+    await audit(tx, actor, 'meeting.notice.approved', 'meeting_notice', notice.id, {
+      meetingId: meeting.id, schoolYearId: meeting.school_year_id, version: notice.version,
+      kind: notice.kind, contentHash: notice.content_hash,
+      noticeDaysBefore: row.notice_days_before, noticeLate: row.notice_late,
+    });
+    return { row, replayed: false };
+  });
+  return { notice: noticeFromRow(result.row, { isLatest: true }), replayed: result.replayed };
+}
+
+const NOTICE_KIND_LABELS = {
+  invitation: 'Zawiadomienie o zebraniu',
+  update: 'Zaktualizowane zawiadomienie o zebraniu',
+  reschedule: 'Zmiana terminu zebrania',
+  cancellation: 'Odwołanie zebrania',
+};
+
+function brusselsDateTime(value) {
+  return new Intl.DateTimeFormat('pl-PL', {
+    timeZone: 'Europe/Brussels', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(value));
+}
+
+function noticeEmailContent(notice, agenda) {
+  const lines = [`${NOTICE_KIND_LABELS[notice.kind]}: ${notice.title}`, ''];
+  if (notice.kind === 'cancellation') {
+    lines.push(`Zebranie zaplanowane na ${brusselsDateTime(notice.scheduled_at)} (czas brukselski) zostało odwołane.`);
+  } else {
+    if (notice.kind === 'reschedule') {
+      lines.push(`Dotychczasowy termin: ${brusselsDateTime(notice.previous_scheduled_at)} (czas brukselski).`);
+    }
+    lines.push(`Termin: ${brusselsDateTime(notice.scheduled_at)} (czas brukselski).`);
+    if (notice.location) lines.push(`Miejsce: ${notice.location}.`);
+    lines.push('', 'Porządek obrad:');
+    for (const item of agenda) lines.push(`${item.position}. ${item.title}`);
+  }
+  return {
+    subject: `${NOTICE_KIND_LABELS[notice.kind]} — ${brusselsDateTime(notice.scheduled_at)}`,
+    bodyText: lines.join('\n'),
+  };
+}
+
+// Szkic kampanii e-mail z zatwierdzonego zawiadomienia. WYŁĄCZNIE szkic: brak migawki
+// odbiorców, brak zatwierdzenia i brak kolejki — treść i listę zatwierdza osoba w
+// module kampanii (cztery oczy, dzienny limit, idempotentny klucz kampania + rodzina).
+// Zebranie ogólne -> wszystkie rodziny roku; klasowe -> rodziny dzieci tej klasy;
+// zebranie zarządu (konta użytkowników) nie ma jeszcze kampanii (poza zakresem).
+export async function createNoticeCampaignDraft(db, actor, input = {}) {
+  const meeting = await meetingForManage(db, actor, input.meetingId);
+  const result = await mutate(db, async tx => {
+    const locked = await lockMeeting(tx, meeting.id);
+    const notice = await loadNotice(tx, meeting.id, input.noticeId, { lock: true });
+    const existing = await one(tx,
+      'SELECT id, status, audience, class_id FROM email_campaigns WHERE meeting_notice_id = $1', [notice.id]);
+    if (existing) return { campaign: existing, replayed: true };
+    if (notice.status !== 'approved') throw new MeetingError('notice_not_approved', 409);
+    if (locked.kind === 'board') throw new MeetingError('notice_campaign_audience_unsupported', 409);
+    await assertNoticeCurrent(tx, notice, locked);
+    const agendaVersion = notice.agenda_version_id
+      ? await one(tx, 'SELECT * FROM meeting_agenda_versions WHERE id = $1', [notice.agenda_version_id]) : null;
+    const audience = locked.kind === 'class' ? 'class_households' : 'all_households';
+    const { subject, bodyText } = noticeEmailContent(notice, agendaVersion?.snapshot ?? []);
+    let content;
+    try {
+      content = parseCampaignContent({
+        title: `Zawiadomienie o zebraniu (wersja ${notice.version}): ${notice.title}`.slice(0, 200),
+        subject, bodyText, audience: 'all_households', category: 'organizational',
+      });
+    } catch (error) {
+      if (error instanceof ContentError) throw new MeetingError('invalid_notice_content', 409, { field: error.code });
+      throw error;
+    }
+    const hash = emailContentHash({ schoolYearId: locked.school_year_id, ...content, audience });
+    const id = randomUUID();
+    await tx.query(
+      `INSERT INTO email_campaigns (id, school_year_id, title, audience, category, subject, body_text, content_hash,
+         created_by, updated_by, idempotency_key, meeting_id, meeting_notice_id, class_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11, $12, $13)`,
+      [id, locked.school_year_id, content.title, audience, content.category, content.subject, content.bodyText,
+        hash, actor.userId, `meeting-notice-${notice.id}`, meeting.id, notice.id,
+        audience === 'class_households' ? locked.class_id : null]);
+    await insertAuditEvent(tx, {
+      actorId: actor.userId, action: 'email.campaign.created', entityType: 'email_campaign', entityId: id,
+      metadata: { schoolYearId: locked.school_year_id, audience, category: content.category, contentHash: hash,
+        meetingId: meeting.id, meetingNoticeId: notice.id },
+    });
+    await audit(tx, actor, 'meeting.notice.campaign_drafted', 'meeting_notice', notice.id,
+      { meetingId: meeting.id, schoolYearId: locked.school_year_id, version: notice.version, campaignId: id });
+    return { campaign: { id, status: 'draft', audience, class_id: audience === 'class_households' ? locked.class_id : null },
+      replayed: false };
+  });
+  return {
+    campaign: {
+      id: result.campaign.id, status: result.campaign.status, audience: result.campaign.audience,
+      classId: result.campaign.class_id ?? null,
+    },
+    // Przypomnienie dla interfejsu: nic nie zostało wysłane ani zakolejkowane.
+    sent: false,
+    replayed: result.replayed,
+  };
+}
+
+// Publiczne: wyłącznie zatwierdzone zawiadomienia zebrań ogólnych (widok public_meeting_notices).
+export async function listPublicMeetingNotices(db, input = {}) {
+  const schoolYearId = requireId(input.schoolYearId);
+  const { rows } = await db.query(
+    'SELECT * FROM public_meeting_notices WHERE school_year_id = $1 ORDER BY scheduled_at, id LIMIT 200', [schoolYearId]);
+  return {
+    notices: rows.map(row => ({
+      id: row.id,
+      kind: row.kind,
+      cancelled: row.kind === 'cancellation',
+      title: row.title,
+      scheduledAt: iso(row.scheduled_at),
+      previousScheduledAt: iso(row.previous_scheduled_at),
+      location: row.location ?? null,
+      agenda: row.kind === 'cancellation' ? []
+        : (row.agenda_snapshot ?? []).map(item => ({ position: item.position, title: item.title })),
+      approvedAt: iso(row.approved_at),
+    })),
+  };
+}
+
 // ---------- HTTP ----------
 
 async function readJson(request) {
@@ -1519,6 +2022,9 @@ function route(method, pathname) {
   if (n === 1 && a === 'public-minutes') {
     return method === 'GET' ? { name: 'public' } : { name: 'method', allowed: ['GET'] };
   }
+  if (n === 1 && a === 'public-notices') {
+    return method === 'GET' ? { name: 'publicNotices' } : { name: 'method', allowed: ['GET'] };
+  }
   if (n === 2 && a === 'resolutions' && b === 'lookup') {
     return method === 'GET' ? { name: 'lookup' } : { name: 'method', allowed: ['GET'] };
   }
@@ -1556,6 +2062,27 @@ function route(method, pathname) {
   if (n === 4 && b === 'minutes' && d === 'visibility') {
     return post ? { name: 'visibility', meetingId, minutesId: c, create: true } : { name: 'method', allowed: ['POST'] };
   }
+  // #113: odwołanie, zmiana terminu, wycofanie punktu i zawiadomienia. Stanowe (bez
+  // Idempotency-Key): ponowienie tej samej operacji zwraca powtórkę.
+  if (n === 2 && b === 'cancellation') {
+    return post ? { name: 'cancel', meetingId } : { name: 'method', allowed: ['POST'] };
+  }
+  if (n === 2 && b === 'reschedule') {
+    return post ? { name: 'reschedule', meetingId } : { name: 'method', allowed: ['POST'] };
+  }
+  if (n === 4 && b === 'agenda-items' && d === 'withdrawal') {
+    return post ? { name: 'agendaWithdraw', meetingId, itemId: c } : { name: 'method', allowed: ['POST'] };
+  }
+  if (n === 2 && b === 'notices') {
+    return post ? { name: 'noticeCreate', meetingId, created: true } : { name: 'method', allowed: ['POST'] };
+  }
+  if (n === 4 && b === 'notices' && d === 'approval') {
+    return post ? { name: 'noticeApprove', meetingId, noticeId: c } : { name: 'method', allowed: ['POST'] };
+  }
+  if (n === 4 && b === 'notices' && d === 'campaign-draft') {
+    return post ? { name: 'noticeCampaign', meetingId, noticeId: c, created: true }
+      : { name: 'method', allowed: ['POST'] };
+  }
   if (n === 2 && b === 'resolutions') {
     return post ? { name: 'resolution', meetingId, create: true } : { name: 'method', allowed: ['POST'] };
   }
@@ -1585,6 +2112,9 @@ export async function handle(request, env, url, json) {
     if (target.name === 'public') {
       return json(await listPublicMinutes(db, { schoolYearId: query.get('schoolYearId') }));
     }
+    if (target.name === 'publicNotices') {
+      return json(await listPublicMeetingNotices(db, { schoolYearId: query.get('schoolYearId') }));
+    }
 
     const actor = await loadActor(request, env);
     if (!mutation) {
@@ -1611,7 +2141,7 @@ export async function handle(request, env, url, json) {
 
     const body = await readJson(request);
     const input = { ...body, meetingId: target.meetingId, minutesId: target.minutesId,
-      resolutionId: target.resolutionId };
+      resolutionId: target.resolutionId, itemId: target.itemId, noticeId: target.noticeId };
     if (target.create) input.idempotencyKey = request.headers.get('Idempotency-Key')?.trim();
 
     const handlers = {
@@ -1627,8 +2157,19 @@ export async function handle(request, env, url, json) {
       resolutionUpdate: () => updateResolution(db, actor, input),
       resolutionCorrect: () => correctResolution(db, actor, input),
       resolutionExecution: () => recordResolutionExecution(db, actor, input),
+      cancel: () => cancelMeeting(db, actor, input),
+      reschedule: () => rescheduleMeeting(db, actor, input),
+      agendaWithdraw: () => withdrawAgendaItem(db, actor, input, env),
+      noticeCreate: () => createMeetingNotice(db, actor, input),
+      noticeApprove: () => approveMeetingNotice(db, actor, input),
+      noticeCampaign: () => createNoticeCampaignDraft(db, actor, input),
     };
     const { replayed, ...result } = await handlers[target.name]();
+    // Operacje stanowe (bez Idempotency-Key): 201 przy pierwszym utworzeniu, 200 przy powtórce.
+    if (target.created) {
+      return json(result, replayed ? 200 : 201, { 'Idempotency-Replayed': replayed ? 'true' : 'false' });
+    }
+    if (replayed !== undefined && !target.create) return json({ ...result, replayed });
     if (!target.create) return json(result);
     return json(result, replayed ? 200 : 201, { 'Idempotency-Replayed': replayed ? 'true' : 'false' });
   } catch (error) {
