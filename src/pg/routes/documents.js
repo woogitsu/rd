@@ -2,7 +2,7 @@
 //
 //   POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]
 //        ciało = surowe bajty pliku, nagłówki Content-Type i Idempotency-Key
-//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&limit=…][&offset=…]
+//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&from=…][&to=…][&sort=documentDate|createdAt][&limit=…][&offset=…]
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
 //   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed
@@ -283,6 +283,16 @@ async function list(request, env, url, json) {
   if (rawQuery !== null && rawQuery.length > 200) return json({ error: 'invalid_request' }, 400);
   // Ucieczka znaków specjalnych ILIKE, żeby "%"/"_" w wyszukiwanej frazie nie działały jako wieloznaczniki.
   const searchQuery = rawQuery ? rawQuery.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`) : '';
+  // Issue #76: zakres daty dokumentu (najnowsza wersja opisu) i sortowanie.
+  // Dokument bez daty nie spełnia filtra from/to; przy sortowaniu po dacie trafia na koniec.
+  const fromDate = url.searchParams.get('from');
+  const toDate = url.searchParams.get('to');
+  if ((fromDate && !validDocumentDate(fromDate)) || (toDate && !validDocumentDate(toDate))) {
+    return json({ error: 'invalid_document_date' }, 400);
+  }
+  if (fromDate && toDate && fromDate > toDate) return json({ error: 'invalid_request' }, 400);
+  const sort = url.searchParams.get('sort') ?? 'createdAt';
+  if (sort !== 'createdAt' && sort !== 'documentDate') return json({ error: 'invalid_request' }, 400);
   const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit') ?? '50', 10) || 50, 1), MAX_LIST_LIMIT);
   const offset = Math.min(Math.max(Number.parseInt(url.searchParams.get('offset') ?? '0', 10) || 0, 0), MAX_OFFSET);
 
@@ -318,10 +328,12 @@ async function list(request, env, url, json) {
         AND ($9::text = 'all' OR COALESCE(s.status, 'active') = 'active')
         AND ($10::text IS NULL OR dd.category = $10)
         AND ($11::text IS NULL OR dd.title ILIKE '%' || $11 || '%' OR dd.description ILIKE '%' || $11 || '%')
-      ORDER BY d.created_at DESC, d.id
+        AND ($12::date IS NULL OR dd.document_date >= $12::date)
+        AND ($13::date IS NULL OR dd.document_date <= $13::date)
+      ORDER BY CASE WHEN $14::text = 'documentDate' THEN dd.document_date END DESC NULLS LAST, d.created_at DESC, d.id
       LIMIT $7 OFFSET $8`,
     [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value, limit, offset,
-      statusFilter, categoryFilter || null, searchQuery || null],
+      statusFilter, categoryFilter || null, searchQuery || null, fromDate || null, toDate || null, sort],
   );
   const documents = rows.map(toDocument).filter((doc) => canAccessDocument(context, doc));
   return json({ documents, limit, offset });

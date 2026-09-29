@@ -1160,3 +1160,74 @@ test('malicious synthetic files are refused with 415 before putObject, also on r
   assert.equal(storage.keys().length, 0);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 0);
 }));
+
+test('from/to filter by document date in SQL; undated documents fail the filter; sort=documentDate puts undated last', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const dated = {};
+  for (const [name, date] of [['old', '2026-01-10'], ['mid', '2026-03-15'], ['new', '2026-05-20']]) {
+    dated[name] = (await upload(env, { cookie })).data.document.id;
+    await describe(env, { cookie, id: dated[name], body: { title: `Faktura ${name}`, category: 'faktura', documentDate: date } });
+  }
+  const undated = (await upload(env, { cookie })).data.document.id;
+  await describe(env, { cookie, id: undated, body: { title: 'Faktura bez daty', category: 'faktura' } });
+
+  const ids = async (query) => {
+    const response = await get(env, `/api/documents?schoolYearId=${YEAR}${query}`, cookie);
+    assert.equal(response.status, 200);
+    return (await response.json()).documents.map((doc) => doc.id);
+  };
+  assert.deepEqual(await ids('&from=2026-02-01&to=2026-04-30'), [dated.mid]);
+  assert.deepEqual(new Set(await ids('&from=2026-03-15')), new Set([dated.mid, dated.new]));
+  assert.deepEqual(await ids('&to=2026-01-10'), [dated.old]);
+  assert.deepEqual(await ids('&sort=documentDate'), [dated.new, dated.mid, dated.old, undated]);
+
+  for (const bad of ['&from=2026-13-40', '&to=nie-data']) {
+    const response = await get(env, `/api/documents?schoolYearId=${YEAR}${bad}`, cookie);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, 'invalid_document_date');
+  }
+  for (const bad of ['&from=2026-05-01&to=2026-04-01', '&sort=title']) {
+    const response = await get(env, `/api/documents?schoolYearId=${YEAR}${bad}`, cookie);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, 'invalid_request');
+  }
+}));
+
+test('from/to and search never widen scope: representative gets nothing from other class or board even with matching date', async () => withEnv(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const own = (await upload(env, { cookie, kind: 'class', classId: 'c-1a' })).data.document.id;
+  const other = (await upload(env, { cookie, kind: 'class', classId: 'c-1b' })).data.document.id;
+  const board = (await upload(env, { cookie, kind: 'board' })).data.document.id;
+  for (const id of [own, other, board]) {
+    await describe(env, { cookie, id, body: { title: 'Protokół zebrania', category: 'protokol', documentDate: '2026-04-01' } });
+  }
+  const response = await get(env, `/api/documents?schoolYearId=${YEAR}&q=Protok&from=2026-04-01&to=2026-04-01&sort=documentDate`, await repA(db));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).documents.map((doc) => doc.id), [own]);
+}));
+
+test('pagination: 120 documents, 70 inaccessible to the representative — full pages of the own 50, no leaked rows', async () => withEnv(async (db, env) => {
+  const insert = (count, kind, classId, prefix) => db.query(
+    `INSERT INTO documents (id, object_key, kind, school_year_id, class_id, mime_type, byte_size, sha256, created_by, idempotency_key)
+     SELECT $1 || g, 'docs/' || gen_random_uuid(), $2, $3, $4, 'application/pdf', 10, repeat('a', 64), 'u-rep-a', $1 || 'key-' || g
+       FROM generate_series(1, $5) g`,
+    [prefix, kind, YEAR, classId, count],
+  );
+  const rep = await repA(db);
+  await insert(50, 'class', 'c-1a', 'own-');
+  await insert(35, 'class', 'c-1b', 'other-');
+  await insert(35, 'board', null, 'board-');
+
+  const seen = [];
+  const sizes = [];
+  for (let offset = 0; offset < 60; offset += 20) {
+    const response = await get(env, `/api/documents?schoolYearId=${YEAR}&limit=20&offset=${offset}`, rep);
+    assert.equal(response.status, 200);
+    const page = (await response.json()).documents;
+    sizes.push(page.length);
+    seen.push(...page.map((doc) => doc.id));
+  }
+  assert.deepEqual(sizes, [20, 20, 10]);
+  assert.equal(new Set(seen).size, 50);
+  assert.ok(seen.every((id) => id.startsWith('own-')));
+}));
