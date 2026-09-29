@@ -8,8 +8,9 @@ import { bodyLimitFor, maxUploadBytes } from './documents.js';
 import { storageFromEnv } from './storage.js';
 import { checkReadiness } from './health.js';
 import { createRequestMetrics, describeError, log, startMetricsReporter } from './log.js';
-import { dummyHash } from './pg/password.js';
+import { dummyHash, loginQueueMetrics } from './pg/password.js';
 import { PHOTO_UPLOAD_MAX_BYTES } from './pg/news.js';
+import { ConfigError, validateConfig } from './config.js';
 import { resolveWriteMode } from './write-mode.js';
 
 // POST /api/news-photos/:id/file (#96) przesyła surowe bajty obrazu, jak
@@ -32,29 +33,10 @@ export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 export const DEFAULT_HEADERS_TIMEOUT_MS = 60_000;
 
-// #126: bez TRUST_PROXY za proxy Railway `clientAddress` (src/node-app.js) bierze
-// adres gniazda (adres proxy), więc limit logowań na IP jest wspólny dla całej
-// szkoły — 20 błędnych prób od kogokolwiek blokuje logowanie wszystkim. Poza
-// development/test (domyślne, bez APP_ENV — lokalnie i w testach) i wprost
-// oznaczonym staging/production wymagamy jawnego TRUST_PROXY. Konwencja nazw
-// zgodna z `isProductionEnv` (src/pg/bootstrap-admin.js): nierozpoznana wartość
-// APP_ENV NIE jest traktowana jak produkcja (nie blokuje startu po cichu),
-// ale `staging`/`production`/`prod` wprost tego wymagają — literówka w APP_ENV
-// nie ma więc być jedynym zabezpieczeniem produkcji (założenie do potwierdzenia).
-const PROXY_REQUIRED_ENVS = new Set(['staging', 'production', 'prod']);
-
-export function trustProxyRequired(appEnv) {
-  return PROXY_REQUIRED_ENVS.has(String(appEnv ?? '').trim().toLowerCase());
-}
-
-export function assertTrustProxyConfigured(processEnv = process.env) {
-  if (!trustProxyRequired(processEnv.APP_ENV)) return;
-  if (processEnv.TRUST_PROXY === '1' || processEnv.TRUST_PROXY === 'true') return;
-  throw new Error(
-    `TRUST_PROXY musi być ustawione (1 lub true) gdy APP_ENV=${processEnv.APP_ENV} — inaczej licznik prób logowania `
-    + 'na adres IP jest wspólny dla całej szkoły (#126, docs/AUTH.md).',
-  );
-}
+// #126/#114: wymagane ustawienia poza środowiskiem lokalnym (w tym TRUST_PROXY,
+// bez którego limit logowań na IP jest wspólny dla całej szkoły) sprawdza
+// `validateConfig` (src/config.js) przed startem — patrz docs/RAILWAY_OPERATIONS.md.
+export { ConfigError, validateConfig };
 
 // Wybór warstwy API. Z DATABASE_URL: nowe API na PostgreSQL (env.db).
 // Bez niej: dotychczasowy router Workera (bez D1 chronione trasy zwracają 503).
@@ -190,7 +172,14 @@ function positiveMs(value, fallback) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  assertTrustProxyConfigured();
+  try {
+    validateConfig();
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    // Tylko nazwy zmiennych i powody — bez wartości (sekrety).
+    log.error('config_invalid', { variables: error.variables });
+    process.exit(1);
+  }
   const runtime = resolveRuntime();
   // #203: wylicza i zapamiętuje fikcyjny hash PRZED pierwszym żądaniem — inaczej
   // pierwsze logowanie nieznanym adresem e-mail po starcie procesu liczyło dwa
@@ -207,7 +196,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const server = await startServer({ env: runtime.env, fetchHandler: runtime.fetchHandler, bodyLimit: runtime.bodyLimit, metrics, readiness });
   const address = server.address();
   log.info('server_started', { mode: runtime.mode, port: typeof address === 'object' ? address.port : null });
-  const stopMetrics = startMetricsReporter({ metrics, intervalMs: positiveMs(process.env.METRICS_LOG_INTERVAL_MS, 5 * 60 * 1000) });
+  const stopMetrics = startMetricsReporter({ metrics, extraFields: loginQueueMetrics, intervalMs: positiveMs(process.env.METRICS_LOG_INTERVAL_MS, 5 * 60 * 1000) });
   const shutdown = createShutdown({
     server,
     close: () => runtime.close(),

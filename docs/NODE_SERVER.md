@@ -36,7 +36,8 @@ Brakujący plik zwraca odpowiedź `404`; serwer nie zastępuje go plikiem `index
 | Zmienna | Wymagana | Znaczenie |
 |---|---:|---|
 | `PORT` | na Railway | Port przydzielony procesowi; lokalnie domyślnie `3000` |
-| `PUBLIC_BASE_URL` | opcjonalna | Publiczny adres bazowy używany przy tworzeniu obiektu `Request` |
+| `PUBLIC_BASE_URL` | obowiązkowa poza development/test | Publiczny adres bazowy (`https://host` bez ścieżki) używany przy tworzeniu obiektu `Request`; bez niej za proxy TLS zapisy kończą się `403 invalid_origin`. Serwer nie startuje z `APP_ENV` innym niż lokalny bez poprawnej wartości — [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md#walidacja-konfiguracji-przy-starcie-114) |
+| `MFA_ENCRYPTION_KEY`, `TRUST_PROXY`, `BREVO_WEBHOOK_SECRET` | obowiązkowe poza development/test | Sprawdzane przy starcie tak samo jak `PUBLIC_BASE_URL` (`validateConfig`, `src/config.js`) |
 | `DATABASE_URL` | opcjonalna | Gdy ustawiona, API obsługuje router PostgreSQL (`src/pg/app.js`); bez niej działa dotychczasowy router Workera |
 | `PG_POOL_MAX` | opcjonalna | Maksymalna liczba połączeń w puli (domyślnie 10, najwyżej 50) |
 | `PG_STATEMENT_TIMEOUT_MS` | opcjonalna | Limit czasu pojedynczego zapytania (domyślnie 10000 ms) |
@@ -76,7 +77,7 @@ Redakcja jest zabezpieczeniem dodatkowym — kod nadal nie może przekazywać do
 
 **Log żądań.** `src/node-app.js` po zakończeniu każdej odpowiedzi zapisuje `http_request` z metodą, ścieżką bez query stringu, w której segmenty podobne do identyfikatorów (liczby, UUID, ciągi z cyframi, adresy e-mail) są zastąpione `:id`, statusem i czasem w ms. Nie zapisuje nagłówków, cookies, adresu IP ani ciał. Sondy `/health` i `/health/ready` są logowane na poziomie `debug`, odpowiedzi 5xx na poziomie `error`, przerwane połączenia (`status: 0`) na poziomie `warn`.
 
-**Liczniki.** Proces liczy żądania według klasy statusu (2xx–5xx) oraz czas średni i maksymalny, a co `METRICS_LOG_INTERVAL_MS` zapisuje zdarzenie `http_metrics` i zeruje liczniki (okresy bez ruchu są pomijane). Liczniki nie są wystawiane przez HTTP — nie ma publicznego punktu metryk, więc nie trzeba go chronić.
+**Liczniki.** Proces liczy żądania według klasy statusu (2xx–5xx) oraz czas średni i maksymalny, a co `METRICS_LOG_INTERVAL_MS` zapisuje zdarzenie `http_metrics` i zeruje liczniki (okresy bez ruchu są pomijane). Zdarzenie zawiera też `login_queue_depth` i `login_busy_total` kolejki scrypt (#203, patrz docs/AUTH.md). Liczniki nie są wystawiane przez HTTP — nie ma publicznego punktu metryk, więc nie trzeba go chronić.
 
 **Zamykanie.** Po SIGTERM/SIGINT serwer przestaje przyjmować połączenia, `/health/ready` zwraca `503`, trwające żądania są kończone, bezczynne połączenia keep-alive zamykane, a następnie zamykana jest pula PostgreSQL (`db.close()`). Po `SHUTDOWN_TIMEOUT_MS` pozostałe połączenia są zamykane siłą i proces kończy się kodem 1. Railway domyślnie wysyła SIGKILL zaraz po SIGTERM, dlatego `railway.json` ustawia `drainingSeconds: 15`, a start odbywa się bezpośrednio przez `node src/server.js` (npm nie przekazuje sygnału do procesu potomnego).
 

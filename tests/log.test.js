@@ -121,3 +121,15 @@ test('request metrics count status classes and the reporter logs only non-empty 
   assert.equal(logged[0].duration_ms_avg, 16);
   assert.equal(metrics.snapshot().requests, 0);
 });
+
+test('reporter dopisuje pola dodatkowe (kolejka logowania, #203) bez adresów i e-maili', async (t) => {
+  const metrics = createRequestMetrics();
+  metrics.record(503, 2);
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const { logger, entries } = capture();
+  const stop = startMetricsReporter({ metrics, logger, intervalMs: 1000, extraFields: () => ({ login_queue_depth: 3, login_busy_total: 7 }) });
+  t.mock.timers.tick(1000);
+  stop();
+  assert.equal(entries()[0].login_queue_depth, 3);
+  assert.equal(entries()[0].login_busy_total, 7);
+});

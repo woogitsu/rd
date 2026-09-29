@@ -50,6 +50,7 @@ export const MESSAGES = Object.freeze({
   emailElsewhere: 'Ten sam adres e-mail opiekuna występuje w innej rodzinie — rodzin nie łączymy automatycznie.',
   noCurrentHousehold: 'Uczeń nie ma w bazie bieżącego głównego gospodarstwa — wymaga ręcznego powiązania.',
   noHouseholdLink: 'Wiersz bez ID rodziny: utworzono osobną rodzinę; rodzeństwo nie zostanie powiązane.',
+  idZeroVariant: 'ID ze źródła różni się od zapisu w bazie tylko zerami wiodących (np. 00123 i 123) — Excel mógł zamienić tekst na liczbę. Wymaga ręcznego sprawdzenia, nie utworzono duplikatu.',
   guardianMaybeChanged: 'Możliwa zmiana danych opiekuna (e-mail lub pisownia) — wymaga ręcznej decyzji. Nie utworzono nowego opiekuna.',
 });
 
@@ -63,6 +64,9 @@ class ImportError extends Error {
 }
 
 const norm = (value) => String(value ?? '').trim().toLocaleLowerCase('pl-PL').replace(/\s+/g, ' ');
+// #88: ID złożone z samych cyfr bez zer wiodących ("00123" -> "123"); służy wyłącznie
+// do wykrycia różnicy w zapisie zer (Excel zamienia tekst 00123 na liczbę 123).
+const digitsCanon = (ref) => (/^[0-9]+$/.test(ref) ? ref.replace(/^0+(?=[0-9])/, '') : null);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 // #166: poprzednia wersja porównywała TYLKO do dosłownego 'production' —
@@ -237,6 +241,26 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     );
     for (const row of rows) existingHouseholds.set(row.ref, row.id);
   }
+  // #88: istniejące ID różniące się od plikowego wyłącznie zerami wiodącymi. Takiego wiersza
+  // nie łączymy automatycznie ani nie dublujemy — trafia do konfliktów.
+  const zeroVariants = async (table, refs) => {
+    const canons = [...new Set(refs.map(digitsCanon).filter((c) => c !== null))];
+    const found = new Map();
+    if (!canons.length) return found;
+    const { rows } = await executor.query(
+      `SELECT lower(source_ref) AS ref FROM ${table}
+        WHERE source_ref ~ '^[0-9]+$' AND regexp_replace(source_ref, '^0+(?=[0-9])', '') = ANY($1::text[])`,
+      [canons],
+    );
+    for (const row of rows) found.set(row.ref, digitsCanon(row.ref));
+    return found;
+  };
+  const studentZeroVariants = await zeroVariants('students', studentRefs);
+  const householdZeroVariants = await zeroVariants('households', householdRefs);
+  const hasZeroVariant = (variants, ref) => {
+    const canon = digitsCanon(ref);
+    return canon !== null && [...variants].some(([existingRef, existingCanon]) => existingCanon === canon && existingRef !== ref);
+  };
   const studentIds = [...existingStudents.values()].map((s) => s.id);
   const householdIds = [...new Set([...existingStudents.values()].map((s) => s.household_id).filter(Boolean).concat([...existingHouseholds.values()]))];
 
@@ -317,6 +341,8 @@ async function buildPlan(executor, { schoolYearId, classIds, records, errors, wa
     if (!studentRef) { conflict(MESSAGES.missingStudentId); continue; }
     const classId = classIds.get(record.className);
     const existing = existingStudents.get(studentRef);
+    if (!existing && hasZeroVariant(studentZeroVariants, studentRef)) { conflict(MESSAGES.idZeroVariant); continue; }
+    if (householdRef && !existingHouseholds.has(householdRef) && hasZeroVariant(householdZeroVariants, householdRef)) { conflict(MESSAGES.idZeroVariant); continue; }
     const changes = [];
     let studentId;
     let householdId;
@@ -434,6 +460,10 @@ async function prepare(executor, payload) {
   return { fingerprint, plan };
 }
 
+function hasPendingWrites(inserts) {
+  return Object.values(inserts).some((list) => list.length > 0);
+}
+
 function batchResult(row, replayed) {
   return {
     batchId: row.id,
@@ -526,13 +556,20 @@ async function commit(env, actorId, payload, idempotencyKey) {
     const { fingerprint, plan } = await prepare(tx, payload);
     if (fingerprint !== payload.fingerprint) throw new ImportError(409, 'fingerprint_mismatch');
     const previous = await tx.query(
-      'SELECT * FROM import_batches WHERE fingerprint = $1 OR idempotency_key = $2',
+      'SELECT * FROM import_batches WHERE fingerprint = $1 OR idempotency_key = $2 ORDER BY created_at DESC, id',
       [fingerprint, idempotencyKey],
     );
     const byKey = previous.rows.find((row) => row.idempotency_key === idempotencyKey);
     if (byKey && byKey.fingerprint !== fingerprint) throw new ImportError(409, 'idempotency_key_reused');
-    const same = previous.rows.find((row) => row.fingerprint === fingerprint);
-    if (same) return { status: 200, body: batchResult(same, true) };
+    // Ten sam klucz = podwójne kliknięcie/ponowienie po zerwaniu połączenia: zapisany wynik.
+    if (byKey) return { status: 200, body: batchResult(byKey, true) };
+    // #2: sam fingerprint (te same wiersze) NIE wystarcza do powtórki. Nowy klucz
+    // dostaje zapisany wynik tylko wtedy, gdy plan nie ma już nic do zapisania
+    // (dane z pliku są w bazie albo pominięte wiersze nadal są w konflikcie).
+    // Jeżeli po poprawce (np. usunięciu konfliktu) plan ma nowe zapisy, powstaje
+    // nowa partia — pominięte wiersze nie giną po cichu.
+    const sameData = previous.rows.find((row) => row.fingerprint === fingerprint);
+    if (sameData && !hasPendingWrites(plan.inserts)) return { status: 200, body: batchResult(sameData, true) };
 
     // #145 (D-06): commit wymaga opublikowanej informacji o przetwarzaniu
     // danych. Sprawdzane dopiero tutaj (nie w preview) — podgląd nie zapisuje

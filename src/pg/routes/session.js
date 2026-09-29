@@ -1,9 +1,10 @@
 // /api/session, /api/access, /api/logout — ten sam kontrakt HTTP co stary Worker.
 
-import { clearSessionCookie } from '../../auth.js';
+import { clearSessionCookies } from '../../auth.js';
 import { loadSession, revokeSession } from '../auth.js';
 import { hasActiveRole, loadAuthorizationContext } from '../authorization.js';
 import { mfaGate } from '../mfa-policy.js';
+import { buildHeaders } from '../http.js';
 import { isReadOnly } from '../../write-mode.js';
 
 export const name = 'session';
@@ -38,7 +39,7 @@ export async function handle(request, env, url, json) {
     if (session) await revokeSession(env, session, { reason: 'logout' });
     return new Response(null, {
       status: 204,
-      headers: { 'Cache-Control': 'no-store', 'Set-Cookie': clearSessionCookie() },
+      headers: buildHeaders({ 'Cache-Control': 'no-store', 'Set-Cookie': clearSessionCookies() }),
     });
   }
   return null;

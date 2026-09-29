@@ -58,13 +58,46 @@ logach, zgłoszeniach ani buildzie frontendu.
 | Zmienna | Usługa | Uwagi |
 |---|---|---|
 | `PORT` | aplikacja | ustawia Railway |
-| `APP_ENV` | aplikacja | `staging` lub `production` |
-| `PUBLIC_BASE_URL` | aplikacja | osobny dla każdego środowiska |
+| `APP_ENV` | aplikacja | `staging` lub `production`. Lokalne są tylko brak wartości, `development` i `test`; każda inna wartość (także literówka) jest traktowana jak środowisko wystawione do sieci i podlega walidacji startowej poniżej |
+| `PUBLIC_BASE_URL` | aplikacja | **wymagana** poza środowiskiem lokalnym: `https://host` bez ścieżki, osobny dla każdego środowiska |
+| `MFA_ENCRYPTION_KEY` (albo `MFA_ENCRYPTION_KEYS`) | aplikacja | **wymagany** poza środowiskiem lokalnym: klucz 32 bajty (sekret), rotacja: sekcja niżej |
+| `TRUST_PROXY` | aplikacja | **wymagana** poza środowiskiem lokalnym: `1` lub `true` (za proxy Railway; inaczej wspólny licznik prób logowania na IP) |
+| `BREVO_WEBHOOK_SECRET` | aplikacja | **wymagany** poza środowiskiem lokalnym: co najmniej 32 znaki (sekret) |
 | `DATABASE_URL` | aplikacja | referencja do prywatnego adresu PostgreSQL (`*.railway.internal`), nie publiczny TCP proxy |
 | `BUCKET`, `ENDPOINT`, `REGION`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` | aplikacja | referencje do zmiennych Storage Bucket (#39) |
 | `BREVO_API_KEY` | aplikacja / worker | dopiero w #40; na stagingu klucz bez możliwości wysyłki do rodziców |
 
 Sesje i MFA mogą wymagać dodatkowych sekretów — ich nazwy dopisuje PR #35.
+
+### Walidacja konfiguracji przy starcie (#114)
+
+Przy `APP_ENV` innym niż brak wartości, `development` i `test` serwer
+(`src/server.js`, `validateConfig` w `src/config.js`) odmawia startu z kodem
+wyjścia `1` i zdarzeniem `config_invalid`, gdy `PUBLIC_BASE_URL` nie jest
+`https://host` bez ścieżki, `MFA_ENCRYPTION_KEY` (albo `MFA_ENCRYPTION_KEYS`) nie
+jest poprawnym kluczem 32 bajtów, `TRUST_PROXY` nie jest `1`/`true` albo
+`BREVO_WEBHOOK_SECRET` ma mniej niż 32 znaki. Log zawiera wyłącznie **nazwy**
+niepoprawnych zmiennych, nigdy wartości. Nieznana wartość `APP_ENV` (np.
+literówka `prodution`) jest traktowana zachowawczo, czyli jak staging/production
+— pełne ujednolicenie obsługi `APP_ENV` w pozostałym kodzie to #166.
+Założenie do potwierdzenia: `BREVO_WEBHOOK_SECRET` jest wymagany także na
+stagingu bez włączonej poczty (zachowawczo, zgodnie z treścią #114).
+
+### Cookie sesji `__Host-rd_session` (#114)
+
+Poza środowiskiem lokalnym sesja jest zapisywana w cookie `__Host-rd_session`
+(`Secure`, `Path=/`, bez `Domain` — przeglądarka odrzuca przy próbie podstawienia
+z subdomeny). Lokalny dev na `http://localhost` (brak `APP_ENV`, `development`,
+`test`) nadal używa nazwy `rd_session`, bo prefiks `__Host-` wymaga `Secure`, a nie
+każda przeglądarka przyjmuje Secure na `http://localhost`. Odczyt przyjmuje obie
+nazwy (nowa ma pierwszeństwo), a wylogowanie i cofnięcie bieżącej sesji czyści
+obie. Wdrożenie tej zmiany nie wylogowuje nikogo od razu: stare cookie działa do
+końca życia sesji (najwyżej 24 h), potem trzeba się zalogować ponownie — prototyp
+bez produkcji, więc bez osobnej migracji sesji. Odczyt starej nazwy można usunąć
+po 24 h od wdrożenia (`readSessionToken` w `src/auth.js`). Skrypty
+obciążeniowe i smoke wysyłają cookie pod starą nazwą `rd_session=` — działa to,
+dopóki serwer czyta starą nazwę; przy jej usunięciu skrypty trzeba przełączyć na
+`__Host-rd_session=`.
 
 ## Region i sieć
 
