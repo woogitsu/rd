@@ -792,6 +792,8 @@ export async function restoreBundle(db, bundle) {
   const warnings = [...verified.warnings];
   let backfilled = null;
 
+  // #156: odtworzenie jest ciężkie i operatorskie — bez automatycznego
+  // ponowienia przy 40001/40P01 (błąd ma być widoczny, próbę powtarza operator).
   await db.transaction(async (tx) => {
     await tx.query("SET LOCAL session_replication_role = 'replica'");
     // Triggery z własnym warunkiem odtworzenia (0027/0028: daty w roku) — i tak wyłączone.
@@ -850,7 +852,7 @@ export async function restoreBundle(db, bundle) {
     }
     // (3) Dane pochodne triggerów.
     await derivedRowsCheck(tx, existing);
-  });
+  }, { retries: 0 });
 
   // Kontrola po odtworzeniu: ten sam eksport z odtworzonej bazy.
   const again = await buildYearlyExport(db, manifest.schoolYearId);

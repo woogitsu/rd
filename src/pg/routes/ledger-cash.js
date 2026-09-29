@@ -464,7 +464,8 @@ export async function handle(request, env, url, json) {
     if (isOpening && method === 'GET') return await getOpening(request, env, url, json);
     if (isOpening && method === 'POST') return await createOpening(request, env, json);
     if (isAdjustments && method === 'POST') return await createAdjustment(request, env, json);
-    throw new RequestError('method_not_allowed', 405);
+    const allow = isTransfers || isOpening ? 'GET, POST' : 'POST';
+    return json({ error: 'method_not_allowed' }, 405, { Allow: allow });
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code }, error.status);
     throw error;
