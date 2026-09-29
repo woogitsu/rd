@@ -228,6 +228,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/reconciliations/:reconciliationId/lines/:lineId/payment` | jak wyżej | tak | 403 | wpłata z pozycji wyciągu i jej powiązanie w jednej transakcji (#115); SR-01 |
 | `GET /api/reconciliations/:reconciliationId/suggestions` | jak wyżej | tak | 403 | tylko propozycje; SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches` | jak wyżej | tak | 403 | SR-01 |
+| `POST /api/reconciliations/:reconciliationId/matches/batch` | jak wyżej | tak | 403 | wsadowe zatwierdzenie wskazanych par pozycja–wpłata, wszystko albo nic (#115); SR-01 |
 | `POST /api/reconciliations/:reconciliationId/matches/:matchId/revocation` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/reconciliations/:reconciliationId/group-matches` | jak wyżej | tak | 403 | przelew zbiorczy (#127); SR-01 |
 | `POST /api/reconciliations/:reconciliationId/group-matches/:groupMatchId/revocation` | jak wyżej | tak | 403 | SR-01 |
