@@ -289,7 +289,6 @@ wpisów).
 | `payment_cannot_be_corrected` | Tej wpłaty nie można skorygować w obecnym stanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_cannot_be_refunded` | Tej wpłaty nie można zwrócić w obecnym stanie. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_has_allocations` | Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części. | Nie — popraw dane żądania. |
-| `payment_linked_entry_not_replaceable` | Wpisu powiązanego z wpłatą nie można przeksięgować. Skoryguj albo wpłatę, albo wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_not_assigned` | Wpłata nie jest przypisana do żadnej rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_not_found` | Nie znaleziono wpłaty albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
 | `payment_reassignment_household_mismatch` | Nie można przepisać wpłaty na tę rodzinę — powiązany wpis księgi wskazuje inną rodzinę. | Nie — popraw dane żądania. |

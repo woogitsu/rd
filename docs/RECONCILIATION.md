@@ -127,6 +127,8 @@ Ogólny CSV: pierwszy wiersz to nagłówek z kolumnami `date`/`data`, `amount`/`
 
 ## Raport dla Komisji Rewizyjnej
 
+**Przeksięgowania (#144).** Sekcja 4 raportu (`reclassifications`) wymienia storno i wpis zastępczy: data, wpis stary → nowy, kategoria i data stara → nowa, kwota storna i nowego wpisu, powód, znacznik „powiązany z wpłatą” oraz „dotyczy zatwierdzonego uzgodnienia” (stary wpis był powiązany z pozycją wyciągu w uzgodnieniu zatwierdzonym; to zatwierdzone uzgodnienie zostaje niezmienione, a jego powiązanie stanie się niezgodne — sekcja `reconciliation_matches`). Przeksięgowanie wpisu z aktywnym powiązaniem w szkicu daje `409 active_bank_match` (jak korekta, 0039); wpis zastępczy nie dziedziczy dopasowania do pozycji wyciągu.
+
 `format=json` (domyślnie) albo `format=html`. Zawiera: bilans otwarcia (z korektami), przychody, wydatki i bilans zamknięcia z `ledger_year_summary`; przychody i wydatki według kategorii (kwota pierwotna, korekty, netto); wydatki o kwocie pierwotnej powyżej 3000 EUR (dokładnie 3000 EUR nie jest wykazywane) z referencją uchwały i oznaczeniem braku zgodnej przyjętej uchwały; listę korekt wpisów i bilansu otwarcia (autor jako identyfikator konta); uzgodnienia rachunku z różnicą, liczbą niedopasowanych pozycji i wyjaśnieniem.
 
 Kontrole krzyżowe (`report.checks.items`, #169) porównują niezależnie liczone źródła i podają liczby; wynik `ok` to wskaźnik do sprawdzenia (`null` = nie liczono), nic nie blokują:

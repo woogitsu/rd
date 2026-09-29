@@ -127,7 +127,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
-| `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą: 409 `payment_linked_entry_not_replaceable`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
+| `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą przechodzi na wpis zastępczy (0142, kwota = netto wpłaty); szkic uzgodnienia z powiązaniem wpisu: 409 `active_bank_match`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
 | `POST /api/ledger/categories/:categoryId/deactivation` | jak wyżej, rok kategorii | tak | 403 | #107; wpis historii z powodem; już wyłączona: 409 `category_inactive` |
 | `POST /api/ledger/budget` | jak wyżej | tak | 403 | #107; pierwsza wersja linii; kolejna: 409 `budget_line_exists` |
 | `POST /api/ledger/budget/:lineId/revisions` | jak wyżej, rok linii | tak | 403 | #107; nowa wersja z `supersedes_id`; nieaktualna wersja lub równoległa rewizja: 409 `budget_line_superseded` |
