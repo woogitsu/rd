@@ -70,6 +70,28 @@
           </table>
         </div>
 
+        <h3>Ostrzeżenia przed zamknięciem</h3>
+        <p class="context">Tylko informacja z liczbami — nie blokują zamknięcia. Blokuje wyłącznie lista kontrolna, druga osoba i zgodność bilansu. Lista „brak wpisu wpłaty” może być nieaktualna; składki są dobrowolne, więc to nie jest status dłużnika.</p>
+        <div class="table-wrap" role="region" aria-labelledby="status-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Ostrzeżenia informacyjne przed zamknięciem roku</caption>
+            <thead><tr><th scope="col">Ostrzeżenie</th><th scope="col" class="amount">Liczba</th><th scope="col" class="amount">Kwota</th></tr></thead>
+            <tbody id="warnings-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="warnings-empty" hidden>Brak ostrzeżeń dla tego roku.</p>
+
+        <h3>Przegląd dziennika odczytu danych (informacyjnie)</h3>
+        <p class="context" id="access-review-summary">—</p>
+        <div class="table-wrap" role="region" aria-labelledby="status-title" tabindex="0">
+          <table>
+            <caption class="sr-only">Odczyty danych rodzin w roku wg rodzaju</caption>
+            <thead><tr><th scope="col">Rodzaj odczytu</th><th scope="col" class="amount">Odczyty</th><th scope="col" class="amount">Konta</th></tr></thead>
+            <tbody id="access-review-body"></tbody>
+          </table>
+        </div>
+        <p class="empty">Ten przegląd nie jest punktem blokującym listy kontrolnej. Szczegóły (kto, kiedy, jaki obiekt) są w przeglądzie dziennika odczytu w panelu administratora.</p>
+
         <div class="dialog-actions detail-actions">
           <button id="open-start" type="button">Rozpocznij zamknięcie</button>
           <button id="open-close" type="button" class="primary" aria-describedby="close-hint">Zamknij rok</button>
