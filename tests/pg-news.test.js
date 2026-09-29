@@ -6,13 +6,12 @@ import sharp from 'sharp';
 import { handlePgRequest } from '../src/pg/app.js';
 import {
   addConsent, approve, createDraft, getInternal, getPhoto, listInternal, listPublic, publish,
-  registerPhoto, revokePhoto, submit, updateDraft, verifyPhoto, withdraw, withdrawConsent, PUBLIC_CACHE_SECONDS,
+  registerPhoto as registerPhotoRaw, revokePhoto, submit, updateDraft, verifyPhoto, withdraw, withdrawConsent, PUBLIC_CACHE_SECONDS,
   PHOTO_UPLOAD_MAX_BYTES, uploadPhotoFile,
 } from '../src/pg/news.js';
 import { newsItems } from '../site/core.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { createTestDb, lifecycleActors, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
-
+import { createTestDb, lifecycleActors, request, seedClass, seedDocument, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
 const board1 = { userId: 'board1', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
@@ -50,6 +49,13 @@ async function newsDb() {
 const pub = async (db) => listPublic(db, { schoolYearId: year });
 
 after(async () => { if (shared) await shared.close(); });
+
+// 0143: news_photos.document_id wskazuje istniejący dokument zarządu — każda
+// rejestracja w testach najpierw zakłada dokument o podanym documentId.
+async function registerPhoto(db, actor, input) {
+  if (typeof input?.documentId === 'string') await seedDocument(db, { id: input.documentId });
+  return registerPhotoRaw(db, actor, input);
+}
 
 let counter = 0;
 const key = (prefix) => `${prefix}-${String(++counter).padStart(6, '0')}`;
@@ -272,6 +278,7 @@ test('copies from a public website are rejected without an explicit licence', as
   try {
     await assert.rejects(registerPhoto(db, admin, photoInput({ source: 'public_website_copy' })), { code: 'public_copy_requires_license' });
     await assert.rejects(registerPhoto(db, admin, photoInput({ source: 'public_website_copy', explicitLicenseGranted: true })), { code: 'public_copy_requires_license' });
+    await seedDocument(db, { id: 'doc-raw' });
     await assert.rejects(db.query(
       `INSERT INTO news_photos (id, document_id, author, source, taken_on, license_text, depicts_children, uploaded_by)
        VALUES ('p-raw','doc-raw','Autor','public_website_copy','2020-01-01','Skopiowano ze strony szkoły',false,'admin')`,
@@ -328,6 +335,7 @@ test('news_photo_alt_text_required is added with NOT VALID (does not retroactive
 test('a raw insert without alt text or decorative is rejected by the database, and the registry view stays empty otherwise', async () => {
   const db = await newsDb();
   try {
+    await seedDocument(db, { id: 'doc-no-alt' });
     await assert.rejects(db.query(
       `INSERT INTO news_photos (id, document_id, author, source, taken_on, license_text, depicts_children, uploaded_by)
        VALUES ('p-no-alt', 'doc-no-alt', 'Autor', 'own_work', '2020-01-01', 'Zdjęcie bez opisu', false, 'admin')`,

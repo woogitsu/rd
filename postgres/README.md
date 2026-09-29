@@ -802,6 +802,19 @@ zmienia się wyłącznie wynik funkcji (a więc dostępność pliku dla odczytu
 publicznego). Wycofanie: `CREATE OR REPLACE FUNCTION news_photo_is_public`
 z ciałem sprzed tej migracji (jak w 0084, bez warunku zgody).
 
+`0143_news_photo_document_fk_and_role_grants_validate.sql` (#198, część 2)
+dodaje klucz obcy `news_photos.document_id -> documents(id)` i trigger
+`news_photo_document_guard` (dokument musi istnieć i mieć rodzaj z
+`news_photo_document_kind_allowed()`; WARIANT ZACHOWAWCZY: tylko `board`,
+rodzaj `gallery` należy do #96 i decyzji zarządu) oraz waliduje
+`role_grants_class_in_year` (0081). Migracja najpierw sprawdza istniejące
+dane i przy naruszeniu zatrzymuje się z błędem wymieniającym identyfikatory
+wierszy (przydziały poza rokiem klasy, zdjęcia z nieistniejącym lub
+niedozwolonym dokumentem) — niczego nie naprawia po cichu; zapytania kontrolne
+są w nagłówku migracji i w `scripts/check-schema-consistency.mjs`. Skutki dla
+danych: żaden wiersz nie jest zmieniany ani usuwany. Wycofanie: patrz nagłówek
+migracji.
+
 `0073_ledger_budget_adoptions.sql` (#107) dodaje preliminarz przez API:
 `ledger_categories.idempotency_key` (klucz żądania tworzenia kategorii),
 `ledger_category_deactivations` (historia wyłączenia kategorii, tylko

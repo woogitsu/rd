@@ -49,10 +49,10 @@ import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
 import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedDocument, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
   ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
-  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, photoBody,
+  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
   pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
@@ -114,6 +114,7 @@ async function seedBase(db) {
     await seedClass(db, { id: target.classId, schoolYearId: target.schoolYearId });
   }
   for (const account of Object.values(FX_ACCOUNTS)) await seedUser(db, { userId: account.userId });
+  await seedDocument(db, { id: PHOTO_SOURCE_DOCUMENT_ID, createdBy: 'u-fx-admin' });
   await db.query("INSERT INTO households (id) VALUES ('hh-1')");
   // #138: cel ponownego przypisania wpłaty (payments.reassignment).
   await db.query("INSERT INTO households (id) VALUES ('hh-2')");
