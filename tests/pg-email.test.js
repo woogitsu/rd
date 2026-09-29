@@ -2130,7 +2130,8 @@ test('#130 preview shows planned start and estimated end in Brussels time; role 
     assert.equal(res.body.sends, false);
     assert.ok(!/@/.test(JSON.stringify(schedule)), 'harmonogram bez danych osobowych');
     const rep = await seedUserSession(t.db, { userId: 'u-rep130p', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
-    assert.equal((await t.call(rep, `/api/email/campaigns/${campaign.id}/preview`)).status, 403);
+    const repPreview = await t.call(rep, `/api/email/campaigns/${campaign.id}/preview`);
+    assert.deepEqual([repPreview.status, repPreview.body], [403, { error: 'forbidden' }]);
   } finally { await t.close(); }
 });
 
