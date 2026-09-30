@@ -230,7 +230,9 @@ export function normalizeRejectReason(value) {
   if (typeof value !== 'string') throw new GrantRequestError('invalid_reason');
   const reason = value.trim();
   if (!reason) return null;
-  if (reason.length < REJECT_REASON_MIN || reason.length > REJECT_REASON_MAX) throw new GrantRequestError('invalid_reason');
+  // Znaki liczone jak char_length w CHECK bazy (punkty kodowe, nie jednostki UTF-16).
+  const length = [...reason].length;
+  if (length < REJECT_REASON_MIN || length > REJECT_REASON_MAX) throw new GrantRequestError('invalid_reason');
   return reason;
 }
 

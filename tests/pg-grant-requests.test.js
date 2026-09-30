@@ -266,7 +266,8 @@ test('0159: powód za krótki, za długi albo nie-tekst → 400 invalid_reason b
   const { db, env, cookies } = await setup();
   try {
     const id = await pendingRequest(env, cookies);
-    for (const reason of ['ab', 'x'.repeat(501), 42, ['lista'], { tekst: 'obiekt' }]) {
+    // '😀a' ma 3 jednostki UTF-16, ale 2 znaki — jak char_length w CHECK bazy.
+    for (const reason of ['ab', '😀a', 'x'.repeat(501), 42, ['lista'], { tekst: 'obiekt' }]) {
       const response = await post(env, rejectPath(id), cookies['u-admin-b'], { reason });
       assert.deepEqual([response.status, response.data.error], [400, 'invalid_reason'], JSON.stringify(reason));
     }
