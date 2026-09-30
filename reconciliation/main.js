@@ -2,11 +2,18 @@ import { decodeCsvBytes, describeSource, detectDelimiter, parseCsvMatrix } from 
 import {
   STATUS_LABELS,
   auditReportUrl,
+  batchCandidates,
+  buildBatchBody,
+  buildLinePaymentBody,
   buildReconciliationsUrl,
   buildStatementFileBody,
   candidateLabel,
+  canCreatePaymentFromLine,
   lineSourceLabel,
+  lineStatusLabel,
+  linePaymentUrl,
   canOfferConfirm,
+  describeBatchFailures,
   decodeStatementBytes,
   describeApiError,
   describeStatementImportError,
@@ -24,10 +31,12 @@ import {
   requiresConfirmationNote,
   STATEMENT_FORMAT_LABELS,
   statementFileProblem,
+  structuredHouseholdFor,
+  summarizeBatchSelection,
   summarizeInconsistencies,
   summarizeStatementImport,
 } from "./core.js";
-import { api as apiRequest } from "../shared/api.js";
+import { MESSAGES, api as apiRequest } from "../shared/api.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
@@ -134,7 +143,15 @@ filtersForm.addEventListener("submit", (event) => {
 
 // --- szczegóły uzgodnienia ----------------------------------------------------
 
-function lineRow(line) {
+function actionButton(text, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function lineRow(line, { draft, canWrite }) {
   const row = document.createElement("tr");
   row.append(
     textCell(line.bookedOn),
@@ -145,23 +162,17 @@ function lineRow(line) {
   const status = document.createElement("td");
   const actions = document.createElement("td");
   actions.className = "row-actions";
+  status.textContent = lineStatusLabel(line);
   if (line.groupMatch) {
     // Przelew zbiorczy (#127): tworzenie i cofnięcie na razie tylko przez API.
-    status.textContent = `Dopasowana zbiorczo (${line.groupMatch.itemCount} poz.)`;
   } else if (line.match) {
-    status.textContent = "Dopasowana";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "Cofnij dopasowanie";
-    button.addEventListener("click", () => openRevoke(line.match.id));
-    actions.append(button);
+    actions.append(actionButton("Cofnij dopasowanie", () => openRevoke(line.match.id)));
   } else {
-    status.textContent = "Niedopasowana";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "Dopasuj";
-    button.addEventListener("click", () => openMatch(line.id));
-    actions.append(button);
+    actions.append(actionButton("Dopasuj", () => openMatch(line.id)));
+    // #115: wpłata wprost z pozycji — kwota i data z wyciągu, bez przepisywania.
+    if (canCreatePaymentFromLine(line, { draft, canWrite })) {
+      actions.append(actionButton("Utwórz wpłatę", () => openLinePayment(line)));
+    }
   }
   row.append(status, actions);
   return row;
@@ -180,8 +191,13 @@ function renderDetail() {
   byId("detail-summary-counts").textContent =
     `${summary.lineCount} pozycji, ${summary.matchedLineCount} dopasowanych, ${summary.unmatchedLineCount} niedopasowanych.`;
 
-  byId("lines-body").replaceChildren(...lines.map(lineRow));
+  const own = isLikelyOwnReconciliation(reconciliation, state.actorId);
+  const canWrite = hasWriteAccess(state.grants, state.schoolYearId);
+  const draft = reconciliation.status === "draft";
+  byId("lines-body").replaceChildren(...lines.map((line) => lineRow(line, { draft, canWrite })));
   byId("lines-empty").hidden = lines.length !== 0;
+  byId("batch-box").hidden = !(draft && canWrite);
+  resetBatch();
 
   const unmatchedList = byId("unmatched-ledger-entries");
   unmatchedList.replaceChildren(...unmatchedLedgerEntries.map((entry) => {
@@ -201,9 +217,6 @@ function renderDetail() {
   }));
   byId("inconsistent-box").hidden = inconsistent.length === 0;
 
-  const own = isLikelyOwnReconciliation(reconciliation, state.actorId);
-  const canWrite = hasWriteAccess(state.grants, state.schoolYearId);
-  const draft = reconciliation.status === "draft";
   byId("import-lines-box").hidden = !(draft && canWrite);
   byId("import-statement-box").hidden = !(draft && canWrite);
   byId("confirm-reconciliation").hidden = !(draft && canWrite) || own || inconsistent.length > 0;
@@ -499,6 +512,20 @@ byId("match-form").addEventListener("submit", async (event) => {
   const button = event.submitter;
   button.disabled = true;
   try {
+    if (type === "household") {
+      // Propozycja nowej wpłaty (komunikacja strukturalna) — ten sam zapis co
+      // „Utwórz wpłatę”; klucz stały dla otwartego okna (ponowienie = ta sama wpłata).
+      state.matchKey ||= makeIdempotencyKey("reconciliation-line-payment");
+      await api(linePaymentUrl(state.selectedId, activeLineId), {
+        method: "POST",
+        headers: { "Idempotency-Key": state.matchKey },
+        body: JSON.stringify(buildLinePaymentBody(id)),
+      });
+      matchDialog.close();
+      await refreshDetail();
+      setMessage("Utworzono wpłatę z pozycji wyciągu i powiązano ją z pozycją.");
+      return;
+    }
     const key = makeIdempotencyKey("reconciliation-match");
     await api(reconciliationActionUrl(state.selectedId, "matches"), {
       method: "POST",
@@ -518,7 +545,170 @@ byId("match-form").addEventListener("submit", async (event) => {
     button.disabled = false;
   }
 });
-matchDialog.addEventListener("close", () => { byId("match-error").textContent = ""; activeLineId = null; });
+matchDialog.addEventListener("close", () => { byId("match-error").textContent = ""; activeLineId = null; state.matchKey = null; });
+
+// --- wpłata wprost z pozycji wyciągu (#115) --------------------------------------
+
+const linePaymentDialog = byId("line-payment-dialog");
+let linePaymentLine = null;
+
+async function openLinePayment(line) {
+  linePaymentLine = line;
+  const form = byId("line-payment-form");
+  form.reset();
+  byId("line-payment-error").textContent = "";
+  byId("line-payment-hint").textContent = "";
+  byId("line-payment-summary").textContent =
+    `Pozycja z ${line.bookedOn}, ${formatCents(line.amountCents)}. Wpłata dostanie tę kwotę i datę z wyciągu (przelew).`;
+  // Klucz idempotencji na całe otwarte okno: podwójne kliknięcie albo ponowienie
+  // po błędzie sieci nie utworzy drugiej wpłaty.
+  state.linePaymentKey = makeIdempotencyKey("reconciliation-line-payment");
+  try {
+    const data = await api(`${reconciliationActionUrl(state.selectedId, "suggestions")}?windowDays=7`);
+    const householdId = structuredHouseholdFor(data.suggestions, line.id);
+    if (householdId) {
+      form.elements.householdId.value = householdId;
+      byId("line-payment-hint").textContent =
+        "Komunikacja strukturalna pozycji odpowiada tej rodzinie. Sprawdź przed zapisem — nic nie jest zapisywane automatycznie.";
+    }
+  } catch {
+    // Propozycja jest tylko podpowiedzią; bez niej skarbnik wpisuje rodzinę sam.
+  }
+  linePaymentDialog.showModal();
+}
+
+byId("line-payment-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") { linePaymentDialog.close(); return; }
+  const errorBox = byId("line-payment-error");
+  errorBox.textContent = "";
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    const body = buildLinePaymentBody(new FormData(event.currentTarget).get("householdId"));
+    const result = await api(linePaymentUrl(state.selectedId, linePaymentLine.id), {
+      method: "POST",
+      headers: { "Idempotency-Key": state.linePaymentKey },
+      body: JSON.stringify(body),
+    });
+    linePaymentDialog.close();
+    await refreshDetail();
+    setMessage(result?.payment?.householdId
+      ? "Utworzono wpłatę z pozycji wyciągu i powiązano ją z pozycją."
+      : "Utworzono wpłatę nieprzypisaną do rodziny i powiązano ją z pozycją. Rodzinę można wskazać później na liście wpłat.");
+  } catch (error) {
+    errorBox.textContent = error.code === "idempotency_conflict"
+      ? `${error.message} Zamknij okno i sprawdź stan uzgodnienia, zanim spróbujesz ponownie.`
+      : error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+linePaymentDialog.addEventListener("close", () => {
+  byId("line-payment-error").textContent = "";
+  linePaymentLine = null;
+  state.linePaymentKey = null;
+});
+
+// --- zatwierdzanie wsadowe wybranych par (#115) -----------------------------------
+
+const batch = { rows: [], key: null };
+
+function resetBatch() {
+  batch.rows = [];
+  batch.key = null;
+  byId("batch-body").replaceChildren();
+  byId("batch-table").hidden = true;
+  byId("batch-empty").hidden = true;
+  byId("batch-error").textContent = "";
+  refreshBatchSummary();
+}
+
+function selectedBatchRows() {
+  const checked = new Set([...byId("batch-body").querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value));
+  return batch.rows.filter((row) => checked.has(row.statementLineId));
+}
+
+function refreshBatchSummary() {
+  const selected = selectedBatchRows();
+  byId("batch-summary").textContent = selected.length ? summarizeBatchSelection(selected) : "Nic nie zaznaczono.";
+  byId("batch-submit").disabled = selected.length === 0;
+}
+
+function batchRow(item) {
+  const row = document.createElement("tr");
+  const choose = document.createElement("td");
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.value = item.statementLineId;
+  input.checked = false;
+  input.setAttribute("aria-label", `Zaznacz pozycję z ${item.bookedOn}, ${formatCents(item.amountCents)}`);
+  input.addEventListener("change", () => { batch.key = null; refreshBatchSummary(); });
+  choose.append(input);
+  row.append(choose, textCell(item.bookedOn), textCell(formatCents(item.amountCents), "amount"),
+    textCell(item.paymentDate), textCell(item.reason));
+  return row;
+}
+
+byId("batch-load").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  byId("batch-error").textContent = "";
+  try {
+    const data = await api(`${reconciliationActionUrl(state.selectedId, "suggestions")}?windowDays=7`);
+    batch.rows = batchCandidates(data.suggestions);
+    batch.key = null;
+    byId("batch-body").replaceChildren(...batch.rows.map(batchRow));
+    byId("batch-table").hidden = batch.rows.length === 0;
+    byId("batch-empty").hidden = batch.rows.length !== 0;
+    refreshBatchSummary();
+  } catch (error) {
+    byId("batch-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+const batchDialog = byId("batch-dialog");
+
+byId("batch-submit").addEventListener("click", () => {
+  const selected = selectedBatchRows();
+  if (!selected.length) return;
+  byId("batch-dialog-summary").textContent = summarizeBatchSelection(selected);
+  byId("batch-dialog-error").textContent = "";
+  batchDialog.showModal();
+});
+
+byId("batch-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") { batchDialog.close(); return; }
+  const selected = selectedBatchRows();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    const body = buildBatchBody(selected);
+    // Ten sam klucz przy ponowieniu tego samego zaznaczenia (zmiana zaznaczenia zeruje klucz).
+    batch.key ||= makeIdempotencyKey("reconciliation-batch");
+    const result = await api(reconciliationActionUrl(state.selectedId, "matches/batch"), {
+      method: "POST",
+      headers: { "Idempotency-Key": batch.key },
+      body: JSON.stringify(body),
+    });
+    batchDialog.close();
+    await refreshDetail();
+    const count = Array.isArray(result?.matches) ? result.matches.length : selected.length;
+    setMessage(`Zatwierdzono ${count} ${count === 1 ? "parę" : "par"}.`);
+  } catch (error) {
+    const failures = describeBatchFailures(error.data?.failures, batch.rows, MESSAGES);
+    byId("batch-dialog-error").textContent = failures.length ? `${error.message} ${failures.join(" ")}` : error.message;
+    // Po odrzuceniu nic nie zapisano — nowy wybór dostanie nowy klucz; po błędzie
+    // sieci klucz zostaje, żeby ponowienie nie zapisało par drugi raz.
+    if (error.status && error.status < 500) batch.key = null;
+  } finally {
+    button.disabled = false;
+  }
+});
+batchDialog.addEventListener("close", () => { byId("batch-dialog-error").textContent = ""; });
 
 // --- cofnięcie dopasowania -----------------------------------------------------
 
