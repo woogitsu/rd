@@ -98,6 +98,52 @@
           <dl class="facts" id="detail-facts"></dl>
           <div class="actions" id="detail-actions"></div>
 
+          <section class="tasks" id="tasks-block" aria-labelledby="tasks-title">
+            <div class="section-heading">
+              <div>
+                <h3 id="tasks-title">Zadania i zapisy wolontariuszy</h3>
+                <p class="hint" id="tasks-summary">Kto pomaga przy wydarzeniu i ile osób jest potrzebnych.</p>
+              </div>
+              <button type="button" id="open-task" hidden>Nowe zadanie</button>
+            </div>
+            <p class="hint">Zapis wskazuje opiekuna z listy klasy wydarzenia. Nie zbieramy telefonów, uwag o zdrowiu ani innych nowych danych. Na stronie publicznej może pojawić się wyłącznie liczba brakujących osób przy zadaniach oznaczonych jako publiczne.</p>
+            <div class="message" id="tasks-message" role="status" aria-live="polite"></div>
+            <div class="table-wrap" id="tasks-wrap" hidden>
+              <table>
+                <caption class="sr-only">Zadania wydarzenia</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Zadanie</th>
+                    <th scope="col">Czas</th>
+                    <th scope="col">Zapisani / potrzebni</th>
+                    <th scope="col">Strona publiczna</th>
+                    <th scope="col">Stan</th>
+                    <th scope="col">Działania</th>
+                  </tr>
+                </thead>
+                <tbody id="tasks-body"></tbody>
+              </table>
+            </div>
+            <div id="signups-wrap" hidden>
+              <h4>Zapisani</h4>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Zapisy do zadań wydarzenia</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Zadanie</th>
+                      <th scope="col">Osoba</th>
+                      <th scope="col">Stan</th>
+                      <th scope="col">Ostatnia zmiana</th>
+                      <th scope="col">Działania</th>
+                    </tr>
+                  </thead>
+                  <tbody id="signups-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
           <h3>Historia wersji</h3>
           <div class="table-wrap">
             <table>
@@ -209,6 +255,88 @@
         <div class="dialog-actions">
           <button type="button" data-close>Anuluj</button>
           <button type="submit" class="danger" id="cancel-submit">Odwołaj wydarzenie</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="task-dialog" aria-labelledby="task-dialog-title">
+      <form id="task-form" novalidate>
+        <div class="dialog-heading">
+          <h2 id="task-dialog-title">Nowe zadanie</h2>
+          <button type="button" class="close" data-close aria-label="Zamknij formularz">Zamknij</button>
+        </div>
+        <p class="context" id="task-context"></p>
+        <div class="field"><label>Zadanie
+          <input name="title" required minlength="3" maxlength="200" aria-describedby="err-task-title" />
+          <small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small>
+          </label>
+          <span class="field-error" id="err-task-title"></span></div>
+        <div class="field"><label>Potrzebnych osób
+          <input name="slotsNeeded" type="number" inputmode="numeric" min="1" max="200" step="1" required aria-describedby="err-task-slotsNeeded" />
+          </label>
+          <span class="field-error" id="err-task-slotsNeeded"></span></div>
+        <div class="field-row">
+          <div class="field"><label>Początek (opcjonalnie, czas w Brukseli)
+            <input name="startsAt" type="datetime-local" aria-describedby="err-task-startsAt" />
+            </label>
+            <span class="field-error" id="err-task-startsAt"></span></div>
+          <div class="field"><label>Koniec (opcjonalnie, czas w Brukseli)
+            <input name="endsAt" type="datetime-local" aria-describedby="err-task-endsAt" />
+            </label>
+            <span class="field-error" id="err-task-endsAt"></span></div>
+        </div>
+        <p class="hint">Czas zadania musi mieścić się w czasie wydarzenia. Treści zadania nie można później zmienić — można je tylko odwołać.</p>
+        <label class="checkbox"><input name="isPublic" type="checkbox" aria-describedby="hint-task-public" /> Pokaż na stronie publicznej liczbę brakujących osób</label>
+        <span class="hint" id="hint-task-public">Strona pokazuje tylko tytuł zadania i „potrzebni jeszcze: N”, bez danych osób, i tylko dla opublikowanego wydarzenia.</span>
+        <div class="form-error" id="task-form-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" data-close>Anuluj</button>
+          <button type="submit" class="primary" id="task-submit">Dodaj zadanie</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="signup-dialog" aria-labelledby="signup-dialog-title">
+      <form id="signup-form" novalidate>
+        <div class="dialog-heading">
+          <h2 id="signup-dialog-title">Zapisz opiekuna</h2>
+          <button type="button" class="close" data-close aria-label="Zamknij formularz">Zamknij</button>
+        </div>
+        <p class="context" id="signup-context"></p>
+        <div class="field" id="signup-class-field" hidden><label>Klasa
+          <select name="classId" aria-describedby="hint-signup-class"></select>
+          </label>
+          <span class="hint" id="hint-signup-class">Wydarzenie ogólnoszkolne: wybierz klasę, z której pochodzi opiekun.</span></div>
+        <div class="field"><label>Opiekun
+          <select name="guardianId" required aria-describedby="hint-signup-guardian err-signup-guardianId"></select>
+          </label>
+          <span class="hint" id="hint-signup-guardian">Lista zawiera opiekunów dzieci przypisanych obecnie do klasy wydarzenia.</span>
+          <span class="field-error" id="err-signup-guardianId"></span></div>
+        <div class="form-error" id="signup-form-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" data-close>Anuluj</button>
+          <button type="submit" class="primary" id="signup-submit">Zapisz</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="task-cancel-dialog" aria-labelledby="task-cancel-dialog-title">
+      <form id="task-cancel-form" novalidate>
+        <div class="dialog-heading">
+          <h2 id="task-cancel-dialog-title">Odwołaj zadanie</h2>
+          <button type="button" class="close" data-close aria-label="Zamknij formularz">Zamknij</button>
+        </div>
+        <p class="context" id="task-cancel-context"></p>
+        <p class="hint">Odwołanie zadania jest ostateczne. Dotychczasowe zapisy zostają w historii; nowych zapisów nie będzie.</p>
+        <div class="field"><label>Powód odwołania
+          <textarea name="reason" rows="3" minlength="3" maxlength="500" required aria-describedby="err-task-reason"></textarea>
+          <small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small>
+          </label>
+          <span class="field-error" id="err-task-reason"></span></div>
+        <div class="form-error" id="task-cancel-form-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" data-close>Anuluj</button>
+          <button type="submit" class="danger" id="task-cancel-submit">Odwołaj zadanie</button>
         </div>
       </form>
     </dialog>

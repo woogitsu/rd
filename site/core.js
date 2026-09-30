@@ -119,7 +119,25 @@ export function normalizeEvent(raw) {
     startsAt,
     endsAt,
     cancelled: raw.status === "cancelled",
+    volunteerTasks: raw.status === "cancelled" ? [] : volunteerTasks(raw.volunteerTasks),
   };
+}
+
+// #142: zadania wolontariuszy oznaczone jako publiczne — wyłącznie tytuł
+// i liczba brakujących osób (API nie zwraca żadnych danych osób).
+export function volunteerTasks(rawTasks) {
+  if (!Array.isArray(rawTasks)) return [];
+  return rawTasks.slice(0, 50).map((task) => {
+    if (!task || typeof task !== "object") return null;
+    const title = cleanText(task.title, 200);
+    const stillNeeded = Number.isSafeInteger(task.stillNeeded) && task.stillNeeded >= 0 ? task.stillNeeded : null;
+    if (!title || stillNeeded === null) return null;
+    return { title, stillNeeded };
+  }).filter(Boolean);
+}
+
+export function volunteerTaskLabel(task) {
+  return task.stillNeeded > 0 ? `potrzebni jeszcze: ${task.stillNeeded}` : "komplet chętnych";
 }
 
 // An event with an end is past once it ended; without an end it stays

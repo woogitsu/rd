@@ -649,6 +649,16 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: `/api/events/${obj.eventId}/tasks` }),
   },
   {
+    // Opiekunowie klasy wydarzenia do wyboru w formularzu zapisu (panel events/).
+    // Wydarzenie ogólnoszkolne (W1) wymaga wskazania klasy parametrem.
+    id: 'events.taskCandidates', module: 'events', method: 'GET', path: '/api/events/:eventId/tasks/candidates',
+    targets: CLASS_TARGETS, allow: EVENT_EDIT, mfa: false, ok: 200, deny: eventDeny, fixture: 'static',
+    object: { kind: 'event', stage: 'draft' },
+    build: ({ obj, target }) => ({
+      path: `/api/events/${obj.eventId}/tasks/candidates${target.key === 'W1' ? '?classId=kl-1a' : ''}`,
+    }),
+  },
+  {
     id: 'events.taskCreate', module: 'events', method: 'POST', path: '/api/events/:eventId/tasks', targets: CLASS_TARGETS,
     allow: EVENT_EDIT, mfa: false, ok: 201, deny: eventDeny, fixture: 'fresh', object: { kind: 'event', stage: 'draft' },
     build: ({ obj, target, key }) => ({

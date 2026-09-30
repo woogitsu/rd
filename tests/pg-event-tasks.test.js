@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import {
-  cancel, cancelTask, createDraft, createSignup, createTask, listPublicTasks, listTasks, publish, approve, submit,
-  updateDraft, withdrawSignup,
+  cancel, cancelTask, createDraft, createSignup, createTask, listPublic, listPublicTasks, listTaskCandidates, listTasks,
+  publish, approve, submit, updateDraft, withdrawSignup,
 } from '../src/pg/events.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
@@ -322,5 +322,109 @@ test('a new event revision keeps tasks and signups', async () => {
     const { tasks } = await listTasks(db, board, { eventId: event.id });
     assert.equal(tasks.length, 1);
     assert.equal(tasks[0].confirmedCount, 1);
+  } finally { await db.close(); }
+});
+
+// ---------- panel: lista opiekunów do wyboru, okno czasu, strona publiczna (#142) ----------
+
+test('candidates: representative sees only current guardians of their own class, names only; read is logged', async () => {
+  const db = await tasksDb();
+  try {
+    const eventA = await draftClassEvent(db, board, 'c1a');
+    const eventB = await draftClassEvent(db, board, 'c1b');
+    const result = await listTaskCandidates(db, repA, { eventId: eventA.id });
+    assert.equal(result.classId, 'c1a');
+    assert.deepEqual(result.guardians, [{ id: 'g2', name: 'Opiekun Dwa' }, { id: 'g1', name: 'Opiekun Jeden' }]);
+    assert.deepEqual(Object.keys(result.guardians[0]).sort(), ['id', 'name'], 'bez e-maili, dzieci i gospodarstw');
+    // Wydarzenie innej klasy: ten sam 404 co nieznane (SR-07).
+    await assert.rejects(listTaskCandidates(db, repA, { eventId: eventB.id }), (error) => error.status === 404 && error.code === 'event_not_found');
+    // Przedstawiciel nie przełączy klasy parametrem.
+    await assert.rejects(listTaskCandidates(db, repA, { eventId: eventA.id, classId: 'c1b' }), (error) => error.code === 'invalid_class');
+    const log = (await db.query("SELECT actor_id, access_kind, class_id, outcome, row_count FROM data_access_log WHERE actor_id = 'repa'")).rows;
+    assert.deepEqual(log.map((r) => [r.access_kind, r.class_id, r.outcome, Number(r.row_count)]), [['class_students', 'c1a', 'ok', 2]]);
+  } finally { await db.close(); }
+});
+
+test('candidates for a school-wide event: board must pick a class of the event year', async () => {
+  const db = await tasksDb();
+  try {
+    const event = await draftClassEvent(db, board, null);
+    await assert.rejects(listTaskCandidates(db, board, { eventId: event.id }), (error) => error.code === 'class_required');
+    await assert.rejects(listTaskCandidates(db, board, { eventId: event.id, classId: 'nope' }), (error) => error.code === 'class_not_found' && error.status === 404);
+    const result = await listTaskCandidates(db, board, { eventId: event.id, classId: 'c1b' });
+    assert.deepEqual(result.guardians, [{ id: 'g3', name: 'Opiekun Trzy' }]);
+    await assert.rejects(listTaskCandidates(db, repA, { eventId: event.id, classId: 'c1a' }), (error) => error.status === 404);
+  } finally { await db.close(); }
+});
+
+test('ended guardian relation or a child who left the class: not a candidate and cannot be signed up by the representative', async () => {
+  const db = await tasksDb();
+  try {
+    const event = await draftClassEvent(db, board, 'c1a');
+    const created = await createTask(db, board, { eventId: event.id, title: 'Dyżur', slotsNeeded: 5, idempotencyKey: key() });
+    // g2: relacja z d1 zakończona wczoraj; nowe dziecko d4 (g4) odeszło z klasy wczoraj.
+    await db.query("UPDATE student_guardians SET ends_on = CURRENT_DATE - 1 WHERE guardian_id = 'g2'");
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('d4','h2','Ewa','Syntetyczna')");
+    await db.query("INSERT INTO guardians (id, household_id, first_name, last_name) VALUES ('g4','h2','Opiekun','Cztery')");
+    await db.query("INSERT INTO student_guardians (student_id, guardian_id, contact_allowed) VALUES ('d4','g4',true)");
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e4','d4','c1a','year')");
+    await db.query("UPDATE enrollments SET ended_on = CURRENT_DATE - 1, ended_at = now(), ended_reason = 'Odejście syntetyczne' WHERE id = 'e4'");
+
+    const { guardians } = await listTaskCandidates(db, repA, { eventId: event.id });
+    assert.deepEqual(guardians.map((g) => g.id), ['g1']);
+    for (const guardianId of ['g2', 'g4']) {
+      await assert.rejects(
+        createSignup(db, repA, { eventId: event.id, taskId: created.task.id, guardianId, idempotencyKey: key() }),
+        (error) => error.code === 'guardian_outside_class',
+        guardianId,
+      );
+    }
+  } finally { await db.close(); }
+});
+
+test('moving the event time outside a task window keeps the task and signups and is shown in the PATCH response and the list', async () => {
+  const db = await tasksDb();
+  try {
+    const event = await draftClassEvent(db, board, 'c1a');
+    const inside = await createTask(db, board, { eventId: event.id, title: 'Bez godzin', slotsNeeded: 2, idempotencyKey: key() });
+    const timed = await createTask(db, board, {
+      eventId: event.id, title: 'Rozstawienie stołów', slotsNeeded: 2, startsAt: '2026-11-12T10:00', endsAt: '2026-11-12T11:00', idempotencyKey: key(),
+    });
+    await createSignup(db, repA, { eventId: event.id, taskId: timed.task.id, guardianId: 'g1', idempotencyKey: key() });
+    const moved = await updateDraft(db, repA, { eventId: event.id, revision: event.revision, startsAt: '2026-11-12T12:00', endsAt: '2026-11-12T16:00' });
+    assert.deepEqual(moved.tasksOutsideEventTime, [{ id: timed.task.id, title: 'Rozstawienie stołów' }]);
+    const { tasks } = await listTasks(db, repA, { eventId: event.id });
+    assert.deepEqual(tasks.map((t) => [t.id, t.outsideEventTime, t.confirmedCount]), [[inside.task.id, false, 0], [timed.task.id, true, 1]]);
+    // Powtórzenie tej samej zmiany (podwójne kliknięcie) też wykazuje zadanie.
+    const replay = await updateDraft(db, repA, { eventId: event.id, revision: event.revision, startsAt: '2026-11-12T12:00', endsAt: '2026-11-12T16:00' });
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.tasksOutsideEventTime.length, 1);
+    // Odwołane zadanie nie jest już wykazywane.
+    await cancelTask(db, repA, { eventId: event.id, taskId: timed.task.id, reason: 'Zmiana godzin' });
+    const after = await updateDraft(db, repA, { eventId: event.id, revision: moved.event.revision, title: 'Piknik (nowy tytuł)' });
+    assert.deepEqual(after.tasksOutsideEventTime, []);
+  } finally { await db.close(); }
+});
+
+test('public events list carries only public tasks as { id, title, stillNeeded }; none for internal or cancelled', async () => {
+  const db = await tasksDb();
+  try {
+    const event = await draftClassEvent(db, board, null, { audience: 'public' });
+    const pub = await createTask(db, board, { eventId: event.id, title: 'Stoisko (publiczne)', slotsNeeded: 2, isPublic: true, idempotencyKey: key() });
+    await createTask(db, board, { eventId: event.id, title: 'Zadanie wewnętrzne', slotsNeeded: 2, idempotencyKey: key() });
+    await createSignup(db, board, { eventId: event.id, taskId: pub.task.id, guardianId: 'g1', idempotencyKey: key() });
+    await submit(db, board, { eventId: event.id, revision: 1 });
+    await approve(db, board2, { eventId: event.id, revision: 1 });
+    await publish(db, board2, { eventId: event.id, revision: 1 });
+
+    const { events } = await listPublic(db, {});
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0].volunteerTasks, [{ id: pub.task.id, title: 'Stoisko (publiczne)', stillNeeded: 1 }]);
+    const text = JSON.stringify(events);
+    for (const secret of ['g1', 'Opiekun', 'Zadanie wewnętrzne', 'board1']) assert.ok(!text.includes(secret), secret);
+
+    await cancel(db, board, { eventId: event.id, revision: 1, reason: 'Odwołanie syntetyczne' });
+    const { events: afterCancel } = await listPublic(db, {});
+    assert.deepEqual(afterCancel[0].volunteerTasks, []);
   } finally { await db.close(); }
 });

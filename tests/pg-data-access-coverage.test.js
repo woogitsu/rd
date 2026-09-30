@@ -243,11 +243,18 @@ describe('pokrycie dziennika odczytu danych rodzin (#133)', () => {
         INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e-1', 's-1', 'c-1a', '${Y1}');
       `);
       cookie = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board', schoolYearId: Y1 }], mfa: true });
+      // #142: wydarzenie klasy 1A dla events.taskCandidates (opiekunowie klasy).
+      const actor = { userId: 'u-board', grants: [{ role: 'board', classId: null, schoolYearId: Y1 }], mfaVerified: true };
+      eventId = (await createDraft(db, actor, {
+        schoolYearId: Y1, classId: 'c-1a', title: 'Piknik klasowy (syntetyczny)',
+        startsAt: '2026-11-12T10:00', audience: 'internal', idempotencyKey: 'cov-reg-event-0001',
+      })).event.id;
     });
     after(async () => { await db?.close(); });
+    let eventId;
 
     const concretePath = (route) => {
-      const path = route.path.replace(':classId', 'c-1a').replace(':householdId', 'h-1');
+      const path = route.path.replace(':classId', 'c-1a').replace(':householdId', 'h-1').replace(':eventId', eventId);
       if (route.id === 'print.cards') return `${path}?schoolYearId=${Y1}`;
       if (route.id === 'payments.list' || route.id === 'payments.exportCsv') return `${path}?schoolYearId=${Y1}`;
       if (route.id === 'exports.classRoster') return `${path}?classId=c-1a`;

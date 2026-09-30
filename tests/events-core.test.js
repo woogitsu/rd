@@ -267,3 +267,59 @@ test("formularz edycji wypełnia się danymi wydarzenia", () => {
   assert.equal(values.classId, "");
   assert.equal(values.organizer, "Rada");
 });
+
+// ---------- zadania i zapisy wolontariuszy (#142) ----------
+import {
+  availableCandidates, buildCandidatesUrl, buildSignupRequest, buildTaskCancelRequest, buildTaskCreateRequest,
+  buildWithdrawRequest, canSignUp, candidateLabels, taskState, validateTaskForm,
+} from "../events/core.js";
+
+test("#142: task form validation — title, slots and optional Brussels times", () => {
+  assert.deepEqual(validateTaskForm({ title: "Stoisko", slotsNeeded: "3" }), {
+    errors: {}, content: { title: "Stoisko", slotsNeeded: 3, isPublic: false },
+  });
+  const bad = validateTaskForm({ title: "ab", slotsNeeded: "0" });
+  assert.deepEqual(Object.keys(bad.errors).sort(), ["slotsNeeded", "title"]);
+  assert.ok(validateTaskForm({ title: "Stoisko", slotsNeeded: "201" }).errors.slotsNeeded);
+  assert.ok(validateTaskForm({ title: "Stoisko", slotsNeeded: "2.5" }).errors.slotsNeeded);
+  const timed = validateTaskForm({ title: "Dyżur", slotsNeeded: "1", startsAt: "2026-11-12T10:00", endsAt: "2026-11-12T11:00", isPublic: true });
+  assert.deepEqual(timed.content, { title: "Dyżur", slotsNeeded: 1, isPublic: true, startsAt: "2026-11-12T10:00", endsAt: "2026-11-12T11:00" });
+  assert.ok(validateTaskForm({ title: "Dyżur", slotsNeeded: "1", startsAt: "2026-11-12T12:00", endsAt: "2026-11-12T11:00" }).errors.endsAt);
+  // Godzina powtórzona przy zmianie czasu (25.10.2026 02:30): bez wyboru przesunięcia — prośba o inną godzinę.
+  assert.ok(validateTaskForm({ title: "Dyżur", slotsNeeded: "1", startsAt: "2026-10-25T02:30" }).errors.startsAt);
+});
+
+test("#142: task requests carry the idempotency key and encode identifiers", () => {
+  const create = buildTaskCreateRequest("ev-1", { title: "Stoisko", slotsNeeded: 2, isPublic: false }, "task-0001-abcd");
+  assert.equal(create.url, "/api/events/ev-1/tasks");
+  assert.equal(create.headers["Idempotency-Key"], "task-0001-abcd");
+  assert.throws(() => buildTaskCreateRequest("ev-1", {}, "x"));
+  const signup = buildSignupRequest("ev-1", "t-1", "g-1", "signup-0001-abcd");
+  assert.equal(signup.url, "/api/events/ev-1/tasks/t-1/signups");
+  assert.deepEqual(JSON.parse(signup.body), { guardianId: "g-1" });
+  assert.throws(() => buildSignupRequest("ev-1", "t-1", "", "signup-0001-abcd"), /Wybierz opiekuna/);
+  assert.equal(buildWithdrawRequest("ev-1", "t-1", "s-1").url, "/api/events/ev-1/tasks/t-1/signups/s-1/withdraw");
+  assert.throws(() => buildTaskCancelRequest("ev-1", "t-1", "x"));
+  assert.deepEqual(JSON.parse(buildTaskCancelRequest("ev-1", "t-1", " Brak chętnych ").body), { reason: "Brak chętnych" });
+  assert.equal(buildCandidatesUrl("ev-1"), "/api/events/ev-1/tasks/candidates");
+  assert.equal(buildCandidatesUrl("ev-1", "kl-1a"), "/api/events/ev-1/tasks/candidates?classId=kl-1a");
+  assert.throws(() => buildCandidatesUrl("ev-1", "zła klasa"));
+});
+
+test("#142: task state, sign-up availability and candidate list without people already signed up", () => {
+  const event = { status: "draft" };
+  const task = { id: "t", slotsNeeded: 2, confirmedCount: 1, signups: [
+    { guardianId: "g1", status: "confirmed" }, { guardianId: "g2", status: "withdrawn" },
+  ] };
+  assert.equal(taskState(task, event), "potrzebni jeszcze: 1");
+  assert.equal(taskState({ ...task, confirmedCount: 2 }, event), "komplet");
+  assert.equal(taskState({ ...task, cancelledAt: "2026-10-01T10:00:00Z" }, event), "odwołane");
+  assert.match(taskState(task, { status: "cancelled" }), /zamrożone/);
+  assert.equal(canSignUp(task, event), true);
+  assert.equal(canSignUp({ ...task, confirmedCount: 2 }, event), false);
+  assert.equal(canSignUp(task, { status: "cancelled" }), false);
+  const candidates = [{ id: "g1", name: "Anna Syntetyczna" }, { id: "g2", name: "Jan Syntetyczny" }, { id: "g3", name: "Jan Syntetyczny" }];
+  assert.deepEqual(availableCandidates(candidates, task).map((c) => c.id), ["g2", "g3"], "wycofany może zapisać się ponownie");
+  assert.deepEqual(candidateLabels(availableCandidates(candidates, task)).map((c) => c.label), ["Jan Syntetyczny (g2)", "Jan Syntetyczny (g3)"]);
+  assert.deepEqual(candidateLabels([candidates[0]]).map((c) => c.label), ["Anna Syntetyczna"]);
+});
