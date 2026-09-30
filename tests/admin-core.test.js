@@ -11,6 +11,9 @@ import { join } from 'node:path';
 import { ENTITY_TYPE_LABELS, REASON_LABELS, accountName, entityTypeLabel, reasonLabel } from '../admin/core.js';
 import { shortId } from '../shared/short-id.js';
 import { AUDIT_ACTIONS } from '../src/pg/routes/admin.js';
+import {
+  GRANT_REQUEST_STATUS_LABELS, grantRequestDialog, grantRequestRow, grantRequestsPath, requestAge,
+} from '../admin/core.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
 
@@ -215,4 +218,127 @@ test('confirmationDialog: brak liczby sesji nie wstawia pustej linii ani „NaN�
   assert.ok(lines.length >= 3);
   assert.deepEqual(lines.filter((line) => /NaN|undefined/.test(line)), []);
   assert.ok(!lines.some((line) => /sesje do zakończenia/.test(line)));
+});
+
+// --- #146: wnioski o nadanie roli w panelu ---------------------------------------
+
+const REQUEST_NOW = new Date('2026-09-30T12:00:00Z');
+const baseRequest = Object.freeze({
+  id: 'req-1', kind: 'grant', role: 'treasurer', userId: 'u-target', email: null, schoolYearId: 'y-2026',
+  grantExpiresAt: null, replacesInvitationId: null, requestedBy: 'u-requester', status: 'pending',
+  createdAt: '2026-09-30T09:30:00Z', expiresAt: '2026-10-03T09:30:00Z',
+});
+const requestUsers = [
+  { id: 'u-requester', email: 'wnioskodawca@example.invalid', displayName: 'Wnioskodawca' },
+  { id: 'u-target', email: 'adresat@example.invalid', displayName: '' },
+];
+const yearsMap = new Map([['y-2026', { label: '2026-2027' }]]);
+
+test('#146: grantRequestsPath przyjmuje tylko znane statusy (domyślnie pending)', () => {
+  assert.equal(grantRequestsPath(), '/api/admin/grant-requests?status=pending');
+  assert.equal(grantRequestsPath('all'), '/api/admin/grant-requests?status=all');
+  for (const status of Object.keys(GRANT_REQUEST_STATUS_LABELS)) {
+    assert.equal(grantRequestsPath(status), `/api/admin/grant-requests?status=${status}`);
+  }
+  assert.equal(grantRequestsPath('x&status=all'), '/api/admin/grant-requests?status=pending');
+});
+
+test('#146: requestAge — minuty, godziny, dni; data błędna i z przyszłości', () => {
+  assert.equal(requestAge('2026-09-30T11:59:40Z', REQUEST_NOW), 'przed chwilą');
+  assert.equal(requestAge('2026-09-30T11:15:00Z', REQUEST_NOW), '45 min temu');
+  assert.equal(requestAge('2026-09-30T09:30:00Z', REQUEST_NOW), '2 godz. temu');
+  assert.equal(requestAge('2026-09-29T11:00:00Z', REQUEST_NOW), '1 dzień temu');
+  assert.equal(requestAge('2026-09-27T11:00:00Z', REQUEST_NOW), '3 dni temu');
+  assert.equal(requestAge('2026-10-01T00:00:00Z', REQUEST_NOW), 'przed chwilą');
+  assert.equal(requestAge('nie-data', REQUEST_NOW), '—');
+});
+
+test('#146: wiersz wniosku — inny administrator widzi „Zatwierdź” i „Odrzuć”, z nazwami kont', () => {
+  const row = grantRequestRow(baseRequest, { me: { id: 'u-approver', email: 'zatwierdzajacy@example.invalid' }, users: requestUsers, years: yearsMap, now: REQUEST_NOW });
+  assert.equal(row.requester, 'Wnioskodawca');
+  assert.equal(row.target, 'adresat@example.invalid');
+  assert.equal(row.role, 'Skarbnik');
+  assert.equal(row.scope, 'rok 2026/2027');
+  assert.equal(row.age, '2 godz. temu');
+  assert.equal(row.status, 'pending');
+  assert.equal(row.canApprove, true);
+  assert.equal(row.canReject, true);
+  assert.equal(row.rejectLabel, 'Odrzuć');
+  assert.equal(row.note, null);
+});
+
+test('#146: własny wniosek — bez „Zatwierdź”, odrzucenie jako „Wycofaj wniosek”', () => {
+  const row = grantRequestRow(baseRequest, { me: { id: 'u-requester' }, users: requestUsers, now: REQUEST_NOW });
+  assert.equal(row.canApprove, false);
+  assert.equal(row.canReject, true);
+  assert.equal(row.rejectLabel, 'Wycofaj wniosek');
+  assert.match(row.note, /inny administrator/);
+});
+
+test('#146: adresat (konto albo adres zaproszenia, bez względu na wielkość liter) nie widzi „Zatwierdź”', () => {
+  const asTarget = grantRequestRow(baseRequest, { me: { id: 'u-target' }, users: requestUsers, now: REQUEST_NOW });
+  assert.equal(asTarget.canApprove, false);
+  const invitation = { ...baseRequest, kind: 'invitation', userId: null, email: 'nowy.zarzad@example.invalid', role: 'board' };
+  const asInvitee = grantRequestRow(invitation, { me: { id: 'u-other', email: 'Nowy.Zarzad@example.invalid' }, users: requestUsers, now: REQUEST_NOW });
+  assert.equal(asInvitee.canApprove, false);
+  assert.equal(asInvitee.target, 'nowy.zarzad@example.invalid');
+  const asOther = grantRequestRow(invitation, { me: { id: 'u-other', email: 'ktos@example.invalid' }, users: requestUsers, now: REQUEST_NOW });
+  assert.equal(asOther.canApprove, true);
+  assert.equal(asOther.scope, 'rok y-2026', 'rok bez etykiety w słowniku — identyfikator');
+});
+
+test('#146: brak zalogowanego konta w stanie — nikt nie jest traktowany jako wnioskodawca', () => {
+  const row = grantRequestRow({ ...baseRequest, requestedBy: null }, { me: {}, now: REQUEST_NOW });
+  assert.equal(row.rejectLabel, 'Odrzuć');
+  assert.equal(row.requester, 'system');
+});
+
+test('#146: wniosek po terminie jest „Wygasły” bez „Zatwierdź”; zamknięty bez żadnych akcji', () => {
+  const overdue = grantRequestRow({ ...baseRequest, expiresAt: '2026-09-30T11:00:00Z' }, { me: { id: 'u-approver' }, now: REQUEST_NOW });
+  assert.equal(overdue.status, 'expired');
+  assert.equal(overdue.statusLabel, 'Wygasły');
+  assert.equal(overdue.canApprove, false);
+  assert.equal(overdue.canReject, true);
+  for (const status of ['approved', 'rejected', 'expired']) {
+    const row = grantRequestRow({ ...baseRequest, status }, { me: { id: 'u-approver' }, now: REQUEST_NOW });
+    assert.equal(row.canApprove, false, status);
+    assert.equal(row.canReject, false, status);
+    assert.equal(row.note, null, status);
+    assert.equal(row.statusLabel, GRANT_REQUEST_STATUS_LABELS[status]);
+  }
+});
+
+test('#146: okno zatwierdzenia nazywa akcję i skutki (przydział albo jednorazowy link)', () => {
+  const me = { id: 'u-approver' };
+  const grantRow = grantRequestRow(baseRequest, { me, users: requestUsers, years: yearsMap, now: REQUEST_NOW });
+  const grantDialog = grantRequestDialog('approve', baseRequest, grantRow);
+  assert.equal(grantDialog.title, 'Zatwierdzić nadanie roli?');
+  assert.equal(grantDialog.confirmLabel, 'Zatwierdź i nadaj rolę');
+  assert.equal(grantDialog.destructive, true);
+  assert.ok(grantDialog.effects.includes('Wnioskuje: Wnioskodawca'));
+  assert.ok(grantDialog.effects.includes('Konto: adresat@example.invalid'));
+  assert.ok(grantDialog.effects.includes('Rola: Skarbnik'));
+  assert.ok(grantDialog.effects.some((line) => line.startsWith('Przydział bezterminowy')));
+  const limited = grantRequestDialog('approve', { ...baseRequest, grantExpiresAt: '2027-09-01T00:00:00Z' }, grantRow);
+  assert.ok(limited.effects.some((line) => line.startsWith('Przydział będzie ważny do')));
+
+  const invitation = { ...baseRequest, kind: 'invitation', userId: null, email: 'nowy@example.invalid', replacesInvitationId: 'inv-old' };
+  const invRow = grantRequestRow(invitation, { me, now: REQUEST_NOW });
+  const invDialog = grantRequestDialog('approve', invitation, invRow);
+  assert.equal(invDialog.confirmLabel, 'Zatwierdź i wydaj link');
+  assert.ok(invDialog.effects.includes('Adres zaproszenia: nowy@example.invalid'));
+  assert.ok(invDialog.effects.some((line) => line.includes('Poprzedni link')));
+  assert.ok(invDialog.effects.some((line) => line.includes('tylko raz')));
+});
+
+test('#146: okno odrzucenia — „Odrzuć wniosek” albo „Wycofaj wniosek” dla własnego', () => {
+  const other = grantRequestRow(baseRequest, { me: { id: 'u-approver' }, now: REQUEST_NOW });
+  const reject = grantRequestDialog('reject', baseRequest, other);
+  assert.equal(reject.title, 'Odrzucić wniosek?');
+  assert.equal(reject.confirmLabel, 'Odrzuć wniosek');
+  assert.ok(reject.effects.some((line) => line.includes('nie zostanie nadana')));
+  const own = grantRequestRow(baseRequest, { me: { id: 'u-requester' }, now: REQUEST_NOW });
+  const withdraw = grantRequestDialog('reject', baseRequest, own);
+  assert.equal(withdraw.title, 'Wycofać wniosek?');
+  assert.equal(withdraw.confirmLabel, 'Wycofaj wniosek');
 });

@@ -68,6 +68,45 @@
         <p><button type="button" id="users-more" hidden>Pokaż więcej</button></p>
       </section>
 
+      <section class="card" aria-labelledby="grant-requests-title">
+        <div class="section-heading">
+          <div><h2 id="grant-requests-title">Wnioski o nadanie roli</h2><p id="grant-requests-summary">Wczytywanie…</p></div>
+          <button type="button" id="reload-grant-requests">Odśwież</button>
+        </div>
+        <p class="hint">Rolę zarządu, skarbnika i administratora nadaje się dopiero po zatwierdzeniu przez innego administratora niż wnioskodawca i osoba, która ma ją otrzymać. Wniosek wygasa po 72 godzinach. Własnego wniosku nie można zatwierdzić.</p>
+        <form id="grant-request-filters" class="filters">
+          <label>Status
+            <select name="status">
+              <option value="pending">Oczekujące</option>
+              <option value="approved">Zatwierdzone</option>
+              <option value="rejected">Odrzucone</option>
+              <option value="expired">Wygasłe</option>
+              <option value="all">Wszystkie</option>
+            </select>
+          </label>
+          <button type="submit">Pokaż</button>
+        </form>
+        <div class="token-box" id="request-token-box" hidden>
+          <p class="token-warning"><strong>Link jest widoczny tylko teraz.</strong> Przekaż go osobie zapraszanej osobnym, zaufanym kanałem. Nie wklejaj go do zgłoszeń ani czatów grupowych. Po zamknięciu tej ramki albo opuszczeniu strony nie da się go odzyskać — w razie utraty wycofaj zaproszenie i utwórz nowe.</p>
+          <p class="hint" id="request-link-label">Link do przekazania (otwiera od razu widok przyjęcia zaproszenia)</p>
+          <div class="token-row">
+            <code id="request-link" aria-labelledby="request-link-label"></code>
+            <button type="button" id="copy-request-link">Kopiuj link</button>
+          </div>
+          <p class="hint" id="request-token-meta"></p>
+          <p><button type="button" id="hide-request-token">Zamknij</button></p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Wnioski o nadanie roli</caption>
+            <thead>
+              <tr><th scope="col">Wnioskuje</th><th scope="col">Dla kogo</th><th scope="col">Rola</th><th scope="col">Zakres</th><th scope="col">Złożono</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Akcje</span></th></tr>
+            </thead>
+            <tbody id="grant-requests-body"></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="card" aria-labelledby="grants-title">
         <div class="section-heading">
           <div><h2 id="grants-title">Przydziały ról</h2><p id="grants-summary"></p></div>
