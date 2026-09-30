@@ -408,7 +408,7 @@ test('campaign PUT without a valid revision: 400 invalid_revision, nothing writt
   } finally { await t.close(); }
 });
 
-test('two parallel campaign PUTs with the same revision: one 200, one 409, one audit event; approved campaign stays approved on 409', async () => {
+test('two campaign PUTs with the same revision via Promise.all (sequential on PGlite): one 200, one 409, one audit event; approved campaign stays approved on 409', async () => {
   const t = await setup();
   try {
     await family(t.db, 'h1');
@@ -1162,7 +1162,7 @@ test('recoverStale: audit failure leaves rows in sending; the next run marks del
   } finally { await t.close(); }
 });
 
-test('recoverStale: two concurrent runs (double click) record each row once', async () => {
+test('recoverStale: two runs via Promise.all (double click, sequential on PGlite) record each row once', async () => {
   const t = await setup();
   try {
     for (const id of ['h1', 'h2']) await family(t.db, id);

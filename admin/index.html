@@ -207,12 +207,13 @@
 
       <section class="card" aria-labelledby="audit-title">
         <div class="section-heading">
-          <div><h2 id="audit-title">Dziennik zmian kont i ról</h2><p>Najnowsze zdarzenia, po 100 na stronę; starsze dociąga „Pokaż więcej”. Dziennik zawiera identyfikatory, bez adresów e-mail.</p></div>
+          <div><h2 id="audit-title">Dziennik zdarzeń</h2><p>Najnowsze zdarzenia wybranego obszaru, po 100 na stronę; starsze dociąga „Pokaż więcej”. Dziennik zawiera identyfikatory, bez adresów e-mail i bez treści opisowych.</p></div>
           <button type="button" id="reload-audit">Odśwież</button>
         </div>
+        <p><label>Obszar <select id="audit-domain"></select></label></p>
         <div class="table-wrap">
           <table>
-            <caption class="sr-only">Dziennik zmian kont i ról</caption>
+            <caption class="sr-only">Dziennik zdarzeń</caption>
             <thead><tr><th scope="col">Czas</th><th scope="col">Zdarzenie</th><th scope="col">Obiekt</th><th scope="col">Szczegóły</th><th scope="col">Wykonał</th></tr></thead>
             <tbody id="audit-body"></tbody>
           </table>
