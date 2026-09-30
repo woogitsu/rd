@@ -6,6 +6,9 @@
 import { expect, test } from '@playwright/test';
 import { readRuntime } from './support/runtime.js';
 
+// Pełne escapowanie znaków specjalnych wyrażenia regularnego (także „\\”) — CodeQL js/incomplete-sanitization.
+const escapeRegExp = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const runtime = readRuntime();
 
 async function boardPage(browser, viewport) {
@@ -33,7 +36,7 @@ test('documents/: „Szczegóły” — Enter otwiera, Esc i „Zamknij” oddaj
   await expect(rows).toHaveCount(runtime.documents.length, { timeout: 10_000 });
 
   const second = page.locator(`#documents-body button[data-id="${runtime.documents[1].id}"]`);
-  await expect(second).toHaveAccessibleName(new RegExp(`^Szczegóły dokumentu: ${runtime.documents[1].title.replace(/[()]/g, '\\$&')}, dodano `));
+  await expect(second).toHaveAccessibleName(new RegExp(`^Szczegóły dokumentu: ${escapeRegExp(runtime.documents[1].title)}, dodano `));
   await second.focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('#details')).toBeVisible();
