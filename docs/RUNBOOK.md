@@ -172,15 +172,20 @@ danych/IOD (karta 9; założenie, nie przepis).
   wracają do kolejki, czekać), `provider_unreachable` (brak połączenia —
   wiadomość wraca do kolejki), `provider_unavailable` (5xx/timeout — wynik
   **niepewny**, `delivery_unknown`), `provider_account_rejected`
-  (401/402/403 — klucz, kredyty, nadawca). Monitor zewnętrzny widzi to jako
+  (401/402/403 — klucz, kredyty, nadawca), `provider_account_paused`
+  (pauza po takiej odmowie, bez połączenia z Brevo). Monitor zewnętrzny widzi to jako
   `503` z `GET /health/jobs` (`email_worker_stale`, `email_queue_too_old`),
   jeśli został skonfigurowany (decyzja zarządu).
 - **Działanie:** nie ponawiać na ślepo. Wiadomości `delivery_unknown`
   sprawdzić w panelu Brevo (nagłówki `X-Mailin-custom` = id wiersza,
   `X-RD-Idempotency-Key`) zanim ktokolwiek zdecyduje o ponowieniu; klucz
   idempotencji (kampania + rodzina) chroni przed duplikatem po naszej
-  stronie, nie po stronie Brevo. Przy `provider_account_rejected` poprawić
-  klucz (`BREVO_API_KEY`, karta 6) lub konto; w tym czasie wysyłkę można
+  stronie, nie po stronie Brevo. Przy `provider_account_rejected` /
+  `provider_account_paused` (#209: po odmowie konta wysyłka jest wstrzymana
+  do jawnego potwierdzenia) poprawić klucz (`BREVO_API_KEY`, karta 6) lub
+  konto, sprawdzić `npm run email:preflight -- --check-account`, a potem
+  członek zarządu potwierdza naprawę w panelu kampanii
+  (`POST /api/email/provider-pause/lift`); w tym czasie wysyłkę można
   wyłączyć `EMAIL_SENDING_ENABLED=false`. Wstrzymanie kampanii:
   `POST /api/email/campaigns/{id}/pause` (wznowienie: `…/resume`). Wynik
   wiadomości niepewnych rozstrzyga zarząd przez `…/resolutions`. Błędy

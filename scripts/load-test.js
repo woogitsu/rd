@@ -20,6 +20,18 @@
 // albo któraś sesja nie należy do konta syntetycznego. Domyślnie zdalnie tylko
 // odczyty; zapisy (wpłaty „unmatched”, szkice wydarzeń) wymagają --allow-writes.
 //
+// Scenariusz "heavy" (#217, docs/RAILWAY_OPERATIONS.md): ciężkie trasy na
+// danych wieloletnich, każda osobno (sekwencyjnie i przy 5 równoczesnych):
+//
+//   npm run load:test -- --scenario heavy                 # skala domyślna (mała)
+//   npm run load:test -- --scenario heavy --heavy-full    # 5 lat, 50 klas/rok, 100 000 zdarzeń audytu
+//
+// Zdalnie (staging) scenariusz "heavy" wykonuje wyłącznie odczyty; te same
+// bezpieczniki co wyżej, `--allow-writes` jest odrzucane. Identyfikatory
+// obiektów stagingu: LOAD_TEST_CLASS_ID, LOAD_TEST_HOUSEHOLD_ID,
+// LOAD_TEST_OTHER_HOUSEHOLD_ID, LOAD_TEST_RECONCILIATION_ID, LOAD_TEST_CAMPAIGN_ID
+// (opcjonalne; operacja bez identyfikatora jest pomijana i wymieniona w `skipped`).
+//
 // Wynik: JSON na stdout (p50/p95/p99, odsetek błędów, przepustowość, podział
 // na operacje). Kod wyjścia 1 przy przekroczeniu progu, 2 przy błędzie użycia.
 // Czasy z PGlite (WASM, jeden proces, jedno połączenie) NIE są reprezentatywne
@@ -30,6 +42,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
 import { isProductionEnv } from '../src/app-env.js';
 import { startServer } from '../src/server.js';
+import { createLogger } from '../src/log.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { approve, createDraft, publish, submit } from '../src/pg/events.js';
 import { createMeeting } from '../src/pg/meetings.js';
@@ -38,11 +51,17 @@ import {
   buildSyntheticData, insertSyntheticData, primaryRoles, seedSyntheticSessions, YEAR,
 } from './lib/synthetic-seed.js';
 import {
-  buildHistoricalData, checkHeavyBudgets, HEAVY_DEFAULTS, insertHistoricalData, runHeavyScenario, seedHeavySessions,
+  buildHistoricalData, checkHeavyBudgets, HEAVY_DEFAULTS, HEAVY_FULL_SCALE, insertHistoricalData, instrumentDb,
+  runHeavyScenario, seedHeavySessions,
 } from './lib/heavy-scenario.js';
 
 const migrationsDir = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const distRoot = fileURLToPath(new URL('../dist/', import.meta.url));
+
+// Serwer lokalny loguje tylko ostrzeżenia i błędy, na stderr — stdout zawiera
+// wyłącznie raport JSON (wcześniej każde żądanie dopisywało linię
+// `http_request` do stdout i psuło raport przy `npm run load:test > wynik.json`).
+const serverLogger = createLogger({ level: 'warn', sink: (line) => process.stderr.write(`${line}\n`) });
 
 export const DEFAULT_THRESHOLDS = Object.freeze({
   p95Ms: 1000,
@@ -56,6 +75,17 @@ export const REMOTE_SESSION_ENV = Object.freeze({
   board: 'LOAD_TEST_SESSION_BOARD',
   treasurer: 'LOAD_TEST_SESSION_TREASURER',
   representative: 'LOAD_TEST_SESSION_REPRESENTATIVE',
+  audit: 'LOAD_TEST_SESSION_AUDIT',
+});
+
+// Scenariusz "heavy" zdalnie (#217 pkt 4): identyfikatory obiektów stagingu
+// (opcjonalne — operacja bez identyfikatora jest pomijana i wymieniona w `skipped`).
+export const REMOTE_HEAVY_ENV = Object.freeze({
+  classId: 'LOAD_TEST_CLASS_ID',
+  householdId: 'LOAD_TEST_HOUSEHOLD_ID',
+  otherHouseholdId: 'LOAD_TEST_OTHER_HOUSEHOLD_ID',
+  reconciliationId: 'LOAD_TEST_RECONCILIATION_ID',
+  campaignId: 'LOAD_TEST_CAMPAIGN_ID',
 });
 
 const FINANCIAL = ['admin', 'board', 'treasurer'];
@@ -79,7 +109,7 @@ export function parseArgs(argv) {
   const options = {
     users: 50, durationSec: 30, thinkMs: 0, timeoutMs: 10_000, target: null,
     confirmStaging: false, allowWrites: null, out: null, thresholds: { ...DEFAULT_THRESHOLDS },
-    scenario: 'light', heavyIterations: 3, heavy: { ...HEAVY_DEFAULTS },
+    scenario: 'light', heavyIterations: 3, heavyConcurrency: 5, heavy: { ...HEAVY_DEFAULTS },
   };
   const valueFlags = new Map([
     ['--users', (v) => { options.users = number(v, '--users', { min: 1, integer: true }); }],
@@ -101,10 +131,14 @@ export function parseArgs(argv) {
     ['--heavy-classes', (v) => { options.heavy.classesPerYear = number(v, '--heavy-classes', { min: 1, integer: true }); }],
     ['--heavy-students', (v) => { options.heavy.studentsPerYear = number(v, '--heavy-students', { min: 1, integer: true }); }],
     ['--heavy-audit-events', (v) => { options.heavy.auditEvents = number(v, '--heavy-audit-events', { min: 0, integer: true }); }],
+    ['--heavy-import-rows', (v) => { options.heavy.importRows = number(v, '--heavy-import-rows', { min: 1, integer: true }); }],
+    ['--heavy-concurrency', (v) => { options.heavyConcurrency = number(v, '--heavy-concurrency', { min: 1, integer: true }); }],
   ]);
   for (let i = 0; i < argv.length; i += 1) {
     const [flag, inline] = argv[i].split(/=(.*)/s, 2);
     if (flag === '--i-confirm-staging') options.confirmStaging = true;
+    // Pełna skala z opisu #217; późniejsze flagi --heavy-* nadpisują pojedyncze wymiary.
+    else if (flag === '--heavy-full') Object.assign(options.heavy, HEAVY_FULL_SCALE);
     else if (flag === '--allow-writes') options.allowWrites = true;
     else if (flag === '--read-only') options.allowWrites = false;
     else if (valueFlags.has(flag)) {
@@ -227,6 +261,7 @@ export async function startLocalTarget({ log = () => {} } = {}) {
     const actors = interleaveByRole(data.users.map(([userId]) => ({ userId, role: roles.get(userId), cookie: cookies.get(userId) })));
     const server = await startServer({
       host: '127.0.0.1', port: 0, distRoot, env: { db, APP_ENV: 'load-test' }, fetchHandler: handlePgRequest,
+      logger: serverLogger,
     });
     const setupMs = Math.round(performance.now() - started);
     log(`local target ready in ${setupMs} ms (PGlite, ${data.students.length} students, ${data.guardians.length} guardians, ${data.users.length} users)`);
@@ -251,29 +286,48 @@ export async function startLocalTarget({ log = () => {} } = {}) {
 
 // ---------- scenariusz "heavy" (#217) ----------
 
-export async function startHeavyTarget({ heavy = HEAVY_DEFAULTS, log = () => {} } = {}) {
+export async function startHeavyTarget({ heavy = HEAVY_DEFAULTS, sessionsPerUser = 5, log = () => {} } = {}) {
   const started = performance.now();
   const db = new PGlite();
   try {
     await applyMigrations(pgliteClient(db), await loadMigrations(migrationsDir));
     const data = buildHistoricalData(heavy);
     const reconciliationId = await insertHistoricalData(db, data);
-    const cookies = await seedHeavySessions(db, data.users.map(([id]) => id));
+    // Kilka sesji na osobę: faza równoczesna udaje kilka osób tej roli (limiter
+    // kosztownych tras liczy równoczesne żądania na sesję).
+    const sessions = [];
+    for (let i = 0; i < Math.max(1, sessionsPerUser); i += 1) sessions.push(await seedHeavySessions(db, data.users.map(([id]) => id)));
     const roles = new Map(data.grants.map(([, userId, role]) => [userId, role]));
-    const actors = data.users.map(([userId]) => ({ userId, role: roles.get(userId), cookie: cookies.get(userId) }));
+    const actors = data.users.map(([userId]) => ({
+      userId, role: roles.get(userId), cookie: sessions[0].get(userId), cookies: sessions.map((map) => map.get(userId)),
+    }));
+    // #217 pkt 2: opakowanie env.db — najwolniejsze zapytanie i najdłuższa przerwa JS w transakcji.
+    const dbStats = instrumentDb(db);
     const server = await startServer({
-      host: '127.0.0.1', port: 0, distRoot, env: { db, APP_ENV: 'load-test' }, fetchHandler: handlePgRequest,
+      host: '127.0.0.1', port: 0, distRoot,
+      // IMPORT_ENABLED: APP_ENV=load-test jest traktowany jak produkcyjny
+      // (fail-closed), a scenariusz importuje wyłącznie syntetyczne wiersze do PGlite w pamięci.
+      env: { db: dbStats.db, APP_ENV: 'load-test', IMPORT_ENABLED: 'true' }, fetchHandler: handlePgRequest,
+      logger: serverLogger,
     });
     const setupMs = Math.round(performance.now() - started);
     log(`heavy target ready in ${setupMs} ms (PGlite, ${data.yearIds.length} lat, `
       + `${data.students.length} uczniów, ${data.auditEventCount} zdarzeń audytu)`);
     return {
       baseUrl: `http://127.0.0.1:${server.address().port}`,
-      latestYear: data.latestYear, classId: data.latestClassId, householdId: data.latestHouseholdId,
-      otherHouseholdId: data.latestOtherHouseholdId, reconciliationId, actors,
+      db, data, dbStats,
+      ids: {
+        latestYear: data.latestYear, classId: data.latestClassId, householdId: data.latestHouseholdId,
+        otherHouseholdId: data.latestOtherHouseholdId, reconciliationId, classNames: data.latestClassNames,
+        importRows: data.importRows, closeYearId: data.closeYearId, closeNextYearId: data.closeNextYearId,
+        lineDate: data.latestStartsOn, lineSpreadDays: data.latestSpreadDays,
+      },
+      actors,
       dataset: {
-        years: data.yearIds.length, students: data.students.length, guardians: data.guardians.length,
-        auditEvents: data.auditEventCount,
+        years: data.yearIds.length, classesPerYear: data.latestClassNames.length, studentsPerYear: data.studentsPerYear,
+        students: data.students.length, households: data.households.length, guardians: data.guardians.length,
+        enrollments: data.enrollments.length, payments: data.payments.length, ledgerEntries: data.ledgerEntries.length,
+        auditEvents: data.auditEventCount, importRows: data.importRows,
       },
       setupMs,
       close: async () => {
@@ -290,26 +344,61 @@ export async function startHeavyTarget({ heavy = HEAVY_DEFAULTS, log = () => {} 
 
 async function runHeavy(options, { log = () => {} } = {}) {
   const startedAt = new Date().toISOString();
-  const target = await startHeavyTarget({ heavy: options.heavy, log });
+  const target = await startHeavyTarget({ heavy: options.heavy, sessionsPerUser: options.heavyConcurrency ?? 5, log });
   try {
-    log(`running scenario heavy (${options.heavyIterations} iterations/route) against local PGlite`);
+    log(`running scenario heavy (${options.heavyIterations} iterations/route, ${options.heavyConcurrency} concurrent) against local PGlite`);
     const result = await runHeavyScenario({
-      baseUrl: target.baseUrl, actors: target.actors, latestYear: target.latestYear, classId: target.classId,
-      householdId: target.householdId, otherHouseholdId: target.otherHouseholdId, reconciliationId: target.reconciliationId,
-      iterations: options.heavyIterations, timeoutMs: options.timeoutMs, log,
+      baseUrl: target.baseUrl, actors: target.actors, ...target.ids, dbStats: target.dbStats,
+      iterations: options.heavyIterations, concurrency: options.heavyConcurrency, timeoutMs: options.timeoutMs, log,
     });
     const breaches = checkHeavyBudgets(result.byOperation);
+    // #217: scenariusz nie może zostawić żadnej wiadomości do wysłania.
+    const outbox = await target.db.query('SELECT count(*)::int AS n FROM email_outbox');
+    if (outbox.rows[0].n !== 0) breaches.push(`email_outbox: ${outbox.rows[0].n} wierszy (scenariusz nie może kolejkować wiadomości)`);
     return {
       mode: 'local', scenario: 'heavy',
       target: 'pglite-in-process (not representative)',
       startedAt, node: process.version,
       dataset: target.dataset, setupMs: target.setupMs,
       ...result,
+      emailOutboxRows: outbox.rows[0].n,
       breaches, passed: breaches.length === 0,
     };
   } finally {
     await target.close();
   }
+}
+
+// Tryb zdalny "heavy" (#217 pkt 4): wyłącznie staging, wyłącznie odczyty
+// (`remoteSafe`), te same bezpieczniki co scenariusz domyślny. Import,
+// uzgodnienia, kampanie, eksport roczny i zamknięcie roku nie są wykonywane.
+// Odczyty zostawiają na stagingu zwykłe wpisy dziennika (audyt/odczyty danych),
+// tak jak każde otwarcie tych widoków w panelu.
+export function remoteHeavyIdsFromEnv(env = process.env) {
+  const ids = {};
+  for (const [field, name] of Object.entries(REMOTE_HEAVY_ENV)) {
+    const value = env[name]?.trim();
+    ids[field] = value || null;
+  }
+  return ids;
+}
+
+async function runHeavyRemote(options, { env, log }) {
+  if (options.allowWrites) throw new UsageError('--scenario heavy against a remote target is read-only; --allow-writes is refused');
+  const baseUrl = validateRemoteTarget(options.target, { confirmStaging: options.confirmStaging, env });
+  const { schoolYearId, actors } = remoteActorsFromEnv(env);
+  await verifyRemoteActors(baseUrl, actors, options.timeoutMs);
+  const startedAt = new Date().toISOString();
+  log(`running scenario heavy (read-only) against ${baseUrl}`);
+  const result = await runHeavyScenario({
+    baseUrl, actors, latestYear: schoolYearId, ...remoteHeavyIdsFromEnv(env), readOnly: true,
+    iterations: options.heavyIterations, concurrency: options.heavyConcurrency, timeoutMs: options.timeoutMs, log,
+  });
+  const breaches = checkHeavyBudgets(result.byOperation);
+  return {
+    mode: 'remote', scenario: 'heavy', target: baseUrl, startedAt, node: process.version, writes: false,
+    ...result, breaches, passed: breaches.length === 0,
+  };
 }
 
 // ---------- obciążenie ----------
@@ -494,10 +583,9 @@ export function checkThresholds(result, thresholds = DEFAULT_THRESHOLDS) {
 
 export async function loadTest(options, { env = process.env, log = () => {} } = {}) {
   if (options.scenario === 'heavy') {
-    // #217 pkt 4: scenariusz "heavy" zapisuje dane (import wyciągu) — wyłącznie
-    // lokalnie. Tryb zdalny (tylko do odczytu, tylko staging) nie jest jeszcze
-    // zaimplementowany — patrz "Ryzyka" w opisie PR.
-    if (options.target) throw new UsageError('--scenario heavy runs locally only (remote heavy mode is not implemented yet)');
+    // #217 pkt 4: zapisy scenariusza "heavy" (import, uzgodnienie, migawka
+    // kampanii, eksport, zamknięcie roku) wyłącznie lokalnie; zdalnie tylko odczyty.
+    if (options.target) return runHeavyRemote(options, { env, log });
     return runHeavy(options, { log });
   }
   const startedAt = new Date().toISOString();

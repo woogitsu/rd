@@ -164,6 +164,8 @@ const CATALOG = {
   'email.suppressions.viewed': ['email', 'Odczyt listy wstrzymanych adresów'],
   'email.suppression.release_requested': ['email', 'Prośba o zwolnienie adresu'],
   'email.suppression.released': ['email', 'Zwolnienie adresu z listy wstrzymanych'],
+  'email.provider.paused': ['email', 'Wstrzymanie wysyłki — błąd konta u dostawcy'],
+  'email.provider.pause_lifted': ['email', 'Zdjęcie wstrzymania wysyłki po naprawie konta'],
   'email.attention_list.viewed': ['email', 'Odczyt listy nieudanych doręczeń kampanii'],
   'email.webhook.previous_secret_used': ['email', 'Użycie poprzedniego sekretu powiadomień dostawcy'],
 

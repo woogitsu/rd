@@ -68,7 +68,13 @@ function sectionElement(section, index) {
       const row = document.createElement("tr");
       cells.forEach((value, column) => {
         const td = document.createElement("td");
-        td.textContent = value;
+        // Komórka z identyfikatorem (idCell): skrót w treści, pełna wartość w podpowiedzi.
+        if (value && typeof value === "object") {
+          td.textContent = value.text;
+          td.title = value.title;
+        } else {
+          td.textContent = value;
+        }
         if (numeric.has(column)) td.className = "amount";
         row.append(td);
       });
@@ -96,7 +102,7 @@ async function showYear(value) {
     const data = await api(reportUrl(value, "json"));
     const report = data.report;
     byId("report-title").textContent = `Raport dla Komisji Rewizyjnej — ${formatSchoolYear(report?.schoolYear?.label ?? value)}`;
-    byId("report-meta").textContent = (report?.asOf ?? report?.generatedAt) ? `Stan na ${formatDate(report.asOf ?? report.generatedAt)}` : "";
+    byId("report-meta").textContent = (report?.asOf ?? report?.generatedAt) ? `Stan na ${formatDate(report.asOf ?? report.generatedAt)} (czas Europe/Brussels)` : "";
     byId("report-html-link").href = reportUrl(value, "html");
     byId("report-sections").replaceChildren(...buildSections(report).map(sectionElement));
     reportSection.hidden = false;

@@ -6,6 +6,8 @@ Ekran pokazuje listę kampanii roku, szkic treści, migawkę odbiorców z liczb�
 
 Pod listą kampanii jest sekcja „Lista wyłączeń adresów” (#94): zamaskowane adresy zablokowane po odbiciu, skardze lub blokadzie dostawcy, z identyfikatorem rodziny i opiekuna. Blokadę zdejmuje się dwuetapowo (wniosek jednej osoby, zatwierdzenie drugiej); powstaje nowy zapis, historia zostaje, nic nie jest wysyłane. Logika bez DOM: `suppressions-core.js`.
 
+Nad listą kampanii pojawia się sekcja „Wysyłka wstrzymana — błąd konta u dostawcy e-mail” (#209), gdy Brevo odrzuciło konto (401/402/403: zły lub obrócony klucz, brak kredytów, nieuprawniony nadawca lub IP). Pokazuje przyczynę i czas; kampania w toku ma wtedy stan „Wstrzymana — błąd konta”. Przycisk „Potwierdź naprawę i wznów wysyłkę” widzi tylko zarząd (serwer wymaga roli zarządu i świeżego MFA); samo potwierdzenie niczego nie wysyła — wysyłkę wznawia najbliższy przebieg zadania.
+
 **Żaden przycisk tego ekranu nie wysyła poczty.** Zatwierdzenie i zakolejkowanie tylko przygotowują wiersze w `email_outbox` — wysyła je wyłącznie osobne zadanie `scripts/email-worker.js`, uruchamiane niezależnie od panelu.
 
 Prototyp — nie używać na danych rzeczywistych przed decyzją zarządu o szablonie wiadomości (D-16) i nadawcy/adresatach (D-17); ekran pokazuje wtedy ostrzeżenie zamiast domyślnie „zatwierdzonej” treści.

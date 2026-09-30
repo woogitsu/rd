@@ -71,3 +71,56 @@ test('email:preflight is deterministic on repeated calls (no state written)', as
   const second = await runPreflight(BASE_ENV, resolvers);
   assert.deepEqual(first, second);
 });
+
+// --- #209: opcjonalne sprawdzenie klucza (GET /v3/account), tylko z fetchImpl ---
+
+function accountStub(respond) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, method: init.method, apiKey: init.headers['api-key'], body: init.body });
+    const answer = respond();
+    if (answer instanceof Error) throw answer;
+    return new Response('{"email":"konto@example.invalid","companyName":"Syntetyczna"}', { status: answer });
+  };
+  return { calls, fetchImpl };
+}
+
+test('email:preflight bez --check-account nie łączy się z Brevo nawet z kluczem', async () => {
+  const stub = accountStub(() => 200);
+  const checks = await runPreflight({ ...BASE_ENV, BREVO_API_KEY: 'synthetic-key' }, { ...fakeResolvers(), fetchImpl: stub.fetchImpl, processEnv: {} });
+  assert.equal(stub.calls.length, 0);
+  assert.deepEqual(statusOf(checks, 'brevo_account'), []);
+});
+
+test('email:preflight --check-account: jedno zapytanie GET /v3/account; 401/402/403 = missing, 200 = ok, brak połączenia = warning', async () => {
+  for (const [answer, expected, pattern] of [
+    [200, 'ok', /przyjęło klucz/],
+    [401, 'missing', /401/],
+    [402, 'missing', /402/],
+    [403, 'missing', /403/],
+    [500, 'warning', /provider_status_500/],
+    [Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }), 'warning', /nie udało się połączyć/],
+  ]) {
+    const stub = accountStub(() => answer);
+    const checks = await runPreflight({ ...BASE_ENV, BREVO_API_KEY: 'synthetic-key' }, {
+      ...fakeResolvers(), checkAccount: true, fetchImpl: stub.fetchImpl, processEnv: {},
+    });
+    const [check] = checks.filter((c) => c.code === 'brevo_account');
+    assert.equal(check.status, expected, String(answer));
+    assert.match(check.detail, pattern);
+    assert.doesNotMatch(check.detail, /synthetic-key|konto@example\.invalid|Syntetyczna/, 'bez sekretu i treści odpowiedzi');
+    assert.equal(stub.calls.length, 1);
+    assert.deepEqual([stub.calls[0].url, stub.calls[0].method, stub.calls[0].apiKey, stub.calls[0].body],
+      ['https://api.brevo.com/v3/account', 'GET', 'synthetic-key', undefined]);
+  }
+});
+
+test('email:preflight --check-account: brak klucza = missing bez zapytania; pod node --test odmawia bez fetch', async () => {
+  const stub = accountStub(() => 200);
+  const noKey = await runPreflight({ ...BASE_ENV }, { ...fakeResolvers(), checkAccount: true, fetchImpl: stub.fetchImpl, processEnv: {} });
+  assert.deepEqual(statusOf(noKey, 'brevo_account'), ['missing']);
+  assert.ok(process.env.NODE_TEST_CONTEXT);
+  const underRunner = await runPreflight({ ...BASE_ENV, BREVO_API_KEY: 'synthetic-key' }, { ...fakeResolvers(), checkAccount: true, fetchImpl: stub.fetchImpl });
+  assert.deepEqual(statusOf(underRunner, 'brevo_account'), ['warning']);
+  assert.equal(stub.calls.length, 0);
+});

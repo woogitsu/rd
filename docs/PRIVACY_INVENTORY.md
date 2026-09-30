@@ -54,6 +54,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_preferences_events`|`email_hash`|Opiekun|pseudonymous|kontakt|preferencje kontaktu wg kategorii (wypisanie jednym kliknięciem)|email_snapshot|nie|nie|
 |`email_preview_sends`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie wysyłki testowej z osobą|nieustalona (D-04)|nie|nie|
 |`email_preview_sends`|`recipient_hash`|Członek Rady|pseudonymous|kontakt|limit wysyłek testowych na adres techniczny Rady|nieustalona (D-04)|nie|nie|
+|`email_provider_pauses`|`lifted_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_suppression_release_requests`|`consumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_suppression_release_requests`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
 |`email_suppression_release_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -211,7 +212,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **198**, w tym wolnego tekstu: **57** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **199**, w tym wolnego tekstu: **57** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -593,6 +594,19 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `idempotency_key` | none | — | nie |
 | `provider_message_id` | none | — | nie |
 | `recipient_hash` | pseudonymous | board_member | nie |
+
+### `email_provider_pauses`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `campaign_id` | none | — | nie |
+| `created_at` | none | — | nie |
+| `error_code` | none | — | nie |
+| `id` | none | — | nie |
+| `lifted_at` | none | — | nie |
+| `lifted_by` | pseudonymous | board_member | nie |
+| `reason` | none | — | nie |
+| `run_id` | none | — | nie |
 
 ### `email_send_ledger`
 

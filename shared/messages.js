@@ -331,6 +331,8 @@ export const MESSAGES = Object.freeze({
   suppression_not_active: "Ta blokada nie jest już aktywna.",
   outbox_not_found: "Nie znaleziono tej wiadomości w kolejce.",
   not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
+  invalid_provider_pause_id: "Niepoprawny identyfikator wstrzymania wysyłki.",
+  provider_pause_not_found: "Nie znaleziono tego wstrzymania wysyłki. Odśwież widok.",
 
   // --- Import -----------------------------------------------------------------------------------
   import_disabled: "Import jest wyłączony na tym środowisku.",

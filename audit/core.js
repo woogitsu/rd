@@ -3,6 +3,10 @@
 // Ekran jest WYŁĄCZNIE do odczytu: nie ma tu żadnej akcji zmieniającej stan.
 
 import { formatEur } from '../panel/money.js';
+import { shortId } from '../shared/short-id.js';
+import { formatDateOrTimestamp } from '../shared/zoned-time.js';
+
+export const TIME_ZONE = 'Europe/Brussels';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
@@ -53,12 +57,18 @@ function text(value) {
   return value === null || value === undefined || value === '' ? '—' : String(value);
 }
 
+// Przegląd demo 4: data jak w kolumnach paneli („2026-10-20”), znacznik czasu
+// w strefie Europe/Brussels („2026-10-20 16:05”) — nie „UTC”. Ta sama funkcja
+// (shared/zoned-time.js) co w raporcie HTML serwera (src/pg/audit-report.js).
 export function formatDate(value) {
-  if (!value) return '—';
-  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
-  if (!match) return String(value);
-  const date = `${match[3]}.${match[2]}.${match[1]}`;
-  return match[4] ? `${date} ${match[4]}:${match[5]} UTC` : date;
+  return formatDateOrTimestamp(value, TIME_ZONE) ?? '—';
+}
+
+// Komórka z identyfikatorem: skrót (shared/short-id.js), pełna wartość w podpowiedzi.
+// main.js wstawia `text` przez textContent, a `title` jako atrybut.
+export function idCell(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  return { text: shortId(value), title: String(value) };
 }
 
 export function checkDetails(check) {
@@ -182,7 +192,7 @@ export function buildSections(report) {
     title: 'Korekty wpisów księgi',
     headers: ['Zapisano', 'Wpis księgi', 'Data wpisu', 'Rodzaj', 'Kwota korekty', 'Powód'],
     rows: (report.corrections ?? []).map((item) => [
-      formatDate(item.createdAt), text(item.ledgerEntryId), formatDate(item.entryOccurredOn),
+      formatDate(item.createdAt), idCell(item.ledgerEntryId), formatDate(item.entryOccurredOn),
       DIRECTION[item.direction] ?? text(item.direction), formatEur(item.amountCents), text(item.reason),
     ]),
     numeric: [4],
@@ -211,7 +221,7 @@ export function buildSections(report) {
       title: 'Dowody wydatków',
       headers: ['Data', 'Kategoria', 'Opis', 'Netto', 'Wpis księgi'],
       rows: (missing.items ?? []).map((item) => [
-        formatDate(item.occurredOn), text(item.category), text(item.description), formatEur(item.netAmountCents), text(item.id),
+        formatDate(item.occurredOn), text(item.category), text(item.description), formatEur(item.netAmountCents), idCell(item.id),
       ]),
       numeric: [3],
       empty: 'Każdy wydatek ma co najmniej jeden dokument.',

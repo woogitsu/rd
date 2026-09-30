@@ -74,6 +74,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   email_suppression_list: "Lista wstrzymanych adresów",
   email_suppression_release: "Zwolnienie adresu z listy wstrzymanych",
   email_suppression_release_request: "Prośba o zwolnienie adresu",
+  email_provider_pause: "Wstrzymanie wysyłki u dostawcy e-mail",
   email_webhook_event: "Zdarzenie dostawcy e-mail",
   enrollment: "Zapis do klasy",
   export: "Eksport",
