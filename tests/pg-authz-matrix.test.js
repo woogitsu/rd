@@ -654,6 +654,13 @@ async function makeAdminTarget(ctx, stage) {
       { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' });
     return { requestId: json.request.id };
   }
+  if (stage === 'dataRequestVerified') {
+    // #100: eksport danych rodziny wymaga żądania dostępu po weryfikacji tożsamości (hh-1).
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',
+      { kind: 'access', householdId: 'hh-1', receivedOn: '2026-10-01' });
+    await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/data-requests/${json.request.id}/status`, { status: 'identity_verified' });
+    return { requestId: json.request.id };
+  }
   throw new Error(`unknown admin fixture ${stage}`);
 }
 

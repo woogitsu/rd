@@ -61,13 +61,19 @@
 //   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
 //   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
 //   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
+//   POST /api/admin/data-requests/{id}/export?format=json|csv
+//        eksport danych jednej rodziny (src/pg/family-export.js, docs/DATA_REQUESTS.md):
+//        tylko żądanie `access`/`portability` w stanie identity_verified/in_progress;
+//        krok w górę MFA; wpis data_access_log (strict, na każde gospodarstwo zakresu)
+//        i zdarzenie data_subject_request.exported w tej samej transakcji.
 //
-// #100 wariant zachowawczy: wyłącznie rejestr żądań i przejścia stanu (bez
-// cofania, bez usuwania — patrz migracja 0068). Eksport danych jednej rodziny,
-// sprostowanie identyfikacyjne i ograniczenie przetwarzania (kampanie/kartki)
-// NIE są tu zaimplementowane — zależą od D-07 (kto przyjmuje, weryfikacja
-// tożsamości, termin) i D-08/D-09 (kto czyta rejestr); do tego czasu odczyt i
-// zapis są wyłącznie dla admina, jak reszta modułu.
+// #100 wariant zachowawczy: rejestr żądań, przejścia stanu (bez cofania, bez
+// usuwania — patrz migracja 0068) i eksport danych jednej rodziny.
+// Sprostowanie identyfikacyjne, ograniczenie przetwarzania (kampanie/kartki)
+// i usunięcie/anonimizacja NIE są tu zaimplementowane — wymagają migracji i
+// decyzji D-07 (kto przyjmuje, weryfikacja tożsamości, termin), D-04 (#91,
+// mechanizm anonimizacji) i D-08/D-09 (kto czyta rejestr); do tego czasu odczyt
+// i zapis są wyłącznie dla admina, jak reszta modułu.
 //   GET  /api/admin/retention/preview           raport kandydatów do retencji (D-04, #91):
 //                                                 wyłącznie liczności per kategoria i rok/rok szkolny
 //                                                 + zarejestrowane polityki (`retention_policies`, bez PII).
@@ -112,7 +118,12 @@ import { invitationBatchAllowedMethods, routeInvitationBatches } from '../invita
 import {
   afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
-import { DATA_ACCESS_KINDS } from '../data-access.js';
+import { DATA_ACCESS_KINDS, recordDataAccess } from '../data-access.js';
+import {
+  buildFamilyExport, buildFamilyExportCsv, EXPORTABLE_REQUEST_KINDS, EXPORTABLE_REQUEST_STATUSES,
+  FAMILY_EXPORT_FORMAT_VERSION, FamilyExportError,
+} from '../family-export.js';
+import { csvResponse } from '../csv.js';
 import { createJsonReader } from '../input.js';
 
 export const name = 'admin';
@@ -1330,6 +1341,78 @@ async function setDataRequestStatus(env, actorId, requestId, request, json) {
   return json(result);
 }
 
+// Eksport danych jednej rodziny dla żądania osoby (#100 pkt 2–3). Paczka nie
+// jest zapisywana na serwerze — trafia wyłącznie do obsługującego; w bazie
+// zostaje wpis dziennika odczytu i zdarzenie audytu (liczności i SHA-256, bez
+// danych osobowych). export_runs NIE jest używane: CHECK kind i NOT NULL
+// school_year_id (0016) nie przyjmują eksportu wielu lat bez migracji.
+async function exportDataRequest(env, actorId, requestId, url) {
+  const format = url.searchParams.get('format') ?? 'json';
+  if (format !== 'json' && format !== 'csv') throw new RequestError('invalid_format');
+  let result;
+  try {
+    result = await env.db.transaction(async (tx) => {
+      await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      // Podwójne kliknięcie: równoczesny drugi przebieg tego samego żądania dostaje
+      // 409 zamiast budować paczkę drugi raz; kolejny (po zakończeniu) daje ten sam SHA-256.
+      const lock = await tx.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked', [`rd_data_request_export:${requestId}`]);
+      if (!lock.rows[0].locked) throw new RequestError('data_request_export_in_progress', 409);
+      const { rows } = await tx.query(
+        `SELECT id, kind, status, household_id, guardian_id, student_id, to_char(received_on, 'YYYY-MM-DD') AS received_on
+           FROM data_subject_requests WHERE id = $1`,
+        [requestId],
+      );
+      const current = rows[0];
+      if (!current) throw new Abort('data_request_not_found', 404);
+      if (!EXPORTABLE_REQUEST_KINDS.includes(current.kind)) throw new Abort('data_request_kind_not_exportable', 409);
+      if (['answered', 'rejected'].includes(current.status)) throw new Abort('data_request_closed', 409);
+      if (!EXPORTABLE_REQUEST_STATUSES.includes(current.status)) throw new Abort('data_request_identity_not_verified', 409);
+      const built = await buildFamilyExport(tx, current);
+      const totalRows = Object.values(built.rowCounts).reduce((sum, n) => sum + n, 0);
+      // #133: dziennik odczytu w tej samej transakcji co eksport (strict), osobny
+      // wiersz na każdy przebieg i gospodarstwo (bez scalania z odczytem karty).
+      const householdIds = built.scope.households.length ? built.scope.households : [null];
+      for (const householdId of householdIds) {
+        await recordDataAccess({ db: tx }, {
+          actorId, accessKind: 'household_card', householdId, outcome: 'ok', rowCount: totalRows,
+        }, { strict: true, dedupe: false });
+      }
+      await insertAuditEvent(tx, {
+        actorId, action: 'data_subject_request.exported', entityType: 'data_subject_request', entityId: requestId,
+        metadata: {
+          format, formatVersion: FAMILY_EXPORT_FORMAT_VERSION, manifestSha256: built.sha256, rowCounts: built.rowCounts,
+          subjectType: built.scope.subjectType,
+          omittedGuardians: built.scope.omitted.guardians, omittedHouseholds: built.scope.omitted.households,
+        },
+      });
+      return built;
+    });
+  } catch (error) {
+    if (error instanceof FamilyExportError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
+  const headers = {
+    'X-Export-Manifest-Sha256': result.sha256,
+    // Osoby trzecie pominięte w paczce — liczby dla obsługującego (bez identyfikatorów).
+    'X-Data-Export-Omitted-Guardians': String(result.scope.omitted.guardians),
+    'X-Data-Export-Omitted-Households': String(result.scope.omitted.households),
+  };
+  const filePart = requestId.replace(/[^A-Za-z0-9_-]/g, '_');
+  if (format === 'csv') {
+    return csvResponse(buildFamilyExportCsv(result.bundle), `rd-dane-rodziny-${filePart}.csv`, headers);
+  }
+  return new Response(result.body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="rd-dane-rodziny-${filePart}-v${FAMILY_EXPORT_FORMAT_VERSION}.json"`,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      ...headers,
+    },
+  });
+}
+
 // --- Retencja (D-04, #91): raport kandydatów, wyłącznie odczyt --------------
 //
 // Kategorie zgodne z privacy/data-inventory.json (retention_category, #123) i
@@ -1512,7 +1595,7 @@ function allowedMethodsFor(section, pathLength, action, path) {
   if (section === 'access-log' && pathLength === 1) return ['GET'];
   if (section === 'data-requests') {
     if (pathLength === 1) return ['GET', 'POST'];
-    if (pathLength === 3 && action === 'status') return ['POST'];
+    if (pathLength === 3 && (action === 'status' || action === 'export')) return ['POST'];
     return null;
   }
   if (section === 'retention' && pathLength === 2) return ['GET'];
@@ -1617,6 +1700,11 @@ async function route(request, env, url, json, actorId, context) {
     if (path.length === 1 && method === 'POST') return createDataRequest(env, actorId, request, json);
     if (path.length === 3 && action === 'status' && method === 'POST') {
       return setDataRequestStatus(env, actorId, decodeId(rawId), request, json);
+    }
+    // #100: eksport danych rodziny ujawnia pełne dane osobowe — krok w górę MFA jak eksport roczny (#150).
+    if (path.length === 3 && action === 'export' && method === 'POST') {
+      requireFreshMfa(context);
+      return exportDataRequest(env, actorId, decodeId(rawId), url);
     }
   }
   if (section === 'retention' && rawId === 'preview' && path.length === 2 && method === 'GET') {

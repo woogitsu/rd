@@ -579,6 +579,68 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/admin/data-requests/{requestId}/export": {
+      "post": {
+        "operationId": "admin_dataRequestExport",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.dataRequestExport",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.dataRequestExport"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/admin/data-requests/{requestId}/status": {
       "post": {
         "operationId": "admin_dataRequestStatus",
@@ -17415,8 +17477,13 @@
           "consents_locked",
           "content_hash_mismatch",
           "correction_exceeds_remaining_amount",
+          "data_request_closed",
+          "data_request_export_in_progress",
+          "data_request_identity_not_verified",
+          "data_request_kind_not_exportable",
           "data_request_not_found",
           "data_request_status_cannot_go_back",
+          "data_request_subject_mismatch",
           "date_outside_school_year",
           "difference_requires_note",
           "document_active_content",
@@ -18085,6 +18152,26 @@
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {
+        "code": "data_request_closed",
+        "meaning": "Żądanie jest już zamknięte (udzielono odpowiedzi albo odrzucono).",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "data_request_export_in_progress",
+        "meaning": "Eksport dla tego żądania już trwa. Poczekaj na jego zakończenie.",
+        "retry": "Tak, po chwili (drugi równoczesny eksport tego samego żądania)."
+      },
+      {
+        "code": "data_request_identity_not_verified",
+        "meaning": "Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy.",
+        "retry": "Nie — najpierw zmień stan żądania."
+      },
+      {
+        "code": "data_request_kind_not_exportable",
+        "meaning": "Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "data_request_not_found",
         "meaning": "Nie znaleziono żądania.",
         "retry": "Nie — popraw dane żądania."
@@ -18093,6 +18180,11 @@
         "code": "data_request_status_cannot_go_back",
         "meaning": "Nie można cofnąć stanu żądania.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "data_request_subject_mismatch",
+        "meaning": "Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "date_outside_school_year",
