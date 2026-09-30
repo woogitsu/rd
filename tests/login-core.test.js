@@ -123,6 +123,9 @@ test('komunikaty błędów po polsku, bez rozróżnienia nieznanego konta i złe
   assert.match(errorMessage(undefined, 429), /Zbyt wiele/);
   assert.match(errorMessage('mfa_enrollment_required', 403), /aplikację uwierzytelniającą/);
   assert.match(errorMessage('nieznany_kod', 503), /niedostępna/);
+  // #99: kody spoza słownika logowania biorą tekst ze wspólnego słownika (login_busy, #545).
+  assert.match(errorMessage('login_busy', 503), /przeciążony logowaniami/);
+  assert.doesNotMatch(errorMessage('login_busy', 503), /login_busy|niedostępna/);
   assertEvery(startPanels([{ role: 'admin' }]), (panel) => panel.href.startsWith('/') && panel.href.endsWith('/'));
   assert.equal(PUBLIC_PANEL.href, '/site/');
 });
@@ -254,6 +257,10 @@ test('#197: mfa_enrollment_not_found wraca do rozpoczęcia konfiguracji; invalid
   assert.equal(wrong.restart, false);
   assert.match(wrong.message, /innej karcie/);
   assert.equal(enrollmentConfirmError('mfa_locked', 429).restart, false);
+  // #99: gotowy komunikat klienta (brak połączenia, czas z Retry-After) ma pierwszeństwo.
+  assert.equal(enrollmentConfirmError('mfa_locked', 429, 'Zbyt wiele błędnych kodów. Spróbuj ponownie za ok. 15 min.').message,
+    'Zbyt wiele błędnych kodów. Spróbuj ponownie za ok. 15 min.');
+  assert.match(enrollmentConfirmError('invalid_code', 400, 'inny').message, /najnowszego kodu QR/);
 });
 
 test('#197: main.js czyści dane przy wylogowaniu, powrocie, hashchange i pagehide; wylogowanie sprawdza wynik', () => {

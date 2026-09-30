@@ -2,11 +2,14 @@ import {
   CHECKLIST_ITEMS,
   CHECKLIST_ITEM_LABELS,
   STATUS_LABELS,
+  YEAR_END_DISCREPANCY_REASONS,
+  YEAR_END_DISCREPANCY_REASON_LABELS,
   accessReviewSummary,
   canOfferClose,
   canOfferStart,
   checklistProgress,
   checklistUrl,
+  closeRequestBody,
   closeUrl,
   describeApiError,
   handoverUrl,
@@ -15,10 +18,12 @@ import {
   hasReadAccess,
   isLikelyOwnClosure,
   isValidId,
+  needsYearEndConfirmation,
   startConfirmation,
   startUrl,
   statusUrl,
   warningRows,
+  yearEndCheckRows,
 } from "./core.js";
 import { formatEur } from "../panel/money.js";
 import { api as apiRequest } from "../shared/api.js";
@@ -79,6 +84,7 @@ function render() {
   byId("bal-cash").textContent = formatEur(balance.closingCashCents);
   byId("bal-bank").textContent = formatEur(balance.closingBankCents);
 
+  renderYearEndCheck(status);
   renderChecklist(status);
   renderWarnings(status);
   renderAccessReview(status);
@@ -131,6 +137,33 @@ function renderChecklist(status) {
   }));
   const progress = checklistProgress(status);
   byId("checklist-progress").textContent = `${progress.confirmed}/${progress.total}`;
+}
+
+// #169: bilans zamknięcia vs saldo księgi na ostatni dzień roku (serwer liczy
+// oba niezależnie). Rozbieżność nie blokuje przycisku — serwer wymaga wtedy
+// potwierdzenia z powodem w oknie zamknięcia.
+function renderYearEndCheck(status) {
+  const view = yearEndCheckRows(status);
+  const summary = byId("year-end-summary");
+  byId("year-end-wrap").hidden = !view;
+  if (!view) {
+    summary.textContent = "Kontrola salda końca roku niedostępna w tej wersji API.";
+    byId("year-end-body").replaceChildren();
+    return;
+  }
+  summary.textContent = view.ok
+    ? "Zgodne: bilans zamknięcia równa się saldu księgi na ostatni dzień roku (kontrola bieżąca, liczona przez serwer)."
+    : "Niezgodne: bilans zamknięcia różni się od salda księgi na ostatni dzień roku. Sprawdź wpisy datowane po końcu roku (raport Komisji Rewizyjnej, kontrola dat). Zamknięcie wymaga potwierdzenia rozbieżności z powodem.";
+  byId("year-end-body").replaceChildren(...view.rows.map((entry) => {
+    const row = document.createElement("tr");
+    row.append(textCell(entry.label));
+    for (const cents of [entry.closingCents, entry.atYearEndCents, entry.differenceCents]) {
+      const cell = textCell(cents === null ? "—" : formatEur(cents));
+      cell.className = "amount";
+      row.append(cell);
+    }
+    return row;
+  }));
 }
 
 function renderWarnings(status) {
@@ -274,26 +307,60 @@ checklistDialog.addEventListener("close", () => { byId("checklist-error").textCo
 // --- zamknięcie roku (nieodwracalne — okno <dialog>, bez window.confirm) ----
 
 const closeDialog = byId("close-dialog");
+const reasonSelect = byId("close-dialog-reason");
+reasonSelect.append(...YEAR_END_DISCREPANCY_REASONS.map((code) => {
+  const option = document.createElement("option");
+  option.value = code;
+  option.textContent = YEAR_END_DISCREPANCY_REASON_LABELS[code] ?? code;
+  return option;
+}));
+
+// Część okna o rozbieżności salda końca roku — tylko gdy ostatni odczyt ją pokazał.
+function renderCloseDiscrepancy() {
+  const needed = needsYearEndConfirmation(state.status);
+  byId("close-dialog-discrepancy").hidden = !needed;
+  reasonSelect.required = needed;
+  reasonSelect.value = "";
+  const check = state.status?.yearEndCheck ?? {};
+  byId("close-dialog-diff-total").textContent = formatEur(check.balanceDifferenceCents);
+  byId("close-dialog-diff-cash").textContent = formatEur(check.cashDifferenceCents);
+}
+
 byId("open-close").addEventListener("click", () => {
   byId("close-error").textContent = "";
   byId("close-dialog-year").textContent = formatSchoolYear(state.schoolYearId);
   byId("close-dialog-balance").textContent = formatEur(state.status?.balance?.closingBalanceCents);
+  renderCloseDiscrepancy();
   closeDialog.showModal();
 });
 byId("close-dialog-cancel").addEventListener("click", () => closeDialog.close());
 byId("close-dialog-cancel-2").addEventListener("click", () => closeDialog.close());
 byId("close-dialog-confirm").addEventListener("click", async () => {
   const button = byId("close-dialog-confirm");
-  button.disabled = true;
   const errorBox = byId("close-error");
   errorBox.textContent = "";
+  let body;
   try {
-    await api(closeUrl(state.schoolYearId), { method: "POST" });
+    body = closeRequestBody(state.status, reasonSelect.value);
+  } catch (error) {
+    errorBox.textContent = error.message;
+    reasonSelect.focus();
+    return;
+  }
+  button.disabled = true;
+  try {
+    await api(closeUrl(state.schoolYearId), { method: "POST", body: JSON.stringify(body) });
     closeDialog.close();
     await refreshStatus();
     setMessage("Rok szkolny zamknięty.");
   } catch (error) {
     errorBox.textContent = describeApiError(error.status, error.code) ?? error.message;
+    // Rozbieżność pojawiła się albo zmieniła od odczytu: nowe liczby z serwera,
+    // osoba zamykająca musi je zobaczyć i wybrać powód ponownie.
+    if (error.code === "year_end_balance_mismatch" || error.code === "year_end_confirmation_mismatch") {
+      await refreshStatus();
+      renderCloseDiscrepancy();
+    }
   } finally {
     button.disabled = false;
   }
