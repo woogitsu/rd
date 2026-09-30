@@ -65,9 +65,14 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
+        // W CI (ubuntu-latest, `playwright install chromium`) domyślny tryb
+        // headless używa chromium-headless-shell, który nie ma czytnika PDF —
+        // PDF otwarty w nowej karcie jest wtedy pobierany zamiast wyświetlony
+        // (tests/e2e/documents-preview.spec.js). `channel: 'chromium'` wybiera
+        // pełny Chromium w nowym trybie headless, jak lokalny executablePath.
         ...(existingChromiumExecutable
           ? { launchOptions: { executablePath: existingChromiumExecutable } }
-          : {}),
+          : { channel: 'chromium' }),
       },
     },
   ],
