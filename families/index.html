@@ -9,8 +9,8 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
-    <header class="site-header">
-      <a class="brand" href="../"><span>Rada Rodziców<br /><small data-school-name></small></span></a>
+    <header class="site-header shell-header">
+      <a class="brand" href="../"><span class="brand-name">Rada Rodziców</span><small data-school-name></small></a>
       <nav aria-label="Panel"><ul id="shell-nav" aria-live="polite"></ul></nav>
       <div id="shell-account"></div>
     </header>
@@ -62,7 +62,7 @@
             </label>
           </form>
           <p id="student-search-count" role="status" aria-live="polite"></p>
-          <div class="table-wrap"><table><caption class="sr-only">Uczniowie klasy</caption><thead><tr><th scope="col">Uczeń</th><th scope="col">Gospodarstwa</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="students-body"></tbody></table></div>
+          <div class="table-wrap"><table><caption class="sr-only">Uczniowie klasy</caption><thead><tr><th scope="col">Uczeń</th><th scope="col">Gospodarstwa</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="students-body"></tbody></table></div>
           <p class="empty" id="students-empty" hidden>Brak uczniów przypisanych do tej klasy.</p>
         </section>
       </section>
@@ -75,7 +75,7 @@
         </section>
         <section class="card">
           <h2>Opiekunowie</h2>
-          <div class="table-wrap"><table><caption class="sr-only">Opiekunowie gospodarstwa</caption><thead><tr><th scope="col">Opiekun</th><th scope="col">E-mail</th><th scope="col">Zgoda na kontakt</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="household-guardians"></tbody></table></div>
+          <div class="table-wrap"><table><caption class="sr-only">Opiekunowie gospodarstwa</caption><thead><tr><th scope="col">Opiekun</th><th scope="col">E-mail</th><th scope="col">Zgoda na kontakt</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="household-guardians"></tbody></table></div>
           <p class="empty" id="guardians-empty" hidden>Brak opiekunów w tym gospodarstwie.</p>
         </section>
         <section class="card" id="payments-card" hidden>

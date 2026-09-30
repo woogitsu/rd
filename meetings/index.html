@@ -9,8 +9,8 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
-    <header class="site-header">
-      <a class="brand" href="../">Rada Rodziców <small data-school-name></small></a>
+    <header class="site-header shell-header">
+      <a class="brand" href="../"><span class="brand-name">Rada Rodziców</span><small data-school-name></small></a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
@@ -35,7 +35,7 @@
       <section class="block" aria-labelledby="filters-title">
         <h2 id="filters-title">Rok szkolny</h2>
         <form id="filters-form" class="inline-form">
-          <label>Rok szkolny
+          <label><span class="sr-only">Rok szkolny</span>
             <select id="school-year-id" name="schoolYearId" required></select>
           </label>
           <button type="submit">Pokaż zebrania</button>
@@ -51,7 +51,7 @@
         <div class="table-wrap" id="list-wrap" hidden>
           <table>
             <caption class="sr-only">Zebrania w wybranym roku szkolnym</caption>
-            <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Tytuł</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Tytuł</th><th scope="col">Status</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead>
             <tbody id="list-body"></tbody>
           </table>
         </div>
@@ -69,7 +69,7 @@
         <div class="table-wrap" id="shared-wrap" hidden>
           <table>
             <caption class="sr-only">Protokoły udostępnione w wybranym roku szkolnym</caption>
-            <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Klasa</th><th scope="col">Tytuł</th><th scope="col">Wersja</th><th scope="col">Zatwierdzono</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <thead><tr><th scope="col">Termin</th><th scope="col">Rodzaj</th><th scope="col">Klasa</th><th scope="col">Tytuł</th><th scope="col">Wersja</th><th scope="col">Zatwierdzono</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead>
             <tbody id="shared-body"></tbody>
           </table>
         </div>
@@ -116,7 +116,7 @@
           <div class="table-wrap">
             <table>
               <caption class="sr-only">Punkty porządku obrad</caption>
-              <thead><tr><th scope="col">Nr</th><th scope="col">Punkt</th><th scope="col">Opis</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <thead><tr><th scope="col">Nr</th><th scope="col">Punkt</th><th scope="col">Opis</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead>
               <tbody id="agenda-body"></tbody>
             </table>
           </div>
@@ -138,7 +138,7 @@
           <div class="table-wrap">
             <table>
               <caption class="sr-only">Wersje zawiadomienia o zebraniu</caption>
-              <thead><tr><th scope="col">Wersja</th><th scope="col">Rodzaj</th><th scope="col">Termin</th><th scope="col">Status</th><th scope="col">Uwagi</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <thead><tr><th scope="col">Wersja</th><th scope="col">Rodzaj</th><th scope="col">Termin</th><th scope="col">Status</th><th scope="col">Uwagi</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead>
               <tbody id="notice-body"></tbody>
             </table>
           </div>
@@ -177,7 +177,7 @@
           <div class="table-wrap">
             <table>
               <caption class="sr-only">Lista obecności</caption>
-              <thead><tr><th scope="col">Osoba</th><th scope="col">Funkcja</th><th scope="col">Obecność</th><th scope="col">Prawo głosu</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <thead><tr><th scope="col">Osoba</th><th scope="col">Funkcja</th><th scope="col">Obecność</th><th scope="col">Prawo głosu</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead>
               <tbody id="attendance-body"></tbody>
             </table>
           </div>
@@ -231,7 +231,7 @@
           <div class="table-wrap">
             <table>
               <caption class="sr-only">Wersje protokołu</caption>
-              <thead><tr><th scope="col">Wersja</th><th scope="col">Status</th><th scope="col">Zatwierdzono</th><th scope="col">Widoczność</th><th scope="col">Opis zmiany</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <thead><tr><th scope="col">Wersja</th><th scope="col">Status</th><th scope="col">Zatwierdzono</th><th scope="col">Widoczność</th><th scope="col">Opis zmiany</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead>
               <tbody id="minutes-body"></tbody>
             </table>
           </div>
@@ -255,7 +255,7 @@
           <div class="table-wrap">
             <table>
               <caption class="sr-only">Uchwały zebrania</caption>
-              <thead><tr><th scope="col">Numer</th><th scope="col">Tytuł</th><th scope="col">Status</th><th scope="col" class="num">Za / przeciw / wstrzymało się</th><th scope="col">Quorum</th><th scope="col">Rewizja</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <thead><tr><th scope="col">Numer</th><th scope="col">Tytuł</th><th scope="col">Status</th><th scope="col" class="num">Za / przeciw / wstrzymało się</th><th scope="col">Quorum</th><th scope="col">Rewizja</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead>
               <tbody id="resolutions-body"></tbody>
             </table>
           </div>

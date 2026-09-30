@@ -41,10 +41,11 @@ import {
   candidateLabels,
   taskState,
   validateTaskForm,
+  revisionAuthorLabel,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
-import { mountShell } from "../shared/shell.js";
+import { mountShell, sessionDisplayName } from "../shared/shell.js";
 import { shortId } from "../shared/short-id.js";
 import "../shared/shell.css";
 import { classChoiceOptionsHtml, fillClassSelect } from "../shared/class-choice.js";
@@ -59,6 +60,7 @@ const state = {
   detail: null, // { event, revisions }
   grants: [], // z /api/access; tylko do ukrywania akcji, serwer i tak autoryzuje
   userId: null,
+  userName: null,
   editing: null, // event being edited, null = create
   busy: false,
   tasks: [], // zadania bieżącego wydarzenia (GET /api/events/:id/tasks)
@@ -153,7 +155,9 @@ async function start() {
     // Sesja przed MFA dostaje { grants: [], mfaRequired: true } — wtedy brak akcji.
     const grants = Array.isArray(access.grants) ? access.grants : [];
     state.grants = grants;
-    state.userId = grants.length ? await api({ url: "/api/session" }).then((s) => s?.user?.id ?? null, () => null) : null;
+    const session = grants.length ? await api({ url: "/api/session" }).catch(() => null) : null;
+    state.userId = session?.user?.id ?? null;
+    state.userName = sessionDisplayName(session);
     app.hidden = false;
     openCreate.hidden = !canDraftEvents(grants);
     // Rok domyślny (puste ekrany bez klikania): najnowszy z przydziałów, awaryjnie
@@ -319,8 +323,9 @@ function renderDetail() {
     const marks = revisionMarks(event, revision.revision);
     row.append(cell(marks.length ? `${revision.revision} (${marks.join(", ")})` : String(revision.revision)));
     row.append(cell(formatStamp(revision.createdAt)));
-    // API nie zwraca nazwy autora — pokazujemy skrócony identyfikator (pełny w podpowiedzi).
-    const author = cell(shortId(revision.createdBy));
+    // API nie zwraca nazwy autora — własne konto nazwą z sesji, cudze skrótem
+    // (pełny identyfikator w podpowiedzi), events/core.js#revisionAuthorLabel.
+    const author = cell(revisionAuthorLabel(revision.createdBy, { userId: state.userId, userName: state.userName }));
     if (revision.createdBy) author.title = revision.createdBy;
     row.append(author);
     const summary = [revision.title, formatBrussels(revision.startsAt ? new Date(revision.startsAt) : null)];

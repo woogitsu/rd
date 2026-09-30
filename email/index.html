@@ -9,8 +9,8 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
-    <header class="site-header">
-      <a class="brand" href="../"><span>Rada Rodziców<br /><small data-school-name></small></span></a>
+    <header class="site-header shell-header">
+      <a class="brand" href="../"><span class="brand-name">Rada Rodziców</span><small data-school-name></small></a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
@@ -32,7 +32,7 @@
       <section class="card filters" aria-labelledby="filters-title">
         <h2 id="filters-title">Rok szkolny</h2>
         <form id="filters-form">
-          <label>Rok szkolny <select id="school-year-id" name="schoolYearId" required></select></label>
+          <label><span class="sr-only">Rok szkolny</span> <select id="school-year-id" name="schoolYearId" required></select></label>
           <button type="submit">Pokaż</button>
         </form>
       </section>
@@ -55,7 +55,7 @@
       </section>
 
       <section class="card" aria-labelledby="campaigns-title">
-        <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="campaigns-title">Kampanie</h2></div><span id="campaigns-count" aria-live="polite"></span></div>
+        <div class="section-heading"><div><h2 id="campaigns-title">Kampanie</h2></div><span id="campaigns-count" aria-live="polite"></span></div>
         <div class="table-wrap" id="campaigns-table" role="region" aria-labelledby="campaigns-title" tabindex="0">
           <table>
             <caption class="sr-only">Kampanie e-mail wybranego roku</caption>
@@ -146,7 +146,7 @@
       </section>
 
       <section class="card" id="suppressions" aria-labelledby="suppressions-title" hidden>
-        <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="suppressions-title">Lista wyłączeń adresów</h2></div><span id="suppressions-count" aria-live="polite"></span></div>
+        <div class="section-heading"><div><h2 id="suppressions-title">Lista wyłączeń adresów</h2></div><span id="suppressions-count" aria-live="polite"></span></div>
         <p class="context">Adresy, na które aplikacja nie wysyła wiadomości po odbiciu, skardze lub blokadzie dostawcy. Adresy są zamaskowane; otwarcie listy jest zapisywane w dzienniku zdarzeń. To nie jest lista dłużników — składki są dobrowolne.</p>
         <p class="context">Lista „do poprawy” zmniejsza się sama po poprawieniu adresu w danych opiekuna: nowy adres nie ma blokady. Blokadę tego samego adresu zdejmuje się osobno i nigdy automatycznie: jedna osoba składa wniosek z powodem, druga (z MFA) go zatwierdza. Zdjęcie blokady nie usuwa historii — powstaje nowy zapis. Blokadę po skardze można zdjąć wyłącznie na wniosek rodzica.</p>
         <div class="message" id="suppressions-message" role="status"></div>

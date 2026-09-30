@@ -52,7 +52,7 @@ test('requiresExplicitHouseholdChoice: jedno gospodarstwo nie wymaga wyboru, kil
 
 test('householdOptionsHtml: jedno gospodarstwo — zaznaczone od razu (bez wymuszania wyboru)', () => {
   const html = householdOptionsHtml(householdsForStudent(STUDENTS, 's-1'), '');
-  assert.match(html, /<option value="h-1" selected>h-1 \(główne\)<\/option>/);
+  assert.match(html, /<option value="h-1" selected>Gospodarstwo nr h-1 \(główne\)<\/option>/);
   assert.doesNotMatch(html, /Wybierz gospodarstwo…/);
 });
 
@@ -60,14 +60,14 @@ test('householdOptionsHtml: opieka dzielona (dwa gospodarstwa) — żadne nie je
   const households = householdsForStudent(STUDENTS, 's-2');
   const html = householdOptionsHtml(households, '');
   assert.match(html, /Wybierz gospodarstwo…/);
-  assert.doesNotMatch(html, /selected>h-2/);
-  assert.doesNotMatch(html, /selected>h-3/);
+  assert.doesNotMatch(html, /value="h-2" selected/);
+  assert.doesNotMatch(html, /value="h-3" selected/);
 });
 
 test('householdOptionsHtml: opieka dzielona z jawnym wyborem zaznacza dokładnie tę pozycję', () => {
   const households = householdsForStudent(STUDENTS, 's-2');
   const html = householdOptionsHtml(households, 'h-3');
-  assert.match(html, /<option value="h-3" selected>h-3<\/option>/);
+  assert.match(html, /<option value="h-3" selected>Gospodarstwo nr h-3<\/option>/);
   assert.doesNotMatch(html, /value="h-2" selected/);
 });
 
@@ -109,4 +109,32 @@ test('shownSummary: odmiana i informacja o kolejnych stronach', () => {
   assert.match(shownSummary(3, true), /^Pokazano 3 wpłaty, są kolejne/);
   assert.match(shownSummary(12, true), /^Pokazano 12 wpłat,/);
   assert.match(shownSummary(22, false), /^Pokazano 22 wpłaty /);
+});
+
+// Przegląd demo 5: etykiety rodzin wspólne dla panel/ i reconciliation/ (fetchHouseholdLabels).
+test('fetchHouseholdLabels: pobiera klasy roku i uczniów, buduje etykiety; błąd → pusta mapa', async () => {
+  const { fetchHouseholdLabels } = await import('../shared/household-picker.js');
+  const calls = [];
+  const api = async (url) => {
+    calls.push(url);
+    if (url === '/api/classes?schoolYearId=2026-2027') return { classes: CLASSES };
+    if (url === '/api/classes/c-1a/students') return { students: STUDENTS };
+    if (url === '/api/classes/c-1b/students') return { students: [] };
+    throw new Error(`nieoczekiwany adres ${url}`);
+  };
+  const labels = await fetchHouseholdLabels(api, '2026-2027');
+  assert.deepEqual(calls, ['/api/classes?schoolYearId=2026-2027', '/api/classes/c-1a/students', '/api/classes/c-1b/students']);
+  assert.equal(labels.get('h-1'), 'Kowalska Anna (1A)');
+  assert.equal(householdLabel(labels, 'h-1'), 'Rodzina: Kowalska Anna (1A)');
+  // Rola bez dostępu do rodzin (403) — pusta mapa, widok zostaje przy skróconym numerze.
+  const denied = await fetchHouseholdLabels(async () => { throw Object.assign(new Error('forbidden'), { status: 403 }); }, '2026-2027');
+  assert.equal(denied.size, 0);
+  assert.equal(householdLabel(denied, 'h-1234567890'), 'Rodzina nr h-123456');
+});
+
+test('householdOptionsHtml: etykieta ze skrótem numeru, pełny identyfikator tylko w value (przegląd demo 5)', () => {
+  const id = '5b0f3c1e-7a93-4d66-9c1a-000000000010';
+  const html = householdOptionsHtml([{ householdId: id, isPrimary: true }], '');
+  assert.match(html, new RegExp(`<option value="${id}" selected>Gospodarstwo nr 5b0f3c1e \\(główne\\)</option>`));
+  assert.equal(html.split(id).length - 1, 1, 'pełny identyfikator wyłącznie w atrybucie value');
 });

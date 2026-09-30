@@ -2,6 +2,9 @@
 // i budowanie żądań do /api/events. Bez DOM i bez fetch — testowane w
 // tests/events-core.test.js. Kontrakt API: src/pg/events.js, docs/EVENTS.md.
 
+import { shortId } from "../shared/short-id.js";
+import { formatDateOrTimestamp } from "../shared/zoned-time.js";
+
 export const TIMEZONE = "Europe/Brussels";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -183,9 +186,6 @@ const timeFormatter = new Intl.DateTimeFormat("pl-PL", {
 const dayKeyFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",
 });
-const stampFormatter = new Intl.DateTimeFormat("pl-PL", {
-  timeZone: TIMEZONE, dateStyle: "short", timeStyle: "short",
-});
 
 function toDate(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -217,9 +217,11 @@ export function formatRange(startsUtc, endsUtc) {
   return `${formatBrussels(start)} – ${formatBrussels(end)}`;
 }
 
+// Czas zapisu (historia wersji): dd.mm.rrrr gg:mm jak w reszcie aplikacji (#563,
+// przegląd demo 5 — wcześniej „30.09.2026, 18:46”).
 export function formatStamp(value) {
   const date = toDate(value);
-  return date ? stampFormatter.format(date) : "—";
+  return date ? (formatDateOrTimestamp(date, TIMEZONE) ?? "—") : "—";
 }
 
 // ---------- walidacja formularza ----------
@@ -644,3 +646,15 @@ export function candidateLabels(candidates) {
 }
 
 export const SIGNUP_STATUS_LABELS = Object.freeze({ confirmed: "zapisany", withdrawn: "wycofany" });
+
+// Autor wersji wydarzenia (przegląd demo 5: „Autor 7a937d66…”). API wydarzeń nie
+// zwraca nazw kont, a lista kont jest wyłącznie dla administratora, więc nazwę
+// znamy tylko dla własnego konta (GET /api/session, jak nagłówek powłoki #578).
+// Cudze konto: skrót identyfikatora z dopiskiem, pełny w podpowiedzi komórki.
+// Nazwy innych autorów wymagają decyzji o zakresie danych (docs/DECISIONS.md) —
+// tu nie dopisujemy ich do odpowiedzi API.
+export function revisionAuthorLabel(createdBy, { userId = null, userName = null } = {}) {
+  if (!createdBy) return "—";
+  if (userId && createdBy === userId) return userName ? `${userName} (Ty)` : "Ty";
+  return `Konto ${shortId(createdBy)}`;
+}

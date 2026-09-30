@@ -9,8 +9,8 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
-    <header class="site-header">
-      <a class="brand" href="../"><span>Rada Rodziców<br /><small data-school-name></small></span></a>
+    <header class="site-header shell-header">
+      <a class="brand" href="../"><span class="brand-name">Rada Rodziców</span><small data-school-name></small></a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
@@ -32,7 +32,7 @@
       <section class="card filters" aria-labelledby="filters-title">
         <h2 id="filters-title">Rok szkolny</h2>
         <form id="filters-form">
-          <label>Rok szkolny <select id="school-year-id" name="schoolYearId" required></select></label>
+          <label><span class="sr-only">Rok szkolny</span> <select id="school-year-id" name="schoolYearId" required></select></label>
           <button type="submit">Pokaż</button>
         </form>
       </section>
@@ -40,7 +40,7 @@
       <div class="message" id="message" role="status"></div>
 
       <section class="card" aria-labelledby="posts-title">
-        <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="posts-title">Wpisy</h2></div><span id="posts-count" aria-live="polite"></span></div>
+        <div class="section-heading"><div><h2 id="posts-title">Wpisy</h2></div><span id="posts-count" aria-live="polite"></span></div>
         <div class="table-wrap" id="posts-table" role="region" aria-labelledby="posts-title" tabindex="0">
           <table>
             <caption class="sr-only">Wpisy aktualności wybranego roku</caption>

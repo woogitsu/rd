@@ -21,10 +21,12 @@ import {
   formatCents,
   formatDay,
   formatDifference,
+  formatDifferenceValue,
   hasWriteAccess,
   isLikelyOwnReconciliation,
   isValidId,
   lineDirectionLabel,
+  linesWithExistingEntries,
   makeIdempotencyKey,
   parseStatementBalance,
   reconciliationActionUrl,
@@ -39,6 +41,8 @@ import {
 } from "./core.js";
 import { MESSAGES, api as apiRequest } from "../shared/api.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
+import { fetchHouseholdLabels, householdLabel } from "../shared/household-picker.js";
+import { wireHouseholdPicker } from "../shared/household-picker-dom.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -55,6 +59,11 @@ const state = {
   actorId: null,
   grants: [],
   requestKey: null,
+  // Przegląd demo 5: pozycje z kandydatem-wpłatą/wpisem księgi (bez „Utwórz wpłatę”)
+  // i etykiety rodzin (nazwy zamiast identyfikatorów w propozycjach).
+  existingEntryLines: null,
+  householdLabels: new Map(),
+  labelsYear: null,
 };
 
 const filtersForm = byId("filters-form");
@@ -152,7 +161,7 @@ function actionButton(text, onClick) {
   return button;
 }
 
-function lineRow(line, { draft, canWrite }) {
+function lineRow(line, { draft, canWrite, existingEntryLines }) {
   const row = document.createElement("tr");
   row.append(
     textCell(formatDay(line.bookedOn)),
@@ -171,7 +180,7 @@ function lineRow(line, { draft, canWrite }) {
   } else {
     actions.append(actionButton("Dopasuj", () => openMatch(line.id)));
     // #115: wpłata wprost z pozycji — kwota i data z wyciągu, bez przepisywania.
-    if (canCreatePaymentFromLine(line, { draft, canWrite })) {
+    if (canCreatePaymentFromLine(line, { draft, canWrite, existingEntryLines })) {
       actions.append(actionButton("Utwórz wpłatę", () => openLinePayment(line)));
     }
   }
@@ -187,7 +196,7 @@ function renderDetail() {
   statusBadge.className = `badge status-${reconciliation.status}`;
   byId("detail-statement-balance").textContent = formatCents(reconciliation.statementBalanceCents);
   byId("detail-ledger-balance").textContent = formatCents(reconciliation.ledgerBalanceCents);
-  byId("detail-difference").textContent = formatDifference(reconciliation.differenceCents);
+  byId("detail-difference").textContent = formatDifferenceValue(reconciliation.differenceCents);
   byId("detail-notes").textContent = reconciliation.notes || "—";
   byId("detail-summary-counts").textContent =
     `${summary.lineCount} pozycji, ${summary.matchedLineCount} dopasowanych, ${summary.unmatchedLineCount} niedopasowanych.`;
@@ -195,7 +204,8 @@ function renderDetail() {
   const own = isLikelyOwnReconciliation(reconciliation, state.actorId);
   const canWrite = hasWriteAccess(state.grants, state.schoolYearId);
   const draft = reconciliation.status === "draft";
-  byId("lines-body").replaceChildren(...lines.map((line) => lineRow(line, { draft, canWrite })));
+  const existingEntryLines = state.existingEntryLines;
+  byId("lines-body").replaceChildren(...lines.map((line) => lineRow(line, { draft, canWrite, existingEntryLines })));
   byId("lines-empty").hidden = lines.length !== 0;
   byId("batch-box").hidden = !(draft && canWrite);
   resetBatch();
@@ -242,11 +252,33 @@ async function fetchFullDetail(id) {
   return { ...data, lines, nextCursor: null };
 }
 
+// Propozycje i etykiety rodzin tylko dla szkicu, który użytkownik może zmieniać
+// (tam są przyciski „Dopasuj”/„Utwórz wpłatę”). Błąd propozycji nie blokuje
+// widoku: przycisk zostaje, a okno i tak pokazuje ostrzeżenie o istniejącej wpłacie.
+async function loadDraftHints(data) {
+  state.existingEntryLines = null;
+  const draft = data?.reconciliation?.status === "draft";
+  if (!(draft && hasWriteAccess(state.grants, state.schoolYearId))) return;
+  const year = data.reconciliation.schoolYearId || state.schoolYearId;
+  const [suggestions] = await Promise.all([
+    api(`${reconciliationActionUrl(data.reconciliation.id, "suggestions")}?windowDays=7`).catch(() => null),
+    loadHouseholdLabels(year),
+  ]);
+  if (suggestions) state.existingEntryLines = linesWithExistingEntries(suggestions.suggestions);
+}
+
+async function loadHouseholdLabels(schoolYearId) {
+  if (!isValidId(schoolYearId) || state.labelsYear === schoolYearId) return;
+  state.labelsYear = schoolYearId;
+  state.householdLabels = await fetchHouseholdLabels(api, schoolYearId);
+}
+
 async function openDetail(id) {
   setMessage("");
   try {
     const data = await fetchFullDetail(id);
     if (state.selectedId !== id) clearStatementFile();
+    await loadDraftHints(data);
     state.selectedId = id;
     state.detail = data;
     detailSection.hidden = false;
@@ -505,7 +537,7 @@ async function openMatch(lineId) {
       input.name = "candidate";
       input.value = JSON.stringify({ type: candidate.type, id: candidate.id });
       const text = document.createElement("span");
-      text.textContent = candidateLabel(candidate);
+      text.textContent = candidateLabel(candidate, state.householdLabels);
       wrapper.append(input, text);
       return wrapper;
     }));
@@ -565,6 +597,34 @@ matchDialog.addEventListener("close", () => { byId("match-error").textContent = 
 const linePaymentDialog = byId("line-payment-dialog");
 let linePaymentLine = null;
 
+const linePaymentPicker = wireHouseholdPicker({
+  byId, api, prefix: "line-payment", isValidId,
+  getSchoolYearId: () => state.detail?.reconciliation?.schoolYearId || state.schoolYearId,
+  onSelect: (householdId) => showLinePaymentChoice(householdId),
+});
+let linePaymentProposal = null; // gospodarstwo z komunikacji strukturalnej (albo null)
+let linePaymentDuplicateWarning = "";
+
+// Wybrana rodzina nazwą (etykieta z list klas), nigdy pełnym identyfikatorem.
+function showLinePaymentChoice(householdId) {
+  byId("line-payment-household-id").value = householdId || "";
+  // Podpowiedź o komunikacji strukturalnej dotyczy tylko zaproponowanej rodziny;
+  // ostrzeżenie o możliwym duplikacie zostaje zawsze.
+  const proposal = householdId && householdId === linePaymentProposal
+    ? "Komunikacja strukturalna pozycji odpowiada tej rodzinie. Sprawdź przed zapisem — nic nie jest zapisywane automatycznie."
+    : "";
+  byId("line-payment-hint").textContent = [linePaymentDuplicateWarning, proposal].filter(Boolean).join(" ");
+  byId("line-payment-choice").textContent = householdId
+    ? `Wybrano: ${householdLabel(state.householdLabels, householdId)}.`
+    : "Nie wybrano rodziny — wpłata będzie nieprzypisana.";
+  byId("line-payment-clear").hidden = !householdId;
+}
+
+byId("line-payment-clear").addEventListener("click", () => {
+  linePaymentPicker.loadClasses();
+  showLinePaymentChoice("");
+});
+
 async function openLinePayment(line) {
   linePaymentLine = line;
   const form = byId("line-payment-form");
@@ -576,16 +636,20 @@ async function openLinePayment(line) {
   // Klucz idempotencji na całe otwarte okno: podwójne kliknięcie albo ponowienie
   // po błędzie sieci nie utworzy drugiej wpłaty.
   state.linePaymentKey = makeIdempotencyKey("reconciliation-line-payment");
+  linePaymentProposal = null;
+  linePaymentDuplicateWarning = "";
+  showLinePaymentChoice("");
+  await linePaymentPicker.loadClasses();
   try {
     const data = await api(`${reconciliationActionUrl(state.selectedId, "suggestions")}?windowDays=7`);
-    const householdId = structuredHouseholdFor(data.suggestions, line.id);
-    if (householdId) {
-      form.elements.householdId.value = householdId;
-      byId("line-payment-hint").textContent =
-        "Komunikacja strukturalna pozycji odpowiada tej rodzinie. Sprawdź przed zapisem — nic nie jest zapisywane automatycznie.";
+    if (linesWithExistingEntries(data.suggestions).has(line.id)) {
+      linePaymentDuplicateWarning =
+        "Uwaga: dla tej pozycji jest już propozycja istniejącej wpłaty lub wpisu księgi. Użyj „Dopasuj”, żeby nie utworzyć duplikatu.";
     }
+    linePaymentProposal = structuredHouseholdFor(data.suggestions, line.id);
+    showLinePaymentChoice(linePaymentProposal || "");
   } catch {
-    // Propozycja jest tylko podpowiedzią; bez niej skarbnik wpisuje rodzinę sam.
+    // Propozycja jest tylko podpowiedzią; bez niej skarbnik wybiera rodzinę sam.
   }
   linePaymentDialog.showModal();
 }

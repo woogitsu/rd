@@ -342,3 +342,23 @@ test('#146: okno odrzucenia — „Odrzuć wniosek” albo „Wycofaj wniosek”
   assert.equal(withdraw.title, 'Wycofać wniosek?');
   assert.equal(withdraw.confirmLabel, 'Wycofaj wniosek');
 });
+
+// Przegląd demo 5: daty w zapisie aplikacji (dd.mm.rrrr gg:mm, Europe/Brussels, #563)
+// i skrót konta zamiast pełnego UUID w listach wyboru.
+test('admin formatDateTime: dd.mm.rrrr gg:mm w Europe/Brussels, sama data dd.mm.rrrr', async () => {
+  const { formatDateTime } = await import('../admin/core.js');
+  assert.equal(formatDateTime('2026-10-03T15:48:00.000Z'), '03.10.2026 17:48');
+  assert.equal(formatDateTime('2026-01-15T12:22:00Z'), '15.01.2026 13:22');
+  assert.equal(formatDateTime('2026-09-01'), '01.09.2026');
+  assert.equal(formatDateTime(null), '—');
+  assert.equal(formatDateTime('nie-data'), '—');
+  assert.doesNotMatch(formatDateTime('2026-10-03T15:48:00Z'), /,/);
+});
+
+test('admin userOptionLabel: e-mail i skrót identyfikatora, bez pełnego UUID', async () => {
+  const { userOptionLabel } = await import('../admin/core.js');
+  const id = '7a937d66-1111-4222-8333-444455556666';
+  const label = userOptionLabel({ id, email: 'admin@example.invalid' });
+  assert.equal(label, 'admin@example.invalid (7a937d66…)');
+  assert.equal(label.includes(id), false);
+});
