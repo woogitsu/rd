@@ -278,7 +278,7 @@ async function seedDocs82(db, userId) {
 
 // #89 część 2: podgląd PDF w panelu documents/. Osobny rok i osobny członek zarządu;
 // treść w magazynie w pamięci (jedyne miejsce e2e z plikiem). Trzy syntetyczne PDF-y:
-// czysty, z linkiem /URI (strażnik opuszczenia panelu) i „sprzed kontroli struktury”
+// czysty, z linkiem /URI (link zmienia tylko kartę podglądu) i „sprzed kontroli struktury”
 // ze skryptem w skompresowanym strumieniu obiektów (podgląd zablokowany, 409).
 const DOCS89_YEAR_ID = 'e2e-y-docs89';
 function e2ePdfWithLink(uri) {
