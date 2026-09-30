@@ -4,6 +4,7 @@
 //   krok kodu albo konfiguracji na podstawie GET /api/auth/state) z tym samym `next`;
 // - błąd jako { error: "<kod>" } (napis) → ApiError z polskim komunikatem;
 // - brak połączenia → ApiError { network: true, status: 0 };
+// - `withMeta: true` → { data, status, replayed } (powtórka żądania z tym samym kluczem);
 // - 429/503 z nagłówkiem Retry-After → ApiError.retryAfter (sekundy) i czytelny komunikat;
 // - 401 przy niezapisanym formularzu: bez przekierowania (dane zostają na stronie), jedno
 //   ostrzeżenie role="alert" z linkiem „zaloguj się w nowej karcie” (także przy wielu
@@ -218,6 +219,7 @@ export function createApiClient({
     messages = null,
     redirect = true,
     binary = false,
+    withMeta = false,
     ...init
   } = {}, confirmed) {
     const finalHeaders = { Accept: "application/json", ...headers };
@@ -257,11 +259,18 @@ export function createApiClient({
         const retryBody = withPersonalDataConfirmation(body);
         if (retryBody !== null && await confirmPersonalData({ categories: data?.categories ?? [] })) {
           // To samo żądanie i ten sam klucz idempotencji — serwer nie utworzy drugiego wpisu.
-          return execute(url, { method, body: retryBody, headers, idempotencyKey, messages, redirect, ...init }, true);
+          return execute(url, { method, body: retryBody, headers, idempotencyKey, messages, redirect, withMeta, ...init }, true);
         }
       }
       const retryAfter = parseRetryAfter(response.headers?.get?.("Retry-After") ?? null);
       throw new ApiError({ status: response.status, code, data, messages, retryAfter });
+    }
+    // `withMeta: true` (#136) — zapis z kluczem idempotencji: serwer oznacza powtórkę
+    // nagłówkiem Idempotency-Replayed: true (200 zamiast 201). Panel pokazuje wtedy
+    // „operacja była już wykonana” zamiast udawać nowy zapis. Semantyka serwera bez zmian.
+    if (withMeta) {
+      const replayed = response.headers?.get?.("Idempotency-Replayed") === "true" || data?.replayed === true;
+      return { data: data ?? {}, status: response.status, replayed };
     }
     return data ?? {};
   }

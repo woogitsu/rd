@@ -87,7 +87,8 @@
 // operacje nie odebrały sobie nawzajem ostatniego dostępu administratora.
 
 import {
-  allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, insertInvitation, isoTimestamp, normalizeEmail, revokeInvitation, revokeUserSessions,
+  allowPendingRoles, CLASS_SCOPE_ROLES, insertInvitation, isoTimestamp, normalizeEmail, reissueInvitation, revokeInvitation,
+  revokeUserSessions,
   revokeUserSessionsWith, ROLE_STATUS, ROLES,
 } from '../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
@@ -801,16 +802,17 @@ async function createClasses(env, actorId, schoolYearId, request, json) {
 // „Wyślij ponownie” (#108): wycofuje stare zaproszenie i tworzy nowe o tym
 // samym zakresie (token wraca raz, jak przy utworzeniu). Tylko dla zaproszeń
 // wciąż oczekujących — przyjęte, wygasłe lub już wycofane nie mają tu drogi
-// (nowe zaproszenie od zera przez POST /api/admin/invitations).
+// (nowe zaproszenie od zera przez POST /api/admin/invitations). Wycofanie i
+// nowe zaproszenie w jednej transakcji pod blokadą adresu (reissueInvitation
+// w src/pg/auth.js, #293/#576).
 async function reissueInvitationRoute(env, actorId, invitationId, json) {
+  // #146: nowy token dla roli chronionej daje tę rolę temu, kto go użyje —
+  // przy drugim administratorze tylko wniosek; stare zaproszenie działa do
+  // zatwierdzenia (wtedy jest wycofywane w tej samej transakcji, pod blokadą adresu).
   const { rows } = await env.db.query(`SELECT ${INVITATION_COLUMNS} FROM invitations i WHERE i.id = $1`, [invitationId]);
   const invitation = rows[0];
   if (!invitation) throw new RequestError('invitation_not_found', 404);
-  if (invitation.status !== 'pending') throw new RequestError('invitation_not_pending', 409);
-  // #146: nowy token dla roli chronionej daje tę rolę temu, kto go użyje —
-  // przy drugim administratorze tylko wniosek; stare zaproszenie działa do
-  // zatwierdzenia (wtedy jest wycofywane w tej samej transakcji).
-  if (isProtectedRole(invitation.role)) {
+  if (invitation.status === 'pending' && isProtectedRole(invitation.role)) {
     const email = String(invitation.email).toLowerCase();
     const pending = await env.db.transaction(async (tx) => {
       await lockGrantChanges(tx);
@@ -825,17 +827,20 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
     });
     if (pending) return json(pending, 202);
   }
-  const revoked = await revokeInvitation(env, { invitationId, actorId });
-  if (!revoked) throw new RequestError('invitation_not_pending', 409);
-  const created = await createInvitation(env, {
-    actorId, email: invitation.email, role: invitation.role,
-    classId: invitation.class_id, schoolYearId: invitation.school_year_id,
-    replacesInvitationId: invitationId,
-  });
+  let created;
+  try {
+    created = await reissueInvitation(env, { actorId, invitationId });
+  } catch (error) {
+    // rejectPending w insertInvitation: inne oczekujące zaproszenie o tym samym zakresie.
+    if (error?.message === 'invitation_pending') throw new RequestError('invitation_pending', 409);
+    throw error;
+  }
+  if (created.error === 'invitation_not_found') throw new RequestError('invitation_not_found', 404);
+  if (created.error) throw new RequestError(created.error, 409);
   return json({
     invitation: {
-      id: created.invitationId, email: invitation.email, role: invitation.role,
-      classId: invitation.class_id, schoolYearId: invitation.school_year_id,
+      id: created.invitationId, email: created.email, role: created.role,
+      classId: created.classId, schoolYearId: created.schoolYearId,
       expiresAt: created.expiresAt, status: 'pending', replacesInvitationId: invitationId,
     },
     token: created.secret,
@@ -870,6 +875,8 @@ async function executeGrantRequest(tx, actorId, row) {
     return { resultId: created.grant.id, outcome: created };
   }
   if (row.replaces_invitation_id) {
+    // Ta sama blokada adresu co reissueInvitation (#293) i insertInvitation.
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:invitation:${row.target_email}`]);
     const { rows: old } = await tx.query(
       `UPDATE invitations SET revoked_at = now(), revoked_by = $2
         WHERE id = $1 AND revoked_at IS NULL AND accepted_at IS NULL AND expires_at > now()

@@ -9,7 +9,7 @@ import {
   ROLE_LABELS,
   buildGrantsUrl,
   classNamesPayload,
-  confirmationText,
+  confirmationDialog,
   describeAuditEvent,
   ERROR_MESSAGES,
   formatDateTime,
@@ -99,14 +99,11 @@ function actionsCell(buttons) {
 // serwer i tak traktuje powtórzenie idempotentnie. Okno potwierdzenia (issue #136)
 // zastępuje natywne okno przeglądarki; akcje tutaj są nieodwracalne inaczej niż
 // nowym zapisem, więc fokus startuje na „Anuluj” (destructive: true).
-async function runAction(element, confirmText, fn) {
-  if (confirmText) {
-    const confirmed = await confirmAction({
-      title: "Potwierdź operację",
-      effects: [confirmText],
-      confirmLabel: "Potwierdź",
-      destructive: true,
-    });
+// `confirmOptions` to wynik confirmationDialog(...) z admin/core.js (tytuł, lista
+// skutków, nazwa akcji na przycisku).
+async function runAction(element, confirmOptions, fn) {
+  if (confirmOptions) {
+    const confirmed = await confirmAction(confirmOptions);
     if (!confirmed) return;
   }
   element.disabled = true;
@@ -146,6 +143,19 @@ async function withStepUp(fn) {
 // #146: rola chroniona (administrator, zarząd, skarbnik) przy drugim administratorze.
 const GRANT_REQUEST_MESSAGE = "Rola zarządu, skarbnika albo administratora: zapisano wniosek, nic jeszcze nie nadano. Nadanie (albo link zaproszenia) wymaga zatwierdzenia przez innego administratora.";
 const RECOVERY_REQUEST_MESSAGE = "Konto ma rolę chronioną: zapisano wniosek, nic jeszcze nie zmieniono. Kod resetu lub wyłączenie MFA wymaga zatwierdzenia przez innego administratora.";
+
+// Kontekst okna potwierdzenia (#136): liczby z listy kont w chwili otwarcia okna.
+function userContext(user) {
+  return { account: user.email, activeSessions: user.activeSessions, activeGrants: user.activeGrants };
+}
+
+function invitationContext(invitation) {
+  return {
+    account: invitation.email,
+    role: ROLE_LABELS[invitation.role] ?? invitation.role,
+    scope: scopeLabel(invitation, state.classes, state.yearMap),
+  };
+}
 
 function userLabel(userId) {
   const user = state.users.find((item) => item.id === userId);
@@ -201,7 +211,7 @@ function renderUsers() {
     tr.append(user.disabledAt ? statusCell("disabled", "Wyłączone") : statusCell("active", "Aktywne"));
     tr.append(cell(String(user.activeGrants), "num"), cell(String(user.activeSessions), "num"));
     const buttons = [];
-    const sessions = button("Wyloguj wszędzie", (event) => runAction(event.currentTarget, confirmationText("revoke-sessions", user.email), async () => {
+    const sessions = button("Wyloguj wszędzie", (event) => runAction(event.currentTarget, confirmationDialog("revoke-sessions", userContext(user)), async () => {
       const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/revoke-sessions`, { method: "POST", body: {} });
       showMessage(`Wycofano sesje: ${result.revokedSessions}.`);
       await loadUsers();
@@ -209,7 +219,7 @@ function renderUsers() {
     buttons.push(sessions);
     // #224: wydanie resetu hasła — dostępne API, brak było ekranu; niedostępne
     // dla własnego konta i konta wyłączonego (to samo konto trzeba najpierw włączyć).
-    buttons.push(button("Wydaj kod resetu hasła", (event) => runAction(event.currentTarget, confirmationText("password-reset", user.email), async () => {
+    buttons.push(button("Wydaj kod resetu hasła", (event) => runAction(event.currentTarget, confirmationDialog("password-reset", userContext(user)), async () => {
       hideResetToken();
       const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, { method: "POST", body: {} });
       // #146: konto z rolą chronioną — serwer (202) zapisał tylko wniosek, bez tokenu.
@@ -231,13 +241,13 @@ function renderUsers() {
       }));
     }
     if (user.disabledAt) {
-      buttons.push(button("Włącz", (event) => runAction(event.currentTarget, confirmationText("enable", user.email), async () => {
+      buttons.push(button("Włącz", (event) => runAction(event.currentTarget, confirmationDialog("enable", userContext(user)), async () => {
         await api(`/api/admin/users/${encodeURIComponent(user.id)}/enable`, { method: "POST", body: {} });
         showMessage("Konto włączone.");
         await Promise.all([loadUsers(), loadAudit()]);
       })));
     } else {
-      buttons.push(button("Wyłącz", (event) => runAction(event.currentTarget, confirmationText("disable", user.email), async () => {
+      buttons.push(button("Wyłącz", (event) => runAction(event.currentTarget, confirmationDialog("disable", userContext(user)), async () => {
         const result = await api(`/api/admin/users/${encodeURIComponent(user.id)}/disable`, { method: "POST", body: {} });
         showMessage(`Konto wyłączone. Wycofano sesje: ${result.revokedSessions}.`);
         await Promise.all([loadUsers(), loadAudit()]);
@@ -356,8 +366,12 @@ function renderGrants() {
       tr.append(cell(""));
     } else {
       const lastOwn = isOwnLastAdminGrant(state.grants, state.me, grant.id);
-      const subject = `${ROLE_LABELS[grant.role] ?? grant.role} — ${userLabel(grant.userId)}`;
-      tr.append(actionsCell([button("Wycofaj", (event) => runAction(event.currentTarget, confirmationText("revoke-grant", subject), async () => {
+      const grantContext = {
+        account: userLabel(grant.userId),
+        role: ROLE_LABELS[grant.role] ?? grant.role,
+        scope: scopeLabel(grant, state.classes, state.yearMap),
+      };
+      tr.append(actionsCell([button("Wycofaj", (event) => runAction(event.currentTarget, confirmationDialog("revoke-grant", grantContext), async () => {
         await api(`/api/admin/grants/${encodeURIComponent(grant.id)}/revoke`, { method: "POST", body: {} });
         showMessage("Przydział wycofany.");
         await Promise.all([loadGrants(), loadUsers(), loadAudit()]);
@@ -435,7 +449,7 @@ function renderInvitations() {
     if (invitation.status === "pending") {
       tr.append(actionsCell([
         // „Wyślij ponownie” (#108): serwer wycofuje stary kod i wydaje nowy; nic nie wysyła e-mailem.
-        button("Wyślij ponownie", (event) => runAction(event.currentTarget, `Poprzedni link dla ${invitation.email} przestanie działać; powstanie nowy link do przekazania.`, async () => {
+        button("Wyślij ponownie", (event) => runAction(event.currentTarget, confirmationDialog("reissue-invitation", invitationContext(invitation)), async () => {
           hideToken();
           const result = await api(`/api/admin/invitations/${encodeURIComponent(invitation.id)}/reissue`, { method: "POST", body: {} });
           if (result.request) {
@@ -446,7 +460,7 @@ function renderInvitations() {
           }
           await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
         })),
-        button("Wycofaj", (event) => runAction(event.currentTarget, confirmationText("revoke-invitation", invitation.email), async () => {
+        button("Wycofaj", (event) => runAction(event.currentTarget, confirmationDialog("revoke-invitation", invitationContext(invitation)), async () => {
           await api(`/api/admin/invitations/${encodeURIComponent(invitation.id)}/revoke`, { method: "POST", body: {} });
           showMessage("Zaproszenie wycofane.");
           await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
@@ -859,9 +873,9 @@ byId("term-form").addEventListener("submit", async (event) => {
   if (!schoolYearId) { errorBox.textContent = "Brak zakończonych lat szkolnych."; return; }
   if (confirm.trim() !== schoolYearId) { errorBox.textContent = "Wpisany identyfikator nie zgadza się z wybranym rokiem."; return; }
   const confirmed = await confirmAction({
-    title: "Potwierdź wygaszenie kadencji",
+    title: `Wygasić kadencję roku ${formatSchoolYear(yearLabel(schoolYearId))}?`,
     effects: [
-      `Wygaszone zostaną wszystkie aktywne przydziały ról roku ${schoolYearId}.`,
+      `Wygaszone zostaną wszystkie aktywne przydziały ról roku ${formatSchoolYear(yearLabel(schoolYearId))}.`,
       "Osoby z przydziałem tylko tego roku stracą dostęp do paneli od następnego żądania.",
       "Cofnięcie jest widoczne w dzienniku zdarzeń; przywrócenie wymaga nowego przydziału.",
     ],
