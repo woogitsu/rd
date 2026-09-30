@@ -10,7 +10,7 @@
 //   a klucz trafia też w nagłówku wiadomości do diagnostyki;
 // - klucz API wyłącznie z sekretu serwera (BREVO_API_KEY), nigdy w logach.
 
-import { isProductionEnv, resolveAppEnv } from '../app-env.js';
+import { isProductionEnv, isTestEnv, resolveAppEnv } from '../app-env.js';
 
 export const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
 export const BREVO_ACCOUNT_ENDPOINT = 'https://api.brevo.com/v3/account';
@@ -276,7 +276,8 @@ export function createBrevoTransport({
   return {
     name: 'brevo',
     async send(message) {
-      if (appEnv === 'test' || underTestRunner(processEnv)) {
+      // #166: wspólna funkcja — 'TEST'/' test ' też blokuje prawdziwy transport.
+      if (isTestEnv(appEnv) || underTestRunner(processEnv)) {
         throw new EmailTransportError('transport_disabled_in_test');
       }
       if (!apiKey) throw new EmailTransportError('api_key_missing');

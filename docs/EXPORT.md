@@ -294,26 +294,56 @@ wersję (`rd-eksport-<rok>-v2.json`).
   tabelę partiami po 2000 wierszy przez kursor w transakcji (limit 500 000
   wierszy na tabelę bez zmian), liczy SHA-256 pliku i sumy `*_cents`
   przyrostowo i po każdej partii oddaje pętlę zdarzeń (`setImmediate`), także
-  wewnątrz `audit_events`. Paczka powstaje od razu jako lista buforów (poza
-  stertą JS) — bez obiektów wierszy, pełnych tekstów plików i drugiej kopii
-  `canonicalJson(bundle)`; bajty są te same co dotąd (format i SHA-256
-  manifestu bez zmian, `formatVersion` 2). Odpowiedź ma `Content-Length` i
-  adapter Node (`src/node-app.js`) przesyła ją strumieniowo z obsługą
-  przeciążenia gniazda; zerwanie pobierania przez klienta anuluje strumień
-  (transakcja i wiersz `export_runs` są wtedy już zatwierdzone — paczka
-  powstaje przed wysyłką). Transakcja dostaje lokalnie
-  `idle_in_transaction_session_timeout = 60s`. Pomiar (PGlite, dane
-  syntetyczne, 200 tys. zdarzeń audytu, paczka 52 MB): szczyt sterty JS
-  252 MB → 39 MB przy `--max-old-space-size=256` (skrypt
-  `scripts/measure-export-memory.js`; czasy i blokada pętli PGlite nie są
-  reprezentatywne, bo silnik działa w procesie — pomiar na Railway zależy od
-  #41). Test wolumenowy (nocny): `RD_EXPORT_VOLUME_EVENTS=200000 node
-  --max-old-space-size=256 --test tests/pg-export-streaming.test.js`.
-  **Nadal nieobsłużone**: `scripts/verify-export.js` wczytuje całą paczkę
-  jednym `JSON.parse` (weryfikacja i odtworzenie); paczka w buforach nadal
-  zajmuje ok. jednej kopii rozmiaru pliku w pamięci procesu (poza stertą),
-  a `restoreBundle` i tryb bez `{ stream: true }` (testy) budują ją jak dotąd
-  w stringach.
+  wewnątrz `audit_events`. Każda partia trafia od razu (z oczekiwaniem na
+  zapis — przeciążenie) do **bufora na dysku** (`src/pg/export-spool.js`):
+  pliku tymczasowego w katalogu z `mkdtemp` (0700, plik 0600), którego nazwa
+  jest usuwana zaraz po otwarciu — dane żyją tylko pod otwartym uchwytem i
+  znikają z dysku po jego zamknięciu, także gdy proces zostanie zabity. W
+  pamięci jest najwyżej jedna partia; bez obiektów wierszy, tekstów plików i
+  całej paczki. Paczka ma klucze w kolejności kanonicznej (`files` pierwsze),
+  więc tabele są czytane w kolejności ścieżek, a manifest (na końcu) zachowuje
+  kolejność `EXPORT_TABLES`. Bajty są te same co dotąd (format i SHA-256
+  manifestu bez zmian, `formatVersion` 2). Wysyłka zaczyna się po COMMIT
+  (wolny klient nie trzyma transakcji): odpowiedź ma `Content-Length`, ciało
+  czyta bufor fragmentami po 256 KiB na żądanie gniazda (adapter Node,
+  `src/node-app.js`). Koniec pobierania, zerwanie połączenia przez klienta
+  albo 5 minut bez odczytu zamyka uchwyt (transakcja i wiersz `export_runs`
+  są wtedy już zatwierdzone — paczka powstaje przed wysyłką); błąd budowy,
+  `409` i wycofanie transakcji też go zamykają, a ponowienie transakcji
+  (40001/40P01) zaczyna bufor od zera. Dysk kontenera potrzebuje miejsca na
+  jedną paczkę na trwający eksport (każdy rok najwyżej jeden naraz). Blokowy
+  zapis na dysku kontenera Railway nie jest nadpisywany zerami po zamknięciu —
+  ryzyko jak przy każdym pliku tymczasowym; dostęp do kontenera ma tylko
+  operator. Transakcja dostaje lokalnie `idle_in_transaction_session_timeout
+  = 60s`.
+- **Weryfikacja i odtworzenie strumieniowe** (#216): `scripts/verify-export.js`
+  nie wczytuje już paczki jednym `JSON.parse`. `verifyBundleFile` czyta plik
+  fragmentami po 1 MiB (`src/pg/export-reader.js`): stringi plików JSONL są
+  dekodowane w locie, a SHA-256, liczność, kolumny i sumy `*_cents` liczone
+  linia po linii; w pamięci jest fragment pliku i jedna linia. Reguły (kody
+  błędów i ich kolejność) są wspólne z `verifyBundle`. Kolejność kluczy w
+  pliku nie ma znaczenia; zdublowany klucz pliku to `duplicate_file:…`, błąd
+  składni lub bajty spoza UTF-8 to `invalid_bundle_json` (bez cytowania
+  treści). `restoreBundleFile` po weryfikacji czyta plik drugi raz w
+  transakcji odtworzenia, wstawia wiersze partiami po 100 i ponownie
+  porównuje SHA-256 i liczność każdego pliku (plik zmieniony między
+  przejściami wycofuje całość). Kontrolny ponowny eksport po odtworzeniu idzie
+  przez kursor bez składania paczki. Formaty 1 i 2 są czytane tak samo.
+- **Pomiar** (PGlite w procesie, dane syntetyczne, 200 tys. zdarzeń audytu,
+  `--max-old-space-size=256`): trasa — szczyt sterty JS 39 MB (paczka 52 MB,
+  `scripts/measure-export-memory.js`); gotowa, nieodebrana odpowiedź trzyma w
+  pamięci poniżej 1/8 paczki (test `tests/pg-export-stream-file.test.js`,
+  pomiar po GC, dawniej całą paczkę); `verify-export.js` na paczce 54 MB —
+  szczyt sterty 186 MB → 9 MB, a z `--restore-pglite` 250 MB → 33 MB. Czasy
+  i opóźnienie pętli zdarzeń z PGlite nie są reprezentatywne (silnik działa
+  synchronicznie w procesie); pomiar na Railway zależy od #41. Test
+  wolumenowy (nocny, #111): `RD_EXPORT_VOLUME_EVENTS=200000 node
+  --max-old-space-size=256 --test tests/pg-export-streaming.test.js` —
+  wzrost sterty i buforów poniżej 64 MB przy dowolnej liczbie wierszy.
+  **Poza zakresem**: panel `data-export/` weryfikuje pobraną paczkę w
+  przeglądarce z całego tekstu (`blob.text()`), a tryb domyślny
+  `buildYearlyExport` (bez `sink`, testy) i `restoreBundle` na obiekcie
+  paczki nadal trzymają ją w pamięci.
 - **Blokada jednego eksportu na rok** (#216): `POST /api/exports` bierze
   `pg_try_advisory_xact_lock(hashtext('rd_export:'||rok))` na czas transakcji
   budującej paczkę. Drugi równoczesny przebieg tego samego roku dostaje od

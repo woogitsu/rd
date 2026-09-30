@@ -14,7 +14,7 @@
 // backup_runs (kind=restore_drill) w bazie ŹRÓDŁOWEJ; baza docelowa jest czyszczona przez
 // operatora usługi (osobna, jednorazowa baza „drill” — poza zakresem skryptu).
 
-import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
+import { appEnvLabel, appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
 import { createPgDatabase } from '../src/db.js';
@@ -60,7 +60,7 @@ async function main() {
       decryptPrivateKeyPem: env.BACKUP_DECRYPTION_PRIVATE_KEY,
       sourceUrl: env.DATABASE_URL,
       targetUrl: env.RESTORE_DRILL_TARGET_DATABASE_URL,
-      environment: env.APP_ENV || 'unknown',
+      environment: appEnvLabel(env.APP_ENV),
       restore: (plaintext) => restoreInto(env.RESTORE_DRILL_TARGET_DATABASE_URL, plaintext),
       migrateTarget: async () => {
         const applied = await applyMigrations(targetClient, await loadMigrations(migrationsDirectory));

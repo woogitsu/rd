@@ -13,10 +13,12 @@
 // zapisywać jej w repo, CI, logach ani zgłoszeniach.
 
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { isProductionLikeEnv } from '../app-env.js';
 import { csvRow, toCsv } from './csv.js';
 import { toXlsx } from './xlsx.js';
 import { insertAuditEvent } from './audit.js';
+import { JsonLinesScanner, readBundleStream, scanJsonLines } from './export-reader.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
 // Wersja 2 (#202): gospodarstwa i ich historia (0014), uzgodnienia rachunku
@@ -32,6 +34,8 @@ const MAX_ROWS_PER_TABLE = 500_000;
 // #216: liczba wierszy pobieranych i przetwarzanych naraz (kursor); po każdej partii pętla zdarzeń jest oddawana.
 export const EXPORT_BATCH_ROWS = 2000;
 const INSERT_BATCH_ROWS = 100;
+// #216: fragment pliku paczki czytany naraz przez verifyBundleFile/restoreBundleFile.
+const READ_CHUNK_BYTES = 1024 * 1024;
 const IDENTIFIER = /^[a-z_][a-z0-9_]{0,62}$/;
 const PATH_PATTERN = /^[a-z][a-z0-9_]{0,62}\.jsonl$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -595,30 +599,53 @@ async function* rowBatches(executor, sql, params, table, useCursor) {
  * Buduje deterministyczną paczkę roku szkolnego. Wywołuj w transakcji
  * REPEATABLE READ, żeby wszystkie pliki pochodziły z jednej migawki.
  *
- * Domyślnie zwraca `bundle` i `body` (string) — jak dotąd, dla testów i
- * odtwarzania. Z `{ stream: true }` (trasa HTTP, #216) nie trzyma ani obiektów
- * wierszy, ani pełnych tekstów plików: wiersze idą partiami przez kursor,
- * skrót SHA-256 liczy się przyrostowo, a paczka powstaje jako lista buforów
- * `bodyChunks` (bajt w bajt ten sam JSON co `body`, bez drugiej kopii).
+ * Tryby (ten sam JSON bajt w bajt i ten sam SHA-256 manifestu):
+ * - domyślny: zwraca `bundle` i `body` (string) — testy i proste wywołania;
+ * - `{ sink }` (trasa HTTP, #216): `sink(buffer)` dostaje kolejne fragmenty
+ *   paczki od razu po każdej partii wierszy i jest oczekiwany (przeciążenie),
+ *   więc w pamięci nie ma ani obiektów wierszy, ani tekstów plików, ani
+ *   paczki — najwyżej jedna partia. Wymaga transakcji (kursor);
+ * - `{ stream: true }`: jak `sink`, ale fragmenty zbierane w `bodyChunks`.
+ *
+ * Paczka ma klucze w kolejności kanonicznej (files, format, formatVersion,
+ * manifest, manifestSha256), więc pliki idą pierwsze — tabele są czytane w
+ * kolejności ścieżek, a manifest (na końcu) zachowuje kolejność EXPORT_TABLES.
  * @returns {Promise<{ bundle?, body?, bodyChunks?, bodyBytes?, manifest, manifestSha256, rowCounts }>}
  */
 export async function buildYearlyExport(executor, schoolYearId, options = {}) {
-  const stream = options.stream === true;
+  const collected = options.stream === true && typeof options.sink !== 'function' ? [] : null;
+  const sink = typeof options.sink === 'function' ? options.sink : collected ? (chunk) => { collected.push(chunk); } : null;
   if (typeof schoolYearId !== 'string' || !schoolYearId) throw new ExportError('invalid_school_year');
   const { rows: yearRows } = await executor.query('SELECT id FROM school_years WHERE id = $1', [schoolYearId]);
   if (!yearRows.length) throw new ExportError('school_year_not_found');
 
   const has = await listBaseTables(executor);
-  const files = [];
-  const contents = {};
-  const buffers = {};
-  const rowCounts = {};
-
+  const specs = [];
   for (const spec of EXPORT_TABLES) {
     if (!has.has(spec.table) || (spec.requires ?? []).some((name) => !has.has(name))) {
       if (spec.required) throw new ExportError(`required_table_missing:${spec.table}`);
       continue;
     }
+    specs.push(spec);
+  }
+  const byPath = [...specs].sort((a, b) => {
+    const left = `${a.table}.jsonl`;
+    const right = `${b.table}.jsonl`;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+
+  let bodyBytes = 0;
+  const emit = async (buffer) => {
+    bodyBytes += buffer.byteLength;
+    await sink(buffer);
+  };
+  const piece = (text) => emit(Buffer.from(text, 'utf8'));
+  const entries = new Map();
+  const contents = {};
+  const rowCounts = {};
+  if (sink) await piece('{"files":{');
+
+  for (const [fileIndex, spec] of byPath.entries()) {
     const available = await tableColumns(executor, spec.table);
     const selected = spec.columns
       ? available.filter((column) => spec.columns.includes(column.name))
@@ -631,6 +658,7 @@ export async function buildYearlyExport(executor, schoolYearId, options = {}) {
       return column && column.type === 'text' ? `${quoteIdent(name)} COLLATE "C"` : quoteIdent(name);
     }).join(', ');
 
+    const path = `${spec.table}.jsonl`;
     const columnNames = selected.map((column) => column.name);
     const centsColumns = columnNames.filter((name) => name.endsWith('_cents'));
     const sums = Object.fromEntries(centsColumns.map((name) => [name, 0]));
@@ -639,7 +667,8 @@ export async function buildYearlyExport(executor, schoolYearId, options = {}) {
     let count = 0;
     const sql = `SELECT ${selected.map(selectExpression).join(', ')} FROM ${quoteIdent(spec.table)}
         WHERE ${spec.where(has)} ORDER BY ${orderBy}`;
-    for await (const rows of rowBatches(executor, sql, [schoolYearId], spec.table, stream)) {
+    if (sink) await piece(`${fileIndex ? ',' : ''}${JSON.stringify(path)}:"`);
+    for await (const rows of rowBatches(executor, sql, [schoolYearId], spec.table, Boolean(sink))) {
       let text = '';
       for (const row of rows) {
         const record = {};
@@ -656,15 +685,15 @@ export async function buildYearlyExport(executor, schoolYearId, options = {}) {
       hash.update(text, 'utf8');
       // Ucieczka znaków w JSON-owym stringu działa znak po znaku, więc
       // sklejenie zakodowanych partii = zakodowany cały plik.
-      parts.push(stream ? Buffer.from(JSON.stringify(text).slice(1, -1), 'utf8') : text);
+      if (sink) await emit(Buffer.from(JSON.stringify(text).slice(1, -1), 'utf8'));
+      else parts.push(text);
       // #216: pętla zdarzeń wolna po każdej partii, także wewnątrz dużej tabeli (audit_events).
       await yieldToEventLoop();
     }
     for (const name of centsColumns) if (!Number.isSafeInteger(sums[name])) throw new ExportError('unsafe_integer');
-    const path = `${spec.table}.jsonl`;
-    if (stream) buffers[path] = parts; else contents[path] = parts.join('');
+    if (sink) await piece('"'); else contents[path] = parts.join('');
     rowCounts[spec.table] = count;
-    files.push({ path, table: spec.table, columns: columnNames, rows: count, sha256: hash.digest('hex'), sums });
+    entries.set(spec.table, { path, table: spec.table, columns: columnNames, rows: count, sha256: hash.digest('hex'), sums });
   }
 
   const manifest = {
@@ -672,27 +701,17 @@ export async function buildYearlyExport(executor, schoolYearId, options = {}) {
     formatVersion: EXPORT_FORMAT_VERSION,
     schoolYearId,
     schema: { migrations: await schemaMigrations(executor) },
-    files,
+    files: specs.map((spec) => entries.get(spec.table)),
     totals: await exportTotals(executor, schoolYearId),
   };
   const manifestSha256 = sha256Hex(canonicalJson(manifest));
-  if (!stream) {
+  const ordered = Object.fromEntries(specs.map((spec) => [spec.table, rowCounts[spec.table]]));
+  if (!sink) {
     const bundle = { format: EXPORT_FORMAT, formatVersion: EXPORT_FORMAT_VERSION, manifest, manifestSha256, files: contents };
-    return { bundle, body: canonicalJson(bundle), manifest, manifestSha256, rowCounts };
+    return { bundle, body: canonicalJson(bundle), manifest, manifestSha256, rowCounts: ordered };
   }
-  // Kolejność kluczy jak w canonicalJson: files, format, formatVersion, manifest, manifestSha256;
-  // ścieżki plików posortowane.
-  const chunks = [];
-  const piece = (text) => chunks.push(Buffer.from(text, 'utf8'));
-  piece('{"files":{');
-  Object.keys(buffers).sort().forEach((path, index) => {
-    piece(`${index ? ',' : ''}${JSON.stringify(path)}:"`);
-    for (const part of buffers[path]) chunks.push(part);
-    piece('"');
-  });
-  piece(`},"format":${JSON.stringify(EXPORT_FORMAT)},"formatVersion":${EXPORT_FORMAT_VERSION},"manifest":${canonicalJson(manifest)},"manifestSha256":${JSON.stringify(manifestSha256)}}`);
-  const bodyBytes = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-  return { bodyChunks: chunks, bodyBytes, manifest, manifestSha256, rowCounts };
+  await piece(`},"format":${JSON.stringify(EXPORT_FORMAT)},"formatVersion":${EXPORT_FORMAT_VERSION},"manifest":${canonicalJson(manifest)},"manifestSha256":${JSON.stringify(manifestSha256)}}`);
+  return { ...(collected ? { bodyChunks: collected } : {}), bodyBytes, manifest, manifestSha256, rowCounts: ordered };
 }
 
 // ---------------------------------------------------------------------------
@@ -724,13 +743,25 @@ export function parseJsonLines(content, path) {
  */
 export function verifyBundle(bundle) {
   if (!isPlainObject(bundle)) fail('invalid_bundle');
-  if (bundle.format !== EXPORT_FORMAT) fail('unsupported_format');
-  if (!SUPPORTED_FORMAT_VERSIONS.includes(bundle.formatVersion)) fail('unsupported_format_version');
-  const { manifest } = bundle;
-  if (!isPlainObject(manifest) || !isPlainObject(bundle.files)) fail('invalid_bundle');
-  if (typeof bundle.manifestSha256 !== 'string' || !SHA256_PATTERN.test(bundle.manifestSha256)) fail('invalid_manifest_sha256');
-  if (sha256Hex(canonicalJson(manifest)) !== bundle.manifestSha256) fail('manifest_hash_mismatch');
-  if (manifest.format !== EXPORT_FORMAT || manifest.formatVersion !== bundle.formatVersion) fail('manifest_format_mismatch');
+  const files = isPlainObject(bundle.files) ? bundle.files : null;
+  return verifyParsedBundle(
+    { ...bundle, files: files ? Object.keys(files) : null },
+    (path) => (Object.hasOwn(files, path) && typeof files[path] === 'string' ? scanJsonLines(files[path], path) : null),
+  );
+}
+
+// Wspólne reguły dla paczki w pamięci i czytanej strumieniowo z pliku (#216).
+// `shell.files` to lista ścieżek plików (albo null, gdy `files` nie jest
+// obiektem); `statsFor(path)` zwraca wynik JsonLinesScanner albo null, gdy
+// wartość pliku nie jest stringiem. Kolejność błędów jak dotąd.
+function verifyParsedBundle(shell, statsFor) {
+  if (shell.format !== EXPORT_FORMAT) fail('unsupported_format');
+  if (!SUPPORTED_FORMAT_VERSIONS.includes(shell.formatVersion)) fail('unsupported_format_version');
+  const { manifest } = shell;
+  if (!isPlainObject(manifest) || !Array.isArray(shell.files)) fail('invalid_bundle');
+  if (typeof shell.manifestSha256 !== 'string' || !SHA256_PATTERN.test(shell.manifestSha256)) fail('invalid_manifest_sha256');
+  if (sha256Hex(canonicalJson(manifest)) !== shell.manifestSha256) fail('manifest_hash_mismatch');
+  if (manifest.format !== EXPORT_FORMAT || manifest.formatVersion !== shell.formatVersion) fail('manifest_format_mismatch');
   if (typeof manifest.schoolYearId !== 'string' || !manifest.schoolYearId) fail('invalid_manifest');
   if (!Array.isArray(manifest.files)) fail('invalid_manifest');
 
@@ -750,37 +781,99 @@ export function verifyBundle(bundle) {
       fail(`invalid_columns:${entry.path}`);
     }
     const spec = EXPORT_TABLES[position];
-    if (bundle.formatVersion < 2 && TABLES_ADDED_IN_V2.includes(entry.table)) fail(`table_not_in_format_version:${entry.path}`);
+    if (shell.formatVersion < 2 && TABLES_ADDED_IN_V2.includes(entry.table)) fail(`table_not_in_format_version:${entry.path}`);
     if (spec.columns && entry.columns.some((name) => !spec.columns.includes(name))) fail(`column_not_allowed:${entry.path}`);
 
-    const content = bundle.files[entry.path];
-    if (typeof content !== 'string') fail(`file_missing:${entry.path}`);
-    if (sha256Hex(content) !== entry.sha256) fail(`file_hash_mismatch:${entry.path}`);
-    const records = parseJsonLines(content, entry.path);
-    if (records.length !== entry.rows) fail(`row_count_mismatch:${entry.path}`);
+    const stats = shell.files.includes(entry.path) ? statsFor(entry.path) : null;
+    if (!stats) fail(`file_missing:${entry.path}`);
+    if (stats.sha256 !== entry.sha256) fail(`file_hash_mismatch:${entry.path}`);
+    if (stats.error) fail(stats.error);
+    if (stats.rows !== entry.rows) fail(`row_count_mismatch:${entry.path}`);
     const expectedKeys = canonicalJson([...entry.columns].sort());
-    for (const record of records) {
-      if (canonicalJson(Object.keys(record).sort()) !== expectedKeys) fail(`column_mismatch:${entry.path}`);
+    if (stats.rows > 0 && (stats.signatureMismatch || stats.signature !== expectedKeys)) fail(`column_mismatch:${entry.path}`);
+    if (stats.invalidCents) throw new ExportError('invalid_cents_value');
+    const sums = {};
+    for (const column of entry.columns) {
+      if (!column.endsWith('_cents')) continue;
+      const total = stats.cents.get(column) ?? 0;
+      if (!Number.isSafeInteger(total)) throw new ExportError('unsafe_integer');
+      sums[column] = total;
     }
-    if (canonicalJson(centsSums(entry.columns, records)) !== canonicalJson(entry.sums ?? {})) fail(`sum_mismatch:${entry.path}`);
+    if (canonicalJson(sums) !== canonicalJson(entry.sums ?? {})) fail(`sum_mismatch:${entry.path}`);
     report.push({ table: entry.table, rows: entry.rows, sums: entry.sums });
   }
   for (const spec of EXPORT_TABLES) {
     if (spec.required && !listed.has(`${spec.table}.jsonl`)) fail(`required_file_missing:${spec.table}.jsonl`);
   }
-  for (const path of Object.keys(bundle.files)) if (!listed.has(path)) fail(`unlisted_file:${path}`);
+  for (const path of shell.files) if (!listed.has(path)) fail(`unlisted_file:${path}`);
 
   // Paczka wersji 1 nie ma tabel z 0014/0015/0017/0021/0028 — jest niepełna.
-  const warnings = bundle.formatVersion < 2 ? ['bundle_incomplete'] : [];
+  const warnings = shell.formatVersion < 2 ? ['bundle_incomplete'] : [];
   return {
     schoolYearId: manifest.schoolYearId,
     formatVersion: manifest.formatVersion,
-    manifestSha256: bundle.manifestSha256,
+    manifestSha256: shell.manifestSha256,
     warnings,
     ...(warnings.length ? { missingTables: [...TABLES_ADDED_IN_V2] } : {}),
     tables: report,
     totals: manifest.totals ?? {},
   };
+}
+
+function openBundleFile(path) {
+  const source = createReadStream(path, { highWaterMark: READ_CHUNK_BYTES });
+  // Brak pliku jako kod bez ścieżki (ścieżka może zdradzać nazwę roku/osoby).
+  return (async function* read() {
+    try {
+      for await (const chunk of source) yield chunk;
+    } catch (error) {
+      // Inne błędy odczytu też jako kod, bez komunikatu systemu (zawiera ścieżkę).
+      fail(error?.code === 'ENOENT' ? 'bundle_not_found' : 'bundle_read_failed');
+    } finally {
+      source.destroy();
+    }
+  }());
+}
+
+async function scanBundleFile(path, { keepRecords = null, drain } = {}) {
+  const scanners = new Map();
+  const nonString = new Set();
+  const shell = await readBundleStream(openBundleFile(path), {
+    file(filePath) {
+      const scanner = new JsonLinesScanner(filePath, { keepRecords: keepRecords ? keepRecords(filePath) : false });
+      scanners.set(filePath, scanner);
+      return scanner;
+    },
+    nonString(filePath) { nonString.add(filePath); },
+    drain: drain ? () => drain(scanners) : undefined,
+  });
+  return { shell, scanners, nonString };
+}
+
+function shellFields(shell) {
+  const { fields } = shell;
+  return {
+    format: fields.format,
+    formatVersion: fields.formatVersion,
+    manifest: fields.manifest,
+    manifestSha256: fields.manifestSha256,
+    files: shell.files?.paths ?? null,
+  };
+}
+
+/**
+ * Jak verifyBundle, ale czyta paczkę z pliku strumieniowo (#216): w pamięci
+ * jest fragment pliku i jedna linia JSONL, nie cała paczka. Zwraca raport jak
+ * verifyBundle.
+ */
+export async function verifyBundleFile(path) {
+  return (await verifyFile(path)).report;
+}
+
+async function verifyFile(path) {
+  const { shell, scanners } = await scanBundleFile(path);
+  const fields = shellFields(shell);
+  return { fields, report: verifyParsedBundle(fields, (filePath) => scanners.get(filePath)?.stats() ?? null) };
 }
 
 // ---------------------------------------------------------------------------
@@ -875,6 +968,54 @@ async function derivedRowsCheck(tx, existing) {
  */
 export async function restoreBundle(db, bundle) {
   const verified = verifyBundle(bundle);
+  return restoreVerified(db, bundle, verified, async (tx, targets) => {
+    for (const entry of bundle.manifest.files) {
+      const records = parseJsonLines(bundle.files[entry.path], entry.path);
+      const target = targets.get(entry.path);
+      for (let start = 0; start < records.length; start += INSERT_BATCH_ROWS) {
+        await target.insert(records.slice(start, start + INSERT_BATCH_ROWS));
+      }
+    }
+  });
+}
+
+/**
+ * Jak restoreBundle, ale czyta paczkę z pliku strumieniowo (#216,
+ * scripts/verify-export.js): pierwsze przejście weryfikuje (jak
+ * verifyBundleFile), drugie — w transakcji odtworzenia — wstawia rekordy
+ * partiami po INSERT_BATCH_ROWS prosto z pliku i ponownie sprawdza SHA-256
+ * i liczność każdego pliku (plik zmieniony między przejściami wycofuje całość).
+ */
+export async function restoreBundleFile(db, path) {
+  const { fields, report: verified } = await verifyFile(path);
+  const bundle = { formatVersion: fields.formatVersion, manifest: fields.manifest, manifestSha256: fields.manifestSha256 };
+  return restoreVerified(db, bundle, verified, async (tx, targets) => {
+    const insertReady = async (scanners, final) => {
+      for (const [filePath, scanner] of scanners) {
+        const target = targets.get(filePath);
+        if (!target) continue;
+        while (scanner.records.length >= INSERT_BATCH_ROWS || (final && scanner.records.length)) {
+          await target.insert(scanner.records.splice(0, INSERT_BATCH_ROWS));
+        }
+      }
+    };
+    const { scanners } = await scanBundleFile(path, {
+      keepRecords: (filePath) => targets.has(filePath),
+      drain: (current) => insertReady(current, false),
+    });
+    await insertReady(scanners, true);
+    for (const entry of bundle.manifest.files) {
+      const stats = scanners.get(entry.path)?.stats();
+      if (!stats || stats.sha256 !== entry.sha256) fail(`file_hash_mismatch:${entry.path}`);
+      if (stats.error) fail(stats.error);
+      if (stats.rows !== entry.rows) fail(`row_count_mismatch:${entry.path}`);
+    }
+  });
+}
+
+// Wspólna część odtworzenia (paczka w pamięci albo z pliku). `loadFiles(tx,
+// targets)` wstawia rekordy przez `targets.get(path).insert(records)`.
+async function restoreVerified(db, bundle, verified, loadFiles) {
   const { manifest } = bundle;
   const warnings = [...verified.warnings];
   let backfilled = null;
@@ -886,6 +1027,7 @@ export async function restoreBundle(db, bundle) {
     // Triggery z własnym warunkiem odtworzenia (0027/0028: daty w roku) — i tak wyłączone.
     await tx.query("SET LOCAL rd.restore = 'on'");
     const existing = await assertEmptyTarget(tx);
+    const targets = new Map();
     for (const entry of manifest.files) {
       if (!existing.has(entry.table)) fail(`target_table_missing:${entry.table}`);
       const targetColumns = await tableColumns(tx, entry.table);
@@ -895,20 +1037,26 @@ export async function restoreBundle(db, bundle) {
         return column;
       }).filter((column) => !column.generated);
       const override = columns.some((column) => column.identityAlways) ? ' OVERRIDING SYSTEM VALUE' : '';
-      const records = parseJsonLines(bundle.files[entry.path], entry.path);
-      for (let start = 0; start < records.length; start += INSERT_BATCH_ROWS) {
-        const batch = records.slice(start, start + INSERT_BATCH_ROWS);
-        const params = [];
-        const tuples = batch.map((record) => `(${columns.map((column) => {
-          params.push(insertValue(column, record[column.name]));
-          return `$${params.length}`;
-        }).join(', ')})`);
-        await tx.query(
-          `INSERT INTO ${quoteIdent(entry.table)} (${columns.map((column) => quoteIdent(column.name)).join(', ')})${override}
-           VALUES ${tuples.join(', ')}`,
-          params,
-        );
-      }
+      targets.set(entry.path, {
+        entry,
+        columns,
+        async insert(batch) {
+          if (!batch.length) return;
+          const params = [];
+          const tuples = batch.map((record) => `(${columns.map((column) => {
+            params.push(insertValue(column, record[column.name]));
+            return `$${params.length}`;
+          }).join(', ')})`);
+          await tx.query(
+            `INSERT INTO ${quoteIdent(entry.table)} (${columns.map((column) => quoteIdent(column.name)).join(', ')})${override}
+             VALUES ${tuples.join(', ')}`,
+            params,
+          );
+        },
+      });
+    }
+    await loadFiles(tx, targets);
+    for (const { entry, columns } of targets.values()) {
       for (const column of columns.filter((item) => item.identity)) {
         await tx.query(
           `SELECT setval(pg_get_serial_sequence($1, $2), COALESCE((SELECT max(${quoteIdent(column.name)}) FROM ${quoteIdent(entry.table)}), 1),
@@ -941,8 +1089,12 @@ export async function restoreBundle(db, bundle) {
     await derivedRowsCheck(tx, existing);
   }, { retries: 0 });
 
-  // Kontrola po odtworzeniu: ten sam eksport z odtworzonej bazy.
-  const again = await buildYearlyExport(db, manifest.schoolYearId);
+  // Kontrola po odtworzeniu: ten sam eksport z odtworzonej bazy — w jednej
+  // migawce, przez kursor i bez składania paczki w pamięci (liczy się manifest).
+  const again = await db.transaction(async (tx) => {
+    await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    return buildYearlyExport(tx, manifest.schoolYearId, { sink: () => {} });
+  }, { retries: 0 });
   const expected = manifest.files.map(({ path, rows, sha256, sums }) => ({ path, rows, sha256, sums }));
   const actual = again.manifest.files
     .filter((entry) => manifest.files.some((item) => item.path === entry.path))

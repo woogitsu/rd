@@ -6,12 +6,12 @@
 // logowań dla całej szkoły (brak TRUST_PROXY) albo za krótki sekret webhooka.
 // Błąd wymienia WYŁĄCZNIE nazwy zmiennych i powody — nigdy wartości.
 //
-// APP_ENV: lokalne są tylko brak wartości, `development` i `test`. Każda inna
-// wartość (staging, production, prod, a także literówka) jest traktowana
-// zachowawczo jak środowisko wystawione do sieci — ta sama reguła co przy nazwie
-// cookie sesji (src/auth.js). Pełne ujednolicenie APP_ENV w kodzie to #166.
+// APP_ENV (#166, wspólne funkcje w src/app-env.js): lokalne są tylko brak
+// wartości, `development` i `test` — ta sama reguła co przy nazwie cookie sesji
+// (src/auth.js). Nieznana wartość (literówka) zatrzymuje start (fail-closed),
+// tak samo brak APP_ENV w usłudze Railway (zapomniana zmienna ≠ lokalny dev).
 
-import { isLocalAppEnv } from './auth.js';
+import { appEnvStartupProblem, isLocalAppEnv } from './app-env.js';
 import { loadEncryptionKeys } from './pg/mfa.js';
 
 export const MIN_WEBHOOK_SECRET_LENGTH = 32;
@@ -35,6 +35,8 @@ function validPublicBaseUrl(raw) {
 
 // Zwraca listę problemów ({ variable, reason }); pusta = konfiguracja poprawna.
 export function configProblems(processEnv = process.env) {
+  const appEnvProblem = appEnvStartupProblem(processEnv);
+  if (appEnvProblem) return [appEnvProblem];
   if (isLocalAppEnv(processEnv.APP_ENV)) return [];
   const problems = [];
   if (!validPublicBaseUrl(processEnv.PUBLIC_BASE_URL)) {
