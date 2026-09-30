@@ -29,6 +29,7 @@ export function lintSource(name, text) {
   const violations = [];
   const lines = text.split('\n');
   const flag = (rule, index) => violations.push({ rule, line: index + 1, text: lines[index].trim() });
+  const realPg = /process\.env\.RD_TEST_PG_URL/.test(text);
   lines.forEach((line, index) => {
     if (/^\s*\/\//.test(line)) return;
     if (/\bassert(?:\.ok|\.equal|\.strictEqual)?\(\s*true\s*(?:,\s*true\s*)?[,)]/.test(line)) flag('assert-true-literal', index);
@@ -40,6 +41,9 @@ export function lintSource(name, text) {
     if (/\{\s*skip:\s*(?:true|['"`])|\.skip\(/.test(line)) flag('unconditional-skip', index);
     if (/first:\s*async\s*\(\)\s*=>\s*(?:session|row|result|user)\b/.test(line)) flag('db-mock-ignores-sql', index);
     if (/kolejność ma znaczenie/i.test(line)) flag('order-dependent-tests', index);
+    // #208: PGlite wykonuje transakcje po kolei — nazwa testu bez prawdziwego
+    // PostgreSQL nie może obiecywać wyścigu, serializacji ani braku zakleszczenia.
+    if (!realPg && /^\s*(?:test|it)\(\s*['"`].*(?:truly parallel|are serialized|bez zakleszczenia)/i.test(line)) flag('pglite-race-claim', index);
   });
   return violations;
 }
@@ -56,6 +60,7 @@ test('lint testów: reguły wykrywają wzorce zakazane (kontrola pozytywna)', ()
     ['x.test.js', "test('a', { skip: true }, () => {});", 'unconditional-skip'],
     ['x.test.js', 'const statement = { first: async () => session };', 'db-mock-ignores-sql'],
     ['x.test.js', '// Testy wykonują się po kolei; kolejność ma znaczenie.\nconst x = "kolejność ma znaczenie";', 'order-dependent-tests'],
+    ['x.test.js', "test('two truly parallel edits: one 409', async () => {});", 'pglite-race-claim'],
   ];
   for (const [name, source, rule] of cases) {
     assert.ok(lintSource(name, source).some((violation) => violation.rule === rule), `reguła ${rule} musi wykryć: ${source}`);
@@ -64,6 +69,8 @@ test('lint testów: reguły wykrywają wzorce zakazane (kontrola pozytywna)', ()
   assert.deepEqual(lintSource('x.test.js', 'assert.ok(rows.every((row) => row.ok));'), []);
   assert.deepEqual(lintSource('x.test.js', "test('a', { skip }, () => {});"), [], 'skip warunkowy ze zmiennej jest dozwolony');
   assert.deepEqual(lintSource('pg-authz-matrix.test.js', "test('a', { todo: 'x' }, () => {});"), []);
+  assert.deepEqual(lintSource('x.test.js', "const skip = !process.env.RD_TEST_PG_URL;\ntest('two truly parallel edits', { skip }, async () => {});"), [],
+    'na prawdziwym PostgreSQL nazwa może mówić o wyścigu');
   assert.deepEqual(lintSource('pg-email.test.js', 'assertEvery(rows, (row) => row.ok);\nassert.equal(rows.length, 3);'), []);
 });
 
