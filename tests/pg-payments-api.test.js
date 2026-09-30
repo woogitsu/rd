@@ -223,6 +223,31 @@ async function createPayment(backend, patch = {}, key = `pay-${crypto.randomUUID
   return result;
 }
 
+test('#99: after re-login the same Idempotency-Key does not duplicate a payment (expired session, lost response)', async () => withPg({}, async (backend) => {
+  // 1) Sesja wygasła przed zapisem: 401 i nic nie powstaje. Po ponownym zalogowaniu (nowa sesja
+  //    tej samej osoby) formularz wysyła ten sam klucz — jeden zapis i jedno zdarzenie audytu.
+  const expired = await backend.as('u1', { mfa: true, expiresAt: new Date(Date.now() - 60 * 1000) });
+  const rejected = await createPayment(backend, {}, 'pay-relogin-0001', expired);
+  assert.deepEqual([rejected.status, rejected.body], [401, { error: 'unauthenticated' }]);
+  assert.equal(await backend.count('payment_entries'), 0);
+  const fresh = await backend.as('u1', { mfa: true });
+  const created = await createPayment(backend, {}, 'pay-relogin-0001', fresh);
+  assert.equal(created.status, 201);
+  const again = await createPayment(backend, {}, 'pay-relogin-0001', fresh);
+  assert.deepEqual([again.status, again.replayed, again.body.payment.id], [200, 'true', created.body.payment.id]);
+
+  // 2) Zapis przeszedł, ale odpowiedź nie dotarła, a potem sesja wygasła (wylogowanie):
+  //    ponowienie tym samym kluczem z nowej sesji odtwarza zapis zamiast tworzyć drugi.
+  const first = await createPayment(backend, {}, 'pay-relogin-0002');
+  assert.equal(first.status, 201);
+  const relogged = await backend.as('u1', { mfa: true });
+  const replay = await createPayment(backend, {}, 'pay-relogin-0002', relogged);
+  assert.deepEqual([replay.status, replay.replayed, replay.body.payment.id], [200, 'true', first.body.payment.id]);
+
+  assert.equal(await backend.count('payment_entries'), 2);
+  assert.equal(await backend.count('audit_events', "action = 'payment.created'"), 2);
+}));
+
 test('double click with the same Idempotency-Key creates one payment and one audit event', async () => withPg({}, async (backend) => {
   const [first, second] = await Promise.all([
     createPayment(backend, {}, 'double-click-0001'),

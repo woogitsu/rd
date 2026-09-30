@@ -10,7 +10,7 @@ Pełny techniczny spis, które kolumny schematu zawierają dane osobowe, czyje i
 ## Dostęp
 Zaproszenia, silne sesje, MFA dla finansów, najmniejsze uprawnienia, zakres klasy sprawdzany po stronie serwera, natychmiastowe wycofanie konta po kadencji. Odczyt dowodów finansowych i eksport też wymagają rejestracji w dzienniku. Oddzielić dostęp techniczny od roli skarbnika.
 
-Fundament walidacji sesji opisuje [AUTH.md](AUTH.md). W bazie przechowujemy wyłącznie skrót sekretu sesji; sam sekret pozostaje w bezpiecznym cookie przeglądarki.
+Fundament walidacji sesji opisuje [AUTH.md](AUTH.md). W bazie przechowujemy wyłącznie skrót sekretu sesji; sam sekret pozostaje w bezpiecznym cookie przeglądarki. Ekran `/login/` trzyma w `localStorage` jedynie czas wygaśnięcia sesji (`rd.sessionExpiresAt`), żeby bez sesji nie pytać `GET /api/auth/state`; to wskazówka, nie kontrola dostępu (docs/AUTH.md, #99).
 
 ### Dziennik odczytu danych dzieci i opiekunów (#133)
 Tabela `data_access_log` (migracje 0067 i 0140, tylko dopisywanie) rejestruje: aktora, czas, rodzaj zasobu (`access_kind`), identyfikatory zakresu (rok, klasa, gospodarstwo), wynik (`ok`/`not_found`) i liczbę rekordów — **bez imion, nazwisk, e-maili, parametrów zapytania i adresów IP** (IP: decyzja administratora, D-01). Wpis dostają: lista klasy, karta gospodarstwa, kartki do druku, lista wpłat, eksport CSV wpłat, eksport listy klasy i eksport roczny. Rejestr tych tras to `DATA_ACCESS_ROUTES` (`src/pg/data-access.js`); meta-test `tests/pg-data-access-coverage.test.js` sprawdza, że każda trasa z rejestru zapisuje wpis, a nowy plik tras czytający tabele rodzin bez wpisu w rejestrze lub uzasadnionego wyjątku wywraca test.
