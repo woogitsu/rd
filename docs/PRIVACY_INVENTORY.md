@@ -12,6 +12,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Tabela | Kolumna | Podmiot | Rodzaj | Kategoria | Cel | Retencja (kategoria) | Wolny tekst | Eksport roczny |
 |---|---|---|---|---|---|---|---|---|
+|`access_denial_windows`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`account_recovery_requests`|`decided_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`account_recovery_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`account_recovery_requests`|`target_user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -220,9 +221,22 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **207**, w tym wolnego tekstu: **58** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **208**, w tym wolnego tekstu: **58** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
+
+### `access_denial_windows`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `actor_id` | pseudonymous | board_member | nie |
+| `audit_event_id` | none | — | nie |
+| `denial_count` | none | — | nie |
+| `first_denied_at` | none | — | nie |
+| `id` | none | — | nie |
+| `last_denied_at` | none | — | nie |
+| `method` | none | — | nie |
+| `route` | none | — | nie |
 
 ### `account_recovery_requests`
 

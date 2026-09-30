@@ -362,5 +362,9 @@
   {
     "name": "0159_role_grant_request_reject_reason.sql",
     "sha256": "79df7e5cb3cd5ecd41e5d12faf0d64b5007d11e0791a7c5cb35b80d7e8376adf"
+  },
+  {
+    "name": "0160_access_denial_windows.sql",
+    "sha256": "82a25878569d2274f5d49e5a1bf6baa1e723245274f3da1045948f55df05d9d4"
   }
 ]

@@ -46,6 +46,8 @@
 //        filtruje wg roku z metadanych, a starsze zdarzenia — wg roku obiektu (#174).
 //        Metadane w odpowiedzi bez wolnego tekstu (auditMetadataForView).
 //        Każde zdarzenie niesie `domain`; ukryte pola metadanych: `redactedFields`.
+//        `access.denied` (od 0160, #184) niesie też `denialCount` — liczbę odmów
+//        tego aktora dla tej metody i ścieżki w oknie 5 minut od zdarzenia.
 //   GET  /api/admin/audit/entity/{entityType}/{entityId}
 //        historia jednego obiektu (#181): payment_entry, ledger_entry,
 //        reconciliation, email_campaign. 404, gdy obiekt nie istnieje. Wymaga
@@ -1055,6 +1057,8 @@ function auditEventForView(row, { withEntity = true } = {}) {
     id: row.id, actorId: row.actor_id ?? null, action: row.action, domain: auditActionDomain(row.action),
   };
   if (withEntity) Object.assign(event, { entityType: row.entity_type, entityId: row.entity_id });
+  // #184: `access.denied` — liczba odmów w oknie 5 minut od tego zdarzenia (0160).
+  if (row.denial_count != null) event.denialCount = Number(row.denial_count);
   return { ...event, occurredAt: isoTimestamp(row.occurred_at), metadata, redactedFields };
 }
 
@@ -1097,13 +1101,18 @@ async function listAudit(env, url, json, actorId, context) {
   }
   if (cursor) conditions.push(afterTimestampDescSql('occurred_at', 'id', cursor, values));
   values.push(limit + 1);
+  // #184: licznik odmów z okna 5 minut (0160) dołączany do zdarzenia
+  // `access.denied`; pozostałe zdarzenia nie mają okna (denial_count = NULL).
   const { rows } = await env.db.query(
-    `SELECT id, actor_id, action, entity_type, entity_id, occurred_at, metadata_json,
-            ${cursorTimestampSql('occurred_at')} AS cursor_ts
-       FROM audit_events
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY occurred_at DESC, id
-      LIMIT $${values.length}`,
+    `SELECT a.*, w.denial_count
+       FROM (SELECT id, actor_id, action, entity_type, entity_id, occurred_at, metadata_json,
+                    ${cursorTimestampSql('occurred_at')} AS cursor_ts
+               FROM audit_events
+              WHERE ${conditions.join(' AND ')}
+              ORDER BY occurred_at DESC, id
+              LIMIT $${values.length}) a
+       LEFT JOIN access_denial_windows w ON w.audit_event_id = a.id
+      ORDER BY a.occurred_at DESC, a.id`,
     values,
   );
   const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);

@@ -58,41 +58,53 @@ export async function loadAuthorizationContext(request, env) {
 export { isAuthorizedScoped, schoolWideContext };
 
 // #184 pkt 1: ślad odmowy 403 dla zalogowanego aktora (anonim/401 — bez
-// zdarzenia, patrz uzasadnienie w issue). Zapis poza transakcją żądania
-// (env.db, autocommit — wyjątek w tests/audit-transaction-boundary.test.js),
-// nigdy nie blokuje ani nie zmienia odpowiedzi 403.
-// Wyłącznie GET: odmowa żądania zmieniającego stan (POST/PUT/PATCH/DELETE) ma
-// pozostać bez żadnego zapisu — to sprawdza już macierz uprawnień
-// (tests/pg-authz-matrix.test.js, WRITE_TABLES obejmuje audit_events). Ślad
-// odmowy przy odczycie jest najprostszym sygnałem powtarzającego się
-// nieuprawnionego przeglądania (patrz #133).
-// Deduplikacja: ten sam aktor + ta sama ścieżka w oknie 5 minut → bez nowego
-// wiersza (audit_events jest tylko do dopisywania — nie ma tu licznika w
-// jednym wierszu; kolejne odmowy w oknie po prostu nie dopisują drugiego
-// zdarzenia, więc widoczne jest zawsze tylko jedno na okno).
-const ACCESS_DENIED_WINDOW_MS = 5 * 60 * 1000;
+// zdarzenia, patrz uzasadnienie w issue). Dotyczy KAŻDEJ metody — także
+// żądania zmieniającego stan (POST/PUT/PATCH/DELETE): próba zapisu bez
+// uprawnień jest najważniejszym sygnałem nadużycia lub źle nadanej roli.
+// Odmowa nie zmienia żadnych danych biznesowych; jedyny zapis to zdarzenie
+// `access.denied` i licznik okna (macierz uprawnień tests/pg-authz-matrix.test.js
+// dopuszcza przy odmowie wyłącznie te dwa ślady).
+// Zapis w osobnej, krótkiej transakcji (zdarzenie + okno razem), poza
+// transakcją żądania; nigdy nie blokuje ani nie zmienia odpowiedzi 403.
+// Deduplikacja (migracja 0160): ten sam aktor + ta sama metoda + ta sama
+// ścieżka w ciągu 5 minut od pierwszej odmowy → bez nowego zdarzenia, tylko
+// `access_denial_windows.denial_count + 1` (audit_events jest tylko do
+// dopisywania — licznik żyje w osobnej tabeli, widok dziennika go dołącza).
+// Ścieżka bez parametrów zapytania i bez treści żądania.
+const ACCESS_DENIED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']);
+const ACCESS_DENIED_MAX_ROUTE = 300;
 
 export async function logAccessDenied(env, context, requirement, request) {
   try {
-    if (request?.method && request.method !== 'GET') return;
     const actorId = context?.session?.user?.id;
-    if (!actorId || !env?.db?.query) return;
-    const url = new URL(request.url);
-    const route = url.pathname;
+    if (!actorId || !env?.db?.transaction) return;
+    const method = String(request?.method ?? 'GET').toUpperCase();
+    if (!ACCESS_DENIED_METHODS.has(method)) return;
+    const route = new URL(request.url).pathname.slice(0, ACCESS_DENIED_MAX_ROUTE);
     const sessionId = context.session.sessionId ?? null;
     const requiredRole = Array.isArray(requirement?.roles) ? requirement.roles.join(',') : null;
-    const since = new Date(Date.now() - ACCESS_DENIED_WINDOW_MS).toISOString();
-    const { rows } = await env.db.query(
-      `SELECT 1 FROM audit_events
-        WHERE actor_id = $1 AND action = 'access.denied' AND entity_type = 'route' AND entity_id = $2
-          AND occurred_at > $3
-        LIMIT 1`,
-      [actorId, route, since],
-    );
-    if (rows[0]) return;
-    await insertAuditEvent(env.db, {
-      actorId, action: 'access.denied', entityType: 'route', entityId: route,
-      metadata: { requiredRole, sessionId },
+    await env.db.transaction(async (tx) => {
+      // Podwójne kliknięcie / równoległe odmowy tego samego aktora na tej samej
+      // trasie nie otwierają dwóch okien (blokada do końca transakcji).
+      await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:access-denied:${actorId}:${method}:${route}`]);
+      const { rows } = await tx.query(
+        `UPDATE access_denial_windows
+            SET denial_count = denial_count + 1, last_denied_at = GREATEST(last_denied_at, now())
+          WHERE actor_id = $1 AND method = $2 AND route = $3
+            AND first_denied_at > now() - interval '5 minutes'
+          RETURNING id`,
+        [actorId, method, route],
+      );
+      if (rows[0]) return;
+      const eventId = await insertAuditEvent(tx, {
+        actorId, action: 'access.denied', entityType: 'route', entityId: route,
+        metadata: { method, requiredRole, sessionId },
+      });
+      await tx.query(
+        `INSERT INTO access_denial_windows (id, audit_event_id, actor_id, method, route)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [crypto.randomUUID(), eventId, actorId, method, route],
+      );
     });
   } catch {
     // Ślad audytu nigdy nie może zablokować ani zmienić odpowiedzi 403.
