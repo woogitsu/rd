@@ -216,7 +216,7 @@ byId("yearly-form").addEventListener("submit", async (event) => {
   let body;
   try { body = yearlyBody(byId("yearly-year").value); } catch (error) { setMessage(error.message, true); return; }
   const confirmed = await confirmAction({
-    title: `Eksport roczny ${body.schoolYearId}`,
+    title: `Wykonać eksport roczny ${formatSchoolYear(body.schoolYearId)}?`,
     effects: [
       "Paczka zawiera dane osobowe rodzin i dzieci oraz finanse całego roku szkolnego.",
       "Przebieg zostanie zapisany w dzienniku zdarzeń (kto, kiedy, skrót); wpisu nie da się usunąć.",
@@ -247,7 +247,7 @@ byId("roster-form").addEventListener("submit", async (event) => {
   try { url = rosterUrl(select.value, format); } catch (error) { setMessage(error.message, true); return; }
   const className = select.selectedOptions[0]?.textContent ?? select.value;
   const confirmed = await confirmAction({
-    title: `Lista klasy ${className}`,
+    title: `Pobrać listę klasy ${className}?`,
     effects: [
       "Plik zawiera dane osobowe dzieci i opiekunów tej klasy.",
       "Pobranie zostanie zapisane w dzienniku zdarzeń (kto, kiedy).",

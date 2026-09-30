@@ -67,3 +67,48 @@ nav:has(> #shell-nav) { min-width: 0; }
   padding: .6rem 1rem;
   font-weight: 600;
 }
+
+/* #136: wspólne okno potwierdzenia (shared/confirm-dialog.js). Style z ID, żeby
+   nie zależeć od reguł `dialog` poszczególnych paneli: cele dotyku >= 44 px,
+   okno mieści się w 320 px bez poziomego przewijania, długie nazwy się łamią.
+   Akcja destrukcyjna jest nazwana tekstem przycisku („Wyłącz konto”), nie tylko kolorem. */
+#shared-confirm-dialog {
+  box-sizing: border-box;
+  width: min(34rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: 0;
+  color: #282c2f;
+  background: #fff;
+  border: 1px solid #282c2f;
+}
+#shared-confirm-dialog::backdrop { background: rgb(40 44 47 / 45%); }
+#shared-confirm-dialog form { display: grid; gap: 1rem; margin: 0; padding: 1.25rem; }
+#shared-confirm-dialog h2 { margin: 0; font-size: 1.25rem; line-height: 1.3; overflow-wrap: anywhere; }
+#shared-confirm-body ul { display: grid; gap: .35rem; margin: 0; padding-left: 1.25rem; }
+#shared-confirm-body li { overflow-wrap: anywhere; }
+#shared-confirm-warning { margin: 0; padding: .6rem .75rem; border-left: 3px solid #b3262d; color: #8e2026; font-weight: 600; }
+#shared-confirm-field { display: grid; gap: .4rem; margin: 0; }
+#shared-confirm-input { box-sizing: border-box; width: 100%; min-height: 44px; padding: .5rem .65rem; font: inherit; border: 1px solid #767676; border-radius: 0; }
+#shared-confirm-dialog .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
+#shared-confirm-dialog .actions button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: .6rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  color: #282c2f;
+  background: #fff;
+  border: 1px solid #767676;
+  border-radius: 0;
+  cursor: pointer;
+}
+#shared-confirm-dialog .actions button.primary { color: #fff; background: #b3262d; border-color: #b3262d; }
+#shared-confirm-dialog .actions button.primary:hover { background: #8e2026; }
+#shared-confirm-dialog .actions button:disabled { opacity: .55; cursor: not-allowed; }
+#shared-confirm-dialog :focus-visible { outline: 3px solid #8e2026; outline-offset: 2px; }
+@media (max-width: 480px) {
+  #shared-confirm-dialog form { padding: 1rem; }
+  #shared-confirm-dialog .actions button { flex: 1 1 100%; }
+}

@@ -271,6 +271,34 @@ test('binary: sukces zwraca blob i nagłówki bez parsowania JSON, błąd nadal 
   assert.deepEqual(failing.navigations, []);
 });
 
+// --- powtórka zapisu (#136) -----------------------------------------------------------------
+
+test('withMeta: nagłówek Idempotency-Replayed: true daje replayed=true, 201 daje false; bez opcji zwraca samo body', async () => {
+  const make = (status, replayedHeader) => createApiClient({
+    fetchImpl: async () => ({
+      status, ok: true,
+      headers: { get: (n) => (n.toLowerCase() === 'idempotency-replayed' ? replayedHeader : null) },
+      json: async () => ({ payment: { id: 'p-1' } }),
+    }),
+    getLocation: () => fakeLocation('/panel/'), navigate: () => {},
+  });
+  const replay = await make(200, 'true').request('/api/payments', { method: 'POST', body: {}, withMeta: true });
+  assert.deepEqual(replay, { data: { payment: { id: 'p-1' } }, status: 200, replayed: true });
+  const created = await make(201, 'false').request('/api/payments', { method: 'POST', body: {}, withMeta: true });
+  assert.equal(created.replayed, false);
+  assert.equal(created.status, 201);
+  const plain = await make(200, 'true').request('/api/payments', { method: 'POST', body: {} });
+  assert.deepEqual(plain, { payment: { id: 'p-1' } });
+  // Brak nagłówka (np. starszy serwer) — replayed tylko, gdy body mówi to wprost.
+  const noHeader = await make(200, null).request('/api/x', { method: 'POST', body: {}, withMeta: true });
+  assert.equal(noHeader.replayed, false);
+});
+
+test('withMeta: błąd nadal jako ApiError (bez obiektu meta)', async () => {
+  const failing = client({ status: 409, body: { error: 'idempotency_conflict' } });
+  await assert.rejects(failing.request('/api/payments', { method: 'POST', body: {}, withMeta: true }), (e) => e.code === 'idempotency_conflict' && e.status === 409);
+});
+
 // --- test statyczny paneli ---------------------------------------------------------------
 
 test('panele nie wołają fetch bezpośrednio — wszystkie żądania przez shared/api.js', () => {
