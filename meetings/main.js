@@ -46,14 +46,14 @@ import {
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { classChoiceOptionsHtml, classesOfYear, classesUrl, fillClassSelect } from "../shared/class-choice.js";
-import { mountShell } from "../shared/shell.js";
+import { mountShell, sessionDisplayName } from "../shared/shell.js";
 import "../shared/shell.css";
-import { mountPrintMeta } from "../shared/print-meta.js";
+import { formatPrintDate, mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
 import { fillYearSelect, selectYearValue, formatSchoolYear } from "../shared/school-year.js";
 
 let printedBy = null;
-mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
+mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
 
 const byId = (id) => document.getElementById(id);
 const state = { grants: [], schoolYearId: "", meetings: [], detail: null, keys: new Map() };
@@ -845,18 +845,21 @@ function fillPrintMinutes(item) {
   byId("print-minutes-info").textContent = [
     KIND_LABELS[meeting.kind] ?? meeting.kind,
     meeting.classId ? `klasa ${meeting.classId}` : null,
-    formatBrussels(meeting.scheduledAt),
+    formatPrintDate(meeting.scheduledAt),
     meeting.location,
   ].filter(Boolean).join(" · ");
+  // Kolumna „Imię i nazwisko” jest pusta do wypełnienia ręcznie: API listy
+  // obecności nie zwraca nazwisk i wydruk ich nie dopowiada (D-21, założenie).
   byId("print-attendance-body").replaceChildren(...(attendees.length ? attendees.map((attendee) => el("tr", {},
+    el("td", { className: "name-blank" }, ""),
     el("td", {}, CAPACITY_LABELS[attendee.capacity] ?? attendee.capacity),
     el("td", {}, attendee.present ? "obecna" : "nieobecna"),
     el("td", {}, attendee.votingEligible ? "tak" : "nie"),
     el("td", { className: "signature" }, ""),
-  )) : [el("tr", {}, el("td", { colspan: "4", className: "muted" }, "Brak wpisów obecności."))]));
+  )) : [el("tr", {}, el("td", { colspan: "5", className: "muted" }, "Brak wpisów obecności."))]));
   const latestCheck = quorumChecks.at(-1);
   byId("print-quorum-result").textContent = latestCheck
-    ? `Quorum: ${describeQuorumCheck(latestCheck).headline} (${formatBrussels(latestCheck.determinedAt)}).`
+    ? `Quorum: ${describeQuorumCheck(latestCheck).headline} (${formatPrintDate(latestCheck.determinedAt)}).`
     : "Quorum nie zostało ustalone.";
   byId("print-minutes-body").textContent = item.body;
   byId("print-attendance-block").hidden = false;

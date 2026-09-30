@@ -1,6 +1,7 @@
 // #151: wspólny arkusz druku (shared/print.css) i blok metadanych wydruku
-// (shared/print-meta.js). Statyczny przegląd — bez przeglądarki; podgląd
-// wydruku wymaga ręcznego sprawdzenia w Chrome/Firefox/Safari (docs/a11y/).
+// (shared/print-meta.js). Statyczny przegląd — bez przeglądarki. Podgląd wydruku
+// w Chromium: tests/e2e/print-panels.spec.js i zrzuty docs/a11y/print-preview-*.png
+// (docs/a11y/print-preview.mjs); Firefox i Safari — przegląd ręczny.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -63,7 +64,7 @@ test('ledger i panel: przycisk „Drukuj zestawienie” dociąga wszystkie stron
 });
 
 const printMeta = read('shared/print-meta.js');
-const { printMetaLines, formatPrintedAt } = await import('../shared/print-meta.js');
+const { printMetaLines, formatPrintedAt, formatPrintDate, runningHeadText, runningPageCss, cssString } = await import('../shared/print-meta.js');
 
 test('printMetaLines: znacznik poufności i PROJEKT tylko na żądanie', () => {
   const plain = printMetaLines({ view: 'X' });
@@ -80,10 +81,62 @@ test('printMetaLines: wydruk niepełny pokazuje liczbę wpisów', () => {
   assert.ok(lines.some((l) => /Wydruk niepełny — pokazano 42 wpisów\./.test(l.text)));
 });
 
-test('formatPrintedAt: data po polsku, godzina Europe/Brussels', () => {
-  const text = formatPrintedAt(new Date('2026-01-15T10:30:00Z'));
-  assert.match(text, /15 stycznia 2026/);
-  assert.match(text, /\d{2}:\d{2}/);
+test('formatPrintedAt: zapis dd.mm.rrrr i godzina Europe/Brussels (decyzja 30.09, #563)', () => {
+  assert.equal(formatPrintedAt(new Date('2026-01-15T10:30:00Z')), '15.01.2026 11:30');
+  // Czas letni: +02:00, bez stałego przesunięcia.
+  assert.equal(formatPrintedAt(new Date('2026-07-01T22:15:00Z')), '02.07.2026 00:15');
+  assert.equal(formatPrintDate('2026-10-20'), '20.10.2026');
+  assert.equal(formatPrintDate(''), '');
+  assert.equal(formatPrintDate(null), '');
+});
+
+test('printMetaLines: „Wydrukowano … przez <nazwa>” w zapisie polskim', () => {
+  const lines = printMetaLines({ printedBy: 'Skarbnik testowy', now: new Date('2026-10-20T14:05:00Z') });
+  assert.ok(lines.some((l) => l.text === 'Wydrukowano: 20.10.2026 16:05 przez Skarbnik testowy'));
+});
+
+test('runningHeadText i runningPageCss: nagłówek każdej strony bez danych osobowych, bezpieczny literał CSS', () => {
+  assert.equal(runningHeadText({ view: 'Księga', schoolYear: '2025-2026', summary: 'Bilans zamknięcia 1,00 €' }),
+    'Księga · Rok szkolny 2025/2026 · Bilans zamknięcia 1,00 €');
+  assert.equal(runningHeadText({ view: 'Protokół', draft: true }), 'PROJEKT · Protokół');
+  const css = runningPageCss({ view: 'X"; } body { color: red } @page { content: "', confidential: true });
+  // Cudzysłów, ukośnik, nowa linia i „<” nie mogą zamknąć literału ani reguły.
+  assert.equal(cssString('a"b\\c\n</style>'), '"a\\"b\\\\c \\3c /style>"');
+  const inner = cssString('X"; } body { color: red }').slice(1, -1);
+  assert.ok(!/(^|[^\\])"/.test(inner), 'każdy cudzysłów w środku literału jest poprzedzony ukośnikiem');
+  assert.ok(css.includes(cssString('X"; } body { color: red } @page { content: "')), 'widok trafia do CSS wyłącznie jako literał');
+  assert.match(css, /@bottom-left \{ content: "Dane poufne Rady Rodziców"; \}/);
+  assert.match(runningPageCss({}), /@bottom-left \{ content: ""; \}/);
+});
+
+test('shared/print.css: numeracja stron i pola marginesu, ukryta wyszukiwarka i link CSV, daty i kwoty bez łamania', () => {
+  assert.match(printCss, /@bottom-right \{ content: "Strona " counter\(page\) " z " counter\(pages\)/);
+  const printBlock = printCss.match(/@media print \{[\s\S]*/)[0];
+  for (const selector of ['#student-search-form', '#events-csv', '.print-hide']) assert.ok(printBlock.includes(selector), selector);
+  assert.match(printBlock, /td\.date, td\.amount[^{]*\{ white-space: nowrap; \}/);
+  assert.match(printBlock, /\.badge \{ background: none !important; color: #000 !important;/);
+});
+
+test('shared/print-meta.js: nagłówek strony przez adoptedStyleSheets (CSP style-src \'self\' blokuje <style>)', () => {
+  assert.match(printMeta, /adoptedStyleSheets/);
+  assert.ok(!/createElement\("style"\)/.test(printMeta));
+});
+
+test('ledger i panel: daty w tabeli w zapisie polskim, filtry dat w metadanych wydruku też', () => {
+  assert.match(mainJs.ledger, /textCell\(formatPrintDate\(entry\.occurredOn\), "date"\)/);
+  assert.match(mainJs.panel, /textCell\(formatPrintDate\(payment\.receivedOn\), "date"\)/);
+  for (const app of ['ledger', 'panel']) {
+    assert.match(mainJs[app], /`od \$\{formatPrintDate\(/);
+    assert.match(mainJs[app], /`do \$\{formatPrintDate\(/);
+  }
+  assert.match(mainJs.ledger, /summary: ledgerBalanceSummary\(\)/);
+});
+
+test('panele: „przez <nazwa>” z GET /api/session ({ user: { displayName } }) przez sessionDisplayName', () => {
+  for (const app of APPS) {
+    assert.match(mainJs[app], /printedBy = sessionDisplayName\(result\?\.session\)/);
+    assert.ok(!/session\?\.displayName/.test(mainJs[app]), `${app}: płaskie session.displayName nie istnieje w odpowiedzi API`);
+  }
 });
 
 test('printMeta.js nie odwołuje się do sieci ani DOM poza mountPrintMeta', () => {
