@@ -21,7 +21,7 @@
 // W CI: tests/e2e/a11y-layout.spec.js (families/, documents/, events/ przy 320 i 1280 px),
 // tests/e2e/documents-news-a11y.spec.js i tests/e2e/public-site-a11y.spec.js (#124).
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
-import http from 'node:http'; import { readFile } from 'node:fs/promises'; import { extname, join, resolve, sep } from 'node:path';
+import http from 'node:http'; import { readFile } from 'node:fs/promises'; import { extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { STATIC_PREFIXES } from '../../src/node-app.js';
 const ROOT = process.argv[2], OUT = process.argv[3], SP = process.argv[4];
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript', '.css':'text/css', '.csv':'text/csv' };
@@ -49,7 +49,9 @@ if (!base) {
     if (fixture) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(fixture)); }
     if (p.startsWith('/api/')) { res.writeHead(401, {'content-type':'application/json'}); return res.end('{"error":{"message":"Brak sesji (serwer testowy)."}}'); }
     // Tylko pliki wewnątrz ROOT (bez „../”) — CodeQL js/path-injection.
-    const file = resolve(ROOT, `.${p}`);
+    const rel = normalize(`.${p}`);
+    if (rel.startsWith('..') || isAbsolute(rel) || rel.includes('\0')) { res.writeHead(404); return res.end(); }
+    const file = resolve(ROOT, rel);
     if (file !== resolve(ROOT) && !file.startsWith(resolve(ROOT) + sep)) { res.writeHead(404); return res.end(); }
     try { const b = await readFile(file); res.writeHead(200, { 'content-type': types[extname(file)] || 'application/octet-stream' }); res.end(b); }
     catch { res.writeHead(404); res.end(); }
