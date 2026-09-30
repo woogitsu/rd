@@ -606,3 +606,114 @@ test('lokalne słowniki zebrań i dokumentów: nieznany kod daje polski tekst be
   assert.equal(meetingsErrorMessage('nieznany_kod', 403), MESSAGES.forbidden);
   assert.equal(meetingsErrorMessage('nieznany_kod', 401), MESSAGES.unauthenticated);
 });
+
+// --- Jedno sprawdzenie sesji na starcie panelu (przegląd demo 5, propozycja 4) ----------------
+
+function gatedClient({ probe, other = () => jsonResponse(200, { ok: true }), unsaved = false } = {}) {
+  const calls = [];
+  const navigations = [];
+  const forgotten = [];
+  const warnings = [];
+  const api = createApiClient({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return url === '/api/session' ? probe() : other(url);
+    },
+    getLocation: () => fakeLocation('/panel/', '?y=2026-2027'),
+    navigate: (url) => navigations.push(url),
+    hasUnsavedChanges: () => unsaved,
+    warnUnsaved: (url, message) => warnings.push({ url, message }),
+    clearWarning: () => {},
+    forgetHint: () => forgotten.push(true),
+  });
+  return { ...api, calls, navigations, forgotten, warnings };
+}
+
+test('anonim: jedno GET /api/session, jedno przekierowanie; pozostałe żądania nie wychodzą z przeglądarki', async () => {
+  const api = gatedClient({ probe: () => jsonResponse(401, { error: 'unauthenticated' }) });
+  const session = api.checkSession();
+  // Żądania panelu wysłane równolegle z powłoką (jak /api/access w main.js).
+  const parallel = [api.request('/api/access'), api.request('/api/payments?schoolYearId=2026-2027')];
+  const results = await Promise.allSettled([session, ...parallel]);
+  const later = await api.request('/api/session').catch((error) => error);
+  assert.deepEqual(api.calls, ['/api/session']);
+  assert.deepEqual(api.navigations, ['/login/#next=%2Fpanel%2F%3Fy%3D2026-2027']);
+  for (const result of results) {
+    assert.equal(result.status, 'rejected');
+    assert.ok(result.reason instanceof ApiError);
+    assert.equal(result.reason.status, 401);
+    assert.equal(result.reason.authAction, 'login');
+    assert.equal(result.reason.message, MESSAGES.unauthenticated);
+  }
+  assert.ok(later instanceof ApiError);
+  assert.equal(later.status, 401);
+  assert.deepEqual(api.calls, ['/api/session'], 'po przekierowaniu brak kolejnych żądań');
+  assert.ok(api.forgotten.length >= 1, '401 usuwa wskazówkę sesji ekranu logowania');
+});
+
+test('zalogowany: pozostałe żądania czekają na /api/session i przechodzą bez zmian', async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const api = gatedClient({ probe: () => pending });
+  const session = api.checkSession();
+  assert.equal(api.checkSession(), session, 'drugie wywołanie w trakcie — to samo sprawdzenie');
+  const access = api.request('/api/access');
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(api.calls, ['/api/session'], 'panel czeka na wynik sprawdzenia sesji');
+  release(jsonResponse(200, { user: { displayName: 'Skarbnik testowy' }, writeMode: 'normal' }));
+  assert.deepEqual(await session, { user: { displayName: 'Skarbnik testowy' }, writeMode: 'normal' });
+  assert.deepEqual(await access, { ok: true });
+  assert.deepEqual(await api.request('/api/payments'), { ok: true });
+  assert.deepEqual(api.calls, ['/api/session', '/api/access', '/api/payments']);
+  assert.deepEqual(api.navigations, []);
+  assert.deepEqual(api.forgotten, []);
+});
+
+test('błąd sieci lub 503 przy sprawdzeniu sesji nie blokuje żądań panelu', async () => {
+  for (const probe of [
+    () => { throw new TypeError('Failed to fetch'); },
+    () => jsonResponse(503, { error: 'service_unavailable' }),
+  ]) {
+    const api = gatedClient({ probe });
+    const session = api.checkSession().catch((error) => error);
+    const access = api.request('/api/access');
+    assert.ok((await session) instanceof ApiError);
+    assert.deepEqual(await access, { ok: true });
+    assert.deepEqual(api.calls, ['/api/session', '/api/access']);
+    assert.deepEqual(api.navigations, []);
+  }
+});
+
+test('401 przy niezapisanym formularzu: strona zostaje, zapis można ponowić (bez blokady żądań)', async () => {
+  let status = 401;
+  const api = gatedClient({
+    probe: () => jsonResponse(200, {}),
+    other: () => jsonResponse(status, status === 401 ? { error: 'unauthenticated' } : { payment: { id: 'p-1' } }),
+    unsaved: true,
+  });
+  await api.checkSession();
+  await assert.rejects(api.request('/api/payments', { method: 'POST', body: { amountCents: 1500 } }), (error) => error.status === 401);
+  assert.equal(api.warnings.length, 1);
+  assert.deepEqual(api.navigations, []);
+  status = 201;
+  assert.deepEqual(await api.request('/api/payments', { method: 'POST', body: { amountCents: 1500 } }), { payment: { id: 'p-1' } });
+  assert.deepEqual(api.calls, ['/api/session', '/api/payments', '/api/payments']);
+});
+
+test('mountShell sprawdza sesję przed pierwszym await, zanim zapyta o /api/access', () => {
+  const shell = readFileSync(join(ROOT, 'shared/shell.js'), 'utf8');
+  const body = shell.slice(shell.indexOf('export async function mountShell')).replace(/^\s*\/\/.*$/gm, '');
+  const probe = body.indexOf('checkSession()');
+  assert.ok(probe > 0, 'mountShell woła checkSession()');
+  assert.ok(probe < body.indexOf('"/api/access"'), 'sprawdzenie sesji przed /api/access');
+  // Jedyne `await` przed wywołaniem to to na samym checkSession() — start jest synchroniczny.
+  assert.equal(body.slice(0, probe).replace(/await\s*$/, '').match(/\bawait\b/g), null, 'checkSession() przed pierwszym await');
+  // Każdy panel montuje powłokę przed własnymi żądaniami (żądania czekają na bramkę).
+  for (const panel of PANELS) {
+    const main = readFileSync(join(ROOT, panel, 'main.js'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
+    const mount = main.search(/^mountShell\(/m);
+    assert.ok(mount > 0, `${panel}: mountShell() na najwyższym poziomie`);
+    const firstApi = main.search(/\b(api|apiRequest|getJson)\(\s*(\{\s*url:\s*)?["'`]\/api\//);
+    if (firstApi >= 0) assert.ok(mount < firstApi, `${panel}: mountShell() przed pierwszym żądaniem API`);
+  }
+});
