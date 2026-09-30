@@ -46,8 +46,9 @@ import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipien
 import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
   AUDIENCES, MEETING_AUDIENCES, parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
-  SAMPLE_STRUCTURED_REFERENCE, usesStructuredReference,
+  SAMPLE_STRUCTURED_REFERENCE, usesPaymentInstructions, usesStructuredReference,
 } from '../../email/content.js';
+import { campaignApprovedPaymentInstructionsId, loadCurrentPaymentInstructions } from './payment-instructions.js';
 import { estimateSchedule } from '../../email/schedule.js';
 import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
 import { createJsonReader, readBodyText } from '../input.js';
@@ -666,9 +667,16 @@ async function preview(request, env, id, json) {
   const sampleReference = usesStructuredReference(campaign)
     ? (recipients[0] ? await activeStructuredReference(env.db, sampleHousehold, campaign.school_year_id) : null) ?? SAMPLE_STRUCTURED_REFERENCE
     : null;
+  // #92: {rachunek}/{odbiorca} z bieżącej zatwierdzonej wersji danych do wpłaty
+  // roku — zatwierdzający widzi dokładnie ten rachunek, który trafi do rodzin.
+  const paymentInstructions = usesPaymentInstructions(campaign)
+    ? await loadCurrentPaymentInstructions(env.db, campaign.school_year_id)
+    : null;
+  const paymentInstructionsMissing = usesPaymentInstructions(campaign) && !paymentInstructions;
   const sample = renderMessage(campaign, {
     schoolYearLabel: campaign.school_year_label, householdId: sampleHousehold, structuredReference: sampleReference,
-    unsubscribeUrl: sampleUnsubscribeUrl,
+    paymentInstructions, unsubscribeUrl: sampleUnsubscribeUrl,
+    missingPaymentText: PREVIEW_MISSING_PAYMENT_TEXT,
   });
   const count = recipients.length;
   const dailyCap = campaign.daily_cap ?? campaignDailyCap(count, config);
@@ -695,7 +703,11 @@ async function preview(request, env, id, json) {
       },
       ...estimateSchedule({ now: new Date(), sendNotBefore: campaign.send_not_before, days: planDays(count, dailyCap, config), sendWindow: config.sendWindow }),
     },
-    warnings: contentWarnings({ bodyText: campaign.body_text }),
+    warnings: [...contentWarnings({ bodyText: campaign.body_text }), ...(paymentInstructionsMissing ? ['payment_instructions_missing'] : [])],
+    // #92: wersja danych do wpłaty użyta w podglądzie (bez IBAN — ten jest w sample.text).
+    paymentInstructions: paymentInstructions
+      ? { id: paymentInstructions.id, approvedAt: paymentInstructions.approvedAt }
+      : null,
     // Adresaci, którzy po zbudowaniu migawki przestali się kwalifikować (#86); { powód: liczba }.
     staleRecipients: campaign.recipients_hash ? await staleRecipientCounts(env.db, campaign, { on: effectiveDay(env) }) : {},
     sends: false,
@@ -742,9 +754,32 @@ async function verifyExact(tx, campaign) {
   return recipients;
 }
 
+// #92: znacznik w podglądzie zamiast rachunku, gdy rok nie ma zatwierdzonej
+// wersji danych do wpłaty (zatwierdzenie jest wtedy zablokowane).
+const PREVIEW_MISSING_PAYMENT_TEXT = '[brak zatwierdzonych danych do wpłaty]';
+
+// #92: kampania z {rachunek}/{odbiorca} wychodzi tylko z DOKŁADNIE tą wersją
+// danych do wpłaty, którą zatwierdzający widział w podglądzie i zatwierdził
+// (identyfikator w zdarzeniu email.campaign.approved). Korekta rachunku po
+// zatwierdzeniu kampanii wymaga ponownego zatwierdzenia (nowa migawka).
+async function assertPaymentInstructionsCurrent(executor, campaign) {
+  if (!usesPaymentInstructions(campaign)) return;
+  const current = await loadCurrentPaymentInstructions(executor, campaign.school_year_id);
+  if (!current) throw new RequestError('payment_instructions_missing', 409);
+  if (current.id !== await campaignApprovedPaymentInstructionsId(executor, campaign.id)) {
+    throw new RequestError('payment_instructions_changed', 409);
+  }
+}
+
 async function approve(request, env, id, json) {
   const data = await readJson(request);
   if (!HASH_PATTERN.test(data.contentHash ?? '') || !HASH_PATTERN.test(data.recipientsHash ?? '')) {
+    throw new RequestError('invalid_request');
+  }
+  // #92: wersja danych do wpłaty z podglądu (preview.paymentInstructions.id);
+  // wymagana tylko dla treści z {rachunek}/{odbiorca}.
+  const seenPaymentInstructionsId = data.paymentInstructionsId ?? null;
+  if (seenPaymentInstructionsId !== null && (typeof seenPaymentInstructionsId !== 'string' || seenPaymentInstructionsId.length > 128)) {
     throw new RequestError('invalid_request');
   }
   const { context } = await campaignFor(request, env, id, APPROVER_ROLES);
@@ -770,6 +805,17 @@ async function approve(request, env, id, json) {
         throw new RequestError('approval_stale', 409);
       }
       if (!recipients.length) throw new RequestError('no_recipients', 409);
+      // #92: treść z {rachunek}/{odbiorca} wymaga zatwierdzonej wersji danych do
+      // wpłaty roku — tej samej, którą zatwierdzający widział w podglądzie (jak
+      // skróty treści i odbiorców). Jej identyfikator trafia do zdarzenia (bez
+      // IBAN) i wiąże kolejkę, wznowienie i worker z tą wersją.
+      const paymentInstructions = usesPaymentInstructions(campaign)
+        ? await loadCurrentPaymentInstructions(tx, campaign.school_year_id)
+        : null;
+      if (usesPaymentInstructions(campaign)) {
+        if (!paymentInstructions) throw new RequestError('payment_instructions_missing', 409);
+        if (paymentInstructions.id !== seenPaymentInstructionsId) throw new RequestError('payment_instructions_changed', 409);
+      }
       // D-16 (domyślnie wyłączone, wariant zachowawczy): jeśli flaga jest
       // włączona, zatwierdzenie wymaga co najmniej jednej wysyłki testowej
       // dla dokładnie bieżącej treści (#104). Liczy się tylko test przyjęty
@@ -795,6 +841,7 @@ async function approve(request, env, id, json) {
         metadata: {
           schoolYearId: campaign.school_year_id,
           contentHash: data.contentHash, recipientsHash: data.recipientsHash, recipients: recipients.length,
+          ...(paymentInstructions ? { paymentInstructionsId: paymentInstructions.id } : {}),
         },
       });
       return json({ campaign: campaignView(rows[0]) });
@@ -817,6 +864,7 @@ async function queue(request, env, id, json) {
       if (campaign.approved_content_hash !== campaign.content_hash || campaign.approved_recipients_hash !== campaign.recipients_hash) {
         throw new RequestError('approval_required', 409);
       }
+      await assertPaymentInstructionsCurrent(tx, campaign);
       const dailyCap = campaignDailyCap(recipients.length, config);
       const { rows: inserted } = await tx.query(
         `INSERT INTO email_outbox (id, campaign_id, household_id, recipient_id, idempotency_key)
@@ -882,7 +930,9 @@ async function resume(request, env, id, json) {
       if (campaign.status === 'sending') return json({ campaign: campaignView(campaign) }, 200, { 'Idempotency-Replayed': 'true' });
       if (campaign.status !== 'paused') throw new RequestError('campaign_locked', 409);
       // Treść i lista są niezmienne w sending/paused — wznowienie nie wymaga
-      // ponownego zatwierdzenia.
+      // ponownego zatwierdzenia. Wyjątek (#92): korekta rachunku po zatwierdzeniu
+      // kampanii z {rachunek}/{odbiorca} — wznowienie odmawia, worker i tak by ją pominął.
+      await assertPaymentInstructionsCurrent(tx, campaign);
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'sending', resumed_by = $2, resumed_at = now()
           WHERE id = $1 RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
@@ -1000,8 +1050,16 @@ async function testSend(request, env, id, json) {
   const unsubscribeUrl = unsubscribeUrlFor(config, {
     campaignId: campaign.id, category: campaign.category, emailHash: emailHash('podglad@example.invalid'),
   });
+  // #92: wiadomość testowa pokazuje rachunek z bieżącej zatwierdzonej wersji;
+  // bez niej test się nie odbywa (nie ma przykładowego IBAN, który ktoś mógłby
+  // omyłkowo uznać za rachunek Rady).
+  const paymentInstructions = usesPaymentInstructions(campaign)
+    ? await loadCurrentPaymentInstructions(env.db, campaign.school_year_id)
+    : null;
+  if (usesPaymentInstructions(campaign) && !paymentInstructions) throw new RequestError('payment_instructions_missing', 409);
   const rendered = renderMessage(campaign, {
-    schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD', structuredReference: SAMPLE_STRUCTURED_REFERENCE, unsubscribeUrl,
+    schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD', structuredReference: SAMPLE_STRUCTURED_REFERENCE,
+    paymentInstructions, unsubscribeUrl,
   });
   const transport = transportFor(env, config);
   let providerMessageId = null;

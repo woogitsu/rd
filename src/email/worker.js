@@ -50,8 +50,9 @@
 // z „queued” do „sending” w tej samej transakcji.
 
 import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
-import { contentHash, preferencesToken, renderMessage, usesStructuredReference } from './content.js';
+import { contentHash, preferencesToken, renderMessage, usesPaymentInstructions, usesStructuredReference } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
+import { campaignApprovedPaymentInstructionsId, loadCurrentPaymentInstructions } from '../pg/routes/payment-instructions.js';
 import { brusselsDay } from '../pg/today.js';
 
 const QUOTA_LOCK_ID = 732481707;
@@ -358,6 +359,21 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
         await recordIntegrityMismatch(tx, campaign, hash);
         continue;
       }
+      // #92: {rachunek}/{odbiorca} — tylko bieżąca wersja danych do wpłaty i tylko
+      // ta, z którą zarząd zatwierdził kampanię (zdarzenie email.campaign.approved).
+      // Korekta rachunku później (albo brak wersji) wstrzymuje kampanię bez zmian
+      // w kolejce: wiersze zostają 'queued', nic nie wychodzi ani ze starym, ani
+      // z nowym, niezatwierdzonym w kampanii rachunkiem. Zarząd anuluje kampanię
+      // i zatwierdza nową.
+      let paymentInstructions = null;
+      if (usesPaymentInstructions(campaign)) {
+        paymentInstructions = await loadCurrentPaymentInstructions(tx, campaign.school_year_id);
+        if (!paymentInstructions
+            || paymentInstructions.id !== await campaignApprovedPaymentInstructionsId(tx, campaign.id)) {
+          run.stoppedReason = 'payment_instructions_changed';
+          continue;
+        }
+      }
       let capLeft = campaign.daily_cap - campaign.sent_today;
       if (capLeft <= 0) continue;
       const { rows } = await tx.query(
@@ -394,7 +410,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
         const message = {
           ...renderMessage(campaign, {
             schoolYearLabel: campaign.school_year_label, householdId: row.household_id,
-            structuredReference: row.structured_reference ?? null, unsubscribeUrl,
+            structuredReference: row.structured_reference ?? null, paymentInstructions, unsubscribeUrl,
           }),
           unsubscribeUrl,
         };

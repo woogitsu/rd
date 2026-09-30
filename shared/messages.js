@@ -319,6 +319,8 @@ export const MESSAGES = Object.freeze({
   invalid_structured_reference: "Niepoprawny format komunikacji strukturalnej (12 cyfr).",
   invalid_unstructured_text: "Tytuł przelewu jest za długi (maksymalnie 140 znaków).",
   epc_payload_too_large: "Dane do kodu QR są za długie (limit specyfikacji EPC).",
+  payment_instructions_missing: "Rok nie ma zatwierdzonych danych do wpłaty — treść z {rachunek} lub {odbiorca} wymaga ich zatwierdzenia przez zarząd.",
+  payment_instructions_changed: "Dane do wpłaty zmieniono po zatwierdzeniu kampanii — zbuduj ponownie listę odbiorców i zatwierdź kampanię jeszcze raz (kampanię w trakcie wysyłki trzeba anulować i utworzyć nową).",
 
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",

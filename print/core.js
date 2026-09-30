@@ -5,6 +5,7 @@ import { decodeCsvBytes, resolveDelimiter } from "../import/csv.js";
 import { formatCents, isValidId, parseEuroAmount } from "../panel/core.js";
 import { MoneyError, parseCentsCell } from "../panel/money.js";
 import { SCHOOL_YEAR_ID_PATTERN, formatSchoolYear } from "../shared/school-year.js";
+import { formatPrintedAt } from "../shared/print-meta.js";
 import { buildEpcPayload } from "./epc.js";
 import { formatStructuredReference, isValidStructuredReference } from "../src/pg/ogm.js";
 import { qrSvgMarkup } from "./qr.js";
@@ -375,8 +376,24 @@ export function structuredReferenceNotice(households, selectedIds, config = {}) 
     : `${base} — ich kartki pokażą tytuł z szablonu.`;
 }
 
+// Wersja danych do wpłaty w stopce kartki (#92): po korekcie rachunku w trakcie
+// roku kartkę wydrukowaną ze starą wersją da się rozpoznać po dacie zatwierdzenia
+// i skróconym identyfikatorze wersji. Dane ręczne z formularza (bez zatwierdzonej
+// wersji) są oznaczone wprost — taka kartka nie ma kodu QR.
+export function paymentVersionLabel(paymentInstructions, { bankAccount = "" } = {}) {
+  if (paymentInstructions) {
+    const approvedAt = paymentInstructions.approvedAt ? formatPrintedAt(new Date(paymentInstructions.approvedAt)) : "";
+    const id = clean(paymentInstructions.id ?? "").slice(0, 8);
+    const parts = [approvedAt, id ? `nr ${id}` : ""].filter(Boolean);
+    return parts.length
+      ? `Dane do wpłaty: wersja zatwierdzona ${parts.join(", ")}.`
+      : "Dane do wpłaty: wersja zatwierdzona.";
+  }
+  return bankAccount ? "Dane do wpłaty wpisane ręcznie, niezatwierdzone na rok — kartka bez kodu QR." : "";
+}
+
 // Model kartki: wyłącznie dane jednej rodziny i zatwierdzone parametry konfiguracji.
-// `paymentInstructions` (opcjonalnie): { iban, bic, payeeName } — zatwierdzona
+// `paymentInstructions` (opcjonalnie): { id, iban, bic, payeeName, approvedAt } — zatwierdzona
 // na rok konfiguracja z GET /api/print/cards (#92). Gdy podana, ZASTĘPUJE ręcznie
 // wpisane pola rachunku/odbiorcy (formularz tylko je pokazuje) i uruchamia
 // generator kodu QR EPC. Bez niej kartka nie ma kodu QR (jest szkicem danych
@@ -436,6 +453,7 @@ export function buildCard(household, config, paymentInstructions = null) {
     paragraphs,
     payment,
     epcSvg,
+    paymentVersion: paymentVersionLabel(paymentInstructions, { bankAccount }),
     closing,
     contact: config.contact,
   };
@@ -448,7 +466,7 @@ export function buildCard(household, config, paymentInstructions = null) {
 export function cardText(card) {
   return [
     card.councilName, card.schoolName, card.schoolYear, card.title,
-    ...card.paragraphs, ...card.payment.flat(), card.closing, card.contact,
+    ...card.paragraphs, ...card.payment.flat(), card.paymentVersion ?? "", card.closing, card.contact,
   ].join("\n");
 }
 
@@ -479,6 +497,7 @@ export function renderCardHtml(card) {
     `<p>${e(card.closing)}</p>`,
     `<p class="card-contact">Kontakt: ${e(card.contact)}</p>`,
     `<p class="card-ref">Nr rodziny: ${e(card.householdId)}</p>`,
+    card.paymentVersion ? `<p class="card-ref card-payment-version">${e(card.paymentVersion)}</p>` : "",
     `</article>`,
   ].join("");
 }
