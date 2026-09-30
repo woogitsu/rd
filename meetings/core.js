@@ -161,6 +161,32 @@ export function buildSharedMinutesUrl(schoolYearId) {
   return `/api/meetings/shared-minutes?${new URLSearchParams({ schoolYearId: schoolYearId.trim() })}`;
 }
 
+// #167: pozycja z GET /api/meetings/shared-minutes ma identyfikator protokołu w
+// polu `minutesId` (nie `id`) — sharedFromRow w src/pg/meetings.js.
+export function findSharedMinutes(list, minutesId) {
+  if (!minutesId) return null;
+  return (Array.isArray(list) ? list : []).find((entry) => entry?.minutesId === minutesId) ?? null;
+}
+
+// Nazwa klasy w widoku przedstawiciela: z GET /api/classes (serwer zawęża do
+// zakresu roli), awaryjnie identyfikator; zebranie ogólne/zarządu — „—”.
+export function sharedMinutesClassLabel(item, classNames) {
+  if (!item?.classId) return "—";
+  return classNames?.get?.(item.classId) || item.classId;
+}
+
+// Wiersz informacyjny wydruku protokołu udostępnionego (#167 pkt 2): tylko pola
+// z odpowiedzi shared-minutes — bez obecności, quorum i miejsca zebrania.
+export function sharedMinutesPrintInfo(item, classNames) {
+  return [
+    KIND_LABELS[item.kind] ?? item.kind,
+    item.classId ? `klasa ${sharedMinutesClassLabel(item, classNames)}` : null,
+    item.scheduledAt ? formatBrussels(item.scheduledAt) : null,
+    item.approvedAt ? `zatwierdzono ${formatBrussels(item.approvedAt)}` : null,
+    VISIBILITY_LABELS[item.visibility] ? `widoczność: ${VISIBILITY_LABELS[item.visibility]}` : null,
+  ].filter(Boolean).join(" · ");
+}
+
 export function meetingUrl(meetingId, ...rest) {
   if (!isValidId(meetingId)) throw new Error("Niepoprawny identyfikator zebrania.");
   return ["/api/meetings", meetingId, ...rest].map((part, index) => (index === 0 ? part : encodeURIComponent(part))).join("/");

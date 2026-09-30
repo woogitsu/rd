@@ -49,7 +49,7 @@ Brakujący plik zwraca odpowiedź `404`; serwer nie zastępuje go plikiem `index
 | `LOG_LEVEL` | opcjonalna | `debug`, `info` (domyślnie), `warn`, `error` lub `silent` |
 | `SHUTDOWN_TIMEOUT_MS` | opcjonalna | Maksymalny czas łagodnego zamknięcia po SIGTERM (domyślnie 10000 ms); musi być krótszy niż `drainingSeconds` w `railway.json` |
 | `METRICS_LOG_INTERVAL_MS` | opcjonalna | Co ile zapisywać liczniki żądań do logu (domyślnie 300000 ms = 5 min) |
-| `DOCUMENT_MAX_CONCURRENT_UPLOADS` | opcjonalna | Limit równoczesnych `POST /api/documents` na proces (domyślnie 4) — [DOCUMENTS.md](DOCUMENTS.md) |
+| `DOCUMENT_MAX_CONCURRENT_UPLOADS` | opcjonalna | Limit równoczesnych `POST /api/documents` i `POST /api/news-photos/:id/file` na proces (domyślnie 4; dodatkowo 2 na użytkownika) — [DOCUMENTS.md](DOCUMENTS.md) |
 
 **Limity połączenia (#185).** `server.requestTimeout` (120 s) i `server.headersTimeout` (60 s) są ustawiane na stałe w `startServer` (`src/server.js`, `DEFAULT_REQUEST_TIMEOUT_MS`/`DEFAULT_HEADERS_TIMEOUT_MS`) — bez tego wolny albo złośliwy klient trzymałby bufor żądania (i gniazdo) bez ograniczenia czasowego. Bez osobnej zmiennej środowiskowej na razie; do zmiany bezpośrednio w kodzie, jeśli okaże się to za krótkie/za długie na stagingu.
 
@@ -89,4 +89,4 @@ Redakcja jest zabezpieczeniem dodatkowym — kod nadal nie może przekazywać do
 
 Serwer statyczny i punkt `/health` są gotowe do testów. Bez `DATABASE_URL` serwer uruchamia stary router Workera (`src/index.js`) bez żadnego bindingu D1 (nie ma adaptera Worker/D1 w Node — `env = {}`): `/health`, sesja i przydziały działają, ale każda chroniona trasa (wpłaty, księga) zwraca `503`, bo nie ma bazy do odpytania. Z `DATABASE_URL` działa router PostgreSQL (`src/pg/app.js`) z sesjami, rolami (issue #35) i 27 modułami tras — wpłaty (#37), księga (#38) i pozostałe wymienione w README; nie jest wdrożony ani zatwierdzony do pracy na danych rodzin. Z tego powodu ten etap nie uruchamia wdrożenia produkcyjnego ani nie konfiguruje publicznej domeny.
 
-Testy HTTP sprawdzają przekierowania, pliki statyczne, nagłówki bezpieczeństwa, brak publikacji map źródłowych, odpowiedzi `404`, brak cache API oraz limit ciała żądania 1 MiB. Wyjątek: `POST /api/documents` ma własny limit `DOCUMENT_MAX_BYTES` (domyślnie 10 MiB), ustawiany przez `bodyLimit` w `createNodeHandler`.
+Testy HTTP sprawdzają przekierowania, pliki statyczne, nagłówki bezpieczeństwa, brak publikacji map źródłowych, odpowiedzi `404`, brak cache API oraz limit ciała żądania 1 MiB. Wyjątek: `POST /api/documents` ma własny limit `DOCUMENT_MAX_BYTES` (domyślnie 10 MiB), a `POST /api/news-photos/:id/file` 10 MiB, ustawiane przez `bodyLimit` w `createNodeHandler`. Ciało tych dwóch tras nie jest buforowane przed wywołaniem trasy (`isStreamedUploadRoute`, #185); `tests/node-upload-memory.test.js` mierzy bajty odebrane przez serwer i wzrost `arrayBuffers` przy 20 równoległych anonimowych żądaniach po 10 MB.

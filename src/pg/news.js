@@ -26,7 +26,7 @@
 import sharp from 'sharp';
 import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
-import { declaredType, detectType, readLimited, validateStructure } from '../documents.js';
+import { declaredType, detectType, readLimited, tryAcquireUploadSlot, validateStructure } from '../documents.js';
 import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
 import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
@@ -1211,15 +1211,29 @@ export async function handle(request, env, url, json) {
       const photoId = decodeId(action[1], 'invalid_photo_id');
       const idempotencyKey = idempotencyHeader(request);
       const contentType = request.headers.get('content-type');
-      let bytes;
+      // #185: uprawnienie, magazyn, typ i zadeklarowana długość sprawdzane
+      // PRZED odczytem ciała (do 10 MB) — tak jak w POST /api/documents.
+      // uploadPhotoFile powtarza te kontrole (wywoływane też bez HTTP).
+      if (!schoolWide(actor, NEWS_POLICY.photoRegister)) throw new NewsError('forbidden', 403);
+      if (!env.storage) throw new NewsError('storage_unavailable', 503);
+      if (!PHOTO_UPLOAD_TYPES.has(declaredType(contentType))) throw new NewsError('unsupported_media_type', 415);
+      if (Number(request.headers.get('content-length')) > PHOTO_UPLOAD_MAX_BYTES) throw new NewsError('photo_file_too_large', 413);
+      // Wspólny semafor z dokumentami (na proces i na użytkownika).
+      const release = tryAcquireUploadSlot(env.maxConcurrentUploads, actor.userId);
+      if (!release) return json({ error: 'upload_busy' }, 503, { ...noStore, 'Retry-After': '2' });
       try {
-        bytes = await readLimited(request, PHOTO_UPLOAD_MAX_BYTES);
-      } catch (error) {
-        if (error instanceof RangeError) throw new NewsError('photo_file_too_large', 413);
-        throw error;
+        let bytes;
+        try {
+          bytes = await readLimited(request, PHOTO_UPLOAD_MAX_BYTES);
+        } catch (error) {
+          if (error instanceof RangeError) throw new NewsError('photo_file_too_large', 413);
+          throw error;
+        }
+        const result = await uploadPhotoFile(env.db, env.storage, actor, { photoId, bytes, contentType, idempotencyKey });
+        return json({ files: result.files }, result.replayed ? 200 : 201, { ...noStore, 'Idempotency-Replayed': String(result.replayed) });
+      } finally {
+        release();
       }
-      const result = await uploadPhotoFile(env.db, env.storage, actor, { photoId, bytes, contentType, idempotencyKey });
-      return json({ files: result.files }, result.replayed ? 200 : 201, { ...noStore, 'Idempotency-Replayed': String(result.replayed) });
     }
     const data = await readJson(request);
     if (route === 'create') {

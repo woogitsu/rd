@@ -403,8 +403,9 @@ async function upload(request, env, url, json) {
 
   // #185 pkt 3: limit współbieżnych uploadów NA PROCES, sprawdzony PRZED
   // odczytem ciała (readLimited niżej) — piąty i kolejny równoczesny upload
-  // dostaje 503 od razu, bez buforowania jego bajtów.
-  const release = tryAcquireUploadSlot(env.maxConcurrentUploads);
+  // dostaje 503 od razu, bez buforowania jego bajtów. Trzeci równoczesny
+  // upload tego samego użytkownika — też (limit na użytkownika, src/documents.js).
+  const release = tryAcquireUploadSlot(env.maxConcurrentUploads, context.session.user.id);
   if (!release) return json({ error: 'upload_busy' }, 503, { 'Retry-After': '2' });
   try {
     return await uploadBody(request, env, url, json, {

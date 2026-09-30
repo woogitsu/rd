@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import worker from './index.js';
-import { createNodeHandler } from './node-app.js';
+import { createNodeHandler, NEWS_PHOTO_FILE_PATH } from './node-app.js';
 import { createPgDatabase } from './db.js';
 import { handlePgRequest } from './pg/app.js';
 import { bodyLimitFor, maxUploadBytes } from './documents.js';
@@ -16,7 +16,6 @@ import { resolveWriteMode } from './write-mode.js';
 // POST /api/news-photos/:id/file (#96) przesyła surowe bajty obrazu, jak
 // POST /api/documents — potrzebuje wyższego limitu ciała niż domyślny 1 MiB,
 // niezależnego od limitu dokumentów (DOCUMENT_MAX_BYTES).
-const NEWS_PHOTO_FILE_PATH = /^\/api\/news-photos\/[^/]+\/file$/;
 function bodyLimitForApp(documentMaxBytes) {
   const documentsLimit = bodyLimitFor(documentMaxBytes);
   return (url, method) => {

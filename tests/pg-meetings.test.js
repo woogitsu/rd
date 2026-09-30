@@ -23,6 +23,7 @@ import {
 } from '../src/pg/meetings.js';
 import { updateMeeting, updateResolution } from './helpers/with-revision.js';
 import { lifecycleActors } from './helpers/pg.js';
+import { findSharedMinutes } from '../meetings/core.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
@@ -478,6 +479,62 @@ test('parents and representatives see only approved minutes explicitly shared wi
     assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.version), [2]);
     await assert.rejects(db.query('DELETE FROM meeting_minutes_publications'), /cannot_be_changed/);
     await assert.rejects(listSharedMinutes(db, principal, { schoolYearId: 'year' }), { code: 'forbidden' });
+  } finally { await db.close(); }
+});
+
+// #167 „Testy do dodania”: granice przydziału przedstawiciela w shared-minutes,
+// rodzeństwo w dwóch klasach, cofnięcie do `internal` i kontrakt pola z panelem.
+test('shared-minutes: representative grant scope (year-less, other year, two classes) and revert to internal', async () => {
+  const db = await meetingsDb();
+  try {
+    const plenary = await heldMeeting(db);
+    const classA = await heldMeeting(db, {}, { kind: 'class', classId: 'class-a', title: 'Zebranie klasy 1A' });
+    const classB = await heldMeeting(db, {}, { kind: 'class', classId: 'class-b', title: 'Zebranie klasy 1B' });
+    const internalOnly = await heldMeeting(db, {}, { title: 'Zebranie wewnętrzne' });
+    const shareAs = async (meeting, visibility) => {
+      const minutes = (await createMinutesVersion(db, board, { idempotencyKey: key(), meetingId: meeting.id,
+        body: `Protokół: ${meeting.title}.` })).minutes;
+      await approveMinutes(db, admin, { minutesId: minutes.id });
+      if (visibility !== 'internal') {
+        await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: minutes.id, visibility });
+      }
+      return minutes;
+    };
+    const plenaryMinutes = await shareAs(plenary, 'parents');
+    await shareAs(classA, 'parents');
+    await shareAs(classB, 'parents');
+    await shareAs(internalOnly, 'internal');
+    const ids = async (actor) => (await listSharedMinutes(db, actor, { schoolYearId: 'year' })).minutes
+      .map(item => item.meetingId).sort();
+
+    // Przedstawiciel 1A: zebranie ogólne i własna klasa; nie 1B ani `internal`.
+    assert.deepEqual(await ids(rep), [plenary.id, classA.id].sort());
+    // Przydział bez roku działa w każdym roku (jak w actorClassIds).
+    const repNoYear = { userId: 'rep-ny', grants: [grant('representative', { classId: 'class-a', schoolYearId: null })], mfaVerified: false };
+    assert.deepEqual(await ids(repNoYear), [plenary.id, classA.id].sort());
+    // Przydział z innego roku nie daje dostępu do tego roku (bez listy zebrań ogólnych).
+    const repOtherYear = { userId: 'rep-old', grants: [grant('representative', { classId: 'class-a', schoolYearId: 'other' })], mfaVerified: false };
+    await assert.rejects(listSharedMinutes(db, repOtherYear, { schoolYearId: 'year' }), { code: 'forbidden' });
+    // Przedstawiciel bez klasy w przydziale — brak zakresu.
+    const repNoClass = { userId: 'rep-nc', grants: [grant('representative')], mfaVerified: false };
+    await assert.rejects(listSharedMinutes(db, repNoClass, { schoolYearId: 'year' }), { code: 'forbidden' });
+    // Rodzeństwo: jedna osoba przedstawicielem 1A i 1B widzi zebrania obu klas.
+    const repTwo = { userId: 'rep-2', grants: [grant('representative', { classId: 'class-a' }),
+      grant('representative', { classId: 'class-b' })], mfaVerified: false };
+    assert.deepEqual(await ids(repTwo), [plenary.id, classA.id, classB.id].sort());
+
+    // Kontrakt z panelem: identyfikator protokołu w polu `minutesId`, bez obecności i quorum.
+    const listed = (await listSharedMinutes(db, rep, { schoolYearId: 'year' })).minutes;
+    const found = findSharedMinutes(listed, plenaryMinutes.id);
+    assert.equal(found?.meetingId, plenary.id);
+    for (const item of listed) {
+      assert.deepEqual(Object.keys(item).sort(), ['approvedAt', 'body', 'classId', 'kind', 'meetingId', 'minutesId',
+        'scheduledAt', 'schoolYearId', 'title', 'version', 'visibility']);
+    }
+
+    // Cofnięcie do `internal` usuwa protokół z widoku przedstawiciela.
+    await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: plenaryMinutes.id, visibility: 'internal' });
+    assert.deepEqual(await ids(rep), [classA.id]);
   } finally { await db.close(); }
 });
 

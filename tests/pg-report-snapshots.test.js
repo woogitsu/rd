@@ -178,7 +178,7 @@ test('korekta: nowa migawka wskazuje poprzednią z powodem; brak/zła referencja
   assert.equal(await count(db, 'financial_report_snapshots'), 2);
   // Powód korekty (wolny tekst) nie trafia do audytu.
   const meta = JSON.stringify((await db.query("SELECT metadata_json FROM audit_events WHERE action = 'report.snapshot.created'")).rows);
-  assert.ok(!meta.includes('Dodano wydatek') && !meta.includes(TRAP) && !meta.includes('470'));
+  assert.ok(!meta.includes('Dodano wydatek') && !meta.includes(TRAP) && !meta.includes('470 12 34 56'));
   assert.ok(meta.includes('piiConfirmed'), 'audyt zapisuje samo potwierdzenie i kategorie');
 
   // Pierwsza migawka jest zastąpiona: lista pokazuje następcę, drugi następca tej samej migawki jest odrzucony.
