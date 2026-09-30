@@ -38,6 +38,7 @@ export async function archiveReadVia(executor, context, schoolYearId, roles) {
 export async function recordArchiveRead(executor, { actorId, schoolYearId, viaSchoolYearId, route }) {
   await insertAuditEvent(executor, {
     actorId, action: 'year_close.archive_read', entityType: 'school_year', entityId: schoolYearId,
-    metadata: { route, viaSchoolYearId },
+    // #174: rok archiwum także w metadanych (filtr dziennika, wymóg insertAuditEvent dla 'year_close.').
+    metadata: { schoolYearId, route, viaSchoolYearId },
   });
 }
