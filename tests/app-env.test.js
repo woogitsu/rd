@@ -9,11 +9,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  appEnvWarning, guardDangerousOperation, isProductionEnv, isProductionLikeEnv, KNOWN_APP_ENVS, resolveAppEnv,
+  appEnvLabel, appEnvStartupProblem, appEnvWarning, guardDangerousOperation, isLocalAppEnv, isProductionEnv, isProductionLikeEnv,
+  isTestEnv, KNOWN_APP_ENVS, resolveAppEnv,
 } from '../src/app-env.js';
+import { isLocalAppEnv as authIsLocalAppEnv } from '../src/auth.js';
 import { isProductionEnv as reexported } from '../src/pg/bootstrap-admin.js';
 import { assertRestoreAllowed } from '../src/pg/export.js';
-import { emailConfig, isProduction, recipientRefusal } from '../src/email/brevo.js';
+import { createBrevoTransport, emailConfig, isProduction, recipientRefusal } from '../src/email/brevo.js';
 import { SNAPSHOT_FORMAT, SNAPSHOT_TABLES, snapshotChecksum } from '../src/d1-postgres-migration.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -78,6 +80,49 @@ test('e-mail: allowlista wyłączona tylko przy rozpoznanej produkcji; brak/niez
     assert.equal(recipientRefusal(config, address), 'recipient_not_allowlisted', String(appEnv));
   }
   assert.equal(emailConfig({}).appEnv, 'development');
+});
+
+test('isLocalAppEnv: tylko brak, development, test; src/auth.js używa tej samej funkcji', () => {
+  assert.equal(authIsLocalAppEnv, isLocalAppEnv);
+  for (const value of [undefined, null, '', '  ', 'development', ' Development ', 'TEST']) assert.equal(isLocalAppEnv(value), true, String(value));
+  for (const value of ['staging', 'production', 'prod', 'PROD', 'prodution', 'local', 'dev', 'load-test']) assert.equal(isLocalAppEnv(value), false, value);
+});
+
+test('isTestEnv i appEnvLabel: normalizacja, nieznane → unknown (bez surowej wartości)', () => {
+  for (const value of ['test', 'TEST', ' Test ']) assert.equal(isTestEnv(value), true, value);
+  for (const value of [undefined, '', 'development', 'testing', 'production']) assert.equal(isTestEnv(value), false, String(value));
+  assert.equal(appEnvLabel('Production'), 'production');
+  assert.equal(appEnvLabel(' prod '), 'production');
+  assert.equal(appEnvLabel('STAGING'), 'staging');
+  for (const value of [undefined, '', 'Prodution', 'x'.repeat(200)]) assert.equal(appEnvLabel(value), 'unknown', String(value).slice(0, 10));
+  // backup_runs.environment ma CHECK '^[a-z0-9_-]{1,40}$' (migracja 0058) — każda etykieta go spełnia.
+  for (const value of [...KNOWN_APP_ENVS, 'Prod', 'Zła Wartość!', undefined]) assert.match(appEnvLabel(value), /^[a-z0-9_-]{1,40}$/);
+});
+
+test('appEnvStartupProblem: nieznana wartość zawsze, brak tylko na Railway', () => {
+  for (const APP_ENV of [...KNOWN_APP_ENVS, 'Prod', ' STAGING ']) assert.equal(appEnvStartupProblem({ APP_ENV, RAILWAY_ENVIRONMENT_NAME: 'x' }), null, APP_ENV);
+  for (const APP_ENV of ['prodution', 'live', 'local', 'load-test']) {
+    assert.equal(appEnvStartupProblem({ APP_ENV }).variable, 'APP_ENV', APP_ENV);
+    assert.ok(!appEnvStartupProblem({ APP_ENV }).reason.includes(APP_ENV), 'bez surowej wartości w powodzie');
+  }
+  assert.equal(appEnvStartupProblem({}), null);
+  assert.equal(appEnvStartupProblem({ APP_ENV: '' }), null);
+  for (const marker of ['RAILWAY_ENVIRONMENT_ID', 'RAILWAY_ENVIRONMENT_NAME', 'RAILWAY_ENVIRONMENT', 'RAILWAY_PROJECT_ID', 'RAILWAY_SERVICE_ID']) {
+    assert.equal(appEnvStartupProblem({ [marker]: 'synthetic' }).variable, 'APP_ENV', marker);
+    assert.equal(appEnvStartupProblem({ [marker]: '  ' }), null, `${marker} pusty`);
+  }
+});
+
+test('atrapa e-mail: prawdziwy transport odmawia przy APP_ENV=test w każdej pisowni', async () => {
+  let calls = 0;
+  const spy = async () => { calls += 1; return new Response('{}', { status: 201 }); };
+  for (const appEnv of ['test', 'TEST', ' Test ']) {
+    const transport = createBrevoTransport({ apiKey: 'synthetic-key', appEnv, fetchImpl: spy, processEnv: {} });
+    await assert.rejects(transport.send({ to: 'a@example.invalid' }), { code: 'transport_disabled_in_test' }, appEnv);
+  }
+  // Konfiguracja z env normalizuje wartość, zanim trafi do transportu (scripts/email-worker.js).
+  assert.equal(emailConfig({ APP_ENV: ' TEST ' }).appEnv, 'test');
+  assert.equal(calls, 0);
 });
 
 test('żaden plik w src/ ani scripts/ nie porównuje APP_ENV do literału production poza src/app-env.js', async () => {

@@ -247,7 +247,7 @@ test('double click with the same Idempotency-Key creates one payment and one aud
   assert.equal(await backend.count('payment_entries'), 1);
 }));
 
-test('parallel corrections are serialized and never exceed the payment amount', async () => withPg({}, async (backend) => {
+test('corrections sent via Promise.all (sequential on PGlite) never exceed the payment amount; lock proof on PostgreSQL in pg-real-double-click', async () => withPg({}, async (backend) => {
   const payment = (await createPayment(backend, { amountCents: 10000 })).body.payment;
   const path = `/api/payments/${payment.id}/corrections`;
   const results = await Promise.all([1, 2, 3].map((n) => backend.fetch(call(backend.cookie, path, {
@@ -280,7 +280,7 @@ test('parallel corrections are serialized and never exceed the payment amount', 
   await assert.rejects(backend.db.query('UPDATE payment_entries SET amount_cents = 1'), /immutable/);
 }));
 
-test('an unmatched payment can be assigned only once, also in parallel', async () => withPg({}, async (backend) => {
+test('an unmatched payment can be assigned only once, also via Promise.all (sequential on PGlite)', async () => withPg({}, async (backend) => {
   const payment = (await createPayment(backend, { householdId: null })).body.payment;
   assert.equal(payment.status, 'unmatched');
   const path = `/api/payments/${payment.id}/assignment`;

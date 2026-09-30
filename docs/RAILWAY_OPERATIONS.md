@@ -58,7 +58,7 @@ logach, zgłoszeniach ani buildzie frontendu.
 | Zmienna | Usługa | Uwagi |
 |---|---|---|
 | `PORT` | aplikacja | ustawia Railway |
-| `APP_ENV` | aplikacja / skrypty | `staging` lub `production`; lokalne: `development`, `test` (wielkość liter bez znaczenia, `prod` = `production`; wspólna normalizacja `src/app-env.js`). Brak lub nieznana wartość (literówka) jest zachowawczo traktowana jak produkcja przy niebezpiecznych operacjach: import wymaga `IMPORT_ENABLED=true`, a migracja, odtworzenie, kopia storage, test odtworzenia, bootstrap administratora i `storage:smoke` odmawiają bez `--allow-production` (skrypty wypisują ostrzeżenie); walidacja startowa serwera opisana niżej. Ustaw jawnie |
+| `APP_ENV` | aplikacja / skrypty | `staging` lub `production`; lokalne: `development`, `test` (wielkość liter bez znaczenia, `prod` = `production`; wspólna normalizacja `src/app-env.js`). Brak lub nieznana wartość (literówka) jest zachowawczo traktowana jak produkcja przy niebezpiecznych operacjach: import wymaga `IMPORT_ENABLED=true`, a migracja, odtworzenie, kopia storage, test odtworzenia, bootstrap administratora i `storage:smoke` odmawiają bez `--allow-production` (skrypty wypisują ostrzeżenie); walidacja startowa serwera opisana niżej: serwer HTTP **nie startuje** z nieznaną wartością ani bez `APP_ENV` w usłudze Railway (#166). Ustaw jawnie |
 | `PUBLIC_BASE_URL` | aplikacja | **wymagana** poza środowiskiem lokalnym: `https://host` bez ścieżki, osobny dla każdego środowiska |
 | `MFA_ENCRYPTION_KEY` (albo `MFA_ENCRYPTION_KEYS`) | aplikacja | **wymagany** poza środowiskiem lokalnym: klucz 32 bajty (sekret), rotacja: sekcja niżej |
 | `TRUST_PROXY` | aplikacja | **wymagana** poza środowiskiem lokalnym: `1` lub `true` (za proxy Railway; inaczej wspólny licznik prób logowania na IP) |
@@ -79,8 +79,15 @@ wyjścia `1` i zdarzeniem `config_invalid`, gdy `PUBLIC_BASE_URL` nie jest
 jest poprawnym kluczem 32 bajtów, `TRUST_PROXY` nie jest `1`/`true` albo
 `BREVO_WEBHOOK_SECRET` ma mniej niż 32 znaki. Log zawiera wyłącznie **nazwy**
 niepoprawnych zmiennych, nigdy wartości. Nieznana wartość `APP_ENV` (np.
-literówka `prodution`) jest traktowana zachowawczo, czyli jak staging/production
-— pełne ujednolicenie obsługi `APP_ENV` w pozostałym kodzie to #166.
+literówka `prodution`) zatrzymuje start niezależnie od pozostałych zmiennych
+(`config_invalid` ze zmienną `APP_ENV`, bez samej wartości w logu). Brak
+`APP_ENV` lokalnie oznacza `development`, ale w usłudze Railway (ustawione
+`RAILWAY_ENVIRONMENT_ID`, `RAILWAY_ENVIRONMENT_NAME`, `RAILWAY_ENVIRONMENT`,
+`RAILWAY_PROJECT_ID` albo `RAILWAY_SERVICE_ID`) również zatrzymuje start —
+zapomniana zmienna nie może przełączyć usługi w tryb lokalny (cookie bez
+`__Host-`, brak walidacji konfiguracji) (#166). Całe rozpoznanie `APP_ENV`
+jest w `src/app-env.js`; `tests/app-env-single-source.test.js` odrzuca
+bezpośrednie porównania `APP_ENV` w innych plikach.
 Założenie do potwierdzenia: `BREVO_WEBHOOK_SECRET` jest wymagany także na
 stagingu bez włączonej poczty (zachowawczo, zgodnie z treścią #114).
 

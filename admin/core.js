@@ -294,7 +294,11 @@ export function indexClasses(schoolYears = []) {
 
 export function scopeLabel(grant, classes = new Map(), years = new Map()) {
   const parts = [];
-  if (grant.classId) parts.push(`klasa ${classes.get(grant.classId)?.name ?? grant.classId}`);
+  if (grant.classId) {
+    // Przegląd demo 4: „klasa Klasa 0-A” — nazwa z serwera zaczyna się już od „Klasa”.
+    const name = String(classes.get(grant.classId)?.name ?? grant.classId);
+    parts.push(/^klasa\b/i.test(name) ? name : `klasa ${name}`);
+  }
   if (grant.schoolYearId) parts.push(`rok ${formatSchoolYear(years.get(grant.schoolYearId)?.label ?? grant.schoolYearId)}`);
   return parts.length ? parts.join(", ") : "cała Rada";
 }

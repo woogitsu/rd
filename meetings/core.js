@@ -6,6 +6,7 @@
 // liczby głosów wpisuje sekretarz po głosowaniu przeprowadzonym na zebraniu.
 
 import { statusMessage } from "../shared/messages.js";
+import { shortId } from "../shared/short-id.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 export const TIME_ZONE = "Europe/Brussels";
@@ -362,6 +363,17 @@ export function requiredCountForRule(input) {
   return null;
 }
 
+// Przegląd demo 4: „co najmniej 3 obecnych osób” → „3 obecne osoby”
+// (1 obecna osoba, 2–4 obecne osoby, 5–21 obecnych osób, 22–24 obecne osoby).
+export function presentPersons(count) {
+  const n = Math.abs(Number(count));
+  if (n === 1) return `${count} obecna osoba`;
+  const last = n % 10;
+  const lastTwo = n % 100;
+  const few = last >= 2 && last <= 4 && !(lastTwo >= 12 && lastTwo <= 14);
+  return few ? `${count} obecne osoby` : `${count} obecnych osób`;
+}
+
 export function describeQuorumRule(input) {
   const rule = normalizeRule(input);
   if (rule.mode === "fraction") {
@@ -369,7 +381,7 @@ export function describeQuorumRule(input) {
     return `${relation} ${rule.numerator}/${rule.denominator} składu uprawnionego (${rule.votingBodySize} osób) — wymagane ${requiredCountForRule(rule)} obecnych uprawnionych`;
   }
   if (rule.mode === "minimum_count") {
-    return `co najmniej ${rule.minCount} obecnych osób z prawem głosu`;
+    return `co najmniej ${presentPersons(rule.minCount)} z prawem głosu`;
   }
   return "reguła quorum nie została wpisana — ustalenie quorum jest niemożliwe";
 }
@@ -419,8 +431,10 @@ export function describeApprovalChecklist(checklist) {
 // ---------- lista obecności ----------
 
 export function attendeeReference(attendee) {
-  if (attendee?.userId) return { type: "user", id: attendee.userId, label: `Konto: ${attendee.userId}` };
-  if (attendee?.guardianId) return { type: "guardian", id: attendee.guardianId, label: `Opiekun: ${attendee.guardianId}` };
+  // Przegląd demo 4: pełne UUID w kolumnie „Osoba” — skrót, pełna wartość w `id`
+  // (panel wstawia ją do atrybutu title komórki).
+  if (attendee?.userId) return { type: "user", id: attendee.userId, label: `Konto ${shortId(attendee.userId)}` };
+  if (attendee?.guardianId) return { type: "guardian", id: attendee.guardianId, label: `Opiekun ${shortId(attendee.guardianId)}` };
   return { type: "", id: "", label: "—" };
 }
 

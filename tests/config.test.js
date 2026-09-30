@@ -32,11 +32,22 @@ test('poprawna konfiguracja staging/production przechodzi (także pierścień kl
   assert.doesNotThrow(() => validateConfig({ ...valid(), TRUST_PROXY: 'true' }));
 });
 
-test('nieznana wartość APP_ENV jest traktowana zachowawczo (wymaga konfiguracji)', () => {
-  for (const APP_ENV of ['prodution', 'live', 'stagng', 'local']) {
-    assert.deepEqual(names({ APP_ENV }), ['PUBLIC_BASE_URL', 'MFA_ENCRYPTION_KEY', 'TRUST_PROXY', 'BREVO_WEBHOOK_SECRET'], APP_ENV);
-    assert.deepEqual(names({ ...valid(), APP_ENV }), [], APP_ENV);
+// #166: nieznana wartość zatrzymuje start (fail-closed) nawet przy komplecie
+// pozostałych zmiennych; błąd nie zawiera samej wartości.
+test('nieznana wartość APP_ENV zatrzymuje start serwera', () => {
+  for (const APP_ENV of ['prodution', 'live', 'stagng', 'local', 'load-test']) {
+    assert.deepEqual(names({ APP_ENV }), ['APP_ENV'], APP_ENV);
+    assert.deepEqual(names({ ...valid(), APP_ENV }), ['APP_ENV'], APP_ENV);
+    assert.throws(() => validateConfig({ ...valid(), APP_ENV }), (error) => error instanceof ConfigError
+      && error.variables.join() === 'APP_ENV' && !error.message.includes(APP_ENV));
   }
+});
+
+test('brak APP_ENV w usłudze Railway zatrzymuje start; lokalnie brak = development', () => {
+  assert.deepEqual(names({ RAILWAY_ENVIRONMENT_NAME: 'production' }), ['APP_ENV']);
+  assert.deepEqual(names({ ...valid(), APP_ENV: undefined, RAILWAY_PROJECT_ID: 'synthetic' }), ['APP_ENV']);
+  assert.deepEqual(names({}), []);
+  assert.deepEqual(names({ APP_ENV: 'production', RAILWAY_ENVIRONMENT_NAME: 'production' }), ['PUBLIC_BASE_URL', 'MFA_ENCRYPTION_KEY', 'TRUST_PROXY', 'BREVO_WEBHOOK_SECRET']);
 });
 
 test('brak każdej wymaganej zmiennej z osobna daje błąd tylko o tej zmiennej', () => {
@@ -82,6 +93,19 @@ test('walidacja nie sięga do process.env dla kluczy MFA i nie ujawnia wartości
     for (const value of [secretish, 'krotki-sekret', 'ukryty.invalid']) assert.ok(!text.includes(value), value);
     assert.match(error.message, /MFA_ENCRYPTION_KEY/);
   }
+});
+
+test('serwer z nieznanym APP_ENV nie startuje: kod ≠ 0, log bez wartości', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../src/server.js', import.meta.url))], {
+    env: { PATH: process.env.PATH, ...valid(), APP_ENV: 'Prodution-Typo', PORT: '0' },
+    encoding: 'utf8', timeout: 20_000,
+  });
+  assert.equal(result.status, 1, result.stderr);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.match(output, /config_invalid/);
+  assert.match(output, /APP_ENV/);
+  assert.ok(!output.includes('Prodution-Typo'));
+  assert.doesNotMatch(output, /server_started/);
 });
 
 test('serwer w produkcji bez konfiguracji nie startuje: kod ≠ 0, log tylko z nazwami zmiennych', () => {
