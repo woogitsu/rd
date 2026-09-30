@@ -301,12 +301,19 @@ async function makeMeeting(db, target, stage, { title, itemTitle, minutesBody, v
   if (stage === 'draft') return obj;
   // #113: zebranie zaplanowane z punktem porządku, szkicem i zatwierdzonym zawiadomieniem
   // (autor fxAdmin, zatwierdza fxBoard — inna osoba, zasada czterech oczu).
-  if (['agendaItem', 'draftNotice', 'approvedNotice'].includes(stage)) {
+  if (['agendaItem', 'agendaItems', 'draftNotice', 'approvedNotice'].includes(stage)) {
     const { agendaItem } = await addAgendaItem(db, fxAdmin, {
       idempotencyKey: nextKey('fx-item'), meetingId: meeting.id, title: itemTitle ?? `Punkt ${scopeMarker}`,
     });
     const withItem = { ...obj, agendaItemId: agendaItem.id };
     if (stage === 'agendaItem') return withItem;
+    // #113: dwa punkty — zmiana kolejności (POST …/agenda-order) musi coś zmienić.
+    if (stage === 'agendaItems') {
+      const { agendaItem: second } = await addAgendaItem(db, fxAdmin, {
+        idempotencyKey: nextKey('fx-item'), meetingId: meeting.id, title: `Punkt drugi ${scopeMarker}`,
+      });
+      return { ...withItem, secondAgendaItemId: second.id };
+    }
     const { notice } = await createMeetingNotice(db, fxAdmin, { meetingId: meeting.id });
     if (stage === 'approvedNotice') await approveMeetingNotice(db, fxBoard, { meetingId: meeting.id, noticeId: notice.id });
     return { ...withItem, noticeId: notice.id };

@@ -137,6 +137,7 @@ wpisów).
 | `import_has_conflicts` | Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `inconsistent_matches` | Dopasowania są niespójne. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
 | `invalid_access_kind` | Wybierz rodzaj odczytu z listy. | Nie — popraw dane żądania. |
+| `invalid_agenda_order` | Nowa kolejność musi zawierać dokładnie wszystkie niewycofane punkty porządku obrad, każdy raz. Odśwież widok i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `invalid_allocation` | Niepoprawny podział wpisu na wydarzenia lub klasy. | Nie — popraw dane żądania. |
 | `invalid_alt_text` | Podaj opis zdjęcia (tekst alternatywny). | Nie — popraw dane żądania. |
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
@@ -317,6 +318,7 @@ wpisów).
 | `not_found` | Nie znaleziono zasobu albo nie masz do niego dostępu. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_resolvable` | Tej wiadomości nie można jeszcze rozstrzygnąć. | Nie — popraw dane żądania. |
 | `nothing_to_promote` | Plan nie zawiera żadnego ucznia do przeniesienia. | Nie — popraw dane żądania. |
+| `notice_calendar_unavailable` | Plik kalendarza jest dostępny tylko dla najnowszego zatwierdzonego zawiadomienia. | Nie — popraw dane żądania. |
 | `notice_campaign_audience_unsupported` | Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana. | Nie — popraw dane żądania. |
 | `notice_four_eyes_required` | Zawiadomienie zatwierdza inna osoba niż jego autor. | Nie — popraw dane żądania. |
 | `notice_not_approved` | Szkic kampanii powstaje tylko z zatwierdzonego zawiadomienia. | Nie — popraw dane żądania. |

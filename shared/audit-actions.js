@@ -225,6 +225,7 @@ const CATALOG = {
   'meeting.cancelled': ['meetings', 'Odwołanie zebrania'],
   'meeting.agenda_item.added': ['meetings', 'Dodanie punktu porządku obrad'],
   'meeting.agenda_item.withdrawn': ['meetings', 'Wycofanie punktu porządku obrad'],
+  'meeting.agenda.reordered': ['meetings', 'Zmiana kolejności punktów porządku obrad'],
   'meeting.agenda_version.created': ['meetings', 'Nowa wersja porządku obrad'],
   'meeting.notice.created': ['meetings', 'Przygotowanie zawiadomienia o zebraniu'],
   'meeting.notice.approved': ['meetings', 'Zatwierdzenie zawiadomienia o zebraniu'],

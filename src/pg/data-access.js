@@ -107,7 +107,7 @@ const EXEMPT_GROUPS = [
   },
   {
     reason: 'zebrania, uchwały, wydarzenia, aktualności i metadane dokumentów Rady (zgody na wizerunek jako numery i referencje, bez imion)',
-    routes: ['meetings.list', 'meetings.sharedMinutes', 'meetings.resolutionLookup', 'meetings.get', 'meetings.approvalChecklist',
+    routes: ['meetings.list', 'meetings.sharedMinutes', 'meetings.resolutionLookup', 'meetings.get', 'meetings.approvalChecklist', 'meetings.noticeCalendar',
       'meetings.resolutionRegister', 'events.list', 'events.get', 'news.list', 'news.get', 'news.photos', 'news.photoGet',
       'documents.list', 'documents.getFinancial', 'documents.getBoard', 'documents.getClass'],
   },

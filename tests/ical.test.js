@@ -166,3 +166,12 @@ test('semicolon, comma and newline in title/location are escaped in the output',
   assert.ok(lines.some((l) => l === 'SUMMARY:Zebranie\\; ważne\\, pilne'));
   assert.ok(lines.some((l) => l === 'LOCATION:Sala A\\nBudynek B'));
 });
+
+test('uidPrefix oddziela przestrzeń UID zebrań od wydarzeń (#113)', () => {
+  const event = { id: 'm-1', title: 'Zebranie', startsAtUtc: '2026-10-10T17:00:00Z', sequence: 2 };
+  assert.ok(buildEventComponent(event).includes('UID:event-m-1@rd.example.invalid'));
+  assert.ok(buildEventComponent(event, { uidPrefix: 'meeting' }).includes('UID:meeting-m-1@rd.example.invalid'));
+  const ics = buildCalendar([event], { uidPrefix: 'meeting' });
+  assert.ok(ics.includes('\r\nUID:meeting-m-1@rd.example.invalid\r\n'));
+  assert.ok(!ics.includes('DTEND'), 'bez godziny końca nie ma DTEND');
+});

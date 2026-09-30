@@ -20,6 +20,8 @@ import {
   canApproveNotice,
   canChangeSchedule,
   canDraftNoticeCampaign,
+  isLatestApprovedNotice,
+  moveAgendaItem,
   describeNoticeLateness,
   canManageMeetings,
   canReadMeetings,
@@ -347,4 +349,36 @@ test("lista obecności pokazuje skrót identyfikatora, pełny zostaje w id", () 
   assert.deepEqual(attendeeReference({ userId: uuid }), { type: "user", id: uuid, label: "Konto d2721f76…" });
   assert.deepEqual(attendeeReference({ guardianId: uuid }), { type: "guardian", id: uuid, label: "Opiekun d2721f76…" });
   assert.deepEqual(attendeeReference({}), { type: "", id: "", label: "—" });
+});
+
+// #113: przestawianie punktów porządku obrad i link do pliku kalendarza.
+test("moveAgendaItem zamienia sąsiednie niewycofane punkty i pomija wycofane", () => {
+  const agenda = [
+    { id: "c", position: 4 },
+    { id: "a", position: 1 },
+    { id: "w", position: 2, withdrawnAt: "2026-09-01T10:00:00Z" },
+    { id: "b", position: 3 },
+  ];
+  assert.deepEqual(moveAgendaItem(agenda, "b", "up"), ["b", "a", "c"]);
+  assert.deepEqual(moveAgendaItem(agenda, "a", "down"), ["b", "a", "c"]);
+  assert.deepEqual(moveAgendaItem(agenda, "b", "down"), ["a", "c", "b"]);
+  assert.equal(moveAgendaItem(agenda, "a", "up"), null, "pierwszy punkt nie idzie wyżej");
+  assert.equal(moveAgendaItem(agenda, "c", "down"), null, "ostatni punkt nie idzie niżej");
+  assert.equal(moveAgendaItem(agenda, "w", "up"), null, "wycofany punkt nie jest przestawiany");
+  assert.equal(moveAgendaItem(agenda, "x", "up"), null);
+  assert.equal(moveAgendaItem(agenda, "b", "left"), null);
+  assert.equal(moveAgendaItem(undefined, "b", "up"), null);
+  assert.deepEqual(agenda.map((item) => item.id), ["c", "a", "w", "b"], "wejście bez zmian");
+});
+
+test("isLatestApprovedNotice: plik kalendarza tylko dla najnowszego zatwierdzonego zawiadomienia", () => {
+  const notices = [
+    { id: "n1", version: 1, status: "approved" },
+    { id: "n2", version: 2, status: "approved" },
+    { id: "n3", version: 3, status: "draft" },
+  ];
+  assert.equal(isLatestApprovedNotice(notices[0], notices), false);
+  assert.equal(isLatestApprovedNotice(notices[1], notices), true, "nowszy szkic nie zmienia pliku");
+  assert.equal(isLatestApprovedNotice(notices[2], notices), false);
+  assert.equal(isLatestApprovedNotice(null, notices), false);
 });
