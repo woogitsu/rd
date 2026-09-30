@@ -52,6 +52,16 @@ Nadanie roli, która dziś nie daje żadnej trasy chronionej (np. `principal`, d
 
 Istniejące przed tą zmianą przydziały klasowe dla ról spoza `CLASS_SCOPE_ROLES` (jeśli takie powstały) nie są usuwane ani migrowane — nowa reguła działa tylko dla przyszłych zaproszeń/nadań. Przegląd takich wierszy (`SELECT * FROM role_grants WHERE role NOT IN ('representative') AND class_id IS NOT NULL`) zostawiamy administratorowi jako zapytanie, nie migrację danych.
 
+## Ślad odmowy 403 — `access.denied` (#184)
+
+Odmowa `403 forbidden` zalogowanego aktora z powodu roli, zakresu klasy/roku lub MFA w bramce `requireAccess` (`src/pg/authorization.js`) oraz w bramkach modułów finansowych i e-mail (`requireFinancialContext`/`requireFinancial` we wpłatach, księdze i centrach kosztów, `requireAccess` w preliminarzu i kasie, `requireContext` w kampaniach e-mail i uzgodnieniach) zapisuje zdarzenie `access.denied` (`entity_type = 'route'`, `entity_id` = ścieżka bez parametrów zapytania; metadane: `method`, `requiredRole`, `sessionId` — bez treści żądania i bez danych osobowych). Dotyczy **każdej** metody, także żądania zmieniającego stan (np. przedstawiciel → `POST /api/payments`).
+
+- Deduplikacja: ten sam aktor + ta sama metoda + ta sama ścieżka w ciągu 5 minut od pierwszej odmowy → bez nowego zdarzenia, tylko licznik `access_denial_windows.denial_count` (migracja 0160). Widok dziennika (`GET /api/admin/audit`, domena `access`) pokazuje przy zdarzeniu `denialCount`.
+- Anonim (`401`) — bez zdarzenia (brak aktora; ochrona przed zalaniem dziennika). Odmowa `403 mfa_stale`/`mfa_required` z kroku w górę MFA (#150) — bez zdarzenia.
+- Zapis w osobnej krótkiej transakcji przed transakcją żądania; jego awaria nigdy nie zmienia odpowiedzi `403`. Macierz tras (`tests/pg-authz-matrix.test.js`) dopuszcza przy odmowie wyłącznie ten ślad (co najwyżej jedno nowe `access.denied` z aktorem i oknem licznika); każdy inny zapis nadal wywraca test.
+- Poza zakresem (luka opisana): odmowa samego zakresu roku po odczycie obiektu (`requireYear` wewnątrz transakcji zapisu we wpłatach, księdze, kampaniach, uzgodnieniach) oraz bramki pozostałych modułów (rodziny, zebrania, wydarzenia, aktualności, eksporty, zamknięcie roku) — dziś bez `access.denied`. Dokumenty mają własne `document.access_denied` (odpowiedź 404).
+- Retencja zdarzeń i liczników — do decyzji D-04; kto czyta odmowy — D-08/D-09 (dziś wyłącznie admin). Logowanie odmów to środek bezpieczeństwa, nie ocena pracy wolontariuszy.
+
 ## Macierz tras API (issue #4) — testy negatywne
 
 Tabela opisuje **zamierzoną** politykę tras routera PostgreSQL (`src/pg/app.js`, `ROUTES`) wynikającą z dokumentacji modułów, a nie zatwierdzone przez szkołę kompetencje. Zakresy ról zarządu, przedstawiciela, dyrekcji i Komisji Rewizyjnej to nadal założenia do decyzji D-08/D-09 (docs/DECISIONS.md). Źródłem prawdy dla testów jest `tests/helpers/route-matrix.js`; `tests/pg-authz-matrix.test.js` wykonuje każdą trasę dla wszystkich aktorów, MFA wł./wył. i każdego zakresu, a meta-test nie przepuści modułu z `ROUTES` ani ścieżki z kodu modułu bez wpisu w macierzy i wiersza w tej tabeli. Gdzie kod odbiega od zamierzonej polityki, przypadki są oznaczone w macierzy jako `todo`: nadal się wykonują, ale ich rozbieżność trafia do osobnego testu „znana luka”, więc CI jest zielone, a luka pozostaje widoczna (sekcja „Znane luki” niżej).

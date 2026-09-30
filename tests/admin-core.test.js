@@ -97,6 +97,14 @@ test('labels, scope and audit descriptions are Polish and contain identifiers on
   assert.equal(described.details, 'Zarząd, konto u-1, rok y-2026, powód: zakończenie kadencji');
 });
 
+// #184: odmowa dostępu pokazuje metodę i licznik odmów z okna 5 minut (0160).
+test('describeAuditEvent shows method and denial counter for access.denied', () => {
+  const described = describeAuditEvent({ action: 'access.denied', metadata: { method: 'POST', requiredRole: 'treasurer' }, denialCount: 10 });
+  assert.equal(described.label, 'Odmowa dostępu do trasy');
+  assert.equal(described.details, 'metoda POST, odmów w ciągu 5 min: 10');
+  assert.equal(describeAuditEvent({ action: 'access.denied', metadata: {} }).details, '');
+});
+
 // #224: pole potwierdzenia resetu MFA musi dokładnie odpowiadać identyfikatorowi
 // konta (kontrakt POST /api/admin/users/{id}/mfa-reset) i rozróżniać anulowanie
 // okna (Escape/Anuluj -> null) od wpisania złego tekstu.
