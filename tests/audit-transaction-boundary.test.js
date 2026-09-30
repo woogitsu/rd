@@ -45,3 +45,23 @@ test('insertAuditEvent on an autocommit connection only for read-only events', a
   }
   assert.deepEqual(offenders, []);
 });
+
+// #184: lokalne pomocniki `audit(tx, …)` (src/pg/events.js, meetings.js, news.js)
+// wołają insertAuditEvent z pierwszym argumentem — więc wywołanie pomocnika też
+// musi dostać transakcję (`tx`), inaczej zdarzenie wypadłoby poza zmianę.
+test('local audit() helpers are called only with the transaction (tx)', async () => {
+  const offenders = [];
+  let helpers = 0;
+  for (const file of await sources('src/pg')) {
+    const text = await readFile(join(root, file), 'utf8');
+    if (!/async function audit\(tx\b/.test(text)) continue;
+    helpers += 1;
+    for (const match of text.matchAll(/(?<![\w.])audit\(\s*([\w.]+)/g)) {
+      const before = text.slice(Math.max(0, match.index - 15), match.index);
+      if (/function\s+$/.test(before)) continue;
+      if (match[1] !== 'tx') offenders.push(`${file}: audit(${match[1]}, …)`);
+    }
+  }
+  assert.ok(helpers >= 3, `oczekiwane pomocniki audit(tx, …) w events/meetings/news (jest ${helpers})`);
+  assert.deepEqual(offenders, []);
+});
