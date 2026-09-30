@@ -252,7 +252,8 @@ Skrypt odmawia (kod `2`, zanim wyśle obciążenie), gdy:
 Zmienne z sesjami (tylko nazwy; wartość = wartość cookie `rd_session`
 syntetycznego konta stagingowego, z prefiksem `rd_session=` lub bez):
 `LOAD_TEST_SESSION_ADMIN`, `LOAD_TEST_SESSION_BOARD`,
-`LOAD_TEST_SESSION_TREASURER`, `LOAD_TEST_SESSION_REPRESENTATIVE`.
+`LOAD_TEST_SESSION_TREASURER`, `LOAD_TEST_SESSION_REPRESENTATIVE`,
+`LOAD_TEST_SESSION_AUDIT` (Komisja Rewizyjna; używana przez scenariusz „heavy”).
 Wirtualni użytkownicy dzielą te sesje rotacyjnie. Wartości ustawiać wyłącznie
 w powłoce operatora, nie w repo, CI ani protokole; po teście wycofać sesje.
 Zdalnie domyślnie wykonywane są tylko odczyty; `--allow-writes` dodaje wpłaty
@@ -283,10 +284,11 @@ jedynie, że mieszanka działa bez błędów przy 50 równoczesnych użytkownika
 Trasy faktycznie zmierzone tym scenariuszem to wyłącznie te z tabeli operacji
 wyżej (`GET /api/session`, `/api/access`, `/api/public/events`, `/api/events`,
 `/api/meetings`, `/api/payments`, `POST /api/payments`, `POST /api/events`) —
-żadna z nich nie ma rażąco złego planu zapytań, ale scenariusz **nie**
-obejmuje kart z sumami wielu lat, kartek dla całej szkoły, eksportów,
-uzgodnień rachunku ani kampanii e-mail (patrz scenariusz „heavy” niżej,
-#217). Kryterium odbioru spełnia dopiero pomiar na stagingu.
+wniosek o braku rażąco złego planu zapytań dotyczy tylko tych tras i danych
+jednego roku. Karty z sumami wielu lat, kartki dla całej szkoły, eksporty,
+dziennik zdarzeń, uzgodnienia rachunku, migawki kampanii, import i zamknięcie
+roku mierzy osobno scenariusz „heavy” niżej (#217). Kryterium odbioru
+spełnia dopiero pomiar na stagingu.
 
 | Data | Środowisko | Kto | Użytkownicy / czas | Zapisy | Żądania | Przepustowość | p50 | p95 | p99 | Błędy | Progi | Wynik / uwagi |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -296,45 +298,98 @@ uzgodnień rachunku ani kampanii e-mail (patrz scenariusz „heavy” niżej,
 
 ### Scenariusz „heavy” (#217): trasy pominięte przez scenariusz domyślny
 
-`npm run load:test -- --scenario heavy` mierzy osobno, sekwencyjnie, trasy
-najbardziej obciążające bazę i serwer, których koszt rośnie z **wiekiem
-systemu** (historia lat, `audit_events`, korekty, uzgodnienia) — seed
-jednego roku ze scenariusza domyślnego tego nie pokazuje:
+`npm run load:test -- --scenario heavy` mierzy osobno trasy najbardziej
+obciążające bazę i serwer, których koszt rośnie z **wiekiem systemu**
+(historia lat, `audit_events`, korekty, uzgodnienia) — seed jednego roku ze
+scenariusza domyślnego tego nie pokazuje. Każda trasa: `--heavy-iterations`
+(domyślnie 3) wywołań sekwencyjnie, a odczyty dodatkowo tyle samo rund po
+`--heavy-concurrency` (domyślnie 5) równoczesnych żądań — lokalnie każde z
+innej sesji tej samej osoby (limiter kosztownych tras z `src/rate-limit.js`
+ogranicza równoczesne żądania jednej sesji; zdalnie, przy jednej sesji na
+rolę, odpowiedzi `429` są liczone osobno jako `rateLimited`, nie jako błędy).
 
-`GET /api/classes`, `GET /api/classes/{id}/students`,
-`GET /api/households/{id}`, `GET /api/print/cards`,
-`GET /api/ledger/export.csv`, `GET /api/reports/audit`,
-`GET /api/reconciliations`, `POST /api/reconciliations/{id}/lines`,
-`GET /api/reconciliations/{id}`, `GET /api/reconciliations/{id}/suggestions`.
+| Grupa | Operacje (nazwa w raporcie) |
+|---|---|
+| Rodziny i klasy | `GET /api/classes` (wszystkie lata), `GET /api/classes/{id}/students`, `GET /api/households/{id}` (sumy wielu lat) |
+| Wydruki i listy | `GET /api/print/cards` (cała szkoła, z kwotami), `GET /api/exports/class-roster (xlsx)` |
+| Finanse i KR | `GET /api/ledger/export.csv`, `GET /api/reports/audit` (json i html), `GET /api/payments (kursor, 5 stron)` |
+| Dziennik zdarzeń | `GET /api/admin/audit (finance, rok)` (filtr roku #174), `GET /api/admin/audit (kursor, 5 stron)` |
+| Uzgodnienie rachunku | `GET /api/reconciliations`, `POST …/{id}/lines` (200 pozycji), `GET …/{id}`, `GET …/{id}/suggestions` |
+| Eksport roczny | `POST /api/exports` (#216 — scenariusz tylko mierzy, kodu eksportu nie zmienia) |
+| Kampanie (bez wysyłki) | `POST …/snapshot (no_payment_record)`, `POST …/snapshot (all_households)`, `GET …/preview`, `POST …/snapshot (double click)` |
+| Import | `POST /api/import/preview`, `POST /api/import/commit`, `POST /api/import/commit (double click)` (dwa równoległe zapisy tym samym kluczem → jedno `201`, jedno `200`, potem ponowienie → `200` z `replayed: true`) |
+| Zamknięcie roku | `POST /api/year-close/{id}/close` (najstarszy rok, druga osoba zarządu), `GET /api/year-close/{id}/handover` |
+| Granice ról | `GET /api/households/{id} (representative, out of scope)`, `POST /api/exports (representative, 403)` — oczekiwane `403`/`404`, nie błąd |
 
 Dane: `scripts/lib/heavy-scenario.js` (`buildHistoricalData`) — kilka lat
-syntetycznej historii zamiast jednego roku: kilka klas na rok, rodzeństwo w
-różnych klasach, dwoje opiekunów na gospodarstwo, wpłaty częściowe i korekty
-w każdym roku, kilka wpisów księgi i jeden szkic uzgodnienia w najnowszym
-roku, zdarzenia audytu wstawiane `generate_series` po stronie bazy. Domyślna
-skala (`--heavy-years 2 --heavy-classes 5 --heavy-students 40
---heavy-audit-events 3000`) jest **celowo mniejsza** niż baseline z opisu
-issue #217 (5 lat, 50 klas/rok, 100 000 zdarzeń audytu) — pełny seed trwa
-dziesiątki sekund i spowalnia PR-y; pełną skalę odtwarza się na żądanie tymi
-samymi flagami (nocny przebieg, #111), nie jest to wymagane na PR.
+syntetycznej historii: rotacja uczniów między latami (co roku ok. 1/4 odchodzi
+i tyle samo dochodzi, więc karta gospodarstwa sumuje kilka lat), rodzeństwo w
+różnych klasach, dwoje opiekunów na gospodarstwo (część bez zgody na
+kontakt), wpłaty częściowe (dwie raty) i brak wpisu wpłaty części rodzin,
+korekty w każdym roku, wpisy księgi powiązane z wpłatami i wydatki, szkic
+uzgodnienia w najnowszym roku, opublikowana syntetyczna informacja o
+przetwarzaniu danych (wymagana przez zapis importu), zdarzenia audytu
+wstawiane `generate_series` po stronie bazy (część z rokiem w metadanych,
+część bez — filtr roku przypisuje je wtedy do roku obiektu). Najnowszy rok
+zawiera dzisiejszą datę. Po wstawieniu danych skrypt wykonuje `ANALYZE`:
+bez statystyk PGlite (brak autovacuum) wybierał pętle zagnieżdżone, a
+`GET /api/print/cards` i `GET /api/admin/audit` wyglądały na kilkukrotnie
+wolniejsze niż są. Wszystkie adresy w domenie `example.invalid`.
 
-Wynik: dla każdej trasy `p50`/`max` opóźnienia, rozmiar odpowiedzi (bajty),
-liczba błędów, oraz dla całego przebiegu szczyt `heapUsed` (MB) i maks.
-opóźnienie pętli zdarzeń (`monitorEventLoopDelay`, ms). Budżety
-(`HEAVY_ROUTE_BUDGETS_MS` w `scripts/lib/heavy-scenario.js`) są orientacyjne
-i luźniejsze niż docelowe dla Railway — kontener testowy jest współdzielony i
-przeciążony (patrz zasady pracy nad poprawkami), więc łapią tylko rażącą
-regresję, nie mikroopóźnienia. Przekroczenie budżetu którejkolwiek trasy albo
-błędna odpowiedź dają kod wyjścia `1` z nazwą trasy w komunikacie. Scenariusz
-zapisuje dane (import wyciągu, #217 pkt 4) — **wyłącznie lokalnie**; tryb
-zdalny (tylko odczyt, tylko staging) nie jest jeszcze zaimplementowany.
-Scenariusz nie wywołuje żadnej trasy e-mail/`…/queue` (test sprawdza brak
-wierszy `email_outbox` po przebiegu).
+Skala domyślna (`--heavy-years 2 --heavy-classes 5 --heavy-students 40
+--heavy-audit-events 3000 --heavy-import-rows 60`) jest **celowo mała**
+(ok. 15 s z przygotowaniem). `--heavy-full` ustawia skalę z opisu issue
+#217: 5 lat, 50 klas/rok, 1000 uczniów/rok (2000 łącznie), 100 000 zdarzeń
+audytu, import 1000 wierszy — ok. 1 min na współdzielonym kontenerze, do
+przebiegu nocnego (#111) albo ręcznego, niewymagany na PR. Flagi `--heavy-*`
+podane **po** `--heavy-full` nadpisują pojedyncze wymiary. W CI działa tylko
+wariant skrócony z `tests/load-heavy-smoke.test.js` (2 lata, 2 klasy, 12
+uczniów/rok).
+
+Wynik (JSON, `--out plik.json`): dla każdej operacji `latencyMs`
+(`p50`/`p95`/`max` przebiegu sekwencyjnego), `responseBytes`,
+`maxEventLoopDelayMs`, `concurrent` (to samo przy N równoczesnych), a lokalnie
+także `memory` (`heapDeltaMb` — szczyt sterty w trakcie trasy minus stan przed
+nią, `peakRssMb`) i `db` (opakowanie `env.db`: liczba zapytań i transakcji,
+łączny czas zapytań, najwolniejsze zapytanie — sam tekst SQL, bez parametrów
+— i `maxTxJsGapMs`, najdłuższa przerwa JS między zapytaniami w otwartej
+transakcji). Dla całego przebiegu: `peakHeapUsedMb`, `peakRssMb`,
+`maxEventLoopDelayMs`, `skipped` i lokalnie `emailOutboxRows`. Uwaga: PGlite
+działa w wątku serwera, więc lokalne opóźnienie pętli zdarzeń obejmuje też
+czas zapytań — na Railway (osobny PostgreSQL) będzie niższe.
+
+Budżety (`HEAVY_ROUTE_BUDGETS_MS` — p50 przebiegu sekwencyjnego; oraz
+`HEAVY_ROUTE_HEAP_BUDGETS_MB` — dziś tylko `POST /api/exports`: 384 MB, do
+zaostrzenia do 64 MB po strumieniowaniu eksportu z #216) są orientacyjne,
+luźniejsze niż docelowe dla Railway — łapią rażącą regresję, nie
+mikroopóźnienia. Są założeniem technicznym, nie wymaganiem szkoły.
+Przekroczenie budżetu którejkolwiek trasy, błędna odpowiedź (także w fazie
+równoczesnej) albo wiersz w `email_outbox` dają kod wyjścia `1` z nazwą trasy
+w komunikacie.
+
+Scenariusz **nie wysyła żadnej wiadomości**: nie wywołuje `…/approve`,
+`…/queue`, `…/test-send` ani workera e-mail; kampanie zostają szkicami z
+migawką odbiorców, a po przebiegu skrypt sprawdza zero wierszy
+`email_outbox`. Zapisy (import, pozycje wyciągu, kampanie, eksport roczny,
+zamknięcie roku) są wykonywane **wyłącznie lokalnie**.
+
+Tryb zdalny (`--target … --i-confirm-staging`, wyłącznie staging na danych
+syntetycznych): te same bezpieczniki co scenariusz domyślny, wyłącznie
+odczyty (operacje oznaczone `remoteSafe`), `--allow-writes` jest odrzucane.
+Identyfikatory obiektów stagingu podaje się zmiennymi `LOAD_TEST_CLASS_ID`,
+`LOAD_TEST_HOUSEHOLD_ID`, `LOAD_TEST_OTHER_HOUSEHOLD_ID` (gospodarstwo spoza
+klasy przedstawiciela), `LOAD_TEST_RECONCILIATION_ID`, `LOAD_TEST_CAMPAIGN_ID`
+(kampania z migawką — tylko podgląd); operacja bez identyfikatora albo bez
+sesji swojej roli jest pomijana i wymieniona w `skipped`. Odczyty zostawiają
+na stagingu zwykłe wpisy dziennika (audyt, odczyty danych rodzin, wiersze
+`export_runs` listy klasy), tak jak otwarcie tych widoków w panelu.
 
 | Data | Środowisko | Skala | Wynik / uwagi |
 |---|---|---|---|
-| 28.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny) | domyślna (2 lata, 5 klas/rok, 40 uczniów/rok, 3000 zdarzeń audytu) | zaliczony, bez naruszeń budżetu; zob. `tests/load-heavy-smoke.test.js` dla wariantu skróconego uruchamianego w CI |
-| do wykonania | staging (tylko odczyt) | pełna (5 lat, 50 klas/rok, 100 000 zdarzeń audytu) | tryb zdalny sceny „heavy” do zaimplementowania |
+| 28.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny) | domyślna (2 lata, 5 klas/rok, 40 uczniów/rok, 3000 zdarzeń audytu) | zaliczony, bez naruszeń budżetu (10 tras, przed rozszerzeniem scenariusza) |
+| 30.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny); kontener 4 vCPU współdzielony, load average 3–7 | domyślna (2 lata, 5 klas/rok, 40 uczniów/rok, 3000 zdarzeń audytu, import 60 wierszy) | zaliczony, bez naruszeń; 27 operacji, przygotowanie 4 s, całość 16 s; najwolniejsza `POST /api/exports` p50 560 ms |
+| 30.09.2026 | jw. | pełna (`--heavy-full`: 5 lat, 50 klas/rok, 2000 uczniów, 3638 opiekunów, 5196 wpłat, 2227 wpisów księgi, 100 000 zdarzeń audytu, import 1000 wierszy) | zaliczony, bez naruszeń; przygotowanie 14 s, całość 49 s; szczyt sterty 123 MB, RSS 866 MB; 0 wierszy `email_outbox`. Wybrane p50 (sekwencyjnie / p95 przy 5 równoczesnych): `households` 15 ms / 105 ms, `print/cards` 49 ms / 205 ms (151 KB), `ledger/export.csv` 22 ms, `reports/audit` 78 ms / 344 ms, `admin/audit (finance, rok)` 13 ms / 58 ms, `reconciliations/{id}/suggestions` **986 ms** / 5,5 s (475 KB), `POST /api/exports` **1336 ms** (9,3 MB, sterta +75 MB, 1042 zapytania w jednej transakcji), `import/commit` 1000 wierszy **986 ms**, `snapshot (all_households)` 195 ms, `year-close close` 45 ms |
+| do wykonania | staging (tylko odczyt) | pełna (5 lat, 50 klas/rok, 100 000 zdarzeń audytu) | `npm run load:test -- --scenario heavy --target https://<host stagingu> --i-confirm-staging` z identyfikatorami jak wyżej |
 
 ## Pierwszy administrator (bootstrap, #187)
 
