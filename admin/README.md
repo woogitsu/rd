@@ -14,6 +14,7 @@ API działa na serwerze Node (PostgreSQL). Panel i API muszą działać pod tym 
 ## Zakres
 
 - tabela kont (e-mail, nazwa, status, liczba aktywnych ról i sesji), wyłączanie i włączanie konta, wylogowanie ze wszystkich urządzeń,
+- wnioski o nadanie roli chronionej (#146, `GET /api/admin/grant-requests`, `…/{id}/approve|reject`): kto wnioskuje, dla kogo, rola, zakres i wiek wniosku; „Zatwierdź” w oknie ze skutkami i z krokiem w górę MFA, niedostępne przy własnym wniosku i wniosku o własne konto (reguły egzekwuje serwer); link zaproszenia z zatwierdzenia pokazany raz, wyłącznie w pamięci strony; „Odrzuć” (albo „Wycofaj wniosek” dla własnego) bez pola powodu,
 - tabela przydziałów ról z filtrami (konto, rola, rok, klasa, status) i wycofaniem po potwierdzeniu,
 - nadanie roli z zakresem roku/klasy i opcjonalną datą wygaśnięcia,
 - zaproszenie: token pokazywany jeden raz, z przyciskiem kopiowania i ostrzeżeniem; panel nie wysyła e-maili,

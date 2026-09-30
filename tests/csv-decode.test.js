@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { decodeCsvBytes, describeSource, detectDelimiter } from '../import/csv.js';
+import { AMBIGUOUS_DELIMITER, decodeCsvBytes, describeSource, detectDelimiter, resolveDelimiter } from '../import/csv.js';
 import { parseCsv } from '../import/core.js';
 import { buildHouseholds, parseInputBytes } from '../print/core.js';
 
@@ -138,4 +138,37 @@ test('druk: niepoprawny bajt blokuje wczytanie, JSON tylko w UTF-8', () => {
   assert.equal(parseInputBytes(utf8(json), 'a.json').rows.length, 1);
   assert.throws(() => parseInputBytes(encodeSingleByte(json, CP1250), 'a.json'), /UTF-8/);
   assert.throws(() => parseInputBytes(utf8('x'), 'a.xlsx'), /\.csv/);
+});
+
+// #77: remis separatorów → pytanie (błąd z prośbą o wybór), ręczny wybór w polu „Separator”.
+test('resolveDelimiter: remis blokuje tryb automatyczny, ręczny wybór go rozstrzyga', () => {
+  assert.throws(() => resolveDelimiter('Imię;Nazwisko,Klasa\nAla;Nowak,1a'), { message: AMBIGUOUS_DELIMITER });
+  assert.throws(() => resolveDelimiter('a;b,c', 'auto'), /Wybierz separator ręcznie/);
+  assert.deepEqual(resolveDelimiter('"Imię; drugie"\tKlasa'), { delimiter: '\t', label: 'tabulator', tie: false, manual: false });
+  assert.deepEqual(resolveDelimiter('a;b,c', ';'), { delimiter: ';', label: 'średnik', tie: false, manual: true });
+  assert.deepEqual(resolveDelimiter('a;b,c', 'tab'), { delimiter: '\t', label: 'tabulator', tie: false, manual: true });
+  assert.equal(resolveDelimiter('a;b,c', '\t').delimiter, '\t');
+  for (const bad of ['|', '', null, 'TAB']) assert.throws(() => resolveDelimiter('a;b', bad), /Nieznany separator/);
+  assert.equal(describeSource({ label: 'UTF-8' }, resolveDelimiter('a;b', ',')), 'UTF-8, przecinek (wybrany ręcznie)');
+});
+
+test('import i druk: remis w nagłówku = pytanie o separator; wybrany separator daje tę samą macierz w każdym kodowaniu', () => {
+  // Nagłówek z dwoma średnikami i dwoma przecinkami poza cudzysłowem (remis); „;” w cudzysłowie się nie liczy.
+  const tie = 'ID rodziny;"Imię; ucznia";Nazwisko ucznia,Klasa,x\nH-7;"Żaneta; Ala";Łęcka,2b,y\n';
+  const expected = [['ID rodziny', 'Imię; ucznia', 'Nazwisko ucznia,Klasa,x'], ['H-7', 'Żaneta; Ala', 'Łęcka,2b,y']];
+  for (const bytes of [utf8(tie), withBom(utf8(tie)), encodeSingleByte(tie, CP1250), utf16le(tie)]) {
+    const { text } = decodeCsvBytes(bytes);
+    assert.throws(() => resolveDelimiter(text), { message: AMBIGUOUS_DELIMITER });
+    assert.throws(() => parseInputBytes(bytes, 'lista.csv'), { message: AMBIGUOUS_DELIMITER });
+    assert.deepEqual(parseCsv(text, { delimiter: resolveDelimiter(text, ';').delimiter }), expected);
+  }
+  const comma = 'ID rodziny,Imię ucznia,Nazwisko ucznia;Klasa;x\nH-8,Ósemka,Źdźbło;1a;z\n';
+  assert.throws(() => parseInputBytes(encodeSingleByte(comma, CP1250), 'lista.csv'), { message: AMBIGUOUS_DELIMITER });
+  // Remis 4:4 (cztery przecinki, cztery średniki w kolumnie uwag) — ręcznie wybrany przecinek.
+  const tieComma = 'ID rodziny,Imię ucznia,Nazwisko ucznia,Klasa,uwagi;a;b;c;d\nH-8,Ósemka,Źdźbło,1a,z\n';
+  assert.throws(() => parseInputBytes(encodeSingleByte(tieComma, CP1250), 'lista.csv'), { message: AMBIGUOUS_DELIMITER });
+  const parsed = parseInputBytes(encodeSingleByte(tieComma, CP1250), 'lista.csv', { delimiter: ',' });
+  assert.deepEqual(parsed.errors, []);
+  assert.equal(parsed.source.delimiter.manual, true);
+  assert.deepEqual(parsed.rows.map((row) => [row.householdId, row.name]), [['H-8', 'Ósemka Źdźbło']]);
 });

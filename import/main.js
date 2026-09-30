@@ -1,7 +1,7 @@
 import { readXlsxSheets } from './xlsx.js';
 import { FIELDS, guessMapping, matrixShapeError, parseCsv, selectSheet, toServerPayload, validateRows } from './core.js';
 import { csvBytes } from '../src/pg/csv.js';
-import { decodeCsvBytes, describeSource, detectDelimiter } from './csv.js';
+import { decodeCsvBytes, describeSource, resolveDelimiter } from './csv.js';
 import { api as apiRequest, errorMessage } from '../shared/api.js';
 import { confirmAction } from '../shared/confirm-dialog.js';
 import { buildErrorReportCsv, missingFromFileSummary, unusedColumns } from './report.js';
@@ -16,6 +16,7 @@ const mappingMemoryNote = document.querySelector('#mapping-memory-note');
 const unusedColumnsBox = document.querySelector('#unused-columns');
 const downloadReportButton = document.querySelector('#download-report');
 const encodingSelect = document.querySelector('#encoding');
+const delimiterSelect = document.querySelector('#delimiter');
 const status = document.querySelector('#file-status');
 const mappingSection = document.querySelector('#mapping-section');
 const resultSection = document.querySelector('#result-section');
@@ -84,9 +85,11 @@ async function readSelectedFile() {
   try {
     if (/\.csv$/i.test(file.name)) {
       // #77: wykrycie kodowania (UTF-8/BOM, Windows-1250) i separatora; ręczny wybór nadpisuje wykrycie.
+      // Remis separatorów w trybie automatycznym = błąd z prośbą o wybór w polu „Separator”.
       const decoded = decodeCsvBytes(await file.arrayBuffer(), { encoding: encodingSelect.value });
-      const source = describeSource(decoded, detectDelimiter(decoded.text));
-      matrix = parseCsv(decoded.text);
+      const delimiter = resolveDelimiter(decoded.text, delimiterSelect.value);
+      const source = describeSource(decoded, delimiter);
+      matrix = parseCsv(decoded.text, { delimiter: delimiter.delimiter });
       applyMatrix(`${source ? ` (${source})` : ''}${decoded.warnings.length ? ` Uwaga: ${decoded.warnings.join(' ')}` : ''}`);
     } else {
       // #88: wybór arkusza — plik bywa wieloarkuszowy (np. arkusz „Instrukcja” przed danymi).
@@ -101,6 +104,7 @@ async function readSelectedFile() {
 }
 fileInput.addEventListener('change', readSelectedFile);
 encodingSelect.addEventListener('change', readSelectedFile);
+delimiterSelect.addEventListener('change', readSelectedFile);
 // #88: pokazuje wskazany arkusz. Błąd arkusza (np. pusty pierwszy) to komunikat przy
 // wyborze arkusza — lista `xlsxSheets` i pole wyboru zostają, więc można wskazać inny.
 function showSheet(index) {

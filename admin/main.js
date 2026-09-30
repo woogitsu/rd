@@ -14,6 +14,9 @@ import {
   ERROR_MESSAGES,
   formatDateTime,
   grantPayload,
+  grantRequestDialog,
+  grantRequestRow,
+  grantRequestsPath,
   indexClasses,
   invitationLink,
   invitationPayload,
@@ -38,7 +41,7 @@ import "../shared/shell.css";
 mountShell();
 
 const state = {
-  me: null, users: [], grants: [], invitations: [], auditEvents: [], auditDomain: "",
+  me: null, meEmail: "", grantRequests: [], users: [], grants: [], invitations: [], auditEvents: [], auditDomain: "",
   usersCursor: null, grantsCursor: null, invitationsCursor: null, auditCursor: null,
   years: [], classes: new Map(), yearMap: new Map() };
 const byId = (id) => document.getElementById(id);
@@ -351,6 +354,119 @@ async function runMfaReset(element, user) {
   }
 }
 
+// --- Wnioski o nadanie roli chronionej (#146) ----------------------------------
+
+// Link zaproszenia z zatwierdzonego wniosku: wyłącznie w pamięci strony (DOM),
+// jeden raz — „Zamknij” i opuszczenie strony (pagehide) go usuwają; serwer nie
+// pokaże go ponownie (lista wniosków nie zawiera tokenów).
+function hideRequestToken() {
+  byId("request-link").textContent = "";
+  byId("request-token-meta").textContent = "";
+  byId("request-token-box").hidden = true;
+}
+
+function showRequestToken(result) {
+  byId("request-link").textContent = invitationLink(result.token, window.location.origin);
+  byId("request-token-meta").textContent = `${result.invitation.email} · ${ROLE_LABELS[result.invitation.role] ?? result.invitation.role} · ${scopeLabel(result.invitation, state.classes, state.yearMap)} · ważne do ${formatDateTime(result.invitation.expiresAt)}`;
+  byId("copy-request-link").textContent = "Kopiuj link";
+  byId("request-token-box").hidden = false;
+  byId("request-token-box").scrollIntoView({ block: "nearest" });
+}
+
+byId("hide-request-token").addEventListener("click", hideRequestToken);
+window.addEventListener("pagehide", hideRequestToken);
+byId("copy-request-link").addEventListener("click", async (event) => {
+  try {
+    await navigator.clipboard.writeText(byId("request-link").textContent);
+    event.currentTarget.textContent = "Skopiowano";
+  } catch {
+    showMessage("Nie udało się skopiować. Zaznacz link i skopiuj ręcznie.", true);
+  }
+});
+
+function requestRowContext() {
+  return { me: { id: state.me, email: state.meEmail }, users: state.users, classes: state.classes, years: state.yearMap, now: new Date() };
+}
+
+// Po zatwierdzeniu lub odrzuceniu (także nieudanym, np. 409 — ktoś inny był
+// szybszy) lista wraca ze stanem z serwera.
+async function afterRequestDecision() {
+  await Promise.all([loadGrantRequests(), loadGrants(), loadUsers(), loadInvitations(), loadAudit(), loadCoverage()]);
+}
+
+// Zatwierdzenie albo odrzucenie; po odpowiedzi (także błędzie innym niż
+// `mfa_stale`, po którym withStepUp prosi o kod i ponawia) lista się odświeża.
+async function decideRequest(requestId, decision) {
+  try {
+    const result = await api(`/api/admin/grant-requests/${encodeURIComponent(requestId)}/${decision}`, { method: "POST", body: {} });
+    await afterRequestDecision().catch(() => {});
+    return result;
+  } catch (error) {
+    if (error?.code !== "mfa_stale") await afterRequestDecision().catch(() => {});
+    throw error;
+  }
+}
+
+function renderGrantRequests() {
+  const tbody = byId("grant-requests-body");
+  const status = byId("grant-request-filters").elements.status.value;
+  const pending = state.grantRequests.filter((request) => request.status === "pending").length;
+  byId("grant-requests-summary").textContent = status === "pending"
+    ? `Oczekujące wnioski: ${pending}.`
+    : `${state.grantRequests.length} wniosków w widoku.`;
+  if (!state.grantRequests.length) return emptyRow(tbody, 7, status === "pending" ? "Brak oczekujących wniosków." : "Brak wniosków dla wybranego statusu.");
+  const context = requestRowContext();
+  tbody.replaceChildren(...state.grantRequests.map((request) => {
+    const row = grantRequestRow(request, context);
+    const tr = document.createElement("tr");
+    tr.dataset.requestId = request.id;
+    tr.append(cell(row.requester), cell(row.target), cell(row.role), cell(row.scope));
+    const age = cell(row.age);
+    age.title = formatDateTime(request.createdAt);
+    tr.append(age, statusCell(row.status, row.statusLabel));
+    const buttons = [];
+    if (row.canApprove) {
+      buttons.push(button("Zatwierdź", (event) => runAction(event.currentTarget, grantRequestDialog("approve", request, row), async () => {
+        hideRequestToken();
+        const result = await decideRequest(request.id, "approve");
+        if (result.token) {
+          showRequestToken(result);
+          showMessage("Wniosek zatwierdzony: zaproszenie wystawione. Link jest widoczny tylko teraz.");
+        } else {
+          showMessage("Wniosek zatwierdzony: rola nadana.");
+        }
+      })));
+    }
+    if (row.canReject) {
+      buttons.push(button(row.rejectLabel, (event) => runAction(event.currentTarget, grantRequestDialog("reject", request, row), async () => {
+        await decideRequest(request.id, "reject");
+        showMessage(row.rejectLabel === "Wycofaj wniosek" ? "Wniosek wycofany. Rola nie została nadana." : "Wniosek odrzucony. Rola nie została nadana.");
+      }), { danger: true }));
+    }
+    const actions = actionsCell(buttons);
+    if (row.note) {
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = row.note;
+      actions.append(note);
+    }
+    tr.append(actions);
+    return tr;
+  }));
+}
+
+async function loadGrantRequests() {
+  const result = await api(grantRequestsPath(byId("grant-request-filters").elements.status.value));
+  state.grantRequests = result.requests ?? [];
+  renderGrantRequests();
+}
+
+byId("grant-request-filters").addEventListener("submit", (event) => {
+  event.preventDefault();
+  loadGrantRequests().catch((error) => showMessage(error.message, true));
+});
+byId("reload-grant-requests").addEventListener("click", () => loadGrantRequests().catch((error) => showMessage(error.message, true)));
+
 // --- Przydziały ---------------------------------------------------------------
 
 function renderGrants() {
@@ -428,7 +544,7 @@ byId("grant-form").addEventListener("submit", async (event) => {
     if (result.request) showMessage(GRANT_REQUEST_MESSAGE);
     else showMessage(result.created ? "Rola nadana." : "Identyczny aktywny przydział już istnieje.");
     form.elements.expiresOn.value = "";
-    await Promise.all([loadGrants(), loadUsers(), loadAudit()]);
+    await Promise.all([loadGrantRequests(), loadGrants(), loadUsers(), loadAudit()]);
   } catch (error) {
     errorBox.textContent = error.message;
   } finally {
@@ -459,7 +575,7 @@ function renderInvitations() {
             showToken(result);
             showMessage("Wydano nowy link; poprzedni jest nieważny.");
           }
-          await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
+          await Promise.all([loadGrantRequests(), loadInvitations(), loadAudit(), loadCoverage()]);
         })),
         button("Wycofaj", (event) => runAction(event.currentTarget, confirmationDialog("revoke-invitation", invitationContext(invitation)), async () => {
           await api(`/api/admin/invitations/${encodeURIComponent(invitation.id)}/revoke`, { method: "POST", body: {} });
@@ -539,7 +655,7 @@ byId("invitation-form").addEventListener("submit", async (event) => {
     if (result.request) showMessage(GRANT_REQUEST_MESSAGE);
     else showToken(result);
     form.reset();
-    await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
+    await Promise.all([loadGrantRequests(), loadInvitations(), loadAudit(), loadCoverage()]);
   } catch (error) {
     errorBox.textContent = error.message;
   } finally {
@@ -940,11 +1056,12 @@ async function start() {
   try {
     const session = await api("/api/session");
     state.me = session.user?.id ?? null;
+    state.meEmail = session.user?.email ?? "";
     await loadYears();
     await loadUsers();
     byId("coverage-year").value = defaultYearId();
     byId("batch-form").elements.schoolYearId.value = defaultYearId();
-    await Promise.all([loadGrants(), loadInvitations(), loadAudit(), loadCoverage()]);
+    await Promise.all([loadGrantRequests(), loadGrants(), loadInvitations(), loadAudit(), loadCoverage()]);
   } catch (error) {
     showMessage(error.message, true);
   }

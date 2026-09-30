@@ -274,7 +274,7 @@ export const MESSAGES = Object.freeze({
   group_match_direction_mismatch: "Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ).",
   invalid_csv: "Nie udało się odczytać pliku CSV.",
   invalid_csv_encoding: "Plik CSV ma nieznane kodowanie (w tekście są znaki zastępcze). Zapisz go jako „CSV UTF-8” albo wybierz kodowanie i wgraj ponownie.",
-  ambiguous_csv_delimiter: "Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem.",
+  ambiguous_csv_delimiter: "Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Wybierz separator ręcznie w polu „Separator” albo zapisz plik z jednym separatorem.",
   invalid_csv_header: "Plik CSV ma niepoprawny nagłówek.",
   cash_below_zero: "Ta operacja doprowadziłaby saldo kasy poniżej zera.",
   invalid_reversal: "Tego przeniesienia nie można cofnąć w obecnym stanie.",

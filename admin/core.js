@@ -470,3 +470,109 @@ export function classNamesPayload(text) {
   }
   return { names };
 }
+
+// --- #146: wnioski o nadanie roli chronionej (GET /api/admin/grant-requests) ----
+// Serwer sam pilnuje zasady czterech oczu (403 grant_four_eyes_required) — funkcje
+// niżej decydują tylko, które przyciski panel pokazuje.
+
+export const GRANT_REQUEST_STATUS_LABELS = Object.freeze({
+  pending: "Oczekuje",
+  approved: "Zatwierdzony",
+  rejected: "Odrzucony",
+  expired: "Wygasły",
+});
+
+export const GRANT_REQUEST_KIND_LABELS = Object.freeze({
+  grant: "Nadanie roli istniejącemu kontu",
+  invitation: "Zaproszenie z rolą",
+});
+
+export function grantRequestsPath(status = "pending") {
+  const value = status === "all" || Object.hasOwn(GRANT_REQUEST_STATUS_LABELS, status) ? status : "pending";
+  return `/api/admin/grant-requests?${new URLSearchParams({ status: value })}`;
+}
+
+// Wiek wniosku słownie (od utworzenia do `now`); zaokrąglenie w dół.
+export function requestAge(createdAt, now = new Date()) {
+  const created = new Date(createdAt).getTime();
+  if (Number.isNaN(created)) return "—";
+  const minutes = Math.max(0, Math.floor((now.getTime() - created) / 60000));
+  if (minutes < 1) return "przed chwilą";
+  if (minutes < 60) return `${minutes} min temu`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} godz. temu`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "1 dzień temu" : `${days} dni temu`;
+}
+
+// Model wiersza listy wniosków. `me` = { id, email } zalogowanego administratora.
+// Zatwierdzić nie może wnioskodawca ani adresat (konto albo adres zaproszenia) —
+// przycisku wtedy nie ma. Wniosek oczekujący po terminie jest pokazany jako
+// wygasły, bez „Zatwierdź” (serwer zwróciłby 409 grant_request_expired).
+export function grantRequestRow(request, { me = {}, users = [], classes = new Map(), years = new Map(), now = new Date() } = {}) {
+  const ownEmail = String(me.email ?? "").toLowerCase();
+  const target = request.userId ? accountName(request.userId, users) : (request.email ?? "—");
+  const overdue = request.status === "pending" && new Date(request.expiresAt).getTime() <= now.getTime();
+  const status = overdue ? "expired" : request.status;
+  const pending = request.status === "pending";
+  const ownRequest = Boolean(me.id) && request.requestedBy === me.id;
+  const addressee = (Boolean(me.id) && request.userId === me.id)
+    || (Boolean(ownEmail) && String(request.email ?? "").toLowerCase() === ownEmail);
+  let approveBlockedReason = null;
+  if (ownRequest) approveBlockedReason = "Własny wniosek zatwierdza inny administrator.";
+  else if (addressee) approveBlockedReason = "Wniosek dotyczy Twojego konta — zatwierdza inny administrator.";
+  else if (overdue) approveBlockedReason = "Wniosek wygasł — trzeba złożyć nowy.";
+  return {
+    id: request.id,
+    kind: GRANT_REQUEST_KIND_LABELS[request.kind] ?? request.kind,
+    requester: accountName(request.requestedBy, users),
+    target,
+    role: ROLE_LABELS[request.role] ?? request.role,
+    scope: scopeLabel({ schoolYearId: request.schoolYearId, classId: null }, classes, years),
+    age: requestAge(request.createdAt, now),
+    status,
+    statusLabel: GRANT_REQUEST_STATUS_LABELS[status] ?? status,
+    canApprove: pending && !approveBlockedReason,
+    canReject: pending,
+    rejectLabel: ownRequest ? "Wycofaj wniosek" : "Odrzuć",
+    note: pending ? approveBlockedReason : null,
+  };
+}
+
+// Skutki w oknie potwierdzenia (#136/#582): przycisk nazywa akcję.
+export function grantRequestDialog(action, request, row) {
+  const lines = [
+    `Wnioskuje: ${row.requester}`,
+    `${request.kind === "invitation" ? "Adres zaproszenia" : "Konto"}: ${row.target}`,
+    `Rola: ${row.role}`,
+    `Zakres: ${row.scope}`,
+  ];
+  if (action === "approve") {
+    const effect = request.kind === "invitation"
+      ? [
+        request.replacesInvitationId ? "Poprzedni link zaproszenia dla tego adresu przestanie działać." : null,
+        "Powstanie zaproszenie z tą rolą. Link zobaczysz tylko raz, w tym oknie panelu — przekaż go osobnym, zaufanym kanałem. Panel niczego nie wysyła e-mailem.",
+      ]
+      : [
+        request.grantExpiresAt ? `Przydział będzie ważny do ${formatDateTime(request.grantExpiresAt)}.` : "Przydział bezterminowy (do wycofania albo wygaszenia kadencji).",
+        "Konto od razu dostanie uprawnienia tej roli. Jako nadający w historii zapiszesz się Ty.",
+      ];
+    return {
+      destructive: true,
+      title: "Zatwierdzić nadanie roli?",
+      confirmLabel: request.kind === "invitation" ? "Zatwierdź i wydaj link" : "Zatwierdź i nadaj rolę",
+      effects: [...lines, ...effect, "Wymagane świeże potwierdzenie kodem z aplikacji. Zatwierdzenie trafi do dziennika zdarzeń."],
+    };
+  }
+  return {
+    destructive: true,
+    title: row.rejectLabel === "Wycofaj wniosek" ? "Wycofać wniosek?" : "Odrzucić wniosek?",
+    confirmLabel: row.rejectLabel === "Wycofaj wniosek" ? "Wycofaj wniosek" : "Odrzuć wniosek",
+    effects: [
+      ...lines,
+      "Rola nie zostanie nadana, a zaproszenie nie powstanie. Wniosek zostaje w historii jako odrzucony.",
+      "Aby wrócić do sprawy, trzeba złożyć nowy wniosek.",
+      "Odrzucenie trafi do dziennika zdarzeń (kto, kiedy, który wniosek).",
+    ],
+  };
+}
