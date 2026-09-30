@@ -165,9 +165,11 @@ test('#130 formatSchedule: start, okno i szacowany koniec w strefie z odpowiedzi
     window: { enabled: true, timezone: 'Europe/Brussels', days: [1, 2, 3, 4, 5], startMinutes: 540, endMinutes: 1080 },
     startsAtLocal: '2026-03-27 09:00', endsAtLocal: '2026-04-06 18:00',
   });
-  assert.match(text, /Start nie wcześniej niż: 2026-03-27 09:00 \(Europe\/Brussels\)/);
+  assert.match(text, /Start nie wcześniej niż: 27\.03\.2026 09:00 \(Europe\/Brussels\)/);
+  assert.match(text, /Szacowany pierwszy przebieg: 27\.03\.2026 09:00/);
+  assert.doesNotMatch(text, /2026-0/);
   assert.match(text, /09:00–18:00/);
-  assert.match(text, /Szacowane zakończenie: do 2026-04-06 18:00/);
+  assert.match(text, /Szacowane zakończenie: do 06\.04\.2026 18:00/);
   assert.match(formatSchedule({ sendNotBefore: null, window: { enabled: false }, timezone: 'Europe/Brussels' }), /wyłączone/);
   assert.equal(formatSchedule(null), '');
   // Plan dni zwracany przez API jest liczbą.

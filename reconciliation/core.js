@@ -2,6 +2,7 @@
 // src/pg/routes/reconciliation.js). Bez sieci, bez DOM.
 
 import { MoneyError, formatEur, parseStatementAmount } from '../panel/money.js';
+import { formatDateOrTimestamp } from '../shared/zoned-time.js';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MAX_BALANCE_CENTS = 10_000_000_000; // jak MAX_BALANCE_CENTS w src/pg/routes/reconciliation.js
@@ -109,6 +110,13 @@ export function lineDirectionLabel(amountCents) {
   return Number(amountCents) >= 0 ? 'Wpływ' : 'Obciążenie';
 }
 
+// Data na ekranie w zapisie polskim („2026-09-29” → „29.09.2026”, przegląd demo 5),
+// tak jak Wpłaty, Księga i raport Komisji Rewizyjnej (#563). Identyfikator dnia
+// w API i polach formularza zostaje bez zmian.
+export function formatDay(value) {
+  return formatDateOrTimestamp(value, 'Europe/Brussels') ?? '—';
+}
+
 export function candidateLabel(candidate) {
   // #115: kandydat „household” to propozycja NOWEJ wpłaty z pozycji dla
   // gospodarstwa wskazanego komunikacją strukturalną (rejestr referencji roku).
@@ -117,11 +125,11 @@ export function candidateLabel(candidate) {
       'komunikacja strukturalna zgodna'].join(' · ');
   }
   const type = candidate.type === 'ledger_entry' ? 'Wpis księgi' : 'Wpłata';
-  const parts = [type, candidate.date, formatCents(candidate.amountCents)];
+  const parts = [type, formatDay(candidate.date), formatCents(candidate.amountCents)];
   if (candidate.structuredReferenceMatch) parts.push('komunikacja strukturalna tej rodziny');
   if (candidate.referenceMatch) parts.push('tytuł zgodny');
   if (candidate.dayDistance === 0) parts.push('ta sama data');
-  else parts.push(`${candidate.dayDistance} dni różnicy`);
+  else parts.push(candidate.dayDistance === 1 ? '1 dzień różnicy' : `${candidate.dayDistance} dni różnicy`);
   return parts.join(' · ');
 }
 
@@ -205,7 +213,7 @@ export function describeBatchFailures(failures, rows = [], messages = {}) {
   const byLine = new Map((Array.isArray(rows) ? rows : []).map((row) => [row.statementLineId, row]));
   return (Array.isArray(failures) ? failures : []).map((failure) => {
     const row = byLine.get(failure.statementLineId);
-    const where = row ? `Pozycja ${row.bookedOn}, ${formatCents(row.amountCents)}` : `Pozycja ${failure.statementLineId}`;
+    const where = row ? `Pozycja ${formatDay(row.bookedOn)}, ${formatCents(row.amountCents)}` : `Pozycja ${failure.statementLineId}`;
     return `${where}: ${messages[failure.error] ?? failure.error}`;
   });
 }

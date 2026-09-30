@@ -64,7 +64,7 @@ header { border-bottom: 2px solid #b3121b; padding-bottom: 8px; margin-bottom: 1
 h1 { font-size: 16pt; margin: 0 0 4px; }
 h2 { font-size: 12pt; margin: 20px 0 6px; break-after: avoid; }
 p { margin: 4px 0; }
-.meta { color: #555; font-size: 9.5pt; }
+.meta { color: #555; font-size: 9.5pt; overflow-wrap: anywhere; }
 .notice { border-left: 3px solid #b3121b; padding: 4px 8px; margin: 8px 0; font-size: 9.5pt; }
 table { width: 100%; border-collapse: collapse; margin: 4px 0 8px; font-size: 9.5pt; }
 th, td { border: 1px solid #c8c8c8; padding: 3px 6px; text-align: left; vertical-align: top; }
@@ -76,6 +76,7 @@ tr { break-inside: avoid; }
 .signatures { margin-top: 28px; display: flex; gap: 24px; }
 .signatures div { flex: 1; border-top: 1px solid #888; padding-top: 4px; font-size: 9pt; color: #555; }
 @media print { body { padding: 0; max-width: none; } }
+@media screen and (max-width: 640px) { table { display: block; overflow-x: auto; } }
 `;
 
 let styleHashPromise = null;
