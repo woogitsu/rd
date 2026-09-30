@@ -131,10 +131,14 @@ Elektroniczne lub zdalne głosowanie zarządu między zebraniami (np. pilna zgod
 Panel sprawdza `GET /api/access` **przed** pierwszym żądaniem listy i wybiera jeden z dwóch widoków (`meetings/core.js`, `meetingsViewMode`):
 
 - role z listy wyżej z dostępem do `GET /api/meetings` (`admin`, `board`, `audit`) → obecny widok bez zmian (lista zebrań, szczegóły, obecność, quorum, protokoły, uchwały);
-- sam `representative` (bez żadnej z tych ról) → widok „Protokoły udostępnione” z `GET /api/meetings/shared-minutes`: data, rodzaj, klasa, tytuł, wersja, data zatwierdzenia i podgląd treści tylko do odczytu (bez listy obecności, quorum i projektów uchwał). Panel nigdy nie woła `GET /api/meetings` dla tej roli, więc nie ma odmowy 403 na starcie.
+- sam `representative` (bez żadnej z tych ról) → widok „Protokoły udostępnione” z `GET /api/meetings/shared-minutes`: data, rodzaj, klasa (nazwa z `GET /api/classes`, który zwraca tylko klasy z zakresu roli; awaryjnie identyfikator), tytuł, wersja, data zatwierdzenia i podgląd treści tylko do odczytu (bez listy obecności, quorum i projektów uchwał). Panel nigdy nie woła `GET /api/meetings` dla tej roli, więc nie ma odmowy 403 na starcie. Pozycja listy ma identyfikator protokołu w polu `minutesId` (nie `id`) — przycisk „Pokaż” szuka po tym polu (`findSharedMinutes` w `meetings/core.js`).
 - inne role bez żadnej z powyższych (np. sam `principal`) → obie sekcje ukryte, tak jak dziś (403 przy próbie odczytu, bez zmiany funkcji tego PR).
 
 Widoczność `parents` w widoku przedstawiciela oznacza, że wolno przekazać treść rodzicom klasy; wydruk/PDF tego widoku korzysta ze wspólnego arkusza druku (#151). Wydruk protokołu (przycisk „Drukuj / zapisz jako PDF”) zawiera listę obecności wg funkcji (bez nazwisk i e-maili), wynik quorum, treść i dwa puste pola podpisu (prowadzący, protokolant) — układ podpisów to założenie zachowawcze do decyzji D-21.
+
+Wydruk z widoku przedstawiciela (to samo okno podglądu, przycisk „Drukuj / zapisz jako PDF”) bierze dane wyłącznie z odpowiedzi `shared-minutes`, bez dodatkowych zapytań: tytuł, rodzaj, klasa, termin, wersja, data zatwierdzenia, widoczność i treść. **Nie zawiera** listy obecności, wyniku quorum, miejsca zebrania ani pól podpisu — przedstawiciel przekazuje rodzicom treść zatwierdzonej wersji, a nie oryginał do podpisu (założenie zachowawcze do D-08 i D-21; oryginał z podpisami drukuje zarząd z pełnego widoku).
+
+Granice zakresu (testy `tests/pg-meetings.test.js`): przedstawiciel 1A widzi zebrania ogólne i zarządu oraz zebrania 1A, nie widzi 1B ani protokołów `internal`; przydział bez roku działa w każdym roku; przydział z innego roku albo bez klasy → `403 forbidden`; przedstawiciel dwóch klas (rodzeństwo) widzi zebrania obu; cofnięcie widoczności do `internal` usuwa protokół z listy od następnego żądania.
 
 ### Zebranie klasowe prowadzone przez przedstawiciela — za flagą `MEETINGS_CLASS_HOST` (#171, D-08)
 

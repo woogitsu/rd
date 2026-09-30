@@ -17,6 +17,7 @@ import {
   buildMeetingsUrl,
   buildQuorumRule,
   buildSharedMinutesUrl,
+  findSharedMinutes,
   canApproveMinutes,
   canApproveNotice,
   canChangeSchedule,
@@ -37,12 +38,14 @@ import {
   makeIdempotencyKey,
   meetingUrl,
   resolutionActions,
+  sharedMinutesClassLabel,
+  sharedMinutesPrintInfo,
   summarizeAttendance,
   validateVotes,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
-import { classChoiceOptionsHtml, fillClassSelect } from "../shared/class-choice.js";
+import { classChoiceOptionsHtml, classesOfYear, classesUrl, fillClassSelect } from "../shared/class-choice.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
@@ -289,17 +292,20 @@ const sharedWrap = byId("shared-wrap");
 const sharedMessage = byId("shared-message");
 const sharedLoading = byId("shared-loading");
 state.sharedMinutes = [];
+// Nazwy klas z GET /api/classes (serwer zwraca tylko klasy z zakresu roli);
+// błąd nie blokuje listy — kolumna pokaże wtedy identyfikator.
+state.sharedClassNames = new Map();
 
 function renderSharedList() {
   sharedBody.replaceChildren(...state.sharedMinutes.map((item) => el("tr", {},
     el("td", { className: "nowrap" }, item.scheduledAt ? formatBrussels(item.scheduledAt) : "—"),
     el("td", {}, KIND_LABELS[item.kind] ?? item.kind),
-    el("td", {}, item.classId ?? "—"),
+    el("td", {}, sharedMinutesClassLabel(item, state.sharedClassNames)),
     el("td", {}, item.title),
     el("td", { className: "num" }, String(item.version)),
     el("td", { className: "nowrap" }, item.approvedAt ? formatBrussels(item.approvedAt) : "—"),
     el("td", { className: "row-actions" }, el("button", {
-      type: "button", dataset: { shared: item.id }, "aria-label": `Pokaż protokół: ${item.title}`,
+      type: "button", dataset: { shared: item.minutesId }, "aria-label": `Pokaż protokół: ${item.title}`,
     }, "Pokaż")),
   )));
   sharedWrap.hidden = state.sharedMinutes.length === 0;
@@ -313,7 +319,12 @@ async function loadSharedList() {
   try {
     const url = buildSharedMinutesUrl(yearInput.value);
     state.schoolYearId = yearInput.value.trim();
-    const result = await api(url);
+    const [result, classes] = await Promise.all([
+      api(url),
+      api(classesUrl(state.schoolYearId)).catch(() => null),
+    ]);
+    state.sharedClassNames = new Map(classesOfYear(classes?.classes, state.schoolYearId)
+      .map((entry) => [entry.id, entry.name || entry.id]));
     state.sharedMinutes = Array.isArray(result.minutes) ? result.minutes : [];
     renderSharedList();
     rememberLocation();
@@ -329,7 +340,7 @@ async function loadSharedList() {
 sharedBody.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-shared]");
   if (!button) return;
-  const item = state.sharedMinutes.find((entry) => entry.id === button.dataset.shared);
+  const item = findSharedMinutes(state.sharedMinutes, button.dataset.shared);
   if (!item) return;
   byId("minutes-view-title").textContent = `${item.title} — wersja ${item.version}`;
   byId("minutes-view-body").textContent = item.body;
@@ -848,13 +859,37 @@ function fillPrintMinutes(item) {
     ? `Quorum: ${describeQuorumCheck(latestCheck).headline} (${formatBrussels(latestCheck.determinedAt)}).`
     : "Quorum nie zostało ustalone.";
   byId("print-minutes-body").textContent = item.body;
+  byId("print-attendance-block").hidden = false;
+  byId("print-signatures").hidden = false;
+}
+
+// #167 pkt 2: wydruk protokołu udostępnionego z widoku przedstawiciela. Tylko
+// pola z odpowiedzi GET /api/meetings/shared-minutes (bez state.detail, bez
+// nowych zapytań): bez listy obecności, quorum i pól podpisu — przedstawiciel
+// przekazuje rodzicom treść zatwierdzonej wersji, nie oryginał do podpisu.
+function fillSharedPrintMinutes(item) {
+  mountPrintMeta(byId("print-minutes-meta"), {
+    view: `Protokół zebrania — wersja ${item.version}`,
+    schoolYear: formatSchoolYear(item.schoolYearId),
+    printedBy,
+    draft: false,
+  });
+  byId("print-minutes-title").textContent = item.title;
+  byId("print-minutes-info").textContent = sharedMinutesPrintInfo(item, state.sharedClassNames);
+  byId("print-attendance-body").replaceChildren();
+  byId("print-quorum-result").textContent = "";
+  byId("print-attendance-block").hidden = true;
+  byId("print-signatures").hidden = true;
+  byId("print-minutes-body").textContent = item.body;
 }
 
 let afterPrintCleanup = null;
 byId("print-minutes-button").addEventListener("click", () => {
   const item = state.viewingMinutes;
-  if (!item || !state.detail) return;
-  fillPrintMinutes(item);
+  if (!item) return;
+  if (state.viewMode === "shared") fillSharedPrintMinutes(item);
+  else if (state.detail) fillPrintMinutes(item);
+  else return;
   document.body.dataset.printTarget = "minutes";
   afterPrintCleanup = () => { delete document.body.dataset.printTarget; };
   window.addEventListener("afterprint", afterPrintCleanup, { once: true });
