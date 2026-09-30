@@ -50,7 +50,7 @@
 // z „queued” do „sending” w tej samej transakcji.
 
 import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
-import { contentHash, preferencesToken, renderMessage } from './content.js';
+import { contentHash, preferencesToken, renderMessage, usesStructuredReference } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { brusselsDay } from '../pg/today.js';
 
@@ -197,6 +197,18 @@ async function recheckRow(tx, campaign, row, config) {
   if (!consent.rows.some((r) => r.enrolled)) return { state: 'suppressed', error: 'student_withdrawn' };
   const refusal = recipientRefusal(config, row.email);
   if (refusal) return { state: 'failed', error: refusal };
+  // #83: treść z {komunikat} — aktywna referencja rodziny w roku kampanii w chwili
+  // wysyłki (nowa po unieważnieniu zastępuje starą). Brak = pominięcie, nigdy
+  // wiadomość z pustym komunikatem.
+  if (usesStructuredReference(campaign)) {
+    const reference = await tx.query(
+      `SELECT structured_reference FROM payment_references
+        WHERE household_id = $1 AND school_year_id = $2 AND revoked_at IS NULL`,
+      [row.household_id, campaign.school_year_id],
+    );
+    if (!reference.rows[0]) return { state: 'skipped', error: 'payment_reference_missing' };
+    row.structured_reference = reference.rows[0].structured_reference;
+  }
   return null;
 }
 
@@ -379,7 +391,13 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
           continue;
         }
         const unsubscribeUrl = unsubscribeUrlFor(config, { campaignId: campaign.id, category: campaign.category, emailHash: row.email_hash });
-        const message = { ...renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: row.household_id, unsubscribeUrl }), unsubscribeUrl };
+        const message = {
+          ...renderMessage(campaign, {
+            schoolYearLabel: campaign.school_year_label, householdId: row.household_id,
+            structuredReference: row.structured_reference ?? null, unsubscribeUrl,
+          }),
+          unsubscribeUrl,
+        };
         run.planned += 1;
         remaining -= 1;
         capLeft -= 1;

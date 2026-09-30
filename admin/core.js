@@ -140,6 +140,7 @@ export const REASON_LABELS = Object.freeze({
   malformed: "błędny adres",
   mfa_reset: "reset weryfikacji dwuetapowej",
   no_consent: "brak zgody",
+  no_payment_reference: "brak aktywnej komunikacji strukturalnej rodziny",
   no_other_admin: "brak innego administratora do zatwierdzenia",
   no_password: "konto bez hasła",
   no_valid_email: "brak poprawnego adresu e-mail",

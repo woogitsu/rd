@@ -122,8 +122,9 @@ test('a line titled with a family structured reference proposes that household, 
       [['h-1', true, 2500]]);
     assert.deepEqual(householdCandidates(byLine.get(bare)).map((c) => c.householdId), ['h-2']);
     assert.deepEqual(householdCandidates(byLine.get(spaced)).map((c) => c.householdId), ['h-1']);
-    // Referencja w środku dłuższego tytułu: serwer zna tylko skrót całego tytułu — bez propozycji.
-    assert.deepEqual(householdCandidates(byLine.get(surrounded)), []);
+    // Referencja w środku dłuższego tytułu: od 0158 import zapisuje osobny skrót
+    // wyodrębnionej referencji (#83), więc rodzina jest proponowana.
+    assert.deepEqual(householdCandidates(byLine.get(surrounded)).map((c) => c.householdId), ['h-1']);
     assert.deepEqual(householdCandidates(byLine.get(other)), []);
     // Odczyt propozycji niczego nie zapisuje (ani wpłaty, ani powiązania, ani zdarzenia).
     assert.deepEqual(await counts(db), before);

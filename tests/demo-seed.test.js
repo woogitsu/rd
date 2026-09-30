@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildDemoPdf, demoInvoicePdf, demoMinutesPdf } from '../scripts/lib/demo-pdf.js';
-import { addDays, demoTimeline, parseDemoNow } from '../scripts/lib/demo-dates.js';
+import {
+  addDays, brusselsLocalIso, demoTimeline, easterSunday, isBelgianPublicHoliday, parseDemoNow,
+} from '../scripts/lib/demo-dates.js';
 import { heuristicSchoolYearId } from '../shared/school-year.js';
 import {
   apiCall, assertSafeEnvironment, DEMO_ORIGIN, DEMO_STATEMENT_DIFFERENCE_CENTS, DemoSeedRefused, runDemoSeed,
@@ -566,4 +568,105 @@ test('demo-seed: daty danych demo nie są z przyszłości, zapowiedzi są, proto
   for (const { begins_at: beginsAt } of events) {
     assert.ok(new Date(beginsAt) > t.now || t.upcoming(14) === t.endsOn, 'zapowiedź dotyczy przyszłego terminu');
   }
+});
+
+// Przegląd demo 5 (propozycja 8): kiermasz demo wypadał 11.11 (święto w Belgii).
+// Terminy zapowiedzi omijają belgijskie święta ustawowe — deterministycznie dla `--teraz`.
+test('demo-dates: zapowiedzi omijają belgijskie święta ustawowe (1.11, 11.11, 25.12, ruchome)', () => {
+  const t = demoTimeline(parseDemoNow('2026-09-30'));
+  assert.equal(t.upcoming(14), '2026-10-14');
+  assert.equal(t.upcoming(42), '2026-11-12', '11.11 → 12.11');
+  assert.equal(demoTimeline(parseDemoNow('2026-09-20')).upcoming(42), '2026-11-02', '1.11 → 2.11');
+  assert.equal(demoTimeline(parseDemoNow('2026-11-13')).upcoming(42), '2026-12-26', '25.12 → 26.12');
+  assert.equal(easterSunday(2027), '2027-03-28');
+  for (const date of ['2027-01-01', '2027-03-29', '2027-05-01', '2027-05-06', '2027-05-17', '2027-07-21', '2027-08-15', '2026-11-01', '2026-11-11', '2026-12-25']) {
+    assert.equal(isBelgianPublicHoliday(date), true, date);
+  }
+  for (const date of ['2026-11-12', '2027-03-28', '2027-05-18', '2026-12-24']) {
+    assert.equal(isBelgianPublicHoliday(date), false, date);
+  }
+  // Każdy dzień uruchomienia w roku: żadna zapowiedź nie wypada w święto.
+  for (let day = '2026-09-01'; day <= '2027-08-31'; day = addDays(day, 1)) {
+    const timeline = demoTimeline(parseDemoNow(day));
+    for (const ahead of [14, 21, 42]) {
+      const date = timeline.upcoming(ahead);
+      assert.ok(!isBelgianPublicHoliday(date) || date === timeline.endsOn, `${day} +${ahead} → ${date}`);
+      assert.ok(date >= timeline.today && date <= timeline.endsOn, `${day} +${ahead} → ${date} w roku szkolnym`);
+    }
+  }
+  assert.equal(brusselsLocalIso('2026-10-14', '18:00'), '2026-10-14T18:00:00+02:00');
+  assert.equal(brusselsLocalIso('2026-11-12', '16:00'), '2026-11-12T16:00:00+01:00');
+});
+
+// Przegląd demo 5 (propozycja 8): nowe funkcje widoczne bez zapisu na pokazie —
+// zadania wolontariuszy (#142/#579) i zatwierdzone zawiadomienie z plikiem .ics (#113/#584).
+test('demo-seed: wydarzenie klasowe 0-A — dwa zadania, jeden zapis opiekuna, na /site/ „potrzebni jeszcze: 1”', async () => {
+  const { classEvent } = seeded;
+  const representative = seeded.accounts.find((a) => a.role === 'representative');
+  const list = await apiCall(seeded.env, { path: `/api/events?schoolYearId=${seeded.schoolYearId}`, cookie: representative.cookie });
+  assert.deepEqual(list.data.events.map((event) => event.id), [classEvent.eventId], 'przedstawiciel widzi wydarzenie własnej klasy');
+  const tasks = await apiCall(seeded.env, { path: `/api/events/${classEvent.eventId}/tasks`, cookie: representative.cookie });
+  assert.equal(tasks.data.tasks.length, 2);
+  const [publicTask, internalTask] = tasks.data.tasks;
+  assert.equal(publicTask.isPublic, true);
+  assert.equal(publicTask.slotsNeeded, 2);
+  assert.equal(publicTask.confirmedCount, 1);
+  assert.equal(publicTask.signups[0].guardianId, classEvent.guardianId);
+  assert.match(publicTask.signups[0].personName, /^Opiekun [AB] Przykładowy \d+$/, 'zapis syntetycznego opiekuna');
+  assert.equal(internalTask.isPublic, false);
+  assert.equal(internalTask.signups.length, 0);
+  const pub = await apiCall(seeded.env, { path: `/api/public/events?schoolYearId=${seeded.schoolYearId}` });
+  const event = pub.data.events.find((entry) => entry.id === classEvent.eventId);
+  assert.deepEqual(event.volunteerTasks.map(({ title, stillNeeded }) => ({ title, stillNeeded })),
+    [{ title: publicTask.title, stillNeeded: 1 }], 'publicznie tylko zadanie publiczne, bez osób');
+  assert.doesNotMatch(JSON.stringify(pub.data), /Opiekun|guardianId/);
+  assert.ok(!pub.data.events.some((entry) => isBelgianPublicHoliday(entry.startsAt.slice(0, 10))), 'żadna zapowiedź w święto');
+});
+
+test('demo-seed: zebranie ogólne z zatwierdzonym zawiadomieniem — plik .ics działa, bez kampanii do wysyłki', async () => {
+  const { generalMeeting } = seeded;
+  const board = seeded.accounts.find((a) => a.role === 'board');
+  const detail = await apiCall(seeded.env, { path: `/api/meetings/${generalMeeting.meetingId}`, cookie: board.cookie });
+  assert.equal(detail.data.meeting.status, 'scheduled');
+  const [notice] = detail.data.notices;
+  assert.equal(detail.data.notices.length, 1);
+  assert.equal(notice.id, generalMeeting.noticeId);
+  assert.equal(notice.status, 'approved');
+  const response = await handlePgRequest(new Request(
+    new URL(`/api/meetings/${generalMeeting.meetingId}/notices/${generalMeeting.noticeId}/calendar`, DEMO_ORIGIN),
+    { headers: { Cookie: board.cookie } },
+  ), seeded.env);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('Content-Type'), /^text\/calendar/);
+  const ics = await response.text();
+  assert.match(ics, /BEGIN:VEVENT/);
+  assert.match(ics, /Wolne wnioski/, 'porządek obrad w pliku kalendarza');
+  const pub = await apiCall(seeded.env, { path: `/api/meetings/public-notices?schoolYearId=${seeded.schoolYearId}` });
+  assert.deepEqual(pub.data.notices.map((entry) => entry.id), [generalMeeting.noticeId]);
+  const { rows: campaigns } = await seeded.env.db.query(
+    'SELECT id, status, meeting_notice_id FROM email_campaigns WHERE school_year_id = $1', [seeded.schoolYearId],
+  );
+  assert.deepEqual(campaigns, [{ id: seeded.campaignId, status: 'draft', meeting_notice_id: null }], 'jedyna kampania to szkic z seeda');
+});
+
+test('demo-seed: szkic kampanii tylko z uwagami o {rodzina} (#83) i stałą uwagą D-16', async () => {
+  const board = seeded.accounts.find((a) => a.role === 'board');
+  const preview = await apiCall(seeded.env, { path: `/api/email/campaigns/${seeded.campaignId}/preview`, cookie: board.cookie });
+  // Demo nie ma rejestru komunikacji strukturalnej (payment_references), więc szkic zostaje przy {rodzina}
+  // — {komunikat} wykluczyłby wszystkie rodziny (no_payment_reference). #83 ostrzega o tym jawnie.
+  assert.deepEqual(preview.data.warnings, ['household_id_as_payment_reference', 'template_requires_board_decision_d16']);
+});
+
+// #146/#586: demo ma jednego administratora, więc nadanie ról chronionych (zarząd ×2,
+// skarbnik) idzie bezpośrednio z wyjątkiem czterech oczu zapisanym w dzienniku.
+test('demo-seed: jeden administrator — role chronione nadane z wyjątkiem czterech oczu w dzienniku', async () => {
+  assert.equal(seeded.accounts.filter((a) => a.role === 'admin').length, 1);
+  const admin = seeded.accounts.find((a) => a.role === 'admin');
+  const { rows } = await seeded.env.db.query(
+    `SELECT actor_id, (metadata_json::jsonb)->>'reason' AS reason FROM audit_events WHERE action = 'role_grant.four_eyes_waived'`,
+  );
+  assert.equal(rows.length, 3, 'zarząd ×2 i skarbnik');
+  for (const row of rows) assert.deepEqual(row, { actor_id: admin.userId, reason: 'no_other_admin' });
+  const { rows: requests } = await seeded.env.db.query('SELECT count(*)::int AS n FROM role_grant_requests');
+  assert.equal(requests[0].n, 0, 'brak oczekujących wniosków o rolę');
 });

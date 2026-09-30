@@ -27,6 +27,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`bank_reconciliations`|`notes`|Osoba trzecia|direct|wolny tekst|notatka uzgodnienia banku|document_financial|tak|tak|
 |`bank_statement_imports`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_statement_lines`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`bank_statement_lines`|`structured_ref_hash`|Opiekun|pseudonymous|identyfikacja|solony skrót komunikacji strukturalnej OGM-VCS wyodrębnionej z tytułu przelewu — propozycja gospodarstwa w uzgodnieniu (#83)|payment_reference|nie|nie|
 |`data_access_log`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`data_access_log`|`household_id`|Opiekun|pseudonymous|identyfikacja|powiązanie wpisu z gospodarstwem|nieustalona (D-04)|nie|nie|
 |`data_subject_requests`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -218,7 +219,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **205**, w tym wolnego tekstu: **57** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **206**, w tym wolnego tekstu: **57** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -375,6 +376,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `line_no` | none | — | tak |
 | `reconciliation_id` | none | — | tak |
 | `reference_hash` | none | — | tak |
+| `structured_ref_hash` | pseudonymous | guardian | nie |
 
 ### `classes`
 
