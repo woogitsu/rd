@@ -7,6 +7,11 @@
 
 import { formatSchoolYear } from '../../shared/school-year.js';
 import { formatEur as formatEurShared } from '../../panel/money.js';
+import { shortId } from '../../shared/short-id.js';
+import { formatDateOrTimestamp } from '../../shared/zoned-time.js';
+
+// Strefa czasu raportu — ta sama co w panelach (Zebrania, Wydarzenia, Konta).
+export const REPORT_TIME_ZONE = 'Europe/Brussels';
 
 const CHECK_LABEL = {
   year_end_balance: 'Saldo księgi na ostatni dzień roku (wpisy do tej daty) a bilans zamknięcia',
@@ -22,7 +27,7 @@ function checkDetails(check) {
     case 'year_end_balance':
       return `bilans zamknięcia ${m(check.closingBalanceCents)}; saldo na koniec roku ${m(check.balanceAtYearEndCents)}; różnica ${m(check.differenceCents)}`;
     case 'dates_within_school_year': {
-      const listed = (check.items ?? []).map((item) => `${escapeHtml(item.kind === 'payment_entry' ? 'wpłata' : 'wpis')} ${escapeHtml(item.id)} (${escapeHtml(item.date)})`);
+      const listed = (check.items ?? []).map((item) => `${escapeHtml(item.kind === 'payment_entry' ? 'wpłata' : 'wpis')} ${idHtml(item.id)} (${escapeHtml(formatDate(item.date))})`);
       return `wpisy księgi poza rokiem: ${escapeHtml(check.ledgerEntryCount)}; wpłaty poza rokiem: ${escapeHtml(check.paymentCount)}${listed.length ? `<br>${listed.join('<br>')}` : ''}`;
     }
     case 'payments_in_ledger':
@@ -31,7 +36,7 @@ function checkDetails(check) {
       return `niezgodne kwotowo: ${escapeHtml(check.amountMismatchCount)}; podwójne ujęcie: ${escapeHtml(check.doubleCountedCount)}; w tym w zatwierdzonych uzgodnieniach (do wyjaśnienia, bez ścieżki poprawy): ${escapeHtml(check.amountMismatchConfirmedCount)}; dopasowania zbiorcze niezgodne: ${escapeHtml(check.groupAmountMismatchCount ?? 0)} (w zatwierdzonych: ${escapeHtml(check.groupAmountMismatchConfirmedCount ?? 0)})`;
     case 'latest_confirmed_reconciliation':
       return check.statementDate
-        ? `wyciąg z ${escapeHtml(check.statementDate)}; różnica ${m(check.differenceCents)}; przelewy w księdze po dacie wyciągu: ${escapeHtml(check.bankEntriesAfterStatement)}`
+        ? `wyciąg z ${escapeHtml(formatDate(check.statementDate))}; różnica ${m(check.differenceCents)}; przelewy w księdze po dacie wyciągu: ${escapeHtml(check.bankEntriesAfterStatement)}`
         : 'brak zatwierdzonego uzgodnienia w tym roku';
     default:
       return '';
@@ -89,14 +94,20 @@ export function formatEur(cents) {
   return formatEurShared(cents, { style: 'print' });
 }
 
-// "2026-10-20" -> "20.10.2026"; znacznik czasu -> "20.10.2026 14:05 UTC".
+// Przegląd demo 4: data jak w kolumnach paneli („2026-10-20”, Księga/Wpłaty/Uzgodnienia),
+// znacznik czasu w strefie Europe/Brussels („2026-10-20 16:05”), nie w UTC. Wspólne
+// dla raportu KR, sprawozdania rocznego i wydruku preliminarza. JSON raportu (asOf,
+// createdAt) zostaje w ISO UTC — zmienia się wyłącznie prezentacja HTML.
 export function formatDate(value) {
-  if (!value) return '';
-  const text = String(value);
-  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
-  if (!match) return text;
-  const date = `${match[3]}.${match[2]}.${match[1]}`;
-  return match[4] ? `${date} ${match[4]}:${match[5]} UTC` : date;
+  return formatDateOrTimestamp(value, REPORT_TIME_ZONE) ?? '';
+}
+
+// Identyfikator (UUID wpisu, dokumentu, konta) w tabeli: skrót jak w panelach
+// (shared/short-id.js, np. „Wpis księgi d2721f76…” w Dokumentach), pełna wartość
+// w podpowiedzi (title) — na wydruku zostaje sam skrót.
+export function idHtml(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  return `<span title="${escapeHtml(value)}">${escapeHtml(shortId(value))}</span>`;
 }
 
 const e = escapeHtml;
@@ -160,18 +171,18 @@ export function renderAuditReportHtml(report) {
   ] : [];
   const splitRows = (reviews?.possibleSplits ?? []).map((item) => row([
     [e(item.category)], [`${e(formatDate(item.fromDate))}–${e(formatDate(item.toDate))}`], [e(item.entryCount), 'num'],
-    [money(item.netCents), 'num'], [item.ledgerEntryIds.map(e).join('<br>')],
+    [money(item.netCents), 'num'], [item.ledgerEntryIds.map(idHtml).join('<br>')],
   ]));
 
   const correctionRows = corrections.map((item) => row([
-    [e(formatDate(item.createdAt))], [e(item.ledgerEntryId)], [e(formatDate(item.entryOccurredOn))],
+    [e(formatDate(item.createdAt))], [idHtml(item.ledgerEntryId)], [e(formatDate(item.entryOccurredOn))],
     [e(DIRECTION[item.direction] ?? item.direction)], [money(item.amountCents), 'num'], [e(item.reason)],
-    [e(item.createdBy)],
+    [idHtml(item.createdBy)],
   ]));
 
   // #144: raporty sprzed tej zmiany (np. z archiwum) nie mają sekcji przeksięgowań.
   const reclassificationRows = (report.reclassifications ?? []).map((item) => row([
-    [e(formatDate(item.createdAt))], [`${e(item.replacesEntryId)}<br>&rarr; ${e(item.id)}`],
+    [e(formatDate(item.createdAt))], [`${idHtml(item.replacesEntryId)}<br>&rarr; ${idHtml(item.id)}`],
     [`${e(item.oldCategory)} &rarr; ${e(item.newCategory)}`],
     [`${e(formatDate(item.oldOccurredOn))} &rarr; ${e(formatDate(item.occurredOn))}`],
     [money(item.stornoCents), 'num'], [money(item.amountCents), 'num'], [e(item.reason)],
@@ -181,7 +192,7 @@ export function renderAuditReportHtml(report) {
   ]));
 
   const adjustmentRows = openingAdjustments.map((item) => row([
-    [e(formatDate(item.createdAt))], [money(item.amountCents), 'num'], [e(item.reason)], [e(item.createdBy)],
+    [e(formatDate(item.createdAt))], [money(item.amountCents), 'num'], [e(item.reason)], [idHtml(item.createdBy)],
   ]));
 
   const reconciliationRows = reconciliations.items.map((item) => row([
@@ -189,16 +200,16 @@ export function renderAuditReportHtml(report) {
     [money(item.statementBalanceCents), 'num'], [money(item.ledgerBalanceCents), 'num'],
     [item.differenceCents === 0 ? money(0) : `<span class="flag">${money(item.differenceCents)}</span>`, 'num'],
     [e(item.unmatchedLineCount), 'num'],
-    [e(item.confirmedBy ?? '—')], [e(item.confirmationNote ?? '')],
+    [idHtml(item.confirmedBy)], [e(item.confirmationNote ?? '')],
   ]));
 
   // #87: raporty zbudowane przed tą zmianą (np. z archiwum) nie mają sekcji dowodów.
   const evidence = report.evidence ?? { expensesWithoutEvidence: { count: 0, netCents: 0, items: [] }, possibleDuplicateEvidence: [] };
   const missingEvidenceRows = evidence.expensesWithoutEvidence.items.map((item) => row([
-    [e(formatDate(item.occurredOn))], [e(item.category)], [e(item.description)], [money(item.netAmountCents), 'num'], [e(item.id)],
+    [e(formatDate(item.occurredOn))], [e(item.category)], [e(item.description)], [money(item.netAmountCents), 'num'], [idHtml(item.id)],
   ]));
   const duplicateEvidenceRows = evidence.possibleDuplicateEvidence.map((item) => row([
-    [item.documentIds.map(e).join('<br>')], [item.ledgerEntryIds.map(e).join('<br>')],
+    [item.documentIds.map(idHtml).join('<br>')], [item.ledgerEntryIds.map(idHtml).join('<br>')],
   ]));
 
   const checkRows = (report.checks.items ?? []).map((check) => row([
@@ -220,7 +231,7 @@ export function renderAuditReportHtml(report) {
 <header>
 <h1>Raport dla Komisji Rewizyjnej</h1>
 <p>Rada Rodziców — rok szkolny ${e(formatSchoolYear(schoolYear.label))} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
-<p class="meta">Stan na: ${e(formatDate(report.asOf ?? report.generatedAt))} (jedna migawka bazy danych — wszystkie liczby z tej samej chwili). Kwoty w EUR. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
+<p class="meta">Stan na: ${e(formatDate(report.asOf ?? report.generatedAt))} (czas Europe/Brussels; jedna migawka bazy danych — wszystkie liczby z tej samej chwili). Kwoty w EUR. Identyfikatory wpisów, dokumentów i kont są skrócone do 8 znaków (jak w panelach); pełne są w wersji JSON raportu. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
 <p class="notice">Zestawienie z księgi w systemie. Nie jest zatwierdzonym sprawozdaniem finansowym; wymaga sprawdzenia z dokumentami źródłowymi.</p>
 </header>
 

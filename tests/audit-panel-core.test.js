@@ -10,9 +10,11 @@ import {
   describeApiError,
   formatDate,
   hasReportAccess,
+  idCell,
   isValidId,
   reportUrl,
 } from '../audit/core.js';
+import { formatDate as formatReportDate, renderAuditReportHtml } from '../src/pg/audit-report.js';
 
 const NBSP = ' ';
 
@@ -49,10 +51,22 @@ test('describeApiError: MFA, brak uprawnień, brak roku', () => {
   assert.equal(describeApiError(500, 'internal_error'), null);
 });
 
-test('formatDate: data i znacznik czasu', () => {
-  assert.equal(formatDate('2026-10-20'), '20.10.2026');
-  assert.equal(formatDate('2026-10-20T14:05:00.000Z'), '20.10.2026 14:05 UTC');
+// Przegląd demo 4: data jak w kolumnach paneli (RRRR-MM-DD), czas w strefie
+// Europe/Brussels (jak Zebrania/Wydarzenia/Konta), nigdy „UTC”; panel i HTML serwera
+// używają tej samej funkcji (shared/zoned-time.js#formatDateOrTimestamp).
+test('formatDate: data jak w panelach, znacznik czasu w strefie Europe/Brussels', () => {
+  assert.equal(formatDate('2026-10-20'), '2026-10-20');
+  assert.equal(formatDate('2026-10-20T14:05:00.000Z'), '2026-10-20 16:05', 'czas letni: UTC+2');
+  assert.equal(formatDate('2026-11-03T10:00:00.000Z'), '2026-11-03 11:00', 'czas zimowy: UTC+1');
+  assert.equal(formatDate('2026-10-25T00:30:00.000Z'), '2026-10-25 02:30', 'noc zmiany czasu');
+  assert.equal(formatDate('2026-08-31T22:30:00.000Z'), '2026-09-01 00:30', 'data lokalna, nie UTC');
   assert.equal(formatDate(null), '—');
+  assert.equal(formatDate('bez daty'), 'bez daty');
+  for (const value of ['2026-10-20', '2026-10-20T14:05:00.000Z', new Date('2026-10-20T14:05:00.000Z')]) {
+    assert.equal(formatReportDate(value), formatDate(value), 'HTML serwera i panel formatują tak samo');
+  }
+  assert.equal(formatReportDate(null), '');
+  assert.doesNotMatch(formatDate('2026-10-20T14:05:00.000Z'), /UTC/);
 });
 
 const REPORT = {
@@ -99,4 +113,48 @@ test('ekran nie ma akcji zmieniających stan: tylko GET, brak POST/PATCH/DELETE 
   const main = readFileSync(new URL('../audit/main.js', import.meta.url), 'utf8');
   assert.doesNotMatch(main, /method:\s*["'](POST|PUT|PATCH|DELETE)["']/);
   assert.doesNotMatch(main, /<button[^>]*type=["']submit["'][^>]*>\s*(Zatwierdź|Usuń|Zapisz)/);
+});
+
+test('idCell: skrót identyfikatora w treści, pełna wartość w podpowiedzi', () => {
+  const id = 'd2721f76-1111-4222-8333-444455556666';
+  assert.deepEqual(idCell(id), { text: 'd2721f76…', title: id });
+  assert.equal(idCell(null), '—');
+  const sections = buildSections({
+    ...REPORT,
+    corrections: [{ ...REPORT.corrections[0], ledgerEntryId: id }],
+    evidence: { expensesWithoutEvidence: { count: 1, netCents: 500, items: [{ occurredOn: '2026-11-02', category: 'X', description: 'Y', netAmountCents: 500, id }] }, possibleDuplicateEvidence: [] },
+  });
+  assert.deepEqual(sections.find((s) => s.id === 'corrections').rows[0][1], { text: 'd2721f76…', title: id });
+  assert.equal(sections.find((s) => s.id === 'corrections').rows[0][0], '2026-11-03 11:00');
+  assert.deepEqual(sections.find((s) => s.id === 'evidence').rows[0][4], { text: 'd2721f76…', title: id });
+  const main = readFileSync(new URL('../audit/main.js', import.meta.url), 'utf8');
+  assert.match(main, /td\.title = value\.title/, 'main.js wstawia pełny identyfikator jako podpowiedź');
+});
+
+test('raport HTML KR: „Stan na” w czasie brukselskim, bez „UTC”, skrócone UUID w kolumnie „Wpis księgi”', () => {
+  const entry = 'aaaaaaaa-1111-4222-8333-444455556666';
+  const doc = 'bbbbbbbb-1111-4222-8333-444455556666';
+  const user = 'cccccccc-1111-4222-8333-444455556666';
+  const html = renderAuditReportHtml({
+    ...REPORT,
+    asOf: '2026-10-20T14:05:00.000Z',
+    schoolYear: { id: '2026-2027', label: '2026-2027', startsOn: '2026-09-01', endsOn: '2027-08-31' },
+    openingAdjustments: [{ createdAt: '2026-09-02T08:00:00.000Z', amountCents: 100, reason: 'Korekta', createdBy: user }],
+    corrections: [{ ...REPORT.corrections[0], ledgerEntryId: entry, createdBy: user }],
+    reconciliations: { ...REPORT.reconciliations, items: [{ ...REPORT.reconciliations.items[0], confirmedBy: user }] },
+    evidence: {
+      expensesWithoutEvidence: { count: 1, netCents: 500, items: [{ occurredOn: '2026-11-02', category: 'X', description: 'Y', netAmountCents: 500, id: entry }] },
+      possibleDuplicateEvidence: [{ documentIds: [doc], ledgerEntryIds: [entry] }],
+    },
+  });
+  assert.match(html, /Stan na: 2026-10-20 16:05 \(czas Europe\/Brussels;/);
+  assert.doesNotMatch(html, /UTC/);
+  assert.match(html, /\(2026-09-01–2027-08-31\)/);
+  assert.match(html, /<td>2026-11-03 11:00<\/td>/, 'kolumna „Zapisano” w czasie brukselskim');
+  // Pełne UUID wyłącznie w atrybucie title, w treści komórki skrót.
+  const visible = html.replace(/ title="[^"]*"/g, '');
+  for (const id of [entry, doc, user]) {
+    assert.doesNotMatch(visible, new RegExp(id), `pełny identyfikator ${id.slice(0, 8)} nie jest widoczny w treści`);
+    assert.match(html, new RegExp(`<span title="${id}">${id.slice(0, 8)}…</span>`));
+  }
 });

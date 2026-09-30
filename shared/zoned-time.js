@@ -47,3 +47,24 @@ export function isoToLocalInput(iso, timeZone) {
   if (!iso) return '';
   return localLabel(new Date(iso), timeZone).replace(' ', 'T');
 }
+
+// Data lub znacznik czasu do raportów i tabel (przegląd demo 4, raport Komisji
+// Rewizyjnej): sama data „2026-10-20” zostaje bez zmian — tak jak w kolumnach dat
+// paneli Księga, Wpłaty i Uzgodnienia; znacznik czasu (ISO UTC albo Date) →
+// „2026-10-20 16:05” w strefie `timeZone` (localLabel), nigdy w UTC.
+// Pusta wartość → null (wywołujący wybiera „—” albo pusty tekst); tekst w innym
+// kształcie wraca bez zmian.
+const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+export function formatDateOrTimestamp(value, timeZone) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : localLabel(value, timeZone);
+  const text = String(value).trim();
+  if (ISO_DATE_ONLY.test(text)) return text;
+  if (ISO_TIMESTAMP.test(text)) {
+    const instant = new Date(text);
+    if (!Number.isNaN(instant.getTime())) return localLabel(instant, timeZone);
+  }
+  return text;
+}
