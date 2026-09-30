@@ -1,6 +1,6 @@
 # Aktualności i galeria po weryfikacji praw (#14)
 
-Status: API na PostgreSQL i panel `news/` — prototyp dla nowego stosu Node.js + PostgreSQL (migracja `0018_news.sql`, moduł `src/pg/news.js`, trasy `src/pg/routes/news.js`). Działa wyłącznie na danych syntetycznych. **Nie jest gotowy do publikowania zdjęć ani treści dotyczących rodzin** — zasady publikacji zdjęć (D-18) i uprawnienia (D-08) nie są jeszcze zatwierdzone.
+Status: API na PostgreSQL i panel `news/` — prototyp dla nowego stosu Node.js + PostgreSQL (migracja `0018_news.sql`, moduł `src/pg/news.js`, trasy `src/pg/routes/news.js`). Działa wyłącznie na danych syntetycznych, niewdrożony na Railway. **Nie jest gotowy do publikowania zdjęć ani treści dotyczących rodzin** — zasady publikacji zdjęć (D-18) i uprawnienia (D-08) nie są jeszcze zatwierdzone.
 
 ## Zasady
 

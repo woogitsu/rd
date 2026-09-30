@@ -1,6 +1,8 @@
 # Zamknięcie roku i przekazanie dokumentacji nowej Radzie
 
-Zakres: issue #15. Migracja `postgres/migrations/0017_year_close.sql`, trasy `src/pg/routes/year-close.js`, testy `tests/pg-year-close.test.js` (współbieżność na prawdziwym PostgreSQL: `tests/pg-year-close-race.test.js`). Prototyp na PostgreSQL (Railway), testowany wyłącznie na danych syntetycznych. **Nie jest gotowy do pracy na danych rodzin** — wymaga decyzji wymienionych na końcu.
+Status (30.09.2026, #175): model w bazie (`postgres/migrations/0017_year_close.sql` i kolejne), API na PostgreSQL (`src/pg/routes/year-close.js`) i panel (`year-close/`). Staging: nie wykonano; produkcja: nie (D-20). Prototyp na danych syntetycznych — **nie jest gotowy do pracy na danych rodzin**.
+
+Zakres: issue #15. Migracja `postgres/migrations/0017_year_close.sql`, trasy `src/pg/routes/year-close.js`, testy `tests/pg-year-close.test.js` (współbieżność na prawdziwym PostgreSQL: `tests/pg-year-close-race.test.js`). Prototyp na PostgreSQL (docelowy stos Railway, niewdrożony), testowany wyłącznie na danych syntetycznych. **Nie jest gotowy do pracy na danych rodzin** — wymaga decyzji wymienionych na końcu.
 
 ## Stany roku
 

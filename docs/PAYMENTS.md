@@ -1,5 +1,7 @@
 # Dobrowolne wpłaty i korekty
 
+Status (30.09.2026, #175): model w bazie (PostgreSQL: `postgres/migrations/0002_payments.sql` i kolejne; pierwotny model D1 — `migrations/0005_payment_corrections.sql` i `migrations/0006_payment_assignments.sql` — opisany niżej), API na PostgreSQL (`src/pg/routes/payments.js`, #37) i panel (`panel/`). Staging: nie wykonano; produkcja: nie (D-20). Prototyp na danych syntetycznych — **nie jest gotowy do pracy na danych rodzin** (D-01–D-06, D-11–D-14).
+
 Wpłata jest zdarzeniem finansowym, a nie informacją o zadłużeniu rodziny. System przechowuje wyłącznie faktycznie otrzymane kwoty w centach EUR. Nie wylicza należności, salda „do zapłaty” ani listy dłużników.
 
 ## Niezmienność zapisów
@@ -28,9 +30,9 @@ Wpłata i odpowiadający jej wpis `payment.created` są zapisywane atomowo. Tak 
 
 `POST /api/payments/{id}/assignment` przypisuje wyłącznie wpłatę ze statusem `unmatched` do istniejącego gospodarstwa. Migracja `0006_payment_assignments.sql` wymaga wcześniejszego, niezmiennego zdarzenia przypisania i uniemożliwia późniejszą zmianę gospodarstwa. Operacja wymaga MFA, właściwej roli i roku, ochrony same-origin oraz klucza idempotencji. Zdarzenie i wpis `payment.assigned` powstają atomowo; dziennik nie kopiuje identyfikatora gospodarstwa.
 
-## PostgreSQL (Railway) — stan prototypu (issue #37)
+## PostgreSQL (docelowy stos Railway, niewdrożony) — stan prototypu (issue #37)
 
-`src/pg/routes/payments.js` przenosi te same cztery trasy (`GET /api/payments`, `POST /api/payments`, `POST /api/payments/{id}/corrections`, `POST /api/payments/{id}/assignment`) do routera PostgreSQL (`src/pg/app.js`). Kontrakt HTTP panelu pozostaje bez zmian: te same walidacje, kształty JSON, kody statusu i błędów, nagłówek `Idempotency-Replayed` oraz kursor stronicowania. Test `tests/pg-payments-api.test.js` wykonuje jeden scenariusz na starym Workerze/D1 i na PostgreSQL i porównuje odpowiedzi krok po kroku. Kursor `nextCursor` wiąże rok szkolny i filtr zapytania, które go wydało (#192): użycie go z innym `schoolYearId` lub innym filtrem (`status`) daje `400 invalid_cursor`, zamiast doklejać wiersze innego zapytania. Panel dociąga kolejne strony wyłącznie z zapamiętanego zapytania, a zmienione, niezatwierdzone pola filtra blokują „Wczytaj następne”.
+`src/pg/routes/payments.js` przenosi cztery pierwotne trasy Workera (`GET /api/payments`, `POST /api/payments`, `POST /api/payments/{id}/corrections`, `POST /api/payments/{id}/assignment`) do routera PostgreSQL (`src/pg/app.js`); trasy dodane później (zwrot, ponowne przypisanie, podział, eksport CSV) opisują sekcje niżej. Kontrakt HTTP panelu pozostaje bez zmian: te same walidacje, kształty JSON, kody statusu i błędów, nagłówek `Idempotency-Replayed` oraz kursor stronicowania. Test `tests/pg-payments-api.test.js` wykonuje jeden scenariusz na starym Workerze/D1 i na PostgreSQL i porównuje odpowiedzi krok po kroku. Kursor `nextCursor` wiąże rok szkolny i filtr zapytania, które go wydało (#192): użycie go z innym `schoolYearId` lub innym filtrem (`status`) daje `400 invalid_cursor`, zamiast doklejać wiersze innego zapytania. Panel dociąga kolejne strony wyłącznie z zapamiętanego zapytania, a zmienione, niezatwierdzone pola filtra blokują „Wczytaj następne”.
 
 - **Transakcje.** Zapis wpłaty, korekty lub przypisania oraz odpowiadające mu zdarzenie `audit_events` powstają w jednej transakcji (`insertAuditEvent`). Błąd zapisu audytu wycofuje całą operację.
 - **Idempotencja.** Ten sam klucz i ta sama treść (oraz ta sama osoba) zwracają pierwotny wynik z kodem 200; ten sam klucz z inną treścią lub od innej osoby kończy się `409 idempotency_conflict`. Wyścig dwóch identycznych żądań (podwójne kliknięcie) kończy się jednym wierszem — drugie żądanie po naruszeniu unikalności odtwarza zapis.
@@ -84,3 +86,11 @@ Jeden przelew może dotyczyć kilku gospodarstw: przelew zbiorczy kilku rodzin, 
 - panel (UI);
 - wpłata gotówki zebranej przez przedstawiciela (D-12, D-13);
 - pokazanie części w raporcie KR (sumy raportu się nie zmieniają, bo liczy on wpłaty, nie gospodarstwa).
+
+## Pozostałe trasy związane z wpłatami (opis w innych dokumentach)
+
+Stan w kodzie 30.09.2026 (trasy w `tests/helpers/route-matrix.js`, role i odmowy w [AUTHORIZATION.md](AUTHORIZATION.md)):
+
+- `GET /api/payments/export.csv?schoolYearId=` (#141) — eksport CSV wpisów wpłat i korekt, bez imion i nazwisk i bez statusu „dłużnik” (`src/pg/routes/payments.js`).
+- `GET/POST /api/payment-references`, `POST /api/payment-references/{id}/revoke` (#83) — belgijska komunikacja strukturalna OGM-VCS na gospodarstwo i rok (`src/pg/routes/payment-references.js`, migracja `0085_payment_references.sql`).
+- `GET/POST /api/payment-instructions` (#92) — zatwierdzone dane do wpłaty (IBAN, BIC, odbiorca) dla kodu QR EPC na kartkach (`src/pg/routes/payment-instructions.js`, migracja `0086_payment_instructions.sql`). Rachunek i kwota czekają na D-13 i D-14; bez zatwierdzonej wersji kartki są szkicem bez kodu QR.
