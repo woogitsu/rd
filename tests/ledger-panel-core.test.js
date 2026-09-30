@@ -228,3 +228,18 @@ test("filtry księgi trafiają do adresu, walidacja odrzuca złe wartości, zmia
   assert.equal(ledgerFilterChanged(query, { ...filters, dateFrom: "2026-09-02" }), true);
   assert.equal(new URL(buildNextLedgerUrl(query, "kursor"), "https://rd.example").searchParams.get("category"), "cat-fees");
 });
+
+// #144: łańcuch przeksięgowań w wierszu księgi (storno + wpis zastępczy).
+test("#144: wiersz opisuje, co wpis zastępuje i czym został zastąpiony", async () => {
+  const { normalizeEntry, replacementChainLabels } = await import("../ledger/core.js");
+  const loaded = [
+    { id: "e-old", occurredOn: "2026-10-01", categoryName: "Składki A", replacedByEntryId: "e-mid" },
+    { id: "e-mid", occurredOn: "2026-10-02", categoryName: "Składki B", replacesEntryId: "e-old", replacedByEntryId: "e-new" },
+  ];
+  assert.deepEqual(replacementChainLabels(normalizeEntry(loaded[1]), loaded),
+    ["Zastępuje wpis z 2026-10-01 (Składki A)", "Zastąpiony przez wpis e-new"]);
+  assert.deepEqual(replacementChainLabels(normalizeEntry(loaded[0]), loaded), ["Zastąpiony przez wpis z 2026-10-02 (Składki B)"]);
+  assert.deepEqual(replacementChainLabels(normalizeEntry({ id: "e-plain" }), loaded), []);
+  // Niepoprawny identyfikator z API nie trafia do opisu.
+  assert.equal(normalizeEntry({ id: "x", replacesEntryId: "zły id" }).replacesEntryId, "");
+});

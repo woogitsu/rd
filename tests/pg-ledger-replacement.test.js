@@ -217,3 +217,86 @@ test('przedstawiciel i audit dostają 403; brak MFA — 403', async () => {
     }
   } finally { await db.close(); }
 });
+
+// #144: łańcuch przeksięgowań w API i eksporcie („zastępuje” / „zastąpiony przez”).
+test('lista i CSV pokazują łańcuch przeksięgowań w obu kierunkach; korekta częściowa, podwójne kliknięcie, rok zamknięty, role', async () => {
+  const { db, cookie, fetch } = await setup();
+  try {
+    const first = await createEntry(fetch, cookie, { key: 'k-led-144-chain', amountCents: 10000 });
+    const plain = await createEntry(fetch, cookie, { key: 'k-led-144-plain', amountCents: 2500, occurredOn: '2026-10-02' });
+    const corr = await readJson(await fetch(req(`/api/ledger/${first}/corrections`, {
+      cookie, key: 'k-corr-144-chain', body: { amountCents: 4000, reason: 'Częściowa korekta' },
+    })));
+    assert.equal(corr.status, 201);
+    const body = { schoolYearId: YEAR, direction: 'income', amountCents: 6000, categoryId: 'cat-in-b', description: 'Zastępczy 1', occurredOn: '2026-10-01', method: 'bank', reason: 'Zła kategoria' };
+    // Podwójne kliknięcie: ten sam klucz — jeden wpis zastępczy, jeden „zastąpiony przez”.
+    const [a, b] = [
+      await readJson(await fetch(req(`/api/ledger/${first}/replacement`, { cookie, key: 'k-repl-144-chain1', body }))),
+      await readJson(await fetch(req(`/api/ledger/${first}/replacement`, { cookie, key: 'k-repl-144-chain1', body }))),
+    ];
+    assert.deepEqual([a.status, b.status], [201, 200]);
+    assert.equal(b.body.entry.id, a.body.entry.id);
+    const second = a.body.entry.id;
+    const next = await readJson(await fetch(req(`/api/ledger/${second}/replacement`, {
+      cookie, key: 'k-repl-144-chain2',
+      body: { ...body, description: 'Zastępczy 2', method: 'cash', reason: 'Zła metoda' },
+    })));
+    assert.equal(next.status, 201, JSON.stringify(next.body));
+    const third = next.body.entry.id;
+
+    const list = await readJson(await fetch(req(`/api/ledger?schoolYearId=${YEAR}`, { cookie })));
+    assert.equal(list.status, 200);
+    const byId = new Map(list.body.entries.map((e) => [e.id, e]));
+    assert.deepEqual([byId.get(first).replacesEntryId, byId.get(first).replacedByEntryId], [undefined, second]);
+    assert.deepEqual([byId.get(second).replacesEntryId, byId.get(second).replacedByEntryId], [first, third]);
+    assert.deepEqual([byId.get(third).replacesEntryId, byId.get(third).replacedByEntryId], [second, undefined]);
+    // Zwykły wpis zachowuje dawny kształt odpowiedzi (bez pól łańcucha).
+    assert.equal(Object.hasOwn(byId.get(plain), 'replacesEntryId'), false);
+    assert.equal(Object.hasOwn(byId.get(plain), 'replacedByEntryId'), false);
+    // Historia pełna: netto 0 dla wpisów zastąpionych, storno tylko pozostałej kwoty.
+    assert.deepEqual([first, second, third].map((id) => byId.get(id).netAmountCents), [0, 0, 6000]);
+
+    // Sesje ról tylko do odczytu przed zamknięciem roku (nadanie roli w zamkniętym roku jest blokowane).
+    const repCookie = await seedUserSession(db, { userId: 'u-rep-144c', roles: [{ role: 'representative', schoolYearId: YEAR, classId: 'kl-x' }] });
+    const auditCookie = await seedUserSession(db, { userId: 'u-audit-144c', mfa: true, roles: [{ role: 'audit', schoolYearId: YEAR }] });
+    // Rok zamknięty: odczyt łańcucha i eksport dalej działają (tylko zapis jest blokowany).
+    await seedSchoolYear(db, 'y-144-next', { startsOn: '2027-09-01', endsOn: '2028-08-31' });
+    await db.exec(`
+      SET session_replication_role = replica;
+      INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
+        closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
+        carried_opening_balance_id, expired_grant_count)
+      VALUES ('cl-144-chain', '${YEAR}', 'y-144-next', 'closed', 'u-t', 'u-closer-x', now(), 0, 0, 0, 0, 'ob-x', 0);
+      SET session_replication_role = origin;
+    `);
+    const closed = await readJson(await fetch(req(`/api/ledger/${third}/replacement`, {
+      cookie, key: 'k-repl-144-chain3', body: { ...body, description: 'Po zamknięciu' },
+    })));
+    assert.deepEqual([closed.status, closed.body.error], [409, 'school_year_closed']);
+    const csv = await fetch(req(`/api/ledger/export.csv?schoolYearId=${YEAR}`, { cookie }));
+    assert.equal(csv.status, 200);
+    const lines = (await csv.text()).replace(/^\uFEFF/, '').split('\r\n').filter(Boolean);
+    const header = lines[0].split(';');
+    const replacesAt = header.indexOf('zastepuje_wpis');
+    const replacedByAt = header.indexOf('zastapiony_przez');
+    // „zastapiony_przez” na końcu — kolumny kwot istniejących arkuszy się nie przesuwają.
+    assert.equal(replacedByAt, header.length - 1);
+    assert.deepEqual(header.slice(replacesAt, replacesAt + 2), ['zastepuje_wpis', 'kwota_eur']);
+    const rows = new Map(lines.slice(1).map((line) => line.split(';')).map((cells) => [cells[0], cells]));
+    assert.deepEqual([first, second, third, plain].map((id) => [rows.get(id)[replacesAt], rows.get(id)[replacedByAt]]),
+      [['', second], [first, third], [second, ''], ['', '']]);
+
+    // Przedstawiciel klasy i Komisja Rewizyjna (audit) nie czytają księgi wprost —
+    // KR widzi przeksięgowania w raporcie (sekcja „Przeksięgowania”).
+    for (const other of [repCookie, auditCookie]) {
+      const denied = await readJson(await fetch(req(`/api/ledger?schoolYearId=${YEAR}`, { cookie: other })));
+      assert.deepEqual([denied.status, denied.body], [403, { error: 'forbidden' }]);
+      const deniedCsv = await fetch(req(`/api/ledger/export.csv?schoolYearId=${YEAR}`, { cookie: other }));
+      assert.equal(deniedCsv.status, 403);
+    }
+    const report = await readJson(await fetch(req(`/api/reports/audit?schoolYearId=${YEAR}&format=json`, { cookie: auditCookie })));
+    assert.equal(report.status, 200, JSON.stringify(report.body));
+    assert.deepEqual(report.body.report.reclassifications.map((item) => [item.replacesEntryId, item.id]).sort(),
+      [[first, second], [second, third]].sort());
+  } finally { await db.close(); }
+});

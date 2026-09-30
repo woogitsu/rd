@@ -208,6 +208,32 @@ export function describeProviderPause(pause) {
   return `Przyczyna: ${reason}.${since ? ` Od: ${since} (czas w Brukseli).` : ''}`;
 }
 
+// #130: alarm „brak przebiegów” zadania wysyłki (GET /api/email/worker-status).
+// Kody jak w src/pg/routes/email.js (computeWorkerStatus); nieznany kod — wprost.
+export const WORKER_ALARM_LABELS = Object.freeze({
+  worker_never_ran: 'Kampania czeka na wysyłkę, a zadanie wysyłki nie zapisało jeszcze żadnego przebiegu.',
+  worker_stale: 'Kampania czeka na wysyłkę, a zadanie wysyłki nie działało dłużej niż próg alarmu.',
+  worker_dry_run_only: 'Kampania czeka na wysyłkę, a zadanie działa tylko w trybie próbnym — nic nie jest wysyłane.',
+});
+
+// Zwraca null, gdy nie ma alarmu (sekcja ukryta). Tekst zawiera tylko kody,
+// czasy (w Brukseli) i liczby — bez danych rodzin.
+export function describeWorkerStatus(status) {
+  const alarms = Array.isArray(status?.alarms) ? status.alarms : [];
+  if (!alarms.length) return null;
+  const lines = alarms.map((code) => WORKER_ALARM_LABELS[code] ?? `Alarm zadania wysyłki (kod ${code}).`);
+  const run = status.lastRun;
+  const mode = run?.mode === 'live' ? 'wysyłka' : 'tryb próbny';
+  const when = run?.finishedAt ? brusselsDateTime(run.finishedAt) : '';
+  const last = run && when
+    ? `Ostatni przebieg: ${when} (czas w Brukseli), ${mode}${run.stoppedReason ? `, zatrzymanie: ${run.stoppedReason}` : ''}.`
+    : 'Ostatni przebieg: brak.';
+  const hours = Number(status.alarmAfterHours);
+  const threshold = Number.isFinite(hours) && hours > 0 ? `Próg alarmu: ${hours} h.` : '';
+  const due = Number(status.campaigns?.due) || 0;
+  return { lines, details: [last, `Kampanie czekające na wysyłkę w tym roku: ${due}.`, threshold].filter(Boolean).join(' ') };
+}
+
 // Stan kampanii w szczegółach: kampania w wysyłce przy aktywnej pauzie konta
 // nie wysyła — pokazujemy to wprost zamiast „W wysyłce”.
 export function campaignStatusLabel(campaign, providerPause) {

@@ -28,6 +28,7 @@ import {
   parseEuroAmount,
   resolutionLimitInfo,
   resolutionOptionLabel,
+  replacementChainLabels,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
@@ -105,6 +106,14 @@ function entryRow(raw) {
     const details = document.createElement("small");
     details.textContent = [entry.source && `Źródło: ${entry.source}`, entry.resolutionReference && `Uchwała: ${entry.resolutionReference}`, evidence].filter(Boolean).join(" · ");
     description.append(details);
+  }
+  // #144: łańcuch przeksięgowań (storno + wpis zastępczy) — historia pozostaje widoczna.
+  const chain = replacementChainLabels(entry, state.entries);
+  if (chain.length) {
+    const chainDetails = document.createElement("small");
+    chainDetails.className = "entry-chain";
+    chainDetails.textContent = chain.join(" · ");
+    description.append(chainDetails);
   }
   row.append(description, textCell(entry.categoryName), textCell(METHOD_LABELS[entry.method]));
   const type = document.createElement("td");

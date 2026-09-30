@@ -701,10 +701,11 @@ test('CSV export of a school year is financial-only, injection-safe and audited'
   assert.equal(lines[1], [
     expense.id, '2026-09-10', 'Wydatek', 'Wydarzenia', `"'=HYPERLINK(""http://evil.example"")"`,
     // #144: nowa kolumna „zastepuje_wpis” (replaces_entry_id) między id_dokumentu a kwota_eur; pusta dla zwykłego wpisu.
-    'Przelew', '"\'+48 konto; ""cytat"""', '', '', 'd1', '', '123,45', '0,45', '123,00', '1', 'd1',
+    // #144: „zastapiony_przez” na końcu wiersza (pusta dla zwykłego wpisu).
+    'Przelew', '"\'+48 konto; ""cytat"""', '', '', 'd1', '', '123,45', '0,45', '123,00', '1', 'd1', '',
   ].join(';'));
-  assert.match(lines[2], /;Przychód;Składki dobrowolne;'@SUM\(A1\);Przelew;Konto testowe;;p1;d1;;50,00;0,00;50,00;1;d1$/);
-  assert.match(lines[3], /;Przychód;Inne przychody;"'-2\+3 wiersz\ndrugi";Karta;Konto testowe;;;d1;;0,07;0,00;0,07;1;d1$/);
+  assert.match(lines[2], /;Przychód;Składki dobrowolne;'@SUM\(A1\);Przelew;Konto testowe;;p1;d1;;50,00;0,00;50,00;1;d1;$/);
+  assert.match(lines[3], /;Przychód;Inne przychody;"'-2\+3 wiersz\ndrugi";Karta;Konto testowe;;;d1;;0,07;0,00;0,07;1;d1;$/);
   // Żadna komórka nie zaczyna się od znaku formuły (poza cytowaniem).
   for (const line of lines.slice(1, -1)) {
     for (const cell of line.split(';')) assert.ok(!/^"?[=+\-@]/.test(cell), cell);
@@ -815,7 +816,7 @@ test('ledger CSV line exports negative amounts as numbers and neutralises text (
   });
   assert.equal(line, [
     'le-syn-1', '2026-09-12', 'Przychód', "'=Kategoria", `"'-korekta; ""opis"""`, 'Przelew', "'@konto", "'+U/1",
-    '', '', '', '10,00', '-12,50', '22,50', '0', '',
+    '', '', '', '10,00', '-12,50', '22,50', '0', '', '',
   ].join(';'));
   assert.deepEqual(ledgerRoutes.LEDGER_CSV_COLUMNS.filter((column) => column.type === 'amount').map((column) => column.header),
     ['kwota_eur', 'korekty_eur', 'netto_eur']);

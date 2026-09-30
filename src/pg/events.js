@@ -695,6 +695,15 @@ export async function listTasks(db, actor, input) {
       WHERE s.task_id = ANY($1::text[]) ORDER BY s.created_at, s.id`,
     [taskRows.map((row) => row.id)],
   );
+  // #133: nazwisko opiekuna w zgłoszeniach = odczyt danych opiekuna; ślad bez
+  // nazwisk i identyfikatorów opiekunów (tylko liczba), tylko gdy lista je zawiera.
+  const guardianSignups = signupRows.filter((row) => row.guardian_id).length;
+  if (guardianSignups > 0) {
+    await insertAuditEvent(db, {
+      actorId: actor.userId, action: 'event.task_signups_viewed', entityType: 'event', entityId: eventId,
+      metadata: { schoolYearId: event.school_year_id, guardianSignups },
+    });
+  }
   const byTask = new Map();
   for (const row of signupRows) {
     const list = byTask.get(row.task_id) ?? [];

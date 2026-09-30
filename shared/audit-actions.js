@@ -42,6 +42,7 @@ const CATALOG = {
   'invitation.revoked': ['access', 'Wycofanie zaproszenia'],
   'invitation.accepted': ['access', 'Przyjęcie zaproszenia'],
   'invitation.reissued': ['access', 'Ponowne wydanie zaproszenia'],
+  'invitation.batch_created': ['access', 'Zaproszenia zbiorcze przedstawicieli'],
   'user.created': ['access', 'Utworzenie konta'],
   'user.disabled': ['access', 'Wyłączenie konta'],
   'user.enabled': ['access', 'Włączenie konta'],
@@ -201,6 +202,7 @@ const CATALOG = {
   'guardian_update_request.created': ['families', 'Prośba opiekuna o aktualizację danych'],
   'guardian_update_request.approved': ['families', 'Zatwierdzenie aktualizacji danych opiekuna'],
   'guardian_update_request.rejected': ['families', 'Odrzucenie aktualizacji danych opiekuna'],
+  'guardian_update_request.list_viewed': ['families', 'Odczyt listy próśb o aktualizację danych opiekunów'],
 
   // --- privacy ---
   'audit.viewed': ['privacy', 'Odczyt dziennika zdarzeń'],
@@ -245,6 +247,7 @@ const CATALOG = {
   'event.task_cancelled': ['events', 'Odwołanie zadania wydarzenia'],
   'event.task_signup_created': ['events', 'Zgłoszenie do zadania wydarzenia'],
   'event.task_signup_withdrawn': ['events', 'Wycofanie zgłoszenia do zadania'],
+  'event.task_signups_viewed': ['events', 'Odczyt zgłoszeń opiekunów do zadań wydarzenia'],
 
   // --- news ---
   'news_post.created': ['news', 'Utworzenie aktualności'],

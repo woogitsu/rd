@@ -77,6 +77,13 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         EMAIL_DAILY_RESERVED: processEnv.EMAIL_DAILY_RESERVED,
         EMAIL_CAMPAIGN_MIN_DAYS: processEnv.EMAIL_CAMPAIGN_MIN_DAYS,
         EMAIL_CAMPAIGN_MIN_DAILY: processEnv.EMAIL_CAMPAIGN_MIN_DAILY,
+        // #130: okno wysyłki — te same zmienne co w usłudze workera, żeby podgląd
+        // kampanii (schedule.startsAt/endsAt) liczył start tak jak zadanie.
+        EMAIL_SEND_WINDOW_ENABLED: processEnv.EMAIL_SEND_WINDOW_ENABLED,
+        EMAIL_SEND_WINDOW_START: processEnv.EMAIL_SEND_WINDOW_START,
+        EMAIL_SEND_WINDOW_END: processEnv.EMAIL_SEND_WINDOW_END,
+        EMAIL_SEND_WINDOW_TIMEZONE: processEnv.EMAIL_SEND_WINDOW_TIMEZONE,
+        EMAIL_SEND_WINDOW_DAYS: processEnv.EMAIL_SEND_WINDOW_DAYS,
         // MFA (#3): klucz szyfrowania sekretów TOTP, wyłącznie jako sekret usługi Railway.
         MFA_ENCRYPTION_KEY: processEnv.MFA_ENCRYPTION_KEY,
         // Import wyciągu CODA/CAMT.053 (#105): klucz HMAC skrótów transakcji (sekret)
@@ -98,6 +105,8 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         BACKUP_MAX_AGE_HOURS: processEnv.BACKUP_MAX_AGE_HOURS,
         EMAIL_WORKER_MAX_AGE_HOURS: processEnv.EMAIL_WORKER_MAX_AGE_HOURS,
         EMAIL_QUEUE_MAX_AGE_HOURS: processEnv.EMAIL_QUEUE_MAX_AGE_HOURS,
+        // #130: próg alarmu „brak przebiegów” w GET /api/email/worker-status (zarząd/skarbnik).
+        EMAIL_WORKER_ALARM_HOURS: processEnv.EMAIL_WORKER_ALARM_HOURS,
       },
       fetchHandler: handlePgRequest,
       bodyLimit: bodyLimitForApp(documentMaxBytes),

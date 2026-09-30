@@ -34,6 +34,7 @@
 
 import { createHash } from 'node:crypto';
 import { DEFAULT_MFA_REQUIRED_ROLES, isMfaGateExempt } from '../../src/pg/mfa-policy.js';
+import { invitationBatchDigest } from '../../src/pg/invitation-batch.js';
 import { emailHash as prefEmailHash, preferencesToken } from '../../src/email/content.js';
 
 export const YEAR_1 = 'y-1';
@@ -312,6 +313,9 @@ function photoAction(id, action, allow, ok, body) {
     build: ({ obj }) => ({ path: `/api/news-photos/${obj.photoId}/${action}`, body }),
   };
 }
+
+// Adres partii zaproszeń (#108): unikalny dla przypadku, znormalizowany jak normalizeEmail.
+const batchEmail = (key) => `partia-${safeKey(key).toLowerCase()}@example.invalid`;
 
 // Ciało tras promocji (#78): rok źródłowy z jedną klasą i rok docelowy z jedną klasą (fixture promotionYears).
 function promotionBody(obj, { toClass = false } = {}) {
@@ -1200,6 +1204,12 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/email/provider-pause?schoolYearId=${target.schoolYearId}` }),
   },
   {
+    // Stan zadania wysyłki i alarm „brak przebiegów” (#130): odczyt jak pauza konta.
+    id: 'email.workerStatus.get', module: 'email', method: 'GET', path: '/api/email/worker-status?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/worker-status?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
     // Zdjęcie pauzy wznawia wysyłkę do rodzin: wyłącznie zarząd z (świeżym) MFA,
     // jak zatwierdzenie kampanii. Fixture 'fresh' zwraca aktywną pauzę albo ją
     // tworzy (najwyżej jedna aktywna); skarbnik, admin i przedstawiciel: 403.
@@ -1382,6 +1392,20 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   adminRoute('admin.invitationReissue', 'POST', '/api/admin/invitations/:invitationId/reissue', {
     ok: 201, object: 'invitation', build: ({ obj }) => ({ path: `/api/admin/invitations/${obj.invitationId}/reissue`, body: {} }),
+  }),
+  // Zaproszenia zbiorcze przedstawicieli (#108): wyłącznie admin z MFA (krok w górę), jak pojedyncze zaproszenie.
+  adminRoute('admin.invitationBatchPreview', 'POST', '/api/admin/invitation-batches/preview', {
+    build: ({ key }) => ({ path: '/api/admin/invitation-batches/preview', body: { schoolYearId: YEAR_1, text: `kl-1a; ${batchEmail(key)}` } }),
+  }),
+  adminRoute('admin.invitationBatchApply', 'POST', '/api/admin/invitation-batches/apply', {
+    ok: 201, keyed: true,
+    build: ({ key }) => ({
+      path: '/api/admin/invitation-batches/apply',
+      body: {
+        schoolYearId: YEAR_1, text: `kl-1a; ${batchEmail(key)}`,
+        planDigest: invitationBatchDigest({ schoolYearId: YEAR_1, ttlHours: null, rows: [{ row: 1, classId: 'kl-1a', email: batchEmail(key), error: null }] }),
+      },
+    }),
   }),
   adminRoute('admin.schoolYears', 'GET', '/api/admin/school-years', {}),
   adminRoute('admin.classCoverage', 'GET', '/api/admin/class-coverage?schoolYearId=:year', {

@@ -114,3 +114,21 @@ td.empty { color: var(--muted); text-align: center; padding: 1.4rem; }
 .status.ops-attention { background: #fff4e0; color: #7a4b00; }
 .status.ops-error { background: #fbeff0; color: var(--red-dark); }
 .status.ops-no_data { background: #f3f1ef; color: #4f4945; }
+
+/* Onboarding przedstawicieli (#108). */
+textarea { width: 100%; padding: .62rem .7rem; color: #292525; background: #fff; border: 1px solid var(--field); font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+.grid-form .wide { grid-column: 1 / -1; }
+.row-actions.start { justify-content: flex-start; }
+td.row-error { color: var(--red-dark); }
+#batch-result-body td.mono { word-break: break-all; min-width: 16rem; }
+.print-sheets { display: none; }
+@media print {
+  body.printing > :not(#print-sheets) { display: none !important; }
+  body.printing .print-sheets { display: block; }
+  .print-card { break-after: page; page-break-after: always; padding: 1.5cm 1.2cm; font-size: 11pt; color: #000; }
+  .print-card:last-child { break-after: auto; page-break-after: auto; }
+  .print-card h2 { font-size: 14pt; margin-bottom: .4cm; }
+  .print-card code { display: block; margin: .3cm 0; padding: .3cm; border: 1px solid #000; word-break: break-all; font-size: 10pt; }
+  .print-card ol, .print-card ul { padding-left: 1.2em; }
+  .print-card .draft { font-size: 9pt; color: #333; border-top: 1px solid #999; padding-top: .2cm; }
+}

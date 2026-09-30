@@ -315,45 +315,58 @@ export async function createInvitation(env, { actorId, email, role, classId = nu
   if (!ROLES.includes(role)) throw new Error('invalid_role');
   if (role === 'representative' && !classId) throw new Error('class_required');
   const normalized = normalizeEmail(email);
+  return database(env).transaction((tx) => insertInvitation(tx, {
+    actorId, email: normalized, role, classId, schoolYearId, ttlSeconds, replacesInvitationId, rejectPending,
+  }));
+}
+
+// Zapis jednego zaproszenia i jego zdarzenia `invitation.created` w transakcji
+// wywołującego (createInvitation powyżej; partia zaproszeń #108,
+// src/pg/invitation-batch.js — wszystkie zaproszenia partii w jednej
+// transakcji). `email` musi być już znormalizowany (normalizeEmail).
+// `batchId` (opcjonalnie) trafia do metadanych zdarzenia — identyfikator
+// partii, bez adresu. Token wraca tylko w wyniku; baza ma wyłącznie skrót.
+export async function insertInvitation(tx, { actorId, email: normalized, role, classId = null, schoolYearId = null, ttlSeconds = INVITATION_DEFAULT_TTL_SECONDS, replacesInvitationId = null, rejectPending = false, batchId = null }) {
+  if (!actorId) throw new Error('actor_required');
+  if (!ROLES.includes(role)) throw new Error('invalid_role');
+  if (role === 'representative' && !classId) throw new Error('class_required');
   const ttl = Math.max(60, Math.min(Number(ttlSeconds) || INVITATION_DEFAULT_TTL_SECONDS, INVITATION_MAX_TTL_SECONDS));
   const { secret, tokenHash } = await createSessionSecret();
   const invitationId = crypto.randomUUID();
-  return database(env).transaction(async (tx) => {
-    if (classId && schoolYearId) {
-      const { rows } = await tx.query('SELECT 1 FROM classes WHERE id = $1 AND school_year_id = $2', [classId, schoolYearId]);
-      if (!rows[0]) throw new Error('class_not_in_school_year');
-    }
-    if (rejectPending) {
-      await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:invitation:${normalized}`]);
-      const { rows: pending } = await tx.query(
-        `SELECT 1 FROM invitations
-          WHERE lower(email) = $1 AND role = $2
-            AND class_id IS NOT DISTINCT FROM $3 AND school_year_id IS NOT DISTINCT FROM $4
-            AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
-          LIMIT 1`,
-        [normalized, role, classId, schoolYearId],
-      );
-      if (pending[0]) throw new Error('invitation_pending');
-    }
-    const { rows } = await tx.query(
-      `INSERT INTO invitations (id, email, token_hash, role, class_id, school_year_id, created_by, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, now() + make_interval(secs => $8))
-       RETURNING expires_at`,
-      [invitationId, normalized, tokenHash, role, classId, schoolYearId, actorId, ttl],
+  if (classId && schoolYearId) {
+    const { rows } = await tx.query('SELECT 1 FROM classes WHERE id = $1 AND school_year_id = $2', [classId, schoolYearId]);
+    if (!rows[0]) throw new Error('class_not_in_school_year');
+  }
+  if (rejectPending) {
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:invitation:${normalized}`]);
+    const { rows: pending } = await tx.query(
+      `SELECT 1 FROM invitations
+        WHERE lower(email) = $1 AND role = $2
+          AND class_id IS NOT DISTINCT FROM $3 AND school_year_id IS NOT DISTINCT FROM $4
+          AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+        LIMIT 1`,
+      [normalized, role, classId, schoolYearId],
     );
-    await insertAuditEvent(tx, {
-      actorId, action: 'invitation.created', entityType: 'invitation', entityId: invitationId,
-      metadata: { role, classId, schoolYearId },
-    });
-    // „Wyślij ponownie” (#108): zdarzenie w tej samej transakcji co nowe zaproszenie.
-    if (replacesInvitationId) {
-      await insertAuditEvent(tx, {
-        actorId, action: 'invitation.reissued', entityType: 'invitation', entityId: invitationId,
-        metadata: { replacesInvitationId },
-      });
-    }
-    return { invitationId, secret, expiresAt: isoTimestamp(rows[0].expires_at) };
+    if (pending[0]) throw new Error('invitation_pending');
+  }
+  const { rows } = await tx.query(
+    `INSERT INTO invitations (id, email, token_hash, role, class_id, school_year_id, created_by, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, now() + make_interval(secs => $8))
+     RETURNING expires_at`,
+    [invitationId, normalized, tokenHash, role, classId, schoolYearId, actorId, ttl],
+  );
+  await insertAuditEvent(tx, {
+    actorId, action: 'invitation.created', entityType: 'invitation', entityId: invitationId,
+    metadata: batchId ? { role, classId, schoolYearId, batchId } : { role, classId, schoolYearId },
   });
+  // „Wyślij ponownie” (#108): zdarzenie w tej samej transakcji co nowe zaproszenie.
+  if (replacesInvitationId) {
+    await insertAuditEvent(tx, {
+      actorId, action: 'invitation.reissued', entityType: 'invitation', entityId: invitationId,
+      metadata: { replacesInvitationId },
+    });
+  }
+  return { invitationId, secret, expiresAt: isoTimestamp(rows[0].expires_at) };
 }
 
 // Blokuje wiersz zaproszenia (FOR UPDATE) i sprawdza jego stan. Zwraca

@@ -47,6 +47,13 @@
         <p><button type="button" class="primary" id="provider-pause-lift" hidden>Potwierdź naprawę i wznów wysyłkę</button></p>
       </section>
 
+      <section class="card" id="worker-status" aria-labelledby="worker-status-title" hidden>
+        <h2 id="worker-status-title">Zadanie wysyłki nie działa</h2>
+        <div class="message error" role="status"><ul id="worker-status-alarms"></ul></div>
+        <p class="context" id="worker-status-details"></p>
+        <p class="context">Sprawdzenie i uruchomienie zadania należy do administratora technicznego (usługa cron, zmienne wysyłki). Ten ekran niczego nie wysyła ani nie uruchamia.</p>
+      </section>
+
       <section class="card" aria-labelledby="campaigns-title">
         <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="campaigns-title">Kampanie</h2></div><span id="campaigns-count" aria-live="polite"></span></div>
         <div class="table-wrap" id="campaigns-table" role="region" aria-labelledby="campaigns-title" tabindex="0">
