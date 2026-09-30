@@ -15,6 +15,8 @@ body{margin:0;background:#fff}
 main{max-width:1180px;margin:auto;padding:28px 24px 70px}
 .breadcrumbs{font-size:.85rem;color:var(--muted);margin-bottom:14px}
 .breadcrumbs a{color:#444}
+/* #112: link ścieżki ma cel co najmniej 24×24 px (WCAG 2.5.8), bez polegania na wyjątku odstępu. */
+.breadcrumbs a{display:inline-block;min-width:24px;min-height:24px;padding:4px 0}
 .page-heading{margin-bottom:12px}
 .page-heading h1{margin:3px 0 8px;font-size:clamp(1.6rem,4vw,2.3rem);letter-spacing:-.03em}
 .page-heading p:not(.eyebrow){margin:0;color:var(--muted)}

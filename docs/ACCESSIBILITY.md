@@ -188,7 +188,20 @@ Aplikacje z kilkoma wzajemnie wykluczającymi się widokami pod jednym `main` (`
 
 **Klawiatura w oknach `families/` (#112, Playwright).** `tests/e2e/families-keyboard.spec.js`: skip link jako pierwszy Tab, dojście do karty gospodarstwa samą klawiaturą, Enter otwiera okno „Edytuj kontakt” (nazwa dostępna, fokus w oknie), Tab nie ustawia fokusu poza oknem, Esc zamyka okno i zwraca fokus na przycisk. Test używa syntetycznej sesji administratora, bo edycja kontaktu wymaga roli admin/board.
 
-**Nadal poza zakresem** (patrz #112, pkt. 4 propozycji): `docs/a11y/audit.mjs` (zrzuty 320/1280 px) renderuje tylko cztery pierwotne aplikacje — rozszerzenie o `families/`, `documents/`, `events/` wymaga ręcznego uruchomienia z Playwright i danych syntetycznych; przegląd z NVDA/VoiceOver (tabela przydziałów ról w `admin/`, karta gospodarstwa z dwojgiem opiekunów i rodzeństwem) — do wykonania.
+**Zrzuty 320/1280 px i przegląd w przeglądarce (#112, pkt. 4, 30.09.2026).** `docs/a11y/audit.mjs` bez listy aplikacji obejmuje teraz wszystkie z `STATIC_PREFIXES` i ma drugi tryb: działający serwer demo (`AUDIT_BASE_URL`) z zapisaną sesją Playwright (`AUDIT_STORAGE_STATE`), bo bez sesji panele przekierowują na `/login/` (skrypt oznacza to polem `redirectedTo` i wtedy nie robi zrzutu ani próby okna — wcześniej próba okna w `panel/` kończyła się błędem, bo przycisk „Dodaj wpłatę” jest ukryty bez sesji). Widoki `families/` pod jednym adresem wybiera się jako `families:klasa` i `families:gospodarstwo`. To samo sprawdzenie dla `families/` (3 widoki), `documents/` i `events/` przy 320 i 1280 px jest w CI: `tests/e2e/a11y-layout.spec.js` (sesja przedstawiciela klasy, dane syntetyczne serwera testowego).
+
+Wynik na danych demo (`npm run demo:seed`, `docs/DEMO.md`), Chromium, konta `przedstawiciel@`, `zarzad1@` i `admin@example.invalid`, 320, 390, 640 i 1280 px. Zrzuty (konto przedstawiciela): `docs/a11y/families-klasa-{320,1280}.png`, `families-gospodarstwo-{320,1280}.png`, `documents-{320,1280}.png`, `events-{320,1280}.png`.
+
+| Ekran | Poziome przewijanie strony | Fokus (30 × Tab) | Cele < 24 px | Kontrast tekstu (obliczony z kolorów w przeglądarce) | Stan |
+|---|---|---|---|---|---|
+| `families/` klasy, klasa, karta gospodarstwa | brak (tabele i nawigacja paneli przewijają się we własnym kontenerze) | obrys 3 px `#8E2026` na każdym elemencie, skip link pierwszy | linki ścieżki „Klasy”, „1A” miały 16 px wysokości — **poprawione** (`.breadcrumbs a` min. 24×24 px) | bez par < 4,5:1 | spełnione |
+| `families/` okna „Kontakt opiekuna” i „Zmiana klasy” (320 i 1280 px) | okno mieści się w ekranie | Enter otwiera, fokus w oknie, Tab nie wychodzi na stronę, Esc zamyka i wraca na przycisk | — | — | spełnione; pole daty: przycisk kalendarza rysowany przez Chromium ma własny, cienki obrys (nie ze stylów aplikacji) — **do sprawdzenia ręcznie**, dotyczy wszystkich pól `type="date"` |
+| `documents/` | brak | obrys na każdym elemencie | pole „Pokaż też zastąpione i unieważnione” 13×13 px (etykieta przy 1280 px niższa niż 24 px, spełnia tylko wyjątek odstępu 2.5.8) | bez par < 4,5:1 | **do poprawy** w zakresie #124 (plik `documents/`); test e2e mierzy tu tylko układ i fokus |
+| `events/` | brak | obrys na każdym elemencie | brak | bez par < 4,5:1 | spełnione |
+| `meetings/`, `admin/` (konta zarządu i administratora) | brak | obrys na każdym elemencie | brak | bez par < 4,5:1 | spełnione (bez zrzutów w repo) |
+| `site/`, `login/` (tryb bez sesji) | brak | obrys na każdym elemencie | brak | — | spełnione |
+
+Kontrast policzono skryptem w przeglądarce (kolor tekstu wobec pierwszego nieprzezroczystego tła przodka) — to nie jest axe-core ani pomiar tła z obrazów; `axe-core` nie jest zależnością projektu. Nadal do wykonania: przegląd z NVDA/VoiceOver (tabela przydziałów ról w `admin/`, karta gospodarstwa z dwojgiem opiekunów i rodzeństwem, lista kontrolna wyżej) i tryb `forced-colors` w prawdziwym trybie wysokiego kontrastu Windows. To przegląd prototypu, nie deklaracja zgodności.
 
 ## Poza zakresem przeglądu
 
