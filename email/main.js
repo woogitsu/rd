@@ -66,6 +66,11 @@ const resolutions = mountResolutions({
     state.report = await api(campaignActionUrl(state.selectedId, "report")).catch(() => state.report);
     renderDetail();
   },
+  // #139: po utworzeniu szkicu uzupełnienia odświeżamy listę i otwieramy szkic.
+  onFollowupCreated: async (campaign) => {
+    await loadList();
+    if (campaign?.id) await openDetail(campaign.id);
+  },
 });
 
 const filtersForm = byId("filters-form");
@@ -253,7 +258,9 @@ function renderDetail() {
   byId("detail-title").textContent = campaign.title;
   byId("detail-status").textContent = campaignStatusLabel(campaign, detail.providerPause);
   byId("detail-status").className = `badge status-${campaign.status}`;
-  byId("detail-audience").textContent = AUDIENCE_LABELS[campaign.audience] ?? campaign.audience;
+  byId("detail-audience").textContent = campaign.kind === "followup"
+    ? `${AUDIENCE_LABELS[campaign.audience] ?? campaign.audience} — uzupełnienie kampanii ${campaign.sourceCampaignId}: tylko rodziny z zatwierdzonym „wiadomość nie wyszła”`
+    : AUDIENCE_LABELS[campaign.audience] ?? campaign.audience;
   byId("detail-subject").textContent = campaign.subject;
   byId("detail-body").textContent = campaign.bodyText;
 
@@ -460,7 +467,9 @@ byId("edit-campaign").addEventListener("click", () => {
     select.append(new Option(AUDIENCE_LABELS[campaign.audience] ?? campaign.audience, campaign.audience));
   }
   select.value = campaign.audience;
-  for (const option of select.options) option.disabled = Boolean(campaign.meetingNoticeId) && option.value !== campaign.audience;
+  // #139: odbiorców uzupełnienia wyznacza kampania źródłowa.
+  const audienceLocked = Boolean(campaign.meetingNoticeId) || campaign.kind === "followup";
+  for (const option of select.options) option.disabled = audienceLocked && option.value !== campaign.audience;
   form.elements.subject.value = campaign.subject;
   form.elements.bodyText.value = campaign.bodyText;
   form.dataset.revision = String(campaign.revisionNo ?? "");

@@ -468,6 +468,21 @@ async function makeCampaign(ctx, target, stage) {
     );
     return { ...obj, outboxId: outboxRow.id };
   }
+  if (stage === 'notSentReported' || stage === 'notSentApproved') {
+    // #139 (0156): „nie wyszła” zgłasza fxCookies.board (spoza aktorów macierzy);
+    // zatwierdza fxCookies.board2 (też spoza), więc testowany aktor nie trafia
+    // w self_approval_forbidden ani przy zatwierdzeniu, ani przy uzupełnieniu.
+    const { rows: [outboxRow] } = await ctx.db.query(
+      "UPDATE email_outbox SET state = 'failed', last_error = 'delivery_unknown' WHERE campaign_id = $1 RETURNING id",
+      [campaignId],
+    );
+    const resolved = await api(ctx, ctx.fxCookies.board, 'POST', `/api/email/campaigns/${campaignId}/resolutions`,
+      { outboxId: outboxRow.id, resolution: 'confirmed_not_sent', evidenceCode: 'brevo_log_no_event' });
+    const resolutionId = resolved.json.resolution.id;
+    if (stage === 'notSentReported') return { ...obj, outboxId: outboxRow.id, resolutionId };
+    await api(ctx, ctx.fxCookies.board2, 'POST', `/api/email/campaigns/${campaignId}/resolutions/${resolutionId}/approve`, {});
+    return { ...obj, outboxId: outboxRow.id, resolutionId };
+  }
   return obj;
 }
 
@@ -938,6 +953,7 @@ const WRITE_TABLES = [
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
   'email_webhook_events', 'email_suppressions', 'email_suppression_release_requests', 'email_suppression_releases',
   'email_preferences_events', 'email_preview_sends', 'email_provider_pauses',
+  'email_outbox_resolutions', 'email_outbox_resolution_approvals',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
   'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',

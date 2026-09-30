@@ -12,6 +12,9 @@
 //   GET  /api/email/campaigns/{id}/report            raport doręczeń: same liczby i kody (#139; ?format=csv — plik)
 //   GET  /api/email/campaigns/{id}/attention         lista operacyjna „do sprawdzenia” (#139, dziennik odczytu)
 //   POST /api/email/campaigns/{id}/resolutions       rozstrzygnięcie delivery_unknown/error (#139, tylko dopisywanie)
+//   POST /api/email/campaigns/{id}/resolutions/{resolutionId}/approve
+//                                                    zatwierdzenie „nie wyszła” przez inną osobę z zarządu (#139, cztery oczy)
+//   POST /api/email/campaigns/{id}/followup          szkic kampanii uzupełniającej (#139, Idempotency-Key)
 //   POST /api/email/campaigns/{id}/pause             wstrzymanie wysyłki (#130), idempotentne
 //   POST /api/email/campaigns/{id}/resume            wznowienie wysyłki (#130), idempotentne
 //   POST /api/email/campaigns/{id}/cancel            anulowanie (wiersze w kolejce → cancelled)
@@ -136,7 +139,7 @@ const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.categor
   c.approved_by, c.approved_at, c.approved_content_hash, c.approved_recipients_hash, c.daily_cap,
   c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key, c.send_not_before,
   c.paused_by, c.paused_at, c.resumed_by, c.resumed_at, c.revision_no,
-  c.meeting_id, c.meeting_notice_id, c.class_id`;
+  c.meeting_id, c.meeting_notice_id, c.class_id, c.kind, c.source_campaign_id`;
 
 async function loadCampaign(executor, id, { lock = false } = {}) {
   const { rows } = await executor.query(
@@ -183,6 +186,9 @@ function campaignView(row) {
     meetingId: row.meeting_id ?? null,
     meetingNoticeId: row.meeting_notice_id ?? null,
     classId: row.class_id ?? null,
+    // #139: kampania uzupełniająca (kind 'followup') wskazuje kampanię źródłową.
+    kind: row.kind ?? 'standard',
+    sourceCampaignId: row.source_campaign_id ?? null,
   };
 }
 
@@ -200,6 +206,13 @@ function mapDatabaseError(error) {
   if (message.includes('email_campaign_closed') || message.includes('email_campaign_content_locked')
       || message.includes('email_snapshot_locked') || message.includes('email_campaign_invalid_transition')) {
     throw new RequestError('campaign_locked', 409);
+  }
+  // #139: strażniki kampanii uzupełniającej (0156).
+  if (message.includes('email_followup_household_already_covered')) throw new RequestError('followup_household_already_covered', 409);
+  if (message.includes('email_followup_household_not_eligible')) throw new RequestError('followup_household_not_eligible', 409);
+  if (message.includes('email_followup_source_not_eligible')) throw new RequestError('followup_source_not_eligible', 409);
+  if (message.includes('email_followup_audience_mismatch') || message.includes('email_campaign_followup_link_immutable')) {
+    throw new RequestError('campaign_audience_locked', 409);
   }
   if (error?.code === '23514' && message.includes('four_eyes')) throw new RequestError('self_approval_forbidden', 403);
   if (error?.code === '23514' && message.includes('parent_only')) throw new RequestError('release_reason_not_allowed', 409);
@@ -336,6 +349,10 @@ async function updateCampaign(request, env, id, json) {
       if (!campaign.meeting_notice_id && MEETING_AUDIENCES.includes(input.audience)) {
         throw new RequestError('invalid_audience');
       }
+      // #139: odbiorcy uzupełnienia wynikają z kampanii źródłowej (0156) — bez ręcznej zmiany.
+      if (campaign.kind === 'followup' && input.audience !== campaign.audience) {
+        throw new RequestError('campaign_audience_locked', 409);
+      }
       const hash = contentHash({ schoolYearId: campaign.school_year_id, ...input });
       const currentSendNotBefore = campaign.send_not_before ? new Date(campaign.send_not_before).toISOString() : null;
       const sendNotBefore = parseSendNotBefore(data.sendNotBefore, currentSendNotBefore);
@@ -389,6 +406,10 @@ async function updateCampaign(request, env, id, json) {
 // (założenie do D-11/D-17). `on` ('YYYY-MM-DD') domyślnie = rd_today() (Bruksela).
 export async function computeSnapshot(executor, campaign, { on = null } = {}) {
   if (campaign.audience === 'class_households' && !campaign.class_id) throw new Error('class_households_requires_class');
+  // #139: uzupełnienie obejmuje wyłącznie rodziny z kampanii źródłowej, których
+  // wiersz ma ZATWIERDZONE (cztery oczy) „nie wyszła”; pozostałe reguły doboru
+  // (zgoda, adres, blokada, wypisanie, wpłata przy no_payment_record) jak zwykle.
+  const followup = campaign.kind === 'followup' ? await followupHouseholds(executor, campaign) : null;
   const { rows: candidates } = await executor.query(
     `WITH d AS (SELECT COALESCE($2::date, rd_today()) AS on_date)
      SELECT p.household_id, g.id AS guardian_id, g.email,
@@ -407,9 +428,11 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
         -- #113: zebranie klasowe — tylko rodziny dzieci zapisanych do tej klasy w roku;
         -- rodzeństwo z innej klasy nie zwiększa listy, a rodzina liczy się raz.
         AND ($3::text IS NULL OR e.class_id = $3)
+        AND ($4::text[] IS NULL OR p.household_id = ANY($4::text[]))
       GROUP BY p.household_id, g.id, g.email, g.contact_allowed
       ORDER BY p.household_id, g.id`,
-    [campaign.school_year_id, on, campaign.audience === 'class_households' ? campaign.class_id : null],
+    [campaign.school_year_id, on, campaign.audience === 'class_households' ? campaign.class_id : null,
+      followup ? followup.eligible : null],
   );
   const paid = new Set();
   if (campaign.audience === 'no_payment_record') {
@@ -453,6 +476,7 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
   const used = new Set();
   const ids = [...households.keys()].sort();
   for (const householdId of ids) {
+    if (followup?.covered.has(householdId)) { exclusions.push({ householdId, reason: 'followup_already_covered' }); continue; }
     if (paid.has(householdId)) { exclusions.push({ householdId, reason: 'payment_recorded' }); continue; }
     const consenting = households.get(householdId).filter((row) => row.guardian_allowed && row.relation_allowed);
     if (!consenting.length) { exclusions.push({ householdId, reason: 'no_consent' }); continue; }
@@ -469,6 +493,26 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     recipients.push({ householdId, guardianId: chosen.guardian_id, email: chosen.normalized, emailHash: chosen.hash });
   }
   return { recipients, exclusions, hash: recipientsHash(recipients) };
+}
+
+// #139: rodziny kampanii źródłowej z zatwierdzonym „nie wyszła” (eligible) oraz
+// te, które mają już nieanulowany wiersz kolejki w INNYM uzupełnieniu tej samej
+// kampanii źródłowej (covered — wykluczone, żeby nie dostały drugiej wiadomości).
+// Te same warunki sprawdza strażnik bazy email_outbox_followup_guard (0156).
+async function followupHouseholds(executor, campaign) {
+  const { rows: eligible } = await executor.query(
+    `SELECT DISTINCT so.household_id FROM email_outbox so
+       JOIN email_outbox_resolution_approvals a ON a.outbox_id = so.id
+      WHERE so.campaign_id = $1 AND so.state = 'failed'
+      ORDER BY so.household_id`,
+    [campaign.source_campaign_id],
+  );
+  const { rows: covered } = await executor.query(
+    `SELECT DISTINCT o.household_id FROM email_outbox o JOIN email_campaigns f ON f.id = o.campaign_id
+      WHERE f.source_campaign_id = $1 AND f.id <> $2 AND o.state <> 'cancelled'`,
+    [campaign.source_campaign_id, campaign.id ?? ''],
+  );
+  return { eligible: eligible.map((row) => row.household_id), covered: new Set(covered.map((row) => row.household_id)) };
 }
 
 // Ostrzeżenie o zmianach po zbudowaniu migawki (#86): adresaci, którzy według
@@ -1243,13 +1287,19 @@ async function attention(request, env, id, url, json) {
   const values = [id];
   const after = cursor ? `AND ${afterTupleAscSql(['t.outbox_id', 't.outbox_id'], [cursor.key, cursor.id], values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT t.outbox_id, t.state, t.last_error, t.provider_message_id, t.email, t.soft_bounce_count, t.resolution FROM (
+    `SELECT t.outbox_id, t.state, t.last_error, t.provider_message_id, t.email, t.soft_bounce_count,
+            t.resolution_id, t.resolution, t.resolved_by, a.approved_at AS resolution_approved_at FROM (
        SELECT o.id AS outbox_id, o.state, o.last_error, o.provider_message_id, r.email,
               (SELECT COUNT(*)::int FROM email_webhook_events w WHERE w.outbox_id = o.id AND w.event = 'soft_bounce') AS soft_bounce_count,
-              (SELECT res.resolution FROM email_outbox_resolutions res WHERE res.outbox_id = o.id ORDER BY res.created_at LIMIT 1) AS resolution
+              res.id AS resolution_id, res.resolution, res.resolved_by
          FROM email_outbox o JOIN email_campaign_recipients r ON r.id = o.recipient_id
+         LEFT JOIN LATERAL (
+           SELECT x.id, x.resolution, x.resolved_by FROM email_outbox_resolutions x
+            WHERE x.outbox_id = o.id ORDER BY x.created_at LIMIT 1
+         ) res ON true
         WHERE o.campaign_id = $1
      ) t
+     LEFT JOIN email_outbox_resolution_approvals a ON a.resolution_id = t.resolution_id
      WHERE (t.state = 'failed' OR t.soft_bounce_count >= 3) ${after}
      ORDER BY t.outbox_id LIMIT ${limit + 1}`,
     values,
@@ -1265,17 +1315,26 @@ async function attention(request, env, id, url, json) {
       providerMessageId: row.provider_message_id, email: maskEmail(row.email), softBounceCount: row.soft_bounce_count,
       // #139: pierwsze (jedyne) rozstrzygnięcie wiersza albo null — ekran rozstrzygania.
       resolution: row.resolution ?? null,
+      resolutionId: row.resolution_id ?? null,
+      // Cztery oczy (0156): „nie wyszła” czeka na zatwierdzenie innej osoby z zarządu;
+      // resolvedByMe tylko podpowiada panelowi (serwer i tak odmawia tej samej osobie).
+      resolutionApproval: resolutionApprovalState(row),
+      resolvedByMe: row.resolved_by ? row.resolved_by === context.session.user.id : false,
     })),
     nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
   });
 }
 
+function resolutionApprovalState(row) {
+  if (row.resolution !== 'confirmed_not_sent') return null;
+  return row.resolution_approved_at ? 'approved' : 'pending';
+}
+
 // #139: rozstrzygnięcie delivery_unknown/error bez zmiany historii wiersza —
 // osobny, tylko-dopisujący wpis. Bardziej dotkliwe twierdzenie
-// („na pewno nie wyszło”, otwiera przebieg uzupełniający) wymaga silniejszej
-// roli (board) niż samo potwierdzenie doręczenia; pełna zasada czterech oczu
-// (inna osoba niż ktokolwiek wcześniej działający na wierszu) nie jest tu
-// zaimplementowana — patrz PR.
+// („na pewno nie wyszło”, otwiera przebieg uzupełniający) wymaga roli board
+// i — zanim rodzina trafi do uzupełnienia — zatwierdzenia przez INNĄ osobę
+// z zarządu (approveResolution niżej, tabela email_outbox_resolution_approvals, 0156).
 async function createResolution(request, env, id, json) {
   const data = await readJson(request);
   if (!validId(data.outboxId)) throw new RequestError('invalid_request');
@@ -1318,6 +1377,139 @@ async function createResolution(request, env, id, json) {
       return json({ resolution: { id: resolutionId, outboxId: data.outboxId, resolution: data.resolution, evidenceCode: data.evidenceCode } }, 201);
     });
   } catch (error) {
+    return mapDatabaseError(error);
+  }
+}
+
+// #139 (cztery oczy): „wiadomość nie wyszła” zgłasza jedna osoba z zarządu,
+// zatwierdza INNA. Dopiero zatwierdzone rozstrzygnięcie wpuszcza rodzinę do
+// kampanii uzupełniającej. Zatwierdzenie niczego nie wysyła; tylko dopisuje
+// wiersz w email_outbox_resolution_approvals (CHECK approved_by <> resolved_by
+// w bazie). Podwójne kliknięcie zwraca istniejące zatwierdzenie.
+async function approveResolution(request, env, id, resolutionId, json) {
+  if (!validId(resolutionId)) throw new RequestError('invalid_request');
+  const { context, campaign } = await campaignFor(request, env, id, APPROVER_ROLES);
+  // Krok w górę MFA jak przy zatwierdzeniu kampanii (#150): zatwierdzenie
+  // otwiera drogę do ponownej wiadomości do rodziny.
+  const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+  if (staleCode) throw new RequestError(staleCode, 403);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        `SELECT id, outbox_id, campaign_id, resolution, resolved_by, evidence_code FROM email_outbox_resolutions
+          WHERE id = $1 AND campaign_id = $2`,
+        [resolutionId, id],
+      );
+      const resolution = rows[0];
+      if (!resolution) throw new RequestError('outbox_resolution_not_found', 404);
+      // Blokada wiersza kolejki szereguje równoległe kliknięcia (jak createResolution).
+      await tx.query('SELECT id FROM email_outbox WHERE id = $1 FOR UPDATE', [resolution.outbox_id]);
+      const { rows: existing } = await tx.query(
+        'SELECT id, approved_by, approved_at FROM email_outbox_resolution_approvals WHERE resolution_id = $1',
+        [resolutionId],
+      );
+      if (existing[0]) {
+        return json({ approval: approvalView(existing[0], resolution) }, 200, { 'Idempotency-Replayed': 'true' });
+      }
+      if (resolution.resolution !== 'confirmed_not_sent') throw new RequestError('resolution_not_approvable', 409);
+      if (resolution.resolved_by === actorId) throw new RequestError('self_approval_forbidden', 403);
+      const approvalId = crypto.randomUUID();
+      const { rows: inserted } = await tx.query(
+        `INSERT INTO email_outbox_resolution_approvals (id, resolution_id, outbox_id, campaign_id, resolution, resolved_by, approved_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, approved_by, approved_at`,
+        [approvalId, resolutionId, resolution.outbox_id, id, resolution.resolution, resolution.resolved_by, actorId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'email.outbox.resolution_approved', entityType: 'email_outbox', entityId: resolution.outbox_id,
+        metadata: {
+          campaignId: id, schoolYearId: campaign.school_year_id, resolutionId, approvalId,
+          resolution: resolution.resolution, evidenceCode: resolution.evidence_code,
+        },
+      });
+      return json({ approval: approvalView(inserted[0], resolution) }, 201);
+    });
+  } catch (error) {
+    return mapDatabaseError(error);
+  }
+}
+
+function approvalView(row, resolution) {
+  return {
+    id: row.id, resolutionId: resolution.id, outboxId: resolution.outbox_id, resolution: resolution.resolution,
+    approvedBy: row.approved_by, approvedAt: iso(row.approved_at),
+  };
+}
+
+const FOLLOWUP_SOURCE_STATUSES = Object.freeze(['sending', 'paused', 'done', 'cancelled']);
+const FOLLOWUP_TITLE_PREFIX = 'Uzupełnienie: ';
+
+// #139: szkic kampanii uzupełniającej. Treść (temat, treść, kategoria) jest
+// kopiowana z kampanii źródłowej i można ją poprawić jak każdy szkic; odbiorców
+// nie wybiera się ręcznie — migawka obejmuje tylko rodziny z zatwierdzonym
+// „nie wyszła” (computeSnapshot). Dalej zwykła ścieżka: migawka, zatwierdzenie
+// treści i listy przez inną osobę z zarządu, kolejka. Nic nie jest wysyłane.
+async function createFollowup(request, env, id, json) {
+  const key = request.headers.get('Idempotency-Key')?.trim();
+  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
+  const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const actorId = context.session.user.id;
+
+  const replay = async (executor) => {
+    const { rows } = await executor.query(`SELECT ${CAMPAIGN_COLUMNS} FROM email_campaigns c WHERE c.idempotency_key = $1`, [key]);
+    const row = rows[0];
+    if (!row) return null;
+    if (row.created_by !== actorId || row.source_campaign_id !== id) throw new RequestError('idempotency_conflict', 409);
+    return json({ campaign: campaignView(row) }, 200, { 'Idempotency-Replayed': 'true' });
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      const existing = await replay(tx);
+      if (existing) return existing;
+      const source = await loadCampaign(tx, id, { lock: true });
+      if (!FOLLOWUP_SOURCE_STATUSES.includes(source.status)) throw new RequestError('followup_source_not_eligible', 409);
+      const households = await followupHouseholds(tx, { id: null, source_campaign_id: id });
+      const eligible = households.eligible.filter((householdId) => !households.covered.has(householdId));
+      if (!eligible.length) throw new RequestError('followup_no_households', 409);
+      const { rows: [{ n: pendingApprovals }] } = await tx.query(
+        `SELECT COUNT(*)::int AS n FROM email_outbox_resolutions res
+          WHERE res.campaign_id = $1 AND res.resolution = 'confirmed_not_sent'
+            AND NOT EXISTS (SELECT 1 FROM email_outbox_resolution_approvals a WHERE a.resolution_id = res.id)`,
+        [id],
+      );
+      const input = {
+        title: `${FOLLOWUP_TITLE_PREFIX}${source.title}`.slice(0, 200).trim(),
+        audience: source.audience === 'no_payment_record' ? 'no_payment_record' : 'all_households',
+        category: source.category, subject: source.subject, bodyText: source.body_text,
+      };
+      const hash = contentHash({ schoolYearId: source.school_year_id, ...input });
+      const newId = crypto.randomUUID();
+      const { rows } = await tx.query(
+        `INSERT INTO email_campaigns (id, school_year_id, title, audience, category, subject, body_text, content_hash,
+                                      created_by, updated_by, idempotency_key, kind, source_campaign_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, 'followup', $11)
+         RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
+        [newId, source.school_year_id, input.title, input.audience, input.category, input.subject, input.bodyText,
+          hash, actorId, key, id],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'email.campaign.followup_created', entityType: 'email_campaign', entityId: newId,
+        metadata: {
+          schoolYearId: source.school_year_id, sourceCampaignId: id, audience: input.audience, category: input.category,
+          contentHash: hash, eligibleHouseholds: eligible.length, pendingApprovals,
+        },
+      });
+      return json({
+        campaign: campaignView(rows[0]), eligibleHouseholds: eligible.length, pendingApprovals,
+      }, 201, { 'Idempotency-Replayed': 'false' });
+    });
+  } catch (error) {
+    if (error?.code === '23505') {
+      const existing = await replay(env.db);
+      if (existing) return existing;
+    }
     return mapDatabaseError(error);
   }
 }
@@ -1759,6 +1951,7 @@ const CAMPAIGN_ACTION_METHODS = Object.freeze({
   approve: ['POST'],
   queue: ['POST'],
   resolutions: ['POST'],
+  followup: ['POST'],
   pause: ['POST'],
   resume: ['POST'],
   cancel: ['POST'],
@@ -1807,7 +2000,18 @@ export async function handle(request, env, url, json) {
       if (suppressionAction === 'release-request') return await releaseRequest(request, env, emailHashParam, json);
       return await release(request, env, emailHashParam, json);
     }
-    const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|report|attention|approve|queue|resolutions|pause|resume|cancel|test-send))?$/);
+    const approvalMatch = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)\/resolutions\/([^/]+)\/approve$/);
+    if (approvalMatch) {
+      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+      let campaignId;
+      let resolutionId;
+      try {
+        campaignId = decodeURIComponent(approvalMatch[1]);
+        resolutionId = decodeURIComponent(approvalMatch[2]);
+      } catch { throw new RequestError('invalid_campaign_id'); }
+      return await approveResolution(request, env, campaignId, resolutionId, json);
+    }
+    const match = url.pathname.match(/^\/api\/email\/campaigns\/([^/]+)(?:\/(snapshot|preview|recipients|report|attention|approve|queue|resolutions|followup|pause|resume|cancel|test-send))?$/);
     if (!match) return null;
     let id;
     try { id = decodeURIComponent(match[1]); } catch { throw new RequestError('invalid_campaign_id'); }
@@ -1823,6 +2027,7 @@ export async function handle(request, env, url, json) {
     if (action === 'approve') return await approve(request, env, id, json);
     if (action === 'queue') return await queue(request, env, id, json);
     if (action === 'resolutions') return await createResolution(request, env, id, json);
+    if (action === 'followup') return await createFollowup(request, env, id, json);
     if (action === 'pause') return await pause(request, env, id, json);
     if (action === 'resume') return await resume(request, env, id, json);
     if (action === 'cancel') return await cancel(request, env, id, json);

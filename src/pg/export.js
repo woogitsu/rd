@@ -389,6 +389,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_campaign_exclusions: 'wykluczenia z kampanii — D-04',
   email_outbox: 'kolejka wysyłki z adresami e-mail — D-04',
   email_outbox_resolutions: 'rozstrzygnięcia doręczeń kampanii (#139) — jak email_outbox, D-04',
+  email_outbox_resolution_approvals: 'zatwierdzenia „nie wyszła” przez drugą osobę z zarządu (0156, #139) — jak email_outbox_resolutions, D-04',
   email_send_ledger: 'dziennik wysyłek dostawcy — D-04',
   email_suppressions: 'lista blokad adresów e-mail — D-04',
   email_suppression_release_requests: 'wnioski o zdjęcie blokady adresu e-mail — D-04',
