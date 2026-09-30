@@ -23,12 +23,12 @@ import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvResponse, safeFileSegment, toCsv } from '../csv.js';
 import { readSnapshot } from '../db-snapshot.js';
+import { createIdempotencyKeyReader, createJsonReader } from '../input.js';
 
 export const name = 'ledger-cost-centers';
 
 const FINANCIAL_ROLES = ['admin', 'board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_ITEMS = 50;
 const MAX_AMOUNT_CENTS = 100_000_000;
@@ -53,25 +53,12 @@ function decodeId(value) {
   throw new RequestError('invalid_id');
 }
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  try {
-    const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  error: (code, status) => new RequestError(code, status),
+});
 
-function readIdempotencyKey(request) {
-  const key = request.headers.get('Idempotency-Key')?.trim();
-  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
-  return key;
-}
+const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) => new RequestError(code, status) });
 
 async function requireFinancial(request, env, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);

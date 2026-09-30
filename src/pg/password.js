@@ -256,12 +256,46 @@ const COMMON_PASSWORDS = new Set([
 // Rdzenie dopasowywane po zdjęciu diakrytyków i cyfr/znaków — patrz `checkPasswordPolicy`.
 // `zaqwsxcde` łapie rozszerzony marsz klawiaturowy (np. „Zaq1@wsxcde3”, gdzie
 // `compact` usuwa tylko separatory, więc dopasowanie idzie po samych literach).
-// `wrzesien` to jeden konkretny przypadek z audytu; pełna lista miesięcy i nazw
-// lokalnych (miasto, szkoła) to kontekstowe rdzenie z konfiguracji — do decyzji.
+// Rdzenie zawierają WYŁĄCZNIE litery a–z: porównanie idzie po `letters` (same
+// litery), więc dawne `passw0rd` i `zaq12wsx` były martwe — zastąpione przez
+// `passwrd` (łapie „Passw0rd2026!”) i `zaqwsx` (łapie „Zaq12wsx1234”).
+// Rdzeń odrzuca hasło tylko wtedy, gdy poza nim (lub jego podwojeniem) zostają
+// same cyfry, spacje i znaki — długie frazy zawierające te słowa przechodzą.
 const COMMON_STEMS = [
-  'password', 'passw0rd', 'haslo', 'qwerty', 'admin', 'welcome', 'letmein', 'zaq12wsx', 'zaqwsxcde',
+  'password', 'passwrd', 'haslo', 'qwerty', 'admin', 'welcome', 'letmein', 'zaqwsx', 'zaqwsxcde',
   'radarodzicow', 'szkolapolska', 'polska', 'iloveyou', 'kochamcie', 'bruksela', 'wrzesien',
+  // #196 punkt 3: słowa związane z Radą i szkołą (bez nazw lokalnych — te są w konfiguracji).
+  'rada', 'rodzice', 'rodzicow', 'skladka', 'szkola', 'bruxelles', 'brussel', 'brussels', 'belgia', 'belgique', 'belgie',
+  // Miesiące PL/FR/NL (typowe „Wrzesień2026!”, „Septembre2026”, „Oktober2026”).
+  'styczen', 'luty', 'marzec', 'kwiecien', 'maj', 'czerwiec', 'lipiec', 'sierpien', 'pazdziernik', 'listopad', 'grudzien',
+  'janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre',
+  'januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december',
 ];
+
+// Wyłącznie dla testu kontraktu listy (tests/pg-password-policy.test.js):
+// kopie, żeby test nie mógł zmienić polityki procesu.
+export function passwordPolicyLists() {
+  return { commonPasswords: [...COMMON_PASSWORDS], commonStems: [...COMMON_STEMS] };
+}
+
+// #196 punkt 3: kontekstowe rdzenie z konfiguracji (nazwa szkoły, miasto,
+// skróty lokalne) — to dane lokalne, więc nie w kodzie. `PASSWORD_CONTEXT_STEMS`:
+// lista oddzielona przecinkami, np. „nazwa szkoły, Uccle”. Każdy wpis
+// jest sprowadzany do samych liter bez diakrytyków (jak hasło w polityce);
+// wpisy krótsze niż 3 litery są pomijane. Brak zmiennej = brak dodatkowych rdzeni.
+// Wynik liczony raz na wartość zmiennej (bez ponownego parsowania przy każdym żądaniu).
+let contextStemsCache = { raw: undefined, stems: [] };
+export function contextStems(env) {
+  const raw = env && Object.hasOwn(env, 'PASSWORD_CONTEXT_STEMS') ? env.PASSWORD_CONTEXT_STEMS : process.env.PASSWORD_CONTEXT_STEMS;
+  const value = typeof raw === 'string' ? raw : '';
+  if (contextStemsCache.raw !== value) {
+    const stems = value.split(',')
+      .map((entry) => foldLatin(entry.normalize('NFKC').toLowerCase()).replace(/[^a-z]/g, ''))
+      .filter((entry) => entry.length >= 3);
+    contextStemsCache = { raw: value, stems: [...new Set(stems)] };
+  }
+  return contextStemsCache.stems;
+}
 
 // Zdejmuje diakrytyki wyłącznie do PORÓWNANIA z listą haseł powszechnych —
 // hash hasła nadal liczony jest z pełną normalizacją NFKC (`normalizePassword`).
@@ -298,7 +332,8 @@ function isSequential(value) {
 }
 
 // Zwraca null albo kod błędu: password_too_short, password_too_long, password_common, password_contains_email.
-export function checkPasswordPolicy(password, { email } = {}) {
+// `env` (opcjonalnie) dostarcza kontekstowe rdzenie `PASSWORD_CONTEXT_STEMS`.
+export function checkPasswordPolicy(password, { email, env } = {}) {
   if (typeof password !== 'string') return 'password_required';
   const normalized = normalizePassword(password);
   const length = [...normalized].length;
@@ -314,13 +349,16 @@ export function checkPasswordPolicy(password, { email } = {}) {
   if (isRepetitive(compact) || isSequential(compact)) return 'password_common';
   // Rdzeń + same cyfry/znaki (np. „haslo12345678!”, „Hasło123456789”).
   const letters = compact.replace(/[^a-z]/g, '');
-  if (COMMON_STEMS.some((stem) => letters === stem || letters === stem.repeat(2))) {
+  const isStem = (stem) => letters === stem || letters === stem.repeat(2);
+  if (COMMON_STEMS.some(isStem) || contextStems(env).some(isStem)) {
     return 'password_common';
   }
   if (email) {
-    const address = String(email).trim().toLowerCase();
+    // #196: adres porównywany także po zdjęciu diakrytyków z hasła
+    // („Jan.Kówalski2026” przy adresie jan.kowalski@…).
+    const address = foldLatin(String(email).normalize('NFKC').trim().toLowerCase());
     const local = address.split('@')[0];
-    if (lower === address || lower.includes(address) || (local.length >= 4 && compact.replace(/\d+$/, '') === local.replace(/[\s\-_.]+/g, ''))) {
+    if (folded === address || folded.includes(address) || (local.length >= 4 && compact.replace(/\d+$/, '') === local.replace(/[\s\-_.]+/g, ''))) {
       return 'password_contains_email';
     }
   }

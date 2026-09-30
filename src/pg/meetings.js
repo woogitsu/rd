@@ -21,6 +21,7 @@ import { detectPossiblePersonalData } from './pii-check.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { insertAuditEvent } from './audit.js';
 import { ContentError, contentHash as emailContentHash, parseCampaignContent } from '../email/content.js';
+import { createJsonReader } from './input.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
 export const READ_ROLES = Object.freeze(['admin', 'board', 'audit']);
@@ -1970,21 +1971,11 @@ export async function listPublicMeetingNotices(db, input = {}) {
 
 // ---------- HTTP ----------
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new MeetingError('invalid_content_type', 415);
-  const declared = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new MeetingError('request_too_large', 413);
-  const raw = await request.text();
-  if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) throw new MeetingError('request_too_large', 413);
-  try {
-    const data = JSON.parse(raw);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('not_object');
-    return data;
-  } catch {
-    throw new MeetingError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  error: (code, status) => new MeetingError(code, status),
+});
 
 function decode(value) {
   try {

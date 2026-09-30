@@ -106,7 +106,7 @@ async function seedSource(db) {
   return { reconciliationId: recId };
 }
 
-// Odczyty porównywane przed eksportem i po odtworzeniu (bez generatedAt).
+// Odczyty porównywane przed eksportem i po odtworzeniu (bez generatedAt i asOf — chwila odczytu).
 async function snapshotViews(db) {
   const cookie = await seedUserSession(db, { userId: 'u-reader', roles: [{ role: 'board' }], mfa: true });
   const get = async (path) => {
@@ -116,6 +116,7 @@ async function snapshotViews(db) {
   };
   const report = await get(`/api/reports/audit?schoolYearId=${YEAR}`);
   delete report.report.generatedAt;
+  delete report.report.asOf;
   return {
     classA: await get('/api/classes/c-1a/students'),
     classB: await get('/api/classes/c-2b/students'),

@@ -220,7 +220,7 @@ export function renderAuditReportHtml(report) {
 <header>
 <h1>Raport dla Komisji Rewizyjnej</h1>
 <p>Rada Rodziców — rok szkolny ${e(formatSchoolYear(schoolYear.label))} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
-<p class="meta">Wygenerowano: ${e(formatDate(report.generatedAt))}. Kwoty w EUR. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
+<p class="meta">Stan na: ${e(formatDate(report.asOf ?? report.generatedAt))} (jedna migawka bazy danych — wszystkie liczby z tej samej chwili). Kwoty w EUR. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
 <p class="notice">Zestawienie z księgi w systemie. Nie jest zatwierdzonym sprawozdaniem finansowym; wymaga sprawdzenia z dokumentami źródłowymi.</p>
 </header>
 

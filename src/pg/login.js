@@ -533,7 +533,7 @@ export async function acceptInvitationWithPassword(env, { token, password, passw
     // wpisana raz, na telefonie, kończyła się zablokowanym kontem i resetem
     // przez admina. Sprawdzone także tu, nie tylko w kliencie (login/main.js).
     if (typeof passwordRepeat !== 'string' || passwordRepeat !== password) throw new LoginError('password_mismatch', 400);
-    const policyError = checkPasswordPolicy(password, { email });
+    const policyError = checkPasswordPolicy(password, { email, env });
     if (policyError) throw new LoginError(policyError, 400);
     newHash = await hashNewPassword(password, env);
   }
@@ -611,7 +611,7 @@ export async function changePassword(env, session, { currentPassword, newPasswor
     }
     return hash;
   });
-  const policyError = checkPasswordPolicy(newPassword, { email: session.user.email });
+  const policyError = checkPasswordPolicy(newPassword, { email: session.user.email, env });
   if (policyError) throw new LoginError(policyError, 400);
   if (currentPassword.normalize('NFKC') === newPassword.normalize('NFKC')) throw new LoginError('password_unchanged', 400);
   const newHash = await hashNewPassword(newPassword, env);
@@ -656,7 +656,7 @@ export async function resetPasswordWithToken(env, { token, newPassword, clientIp
     if (!found.rows[0]) throw await invalid('not_available');
     return { tokenHash: hash, rows: found.rows };
   });
-  const policyError = checkPasswordPolicy(newPassword, { email: rows[0].email });
+  const policyError = checkPasswordPolicy(newPassword, { email: rows[0].email, env });
   if (policyError) throw new LoginError(policyError, 400);
   const newHash = await hashNewPassword(newPassword, env);
 

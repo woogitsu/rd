@@ -23,6 +23,7 @@ import { FIELDS, validateRows } from '../../../import/core.js';
 import { insertAuditEvent } from '../audit.js';
 import { requireAccess } from '../authorization.js';
 import { isProductionLikeEnv } from '../../app-env.js';
+import { createJsonReader } from '../input.js';
 
 export const name = 'import';
 export const IMPORT_ROLES = Object.freeze(['admin', 'board']);
@@ -85,15 +86,17 @@ function qualifyingGrants(context, schoolYearId) {
     && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === schoolYearId));
 }
 
-async function readJsonBody(request) {
-  const type = request.headers.get('Content-Type') ?? '';
-  if (!/^application\/json\b/i.test(type)) throw new ImportError(415, 'unsupported_media_type');
-  const declared = Number(request.headers.get('Content-Length') ?? 0);
-  if (Number.isFinite(declared) && declared > MAX_IMPORT_BODY_BYTES) throw new ImportError(413, 'request_too_large');
-  const text = await request.text();
-  if (Buffer.byteLength(text, 'utf8') > MAX_IMPORT_BODY_BYTES) throw new ImportError(413, 'request_too_large');
-  try { return JSON.parse(text); } catch { throw new ImportError(400, 'invalid_json'); }
-}
+// Zachowanie importu zostaje bez zmian: typ sprawdzany wzorcem na całym
+// nagłówku (nie tylko na części przed „;”), odmowa `unsupported_media_type`,
+// wynik parsowania zwracany bez wymogu obiektu (kształt waliduje validateImportBody).
+const readJsonBody = createJsonReader({
+  maxBytes: MAX_IMPORT_BODY_BYTES,
+  declaredLength: true,
+  isJsonType: (raw) => /^application\/json\b/i.test(raw ?? ''),
+  typeError: ['unsupported_media_type', 415],
+  requireObject: false,
+  error: (code, status) => new ImportError(status, code),
+});
 
 function cell(value) {
   if (value === null || value === undefined) return '';

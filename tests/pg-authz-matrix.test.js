@@ -52,7 +52,7 @@ import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedDocument, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
   ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, REFERENCE_CASES, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
-  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
+  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaOnlyDenial, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
   pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 
@@ -1013,6 +1013,13 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
   const problems = [];
 
   if (response.status !== expected) problems.push(`status ${response.status} zamiast ${expected}: ${text.slice(0, 200)}`);
+  // #161: odmowa wyłącznie z powodu MFA ma kod prowadzący do zapisu MFA, nie ogólne `forbidden`
+  // (sprawdzane dla każdej trasy × aktora z macierzy; dokumenty celowo odpowiadają 404).
+  const mfaReason = mfaOnlyDenial(route, actor, mfa, targetKey);
+  let mfaCode = null;
+  if (mfaReason && expected === 403 && response.status === 403) {
+    try { mfaCode = JSON.parse(text).error; } catch { /* treść nie-JSON */ }
+  }
   if (!isSuccess(response.status)) {
     const leaked = markersIn(text, [...SCOPED_MARKER_KEYS, 'PUBLIC']);
     if (leaked.length) problems.push(`odmowa zawiera dane: ${leaked.join(', ')}`);
@@ -1051,6 +1058,9 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
     if (changed.length) problems.push(`odmowa zmieniła tabele: ${changed.join(', ')}`);
   }
 
+  if (mfaReason && mfaCode !== null && mfaCode !== 'mfa_enrollment_required' && await grantsStillLive(ctx, cookie, actor)) {
+    problems.push(`odmowa z powodu samego MFA (${mfaReason === 'gate' ? 'bramka routera' : 'trasa'}) ma kod ${mfaCode} zamiast mfa_enrollment_required — konto bez czynnika nie trafi do zapisu MFA (#161)`);
+  }
   if (route.id === 'session.access' && response.status === 200) {
     const { grants } = JSON.parse(text);
     // #189: sesja czekająca na MFA (rola z wymogiem MFA, bez MFA) nie poznaje przydziałów.
@@ -1063,6 +1073,18 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
     if (after.status !== 401) problems.push(`sesja działa po wylogowaniu (status ${after.status})`);
   }
   return problems.map((problem) => `${label}: ${problem}`);
+}
+
+// #161: czy przydziały aktora nadal obowiązują (fixture mogło je zmienić — np. udane zamknięcie
+// roku wygasza role tego roku; wtedy `forbidden` jest poprawne, bo rola już nie pasuje).
+// Bramka czekająca na MFA odpowiada { mfaRequired: true }; bez niej /api/access zwraca przydziały.
+async function grantsStillLive(ctx, cookie, actor) {
+  const response = await handlePgRequest(request('/api/access', { cookie }), ctx.env);
+  if (response.status !== 200) return false;
+  const body = await response.json();
+  if (body.mfaRequired) return true;
+  const live = actor.grants.filter((grant) => !grant.revoked && !grant.expiresAt).length;
+  return Array.isArray(body.grants) && body.grants.length === live;
 }
 
 function caseList(route) {
@@ -1378,6 +1400,12 @@ test('meta: detektor macierzy wykrywa błędny status i wyciek danych (kontrola 
   // Ślad odmowy: próba zapisu bez uprawnień nie zmienia tabel (przypadek poprawny = brak problemów).
   const denied = await runCase(ctx, byId['events.create'], repA, false, 'B');
   assert.deepEqual(denied, []);
+  // #161: tabela twierdzi, że przedstawiciel czyta wpłaty z MFA — bez MFA trasa odpowiada ogólnym
+  // `forbidden` (rola nie pasuje), więc detektor zgłasza brak kodu prowadzącego do zapisu MFA.
+  const deadEnd = await runCase(ctx, { ...byId['payments.list'], allow: { repA: ['W1'] } }, repA, false, 'W1');
+  assert.ok(deadEnd.some((problem) => problem.includes('kod forbidden zamiast mfa_enrollment_required')), deadEnd.join('\n'));
+  // Poprawny przypadek: lista własnej klasy bez czynnika daje mfa_enrollment_required (brak problemów).
+  assert.deepEqual(await runCase(ctx, byId['exports.classRoster'], repA, false, 'A'), []);
 });
 
 // ---------- regresje dawnych rozbieżności ----------

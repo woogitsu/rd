@@ -1,5 +1,7 @@
 # Uzgodnienie rachunku i raport dla Komisji Rewizyjnej
 
+Status (30.09.2026, #175): model w bazie (`postgres/migrations/0015_reconciliation.sql` i kolejne), API na PostgreSQL (`src/pg/routes/reconciliation.js`, raport KR `src/pg/audit-report.js`) i panele (`reconciliation/`, raport Komisji Rewizyjnej `audit/`). Staging: nie wykonano; produkcja: nie (D-20). Prototyp na danych syntetycznych — **nie jest gotowy do pracy na danych rodzin ani na prawdziwych wyciągach** (D-13).
+
 Zakres: issue #7 (uzgodnienie księgi z wyciągiem bankowym) i przygotowanie raportu rocznego dla Komisji Rewizyjnej (#15). Prototyp na PostgreSQL (`src/pg/routes/reconciliation.js`, `src/pg/audit-report.js`, migracja `postgres/migrations/0015_reconciliation.sql`). Nie jest wdrożony i nie jest zatwierdzony do pracy na danych rodzin ani na prawdziwych wyciągach.
 
 ## Otwarte decyzje i przyjęte założenia
@@ -123,7 +125,7 @@ Jedna pozycja wyciągu może odpowiadać kilku wpłatom: rodziny zapłaciły jed
 - `householdId: null` → wpłata `unmatched` (przypisanie później przez istniejące `POST /api/payments/{id}/assignment`, jak przy pozycji bez referencji). `householdId` wskazujące gospodarstwo → wpłata `recorded` od razu.
 - Idempotencja: jeden `Idempotency-Key` chroni **całą** operację (wpłatę i powiązanie razem) — ponowienie/podwójne kliknięcie z tym samym kluczem daje `200` z tym samym `payment.id` i `match.id`, nigdy drugiej wpłaty ani drugiego powiązania. Klucz jest zapisany osobno w `payment_entries.idempotency_key` i `bank_reconciliation_matches.idempotency_key` (różne tabele, więc bez kolizji), ale sprawdzany łącznie — replay wymaga zgodności wpłaty **i** jej aktywnego powiązania.
 - Uzgodnienie zatwierdzone odrzuca operację tak samo jak ręczny `POST …/matches` (`409 reconciliation_confirmed`) — trigger `bank_reconciliation_require_draft` (0015) jest backstopem w bazie.
-- Poza zakresem tej części: propozycje gospodarstw po komunikacji strukturalnej (zależy od #83), zatwierdzanie wsadowe wielu par naraz. Ekran uzgodnienia istnieje jako prototyp (`reconciliation/`), ale nie obejmuje tej trasy — dla łączenia z utworzeniem wpłaty dostępne jest tylko API.
+- Poza zakresem tej części: propozycje gospodarstw po komunikacji strukturalnej (rejestr referencji OGM-VCS z #83 jest na main, ale propozycje dopasowania porównują tylko tytuł pozycji z referencją samej wpłaty i nie wskazują gospodarstwa z tego rejestru). Zatwierdzanie wsadowe jawnie wskazanych par dodał później #115 — sekcja „Zatwierdzanie wsadowe” niżej. Ekran uzgodnienia istnieje jako prototyp (`reconciliation/`), ale nie obejmuje tej trasy — dla łączenia z utworzeniem wpłaty dostępne jest tylko API.
 
 Ogólny CSV: pierwszy wiersz to nagłówek z kolumnami `date`/`data`, `amount`/`kwota` i opcjonalnie `reference`/`tytuł`/`opis`. Separator `,` albo `;` (wykrywany z nagłówka), pola w cudzysłowach, BOM dopuszczalny. Data `RRRR-MM-DD` lub `DD.MM.RRRR`/`DD/MM/RRRR`; kwota w EUR z kropką lub przecinkiem, np. `-12,50`. Błędny wiersz zwraca `400 invalid_statement_line` z numerem wiersza danych. Używać wyłącznie danych syntetycznych.
 
@@ -157,6 +159,8 @@ Kontrole krzyżowe (`report.checks.items`, #169) porównują niezależnie liczon
 Raport nie pisze już „Sumy kategorii są zgodne z bilansem roku” — tamta kontrola porównywała widok sam ze sobą i zawsze wychodziła zgodna. Pola `checks.categoryIncomeMatchesSummary` i `checks.categoryExpenseMatchesSummary` zostały usunięte.
 
 Wersja HTML jest przeznaczona do druku (A4, `@page`); PDF powstaje przez „Drukuj → Zapisz jako PDF” w przeglądarce. Strona nie zawiera skryptów, a wszystkie teksty z bazy są escapowane. Odpowiedź ma `Content-Security-Policy: default-src 'none'` z wyjątkiem wbudowanego arkusza stylów dopuszczonego skrótem SHA-256, `Cache-Control: no-store`, `X-Frame-Options: DENY`. Każde wygenerowanie raportu zapisuje zdarzenie `report.audit.generated` (bez treści raportu).
+
+**Migawka i `asOf` (#213).** Cały raport jest liczony w jednej transakcji `REPEATABLE READ, READ ONLY` (`readSnapshot`, `src/pg/db-snapshot.js`), więc bilans, kategorie, korekty, uzgodnienia i kontrole krzyżowe pochodzą z tej samej chwili, nawet gdy skarbnik w tej samej sekundzie zapisuje wpis albo korektę. Pole `report.asOf` (JSON) i nagłówek „Stan na: …” (HTML) to czas tej migawki (`now()` transakcji), nie zegar serwera aplikacji; ta sama wartość trafia do `metadata.asOf` zdarzenia `report.audit.generated`. Pole `generatedAt` zostaje dla zgodności wstecznej i ma tę samą wartość. Ponowienie żądania bez zapisów w międzyczasie daje identyczną treść i nowe zdarzenie z innym `asOf`. Test przeplotu na prawdziwym PostgreSQL: `tests/pg-audit-report-snapshot-real.test.js` (`npm run test:pg-real`).
 
 Raport nie jest zatwierdzonym sprawozdaniem finansowym. Zakres i forma sprawozdania Komisji Rewizyjnej wymagają decyzji Rady (#15, D-09).
 

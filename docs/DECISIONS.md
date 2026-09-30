@@ -131,18 +131,18 @@ Stan na 27.09.2026 (uzupełnione 29.09.2026 o pytania zebrane 28–29.09): żadn
 
   | Moduł | Role (stałe w kodzie) | Plik | Test |
   |---|---|---|---|
-  | Rodziny | odczyt: `admin, board, treasurer, representative` (representative — własna klasa); edycja: `admin, board`; finanse/e-mail rodziny: `admin, board, treasurer` (e-mail widoczny bez względu na zgodę dla ostatniej trójki) | `src/pg/routes/families.js:32-35` | `tests/pg-families.test.js` |
-  | Wpłaty | `admin, board, treasurer` | `src/pg/routes/payments.js:26` | `tests/pg-payments-api.test.js` |
-  | Księga | `admin, board, treasurer` | `src/pg/routes/ledger.js:31` | `tests/pg-ledger-api.test.js` |
-  | Kasa (przelewy, bilans otwarcia) | transfer/odczyt: `admin, board, treasurer`; otwarcie: `board` | `src/pg/routes/ledger-cash.js:34-36` | `tests/pg-ledger-cash.test.js` |
-  | Korespondencja | edycja/kampanie: `board, treasurer`; zatwierdzenie: `board` | `src/pg/routes/email.js:35-36` | `tests/pg-email.test.js` |
-  | Import uczniów | `admin, board` (bez `class_id`) | `src/pg/routes/import.js:28` | `tests/pg-import.test.js` |
-  | Eksport roczny / archiwum | roczny: `admin, board`; archiwum kadencji: `board` | `src/pg/routes/exports.js:25,27` | `tests/pg-export-v2.test.js` |
-  | Zamknięcie roku | odczyt/checklista: `board, treasurer`; zamknięcie: `board` | `src/pg/routes/year-close.js:35-37` | `tests/pg-year-close.test.js` |
-  | Kartki (dowody wpłat) | `admin, board, treasurer` + `representative` (własna klasa) | `src/pg/routes/print.js:30-31` | `tests/pg-print.test.js` |
-  | Centra kosztów (#117) | `admin, board, treasurer`; przedstawiciel, `audit`, `principal` — brak dostępu | `src/pg/routes/ledger-cost-centers.js:28` | `tests/pg-ledger-cost-centers.test.js` |
-  | Sprawozdanie roczne i przepływy (#125) | `board, treasurer`; `admin`, `audit`, `principal`, przedstawiciel — brak dostępu | `src/pg/routes/financial-reports.js:20` | `tests/pg-annual-report.test.js` |
-  | Uzgodnienia bankowe | zapis: `admin, board, treasurer`; raport: `audit, board, treasurer`; raport archiwum: `board, treasurer` | `src/pg/routes/reconciliation.js:31-34` | `tests/pg-reconciliation.test.js` |
+  | Rodziny | odczyt: `admin, board, treasurer, representative` (representative — własna klasa); edycja: `admin, board`; finanse/e-mail rodziny: `admin, board, treasurer` (e-mail widoczny bez względu na zgodę dla ostatniej trójki) | `src/pg/routes/families.js` (`READ_ROLES`, `WIDE_ROLES`, `EDIT_ROLES`, `FINANCIAL_ROLES`) | `tests/pg-families.test.js` |
+  | Wpłaty | `admin, board, treasurer` | `src/pg/routes/payments.js` (`FINANCIAL_ROLES`) | `tests/pg-payments-api.test.js` |
+  | Księga | `admin, board, treasurer` | `src/pg/routes/ledger.js` (`FINANCIAL_ROLES`) | `tests/pg-ledger-api.test.js` |
+  | Kasa (przelewy, bilans otwarcia) | transfer/odczyt: `admin, board, treasurer`; otwarcie: `board` | `src/pg/routes/ledger-cash.js` (`TRANSFER_ROLES`, `READ_ROLES`, `OPENING_ROLES`) | `tests/pg-ledger-cash.test.js` |
+  | Korespondencja | edycja/kampanie: `board, treasurer`; zatwierdzenie: `board` | `src/pg/routes/email.js` (`EDITOR_ROLES`, `APPROVER_ROLES`) | `tests/pg-email.test.js` |
+  | Import uczniów | `admin, board` (bez `class_id`) | `src/pg/routes/import.js` (`IMPORT_ROLES`) | `tests/pg-import.test.js` |
+  | Eksport roczny / archiwum | roczny: `admin, board`; archiwum kadencji: `board` | `src/pg/routes/exports.js` (`YEARLY_EXPORT_ROLES`, `ARCHIVE_EXPORT_ROLES`) | `tests/pg-export-v2.test.js` |
+  | Zamknięcie roku | odczyt/checklista: `board, treasurer`; zamknięcie: `board` | `src/pg/routes/year-close.js` (`READ_ROLES`, `CHECKLIST_ROLES`, `CLOSE_ROLES`) | `tests/pg-year-close.test.js` |
+  | Kartki (dowody wpłat) | `admin, board, treasurer` + `representative` (własna klasa) | `src/pg/routes/print.js` (`FINANCIAL_ROLES`, `PRINT_ROLES`) | `tests/pg-print.test.js` |
+  | Centra kosztów (#117) | `admin, board, treasurer`; przedstawiciel, `audit`, `principal` — brak dostępu | `src/pg/routes/ledger-cost-centers.js` (`FINANCIAL_ROLES`) | `tests/pg-ledger-cost-centers.test.js` |
+  | Sprawozdanie roczne i przepływy (#125) | `board, treasurer`; `admin`, `audit`, `principal`, przedstawiciel — brak dostępu | `src/pg/routes/financial-reports.js` (`REPORT_ROLES`) | `tests/pg-annual-report.test.js` |
+  | Uzgodnienia bankowe | zapis: `admin, board, treasurer`; raport: `audit, board, treasurer`; raport archiwum: `board, treasurer` | `src/pg/routes/reconciliation.js` (`WRITE_ROLES`, `REPORT_ROLES`, `ARCHIVE_REPORT_ROLES`) | `tests/pg-reconciliation.test.js` |
   | Wydarzenia (#12) | tworzy: `admin, board` + `representative` (własna klasa); zatwierdza/publikuje: wyłącznie `board`, zasada czterech oczu | `src/pg/routes/events.js`, `docs/EVENTS.md` | `tests/pg-events.test.js` |
 
   Zarząd nie zatwierdził żadnego z powyższych wierszy — kod działa na tych
@@ -300,7 +300,7 @@ Stan na 27.09.2026 (uzupełnione 29.09.2026 o pytania zebrane 28–29.09): żadn
 - Data decyzji:
 - Kto zatwierdził:
 - Uchwała/dokument:
-- Notatka techniczna (28.09.2026, przegląd #42): #42 („usunięcie Workera, D1 i starej konfiguracji") nie ma jeszcze scalonego PR i nie jest realizowany dalej, dopóki ta decyzja jest otwarta — zgodnie z AGENTS.md i opisem issue („nie usuwaj starych ścieżek przed testami równoważności i próbą odtworzenia", „nie wdrażaj produkcyjnie bez osobnej decyzji szkoły"). Stan repo: kod Workera/Cloudflare D1 (`src/index.js` warstwa Workera, `wrangler.toml`, `migrations/*.sql` D1) współistnieje nadal z warstwą Node/PostgreSQL (`src/pg/**`, `postgres/migrations/*.sql`); PR #227 ustalił, że stary stos nigdy nie był wdrożony produkcyjnie ani nie zawierał danych szkoły. Osobne, już scalone PR-y (#353 — audyt npm i CI, #367 — SR-06/SR-05 część, oba niezależne od tej decyzji) zamknęły dwie punktowe luki bezpieczeństwa niezwiązane z samym usunięciem starego stosu. Do czasu przyjęcia D-20 żaden agent nie powinien usuwać `wrangler`, kodu Workera ani migracji D1, ani oznaczać prototypu jako gotowego do wdrożenia.
+- Notatka techniczna (28.09.2026, przegląd #42): #42 („usunięcie Workera, D1 i starej konfiguracji") nie ma jeszcze scalonego PR i nie jest realizowany dalej, dopóki ta decyzja jest otwarta — zgodnie z AGENTS.md i opisem issue („nie usuwaj starych ścieżek przed testami równoważności i próbą odtworzenia", „nie wdrażaj produkcyjnie bez osobnej decyzji szkoły"). Stan repo: kod Workera/Cloudflare D1 (`src/index.js` warstwa Workera, `wrangler.jsonc`, `migrations/*.sql` D1) współistnieje nadal z warstwą Node/PostgreSQL (`src/pg/**`, `postgres/migrations/*.sql`); PR #227 ustalił, że stary stos nigdy nie był wdrożony produkcyjnie ani nie zawierał danych szkoły. Osobne, już scalone PR-y (#353 — audyt npm i CI, #367 — SR-06/SR-05 część, oba niezależne od tej decyzji) zamknęły dwie punktowe luki bezpieczeństwa niezwiązane z samym usunięciem starego stosu. Do czasu przyjęcia D-20 żaden agent nie powinien usuwać `wrangler`, kodu Workera ani migracji D1, ani oznaczać prototypu jako gotowego do wdrożenia.
 
 ### D-21. Aktualny regulamin i dostęp do dokumentów źródłowych
 
@@ -308,6 +308,7 @@ Stan na 27.09.2026 (uzupełnione 29.09.2026 o pytania zebrane 28–29.09): żadn
 - Dlaczego: README zabrania umieszczania tych dokumentów w repo bez decyzji. Dotyczy #13 i #15.
 - Warianty w dokumentacji: nie wskazano.
 - Notatka techniczna (28.09.2026): PR #382 (#125, scalony) dostarczył wyłącznie projekt sprawozdania rocznego liczony na żywo z bieżących danych (nagłówek „nie jest wersją zatwierdzoną”). Niezmienne migawki sprawozdania (`financial_report_snapshots`, suma SHA-256, zatwierdzenie przez drugą osobę), wskazanie migawki przy zamknięciu roku i publikacja zatwierdzonej migawki przez aktualności są wprost poza zakresem PR i czekają na tę decyzję oraz na D-04 (schemat i retencja migawki wymagają osobnej migracji).
+- Notatka techniczna (30.09.2026, #175): uzupełnienie notatki z 28.09 — od PR #450 (scalony 29.09, migracja `0138_financial_report_snapshots.sql`) niezmienne migawki sprawozdania (`financial_report_snapshots`, SHA-256, zatwierdzenie przez inną osobę z zarządu) i wskazanie migawki przy zamknięciu roku (`reportSnapshotId`, docs/YEAR_CLOSE.md) są w kodzie; publikacji sprawozdania przez aktualności nadal nie ma. Mechanizm nie rozstrzyga tej decyzji ani D-04 — status pozostaje otwarty.
 - Notatka techniczna (29.09.2026; D-19, #211, PR #437): w zebraniu ta sama osoba zapisana zarówno jako użytkownik (`user_id`), jak i jako opiekun (`guardian_id`) liczy się do quorum dwa razy. Test „known gap” w `tests/pg-meetings.test.js` utrwala obecne zachowanie (opis: docs/TESTING.md). Naprawa wymaga migracji oraz decyzji, kto głosuje i jest liczony — konto czy opiekun (zależne od regulaminu i D-19). Warianty: A) liczyć konto; B) liczyć opiekuna; C) osoba jedna, łączona po potwierdzeniu przez sekretarza zebrania. Obecny wariant: brak deduplikacji (znana luka, nieoznaczona jako gotowa). Rekomendacja koordynatora (nie rozstrzygnięcie): po ustaleniu regulaminu liczyć osobę raz; do tego czasu quorum stwierdza sekretarz ręcznie.
 - Status: otwarta
 - Data decyzji:

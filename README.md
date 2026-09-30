@@ -53,6 +53,15 @@ To etap przygotowania. Przed importem danych rodzin wymagane są ustalenia z dyr
 - [Przegląd bezpieczeństwa](docs/SECURITY_REVIEW.md)
 - [Zasady projektowe interfejsu](docs/DESIGN.md)
 - [Dostępność (WCAG 2.2 AA)](docs/ACCESSIBILITY.md)
+- [Szkic deklaracji dostępności strony publicznej (do zatwierdzenia)](docs/ACCESSIBILITY_DECLARATION_DRAFT.md)
+- [Katalog kodów błędów API](docs/API_ERRORS.md)
+- [Runbook incydentów](docs/RUNBOOK.md)
+- [Projekt inwentarza danych osobowych](docs/PRIVACY_INVENTORY.md)
+- [Checklista DPIA (projekt, nie ocena prawna)](docs/DPIA_CHECKLIST.md)
+- [Podmioty przetwarzające (projekt do weryfikacji przez IOD)](docs/PROCESSORS.md)
+- [Informacja o przetwarzaniu danych (D-06)](docs/PRIVACY_NOTICE.md)
+- [Retencja (D-04): rejestr polityk i raport kandydatów](docs/RETENTION.md)
+- [Wykrywanie możliwych danych osobowych w polach wolnego tekstu](docs/PII_CHECK.md)
 - [Zasady pracy agentów](AGENTS.md)
 
 ## Źródła wymagań
@@ -76,7 +85,7 @@ Podgląd samego mapowania kolumn i walidacji działa bez API: `npm ci`, `npm run
 
 ## Panel wpłat
 
-Chroniony interfejs ewidencji: buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej (`/panel/` pod serwerem Node z `DATABASE_URL`). Panel obsługuje listę, rejestrację, korekty i jednokrotne przypisanie wpłaty do rodziny. [Instrukcja panelu](panel/README.md). Router Workera/D1 (`src/index.js`) ma równoważne trasy `/api/payments*` (kontrakt równoważności, [docs/EQUIVALENCE.md](docs/EQUIVALENCE.md)), ale `npm run dev:panel` + `npm run dev` nie łączy ich dziś ze sobą (brak proxy Vite, patrz wyżej). Nie zawiera danych demonstracyjnych ani obejścia logowania.
+Chroniony interfejs ewidencji: buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej (`/panel/` pod serwerem Node z `DATABASE_URL`). Panel obsługuje listę z filtrami, rejestrację, korekty, jednokrotne przypisanie wpłaty do rodziny i podział nieprzypisanej wpłaty na gospodarstwa; zwrot, ponowne przypisanie, eksport CSV i referencje OGM-VCS są dziś dostępne przez API ([docs/PAYMENTS.md](docs/PAYMENTS.md)). [Instrukcja panelu](panel/README.md). Router Workera/D1 (`src/index.js`) ma równoważne trasy `/api/payments*` (kontrakt równoważności, [docs/EQUIVALENCE.md](docs/EQUIVALENCE.md)), ale `npm run dev:panel` + `npm run dev` nie łączy ich dziś ze sobą (brak proxy Vite, patrz wyżej). Nie zawiera danych demonstracyjnych ani obejścia logowania.
 
 ## Panel księgi
 
@@ -84,7 +93,7 @@ Chroniony interfejs księgi: buduj i uruchamiaj razem z API według „Uruchomie
 
 ## Panel wydarzeń
 
-Wewnętrzny interfejs wydarzeń (#12) buduje polecenie `npm run build:events`; serwer Node.js (`npm start`) udostępnia go pod `/events/` w tym samym originie co API. Obsługuje listę roku z filtrem statusu, szkic i edycję z jawnym wyborem godziny przy zmianie czasu w Brukseli, zgłoszenie, zatwierdzenie, publikację, odwołanie z powodem oraz historię wersji. [Instrukcja panelu](events/README.md). Nie zawiera danych demonstracyjnych ani obejścia logowania.
+Wewnętrzny interfejs wydarzeń (#12) buduje polecenie `npm run build:events`; serwer Node.js (`npm start`) udostępnia go pod `/events/` w tym samym originie co API. Obsługuje listę roku z filtrem statusu, szkic i edycję z jawnym wyborem godziny przy zmianie czasu w Brukseli, zgłoszenie, zatwierdzenie, publikację, odwołanie z powodem oraz historię wersji. Zadania i zapisy wolontariuszy (#142) są dziś dostępne wyłącznie przez API — panel nie ma jeszcze tego widoku ([docs/EVENTS.md](docs/EVENTS.md)). [Instrukcja panelu](events/README.md). Nie zawiera danych demonstracyjnych ani obejścia logowania.
 
 ## Kartki o dobrowolnej składce
 
