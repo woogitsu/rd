@@ -5,6 +5,7 @@ import { isAuthorized } from '../authorization.js';
 import { isoTimestamp, loadSession, ROLE_STATUS } from './auth.js';
 import { insertAuditEvent } from './audit.js';
 import { mfaStatus } from './mfa-policy.js';
+import { isAuthorizedScoped, schoolWideContext } from './scope.js';
 
 export { isAuthorized };
 
@@ -51,15 +52,10 @@ export async function loadAuthorizationContext(request, env) {
 // Bezpieczny domyślny zakres: gdy trasa nie podaje classId, przydział
 // ograniczony do klasy NIE jest brany pod uwagę (isAuthorized sam w sobie
 // traktowałby go wtedy jak przydział szkolny). Trasa klasowa musi podać classId.
-export function schoolWideContext(context) {
-  if (!context || !Array.isArray(context.grants)) return context;
-  return { ...context, grants: context.grants.filter((grant) => !grant.classId) };
-}
-
-export function isAuthorizedScoped(context, requirement) {
-  const scoped = requirement?.classId ? context : schoolWideContext(context);
-  return isAuthorized(scoped, requirement);
-}
+//
+// Obie funkcje mieszkają w src/pg/scope.js (jeden resolver zakresu, #155);
+// tu zostaje reeksport dla istniejących importów.
+export { isAuthorizedScoped, schoolWideContext };
 
 // #184 pkt 1: ślad odmowy 403 dla zalogowanego aktora (anonim/401 — bez
 // zdarzenia, patrz uzasadnienie w issue). Zapis poza transakcją żądania
