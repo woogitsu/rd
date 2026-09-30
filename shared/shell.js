@@ -162,6 +162,18 @@ async function logout() {
 // Montuje nawigację i blok konta w istniejących kontenerach strony.
 // Oczekuje w HTML: <nav aria-label="Panel"><ul id="shell-nav"></ul></nav>
 // oraz <div id="shell-account"></div> (patrz zmiany w */index.html).
+// Nazwa wyświetlana zalogowanej osoby (nagłówek powłoki, stopka wydruku #151).
+// GET /api/session zwraca { user: { displayName, email } }; płaski kształt
+// { displayName } obsługujemy dla zgodności ze starszymi odpowiedziami i testami.
+export function sessionDisplayName(session) {
+  if (!session || typeof session !== "object") return null;
+  const user = session.user && typeof session.user === "object" ? session.user : {};
+  for (const value of [user.displayName, session.displayName, user.email, session.email]) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 export async function mountShell({ document: doc = document, location: loc = window.location } = {}) {
   applySchoolName(doc);
   const navList = doc.getElementById("shell-nav");
@@ -186,7 +198,7 @@ export async function mountShell({ document: doc = document, location: loc = win
       account.innerHTML = "";
       return { grants, session };
     }
-    const name = escapeHtml(session.displayName || session.email || "Konto");
+    const name = escapeHtml(sessionDisplayName(session) || "Konto");
     const yearLabel = activeYearLabel(grants);
     account.innerHTML =
       `<span class="shell-account-name">${name}</span>` +

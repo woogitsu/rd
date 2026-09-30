@@ -18,13 +18,13 @@ import {
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { formatSchoolYear } from "../shared/school-year.js";
-import { mountShell } from "../shared/shell.js";
+import { mountShell, sessionDisplayName } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
 
 let printedBy = null;
-mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
+mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
 
 const byId = (id) => document.getElementById(id);
 const state = { classes: null, canEdit: false, isRepresentative: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };

@@ -20,6 +20,7 @@ import { createSessionSecret } from '../../../src/auth.js';
 import { hashPassword } from '../../../src/pg/password.js';
 import { createDraft, submit, approve, publish } from '../../../src/pg/events.js';
 import * as news from '../../../src/pg/news.js';
+import * as meetings from '../../../src/pg/meetings.js';
 import { handlePgRequest } from '../../../src/pg/app.js';
 import { loadMigrations, applyMigrations } from '../../../src/postgres-migrations.js';
 import { startServer } from '../../../src/server.js';
@@ -227,6 +228,62 @@ async function seedDocuments(db) {
   }
 }
 
+// Wydruk zestawień (#151): osobny rok i osobny skarbnik, żeby 300 wpłat i 300
+// wpisów księgi nie zmieniało list widzianych przez inne testy. Część wpłat ma
+// korektę częściową (kolumny „Korekty” i „Netto” na wydruku). Dane syntetyczne.
+const PRINT_YEAR_ID = 'e2e-y-print';
+const PRINT_ROWS = 300;
+async function seedPrintLists(db, userId) {
+  await db.query(
+    `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+     VALUES ('e2e-cat-print', $1, 'income', 'Składki dobrowolne (e2e)', $2)`,
+    [PRINT_YEAR_ID, userId],
+  );
+  await db.query(
+    `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, reference, status, created_by, idempotency_key)
+     SELECT 'e2e-print-p-' || lpad(n::text, 3, '0'), NULL, $1, 123456 + n, DATE '2025-09-01' + (n % 300),
+            'bank', 'Wpłata syntetyczna ' || lpad(n::text, 3, '0'), 'unmatched', $2, 'e2e-print-p-key-' || n
+       FROM generate_series(1, ${PRINT_ROWS}) AS n`,
+    [PRINT_YEAR_ID, userId],
+  );
+  await db.query(
+    `INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
+     SELECT 'e2e-print-c-' || n, 'e2e-print-p-' || lpad(n::text, 3, '0'), 1000, 'Korekta syntetyczna (zwrot części)', $1, 'e2e-print-c-key-' || n
+       FROM generate_series(1, ${PRINT_ROWS}, 50) AS n`,
+    [userId],
+  );
+  await db.query(
+    `INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description, occurred_on, method, created_by, idempotency_key)
+     SELECT 'e2e-print-l-' || lpad(n::text, 3, '0'), $1, 'income', 123456 + n, 'e2e-cat-print',
+            'Wpis syntetyczny ' || lpad(n::text, 3, '0'), DATE '2025-09-01' + (n % 300), 'bank', $2, 'e2e-print-l-key-' || n
+       FROM generate_series(1, ${PRINT_ROWS}) AS n`,
+    [PRINT_YEAR_ID, userId],
+  );
+}
+
+// Wydruk protokołu (#151): zebranie zarządu z listą obecności i projektem
+// protokołu (niezatwierdzony → znak „PROJEKT”). Jedna bardzo długa linia
+// sprawdza zawijanie tekstu na A4. Treść bez danych osobowych.
+const PRINT_MEETING_TITLE = 'Zebranie zarządu (syntetyczne, wydruk)';
+async function seedPrintMeeting(db, userId) {
+  const actor = { userId, grants: [{ role: 'board', classId: null, schoolYearId: 'e2e-y-2026' }], mfaVerified: true };
+  const { meeting } = await meetings.createMeeting(db, actor, {
+    idempotencyKey: 'e2e-print-meeting-1', schoolYearId: 'e2e-y-2026', kind: 'board', status: 'scheduled',
+    title: PRINT_MEETING_TITLE, scheduledAt: '2026-09-15T16:00:00Z', location: 'Sala syntetyczna',
+    quorumMode: 'minimum_count', quorumMinCount: 1, votingBodySize: 2, quorumRuleSource: 'Regulamin syntetyczny § 1',
+  });
+  await meetings.updateMeeting(db, actor, { meetingId: meeting.id, revision: meeting.revisionNo, status: 'held' });
+  for (const [attendeeId, present] of [[userId, true], ['e2e-board-reviewer', false]]) {
+    await meetings.recordAttendance(db, actor, { meetingId: meeting.id, userId: attendeeId, capacity: 'board_member', votingEligible: true, present });
+  }
+  await meetings.determineQuorum(db, actor, { idempotencyKey: 'e2e-print-quorum-1', meetingId: meeting.id });
+  await meetings.createMinutesVersion(db, actor, {
+    idempotencyKey: 'e2e-print-minutes-1', meetingId: meeting.id,
+    body: ['1. Otwarcie zebrania i przyjęcie porządku obrad.', `2. ${'Sprawozdanie '.repeat(40).trim()}.`, '3. Zamknięcie zebrania.'].join('\n'),
+  });
+  return meeting.id;
+}
+
 async function main() {
   const db = new PGlite();
   const client = pgliteClient(db);
@@ -261,10 +318,18 @@ async function main() {
   await grantRole(db, 'e2e-treasurer', 'treasurer', { schoolYearId: 'e2e-y-2026' });
   const treasurerCookie = await seedCookieSession(db, { userId: 'e2e-treasurer', mfa: true });
 
+  // 3b. Skarbnik wydruków (#151): przydział wyłącznie na rok e2e-y-print.
+  await seedUser(db, 'e2e-treasurer-print');
+  await seedSchoolYear(db, PRINT_YEAR_ID, { startsOn: '2025-09-01', endsOn: '2026-08-31' });
+  await grantRole(db, 'e2e-treasurer-print', 'treasurer', { schoolYearId: PRINT_YEAR_ID });
+  await seedPrintLists(db, 'e2e-treasurer-print');
+  const treasurerPrintCookie = await seedCookieSession(db, { userId: 'e2e-treasurer-print', mfa: true });
+
   // 3a. Członek zarządu z przydziałem na rok e2e (#124: panel dokumentów) — sesja przez cookie.
   await seedUser(db, 'e2e-board-docs');
   await grantRole(db, 'e2e-board-docs', 'board', { schoolYearId: 'e2e-y-2026' });
   const boardDocsCookie = await seedCookieSession(db, { userId: 'e2e-board-docs', mfa: true });
+  const printMeetingId = await seedPrintMeeting(db, 'e2e-board-docs');
 
   // 4. Panel „Konta i role” (#224): admin z czynnikiem TOTP i sesjami cookie —
   //    jedna ze starym MFA (krok w górę: mfa_stale), jedna ze świeżym; dwa konta
@@ -296,10 +361,12 @@ async function main() {
     admin: { userId: 'e2e-admin', email: 'e2e-admin@example.invalid', password: adminPassword },
     representative: { userId: 'e2e-rep', cookie: repCookie },
     treasurer: { userId: 'e2e-treasurer', cookie: treasurerCookie },
+    treasurerPrint: { userId: 'e2e-treasurer-print', cookie: treasurerPrintCookie, schoolYearId: PRINT_YEAR_ID, rows: PRINT_ROWS },
     adminReset: { userId: 'e2e-admin-reset', totpSecret: adminTotpSecret, staleCookie: adminStaleCookie, staleCookie2: adminStaleCookie2, freshCookie: adminFreshCookie, targets: resetTargets },
     publishedEventTitle: 'Piknik szkolny (syntetyczny)',
     draftEventTitle: 'Szkic niezatwierdzony SEKRET E2E',
     boardDocs: { userId: 'e2e-board-docs', cookie: boardDocsCookie },
+    printMeeting: { id: printMeetingId, title: PRINT_MEETING_TITLE },
     documents: E2E_DOCUMENTS,
     newsTitles,
     newsLongWord: NEWS_LONG_WORD,
