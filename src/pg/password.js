@@ -280,7 +280,7 @@ export function passwordPolicyLists() {
 
 // #196 punkt 3: kontekstowe rdzenie z konfiguracji (nazwa szkoły, miasto,
 // skróty lokalne) — to dane lokalne, więc nie w kodzie. `PASSWORD_CONTEXT_STEMS`:
-// lista oddzielona przecinkami, np. „Szkoła Polska im. X, Uccle”. Każdy wpis
+// lista oddzielona przecinkami, np. „nazwa szkoły, Uccle”. Każdy wpis
 // jest sprowadzany do samych liter bez diakrytyków (jak hasło w polityce);
 // wpisy krótsze niż 3 litery są pomijane. Brak zmiennej = brak dodatkowych rdzeni.
 // Wynik liczony raz na wartość zmiennej (bez ponownego parsowania przy każdym żądaniu).
