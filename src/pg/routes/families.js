@@ -26,7 +26,8 @@
 // wyłącznie role finansowe z MFA. Jednostka ewidencji składki — decyzja D-11.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { loadAuthorizationContext } from '../authorization.js';
+import { resolveScope, scopeSqlFragment, scopeSqlParams } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { recordDataAccess } from '../data-access.js';
@@ -93,32 +94,18 @@ function readReason(value) {
   return reason;
 }
 
-// Zakres z przydziałów o podanych rolach. Przydział z class_id (obowiązkowy
-// dla przedstawiciela) zawęża do tej klasy; przydział szerokiej roli bez
-// class_id — do roku z school_year_id albo do wszystkich lat.
-export function scopeFromGrants(grants, roles) {
-  const scope = { any: false, allYears: false, years: [], classIds: [], classYears: [] };
-  for (const grant of grants) {
-    if (!roles.includes(grant.role)) continue;
-    if (grant.classId) {
-      scope.classIds.push(grant.classId);
-      scope.classYears.push(grant.schoolYearId ?? null);
-    } else if (WIDE_ROLES.has(grant.role)) {
-      if (grant.schoolYearId) scope.years.push(grant.schoolYearId);
-      else scope.allYears = true;
-    } else {
-      continue;
-    }
-    scope.any = true;
-  }
-  return scope;
+// Zakres z przydziałów o podanych rolach — wspólny resolver src/pg/scope.js
+// (#155). Przydział z class_id (obowiązkowy dla przedstawiciela) zawęża do tej
+// klasy; przydział szerokiej roli (WIDE_ROLES) bez class_id — do roku z
+// school_year_id albo do wszystkich lat.
+export function familiesScope(context, roles) {
+  return resolveScope(context, { roles, schoolWideRoles: WIDE_ROLES });
 }
 
-// Parametry zakresu zajmują zawsze $1–$4; dalsze parametry zaczynają się od $5.
-const scopeParams = (scope) => [scope.allYears, scope.years, scope.classIds, scope.classYears];
-const CLASS_IN_SCOPE = (alias) => `($1::boolean OR ${alias}.school_year_id = ANY($2::text[])
-  OR EXISTS (SELECT 1 FROM unnest($3::text[], $4::text[]) AS g(class_id, school_year_id)
-              WHERE g.class_id = ${alias}.id AND (g.school_year_id IS NULL OR g.school_year_id = ${alias}.school_year_id)))`;
+// Parametry zakresu zajmują zawsze $1–$4 (scopeSqlFragment z firstParam 1);
+// dalsze parametry zaczynają się od $5.
+const scopeParams = (scope) => scopeSqlParams(scope);
+const CLASS_IN_SCOPE = (alias) => scopeSqlFragment({ classAlias: alias });
 // Aktywna relacja opiekun–uczeń: jedyne źródło prawdy to widok
 // student_guardians_current (#157) — dlatego wszystkie odwołania do
 // `student_guardians` poniżej, które mają liczyć się jako "aktualne",
@@ -134,7 +121,7 @@ const CONTACT_HOUSEHOLD = (householdExpr, studentExpr) => `EXISTS (
    WHERE ch.household_id = ${householdExpr} AND csg.student_id = ${studentExpr}
      AND csg.contact_allowed AND cg.contact_allowed)`;
 // Zakres wyłącznie klasowy (przedstawiciel, także zarząd z przydziałem klasy).
-const isClassScoped = (scope) => !(scope.allYears || scope.years.length > 0);
+const isClassScoped = (scope) => !scope.schoolWide;
 const STUDENT_IN_SCOPE = (studentExpr) => `($1::boolean OR EXISTS (
   SELECT 1 FROM enrollments se JOIN classes sc ON sc.id = se.class_id
    WHERE se.student_id = ${studentExpr} AND ${CLASS_IN_SCOPE('sc')}))`;
@@ -142,7 +129,7 @@ const STUDENT_IN_SCOPE = (studentExpr) => `($1::boolean OR EXISTS (
 async function requireReadContext(request, env, roles = READ_ROLES) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  const scope = scopeFromGrants(context.grants, roles);
+  const scope = familiesScope(context, roles);
   if (!scope.any) throw new RequestError('forbidden', 403);
   return { context, scope };
 }
@@ -216,9 +203,9 @@ async function listClassStudents(request, env, classId, json) {
 }
 
 function financialYears(context) {
-  if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, requireMfa: true })) return null;
-  const scope = scopeFromGrants(context.grants.filter((grant) => !grant.classId), FINANCIAL_ROLES);
-  return scope.any ? scope : null;
+  // Wyłącznie przydział bez klasy (SR-01): zakres szkolny z MFA.
+  const scope = resolveScope(context, { roles: FINANCIAL_ROLES, requireMfa: true, schoolWideRoles: WIDE_ROLES });
+  return scope.schoolWide ? scope : null;
 }
 
 async function getHousehold(request, env, householdId, json) {
@@ -313,7 +300,7 @@ async function getHousehold(request, env, householdId, json) {
          FROM household_payment_totals t
         WHERE t.household_id = $3 AND ($1::boolean OR t.school_year_id = ANY($2::text[]))
         ORDER BY t.school_year_id`,
-      [finance.allYears, finance.years, householdId],
+      [...scopeSqlParams(finance).slice(0, 2), householdId],
     );
     body.paymentTotals = totals.rows.map((row) => ({
       schoolYearId: row.school_year_id,

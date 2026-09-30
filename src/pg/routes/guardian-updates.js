@@ -26,10 +26,9 @@
 // e-maila kodem (poza zakresem tego PR).
 
 import { createHash, randomBytes } from 'node:crypto';
-import { loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
-import { scopeFromGrants } from './families.js';
 import { createJsonReader } from '../input.js';
 import { emailHash, normalizeEmail } from '../../email/content.js';
 
@@ -81,8 +80,7 @@ const readJson = createJsonReader({
 async function requireBoardContext(request, env) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  const scope = scopeFromGrants(context.grants.filter((grant) => !grant.classId), EDIT_ROLES);
-  if (!scope.any) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles: EDIT_ROLES })) throw new RequestError('forbidden', 403);
   return context;
 }
 
