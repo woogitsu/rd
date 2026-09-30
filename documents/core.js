@@ -11,6 +11,7 @@ export const LIST_LIMIT = 50;
 
 import { statusMessage } from "../shared/messages.js";
 import { formatSchoolYear } from "../shared/school-year.js";
+import { shortId } from "../shared/short-id.js";
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -341,9 +342,20 @@ export function categoryLabel(doc) {
   return doc.category ? CATEGORY_LABELS[doc.category] : "—";
 }
 
+// Przegląd demo 4: „1 dokument” obok „Dokumenty: 2” — jedna odmiana jak
+// w innych panelach („1 wpis”, „5 pozycji”).
+export function documentCountLabel(count) {
+  const n = Math.abs(Number(count) || 0);
+  if (n === 1) return "1 dokument";
+  const last = n % 10;
+  const lastTwo = n % 100;
+  const few = last >= 2 && last <= 4 && !(lastTwo >= 12 && lastTwo <= 14);
+  return `${n} ${few ? "dokumenty" : "dokumentów"}`;
+}
+
 export function linkLabel(doc) {
   if (!doc.linkedEntityType || !doc.linkedEntityId) return "—";
-  return `${LINK_LABELS[doc.linkedEntityType]}: ${doc.linkedEntityId}`;
+  return `${LINK_LABELS[doc.linkedEntityType]} ${shortId(doc.linkedEntityId)}`;
 }
 
 // Pary [etykieta, wartość] do widoku metadanych.
@@ -362,7 +374,7 @@ export function metadataRows(rawDoc) {
     ["Tytuł", titleLabel(doc)],
     ["Kategoria", categoryLabel(doc)],
     ["Data dokumentu", doc.documentDate ?? "—"],
-    ["Dodał(a)", doc.createdBy ?? "—"],
+    ["Dodał(a)", doc.createdBy ? `konto ${shortId(doc.createdBy)}` : "—"],
     ["Dodano", formatDateTime(doc.createdAt)],
   ];
 }

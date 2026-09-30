@@ -153,6 +153,8 @@ test('WARNING_CODES odpowiada CLOSE_WARNING_CODES na serwerze i każdy kod ma et
   const parse = (text) => [...text.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual([...WARNING_CODES], parse(match));
   for (const code of WARNING_CODES) assert.ok(WARNING_LABELS[code], code);
+  // przegląd demo 4: bez żargonu „suma modułów kwot” na ekranie zarządu
+  assert.doesNotMatch(Object.values(WARNING_LABELS).join(' '), /modułów/);
 });
 
 test('warningRows: kolejność serwera, kwoty opcjonalne, nieznany kod nie znika, brak pola = pusta lista', () => {

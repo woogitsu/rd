@@ -536,7 +536,7 @@ function renderDetail({ refill = false } = {}) {
   byId("attendance-body").replaceChildren(...(attendees.length ? attendees.map((attendee) => {
     const reference = attendeeReference(attendee);
     return el("tr", {},
-      el("td", { className: "break" }, reference.label),
+      el("td", { className: "break", title: reference.id || null }, reference.label),
       el("td", {}, CAPACITY_LABELS[attendee.capacity] ?? attendee.capacity),
       el("td", {}, attendee.present ? "obecna" : "nieobecna"),
       el("td", {}, attendee.votingEligible ? "tak" : "nie"),

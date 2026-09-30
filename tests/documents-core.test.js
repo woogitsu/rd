@@ -22,6 +22,8 @@ import {
   isRetryable,
   makeIdempotencyKey,
   metadataRows,
+  documentCountLabel,
+  linkLabel,
   metadataUrl,
   normalizeDocument,
   sniffType,
@@ -165,7 +167,8 @@ test("normalizacja i metadane nie ufają nieznanym wartościom", () => {
   assert.equal(rows.Klasa, "—");
   assert.equal(rows["Typ pliku"], "PDF");
   assert.equal(rows.Rozmiar, "2 KiB");
-  assert.equal(rows["Powiązanie"], "Wpłata: pay_1");
+  assert.equal(rows["Powiązanie"], "Wpłata pay_1");
+  assert.equal(rows["Dodał(a)"], "konto user_1");
   assert.match(rows.Dodano, /27\.09\.2026/);
   assert.equal(formatBytes(512), "512 B");
   assert.equal(formatBytes(10 * 1024 * 1024), "10 MiB");
@@ -326,4 +329,24 @@ test("statusConfirmation: mówi, że plik zostaje w archiwum", () => {
     assert.ok(c.effects.some((e) => e.includes("zostają w archiwum")));
     assert.ok(!/usun(i|ię)ęt|zostanie usunięty/.test(c.effects.join(" ")));
   }
+});
+
+// --- Przegląd demo 4: odmiana liczby dokumentów i skrócone identyfikatory ----------
+
+test("documentCountLabel odmienia liczbę dokumentów jak inne panele", () => {
+  assert.equal(documentCountLabel(0), "0 dokumentów");
+  assert.equal(documentCountLabel(1), "1 dokument");
+  assert.equal(documentCountLabel(2), "2 dokumenty");
+  assert.equal(documentCountLabel(5), "5 dokumentów");
+  assert.equal(documentCountLabel(12), "12 dokumentów");
+  assert.equal(documentCountLabel(22), "22 dokumenty");
+});
+
+test("linkLabel i Dodał(a) pokazują skrót UUID zamiast pełnego identyfikatora", () => {
+  const uuid = "fd1c44a1-0c70-4f7c-9664-4e97e45e2ac8";
+  const doc = normalizeDocument({ id: DOC_ID, kind: "financial", linkedEntityType: "ledger_entry", linkedEntityId: uuid, createdBy: uuid });
+  assert.equal(linkLabel(doc), "Wpis księgi fd1c44a1…");
+  const rows = Object.fromEntries(metadataRows(doc));
+  assert.equal(rows["Dodał(a)"], "konto fd1c44a1…");
+  assert.ok(!Object.values(rows).some((value) => String(value).includes(uuid)), "pełny UUID nie trafia do metadanych");
 });
