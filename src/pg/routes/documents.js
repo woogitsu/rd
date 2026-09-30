@@ -689,14 +689,6 @@ async function changeStatus(request, env, id, json, action) {
       }
 
       if (action === 'superseded') {
-        // Zastąpienie zmienia, która wersja dowodu obowiązuje — to korekta roku,
-        // a korekta po zamknięciu roku nie ma ścieżki w aplikacji (docs/YEAR_CLOSE.md;
-        // opis dokumentu z zamkniętego roku jest zamrożony od 0106). Blokada
-        // wiersza zamknięcia (FOR SHARE w school_year_assert_open) jak w
-        // triggerach zamrożenia. Unieważnienia NIE blokujemy (wariant zachowawczy,
-        // D-04/D-07): omyłkowo wgrany plik z danymi osobowymi musi dać się ukryć
-        // z domyślnej listy także po zamknięciu roku.
-        await tx.query('SELECT school_year_assert_open($1)', [doc.school_year_id]);
         const replacement = (await tx.query(
           'SELECT id, kind, school_year_id, class_id FROM documents WHERE id = $1', [replacementDocumentId],
         )).rows[0];
@@ -735,6 +727,17 @@ async function changeStatus(request, env, id, json, action) {
         }
         return { conflict: true };
       }
+
+      // Zastąpienie zmienia, która wersja dowodu obowiązuje — to korekta roku,
+      // a korekta po zamknięciu roku nie ma ścieżki w aplikacji (docs/YEAR_CLOSE.md;
+      // opis dokumentu z zamkniętego roku jest zamrożony od 0106). Blokada
+      // wiersza zamknięcia (FOR SHARE w school_year_assert_open) jak w
+      // triggerach zamrożenia. Sprawdzane dopiero przed zapisem, żeby ponowienie
+      // zastąpienia zapisanego przed zamknięciem nadal było powtórką (replayed).
+      // Unieważnienia NIE blokujemy (wariant zachowawczy, D-04/D-07): omyłkowo
+      // wgrany plik z danymi osobowymi musi dać się ukryć z domyślnej listy
+      // także po zamknięciu roku.
+      if (action === 'superseded') await tx.query('SELECT school_year_assert_open($1)', [doc.school_year_id]);
 
       // #152: powód zdarzenia niezmiennego — bramka na dane osobowe (422).
       const gate = gateFreeText([['document_status_events.reason', reason]], { confirm: body.value?.confirmPersonalData === true });

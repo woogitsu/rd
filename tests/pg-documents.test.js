@@ -964,6 +964,12 @@ test('#82 zamknięty rok: nowej wersji nie da się przesłać ani wskazać (409 
   // Wersja zastępująca przesłana jeszcze przed zamknięciem roku.
   const replacement = await upload(env, { cookie });
   const mistaken = await upload(env, { cookie });
+  // Zastąpienie zapisane przed zamknięciem — jego ponowienie po zamknięciu to powtórka.
+  const earlier = await upload(env, { cookie });
+  const earlierReplacement = await upload(env, { cookie });
+  const earlierBody = { replacementDocumentId: earlierReplacement.data.document.id, reason: 'Przed zamknięciem' };
+  const beforeClose = await changeStatus(env, { cookie, id: earlier.data.document.id, action: 'supersede', key: 'supersede-before-close', body: earlierBody });
+  assert.equal(beforeClose.response.status, 201);
 
   await seedSchoolYear(db, 'y-2027-next', { startsOn: '2027-09-01', endsOn: '2028-08-31' });
   await db.exec(`
@@ -984,7 +990,10 @@ test('#82 zamknięty rok: nowej wersji nie da się przesłać ani wskazać (409 
   });
   assert.deepEqual([supersede.response.status, supersede.data.error], [409, 'school_year_closed']);
   assert.equal(await statusEventCount(db, original.data.document.id), 0);
-  assert.equal((await auditRows(db, 'document.superseded')).length, 0);
+  assert.equal((await auditRows(db, 'document.superseded')).length, 1, 'tylko zastąpienie sprzed zamknięcia');
+
+  const retry = await changeStatus(env, { cookie, id: earlier.data.document.id, action: 'supersede', key: 'supersede-before-close', body: earlierBody });
+  assert.deepEqual([retry.response.status, retry.data.replayed], [200, true]);
 
   // Wariant zachowawczy (D-04/D-07): omyłkowo wgrany plik można ukryć z domyślnej listy
   // także w zamkniętym roku; plik i wpis documents zostają.
