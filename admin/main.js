@@ -26,6 +26,7 @@ import { api as apiRequest } from "../shared/api.js";
 import { confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import { shortId } from "../shared/short-id.js";
+import { formatSchoolYear } from "../shared/school-year.js";
 import "../shared/shell.css";
 
 mountShell();
@@ -585,7 +586,7 @@ byId("classes-form").addEventListener("submit", async (event) => {
   const confirmed = await confirmAction({
     title: "Dodać klasy?",
     effects: [
-      `Rok ${state.yearMap.get(schoolYearId)?.label ?? schoolYearId}: ${payload.names.join(", ")}.`,
+      `Rok ${state.yearMap.get(schoolYearId)?.label ?? formatSchoolYear(schoolYearId)}: ${payload.names.join(", ")}.`,
       "Klas nie można usuwać ani zmieniać ich nazwy; pomyłkę poprawia nowa klasa i przeniesienie uczniów.",
     ],
     confirmLabel: "Dodaj klasy",
