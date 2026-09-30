@@ -89,3 +89,24 @@ test('extractStructuredReference: dodatkowe słowo w tytule nie przeszkadza (ina
   const formatted = formatStructuredReference(reference);
   assert.equal(extractStructuredReference(`składka ${formatted} Jan Kowalski`), reference);
 });
+
+test('extractStructuredReference: dwie różne referencje w tytule -> null, ta sama powtórzona -> referencja (#83)', () => {
+  const first = generateStructuredReference();
+  let second = generateStructuredReference();
+  while (second === first) second = generateStructuredReference();
+  const f1 = formatStructuredReference(first);
+  const f2 = formatStructuredReference(second);
+  assert.equal(extractStructuredReference(`składka ${f1} i ${f2}`), null);
+  assert.equal(extractStructuredReference(`${first} ${second}`), null);
+  assert.equal(extractStructuredReference(`${f1} powtórzone ${f1}`), first);
+  // Zapis z +++/*** ma pierwszeństwo przed samymi cyframi w dalszej części tytułu.
+  assert.equal(extractStructuredReference(`${f1} numer ${second}`), first);
+});
+
+test('extractStructuredReference: błędna suma w zapisie z plusami nie blokuje poprawnej referencji obok, ale sama nie wystarcza', () => {
+  const reference = generateStructuredReference();
+  const broken = reference.slice(0, 10) + String((Number(reference.slice(10)) % 97) + 1).padStart(2, '0');
+  assert.equal(isValidStructuredReference(broken), false);
+  assert.equal(extractStructuredReference(formatStructuredReference(broken)), null);
+  assert.equal(extractStructuredReference(`${formatStructuredReference(broken)} ${formatStructuredReference(reference)}`), reference);
+});

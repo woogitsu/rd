@@ -42,6 +42,7 @@ import { StatementFileError, normalizeIban } from '../bank/common.js';
 import { parseCoda } from '../bank/coda.js';
 import { parseCamt053 } from '../bank/camt053.js';
 import { createIdempotencyKeyReader, createJsonReader, isUniqueError } from '../input.js';
+import { extractStructuredReference } from '../ogm.js';
 
 export const name = 'reconciliation';
 
@@ -140,6 +141,16 @@ export function normalizeReference(value) {
 export async function hashReference(salt, value) {
   const normalized = normalizeReference(value);
   return normalized ? sha256Hex(`${salt}:${normalized}`) : null;
+}
+
+// Skrót komunikacji strukturalnej OGM-VCS wyodrębnionej z tytułu (#83, 0158):
+// „<sól>:ogm:<12 cyfr>”. Tylko referencja z poprawną sumą mod 97 i jednoznaczna
+// w tytule (extractStructuredReference); inaczej NULL. Przedrostek „ogm:”
+// oddziela go od skrótu całego tytułu. Ten sam wzór liczy baza w
+// STRUCTURED_REFERENCE_LINES_SQL — zmiana tylko razem z nim.
+export async function hashStructuredReference(salt, title) {
+  const reference = extractStructuredReference(title);
+  return reference ? sha256Hex(`${salt}:ogm:${reference}`) : null;
 }
 
 // --- import wyciągu (ogólny CSV: data, kwota, tytuł) -----------------------
@@ -825,6 +836,7 @@ async function importLines(request, env, id, json) {
       const hashed = await Promise.all(input.lines.map(async (line, index) => ({
         ...line,
         referenceHash: line.reference ? await sha256Hex(`${row.reference_salt}:${line.reference}`) : null,
+        structuredRefHash: line.reference ? await hashStructuredReference(row.reference_salt, line.reference) : null,
         transactionHash: transactionHashes?.[index] ?? null,
       })));
       requestHash = fromFile
@@ -855,10 +867,11 @@ async function importLines(request, env, id, json) {
       if (hashed.length > 0) {
         const inserted = await tx.query(
           `WITH ins AS (
-             INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents, reference_hash, created_by)
-             SELECT t.id, $1, $2, t.line_no, t.booked_on, t.amount_cents, t.reference_hash, $3
-               FROM unnest($4::text[], $5::int[], $6::date[], $7::bigint[], $8::text[])
-                    AS t(id, line_no, booked_on, amount_cents, reference_hash)
+             INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents,
+                                               reference_hash, structured_ref_hash, created_by)
+             SELECT t.id, $1, $2, t.line_no, t.booked_on, t.amount_cents, t.reference_hash, t.structured_ref_hash, $3
+               FROM unnest($4::text[], $5::int[], $6::date[], $7::bigint[], $8::text[], $9::text[])
+                    AS t(id, line_no, booked_on, amount_cents, reference_hash, structured_ref_hash)
              RETURNING booked_on, amount_cents, reference_hash
            )
            SELECT count(*) AS n FROM ins l WHERE EXISTS (
@@ -871,7 +884,8 @@ async function importLines(request, env, id, json) {
             hashed.map((_, index) => index + 1),
             hashed.map((line) => line.bookedOn),
             hashed.map((line) => line.amountCents),
-            hashed.map((line) => line.referenceHash)],
+            hashed.map((line) => line.referenceHash),
+            hashed.map((line) => line.structuredRefHash)],
         );
         possibleDuplicateCount = toSafeInteger(inserted.rows[0].n);
       }
@@ -982,10 +996,10 @@ async function importStatementFile(tx, { context, actorId, row, input, hashed, f
   for (const [index, line] of fresh.entries()) {
     await tx.query(
       `INSERT INTO bank_statement_lines (id, reconciliation_id, import_id, line_no, booked_on, amount_cents,
-         reference_hash, bank_transaction_hash, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         reference_hash, structured_ref_hash, bank_transaction_hash, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [crypto.randomUUID(), id, importId, index + 1, line.bookedOn, line.amountCents, line.referenceHash,
-        line.transactionHash, actorId],
+        line.structuredRefHash, line.transactionHash, actorId],
     );
   }
   await insertAuditEvent(tx, {
@@ -1093,32 +1107,43 @@ function householdCandidatesSql(eligible) {
     ) ranked WHERE rn <= $4`;
 }
 
-// Warianty zapisu komunikacji strukturalnej OGM-VCS (#83), które — po
-// normalizacji tytułu (normalizeReference) — mogą stanowić CAŁY tytuł pozycji:
-// CODA typ 101 daje „+++ddd/dddd/ddddd+++”, CAMT (Strd/CdtrRefInf/Ref) zwykle
-// 12 cyfr albo ten sam zapis z plusami. Serwer nie przechowuje tytułu, tylko
-// solony skrót (sól uzgodnienia w $3), więc porównujemy skróty wariantów
-// aktywnych referencji roku ze skrótem pozycji. Tytuł, w którym referencja jest
-// otoczona innym tekstem, nie jest rozpoznawany — świadome ograniczenie
-// (docs/RECONCILIATION.md).
+// Rozpoznanie komunikacji strukturalnej OGM-VCS (#83) w pozycji wyciągu.
+// Serwer nie przechowuje tytułu, tylko solone skróty (sól uzgodnienia w $3):
+// * structured_ref_hash (0158) — skrót referencji wyodrębnionej przy imporcie
+//   z dowolnego miejsca tytułu („Składka +++…+++ Jan”), liczony w JS przez
+//   hashStructuredReference jako sha256('<sól>:ogm:<12 cyfr>');
+// * reference_hash — skrót CAŁEGO tytułu; pozycje sprzed 0158 nie mają skrótu
+//   referencji, więc porównujemy go ze skrótami czterech zapisów, które mogą
+//   stanowić cały tytuł: 12 cyfr, „+++ddd/dddd/ddddd+++” (CODA 101),
+//   „***…***” i „ddd/dddd/ddddd”. Stara pozycja z referencją w dłuższym
+//   tytule nie jest rozpoznawana (przeliczenie wstecz niemożliwe — brak tytułu).
+// Tylko aktywne referencje roku; unieważniona i z innego roku nie wskazują nikogo.
 const STRUCTURED_REFERENCE_LINES_SQL = `
-  WITH variants AS MATERIALIZED (
-    SELECT pr.household_id, v.variant
+  WITH refs AS MATERIALIZED (
+    SELECT pr.household_id, pr.structured_reference,
+           substr(pr.structured_reference, 1, 3) || '/' || substr(pr.structured_reference, 4, 4)
+             || '/' || substr(pr.structured_reference, 8, 5) AS slashed
       FROM payment_references pr
-      CROSS JOIN LATERAL (SELECT substr(pr.structured_reference, 1, 3) || '/' || substr(pr.structured_reference, 4, 4)
-                                 || '/' || substr(pr.structured_reference, 8, 5) AS slashed) f
-      CROSS JOIN LATERAL (VALUES (pr.structured_reference), ('+++' || f.slashed || '+++'),
-                                 ('***' || f.slashed || '***'), (f.slashed)) AS v(variant)
      WHERE pr.school_year_id = $2 AND pr.revoked_at IS NULL
-  ), hashed AS MATERIALIZED (
-    SELECT household_id, encode(sha256(convert_to($3 || ':' || variant, 'UTF8')), 'hex') AS reference_hash
-      FROM variants
+  ), title_hashes AS MATERIALIZED (
+    SELECT r.household_id, encode(sha256(convert_to($3 || ':' || v.variant, 'UTF8')), 'hex') AS reference_hash
+      FROM refs r
+      CROSS JOIN LATERAL (VALUES (r.structured_reference), ('+++' || r.slashed || '+++'),
+                                 ('***' || r.slashed || '***'), (r.slashed)) AS v(variant)
+  ), ref_hashes AS MATERIALIZED (
+    SELECT r.household_id, encode(sha256(convert_to($3 || ':ogm:' || r.structured_reference, 'UTF8')), 'hex') AS ref_hash
+      FROM refs r
+  ), open_lines AS MATERIALIZED (
+    SELECT l.id, l.reference_hash, l.structured_ref_hash
+      FROM bank_statement_lines l
+     WHERE ${OPEN_LINE_SQL} AND l.amount_cents > 0 AND l.reference_hash IS NOT NULL
   )
-  SELECT DISTINCT l.id AS line_id, h.household_id
-    FROM bank_statement_lines l
-    JOIN hashed h ON h.reference_hash = l.reference_hash
-   WHERE ${OPEN_LINE_SQL} AND l.amount_cents > 0 AND l.reference_hash IS NOT NULL
-   ORDER BY l.id, h.household_id`;
+  SELECT line_id, household_id FROM (
+    SELECT l.id AS line_id, h.household_id FROM open_lines l JOIN ref_hashes h ON h.ref_hash = l.structured_ref_hash
+    UNION
+    SELECT l.id AS line_id, h.household_id FROM open_lines l JOIN title_hashes h ON h.reference_hash = l.reference_hash
+  ) found
+   ORDER BY line_id, household_id`;
 
 function toCandidate(type, entry, extra = {}) {
   return {
@@ -1204,9 +1229,10 @@ async function suggestMatches(request, env, id, url, json) {
   const paymentsByKey = byKey(found.payments.rows);
   const householdLedger = byLineId(found.householdLedger.rows);
   const householdPayments = byLineId(found.householdPayments.rows);
-  // Jedno gospodarstwo na pozycję: referencja jest unikalna w roku, a skrót
-  // całego tytułu nie może odpowiadać dwóm różnym referencjom. Gdyby jednak
-  // wskazywał więcej niż jedno (np. ręczny import), nie wskazujemy żadnego.
+  // Jedno gospodarstwo na pozycję: referencja jest unikalna w roku, import
+  // zapisuje skrót najwyżej jednej (jednoznacznej) referencji, a skrót całego
+  // tytułu nie może odpowiadać dwóm różnym referencjom. Gdyby jednak pozycja
+  // wskazywała więcej niż jedno gospodarstwo, nie wskazujemy żadnego.
   const structuredHousehold = new Map();
   for (const [lineId, rows] of byLineId(found.structured.rows)) {
     if (rows.length === 1) structuredHousehold.set(lineId, rows[0].household_id);
