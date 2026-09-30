@@ -23,12 +23,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .skip-link { position: absolute; left: -9999px; top: 0; padding: .5rem .75rem; background: var(--bg); color: var(--red-dark); }
 .skip-link:focus { left: 1rem; }
-
-.site-header {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 2rem;
-  padding: .9rem clamp(1rem, 5vw, 3rem);
-  border-bottom: 1px solid var(--line);
-}
 .brand { color: var(--text); font-weight: 700; text-decoration: none; }
 .brand small { display: block; color: var(--muted); font-weight: 400; }
 nav { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }

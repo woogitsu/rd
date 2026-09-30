@@ -1498,6 +1498,11 @@ export const ROUTE_MATRIX = Object.freeze([
     object: 'dataRequest',
     build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/status`, body: { status: 'identity_verified' } }),
   }),
+  // #100: eksport danych jednej rodziny — wariant zachowawczy (admin + krok w górę MFA), żądanie po weryfikacji tożsamości.
+  adminRoute('admin.dataRequestExport', 'POST', '/api/admin/data-requests/:requestId/export', {
+    object: 'dataRequestVerified',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/export`, body: {} }),
+  }),
   // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
   adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
   // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.

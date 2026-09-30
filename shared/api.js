@@ -11,15 +11,22 @@
 //   równoległych żądaniach); pierwsza udana odpowiedź je usuwa;
 // - 403 mfa_stale (krok w górę) NIE przekierowuje: kod trafia do panelu (ApiError.code),
 //   który sam pokaże okno z kodem — panel admin może później przejść na ten moduł.
-// Nic nie jest zapisywane w localStorage ani sessionStorage. Kontrola dostępu jest
-// wyłącznie po stronie serwera — klient tylko prowadzi użytkownika do logowania.
+// - checkSession() (przegląd demo 5, propozycja 4): pierwsze żądanie strony panelu to jedno
+//   GET /api/session; pozostałe czekają na jego wynik. Po 401 i przekierowaniu na /login/
+//   kolejne żądania nie wychodzą z przeglądarki (ApiError 401 bez sieci) — anonim dostaje
+//   jedno 401 w konsoli zamiast 3–4. Kontrakt API bez zmian; o sesji rozstrzyga serwer.
+// Nic nie jest zapisywane w localStorage ani sessionStorage; 401 usuwa jedynie wskazówkę
+// sesji ekranu logowania (shared/session-hint.js), żeby /login/ nie pytał o wygasłą sesję.
+// Kontrola dostępu jest wyłącznie po stronie serwera — klient tylko prowadzi do logowania.
 
 import { errorCode, errorMessage } from "./messages.js";
 import { confirmPersonalData } from "./pii-confirm.js";
+import { forgetSession } from "./session-hint.js";
 
 export { MESSAGES, errorMessage, statusMessage } from "./messages.js";
 
 export const LOGIN_PATH = "/login/";
+export const SESSION_PATH = "/api/session";
 const CHECK_ORIGIN = "https://rd.invalid";
 const MAX_NEXT_LENGTH = 512;
 
@@ -173,8 +180,19 @@ export function createApiClient({
   hasUnsavedChanges = domUnsavedTracker(globalThis.document),
   warnUnsaved = domSessionWarning(globalThis.document),
   clearWarning = domClearSessionWarning(globalThis.document),
+  // 401: wskazówka „może być sesja” dla /login/ jest nieaktualna (shared/session-hint.js).
+  forgetHint = () => forgetSession(),
 } = {}) {
   let redirecting = false;
+  // Przekierowanie na /login/ zostało wywołane — strona jest opuszczana. Dalsze żądania
+  // skończyłyby się tym samym 401 (czerwony wpis w konsoli), więc nie wychodzą z przeglądarki.
+  // Nie dotyczy ostrzeżenia przy niezapisanym formularzu: tam strona zostaje, a zapis można
+  // ponowić po zalogowaniu w nowej karcie.
+  let leaving = false;
+  // checkSession(): trwające GET /api/session i bramka (nigdy nie odrzuca), na którą
+  // czekają pozostałe żądania strony.
+  let sessionProbe = null;
+  let sessionGate = null;
   // Ostrzeżenie zamiast przekierowania (niezapisany formularz): jedno na stronę, dopóki
   // któreś żądanie nie zakończy się sukcesem.
   let warned = false;
@@ -190,9 +208,24 @@ export function createApiClient({
       redirecting = true;
       const url = loginUrl(currentPath(location), { reason: action === "enroll" ? "enroll" : undefined });
       if (hasUnsavedChanges()) { warned = true; warnUnsaved(url, SESSION_EXPIRED_WARNING); }
-      else navigate(url);
+      else { leaving = true; navigate(url); }
     }
     return action;
+  }
+
+  // Jedno sprawdzenie sesji przed pozostałymi żądaniami strony (wywołuje je mountShell,
+  // shared/shell.js). Zwraca dane GET /api/session albo rzuca ApiError. Wywołanie w trakcie
+  // trwającego sprawdzenia zwraca to samo (bez drugiego żądania). Błąd sieci lub 5xx nie
+  // blokuje reszty — panele pokażą własne komunikaty jak dotąd; blokuje wyłącznie
+  // wywołane przekierowanie na /login/ (`leaving`).
+  function checkSession(url = SESSION_PATH) {
+    if (sessionProbe) return sessionProbe;
+    const probe = execute(url, {}, false, true);
+    sessionProbe = probe;
+    sessionGate = probe.then(() => {}, () => {}).finally(() => {
+      if (sessionProbe === probe) sessionProbe = null;
+    });
+    return probe;
   }
 
   // Ciało z potwierdzeniem danych osobowych albo null, gdy ciała nie da się uzupełnić.
@@ -221,7 +254,9 @@ export function createApiClient({
     binary = false,
     withMeta = false,
     ...init
-  } = {}, confirmed) {
+  } = {}, confirmed, probe = false) {
+    if (sessionGate && !probe) await sessionGate;
+    if (leaving) throw new ApiError({ status: 401, code: "unauthenticated", messages });
     const finalHeaders = { Accept: "application/json", ...headers };
     let payload = body;
     if (body !== undefined) {
@@ -254,6 +289,7 @@ export function createApiClient({
     const data = response.status === 204 ? {} : await response.json().catch(() => ({}));
     if (!response.ok) {
       const code = errorCode(data?.error);
+      if (response.status === 401) forgetHint();
       if (redirect) handleAuthFailure(response.status, code);
       if (code === "possible_personal_data" && !confirmed && confirmPersonalData) {
         const retryBody = withPersonalDataConfirmation(body);
@@ -275,7 +311,7 @@ export function createApiClient({
     return data ?? {};
   }
 
-  return { request, handleAuthFailure };
+  return { request, handleAuthFailure, checkSession };
 }
 
 let defaultClient = null;
@@ -287,6 +323,11 @@ function client() {
 // Żądanie JSON do API. Zwraca dane odpowiedzi albo rzuca ApiError.
 export function api(url, options) {
   return client().request(url, options);
+}
+
+// Jedno GET /api/session przed pozostałymi żądaniami strony (shared/shell.js mountShell).
+export function checkSession(url) {
+  return client().checkSession(url);
 }
 
 // Dla żądań spoza fetch (np. XMLHttpRequest z postępem przesyłania).

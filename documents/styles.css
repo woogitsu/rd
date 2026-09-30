@@ -21,18 +21,8 @@ button, input, select, textarea { font: inherit; }
 
 .skip-link { position: absolute; left: -999px; top: 0; padding: .5rem 1rem; background: #fff; color: var(--red); }
 .skip-link:focus { left: 1rem; }
-
-.site-header {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 2rem;
-  padding: .9rem max(1rem, calc((100vw - 1120px) / 2));
-  background: #fff; border-bottom: 1px solid var(--line);
-}
 .brand { color: var(--text); text-decoration: none; font-weight: 700; }
 .brand small { display: block; color: var(--muted); font-weight: 400; }
-.site-header nav { display: flex; flex-wrap: wrap; gap: .25rem; }
-.site-header nav a { padding: .45rem .7rem; color: var(--text); text-decoration: none; border-bottom: 2px solid transparent; }
-.site-header nav a:hover { color: var(--red-dark); }
-.site-header nav a.active { color: var(--red); border-bottom-color: var(--red); }
 
 main { max-width: 1120px; margin: 0 auto; padding: 2rem 1rem 4rem; }
 h1 { margin: .25rem 0 .5rem; font-family: Georgia, serif; font-size: clamp(1.7rem, 4vw, 2.4rem); font-weight: 500; }

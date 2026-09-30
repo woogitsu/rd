@@ -20,12 +20,6 @@ h1, h2, p { margin-top: 0; }
 
 .skip-link { position: absolute; left: -999px; top: 0; padding: .6rem 1rem; background: #fff; color: var(--red-dark); }
 .skip-link:focus { left: 1rem; z-index: 10; }
-
-.site-header {
-  display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
-  min-height: 72px; padding: .6rem 5vw; background: #fff;
-  border-top: 4px solid var(--red); border-bottom: 1px solid var(--line);
-}
 .brand { color: inherit; text-decoration: none; font-weight: 700; line-height: 1.2; }
 .brand small { color: var(--muted); font-weight: 500; }
 nav { display: flex; flex-wrap: wrap; gap: .25rem; }
@@ -96,12 +90,6 @@ td:first-child, th:first-child { width: 3rem; }
 .card-draft { margin: 0 0 4mm; padding: 1.5mm 3mm; border: 1px solid var(--red); color: var(--red-dark); font-size: 9pt; font-weight: 700; letter-spacing: .06em; }
 
 @media (max-width: 640px) {
-  /* #182: align-items:flex-start zostawiał <nav> nierozciągnięty do
-     szerokości nagłówka — nav nie ma się do czego skurczyć, linki renderują
-     się w jednej linii szerszej niż ekran (poziomy scroll całej strony).
-     align-items:stretch (wartość domyślna) naprawia to tak samo jak w
-     admin/styles.css i panel/styles.css. */
-  .site-header { flex-direction: column; align-items: stretch; }
   nav a { padding: .45rem .5rem; }
   .print-card { padding: 1.2rem; font-size: 10.5pt; }
   .buttons, .buttons button, #print-button { width: 100%; }
