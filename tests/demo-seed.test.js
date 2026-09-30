@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildDemoPdf, DEMO_INVOICE_PDF, DEMO_MINUTES_PDF } from '../scripts/lib/demo-pdf.js';
 import {
@@ -316,6 +317,37 @@ test('demo-seed: uzgodnienie wyciągu — różnica niewielka i w całości opis
   }
   // Saldo wyciągu = suma pozycji (bilans otwarcia rachunku wynosi 0).
   assert.equal(detail.data.lines.reduce((sum, line) => sum + line.amountCents, 0), draft.statementBalanceCents);
+});
+
+// #175: docs/DEMO.md podaje zarządowi konkretne kwoty — muszą być tymi, które
+// panel pokaże po `npm run demo:seed` (kroki 3, 4 i 9 oraz tabela liczb).
+test('demo-seed: kwoty i liczby w docs/DEMO.md zgadzają się z danymi seeda', async () => {
+  const demo = readFileSync(new URL('../docs/DEMO.md', import.meta.url), 'utf8');
+  const eur = (cents) => (cents / 100).toFixed(2).replace('.', ',');
+  const board = seeded.accounts.find((a) => a.role === 'board');
+  const annual = await apiCall(seeded.env, {
+    path: `/api/reports/annual?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: board.cookie,
+  });
+  const { balance } = annual.data.report;
+  const report = await auditReport();
+  const [draft] = report.reconciliations.items;
+  const treasurer = seeded.accounts.find((a) => a.role === 'treasurer');
+  const detail = await apiCall(seeded.env, {
+    path: `/api/reconciliations/${seeded.reconciliation.reconciliationId}`, cookie: treasurer.cookie,
+  });
+  const skladki = report.categories.find((c) => c.id === 'cat-income-skladki');
+  const expected = [
+    `bilans otwarcia/zamknięcia (${eur(balance.openingBalanceCents)} / ${eur(balance.closingBalanceCents)} EUR), przychody ${eur(balance.incomeCents)} EUR i wydatki ${eur(balance.expenseCents)} EUR`,
+    `${detail.data.lines.length} pozycji zaimportowanych z wyciągu (saldo wyciągu ${eur(draft.statementBalanceCents)} EUR, „Saldo księgi (rachunek)” ${eur(draft.ledgerBalanceCents)} EUR, „Różnica: ${eur(draft.differenceCents)} €”)`,
+    `(otwarcia ${eur(balance.openingBalanceCents)}, przychody ${eur(balance.incomeCents)}, wydatki ${eur(balance.expenseCents)}, zamknięcia ${eur(balance.closingBalanceCents)} EUR, w tym rachunek ${eur(balance.closingBankCents)} i kasa ${eur(balance.closingCashCents)})`,
+    `| Bilans otwarcia / zamknięcia | ${eur(balance.openingBalanceCents)} / ${eur(balance.closingBalanceCents)} EUR |`,
+    `| Saldo wyciągu 2026-12-05 | ${eur(draft.statementBalanceCents)} EUR |`,
+    `| Różnica uzgodnienia (szkic) | ${eur(draft.differenceCents)} EUR |`,
+    `| ${eur(skladki.netCents)} EUR |`,
+    `| Wydatki | ${eur(balance.expenseCents)} EUR |`,
+  ];
+  const missing = expected.filter((snippet) => !demo.includes(snippet));
+  assert.deepEqual(missing, [], 'docs/DEMO.md podaje inne liczby niż seed demo');
 });
 
 test('demo-seed: celowa wpłata bez przypisanej rodziny nie jest ujęta w księdze i nie jest „niezgodna”', async () => {

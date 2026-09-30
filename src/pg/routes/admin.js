@@ -29,12 +29,18 @@
 //   GET  /api/admin/class-coverage?schoolYearId= obsada klas roku: przydziały, oczekujące zaproszenia, ostatnie logowanie (#108)
 //   GET  /api/admin/audit?limit=&cursor=&domain=&actorId=&from=&to=&schoolYearId=
 //        dziennik zdarzeń; bez `domain` — jak dotąd (zmiany kont i ról).
-//        Z `domain` (finance|email|access|security|documents|year_close) — akcje
-//        tej domeny (#181). `schoolYearId` filtruje tylko zdarzenia, które mają
-//        ten identyfikator w metadanych — część zdarzeń go jeszcze nie ma (#174).
+//        Z `domain` (access|security|finance|email|documents|year_close|families|
+//        privacy|meetings|events|news; słownik shared/audit-actions.js) — akcje
+//        tej domeny (#181). Każda domena ma listę ról z prawem odczytu
+//        (dziś wyłącznie admin — D-08/D-09); inna rola: 403. `schoolYearId`
+//        filtruje wg roku z metadanych, a starsze zdarzenia — wg roku obiektu (#174).
+//        Metadane w odpowiedzi bez wolnego tekstu (auditMetadataForView).
+//        Każde zdarzenie niesie `domain`; ukryte pola metadanych: `redactedFields`.
 //   GET  /api/admin/audit/entity/{entityType}/{entityId}
 //        historia jednego obiektu (#181): payment_entry, ledger_entry,
-//        reconciliation, email_campaign. 404, gdy obiekt nie istnieje.
+//        reconciliation, email_campaign. 404, gdy obiekt nie istnieje. Wymaga
+//        odczytu domeny obiektu (finance/email); zdarzenia innych domen, których
+//        aktor nie może czytać, są pomijane.
 //   GET  /api/admin/access-log?kind=&actorId=&householdId=&classId=&schoolYearId=&outcome=&from=&to=&limit=&cursor=
 //        przegląd dziennika odczytu danych dzieci i opiekunów (#133): tylko do
 //        odczytu, kursor (occurred_at, id) malejąco, BEZ danych osobowych i bez
@@ -75,8 +81,9 @@ import {
   allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions,
   revokeUserSessionsWith, ROLE_STATUS, ROLES,
 } from '../auth.js';
-import { freshMfaForbiddenCode, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
-import { insertAuditEvent } from '../audit.js';
+import { freshMfaForbiddenCode, isAuthorizedScoped, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
+import { auditMetadataForView, insertAuditEvent } from '../audit.js';
+import { AUDIT_DOMAINS, auditActionDomain, auditDomainActions } from '../../../shared/audit-actions.js';
 import { auditYearByObjectSql } from '../export.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
@@ -817,21 +824,45 @@ export const AUDIT_ACTIONS = [
   'account_recovery.requested', 'account_recovery.approved', 'account_recovery.rejected', 'account_recovery.expired',
 ];
 
-// #181: domeny mapowane na przedrostki action. Wariant zachowawczy — odczyt
-// zostaje wyłącznie dla admina (D-08/D-09 nie ustaliły jeszcze ról zarządu/KR
-// per domena), zmienia się tylko zakres akcji, jaki admin może przefiltrować.
-const DOMAIN_ACTION_PREFIXES = {
-  access: ['role_grant.', 'invitation.', 'user.', 'session.', 'school_year.grants_expired', 'access.denied'],
-  finance: ['payment.', 'ledger.', 'reconciliation.', 'report.audit.'],
-  email: ['email.'],
-  security: ['mfa.', 'auth.', 'account_recovery.'],
-  documents: ['document.', 'export.', 'print.'],
-  year_close: ['year_close.', 'ledger_opening_balance.'],
-};
+// #181: domeny dziennika i etykiety akcji są w shared/audit-actions.js
+// (AUDIT_DOMAINS, AUDIT_ACTION_CATALOG) — każda akcja zapisywana w src/pg/**
+// i src/email/** ma tam dokładnie jedną domenę (test przekrojowy
+// tests/audit-actions-catalog.test.js). Filtr `domain` to dokładna lista akcji
+// domeny, nie przedrostki: rodziny `payment_reference.`, `payment_instructions.`,
+// `ledger_category.`, `report.snapshot.`/`report.annual.` należą do `finance`
+// (przedrostki z #181 cz. 1 ich nie obejmowały).
+//
+// Kontrola ról per domena (serwer): `readRoles` z AUDIT_DOMAINS. Wariant
+// zachowawczy do D-08/D-09 — każda domena wyłącznie `admin`; bramka modułu
+// (requireAccess admin + MFA) jest pierwszą linią, ta — drugą: zmiana
+// `readRoles` po decyzji nie otworzy innych domen niż wskazane.
+function canReadAuditDomain(context, domain) {
+  // Akcja spoza słownika (np. stary wiersz o nazwie, której już nikt nie zapisuje)
+  // nie ma domeny — widzi ją wyłącznie admin.
+  const readRoles = domain === null ? ['admin'] : AUDIT_DOMAINS[domain]?.readRoles;
+  return Boolean(readRoles?.length) && isAuthorizedScoped(context, { roles: readRoles });
+}
+
+// Domyślny widok (bez `domain`) = AUDIT_ACTIONS; wymaga odczytu każdej domeny,
+// do której należą te akcje (dziś: access i security).
+const DEFAULT_VIEW_DOMAINS = [...new Set(AUDIT_ACTIONS.map((action) => auditActionDomain(action)))];
+
+function requireAuditDomains(context, domains) {
+  if (!domains.every((domain) => canReadAuditDomain(context, domain))) throw new RequestError('forbidden', 403);
+}
+
+function auditEventForView(row, { withEntity = true } = {}) {
+  const { metadata, redactedFields } = auditMetadataForView(row.metadata_json ?? {});
+  const event = {
+    id: row.id, actorId: row.actor_id ?? null, action: row.action, domain: auditActionDomain(row.action),
+  };
+  if (withEntity) Object.assign(event, { entityType: row.entity_type, entityId: row.entity_id });
+  return { ...event, occurredAt: isoTimestamp(row.occurred_at), metadata, redactedFields };
+}
 
 function parseAuditFilters(url) {
   const domain = url.searchParams.get('domain');
-  if (domain !== null && !Object.hasOwn(DOMAIN_ACTION_PREFIXES, domain)) throw new RequestError('invalid_domain');
+  if (domain !== null && !Object.hasOwn(AUDIT_DOMAINS, domain)) throw new RequestError('invalid_domain');
   const actorId = optionalId(url.searchParams.get('actorId'), 'invalid_actor_id');
   const schoolYearId = optionalId(url.searchParams.get('schoolYearId'), 'invalid_school_year_id');
   const from = url.searchParams.get('from');
@@ -841,23 +872,17 @@ function parseAuditFilters(url) {
   return { domain, actorId, schoolYearId, from, to };
 }
 
-async function listAudit(env, url, json, actorId) {
+async function listAudit(env, url, json, actorId, context) {
   const limit = listLimit(url, { defaultLimit: 100, maxLimit: MAX_LIST });
   const filters = parseAuditFilters(url);
+  requireAuditDomains(context, filters.domain ? [filters.domain] : DEFAULT_VIEW_DOMAINS);
   // Kursor wiąże wszystkie filtry: zmiana `from`/`to`/`domain`… → 400 invalid_cursor.
   const scope = JSON.stringify(['audit', filters.domain, filters.actorId, filters.schoolYearId, filters.from, filters.to]);
   const cursor = listCursor(url, 'timestamp', scope);
   const values = [];
   const conditions = [];
-  if (filters.domain) {
-    conditions.push(`(${DOMAIN_ACTION_PREFIXES[filters.domain].map((prefix) => {
-      values.push(`${prefix}%`);
-      return `action LIKE $${values.length}`;
-    }).join(' OR ')})`);
-  } else {
-    values.push(AUDIT_ACTIONS);
-    conditions.push(`action = ANY($${values.length}::text[])`);
-  }
+  values.push(filters.domain ? auditDomainActions(filters.domain) : AUDIT_ACTIONS);
+  conditions.push(`action = ANY($${values.length}::text[])`);
   if (filters.actorId) { values.push(filters.actorId); conditions.push(`actor_id = $${values.length}`); }
   if (filters.from) { values.push(filters.from); conditions.push(`occurred_at >= $${values.length}`); }
   if (filters.to) { values.push(filters.to); conditions.push(`occurred_at <= $${values.length}`); }
@@ -893,11 +918,7 @@ async function listAudit(env, url, json, actorId) {
     nextCursor: page.nextCursor,
     truncated: page.truncated,
     limit: page.limit,
-    events: page.items.map((row) => ({
-      id: row.id, actorId: row.actor_id ?? null, action: row.action, entityType: row.entity_type,
-      entityId: row.entity_id, occurredAt: isoTimestamp(row.occurred_at),
-      metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
-    })),
+    events: page.items.map((row) => auditEventForView(row)),
   });
 }
 
@@ -1214,6 +1235,14 @@ const ENTITY_TABLES = {
   reconciliation: 'bank_reconciliations',
   email_campaign: 'email_campaigns',
 };
+// Domena, której odczyt jest wymagany do historii obiektu danego typu.
+const ENTITY_DOMAIN = {
+  payment_entry: 'finance', ledger_entry: 'finance', reconciliation: 'finance', email_campaign: 'email',
+};
+// Zdarzenia uzgodnienia zapisują entity_type 'bank_reconciliation' (routes/
+// reconciliation.js) — bez tej mapy historia uzgodnienia gubiła jego utworzenie,
+// potwierdzenie i porzucenie (zostawały tylko zdarzenia z reconciliationId).
+const ENTITY_AUDIT_TYPE = { reconciliation: 'bank_reconciliation' };
 // Zdarzenia powiązane (korekta, przypisanie, zwrot, dopasowanie…) mają własny
 // entity_type/entity_id, a odniesienie do obiektu głównego trzymają w
 // metadanych pod tym kluczem (konwencja już istniejąca w routes/payments.js,
@@ -1225,27 +1254,28 @@ const RELATED_METADATA_KEY = {
   email_campaign: 'campaignId',
 };
 
-async function entityAudit(env, entityType, entityId, json, actorId) {
+async function entityAudit(env, entityType, entityId, json, actorId, context) {
   const table = ENTITY_TABLES[entityType];
   if (!table) throw new RequestError('invalid_entity_type');
+  requireAuditDomains(context, [ENTITY_DOMAIN[entityType]]);
   const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
   if (!exists.length) throw new RequestError('not_found', 404);
   const { rows } = await env.db.query(
     `SELECT id, actor_id, action, occurred_at, metadata_json
        FROM audit_events
-      WHERE (entity_type = $1 AND entity_id = $2) OR metadata_json ->> $3 = $2
+      WHERE (entity_type = ANY($1::text[]) AND entity_id = $2) OR metadata_json ->> $3 = $2
       ORDER BY occurred_at, id`,
-    [entityType, entityId, RELATED_METADATA_KEY[entityType]],
+    [[entityType, ENTITY_AUDIT_TYPE[entityType] ?? entityType], entityId, RELATED_METADATA_KEY[entityType]],
   );
+  // Historia obiektu obejmuje zdarzenia różnych domen (np. `audit.viewed` z
+  // domeny privacy) — pokazujemy tylko te, których domenę aktor może czytać.
+  const visible = rows.filter((row) => canReadAuditDomain(context, auditActionDomain(row.action)));
   await insertAuditEvent(env.db, {
     actorId, action: 'audit.viewed', entityType, entityId, metadata: {},
   });
   return json({
     entityType, entityId,
-    events: rows.map((row) => ({
-      id: row.id, actorId: row.actor_id ?? null, action: row.action, occurredAt: isoTimestamp(row.occurred_at),
-      metadata: typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : (row.metadata_json ?? {}),
-    })),
+    events: visible.map((row) => auditEventForView(row, { withEntity: false })),
   });
 }
 
@@ -1322,7 +1352,7 @@ async function route(request, env, url, json, actorId, context) {
   // GET /api/admin/audit/entity/{entityType}/{entityId} (#181): jedyna trasa
   // z czterema segmentami, więc obsługiwana przed ogólnym `if (rest.length)`.
   if (section === 'audit' && rawId === 'entity' && rest.length === 1 && method === 'GET') {
-    return entityAudit(env, action, decodeId(rest[0]), json, actorId);
+    return entityAudit(env, action, decodeId(rest[0]), json, actorId, context);
   }
   if (rest.length) return null;
 
@@ -1376,7 +1406,7 @@ async function route(request, env, url, json, actorId, context) {
   }
   if (section === 'promotions') return routePromotions(env, actorId, request, path, json);
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
-  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId);
+  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId, context);
   if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
   if (section === 'data-requests') {
     if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);
