@@ -44,7 +44,7 @@ wpisów).
 | `already_matched_via_payment` | Pozycja jest już dopasowana do wpłaty. | Nie — popraw dane żądania. |
 | `already_matched` | Pozycja jest już dopasowana. | Nie — popraw dane żądania. |
 | `alt_text_required` | Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne. | Zależy od kontekstu (patrz moduł trasy). |
-| `ambiguous_csv_delimiter` | Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem. | Nie — popraw dane żądania. |
+| `ambiguous_csv_delimiter` | Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Wybierz separator ręcznie w polu „Separator” albo zapisz plik z jednym separatorem. | Nie — popraw dane żądania. |
 | `ambiguous_local_time` | Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi. | Zależy od kontekstu (patrz moduł trasy). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |

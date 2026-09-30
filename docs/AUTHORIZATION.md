@@ -353,6 +353,7 @@ Panele ukrywają akcje, których rola nie może wykonać. Robią to na podstawie
 | Dokumenty | rodzaj w formularzu przesyłania | według `DOCUMENT_POLICIES`; przedstawiciel widzi tylko „Materiał klasy” z podpowiedzią własnych klas |
 | Zebrania | „Nowe zebranie” | `MANAGE_ROLES` |
 | Wydarzenia | „Nowy szkic”, „Zgłoś”, „Zatwierdź”, „Opublikuj”, „Odwołaj” | według `EVENT_POLICY`; „Zatwierdź” nie jest pokazywane autorowi wydarzenia ani autorowi bieżącej wersji, który zamiast tego widzi wyjaśnienie zasady czterech oczu |
+| Konta i role | „Zatwierdź” wniosek o nadanie roli (#146) | administrator inny niż wnioskodawca i adresat (konto albo adres zaproszenia); wnioskodawca widzi „Wycofaj wniosek” i wyjaśnienie zasady czterech oczu; serwer i tak zwraca `403 grant_four_eyes_required` |
 
 Listy ról w panelach (`*/core.js`) porównuje ze stałymi serwera test `tests/role-policy-parity.test.js`. Odpowiedź 403 panele Wpłat i Księgi opisują jako brak uprawnień, a nie jako „Błąd serwera”.
 

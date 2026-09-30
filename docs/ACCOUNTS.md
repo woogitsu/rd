@@ -124,8 +124,16 @@ działa bezpośrednio, a w tej samej transakcji powstaje zdarzenie
 `role_grant.four_eyes_waived` (`reason: no_other_admin`). Adresat nie liczy się
 jako zatwierdzający. Wyłączony lub wygasły przydział admina też nie.
 Zatwierdzać może dziś wyłącznie administrator; czy także zarząd — D-08.
-Panel `admin/` pokazuje komunikat o wniosku; lista wniosków i przycisk
-„Zatwierdź” w panelu są zakresem otwartym (dziś przez API, jak wnioski o reset).
+Panel `admin/` pokazuje komunikat o wniosku, a sekcja „Wnioski o nadanie roli”
+listuje wnioski (kto wnioskuje, dla kogo, rola, zakres, wiek; filtr statusu) z
+przyciskami „Zatwierdź” (okno ze skutkami, krok w górę MFA) i „Odrzuć”/„Wycofaj
+wniosek”. Przy własnym wniosku i wniosku o własne konto lub adres panel nie
+pokazuje „Zatwierdź” (serwer i tak odmawia `403`). Link zaproszenia z
+zatwierdzenia jest tylko w pamięci strony — znika po „Zamknij” i opuszczeniu
+strony. Odrzucenie nie ma pola powodu: trasa go nie przyjmuje, a zapis wolnego
+tekstu wymagałby kolumny z bramką danych osobowych (#152), czyli migracji —
+zakres otwarty. Wnioski o reset hasła/MFA (`/account-requests`) mają dziś
+wyłącznie API.
 
 Raport dla Komisji Rewizyjnej (`GET /api/reports/audit`, sekcja 7) zawiera
 „operacje administracyjne na kontach” w roku szkolnym — **same liczby**

@@ -41,6 +41,7 @@ configForm.elements.schoolName.value = SCHOOL_NAME;
 const configError = byId("config-error");
 const fileInput = byId("file-input");
 const fileEncoding = byId("file-encoding");
+const fileDelimiter = byId("file-delimiter");
 const fileMessage = byId("file-message");
 const fileErrors = byId("file-errors");
 const selectSection = byId("select-section");
@@ -351,7 +352,7 @@ async function handleFile(file) {
   }
   let source = null;
   loadParsed(() => {
-    const parsed = parseInputBytes(bytes, file.name, { encoding: fileEncoding.value });
+    const parsed = parseInputBytes(bytes, file.name, { encoding: fileEncoding.value, delimiter: fileDelimiter.value });
     source = parsed.source;
     return parsed;
   }, "Plik", fileInput);
@@ -406,6 +407,10 @@ api.yearInput.addEventListener("change", () => {
 });
 fileInput.addEventListener("change", () => handleFile(fileInput.files?.[0]));
 fileEncoding.addEventListener("change", () => {
+  if (fileInput.files?.[0]) handleFile(fileInput.files[0]);
+});
+// #77: ręczny wybór separatora (np. po remisie ; , tabulator w nagłówku) odczytuje plik ponownie.
+fileDelimiter.addEventListener("change", () => {
   if (fileInput.files?.[0]) handleFile(fileInput.files[0]);
 });
 configForm.addEventListener("input", () => {
