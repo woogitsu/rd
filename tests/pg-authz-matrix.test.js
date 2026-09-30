@@ -37,6 +37,9 @@ import {
 } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
 import {
+  AUDIT_ROW_PARENTS, AUDIT_ROW_ROUTE_EXEMPT, AUDIT_ROW_TECHNICAL, newRows, rowCoverageProblems, rowCoverageTables, rowIdSnapshot,
+} from './helpers/audit-row-coverage.js';
+import {
   addConsent, approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto,
   submit as submitNews, uploadPhotoFile, verifyPhoto,
 } from '../src/pg/news.js';
@@ -88,6 +91,8 @@ const isSuccess = (status) => status >= 200 && status < 300;
 // skopiowane) i słusznie nie tworzą nowego wpisu. Metadane każdego zdarzenia przechodzą
 // assertNoPii. Wyjątki są jawne i uzasadnione; nie dopisuj tu trasy zmieniającej dane
 // biznesowe — wtedy dopisz insertAuditEvent(tx, …) w trasie.
+// Dodatkowo (#184 pkt 6) każdy NOWY wiersz tabeli z kolumną id musi mieć zdarzenie
+// wskazujące go albo jego obiekt nadrzędny — listy w tests/helpers/audit-row-coverage.js.
 export const AUDIT_EXEMPT_ROUTES = new Map([
   ['import.preview', 'podgląd: walidacja i różnica względem bazy, nic nie zapisuje (import.committed loguje commit)'],
   ['login.invitationPreview', 'podgląd zaproszenia (#164): tylko odczyt po tokenie, nic nie zapisuje; odmowy loguje auth.invitation_preview_failed — tests/pg-login.test.js'],
@@ -1005,6 +1010,9 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
   const tracksWrites = route.method !== 'GET';
   const before = tracksWrites ? await writeFingerprint(ctx.db) : null;
   const auditBefore = tracksWrites && isSuccess(expected) ? await auditIds(ctx.db) : null;
+  // #184 pkt 6: identyfikatory wierszy przed zapisem — każdy nowy wiersz musi mieć zdarzenie.
+  const rowTables = auditBefore ? await rowCoverageTables(ctx.db) : null;
+  const rowsBefore = rowTables ? await rowIdSnapshot(ctx.db, rowTables) : null;
   const response = await handlePgRequest(request(built.path, {
     method: route.method, body: built.body, headers: built.headers ?? {}, cookie,
   }), ctx.env);
@@ -1051,6 +1059,8 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
       try { assertNoPii(row.metadata_json ?? {}); } catch (error) { problems.push(`zdarzenie ${row.action}: ${error.message}`); }
     }
     if (rows.some((row) => (row.actor_id || !needsActor) && row.entity_type && row.entity_id)) stats.complete += 1;
+    const created = await newRows(ctx.db, rowsBefore, await rowIdSnapshot(ctx.db, rowTables));
+    problems.push(...rowCoverageProblems(route.id, created, rows));
   }
   if (!isSuccess(expected) && tracksWrites) {
     const after = await writeFingerprint(ctx.db);
@@ -1114,6 +1124,10 @@ for (const route of ROUTE_MATRIX) {
     }
     assert.equal(cases.length, route.targets.length * ACTORS.length * 2);
     const stats = auditStats.get(route.id);
+    // #184: trasa zapisu bez ani jednego udanego przypadku nie ma sprawdzonego dziennika.
+    if (route.method !== 'GET' && !stats) {
+      failures.push(`${route.method} ${route.path}: żaden przypadek macierzy nie kończy się sukcesem — pokrycie audytem niesprawdzone (dodaj przypadek dozwolony)`);
+    }
     if (stats && !AUDIT_EXEMPT_ROUTES.has(route.id) && !stats.complete) {
       failures.push(`${route.method} ${route.path}: ${stats.successes} udanych zapisów bez zdarzenia audytu z ${AUDIT_ACTORLESS_ROUTES.has(route.id) ? '' : 'actor_id, '}entity_type i entity_id (zdarzenia: ${[...stats.actions].join(', ') || 'brak'}) — dopisz insertAuditEvent(tx, …) w trasie`);
     }
@@ -1441,4 +1455,30 @@ test('meta: wyjątki od pokrycia audytem wskazują istniejące trasy zapisu i ma
     }
   }
   for (const id of AUDIT_EXEMPT_ROUTES.keys()) assert.ok(!AUDIT_ACTORLESS_ROUTES.has(id), `${id} na obu listach`);
+});
+
+test('meta: wyjątki pokrycia wierszy audytem wskazują tabele z kolumną id i mają uzasadnienie (#184 pkt 6)', async () => {
+  const ctx = await matrixContext();
+  const tables = new Set(await rowCoverageTables(ctx.db));
+  const writes = new Set(ROUTE_MATRIX.filter((route) => route.method !== 'GET').map((route) => route.id));
+  for (const [table, entry] of AUDIT_ROW_PARENTS) {
+    assert.ok(tables.has(table), `AUDIT_ROW_PARENTS: ${table} nie jest tabelą z kolumną id`);
+    assert.equal(typeof entry.keys, 'function', `AUDIT_ROW_PARENTS: ${table} bez funkcji kluczy`);
+    assert.ok(entry.why.length >= 30, `AUDIT_ROW_PARENTS: ${table} bez uzasadnienia`);
+    for (const key of entry.metadataKeys ?? []) assert.match(key, /^[a-z][A-Za-z]*Id$/, `AUDIT_ROW_PARENTS: ${table}: klucz metadanych ${key}`);
+    assert.ok(!AUDIT_ROW_TECHNICAL.has(table), `${table} na dwóch listach`);
+  }
+  for (const [table, why] of AUDIT_ROW_TECHNICAL) {
+    assert.ok(tables.has(table), `AUDIT_ROW_TECHNICAL: ${table} nie jest tabelą z kolumną id`);
+    assert.ok(why.length >= 30, `AUDIT_ROW_TECHNICAL: ${table} bez uzasadnienia`);
+  }
+  for (const [routeId, entry] of AUDIT_ROW_ROUTE_EXEMPT) {
+    assert.ok(writes.has(routeId), `AUDIT_ROW_ROUTE_EXEMPT: ${routeId} nie jest trasą zapisu w macierzy`);
+    assert.ok(entry.why.length >= 30, `AUDIT_ROW_ROUTE_EXEMPT: ${routeId} bez uzasadnienia`);
+    for (const table of entry.tables) assert.ok(tables.has(table), `AUDIT_ROW_ROUTE_EXEMPT: ${routeId}: ${table} nie jest tabelą z kolumną id`);
+  }
+  // Tabele finansowe, ról i wysyłek (AGENTS.md) nie mogą być zwolnione jako techniczne.
+  for (const table of AUDIT_ROW_TECHNICAL.keys()) {
+    assert.doesNotMatch(table, /^(payment|ledger|bank_|role_grants|invitations|users|email_campaigns|email_outbox$)/, `${table}: tabela biznesowa na liście technicznej`);
+  }
 });
