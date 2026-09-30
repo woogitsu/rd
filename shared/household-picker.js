@@ -53,7 +53,9 @@ export function householdOptionsHtml(households, selectedId) {
         // Jedno gospodarstwo (typowy przypadek) może być zaznaczone od razu; przy kilku
         // (opieka dzielona) żadne nie jest domyślnie zaznaczone.
         const selected = needsChoice ? h.householdId === selectedId : i === 0;
-        const label = h.isPrimary ? `${h.householdId} (główne)` : h.householdId;
+        // Przegląd demo 5: skrót numeru zamiast pełnego UUID (pełny zostaje w value).
+        const number = `Gospodarstwo nr ${String(h.householdId).slice(0, 8)}`;
+        const label = h.isPrimary ? `${number} (główne)` : number;
         return `<option value="${escapeHtml(h.householdId)}"${selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
       })
       .join("")
@@ -92,6 +94,22 @@ export function buildHouseholdLabels(classStudents) {
     labels.set(householdId, parts.join(", "));
   }
   return labels;
+}
+
+// Pobiera etykiety gospodarstw roku z tras klas/uczniów (#128). `api(url)` zwraca JSON
+// albo rzuca. Rola bez dostępu do rodzin (403) albo błąd sieci → pusta mapa: widok
+// zostaje przy skróconym numerze, bez PII. Wspólne dla panel/ i reconciliation/.
+export async function fetchHouseholdLabels(api, schoolYearId) {
+  try {
+    const { classes = [] } = await api(`/api/classes?schoolYearId=${encodeURIComponent(schoolYearId)}`);
+    const loaded = await Promise.all((Array.isArray(classes) ? classes : []).map(async (cls) => {
+      const result = await api(`/api/classes/${encodeURIComponent(cls.id)}/students`);
+      return { className: cls.name, students: Array.isArray(result?.students) ? result.students : [] };
+    }));
+    return buildHouseholdLabels(loaded);
+  } catch {
+    return new Map();
+  }
 }
 
 // Rodzina bez etykiety (brak dostępu albo poza wczytanymi klasami): skrócony numer, nie pełny UUID.

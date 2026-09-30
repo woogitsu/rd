@@ -235,6 +235,8 @@ import {
   lineStatusLabel,
   structuredHouseholdFor,
   summarizeBatchSelection,
+  formatDifferenceValue,
+  linesWithExistingEntries,
 } from '../reconciliation/core.js';
 import { findForbiddenWording } from '../print/core.js';
 
@@ -243,7 +245,8 @@ test('#115 candidateLabel: propozycja nowej wpłaty dla rodziny i oznaczenie kom
     type: 'household', id: 'h-1', householdId: 'h-1', amountCents: 2500, dayDistance: null, structuredReferenceMatch: true,
   });
   assert.match(household, /Nowa wpłata z tej pozycji/);
-  assert.match(household, /rodzina h-1/);
+  // Bez etykiety rodziny: skrócony numer (shared/household-picker.js#householdLabel), nie surowe ID.
+  assert.match(household, /Rodzina nr h-1/);
   assert.match(household, /25,00/);
   assert.match(household, /komunikacja strukturalna zgodna/);
   const payment = candidateLabel({
@@ -373,3 +376,52 @@ test('przegląd demo 5: formatDay i daty kandydatów w zapisie dd.mm.rrrr', () =
   assert.doesNotMatch(panel, /textCell\((item|line)\.(statementDate|bookedOn|paymentDate)\)/);
   assert.doesNotMatch(panel, /\$\{(line|item|entry|reconciliation)\.(bookedOn|occurredOn|statementDate)\}/);
 });
+
+// Przegląd demo 5 — okno „Utwórz wpłatę” i kafelek różnicy.
+test('przegląd demo 5: propozycja nowej wpłaty pokazuje nazwę rodziny, nie identyfikator', () => {
+  const householdId = '5b0f3c1e-7a93-4d66-9c1a-000000000010';
+  const candidate = { type: 'household', id: householdId, householdId, amountCents: 1000, dayDistance: null, structuredReferenceMatch: true };
+  const labels = new Map([[householdId, 'Przykładowy 0010 Uczeń 1 (Klasa 0-A)']]);
+  const named = candidateLabel(candidate, labels);
+  assert.match(named, /Rodzina: Przykładowy 0010 Uczeń 1 \(Klasa 0-A\)/);
+  assert.equal(named.includes(householdId), false, 'pełny identyfikator nie trafia do etykiety');
+  // Rodzina spoza wczytanych klas: skrót 8 znaków, bez pełnego UUID.
+  const unknown = candidateLabel(candidate, new Map());
+  assert.match(unknown, /Rodzina nr 5b0f3c1e/);
+  assert.equal(unknown.includes(householdId), false);
+});
+
+test('przegląd demo 5: linesWithExistingEntries — pozycje z istniejącą wpłatą lub wpisem księgi', () => {
+  const suggestions = [
+    { statementLineId: 'line-payment', candidates: [{ type: 'payment_entry', id: 'p1' }] },
+    { statementLineId: 'line-ledger', candidates: [{ type: 'ledger_entry', id: 'l1' }, { type: 'household', id: 'h1' }] },
+    { statementLineId: 'line-household', candidates: [{ type: 'household', id: 'h2' }] },
+    { statementLineId: 'line-empty', candidates: [] },
+  ];
+  assert.deepEqual([...linesWithExistingEntries(suggestions)].sort(), ['line-ledger', 'line-payment']);
+  assert.equal(linesWithExistingEntries(null).size, 0);
+  assert.equal(linesWithExistingEntries([{ statementLineId: 'x' }]).size, 0);
+});
+
+test('przegląd demo 5: „Utwórz wpłatę” ukryte przy pozycji, która ma już wpłatę (ryzyko duplikatu)', () => {
+  const line = { id: 'line-payment', amountCents: 1000, match: null, groupMatch: null };
+  const existing = linesWithExistingEntries([{ statementLineId: 'line-payment', candidates: [{ type: 'payment_entry', id: 'p1' }] }]);
+  assert.equal(canCreatePaymentFromLine(line, { draft: true, canWrite: true, existingEntryLines: existing }), false);
+  // Pozycja tylko z propozycją NOWEJ wpłaty (komunikacja strukturalna) albo bez propozycji — przycisk zostaje.
+  assert.equal(canCreatePaymentFromLine({ ...line, id: 'line-household' }, { draft: true, canWrite: true, existingEntryLines: existing }), true);
+  // Propozycje niedostępne (błąd sieci) — zachowanie jak przed zmianą.
+  assert.equal(canCreatePaymentFromLine(line, { draft: true, canWrite: true, existingEntryLines: null }), true);
+  // Pozostałe warunki nadal obowiązują.
+  assert.equal(canCreatePaymentFromLine({ ...line, id: 'line-household' }, { draft: false, canWrite: true, existingEntryLines: existing }), false);
+});
+
+test('przegląd demo 5: kafelek „Różnica” bez powtórzenia słowa „Różnica”', () => {
+  assert.equal(formatDifferenceValue(1175), formatCents(1175));
+  assert.doesNotMatch(formatDifferenceValue(1175), /Różnica/);
+  assert.doesNotMatch(formatDifferenceValue(-250), /Różnica/);
+  assert.match(formatDifferenceValue(-250), /2,50/);
+  assert.equal(formatDifferenceValue(0), '0,00 € (bilans zgadza się)');
+  // Zdanie w oknie potwierdzenia nadal nazywa różnicę (kontekst bez etykiety kafelka).
+  assert.match(formatDifference(1175), /^Różnica: /);
+});
+

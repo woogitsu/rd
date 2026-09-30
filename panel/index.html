@@ -9,10 +9,8 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
-    <header class="site-header">
-      <a class="brand" href="../">
-        <span>Rada Rodziców<br /><small data-school-name></small></span>
-      </a>
+    <header class="site-header shell-header">
+      <a class="brand" href="../"><span class="brand-name">Rada Rodziców</span><small data-school-name></small></a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
@@ -107,7 +105,7 @@
                 <th scope="col" class="amount">Wpłata</th>
                 <th scope="col" class="amount">Korekty</th>
                 <th scope="col" class="amount">Netto</th>
-                <th scope="col"><span class="sr-only">Akcje</span></th>
+                <th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th>
               </tr>
             </thead>
             <tbody id="payments-body"></tbody>
@@ -192,7 +190,7 @@
         <div class="table-wrap" role="region" aria-labelledby="split-parts-caption" tabindex="0">
           <table>
             <caption id="split-parts-caption" class="sr-only">Części tej wpłaty</caption>
-            <thead><tr><th scope="col">Gospodarstwo</th><th scope="col" class="amount">Kwota</th><th scope="col">Stan</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <thead><tr><th scope="col">Gospodarstwo</th><th scope="col" class="amount">Kwota</th><th scope="col">Stan</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead>
             <tbody id="split-parts"></tbody>
           </table>
         </div>

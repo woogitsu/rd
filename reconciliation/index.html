@@ -9,8 +9,8 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
-    <header class="site-header">
-      <a class="brand" href="../"><span>Rada Rodziców<br /><small data-school-name></small></span></a>
+    <header class="site-header shell-header">
+      <a class="brand" href="../"><span class="brand-name">Rada Rodziców</span><small data-school-name></small></a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
@@ -32,7 +32,7 @@
       <section class="card filters" aria-labelledby="filters-title">
         <h2 id="filters-title">Rok szkolny</h2>
         <form id="filters-form">
-          <label>Rok szkolny <select id="school-year-id" name="schoolYearId" required></select></label>
+          <label><span class="sr-only">Rok szkolny</span> <select id="school-year-id" name="schoolYearId" required></select></label>
           <button type="submit">Pokaż</button>
         </form>
         <p id="audit-report-box" hidden><a id="audit-report-link" href="#">Raport dla Komisji Rewizyjnej (otwiera nową kartę)</a></p>
@@ -41,7 +41,7 @@
       <div class="message" id="message" role="status"></div>
 
       <section class="card" aria-labelledby="reconciliations-title">
-        <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="reconciliations-title">Uzgodnienia</h2></div><span id="reconciliations-count" aria-live="polite"></span></div>
+        <div class="section-heading"><div><h2 id="reconciliations-title">Uzgodnienia</h2></div><span id="reconciliations-count" aria-live="polite"></span></div>
         <div class="table-wrap" id="reconciliations-table" role="region" aria-labelledby="reconciliations-title" tabindex="0">
           <table>
             <caption class="sr-only">Uzgodnienia wyciągu wybranego roku</caption>
@@ -170,8 +170,18 @@
     <dialog id="line-payment-dialog" aria-labelledby="line-payment-dialog-title"><form id="line-payment-form" method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">Wpłata z pozycji wyciągu</p><h2 id="line-payment-dialog-title">Utwórz wpłatę</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
       <p class="context" id="line-payment-summary"></p>
-      <label>Identyfikator rodziny <input name="householdId" maxlength="128" autocomplete="off" placeholder="Zostaw puste, jeśli nie wiadomo" /><small>Bez rodziny wpłata będzie nieprzypisana; rodzinę można wskazać później na liście wpłat.</small></label>
-      <p class="context" id="line-payment-hint" role="status"></p>
+      <fieldset class="household-picker">
+        <legend>Rodzina (opcjonalnie)</legend>
+        <p class="context" id="line-payment-hint" role="status"></p>
+        <label>Klasa <select id="line-payment-class"></select></label>
+        <label>Uczeń <select id="line-payment-student" disabled></select></label>
+        <label>Gospodarstwo <select id="line-payment-household" disabled></select></label>
+        <p class="context" id="line-payment-household-summary" role="status" aria-live="polite"></p>
+        <input type="hidden" id="line-payment-household-id" name="householdId" />
+        <p class="context" id="line-payment-choice" aria-live="polite"></p>
+        <button type="button" id="line-payment-clear" hidden>Bez rodziny</button>
+        <small>Bez rodziny wpłata będzie nieprzypisana; rodzinę można wskazać później na liście wpłat.</small>
+      </fieldset>
       <div class="form-error" id="line-payment-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="line-payment-error">Utwórz wpłatę i powiąż</button></div>
     </form></dialog>

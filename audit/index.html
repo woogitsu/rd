@@ -9,8 +9,8 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
-    <header class="site-header">
-      <a class="brand" href="../"><span>Rada Rodziców<br /><small data-school-name></small></span></a>
+    <header class="site-header shell-header">
+      <a class="brand" href="../"><span class="brand-name">Rada Rodziców</span><small data-school-name></small></a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
@@ -31,7 +31,7 @@
       <section class="card filters" aria-labelledby="filters-title">
         <h2 id="filters-title">Rok szkolny</h2>
         <form id="filters-form">
-          <label>Rok szkolny <select id="school-year-id" name="schoolYearId" required></select></label>
+          <label><span class="sr-only">Rok szkolny</span> <select id="school-year-id" name="schoolYearId" required></select></label>
           <button type="submit">Pokaż raport</button>
         </form>
       </section>
@@ -40,7 +40,7 @@
 
       <section class="card" id="report-section" aria-labelledby="report-title" hidden>
         <div class="section-heading">
-          <div><p class="eyebrow">Rok szkolny</p><h2 id="report-title">Raport</h2></div>
+          <div><h2 id="report-title">Raport</h2></div>
           <span id="report-meta"></span>
         </div>
         <p><a id="report-html-link" href="#" target="_blank" rel="noopener">Wersja do druku (HTML, otwiera nową kartę; PDF przez drukowanie w przeglądarce)</a></p>

@@ -2,6 +2,7 @@
 import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
 import { formatSchoolYear } from "../shared/school-year.js";
 import { shortId } from "../shared/short-id.js";
+import { formatDateOrTimestamp } from "../shared/zoned-time.js";
 import { AUDIT_ACTION_LABELS, AUDIT_DOMAINS } from "../shared/audit-actions.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -311,11 +312,19 @@ export function scopeLabel(grant, classes = new Map(), years = new Map()) {
   return parts.length ? parts.join(", ") : "cała Rada";
 }
 
+// Przegląd demo 5: „3.10.2026, 17:48” → „03.10.2026 17:48” — ten sam zapis co reszta
+// aplikacji (shared/zoned-time.js#formatDateOrTimestamp, #563), czas Europe/Brussels.
+// Sama data („2026-09-01”) → „01.09.2026” (tabela lat szkolnych).
 export function formatDateTime(value) {
   if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("pl-PL", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Brussels" }).format(date);
+  if (!(value instanceof Date) && Number.isNaN(new Date(value).getTime())) return "—";
+  return formatDateOrTimestamp(value, "Europe/Brussels") ?? "—";
+}
+
+// Konto w listach wyboru: e-mail i skrót identyfikatora zamiast pełnego UUID
+// (przegląd demo 5). Pełny identyfikator zostaje w wartości opcji.
+export function userOptionLabel(user) {
+  return `${user?.email ?? "—"} (${shortId(user?.id)})`;
 }
 
 // Podpowiedź w UI (serwer i tak odmawia): czy wycofanie tego przydziału

@@ -5,7 +5,7 @@
 // komunikat, nic nie ukrywa po stronie klienta jako kontroli dostępu.
 import { api as apiRequest } from "../shared/api.js";
 import { ERROR_MESSAGES } from "./core.js";
-import { STATE_LABELS, buildOpsRows, overallState } from "./ops-status-core.js";
+import { STATE_LABELS, buildOpsRows, formatWhen, overallState } from "./ops-status-core.js";
 
 const byId = (id) => document.getElementById(id);
 
@@ -33,7 +33,7 @@ function render(status) {
     return tr;
   }));
   const overall = overallState(rows);
-  byId("ops-summary").textContent = `Ogólnie: ${STATE_LABELS[overall]}. Stan z ${new Date(status.generatedAt ?? Date.now()).toLocaleString("pl-BE")}.`;
+  byId("ops-summary").textContent = `Ogólnie: ${STATE_LABELS[overall]}. Stan z ${formatWhen(status.generatedAt ?? new Date())}.`;
 }
 
 async function load() {

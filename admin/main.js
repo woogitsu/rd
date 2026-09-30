@@ -13,6 +13,7 @@ import {
   describeAuditEvent,
   ERROR_MESSAGES,
   formatDateTime,
+  userOptionLabel,
   grantPayload,
   grantRequestDialog,
   grantRequestRow,
@@ -198,7 +199,7 @@ function fillDictionaries() {
     fillSelect(select, [...head, ...classes]);
   }
   const activeUsers = state.users.filter((user) => !user.disabledAt);
-  fillSelect(byId("grant-form").elements.userId, activeUsers.map((user) => [user.id, `${user.email} (${user.id})`]));
+  fillSelect(byId("grant-form").elements.userId, activeUsers.map((user) => [user.id, userOptionLabel(user)]));
   fillSelect(byId("grant-filters").elements.userId, [["", "Wszystkie"], ...state.users.map((user) => [user.id, user.email])]);
 }
 
@@ -212,7 +213,10 @@ function renderUsers() {
   tbody.replaceChildren(...state.users.map((user) => {
     const tr = document.createElement("tr");
     const self = user.id === state.me;
-    tr.append(cell(user.email), cell(user.displayName), cell(user.id, "mono"));
+    // Skrót konta (przegląd demo 5); pełny identyfikator w podpowiedzi komórki.
+    const idCell = cell(shortId(user.id), "mono");
+    idCell.title = user.id;
+    tr.append(cell(user.email), cell(user.displayName), idCell);
     tr.append(user.disabledAt ? statusCell("disabled", "Wyłączone") : statusCell("active", "Aktywne"));
     tr.append(cell(String(user.activeGrants), "num"), cell(String(user.activeSessions), "num"));
     const buttons = [];
@@ -954,7 +958,7 @@ function renderYears() {
   tbody.replaceChildren(...state.years.map((year) => {
     const tr = document.createElement("tr");
     const classes = (year.classes ?? []).map((item) => item.name).join(", ");
-    tr.append(cell(`${year.label}${year.finished ? " (zakończony)" : ""}`), cell(year.id), cell(year.startsOn), cell(year.endsOn), cell(classes || "Brak klas"));
+    tr.append(cell(`${year.label}${year.finished ? " (zakończony)" : ""}`), cell(year.id), cell(formatDateTime(year.startsOn)), cell(formatDateTime(year.endsOn)), cell(classes || "Brak klas"));
     return tr;
   }));
 }

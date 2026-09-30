@@ -323,3 +323,24 @@ test("#142: task state, sign-up availability and candidate list without people a
   assert.deepEqual(candidateLabels(availableCandidates(candidates, task)).map((c) => c.label), ["Jan Syntetyczny (g2)", "Jan Syntetyczny (g3)"]);
   assert.deepEqual(candidateLabels([candidates[0]]).map((c) => c.label), ["Anna Syntetyczna"]);
 });
+
+// Przegląd demo 5: autor wersji wydarzenia — nazwa własnego konta albo skrót, nie surowe ID.
+import { formatStamp, revisionAuthorLabel } from "../events/core.js";
+
+test("revisionAuthorLabel: własne konto nazwą z sesji, cudze skrótem identyfikatora", () => {
+  const me = "7a937d66-1111-4222-8333-444455556666";
+  const other = "0c1d2e3f-aaaa-4bbb-8ccc-ddddeeeeffff";
+  assert.equal(revisionAuthorLabel(me, { userId: me, userName: "Zarząd — prezes (demo)" }), "Zarząd — prezes (demo) (Ty)");
+  assert.equal(revisionAuthorLabel(me, { userId: me, userName: null }), "Ty");
+  const foreign = revisionAuthorLabel(other, { userId: me, userName: "Zarząd — prezes (demo)" });
+  assert.equal(foreign, "Konto 0c1d2e3f…");
+  assert.equal(foreign.includes(other), false);
+  assert.equal(revisionAuthorLabel(null, { userId: me }), "—");
+  assert.equal(revisionAuthorLabel(other), "Konto 0c1d2e3f…");
+});
+
+test("formatStamp: dd.mm.rrrr gg:mm w Europe/Brussels (jak reszta aplikacji, przegląd demo 5)", () => {
+  assert.equal(formatStamp("2026-09-30T16:46:00Z"), "30.09.2026 18:46");
+  assert.equal(formatStamp("2026-01-15T12:22:00Z"), "15.01.2026 13:22");
+  assert.equal(formatStamp(null), "—");
+});

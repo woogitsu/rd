@@ -18,7 +18,7 @@ Sekcja „Z życia szkoły”: 2–3 kadry z rzeczywistych wydarzeń, krótkie p
 
 ## Widoki
 Publiczny: informacja o Radzie, najbliższe wydarzenia, sekcja archiwalna, kontakt i zatwierdzone dokumenty.
-Panel: nawigacja boczna, nagłówek roku szkolnego, płaskie listy i tabele; na telefonie przewijana nawigacja. Pasek nagłówka (`.site-header`) jest biały we wszystkich panelach — zgodnie z „białe tło” (AGENTS.md).
+Panel: nawigacja boczna, nagłówek roku szkolnego, płaskie listy i tabele; na telefonie przewijana nawigacja. Pasek nagłówka (`.site-header`) jest biały we wszystkich panelach — zgodnie z „białe tło” (AGENTS.md). Nagłówek jest jeden dla wszystkich paneli (`.shell-header` w `shared/shell.css`: wiersz marki i konta, pod nim nawigacja; ta sama wysokość na każdym ekranie), tytuł ekranu (`h1`) ma we wszystkich panelach systemowy sans, a linki w treści czerwień projektu z widocznym fokusem zamiast domyślnego niebieskiego (przegląd demo 5; `tests/panel-header-static.test.js`, `tests/e2e/panel-header.spec.js`).
 
 ## Dostępność
 Kontrast, fokus, rozmiar celów i reflow: [ACCESSIBILITY.md](ACCESSIBILITY.md). Czerwień `#B3262D` na białym tle ma 6,5:1, a `#8E2026` (fokus, hover) 8,8:1 — obie spełniają WCAG AA dla tekstu.

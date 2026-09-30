@@ -82,3 +82,12 @@ test('runbook zawiera karty wymagane w #149 i odwołuje się do istniejących tr
   }
   assert.doesNotMatch(doc, /@(?!example\.invalid)[a-z0-9-]+\.[a-z]{2,}/i);
 });
+
+// Przegląd demo 5: „Stan z 30.09.2026, 19:07:01” → zapis aplikacji dd.mm.rrrr gg:mm (#563).
+test('formatWhen: dd.mm.rrrr gg:mm w Europe/Brussels', async () => {
+  const { formatWhen } = await import('../admin/ops-status-core.js');
+  assert.equal(formatWhen('2026-09-30T17:07:01Z'), '30.09.2026 19:07');
+  assert.equal(formatWhen(new Date('2026-01-15T12:22:00Z')), '15.01.2026 13:22');
+  assert.equal(formatWhen(null), '—');
+  assert.equal(formatWhen('nie-data'), '—');
+});

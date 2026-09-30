@@ -3,6 +3,7 @@
 
 import { MoneyError, formatEur, parseStatementAmount } from '../panel/money.js';
 import { formatDateOrTimestamp } from '../shared/zoned-time.js';
+import { householdLabel } from '../shared/household-picker.js';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MAX_BALANCE_CENTS = 10_000_000_000; // jak MAX_BALANCE_CENTS w src/pg/routes/reconciliation.js
@@ -96,6 +97,13 @@ export function formatDifference(cents) {
   return `Różnica: ${formatCents(cents)}.`;
 }
 
+// Wartość w kafelku „Różnica” (przegląd demo 5: „Różnica / Różnica: 11,75 €.” —
+// etykieta kafelka już mówi, co to jest, więc wartość bez powtórzenia słowa).
+export function formatDifferenceValue(cents) {
+  if (Number(cents) === 0) return '0,00 € (bilans zgadza się)';
+  return formatCents(cents);
+}
+
 // Przegląd demo 4: kolumna „Źródło” pokazywała surowy kod („csv”). Kody jak
 // w CHECK bank_statement_imports.source (0089); nieznany kod zostaje bez zmian.
 export const LINE_SOURCE_LABELS = Object.freeze({ manual: 'Ręcznie', csv: 'CSV', coda: 'CODA', camt053: 'CAMT.053' });
@@ -117,11 +125,14 @@ export function formatDay(value) {
   return formatDateOrTimestamp(value, 'Europe/Brussels') ?? '—';
 }
 
-export function candidateLabel(candidate) {
+// labels — mapa etykiet gospodarstw (shared/household-picker.js#fetchHouseholdLabels).
+// Bez etykiety (brak dostępu do rodzin, rodzina spoza wczytanych klas) zostaje
+// skrócony numer, nigdy pełny identyfikator (przegląd demo 5).
+export function candidateLabel(candidate, labels = null) {
   // #115: kandydat „household” to propozycja NOWEJ wpłaty z pozycji dla
   // gospodarstwa wskazanego komunikacją strukturalną (rejestr referencji roku).
   if (candidate.type === 'household') {
-    return ['Nowa wpłata z tej pozycji', `rodzina ${candidate.householdId}`, formatCents(candidate.amountCents),
+    return ['Nowa wpłata z tej pozycji', householdLabel(labels, candidate.householdId), formatCents(candidate.amountCents),
       'komunikacja strukturalna zgodna'].join(' · ');
   }
   const type = candidate.type === 'ledger_entry' ? 'Wpis księgi' : 'Wpłata';
@@ -141,10 +152,25 @@ export function lineStatusLabel(line) {
   return 'Do wyjaśnienia';
 }
 
+// Pozycje, dla których propozycje (GET …/suggestions) wskazują ISTNIEJĄCĄ wpłatę
+// albo wpis księgi. Nowa wpłata z takiej pozycji byłaby prawdopodobnie duplikatem
+// (przegląd demo 5) — właściwą akcją jest „Dopasuj”.
+export function linesWithExistingEntries(suggestions) {
+  const ids = new Set();
+  for (const suggestion of Array.isArray(suggestions) ? suggestions : []) {
+    const candidates = Array.isArray(suggestion?.candidates) ? suggestion.candidates : [];
+    if (candidates.some((c) => c?.type === 'payment_entry' || c?.type === 'ledger_entry')) ids.add(suggestion.statementLineId);
+  }
+  return ids;
+}
+
 // Wpłatę z pozycji (POST …/lines/{lineId}/payment) można utworzyć tylko dla
 // wpływu (kwota > 0) bez powiązania, w szkicu. Serwer sprawdza to samo.
-export function canCreatePaymentFromLine(line, { draft, canWrite }) {
-  return Boolean(draft && canWrite && line && !line.match && !line.groupMatch && Number(line.amountCents) > 0);
+// existingEntryLines (z linesWithExistingEntries) ukrywa przycisk przy pozycjach,
+// które mają już kandydata-wpłatę lub wpis księgi — to wskazówka UI, nie kontrola.
+export function canCreatePaymentFromLine(line, { draft, canWrite, existingEntryLines = null }) {
+  if (!(draft && canWrite && line && !line.match && !line.groupMatch && Number(line.amountCents) > 0)) return false;
+  return !(existingEntryLines && typeof existingEntryLines.has === 'function' && existingEntryLines.has(line.id));
 }
 
 // Gospodarstwo wskazane komunikacją strukturalną dla danej pozycji (albo null).

@@ -5,6 +5,7 @@
 // zgaduje — pokazuje fakty, a stan „uwaga/błąd” tylko tam, gdzie wynika wprost
 // z danych (nieudany przebieg, zaległa migracja, wiadomości `failed`).
 // Brak danych to osobny stan, nigdy „w normie”.
+import { formatDateOrTimestamp } from "../shared/zoned-time.js";
 
 export const STATE_LABELS = Object.freeze({
   ok: "W normie",
@@ -13,11 +14,12 @@ export const STATE_LABELS = Object.freeze({
   no_data: "Brak danych",
 });
 
+// dd.mm.rrrr gg:mm w Europe/Brussels — ten sam zapis co reszta aplikacji (#563, przegląd demo 5).
 export function formatWhen(value) {
   if (!value) return "—";
-  const date = new Date(value);
+  const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("pl-BE", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Brussels" }).format(date);
+  return formatDateOrTimestamp(date, "Europe/Brussels") ?? "—";
 }
 
 // Wiek zdarzenia po polsku („3 godz. temu”); null, gdy brak daty.

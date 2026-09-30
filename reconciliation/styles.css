@@ -13,3 +13,5 @@
   .badge { border: 1px solid CanvasText; }
   nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
 }
+/* Przegląd demo 5: wybór rodziny w oknie „Utwórz wpłatę” (jak w panelu wpłat, #128). */
+.household-picker{display:grid;gap:10px;margin:0;padding:14px;border:1px solid #e2e2e0}.household-picker legend{padding:0 6px;font-size:.83rem;font-weight:700;color:#3e4347}.household-picker>small{color:var(--muted);font-size:.8rem}.household-picker p.context:empty{display:none}.household-picker #line-payment-clear{justify-self:start}
