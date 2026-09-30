@@ -25,6 +25,9 @@ import { handlePgRequest } from '../../../src/pg/app.js';
 import { insertGrantRequest } from '../../../src/pg/grant-requests.js';
 import { loadMigrations, applyMigrations } from '../../../src/postgres-migrations.js';
 import { startServer } from '../../../src/server.js';
+import { createMemoryStorage, sha256Hex } from '../../../src/storage.js';
+import { deflateSync } from 'node:zlib';
+import { buildDemoPdf } from '../../../scripts/lib/demo-pdf.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const migrationsDir = fileURLToPath(new URL('../../../postgres/migrations/', import.meta.url));
@@ -273,6 +276,60 @@ async function seedDocs82(db, userId) {
   }
 }
 
+// #89 część 2: podgląd PDF w panelu documents/. Osobny rok i osobny członek zarządu;
+// treść w magazynie w pamięci (jedyne miejsce e2e z plikiem). Trzy syntetyczne PDF-y:
+// czysty, z linkiem /URI (link zmienia tylko kartę podglądu) i „sprzed kontroli struktury”
+// ze skryptem w skompresowanym strumieniu obiektów (podgląd zablokowany, 409).
+const DOCS89_YEAR_ID = 'e2e-y-docs89';
+function e2ePdfWithLink(uri) {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /Annots [6 0 R] >>',
+  ];
+  const content = 'BT /F1 20 Tf 56 780 Td (Syntetyczny PDF z linkiem - e2e) Tj ET';
+  objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  objects.push(`<< /Type /Annot /Subtype /Link /Rect [0 0 595 842] /Border [0 0 0] /A << /S /URI /URI (${uri}) >> >>`);
+  let out = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, index) => { offsets.push(out.length); out += `${index + 1} 0 obj\n${body}\nendobj\n`; });
+  const xrefAt = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`;
+  return Uint8Array.from(out, (ch) => ch.charCodeAt(0));
+}
+function e2ePdfWithHiddenScript() {
+  const payload = deflateSync(Buffer.from('5 0 << /S /JavaScript /JS (app.alert(1)) >>', 'latin1'));
+  return new Uint8Array(Buffer.concat([
+    Buffer.from(`%PDF-1.5\n1 0 obj << /Type /Catalog /OpenAction 5 0 R >> endobj\n9 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length ${payload.length} /Filter /FlateDecode >>\nstream\n`, 'latin1'),
+    payload,
+    Buffer.from('\nendstream\nendobj\ntrailer << /Root 1 0 R >>\n%%EOF\n', 'latin1'),
+  ]));
+}
+const E2E_DOCS89 = [
+  { id: '00000000-0000-4000-8000-0000000e89a1', title: 'Protokół (syntetyczny PDF)', bytes: () => buildDemoPdf({ title: 'Protokol - dokument syntetyczny e2e', lines: ['To nie jest prawdziwy dokument.'] }) },
+  { id: '00000000-0000-4000-8000-0000000e89a2', title: 'Plik z linkiem (syntetyczny PDF)', bytes: () => e2ePdfWithLink(`http://127.0.0.1:${PORT}/site/`) },
+  { id: '00000000-0000-4000-8000-0000000e89a3', title: 'Plik sprzed kontroli struktury (syntetyczny)', bytes: e2ePdfWithHiddenScript },
+];
+async function seedDocs89(db, storage, userId) {
+  for (const [index, doc] of E2E_DOCS89.entries()) {
+    const bytes = doc.bytes();
+    const objectKey = `docs/${doc.id}`;
+    await storage.putObject(objectKey, bytes, 'application/pdf');
+    await db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key, created_at)
+       VALUES ($1, $2, 'application/pdf', $3, 'board', $4, $5, $6, $7, now() - ($8::int * interval '1 minute'))`,
+      [doc.id, objectKey, bytes.length, userId, DOCS89_YEAR_ID, sha256Hex(bytes), `e2e-docs89-${index + 1}`, 10 - index],
+    );
+    await db.query(
+      `INSERT INTO document_descriptions (document_id, revision_no, title, category, created_by)
+       VALUES ($1, 1, $2, 'protokol', $3)`,
+      [doc.id, doc.title, userId],
+    );
+  }
+}
+
 // Wydruk zestawień (#151): osobny rok i osobny skarbnik, żeby 300 wpłat i 300
 // wpisów księgi nie zmieniało list widzianych przez inne testy. Część wpłat ma
 // korektę częściową (kolumny „Korekty” i „Netto” na wydruku). Dane syntetyczne.
@@ -383,6 +440,14 @@ async function main() {
   await seedDocs82(db, 'e2e-board-docs82');
   const boardDocs82Cookie = await seedCookieSession(db, { userId: 'e2e-board-docs82', mfa: true });
 
+  // 3a''. Członek zarządu wyłącznie w roku e2e-y-docs89 (#89: podgląd PDF z magazynu).
+  const storage = createMemoryStorage();
+  await seedUser(db, 'e2e-board-docs89');
+  await seedSchoolYear(db, DOCS89_YEAR_ID, { startsOn: '2023-09-01', endsOn: '2024-08-31' });
+  await grantRole(db, 'e2e-board-docs89', 'board', { schoolYearId: DOCS89_YEAR_ID });
+  await seedDocs89(db, storage, 'e2e-board-docs89');
+  const boardDocs89Cookie = await seedCookieSession(db, { userId: 'e2e-board-docs89', mfa: true });
+
   // 4. Panel „Konta i role” (#224): admin z czynnikiem TOTP i sesjami cookie —
   //    jedna ze starym MFA (krok w górę: mfa_stale), jedna ze świeżym; dwa konta
   //    docelowe (hasło + czynnik TOTP), na których test wykonuje resety.
@@ -447,6 +512,10 @@ async function main() {
     printMeeting: { id: printMeetingId, title: PRINT_MEETING_TITLE },
     documents: E2E_DOCUMENTS,
     boardDocs82: { userId: 'e2e-board-docs82', cookie: boardDocs82Cookie, schoolYearId: DOCS82_YEAR_ID, documents: E2E_DOCS82 },
+    boardDocs89: {
+      userId: 'e2e-board-docs89', cookie: boardDocs89Cookie, schoolYearId: DOCS89_YEAR_ID,
+      documents: E2E_DOCS89.map(({ id, title }) => ({ id, title })),
+    },
     newsTitles,
     newsLongWord: NEWS_LONG_WORD,
     newsInjectionTitle: NEWS_INJECTION_TITLE,
@@ -461,6 +530,7 @@ async function main() {
     distRoot,
     env: {
       db,
+      storage,
       APP_ENV: 'test',
       MFA_ENCRYPTION_KEY: mfaKey,
       SCRYPT_COST_LOG2: FAST_SCRYPT.SCRYPT_COST_LOG2,

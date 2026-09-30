@@ -187,6 +187,7 @@ const CATALOG = {
   'document.voided': ['documents', 'Unieważnienie dokumentu'],
   'document.access_denied': ['documents', 'Odmowa dostępu do dokumentu'],
   'document.content_missing': ['documents', 'Brak pliku dokumentu w magazynie'],
+  'document.preview_blocked': ['documents', 'Zablokowany podgląd dokumentu (bieżąca kontrola struktury)'],
   'export.created': ['documents', 'Utworzenie eksportu rocznego'],
   'export.restored': ['documents', 'Odtworzenie danych z paczki eksportu'],
   'print.cards_requested': ['documents', 'Przygotowanie kartek klasowych'],

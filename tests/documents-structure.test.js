@@ -4,7 +4,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { validateStructure } from '../src/documents.js';
+import { deflateSync } from 'node:zlib';
+
+import { detectType, PDF_OBJECT_STREAM_MAX_BYTES, validateStructure } from '../src/documents.js';
 
 const encoder = new TextEncoder();
 
@@ -101,4 +103,99 @@ test('/OpenAction: akcja wpisana w miejscu odrzucona, cel-strona (tablica/odnoś
   assert.deepEqual(validateStructure(pdf('/OpenAction 5 0 R'), 'application/pdf'), { ok: true });
   // Odnośnik do akcji ze skryptem jest wychwycony przez słowo kluczowe akcji.
   assert.deepEqual(validateStructure(pdf('/OpenAction 5 0 R') && encoder.encode('%PDF-1.4\n<< /OpenAction 5 0 R >>\n5 0 obj << /S /JavaScript /JS (x) >>\n%%EOF\n'), 'application/pdf'), { ok: false, code: 'document_active_content' });
+});
+
+// --- #89 część 2: strumienie obiektów PDF, formularze, PNG, SVG -----------------------
+
+// Syntetyczny PDF 1.5 ze słownikami schowanymi w skompresowanym strumieniu obiektów.
+function pdfWithObjectStream(inner, { dict = '/Type /ObjStm /N 1 /First 4', compress = deflateSync, raw } = {}) {
+  const payload = raw ?? compress(Buffer.from(`5 0 ${inner}`, 'latin1'));
+  const head = Buffer.from(`%PDF-1.5\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n9 0 obj\n<< ${dict} /Length ${payload.length}${raw || compress === deflateSync ? ' /Filter /FlateDecode' : ''} >>\nstream\n`, 'latin1');
+  const tail = Buffer.from('\nendstream\nendobj\ntrailer << /Root 1 0 R >>\n%%EOF\n', 'latin1');
+  return new Uint8Array(Buffer.concat([head, payload, tail]));
+}
+
+test('słownik z /JavaScript albo /OpenAction << >> schowany w skompresowanym strumieniu obiektów jest odrzucony', () => {
+  for (const inner of ['<< /S /JavaScript /JS (app.alert(1)) >>', '<< /OpenAction << /S /Launch /F (x.exe) >> >>', '<< /S /J#61vaScript >>', '<< /Type /Catalog /OpenAction << /S /URI /URI (x) >> >>']) {
+    assert.deepEqual(validateStructure(pdfWithObjectStream(inner), 'application/pdf'), { ok: false, code: 'document_active_content' }, inner);
+  }
+});
+
+test('strumień obiektów rozpoznany także bez /Type (klucz /First) i z nazwami zapisanymi szesnastkowo', () => {
+  const inner = '<< /S /JavaScript >>';
+  assert.deepEqual(validateStructure(pdfWithObjectStream(inner, { dict: '/N 1 /First 4' }), 'application/pdf'), { ok: false, code: 'document_active_content' });
+  const escaped = pdfWithObjectStream(inner, { dict: '/Type /Obj#53tm /N 1 /First 4' });
+  assert.deepEqual(validateStructure(escaped, 'application/pdf'), { ok: false, code: 'document_active_content' });
+});
+
+test('czysty skompresowany strumień obiektów przechodzi kontrolę', () => {
+  const bytes = pdfWithObjectStream('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>');
+  assert.deepEqual(validateStructure(bytes, 'application/pdf'), { ok: true });
+});
+
+test('skompresowany strumień treści/obrazu (nie ObjStm) nie jest przeszukiwany — brak fałszywych odrzuceń', () => {
+  // Bajty "/JS" wewnątrz strumienia obrazu nie są słownikiem PDF.
+  const data = deflateSync(Buffer.from('xx/JSyy/Launch binarne dane obrazu', 'latin1'));
+  const head = Buffer.from(`%PDF-1.5\n7 0 obj\n<< /Type /XObject /Subtype /Image /Length ${data.length} /Filter /FlateDecode >>\nstream\n`, 'latin1');
+  const bytes = new Uint8Array(Buffer.concat([head, data, Buffer.from('\nendstream\nendobj\n%%EOF\n', 'latin1')]));
+  assert.deepEqual(validateStructure(bytes, 'application/pdf'), { ok: true });
+});
+
+test('strumień obiektów, którego nie da się sprawdzić, jest odrzucony jako uszkodzony', () => {
+  const inner = '<< /S /JavaScript >>';
+  const hex = Buffer.from(Buffer.from(`5 0 ${inner}`, 'latin1').toString('hex') + '>', 'latin1');
+  const cases = {
+    'filtr ASCIIHex': pdfWithObjectStream(inner, { dict: '/Type /ObjStm /N 1 /First 4 /Filter /ASCIIHexDecode', raw: undefined, compress: () => hex }),
+    'łańcuch filtrów': pdfWithObjectStream(inner, { dict: '/Type /ObjStm /N 1 /First 4 /Filter [/ASCIIHexDecode /FlateDecode]', compress: () => hex }),
+    'predyktor': pdfWithObjectStream(inner, { dict: '/Type /ObjStm /N 1 /First 4 /DecodeParms << /Predictor 12 /Columns 5 >>' }),
+    'uszkodzone dane zlib': pdfWithObjectStream(inner, { raw: Buffer.from('to nie jest zlib', 'latin1') }),
+  };
+  for (const [label, bytes] of Object.entries(cases)) {
+    assert.deepEqual(validateStructure(bytes, 'application/pdf'), { ok: false, code: 'document_malformed' }, label);
+  }
+});
+
+test('„bomba” zlib w strumieniu obiektów (ponad limit rozpakowania) jest odrzucona bez rozpakowania całości', () => {
+  const bomb = deflateSync(Buffer.alloc(PDF_OBJECT_STREAM_MAX_BYTES + 1024, 0x20));
+  assert.ok(bomb.length < 64 * 1024, 'syntetyczna bomba jest mała po kompresji');
+  assert.deepEqual(validateStructure(pdfWithObjectStream('', { raw: bomb }), 'application/pdf'), { ok: false, code: 'document_malformed' });
+});
+
+test('akcje formularza /SubmitForm i /ImportData są odrzucone (także w strumieniu obiektów)', () => {
+  for (const key of ['/SubmitForm', '/ImportData', '/Submit#46orm']) {
+    const bytes = encoder.encode(`%PDF-1.4\n1 0 obj << /S ${key} /F (https://example.invalid/x) >> endobj\n%%EOF\n`);
+    assert.deepEqual(validateStructure(bytes, 'application/pdf'), { ok: false, code: 'document_active_content' }, key);
+  }
+  assert.deepEqual(validateStructure(pdfWithObjectStream('<< /S /SubmitForm >>'), 'application/pdf'), { ok: false, code: 'document_active_content' });
+});
+
+test('PNG: pierwszy chunk musi być IHDR, typ chunku to cztery litery ASCII', () => {
+  const png = validPng();
+  const noIhdr = png.slice();
+  noIhdr.set([0x74, 0x45, 0x58, 0x74], 12); // tEXt zamiast IHDR
+  assert.deepEqual(validateStructure(noIhdr, 'image/png'), { ok: false, code: 'document_malformed' });
+  const badType = png.slice();
+  badType.set([0x3c, 0x68, 0x3e, 0x00], 37); // "<h>\0" zamiast IEND
+  assert.deepEqual(validateStructure(badType, 'image/png'), { ok: false, code: 'document_malformed' });
+});
+
+test('SVG (także zadeklarowany jako obraz) nie ma dozwolonej sygnatury i nie przechodzi detectType', () => {
+  const svg = encoder.encode('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script></svg>');
+  assert.equal(detectType(svg), null);
+  assert.equal(detectType(encoder.encode('<?xml version="1.0"?><svg/>')), null);
+  // Struktura dla SVG/innych typów jest zawsze odrzucona (lista zamknięta).
+  assert.deepEqual(validateStructure(svg, 'image/svg+xml'), { ok: false, code: 'document_malformed' });
+});
+
+test('strumień obiektów z długością pośrednią (/Length 12 0 R) jest rozpakowany do słowa endstream', () => {
+  const build = (inner) => {
+    const payload = deflateSync(Buffer.from(`5 0 ${inner}`, 'latin1'));
+    return new Uint8Array(Buffer.concat([
+      Buffer.from('%PDF-1.5\n9 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 12 0 R /Filter /FlateDecode >>\nstream\n', 'latin1'),
+      payload,
+      Buffer.from(`\nendstream\nendobj\n12 0 obj ${payload.length} endobj\n%%EOF\n`, 'latin1'),
+    ]));
+  };
+  assert.deepEqual(validateStructure(build('<< /Type /Page >>'), 'application/pdf'), { ok: true });
+  assert.deepEqual(validateStructure(build('<< /S /JavaScript >>'), 'application/pdf'), { ok: false, code: 'document_active_content' });
 });

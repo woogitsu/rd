@@ -488,7 +488,7 @@ detailsPreview.addEventListener("click", () => {
   if (kind === "image") {
     previewImage.addEventListener("error", () => {
       previewMessage.className = "message error";
-      previewMessage.textContent = "Nie udało się wczytać podglądu. Sesja mogła wygasnąć albo brak dostępu — spróbuj pobrać plik.";
+      previewMessage.textContent = "Nie udało się wczytać podglądu. Sesja mogła wygasnąć, brak dostępu albo plik nie przechodzi bieżącej kontroli struktury — spróbuj pobrać plik.";
       previewImage.hidden = true;
     }, { once: true });
   }

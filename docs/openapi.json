@@ -17490,6 +17490,7 @@
           "document_content_missing",
           "document_integrity_mismatch",
           "document_malformed",
+          "document_preview_blocked",
           "document_preview_unsupported",
           "document_status_conflict",
           "document_status_replacement_not_active",
@@ -18217,6 +18218,11 @@
         "code": "document_malformed",
         "meaning": "Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane).",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "document_preview_blocked",
+        "meaning": "Ten plik nie przechodzi bieżącej kontroli struktury, więc nie otworzy się w panelu. Można go pobrać; zgłoś go administratorowi.",
+        "retry": "Nie — plik trzeba pobrać albo zastąpić poprawnym."
       },
       {
         "code": "document_preview_unsupported",
