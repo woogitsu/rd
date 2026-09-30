@@ -20,6 +20,8 @@ import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { formatDateOrTimestamp } from '../shared/zoned-time.js';
 import { handlePgRequest } from '../src/pg/app.js';
+import { auditReportContentSha256 } from '../src/pg/audit-report-xlsx.js';
+import { createMemoryStorage } from '../src/storage.js';
 import { createRealTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
 
 const skip = process.env.RD_TEST_PG_URL ? false : 'brak RD_TEST_PG_URL (wymaga prawdziwego PostgreSQL)';
@@ -53,8 +55,8 @@ async function setup(db) {
   return cookies;
 }
 
-async function call(env, path, { cookie, method = 'GET', body, idempotencyKey } = {}) {
-  const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined;
+async function call(env, path, { cookie, method = 'GET', body, idempotencyKey, headers: extra } = {}) {
+  const headers = idempotencyKey || extra ? { ...extra, ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) } : undefined;
   const response = await handlePgRequest(request(path, { method, cookie, body, headers }), env);
   const text = await response.text();
   let data = null;
@@ -265,5 +267,57 @@ test('kontrola pozytywna: ten sam przeplot bez migawki (zapytania na puli) daje 
     assert.equal(report.balance.incomeCents, 10000, 'bilans z chwili przed korektą');
     assert.equal(incomeCategorySum(report), 7000, 'kategorie z chwili po korekcie');
     assert.equal(check(report, 'year_end_balance').ok, false, 'raport sam zgłasza fałszywą niezgodność');
+  });
+});
+
+// #82/#594: sekcja „Dowody wydatków” na prawdziwym PG — rekurencyjny łańcuch
+// zastąpień (wspólny z GET /api/ledger) w migawce READ ONLY. Wydatek, którego
+// łańcuch A→B→C kończy się unieważnieniem, jest „bez dowodu” z adnotacją;
+// skrót treści w HTML = skrót JSON.
+test('GET /api/reports/audit: dowód unieważniony na końcu łańcucha A→B→C — „bez dowodu”, ten sam skrót w HTML', { skip }, async () => {
+  await withReal(async (db) => {
+    const cookies = await setup(db);
+    const env = { db, storage: createMemoryStorage() };
+    await db.query(`INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+      VALUES ('cat-exp', $1, 'expense', 'Wydarzenia', 'u-treasurer')`, [YEAR]);
+    const upload = async (label) => {
+      const response = await call(env, `/api/documents?kind=financial&schoolYearId=${YEAR}`, {
+        cookie: cookies.treasurer, method: 'POST', idempotencyKey: key('doc'),
+        body: new TextEncoder().encode(`%PDF-1.4\n% syntetyczny dowod ${label}\n%%EOF\n`),
+        headers: { 'Content-Type': 'application/pdf' },
+      });
+      assert.equal(response.status, 201, response.text);
+      return response.body.document.id;
+    };
+    const status = async (id, action, body = {}) => {
+      const response = await call(env, `/api/documents/${id}/${action}`, {
+        cookie: cookies.treasurer, method: 'POST', idempotencyKey: key(`status-${action}`),
+        body: { reason: 'Syntetyczny powod zmiany', ...body },
+      });
+      assert.equal(response.status, 201, response.text);
+    };
+    const [a, b, c] = [await upload('A'), await upload('B'), await upload('C')];
+    const entry = await call(env, '/api/ledger', {
+      cookie: cookies.treasurer, method: 'POST', idempotencyKey: key('le'),
+      body: { schoolYearId: YEAR, direction: 'expense', amountCents: 4200, categoryId: 'cat-exp', sourceDocumentId: a,
+        description: 'Syntetyczny wydatek z łańcuchem', occurredOn: '2026-10-05', method: 'bank' },
+    });
+    assert.equal(entry.status, 201, entry.text);
+    await status(a, 'supersede', { replacementDocumentId: b });
+    await status(b, 'supersede', { replacementDocumentId: c });
+
+    let report = (await call(env, `/api/reports/audit?schoolYearId=${YEAR}`, { cookie: cookies.audit })).body.report;
+    assert.deepEqual(report.evidence.expensesWithoutEvidence, { count: 0, netCents: 0, items: [] }, 'C aktywny — wydatek ma dowód');
+
+    await status(c, 'void');
+    report = (await call(env, `/api/reports/audit?schoolYearId=${YEAR}`, { cookie: cookies.audit })).body.report;
+    assert.deepEqual(report.evidence.expensesWithoutEvidence.items, [{
+      id: entry.body.entry.id, occurredOn: '2026-10-05', category: 'Wydarzenia', description: 'Syntetyczny wydatek z łańcuchem',
+      netAmountCents: 4200, evidenceStatus: 'voided', voidedDocumentIds: [a],
+    }]);
+    assertConsistent(report, 'raport z unieważnionym dowodem');
+    const html = (await call(env, `/api/reports/audit?schoolYearId=${YEAR}&format=html`, { cookie: cookies.audit })).text;
+    assert.ok(html.includes(`Skrót treści (SHA-256): ${await auditReportContentSha256(report)}`), 'HTML i JSON z tych samych danych — ten sam skrót');
+    assert.ok(html.includes('dowód unieważniony'));
   });
 });

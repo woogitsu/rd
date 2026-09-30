@@ -15,6 +15,7 @@
 // do porównania z wersją JSON i panelami.
 
 import { formatSchoolYear } from '../../shared/school-year.js';
+import { evidenceNote } from '../../shared/evidence-note.js';
 import { toXlsxWorkbook } from './xlsx.js';
 import {
   ACCOUNT_OPERATION_ROWS, CHECK_LABEL, checkDetails, DIRECTION, EVENT_STATUS, formatDate, PLAIN_DETAILS, REPORT_TIME_ZONE, RESOLUTION_STATUS, STATUS,
@@ -232,11 +233,11 @@ function evidenceSheets(report) {
   return [
     {
       name: 'Dowody',
-      columns: cols([['Data', 'date'], ['Kategoria', 'text'], ['Opis', 'text'], ['Netto', 'amount'], ['Wpis księgi', 'text']]),
+      columns: cols([['Data', 'date'], ['Kategoria', 'text'], ['Opis', 'text'], ['Netto', 'amount'], ['Wpis księgi', 'text'], ['Uwagi', 'text']]),
       rows: evidence.expensesWithoutEvidence.items.map((item) => [item.occurredOn, item.category, item.description,
-        item.netAmountCents, item.id]),
+        item.netAmountCents, item.id, evidenceNote(item)]),
       preamble: [`Wydatki bez dowodu: ${evidence.expensesWithoutEvidence.count}.`],
-      trailer: ['', 'Liczone są wydatki z kwotą netto powyżej zera. Numer i wystawca faktury nie są jeszcze zapisywane, więc duplikat tej samej faktury w innym pliku nie zostanie wykryty.'],
+      trailer: ['', 'Liczone są wydatki z kwotą netto powyżej zera. Dowodem jest dokument aktywny albo zastąpiony z aktywną wersją na końcu łańcucha; „dowód unieważniony” = żaden dokument wydatku nie ma aktualnej wersji. Numer i wystawca faktury nie są jeszcze zapisywane, więc duplikat tej samej faktury w innym pliku nie zostanie wykryty.'],
     },
     {
       name: 'Możliwe duplikaty dowodu',
