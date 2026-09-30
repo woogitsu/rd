@@ -6,7 +6,7 @@ import { revokeRoleGrant } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
 import {
   bodyLimitFor, DEFAULT_BODY_LIMIT_BYTES, DEFAULT_MAX_CONCURRENT_UPLOADS, detectType, maxUploadBytes,
-  HARD_MAX_UPLOAD_BYTES, resetUploadSlotsForTests, tryAcquireUploadSlot,
+  activeUploadSlots, HARD_MAX_UPLOAD_BYTES, resetUploadSlotsForTests, tryAcquireUploadSlot,
 } from '../src/documents.js';
 import { createMemoryStorage, createS3Storage, sha256Hex, signRequest, storageFromEnv } from '../src/storage.js';
 import { resolveRuntime } from '../src/server.js';
@@ -262,6 +262,79 @@ test('a fifth concurrent upload gets 503 upload_busy with Retry-After, before th
   // Po zwolnieniu miejsc kolejny upload przebiega normalnie.
   assert.equal((await upload(env, { cookie })).response.status, 201);
   resetUploadSlotsForTests();
+}));
+
+// #185: ciało jest strumieniem, z którego trasa NIE może nic pobrać, zanim
+// sprawdzi sesję, uprawnienie do rodzaju i typ. Atrapa strumienia liczy
+// każdy pobrany bajt (highWaterMark 0 — nic nie jest pobierane z wyprzedzeniem).
+function countingUpload(options, totalBytes = 10 * 1024 * 1024) {
+  const base = uploadRequest(options);
+  const counter = { pulled: 0 };
+  const chunk = new Uint8Array(64 * 1024);
+  chunk.set(PDF.subarray(0, 5));
+  const body = new ReadableStream({
+    pull(controller) {
+      if (counter.pulled >= totalBytes) { controller.close(); return; }
+      counter.pulled += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+  }, { highWaterMark: 0 });
+  const headers = new Headers(base.headers);
+  headers.set('Content-Length', String(totalBytes));
+  return { counter, request: new Request(base.url, { method: 'POST', headers, body, duplex: 'half' }) };
+}
+
+test('#185: bez sesji, przedstawiciel z kind=financial i niedozwolony typ — odmowa bez odczytu ani jednego bajtu ciała', async () => withEnv(async (db, env, storage) => {
+  resetUploadSlotsForTests();
+  const rep = await repA(db);
+  const cases = [
+    { options: {}, status: 401, error: 'unauthenticated' },
+    { options: { cookie: rep, kind: 'financial' }, status: 403, error: 'forbidden' },
+    { options: { cookie: await treasurer(db), type: 'text/html' }, status: 415, error: 'unsupported_media_type' },
+  ];
+  for (const { options, status, error } of cases) {
+    const { counter, request: req } = countingUpload(options);
+    const response = await handlePgRequest(req, env);
+    assert.equal(response.status, status, error);
+    assert.equal((await response.json()).error, error);
+    assert.equal(counter.pulled, 0, `${error}: trasa nie może czytać ciała przed odmową`);
+  }
+  assert.equal(storage.keys().length, 0);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM document_uploads')).rows[0].n, 0);
+}, { documentMaxBytes: 25 * 1024 * 1024 }));
+
+test('#185: ten sam użytkownik ma najwyżej 2 uploady naraz; inny użytkownik nadal wysyła', async () => withEnv(async (db, env) => {
+  resetUploadSlotsForTests();
+  const cookie = await treasurer(db);
+  const own = [tryAcquireUploadSlot(undefined, 'u-treasurer'), tryAcquireUploadSlot(undefined, 'u-treasurer')];
+  try {
+    const { counter, request: req } = countingUpload({ cookie });
+    const busy = await handlePgRequest(req, env);
+    assert.equal(busy.status, 503);
+    assert.equal((await busy.json()).error, 'upload_busy');
+    assert.ok(busy.headers.get('retry-after'));
+    assert.equal(counter.pulled, 0, 'ciało trzeciego uploadu nie jest czytane');
+    const other = await seedUserSession(db, { userId: 'u-treasurer-2', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
+    assert.equal((await upload(env, { cookie: other })).response.status, 201, 'limit dotyczy użytkownika, nie wszystkich');
+  } finally {
+    for (const release of own) release();
+  }
+  assert.equal((await upload(env, { cookie })).response.status, 201);
+  resetUploadSlotsForTests();
+}));
+
+// Podwójne kliknięcie dużego pliku: dwa równoległe żądania z tym samym kluczem
+// idempotencji mieszczą się w limicie na użytkownika, a na końcu jest jeden dokument.
+test('#185: podwójne kliknięcie (ten sam klucz, równolegle) daje jeden dokument', async () => withEnv(async (db, env, storage) => {
+  resetUploadSlotsForTests();
+  const cookie = await treasurer(db);
+  const key = `double-click-${Date.now()}`;
+  const [first, second] = await Promise.all([upload(env, { cookie, key }), upload(env, { cookie, key })]);
+  assert.deepEqual([first.response.status, second.response.status].sort(), [200, 201]);
+  assert.equal(first.data.document.id, second.data.document.id);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 1);
+  assert.equal(storage.keys().length, 1);
+  assert.equal(activeUploadSlots(), 0, 'oba miejsca zwolnione');
 }));
 
 test('expired and revoked grants lose access from the next request', async () => withEnv(async (db, env) => {

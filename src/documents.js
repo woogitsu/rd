@@ -139,22 +139,42 @@ export function bodyLimitFor(uploadLimit = DEFAULT_MAX_UPLOAD_BYTES) {
 // Semafor liczący — bez kolejki: piąte i kolejne równoczesne żądanie dostaje
 // od razu `503 upload_busy`, zamiast czekać na zwolnienie miejsca. Licznik
 // żyje przez cały czas życia procesu (moduł ładowany raz), nie per-żądanie.
+//
+// Dodatkowo limit NA UŻYTKOWNIKA (`key` = identyfikator użytkownika z sesji):
+// jedno konto (np. przejęta sesja albo skrypt) nie może zająć wszystkich
+// miejsc procesu i zablokować uploadów innym osobom. Panele wysyłają pliki
+// pojedynczo, więc 2 wystarcza także na podwójne kliknięcie (drugie żądanie
+// i tak rozstrzyga klucz idempotencji). Wspólny dla POST /api/documents
+// i POST /api/news-photos/:id/file — oba czytają do 10-25 MB do pamięci.
 export const DEFAULT_MAX_CONCURRENT_UPLOADS = 4;
+export const DEFAULT_MAX_CONCURRENT_UPLOADS_PER_USER = 2;
 let activeUploads = 0;
+const activeByKey = new Map();
 
-export function tryAcquireUploadSlot(max = DEFAULT_MAX_CONCURRENT_UPLOADS) {
-  if (activeUploads >= max) return null;
+export function tryAcquireUploadSlot(max = DEFAULT_MAX_CONCURRENT_UPLOADS, key = null, maxPerKey = DEFAULT_MAX_CONCURRENT_UPLOADS_PER_USER) {
+  const limit = Number.isInteger(max) && max > 0 ? max : DEFAULT_MAX_CONCURRENT_UPLOADS;
+  const perKey = Number.isInteger(maxPerKey) && maxPerKey > 0 ? maxPerKey : DEFAULT_MAX_CONCURRENT_UPLOADS_PER_USER;
+  if (activeUploads >= limit) return null;
+  if (key != null && (activeByKey.get(key) ?? 0) >= perKey) return null;
   activeUploads += 1;
+  if (key != null) activeByKey.set(key, (activeByKey.get(key) ?? 0) + 1);
   let released = false;
   return () => {
     if (released) return;
     released = true;
     activeUploads -= 1;
+    if (key != null) {
+      const left = (activeByKey.get(key) ?? 1) - 1;
+      if (left > 0) activeByKey.set(key, left); else activeByKey.delete(key);
+    }
   };
 }
 
+// Stan semafora (do testów i diagnostyki): liczba zajętych miejsc.
+export function activeUploadSlots() { return activeUploads; }
+
 // Wyłącznie do testów (odtworzenie stanu między przebiegami w tym samym procesie).
-export function resetUploadSlotsForTests() { activeUploads = 0; }
+export function resetUploadSlotsForTests() { activeUploads = 0; activeByKey.clear(); }
 
 // Czyta ciało Web Request z twardym limitem (niezależnie od Content-Length).
 // #185 pkt 2: przy deklarowanym Content-Length (<= limit) bajty trafiają od
