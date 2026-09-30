@@ -104,6 +104,12 @@ test('buildSections: raport z archiwum bez sekcji opcjonalnych, pusty raport bez
   assert.deepEqual(buildSections(null), []);
   const withOptional = buildSections({ ...REPORT, evidence: { expensesWithoutEvidence: { count: 1, netCents: 500, items: [{ occurredOn: '2026-11-02', category: 'X', description: 'Y', netAmountCents: 500, id: 'e2' }] }, possibleDuplicateEvidence: [] }, expenseReviews: { unverified: { count: 1, netCents: 5 }, questioned: { count: 0, netCents: 0 }, verified: { count: 2, netCents: 9 }, splitWindowDays: 30, possibleSplits: [] }, resolutionExecution: [{ number: 'U/1', title: 'T', status: 'adopted', authorizedAmountCents: null, spentNetCents: 1, remainingCents: null, entryCount: 1 }] });
   assert.ok(withOptional.some((s) => s.id === 'evidence'));
+  // #82/#594: kolumna „Uwagi” — adnotacja tylko przy dowodzie unieważnionym.
+  const evidenceSection = withOptional.find((s) => s.id === 'evidence');
+  assert.equal(evidenceSection.headers.at(-1), 'Uwagi');
+  assert.equal(evidenceSection.rows[0].at(-1), '');
+  const voided = buildSections({ ...REPORT, evidence: { expensesWithoutEvidence: { count: 1, netCents: 500, items: [{ occurredOn: '2026-11-02', category: 'X', description: 'Y', netAmountCents: 500, id: 'e3', evidenceStatus: 'voided', voidedDocumentIds: ['d1'] }] }, possibleDuplicateEvidence: [] } });
+  assert.equal(voided.find((s) => s.id === 'evidence').rows[0].at(-1), 'dowód unieważniony');
   assert.equal(withOptional.find((s) => s.id === 'resolution-execution').rows[0][3], 'bez kwoty');
 });
 

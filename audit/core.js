@@ -4,6 +4,7 @@
 
 import { formatEur } from '../panel/money.js';
 import { shortId } from '../shared/short-id.js';
+import { evidenceNote } from '../shared/evidence-note.js';
 import { formatDateOrTimestamp } from '../shared/zoned-time.js';
 
 export const TIME_ZONE = 'Europe/Brussels';
@@ -219,9 +220,10 @@ export function buildSections(report) {
     sections.push({
       id: 'evidence',
       title: 'Dowody wydatków',
-      headers: ['Data', 'Kategoria', 'Opis', 'Netto', 'Wpis księgi'],
+      headers: ['Data', 'Kategoria', 'Opis', 'Netto', 'Wpis księgi', 'Uwagi'],
       rows: (missing.items ?? []).map((item) => [
         formatDate(item.occurredOn), text(item.category), text(item.description), formatEur(item.netAmountCents), idCell(item.id),
+        evidenceNote(item),
       ]),
       numeric: [3],
       empty: 'Każdy wydatek ma co najmniej jeden dokument.',

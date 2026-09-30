@@ -3,11 +3,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { renderAuditReportHtml } from '../src/pg/audit-report.js';
+import { auditReportContentSha256 } from '../src/pg/audit-report-xlsx.js';
+import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 const OTHER_YEAR = 'y-2025';
+const NEXT_YEAR = 'y-2027';
 const PDF = new TextEncoder().encode('%PDF-1.4\n% syntetyczny dowod\n1 0 obj <<>> endobj\n%%EOF\n');
 const PDF_2 = new TextEncoder().encode('%PDF-1.4\n% drugi syntetyczny dowod\n%%EOF\n');
 
@@ -255,4 +258,134 @@ test('audit report lists expenses without evidence and possible duplicate eviden
   const legacy = { ...response.body.report };
   delete legacy.evidence;
   assert.match(renderAuditReportHtml(legacy), /Każdy wydatek ma co najmniej jeden dokument/);
+}));
+
+// #82/#594: raport KR i ostrzeżenie zamknięcia roku liczą dowód wg tej samej
+// reguły łańcucha zastąpień co GET /api/ledger (src/pg/document-chain.js).
+async function auditReport(env, cookie, format = 'json') {
+  const response = await call(env, `/api/reports/audit?schoolYearId=${YEAR}${format === 'json' ? '' : `&format=${format}`}`, { cookie });
+  assert.equal(response.status, 200);
+  return format === 'json' ? response.body.report : response.body;
+}
+
+test('#82/#594: raport KR — dowód unieważniony, zastąpiony, łańcuch A→B→C; skrót zmienia się tylko przy unieważnieniu', async () => withEnv(async ({ env, cookies }) => {
+  const t = cookies.treasurer;
+  // e1: jedyny dowód (dokument główny) unieważniony.
+  const v = (await uploadDocument(env, t, { bytes: pdfVariant('V') })).body.document;
+  const e1 = (await createEntry(env, t, { sourceDocumentId: v.id, description: 'Syntetyczny wydatek 1', amountCents: 1100, occurredOn: '2026-10-01' })).body.entry;
+  // e2: dowód dołączony później, zastąpiony aktywną wersją.
+  const e2 = (await createEntry(env, t, { description: 'Syntetyczny wydatek 2', amountCents: 1200, occurredOn: '2026-10-02' })).body.entry;
+  const s1 = (await uploadDocument(env, t, { link: e2.id, bytes: pdfVariant('S1') })).body.document;
+  const s2 = (await uploadDocument(env, t, { bytes: pdfVariant('S2') })).body.document;
+  // e3: łańcuch A→B→C (dokument główny A).
+  const a = (await uploadDocument(env, t, { bytes: pdfVariant('A') })).body.document;
+  const e3 = (await createEntry(env, t, { sourceDocumentId: a.id, description: 'Syntetyczny wydatek 3', amountCents: 1300, occurredOn: '2026-10-03' })).body.entry;
+  const b = (await uploadDocument(env, t, { bytes: pdfVariant('B') })).body.document;
+  const c = (await uploadDocument(env, t, { bytes: pdfVariant('C') })).body.document;
+  // e4: jeden dowód unieważniony, drugi aktywny — wydatek ma dowód.
+  const e4 = (await createEntry(env, t, { description: 'Syntetyczny wydatek 4', amountCents: 1400, occurredOn: '2026-10-04' })).body.entry;
+  const w1 = (await uploadDocument(env, t, { link: e4.id, bytes: pdfVariant('W1') })).body.document;
+  await uploadDocument(env, t, { link: e4.id, bytes: pdfVariant('W2') });
+  // e5: bez żadnego dokumentu.
+  const e5 = (await createEntry(env, t, { description: 'Syntetyczny wydatek 5', amountCents: 1500, occurredOn: '2026-10-05' })).body.entry;
+  // e6/e7: ten sam plik przy dwóch wydatkach (możliwy duplikat).
+  const e6 = (await createEntry(env, t, { description: 'Syntetyczny wydatek 6', amountCents: 1600, occurredOn: '2026-10-06' })).body.entry;
+  const e7 = (await createEntry(env, t, { description: 'Syntetyczny wydatek 7', amountCents: 1700, occurredOn: '2026-10-07' })).body.entry;
+  const d6 = (await uploadDocument(env, t, { link: e6.id, bytes: PDF_2 })).body.document;
+  const d7 = (await uploadDocument(env, t, { link: e7.id, bytes: PDF_2 })).body.document;
+
+  const plain = (entry, net) => ({ id: entry.id, occurredOn: entry.occurredOn, category: 'Wydarzenia', description: entry.description, netAmountCents: net });
+
+  // Tylko zastąpienia (bez unieważnień): treść sekcji jak przed zmianą — bez
+  // nowych pól, e2 i e3 mają dowód.
+  assert.equal((await changeDocumentStatus(env, t, s1.id, 'supersede', { replacementDocumentId: s2.id })).status, 201);
+  assert.equal((await changeDocumentStatus(env, t, a.id, 'supersede', { replacementDocumentId: b.id })).status, 201);
+  assert.equal((await changeDocumentStatus(env, t, b.id, 'supersede', { replacementDocumentId: c.id })).status, 201);
+  let report = await auditReport(env, cookies.audit);
+  assert.deepEqual(report.evidence.expensesWithoutEvidence, { count: 1, netCents: 1500, items: [plain(e5, 1500)] });
+  assert.deepEqual(report.evidence.possibleDuplicateEvidence, [{ documentIds: [d6.id, d7.id].sort(), ledgerEntryIds: [e6.id, e7.id].sort() }]);
+  const hashWithoutVoids = await auditReportContentSha256(report);
+  assert.equal(await auditReportContentSha256(await auditReport(env, cookies.audit)), hashWithoutVoids, 'te same dane → ten sam skrót');
+
+  // Unieważnienia: V (e1), W1 (e4, ma drugi aktywny dowód), D7 (e7 — znika duplikat).
+  for (const id of [v.id, w1.id, d7.id]) assert.equal((await changeDocumentStatus(env, t, id, 'void')).status, 201);
+  report = await auditReport(env, cookies.audit);
+  assert.deepEqual(report.evidence.expensesWithoutEvidence, {
+    count: 3, netCents: 1100 + 1500 + 1700,
+    items: [
+      { ...plain(e1, 1100), evidenceStatus: 'voided', voidedDocumentIds: [v.id] },
+      plain(e5, 1500),
+      { ...plain(e7, 1700), evidenceStatus: 'voided', voidedDocumentIds: [d7.id] },
+    ],
+  });
+  assert.deepEqual(report.evidence.possibleDuplicateEvidence, [], 'unieważniony plik nie jest duplikatem dowodu');
+  assert.notEqual(await auditReportContentSha256(report), hashWithoutVoids);
+
+  // Koniec łańcucha A→B→C unieważniony: e3 bez dowodu, adnotacja z pierwotnym A.
+  assert.equal((await changeDocumentStatus(env, t, c.id, 'void')).status, 201);
+  report = await auditReport(env, cookies.audit);
+  const e3Item = report.evidence.expensesWithoutEvidence.items.find((item) => item.id === e3.id);
+  assert.deepEqual(e3Item, { ...plain(e3, 1300), evidenceStatus: 'voided', voidedDocumentIds: [a.id] });
+  assert.ok(!report.evidence.expensesWithoutEvidence.items.some((item) => [e2.id, e4.id, e6.id].includes(item.id)));
+  // Ta sama reguła co GET /api/ledger: attachments e3 bez aktualnej wersji.
+  const listed = (await listEntries(env, t)).find((item) => item.id === e3.id);
+  assert.deepEqual(listed.attachments, [{ documentId: a.id, status: 'superseded', currentDocumentId: null }]);
+
+  // HTML: kolumna „Uwagi” z adnotacją; wydatek bez dokumentu bez adnotacji.
+  const html = await auditReport(env, cookies.audit, 'html');
+  assert.match(html, /<th[^>]*>Uwagi<\/th>/);
+  assert.equal(html.split('dowód unieważniony</td>').length - 1, 3);
+  assert.match(renderAuditReportHtml(report), /Wydatki bez dowodu: 4; suma netto 56,00/);
+}));
+
+test('#82/#594: zamknięcie roku — ostrzeżenie expenses_without_evidence przed, raport KR zamkniętego roku po unieważnieniu', async () => withEnv(async ({ db, env, cookies }) => {
+  const t = cookies.treasurer;
+  const doc1 = (await uploadDocument(env, t, { bytes: pdfVariant('Z1') })).body.document;
+  const e1 = (await createEntry(env, t, { sourceDocumentId: doc1.id, description: 'Syntetyczny wydatek przed zamknięciem', amountCents: 2500 })).body.entry;
+  const doc2 = (await uploadDocument(env, t, { bytes: pdfVariant('Z2') })).body.document;
+  const e2 = (await createEntry(env, t, { sourceDocumentId: doc2.id, description: 'Syntetyczny wydatek po zamknięciu', amountCents: 700, occurredOn: '2026-10-06' })).body.entry;
+  const replacement = (await uploadDocument(env, t, { bytes: pdfVariant('Z3') })).body.document;
+  const warnings = async () => {
+    const response = await handlePgRequest(request(`/api/year-close/${YEAR}`, { cookie: cookies.board }), env);
+    assert.equal(response.status, 200);
+    return Object.fromEntries((await response.json()).warnings.map((w) => [w.code, w]));
+  };
+  assert.equal((await warnings()).expenses_without_evidence, undefined, 'aktywne dowody — bez ostrzeżenia');
+  assert.equal((await changeDocumentStatus(env, t, doc1.id, 'void')).status, 201);
+  assert.deepEqual((await warnings()).expenses_without_evidence, { code: 'expenses_without_evidence', count: 1, amountCents: 2500 });
+
+  // Zamknięcie roku pełną ścieżką API (start, lista kontrolna, cztery oczy);
+  // ostrzeżenie nie blokuje.
+  await seedSchoolYear(db, NEXT_YEAR, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
+  const boardB = await seedUserSession(db, { userId: 'u-board-b', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] });
+  const post = async (path, cookie, body = {}) => handlePgRequest(request(path, { method: 'POST', cookie, body }), env);
+  assert.equal((await post(`/api/year-close/${YEAR}/start`, cookies.board, { nextSchoolYearId: NEXT_YEAR })).status, 201);
+  for (const [index, item] of CHECKLIST_ITEMS.entries()) {
+    const response = await post(`/api/year-close/${YEAR}/checklist/${item}`, index % 2 ? t : cookies.board, { note: `Potwierdzenie ${item}` });
+    assert.equal(response.status, 201, item);
+  }
+  const closed = await post(`/api/year-close/${YEAR}/close`, boardB);
+  assert.equal(closed.status, 200, JSON.stringify(await closed.clone().json()));
+  assert.equal((await db.query('SELECT status FROM school_year_closures WHERE school_year_id = $1', [YEAR])).rows[0].status, 'closed');
+
+  // Zamknięcie wygasza przydziały roku. Unieważnia administrator (przydział
+  // globalny); raport zamkniętego roku czyta nowa Rada (przydział w roku
+  // następnym, dostęp archiwalny src/pg/archive-access.js).
+  const admin = await seedUserSession(db, { userId: 'u-admin', mfa: true, roles: [{ role: 'admin' }] });
+  const newBoard = await seedUserSession(db, { userId: 'u-board-next', mfa: true, roles: [{ role: 'board', schoolYearId: NEXT_YEAR }] });
+  // Zastąpienie w zamkniętym roku jest zablokowane (korekta roku), unieważnienie nie.
+  const blocked = await changeDocumentStatus(env, admin, doc2.id, 'supersede', { replacementDocumentId: replacement.id });
+  assert.equal(blocked.status, 409, JSON.stringify(blocked.body));
+  assert.equal((await changeDocumentStatus(env, admin, doc2.id, 'void')).status, 201);
+
+  const report = await auditReport(env, newBoard);
+  assert.deepEqual(report.evidence.expensesWithoutEvidence, {
+    count: 2, netCents: 3200,
+    items: [
+      { id: e1.id, occurredOn: '2026-10-05', category: 'Wydarzenia', description: 'Syntetyczny wydatek przed zamknięciem',
+        netAmountCents: 2500, evidenceStatus: 'voided', voidedDocumentIds: [doc1.id] },
+      { id: e2.id, occurredOn: '2026-10-06', category: 'Wydarzenia', description: 'Syntetyczny wydatek po zamknięciu',
+        netAmountCents: 700, evidenceStatus: 'voided', voidedDocumentIds: [doc2.id] },
+    ],
+  });
 }));

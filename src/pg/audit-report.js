@@ -8,6 +8,7 @@
 import { formatSchoolYear } from '../../shared/school-year.js';
 import { formatEur as formatEurShared } from '../../panel/money.js';
 import { shortId } from '../../shared/short-id.js';
+import { evidenceNote } from '../../shared/evidence-note.js';
 import { formatDateOrTimestamp } from '../../shared/zoned-time.js';
 
 // Strefa czasu raportu — ta sama co w panelach (Zebrania, Wydarzenia, Konta).
@@ -219,6 +220,7 @@ export function renderAuditReportHtml(report, { contentSha256 = null } = {}) {
   const evidence = report.evidence ?? { expensesWithoutEvidence: { count: 0, netCents: 0, items: [] }, possibleDuplicateEvidence: [] };
   const missingEvidenceRows = evidence.expensesWithoutEvidence.items.map((item) => row([
     [e(formatDate(item.occurredOn))], [e(item.category)], [e(item.description)], [money(item.netAmountCents), 'num'], [idHtml(item.id)],
+    [e(evidenceNote(item))],
   ]));
   const duplicateEvidenceRows = evidence.possibleDuplicateEvidence.map((item) => row([
     [item.documentIds.map(idHtml).join('<br>')], [item.ledgerEntryIds.map(idHtml).join('<br>')],
@@ -309,7 +311,8 @@ ${table([['Data wyciągu'], ['Status'], ['Saldo wyciągu', 'num'], ['Saldo księ
 
 <h2>6. Dowody wydatków</h2>
 <p>Wydatki bez dowodu: ${e(evidence.expensesWithoutEvidence.count)}; suma netto ${money(evidence.expensesWithoutEvidence.netCents)}.</p>
-${table([['Data'], ['Kategoria'], ['Opis'], ['Netto', 'num'], ['Wpis księgi']], missingEvidenceRows, 'Każdy wydatek ma co najmniej jeden dokument.')}
+${table([['Data'], ['Kategoria'], ['Opis'], ['Netto', 'num'], ['Wpis księgi'], ['Uwagi']], missingEvidenceRows, 'Każdy wydatek ma co najmniej jeden dokument.')}
+<p class="meta">Dowodem jest dokument aktywny albo zastąpiony, którego łańcuch zastąpień kończy się aktywną wersją. „Dowód unieważniony”: wydatek miał dokumenty, ale żaden nie ma aktualnej wersji.</p>
 <p>Możliwe duplikaty dowodu (ten sam plik przy więcej niż jednym wydatku — do sprawdzenia):</p>
 ${table([['Dokument'], ['Wpisy księgi']], duplicateEvidenceRows, 'Brak powtórzonych dokumentów.')}
 <p class="meta">Liczone są wydatki z kwotą netto powyżej zera. Numer i wystawca faktury nie są jeszcze zapisywane, więc duplikat tej samej faktury w innym pliku nie zostanie wykryty.</p>
