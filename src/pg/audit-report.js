@@ -325,7 +325,7 @@ ${accountOperationsSection(report.accountOperations)}
 // #146: operacje administracyjne na kontach — same liczby (bez identyfikatorów
 // kont i aktorów: domeny access/security dziennika czyta dziś tylko admin,
 // D-08/D-09). Raporty sprzed tej zmiany (np. z archiwum) nie mają tej sekcji.
-const ACCOUNT_OPERATION_ROWS = [
+export const ACCOUNT_OPERATION_ROWS = Object.freeze([
   ['protectedGrants', 'Nadania ról administratora, zarządu i skarbnika'],
   ['protectedGrantsApproved', 'w tym po zatwierdzeniu wniosku przez drugą osobę'],
   ['fourEyesWaived', 'Nadania roli chronionej bez drugiej osoby (brak innego administratora)'],
@@ -337,7 +337,7 @@ const ACCOUNT_OPERATION_ROWS = [
   ['recoveryRequests', 'Wnioski o reset hasła/MFA kont chronionych'],
   ['recoveryRequestsClosed', 'Wnioski o reset odrzucone lub wygasłe'],
   ['loginsAfterAdminReset', 'Logowania na hasło ustawione po resecie administracyjnym'],
-];
+]);
 
 export function accountOperationsSection(ops) {
   if (!ops) return '';
