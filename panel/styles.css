@@ -18,18 +18,6 @@ body { margin: 0; min-width: 320px; background: #fff; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
-.site-header {
-  min-height: 76px;
-  padding: 0 5vw;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 2rem;
-  background: #fff;
-  border-top: 4px solid var(--red);
-  border-bottom: 1px solid #e4dfdb;
-}
-
 .brand { display: flex; align-items: center; min-height: 44px; gap: .75rem; color: inherit; text-decoration: none; font-weight: 700; line-height: 1.15; }
 .brand small { color: #6e6864; font-weight: 500; }
 nav { display: flex; flex-wrap: wrap; gap: .4rem; }
@@ -107,12 +95,6 @@ dialog form { display: grid; gap: 1rem; padding: 1.5rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 760px) {
-  /* #182: align-items:flex-start zostawiał <nav> nierozciągnięty do
-     szerokości nagłówka — nav nie ma się do czego skurczyć, linki (przy
-     roli zarządu: Rodziny/Wpłaty/Księga/Kartki) renderują się w jednej linii
-     szerszej niż ekran (poziomy scroll całej strony). align-items:stretch
-     (wartość domyślna) naprawia to tak samo jak w admin/styles.css. */
-  .site-header { flex-direction: column; gap: .5rem; padding: .8rem 4vw; align-items: stretch; }
   nav { gap: .25rem; }
   nav a { padding: .5rem .5rem; }
   main { padding-top: 2rem; }

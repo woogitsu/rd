@@ -36,6 +36,7 @@ import { xlsxResponse } from '../xlsx.js';
 import { safeFileSegment } from '../csv.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { buildBudgetExecution } from './ledger-budget.js';
+import { documentChainCtes } from '../document-chain.js';
 import { costCenterReport } from './ledger-cost-centers.js';
 import { readSnapshot } from '../db-snapshot.js';
 import { StatementFileError, normalizeIban } from '../bank/common.js';
@@ -2502,27 +2503,40 @@ export async function buildLargeExpenses(executor, schoolYearId) {
 // #87: dowody wydatków dla Komisji Rewizyjnej. Liczą się wydatki z netto > 0
 // (wpis skorygowany do zera, np. storno przy przeksięgowaniu, nie wymaga już
 // dowodu). Dowodem jest dokument główny (source_document_id) albo dokument
-// dołączony przez documents.linked_entity_*. „Możliwy duplikat” = ten sam
-// plik (sha256; dla wierszy bez skrótu — ten sam dokument) przy więcej niż
-// jednym wydatku — informacja do sprawdzenia, nie zarzut. Numer faktury i
-// wystawca (tabela ledger_entry_evidence z #87) wymagają osobnej migracji.
+// dołączony przez documents.linked_entity_*, ale tylko gdy ma AKTUALNĄ wersję
+// (#82/#594): dokument aktywny albo zastąpiony z aktywnym końcem łańcucha
+// zastąpień (A→B→C). Dokument unieważniony — sam albo na końcu łańcucha — nie
+// jest dowodem; wydatek, którego wszystkie dowody są takie, trafia do „bez
+// dowodu” z `evidenceStatus: 'voided'` i `voidedDocumentIds` (pola tylko
+// wtedy — raport bez unieważnień ma tę samą treść i skrót co przed zmianą).
+// Reguła łańcucha jest wspólna z GET /api/ledger (src/pg/document-chain.js).
+// „Możliwy duplikat” = ten sam plik (sha256; dla wierszy bez skrótu — ten sam
+// dokument) przy więcej niż jednym wydatku, liczony z dowodów z aktualną
+// wersją — informacja do sprawdzenia, nie zarzut. Numer faktury i wystawca
+// (tabela ledger_entry_evidence z #87) wymagają osobnej migracji.
 export async function buildEvidenceSection(executor, schoolYearId) {
-  const evidenceCte = `WITH expense AS (
+  const evidenceCte = `WITH RECURSIVE expense AS (
       SELECT e.id, e.occurred_on, e.description, e.net_amount_cents, e.category_id
         FROM ledger_entry_net e
        WHERE e.school_year_id = $1 AND e.direction = 'expense' AND e.net_amount_cents > 0
-    ), evidence AS (
+    ), linked AS (
       SELECT x.id AS ledger_entry_id, l.source_document_id AS document_id
         FROM expense x JOIN ledger_entries l ON l.id = x.id
        WHERE l.source_document_id IS NOT NULL
       UNION
       SELECT x.id, d.id FROM expense x
         JOIN documents d ON d.linked_entity_type = 'ledger_entry' AND d.linked_entity_id = x.id
+    ), ${documentChainCtes('SELECT DISTINCT document_id FROM linked')}, evidence AS (
+      SELECT k.ledger_entry_id, k.document_id
+        FROM linked k JOIN document_current dc ON dc.start_id = k.document_id
+       WHERE dc.current_document_id IS NOT NULL
     )`;
   const missingRows = (await executor.query(
     `${evidenceCte}
      SELECT x.id, to_char(x.occurred_on, 'YYYY-MM-DD') AS occurred_on, x.description, x.net_amount_cents,
-            c.name AS category
+            c.name AS category,
+            ARRAY(SELECT k.document_id FROM linked k WHERE k.ledger_entry_id = x.id
+                   ORDER BY k.document_id COLLATE "C") AS voided_document_ids
        FROM expense x JOIN ledger_categories c ON c.id = x.category_id
       WHERE NOT EXISTS (SELECT 1 FROM evidence v WHERE v.ledger_entry_id = x.id)
       ORDER BY x.occurred_on, x.id`,
@@ -2539,10 +2553,19 @@ export async function buildEvidenceSection(executor, schoolYearId) {
       ORDER BY 1`,
     [schoolYearId],
   )).rows;
-  const withoutEvidence = missingRows.map((row) => ({
-    id: row.id, occurredOn: row.occurred_on, category: row.category, description: row.description,
-    netAmountCents: toSafeInteger(row.net_amount_cents),
-  }));
+  const withoutEvidence = missingRows.map((row) => {
+    const item = {
+      id: row.id, occurredOn: row.occurred_on, category: row.category, description: row.description,
+      netAmountCents: toSafeInteger(row.net_amount_cents),
+    };
+    // Wydatek miał dokumenty, ale żaden nie ma aktualnej wersji: adnotacja
+    // „dowód unieważniony” (pierwotne identyfikatory, historia powiązań).
+    if (row.voided_document_ids?.length) {
+      item.evidenceStatus = 'voided';
+      item.voidedDocumentIds = row.voided_document_ids;
+    }
+    return item;
+  });
   return {
     expensesWithoutEvidence: {
       count: withoutEvidence.length,

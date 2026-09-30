@@ -3,7 +3,7 @@
 // Część z DOM/fetch (mountShell) nie ma testu jednostkowego — jak main.js pozostałych
 // paneli, jest wiązana ręcznie; kontrolę dostępu i tak wykonuje wyłącznie serwer.
 
-import { api as apiRequest } from "./api.js";
+import { api as apiRequest, checkSession } from "./api.js";
 import { forgetSession } from "./session-hint.js";
 import { applySchoolName } from "./school.js";
 import { defaultYear, formatSchoolYear, yearsFromGrants } from "./school-year.js";
@@ -180,6 +180,15 @@ export async function mountShell({ document: doc = document, location: loc = win
   const account = doc.getElementById("shell-account");
   let grants = [];
   let session = null;
+  // Przegląd demo 5 (propozycja 4): najpierw jedno GET /api/session, zanim wyjdzie
+  // jakiekolwiek inne żądanie strony (także z main.js panelu — czekają na bramkę w
+  // shared/api.js). Bez sesji: jedno 401 i od razu /login/#next=…, dalsze żądania nie
+  // wychodzą. Wywołanie musi zostać przed pierwszym `await` (synchronicznie przy starcie).
+  try {
+    session = await checkSession();
+  } catch {
+    session = null;
+  }
   try {
     const access = await apiRequest("/api/access");
     grants = access && Array.isArray(access.grants) ? access.grants : [];
@@ -187,11 +196,6 @@ export async function mountShell({ document: doc = document, location: loc = win
     grants = [];
   }
   if (navList) navList.innerHTML = navItemsHtml(visiblePanels(grants), loc.pathname);
-  try {
-    session = await apiRequest("/api/session");
-  } catch {
-    session = null;
-  }
   syncWriteModeBanner(doc, session);
   if (account) {
     if (!session) {

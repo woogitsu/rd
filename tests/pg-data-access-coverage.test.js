@@ -22,7 +22,6 @@ const Y1 = 'y-2026';
 // osobowych dzieci i opiekunów (uzasadnienie przy każdym). Nowy plik trzeba
 // świadomie dopisać tutaj albo do rejestru.
 const NOT_A_CHILD_DATA_READ = new Map([
-  ['admin.js', 'tylko SELECT 1 (istnienie obiektu) przy rejestrze żądań osób; bez zwracania danych'],
   ['board.js', 'liczności/flagi gotowości klas (agregaty bez imion i e-maili)'],
   ['representative.js', 'liczniki klasy przedstawiciela (agregaty bez imion i e-maili)'],
   ['guardian-updates.js', 'podgląd: samo imię opiekuna i nazwy klas dla właściciela jednorazowego linku; lista żądań (zarząd: imię, proponowany adres) ma ślad audytu guardian_update_request.list_viewed — patrz DATA_ACCESS_EXEMPT_ROUTES'],
@@ -261,16 +260,36 @@ describe('pokrycie dziennika odczytu danych rodzin (#133)', () => {
       return path;
     };
 
+    // #100: eksport danych rodziny dla żądania osoby — wyłącznie admin z MFA
+    // (wariant zachowawczy do D-07/D-08), żądanie po weryfikacji tożsamości.
+    const ADMIN_ONLY_ROUTES = new Set(['admin.dataRequestExport']);
+    async function adminDataRequest() {
+      const adminCookie = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
+      const call = (path, body) => handlePgRequest(request(path, { method: 'POST', cookie: adminCookie, body }), env);
+      const created = await (await call('/api/admin/data-requests', { kind: 'access', householdId: 'h-1', receivedOn: '2026-10-01' })).json();
+      await (await call(`/api/admin/data-requests/${created.request.id}/status`, { status: 'identity_verified' })).arrayBuffer();
+      return { adminCookie, requestId: created.request.id };
+    }
+
     for (const route of DATA_ACCESS_ROUTES) {
       test(route.id, async () => {
+        let actorId = 'u-board';
+        let path = concretePath(route);
         const options = { method: route.method, cookie };
         if (route.method === 'POST') options.body = { schoolYearId: Y1 };
-        const response = await handlePgRequest(request(concretePath(route), options), env);
+        if (ADMIN_ONLY_ROUTES.has(route.id)) {
+          const { adminCookie, requestId } = await adminDataRequest();
+          actorId = 'u-admin';
+          options.cookie = adminCookie;
+          options.body = {};
+          path = route.path.replace(':requestId', requestId);
+        }
+        const response = await handlePgRequest(request(path, options), env);
         assert.equal(response.status, 200, `${route.id}: oczekiwano 200`);
         await response.arrayBuffer();
         const { rows } = await db.query(
-          `SELECT count(*)::int AS n FROM data_access_log WHERE actor_id = 'u-board' AND access_kind = $1 AND outcome = 'ok'`,
-          [route.accessKind],
+          `SELECT count(*)::int AS n FROM data_access_log WHERE actor_id = $2 AND access_kind = $1 AND outcome = 'ok'`,
+          [route.accessKind, actorId],
         );
         assert.equal(rows[0].n, 1, `${route.id}: brak wpisu ${route.accessKind}`);
       });
