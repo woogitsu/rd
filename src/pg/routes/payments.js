@@ -26,13 +26,14 @@ import { insertAuditEvent } from '../audit.js';
 import { csvCell, csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from '../pii-gate.js';
 import { recordDataAccess } from '../data-access.js';
-import { createJsonReader, isUniqueError } from '../input.js';
+import {
+  createIdempotencyKeyReader, createJsonReader, decodeDateIdCursor, encodeDateIdCursor, isUniqueError,
+} from '../input.js';
 
 export const name = 'payments';
 
 const FINANCIAL_ROLES = ['admin', 'board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const METHODS = new Set(['bank', 'cash', 'other']);
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_AMOUNT_CENTS = 100_000_000;
@@ -121,11 +122,7 @@ const readJson = createJsonReader({
   error: (code, status) => new RequestError(code, status),
 });
 
-function readIdempotencyKey(request) {
-  const key = request.headers.get('Idempotency-Key')?.trim();
-  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
-  return key;
-}
+const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) => new RequestError(code, status) });
 
 function readAmount(value) {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_AMOUNT_CENTS) {
@@ -332,27 +329,7 @@ async function loadReassignmentByKey(executor, key) {
 
 // Kursor wiąże rok szkolny i filtr zapytania, które go wydało (#192): dociągnięcie
 // strony z innym rokiem lub filtrem kończy się 400 invalid_cursor zamiast mieszać wiersze.
-function encodeCursor(row, scope) {
-  return btoa(JSON.stringify([row.received_on, row.id, scope.schoolYearId, scope.filter]))
-    .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
-}
-
-function decodeCursor(value, scope) {
-  if (!value) return null;
-  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new RequestError('invalid_cursor');
-  try {
-    const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
-    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
-    const decoded = JSON.parse(atob(base64 + padding));
-    if (!Array.isArray(decoded) || decoded.length !== 4 || !validDate(decoded[0]) || !validId(decoded[1])
-      || decoded[2] !== scope.schoolYearId || decoded[3] !== scope.filter) {
-      throw new Error();
-    }
-    return { receivedOn: decoded[0], id: decoded[1] };
-  } catch {
-    throw new RequestError('invalid_cursor');
-  }
-}
+const cursorError = (code, status) => new RequestError(code, status);
 
 // Tłumaczy błędy triggerów i ograniczeń na kody API (jak mapDatabaseError w Workerze).
 function mapDatabaseError(error) {
@@ -455,7 +432,8 @@ async function listPayments(request, env, url, json) {
     schoolYearId,
     filter: hasExtraFilters ? JSON.stringify([status, dateFrom, dateTo, method, householdId, q]) : (status ?? ''),
   };
-  const cursor = decodeCursor(url.searchParams.get('cursor'), cursorScope);
+  const decodedCursor = decodeDateIdCursor(url.searchParams.get('cursor'), cursorScope, cursorError);
+  const cursor = decodedCursor && { receivedOn: decodedCursor.date, id: decodedCursor.id };
   const context = await requireFinancialContext(request, env, schoolYearId);
 
   const values = [schoolYearId];
@@ -512,7 +490,7 @@ async function listPayments(request, env, url, json) {
   );
   const visibleRows = rows.slice(0, limit);
   const nextCursor = rows.length > limit && visibleRows.length
-    ? encodeCursor(visibleRows[visibleRows.length - 1], cursorScope)
+    ? encodeDateIdCursor(visibleRows[visibleRows.length - 1].received_on, visibleRows[visibleRows.length - 1].id, cursorScope)
     : null;
   await recordDataAccess(env, {
     actorId: context.session.user.id, accessKind: 'payment_list', schoolYearId, outcome: 'ok', rowCount: visibleRows.length,

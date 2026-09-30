@@ -6,10 +6,12 @@
 // domeny (bez importów z authorization.js/audit.js), by dało się go
 // bezpiecznie użyć w każdej trasie.
 //
-// Trasy z src/pg/routes korzystają z `createJsonReader` (czytnik zachowujący
-// dotychczasowy kontrakt każdej trasy) i `isUniqueError`; pilnuje tego
-// tests/pg-routes-input-static.test.js. Moduły domenowe w src/pg (events.js,
-// meetings.js, news.js) mają jeszcze własne kopie — osobny zakres.
+// Trasy z src/pg/routes oraz moduły domenowe z obsługą HTTP (events.js,
+// meetings.js, news.js) korzystają z `createJsonReader` (czytnik zachowujący
+// dotychczasowy kontrakt każdej trasy), `createIdempotencyKeyReader`,
+// `encodeDateIdCursor`/`decodeDateIdCursor` i `isUniqueError`; pilnuje tego
+// tests/pg-routes-input-static.test.js. Każda trasa rzuca nadal własną klasę
+// błędu (fabryka `error`), więc jej blok catch i kody odpowiedzi są bez zmian.
 
 /** Jedna klasa błędu żądania dla całego `src/pg/**`. */
 export class ApiError extends Error {
@@ -224,4 +226,71 @@ export function createJsonReader({
       throw makeError('invalid_json', 400);
     }
   };
+}
+
+/** Wzorzec klucza idempotencji tras finansowych: 8–128 znaków, pierwszy alfanumeryczny. */
+export const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
+
+/**
+ * Buduje czytnik wymaganego nagłówka `Idempotency-Key` o zachowaniu tras
+ * finansowych (payments, ledger*, reconciliation, payment-*): wartość po
+ * `trim()`, brak lub niezgodność ze wzorcem → `invalid_idempotency_key` (400)
+ * rzucone klasą błędu trasy.
+ * @param {object} config
+ * @param {(code: string, status: number) => Error} config.error fabryka błędu trasy
+ * @param {RegExp} [config.pattern]
+ * @returns {(request: Request) => string}
+ */
+export function createIdempotencyKeyReader({ error: makeError, pattern = IDEMPOTENCY_KEY_PATTERN }) {
+  return function readIdempotencyKey(request) {
+    const key = request.headers.get('Idempotency-Key')?.trim();
+    if (!key || !pattern.test(key)) throw makeError('invalid_idempotency_key', 400);
+    return key;
+  };
+}
+
+// --- Kursor list wpłat i księgi (payments.js, ledger.js) --------------------
+//
+// Format bez zmian względem dotychczasowych kopii w obu trasach: base64url
+// (bez dopełnienia) z JSON `[data, id, schoolYearId, filter]`. Kursor jest
+// związany z rokiem i filtrem, które go wydały — inny rok, inny filtr albo
+// kursor z innej listy daje `invalid_cursor` (400), nigdy 5xx.
+
+const MAX_DATE_ID_CURSOR_LENGTH = 512;
+
+/**
+ * @param {string} date data wiersza (YYYY-MM-DD)
+ * @param {string} id identyfikator wiersza
+ * @param {{ schoolYearId: string, filter: string }} scope
+ * @returns {string}
+ */
+export function encodeDateIdCursor(date, id, scope) {
+  return btoa(JSON.stringify([date, id, scope.schoolYearId, scope.filter]))
+    .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+/**
+ * @param {string|null|undefined} value
+ * @param {{ schoolYearId: string, filter: string }} scope
+ * @param {(code: string, status: number) => Error} makeError fabryka błędu trasy
+ * @returns {{ date: string, id: string }|null} `null` gdy brak kursora
+ */
+export function decodeDateIdCursor(value, scope, makeError) {
+  if (!value) return null;
+  const invalid = () => makeError('invalid_cursor', 400);
+  if (value.length > MAX_DATE_ID_CURSOR_LENGTH || !/^[A-Za-z0-9_-]+$/.test(value)) throw invalid();
+  let decoded;
+  try {
+    const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    decoded = JSON.parse(atob(base64 + padding));
+  } catch {
+    throw invalid();
+  }
+  if (!Array.isArray(decoded) || decoded.length !== 4 || !isValidDate(decoded[0])
+    || typeof decoded[1] !== 'string' || !DEFAULT_ID_PATTERN.test(decoded[1])
+    || decoded[2] !== scope.schoolYearId || decoded[3] !== scope.filter) {
+    throw invalid();
+  }
+  return { date: decoded[0], id: decoded[1] };
 }

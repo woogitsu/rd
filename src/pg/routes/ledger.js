@@ -42,7 +42,9 @@ import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvCell, csvResponse, csvRow, formatEuro, safeFileSegment, toCsv } from '../csv.js';
 import { toXlsx, xlsxResponse } from '../xlsx.js';
-import { createJsonReader, isUniqueError } from '../input.js';
+import {
+  createIdempotencyKeyReader, createJsonReader, decodeDateIdCursor, encodeDateIdCursor, isUniqueError,
+} from '../input.js';
 
 export const name = 'ledger';
 
@@ -118,11 +120,7 @@ const readJson = createJsonReader({
   error: (code, status) => new RequestError(code, status),
 });
 
-function readIdempotencyKey(request) {
-  const key = request.headers.get('Idempotency-Key')?.trim();
-  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
-  return key;
-}
+const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) => new RequestError(code, status) });
 
 function readAmount(value) {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_AMOUNT_CENTS) {
@@ -319,27 +317,7 @@ async function loadCorrectionByKey(executor, key) {
 
 // Kursor wiąże rok szkolny i filtr zapytania, które go wydało (#192): dociągnięcie
 // strony z innym rokiem lub filtrem kończy się 400 invalid_cursor zamiast mieszać wiersze.
-function encodeCursor(row, scope) {
-  return btoa(JSON.stringify([row.occurred_on, row.id, scope.schoolYearId, scope.filter]))
-    .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
-}
-
-function decodeCursor(value, scope) {
-  if (!value) return null;
-  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new RequestError('invalid_cursor');
-  try {
-    const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
-    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
-    const decoded = JSON.parse(atob(base64 + padding));
-    if (!Array.isArray(decoded) || decoded.length !== 4 || !validDate(decoded[0]) || !validId(decoded[1])
-      || decoded[2] !== scope.schoolYearId || decoded[3] !== scope.filter) {
-      throw new Error();
-    }
-    return { occurredOn: decoded[0], id: decoded[1] };
-  } catch {
-    throw new RequestError('invalid_cursor');
-  }
-}
+const cursorError = (code, status) => new RequestError(code, status);
 
 // Tłumaczy błędy triggerów i ograniczeń na kody API (jak mapDatabaseError w Workerze).
 // Zwykle nieosiągalne — moduł sprawdza te warunki jawnie przed zapisem.
@@ -444,7 +422,8 @@ async function listEntries(request, env, url, json) {
     schoolYearId,
     filter: hasExtraFilters ? JSON.stringify([direction, category, dateFrom, dateTo]) : (direction ?? ''),
   };
-  const cursor = decodeCursor(url.searchParams.get('cursor'), cursorScope);
+  const decodedCursor = decodeDateIdCursor(url.searchParams.get('cursor'), cursorScope, cursorError);
+  const cursor = decodedCursor && { occurredOn: decodedCursor.date, id: decodedCursor.id };
   await requireFinancialContext(request, env, schoolYearId);
 
   const values = [schoolYearId];
@@ -490,7 +469,7 @@ async function listEntries(request, env, url, json) {
   );
   const visibleRows = rows.slice(0, limit);
   const nextCursor = rows.length > limit && visibleRows.length
-    ? encodeCursor(visibleRows[visibleRows.length - 1], cursorScope)
+    ? encodeDateIdCursor(visibleRows[visibleRows.length - 1].occurred_on, visibleRows[visibleRows.length - 1].id, cursorScope)
     : null;
   return json({ entries: visibleRows.map(entryFromRow), nextCursor });
 }
