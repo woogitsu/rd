@@ -73,12 +73,12 @@ export const HEAVY_ROUTE_BUDGETS_MS = Object.freeze({
 });
 
 // Budżet przyrostu sterty procesu (MB, szczyt w trakcie trasy minus stan
-// przed nią) — mierzony wyłącznie lokalnie (serwer w tym samym procesie).
-// Eksport roczny buduje dziś całą paczkę w pamięci (#216 w toku); próg jest
-// na razie luźny i łapie tylko rażący wzrost. Po scaleniu strumieniowania
-// (#216) zaostrzyć do 64 MB (propozycja z opisu issue #217).
+// przed nią) — mierzony wyłącznie lokalnie (serwer w tym samym procesie;
+// odpowiedź jest po stronie klienta tylko zliczana, nie buforowana). Eksport
+// roczny jest strumieniowany (#216): 64 MB to próg z opisu issue #217
+// (pomiar 30.09 w pełnej skali: ok. +18 MB przy paczce 9,3 MB).
 export const HEAVY_ROUTE_HEAP_BUDGETS_MB = Object.freeze({
-  'POST /api/exports': 384,
+  'POST /api/exports': 64,
 });
 
 const CAMPAIGN_TEXT = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok {rok}. Tytuł przelewu: {rodzina}. '
@@ -718,7 +718,10 @@ export async function runHeavyScenario({
   // `slot` wybiera jedną z kilku sesji tej samej osoby (lokalnie: `actor.cookies`),
   // żeby faza równoczesna odpowiadała kilku osobom, a nie jednej sesji, którą
   // limiter kosztownych tras (src/rate-limit.js, heavyConcurrency) ogranicza do 2 naraz.
-  const call = async (role, method, path, { body, key, slot = 0 } = {}) => {
+  // `parse: false` (pomiar zwykłej trasy): odpowiedź jest tylko zliczana
+  // strumieniowo, bez trzymania całej treści i bez JSON.parse — inaczej 9 MB
+  // paczki rocznej zawyżałoby przyrost sterty „serwera” pracą klienta testu.
+  const call = async (role, method, path, { body, key, slot = 0, parse = true } = {}) => {
     const actor = byRole.get(role);
     if (!actor) throw new Error(`no actor for role ${role}`);
     const cookie = actor.cookies?.length ? actor.cookies[slot % actor.cookies.length] : actor.cookie;
@@ -729,6 +732,11 @@ export async function runHeavyScenario({
     const response = await fetch(`${baseUrl}${path}`, {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs),
     });
+    if (!parse) {
+      let bytes = 0;
+      if (response.body) for await (const chunk of response.body) bytes += chunk.byteLength;
+      return { status: response.status, bytes, json: null };
+    }
     const buffer = await response.arrayBuffer();
     let json = null;
     if ((response.headers.get('content-type') ?? '').includes('json')) {
@@ -765,7 +773,7 @@ export async function runHeavyScenario({
     const path = typeof op.path === 'function' ? op.path(state) : op.path;
     const body = typeof op.body === 'function' ? op.body(state) : op.body;
     const key = op.key ? (i === 0 ? op.key : `${op.key}-${i}`) : undefined;
-    const result = await call(op.role, op.method ?? 'GET', path, { body, key, slot });
+    const result = await call(op.role, op.method ?? 'GET', path, { body, key, slot, parse: false });
     const expected = op.expect ?? [200, 201];
     return { bytes: result.bytes, status: result.status, error: expected.includes(result.status) ? null : `HTTP ${result.status}` };
   };

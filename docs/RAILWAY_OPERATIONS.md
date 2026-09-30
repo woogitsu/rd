@@ -366,8 +366,9 @@ działa w wątku serwera, więc lokalne opóźnienie pętli zdarzeń obejmuje te
 czas zapytań — na Railway (osobny PostgreSQL) będzie niższe.
 
 Budżety (`HEAVY_ROUTE_BUDGETS_MS` — p50 przebiegu sekwencyjnego; oraz
-`HEAVY_ROUTE_HEAP_BUDGETS_MB` — dziś tylko `POST /api/exports`: 384 MB, do
-zaostrzenia do 64 MB po strumieniowaniu eksportu z #216) są orientacyjne,
+`HEAVY_ROUTE_HEAP_BUDGETS_MB` — dziś tylko `POST /api/exports`: 64 MB, próg
+z opisu #217 po strumieniowaniu eksportu z #216; klient testu tylko zlicza
+bajty odpowiedzi, nie buforuje ich) są orientacyjne,
 luźniejsze niż docelowe dla Railway — łapią rażącą regresję, nie
 mikroopóźnienia. Są założeniem technicznym, nie wymaganiem szkoły.
 Przekroczenie budżetu którejkolwiek trasy, błędna odpowiedź (także w fazie
@@ -394,8 +395,8 @@ na stagingu zwykłe wpisy dziennika (audyt, odczyty danych rodzin, wiersze
 | Data | Środowisko | Skala | Wynik / uwagi |
 |---|---|---|---|
 | 28.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny) | domyślna (2 lata, 5 klas/rok, 40 uczniów/rok, 3000 zdarzeń audytu) | zaliczony, bez naruszeń budżetu (10 tras, przed rozszerzeniem scenariusza) |
-| 30.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny); kontener 4 vCPU współdzielony, load average 3–7 | domyślna (2 lata, 5 klas/rok, 40 uczniów/rok, 3000 zdarzeń audytu, import 60 wierszy) | zaliczony, bez naruszeń; 27 operacji, przygotowanie 4 s, całość 16 s; najwolniejsza `POST /api/exports` p50 560 ms |
-| 30.09.2026 | jw. | pełna (`--heavy-full`: 5 lat, 50 klas/rok, 2000 uczniów, 3638 opiekunów, 5196 wpłat, 2227 wpisów księgi, 100 000 zdarzeń audytu, import 1000 wierszy) | zaliczony, bez naruszeń; przygotowanie 14 s, całość 49 s; szczyt sterty 123 MB, RSS 866 MB; 0 wierszy `email_outbox`. Wybrane p50 (sekwencyjnie / p95 przy 5 równoczesnych): `households` 15 ms / 105 ms, `print/cards` 49 ms / 205 ms (151 KB), `ledger/export.csv` 22 ms, `reports/audit` 78 ms / 344 ms, `admin/audit (finance, rok)` 13 ms / 58 ms, `reconciliations/{id}/suggestions` **986 ms** / 5,5 s (475 KB), `POST /api/exports` **1336 ms** (9,3 MB, sterta +75 MB, 1042 zapytania w jednej transakcji), `import/commit` 1000 wierszy **986 ms**, `snapshot (all_households)` 195 ms, `year-close close` 45 ms |
+| 30.09.2026 | lokalnie, PGlite w procesie (niereprezentatywny); kontener 4 vCPU współdzielony, load average 3–7 | domyślna (2 lata, 5 klas/rok, 40 uczniów/rok, 3000 zdarzeń audytu, import 60 wierszy) | zaliczony, bez naruszeń; 27 operacji, przygotowanie 4 s, całość 14 s; najwolniejsza `POST /api/exports` p50 545 ms |
+| 30.09.2026 | jw. | pełna (`--heavy-full`: 5 lat, 50 klas/rok, 2000 uczniów, 3638 opiekunów, 5196 wpłat, 2227 wpisów księgi, 100 000 zdarzeń audytu, import 1000 wierszy) | zaliczony, bez naruszeń (po scaleniu #216); przygotowanie 14 s, całość 53 s; szczyt sterty 129 MB, RSS 839 MB; 0 wierszy `email_outbox`. Wybrane p50 (sekwencyjnie / p95 przy 5 równoczesnych): `households` 16 ms / 98 ms, `print/cards` 36 ms / 212 ms (151 KB), `ledger/export.csv` 35 ms / 173 ms, `reports/audit` 89 ms / 391 ms, `admin/audit (finance, rok)` 14 ms / 83 ms, `reconciliations/{id}/suggestions` **1217 ms** / 5,7 s (475 KB, najwolniejsze zapytanie 919 ms), `POST /api/exports` **1465 ms** (9,3 MB, sterta +18 MB, 1042 zapytania w jednej transakcji), `import/commit` 1000 wierszy **1030 ms** (podwójne kliknięcie + ponowienie 1410 ms), `snapshot (all_households)` 196 ms, `year-close close` 56 ms |
 | do wykonania | staging (tylko odczyt) | pełna (5 lat, 50 klas/rok, 100 000 zdarzeń audytu) | `npm run load:test -- --scenario heavy --target https://<host stagingu> --i-confirm-staging` z identyfikatorami jak wyżej |
 
 ## Pierwszy administrator (bootstrap, #187)
