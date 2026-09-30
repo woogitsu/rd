@@ -21,6 +21,11 @@ Macierz jest **założeniem technicznym do zatwierdzenia** przez zarząd i szko�
 - Przydział z rokiem szkolnym działa tylko dla dokumentów tego roku. Wygasły lub cofnięty przydział traci dostęp od następnego żądania.
 - Autoryzacja jest liczona **dla każdego dokumentu** z jego rodzaju, roku i klasy zapisanych w bazie, nie z parametrów żądania.
 
+### Co widzi przedstawiciel klasy (#167)
+
+- Wyłącznie dokumenty `class` przypisanej klasy i roku przydziału (odczyt, przesłanie, opis, zastąpienie/unieważnienie jak w macierzy). Dokumenty `financial` i `board` dają mu `404` (brak wyroczni istnienia), a przesłanie ich — `403 forbidden`.
+- **Brak dziś rodzaju „dokumenty Rady dla przedstawicieli wszystkich klas”** (roboczo `council_shared` z #167: regulamin, plan pracy, informacja o składce). Wymaga migracji rozszerzającej `CHECK` kolumny `documents.kind` (0006) i funkcji z 0143 (`kind = 'board'`), nowego wpisu w `DOCUMENT_POLICIES` i testu w `tests/pg-authz-matrix.test.js`; które dokumenty tam trafiają, rozstrzyga zarząd (D-08). Do tego czasu zarząd wgrywa taki materiał jako `class` osobno dla każdej klasy albo przekazuje go poza systemem. Zatwierdzone protokoły udostępnione rodzicom przedstawiciel widzi w panelu `meetings/` (docs/MEETINGS.md, „co widzi przedstawiciel”).
+
 ## API
 
 | Metoda i ścieżka | Opis |
