@@ -65,6 +65,17 @@ Stronicowanie jest keyset, nie `OFFSET`:
 `GET /api/admin/audit` przy każdym odczycie zapisuje zdarzenie `audit.viewed`
 (bez parametrów zapytania) — dotyczy to także kolejnych stron.
 
+Domeny filtra `domain` (#181) to dokładne listy akcji ze słownika
+`shared/audit-actions.js` (`access`, `security`, `finance`, `email`,
+`documents`, `year_close`, `families`, `privacy`, `meetings`, `events`,
+`news`), a nie przedrostki nazw — każda akcja zapisywana w `src/pg/**` i
+`src/email/**` ma tam jedną domenę i polską etykietę (test
+`tests/audit-actions-catalog.test.js`). Każde zdarzenie w odpowiedzi ma pole
+`domain`; metadane przechodzą przez `auditMetadataForView` (`src/pg/audit.js`):
+tylko liczby, wartości logiczne i napisy w kształcie identyfikatora/kodu/daty.
+Wolny tekst i klucze z danymi osobowymi są pomijane, a ich ścieżki (bez
+wartości) podaje `redactedFields`.
+
 ## Panele
 
 Panele `admin/` (konta, przydziały, zaproszenia, dziennik), `email/` (kampanie)

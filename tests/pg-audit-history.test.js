@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { AUDIT_ACTION_CATALOG, AUDIT_DOMAINS, auditActionDomain } from '../shared/audit-actions.js';
 
 async function call(env, path, { cookie, method = 'GET', body, key } = {}) {
   const headers = key ? { 'Idempotency-Key': key } : undefined;
@@ -79,8 +80,7 @@ test('filtr domenowy zwraca tylko akcje domeny i odrzuca nieznaną domenę', asy
   const finance = await call(env, '/api/admin/audit?domain=finance', { cookie: admin });
   assert.equal(finance.status, 200);
   assert.ok(finance.data.events.length > 0);
-  assert.ok(finance.data.events.every((e) => e.action.startsWith('payment.') || e.action.startsWith('ledger.')
-    || e.action.startsWith('reconciliation.') || e.action.startsWith('report.audit.')));
+  assert.ok(finance.data.events.every((e) => e.domain === 'finance' && auditActionDomain(e.action) === 'finance'));
 
   const bad = await call(env, '/api/admin/audit?domain=nope', { cookie: admin });
   assert.equal(bad.status, 400);
@@ -152,4 +152,117 @@ test('#174: filtr roku przypisuje stare zdarzenia bez schoolYearId do roku obiek
   // Zapisanych zdarzeń nie zmieniono.
   const { rows } = await db.query(`SELECT metadata_json FROM audit_events WHERE id = 'lg-y1-pay'`);
   assert.deepEqual(typeof rows[0].metadata_json === 'string' ? JSON.parse(rows[0].metadata_json) : rows[0].metadata_json, {});
+});
+
+async function insertLegacy(db, id, action, entityType, entityId, metadata = {}) {
+  await db.query(
+    `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
+     VALUES ($1, 'u-treasurer', $2, $3, $4, $5::jsonb)`, [id, action, entityType, entityId, JSON.stringify(metadata)]);
+}
+
+test('granice ról: zarząd, skarbnik, przedstawiciel, KR i dyrekcja × każda domena → 403; admin → 200', async () => {
+  const { db, env, admin, treasurer } = await setup();
+  const created = await recordPayment(env, treasurer, 'key-payment-history-0101');
+  const paymentId = created.data.payment.id;
+  const others = {
+    treasurer,
+    board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board', schoolYearId: 'y-1' }], mfa: true }),
+    representative: await seedUserSession(db, {
+      userId: 'u-rep', roles: [{ role: 'representative', schoolYearId: 'y-1', classId: 'c-1' }], mfa: true,
+    }),
+    audit: await seedUserSession(db, { userId: 'u-audit', roles: [{ role: 'audit', schoolYearId: 'y-1' }], mfa: true }),
+    principal: await seedUserSession(db, { userId: 'u-principal', roles: [{ role: 'principal' }], mfa: true }),
+  };
+  for (const domain of Object.keys(AUDIT_DOMAINS)) {
+    assert.equal((await call(env, `/api/admin/audit?domain=${domain}`, { cookie: admin })).status, 200, `admin × ${domain}`);
+    for (const [role, cookie] of Object.entries(others)) {
+      assert.equal((await call(env, `/api/admin/audit?domain=${domain}`, { cookie })).status, 403, `${role} × ${domain}`);
+    }
+  }
+  for (const [role, cookie] of Object.entries(others)) {
+    assert.equal((await call(env, '/api/admin/audit', { cookie })).status, 403, `${role} × widok domyślny`);
+    assert.equal((await call(env, `/api/admin/audit/entity/payment_entry/${paymentId}`, { cookie })).status, 403, `${role} × historia`);
+  }
+});
+
+test('każda domena zwraca wyłącznie swoje akcje; finance obejmuje tytuły, dane do wpłat, kategorie i sprawozdania', async () => {
+  const { db, env, admin } = await setup();
+  // Po jednym syntetycznym wierszu dla każdej akcji słownika (bez aktora-człowieka w metadanych).
+  let n = 0;
+  for (const action of Object.keys(AUDIT_ACTION_CATALOG)) {
+    n += 1;
+    await insertLegacy(db, `cat-${String(n).padStart(3, '0')}`, action, 'school_year', 'y-1', { schoolYearId: 'y-1' });
+  }
+  const seen = new Set();
+  for (const domain of Object.keys(AUDIT_DOMAINS)) {
+    const result = await call(env, `/api/admin/audit?domain=${domain}&limit=500`, { cookie: admin });
+    assert.equal(result.status, 200);
+    for (const event of result.data.events) {
+      if (event.action === 'audit.viewed' && event.entityType === 'audit_log') continue; // ślad samego odczytu
+      assert.equal(event.domain, domain, `${event.action} w domenie ${domain}`);
+      seen.add(event.action);
+    }
+  }
+  // Żadna akcja nie wypada z filtra domen (dawniej: przedrostki bez payment_reference. itd.).
+  assert.deepEqual(Object.keys(AUDIT_ACTION_CATALOG).filter((action) => !seen.has(action)), []);
+  const finance = (await call(env, '/api/admin/audit?domain=finance&limit=500', { cookie: admin })).data.events.map((e) => e.action);
+  for (const action of ['payment_reference.generated', 'payment_instructions.approved', 'ledger_category.copied',
+    'report.snapshot.approved', 'report.annual.generated']) assert.ok(finance.includes(action), action);
+  assert.ok(!finance.includes('email.sent') && !finance.includes('year_close.closed'));
+});
+
+test('widok nie ujawnia wolnego tekstu ani danych osobowych z metadanych (także starych wierszy)', async () => {
+  const { db, env, admin, treasurer } = await setup();
+  const created = await recordPayment(env, treasurer, 'key-payment-history-0102');
+  const paymentId = created.data.payment.id;
+  // Stary wiersz sprzed #184 z wolnym tekstem i danymi osobowymi w metadanych.
+  await insertLegacy(db, 'lg-pii', 'payment.correction.created', 'payment_correction', 'pc-legacy', {
+    schoolYearId: 'y-1', paymentEntryId: paymentId, amountCents: 500,
+    reason: 'Rodzina Przykładowa zapłaciła gotówką', note: 'Kontakt: rodzic', displayName: 'Anna Przykład',
+    guardianEmail: 'rodzic@example.invalid', nested: { comment: 'x', ids: ['pc-1', 'wolny tekst'] },
+  });
+  for (const path of ['/api/admin/audit?domain=finance', `/api/admin/audit/entity/payment_entry/${paymentId}`]) {
+    const result = await call(env, path, { cookie: admin });
+    assert.equal(result.status, 200);
+    const event = result.data.events.find((e) => e.id === 'lg-pii');
+    assert.ok(event, path);
+    assert.deepEqual(event.metadata, { schoolYearId: 'y-1', paymentEntryId: paymentId, amountCents: 500, nested: { ids: ['pc-1'] } });
+    assert.deepEqual(event.redactedFields.sort(),
+      ['displayName', 'guardianEmail', 'nested.comment', 'nested.ids[1]', 'note', 'reason'].sort());
+    const text = JSON.stringify(result.data);
+    assert.doesNotMatch(text, /@|Przykład|Kontakt|gotówką|wolny tekst/);
+  }
+});
+
+test('historia wpłaty: kilka korekt w kolejności, podwójne kliknięcie daje jedno zdarzenie', async () => {
+  const { env, admin, treasurer } = await setup();
+  const created = await recordPayment(env, treasurer, 'key-payment-history-0103');
+  const replay = await recordPayment(env, treasurer, 'key-payment-history-0103');
+  assert.equal(replay.data.payment.id, created.data.payment.id);
+  const paymentId = created.data.payment.id;
+  for (const [index, amountCents] of [[1, 500], [2, 200]]) {
+    const corrected = await call(env, `/api/payments/${paymentId}/corrections`, {
+      method: 'POST', cookie: treasurer, key: `key-correction-010${index}`,
+      body: { amountCents, reason: `Korekta numer ${index}` },
+    });
+    assert.equal(corrected.status, 201, JSON.stringify(corrected.data));
+  }
+  const history = await call(env, `/api/admin/audit/entity/payment_entry/${paymentId}`, { cookie: admin });
+  assert.deepEqual(history.data.events.map((e) => e.action),
+    ['payment.created', 'payment.correction.created', 'payment.correction.created']);
+  assert.deepEqual(history.data.events.map((e) => e.domain), ['finance', 'finance', 'finance']);
+  assert.doesNotMatch(JSON.stringify(history.data), /Korekta numer/);
+});
+
+test('historia uzgodnienia obejmuje zdarzenia zapisane jako bank_reconciliation', async () => {
+  const { env, admin, treasurer } = await setup();
+  const created = await call(env, '/api/reconciliations', {
+    method: 'POST', cookie: treasurer, key: 'key-reconciliation-0101',
+    body: { schoolYearId: 'y-1', statementDate: '2026-09-30', statementBalanceCents: 0 },
+  });
+  assert.equal(created.status, 201);
+  const id = created.data.reconciliation.id;
+  const history = await call(env, `/api/admin/audit/entity/reconciliation/${id}`, { cookie: admin });
+  assert.equal(history.status, 200);
+  assert.deepEqual(history.data.events.map((e) => e.action), ['reconciliation.created']);
 });

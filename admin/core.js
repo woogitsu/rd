@@ -2,6 +2,7 @@
 import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
 import { formatSchoolYear } from "../shared/school-year.js";
 import { shortId } from "../shared/short-id.js";
+import { AUDIT_ACTION_LABELS, AUDIT_DOMAINS } from "../shared/audit-actions.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -38,37 +39,22 @@ export const INVITATION_STATUS_LABELS = Object.freeze({
   expired: "Wygasłe",
 });
 
-export const ACTION_LABELS = Object.freeze({
-  "auth.password_reset_issued": "Wydanie kodu resetu hasła",
-  "auth.password_reset_revoked": "Unieważnienie kodu resetu hasła",
-  "mfa.reset": "Reset weryfikacji dwuetapowej",
-  "role_grant.created": "Nadanie roli",
-  "role_grant.revoked": "Wycofanie roli",
-  "role_grant.expired": "Wygaszenie roli",
-  "school_year.grants_expired": "Wygaszenie kadencji",
-  "invitation.created": "Utworzenie zaproszenia",
-  "invitation.revoked": "Wycofanie zaproszenia",
-  "invitation.accepted": "Przyjęcie zaproszenia",
-  "user.disabled": "Wyłączenie konta",
-  "user.enabled": "Włączenie konta",
-  "session.revoked": "Wycofanie sesji",
-  // Przegląd demo: te zdarzenia dziennik pokazywał surowym kodem (np. „user.created”).
-  "user.created": "Utworzenie konta",
-  "auth.password_set": "Ustawienie hasła",
-  "auth.password_changed": "Zmiana hasła",
-  "auth.account_under_pressure": "Konto pod presją prób logowania",
-  "auth.password_reset_completed": "Ustawienie nowego hasła kodem resetu",
-  "invitation.reissued": "Ponowne wydanie zaproszenia",
-  "role_grant.school_year_backfilled": "Uzupełnienie roku szkolnego w przydziale roli",
-  "school_year.created": "Utworzenie roku szkolnego",
-  "class.created": "Utworzenie klasy",
-  "promotion.applied": "Promocja uczniów na nowy rok",
-  "enrollment.promoted": "Przeniesienie ucznia do klasy na nowy rok",
-  "account_recovery.requested": "Prośba o odzyskanie konta",
-  "account_recovery.approved": "Zatwierdzenie odzyskania konta",
-  "account_recovery.rejected": "Odrzucenie odzyskania konta",
-  "account_recovery.expired": "Wygaśnięcie prośby o odzyskanie konta",
-});
+// #181: etykiety wszystkich akcji dziennika z jednego słownika (shared/audit-actions.js),
+// wspólnego z serwerem — także finanse, e-mail, dokumenty, zebrania (filtr domen).
+export const ACTION_LABELS = AUDIT_ACTION_LABELS;
+
+// Opcje filtra domeny w tabeli dziennika: pusta wartość = widok domyślny
+// (konta i role — AUDIT_ACTIONS po stronie serwera).
+export const AUDIT_DOMAIN_OPTIONS = Object.freeze([
+  { value: "", label: "Konta i role (widok domyślny)" },
+  ...Object.entries(AUDIT_DOMAINS).map(([value, domain]) => ({ value, label: domain.label })),
+]);
+
+export function auditListPath(domain) {
+  const params = new URLSearchParams({ limit: "100" });
+  if (domain && Object.hasOwn(AUDIT_DOMAINS, domain)) params.set("domain", domain);
+  return `/api/admin/audit?${params}`;
+}
 
 // Przegląd demo: dziennik pokazywał surowe typy obiektów (`role_grant`) i powody
 // (`rotated`). Zestawy pokrywa test tests/admin-core.test.js (skan src/pg/**).
@@ -365,6 +351,9 @@ export function describeAuditEvent(event, users = []) {
   if (meta.schoolYearId) details.push(`rok ${formatSchoolYear(meta.schoolYearId)}`);
   if (meta.reason) details.push(`powód: ${reasonLabel(meta.reason)}`);
   if (Number.isInteger(meta.count)) details.push(`liczba: ${meta.count}`);
+  // #181: serwer pomija w widoku wolny tekst i pola z danymi osobowymi — tylko liczba.
+  const redacted = Array.isArray(event.redactedFields) ? event.redactedFields.length : 0;
+  if (redacted) details.push(`ukryte pola opisowe: ${redacted}`);
   return { label, details: details.join(", ") };
 }
 

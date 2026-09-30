@@ -87,3 +87,50 @@ export async function insertAuditEvent(executor, { actorId = null, action, entit
   );
   return id;
 }
+
+// #181: metadane zdarzenia w widoku dziennika (GET /api/admin/audit*). Zapis
+// już odrzuca e-maile i klucze z danymi osobowymi (assertNoPii), ale dziennik
+// jest trwały — starsze wiersze (sprzed #184) i przyszłe pomyłki nie mogą
+// wyciec przez widok. Widok przepuszcza wyłącznie liczby, wartości logiczne,
+// null oraz napisy w kształcie identyfikatora/kodu/daty (bez spacji, bez „@”).
+// Wolny tekst (np. powód korekty, notatka, tytuł) i klucze z listy danych
+// osobowych są pomijane; `redactedFields` podaje same ścieżki kluczy (bez
+// wartości), żeby było widać, że coś ukryto.
+const FREE_TEXT_KEY = /(note|notes|description|title|body|text|message|comment|subject|name|label|author|details?)$/i;
+const VIEW_SAFE_STRING = /^[A-Za-z0-9][A-Za-z0-9_.:+\-/]{0,127}$/;
+
+export function auditMetadataForView(raw) {
+  let metadata = raw;
+  if (typeof metadata === 'string') {
+    try { metadata = JSON.parse(metadata); } catch { return { metadata: {}, redactedFields: ['metadata'] }; }
+  }
+  const redactedFields = [];
+  const visit = (value, path) => {
+    if (value === null || typeof value === 'number' || typeof value === 'boolean') return { keep: true, value };
+    if (typeof value === 'string') return VIEW_SAFE_STRING.test(value) ? { keep: true, value } : { keep: false };
+    if (Array.isArray(value)) {
+      const items = [];
+      value.forEach((item, index) => {
+        const result = visit(item, `${path}[${index}]`);
+        if (result.keep) items.push(result.value); else redactedFields.push(`${path}[${index}]`);
+      });
+      return { keep: true, value: items };
+    }
+    if (typeof value === 'object') {
+      const out = {};
+      for (const [key, item] of Object.entries(value)) {
+        const keyPath = path ? `${path}.${key}` : key;
+        if (!VIEW_SAFE_STRING.test(key) || FORBIDDEN_KEY.test(key) || FREE_TEXT_KEY.test(key)) {
+          redactedFields.push(VIEW_SAFE_STRING.test(key) ? keyPath : `${path || 'metadata'}.?`);
+          continue;
+        }
+        const result = visit(item, keyPath);
+        if (result.keep) out[key] = result.value; else redactedFields.push(keyPath);
+      }
+      return { keep: true, value: out };
+    }
+    return { keep: false };
+  };
+  const result = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? visit(metadata, '') : { value: {} };
+  return { metadata: result.value ?? {}, redactedFields };
+}
