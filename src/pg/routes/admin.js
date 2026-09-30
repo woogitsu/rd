@@ -21,6 +21,8 @@
 //   POST /api/admin/invitations                 { email, role, classId?, schoolYearId?, ttlHours? }
 //   POST /api/admin/invitations/{id}/revoke
 //   POST /api/admin/invitations/{id}/reissue    wycofuje i tworzy nowe zaproszenie (#108); tylko oczekujące
+//   POST /api/admin/invitation-batches/preview|apply  zaproszenia zbiorcze przedstawicieli z podglądem,
+//        planDigest i Idempotency-Key (#108); krok w górę MFA; patrz src/pg/invitation-batch.js
 //   GET  /api/admin/school-years                lata i klasy do formularzy
 //   POST /api/admin/school-years                { id, label, startsOn, endsOn } — nowy rok szkolny (#78)
 //   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
@@ -93,6 +95,7 @@ import {
 } from '../account-recovery.js';
 import { computeOpsStatus } from '../ops-status.js';
 import { promotionAllowedMethods, PromotionError, routePromotions } from '../promotions.js';
+import { invitationBatchAllowedMethods, routeInvitationBatches } from '../invitation-batch.js';
 import {
   afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
@@ -809,7 +812,7 @@ async function listSchoolYears(env, json) {
 export const AUDIT_ACTIONS = [
   'role_grant.created', 'role_grant.revoked', 'role_grant.expired', 'role_grant.school_year_backfilled',
   'school_year.grants_expired', 'school_year.created', 'class.created',
-  'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued',
+  'invitation.created', 'invitation.revoked', 'invitation.accepted', 'invitation.reissued', 'invitation.batch_created',
   'user.disabled', 'user.enabled', 'user.created', 'session.revoked',
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
   'auth.password_changed', 'auth.account_under_pressure', 'mfa.reset',
@@ -1311,6 +1314,7 @@ function allowedMethodsFor(section, pathLength, action, path) {
     return null;
   }
   if (section === 'promotions') return promotionAllowedMethods(path);
+  if (section === 'invitation-batches') return invitationBatchAllowedMethods(path);
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
   if (section === 'access-log' && pathLength === 1) return ['GET'];
@@ -1397,6 +1401,12 @@ async function route(request, env, url, json, actorId, context) {
     }
   }
   if (section === 'promotions') return routePromotions(env, actorId, request, path, json);
+  // Zaproszenia zbiorcze (#108): jak pojedyncze zaproszenie — krok w górę MFA
+  // także dla podglądu (podgląd ujawnia, które adresy mają już konto).
+  if (section === 'invitation-batches' && path.length === 2 && method === 'POST') {
+    requireFreshMfa(context);
+    return routeInvitationBatches(env, actorId, request, path, json);
+  }
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId, context);
   if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
@@ -1414,7 +1424,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;

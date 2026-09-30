@@ -24,6 +24,9 @@ import {
   schoolYearPayload,
   scopeLabel,
 } from "./core.js";
+import {
+  batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, tokenListText,
+} from "./onboarding.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
@@ -41,7 +44,7 @@ const byId = (id) => document.getElementById(id);
 const globalMessage = byId("global-message");
 
 // Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
-const api = (url, { method = "GET", body } = {}) => apiRequest(url, { method, body, messages: ERROR_MESSAGES });
+const api = (url, { method = "GET", body, idempotencyKey } = {}) => apiRequest(url, { method, body, idempotencyKey, messages: ERROR_MESSAGES });
 
 function showMessage(text, isError = false) {
   globalMessage.textContent = text;
@@ -427,11 +430,21 @@ function renderInvitations() {
     tr.append(cell(formatDateTime(invitation.createdAt)), cell(formatDateTime(invitation.expiresAt)));
     tr.append(statusCell(invitation.status, INVITATION_STATUS_LABELS[invitation.status] ?? invitation.status));
     if (invitation.status === "pending") {
-      tr.append(actionsCell([button("Wycofaj", (event) => runAction(event.currentTarget, confirmationText("revoke-invitation", invitation.email), async () => {
-        await api(`/api/admin/invitations/${encodeURIComponent(invitation.id)}/revoke`, { method: "POST", body: {} });
-        showMessage("Zaproszenie wycofane.");
-        await Promise.all([loadInvitations(), loadAudit()]);
-      }), { danger: true })]));
+      tr.append(actionsCell([
+        // „Wyślij ponownie” (#108): serwer wycofuje stary kod i wydaje nowy; nic nie wysyła e-mailem.
+        button("Wyślij ponownie", (event) => runAction(event.currentTarget, `Poprzedni link dla ${invitation.email} przestanie działać; powstanie nowy link do przekazania.`, async () => {
+          hideToken();
+          const result = await api(`/api/admin/invitations/${encodeURIComponent(invitation.id)}/reissue`, { method: "POST", body: {} });
+          showToken(result);
+          showMessage("Wydano nowy link; poprzedni jest nieważny.");
+          await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
+        })),
+        button("Wycofaj", (event) => runAction(event.currentTarget, confirmationText("revoke-invitation", invitation.email), async () => {
+          await api(`/api/admin/invitations/${encodeURIComponent(invitation.id)}/revoke`, { method: "POST", body: {} });
+          showMessage("Zaproszenie wycofane.");
+          await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
+        }), { danger: true }),
+      ]));
     } else {
       tr.append(cell(""));
     }
@@ -452,6 +465,16 @@ function hideToken() {
   byId("token-value").textContent = "";
   byId("token-meta").textContent = "";
   byId("token-box").hidden = true;
+}
+
+function showToken(result) {
+  byId("invite-link").textContent = invitationLink(result.token, window.location.origin);
+  byId("token-value").textContent = result.token;
+  byId("token-meta").textContent = `${ROLE_LABELS[result.invitation.role]} · ${scopeLabel(result.invitation, state.classes, state.yearMap)} · ważne do ${formatDateTime(result.invitation.expiresAt)}`;
+  byId("copy-link").textContent = "Kopiuj link";
+  byId("copy-token").textContent = "Kopiuj kod";
+  byId("token-box").hidden = false;
+  byId("token-box").scrollIntoView({ block: "nearest" });
 }
 
 byId("hide-token").addEventListener("click", hideToken);
@@ -491,20 +514,228 @@ byId("invitation-form").addEventListener("submit", async (event) => {
   submit.disabled = true;
   try {
     const result = await api("/api/admin/invitations", { method: "POST", body: payload });
-    byId("invite-link").textContent = invitationLink(result.token, window.location.origin);
-    byId("token-value").textContent = result.token;
-    byId("token-meta").textContent = `${ROLE_LABELS[result.invitation.role]} · ${scopeLabel(result.invitation, state.classes, state.yearMap)} · ważne do ${formatDateTime(result.invitation.expiresAt)}`;
-    byId("copy-link").textContent = "Kopiuj link";
-    byId("copy-token").textContent = "Kopiuj kod";
-    byId("token-box").hidden = false;
+    showToken(result);
     form.reset();
-    await Promise.all([loadInvitations(), loadAudit()]);
+    await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
   } catch (error) {
     errorBox.textContent = error.message;
   } finally {
     submit.disabled = false;
   }
 });
+
+// --- Obsada klas i zaproszenia zbiorcze (#108) -----------------------------------
+
+function yearLabel(yearId) {
+  const year = state.yearMap.get(yearId);
+  return year ? year.label : formatSchoolYear(yearId);
+}
+
+function defaultYearId() {
+  return (state.years.find((year) => !year.finished) ?? state.years[0])?.id ?? "";
+}
+
+async function loadCoverage() {
+  const select = byId("coverage-year");
+  const schoolYearId = select.value;
+  const tbody = byId("coverage-body");
+  if (!schoolYearId) {
+    byId("coverage-summary").textContent = "Brak lat szkolnych.";
+    return emptyRow(tbody, 6, "Brak danych.");
+  }
+  const result = await api(`/api/admin/class-coverage?schoolYearId=${encodeURIComponent(schoolYearId)}`);
+  byId("coverage-summary").textContent = `${formatSchoolYear(yearLabel(schoolYearId))}: ${coverageSummary(result.classes)}`;
+  if (!result.classes.length) return emptyRow(tbody, 6, "Rok nie ma klas.");
+  tbody.replaceChildren(...result.classes.map((row) => {
+    const tr = document.createElement("tr");
+    const { key, label } = coverageState(row);
+    tr.append(cell(row.name), statusCell(key, label));
+    tr.append(cell(String(row.activeRepresentativeCount), "num"), cell(String(row.pendingInvitationCount), "num"));
+    tr.append(cell(row.nextInvitationExpiresAt ? formatDateTime(row.nextInvitationExpiresAt) : "—"));
+    tr.append(cell(row.lastRepresentativeLoginOn ?? "—"));
+    return tr;
+  }));
+}
+
+byId("coverage-year").addEventListener("change", () => loadCoverage().catch((error) => showMessage(error.message, true)));
+byId("reload-coverage").addEventListener("click", () => loadCoverage().catch((error) => showMessage(error.message, true)));
+
+// Stan partii: podgląd (z kluczem partii) i wynik z tokenami — wyłącznie w pamięci.
+const batch = { preview: null, body: null, key: null, result: null };
+
+function batchBody(form) {
+  const data = Object.fromEntries(new FormData(form));
+  const ttl = String(data.ttlHours ?? "").trim();
+  if (ttl && !/^\d+$/.test(ttl)) throw new Error(ERROR_MESSAGES.invalid_ttl);
+  return { schoolYearId: data.schoolYearId, text: String(data.text ?? ""), ...(ttl ? { ttlHours: Number(ttl) } : {}) };
+}
+
+function resetBatchPreview() {
+  batch.preview = null;
+  batch.body = null;
+  batch.key = null;
+  byId("batch-preview").hidden = true;
+  byId("batch-preview-body").replaceChildren();
+  byId("batch-apply").disabled = true;
+}
+
+function hideBatchResult() {
+  batch.result = null;
+  byId("batch-result-body").replaceChildren();
+  byId("batch-result-summary").textContent = "";
+  byId("print-sheets").replaceChildren();
+  byId("batch-result").hidden = true;
+}
+
+function renderBatchPreview(preview) {
+  byId("batch-preview-summary").textContent = batchSummary(preview);
+  byId("batch-preview-body").replaceChildren(...preview.rows.map((row) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(String(row.row), "num"), cell(row.className ?? row.classRef ?? "—"), cell(row.email ?? "—"));
+    tr.append(cell(row.error ? "—" : row.existingAccount ? "istniejące (przyjęcie obecnym hasłem)" : "nowe"));
+    tr.append(cell(row.error ? batchRowError(row) : "gotowe", row.error ? "row-error" : ""));
+    return tr;
+  }));
+  byId("batch-apply").disabled = !canApplyBatch(preview);
+  byId("batch-preview").hidden = false;
+}
+
+function renderBatchResult(result) {
+  batch.result = result;
+  const withTokens = result.invitations.filter((item) => item.token);
+  byId("batch-result-summary").textContent = result.replayed
+    ? `Ta partia była już zapisana (${invitationsCount(result.invitations.length)}). Linki pokazano wtedy jeden raz — jeśli zginęły, użyj „Wyślij ponownie” przy zaproszeniu.`
+    : `Utworzono ${invitationsCount(withTokens.length)} (${formatSchoolYear(yearLabel(result.schoolYearId))}).`;
+  byId("batch-result-body").replaceChildren(...result.invitations.map((item) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(item.row ? String(item.row) : "—", "num"), cell(item.className ?? item.classId), cell(item.email));
+    const link = cell(item.token ? invitationLink(item.token, window.location.origin) : "(pokazany wcześniej)", item.token ? "mono" : "");
+    tr.append(link, cell(formatDateTime(item.expiresAt)));
+    return tr;
+  }));
+  byId("batch-copy").disabled = !withTokens.length;
+  byId("batch-print").disabled = !withTokens.length;
+  byId("batch-copy").textContent = "Kopiuj listę";
+  byId("batch-result").hidden = false;
+  byId("batch-result").scrollIntoView({ block: "nearest" });
+}
+
+byId("batch-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const errorBox = byId("batch-error");
+  const submit = form.querySelector("button[type=submit]");
+  errorBox.textContent = "";
+  resetBatchPreview();
+  let body;
+  try {
+    body = batchBody(form);
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  submit.disabled = true;
+  try {
+    const preview = await withStepUp(() => api("/api/admin/invitation-batches/preview", { method: "POST", body }));
+    batch.preview = preview;
+    batch.body = body;
+    batch.key = newBatchKey();
+    renderBatchPreview(preview);
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+// Zmiana tekstu, roku lub ważności po podglądzie unieważnia podgląd (nowy klucz przy następnym).
+byId("batch-form").addEventListener("input", resetBatchPreview);
+
+byId("batch-apply").addEventListener("click", async (event) => {
+  const element = event.currentTarget;
+  if (!canApplyBatch(batch.preview)) return;
+  const confirmed = await confirmAction({
+    title: "Utworzyć zaproszenia?",
+    effects: [
+      `Powstaną osobne zaproszenia dla przedstawicieli klas: ${invitationsCount(batch.preview.counts.valid)}.`,
+      "Linki zobaczysz jeden raz. Panel nie wysyła e-maili — przekażesz je sam.",
+    ],
+    confirmLabel: "Utwórz zaproszenia",
+  });
+  if (!confirmed) return;
+  element.disabled = true;
+  byId("batch-error").textContent = "";
+  try {
+    const result = await withStepUp(() => api("/api/admin/invitation-batches/apply", {
+      method: "POST", body: { ...batch.body, planDigest: batch.preview.planDigest }, idempotencyKey: batch.key,
+    }));
+    resetBatchPreview();
+    byId("batch-form").reset();
+    byId("batch-form").elements.schoolYearId.value = result.schoolYearId ?? defaultYearId();
+    renderBatchResult(result);
+    showMessage(result.replayed ? "Partia była już zapisana — nie utworzono nowych zaproszeń." : "Zaproszenia utworzone.");
+    await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
+  } catch (error) {
+    byId("batch-error").textContent = error.message;
+    element.disabled = !canApplyBatch(batch.preview);
+  }
+});
+
+byId("batch-hide").addEventListener("click", hideBatchResult);
+byId("batch-copy").addEventListener("click", async (event) => {
+  const text = tokenListText(batch.result?.invitations, window.location.origin, formatDateTime);
+  try {
+    await navigator.clipboard.writeText(text);
+    event.currentTarget.textContent = "Skopiowano";
+  } catch {
+    showMessage("Nie udało się skopiować. Zaznacz linki w tabeli i skopiuj ręcznie.", true);
+  }
+});
+
+function printCardElement(model) {
+  const card = document.createElement("section");
+  card.className = "print-card";
+  const title = document.createElement("h2");
+  title.textContent = model.title;
+  const meta = document.createElement("p");
+  meta.textContent = [model.schoolYear, `Adres konta: ${model.email}`].filter(Boolean).join(" · ");
+  const link = document.createElement("code");
+  link.textContent = model.link;
+  const expires = document.createElement("p");
+  expires.textContent = model.expires;
+  const stepsTitle = document.createElement("h3");
+  stepsTitle.textContent = "Pierwsze logowanie";
+  const steps = document.createElement("ol");
+  steps.append(...model.steps.map((text) => Object.assign(document.createElement("li"), { textContent: text })));
+  const rulesTitle = document.createElement("h3");
+  rulesTitle.textContent = "Zasady";
+  const rules = document.createElement("ul");
+  rules.append(...model.rules.map((text) => Object.assign(document.createElement("li"), { textContent: text })));
+  const draft = document.createElement("p");
+  draft.className = "draft";
+  draft.textContent = model.draftNotice;
+  card.append(title, meta, link, expires, stepsTitle, steps, rulesTitle, rules, draft);
+  return card;
+}
+
+function clearPrintSheets() {
+  document.body.classList.remove("printing");
+  byId("print-sheets").replaceChildren();
+}
+
+byId("batch-print").addEventListener("click", () => {
+  const invitations = (batch.result?.invitations ?? []).filter((item) => item.token);
+  if (!invitations.length) return;
+  const schoolYearLabel = yearLabel(batch.result.schoolYearId);
+  byId("print-sheets").replaceChildren(...invitations.map((item) => printCardElement(printCardModel(item, {
+    origin: window.location.origin, schoolYearLabel, formatDateTime,
+  }))));
+  document.body.classList.add("printing");
+  window.print();
+});
+window.addEventListener("afterprint", clearPrintSheets);
+// Wspólny komputer: przy opuszczeniu strony linki znikają z DOM.
+window.addEventListener("pagehide", () => { hideBatchResult(); hideToken(); clearPrintSheets(); });
 
 // --- Lata szkolne i klasy (#207; trasy #78, wyłącznie admin) ----------------------
 
@@ -688,7 +919,9 @@ async function start() {
     state.me = session.user?.id ?? null;
     await loadYears();
     await loadUsers();
-    await Promise.all([loadGrants(), loadInvitations(), loadAudit()]);
+    byId("coverage-year").value = defaultYearId();
+    byId("batch-form").elements.schoolYearId.value = defaultYearId();
+    await Promise.all([loadGrants(), loadInvitations(), loadAudit(), loadCoverage()]);
   } catch (error) {
     showMessage(error.message, true);
   }

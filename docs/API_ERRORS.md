@@ -100,6 +100,7 @@ wpisów).
 | `document_too_large` | Plik przekracza dozwolony rozmiar. | Zależy od kontekstu (patrz moduł trasy). |
 | `duplicate_name` | Nazwy klas na liście powtarzają się. | Nie — popraw dane żądania. |
 | `duplicate_photo` | To zdjęcie jest już dodane. | Nie — popraw dane żądania. |
+| `duplicate_row` | Ten sam adres i klasa powtarzają się w partii. | Nie — popraw dane żądania. |
 | `empty_document` | Plik jest pusty. | Zależy od kontekstu (patrz moduł trasy). |
 | `empty_photo_file` | Plik zdjęcia jest pusty. | Nie — popraw dane żądania. |
 | `ends_before_start` | Koniec nie może być wcześniej niż początek. | Zależy od kontekstu (patrz moduł trasy). |
@@ -188,6 +189,7 @@ wpisów).
 | `invalid_identifier` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
 | `invalid_import` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
 | `invalid_invitation` | Zaproszenie jest nieważne, wygasło albo zostało już wykorzystane. | Nie — popraw dane żądania. |
+| `invalid_invitation_batch_text` | Wklej wiersze w formacie „klasa; e-mail” (najwyżej 24 KB tekstu). | Nie — popraw dane żądania. |
 | `invalid_json` | Serwer nie odczytał danych formularza. | Nie — popraw dane żądania. |
 | `invalid_kind` | Nieznany rodzaj dokumentu. | Nie — popraw dane żądania. |
 | `invalid_label` | Podaj nazwę roku szkolnego (maksymalnie 200 znaków). | Nie — popraw dane żądania. |
@@ -234,6 +236,7 @@ wpisów).
 | `invalid_revision` | Brak numeru wersji. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `invalid_rights_note` | Niepoprawna notatka o prawach. | Nie — popraw dane żądania. |
 | `invalid_role` | Wybierz rolę z listy. | Nie — popraw dane żądania. |
+| `invalid_row_format` | Wiersz musi mieć dwie kolumny: klasa i e-mail. | Nie — popraw dane żądania. |
 | `invalid_row_numbers` | Niepoprawne numery wierszy. | Nie — popraw dane żądania. |
 | `invalid_rows` | Niepoprawne wiersze importu. | Nie — popraw dane żądania. |
 | `invalid_school_year_id` | Niepoprawny identyfikator roku szkolnego. | Nie — popraw dane żądania. |
@@ -259,6 +262,9 @@ wpisów).
 | `invalid_year_end_confirmation` | Potwierdzenie rozbieżności wymaga jednego z dozwolonych powodów i widzianych różnic w centach. | Nie — popraw dane żądania. |
 | `invalid_year_order` | Rok docelowy musi zaczynać się później niż rok źródłowy. | Nie — popraw dane żądania. |
 | `invitation_already_accepted` | Zaproszenie zostało już przyjęte. | Zależy od kontekstu (patrz moduł trasy). |
+| `invitation_batch_empty` | Brak wierszy do zaproszenia. Wklej co najmniej jeden wiersz „klasa; e-mail”. | Nie — popraw dane żądania. |
+| `invitation_batch_invalid` | Partia ma błędne wiersze. Popraw je w podglądzie i zatwierdź ponownie. | Nie — popraw dane żądania. |
+| `invitation_batch_stale` | Dane zmieniły się od podglądu zaproszeń. Wygeneruj podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `invitation_not_found` | Nie znaleziono zaproszenia. | Nie — popraw dane żądania. |
 | `invitation_not_pending` | To zaproszenie nie oczekuje już na przyjęcie. Utwórz nowe zaproszenie. | Zależy od kontekstu (patrz moduł trasy). |
 | `invitation_pending` | Dla tego adresu i zakresu istnieje już oczekujące zaproszenie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -383,6 +389,7 @@ wpisów).
 | `report_snapshot_not_found` | Nie znaleziono migawki sprawozdania. | Nie — popraw dane żądania. |
 | `report_snapshot_superseded` | Migawka została zastąpiona nowszą. Otwórz bieżącą migawkę roku. | Nie — odśwież widok. |
 | `report_snapshot_supersedes_required` | Rok ma już migawkę sprawozdania. Wskaż bieżącą migawkę i powód korekty. | Nie — popraw dane żądania. |
+| `representative_already_assigned` | Ta osoba jest już przedstawicielem tej klasy w tym roku. | Nie — popraw dane żądania. |
 | `request_already_consumed` | Ten wniosek o zdjęcie blokady został już rozpatrzony. | Zależy od kontekstu (patrz moduł trasy). |
 | `request_not_found` | Nie znaleziono wniosku. | Nie — popraw dane żądania. |
 | `request_too_large` | Za dużo danych w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |

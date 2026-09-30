@@ -42,6 +42,7 @@ const CATALOG = {
   'invitation.revoked': ['access', 'Wycofanie zaproszenia'],
   'invitation.accepted': ['access', 'Przyjęcie zaproszenia'],
   'invitation.reissued': ['access', 'Ponowne wydanie zaproszenia'],
+  'invitation.batch_created': ['access', 'Zaproszenia zbiorcze przedstawicieli'],
   'user.created': ['access', 'Utworzenie konta'],
   'user.disabled': ['access', 'Wyłączenie konta'],
   'user.enabled': ['access', 'Włączenie konta'],
