@@ -33,6 +33,7 @@ export const EXCLUSION_REASON_LABELS = Object.freeze({
   no_valid_email: 'brak poprawnego adresu e-mail',
   suppressed: 'adres wykluczony (odbicie lub rezygnacja)',
   duplicate_address: 'adres już użyty w innej rodzinie tej kampanii',
+  no_payment_reference: 'brak aktywnej komunikacji strukturalnej w roku (treść zawiera {komunikat})',
 });
 
 export function isValidId(value) {
@@ -169,7 +170,8 @@ export function formatSchedule(schedule) {
 // Kody z contentWarnings w src/email/content.js — nie blokują, informują zatwierdzającego.
 export const WARNING_LABELS = Object.freeze({
   missing_skip_if_paid_sentence: 'Treść nie wspomina, że wpłacający mogą pominąć wiadomość.',
-  missing_payment_reference: 'Treść nie zawiera znacznika {rodzina} (tytułu przelewu rodziny).',
+  missing_payment_reference: 'Treść nie zawiera znacznika {komunikat} (komunikacji strukturalnej rodziny) ani {rodzina}.',
+  household_id_as_payment_reference: 'Znacznik {rodzina} wstawia długi identyfikator rodziny bez sumy kontrolnej — łatwo go przepisać z błędem. Lepiej użyć {komunikat} (komunikacja strukturalna +++…+++).',
   template_requires_board_decision_d16: 'Szablon czeka na decyzję zarządu o treści (D-16) — nie jest „zatwierdzonym” wzorem.',
 });
 

@@ -356,7 +356,7 @@
     "sha256": "a91305492bc38e52f9eb6a6eed72bf2388fe0354420c50dae309b4ee6a602eed"
   },
   {
-    "name": "0158_statement_line_structured_ref_hash.sql",
-    "sha256": "e8c39c397acb11743faa9f118d2b52e9864f4e1269c50d60ac0fd8d02366f686"
+    "name": "0158_structured_reference_usage.sql",
+    "sha256": "9f59b608b2407cbe9ccc7e98d5c8e23c21704dbe42ca83df69986efccd439f6f"
   }
 ]

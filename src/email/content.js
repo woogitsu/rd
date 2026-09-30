@@ -4,6 +4,7 @@
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { findForbiddenWording } from '../../print/core.js';
+import { formatStructuredReference, isValidStructuredReference } from '../pg/ogm.js';
 
 export { findForbiddenWording };
 
@@ -16,9 +17,15 @@ export const MEETING_AUDIENCES = Object.freeze(['class_households']);
 // osobnej decyzji zarządu/szkoły (D-06) — do tego czasu każda kategoria ma link.
 export const CATEGORIES = Object.freeze(['contribution_reminder', 'organizational']);
 export const DEFAULT_CATEGORY = 'contribution_reminder';
-// {rok} — etykieta roku szkolnego, {rodzina} — identyfikator rodziny jako tytuł przelewu.
+// {rok} — etykieta roku szkolnego, {rodzina} — identyfikator rodziny jako tytuł przelewu,
+// {komunikat} — aktywna komunikacja strukturalna OGM-VCS rodziny w roku kampanii
+// (+++ddd/dddd/ddddd+++, rejestr payment_references, #83).
 // Brak placeholderów z imieniem dziecka lub opiekuna (minimalizacja, EMAIL.md).
-export const BODY_PLACEHOLDERS = Object.freeze(['rok', 'rodzina']);
+export const BODY_PLACEHOLDERS = Object.freeze(['rok', 'rodzina', 'komunikat']);
+// Przykładowa referencja podglądu i wiadomości testowej: baza 0000000000,
+// suma kontrolna 97 — poprawny format, niczyja referencja (generator nie
+// losuje samych zer, src/pg/ogm.js randomBase).
+export const SAMPLE_STRUCTURED_REFERENCE = '000000000097';
 export const SUBJECT_PLACEHOLDERS = Object.freeze(['rok']);
 
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
@@ -123,9 +130,21 @@ function appendUnsubscribeFooter(text, unsubscribeUrl) {
   return text + UNSUBSCRIBE_FOOTER.replace('{link_wypisania}', unsubscribeUrl);
 }
 
+// Czy treść kampanii używa {komunikat} — wtedy każda rodzina potrzebuje aktywnej
+// referencji roku (migawka wyklucza rodzinę bez niej, worker pomija wiersz).
+export function usesStructuredReference(campaign) {
+  return String(campaign?.body_text ?? campaign?.bodyText ?? '').includes('{komunikat}');
+}
+
 // Jedna wiadomość = jedna rodzina. Czysty tekst (bez HTML), więc bez wstrzyknięć znaczników.
-export function renderMessage(campaign, { schoolYearLabel, householdId, unsubscribeUrl = null }) {
+// structuredReference: 12 cyfr aktywnej referencji rodziny; wymagana, gdy treść
+// ma {komunikat} — pusty komunikat w wiadomości do rodzica byłby błędem.
+export function renderMessage(campaign, { schoolYearLabel, householdId, structuredReference = null, unsubscribeUrl = null }) {
   const values = { rok: schoolYearLabel, rodzina: householdId };
+  if (usesStructuredReference(campaign)) {
+    if (!isValidStructuredReference(structuredReference)) throw new ContentError('payment_reference_missing');
+    values.komunikat = formatStructuredReference(structuredReference);
+  }
   const subject = fill(campaign.subject, values);
   const text = appendUnsubscribeFooter(fill(campaign.body_text ?? campaign.bodyText, values), unsubscribeUrl);
   if (findForbiddenWording(subject) || findForbiddenWording(text)) throw new ContentError('forbidden_wording');
@@ -174,7 +193,9 @@ export function verifyPreferencesToken(secret, token) {
 export function contentWarnings({ bodyText }) {
   const warnings = [];
   if (!SKIP_HINT.test(bodyText)) warnings.push('missing_skip_if_paid_sentence');
-  if (!bodyText.includes('{rodzina}')) warnings.push('missing_payment_reference');
+  if (!bodyText.includes('{rodzina}') && !bodyText.includes('{komunikat}')) warnings.push('missing_payment_reference');
+  // #83: identyfikator rodziny (UUID, bez sumy kontrolnej) łatwo przepisać z błędem.
+  if (bodyText.includes('{rodzina}')) warnings.push('household_id_as_payment_reference');
   warnings.push('template_requires_board_decision_d16');
   return warnings;
 }
