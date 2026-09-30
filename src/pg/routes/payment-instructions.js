@@ -78,6 +78,40 @@ function instructionsFromRow(row) {
   };
 }
 
+// Bieżąca (najnowsza) zatwierdzona wersja danych do wpłaty roku albo null.
+// Wspólna dla kartek (print.js), kampanii e-mail ({rachunek}/{odbiorca},
+// src/pg/routes/email.js) i workera wysyłki (src/email/worker.js) — wszędzie ta
+// sama definicja „bieżącej wersji”. Bez kontroli uprawnień: wywołujący sprawdza
+// rolę i zakres przed odczytem.
+export async function loadCurrentPaymentInstructions(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT id, school_year_id, iban, bic, payee_name, approved_at
+       FROM payment_instructions
+      WHERE school_year_id = $1
+      ORDER BY approved_at DESC, id DESC
+      LIMIT 1`,
+    [schoolYearId],
+  );
+  return rows[0] ? instructionsFromRow(rows[0]) : null;
+}
+
+// Wersja danych do wpłaty, z którą zarząd zatwierdził kampanię e-mail (#92):
+// `paymentInstructionsId` w metadanych OSTATNIEGO zdarzenia
+// email.campaign.approved tej kampanii (dziennik jest tylko do dopisywania,
+// zapis w tej samej transakcji co zatwierdzenie). Bez osobnej kolumny — bez
+// migracji; null = kampania zatwierdzona bez wersji (albo jeszcze niezatwierdzona).
+export async function campaignApprovedPaymentInstructionsId(executor, campaignId) {
+  const { rows } = await executor.query(
+    `SELECT metadata_json->>'paymentInstructionsId' AS id
+       FROM audit_events
+      WHERE entity_type = 'email_campaign' AND entity_id = $1 AND action = 'email.campaign.approved'
+      ORDER BY occurred_at DESC, id DESC
+      LIMIT 1`,
+    [campaignId],
+  );
+  return rows[0]?.id ?? null;
+}
+
 async function requireContext(request, env, roles, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
@@ -98,15 +132,7 @@ async function getCurrent(request, env, url, json) {
   const schoolYearId = url.searchParams.get('schoolYearId');
   if (!validId(schoolYearId)) throw new RequestError('invalid_request');
   await requireContext(request, env, READ_ROLES, schoolYearId);
-  const { rows } = await env.db.query(
-    `SELECT id, school_year_id, iban, bic, payee_name, approved_at
-       FROM payment_instructions
-      WHERE school_year_id = $1
-      ORDER BY approved_at DESC, id DESC
-      LIMIT 1`,
-    [schoolYearId],
-  );
-  return json({ paymentInstructions: rows[0] ? instructionsFromRow(rows[0]) : null });
+  return json({ paymentInstructions: await loadCurrentPaymentInstructions(env.db, schoolYearId) });
 }
 
 function inputMatches(row, input) {

@@ -5,6 +5,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { findForbiddenWording } from '../../print/core.js';
 import { formatStructuredReference, isValidStructuredReference } from '../pg/ogm.js';
+import { formatIbanForDisplay, isValidIban } from '../../print/iban.js';
 
 export { findForbiddenWording };
 
@@ -19,9 +20,14 @@ export const CATEGORIES = Object.freeze(['contribution_reminder', 'organizationa
 export const DEFAULT_CATEGORY = 'contribution_reminder';
 // {rok} — etykieta roku szkolnego, {rodzina} — identyfikator rodziny jako tytuł przelewu,
 // {komunikat} — aktywna komunikacja strukturalna OGM-VCS rodziny w roku kampanii
-// (+++ddd/dddd/ddddd+++, rejestr payment_references, #83).
+// (+++ddd/dddd/ddddd+++, rejestr payment_references, #83),
+// {rachunek} / {odbiorca} — IBAN i nazwa odbiorcy z ZATWIERDZONEJ na rok wersji
+// danych do wpłaty (payment_instructions, #92); bez zatwierdzonej wersji kampanii
+// nie da się zatwierdzić, a zmiana rachunku po zatwierdzeniu kampanii wstrzymuje
+// jej wysyłkę do ponownego zatwierdzenia.
 // Brak placeholderów z imieniem dziecka lub opiekuna (minimalizacja, EMAIL.md).
-export const BODY_PLACEHOLDERS = Object.freeze(['rok', 'rodzina', 'komunikat']);
+export const BODY_PLACEHOLDERS = Object.freeze(['rok', 'rodzina', 'komunikat', 'rachunek', 'odbiorca']);
+export const PAYMENT_INSTRUCTION_PLACEHOLDERS = Object.freeze(['rachunek', 'odbiorca']);
 // Przykładowa referencja podglądu i wiadomości testowej: baza 0000000000,
 // suma kontrolna 97 — poprawny format, niczyja referencja (generator nie
 // losuje samych zer, src/pg/ogm.js randomBase).
@@ -136,14 +142,43 @@ export function usesStructuredReference(campaign) {
   return String(campaign?.body_text ?? campaign?.bodyText ?? '').includes('{komunikat}');
 }
 
+// Czy treść kampanii używa {rachunek} lub {odbiorca} (#92) — wtedy zatwierdzenie,
+// kolejka i wysyłka wymagają zatwierdzonej wersji danych do wpłaty roku.
+export function usesPaymentInstructions(campaign) {
+  const body = String(campaign?.body_text ?? campaign?.bodyText ?? '');
+  return PAYMENT_INSTRUCTION_PLACEHOLDERS.some((name) => body.includes(`{${name}}`));
+}
+
 // Jedna wiadomość = jedna rodzina. Czysty tekst (bez HTML), więc bez wstrzyknięć znaczników.
 // structuredReference: 12 cyfr aktywnej referencji rodziny; wymagana, gdy treść
 // ma {komunikat} — pusty komunikat w wiadomości do rodzica byłby błędem.
-export function renderMessage(campaign, { schoolYearLabel, householdId, structuredReference = null, unsubscribeUrl = null }) {
+// paymentInstructions: { iban, payeeName } zatwierdzonej wersji roku (#92);
+// wymagana, gdy treść ma {rachunek}/{odbiorca} — nigdy wiadomość z pustym
+// albo niepoprawnym rachunkiem. Kod QR nie trafia do e-maila: wiadomość jest
+// czystym tekstem, a HTML/obraz wymaga decyzji D-17.
+// missingPaymentText: TYLKO podgląd dla zatwierdzającego — znacznik w miejscu
+// {rachunek}/{odbiorca}, gdy rok nie ma zatwierdzonej wersji (zatwierdzenie i
+// wysyłka takiej kampanii są wtedy zablokowane, więc znacznik nie trafi do rodzica).
+export function renderMessage(campaign, {
+  schoolYearLabel, householdId, structuredReference = null, paymentInstructions = null, unsubscribeUrl = null,
+  missingPaymentText = null,
+}) {
   const values = { rok: schoolYearLabel, rodzina: householdId };
   if (usesStructuredReference(campaign)) {
     if (!isValidStructuredReference(structuredReference)) throw new ContentError('payment_reference_missing');
     values.komunikat = formatStructuredReference(structuredReference);
+  }
+  if (usesPaymentInstructions(campaign)) {
+    const payeeName = String(paymentInstructions?.payeeName ?? '').trim();
+    if (paymentInstructions && isValidIban(paymentInstructions.iban) && payeeName) {
+      values.rachunek = formatIbanForDisplay(paymentInstructions.iban);
+      values.odbiorca = payeeName;
+    } else if (missingPaymentText) {
+      values.rachunek = missingPaymentText;
+      values.odbiorca = missingPaymentText;
+    } else {
+      throw new ContentError('payment_instructions_missing');
+    }
   }
   const subject = fill(campaign.subject, values);
   const text = appendUnsubscribeFooter(fill(campaign.body_text ?? campaign.bodyText, values), unsubscribeUrl);

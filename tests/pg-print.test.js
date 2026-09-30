@@ -230,7 +230,7 @@ test('zatwierdzone dane do wpłaty trafiają do kartek każdej roli uprawnionej 
       const result = await get(query, cookie);
       assert.equal(result.status, 200);
       assert.deepEqual(result.body.paymentInstructions, {
-        iban: 'BE68539007547034', bic: 'GKCCBEBB', payeeName: 'Rada Rodziców — Szkoła Testowa',
+        id: 'pi-1', iban: 'BE68539007547034', bic: 'GKCCBEBB', payeeName: 'Rada Rodziców — Szkoła Testowa',
         approvedAt: result.body.paymentInstructions.approvedAt,
       });
     }
@@ -243,6 +243,42 @@ test('zatwierdzone dane do wpłaty trafiają do kartek każdej roli uprawnionej 
     assert.equal(post.status, 405);
     const { rows } = await db.query('SELECT count(*)::int AS n FROM payment_instructions');
     assert.equal(rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});
+
+// #92: korekta rachunku w trakcie roku — nowa wersja zastępuje starą na kartkach
+// (także przedstawiciela klasy), a stopka kartki pokazuje wersję, więc kartki
+// wydrukowane wcześniej da się rozpoznać.
+test('korekta rachunku w trakcie roku: kartki z nową wersją, wersja w stopce, QR z nowym IBAN', async () => {
+  const { db, sessions, get } = await setup();
+  try {
+    await db.query(
+      `INSERT INTO payment_instructions (id, school_year_id, iban, bic, payee_name, approved_by, approved_at, idempotency_key)
+       VALUES ('pi-old00001', $1, 'BE68539007547034', NULL, 'Rada Rodziców — Szkoła Testowa', 'u-board', '2026-09-01T08:00:00Z', 'print-test-pi-old'),
+              ('pi-new00002', $1, 'BE71096123456769', NULL, 'Rada Rodziców — Szkoła Testowa', 'u-board', '2026-11-15T09:30:00Z', 'print-test-pi-new')`,
+      [YEAR],
+    );
+    const board = await get(`schoolYearId=${YEAR}`, sessions.board);
+    const rep = await get(`schoolYearId=${YEAR}&classId=c-1a`, sessions.rep1a);
+    for (const result of [board, rep]) {
+      assert.equal(result.status, 200);
+      assert.equal(result.body.paymentInstructions.id, 'pi-new00002');
+      assert.equal(result.body.paymentInstructions.iban, 'BE71096123456769');
+      assert.doesNotMatch(result.text, /BE68539007547034|pi-old00001/);
+    }
+    const repGrouped = buildHouseholds(parseInputRows(rep.body).rows);
+    const cards = renderCardsHtml(repGrouped.households, new Set(['H-1']), CONFIG, rep.body.paymentInstructions);
+    assert.equal(cards.count, 1);
+    assert.match(cards.html, /class="card-qr"/);
+    assert.match(cards.html, /Dane do wpłaty: wersja zatwierdzona 15\.11\.2026 10:30, nr pi-new00/);
+    assert.match(cards.html, /BE71096123456769/);
+    assert.doesNotMatch(cards.html, /BE68539007547034/);
+    // Stara wersja dałaby inną stopkę — wydruk sprzed korekty jest rozpoznawalny.
+    const oldCards = renderCardsHtml(repGrouped.households, new Set(['H-1']), CONFIG,
+      { id: 'pi-old00001', iban: 'BE68539007547034', bic: null, payeeName: 'Rada Rodziców — Szkoła Testowa', approvedAt: '2026-09-01T08:00:00.000Z' });
+    assert.match(oldCards.html, /wersja zatwierdzona 01\.09\.2026 10:00, nr pi-old00/);
   } finally {
     await db.close();
   }

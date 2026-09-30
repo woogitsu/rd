@@ -70,7 +70,8 @@ Wygenerowany PDF zawiera dane osobowe: nie zapisywać go w repozytorium ani w pu
 - zdanie o dobrowolnym charakterze składki,
 - opcjonalnie kwota sugerowana (D-14) i dane do przelewu (D-13, szablon tytułu z `{rodzina}` i `{rok}`); rodzina z komunikacją strukturalną dostaje zamiast tytułu wiersz „Komunikacja strukturalna” `+++ddd/dddd/ddddd+++`, a kod QR EPC niesie ją w polu referencji strukturalnej (bez tytułu wolnego). Podgląd informuje, ile wybranych rodzin nie ma referencji i ostrzega, że identyfikator z `{rodzina}` łatwo przepisać z błędem (#83),
 - „Jeśli wpłata została już wykonana, prosimy pominąć tę informację.”,
-- kontakt i drobny numer rodziny ułatwiający rozdanie kartek.
+- kontakt i drobny numer rodziny ułatwiający rozdanie kartek,
+- stopka wersji danych do wpłaty (#92): „Dane do wpłaty: wersja zatwierdzona 15.11.2026 10:30, nr ab12cd34.” (czas w Europe/Brussels i skrót identyfikatora wersji z `GET /api/print/cards`). Po korekcie rachunku w trakcie roku (nowa zatwierdzona wersja) kartki wydrukowane ze starą wersją da się rozpoznać po stopce. Rachunek wpisany ręcznie w formularzu, bez zatwierdzonej wersji, daje stopkę „Dane do wpłaty wpisane ręcznie, niezatwierdzone na rok — kartka bez kodu QR.”
 
 Kontrola słownictwa odrzuca konfigurację i kartki ze słowami „zaległość”, „dług”, „dłużnik”, „zadłużenie”, „windykacja”, „należność”, „monit”, „wezwanie”. Imiona i nazwiska uczniów nie są sprawdzane (np. „Długosz”).
 
