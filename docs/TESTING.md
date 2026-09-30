@@ -17,7 +17,7 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 „równoległe” scenariusze sprawdzają niezmiennik wyniku, a nie realny wyścig
 (realne wyścigi na PostgreSQL: `tests/pg-reconciliation-race.test.js`,
 `tests/pg-export-race.test.js`, `tests/pg-real-concurrency.test.js`,
-`tests/pg-year-close-race.test.js`, uruchamiane z `RD_TEST_PG_URL`; #208, sekcja „Testy na prawdziwym PostgreSQL” niżej).
+`tests/pg-year-close-race.test.js`, `tests/pg-real-double-click.test.js`, uruchamiane z `RD_TEST_PG_URL`; #208, sekcja „Testy na prawdziwym PostgreSQL” niżej).
 
 ## Macierz
 
@@ -85,10 +85,10 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | wplaty | Wpł. częściowe | tests/pg-payments-api.test.js | partial payments, siblings and two guardians sum per household |
 | wplaty | Podw. kliknięcie | tests/pg-payments-api.test.js | double click with the same Idempotency-Key creates one payment |
 | wplaty | Ponowienie | tests/pg-payments-api.test.js | audit events are atomic with the write and carry no amounts, references or family data |
-| wplaty | Korekty | tests/pg-payments-api.test.js | parallel corrections are serialized and never exceed the payment amount |
+| wplaty | Korekty | tests/pg-real-double-click.test.js | dwie korekty wpłaty 70 + 70 € przy 100 € |
 | ksiega | Podw. kliknięcie | tests/pg-ledger-api.test.js | double click with the same Idempotency-Key creates one entry |
 | ksiega | Ponowienie | tests/pg-ledger-api.test.js | audit events are atomic with the write and carry no amounts, descriptions or documents |
-| ksiega | Korekty | tests/pg-ledger-api.test.js | parallel corrections are serialized and never exceed the entry amount |
+| ksiega | Korekty | tests/pg-real-double-click.test.js | dwie korekty wpisu księgi 70 + 70 € przy 100 € |
 | uzgodnienia | 2 opiekunów | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Rodzeństwo | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Wpł. częściowe | tests/pg-reconciliation.test.js | a correction after matching blocks confirmation with a list of inconsistent matches |
@@ -204,7 +204,51 @@ a zdjęcie blokady kampanii w `cancel` (`loadCampaign(..., { lock: true })`) —
 bariery anulowania. Wpłaty mają kilka warstw blokad (API i triggery 0002/0038/0039/
 0104): po zdjęciu `FOR UPDATE` z API korekty i z triggerów 0002 test bariery korekt
 nadal przechodzi, bo pozostałe warstwy trzymają blokadę.
-Automatycznej kontroli mutacyjnej w CI jeszcze nie ma (#208, punkt 4).
+
+`tests/pg-real-double-click.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera
+(`tests/helpers/pg-barrier.js`) dla kluczowych ścieżek — zapis wpłaty z tym samym
+`Idempotency-Key` (druga transakcja czeka na klucz, dostaje `23505` i odtwarza zapis;
+ta sama treść → `200 Idempotency-Replayed: true`, inna → `409 idempotency_conflict`;
+ponowienie po utracie odpowiedzi), korekta wpłaty i korekta wpisu księgi 70 + 70 €
+przy 100 €, podwójne kliknięcie korekty księgi, przypisanie wpłaty do dwóch rodzin,
+dwa ujęcia tej samej wpłaty w księdze, podwójne kliknięcie „Dopasuj” i dwa dopasowania
+jednej pozycji wyciągu, zatwierdzenie kampanii e-mail (podwójne kliknięcie i dwie osoby
+z zarządu; nic nie jest kolejkowane ani wysyłane), „Zaproś” (dwa równoległe
+zaproszenia tego samego adresu), dwóch administratorów odbierających sobie rolę
+(`409 last_admin_grant`) i dwa commity importu z różnymi kluczami. Każdy test sprawdza
+w `pg_stat_activity`, na czym drugie żądanie czeka — tekst czekającego zapytania musi
+być blokadą z kodu trasy (`FOR UPDATE`, `pg_advisory_xact_lock`), a nie dopiero
+`INSERT` na indeksie unikalnym. Kontrole pozytywne w tym samym pliku (mutacja przez
+`rewrite` bariery): bez blokady kampanii drugie zatwierdzenie kończy się `409` z
+triggera zamiast odtworzeniem; bez blokady adresu powstają dwa ważne tokeny
+zaproszenia; bez `rd:role_grants` nie zostaje żaden administrator; bez
+`rd_import_commit` drugi commit dostaje `409` zamiast odtworzenia.
+
+Test „Zaproś” wykrył błąd: sprawdzenie „oczekujące zaproszenie już jest” działało
+przed transakcją, więc dwa równoległe żądania tworzyły dwa ważne tokeny. Teraz
+sprawdzenie jest w transakcji zapisu pod blokadą doradczą adresu
+(`createInvitation(..., { rejectPending: true })` w `src/pg/auth.js`).
+
+### Kontrola mutacyjna (`npm run test:pg-mutations`)
+
+`scripts/check-lock-mutations.js` usuwa po kolei każdą blokadę z listy `MUTANTS`
+(`FOR UPDATE` albo `pg_advisory_xact_lock` w jednej funkcji) w kopii kodu w katalogu
+tymczasowym i uruchamia wskazany plik testów na prawdziwym PostgreSQL; mutant musi dać
+czerwony test. Najpierw przebieg bez mutacji (musi być zielony). Kod repozytorium nie
+jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`.
+`tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
+Obecnie lista obejmuje: korektę i przypisanie wpłaty, korektę wpisu księgi i ujęcie
+wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
+`rd:role_grants`, blokadę adresu zaproszenia, `rd_import_commit` i `rd_year_close`.
+Poza listą (brak testu z barierą, #208): `FOR UPDATE` w `families.js`, `events.js`,
+`news.js`, `meetings.js`, `documents.js`, pozostałe w `payments.js`/`ledger.js`
+(zwroty, przeksięgowania, części wpłat, autoryzacje) oraz blokady w triggerach migracji.
+
+Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
+(reguła `pglite-race-claim`) odrzuca w plikach bez `RD_TEST_PG_URL` nazwy z
+„truly parallel”, „are serialized” i „bez zakleszczenia”. Testy z `Promise.all` na
+PGlite mają w nazwie „sequential on PGlite” / „PGlite: po kolei”. „Podwójne
+kliknięcie” na PGlite oznacza ponowienie po kolei (odtworzenie zapisu), a nie wyścig.
 
 `tests/pg-year-close-race.test.js` (#212, pomijany bez `RD_TEST_PG_URL`): równoległe
 „Zamknij rok” — dwie osoby z zarządu, podwójne kliknięcie tej samej osoby (i ponowienie

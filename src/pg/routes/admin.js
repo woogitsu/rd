@@ -605,22 +605,14 @@ async function createInvitationRoute(env, actorId, request, json) {
 
   // Podwójne kliknięcie: drugie zaproszenie o tym samym zakresie dla adresu,
   // który ma już oczekujące zaproszenie, jest odrzucane (token nie wraca drugi raz).
-  const { rows: pending } = await env.db.query(
-    `SELECT 1 FROM invitations
-      WHERE lower(email) = $1 AND role = $2
-        AND class_id IS NOT DISTINCT FROM $3 AND school_year_id IS NOT DISTINCT FROM $4
-        AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
-      LIMIT 1`,
-    [email, data.role, scope.classId, scope.schoolYearId],
-  );
-  if (pending[0]) throw new RequestError('invitation_pending', 409);
-
+  // Sprawdzenie jest w transakcji zapisu, pod blokadą adresu (rejectPending, #208).
   let created;
   try {
     created = await createInvitation(env, {
-      actorId, email, role: data.role, classId: scope.classId, schoolYearId: scope.schoolYearId, ttlSeconds,
+      actorId, email, role: data.role, classId: scope.classId, schoolYearId: scope.schoolYearId, ttlSeconds, rejectPending: true,
     });
   } catch (error) {
+    if (error?.message === 'invitation_pending') throw new RequestError('invitation_pending', 409);
     if (['invalid_email', 'invalid_role', 'class_required'].includes(error?.message)) throw new RequestError(error.message);
     if (error?.message === 'class_not_in_school_year') throw new RequestError(error.message, 422);
     throw error;

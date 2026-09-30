@@ -75,6 +75,7 @@
     "demo:start": "node scripts/demo-start.js",
     "pretest:e2e": "npm run build",
     "test:pg-real": "node scripts/test-pg-real.js",
+    "test:pg-mutations": "node scripts/check-lock-mutations.js",
     "test:e2e": "playwright test"
   },
   "dependencies": {

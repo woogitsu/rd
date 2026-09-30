@@ -192,7 +192,7 @@ test('role boundaries come first: auditor and representative get 403 even withou
   } finally { await db.close(); }
 });
 
-test('two truly parallel resolution edits with the same revision: exactly one 200, one 409, no lost change', async () => {
+test('two resolution edits with the same revision via Promise.all (sequential on PGlite): exactly one 200, one 409, no lost change', async () => {
   const db = await meetingsDb();
   try {
     const { meeting } = await newMeeting(db);
@@ -217,7 +217,7 @@ test('two truly parallel resolution edits with the same revision: exactly one 20
   } finally { await db.close(); }
 });
 
-test('parallel: A edits the text, B enters votes and adopts on the old revision: B gets 409, resolution stays a draft', async () => {
+test('stale revision via Promise.all (sequential on PGlite): A edits the text, B enters votes and adopts on the old revision: B gets 409, resolution stays a draft', async () => {
   const db = await meetingsDb();
   try {
     const { meeting } = await newMeeting(db, { votingBodySize: 1 });
@@ -242,7 +242,7 @@ test('parallel: A edits the text, B enters votes and adopts on the old revision:
   } finally { await db.close(); }
 });
 
-test('two truly parallel meeting edits with the same revision: one 200, one 409; double click of the same edit: 200 + 200, one audit event', async () => {
+test('two meeting edits with the same revision via Promise.all (sequential on PGlite): one 200, one 409; repeated identical edit: 200 + 200, one audit event', async () => {
   const db = await meetingsDb();
   try {
     const { meeting } = await newMeeting(db);

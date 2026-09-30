@@ -709,7 +709,7 @@ test('#2 skipped row -> conflict removed -> same file with a new key is committe
   assert.equal(await count(db, 'import_batches'), 3);
 }));
 
-test('#2 parallel commits of the same file with different keys write once', async () => withDb(async (db, env, admin) => {
+test('#2 commits of the same file with different keys via Promise.all (sequential on PGlite) write once; race on PostgreSQL in pg-real-double-click', async () => withDb(async (db, env, admin) => {
   const payload = payloadFromCsv(BASIC);
   const p = await preview(env, admin, payload);
   const [a, b] = await Promise.all([

@@ -342,7 +342,7 @@ test('ponowne zamknięcie jest idempotentne i nie dubluje bilansu ani audytu', a
   }
 });
 
-test('#212: dwa równoległe „Zamknij rok” (dwie osoby albo podwójne kliknięcie) — bez zakleszczenia, dokładnie jeden bilans otwarcia', async () => {
+test('#212: dwa „Zamknij rok” przez Promise.all (dwie osoby albo podwójne kliknięcie; PGlite wykonuje je po kolei — zakleszczenie sprawdza pg-year-close-race) — dokładnie jeden bilans otwarcia', async () => {
   const { db, env, cookies } = await setup();
   try {
     await startAndConfirm(env, cookies);
@@ -438,7 +438,7 @@ test('#212: zamknięcie roku wygasza WŁASNY przydział drugiej osoby zarządu �
   }
 });
 
-test('#212: podwójne kliknięcie „Zamknij rok” przez tę samą osobę — bez zakleszczenia, drugie replayed:true', async () => {
+test('#212: podwójne kliknięcie „Zamknij rok” przez tę samą osobę (PGlite: po kolei; zakleszczenie sprawdza pg-year-close-race) — drugie replayed:true', async () => {
   const { db, env, cookies } = await setup();
   try {
     await startAndConfirm(env, cookies);

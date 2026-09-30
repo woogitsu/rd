@@ -26,6 +26,8 @@ import {
   currentResolutions,
   describeQuorumCheck,
   describeQuorumRule,
+  presentPersons,
+  attendeeReference,
   effectiveMinutes,
   errorMessage,
   formatVotes,
@@ -326,4 +328,23 @@ test("spóźnione zawiadomienie to tylko ostrzeżenie z regułą i źródłem", 
   assert.match(warning, /co najmniej 14/);
   assert.match(warning, /Założenie testowe/);
   assert.match(warning, /nic nie jest blokowane/);
+});
+
+// --- Przegląd demo 4: odmiana w regule quorum i skrót identyfikatora obecności ------
+
+test("reguła minimalnej liczby obecnych ma poprawną odmianę", () => {
+  assert.equal(presentPersons(1), "1 obecna osoba");
+  assert.equal(presentPersons(3), "3 obecne osoby");
+  assert.equal(presentPersons(5), "5 obecnych osób");
+  assert.equal(presentPersons(12), "12 obecnych osób");
+  assert.equal(presentPersons(23), "23 obecne osoby");
+  assert.equal(describeQuorumRule({ mode: "minimum_count", minCount: 3 }), "co najmniej 3 obecne osoby z prawem głosu");
+  assert.doesNotMatch(describeQuorumRule({ mode: "minimum_count", minCount: 3 }), /3 obecnych osób/);
+});
+
+test("lista obecności pokazuje skrót identyfikatora, pełny zostaje w id", () => {
+  const uuid = "d2721f76-2874-4111-adca-10563962d9ea";
+  assert.deepEqual(attendeeReference({ userId: uuid }), { type: "user", id: uuid, label: "Konto d2721f76…" });
+  assert.deepEqual(attendeeReference({ guardianId: uuid }), { type: "guardian", id: uuid, label: "Opiekun d2721f76…" });
+  assert.deepEqual(attendeeReference({}), { type: "", id: "", label: "—" });
 });

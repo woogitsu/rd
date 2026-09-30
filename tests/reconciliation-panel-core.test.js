@@ -23,6 +23,7 @@ import {
   isLikelyOwnReconciliation,
   isValidId,
   lineDirectionLabel,
+  lineSourceLabel,
   makeIdempotencyKey,
   parseStatementBalance,
   reconciliationActionUrl,
@@ -204,4 +205,18 @@ test('describeStatementImportError podaje numer rekordu, nigdy treści', () => {
   const error = Object.assign(new Error('Nie udało się odczytać pliku wyciągu. Sprawdź format pliku.'), { data: { error: 'invalid_statement_file', record: 7 } });
   assert.match(describeStatementImportError(error), /rekord 7\)$/);
   assert.equal(describeStatementImportError(new Error('Błąd.')), 'Błąd.');
+});
+
+// Przegląd demo 4: kolumna „Źródło” pokazywała surowy kod „csv”.
+test('lineSourceLabel: etykiety źródeł pozycji wyciągu zamiast surowych kodów', () => {
+  assert.equal(lineSourceLabel('csv'), 'CSV');
+  assert.equal(lineSourceLabel('manual'), 'Ręcznie');
+  assert.equal(lineSourceLabel('coda'), 'CODA');
+  assert.equal(lineSourceLabel('camt053'), 'CAMT.053');
+  assert.equal(lineSourceLabel(null), '—');
+  assert.equal(lineSourceLabel('inne'), 'inne');
+  // każdy kod z CHECK bank_statement_imports.source (migracja 0089) ma etykietę
+  const sql = readFileSync(new URL('../postgres/migrations/0089_bank_statement_formats.sql', import.meta.url), 'utf8');
+  const codes = sql.match(/CHECK \(source IN \(([^)]*)\)\)/)[1].match(/'([a-z0-9]+)'/g).map((code) => code.slice(1, -1));
+  assert.deepEqual(codes.filter((code) => lineSourceLabel(code) === code), []);
 });
