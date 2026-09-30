@@ -104,6 +104,23 @@
           </div>
           <p class="empty" id="detail-report-unknown" hidden></p>
           <p class="empty">Same liczby, bez adresów i nazwisk. Stan „nie wiadomo” rozstrzyga zarząd po sprawdzeniu logów dostawcy; ponowna wysyłka jest możliwa wyłącznie w nowej kampanii.</p>
+          <p><a id="detail-report-csv" href="#">Pobierz raport CSV</a> <span class="context">(te same liczby; pobranie pliku zapisuje się w dzienniku zdarzeń)</span></p>
+          <button id="attention-open" type="button">Pokaż listę do sprawdzenia</button>
+        </div>
+
+        <div id="attention-box" hidden>
+          <h3>Do sprawdzenia w logach dostawcy</h3>
+          <p class="context">Wiadomości, o których nie wiadomo, czy wyszły, odrzucone przez dostawcę albo z powtarzającymi się odbiciami tymczasowymi. Wyszukaj w logach dostawcy identyfikator wiersza kolejki (nagłówek X-Mailin-custom) i zapisz wynik. Adresy są zamaskowane; otwarcie listy jest zapisywane w dzienniku zdarzeń. Zapis wyniku niczego nie wysyła. To nie jest lista dłużników.</p>
+          <div class="message" id="attention-message" role="status"></div>
+          <div class="table-wrap" id="attention-table" role="region" aria-label="Lista do sprawdzenia" tabindex="0">
+            <table>
+              <caption class="sr-only">Wiadomości do sprawdzenia w logach dostawcy</caption>
+              <thead><tr><th scope="col">Wiersz kolejki</th><th scope="col">Adres</th><th scope="col">Powód</th><th scope="col">Identyfikator u dostawcy</th><th scope="col">Wynik sprawdzenia</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <tbody id="attention-body"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="attention-empty" hidden>Brak wiadomości do sprawdzenia.</p>
+          <button class="load-more" id="attention-load-more" type="button" hidden>Wczytaj następne</button>
         </div>
 
         <div class="dialog-actions detail-actions">
@@ -181,6 +198,15 @@
       <label>Kod sposobu potwierdzenia (bez treści rozmowy i adresów) <input name="confirmationNote" maxlength="40" pattern="[a-z0-9_]{1,40}" placeholder="np. parent_email_reply" autocomplete="off" /></label>
       <div class="form-error" id="suppression-request-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="suppression-request-error">Złóż wniosek</button></div>
+    </form></dialog>
+    <dialog id="resolution-dialog" aria-labelledby="resolution-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Wynik sprawdzenia</p><h2 id="resolution-title">Rozstrzygnięcie wiadomości</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context" id="resolution-target"></p>
+      <p class="context">Zapis jest trwały i nie zmienia historii wiersza. Nic nie jest wysyłane. „Wiadomość nie wyszła” może potwierdzić wyłącznie zarząd.</p>
+      <label>Wynik <select name="resolution" required></select></label>
+      <label>Kod dowodu z logów dostawcy (bez adresów i treści) <input name="evidenceCode" maxlength="60" pattern="[a-z0-9_]{1,60}" required placeholder="np. brevo_log_delivered" autocomplete="off" /></label>
+      <div class="form-error" id="resolution-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="resolution-error">Zapisz wynik</button></div>
     </form></dialog>
     <script type="module" src="/main.js"></script>
   </body>

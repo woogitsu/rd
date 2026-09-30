@@ -9,6 +9,7 @@ import { normalizeEmail, emailHash, parseCampaignContent } from '../src/email/co
 import {
   accountDay, campaignDailyCap, recordOtherSends, remainingQuota, runEmailBatch, ResultNotRecordedError,
 } from '../src/email/worker.js';
+import { proposeResolutions } from '../src/email/reconcile.js';
 import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 // Pułapka na sieć (#214) jest teraz instalowana globalnie przez
@@ -2304,5 +2305,175 @@ test('#139 webhook CIDR: outside range gets 401 before parsing, inside passes, o
     assert.equal(bad.status, 503);
     // Pusta zmienna = brak ograniczenia.
     assert.equal((await handlePgRequest(from('203.0.113.9', JSON.stringify({ ...event, id: 8 })), { ...env, BREVO_WEBHOOK_ALLOWED_CIDRS: '' })).status, 200);
+  } finally { await t.close(); }
+});
+
+// --- #139: eksport CSV raportu, stan rozstrzygnięcia na liście, propozycje email:reconcile ----
+
+async function unknownCampaign(t, households) {
+  for (const id of households) await family(t.db, id);
+  const campaign = await readyCampaign(t, { key: crypto.randomUUID() });
+  await t.db.query("UPDATE email_outbox SET state = 'sending', attempts = 1, claimed_at = $2, claim_token = $3, send_started_at = $2 WHERE campaign_id = $1", [campaign.id, DAY1.toISOString(), crypto.randomUUID()]);
+  const transport = fakeTransport();
+  await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+  assert.equal(transport.calls.length, 0);
+  const { rows } = await t.db.query('SELECT household_id, id, state, last_error FROM email_outbox WHERE campaign_id = $1 ORDER BY household_id', [campaign.id]);
+  for (const row of rows) assert.deepEqual([row.state, row.last_error], ['failed', 'delivery_unknown']);
+  return { campaign, outbox: Object.fromEntries(rows.map((row) => [row.household_id, row.id])) };
+}
+
+async function rawCall(t, cookie, path) {
+  const response = await handlePgRequest(request(path, { cookie }), t.env);
+  // ignoreBOM: zachowujemy BOM UTF-8, żeby sprawdzić, że plik go ma (Response.text() go usuwa).
+  const text = new TextDecoder('utf-8', { ignoreBOM: true }).decode(await response.arrayBuffer());
+  return { status: response.status, headers: response.headers, text };
+}
+
+test('#139 report CSV: same aggregates as JSON, no addresses/names/household ids/title, download is logged, role boundaries', async () => {
+  const t = await setup();
+  try {
+    const { campaign, outbox } = await unknownCampaign(t, ['h1', 'h2']);
+    await t.call(t.board, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId: outbox.h1, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
+    });
+    const json = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/report`);
+    assert.equal(json.status, 200);
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.report.exported'"), 0, 'odczyt JSON nie tworzy wpisu eksportu');
+
+    const csv = await rawCall(t, t.treasurer, `/api/email/campaigns/${campaign.id}/report?format=csv`);
+    assert.equal(csv.status, 200);
+    assert.match(csv.headers.get('content-type'), /^text\/csv/);
+    assert.match(csv.headers.get('content-disposition'), /^attachment; filename="raport-doreczen-[A-Za-z0-9_-]+\.csv"$/);
+    assert.equal(csv.headers.get('cache-control'), 'no-store');
+    assert.ok(csv.text.startsWith('﻿'));
+    assert.ok(!/@|example\.invalid|h1|h2|Opiekun|Testowy|Uczeń|Przypomnienie jesienne/.test(csv.text), `CSV bez danych osobowych i wolnego tekstu: ${csv.text}`);
+    const lines = csv.text.slice(1).trim().split('\r\n');
+    assert.equal(lines[2], 'Sekcja;Kod;Liczba');
+    const cells = Object.fromEntries(lines.slice(3).map((line) => { const [section, key, n] = line.split(';'); return [`${section}.${key}`, Number(n)]; }));
+    for (const [key, n] of Object.entries(json.body.summary)) assert.equal(cells[`summary.${key}`], n, key);
+    assert.equal(cells['summary.delivery_unknown'], 2);
+    assert.equal(cells['summary.delivery_unknown_unresolved'], 1);
+    assert.equal(cells['resolutions.confirmed_delivered'], 1);
+    assert.equal(cells['outbox.failed'], 2);
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.report.exported' AND entity_id = $1 AND actor_id = 'u-tr'", [campaign.id]), 1);
+
+    const badFormat = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/report?format=xlsx`);
+    assert.deepEqual([badFormat.status, badFormat.body], [400, { error: 'invalid_format' }]);
+    assert.equal((await rawCall(t, null, `/api/email/campaigns/${campaign.id}/report?format=csv`)).status, 401);
+    const rep = await seedUserSession(t.db, { userId: 'u-rep139c', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    const admin = await seedUserSession(t.db, { userId: 'u-adm139c', mfa: true, roles: [{ role: 'admin' }] });
+    const classBoard = await seedUserSession(t.db, { userId: 'u-cbd139c', mfa: true, roles: [{ role: 'board', classId: 'c1', schoolYearId: YEAR }] });
+    const noMfa = await seedUserSession(t.db, { userId: 'u-tr139c', mfa: false, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
+    for (const cookie of [rep, admin, classBoard, noMfa]) {
+      const denied = await rawCall(t, cookie, `/api/email/campaigns/${campaign.id}/report?format=csv`);
+      assert.equal(denied.status, 403);
+      assert.doesNotMatch(denied.headers.get('content-type') ?? '', /csv/);
+    }
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.report.exported'"), 1, 'odmowa nie tworzy wpisu eksportu');
+    assert.equal(networkGuardCalls(), 0);
+  } finally { await t.close(); }
+});
+
+test('#139 attention list shows the recorded resolution; resolving never changes the outbox row', async () => {
+  const t = await setup();
+  try {
+    const { campaign, outbox } = await unknownCampaign(t, ['h1', 'h2']);
+    const before = await t.call(t.board, `/api/email/campaigns/${campaign.id}/attention`);
+    assert.deepEqual(before.body.rows.map((row) => row.resolution), [null, null]);
+    const ok = await t.call(t.board, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId: outbox.h2, resolution: 'confirmed_not_sent', evidenceCode: 'brevo_log_no_event' },
+    });
+    assert.equal(ok.status, 201);
+    const after = await t.call(t.board, `/api/email/campaigns/${campaign.id}/attention`);
+    const byId = Object.fromEntries(after.body.rows.map((row) => [row.outboxId, row]));
+    assert.equal(byId[outbox.h1].resolution, null);
+    assert.equal(byId[outbox.h2].resolution, 'confirmed_not_sent');
+    assert.deepEqual([byId[outbox.h2].state, byId[outbox.h2].lastError], ['failed', 'delivery_unknown']);
+    assert.ok(!JSON.stringify(after.body).includes('h2-g1@'), 'adres tylko zamaskowany');
+  } finally { await t.close(); }
+});
+
+test('#139 email:reconcile proposals: webhook evidence only, never confirmed_not_sent, writes nothing, no network', async () => {
+  const t = await setup();
+  try {
+    const { campaign, outbox } = await unknownCampaign(t, ['h1', 'h2', 'h3', 'h4']);
+    const hook = async (event, household, id) => {
+      const res = await handlePgRequest(webhookRequest(
+        { event, email: `${household}-g1@example.invalid`, 'X-Mailin-custom': outbox[household], ts_event: 1791187200 + id, id },
+        `Bearer ${WEBHOOK_SECRET}`,
+      ), t.env);
+      assert.equal(res.status, 200);
+    };
+    await hook('request', 'h1', 1);
+    await hook('delivered', 'h1', 2);
+    await hook('hard_bounce', 'h2', 3);
+    await hook('deferred', 'h3', 4);
+    // h4: brak jakiegokolwiek zdarzenia. Druga kampania (h1, h3–h5; adres h2
+    // zablokowany po hard_bounce), wszystkie delivery_unknown — sprawdza filtr --campaign.
+    await unknownCampaign(t, ['h5']);
+
+    const tables = ['email_outbox_resolutions', 'audit_events', 'email_outbox', 'email_webhook_events'];
+    const counts = async () => Object.fromEntries(await Promise.all(tables.map(async (name) => [name, await t.count(`SELECT count(*)::int AS n FROM ${name}`)])));
+    const statesBefore = (await t.db.query('SELECT id, state, last_error, updated_at FROM email_outbox ORDER BY id')).rows;
+    const before = await counts();
+
+    let fetchCalls = 0;
+    const fetchImpl = async () => { fetchCalls += 1; return new Response('{"events":[]}', { status: 200 }); };
+    const result = await proposeResolutions(t.db, { campaignId: campaign.id, fetchImpl });
+    const byId = Object.fromEntries(result.rows.map((row) => [row.outboxId, row]));
+    assert.equal(result.rows.length, 4);
+    assert.deepEqual([byId[outbox.h1].proposal, byId[outbox.h1].evidenceCode, byId[outbox.h1].source], ['confirmed_delivered', 'webhook_delivered', 'webhook']);
+    assert.deepEqual(byId[outbox.h1].events, ['delivered', 'request']);
+    assert.equal(byId[outbox.h2].proposal, 'review_bounced');
+    assert.equal(byId[outbox.h3].proposal, 'review_accepted_by_provider');
+    assert.deepEqual([byId[outbox.h4].proposal, byId[outbox.h4].source], ['check_brevo_logs', 'none']);
+    assertEvery(result.rows, (row) => row.proposal !== 'confirmed_not_sent', 'skrypt nigdy nie proponuje confirmed_not_sent');
+    const text = JSON.stringify(result);
+    assert.ok(!/@|example\.invalid|h[1-5]-g|Opiekun|Testowy/.test(text), `bez danych osobowych: ${text}`);
+    assert.equal(fetchCalls, 0, 'bez queryBrevo brak zapytań do dostawcy');
+
+    // Zapisane rozstrzygnięcie wyłącza wiersz z propozycji.
+    const resolved = await t.call(t.treasurer, `/api/email/campaigns/${campaign.id}/resolutions`, {
+      method: 'POST', body: { outboxId: outbox.h1, resolution: 'confirmed_delivered', evidenceCode: byId[outbox.h1].evidenceCode },
+    });
+    assert.equal(resolved.status, 201);
+    const afterResolve = await proposeResolutions(t.db, { campaignId: campaign.id });
+    assert.deepEqual(afterResolve.rows.map((row) => row.outboxId).sort(), [outbox.h2, outbox.h3, outbox.h4].sort());
+    const beforeScan = await counts();
+    // Bez filtra kampanii: także wiersz drugiej kampanii.
+    const all = await proposeResolutions(t.db, {});
+    assert.equal(all.rows.length, 3 + 4);
+    assert.deepEqual(await counts(), beforeScan, 'propozycje niczego nie zapisują');
+    assert.equal(before.email_outbox, beforeScan.email_outbox);
+    assert.deepEqual((await t.db.query('SELECT id, state, last_error, updated_at FROM email_outbox ORDER BY id')).rows, statesBefore);
+
+    // queryBrevo pod node --test: odmowa bez fetch (wiersze i tak nie mają message-id).
+    const guarded = await proposeResolutions(t.db, { campaignId: campaign.id, queryBrevo: true, apiKey: 'synthetic-key', fetchImpl });
+    assertEvery(guarded.rows, (row) => row.lookupCode === undefined || row.lookupCode === 'no_message_id', 'brak message-id = brak zapytania');
+    await t.db.query("UPDATE email_outbox SET provider_message_id = '<synthetic-4@smtp.example.invalid>' WHERE id = $1", [outbox.h4]);
+    const underRunner = await proposeResolutions(t.db, { campaignId: campaign.id, queryBrevo: true, apiKey: 'synthetic-key', fetchImpl });
+    assert.equal(underRunner.rows.find((row) => row.outboxId === outbox.h4).lookupCode, 'lookup_disabled_in_test');
+    assert.equal(fetchCalls, 0);
+
+    // Atrapa fetch (processEnv bez NODE_TEST_CONTEXT): jedno zapytanie po message-id, bez adresu.
+    const requests = [];
+    const fakeFetch = async (url, init) => {
+      requests.push({ url, init });
+      return new Response(JSON.stringify({ events: [{ event: 'requests', email: 'h4-g1@example.invalid' }, { event: 'delivered', email: 'h4-g1@example.invalid' }] }), { status: 200 });
+    };
+    const withApi = await proposeResolutions(t.db, { campaignId: campaign.id, queryBrevo: true, apiKey: 'synthetic-key', fetchImpl: fakeFetch, processEnv: {} });
+    const h4 = withApi.rows.find((row) => row.outboxId === outbox.h4);
+    assert.deepEqual([h4.source, h4.proposal, h4.evidenceCode, h4.lookupCode], ['brevo_api', 'confirmed_delivered', 'brevo_api_delivered', 'ok']);
+    assert.deepEqual(h4.events, ['delivered', 'request']);
+    assert.ok(!JSON.stringify(withApi).includes('@example.invalid'), 'adres z odpowiedzi dostawcy nie trafia do wyniku');
+    assert.equal(requests.length, 1);
+    const asked = new URL(requests[0].url);
+    assert.equal(`${asked.origin}${asked.pathname}`, 'https://api.brevo.com/v3/smtp/statistics/events');
+    assert.equal(asked.searchParams.get('messageId'), '<synthetic-4@smtp.example.invalid>');
+    assert.equal(asked.searchParams.get('email'), null, 'adres odbiorcy nie jest wysyłany do dostawcy');
+    assert.equal(requests[0].init.method, 'GET');
+    assert.equal(requests[0].init.body, undefined);
+    assert.deepEqual(await counts(), beforeScan, 'także z zapytaniem do dostawcy nic nie jest zapisywane');
+    assert.equal(networkGuardCalls(), 0);
   } finally { await t.close(); }
 });
