@@ -164,6 +164,28 @@ body:has(> header.shell-header) main h1 {
   header.shell-header > #shell-account > button { order: 2; }
 }
 
+/* Tryb wysokiego kontrastu Windows (forced-colors): box-shadow znika, a kolor
+   #b3262d zastępuje kolor systemowy — aktywna pozycja wyglądałaby jak każdy inny
+   link. Reguły forced-colors w styles.css paneli (`nav a.active`) mają niższą
+   szczegółowość niż `header.shell-header #shell-nav a` (border: 0,
+   text-decoration: none), więc nie działały w nagłówku powłoki. Tu ten sam
+   selektor co reguła bazowa: obramowanie i podkreślenie kolorami systemowymi,
+   niezależne od tła. Padding skrócony o grubość obramowania — bez przesunięcia
+   układu. Blok stoi za regułą telefonu (@media (max-width: 480px)) — testy
+   statyczne traktują pierwszy @media w pliku jako regułę telefonu. Aktywny link
+   ma też aria-current="page" (shared/shell.js). */
+@media (forced-colors: active) {
+  header.shell-header #shell-nav a.active {
+    color: LinkText;
+    box-shadow: none;
+    border-bottom: 3px solid Highlight;
+    padding-bottom: calc(.6rem - 3px);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: .2em;
+  }
+}
+
 /* #152: krótka podpowiedź przy polach wolnego tekstu zapisywanych na stałe. */
 .pii-hint { display: block; margin-top: .25rem; color: #555; font-size: .85rem; font-weight: 400; line-height: 1.35; }
 
