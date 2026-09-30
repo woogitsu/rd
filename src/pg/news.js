@@ -1281,7 +1281,11 @@ export async function handle(request, env, url, json) {
       : await revokePhoto(env.db, actor, { ...pick(data, ['reason', 'confirmPersonalData']), photoId });
     return json({ photo: result.photo, replayed: result.replayed }, 200, noStore);
   } catch (error) {
-    if (error instanceof NewsError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof NewsError) {
+      // #184: ślad odmowy (poza transakcją żądania — ta już się zakończyła).
+      if (error.status === 403 && error.code === 'forbidden') await env?.onAccessDenied?.();
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     throw error;
   }
 }

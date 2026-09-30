@@ -23,7 +23,10 @@
 
 import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, mfaAwareForbiddenCode } from '../authorization.js';
+import {
+  isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, mfaAwareForbiddenCode,
+  withDeferredAccessDenied,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
@@ -397,7 +400,9 @@ async function requireContext(request, env, roles, schoolYearId) {
 }
 
 function requireYear(context, roles, schoolYearId) {
-  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) {
+    throw withDeferredAccessDenied(new RequestError('forbidden', 403), context, { roles });
+  }
 }
 
 function mapDatabaseError(error) {
@@ -2677,6 +2682,9 @@ async function auditReport(request, env, url, json) {
       // #161: sam brak MFA (rola audit/board/treasurer i rok pasują) zwraca
       // mfa_required/mfa_enrollment_required zamiast ogólnego forbidden.
       const code = await mfaAwareForbiddenCode(context, { roles: REPORT_ROLES, schoolYearId, requireMfa: true }, env);
+      // #184: ślad odmowy raportu Komisji Rewizyjnej (przed migawką raportu);
+      // kody MFA — bez zdarzenia, jak w pozostałych bramkach.
+      if (code === 'forbidden') await logAccessDenied(env, context, { roles: REPORT_ROLES }, request);
       throw new RequestError(code, 403);
     }
     await recordArchiveRead(env.db, {
@@ -2763,7 +2771,11 @@ export async function handle(request, env, url, json) {
     if (action === 'abandon') return await abandonReconciliation(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof RequestError) {
+      // #184: odmowa zakresu roku z wnętrza transakcji — ślad po jej wycofaniu.
+      await logDeferredAccessDenied(env, error, request);
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     throw error;
   }
 }

@@ -37,7 +37,7 @@
 // klasy), żadnego słowa „dłużnik”/„zaległość” — AGENTS.md, docs/PRODUCT.md.
 // Odpowiedź nie zawiera identyfikatorów gospodarstw, imion ani e-maili.
 
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { readSnapshot } from '../db-snapshot.js';
 import { insertAuditEvent } from '../audit.js';
 import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
@@ -123,7 +123,11 @@ async function authorize(request, env, url, json) {
   // Przydział szeroki (admin/zarząd całej szkoły lub roku) albo klasowy
   // (zarząd klasy): klasowy zawęża wyniki do przypisanych klas.
   const scope = familiesScope(context, BASE_ROLES);
-  if (!scope.any) return { response: json({ error: 'forbidden' }, 403) };
+  if (!scope.any) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles: BASE_ROLES }, request);
+    return { response: json({ error: 'forbidden' }, 403) };
+  }
 
   const schoolYearId = url.searchParams.get('schoolYearId');
   if (!ID_PATTERN.test(schoolYearId ?? '')) return { response: json({ error: 'invalid_request' }, 400) };

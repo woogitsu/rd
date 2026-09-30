@@ -65,3 +65,24 @@ test('local audit() helpers are called only with the transaction (tx)', async ()
   assert.ok(helpers >= 3, `oczekiwane pomocniki audit(tx, …) w events/meetings/news (jest ${helpers})`);
   assert.deepEqual(offenders, []);
 });
+
+// #184 etap 2: ślad odmowy (`access.denied`) zapisuje się WYŁĄCZNIE poza
+// transakcją żądania — logAccessDenied dostaje `env` (własna krótka
+// transakcja), nigdy `tx`. Odmowa wykryta wewnątrz transakcji niesie kontekst
+// na błędzie (withDeferredAccessDenied), a moduł, który tak robi, musi go
+// zapisać w zewnętrznym catch (logDeferredAccessDenied) — inaczej ślad ginie.
+test('logAccessDenied only with env (outside the request transaction); deferred denials are drained', async () => {
+  const offenders = [];
+  for (const file of await sources('src/pg')) {
+    const text = await readFile(join(root, file), 'utf8');
+    for (const match of text.matchAll(/(?<![\w.])logAccessDenied\(\s*([\w.]+)/g)) {
+      const before = text.slice(Math.max(0, match.index - 15), match.index);
+      if (/function\s+$/.test(before)) continue;
+      if (match[1] !== 'env') offenders.push(`${file}: logAccessDenied(${match[1]}, …)`);
+    }
+    const defers = /withDeferredAccessDenied\(\s*new /.test(text);
+    const drains = /await logDeferredAccessDenied\(\s*env,/.test(text);
+    if (defers && !drains) offenders.push(`${file}: withDeferredAccessDenied bez logDeferredAccessDenied`);
+  }
+  assert.deepEqual(offenders, []);
+});

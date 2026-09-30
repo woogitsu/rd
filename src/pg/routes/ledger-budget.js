@@ -36,7 +36,9 @@
 
 import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
+import {
+  isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, withDeferredAccessDenied,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
@@ -137,7 +139,9 @@ async function requireAccess(request, env, roles, schoolYearId) {
 }
 
 function requireYear(context, roles, schoolYearId) {
-  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) {
+    throw withDeferredAccessDenied(new RequestError('forbidden', 403), context, { roles });
+  }
 }
 
 function mapDatabaseError(error) {
@@ -619,7 +623,11 @@ export async function handle(request, env, url, json) {
     if (isAdoptions) return await createAdoption(request, env, json);
     return await reviseLine(request, env, decodeId(revision[1]), json);
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof RequestError) {
+      // #184: odmowa zakresu roku z wnętrza transakcji — ślad po jej wycofaniu.
+      await logDeferredAccessDenied(env, error, request);
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     throw error;
   }
 }

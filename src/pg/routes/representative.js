@@ -25,7 +25,7 @@
 // z liczników i z listy „do kartki papierowej” tego pulpitu, tak samo jak
 // z listy klasy #95 i migawki kampanii. Follow-up po #294.
 
-import { loadAuthorizationContext } from '../authorization.js';
+import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { authorizedClassIds, resolveScope } from '../scope.js';
 import { emailHash, normalizeEmail } from '../../email/content.js';
 
@@ -47,7 +47,11 @@ export async function handle(request, env, url, json) {
   if (!context) return json({ error: 'unauthenticated' }, 401);
 
   const hasRepresentativeRole = resolveScope(context, { roles: ['representative'] }).any;
-  if (!hasRepresentativeRole) return json({ error: 'forbidden' }, 403);
+  if (!hasRepresentativeRole) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles: ['representative'] }, request);
+    return json({ error: 'forbidden' }, 403);
+  }
 
   const schoolYearId = url.searchParams.get('schoolYearId');
   if (!ID_PATTERN.test(schoolYearId ?? '')) return json({ error: 'invalid_request' }, 400);

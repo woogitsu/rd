@@ -5,9 +5,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPgHandler, handlePgRequest, ROUTES } from '../src/pg/app.js';
-import { logAccessDenied, requireAccess } from '../src/pg/authorization.js';
+import {
+  loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, requireAccess, withDeferredAccessDenied,
+} from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import {
+  createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession,
+} from './helpers/pg.js';
 
 const financeProbe = {
   name: 'finance-probe',
@@ -229,3 +233,152 @@ test('assertNoPii rejects free text in code-only fields, accepts a code', () => 
   assert.throws(() => assertNoPii({ status: 'Zatwierdzone przez zarząd' }), /audit_metadata_pii/);
   assert.doesNotThrow(() => assertNoPii({ status: 'sending' }));
 });
+
+// ---------- #184 etap 2: ślad odmowy w bramkach pozostałych modułów ----------
+
+// Jedno żądanie → status i kod odpowiedzi (semantyka 403 bez zmian).
+async function statusOf(env, path, options) {
+  const res = await handlePgRequest(request(path, options), env);
+  const text = await res.text();
+  return { status: res.status, error: text ? JSON.parse(text).error : null };
+}
+
+async function expectOneDenial(db, actorId, route, method, count = 1) {
+  const events = await accessDeniedEvents(db, actorId);
+  assert.deepEqual(events.map((event) => [event.route, event.method, event.count]), [[route, method, count]]);
+  assert.doesNotThrow(() => assertNoPii(events[0].metadata));
+  return events[0];
+}
+
+test('families: audit role on the class list and a class-scoped board adding a household → 403 + access.denied', async () => withDb(async (db, env) => {
+  const audit = await seedUserSession(db, { userId: 'kr-fam', mfa: true, roles: [{ role: 'audit' }] });
+  assert.deepEqual(await statusOf(env, '/api/classes', { cookie: audit }), { status: 403, error: 'forbidden' });
+  const event = await expectOneDenial(db, 'kr-fam', '/api/classes', 'GET');
+  assert.equal(event.metadata.requiredRole, 'admin,board,treasurer,representative');
+
+  const boardA = await seedUserSession(db, { userId: 'board-fam', mfa: true, roles: [{ role: 'board', classId: 'c-1a' }] });
+  const body = { householdId: 'h-x', isPrimary: false, startsOn: '2026-09-01', reason: 'Dodanie syntetyczne' };
+  assert.deepEqual(await statusOf(env, '/api/students/s-x/households', { method: 'POST', cookie: boardA, body }),
+    { status: 403, error: 'forbidden' });
+  await expectOneDenial(db, 'board-fam', '/api/students/s-x/households', 'POST');
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM student_households')).rows[0].n, 0);
+}));
+
+test('events: representative creating an event for a class outside the assignment; double click → one event, counter 2', async () => withDb(async (db, env) => {
+  await seedClass(db, { id: 'c-1b' });
+  const cookie = await representative(db, 'rep-ev');
+  const create = (classId, key) => statusOf(env, '/api/events', {
+    method: 'POST', cookie, headers: { 'Idempotency-Key': key },
+    body: { schoolYearId: 'y-test', classId, title: 'Wydarzenie syntetyczne', startsAt: '2026-11-12T18:30', audience: 'internal' },
+  });
+  // Własna klasa: bez śladu odmowy.
+  assert.equal((await create('c-1a', 'rep-ev-own-0001')).status, 201);
+  assert.deepEqual(await accessDeniedEvents(db, 'rep-ev'), []);
+  // Podwójne kliknięcie (ten sam klucz) na klasie spoza przydziału.
+  assert.deepEqual(await create('c-1b', 'rep-ev-other-0001'), { status: 403, error: 'forbidden' });
+  assert.deepEqual(await create('c-1b', 'rep-ev-other-0001'), { status: 403, error: 'forbidden' });
+  await expectOneDenial(db, 'rep-ev', '/api/events', 'POST', 2);
+  assert.equal((await db.query(`SELECT count(*)::int AS n FROM events WHERE class_id = 'c-1b'`)).rows[0].n, 0);
+}));
+
+test('meetings: representative listing meetings → 403 + access.denied (GET)', async () => withDb(async (db, env) => {
+  const cookie = await representative(db, 'rep-mt');
+  assert.deepEqual(await statusOf(env, '/api/meetings?schoolYearId=y-test', { cookie }), { status: 403, error: 'forbidden' });
+  const event = await expectOneDenial(db, 'rep-mt', '/api/meetings', 'GET');
+  assert.equal(event.metadata.requiredRole, null);
+}));
+
+test('news: representative creating a school-wide post → 403 + access.denied (POST)', async () => withDb(async (db, env) => {
+  const cookie = await representative(db, 'rep-nw');
+  assert.deepEqual(await statusOf(env, '/api/news', {
+    method: 'POST', cookie, headers: { 'Idempotency-Key': 'rep-nw-key-0001' },
+    body: { schoolYearId: 'y-test', classId: null, title: 'Wpis syntetyczny', body: 'Treść syntetyczna.' },
+  }), { status: 403, error: 'forbidden' });
+  await expectOneDenial(db, 'rep-nw', '/api/news', 'POST');
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM news_posts')).rows[0].n, 0);
+}));
+
+test('exports: representative yearly export and a roster of a class outside the assignment → 403 + access.denied', async () => withDb(async (db, env) => {
+  await seedClass(db, { id: 'c-1b' });
+  const cookie = await representative(db, 'rep-ex');
+  assert.deepEqual(await statusOf(env, '/api/exports', { method: 'POST', cookie, body: { schoolYearId: 'y-test' } }),
+    { status: 403, error: 'forbidden' });
+  await expectOneDenial(db, 'rep-ex', '/api/exports', 'POST');
+  assert.deepEqual(await statusOf(env, '/api/exports/class-roster?classId=c-1b', { cookie }), { status: 403, error: 'forbidden' });
+  const routes = (await accessDeniedEvents(db, 'rep-ex')).map((event) => [event.route, event.method]);
+  assert.deepEqual(routes, [['/api/exports', 'POST'], ['/api/exports/class-roster', 'GET']]);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM export_runs')).rows[0].n, 0);
+}));
+
+test('year close: representative reading the close status → 403 + access.denied', async () => withDb(async (db, env) => {
+  const cookie = await representative(db, 'rep-yc');
+  assert.deepEqual(await statusOf(env, '/api/year-close/y-test', { cookie }), { status: 403, error: 'forbidden' });
+  await expectOneDenial(db, 'rep-yc', '/api/year-close/y-test', 'GET');
+}));
+
+test('audit committee report: representative → 403 + access.denied, no report.audit.generated', async () => withDb(async (db, env) => {
+  const cookie = await representative(db, 'rep-kr');
+  assert.deepEqual(await statusOf(env, '/api/reports/audit?schoolYearId=y-test&format=json', { cookie }), { status: 403, error: 'forbidden' });
+  await expectOneDenial(db, 'rep-kr', '/api/reports/audit', 'GET');
+  const { rows } = await db.query(`SELECT action FROM audit_events WHERE actor_id = 'rep-kr'`);
+  assert.deepEqual(rows.map((row) => row.action), ['access.denied']);
+}));
+
+test('board overview and representative overview: role outside the gate → 403 + access.denied', async () => withDb(async (db, env) => {
+  const cookie = await representative(db, 'rep-bo');
+  assert.deepEqual(await statusOf(env, '/api/board/overview?schoolYearId=y-test', { cookie }), { status: 403, error: 'forbidden' });
+  const treasurer = await seedUserSession(db, { userId: 'tr-ro', mfa: true, roles: [{ role: 'treasurer' }] });
+  assert.deepEqual(await statusOf(env, '/api/representative/overview?schoolYearId=y-test', { cookie: treasurer }), { status: 403, error: 'forbidden' });
+  await expectOneDenial(db, 'rep-bo', '/api/board/overview', 'GET');
+  await expectOneDenial(db, 'tr-ro', '/api/representative/overview', 'GET');
+}));
+
+test('denial detected inside the request transaction (payment of another year) → 403, event written after rollback', async () => withDb(async (db, env) => {
+  await seedSchoolYear(db, 'y-other', { startsOn: '2025-09-01', endsOn: '2026-08-31' });
+  await seedEnrolledHousehold(db, 'h1', ['y-test']);
+  const owner = await seedUserSession(db, { userId: 'tr-own', mfa: true, roles: [{ role: 'treasurer', schoolYearId: 'y-test' }] });
+  const created = await handlePgRequest(request('/api/payments', {
+    method: 'POST', cookie: owner, headers: { 'Idempotency-Key': 'tr-own-pay-0001' },
+    body: { householdId: 'h1', schoolYearId: 'y-test', amountCents: 7500, receivedOn: '2026-09-20', method: 'bank', reference: 'synthetic-reference' },
+  }), env);
+  assert.equal(created.status, 201);
+  const paymentId = (await created.json()).payment.id;
+
+  // Skarbnik innego roku: rola i MFA pasują (bramka przed transakcją przepuszcza),
+  // odmowa zakresu roku zapada dopiero po odczycie wpłaty w transakcji.
+  const other = await seedUserSession(db, { userId: 'tr-other', mfa: true, roles: [{ role: 'treasurer', schoolYearId: 'y-other' }] });
+  const correct = () => statusOf(env, `/api/payments/${paymentId}/corrections`, {
+    method: 'POST', cookie: other, headers: { 'Idempotency-Key': 'tr-other-cor-0001' },
+    body: { amountCents: 5000, reason: 'Korekta syntetyczna' },
+  });
+  assert.deepEqual(await correct(), { status: 403, error: 'forbidden' });
+  assert.deepEqual(await correct(), { status: 403, error: 'forbidden' });
+  const event = await expectOneDenial(db, 'tr-other', `/api/payments/${paymentId}/corrections`, 'POST', 2);
+  assert.equal(event.metadata.requiredRole, 'admin,board,treasurer');
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM payment_corrections')).rows[0].n, 0);
+  const { rows } = await db.query(`SELECT action FROM audit_events WHERE actor_id = 'tr-other'`);
+  assert.deepEqual(rows.map((row) => row.action), ['access.denied']);
+}));
+
+test('deferred denial: logged once per error, never without an actor', async () => withDb(async (db) => {
+  const cookie = await representative(db, 'rep-df');
+  const context = await loadAuthorizationContext(request('/api/x', { cookie }), { db });
+  const error = withDeferredAccessDenied(new Error('forbidden'), context, { roles: ['treasurer'] });
+  await logDeferredAccessDenied({ db }, error, request('/api/probe/deferred', { method: 'POST', body: {} }));
+  await logDeferredAccessDenied({ db }, error, request('/api/probe/deferred', { method: 'POST', body: {} }));
+  await logDeferredAccessDenied({ db }, new Error('other'), request('/api/probe/deferred', { method: 'POST', body: {} }));
+  await logDeferredAccessDenied({ db }, withDeferredAccessDenied(new Error('x'), null, null), request('/api/probe/deferred'));
+  await expectOneDenial(db, 'rep-df', '/api/probe/deferred', 'POST', 1);
+}));
+
+test('MFA-only denial (403 mfa_* code) leaves no access.denied; only `forbidden` does', async () => withDb(async (db, env) => {
+  const cookie = await seedUserSession(db, { userId: 'rep-nomfa', mfa: false, roles: [{ role: 'representative', classId: 'c-1a' }] });
+  // Własna klasa, konto bez czynnika: kod prowadzący do zapisu MFA (#161), bez śladu.
+  assert.deepEqual(await statusOf(env, '/api/exports/class-roster?classId=c-1a', { cookie }),
+    { status: 403, error: 'mfa_enrollment_required' });
+  assert.deepEqual(await accessDeniedEvents(db, 'rep-nomfa'), []);
+  // Raport KR: rola spoza bramki → `forbidden` i ślad.
+  assert.deepEqual(await statusOf(env, '/api/reports/audit?schoolYearId=y-test&format=json', { cookie }),
+    { status: 403, error: 'forbidden' });
+  await expectOneDenial(db, 'rep-nomfa', '/api/reports/audit', 'GET');
+}));

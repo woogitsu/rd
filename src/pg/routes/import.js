@@ -21,7 +21,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { FIELDS, validateRows } from '../../../import/core.js';
 import { insertAuditEvent } from '../audit.js';
-import { requireAccess } from '../authorization.js';
+import { logAccessDenied, requireAccess } from '../authorization.js';
 import { resolveScope, scopeSqlParams } from '../scope.js';
 import { isProductionLikeEnv } from '../../app-env.js';
 import { createJsonReader } from '../input.js';
@@ -616,9 +616,13 @@ async function commit(env, actorId, payload, idempotencyKey) {
   });
 }
 
-async function options(env, context, json) {
+async function options(request, env, context, json) {
   const scope = importScope(context, null);
-  if (!scope.schoolWide) return json({ error: 'forbidden' }, 403);
+  if (!scope.schoolWide) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, ACCESS, request);
+    return json({ error: 'forbidden' }, 403);
+  }
   const [allYears, allowed] = scopeSqlParams(scope);
   const { rows } = await env.db.query(
     `SELECT y.id, y.label, y.starts_on, COALESCE(array_agg(c.name ORDER BY c.name) FILTER (WHERE c.id IS NOT NULL), '{}') AS classes
@@ -651,7 +655,7 @@ export async function handle(request, env, url, json) {
   if (access.response) return access.response;
   if (importDisabled(env)) return json({ error: 'import_disabled' }, 403);
   const { context } = access;
-  if (route === 'options') return options(env, context, json);
+  if (route === 'options') return options(request, env, context, json);
 
   try {
     const idempotencyKey = request.headers.get('Idempotency-Key');
@@ -659,7 +663,11 @@ export async function handle(request, env, url, json) {
       throw new ImportError(400, 'idempotency_key_required');
     }
     const payload = parseImportPayload(await readJsonBody(request));
-    if (!importScope(context, payload.schoolYearId).schoolWide) return json({ error: 'forbidden' }, 403);
+    if (!importScope(context, payload.schoolYearId).schoolWide) {
+      // #184: ślad odmowy 403 (przed transakcją żądania).
+      await logAccessDenied(env, context, ACCESS, request);
+      return json({ error: 'forbidden' }, 403);
+    }
 
     if (route === 'preview') {
       const { fingerprint, plan } = await prepare(env.db, payload);

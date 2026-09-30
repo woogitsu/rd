@@ -26,7 +26,7 @@
 // e-maila kodem (poza zakresem tego PR).
 
 import { createHash, randomBytes } from 'node:crypto';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { createJsonReader } from '../input.js';
@@ -80,7 +80,11 @@ const readJson = createJsonReader({
 async function requireBoardContext(request, env) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorizedScoped(context, { roles: EDIT_ROLES })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles: EDIT_ROLES })) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles: EDIT_ROLES }, request);
+    throw new RequestError('forbidden', 403);
+  }
   return context;
 }
 
