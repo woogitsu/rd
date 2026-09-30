@@ -139,8 +139,8 @@ test('entry lists all evidence: primary document and documents attached later; a
 
   const csv = await handlePgRequest(request(`/api/ledger/export.csv?schoolYearId=${YEAR}`, { cookie: cookies.treasurer }), env);
   const lines = (await csv.text()).split('\r\n');
-  assert.ok(lines[0].endsWith(';liczba_dowodow;id_dowodow'));
-  assert.ok(lines[1].endsWith(`;2;${primary.id} ${attached.body.document.id}`));
+  assert.ok(lines[0].endsWith(';liczba_dowodow;id_dowodow;zastapiony_przez'), 'kolumny dowodów przed kolumną łańcucha #144 (ostatnia)');
+  assert.ok(lines[1].endsWith(`;2;${primary.id} ${attached.body.document.id};`), "zwykły wpis: pusta kolumna zastapiony_przez na końcu");
 
   // Plik z błędnym typem przy dołączaniu do wpisu -> odmowa, brak powiązania.
   const wrongType = await call(env, `/api/documents?kind=financial&schoolYearId=${YEAR}&linkedEntityType=ledger_entry&linkedEntityId=${entry.id}`, {
