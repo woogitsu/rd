@@ -75,6 +75,30 @@ export function baselineSecurityHeaders(publicBaseUrl) {
 export const JSON_CSP = "default-src 'none'; frame-ancestors 'none'";
 function jsonBaseline(baseline) { return { ...baseline, 'Content-Security-Policy': JSON_CSP }; }
 
+// #185: trasy przyjmujące surowe pliki (do 10-25 MB). Ich ciało NIE jest
+// buforowane tutaj — trafia do Request jako strumień, a trasa czyta je
+// (readLimited) dopiero po sprawdzeniu sesji, uprawnień, typu i limitu
+// równoczesnych uploadów. Wszystkie inne trasy (w tym import CSV/XLSX
+// i wyciągi bankowe, wysyłane jako JSON) mają domyślny limit 1 MiB.
+export const NEWS_PHOTO_FILE_PATH = /^\/api\/news-photos\/[^/]+\/file$/;
+export function isStreamedUploadRoute(method, pathname) {
+  return method === 'POST' && (pathname === UPLOAD_PATH || NEWS_PHOTO_FILE_PATH.test(pathname));
+}
+
+// Strumień ciała z twardym limitem bajtów niezależnie od Content-Length
+// (chunked albo zaniżona deklaracja). Trasy i tak czytają przez readLimited;
+// to druga linia obrony, gdyby któraś przeczytała ciało inną metodą.
+function limitedBodyStream(request, limit) {
+  let size = 0;
+  return Readable.toWeb(request).pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      size += chunk.byteLength;
+      if (size > limit) controller.error(new RangeError('request_too_large'));
+      else controller.enqueue(chunk);
+    },
+  }));
+}
+
 async function requestBody(request, limit = MAX_BODY_BYTES) {
   const length = Number(request.headers['content-length'] ?? 0);
   if (Number.isFinite(length) && length > limit) throw new RangeError('request_too_large');
@@ -331,7 +355,7 @@ export function createNodeHandler({
       // Bez ważnej sesji handler kończy się wcześniej i strumień nigdy nie
       // jest czytany — połączenie jest wtedy zamykane niżej (writeFetchResponse),
       // żeby nieprzeczytane bajty nie zawisły na współdzielonym gnieździe keep-alive.
-      const streamBody = method === 'POST' && url.pathname === UPLOAD_PATH;
+      const streamBody = isStreamedUploadRoute(method, url.pathname);
       let body;
       if (['GET', 'HEAD'].includes(method)) {
         body = undefined;
@@ -339,7 +363,7 @@ export function createNodeHandler({
         const declared = Number(request.headers['content-length']);
         const limit = limitFor(url, method);
         if (Number.isFinite(declared) && declared > limit) throw new RangeError('request_too_large');
-        body = Readable.toWeb(request);
+        body = limitedBodyStream(request, limit);
       } else {
         body = await requestBody(request, limitFor(url, method));
       }
@@ -356,11 +380,22 @@ export function createNodeHandler({
     } catch (error) {
       const tooLarge = error instanceof RangeError && error.message === 'request_too_large';
       if (!tooLarge) logger.error('http_handler_error', describeError(error));
+      if (response.headersSent) {
+        // Odpowiedź już częściowo wysłana — nie da się podmienić statusu.
+        response.destroy();
+        return;
+      }
+      // #185: przy 413 reszta ciała (nawet 25 MB) zostaje nieprzeczytana.
+      // Bez zamknięcia połączenia Node odczytałby ją i odrzucił, żeby
+      // obsłużyć kolejne żądanie keep-alive — zamykamy gniazdo po odpowiedzi.
+      const unreadBody = tooLarge && !request.readableEnded;
       response.writeHead(tooLarge ? 413 : 500, {
         ...jsonBaseline(baseline),
         'Cache-Control': 'no-store',
         'Content-Type': 'application/json; charset=utf-8',
+        ...(unreadBody ? { Connection: 'close' } : {}),
       });
+      if (unreadBody) response.once('finish', () => response.socket?.destroy());
       response.end(JSON.stringify({ error: tooLarge ? 'request_too_large' : 'service_unavailable' }));
     }
   };
