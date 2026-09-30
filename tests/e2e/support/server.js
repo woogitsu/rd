@@ -22,6 +22,7 @@ import { createDraft, submit, approve, publish } from '../../../src/pg/events.js
 import * as news from '../../../src/pg/news.js';
 import * as meetings from '../../../src/pg/meetings.js';
 import { handlePgRequest } from '../../../src/pg/app.js';
+import { insertGrantRequest } from '../../../src/pg/grant-requests.js';
 import { loadMigrations, applyMigrations } from '../../../src/postgres-migrations.js';
 import { startServer } from '../../../src/server.js';
 
@@ -371,6 +372,27 @@ async function main() {
     resetTargets.push({ userId: id, email: `${id}@example.invalid`, password });
   }
 
+  // 5. Wnioski o nadanie roli chronionej (#146, admin-grant-requests.spec.js):
+  //    osobny administrator-zatwierdzający z własnym czynnikiem TOTP (kod nie
+  //    koliduje z testami resetów) i sesjami: stara (krok w górę) i świeża.
+  //    Wnioski złożył drugi administrator (e2e-admin) — oprócz jednego własnego.
+  await seedUser(db, 'e2e-admin-grants');
+  await grantRole(db, 'e2e-admin-grants', 'admin');
+  const grantsTotpSecret = await seedTotpFactor(db, { userId: 'e2e-admin-grants', factorId: 'e2e-f-admin-grants', encryptionKey: mfaKey });
+  const grantsStaleCookie = await seedCookieSession(db, { userId: 'e2e-admin-grants', mfa: true, mfaAgeMinutes: 60 });
+  const grantsFreshCookie = await seedCookieSession(db, { userId: 'e2e-admin-grants', mfa: true });
+  for (const id of ['e2e-grant-target', 'e2e-grant-reject', 'e2e-grant-own']) await seedUser(db, id);
+  const grantRequests = {};
+  await db.transaction(async (tx) => {
+    const seedRequest = async (key, input) => {
+      grantRequests[key] = (await insertGrantRequest(tx, input)).request.id;
+    };
+    await seedRequest('approveGrant', { actorId: 'e2e-admin', kind: 'grant', role: 'treasurer', targetUserId: 'e2e-grant-target', schoolYearId: 'e2e-y-2026' });
+    await seedRequest('approveInvitation', { actorId: 'e2e-admin', kind: 'invitation', role: 'board', targetEmail: 'e2e-zaproszenie-zarzad@example.invalid', schoolYearId: 'e2e-y-2026' });
+    await seedRequest('reject', { actorId: 'e2e-admin', kind: 'grant', role: 'board', targetUserId: 'e2e-grant-reject' });
+    await seedRequest('own', { actorId: 'e2e-admin-grants', kind: 'grant', role: 'board', targetUserId: 'e2e-grant-own' });
+  });
+
   const runtime = {
     port: PORT,
     baseUrl: `http://127.0.0.1:${PORT}`,
@@ -382,6 +404,10 @@ async function main() {
     treasurer: { userId: 'e2e-treasurer', cookie: treasurerCookie },
     treasurerPrint: { userId: 'e2e-treasurer-print', cookie: treasurerPrintCookie, schoolYearId: PRINT_YEAR_ID, rows: PRINT_ROWS },
     adminReset: { userId: 'e2e-admin-reset', totpSecret: adminTotpSecret, staleCookie: adminStaleCookie, staleCookie2: adminStaleCookie2, freshCookie: adminFreshCookie, targets: resetTargets },
+    adminGrants: {
+      userId: 'e2e-admin-grants', totpSecret: grantsTotpSecret, staleCookie: grantsStaleCookie, freshCookie: grantsFreshCookie,
+      requests: grantRequests, invitationEmail: 'e2e-zaproszenie-zarzad@example.invalid',
+    },
     publishedEventTitle: 'Piknik szkolny (syntetyczny)',
     draftEventTitle: 'Szkic niezatwierdzony SEKRET E2E',
     approvedEventTitle: APPROVED_EVENT_TITLE,
