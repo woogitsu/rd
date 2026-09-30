@@ -1,12 +1,16 @@
-// Sprawdzenie gotowości nadawcy przed wysyłką (issue #148). NIE wysyła poczty
-// i NIGDY nie łączy się z API Brevo (`BREVO_API_KEY` nie jest wymagany).
-// Sprawdza wyłącznie konfigurację i publiczne rekordy DNS domeny nadawcy.
+// Sprawdzenie gotowości nadawcy przed wysyłką (issue #148). NIE wysyła poczty.
+// Domyślnie NIE łączy się z API Brevo (`BREVO_API_KEY` nie jest wymagany):
+// sprawdza konfigurację i publiczne rekordy DNS domeny nadawcy.
 //   npm run email:preflight
+//   npm run email:preflight -- --check-account   (#209) dodatkowo jedno
+//     zapytanie tylko do odczytu GET /v3/account z BREVO_API_KEY — wykrywa zły
+//     lub obrócony klucz (401), brak kredytów (402), blokadę IP (403) przed
+//     zatwierdzeniem kampanii. Treść odpowiedzi nie jest czytana.
 // Wynik: lista kodów `ok|missing|warning` na stdout, bez sekretów i bez adresów
 // rodzin. Zależy od decyzji D-17 (domena, adres nadawcy i odpowiedzi).
 
 import { promises as dns } from 'node:dns';
-import { emailConfig, isFreeEmailDomain, senderDomain } from '../src/email/brevo.js';
+import { checkBrevoAccount, emailConfig, isFreeEmailDomain, senderDomain } from '../src/email/brevo.js';
 
 const MIN_WEBHOOK_SECRET_LENGTH = 32;
 
@@ -38,7 +42,11 @@ async function lookupAny(resolveTxt, resolveCname, hostname) {
 
 // `resolveTxt`/`resolveCname` są wstrzykiwane w testach (fałszywy resolver DNS,
 // bez sieci). Domyślnie: `node:dns/promises`.
-export async function runPreflight(env = process.env, { resolveTxt = dns.resolveTxt, resolveCname = dns.resolveCname } = {}) {
+// `checkAccount` (domyślnie false) włącza sprawdzenie klucza; `fetchImpl`
+// i `processEnv` wstrzykiwane w testach (bez sieci).
+export async function runPreflight(env = process.env, {
+  resolveTxt = dns.resolveTxt, resolveCname = dns.resolveCname, checkAccount = false, fetchImpl, processEnv,
+} = {}) {
   const config = emailConfig(env);
   const checks = [];
   const push = (code, status, detail) => checks.push({ code, status, detail });
@@ -84,6 +92,23 @@ export async function runPreflight(env = process.env, { resolveTxt = dns.resolve
     }
   }
 
+  if (checkAccount) {
+    const result = await checkBrevoAccount({
+      apiKey: env.BREVO_API_KEY, appEnv: config.appEnv,
+      ...(fetchImpl ? { fetchImpl } : {}), ...(processEnv ? { processEnv } : {}),
+    });
+    const details = {
+      account_accepted: 'Brevo przyjęło klucz API (GET /v3/account)',
+      api_key_missing: 'BREVO_API_KEY nie jest ustawiony',
+      provider_rejected_401: 'Brevo odrzuciło klucz API (401 — zły, wygasły lub obrócony klucz)',
+      provider_rejected_402: 'Brevo: brak kredytów na koncie (402)',
+      provider_rejected_403: 'Brevo odmówiło dostępu (403 — np. adres IP spoza listy dozwolonych)',
+      provider_unreachable: 'nie udało się połączyć z Brevo — konta nie sprawdzono',
+      account_check_disabled_in_test: 'sprawdzenie konta wyłączone w środowisku testowym',
+    };
+    push('brevo_account', result.status, details[result.code] ?? `Brevo odpowiedziało kodem ${result.code}`);
+  }
+
   return checks;
 }
 
@@ -93,7 +118,7 @@ function formatLine(check) {
 
 /* c8 ignore start -- ścieżka CLI, pokryta przez testy runPreflight */
 async function main() {
-  const checks = await runPreflight(process.env);
+  const checks = await runPreflight(process.env, { checkAccount: process.argv.includes('--check-account') });
   for (const check of checks) console.log(formatLine(check));
   process.exitCode = checks.some((c) => c.status === 'missing') ? 1 : 0;
 }

@@ -481,6 +481,20 @@ async function makeSuppression(ctx, _target, stage) {
   return { emailHash: emailHashValue, requestId: json.requestId };
 }
 
+// Aktywna pauza konta dostawcy (#209). W produkcji zapisuje ją wyłącznie worker
+// po odmowie 401/402/403; tu — wprost w bazie. Najwyżej jedna aktywna, więc
+// fixture zwraca istniejącą, jeśli jeszcze nie została zdjęta.
+async function makeProviderPause(ctx) {
+  const { rows } = await ctx.db.query('SELECT id FROM email_provider_pauses WHERE lifted_at IS NULL');
+  if (rows[0]) return { pauseId: rows[0].id };
+  const pauseId = nextKey('fx-provider-pause');
+  await ctx.db.query(
+    "INSERT INTO email_provider_pauses (id, reason, error_code) VALUES ($1, 'account_rejected', 'provider_rejected_401')",
+    [pauseId],
+  );
+  return { pauseId };
+}
+
 async function makeReconciliation(ctx, target, stage) {
   const cookie = ctx.fxCookies.treasurer;
   const { json } = await api(ctx, cookie, 'POST', '/api/reconciliations', {
@@ -793,6 +807,7 @@ const MAKERS = {
   },
   campaign: makeCampaign,
   suppression: makeSuppression,
+  providerPause: makeProviderPause,
   reconciliation: makeReconciliation,
   household: (ctx, target) => makeHousehold(ctx.db, target),
   sharedGuardianHousehold: (ctx, target) => makeSharedGuardianHousehold(ctx.db, target),
@@ -915,7 +930,7 @@ const WRITE_TABLES = [
   'ledger_opening_balance_adjustments', 'ledger_transfers',
   'email_campaigns', 'email_campaign_recipients', 'email_campaign_exclusions', 'email_outbox',
   'email_webhook_events', 'email_suppressions', 'email_suppression_release_requests', 'email_suppression_releases',
-  'email_preferences_events', 'email_preview_sends',
+  'email_preferences_events', 'email_preview_sends', 'email_provider_pauses',
   'news_posts', 'news_post_revisions', 'news_photos', 'news_photo_consents',
   'bank_reconciliations', 'bank_statement_imports', 'bank_statement_lines', 'bank_reconciliation_matches',
   'bank_reconciliation_group_matches', 'bank_reconciliation_group_match_items',

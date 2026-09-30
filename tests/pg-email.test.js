@@ -1577,33 +1577,41 @@ test('Brevo 401/402/403 is account-level: transport error flagged accountLevel, 
   assert.equal(networkGuardCalls(), 0);
 });
 
-test('Brevo rejects the account (401): one call per run, nothing failed, campaign not done; fixed key sends each family once', async () => {
+test('Brevo rejects the account (401): one call, nothing failed, campaign not done; paused until the board lifts it; then each family once', async () => {
   const t = await setup();
   try {
     for (const id of ['h1', 'h2', 'h3', 'h4']) await family(t.db, id);
     const campaign = await readyCampaign(t);
     let broken = true;
     const transport = brevoStub(() => (broken ? 401 : 201));
-    for (let i = 0; i < 2; i += 1) {
-      const run = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + i * 60 * 60_000) });
-      assert.equal(run.stoppedReason, 'provider_account_rejected');
-      assert.equal(run.failed, 0);
-      assert.equal(run.requeued, 4);
-      assert.equal(transport.requests.length, i + 1, 'one provider call per run');
-    }
+    const first = await runEmailBatch(t.env, { transport, dryRun: false, now: DAY1 });
+    assert.equal(first.stoppedReason, 'provider_account_rejected');
+    assert.equal(first.failed, 0);
+    assert.equal(first.requeued, 4);
+    assert.equal(transport.requests.length, 1, 'one provider call');
+    // #209: trwała pauza — kolejne przebiegi (także po poprawie klucza) nie
+    // łączą się z dostawcą, dopóki zarząd nie potwierdzi naprawy.
+    broken = false;
+    const paused = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 60 * 60_000) });
+    assert.equal(paused.stoppedReason, 'provider_account_paused');
+    assert.equal(paused.sent, 0);
+    assert.equal(transport.requests.length, 1, 'no provider call while paused');
     assertEvery((await outboxStates(t, campaign.id)), (r) => r.state === 'queued' && r.last_error !== null);
     assert.equal(await t.count("SELECT max(attempts)::int AS n FROM email_outbox"), 0);
     assert.equal(await campaignStatus(t, campaign.id), 'sending');
     assert.equal(await ledgerCount(t), 0);
-    assert.equal(await t.count("SELECT count(*)::int AS n FROM email_worker_runs WHERE stopped_reason = 'provider_account_rejected'"), 2);
-    assert.equal(await auditCount(t, 'email.campaign.provider_rejected', campaign.id), 2);
+    assert.equal(await t.count("SELECT count(*)::int AS n FROM email_worker_runs WHERE stopped_reason = 'provider_account_rejected'"), 1);
+    assert.equal(await auditCount(t, 'email.campaign.provider_rejected', campaign.id), 1);
 
-    broken = false;
+    const pause = (await t.call(t.board, `/api/email/provider-pause?schoolYearId=${YEAR}`)).body.pause;
+    const lifted = await t.call(t.board, '/api/email/provider-pause/lift', { method: 'POST', body: { schoolYearId: YEAR, pauseId: pause.id } });
+    assert.equal(lifted.status, 200, JSON.stringify(lifted.body));
     const fixed = await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 3 * 60 * 60_000) });
     assert.equal(fixed.sent, 4);
     assert.equal(await campaignStatus(t, campaign.id), 'done');
-    const delivered = transport.requests.slice(2).map((body) => body.headers['X-RD-Idempotency-Key']);
+    const delivered = transport.requests.slice(1).map((body) => body.headers['X-RD-Idempotency-Key']);
     assert.equal(new Set(delivered).size, 4);
+    assert.equal(delivered.length, 4);
     assert.equal(await ledgerCount(t), 4);
     assert.equal(networkGuardCalls(), 0);
   } finally { await t.close(); }

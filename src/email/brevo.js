@@ -13,6 +13,7 @@
 import { isProductionEnv, resolveAppEnv } from '../app-env.js';
 
 export const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
+export const BREVO_ACCOUNT_ENDPOINT = 'https://api.brevo.com/v3/account';
 const REQUEST_TIMEOUT_MS = 15_000;
 
 // Domeny darmowych skrzynek pocztowych (adres nadawcy nie może z nich pochodzić
@@ -331,4 +332,29 @@ export function createBrevoTransport({
       return { messageId };
     },
   };
+}
+
+// Sprawdzenie klucza API zapytaniem TYLKO DO ODCZYTU (GET /v3/account, #209
+// pkt 4) — wyłącznie na żądanie (`npm run email:preflight -- --check-account`),
+// nigdy z workera. Nie wysyła poczty. Treść odpowiedzi (adres i nazwa konta,
+// plan) nie jest czytana ani logowana — liczy się tylko status HTTP.
+// Pod `node --test` i przy APP_ENV=test odmawia bez wywołania fetch, jak transport.
+export async function checkBrevoAccount({
+  apiKey, appEnv, fetchImpl = globalThis.fetch, endpoint = BREVO_ACCOUNT_ENDPOINT, processEnv = process.env,
+} = {}) {
+  if (appEnv === 'test' || underTestRunner(processEnv)) return { status: 'warning', code: 'account_check_disabled_in_test' };
+  if (!apiKey) return { status: 'missing', code: 'api_key_missing' };
+  let response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: 'GET',
+      headers: { 'api-key': apiKey, accept: 'application/json' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    return { status: 'warning', code: 'provider_unreachable' };
+  }
+  if (response.ok) return { status: 'ok', code: 'account_accepted' };
+  if ([401, 402, 403].includes(response.status)) return { status: 'missing', code: `provider_rejected_${response.status}` };
+  return { status: 'warning', code: `provider_status_${response.status}` };
 }

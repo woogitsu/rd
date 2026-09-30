@@ -5299,6 +5299,124 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/email/provider-pause": {
+      "get": {
+        "operationId": "email_providerPause_get",
+        "parameters": [
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "email.providerPause.get",
+        "tags": [
+          "email"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "email.providerPause.get"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/email/provider-pause/lift": {
+      "post": {
+        "operationId": "email_providerPause_lift",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "email.providerPause.lift",
+        "tags": [
+          "email"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "email.providerPause.lift"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/email/suppressions": {
       "get": {
         "operationId": "email_suppressions_list",
@@ -16581,6 +16699,7 @@
           "invalid_photos",
           "invalid_plan_digest",
           "invalid_post_id",
+          "invalid_provider_pause_id",
           "invalid_quorum_rule",
           "invalid_reason",
           "invalid_received_on",
@@ -16721,6 +16840,7 @@
           "privacy_notice_not_found",
           "production_requires_flag",
           "production_restore_requires_allow_production",
+          "provider_pause_not_found",
           "public_copy_requires_license",
           "quorum_rule_source_required",
           "rate_limited",
@@ -17762,6 +17882,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_provider_pause_id",
+        "meaning": "Niepoprawny identyfikator wstrzymania wysyłki.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_quorum_rule",
         "meaning": "Niepoprawna reguła quorum.",
         "retry": "Nie — popraw dane żądania."
@@ -18460,6 +18585,11 @@
         "code": "production_restore_requires_allow_production",
         "meaning": "Odtworzenie na produkcji wymaga osobnego potwierdzenia.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "provider_pause_not_found",
+        "meaning": "Nie znaleziono tego wstrzymania wysyłki. Odśwież widok.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "public_copy_requires_license",

@@ -7,6 +7,9 @@ import {
   EDITOR_ROLES,
   buildCampaignsUrl,
   campaignActionUrl,
+  campaignStatusLabel,
+  describeProviderPause,
+  PROVIDER_PAUSE_REASONS,
   campaignUrl,
   canOfferApproval,
   describeApiError,
@@ -182,4 +185,33 @@ test('panel kampanii używa isSnapshotStale do komunikatu i do gotowości zatwie
   assert.match(main, /byId\("detail-snapshot-current"\)\.hidden = !isSnapshotStale\(preview\)/);
   assert.match(main, /!isSnapshotStale\(preview\);/);
   assert.doesNotMatch(main, /snapshotCurrent/);
+});
+
+test('#209 pauza konta dostawcy: czytelna przyczyna po polsku, czas w Brukseli, nieznany kod wprost', () => {
+  assert.equal(describeProviderPause(null), '');
+  const text = describeProviderPause({ errorCode: 'provider_rejected_401', createdAt: '2026-10-05T08:00:00Z' });
+  assert.match(text, /klucz API \(401/);
+  assert.match(text, /05\.10\.2026.*10:00.*Brukseli/);
+  for (const code of ['provider_rejected_401', 'provider_rejected_402', 'provider_rejected_403']) {
+    assert.ok(PROVIDER_PAUSE_REASONS[code], code);
+  }
+  assert.match(describeProviderPause({ errorCode: 'provider_rejected_499', createdAt: null }), /kod provider_rejected_499/);
+});
+
+test('#209 stan kampanii: „W wysyłce” przy aktywnej pauzie konta to „Wstrzymana — błąd konta”', () => {
+  const pause = { id: 'p1', errorCode: 'provider_rejected_401' };
+  assert.equal(campaignStatusLabel({ status: 'sending' }, pause), 'Wstrzymana — błąd konta');
+  assert.equal(campaignStatusLabel({ status: 'sending' }, null), STATUS_LABELS.sending);
+  assert.equal(campaignStatusLabel({ status: 'done' }, pause), STATUS_LABELS.done);
+});
+
+test('#209 panel: przycisk potwierdzenia naprawy tylko dla zarządu, trasa zgodna z serwerem', () => {
+  const main = readFileSync(new URL('../email/main.js', import.meta.url), 'utf8');
+  const server = readFileSync(new URL('../src/pg/routes/email.js', import.meta.url), 'utf8');
+  assert.match(main, /byId\("provider-pause-lift"\)\.hidden = !approver/);
+  assert.match(main, /hasApproverAccess\(state\.grants, state\.schoolYearId\)/);
+  for (const path of ['/api/email/provider-pause/lift', '/api/email/provider-pause']) {
+    assert.ok(main.includes(path), path);
+    assert.ok(server.includes(`'${path}'`), path);
+  }
 });

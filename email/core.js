@@ -185,6 +185,36 @@ export function describeApiError(status, code) {
   return null;
 }
 
+// #209: odmowa konta przez dostawcę (401/402/403). Kod z serwera → opis dla
+// zarządu; nieznany kod pokazujemy wprost (tylko kod, bez danych rodzin).
+export const PROVIDER_PAUSE_REASONS = Object.freeze({
+  provider_rejected_401: 'dostawca odrzucił klucz API (401 — zły, wygasły lub obrócony klucz)',
+  provider_rejected_402: 'konto dostawcy nie ma dostępnych kredytów wysyłki (402)',
+  provider_rejected_403: 'dostawca odmówił wysyłki z tego konta (403 — nieuprawniony nadawca lub adres IP spoza listy dozwolonych)',
+});
+
+function brusselsDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('pl-PL', {
+    timeZone: 'Europe/Brussels', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(date);
+}
+
+export function describeProviderPause(pause) {
+  if (!pause) return '';
+  const reason = PROVIDER_PAUSE_REASONS[pause.errorCode] ?? `dostawca odrzucił konto (kod ${pause.errorCode})`;
+  const since = pause.createdAt ? brusselsDateTime(pause.createdAt) : '';
+  return `Przyczyna: ${reason}.${since ? ` Od: ${since} (czas w Brukseli).` : ''}`;
+}
+
+// Stan kampanii w szczegółach: kampania w wysyłce przy aktywnej pauzie konta
+// nie wysyła — pokazujemy to wprost zamiast „W wysyłce”.
+export function campaignStatusLabel(campaign, providerPause) {
+  if (providerPause && campaign?.status === 'sending') return 'Wstrzymana — błąd konta';
+  return STATUS_LABELS[campaign?.status] ?? campaign?.status ?? '';
+}
+
 // Raport doręczeń (#139): rozłączne kategorie z GET …/report (`summary`).
 // Kolejność i nazwy jak REPORT_CATEGORIES w src/pg/routes/email.js.
 export const REPORT_LABELS = Object.freeze({

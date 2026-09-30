@@ -16,6 +16,8 @@
 //   POST /api/email/campaigns/{id}/resume            wznowienie wysyłki (#130), idempotentne
 //   POST /api/email/campaigns/{id}/cancel            anulowanie (wiersze w kolejce → cancelled)
 //   POST /api/email/campaigns/{id}/test-send         wysyłka testowa na adres z EMAIL_PREVIEW_RECIPIENTS (#104)
+//   GET  /api/email/provider-pause?schoolYearId=…    aktywna pauza po odmowie konta przez dostawcę (#209)
+//   POST /api/email/provider-pause/lift              potwierdzenie naprawy konfiguracji: zarząd + świeże MFA (#209), idempotentne
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
 //   GET  /api/email/preferences?t=…                  publiczna: podgląd wypisania (bez skutku, #110)
 //   POST /api/email/preferences?t=…                  publiczna: wypisanie jednym kliknięciem (bez Origin, #110)
@@ -979,11 +981,92 @@ async function status(request, env, id, json) {
     'SELECT reason, COUNT(*)::int AS n FROM email_campaign_exclusions WHERE campaign_id = $1 GROUP BY reason ORDER BY reason',
     [id],
   );
+  // #209: pauza konta dostawcy wstrzymuje wysyłkę wszystkich kampanii — panel
+  // pokazuje ją przy kampanii w toku („wstrzymana — błąd konta”).
+  const pause = ['sending', 'paused'].includes(campaign.status) ? await loadActiveProviderPause(env.db) : null;
   return json({
     campaign: campaignView(campaign),
     outbox: Object.fromEntries(rows.map((row) => [row.state, row.n])),
     exclusions: Object.fromEntries(exclusions.map((row) => [row.reason, row.n])),
+    providerPause: providerPauseView(pause),
   });
+}
+
+// --- Pauza dostawcy po odmowie konta (#209) ----------------------------------
+
+function providerPauseView(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    reason: row.reason,
+    errorCode: row.error_code,
+    campaignId: row.campaign_id ?? null,
+    createdAt: iso(row.created_at),
+    liftedBy: row.lifted_by ?? null,
+    liftedAt: iso(row.lifted_at),
+  };
+}
+
+const PROVIDER_PAUSE_COLUMNS = 'id, reason, error_code, campaign_id, created_at, lifted_by, lifted_at';
+
+async function loadActiveProviderPause(executor) {
+  const { rows } = await executor.query(
+    `SELECT ${PROVIDER_PAUSE_COLUMNS} FROM email_provider_pauses WHERE lifted_at IS NULL ORDER BY created_at, id LIMIT 1`,
+  );
+  return rows[0] ?? null;
+}
+
+// Pauza dotyczy konta dostawcy (wszystkich kampanii). Odczyt i zdjęcie wymagają
+// przydziału w podanym roku (jak lista wyłączeń), żeby rola z zamkniętego roku
+// nie wystarczała.
+async function providerPauseShow(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, schoolYearId);
+  return json({ pause: providerPauseView(await loadActiveProviderPause(env.db)) });
+}
+
+// Zdjęcie pauzy wznawia wysyłkę do rodzin przy najbliższym przebiegu, więc —
+// jak zatwierdzenie kampanii — wymaga roli zarządu i świeżo potwierdzonego MFA.
+// Idempotentne: drugie kliknięcie (pauza już zdjęta) zwraca ten sam wynik bez
+// nowego zdarzenia. Wiadomości nie dublują się po wznowieniu — klucz kampania+
+// rodzina w email_outbox i wiersze wrócone do „queued” bez zużycia próby.
+async function providerPauseLift(request, env, json) {
+  const data = await readJson(request);
+  if (!validId(data.schoolYearId)) throw new RequestError('invalid_request');
+  const context = await requireContext(request, env, APPROVER_ROLES);
+  requireYear(context, APPROVER_ROLES, data.schoolYearId);
+  if (!validId(data.pauseId)) throw new RequestError('invalid_provider_pause_id');
+  const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+  if (staleCode) throw new RequestError(staleCode, 403);
+  const actorId = context.session.user.id;
+  try {
+    return await env.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        `SELECT ${PROVIDER_PAUSE_COLUMNS} FROM email_provider_pauses WHERE id = $1 FOR UPDATE`,
+        [data.pauseId],
+      );
+      const pause = rows[0];
+      if (!pause) throw new RequestError('provider_pause_not_found', 404);
+      if (pause.lifted_at) return json({ pause: providerPauseView(pause) }, 200, { 'Idempotency-Replayed': 'true' });
+      const { rows: lifted } = await tx.query(
+        `UPDATE email_provider_pauses SET lifted_by = $2, lifted_at = now()
+          WHERE id = $1 AND lifted_at IS NULL RETURNING ${PROVIDER_PAUSE_COLUMNS}`,
+        [pause.id, actorId],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'email.provider.pause_lifted', entityType: 'email_provider_pause', entityId: pause.id,
+        metadata: {
+          schoolYearId: data.schoolYearId, reason: pause.reason, errorCode: pause.error_code,
+          campaignId: pause.campaign_id ?? null,
+        },
+      });
+      return json({ pause: providerPauseView(lifted[0]) });
+    });
+  } catch (error) {
+    return mapDatabaseError(error);
+  }
 }
 
 const REPORT_CATEGORIES = Object.freeze(['queued', 'sending', 'sent', 'delivered', 'bounced', 'delivery_unknown', 'failed', 'suppressed', 'skipped', 'cancelled']);
@@ -1602,6 +1685,14 @@ export async function handle(request, env, url, json) {
     if (url.pathname === '/api/email/suppressions') {
       if (method === 'GET') return await listSuppressions(request, env, url, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    }
+    if (url.pathname === '/api/email/provider-pause') {
+      if (method === 'GET') return await providerPauseShow(request, env, url, json);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    }
+    if (url.pathname === '/api/email/provider-pause/lift') {
+      if (method === 'POST') return await providerPauseLift(request, env, json);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
     }
     const suppressionMatch = url.pathname.match(/^\/api\/email\/suppressions\/([0-9a-f]{64})\/(release-request|release)$/);
     if (suppressionMatch) {
