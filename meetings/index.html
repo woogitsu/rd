@@ -266,16 +266,20 @@
         <div class="print-meta" id="print-minutes-meta"></div>
         <h2 id="print-minutes-title"></h2>
         <p id="print-minutes-info" class="muted"></p>
-        <h3>Lista obecności</h3>
-        <table>
-          <caption class="sr-only">Lista obecności — wersja do druku</caption>
-          <thead><tr><th scope="col">Funkcja</th><th scope="col">Obecność</th><th scope="col">Prawo głosu</th><th scope="col">Podpis</th></tr></thead>
-          <tbody id="print-attendance-body"></tbody>
-        </table>
-        <p id="print-quorum-result"></p>
+        <!-- #167: wydruk z widoku przedstawiciela (protokół udostępniony) ukrywa
+             listę obecności, quorum i pola podpisu — zob. fillSharedPrintMinutes. -->
+        <div id="print-attendance-block">
+          <h3>Lista obecności</h3>
+          <table>
+            <caption class="sr-only">Lista obecności — wersja do druku</caption>
+            <thead><tr><th scope="col">Funkcja</th><th scope="col">Obecność</th><th scope="col">Prawo głosu</th><th scope="col">Podpis</th></tr></thead>
+            <tbody id="print-attendance-body"></tbody>
+          </table>
+          <p id="print-quorum-result"></p>
+        </div>
         <h3>Treść protokołu</h3>
         <div id="print-minutes-body" class="minutes-text"></div>
-        <div class="print-signatures" aria-hidden="true">
+        <div class="print-signatures" id="print-signatures" aria-hidden="true">
           <div><span>Prowadzący zebranie — imię i nazwisko, podpis, data</span></div>
           <div><span>Protokolant — imię i nazwisko, podpis, data</span></div>
         </div>

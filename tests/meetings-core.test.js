@@ -10,6 +10,9 @@ import {
   allowedStatusTransitions,
   brusselsLocalToIso,
   buildAttendancePayload,
+  findSharedMinutes,
+  sharedMinutesClassLabel,
+  sharedMinutesPrintInfo,
   buildMeetingsUrl,
   buildQuorumRule,
   buildSharedMinutesUrl,
@@ -77,6 +80,33 @@ test("buildSharedMinutesUrl: waliduje identyfikator roku jak buildMeetingsUrl", 
   assert.equal(buildSharedMinutesUrl("2026-2027"), "/api/meetings/shared-minutes?schoolYearId=2026-2027");
   assert.throws(() => buildSharedMinutesUrl(""), /roku szkolnego/);
   assert.throws(() => buildSharedMinutesUrl("../etc"), /roku szkolnego/);
+});
+
+test("findSharedMinutes: szuka po minutesId (pole odpowiedzi shared-minutes), nie po id", () => {
+  const list = [{ minutesId: "m-1", title: "A" }, { minutesId: "m-2", title: "B" }];
+  assert.equal(findSharedMinutes(list, "m-2").title, "B");
+  // Regresja #167: przycisk „Pokaż” miał data-shared=undefined, bo panel czytał `id`.
+  assert.equal(findSharedMinutes([{ id: "m-1" }], "m-1"), null);
+  assert.equal(findSharedMinutes(list, "undefined"), null);
+  assert.equal(findSharedMinutes(list, ""), null);
+  assert.equal(findSharedMinutes(null, "m-1"), null);
+});
+
+test("sharedMinutesClassLabel / sharedMinutesPrintInfo: nazwa klasy z zakresu roli, bez obecności i quorum", () => {
+  const names = new Map([["class-a", "1A"]]);
+  assert.equal(sharedMinutesClassLabel({ classId: null }, names), "—");
+  assert.equal(sharedMinutesClassLabel({ classId: "class-a" }, names), "1A");
+  // Klasa spoza odpowiedzi /api/classes (lub błąd zapytania) — identyfikator, bez wyjątku.
+  assert.equal(sharedMinutesClassLabel({ classId: "class-x" }, names), "class-x");
+  assert.equal(sharedMinutesClassLabel({ classId: "class-a" }, undefined), "class-a");
+  const info = sharedMinutesPrintInfo({
+    kind: "class", classId: "class-a", scheduledAt: "2026-10-10T17:00:00.000Z",
+    approvedAt: "2026-10-12T08:00:00.000Z", visibility: "parents",
+  }, names);
+  assert.equal(info, `${KIND_LABELS.class} · klasa 1A · 10 października 2026 19:00 · zatwierdzono 12 października 2026 10:00 · widoczność: ${VISIBILITY_LABELS.parents}`);
+  const plenary = sharedMinutesPrintInfo({ kind: "plenary", classId: null, scheduledAt: null, approvedAt: null, visibility: "public" }, names);
+  assert.equal(plenary, `${KIND_LABELS.plenary} · widoczność: ${VISIBILITY_LABELS.public}`);
+  assert.ok(!/quorum|obecn/i.test(info));
 });
 
 test("czas zebrania jest interpretowany w strefie Europe/Brussels", () => {

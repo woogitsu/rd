@@ -37,3 +37,31 @@ test('"Nowe zebranie" ukryte, dopóki tryb widoku nie jest znany i poza trybem "
   assert.match(mainJs, /byId\("open-meeting"\)\.hidden = true;\s*\n\s*byId\("list-section"\)\.hidden = true;/);
   assert.match(mainJs, /byId\("open-meeting"\)\.hidden = mode !== "full" \|\| !state\.canManage;/);
 });
+
+test('przycisk „Pokaż” w widoku przedstawiciela używa minutesId z odpowiedzi shared-minutes (regresja #167)', () => {
+  const render = mainJs.slice(mainJs.indexOf('function renderSharedList()'), mainJs.indexOf('async function loadSharedList()'));
+  assert.match(render, /dataset: \{ shared: item\.minutesId \}/);
+  assert.ok(!/dataset: \{ shared: item\.id \}/.test(render));
+  assert.match(mainJs, /findSharedMinutes\(state\.sharedMinutes, button\.dataset\.shared\)/);
+});
+
+test('„Drukuj / zapisz jako PDF” działa w widoku przedstawiciela bez state.detail, bez obecności i quorum (#167 pkt 2)', () => {
+  const handler = mainJs.slice(mainJs.indexOf('byId("print-minutes-button").addEventListener'));
+  assert.match(handler.slice(0, 600), /if \(state\.viewMode === "shared"\) fillSharedPrintMinutes\(item\);/);
+  const fn = mainJs.match(/function fillSharedPrintMinutes\(item\) \{[\s\S]*?\n\}\n/)[0];
+  assert.ok(!/api\(|fetch\(/.test(fn), 'wydruk nie woła sieci');
+  assert.ok(!/state\.detail|attendee|quorumChecks|location/.test(fn), 'tylko pola z odpowiedzi shared-minutes');
+  for (const forbidden of ['email', 'displayName', 'userId', 'guardian', 'phone', 'address']) {
+    assert.ok(!fn.includes(forbidden), `wydruk protokołu udostępnionego nie może używać pola ${forbidden}`);
+  }
+  assert.match(fn, /byId\("print-attendance-block"\)\.hidden = true;/);
+  assert.match(fn, /byId\("print-signatures"\)\.hidden = true;/);
+  // Pełny widok (zarząd) przywraca listę obecności i podpisy po wydruku z widoku przedstawiciela.
+  const full = mainJs.match(/function fillPrintMinutes\(item\) \{[\s\S]*?\n\}\n/)[0];
+  assert.match(full, /byId\("print-attendance-block"\)\.hidden = false;/);
+  assert.match(full, /byId\("print-signatures"\)\.hidden = false;/);
+  const section = html.match(/<section id="print-minutes"[\s\S]*?<\/section>/)[0];
+  const block = section.match(/<div id="print-attendance-block">[\s\S]*?<\/div>/)[0];
+  assert.match(block, /print-attendance-body/);
+  assert.match(block, /print-quorum-result/);
+});
