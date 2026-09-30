@@ -19,13 +19,12 @@ import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.j
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { generateStructuredReference, isValidStructuredReference } from '../ogm.js';
-import { createJsonReader, isUniqueError } from '../input.js';
+import { createIdempotencyKeyReader, createJsonReader, isUniqueError } from '../input.js';
 
 export const name = 'payment-references';
 
 const FINANCIAL_ROLES = ['admin', 'board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const MAX_BODY_BYTES = 4 * 1024;
 const MAX_GENERATE_ATTEMPTS = 8;
 
@@ -64,11 +63,7 @@ function textOrNull(value, maxLength) {
   return normalized;
 }
 
-function readIdempotencyKey(request) {
-  const key = request.headers.get('Idempotency-Key')?.trim();
-  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
-  return key;
-}
+const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) => new RequestError(code, status) });
 
 const readJson = createJsonReader({
   maxBytes: MAX_BODY_BYTES,

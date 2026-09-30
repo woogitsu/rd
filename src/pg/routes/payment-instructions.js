@@ -21,14 +21,13 @@ import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isValidIban, normalizeIban } from '../../../print/iban.js';
-import { createJsonReader, isUniqueError } from '../input.js';
+import { createIdempotencyKeyReader, createJsonReader, isUniqueError } from '../input.js';
 
 export const name = 'payment-instructions';
 
 const APPROVE_ROLES = ['admin', 'board'];
 const READ_ROLES = ['admin', 'board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const BIC_PATTERN = /^[A-Z0-9]{8}([A-Z0-9]{3})?$/;
 const MAX_BODY_BYTES = 2 * 1024;
 
@@ -45,11 +44,7 @@ function validId(value) {
   return typeof value === 'string' && ID_PATTERN.test(value);
 }
 
-function readIdempotencyKey(request) {
-  const key = request.headers.get('Idempotency-Key')?.trim();
-  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
-  return key;
-}
+const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) => new RequestError(code, status) });
 
 const readJson = createJsonReader({
   maxBytes: MAX_BODY_BYTES,

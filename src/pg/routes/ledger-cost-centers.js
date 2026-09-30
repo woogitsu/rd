@@ -23,13 +23,12 @@ import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvResponse, safeFileSegment, toCsv } from '../csv.js';
 import { readSnapshot } from '../db-snapshot.js';
-import { createJsonReader } from '../input.js';
+import { createIdempotencyKeyReader, createJsonReader } from '../input.js';
 
 export const name = 'ledger-cost-centers';
 
 const FINANCIAL_ROLES = ['admin', 'board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_ITEMS = 50;
 const MAX_AMOUNT_CENTS = 100_000_000;
@@ -59,11 +58,7 @@ const readJson = createJsonReader({
   error: (code, status) => new RequestError(code, status),
 });
 
-function readIdempotencyKey(request) {
-  const key = request.headers.get('Idempotency-Key')?.trim();
-  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
-  return key;
-}
+const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) => new RequestError(code, status) });
 
 async function requireFinancial(request, env, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);

@@ -29,7 +29,7 @@ import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.j
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
-import { createJsonReader } from '../input.js';
+import { createIdempotencyKeyReader, createJsonReader } from '../input.js';
 
 export const name = 'ledger-cash';
 
@@ -38,7 +38,6 @@ const READ_ROLES = ['admin', 'board', 'treasurer'];
 const OPENING_ROLES = ['board'];
 const DIRECTIONS = new Set(['cash_to_bank', 'bank_to_cash']);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_AMOUNT_CENTS = 100_000_000;
 // ledger_opening_balances.amount_cents i adjustments.amount_cents to INTEGER.
@@ -99,11 +98,7 @@ const readJson = createJsonReader({
   error: (code, status) => new RequestError(code, status),
 });
 
-function readIdempotencyKey(request) {
-  const key = request.headers.get('Idempotency-Key')?.trim();
-  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
-  return key;
-}
+const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) => new RequestError(code, status) });
 
 // Przydział z class_id nie daje dostępu (isAuthorizedScoped bez classId).
 async function requireAccess(request, env, roles, schoolYearId) {
