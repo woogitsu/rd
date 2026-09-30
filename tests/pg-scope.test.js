@@ -302,3 +302,30 @@ test('hasAnyMatchingGrant świadomie liczy przydział klasowy bez classId w wymo
   assert.equal(hasAnyMatchingGrant(context, { roles: ['board'], schoolYearId: 'y-2026' }), true);
   assert.equal(isAuthorizedScoped(context, { roles: ['board'], schoolYearId: 'y-2026' }), false, 'SR-01');
 });
+
+test('print.js#printScope (na scope.js) = dawna lokalna implementacja z yearMatches', async () => {
+  const { printScope } = await import('../src/pg/routes/print.js');
+  const FIN = ['admin', 'board', 'treasurer'];
+  const PRINT = [...FIN, 'representative'];
+  const yearMatches = (grant, schoolYearId) => !grant.schoolYearId || grant.schoolYearId === schoolYearId;
+  const legacy = (context, { schoolYearId, classId }) => {
+    const grants = context.grants.filter((grant) => PRINT.includes(grant.role) && yearMatches(grant, schoolYearId));
+    const full = grants.some((grant) => FIN.includes(grant.role) && !grant.classId);
+    const classIds = new Set(grants.filter((grant) => grant.classId).map((grant) => grant.classId));
+    if (!full && !classIds.size) return { error: 'forbidden', status: 403 };
+    if (!full && !classId) return { error: 'class_required', status: 400 };
+    if (!full && !classIds.has(classId)) return { error: 'forbidden', status: 403 };
+    const paymentInfo = Boolean(context.session.mfaVerified) && grants.some((grant) => FIN.includes(grant.role)
+      && (!grant.classId || grant.classId === classId));
+    return { full, paymentInfo };
+  };
+  const rng = mulberry32(1555);
+  for (let sample = 0; sample < 600; sample += 1) {
+    const context = ctx(randomRequirementGrants(rng), { mfaVerified: rng() < 0.5 });
+    const input = {
+      schoolYearId: YEAR_IDS[Math.floor(rng() * YEAR_IDS.length)],
+      classId: rng() < 0.3 ? null : CLASS_IDS[Math.floor(rng() * CLASS_IDS.length)],
+    };
+    assert.deepEqual(printScope(context, input), legacy(context, input), `próbka ${sample}: ${JSON.stringify({ context, input })}`);
+  }
+});

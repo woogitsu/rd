@@ -26,6 +26,7 @@
 // Odpowiedź nigdy nie zawiera danych opiekunów (e-maili, imion, zgód).
 
 import { loadAuthorizationContext } from '../authorization.js';
+import { authorizedClassIds, isAuthorizedScoped } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { recordDataAccess } from '../data-access.js';
 import { toSafeInteger } from './payments.js';
@@ -41,21 +42,18 @@ export const MAX_PRINT_ROWS = 5000;
 
 const validId = (value) => typeof value === 'string' && ID_PATTERN.test(value);
 
-function yearMatches(grant, schoolYearId) {
-  return !grant.schoolYearId || grant.schoolYearId === schoolYearId;
-}
-
-// Wylicza zakres z przydziałów: pełny rok albo zbiór klas.
+// Wylicza zakres z przydziałów: pełny rok albo zbiór klas (src/pg/scope.js, #155).
+// `schoolYearId` jest zawsze podany (trasa waliduje go przed wywołaniem).
 export function printScope(context, { schoolYearId, classId }) {
-  const grants = context.grants.filter((grant) => PRINT_ROLES.includes(grant.role) && yearMatches(grant, schoolYearId));
-  const full = grants.some((grant) => FINANCIAL_ROLES.includes(grant.role) && !grant.classId);
-  const classIds = new Set(grants.filter((grant) => grant.classId).map((grant) => grant.classId));
+  const full = isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId });
+  const classIds = new Set(authorizedClassIds(context, { roles: PRINT_ROLES, schoolYearId }));
   if (!full && !classIds.size) return { error: 'forbidden', status: 403 };
   if (!full && !classId) return { error: 'class_required', status: 400 };
   if (!full && !classIds.has(classId)) return { error: 'forbidden', status: 403 };
   // Kwoty tylko przy MFA i przydziale finansowym obejmującym cały żądany zakres.
-  const paymentInfo = Boolean(context.session.mfaVerified) && grants.some((grant) => FINANCIAL_ROLES.includes(grant.role)
-    && (!grant.classId || grant.classId === classId));
+  const paymentInfo = isAuthorizedScoped(context, {
+    roles: FINANCIAL_ROLES, schoolYearId, classId: classId || undefined, requireMfa: true,
+  });
   return { full, paymentInfo };
 }
 
