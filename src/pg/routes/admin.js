@@ -16,7 +16,8 @@
 //   GET  /api/admin/grant-requests?status=       wnioski o nadanie roli chronionej (#146)
 //   POST /api/admin/grant-requests/{id}/approve  zatwierdza INNY administrator (nie wnioskodawca, nie adresat)
 //        i wykonuje nadanie (przydział albo zaproszenie z tokenem, zwracanym raz); krok w górę MFA
-//   POST /api/admin/grant-requests/{id}/reject   odrzuca lub wycofuje wniosek
+//   POST /api/admin/grant-requests/{id}/reject   { reason?, confirmPersonalData? } — odrzuca lub wycofuje wniosek;
+//        opcjonalny powód (0159) przez bramkę danych osobowych #152 (422 bez zapisu)
 //   GET  /api/admin/grants?userId=&role=&schoolYearId=&classId=&status=&limit=&cursor=
 //   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? } — krok w górę MFA (#150)
 //        #146: rola admin/board/treasurer przy drugim aktywnym administratorze — 202 i wniosek
@@ -914,16 +915,23 @@ async function executeGrantRequest(tx, actorId, row) {
   };
 }
 
-async function grantRequestDecision(env, actorId, requestId, decision, json) {
+async function grantRequestDecision(env, actorId, requestId, decision, request, json) {
   try {
     if (decision === 'approve') {
       return json(await approveGrantRequest(env, {
         actorId, requestId, lockFirst: lockGrantChanges, execute: (tx, row) => executeGrantRequest(tx, actorId, row),
       }));
     }
-    return json(await rejectGrantRequest(env, { actorId, requestId }));
+    // Ciało opcjonalne (zgodność z klientami sprzed 0159): bez treści = bez powodu.
+    const data = request.body === null && !request.headers.get('Content-Type') ? {} : await readJson(request);
+    return json(await rejectGrantRequest(env, {
+      actorId, requestId, reason: data.reason, confirmPersonalData: data.confirmPersonalData === true,
+    }));
   } catch (error) {
-    if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
+    if (error instanceof GrantRequestError) {
+      // #152: 422 bramki danych osobowych zwraca kategorie (bez fragmentu tekstu).
+      throw Object.assign(new RequestError(error.code, error.status), error.categories ? { categories: error.categories } : {});
+    }
     throw error;
   }
 }
@@ -1561,10 +1569,10 @@ async function route(request, env, url, json, actorId, context) {
     if (path.length === 1 && method === 'GET') return grantRequestsList(env, url, json);
     if (path.length === 3 && action === 'approve' && method === 'POST') {
       requireFreshMfa(context);
-      return grantRequestDecision(env, actorId, decodeId(rawId), 'approve', json);
+      return grantRequestDecision(env, actorId, decodeId(rawId), 'approve', request, json);
     }
     if (path.length === 3 && action === 'reject' && method === 'POST') {
-      return grantRequestDecision(env, actorId, decodeId(rawId), 'reject', json);
+      return grantRequestDecision(env, actorId, decodeId(rawId), 'reject', request, json);
     }
   }
   if (section === 'grants') {
@@ -1638,7 +1646,9 @@ export async function handle(request, env, url, json) {
     if (!allowed) return null;
     return json({ error: 'method_not_allowed' }, 405, { Allow: allowed.join(', ') });
   } catch (error) {
-    if (error instanceof RequestError || error instanceof PromotionError) return json({ error: error.code }, error.status, error.headers);
+    if (error instanceof RequestError || error instanceof PromotionError) {
+      return json({ error: error.code, ...(error.categories ? { categories: error.categories } : {}) }, error.status, error.headers);
+    }
     throw error;
   }
 }

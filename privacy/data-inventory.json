@@ -10602,6 +10602,17 @@
       "exportable": false,
       "data_type": "text"
     },
+    "reject_reason": {
+      "personal": "direct",
+      "subject": "board_member",
+      "category": "wolny tekst",
+      "purpose": "opcjonalny powód odrzucenia lub wycofania wniosku o nadanie roli chronionej (#146) — może wspomnieć osobę; bramka danych osobowych przed zapisem, bez treści w dzienniku zdarzeń",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": true,
+      "exportable": false,
+      "data_type": "text"
+    },
     "replaces_invitation_id": {
       "personal": "none",
       "subject": null,

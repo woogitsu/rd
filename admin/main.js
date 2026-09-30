@@ -23,6 +23,7 @@ import {
   isOwnLastAdminGrant,
   mfaResetConfirmation,
   passwordResetLink,
+  rejectRequestPayload,
   roleNeedsPendingDecisionWarning,
   schoolYearPayload,
   scopeLabel,
@@ -31,7 +32,7 @@ import {
   batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, schoolYearsCount, tokenListText,
 } from "./onboarding.js";
 import { api as apiRequest } from "../shared/api.js";
-import { confirmAction, promptAction } from "../shared/confirm-dialog.js";
+import { buildEffectsHtml, confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import { shortId } from "../shared/short-id.js";
 import { formatSchoolYear } from "../shared/school-year.js";
@@ -396,9 +397,9 @@ async function afterRequestDecision() {
 
 // Zatwierdzenie albo odrzucenie; po odpowiedzi (także błędzie innym niż
 // `mfa_stale`, po którym withStepUp prosi o kod i ponawia) lista się odświeża.
-async function decideRequest(requestId, decision) {
+async function decideRequest(requestId, decision, body = {}) {
   try {
-    const result = await api(`/api/admin/grant-requests/${encodeURIComponent(requestId)}/${decision}`, { method: "POST", body: {} });
+    const result = await api(`/api/admin/grant-requests/${encodeURIComponent(requestId)}/${decision}`, { method: "POST", body });
     await afterRequestDecision().catch(() => {});
     return result;
   } catch (error) {
@@ -438,12 +439,15 @@ function renderGrantRequests() {
       })));
     }
     if (row.canReject) {
-      buttons.push(button(row.rejectLabel, (event) => runAction(event.currentTarget, grantRequestDialog("reject", request, row), async () => {
-        await decideRequest(request.id, "reject");
-        showMessage(row.rejectLabel === "Wycofaj wniosek" ? "Wniosek wycofany. Rola nie została nadana." : "Wniosek odrzucony. Rola nie została nadana.");
-      }), { danger: true }));
+      buttons.push(button(row.rejectLabel, (event) => openRejectDialog(event.currentTarget, request, row), { danger: true }));
     }
     const actions = actionsCell(buttons);
+    if (row.rejectReason) {
+      const reason = document.createElement("p");
+      reason.className = "hint";
+      reason.textContent = row.rejectReason;
+      actions.append(reason);
+    }
     if (row.note) {
       const note = document.createElement("p");
       note.className = "hint";
@@ -454,6 +458,63 @@ function renderGrantRequests() {
     return tr;
   }));
 }
+
+// Okno „Odrzuć”/„Wycofaj wniosek” (0159) z opcjonalnym powodem. Błędy powodu
+// (400 invalid_reason, 422 bramki danych osobowych, także anulowane
+// potwierdzenie telefonu) zostawiają okno otwarte z treścią do poprawy —
+// wniosek pozostaje oczekujący. Podwójne kliknięcie „Odrzuć wniosek”: jedno żądanie.
+const rejectDialog = byId("reject-request-dialog");
+const rejectForm = byId("reject-request-form");
+const rejectConfirm = rejectForm.querySelector('[data-role="confirm"]');
+const REASON_ERRORS = new Set(["invalid_reason", "personal_data_forbidden", "possible_personal_data"]);
+let rejectTarget = null;
+let rejectSubmitting = false;
+
+function openRejectDialog(invoker, request, row) {
+  const options = grantRequestDialog("reject", request, row);
+  rejectTarget = { invoker, request, row };
+  rejectForm.reset();
+  byId("reject-request-title").textContent = options.title;
+  byId("reject-request-effects").innerHTML = buildEffectsHtml(options.effects);
+  byId("reject-request-error").textContent = "";
+  rejectConfirm.textContent = options.confirmLabel;
+  rejectConfirm.disabled = false;
+  rejectDialog.showModal();
+  // Akcja destrukcyjna: fokus startuje na „Anuluj” (jak shared/confirm-dialog.js).
+  rejectForm.querySelector('[data-role="cancel"]').focus();
+}
+
+rejectForm.querySelector('[data-role="cancel"]').addEventListener("click", () => rejectDialog.close());
+rejectDialog.addEventListener("close", () => {
+  const invoker = rejectTarget?.invoker;
+  rejectTarget = null;
+  rejectForm.reset(); // powód nie zostaje w DOM po zamknięciu
+  if (invoker?.isConnected) invoker.focus();
+});
+rejectForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!rejectTarget || rejectSubmitting) return;
+  if (!rejectForm.reportValidity()) return;
+  const { request, row } = rejectTarget;
+  rejectSubmitting = true;
+  rejectConfirm.disabled = true;
+  byId("reject-request-error").textContent = "";
+  try {
+    await withStepUp(() => decideRequest(request.id, "reject", rejectRequestPayload(rejectForm.elements.reason.value)));
+    rejectDialog.close();
+    showMessage(row.rejectLabel === "Wycofaj wniosek" ? "Wniosek wycofany. Rola nie została nadana." : "Wniosek odrzucony. Rola nie została nadana.");
+  } catch (error) {
+    if (REASON_ERRORS.has(error?.code)) {
+      byId("reject-request-error").textContent = error.message;
+      rejectConfirm.disabled = false;
+    } else {
+      rejectDialog.close();
+      showMessage(error.message, true);
+    }
+  } finally {
+    rejectSubmitting = false;
+  }
+});
 
 async function loadGrantRequests() {
   const result = await api(grantRequestsPath(byId("grant-request-filters").elements.status.value));

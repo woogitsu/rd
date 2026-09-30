@@ -78,6 +78,7 @@ export const GATED_FIELDS = Object.freeze([
   'guardian_contact_changes.reason',
   'guardian_update_requests.note',
   'email_suppression_releases.confirmation_note',
+  'role_grant_requests.reject_reason',
 ]);
 
 // Pola wolnego tekstu z tabel niezmiennych świadomie BEZ bramki — z uzasadnieniem.

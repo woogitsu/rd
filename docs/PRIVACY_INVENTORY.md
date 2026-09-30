@@ -196,6 +196,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`retention_policies`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia polityki z osobą (zasada czterech oczu)|nieustalona (D-04)|nie|nie|
 |`retention_policies`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grant_requests`|`decided_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`role_grant_requests`|`reject_reason`|Członek Rady|direct|wolny tekst|opcjonalny powód odrzucenia lub wycofania wniosku o nadanie roli chronionej (#146) — może wspomnieć osobę; bramka danych osobowych przed zapisem, bez treści w dzienniku zdarzeń|nieustalona (D-04)|tak|nie|
 |`role_grant_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grant_requests`|`target_email`|Członek Rady|direct|kontakt|adres osoby zapraszanej do roli zarządu, skarbnika lub administratora — do zatwierdzenia przez drugą osobę (#146)|nieustalona (D-04)|nie|nie|
 |`role_grant_requests`|`target_user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -219,7 +220,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **206**, w tym wolnego tekstu: **57** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **207**, w tym wolnego tekstu: **58** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -1760,6 +1761,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `id` | none | — | nie |
 | `invitation_ttl_seconds` | none | — | nie |
 | `kind` | none | — | nie |
+| `reject_reason` | direct | board_member | nie |
 | `replaces_invitation_id` | none | — | nie |
 | `requested_by` | pseudonymous | board_member | nie |
 | `result_id` | none | — | nie |

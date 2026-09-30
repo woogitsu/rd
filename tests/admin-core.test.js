@@ -12,7 +12,7 @@ import { ENTITY_TYPE_LABELS, REASON_LABELS, accountName, entityTypeLabel, reason
 import { shortId } from '../shared/short-id.js';
 import { AUDIT_ACTIONS } from '../src/pg/routes/admin.js';
 import {
-  GRANT_REQUEST_STATUS_LABELS, grantRequestDialog, grantRequestRow, grantRequestsPath, requestAge,
+  GRANT_REQUEST_STATUS_LABELS, grantRequestDialog, grantRequestRow, grantRequestsPath, rejectRequestPayload, requestAge,
 } from '../admin/core.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
@@ -341,4 +341,21 @@ test('#146: okno odrzucenia — „Odrzuć wniosek” albo „Wycofaj wniosek”
   const withdraw = grantRequestDialog('reject', baseRequest, own);
   assert.equal(withdraw.title, 'Wycofać wniosek?');
   assert.equal(withdraw.confirmLabel, 'Wycofaj wniosek');
+});
+
+test('#146/0159: powód odrzucenia — w wierszu tylko przy wniosku odrzuconym; w oknie opis, że dziennik nie dostaje treści', () => {
+  const me = { id: 'u-approver' };
+  const rejected = grantRequestRow({ ...baseRequest, status: 'rejected', rejectReason: 'Brak uchwały zarządu' }, { me, now: REQUEST_NOW });
+  assert.equal(rejected.rejectReason, 'Powód: Brak uchwały zarządu');
+  assert.equal(grantRequestRow({ ...baseRequest, status: 'rejected', rejectReason: null }, { me, now: REQUEST_NOW }).rejectReason, null);
+  assert.equal(grantRequestRow({ ...baseRequest, rejectReason: 'nie powinno się pokazać' }, { me, now: REQUEST_NOW }).rejectReason, null, 'oczekujący: bez powodu');
+  const dialog = grantRequestDialog('reject', baseRequest, grantRequestRow(baseRequest, { me, now: REQUEST_NOW }));
+  assert.ok(dialog.effects.some((line) => line.includes('Powód jest opcjonalny') && line.includes('bez jego treści')));
+});
+
+test('#146/0159: ciało odrzucenia — pusty powód albo same spacje = brak pola; tekst obcięty', () => {
+  assert.deepEqual(rejectRequestPayload(''), {});
+  assert.deepEqual(rejectRequestPayload('   '), {});
+  assert.deepEqual(rejectRequestPayload(undefined), {});
+  assert.deepEqual(rejectRequestPayload('  Brak uchwały  '), { reason: 'Brak uchwały' });
 });

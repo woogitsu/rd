@@ -19,6 +19,8 @@ const FIELDS = {
   'families/index.html': ['reason'],
   'documents/index.html': ['title', 'description', 'reason'],
   'events/index.html': ['title', 'reason'],
+  // #146 (0159): okno „Odrzuć” wniosku o nadanie roli — opcjonalny powód.
+  'admin/index.html': ['reason'],
 };
 
 test('każde pole wolnego tekstu z niezmiennej tabeli ma w panelu krótką podpowiedź o danych osobowych', () => {
