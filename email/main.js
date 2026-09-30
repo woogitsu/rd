@@ -4,6 +4,7 @@ import {
   buildCampaignsUrl,
   campaignStatusLabel,
   describeProviderPause,
+  describeWorkerStatus,
   campaignActionUrl,
   campaignUrl,
   canOfferApproval,
@@ -182,6 +183,27 @@ byId("provider-pause-lift").addEventListener("click", async () => {
   }
 });
 
+// --- alarm „brak przebiegów” zadania wysyłki (#130) ---------------------------
+
+function renderWorkerStatus(status) {
+  const view = describeWorkerStatus(status);
+  byId("worker-status").hidden = !view;
+  const list = byId("worker-status-alarms");
+  list.replaceChildren();
+  if (!view) return;
+  for (const line of view.lines) {
+    const item = document.createElement("li");
+    item.textContent = line;
+    list.append(item);
+  }
+  byId("worker-status-details").textContent = view.details;
+}
+
+async function loadWorkerStatus() {
+  const data = await api(`/api/email/worker-status?schoolYearId=${encodeURIComponent(state.schoolYearId)}`);
+  renderWorkerStatus(data?.workerStatus ?? null);
+}
+
 // Wczytuje listę dla podanego roku; używane zarówno przy ręcznym „Pokaż”, jak i
 // przy wypełnieniu domyślnym rokiem po wejściu na panel (puste ekrany bez akcji).
 // Wczytuje wyłącznie listę już zaplanowanych/wysłanych kampanii — nic tu nie
@@ -198,6 +220,7 @@ async function showYear(value) {
     state.selectedId = null;
     await suppressions.load(value);
     await loadProviderPause().catch(() => { state.providerPause = null; renderProviderPause(); });
+    await loadWorkerStatus().catch(() => renderWorkerStatus(null));
   } catch (error) {
     setMessage(`Nie udało się pobrać listy kampanii: ${error.message}`, true);
   } finally {

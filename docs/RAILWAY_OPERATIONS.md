@@ -14,7 +14,8 @@ protokołu, `/api/admin/ops-status` i `/health/jobs`).
 | Element | Plik | Znaczenie |
 |---|---|---|
 | Konfiguracja usługi | `railway.json` | build `npm ci && npm run build`, start `node src/server.js` (bezpośrednio, aby SIGTERM trafił do serwera), healthcheck `/health` (liveness), `drainingSeconds: 15`, restart `ON_FAILURE` (maks. 5 prób), region `europe-west4-drams3a` (Amsterdam), bez usypiania |
-| Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE |
+| Usługa cron e-mail | `railway.email-worker.json` | osobna usługa (#130): build `npm ci`, start `node scripts/email-worker.js` (**dry-run**, bez `--send`), `cronSchedule` `15 * * * *`, restart `NEVER`, region `europe-west4-drams3a`; nie jest utworzona w żadnym środowisku (sekcja „Zadanie wysyłki e-mail”) |
+| Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE; usługa cron e-mail bez `--send` i bez restartu |
 | Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`) i przez prawdziwy HTTP z migracjami (`200`), wszystkich 17 paneli (`STATIC_PREFIXES`), nagłówki, `404` dla ścieżek prywatnych/traversal i brak `*.map`, granice ról na poziomie HTTP |
 | Smoke test zdalny | `npm run smoke:remote` (`scripts/smoke-remote.js`) | wyłącznie `GET`, po deployu stagingu (sekcja „Smoke test po deployu” niżej) |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
@@ -67,6 +68,8 @@ logach, zgłoszeniach ani buildzie frontendu.
 | `BUCKET`, `ENDPOINT`, `REGION`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` | aplikacja | referencje do zmiennych Storage Bucket (#39) |
 | `BREVO_API_KEY` | aplikacja / worker | dopiero w #40; na stagingu klucz bez możliwości wysyłki do rodziców |
 | `APP_WRITE_MODE` | aplikacja i worker e-mail | `normal` (domyślnie, także gdy brak) albo `read_only` (#143); inna wartość to błąd konfiguracji — serwer nie startuje, worker kończy z błędem. Procedura: sekcja „Tryb tylko do odczytu” |
+| `EMAIL_SEND_WINDOW_ENABLED`, `EMAIL_SEND_WINDOW_START`, `EMAIL_SEND_WINDOW_END`, `EMAIL_SEND_WINDOW_TIMEZONE`, `EMAIL_SEND_WINDOW_DAYS` | aplikacja i worker e-mail | te same wartości w obu usługach (#130): zadanie liczy okno w strefie Brukseli, aplikacja pokazuje na tej podstawie szacowany start/koniec kampanii; godziny i dni ustala zarząd (D-16) |
+| `EMAIL_WORKER_ALARM_HOURS` | aplikacja | próg alarmu „brak przebiegów” dla zarządu (`GET /api/email/worker-status`, domyślnie 2 h, #130); przy cronie co godzinę 2 h = jeden opuszczony przebieg zapasu |
 
 Sesje i MFA mogą wymagać dodatkowych sekretów — ich nazwy dopisuje PR #35.
 
@@ -481,6 +484,35 @@ weryfikacji. Jedyne wyjście to reset MFA każdego dotkniętego konta
 każda osoba zapisuje czynnik ponownie po zalogowaniu. Komunikacja z rodzinami
 o masowym resecie MFA to decyzja zarządu (szablon, kanał — D-16/D-17, jak
 przy innych wysyłkach).
+
+## Zadanie wysyłki e-mail (cron, #130)
+
+Stan: plik konfiguracji jest w repozytorium, **usługa nie jest utworzona** w
+żadnym środowisku (D-20). Szczegóły kolejki, limitów i okna: [EMAIL.md](EMAIL.md).
+
+1. Utworzyć osobną usługę (np. `rd-email-worker`) z tym samym repozytorium i w
+   ustawieniach usługi wskazać plik konfiguracji `railway.email-worker.json`
+   (config as code). `railway.json` aplikacji zostaje bez crona.
+2. Plik uruchamia `node scripts/email-worker.js` co godzinę (`15 * * * *`,
+   UTC), z `restartPolicyType: NEVER`. To **zawsze dry-run**: przebieg zapisuje
+   się w `email_worker_runs`, kolejka i dziennik limitu się nie zmieniają,
+   połączenia z Brevo nie ma. Sama zmienna `EMAIL_SENDING_ENABLED=true` nie
+   włącza wysyłki.
+3. Włączenie wysyłki (dopiero po D-20, na stagingu wyłącznie z odbiorcami
+   syntetycznymi): przeglądany PR zmieniający `startCommand` na
+   `node scripts/email-worker.js --send`, w usłudze `EMAIL_SENDING_ENABLED=true`,
+   `EMAIL_SEND_WINDOW_ENABLED=true` z godzinami ustalonymi przez zarząd (D-16;
+   propozycja zachowawcza: pon.–pt. 09:00–18:00 `Europe/Brussels`) i te same
+   `EMAIL_SEND_WINDOW_*` w usłudze aplikacji. Okno liczy zadanie w strefie
+   Brukseli, więc cron w UTC nie przesuwa go przy zmianie czasu.
+4. Zmienne usługi: `DATABASE_URL` (sieć prywatna), `APP_ENV`, `APP_WRITE_MODE`,
+   `EMAIL_*`, `BREVO_API_KEY`, `BREVO_FROM_EMAIL`, `BREVO_FROM_NAME`.
+5. Kontrola działania: zarząd i skarbnik widzą w panelu `email/` alarm
+   „Zadanie wysyłki nie działa” (`GET /api/email/worker-status`:
+   `worker_never_ran`, `worker_stale`, `worker_dry_run_only`), gdy kampania roku
+   czeka na wysyłkę, a przebiegu (albo przebiegu wysyłki) nie było dłużej niż
+   `EMAIL_WORKER_ALARM_HOURS`. Admin techniczny: `/api/admin/ops-status` i
+   `/health/jobs` (`email_worker_stale`, sekcja „Stan systemu”).
 
 ## Backup PostgreSQL
 
