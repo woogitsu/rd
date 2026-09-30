@@ -24,9 +24,17 @@ const CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
 // aktualności, ale wyłącznie 'news_post.' (news_photo NIE ma school_year_id
 // w schemacie: biblioteka zdjęć nie jest przypisana do roku, więc zdarzenia
 // 'news_photo.*' zostają bez wymogu, jak sesje/MFA/konta).
+// Część 3 (#174): rodziny finansowe z podkreśleniem (np. 'ledger_opening_balance.'
+// z bilansu otwarcia, 'ledger_category.', 'payment_reference.',
+// 'payment_instructions.') oraz zamknięcie roku i raporty roczne — wszystkie
+// dotyczą obiektu jednego roku i już niosły rok, ale nic tego nie wymuszało.
+// FINANCIAL_FAMILY obejmuje także przyszłe rodziny 'payment_*.'/'ledger_*.'/
+// 'reconciliation_*.' — nowa trasa nie ominie wymogu nową nazwą akcji.
 const SCHOOL_YEAR_REQUIRED_PREFIXES = [
   'payment.', 'ledger.', 'reconciliation.', 'email.', 'meeting.', 'resolution.', 'event.', 'news_post.',
+  'year_close.', 'report.',
 ];
+export const FINANCIAL_FAMILY = /^(payment|ledger|reconciliation)(_[a-z_]+)?\./;
 // 'email.address_suppressed' dotyczy ADRESU (email_suppressions, bez
 // school_year_id — obowiązuje niezależnie od roku), nie jednej kampanii:
 // webhook dostawcy może przyjść dla adresu bez żadnej pasującej wysyłki w
@@ -37,8 +45,8 @@ const SCHOOL_YEAR_REQUIRED_PREFIXES = [
 // nie ma tu żadnego obiektu ze szkoły, z którego dałoby się wziąć rok.
 const SCHOOL_YEAR_EXEMPT_ACTIONS = new Set(['email.address_suppressed', 'email.webhook.previous_secret_used']);
 
-function requiresSchoolYearId(action) {
-  return SCHOOL_YEAR_REQUIRED_PREFIXES.some((prefix) => action.startsWith(prefix))
+export function requiresSchoolYearId(action) {
+  return (FINANCIAL_FAMILY.test(action) || SCHOOL_YEAR_REQUIRED_PREFIXES.some((prefix) => action.startsWith(prefix)))
     && !SCHOOL_YEAR_EXEMPT_ACTIONS.has(action);
 }
 

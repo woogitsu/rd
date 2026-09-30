@@ -108,12 +108,48 @@ test('filtr actorId i schoolYearId zawężają wynik', async () => {
   const byActor = await call(env, '/api/admin/audit?domain=finance&actorId=u-treasurer', { cookie: admin });
   assert.equal(byActor.status, 200);
   assert.ok(byActor.data.events.every((e) => e.actorId === 'u-treasurer'));
-  // payment.created nie ma jeszcze schoolYearId w metadanych (luka #174);
-  // role_grant.created (domena domyślna) ma, więc filtr sprawdzamy na nim.
   await call(env, '/api/admin/grants', {
     method: 'POST', cookie: admin, body: { userId: 'u-treasurer', role: 'board', schoolYearId: 'y-1' },
   });
   const byYear = await call(env, '/api/admin/audit?schoolYearId=y-1', { cookie: admin });
   assert.equal(byYear.status, 200);
   assert.ok(byYear.data.events.length > 0);
+  // #174: payment.created niesie już schoolYearId — filtr roku działa w domenie finansów.
+  const financeYear = await call(env, '/api/admin/audit?domain=finance&schoolYearId=y-1', { cookie: admin });
+  assert.deepEqual(financeYear.data.events.map((e) => e.action), ['payment.created']);
+  assert.equal(financeYear.data.events[0].metadata.schoolYearId, 'y-1');
+});
+
+test('#174: filtr roku przypisuje stare zdarzenia bez schoolYearId do roku obiektu, bez heurystyki dat', async () => {
+  const { db, env, admin, treasurer } = await setup();
+  await seedSchoolYear(db, 'y-2', { startsOn: '2027-09-01', endsOn: '2028-08-31' });
+  const own = await recordPayment(env, treasurer, 'key-payment-history-0005');
+  const paymentId = own.data.payment.id;
+  // Stare zdarzenia (sprzed dopisania roku do metadanych) — dziennik trwały, nie poprawiamy ich;
+  // wstawione bezpośrednio, bo insertAuditEvent odrzuca dziś takie zdarzenie.
+  const legacy = [
+    ['lg-y1-pay', 'payment.correction.created', 'payment_entry', paymentId],
+    ['lg-y1-year', 'report.audit.generated', 'school_year', 'y-1'],
+    ['lg-y2-year', 'report.audit.generated', 'school_year', 'y-2'],
+    ['lg-orphan', 'payment.created', 'payment_entry', 'p-nieistniejaca'],
+  ];
+  for (const [id, action, entityType, entityId] of legacy) {
+    await db.query(
+      `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
+       VALUES ($1, 'u-treasurer', $2, $3, $4, '{}'::jsonb)`, [id, action, entityType, entityId]);
+  }
+  const ids = async (query) => (await call(env, `/api/admin/audit?${query}`, { cookie: admin })).data.events.map((e) => e.id);
+  const y1 = await ids('domain=finance&schoolYearId=y-1');
+  const y2 = await ids('domain=finance&schoolYearId=y-2');
+  assert.ok(y1.includes('lg-y1-pay') && y1.includes('lg-y1-year'), 'stare zdarzenia roku y-1');
+  assert.ok(!y1.includes('lg-y2-year') && !y1.includes('lg-orphan'));
+  assert.deepEqual(y2, ['lg-y2-year']);
+  // Zdarzenie bez obiektu roku nie trafia do żadnego roku wg daty.
+  await db.query(`INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
+    VALUES ('lg-session', 'u-treasurer', 'session.revoked', 'session', 's-synthetic', '{}'::jsonb)`);
+  assert.ok(!(await ids('schoolYearId=y-1')).includes('lg-session'));
+  assert.ok((await ids('')).includes('lg-session'));
+  // Zapisanych zdarzeń nie zmieniono.
+  const { rows } = await db.query(`SELECT metadata_json FROM audit_events WHERE id = 'lg-y1-pay'`);
+  assert.deepEqual(typeof rows[0].metadata_json === 'string' ? JSON.parse(rows[0].metadata_json) : rows[0].metadata_json, {});
 });
