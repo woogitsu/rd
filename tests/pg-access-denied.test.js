@@ -220,7 +220,7 @@ test('admin audit list shows the denial counter on access.denied', async () => w
   assert.equal(denied[0].denialCount, 3);
   assert.equal(denied[0].metadata.method, 'POST');
   // Inne zdarzenia nie mają licznika odmów.
-  assert.ok(events.filter((event) => event.action !== 'access.denied').every((event) => !('denialCount' in event)));
+  assert.deepEqual(events.filter((event) => event.action !== 'access.denied' && 'denialCount' in event), []);
 }));
 
 test('assertNoPii rejects free text in code-only fields, accepts a code', () => {
