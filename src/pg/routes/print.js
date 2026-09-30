@@ -11,7 +11,7 @@
 // przedstawiciel tylko dla uczniów przypisanej klasy (printScope). Kartka
 // pokazuje ją zamiast tytułu z identyfikatorem rodziny. Unieważniona referencja
 // i referencja innego roku nie są zwracane.
-// paymentInstructions: { iban, bic, payeeName, approvedAt } albo null, gdy rok
+// paymentInstructions: { id, iban, bic, payeeName, approvedAt } albo null, gdy rok
 // nie ma jeszcze zatwierdzonej wersji (kartka jest wtedy szkicem, bez kodu QR —
 // zob. print/core.js buildCard). Dostępne dla każdej roli uprawnionej do druku
 // (także przedstawiciela klasy) — edycja/zatwierdzanie pozostaje w
@@ -36,6 +36,7 @@ import { authorizedClassIds, isAuthorizedScoped } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { recordDataAccess } from '../data-access.js';
 import { toSafeInteger } from './payments.js';
+import { loadCurrentPaymentInstructions } from './payment-instructions.js';
 import { brusselsDay, effectiveDay } from '../today.js';
 
 export const name = 'print';
@@ -122,18 +123,16 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
 // admin/board (POST /api/payment-instructions). IBAN/BIC nigdy nie trafiają
 // do audytu (assertNoPii + reguła ręczna w payment-instructions.js).
 async function loadPaymentInstructions(db, schoolYearId) {
-  const { rows } = await db.query(
-    `SELECT iban, bic, payee_name, approved_at FROM payment_instructions
-      WHERE school_year_id = $1 ORDER BY approved_at DESC, id DESC LIMIT 1`,
-    [schoolYearId],
-  );
-  const row = rows[0];
-  if (!row) return null;
+  const current = await loadCurrentPaymentInstructions(db, schoolYearId);
+  if (!current) return null;
+  // id = wersja konfiguracji (#92): drukowana w stopce kartki, żeby po korekcie
+  // rachunku w trakcie roku odróżnić kartki wydrukowane ze starą wersją.
   return {
-    iban: row.iban,
-    bic: row.bic ?? null,
-    payeeName: row.payee_name,
-    approvedAt: new Date(row.approved_at).toISOString(),
+    id: current.id,
+    iban: current.iban,
+    bic: current.bic,
+    payeeName: current.payeeName,
+    approvedAt: current.approvedAt,
   };
 }
 

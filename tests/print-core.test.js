@@ -12,6 +12,7 @@ import {
   parseInputText,
   renderCardsHtml,
   parseStructuredReferenceCell,
+  paymentVersionLabel,
   selectHouseholds,
   structuredReferenceNotice,
 } from "../print/core.js";
@@ -330,4 +331,30 @@ test("informacja pod podglądem: ile kartek ma komunikację, ostrzeżenie przy {
   assert.equal(structuredReferenceNotice(list, ["H-1"], { bankAccount: "" }), "");
   assert.equal(structuredReferenceNotice(list, [], config), "");
   assert.doesNotMatch(structuredReferenceNotice(list, ["H-1", "H-2"], config), DEBT_WORDS);
+});
+
+// #92: wersja danych do wpłaty w stopce kartki (korekta rachunku w trakcie roku).
+test("stopka kartki: wersja zatwierdzonych danych do wpłaty; dane ręczne oznaczone jako niezatwierdzone", () => {
+  const list = households();
+  const v1 = { ...PAYMENT_INSTRUCTIONS, id: "11111111-aaaa-bbbb-cccc-000000000001", approvedAt: "2026-09-01T08:00:00.000Z" };
+  const v2 = { ...PAYMENT_INSTRUCTIONS, iban: "BE71096123456769", id: "22222222-aaaa-bbbb-cccc-000000000002", approvedAt: "2026-11-15T09:30:00.000Z" };
+  assert.equal(paymentVersionLabel(v1), "Dane do wpłaty: wersja zatwierdzona 01.09.2026 10:00, nr 11111111.");
+  const first = renderCardsHtml(list, ["H-1"], CONFIG, v1);
+  const second = renderCardsHtml(list, ["H-1"], CONFIG, v2);
+  assert.match(first.html, /<p class="card-ref card-payment-version">Dane do wpłaty: wersja zatwierdzona 01\.09\.2026 10:00, nr 11111111\.<\/p>/);
+  assert.match(second.html, /wersja zatwierdzona 15\.11\.2026 10:30, nr 22222222\./);
+  assert.notEqual(first.html, second.html);
+  // Pełny identyfikator wersji nie jest drukowany (wystarcza skrót do rozróżnienia).
+  assert.doesNotMatch(first.html, /aaaa-bbbb/);
+
+  // Rachunek wpisany ręcznie (bez zatwierdzonej wersji): wprost oznaczony, bez QR.
+  const manual = renderCardsHtml(list, ["H-1"], { ...CONFIG, bankAccount: "BE68 5390 0754 7034" });
+  assert.match(manual.html, /Dane do wpłaty wpisane ręcznie, niezatwierdzone na rok — kartka bez kodu QR\./);
+  assert.doesNotMatch(manual.html, /card-qr-svg/);
+  // Bez rachunku kartka nie ma stopki wersji.
+  const none = renderCardsHtml(list, ["H-1"], CONFIG);
+  assert.doesNotMatch(none.html, /card-payment-version/);
+  // Wersja bez identyfikatora i daty (starsze klienty) — etykieta bez pustych pól.
+  assert.equal(paymentVersionLabel(PAYMENT_INSTRUCTIONS), "Dane do wpłaty: wersja zatwierdzona.");
+  for (const html of [first.html, second.html, manual.html]) assert.doesNotMatch(html, DEBT_WORDS);
 });

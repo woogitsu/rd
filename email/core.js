@@ -179,6 +179,8 @@ export const WARNING_LABELS = Object.freeze({
   missing_payment_reference: 'Treść nie zawiera znacznika {komunikat} (komunikacji strukturalnej rodziny) ani {rodzina}.',
   household_id_as_payment_reference: 'Znacznik {rodzina} wstawia długi identyfikator rodziny bez sumy kontrolnej — łatwo go przepisać z błędem. Lepiej użyć {komunikat} (komunikacja strukturalna +++…+++).',
   template_requires_board_decision_d16: 'Szablon czeka na decyzję zarządu o treści (D-16) — nie jest „zatwierdzonym” wzorem.',
+  // #92: dodawane przez podgląd (nie contentWarnings) — blokuje zatwierdzenie.
+  payment_instructions_missing: 'Treść zawiera {rachunek} lub {odbiorca}, a rok nie ma zatwierdzonych danych do wpłaty — kampanii nie da się zatwierdzić.',
 });
 
 export function formatWarnings(warnings) {

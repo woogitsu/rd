@@ -553,7 +553,11 @@ byId("approve-campaign").addEventListener("click", async () => {
   try {
     await api(campaignActionUrl(state.selectedId, "approve"), {
       method: "POST",
-      body: JSON.stringify({ contentHash: campaign.contentHash, recipientsHash: campaign.recipientsHash }),
+      // #92: wersja danych do wpłaty widziana w podglądzie ({rachunek}/{odbiorca}).
+      body: JSON.stringify({
+        contentHash: campaign.contentHash, recipientsHash: campaign.recipientsHash,
+        paymentInstructionsId: state.preview?.paymentInstructions?.id ?? null,
+      }),
     });
     await refreshDetail();
     setMessage("Kampania zatwierdzona.");

@@ -17742,6 +17742,8 @@
           "payment_cannot_be_corrected",
           "payment_cannot_be_refunded",
           "payment_has_allocations",
+          "payment_instructions_changed",
+          "payment_instructions_missing",
           "payment_not_assigned",
           "payment_not_found",
           "payment_reassignment_household_mismatch",
@@ -19474,6 +19476,16 @@
       {
         "code": "payment_has_allocations",
         "meaning": "Wpłata jest podzielona na gospodarstwa. Najpierw cofnij części.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "payment_instructions_changed",
+        "meaning": "Dane do wpłaty zmieniono po zatwierdzeniu kampanii — zbuduj ponownie listę odbiorców i zatwierdź kampanię jeszcze raz (kampanię w trakcie wysyłki trzeba anulować i utworzyć nową).",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "payment_instructions_missing",
+        "meaning": "Rok nie ma zatwierdzonych danych do wpłaty — treść z {rachunek} lub {odbiorca} wymaga ich zatwierdzenia przez zarząd.",
         "retry": "Nie — popraw dane żądania."
       },
       {
