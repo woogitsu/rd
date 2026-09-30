@@ -87,6 +87,8 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         // Logowanie hasłem (#3): role z obowiązkowym MFA i koszt scrypt (log2 N).
         MFA_REQUIRED_ROLES: processEnv.MFA_REQUIRED_ROLES,
         SCRYPT_COST_LOG2: processEnv.SCRYPT_COST_LOG2,
+        // #196: kontekstowe rdzenie słabych haseł (nazwa szkoły, miasto) — dane lokalne, nie sekret.
+        PASSWORD_CONTEXT_STEMS: processEnv.PASSWORD_CONTEXT_STEMS,
         LOGIN_EMAIL_DELAY_MS: processEnv.LOGIN_EMAIL_DELAY_MS,
         LOGIN_PRESSURE_THRESHOLD: processEnv.LOGIN_PRESSURE_THRESHOLD,
         // Stan systemu i heartbeat zadań (#149) — tylko liczby/kody, żadnych

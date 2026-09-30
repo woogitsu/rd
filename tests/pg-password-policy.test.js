@@ -3,7 +3,7 @@
 // ich zachowywało. Testy odtwarzają tabelę z audytu (dane wyłącznie syntetyczne).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkPasswordPolicy, PASSWORD_POLICY } from '../src/pg/password.js';
+import { checkPasswordPolicy, contextStems, passwordPolicyLists, PASSWORD_POLICY } from '../src/pg/password.js';
 
 // Dostęp do listy przez zachowanie funkcji (nie eksportujemy wewnętrznego Set),
 // więc kontrakt listy sprawdzamy pośrednio: żadne z podanych haseł nie może
@@ -33,12 +33,79 @@ test('checkPasswordPolicy nie odrzuca długich syntetycznych fraz z polskimi zna
   assert.equal(checkPasswordPolicy('Ćwiczebne zdanie bez znaczenia 42'), null);
 });
 
-test('kontrakt listy: każdy wpis ma co najmniej minLength znaków (martwy wpis 11-znakowy usunięty)', () => {
-  // `asdfghjkl;'` (11 znaków) był martwym wpisem — krótszy niż PASSWORD_POLICY.minLength=12,
-  // więc nigdy nie mógł zostać dopasowany. checkPasswordPolicy odrzuca go już na etapie
-  // password_too_short, więc test kontraktu sprawdza to zachowanie zamiast czytać Set wprost.
+// Ta sama normalizacja co w checkPasswordPolicy (foldLatin + compact) — test
+// kontraktu nie może polegać na funkcji, którą sprawdza.
+const fold = (value) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').replace(/Ł/g, 'L');
+const compact = (value) => fold(value.normalize('NFKC').toLowerCase()).replace(/[\s\-_.!@#$%^&*]+/g, '');
+
+test('kontrakt listy: każdy wpis ≥ minLength, bez polskich znaków, bez duplikatów po normalizacji, odrzucany', () => {
+  const { commonPasswords } = passwordPolicyLists();
+  assert.ok(commonPasswords.length >= 70, `lista za krótka: ${commonPasswords.length}`);
+  for (const entry of commonPasswords) {
+    // `asdfghjkl;'` (11 znaków) był martwym wpisem — krótszy niż minLength nigdy nie trafi.
+    assert.ok([...entry].length >= PASSWORD_POLICY.minLength, `martwy wpis (za krótki): ${entry}`);
+    assert.ok([...entry].length <= PASSWORD_POLICY.maxLength, entry);
+    assert.equal(entry, fold(entry).toLowerCase(), `wpis musi być zapisany bez polskich znaków i małymi literami: ${entry}`);
+    assert.equal(checkPasswordPolicy(entry), 'password_common', entry);
+    assert.equal(checkPasswordPolicy(entry.toUpperCase()), 'password_common', `wielkie litery: ${entry}`);
+  }
+  const normalized = commonPasswords.map(compact);
+  const duplicates = normalized.filter((value, index) => normalized.indexOf(value) !== index);
+  assert.deepEqual(duplicates, [], 'duplikaty po zdjęciu diakrytyków i separatorów');
+});
+
+test('kontrakt rdzeni: tylko litery a–z (inaczej rdzeń jest martwy), bez duplikatów', () => {
+  const { commonStems } = passwordPolicyLists();
+  for (const stem of commonStems) assert.match(stem, /^[a-z]+$/, `martwy rdzeń: ${stem}`);
+  assert.equal(new Set(commonStems).size, commonStems.length);
+  // Dawne martwe rdzenie `passw0rd`/`zaq12wsx` — teraz łapane.
+  assert.equal(checkPasswordPolicy('Passw0rd2026!'), 'password_common');
+  assert.equal(checkPasswordPolicy('Zaq12wsx1234'), 'password_common');
   assert.equal(checkPasswordPolicy("asdfghjkl;'"), 'password_too_short');
-  assert.ok(PASSWORD_POLICY.minLength === 12);
+});
+
+test('rdzenie Rady i miesiące PL/FR/NL + rok/cyfry/spacje → password_common', () => {
+  for (const password of [
+    'Styczeń2026!!', 'Październik 2026', 'Grudzień 2025!', 'Składka2026!!', 'Rada123456789', 'Rodzice 2026!!',
+    'Szkoła 2026-2027', 'Septembre2026', 'Février 2026!', 'Décembre 2026', 'Oktober 2026!!', 'Augustus2026!',
+    'Bruxelles2026', 'Belgique 2026!', 'Maj 2026 12345', 'rada rada 2026',
+  ]) {
+    assert.equal(checkPasswordPolicy(password), 'password_common', password);
+  }
+});
+
+test('rdzenie nie odrzucają fraz, w których poza słowem są inne litery (brak fałszywych odrzuceń)', () => {
+  for (const password of [
+    'Wrzesień to piękny miesiąc', 'kwiecień plecień bo przeplata', 'Rada Rodziców zbiera się w środę',
+    'Składka na wycieczkę klasy 3b', 'Oktober in Brussel is koud', 'Mai à Bruxelles sous la pluie',
+  ]) {
+    assert.equal(checkPasswordPolicy(password), null, password);
+  }
+});
+
+test('kontekstowe rdzenie z konfiguracji PASSWORD_CONTEXT_STEMS (nazwa szkoły, gmina)', () => {
+  const env = { PASSWORD_CONTEXT_STEMS: 'Szkoła Przykładowa, Uccle, , xy' };
+  assert.deepEqual(contextStems(env), ['szkolaprzykladowa', 'uccle'], 'litery bez diakrytyków, krótkie/puste pominięte');
+  assert.equal(checkPasswordPolicy('Uccle2026!!!!', { env }), 'password_common');
+  assert.equal(checkPasswordPolicy('Szkoła Przykładowa 2026', { env }), 'password_common');
+  assert.equal(checkPasswordPolicy('Uccle w deszczowy wtorek', { env }), null, 'fraza z nazwą, ale nie sam rdzeń');
+  // Bez konfiguracji te same hasła przechodzą — nazwy lokalne nie są w kodzie.
+  assert.deepEqual(contextStems({ PASSWORD_CONTEXT_STEMS: '' }), []);
+  assert.equal(checkPasswordPolicy('Uccle2026!!!!', { env: { PASSWORD_CONTEXT_STEMS: '' } }), null);
+});
+
+test('porównanie z adresem e-mail po zdjęciu diakrytyków', () => {
+  const email = 'jan.kowalski@example.invalid';
+  assert.equal(checkPasswordPolicy('Jan.Kówalski2026', { email }), 'password_contains_email');
+  assert.equal(checkPasswordPolicy('moje jań.kowalski@example.invalid', { email }), 'password_contains_email');
+  assert.equal(checkPasswordPolicy('Syntetyczne hasło z polskimi znakami żółć', { email }), null);
+});
+
+test('porównanie z listą jest szybkie (Set, lista ładowana raz na proces)', () => {
+  const started = process.hrtime.bigint();
+  for (let index = 0; index < 1000; index += 1) checkPasswordPolicy(`Syntetyczna fraza numer ${index} żółć`);
+  const perCallMs = Number(process.hrtime.bigint() - started) / 1e6 / 1000;
+  assert.ok(perCallMs < 5, `średnio ${perCallMs} ms na wywołanie`);
 });
 
 test('podwójna próba zmiany hasła odrzuconym hasłem: druga próba wciąż 400, bez efektów ubocznych', () => {
