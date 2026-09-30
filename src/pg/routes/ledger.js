@@ -419,17 +419,31 @@ function requireYear(context, schoolYearId) {
   }
 }
 
+// #128: filtry księgi (kategoria, zakres dat wpisu) liczone w SQL razem z zakresem
+// roku; uprawnienia sprawdza requireFinancialContext przed zapytaniem. Kategoria
+// spoza roku daje pustą listę (nie ujawnia jej istnienia).
 async function listEntries(request, env, url, json) {
   const schoolYearId = url.searchParams.get('schoolYearId');
   const direction = url.searchParams.get('direction');
+  const category = url.searchParams.get('category') || null;
+  const dateFrom = url.searchParams.get('dateFrom') || null;
+  const dateTo = url.searchParams.get('dateTo') || null;
   const limitText = url.searchParams.get('limit') ?? '50';
-  if (!validId(schoolYearId) || (direction && !DIRECTIONS.has(direction))) {
+  if (!validId(schoolYearId) || (direction && !DIRECTIONS.has(direction)) || (category && !validId(category))) {
     throw new RequestError('invalid_request');
   }
+  if ((dateFrom && !validDate(dateFrom)) || (dateTo && !validDate(dateTo))) throw new RequestError('invalid_date');
+  if (dateFrom && dateTo && dateFrom > dateTo) throw new RequestError('invalid_date_range');
   if (!/^\d{1,3}$/.test(limitText)) throw new RequestError('invalid_limit');
   const limit = Number(limitText);
   if (limit < 1 || limit > 100) throw new RequestError('invalid_limit');
-  const cursorScope = { schoolYearId, filter: direction ?? '' };
+  // Sam kierunek zachowuje dawny kształt zakresu kursora; dodatkowe filtry wchodzą do zakresu,
+  // więc zmiana filtra z tym samym kursorem kończy się 400 invalid_cursor.
+  const hasExtraFilters = Boolean(category || dateFrom || dateTo);
+  const cursorScope = {
+    schoolYearId,
+    filter: hasExtraFilters ? JSON.stringify([direction, category, dateFrom, dateTo]) : (direction ?? ''),
+  };
   const cursor = decodeCursor(url.searchParams.get('cursor'), cursorScope);
   await requireFinancialContext(request, env, schoolYearId);
 
@@ -438,6 +452,18 @@ async function listEntries(request, env, url, json) {
   if (direction) {
     values.push(direction);
     conditions.push(`entry.direction = $${values.length}`);
+  }
+  if (category) {
+    values.push(category);
+    conditions.push(`entry.category_id = $${values.length}`);
+  }
+  if (dateFrom) {
+    values.push(dateFrom);
+    conditions.push(`entry.occurred_on >= $${values.length}::date`);
+  }
+  if (dateTo) {
+    values.push(dateTo);
+    conditions.push(`entry.occurred_on <= $${values.length}::date`);
   }
   if (cursor) {
     values.push(cursor.occurredOn, cursor.id);
@@ -607,6 +633,8 @@ async function deactivateCategory(request, env, categoryId, json) {
       );
       await insertAuditEvent(tx, {
         actorId, action: 'ledger_category.deactivated', entityType: 'ledger_category', entityId: categoryId,
+        // #207: rok w metadanych, jak przy pozostałych zdarzeniach księgi (eksport roczny, filtr dziennika).
+        metadata: { schoolYearId: category.school_year_id },
       });
       return json({ category: categoryFromRow(updated.rows[0]) });
     });
@@ -672,7 +700,7 @@ async function copyCategories(request, env, json) {
       if (rows.length) {
         await insertAuditEvent(tx, {
           actorId, action: 'ledger_category.copied', entityType: 'school_year', entityId: input.toSchoolYearId,
-          metadata: { from: input.fromSchoolYearId, count: rows.length },
+          metadata: { schoolYearId: input.toSchoolYearId, from: input.fromSchoolYearId, count: rows.length },
         });
       }
       return json({

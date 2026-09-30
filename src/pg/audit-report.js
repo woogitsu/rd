@@ -5,6 +5,7 @@
 // zawiera skryptów; CSP dopuszcza wyłącznie wbudowany arkusz stylów o znanym
 // skrócie SHA-256.
 
+import { formatSchoolYear } from '../../shared/school-year.js';
 import { formatEur as formatEurShared } from '../../panel/money.js';
 
 const CHECK_LABEL = {
@@ -212,13 +213,13 @@ export function renderAuditReportHtml(report) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Raport dla Komisji Rewizyjnej — ${e(schoolYear.label)}</title>
+<title>Raport dla Komisji Rewizyjnej — ${e(formatSchoolYear(schoolYear.label))}</title>
 <style>${REPORT_CSS}</style>
 </head>
 <body>
 <header>
 <h1>Raport dla Komisji Rewizyjnej</h1>
-<p>Rada Rodziców — rok szkolny ${e(schoolYear.label)} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
+<p>Rada Rodziców — rok szkolny ${e(formatSchoolYear(schoolYear.label))} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
 <p class="meta">Wygenerowano: ${e(formatDate(report.generatedAt))}. Kwoty w EUR. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
 <p class="notice">Zestawienie z księgi w systemie. Nie jest zatwierdzonym sprawozdaniem finansowym; wymaga sprawdzenia z dokumentami źródłowymi.</p>
 </header>

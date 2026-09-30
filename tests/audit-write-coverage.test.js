@@ -81,6 +81,7 @@ test('POST /api/ledger/categories/copy: rzeczywiste kopiowanie zostawia zdarzeni
   assert.equal(event.actor_id, 'u-cov-board');
   assert.equal(event.entity_type, 'school_year');
   assert.equal(event.entity_id, Y1);
+  assert.equal(event.metadata_json.schoolYearId, Y1, '#207: rok docelowy w metadanych');
   assert.equal((await copy(false)).status, 200);
   assert.equal((await eventsAfter(db, 'ledger_category.copied')).length, 1);
 });

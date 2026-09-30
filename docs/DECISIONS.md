@@ -4,7 +4,7 @@ Ten dokument zbiera decyzje organizacyjne i prawne, których zespół techniczny
 
 Do czasu zamknięcia decyzji D-01–D-06 nie importujemy danych rodzin. Prace na danych syntetycznych mogą trwać równolegle (#1).
 
-Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są otwarte. Portal jest prototypem przygotowywanym przez jednego rodzica do przedstawienia zarządowi. Poprzednia wersja (Cloudflare Worker/D1) nigdy nie była wdrożona ani nie zawierała danych szkoły — zob. [RAILWAY_MIGRATION.md](RAILWAY_MIGRATION.md#stan-wyjściowy-fakt-nie-decyzja). Założenia przyjęte w kodzie do czasu decyzji są opisane w PR i issues jako warianty tymczasowe, nie jako decyzje.
+Stan na 27.09.2026 (uzupełnione 29.09.2026 o pytania zebrane 28–29.09): żadna decyzja nie zapadła; wszystkie pozycje poniżej są otwarte. Portal jest prototypem przygotowywanym przez jednego rodzica do przedstawienia zarządowi. Poprzednia wersja (Cloudflare Worker/D1) nigdy nie była wdrożona ani nie zawierała danych szkoły — zob. [RAILWAY_MIGRATION.md](RAILWAY_MIGRATION.md#stan-wyjściowy-fakt-nie-decyzja). Założenia przyjęte w kodzie do czasu decyzji są opisane w PR i issues jako warianty tymczasowe, nie jako decyzje.
 
 ## Jak wypełniać
 
@@ -38,6 +38,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 | D-20 | Zgoda na produkcję na Railway | #31, #41, #42 | otwarta |
 | D-21 | Aktualny regulamin i dostęp do dokumentów źródłowych | #13, #15 | otwarta |
 | D-22 | Wersje językowe strony publicznej | #129 | otwarta |
+| D-23 | Nazwa szkoły i format roku szkolnego | wydruki, strona publiczna | otwarta |
 
 ## Dane osobowe
 
@@ -113,6 +114,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: kto przyjmuje zgłoszenie incydentu lub żądanie sprostowania/usunięcia, w jakim czasie i jak jest ono dokumentowane?
 - Dlaczego: SECURITY.md wymaga procedury przed importem; odbiór produkcji (#41).
 - Warianty w dokumentacji: nie wskazano.
+- Notatka techniczna (29.09.2026): rejestr żądań osób (#323, scalony) obsługuje dziś wyłącznie zapis i przebieg żądania; NIE generuje eksportu danych rodziny, nie wykonuje sprostowania ani ograniczenia przetwarzania. Wariant zachowawczy: te czynności wykonuje ręcznie uprawniona osoba poza rejestrem, a rejestr tylko dokumentuje termin i wynik. Pytania do zarządu/IOD: kto realizuje żądanie dostępu (eksport danych rodziny), sprostowania i ograniczenia przetwarzania; w jakim formacie i kanale przekazujemy wynik osobie; czy rejestr ma to wspierać technicznie. Rekomendacja koordynatora (nie rozstrzygnięcie): najpierw przyjąć procedurę i osobę odpowiedzialną, dopiero potem rozbudowywać mechanizm.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -150,6 +152,10 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
   porównuje stałych ról z tą tabelą — rozszerzenie do zrobienia osobno.
 - Notatka techniczna (28.09.2026): dwa dalsze PR (#341/#377 i #329, wszystkie scalone do `main`) przyjęły warianty zachowawcze w modułach spoza tabeli wyżej. PR #341/#377 (#92, scalone do `main`) ograniczyły zatwierdzanie zatwierdzonych danych do wpłaty (`POST /api/payment-instructions`, IBAN/BIC do kodu QR na kartkach) do ról `admin`/`board`, świadomie bez skarbnika, do czasu tej decyzji; odczyt pozostaje `admin`/`board`/`treasurer` z MFA. PR #329 (#82, scalony) dodał unieważnienie/zastąpienie dokumentu (`POST /api/documents/:id/supersede`, `/void`) z tymi samymi regułami dostępu co odczyt danego dokumentu (`canAccessDocument`) — dla dokumentu finansowego oznacza to, że skarbnik z MFA może unieważnić lub zastąpić dokument finansowy, mimo że moduł dokumentów w ogóle nie był dotąd ujęty w tabeli wyżej. Skutek: zakres ról dla obu modułów (dane do wpłaty, unieważnianie/zastępowanie dokumentów) czeka na potwierdzenie w tej decyzji.
 - Założenie techniczne do czasu decyzji (#152, PII_CHECK.md): publikacja publiczna protokołu z wykrytym imieniem/nazwiskiem, e-mailem lub IBAN jest dziś blokowana zawsze (`409`), bez wyjątku dla nazwiska członka Rady pełniącego funkcję — wariant zachowawczy, bo brak decyzji, czy takie nazwisko jest dopuszczalne w publicznym protokole. Nie jest to decyzja.
+- Notatka techniczna (29.09.2026), zakres roli `admin` (#474, #163): kod daje administratorowi technicznemu odczyt i edycję rodzin oraz zapis wpłat i księgi (stała `admin, board, treasurer` w tabeli wyżej). Pytanie: czy rozdzielić rolę techniczną od finansowej, tak by `admin` nie miał dostępu do danych rodzin i wpłat (a konta i role prowadził bez wglądu w dane finansowe)? Warianty: A) obecny stan (admin = pełny zakres roboczy); B) admin tylko konta, role i konfiguracja, bez rodzin, wpłat i księgi; C) B, a dostęp do danych na czas prac serwisowych nadawany doraźnie i wpisywany do dziennika. Obecny wariant w kodzie: A, opisany w dokumentacji jako stan faktyczny, niezatwierdzony. Rekomendacja koordynatora (nie rozstrzygnięcie): B lub C, zgodnie z zasadą najmniejszych uprawnień.
+- Notatka techniczna (29.09.2026), zebrania (#369, #171): przedstawiciel klasy jako gospodarz zebrania klasowego też musi mieć MFA — bardziej restrykcyjnie niż pierwotny projekt #171. Po scaleniu z #102 ten sam blankietowy wymóg MFA obejmuje także zarządzanie zebraniami, w tym nową trasę `POST /api/meetings/resolutions/:id/execution` (wykonanie uchwały). Pytanie: czy MFA ma być wymagane od każdego gospodarza zebrania klasowego, czy tylko od ról finansowych i zarządu? Obecny wariant zachowawczy: MFA wszędzie. Skutek: rodzic-gospodarz musi mieć skonfigurowany TOTP. Rekomendacja koordynatora (nie rozstrzygnięcie): zostawić MFA dla zarządzania uchwałami i ich wykonaniem, a dla gospodarza klasowego ocenić po pierwszym zebraniu próbnym.
+- Notatka techniczna (29.09.2026), dokumenty (#329): unieważnienie lub zastąpienie dokumentu wymaga tylko tego samego uprawnienia, co odczyt (patrz notatka z 28.09.2026 wyżej). Do potwierdzenia zakres: czy skarbnik z MFA może unieważniać dokumenty finansowe, czy tylko zarząd. Rekomendacja koordynatora (nie rozstrzygnięcie): unieważnianie tylko przez `board`, odczyt bez zmian.
+- Pytanie z przeglądu demo (29.09.2026): w dzienniku kont i w historii wydarzenia autor zmiany jest pokazywany jako identyfikator (UUID), a typy obiektów i powody jako wartości techniczne. Czy rola, która widzi dziennik, ma widzieć nazwę konta autora (dane osobowe pracowników Rady), czy skrócony identyfikator? Wariant zachowawczy: identyfikator bez nazwy. Rekomendacja koordynatora (nie rozstrzygnięcie): nazwa konta tylko dla `board` i `audit`, dla pozostałych skrócony identyfikator.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -171,6 +177,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: jakim sposobem użytkownicy logują się i przyjmują zaproszenia; kto może zapraszać; czy dostawca logowania jest kolejnym podmiotem przetwarzającym (D-05)?
 - Dlaczego: bez tego nie ma drogi utworzenia sesji (AUTH.md). Blokuje #3 i częściowo #35.
 - Warianty w dokumentacji: tylko wymagania — konta na zaproszenie, bez publicznej rejestracji, MFA dla dostępu finansowego. Dostawca niewskazany.
+- Założenia techniczne do potwierdzenia (29.09.2026; #369, #384): sesja wygasa po 30 minutach bezczynności (`SESSION_IDLE_TIMEOUT_SECONDS`), a „świeże MFA” dla operacji wrażliwych (zamknięcie roku, zatwierdzenie kampanii, reset hasła/MFA, nadanie roli) obowiązuje 15 minut od ostatniego potwierdzenia TOTP (`MFA_STEP_UP_MAX_AGE_SECONDS`). To wartości wybrane technicznie, bez uzgodnienia z zarządem. Warianty: obecne 30/15 min; krócej (np. 15/5 min) kosztem wygody skarbnika; dłużej (np. 60/30 min) kosztem bezpieczeństwa współdzielonego komputera. Rekomendacja koordynatora (nie rozstrzygnięcie): pozostawić 30/15 do czasu prób z zarządem.
 - Status: wskazanie użytkownika 2026-09-27: e-mail + hasło + TOTP (Google/Microsoft Authenticator); do formalnego potwierdzenia przez zarząd/IOD. To **nie** jest decyzja zarządu — prototyp (docs/AUTH.md) realizuje wskazany wariant, aby można go było ocenić na danych syntetycznych.
 - Zakres wskazania: logowanie adresem e-mail i hasłem we własnym systemie (bez zewnętrznego dostawcy tożsamości, więc bez nowego podmiotu przetwarzającego z D-05), drugi składnik z aplikacji uwierzytelniającej zgodnej z TOTP (RFC 6238), konta wyłącznie z zaproszenia, reset hasła tylko przez administratora.
 - Do potwierdzenia razem z metodą (założenia prototypu): polityka haseł (12–128 znaków, lista popularnych haseł, bez reguł składu), limity prób (5 na adres i 20 na IP w 15 min, blokada 15 min), role z obowiązkowym MFA (`MFA_REQUIRED_ROLES`, domyślnie admin, zarząd, skarbnik), ważność tokenu resetu (2 h, najwyżej 24 h), procedura odzyskania dostępu po utracie telefonu i kodów (reset MFA przez administratora — kto i na jakiej podstawie potwierdza tożsamość), kto może zapraszać do których ról, retencja skrótów haseł i dziennika logowań (D-04).
@@ -206,6 +213,11 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Pytanie: na jaki rachunek przyjmowane są wpłaty w danym roku, kto go prowadzi, jak rejestrujemy gotówkę i kto oraz jak często uzgadnia księgę z wyciągiem?
 - Dlaczego: dane do wpłaty w wiadomościach pochodzą z konfiguracji zatwierdzonej na rok (EMAIL.md). Blokuje uzgadnianie w #7 i treść w #10.
 - Warianty w dokumentacji: przelew i gotówka jako metody (ROADMAP.md, #6). Sposób uzgadniania niewskazany.
+- Pytanie z badania na danych syntetycznych (29.09.2026; D-09): przelew zbiorczy za kilka rodzin i raport Komisji Rewizyjnej. Wpłata podzielona między rodziny ma zawsze status „nieprzypisana” i nie da się jej ująć w księdze — wpis z powiązaniem kończy się błędem `400 invalid_payment_link`, bo księga wymaga wpłaty przypisanej. Przykład liczbowy: przelew zbiorczy 5000 + zwykła wpłata 3000 → raport KR pokazuje wpływy 3000, kontrola „wpłaty w księdze” jest zielona (obie strony pomijają nieprzypisane), a 5000 nie widać nigdzie w raporcie. Kartki klasowe liczą części podzielonej wpłaty poprawnie.
+  - Warianty: A) dopuścić ujęcie w księdze wpłaty podzielonej (zmiana reguł księgi i migracja); B) raport KR wykazuje wpłaty nieprzypisane (liczba, kwota netto, w tym podzielone) tak jak przy zamknięciu roku; C) bez zmian, skarbnik opisuje różnicę w uzgodnieniu.
+  - Obecny wariant w kodzie: C (nieprzypisane pomijane po obu stronach kontroli).
+  - Rekomendacja koordynatora (nie rozstrzygnięcie): B niezależnie od A, dla przejrzystości wobec KR.
+- Notatka techniczna (29.09.2026, #395): porzucenie szkicu uzgodnienia może wykonać sam autor szkicu, bez zasady czterech oczu obowiązującej przy zatwierdzeniu. Przyjęto tak, bo porzucenie niczego nie zatwierdza, a szkic pozostaje w dzienniku jako „porzucony” z powodem. Pytanie: czy porzucenie szkicu też ma wymagać drugiej osoby? Rekomendacja koordynatora (nie rozstrzygnięcie): zostawić bez drugiej osoby, z wpisem w dzienniku i widocznością w raporcie KR.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -296,6 +308,7 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Dlaczego: README zabrania umieszczania tych dokumentów w repo bez decyzji. Dotyczy #13 i #15.
 - Warianty w dokumentacji: nie wskazano.
 - Notatka techniczna (28.09.2026): PR #382 (#125, scalony) dostarczył wyłącznie projekt sprawozdania rocznego liczony na żywo z bieżących danych (nagłówek „nie jest wersją zatwierdzoną”). Niezmienne migawki sprawozdania (`financial_report_snapshots`, suma SHA-256, zatwierdzenie przez drugą osobę), wskazanie migawki przy zamknięciu roku i publikacja zatwierdzonej migawki przez aktualności są wprost poza zakresem PR i czekają na tę decyzję oraz na D-04 (schemat i retencja migawki wymagają osobnej migracji).
+- Notatka techniczna (29.09.2026; D-19, #211, PR #437): w zebraniu ta sama osoba zapisana zarówno jako użytkownik (`user_id`), jak i jako opiekun (`guardian_id`) liczy się do quorum dwa razy. Test „known gap” w `tests/pg-meetings.test.js` utrwala obecne zachowanie (opis: docs/TESTING.md). Naprawa wymaga migracji oraz decyzji, kto głosuje i jest liczony — konto czy opiekun (zależne od regulaminu i D-19). Warianty: A) liczyć konto; B) liczyć opiekuna; C) osoba jedna, łączona po potwierdzeniu przez sekretarza zebrania. Obecny wariant: brak deduplikacji (znana luka, nieoznaczona jako gotowa). Rekomendacja koordynatora (nie rozstrzygnięcie): po ustaleniu regulaminu liczyć osobę raz; do tego czasu quorum stwierdza sekretarz ręcznie.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:
@@ -307,6 +320,18 @@ Stan na 27.09.2026: żadna decyzja nie zapadła; wszystkie pozycje poniżej są 
 - Dlaczego: blokuje #129. Bez tej decyzji nie wdrażamy warstwy i18n ani tłumaczenia treści — polska wersja pozostaje jedyną. Ta pozycja jest wprost proponowana w treści #129 („Nowa decyzja zarządu... Bez niej nie implementować”), nie założeniem zespołu technicznego.
 - Warianty w dokumentacji: propozycja z #129 — tłumaczenie wiązane z konkretną opublikowaną wersją polską (numer wersji), przechodzące to samo „cztery oczy” co treść polska (autor tłumaczenia ≠ zatwierdzający), automatyczne ukrycie tłumaczenia po zmianie wersji polskiej do czasu ponownego zatwierdzenia, polska wersja pozostaje nadrzędna i wiążąca. Bez tłumaczenia maszynowego publikowanego automatycznie.
 - Do ustalenia razem z decyzją: które języki (FR/NL/EN czy inny zestaw), kto ma uprawnienia tłumacza i zatwierdzającego (czy to musi być zarząd, czy może być osoba spoza zarządu ze znajomością języka), czy dotyczy też wydarzeń (tytuł/opis/miejsce) czy tylko aktualności w pierwszym etapie, i czy podpisy licencji/zgód pod zdjęciami (#96, #106) pozostają wyłącznie po polsku.
+- Status: otwarta
+- Data decyzji:
+- Kto zatwierdził:
+- Uchwała/dokument:
+
+### D-23. Nazwa szkoły i format roku szkolnego w panelu
+
+- Pytanie: jaka jest oficjalna nazwa szkoły i Rady w nagłówkach, na stronie publicznej i na wydrukach oraz jaki format roku szkolnego obowiązuje?
+- Dlaczego: w prototypie występują trzy zapisy nazwy — „Szkoła Polska w Brukseli” (nagłówki paneli), „Szkoła Polska im. Joachima Lelewela” (`/site/`, `/import/`, kartki) i „im. J. Lelewela” (seed wydarzenia demo) — oraz dwa formaty roku: „2026/2027” (Rodziny, Konta, Eksport, raport KR) i „2026-2027” (pola formularzy). Nie chcemy zgadywać nazwy urzędowej; wydruki i strona publiczna są widoczne dla rodziców (przegląd demo z 29.09.2026, pozycja 7).
+- Warianty: nazwa — pełna z patronem („Szkoła Polska im. Joachima Lelewela w Brukseli”), krótka („Szkoła Polska w Brukseli”) albo krótka w nagłówku i pełna na wydrukach i stronie publicznej; rok — „2026/2027” albo „2026-2027”; osobno strefa czasu w wyświetlanych godzinach (dziś UTC w Aktualnościach, czas lokalny gdzie indziej): Europe/Brussels wszędzie.
+- Obecny wariant w kodzie: bez zmian, niespójny (nic nie ujednolicono, żeby nie wprowadzać nieoficjalnej nazwy). Po decyzji nazwa i format trafią do jednej stałej w `shared/`.
+- Rekomendacja koordynatora (nie rozstrzygnięcie): pełna nazwa na stronie publicznej i wydrukach, krótka w nagłówkach paneli; format „2026/2027” (jak w treści kartek); godziny w Europe/Brussels. Ostateczną nazwę potwierdza Rada z dyrekcją szkoły.
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:

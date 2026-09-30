@@ -27,6 +27,12 @@ Każdy punkt potwierdza osoba z rolą zarządu albo skarbnika (MFA). Zapisywane 
 
 Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawienie przekazania pokazuje pomocniczo np. liczbę odbytych zebrań bez zatwierdzonego protokołu.
 
+### Ostrzeżenia informacyjne i przegląd dziennika odczytu (#80, #133)
+
+`GET /api/year-close/{rok}` zwraca dodatkowo `warnings` (lista `{ code, count, amountCents }`, pusta gdy brak) i `accessReview`. To wyłącznie **informacja z liczbami — nie blokuje** rozpoczęcia, potwierdzenia punktu ani zamknięcia; blokuje nadal tylko to, co blokowało serwer (komplet listy kontrolnej, cztery oczy, zgodność salda końca roku). Odpowiedź nie zawiera opisów wpisów, nazw ani identyfikatorów osób i gospodarstw. Kody, w stałej kolejności: `unallocated_payments` (wpłaty w stanie `unmatched` z niepokrytą kwotą netto; kwota = suma niepokrytej części), `expenses_without_evidence` (wydatki netto > 0 bez dokumentu; te same reguły co raport KR, #87), `large_expenses_without_resolution` (wydatki > 3000 EUR bez przyjętej uchwały; ta sama reguła `flagged` co w raporcie KR, #93), `reconciliation_missing` (brak zatwierdzonego uzgodnienia), `reconciliation_before_year_end` (data wyciągu ostatniego zatwierdzonego uzgodnienia przed `ends_on`), `reconciliation_difference` (różnica salda ostatniego zatwierdzonego uzgodnienia ≠ 0; kwota = różnica), `reconciliation_drafts` (szkice), `unmatched_statement_lines` (pozycje wyciągu bez dopasowania w uzgodnieniach niezarzuconych; kwota = suma modułów), `open_email_campaigns` (kampanie w stanie szkic, zatwierdzona lub w wysyłce). „Brak wpisu wpłaty” nie jest statusem dłużnika — składki są dobrowolne, lista może być nieaktualna.
+
+`accessReview` (informacyjna pozycja przeglądu, #133): odczyty z `data_access_log` w zakresie roku (`school_year_id` roku albo klasa roku), z wynikiem `ok`, wg rodzaju (`reads`: wpisy, odczyty, liczba kont), `readsWithoutValidGrant` (odczyty, przy których konto nie miało w chwili odczytu ważnego przydziału — wygasłego, cofniętego albo jeszcze nieprzyznanego) oraz `activeGrantsInScope` (przydziały, które zamknięcie roku wygasi). Bez identyfikatorów kont — szczegóły w przeglądzie dziennika odczytu w panelu administratora. **Wariant zachowawczy (D-13/D-21):** nie jest to kolejny punkt blokujący listy kontrolnej (`CHECKLIST_ITEMS`); nowy punkt wymagałby migracji (`CHECK` na `school_year_closure_checklist.item`) i zmieniłby warunek zamknięcia, więc do decyzji Rady. Ekran `year-close/` pokazuje obie sekcje pod listą kontrolną.
+
 ## Zamknięcie
 
 `POST /api/year-close/{rok}/close` wykonuje w jednej transakcji, w tej kolejności blokad (#212 — nie odwracać, ani w tej, ani w innej trasie):
@@ -109,6 +115,23 @@ Wariant zachowawczy do czasu decyzji D-08/D-09 (zarząd jeszcze nie zdecydował)
 - Pozostałe trasy roku N (stan zamknięcia, księga, wpłaty, uzgodnienia) nadal wymagają przydziału roku N albo bez zakresu roku. Zapis w roku N kończy się `403` (brak roli w roku N) albo `409 school_year_closed` (trigger zamrożenia).
 - Nie ma przydziału „tylko do odczytu” w zamkniętym roku: `POST /api/admin/grants` z `schoolYearId` zamkniętego roku kończy się `409 school_year_closed` (nie `503`), bez zapisu.
 - Komisja Rewizyjna traci odczyt w chwili zamknięcia (D-09: czy i jak długo KR ma dostęp po zamknięciu). Jeśli Rada zdecyduje inaczej, regułę trzeba rozszerzyć osobną zmianą.
+
+## Nowy rok szkolny bez ręcznego SQL (#207)
+
+Pełny cykl przechodzi przez API i panele, bez `INSERT` w bazie; kolejność sprawdza test `tests/pg-year-cycle.test.js` (jeden PGlite, wyłącznie `handlePgRequest`). Uprawnienia bez zmian (wariant zachowawczy D-08/D-09 — panel tylko pokazuje akcje istniejących tras, serwer autoryzuje każde żądanie).
+
+| Krok | Trasa | Panel | Kto |
+|---|---|---|---|
+| Nowy rok | `POST /api/admin/school-years` | Konta i role → „Lata szkolne i klasy” | admin |
+| Klasy nowego roku | `POST /api/admin/school-years/:id/classes` albo kopia z mapą `POST /api/admin/promotions/classes/preview` i `…/apply` | Konta i role (dodanie klas); kopia z mapą — tylko API (#78) | admin |
+| Promocja uczniów | `POST /api/admin/promotions/preview` i `…/apply` (planDigest, Idempotency-Key) | tylko API (zakładka „Nowy rok” — #78) | admin |
+| Kategorie księgi | `POST /api/ledger/categories/copy` (`dryRun` → zapis) albo `POST /api/ledger/categories` | Księga → „Kopiuj kategorie z innego roku”, „Nowa kategoria” | admin, zarząd, skarbnik roku docelowego |
+| Preliminarz | `POST /api/ledger/budget` | Księga → „Dodaj linię planu” | jak wyżej |
+| Bilans otwarcia | pierwszy rok: `POST /api/ledger/opening-balance`; kolejne lata: zamknięcie roku poprzedniego | Księga → „Wpisz bilans otwarcia” (tylko rok bez bilansu) | zarząd |
+| Przydziały ról | `POST /api/admin/grants` / zaproszenia | Konta i role | admin |
+| Zamknięcie poprzedniego roku | `/api/year-close/:id/*` | Zamknięcie roku | wg sekcji „Zamknięcie” |
+
+Poza zakresem (osobne decyzje): akceptacja zaproszeń i konta w teście są seedowane (D-10); formularz poprawki bilansu otwarcia (`/opening-balance/adjustments`, #199) i zakładka promocji w `families/` (#78) nie istnieją jeszcze w panelach.
 
 ## Założenia
 

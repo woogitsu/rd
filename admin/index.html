@@ -11,7 +11,7 @@
     <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
       <a class="brand" href="../">
-        <span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span>
+        <span>Rada Rodziców<br /><small data-school-name></small></span>
       </a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
@@ -161,6 +161,37 @@
           </table>
         </div>
         <p><button type="button" id="invitations-more" hidden>Pokaż więcej</button></p>
+      </section>
+
+      <section class="card" aria-labelledby="years-title">
+        <div class="section-heading">
+          <div><h2 id="years-title">Lata szkolne i klasy</h2><p id="years-summary">Wczytywanie…</p></div>
+        </div>
+        <p class="hint">Nowy rok i jego klasy tworzy administrator; klas nie można usuwać ani zmieniać nazwy. Przeniesienie klas i uczniów z poprzedniego roku odbywa się przez promocję z podglądem (#78). Kategorie księgi i bilans otwarcia ustawia się w panelu Księga.</p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Lata szkolne i klasy</caption>
+            <thead><tr><th scope="col">Rok</th><th scope="col">Identyfikator</th><th scope="col">Od</th><th scope="col">Do</th><th scope="col">Klasy</th></tr></thead>
+            <tbody id="years-body"></tbody>
+          </table>
+        </div>
+        <h3>Nowy rok szkolny</h3>
+        <form id="year-form" class="grid-form">
+          <label>Identyfikator <input name="id" autocomplete="off" required maxlength="128" placeholder="2027-2028" /></label>
+          <label>Nazwa <input name="label" autocomplete="off" required maxlength="200" placeholder="Rok szkolny 2027/2028" /></label>
+          <label>Początek <input name="startsOn" type="date" required /></label>
+          <label>Koniec <input name="endsOn" type="date" required /></label>
+          <button class="primary" type="submit">Utwórz rok</button>
+          <p class="form-error" id="year-error" role="alert"></p>
+        </form>
+        <h3>Dodaj klasy do roku</h3>
+        <form id="classes-form" class="grid-form">
+          <label>Rok szkolny <select name="schoolYearId" data-years="open" required></select></label>
+          <label>Nazwy klas <input name="names" autocomplete="off" required placeholder="1A, 1B, 2A" aria-describedby="classes-hint" /></label>
+          <button type="submit">Dodaj klasy</button>
+          <p class="hint" id="classes-hint">Oddziel nazwy przecinkami. Klasa o istniejącej nazwie nie zostanie utworzona drugi raz.</p>
+          <p class="form-error" id="classes-error" role="alert"></p>
+        </form>
       </section>
 
       <section class="card" aria-labelledby="term-title">

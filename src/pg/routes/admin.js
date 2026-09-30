@@ -86,7 +86,7 @@ import {
 import { computeOpsStatus } from '../ops-status.js';
 import { promotionAllowedMethods, PromotionError, routePromotions } from '../promotions.js';
 import {
-  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+  afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
 import { DATA_ACCESS_KINDS } from '../data-access.js';
 import { createJsonReader } from '../input.js';
@@ -1011,16 +1011,32 @@ async function listDataRequests(env, url, json) {
   const kind = url.searchParams.get('kind');
   if (status !== null && !DATA_REQUEST_STATUSES.includes(status)) throw new RequestError('invalid_status');
   if (kind !== null && !DATA_REQUEST_KINDS.has(kind)) throw new RequestError('invalid_kind');
+  // #159: keyset (received_on, created_at, id) rosnąco zamiast całego rejestru naraz;
+  // kursor wiąże filtry status/kind (zmiana filtra → 400 invalid_cursor).
+  const limit = listLimit(url);
+  const scope = JSON.stringify(['data-requests', status, kind]);
+  const cursor = listCursor(url, 'text', scope);
   const conditions = [];
   const values = [];
   if (status) { values.push(status); conditions.push(`status = $${values.length}`); }
   if (kind) { values.push(kind); conditions.push(`kind = $${values.length}`); }
+  if (cursor) {
+    const parts = cursor.key.split('|');
+    if (parts.length !== 2 || !validDate(parts[0]) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,6}Z$/.test(parts[1])) {
+      throw new RequestError('invalid_cursor');
+    }
+    conditions.push(afterTupleAscSql(['received_on', 'created_at', 'id'], [parts[0], parts[1], cursor.id], values, ['::date', '::timestamptz', '']));
+  }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const { rows } = await env.db.query(
-    `SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests ${where} ORDER BY received_on, created_at`,
+  const { rows: fetched } = await env.db.query(
+    `SELECT ${DATA_REQUEST_COLUMNS}, ${cursorTimestampSql('created_at')} AS cursor_ts,
+            to_char(received_on, 'YYYY-MM-DD') AS received_key
+       FROM data_subject_requests ${where} ORDER BY received_on, created_at, id LIMIT ${limit + 1}`,
     values,
   );
-  return json({ requests: rows.map(dataRequestFromRow) });
+  const page = pageOf(fetched, limit, (row) => ({ key: `${row.received_key}|${row.cursor_ts}`, id: row.id }), scope);
+  const rows = page.items;
+  return json({ requests: rows.map(dataRequestFromRow), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit });
 }
 
 async function createDataRequest(env, actorId, request, json) {

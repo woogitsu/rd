@@ -33,7 +33,7 @@ import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MF
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import {
-  afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
+  afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
 import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
@@ -624,23 +624,29 @@ async function preview(request, env, id, json) {
   });
 }
 
+// #159: odbiorcy kampanii ze stronicowaniem keyset (household_id, id) zamiast OFFSET;
+// `nextCursor`/`truncated` mówią jawnie, czy są kolejne strony.
 async function listRecipients(request, env, id, url, json) {
   const { context, campaign } = await campaignFor(request, env, id, EDITOR_ROLES);
-  const offsetText = url.searchParams.get('offset') ?? '0';
-  if (!/^\d{1,6}$/.test(offsetText)) throw new RequestError('invalid_request');
-  const offset = Number(offsetText);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: RECIPIENT_PAGE, maxLimit: RECIPIENT_PAGE }, fail);
+  const scope = JSON.stringify(['recipients', id]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'text', scope }, fail);
+  const values = [id];
+  const after = cursor ? `AND ${afterTupleAscSql(['household_id', 'id'], [cursor.key, cursor.id], values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT household_id, guardian_id, email FROM email_campaign_recipients
-      WHERE campaign_id = $1 ORDER BY household_id LIMIT $2 OFFSET $3`,
-    [id, RECIPIENT_PAGE + 1, offset],
+    `SELECT id, household_id, guardian_id, email FROM email_campaign_recipients
+      WHERE campaign_id = $1 ${after} ORDER BY household_id, id LIMIT ${limit + 1}`,
+    values,
   );
+  const page = pageOf(rows, limit, (row) => ({ key: row.household_id, id: row.id }), scope);
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'email.recipients.viewed', entityType: 'email_campaign', entityId: id,
-    metadata: { schoolYearId: campaign.school_year_id, offset, recipientsHash: campaign.recipients_hash ?? null },
+    metadata: { schoolYearId: campaign.school_year_id, continued: Boolean(cursor), recipientsHash: campaign.recipients_hash ?? null },
   });
   return json({
-    recipients: rows.slice(0, RECIPIENT_PAGE).map((row) => ({ householdId: row.household_id, guardianId: row.guardian_id, email: row.email })),
-    nextOffset: rows.length > RECIPIENT_PAGE ? offset + RECIPIENT_PAGE : null,
+    recipients: page.items.map((row) => ({ householdId: row.household_id, guardianId: row.guardian_id, email: row.email })),
+    nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
   });
 }
 
@@ -1046,8 +1052,14 @@ async function report(request, env, id, json) {
 // #139: lista operacyjna „do sprawdzenia” — wiersze failed (w tym
 // delivery_unknown) i adresy z ≥3 soft_bounce. Adres maskowany; odczyt trafia
 // do dziennika. provider_message_id/id wiersza = X-Mailin-custom do logów Brevo.
-async function attention(request, env, id, json) {
+async function attention(request, env, id, url, json) {
   const { context, campaign } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 200, maxLimit: 200 }, fail);
+  const scope = JSON.stringify(['attention', id]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'text', scope }, fail);
+  const values = [id];
+  const after = cursor ? `AND ${afterTupleAscSql(['t.outbox_id', 't.outbox_id'], [cursor.key, cursor.id], values)}` : '';
   const { rows } = await env.db.query(
     `SELECT t.outbox_id, t.state, t.last_error, t.provider_message_id, t.email, t.soft_bounce_count FROM (
        SELECT o.id AS outbox_id, o.state, o.last_error, o.provider_message_id, r.email,
@@ -1055,19 +1067,21 @@ async function attention(request, env, id, json) {
          FROM email_outbox o JOIN email_campaign_recipients r ON r.id = o.recipient_id
         WHERE o.campaign_id = $1
      ) t
-     WHERE t.state = 'failed' OR t.soft_bounce_count >= 3
-     ORDER BY t.outbox_id LIMIT 200`,
-    [id],
+     WHERE (t.state = 'failed' OR t.soft_bounce_count >= 3) ${after}
+     ORDER BY t.outbox_id LIMIT ${limit + 1}`,
+    values,
   );
+  const page = pageOf(rows, limit, (row) => ({ key: row.outbox_id, id: row.outbox_id }), scope);
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'email.attention_list.viewed', entityType: 'email_campaign', entityId: id,
-    metadata: { schoolYearId: campaign.school_year_id, rows: rows.length },
+    metadata: { schoolYearId: campaign.school_year_id, rows: page.items.length },
   });
   return json({
-    rows: rows.map((row) => ({
+    rows: page.items.map((row) => ({
       outboxId: row.outbox_id, state: row.state, lastError: row.last_error,
       providerMessageId: row.provider_message_id, email: maskEmail(row.email), softBounceCount: row.soft_bounce_count,
     })),
+    nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
   });
 }
 
@@ -1333,11 +1347,21 @@ async function listSuppressions(request, env, url, json) {
   if (!validId(schoolYearId)) throw new RequestError('invalid_request');
   const context = await requireContext(request, env, EDITOR_ROLES);
   requireYear(context, EDITOR_ROLES, schoolYearId);
-  const { rows } = await env.db.query(
-    `SELECT s.email_hash, s.reason, s.created_at,
+  // #159: keyset (created_at DESC, email_hash) zamiast LIMIT 500 bez sygnału obcięcia.
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 500, maxLimit: 500 }, fail);
+  const scope = JSON.stringify(['suppressions', schoolYearId]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const listValues = [];
+  const after = cursor ? `WHERE ${afterTimestampDescSql('s.created_at', 's.email_hash', cursor, listValues)}` : '';
+  const { rows: fetched } = await env.db.query(
+    `SELECT s.email_hash, s.reason, s.created_at, ${cursorTimestampSql('s.created_at')} AS cursor_ts,
             (SELECT COUNT(*)::int FROM email_suppressions x WHERE x.email_hash = s.email_hash) AS events
-       FROM email_active_suppressions s ORDER BY s.created_at DESC LIMIT 500`,
+       FROM email_active_suppressions s ${after} ORDER BY s.created_at DESC, s.email_hash LIMIT ${limit + 1}`,
+    listValues,
   );
+  const page = pageOf(fetched, limit, (row) => ({ key: row.cursor_ts, id: row.email_hash }), scope);
+  const rows = page.items;
   const guardians = await guardiansByEmailHash(env.db);
   // Otwarty (niezatwierdzony) wniosek o zdjęcie blokady — żeby druga osoba mogła
   // go zatwierdzić bez przepisywania identyfikatora. Bez adresu i bez identyfikatora
@@ -1368,7 +1392,7 @@ async function listSuppressions(request, env, url, json) {
     actorId: context.session.user.id, action: 'email.suppressions.viewed', entityType: 'email_suppression_list', entityId: schoolYearId,
     metadata: { count: items.length, schoolYearId },
   });
-  return json({ suppressions: items });
+  return json({ suppressions: items, nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit });
 }
 
 async function releaseRequest(request, env, hashValue, json) {
@@ -1596,7 +1620,7 @@ export async function handle(request, env, url, json) {
     if (action === 'preview' && method === 'GET') return await preview(request, env, id, json);
     if (action === 'recipients' && method === 'GET') return await listRecipients(request, env, id, url, json);
     if (action === 'report' && method === 'GET') return await report(request, env, id, json);
-    if (action === 'attention' && method === 'GET') return await attention(request, env, id, json);
+    if (action === 'attention' && method === 'GET') return await attention(request, env, id, url, json);
     if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
     if (action === 'snapshot') return await buildSnapshot(request, env, id, json);
     if (action === 'approve') return await approve(request, env, id, json);

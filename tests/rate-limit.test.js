@@ -9,6 +9,9 @@ import { join } from 'node:path';
 import { createNodeHandler } from '../src/node-app.js';
 import { classifyRequest, createRateLimiter, isHeavyPath, rateLimitConfig, RATE_LIMIT_DEFAULTS } from '../src/rate-limit.js';
 
+// Wartości w formacie tokenu sesji (43 znaki base64url) — inne limiter traktuje jak brak sesji.
+const S1 = 'a'.repeat(43);
+const S2 = 'b'.repeat(43);
 const args = (pathname, address = '192.0.2.10', cookieHeader = '') => ({ pathname, address, cookieHeader });
 
 test('klasyfikacja: webhook, public, session; poza /api/ brak limitu', () => {
@@ -18,7 +21,7 @@ test('klasyfikacja: webhook, public, session; poza /api/ brak limitu', () => {
   assert.equal(classifyRequest('/api/public/events', 'rd_session=abc').cls, 'public');
   assert.equal(classifyRequest('/api/meetings/public-minutes', 'rd_session=abc').cls, 'public');
   assert.equal(classifyRequest('/api/payments', '').cls, 'public', 'bez ciasteczka — próg klasy public');
-  assert.deepEqual(classifyRequest('/api/payments', 'x=1; rd_session=tajny'), { cls: 'session', session: 'tajny' });
+  assert.deepEqual(classifyRequest('/api/payments', `x=1; rd_session=${S1}`), { cls: 'session', session: S1 });
   assert.ok(isHeavyPath('/api/exports') && isHeavyPath('/api/exports/class-roster') && isHeavyPath('/api/import/preview') && isHeavyPath('/api/reports/annual'));
   assert.ok(!isHeavyPath('/api/exportsx') && !isHeavyPath('/api/payments'));
 });
@@ -43,29 +46,61 @@ test('webhook i sesja mają osobne progi; zalogowane trasy — wyższy domyślny
   assert.equal(limiter.acquire(args('/api/public/events')).ok, true);
   assert.equal(limiter.acquire(args('/api/public/events')).ok, false);
   // Sesja nie jest blokowana progiem klasy public tego samego adresu.
-  for (let i = 0; i < 50; i += 1) assert.equal(limiter.acquire(args('/api/payments', '192.0.2.10', 'rd_session=s1')).ok, true);
+  for (let i = 0; i < 50; i += 1) assert.equal(limiter.acquire(args('/api/payments', '192.0.2.10', `rd_session=${S1}`)).ok, true);
   assert.ok(RATE_LIMIT_DEFAULTS.sessionPerWindow > RATE_LIMIT_DEFAULTS.publicPerWindow);
   const strict = createRateLimiter({ env: { RATE_LIMIT_SESSION_PER_MIN: '2' } });
-  assert.equal(strict.acquire(args('/api/payments', 'a', 'rd_session=s1')).ok, true);
-  assert.equal(strict.acquire(args('/api/payments', 'b', 'rd_session=s1')).ok, true);
-  assert.equal(strict.acquire(args('/api/payments', 'c', 'rd_session=s1')).ok, false, 'klucz to sesja, nie adres');
-  assert.equal(strict.acquire(args('/api/payments', 'c', 'rd_session=s2')).ok, true);
+  assert.equal(strict.acquire(args('/api/payments', 'a', `rd_session=${S1}`)).ok, true);
+  assert.equal(strict.acquire(args('/api/payments', 'b', `rd_session=${S1}`)).ok, true);
+  assert.equal(strict.acquire(args('/api/payments', 'c', `rd_session=${S1}`)).ok, false, 'klucz to sesja, nie adres');
+  assert.equal(strict.acquire(args('/api/payments', 'c', `rd_session=${S2}`)).ok, true);
 });
 
 test('kosztowne trasy: limit równoczesnych żądań na sesję, zwolnienie odblokowuje, podwójne zwolnienie jest bezpieczne', () => {
   const limiter = createRateLimiter({ env: { RATE_LIMIT_HEAVY_CONCURRENCY: '2' } });
-  const cookie = 'rd_session=s1';
+  const cookie = `rd_session=${S1}`;
   const first = limiter.acquire(args('/api/exports', 'a', cookie));
   const second = limiter.acquire(args('/api/import/preview', 'a', cookie));
   const third = limiter.acquire(args('/api/reports/annual', 'a', cookie));
   assert.deepEqual([first.ok, second.ok, third.ok], [true, true, false]);
   assert.ok(third.retryAfter > 0);
-  assert.equal(limiter.acquire(args('/api/exports', 'a', 'rd_session=s2')).ok, true, 'inna sesja');
+  assert.equal(limiter.acquire(args('/api/exports', 'a', `rd_session=${S2}`)).ok, true, 'inna sesja');
   assert.equal(limiter.acquire(args('/api/payments', 'a', cookie)).ok, true, 'zwykła trasa nie jest liczona');
   first.release();
   first.release();
   assert.equal(limiter.acquire(args('/api/exports', 'a', cookie)).ok, true);
   assert.equal(limiter.acquire(args('/api/exports', 'a', cookie)).ok, false, 'podwójne release nie zwolniło drugiego slotu');
+});
+
+test('przegląd 29.09: ciasteczko __Host-rd_session (staging/produkcja) to klasa session, nie wspólny próg adresu', () => {
+  assert.deepEqual(classifyRequest('/api/payments', `__Host-rd_session=${S1}`), { cls: 'session', session: S1 });
+  assert.deepEqual(classifyRequest('/api/payments', `rd_session=${S2}; __Host-rd_session=${S1}`), { cls: 'session', session: S1 }, '__Host- ma pierwszeństwo');
+  assert.equal(classifyRequest('/api/payments', 'x__Host-rd_session=zzz').cls, 'public');
+  assert.equal(classifyRequest('/api/payments', 'rd_session=krotki').cls, 'public', 'wartość spoza formatu tokenu = brak sesji');
+  // Czterech zalogowanych za jednym NAT-em nie dzieli progu public.
+  const limiter = createRateLimiter({ env: { RATE_LIMIT_PUBLIC_PER_MIN: '3' } });
+  const tokens = ['c', 'd', 'e', 'f'].map((ch) => ch.repeat(43));
+  for (const token of tokens) assert.equal(limiter.acquire(args('/api/payments', '203.0.113.1', `__Host-rd_session=${token}`)).ok, true);
+});
+
+test('przegląd 29.09: rotacja podrobionych ciasteczek nie omija limitów', () => {
+  let n = 0;
+  const forged = () => { n += 1; return `rd_session=${String(n).padStart(43, 'x')}`; };
+  // Trasy bez sesji: zawsze próg public po adresie, ciasteczko nie ma znaczenia.
+  const pub = createRateLimiter({ env: { RATE_LIMIT_PUBLIC_PER_MIN: '5' } });
+  let passed = 0;
+  for (let i = 0; i < 100; i += 1) if (pub.acquire(args('/api/invitations/preview', '198.51.100.7', forged())).ok) passed += 1;
+  assert.equal(passed, 5);
+  for (const path of ['/api/login', '/api/password/reset', '/api/invitations/accept', '/api/meetings/public-notices']) {
+    assert.equal(classifyRequest(path, `rd_session=${S1}`).cls, 'public', path);
+  }
+  // Pozostałe trasy: każdy podrobiony token ma własny licznik, ale adres ma wspólny próg sesji.
+  const ses = createRateLimiter({ env: { RATE_LIMIT_SESSION_ADDRESS_PER_MIN: '10' } });
+  passed = 0;
+  for (let i = 0; i < 100; i += 1) if (ses.acquire(args('/api/payments', '198.51.100.8', forged())).ok) passed += 1;
+  assert.equal(passed, 10);
+  assert.equal(ses.acquire(args('/api/payments', '198.51.100.9', forged())).ok, true, 'inny adres — osobny próg');
+  assert.equal(rateLimitConfig({ RATE_LIMIT_SESSION_ADDRESS_PER_MIN: '0' }).sessionAddressPerWindow, 0);
+  assert.ok(RATE_LIMIT_DEFAULTS.sessionAddressPerWindow > RATE_LIMIT_DEFAULTS.sessionPerWindow);
 });
 
 test('konfiguracja: wyłączenie, próg 0 = brak limitu klasy, błędne wartości → domyślne', () => {

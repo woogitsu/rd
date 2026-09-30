@@ -1,5 +1,6 @@
 // Czyste funkcje panelu administracji kont (bez DOM i sieci) — testowane w tests/admin-core.test.js.
 import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
+import { formatSchoolYear } from "../shared/school-year.js";
 import { shortId } from "../shared/short-id.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -308,7 +309,7 @@ export function indexClasses(schoolYears = []) {
 export function scopeLabel(grant, classes = new Map(), years = new Map()) {
   const parts = [];
   if (grant.classId) parts.push(`klasa ${classes.get(grant.classId)?.name ?? grant.classId}`);
-  if (grant.schoolYearId) parts.push(`rok ${years.get(grant.schoolYearId)?.label ?? grant.schoolYearId}`);
+  if (grant.schoolYearId) parts.push(`rok ${formatSchoolYear(years.get(grant.schoolYearId)?.label ?? grant.schoolYearId)}`);
   return parts.length ? parts.join(", ") : "cała Rada";
 }
 
@@ -361,8 +362,39 @@ export function describeAuditEvent(event, users = []) {
   if (meta.role) details.push(ROLE_LABELS[meta.role] ?? meta.role);
   if (meta.userId) details.push(`konto ${accountName(meta.userId, users)}`);
   if (meta.classId) details.push(`klasa ${meta.classId}`);
-  if (meta.schoolYearId) details.push(`rok ${meta.schoolYearId}`);
+  if (meta.schoolYearId) details.push(`rok ${formatSchoolYear(meta.schoolYearId)}`);
   if (meta.reason) details.push(`powód: ${reasonLabel(meta.reason)}`);
   if (Number.isInteger(meta.count)) details.push(`liczba: ${meta.count}`);
   return { label, details: details.join(", ") };
+}
+
+// --- #207: nowy rok szkolny i klasy z panelu (trasy #78, wyłącznie admin) ------
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// Treść POST /api/admin/school-years; serwer powtarza walidację (400/409).
+export function schoolYearPayload({ id, label, startsOn, endsOn }) {
+  const yearId = String(id ?? "").trim();
+  if (!isValidId(yearId)) throw new Error("Podaj identyfikator roku (litery, cyfry, „-”, „_”, „.”; np. 2027-2028).");
+  const name = String(label ?? "").trim();
+  if (!name || name.length > 200) throw new Error("Podaj nazwę roku szkolnego (maksymalnie 200 znaków).");
+  if (!DATE_PATTERN.test(String(startsOn ?? "")) || !DATE_PATTERN.test(String(endsOn ?? ""))) throw new Error("Podaj daty początku i końca roku.");
+  if (endsOn < startsOn) throw new Error("Data końca nie może być wcześniejsza niż data początku.");
+  return { id: yearId, label: name, startsOn, endsOn };
+}
+
+// Nazwy klas z pola tekstowego: przecinek, średnik lub nowa linia. Powtórzenia
+// (bez względu na wielkość liter) to błąd — jak po stronie serwera (duplicate_name).
+export function classNamesPayload(text) {
+  const names = String(text ?? "").split(/[,;\n]/).map((name) => name.trim()).filter(Boolean);
+  if (!names.length || names.length > 100 || names.some((name) => name.length > 60)) {
+    throw new Error("Podaj nazwy klas (każda do 60 znaków), oddzielone przecinkami.");
+  }
+  const seen = new Set();
+  for (const name of names) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) throw new Error(`Nazwa klasy „${name}” powtarza się na liście.`);
+    seen.add(key);
+  }
+  return { names };
 }

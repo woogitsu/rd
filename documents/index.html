@@ -11,7 +11,7 @@
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
-      <a class="brand" href="../">Rada Rodziców<small>Szkoła Polska w Brukseli</small></a>
+      <a class="brand" href="../">Rada Rodziców<small data-school-name></small></a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
       </nav>
@@ -111,7 +111,8 @@
           <p id="preview-message" class="message" role="status"></p>
           <img id="preview-image" class="preview-image" alt="Podgląd dokumentu" hidden />
           <iframe id="preview-frame" class="preview-frame" title="Podgląd dokumentu PDF" sandbox="" referrerpolicy="no-referrer" hidden></iframe>
-          <p class="hint">Jeśli przeglądarka nie wyświetli PDF w ramce bez skryptów, pobierz plik.</p>
+          <p class="hint" id="preview-fallback">Chrome, Edge i inne przeglądarki oparte na Chromium nie wyświetlają PDF w ramce bez skryptów (pokazują własny komunikat o blokadzie). Wtedy otwórz podgląd w nowej karcie — ten sam adres, sprawdzany przez serwer i zapisywany w dzienniku — albo pobierz plik.
+            <a id="preview-open-tab" class="button-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Otwórz podgląd w nowej karcie</a></p>
         </div>
 
         <h3>Wersje i stan dokumentu</h3>

@@ -1,8 +1,20 @@
 // Wybór roku szkolnego z listy zamiast wpisywania identyfikatora (issue #128).
 // Źródłem jest GET /api/access (grants), które każdy panel już wywołuje przy starcie
 // (401/403 obsługuje shared/api.js). Identyfikator roku jest już czytelny dla człowieka
-// (np. "2026-2027" — patrz istniejące placeholdery), więc pełny słownik nazw z
-// GET /api/classes nie jest tu potrzebny.
+// (np. "2026-2027"); w liście pokazujemy go jako „2026/2027” (formatSchoolYear),
+// więc pełny słownik nazw z GET /api/classes nie jest tu potrzebny.
+
+// Identyfikator roku ("2026-2027") jest techniczny: zostaje w URL, API i danych.
+// Ludziom pokazujemy „2026/2027” — WYŁĄCZNIE przez tę funkcję (test:
+// tests/school-year-format-static.test.js pilnuje paneli). Inny kształt (np. etykieta
+// z API, która już ma ukośnik) zwracany jest bez zmian.
+export const SCHOOL_YEAR_ID_PATTERN = /^(\d{4})-(\d{4})$/;
+
+export function formatSchoolYear(id) {
+  const text = String(id ?? "").trim();
+  const match = SCHOOL_YEAR_ID_PATTERN.exec(text);
+  return match ? `${match[1]}/${match[2]}` : text;
+}
 
 // Zwraca unikalne, posortowane malejąco (najnowszy pierwszy) lata z przydziałów.
 export function yearsFromGrants(grants) {
@@ -14,7 +26,7 @@ export function yearsFromGrants(grants) {
 export function yearOptionsHtml(years, selected) {
   if (!years.length) return '<option value="">Brak lat w Twoim zakresie</option>';
   return years
-    .map((year) => `<option value="${escapeHtml(year)}"${year === selected ? " selected" : ""}>${escapeHtml(year)}</option>`)
+    .map((year) => `<option value="${escapeHtml(year)}"${year === selected ? " selected" : ""}>${escapeHtml(formatSchoolYear(year))}</option>`)
     .join("");
 }
 
@@ -86,6 +98,6 @@ export function fillYearSelect(select, grants, { value = "", now } = {}) {
 // Ustawia rok w <select>; brakującą opcję (np. rok z linku) dodaje, by wartość nie zniknęła.
 export function selectYearValue(select, value) {
   if (!value) return;
-  if (![...select.options].some((option) => option.value === value)) select.add(new Option(value, value));
+  if (![...select.options].some((option) => option.value === value)) select.add(new Option(formatSchoolYear(value), value));
   select.value = value;
 }

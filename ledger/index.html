@@ -10,7 +10,7 @@
   <body>
     <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
-      <a class="brand" href="../"><span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span></a>
+      <a class="brand" href="../"><span>Rada Rodziców<br /><small data-school-name></small></span></a>
       <nav aria-label="Panel"><ul id="shell-nav" aria-live="polite"></ul></nav>
       <div id="shell-account"></div>
     </header>
@@ -32,6 +32,9 @@
         <form id="filters-form">
           <label>Rok szkolny <select id="school-year-id" name="schoolYearId" required></select></label>
           <label>Rodzaj <select id="direction-filter" name="direction"><option value="">Wszystkie</option><option value="income">Przychody</option><option value="expense">Wydatki</option></select></label>
+          <label>Kategoria <select id="category-filter" name="category"><option value="">Wszystkie</option></select></label>
+          <label>Data od <input id="date-from-filter" name="dateFrom" type="date"></label>
+          <label>Data do <input id="date-to-filter" name="dateTo" type="date"></label>
           <button type="submit">Pokaż</button>
         </form>
       </section>
@@ -45,6 +48,10 @@
           <div><span>Wydatki</span><strong class="expense" id="expense-total">—</strong></div>
           <div class="closing"><span>Bilans zamknięcia</span><strong id="closing-balance">—</strong></div>
         </div>
+        <div class="opening-actions" id="opening-actions" hidden>
+          <p class="hint">Ten rok nie ma jeszcze bilansu otwarcia. W pierwszym roku prowadzenia księgi w systemie zarząd wpisuje stan z papierowej księgi; w kolejnych latach bilans przenosi zamknięcie roku.</p>
+          <button id="open-opening" type="button">Wpisz bilans otwarcia</button>
+        </div>
 
         <section class="card" aria-labelledby="budget-title">
           <div class="section-heading"><div><p class="eyebrow">Plan finansowy</p><h2 id="budget-title">Preliminarz i wykonanie</h2></div><span id="budget-count" aria-live="polite"></span></div>
@@ -56,6 +63,7 @@
           <div class="section-heading"><div><p class="eyebrow">Plan finansowy</p><h2 id="history-title">Historia preliminarza</h2></div><span id="history-count" aria-live="polite"></span></div>
           <div class="budget-actions" id="budget-actions">
             <button id="open-category" type="button">Nowa kategoria</button>
+            <button id="open-copy" type="button">Kopiuj kategorie z innego roku</button>
             <button id="open-deactivate" type="button">Wyłącz kategorię</button>
             <button id="open-line" type="button">Dodaj linię planu</button>
             <button id="open-revision" type="button">Zmień plan linii</button>
@@ -119,6 +127,27 @@
       <div class="field-row"><label>Rodzaj <select name="direction"><option value="expense">Wydatek</option><option value="income">Przychód</option></select></label><label>Nazwa <input name="name" minlength="2" maxlength="100" required autofocus /></label></div>
       <div class="form-error" id="category-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Dodaj kategorię</button></div>
+    </form></dialog>
+
+    <dialog id="copy-dialog" aria-labelledby="copy-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Preliminarz</p><h2 id="copy-dialog-title">Kopiuj kategorie z innego roku</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <input type="hidden" name="schoolYearId" />
+      <label>Rok źródłowy <input name="fromSchoolYearId" list="copy-year-options" autocomplete="off" required autofocus aria-describedby="copy-hint" /></label>
+      <datalist id="copy-year-options"></datalist>
+      <p class="hint" id="copy-hint">Najpierw zobaczysz podgląd: które kategorie powstaną, a które już istnieją. Kopiowane są tylko nazwy i rodzaje aktywnych kategorii, bez kwot. Ponowne kopiowanie niczego nie dubluje.</p>
+      <div class="form-error" id="copy-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Pokaż podgląd i kopiuj</button></div>
+    </form></dialog>
+
+    <dialog id="opening-dialog" aria-labelledby="opening-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Zarząd</p><h2 id="opening-dialog-title">Bilans otwarcia pierwszego roku</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <input type="hidden" name="schoolYearId" />
+      <div class="field-row"><label>Rachunek EUR <input name="bank" inputmode="decimal" required autofocus placeholder="1250,00" /></label><label>Kasa EUR <input name="cash" inputmode="decimal" placeholder="0,00" /></label></div>
+      <label>Źródło bilansu <textarea name="note" rows="3" minlength="3" maxlength="500" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków.</small></label>
+      <label>ID dokumentu źródłowego <input name="sourceDocumentId" autocomplete="off" placeholder="Opcjonalnie — dokument finansowy tego roku" /></label>
+      <p class="hint">Tylko dla pierwszego roku szkolnego w systemie; później bilans przenosi zamknięcie roku. Pomyłkę poprawia się nowym wpisem poprawki, pierwotny zapis zostaje w historii.</p>
+      <div class="form-error" id="opening-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz bilans otwarcia</button></div>
     </form></dialog>
 
     <dialog id="deactivate-dialog" aria-labelledby="deactivate-dialog-title"><form method="dialog">

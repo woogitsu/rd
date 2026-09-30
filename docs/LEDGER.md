@@ -20,7 +20,7 @@ Preliminarz używa niezmiennych wersji `ledger_budget_lines`. Nowa wersja wskazu
 
 ## API księgi
 
-`GET /api/ledger?schoolYearId=...` zwraca stronicowaną listę wpisów z wartością pierwotną, sumą korekt i wartością netto. Opcjonalny filtr `direction` przyjmuje `income` albo `expense`.
+`GET /api/ledger?schoolYearId=...` zwraca stronicowaną listę wpisów z wartością pierwotną, sumą korekt i wartością netto. Opcjonalny filtr `direction` przyjmuje `income` albo `expense`. Od #128 lista filtruje też w SQL po `category` (identyfikator kategorii z tego roku; kategoria spoza roku daje pustą listę) oraz `dateFrom`/`dateTo` (data wpisu, włącznie). Zły parametr daje `400` (`invalid_date`, `invalid_date_range`, `invalid_request`); zmiana filtru przy tym samym kursorze daje `400 invalid_cursor`. Zakres roku i uprawnień jest bez zmian.
 
 Panel może pobrać aktywne kategorie przez `GET /api/ledger/categories`, bilans roku przez `GET /api/ledger/summary` oraz aktualne wersje linii preliminarza przez `GET /api/ledger/budget`. Każda trasa wymaga parametru `schoolYearId`; kategorie można dodatkowo filtrować po kierunku.
 

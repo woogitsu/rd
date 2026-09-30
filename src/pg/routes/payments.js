@@ -413,17 +413,48 @@ function requireYear(context, schoolYearId) {
   }
 }
 
+// #128: filtry listy wpłat liczone w SQL razem z zakresem roku (uprawnienia
+// sprawdza requireFinancialContext przed zapytaniem). `q` przeszukuje wyłącznie
+// referencję wpłaty; znaki %, _ i ukośnik wstecz w frazie są ucieczkowane, więc
+// nie działają jak wieloznaczniki LIKE.
+const MAX_SEARCH_LENGTH = 100;
+
+export function escapeLikePattern(text) {
+  return text.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+function readListFilters(url) {
+  const status = url.searchParams.get('status');
+  const dateFrom = url.searchParams.get('dateFrom') || null;
+  const dateTo = url.searchParams.get('dateTo') || null;
+  const method = url.searchParams.get('method') || null;
+  const householdId = url.searchParams.get('householdId') || null;
+  const rawQuery = url.searchParams.get('q');
+  if (status && !['recorded', 'unmatched'].includes(status)) throw new RequestError('invalid_request');
+  if ((dateFrom && !validDate(dateFrom)) || (dateTo && !validDate(dateTo))) throw new RequestError('invalid_date');
+  if (dateFrom && dateTo && dateFrom > dateTo) throw new RequestError('invalid_date_range');
+  if (method && !METHODS.has(method)) throw new RequestError('invalid_method');
+  if (householdId && !validId(householdId)) throw new RequestError('invalid_request');
+  if (rawQuery !== null && rawQuery.length > MAX_SEARCH_LENGTH) throw new RequestError('invalid_request');
+  const q = rawQuery ? rawQuery.trim() : '';
+  return { status, dateFrom, dateTo, method, householdId, q: q || null };
+}
+
 async function listPayments(request, env, url, json) {
   const schoolYearId = url.searchParams.get('schoolYearId');
-  const status = url.searchParams.get('status');
   const limitText = url.searchParams.get('limit') ?? '50';
-  if (!validId(schoolYearId) || (status && !['recorded', 'unmatched'].includes(status))) {
-    throw new RequestError('invalid_request');
-  }
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  const { status, dateFrom, dateTo, method, householdId, q } = readListFilters(url);
   if (!/^\d{1,3}$/.test(limitText)) throw new RequestError('invalid_limit');
   const limit = Number(limitText);
   if (limit < 1 || limit > 100) throw new RequestError('invalid_limit');
-  const cursorScope = { schoolYearId, filter: status ?? '' };
+  // Sam status zachowuje dawny kształt zakresu kursora (zgodność ze starym Workerem);
+  // każdy dodatkowy filtr wchodzi do zakresu, więc zmiana filtra unieważnia kursor.
+  const hasExtraFilters = Boolean(dateFrom || dateTo || method || householdId || q);
+  const cursorScope = {
+    schoolYearId,
+    filter: hasExtraFilters ? JSON.stringify([status, dateFrom, dateTo, method, householdId, q]) : (status ?? ''),
+  };
   const cursor = decodeCursor(url.searchParams.get('cursor'), cursorScope);
   const context = await requireFinancialContext(request, env, schoolYearId);
 
@@ -432,6 +463,30 @@ async function listPayments(request, env, url, json) {
   if (status) {
     values.push(status);
     conditions.push(`p.status = $${values.length}`);
+  }
+  if (dateFrom) {
+    values.push(dateFrom);
+    conditions.push(`p.received_on >= $${values.length}::date`);
+  }
+  if (dateTo) {
+    values.push(dateTo);
+    conditions.push(`p.received_on <= $${values.length}::date`);
+  }
+  if (method) {
+    values.push(method);
+    conditions.push(`p.method = $${values.length}`);
+  }
+  if (householdId) {
+    // Wpłata przypisana w całości albo z bieżącą częścią (podział, #127) dla gospodarstwa.
+    values.push(householdId);
+    const param = `$${values.length}`;
+    conditions.push(`(p.household_id = ${param} OR EXISTS (
+      SELECT 1 FROM payment_allocations_current pa
+       WHERE pa.payment_entry_id = p.id AND pa.household_id = ${param}))`);
+  }
+  if (q) {
+    values.push(`%${escapeLikePattern(q)}%`);
+    conditions.push(`p.reference ILIKE $${values.length} ESCAPE '\\'`);
   }
   if (cursor) {
     values.push(cursor.receivedOn, cursor.id);

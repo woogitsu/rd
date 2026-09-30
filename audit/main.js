@@ -7,7 +7,7 @@ import {
   reportUrl,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
-import { initialSchoolYearId, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
+import { formatSchoolYear, initialSchoolYearId, yearOptionsHtml, yearsFromGrants } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 
@@ -95,7 +95,7 @@ async function showYear(value) {
   try {
     const data = await api(reportUrl(value, "json"));
     const report = data.report;
-    byId("report-title").textContent = `Raport dla Komisji Rewizyjnej — ${report?.schoolYear?.label ?? value}`;
+    byId("report-title").textContent = `Raport dla Komisji Rewizyjnej — ${formatSchoolYear(report?.schoolYear?.label ?? value)}`;
     byId("report-meta").textContent = report?.generatedAt ? `Stan na ${formatDate(report.generatedAt)}` : "";
     byId("report-html-link").href = reportUrl(value, "html");
     byId("report-sections").replaceChildren(...buildSections(report).map(sectionElement));

@@ -47,7 +47,7 @@ import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
 import { mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
-import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
+import { fillYearSelect, selectYearValue, formatSchoolYear } from "../shared/school-year.js";
 
 let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
@@ -258,8 +258,8 @@ function renderList() {
   )));
   listWrap.hidden = state.meetings.length === 0;
   setMessage(listMessage, state.meetings.length
-    ? `Zebrania w roku ${state.schoolYearId}: ${state.meetings.length}.`
-    : `Brak zebrań w roku ${state.schoolYearId}.`);
+    ? `Zebrania w roku ${formatSchoolYear(state.schoolYearId)}: ${state.meetings.length}.`
+    : `Brak zebrań w roku ${formatSchoolYear(state.schoolYearId)}.`);
 }
 
 async function loadList() {
@@ -304,8 +304,8 @@ function renderSharedList() {
   )));
   sharedWrap.hidden = state.sharedMinutes.length === 0;
   setMessage(sharedMessage, state.sharedMinutes.length
-    ? `Udostępnione protokoły w roku ${state.schoolYearId}: ${state.sharedMinutes.length}.`
-    : `Brak udostępnionych protokołów w roku ${state.schoolYearId}.`);
+    ? `Udostępnione protokoły w roku ${formatSchoolYear(state.schoolYearId)}: ${state.sharedMinutes.length}.`
+    : `Brak udostępnionych protokołów w roku ${formatSchoolYear(state.schoolYearId)}.`);
 }
 
 async function loadSharedList() {
@@ -826,7 +826,7 @@ function fillPrintMinutes(item) {
   const draft = item.status !== "approved";
   mountPrintMeta(byId("print-minutes-meta"), {
     view: `Protokół zebrania — wersja ${item.version}`,
-    schoolYear: meeting.schoolYearId,
+    schoolYear: formatSchoolYear(meeting.schoolYearId),
     printedBy,
     draft,
   });

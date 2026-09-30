@@ -305,6 +305,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `idempotency_key` | none | — | tak |
 | `ledger_entry_id` | none | — | tak |
 | `payment_entry_id` | none | — | tak |
+| `payment_refund_id` | none | — | tak |
 | `reconciliation_id` | none | — | tak |
 | `revoke_reason` | direct | third_party | tak |
 | `revoked_at` | none | — | tak |

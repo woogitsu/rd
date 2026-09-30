@@ -115,6 +115,10 @@ describe('kategorie księgi przez API (#207)', () => {
       [id],
     );
     assert.equal(Number(auditRows[0].n), 1, 'jedno zdarzenie audytu mimo dwóch żądań');
+    const { rows: deactivatedMeta } = await db.query(
+      "SELECT metadata_json FROM audit_events WHERE action = 'ledger_category.deactivated' AND entity_id = $1", [id],
+    );
+    assert.equal(deactivatedMeta[0].metadata_json.schoolYearId, Y, '#207: rok kategorii w metadanych zdarzenia');
     await db.close();
   });
 

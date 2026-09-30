@@ -2,6 +2,8 @@
 // src/pg/routes/year-close.js). Bez sieci, bez DOM: łatwe do przetestowania
 // (tests/year-close-panel-core.test.js).
 
+import { formatSchoolYear } from '../shared/school-year.js';
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 // Role z src/pg/routes/year-close.js (READ_ROLES/CHECKLIST_ROLES/CLOSE_ROLES) —
@@ -28,6 +30,67 @@ export const CHECKLIST_ITEM_LABELS = Object.freeze({
   reconciliation_confirmed: 'Uzgodnienie wyciągu bankowego potwierdzone',
   documents_handed_over: 'Dokumentacja przekazana',
 });
+
+// Kody i kolejność z CLOSE_WARNING_CODES w src/pg/routes/year-close.js (test parzystości).
+// Ostrzeżenia są informacyjne: nie blokują zamknięcia ponad to, co blokuje serwer.
+export const WARNING_CODES = Object.freeze([
+  'unallocated_payments',
+  'expenses_without_evidence',
+  'large_expenses_without_resolution',
+  'reconciliation_missing',
+  'reconciliation_before_year_end',
+  'reconciliation_difference',
+  'reconciliation_drafts',
+  'unmatched_statement_lines',
+  'open_email_campaigns',
+]);
+
+export const WARNING_LABELS = Object.freeze({
+  unallocated_payments: 'Wpłaty nieprzypisane do gospodarstwa (kwota do wyjaśnienia)',
+  expenses_without_evidence: 'Wydatki bez dowodu (dokumentu)',
+  large_expenses_without_resolution: 'Wydatki powyżej 3000 EUR bez przyjętej uchwały',
+  reconciliation_missing: 'Brak zatwierdzonego uzgodnienia rachunku w tym roku',
+  reconciliation_before_year_end: 'Ostatnie zatwierdzone uzgodnienie ma datę wyciągu przed końcem roku',
+  reconciliation_difference: 'Ostatnie zatwierdzone uzgodnienie ma różnicę salda (kwota = różnica)',
+  reconciliation_drafts: 'Szkice uzgodnień (niezatwierdzone)',
+  unmatched_statement_lines: 'Pozycje wyciągu bez dopasowania (suma modułów kwot)',
+  open_email_campaigns: 'Kampanie e-mail otwarte (szkic, zatwierdzona lub w wysyłce)',
+});
+
+export const ACCESS_KIND_LABELS = Object.freeze({
+  class_students: 'Lista klasy',
+  household_card: 'Karta gospodarstwa',
+  print_cards: 'Kartki',
+  payment_list: 'Lista wpłat',
+});
+
+// Wiersze tabeli ostrzeżeń: tylko znane kody, w kolejności serwera; nieznany kod
+// (nowsza wersja API) jest pokazany surowo, żeby ostrzeżenie nie zniknęło po cichu.
+export function warningRows(status) {
+  const list = Array.isArray(status?.warnings) ? status.warnings : [];
+  const known = WARNING_CODES.map((code) => list.find((entry) => entry?.code === code)).filter(Boolean);
+  const unknown = list.filter((entry) => entry && !WARNING_CODES.includes(entry.code));
+  return [...known, ...unknown].map((entry) => ({
+    code: entry.code,
+    label: WARNING_LABELS[entry.code] ?? entry.code,
+    count: Number(entry.count) || 0,
+    amountCents: entry.amountCents === null || entry.amountCents === undefined ? null : Number(entry.amountCents),
+  }));
+}
+
+// Pozycja informacyjna „przegląd dziennika odczytu danych” (#133) — nie jest
+// punktem blokującym listy kontrolnej.
+export function accessReviewSummary(status) {
+  const review = status?.accessReview;
+  if (!review) return null;
+  const reads = Array.isArray(review.reads) ? review.reads : [];
+  return {
+    total: reads.reduce((sum, row) => sum + (Number(row.hits) || 0), 0),
+    byKind: reads.map((row) => ({ label: ACCESS_KIND_LABELS[row.accessKind] ?? row.accessKind, hits: Number(row.hits) || 0, actors: Number(row.actors) || 0 })),
+    withoutValidGrant: Number(review.readsWithoutValidGrant?.hits) || 0,
+    activeGrants: Number(review.activeGrantsInScope) || 0,
+  };
+}
 
 export const STATUS_LABELS = Object.freeze({
   open: 'Otwarty',
@@ -103,7 +166,7 @@ export function startConfirmation(schoolYearId, nextSchoolYearId) {
     destructive: true,
     confirmLabel: 'Rozpocznij zamknięcie',
     effects: [
-      `Rok ${schoolYearId} przejdzie w stan „zamykanie”, a rok docelowy ${nextSchoolYearId} zostanie na stałe zapisany w wierszu zamknięcia.`,
+      `Rok ${formatSchoolYear(schoolYearId)} przejdzie w stan „zamykanie”, a rok docelowy ${formatSchoolYear(nextSchoolYearId)} zostanie na stałe zapisany w wierszu zamknięcia.`,
       'Rozpoczęcia nie da się cofnąć ani usunąć — ani z tego ekranu, ani przez API. Zdarzenie trafia do dziennika z Twoim kontem.',
       'Samo rozpoczęcie niczego jeszcze nie zamyka. Zamknięcie roku (przeniesienie bilansu, wygaszenie ról tej kadencji) wymaga potwierdzenia całej listy kontrolnej i drugiej osoby.',
     ],

@@ -7,6 +7,9 @@ import {
   CHECKLIST_ROLES,
   CLOSE_ROLES,
   READ_ROLES,
+  WARNING_CODES,
+  WARNING_LABELS,
+  accessReviewSummary,
   canOfferClose,
   canOfferStart,
   checklistProgress,
@@ -22,6 +25,7 @@ import {
   startConfirmation,
   startUrl,
   statusUrl,
+  warningRows,
 } from '../year-close/core.js';
 
 // Role muszą być identyczne z serwerem (src/pg/routes/year-close.js) — tak jak
@@ -128,8 +132,8 @@ test('startConfirmation: okno destrukcyjne z opisem nieodwracalności i rokiem d
   const dialog = startConfirmation('2026-2027', '2027-2028');
   assert.equal(dialog.destructive, true);
   const text = dialog.effects.join(' ');
-  assert.match(text, /2026-2027/);
-  assert.match(text, /2027-2028/);
+  assert.match(text, /2026\/2027/);
+  assert.match(text, /2027\/2028/);
   assert.match(text, /nie da się cofnąć/);
   assert.match(text, /lista kontrolna|listy kontrolnej/);
 });
@@ -141,4 +145,38 @@ test('panel: rozpoczęcie zamknięcia przechodzi przez confirmAction przed żąd
   const postAt = main.indexOf('await api(startUrl(');
   assert.ok(confirmAt > 0 && postAt > confirmAt, 'confirmAction musi poprzedzać POST /start');
   assert.match(main, /byId\("open-start"\)\.hidden = !canOfferStart\(status, state\.grants, state\.schoolYearId\)/);
+});
+
+test('WARNING_CODES odpowiada CLOSE_WARNING_CODES na serwerze i każdy kod ma etykietę', () => {
+  const source = readFileSync(new URL('../src/pg/routes/year-close.js', import.meta.url), 'utf8');
+  const match = source.match(/export const CLOSE_WARNING_CODES = Object\.freeze\(\[([\s\S]*?)\]\)/)[1];
+  const parse = (text) => [...text.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  assert.deepEqual([...WARNING_CODES], parse(match));
+  for (const code of WARNING_CODES) assert.ok(WARNING_LABELS[code], code);
+});
+
+test('warningRows: kolejność serwera, kwoty opcjonalne, nieznany kod nie znika, brak pola = pusta lista', () => {
+  assert.deepEqual(warningRows({}), []);
+  assert.deepEqual(warningRows(null), []);
+  const rows = warningRows({ warnings: [
+    { code: 'open_email_campaigns', count: 2, amountCents: null },
+    { code: 'future_code', count: 1, amountCents: 5 },
+    { code: 'unallocated_payments', count: 1, amountCents: 1500 },
+  ] });
+  assert.deepEqual(rows.map((row) => row.code), ['unallocated_payments', 'open_email_campaigns', 'future_code']);
+  assert.equal(rows[0].amountCents, 1500);
+  assert.equal(rows[1].amountCents, null);
+  assert.equal(rows[2].label, 'future_code');
+});
+
+test('accessReviewSummary: sumy odczytów, odczyty bez ważnego przydziału, brak danych = null', () => {
+  assert.equal(accessReviewSummary({}), null);
+  const summary = accessReviewSummary({ accessReview: {
+    reads: [{ accessKind: 'class_students', entries: 2, hits: 5, actors: 1 }, { accessKind: 'other', entries: 1, hits: 1, actors: 1 }],
+    readsWithoutValidGrant: { entries: 1, hits: 2, actors: 1 }, activeGrantsInScope: 4,
+  } });
+  assert.equal(summary.total, 6);
+  assert.deepEqual(summary.byKind.map((row) => row.label), ['Lista klasy', 'other']);
+  assert.equal(summary.withoutValidGrant, 2);
+  assert.equal(summary.activeGrants, 4);
 });

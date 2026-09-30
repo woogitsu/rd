@@ -136,7 +136,7 @@ test('activeYearLabel: najnowszy rok z przydziałów; bez roku pusty napis', () 
     { role: 'treasurer', schoolYearId: '2025-2026' },
     { role: 'representative', classId: '1A', schoolYearId: '2026-2027' },
   ];
-  assert.equal(activeYearLabel(grants), 'Rok szkolny 2026-2027');
+  assert.equal(activeYearLabel(grants), 'Rok szkolny 2026/2027');
   assert.equal(activeYearLabel([{ role: 'admin' }]), '');
   assert.equal(activeYearLabel(undefined), '');
 });
@@ -168,7 +168,7 @@ test('mountShell: przedstawiciel 1A — Rodziny/Kartki/Dokumenty/Wydarzenia, kon
   for (const label of ['Rodziny', 'Kartki', 'Dokumenty', 'Wydarzenia']) assert.ok(nav.includes(`>${label}</a>`), label);
   for (const label of ['Wpłaty', 'Księga', 'Import uczniów', 'Konta i role']) assert.ok(!nav.includes(`>${label}</a>`), label);
   const acc = doc.els['shell-account'].innerHTML;
-  assert.match(acc, /Rok szkolny 2026-2027/);
+  assert.match(acc, /Rok szkolny 2026\/2027/);
   assert.match(acc, /Przedstawiciel klasy/);
   assert.ok(acc.includes('Jan &lt;b&gt;Test&lt;/b&gt;'));
   assert.match(acc, /id="shell-logout"/);

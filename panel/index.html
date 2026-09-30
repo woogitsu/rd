@@ -11,7 +11,7 @@
     <a class="skip-link" href="#main">Przejdź do treści</a>
     <header class="site-header">
       <a class="brand" href="../">
-        <span>Rada Rodziców<br /><small>Szkoła Polska w Brukseli</small></span>
+        <span>Rada Rodziców<br /><small data-school-name></small></span>
       </a>
       <nav aria-label="Panel">
         <ul id="shell-nav" aria-live="polite"></ul>
@@ -53,6 +53,33 @@
               <option value="recorded">Przypisane</option>
               <option value="unmatched">Do przypisania</option>
             </select>
+          </label>
+          <label>
+            Sposób wpłaty
+            <select id="method-filter" name="method">
+              <option value="">Wszystkie</option>
+              <option value="bank">Przelew</option>
+              <option value="cash">Gotówka</option>
+              <option value="other">Inna</option>
+            </select>
+          </label>
+          <label>
+            Rodzina
+            <select id="household-filter" name="householdId">
+              <option value="">Wszystkie</option>
+            </select>
+          </label>
+          <label>
+            Data od
+            <input id="date-from-filter" name="dateFrom" type="date">
+          </label>
+          <label>
+            Data do
+            <input id="date-to-filter" name="dateTo" type="date">
+          </label>
+          <label>
+            Szukaj w tytule przelewu
+            <input id="q-filter" name="q" type="search" maxlength="100" autocomplete="off">
           </label>
           <button type="submit">Pokaż</button>
         </form>
@@ -152,6 +179,37 @@
         </fieldset>
         <div class="form-error" id="assignment-error" role="alert"></div>
         <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="assignment-error">Przypisz</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="split-dialog" aria-labelledby="split-dialog-title" aria-describedby="split-context">
+      <form id="split-form" method="dialog">
+        <div class="dialog-heading"><div><p class="eyebrow">Wpłata nierozpoznana</p><h2 id="split-dialog-title">Podział wpłaty</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+        <input type="hidden" name="paymentId" />
+        <p class="context" id="split-context"></p>
+        <p id="split-summary" role="status" aria-live="polite"></p>
+        <p class="context">Podział wskazuje, ile z jednego przelewu dotyczy którego gospodarstwa. Suma części nie może przekroczyć kwoty netto wpłaty. Podział jest informacją o wpłacie — nie tworzy zobowiązań.</p>
+        <div class="table-wrap" role="region" aria-labelledby="split-parts-caption" tabindex="0">
+          <table>
+            <caption id="split-parts-caption" class="sr-only">Części tej wpłaty</caption>
+            <thead><tr><th scope="col">Gospodarstwo</th><th scope="col" class="amount">Kwota</th><th scope="col">Stan</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+            <tbody id="split-parts"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="split-empty" hidden>Brak części — wpłata nie jest jeszcze podzielona.</p>
+        <fieldset class="household-picker" id="split-add">
+          <legend>Dodaj część</legend>
+          <label>Klasa <select id="split-class"></select></label>
+          <label>Uczeń <select id="split-student" disabled></select></label>
+          <label>Gospodarstwo <select id="split-household" disabled></select></label>
+          <p id="split-household-summary" role="status" aria-live="polite"></p>
+          <input type="hidden" id="split-household-id" />
+          <label>Kwota części EUR <input id="split-amount" inputmode="decimal" autocomplete="off" placeholder="25,00" /></label>
+          <div><button type="button" class="primary" id="split-add-button">Dodaj część</button></div>
+        </fieldset>
+        <label>Powód cofnięcia części (wymagany przy „Cofnij”) <textarea id="split-reason" rows="2" minlength="3" maxlength="500"></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
+        <div class="form-error" id="split-error" role="alert"></div>
+        <div class="dialog-actions"><button value="cancel" formnovalidate>Zamknij</button></div>
       </form>
     </dialog>
 

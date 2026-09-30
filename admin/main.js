@@ -6,6 +6,7 @@ import {
   INVITATION_STATUS_LABELS,
   ROLE_LABELS,
   buildGrantsUrl,
+  classNamesPayload,
   confirmationText,
   describeAuditEvent,
   ERROR_MESSAGES,
@@ -18,12 +19,14 @@ import {
   mfaResetConfirmation,
   passwordResetLink,
   roleNeedsPendingDecisionWarning,
+  schoolYearPayload,
   scopeLabel,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import { shortId } from "../shared/short-id.js";
+import { formatSchoolYear } from "../shared/school-year.js";
 import "../shared/shell.css";
 
 mountShell();
@@ -162,7 +165,8 @@ function fillDictionaries() {
   }
   for (const select of document.querySelectorAll("[data-years]")) {
     const mode = select.dataset.years;
-    const years = mode === "finished" ? state.years.filter((year) => year.finished) : state.years;
+    const years = mode === "finished" ? state.years.filter((year) => year.finished)
+      : mode === "open" ? state.years.filter((year) => !year.finished) : state.years;
     const head = mode === "all" ? [["", "Wszystkie"]] : mode === "none" ? [["", "Bez ograniczenia"]] : [];
     fillSelect(select, [...head, ...years.map((year) => [year.id, `${year.label} (${year.id})`])]);
   }
@@ -500,6 +504,108 @@ byId("invitation-form").addEventListener("submit", async (event) => {
   }
 });
 
+// --- Lata szkolne i klasy (#207; trasy #78, wyłącznie admin) ----------------------
+
+async function loadYears() {
+  const { schoolYears } = await api("/api/admin/school-years");
+  state.years = schoolYears;
+  state.classes = indexClasses(schoolYears);
+  state.yearMap = new Map(schoolYears.map((year) => [year.id, year]));
+  renderYears();
+}
+
+function renderYears() {
+  const tbody = byId("years-body");
+  byId("years-summary").textContent = `${state.years.length} ${state.years.length === 1 ? "rok" : "lat"} szkolnych w systemie.`;
+  if (!state.years.length) return emptyRow(tbody, 5, "Brak lat szkolnych. Utwórz pierwszy rok poniżej.");
+  tbody.replaceChildren(...state.years.map((year) => {
+    const tr = document.createElement("tr");
+    const classes = (year.classes ?? []).map((item) => item.name).join(", ");
+    tr.append(cell(`${year.label}${year.finished ? " (zakończony)" : ""}`), cell(year.id), cell(year.startsOn), cell(year.endsOn), cell(classes || "Brak klas"));
+    return tr;
+  }));
+}
+
+async function afterYearsChange() {
+  await loadYears();
+  fillDictionaries();
+  await loadAudit();
+}
+
+byId("year-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const errorBox = form.querySelector(".form-error");
+  const submit = form.querySelector("button[type=submit]");
+  errorBox.textContent = "";
+  let payload;
+  try {
+    payload = schoolYearPayload(Object.fromEntries(new FormData(form)));
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  const confirmed = await confirmAction({
+    title: "Utworzyć rok szkolny?",
+    effects: [
+      `${payload.label} (${payload.id}), od ${payload.startsOn} do ${payload.endsOn}.`,
+      "Identyfikatora i dat nie da się później zmienić w panelu; rok nie ma jeszcze klas ani przydziałów ról.",
+    ],
+    confirmLabel: "Utwórz rok",
+  });
+  if (!confirmed) return;
+  submit.disabled = true;
+  try {
+    await api("/api/admin/school-years", { method: "POST", body: payload });
+    showMessage(`Utworzono rok szkolny ${payload.id}.`);
+    form.reset();
+    await afterYearsChange();
+    byId("classes-form").elements.schoolYearId.value = payload.id;
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+byId("classes-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const errorBox = form.querySelector(".form-error");
+  const submit = form.querySelector("button[type=submit]");
+  errorBox.textContent = "";
+  const { schoolYearId, names } = Object.fromEntries(new FormData(form));
+  let payload;
+  try {
+    if (!schoolYearId) throw new Error("Wybierz rok szkolny.");
+    payload = classNamesPayload(names);
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  const confirmed = await confirmAction({
+    title: "Dodać klasy?",
+    effects: [
+      `Rok ${state.yearMap.get(schoolYearId)?.label ?? formatSchoolYear(schoolYearId)}: ${payload.names.join(", ")}.`,
+      "Klas nie można usuwać ani zmieniać ich nazwy; pomyłkę poprawia nowa klasa i przeniesienie uczniów.",
+    ],
+    confirmLabel: "Dodaj klasy",
+  });
+  if (!confirmed) return;
+  submit.disabled = true;
+  try {
+    const result = await api(`/api/admin/school-years/${encodeURIComponent(schoolYearId)}/classes`, { method: "POST", body: payload });
+    showMessage(`Dodano klasy: ${result.classes.length}.`);
+    form.elements.names.value = "";
+    await afterYearsChange();
+    form.elements.schoolYearId.value = schoolYearId;
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
 // --- Kadencja -------------------------------------------------------------------
 
 byId("term-form").addEventListener("submit", async (event) => {
@@ -569,10 +675,7 @@ async function start() {
   try {
     const session = await api("/api/session");
     state.me = session.user?.id ?? null;
-    const { schoolYears } = await api("/api/admin/school-years");
-    state.years = schoolYears;
-    state.classes = indexClasses(schoolYears);
-    state.yearMap = new Map(schoolYears.map((year) => [year.id, year]));
+    await loadYears();
     await loadUsers();
     await Promise.all([loadGrants(), loadInvitations(), loadAudit()]);
   } catch (error) {

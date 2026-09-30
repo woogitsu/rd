@@ -21,6 +21,7 @@ import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { readSnapshot } from '../db-snapshot.js';
+import { buildEvidenceSection, buildLargeExpenses } from './reconciliation.js';
 import { createJsonReader } from '../input.js';
 
 export const name = 'year-close';
@@ -316,6 +317,124 @@ async function statusView(executor, schoolYearId) {
     // #97: informacja przed zamknięciem roku — wydatki bez weryfikacji drugiej
     // osoby lub zakwestionowane. Nie blokuje zamknięcia (D-08).
     expenseReviews: await expenseReviewSummary(executor, schoolYearId),
+    // #80/#133: ostrzeżenia informacyjne z liczbami i przegląd dziennika odczytu.
+    // Nie blokują zamknięcia — blokuje wyłącznie to, co blokuje serwer (lista
+    // kontrolna, cztery oczy, bilans końca roku). D-13/D-21: wariant zachowawczy.
+    warnings: await closeWarnings(executor, schoolYearId),
+    accessReview: await accessLogReview(executor, schoolYearId),
+  };
+}
+
+// Kolejność i kody ostrzeżeń są stałe (year-close/core.js ma etykiety). Każde
+// ostrzeżenie to { code, count, amountCents } — bez opisów wpisów, nazw i
+// identyfikatorów osób. Brak ostrzeżenia = pusta lista. „Brak wpisu wpłaty”
+// nie jest statusem dłużnika (składki są dobrowolne).
+export const CLOSE_WARNING_CODES = Object.freeze([
+  'unallocated_payments',
+  'expenses_without_evidence',
+  'large_expenses_without_resolution',
+  'reconciliation_missing',
+  'reconciliation_before_year_end',
+  'reconciliation_difference',
+  'reconciliation_drafts',
+  'unmatched_statement_lines',
+  'open_email_campaigns',
+]);
+
+async function closeWarnings(executor, schoolYearId) {
+  const found = [];
+  const add = (code, count, amountCents = null) => { if (count > 0) found.push({ code, count, amountCents }); };
+
+  const unallocated = (await executor.query(
+    `SELECT count(*) AS n, COALESCE(sum(p.net_amount_cents - payment_allocated_cents(p.id)), 0) AS cents
+       FROM payment_entry_net p
+      WHERE p.school_year_id = $1 AND p.status = 'unmatched'
+        AND p.net_amount_cents - payment_allocated_cents(p.id) > 0`,
+    [schoolYearId],
+  )).rows[0];
+  add('unallocated_payments', toSafeInteger(unallocated.n), toSafeInteger(unallocated.cents));
+
+  const evidence = (await buildEvidenceSection(executor, schoolYearId)).expensesWithoutEvidence;
+  add('expenses_without_evidence', evidence.count, evidence.netCents);
+
+  const flagged = (await buildLargeExpenses(executor, schoolYearId)).filter((item) => item.flagged);
+  add('large_expenses_without_resolution', flagged.length, flagged.reduce((sum, item) => sum + item.netAmountCents, 0));
+
+  const year = await loadYear(executor, schoolYearId);
+  const reconciliations = (await executor.query(
+    `SELECT r.id, r.status, to_char(r.statement_date, 'YYYY-MM-DD') AS statement_date,
+            r.statement_balance_cents, r.ledger_balance_cents
+       FROM bank_reconciliations r WHERE r.school_year_id = $1 ORDER BY r.statement_date, r.created_at, r.id`,
+    [schoolYearId],
+  )).rows;
+  const confirmed = reconciliations.filter((row) => row.status === 'confirmed');
+  const latest = confirmed.at(-1) ?? null;
+  if (!latest) add('reconciliation_missing', 1);
+  else {
+    if (year && latest.statement_date < year.ends_on) add('reconciliation_before_year_end', 1);
+    const difference = toSafeInteger(latest.statement_balance_cents) - toSafeInteger(latest.ledger_balance_cents);
+    if (difference !== 0) add('reconciliation_difference', 1, difference);
+  }
+  add('reconciliation_drafts', reconciliations.filter((row) => row.status === 'draft').length);
+
+  const lines = (await executor.query(
+    `SELECT count(*) AS n, COALESCE(sum(abs(l.amount_cents)), 0) AS cents
+       FROM bank_statement_lines l JOIN bank_reconciliations r ON r.id = l.reconciliation_id
+      WHERE r.school_year_id = $1 AND r.status <> 'abandoned'
+        AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_group_matches_current g WHERE g.statement_line_id = l.id)`,
+    [schoolYearId],
+  )).rows[0];
+  add('unmatched_statement_lines', toSafeInteger(lines.n), toSafeInteger(lines.cents));
+
+  const campaigns = (await executor.query(
+    `SELECT count(*) AS n FROM email_campaigns
+      WHERE school_year_id = $1 AND status IN ('draft', 'approved', 'sending')`,
+    [schoolYearId],
+  )).rows[0];
+  add('open_email_campaigns', toSafeInteger(campaigns.n));
+
+  return CLOSE_WARNING_CODES.map((code) => found.find((item) => item.code === code)).filter(Boolean);
+}
+
+// #133: przegląd dziennika odczytu danych rodzin przed zamknięciem kadencji.
+// Tylko liczby (bez identyfikatorów kont i gospodarstw): odczyty roku wg rodzaju,
+// odczyty bez ważnego przydziału w chwili odczytu (przydział wygasły lub cofnięty)
+// oraz przydziały, które zamknięcie roku wygasi. Szczegóły: przegląd dziennika
+// odczytu w panelu administratora. To pozycja informacyjna — nie jest punktem
+// blokującym listy kontrolnej (nowy punkt wymagałby migracji i zmieniłby warunek
+// zamknięcia; do decyzji zarządu, D-21).
+async function accessLogReview(executor, schoolYearId) {
+  const scope = `(l.school_year_id = $1 OR l.class_id IN (SELECT id FROM classes WHERE school_year_id = $1))`;
+  const byKind = (await executor.query(
+    `SELECT l.access_kind, count(*) AS entries, COALESCE(sum(l.hit_count), 0) AS hits, count(DISTINCT l.actor_id) AS actors
+       FROM data_access_log l WHERE ${scope} AND l.outcome = 'ok'
+      GROUP BY l.access_kind ORDER BY l.access_kind`,
+    [schoolYearId],
+  )).rows;
+  const outside = (await executor.query(
+    `SELECT count(*) AS entries, COALESCE(sum(l.hit_count), 0) AS hits, count(DISTINCT l.actor_id) AS actors
+       FROM data_access_log l
+      WHERE ${scope} AND l.outcome = 'ok'
+        AND NOT EXISTS (
+          SELECT 1 FROM role_grants g
+           WHERE g.user_id = l.actor_id AND g.granted_at <= l.occurred_at
+             AND (g.revoked_at IS NULL OR g.revoked_at > l.occurred_at)
+             AND (g.expires_at IS NULL OR g.expires_at > l.occurred_at))`,
+    [schoolYearId],
+  )).rows[0];
+  const grants = (await executor.query(
+    `SELECT count(*) AS n FROM role_grants g
+      WHERE g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now())
+        AND (g.school_year_id = $1 OR g.class_id IN (SELECT id FROM classes WHERE school_year_id = $1))`,
+    [schoolYearId],
+  )).rows[0];
+  const total = (row) => ({ entries: toSafeInteger(row.entries), hits: toSafeInteger(row.hits), actors: toSafeInteger(row.actors) });
+  return {
+    informational: true,
+    reads: byKind.map((row) => ({ accessKind: row.access_kind, ...total(row) })),
+    readsWithoutValidGrant: total(outside),
+    activeGrantsInScope: toSafeInteger(grants.n),
   };
 }
 

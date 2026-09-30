@@ -1,5 +1,13 @@
 import { describeApiError, hasFinancialAccess } from "./core.js";
 import {
+  allocationReversalUrl,
+  allocationSummaryText,
+  allocationsUrl,
+  assertHouseholdNotAllocated,
+  buildAllocationBody,
+  buildAllocationReversalBody,
+  normalizeAllocations,
+  validateAllocationAmount,
   METHOD_LABELS,
   STATUS_LABELS,
   buildNextPaymentsUrl,
@@ -35,12 +43,44 @@ import "../shared/print.css";
 let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
-const FILTER_KEYS = ["schoolYearId", "status"];
+const FILTER_KEYS = ["schoolYearId", "status", "method", "householdId", "dateFrom", "dateTo", "q"];
 const state = { householdLabels: new Map(), labelsYear: null, payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
 const statusInput = byId("status-filter");
+const methodInput = byId("method-filter");
+const householdInput = byId("household-filter");
+const dateFromInput = byId("date-from-filter");
+const dateToInput = byId("date-to-filter");
+const searchInput = byId("q-filter");
+
+// Wszystkie pola filtrów w jednym obiekcie (formularz, adres, zapytanie).
+function currentFilters() {
+  return {
+    schoolYearId: yearInput.value,
+    status: statusInput.value,
+    method: methodInput.value,
+    householdId: householdInput.value,
+    dateFrom: dateFromInput.value,
+    dateTo: dateToInput.value,
+    q: searchInput.value,
+  };
+}
+
+// Lista rodzin filtra z etykiet już wczytanych do wyboru rodziny (bez e-maili). Zapamiętana z adresu
+// rodzina zostaje wybrana także bez etykiety (skrócony numer).
+function fillHouseholdFilter(selected) {
+  const options = [new Option("Wszystkie", "")];
+  const ids = new Set();
+  for (const [id, label] of [...state.householdLabels].sort((a, b) => a[1].localeCompare(b[1], "pl"))) {
+    options.push(new Option(label, id));
+    ids.add(id);
+  }
+  if (selected && !ids.has(selected)) options.push(new Option(householdLabel(state.householdLabels, selected), selected));
+  householdInput.replaceChildren(...options);
+  householdInput.value = selected || "";
+}
 const body = byId("payments-body");
 const message = byId("message");
 const tableWrap = byId("table-wrap");
@@ -100,7 +140,10 @@ function paymentRow(rawPayment) {
   const actionGroup = document.createElement("div");
   actionGroup.className = "row-actions";
   actionGroup.append(actionButton("Korekta", "correct", payment.id));
-  if (payment.status === "unmatched") actionGroup.prepend(actionButton("Przypisz", "assign", payment.id));
+  if (payment.status === "unmatched") {
+    actionGroup.prepend(actionButton("Podziel", "split", payment.id));
+    actionGroup.prepend(actionButton("Przypisz", "assign", payment.id));
+  }
   actions.append(actionGroup);
   row.append(actions);
   return row;
@@ -119,7 +162,7 @@ function render() {
 }
 
 function filterChanged() {
-  return paymentsFilterChanged(state.query, { schoolYearId: yearInput.value, status: statusInput.value });
+  return paymentsFilterChanged(state.query, currentFilters());
 }
 
 // Zmienione, niezatwierdzone pola filtra blokują dociąganie strony (#192).
@@ -135,7 +178,15 @@ function updatePrintMeta() {
   const container = byId("print-meta");
   if (!container) return;
   const yearLabel = yearInput.selectedOptions?.[0]?.textContent || null;
-  const filters = state.query?.status ? STATUS_LABELS[state.query.status] : null;
+  const query = state.query;
+  const filters = [
+    query?.status ? STATUS_LABELS[query.status] : null,
+    query?.method ? METHOD_LABELS[query.method] : null,
+    query?.householdId ? householdLabel(state.householdLabels, query.householdId) : null,
+    query?.dateFrom ? `od ${query.dateFrom}` : null,
+    query?.dateTo ? `do ${query.dateTo}` : null,
+    query?.q ? `tytuł zawiera: ${query.q}` : null,
+  ].filter(Boolean).join(", ") || null;
   mountPrintMeta(container, {
     view: "Dobrowolne wpłaty",
     schoolYear: yearLabel,
@@ -181,7 +232,7 @@ async function loadPayments({ append = false, reload = false } = {}) {
       url = buildNextPaymentsUrl(state.query, state.nextCursor);
       if (!url || filterChanged()) return;
     } else {
-      if (!reload || !query) query = paymentsQuery({ schoolYearId: yearInput.value, status: statusInput.value });
+      if (!reload || !query) query = paymentsQuery(currentFilters());
       url = buildPaymentsUrl(query);
     }
   } catch (error) {
@@ -195,6 +246,7 @@ async function loadPayments({ append = false, reload = false } = {}) {
   try {
     const result = await api(url);
     await loadHouseholdLabels(query.schoolYearId);
+    fillHouseholdFilter(query.householdId);
     if (!append) state.query = query;
     const items = Array.isArray(result.payments) ? result.payments : [];
     state.payments = append ? [...state.payments, ...items] : items;
@@ -216,7 +268,7 @@ async function loadPayments({ append = false, reload = false } = {}) {
 }
 
 function syncFiltersToUrl() {
-  const query = filtersToQuery({ schoolYearId: yearInput.value, status: statusInput.value });
+  const query = filtersToQuery(currentFilters());
   const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
   window.history.replaceState(null, "", url);
 }
@@ -243,6 +295,14 @@ filtersForm.addEventListener("submit", (event) => {
   if (restored.status && [...statusInput.options].some((o) => o.value === restored.status)) {
     statusInput.value = restored.status;
   }
+  if (restored.method && [...methodInput.options].some((o) => o.value === restored.method)) {
+    methodInput.value = restored.method;
+  }
+  // Wartości spoza formatu odrzuca walidacja zapytania (komunikat w #message), nie wykonanie.
+  if (restored.householdId) fillHouseholdFilter(restored.householdId);
+  if (restored.dateFrom) dateFromInput.value = restored.dateFrom;
+  if (restored.dateTo) dateToInput.value = restored.dateTo;
+  if (restored.q) searchInput.value = restored.q.slice(0, 100);
   if (year) {
     syncFiltersToUrl();
     loadPayments();
@@ -267,8 +327,10 @@ printButton.addEventListener("click", async () => {
     updateFilterHint();
   }
 });
-yearInput.addEventListener("input", updateFilterHint);
-statusInput.addEventListener("change", updateFilterHint);
+// Rodziny należą do roku: zmiana roku czyści wybór rodziny (lista wróci po wczytaniu roku).
+yearInput.addEventListener("input", () => { householdInput.replaceChildren(new Option("Wszystkie", "")); updateFilterHint(); });
+for (const input of [statusInput, methodInput, householdInput, dateFromInput, dateToInput]) input.addEventListener("change", updateFilterHint);
+searchInput.addEventListener("input", updateFilterHint);
 
 // Po zapisie tabela jest renderowana od nowa, więc przycisk otwierający okno może zniknąć.
 // Wtedy przenosimy fokus na nagłówek listy, aby nie spadł na <body> (WCAG 2.4.3).
@@ -485,6 +547,141 @@ const assignmentDialog = configureDialog("assignment-dialog", "assignment", asyn
   });
 }, "Przypisano rodzinę.");
 
+// --- podział wpłaty na gospodarstwa (#127) ---------------------------------------
+// Okno wielokrotnego użytku: lista części, dodanie części (klasa → uczeń → gospodarstwo, kwota
+// w centach, potwierdzenie) i cofnięcie części z powodem. Suma ≤ netto pilnuje serwer (409);
+// klient tylko podpowiada wcześniej. Bez żadnego statusu zaległości.
+const splitDialog = byId("split-dialog");
+const splitForm = byId("split-form");
+const splitError = byId("split-error");
+const splitPicker = wireHouseholdPicker("split", () => splitDialog.dataset.schoolYearId || "");
+const splitState = { paymentId: "", allocations: null, busy: false, keys: new Map() };
+
+// Jeden klucz na tę samą operację (ponowienie po błędzie sieci nie tworzy drugiej części).
+function splitKey(fingerprint, prefix) {
+  if (!splitState.keys.has(fingerprint)) splitState.keys.set(fingerprint, makeIdempotencyKey(prefix));
+  return splitState.keys.get(fingerprint);
+}
+
+function setSplitBusy(busy) {
+  splitState.busy = busy;
+  for (const button of splitDialog.querySelectorAll("#split-parts button, #split-add-button")) button.disabled = busy;
+}
+
+function renderSplit() {
+  const data = splitState.allocations;
+  byId("split-summary").textContent = data ? allocationSummaryText(data) : "";
+  const rows = [];
+  for (const item of data ? [...data.active, ...data.reversed] : []) {
+    const row = document.createElement("tr");
+    row.append(textCell(householdLabel(state.householdLabels, item.householdId)));
+    row.append(textCell(formatCents(item.amountCents), "amount"));
+    row.append(textCell(item.reversed ? "Cofnięta" : "Bieżąca"));
+    const actions = document.createElement("td");
+    if (!item.reversed) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Cofnij";
+      button.dataset.allocationId = item.id;
+      actions.append(button);
+    }
+    row.append(actions);
+    rows.push(row);
+  }
+  byId("split-parts").replaceChildren(...rows);
+  byId("split-empty").hidden = rows.length !== 0;
+  byId("split-add").hidden = !(data && data.canAllocate);
+}
+
+async function refreshSplit() {
+  const data = await api(allocationsUrl(splitState.paymentId));
+  splitState.allocations = normalizeAllocations(data);
+  renderSplit();
+}
+
+splitForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") splitDialog.close();
+});
+splitDialog.addEventListener("close", () => {
+  splitError.textContent = "";
+  splitState.keys.clear();
+  splitState.allocations = null;
+  byId("split-amount").value = "";
+  byId("split-reason").value = "";
+  splitPicker.reset();
+});
+
+byId("split-add-button").addEventListener("click", async () => {
+  if (splitState.busy || !splitState.allocations) return;
+  splitError.textContent = "";
+  setSplitBusy(true);
+  try {
+    const householdId = byId("split-household-id").value.trim();
+    const amountCents = parseEuroAmount(byId("split-amount").value);
+    assertHouseholdNotAllocated(splitState.allocations, householdId);
+    validateAllocationAmount(amountCents, splitState.allocations.remainingCents);
+    const confirmed = await confirmAction({
+      title: "Dodać część wpłaty?",
+      effects: [
+        `Gospodarstwo: ${householdLabel(state.householdLabels, householdId)}`,
+        `Kwota części: ${formatCents(amountCents)}`,
+        `Reszta bez przypisania po dodaniu: ${formatCents(splitState.allocations.remainingCents - amountCents)}`,
+        "Część jest niezmienna; pomyłkę poprawisz jej cofnięciem z powodem (widoczne w historii).",
+      ],
+      confirmLabel: "Dodaj część",
+    });
+    if (!confirmed) return;
+    await api(allocationsUrl(splitState.paymentId), {
+      method: "POST",
+      headers: { "Idempotency-Key": splitKey(`add:${householdId}:${amountCents}`, "allocation") },
+      body: JSON.stringify(buildAllocationBody(householdId, amountCents)),
+    });
+    splitState.keys.clear();
+    byId("split-amount").value = "";
+    await refreshSplit();
+  } catch (error) {
+    splitError.textContent = error.message;
+  } finally {
+    setSplitBusy(false);
+  }
+});
+
+byId("split-parts").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-allocation-id]");
+  if (!button || splitState.busy) return;
+  splitError.textContent = "";
+  setSplitBusy(true);
+  try {
+    const allocationId = button.dataset.allocationId;
+    const reasonBody = buildAllocationReversalBody(byId("split-reason").value);
+    const item = splitState.allocations?.active.find((part) => part.id === allocationId);
+    const confirmed = await confirmAction({
+      title: "Cofnąć część wpłaty?",
+      effects: [
+        item ? `Gospodarstwo: ${householdLabel(state.householdLabels, item.householdId)}` : "",
+        item ? `Kwota części: ${formatCents(item.amountCents)}` : "",
+        `Powód: ${reasonBody.reason}`,
+        "Cofnięcie jest nowym zapisem — pierwotna część zostaje w historii.",
+      ],
+      confirmLabel: "Cofnij część",
+    });
+    if (!confirmed) return;
+    await api(allocationReversalUrl(splitState.paymentId, allocationId), {
+      method: "POST",
+      headers: { "Idempotency-Key": splitKey(`rev:${allocationId}:${reasonBody.reason}`, "allocation-reversal") },
+      body: JSON.stringify(reasonBody),
+    });
+    splitState.keys.clear();
+    byId("split-reason").value = "";
+    await refreshSplit();
+  } catch (error) {
+    splitError.textContent = error.message;
+  } finally {
+    setSplitBusy(false);
+  }
+});
+
 paymentDialog.form.elements.schoolYearId.addEventListener("change", () => paymentPicker.loadClasses());
 byId("open-payment").addEventListener("click", () => {
   // Rok z listy filtra (lata z przydziałów użytkownika), bez wpisywania (#128).
@@ -506,6 +703,15 @@ body.addEventListener("click", (event) => {
     correctionDialog.form.elements.paymentId.value = payment.id;
     correctionDialog.form.querySelector(".context").textContent = `${payment.receivedOn} · ${payment.reference || "Bez opisu"} · netto ${formatCents(payment.netCents)}`;
     correctionDialog.dialog.showModal();
+  } else if (button.dataset.action === "split") {
+    splitState.paymentId = payment.id;
+    splitDialog.dataset.schoolYearId = payment.schoolYearId;
+    splitForm.elements.paymentId.value = payment.id;
+    byId("split-context").textContent = `${payment.receivedOn} · ${payment.reference || "Bez opisu"} · netto ${formatCents(payment.netCents)}`;
+    splitPicker.loadClasses();
+    splitError.textContent = "";
+    splitDialog.showModal();
+    refreshSplit().catch((error) => { splitError.textContent = error.message; });
   } else if (button.dataset.action === "assign") {
     assignmentDialog.form.elements.paymentId.value = payment.id;
     const context = assignmentDialog.form.querySelector(".context");

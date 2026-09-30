@@ -2,9 +2,10 @@
 // here is testable in Node. Values from the API are treated as untrusted text;
 // callers render them with textContent only.
 
-import { heuristicSchoolYearId } from "../shared/school-year.js";
+import { COUNCIL_FULL_NAME } from "../shared/school.js";
+import { formatSchoolYear, heuristicSchoolYearId } from "../shared/school-year.js";
 
-export const RADA_NAME = "Rada Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli";
+export const RADA_NAME = COUNCIL_FULL_NAME;
 export const TIMEZONE = "Europe/Brussels";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -248,9 +249,8 @@ export function schoolYearFromSearch(search, now = new Date()) {
   return value && ID_PATTERN.test(value) ? value : defaultSchoolYearId(now);
 }
 
-export function formatSchoolYear(id) {
-  return /^\d{4}-\d{4}$/.test(id) ? id.replace("-", "/") : id;
-}
+// Wspólna funkcja formatująca (shared/school-year.js) — bez własnej kopii.
+export { formatSchoolYear };
 
 // Pojedynczy plik .ics wydarzenia (publiczny, tylko opublikowana wersja).
 export function eventIcsUrl(id) {

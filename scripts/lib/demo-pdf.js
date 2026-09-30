@@ -6,6 +6,7 @@
 // struktury (src/documents.js validateStructure) co plik z banku.
 // Tekst tylko ASCII (bez polskich znaków), bo czcionka standardowa nie ma ich
 // w kodowaniu WinAnsi; polskie tytuły trafiają do opisu dokumentu w panelu.
+import { SCHOOL_YEAR_LABEL } from './demo-constants.js';
 
 function pdfText(value) {
   return String(value).replace(/[^\x20-\x7e]/g, '?').replace(/([\\()])/g, '\\$1');
@@ -58,7 +59,7 @@ export const DEMO_MINUTES_PDF = Object.freeze({
     'Dokument syntetyczny wygenerowany w kodzie demo. To nie jest prawdziwy protokol.',
     '',
     'Zebranie zarzadu Rady (dane przykladowe), 2026-11-20',
-    'Omowiono biezace wplaty i plan wydatkow na rok szkolny 2026/2027.',
+    `Omowiono biezace wplaty i plan wydatkow na rok szkolny ${SCHOOL_YEAR_LABEL}.`,
     'Bez uchwal na tym zebraniu.',
   ],
 });

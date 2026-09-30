@@ -4,7 +4,8 @@
 // paneli, jest wiązana ręcznie; kontrolę dostępu i tak wykonuje wyłącznie serwer.
 
 import { api as apiRequest } from "./api.js";
-import { defaultYear, yearsFromGrants } from "./school-year.js";
+import { applySchoolName } from "./school.js";
+import { defaultYear, formatSchoolYear, yearsFromGrants } from "./school-year.js";
 
 // Kolejność stała dla wszystkich paneli (patrz issue #85, propozycja p.3; rozszerzone
 // o #226 — uzgodnienia, kampanie e-mail i zamknięcie roku miały wcześniej własne,
@@ -91,7 +92,7 @@ export function scopeSummary(grants) {
 // niosą roku (np. rola globalna) — wtedy panele stosują własny rok domyślny.
 export function activeYearLabel(grants) {
   const year = defaultYear(yearsFromGrants(grants), "");
-  return year ? `Rok szkolny ${year}` : "";
+  return year ? `Rok szkolny ${formatSchoolYear(year)}` : "";
 }
 
 // Aktywny panel: porównanie ścieżki bieżącej strony z href panelu (prefiks, bez query).
@@ -159,6 +160,7 @@ async function logout() {
 // Oczekuje w HTML: <nav aria-label="Panel"><ul id="shell-nav"></ul></nav>
 // oraz <div id="shell-account"></div> (patrz zmiany w */index.html).
 export async function mountShell({ document: doc = document, location: loc = window.location } = {}) {
+  applySchoolName(doc);
   const navList = doc.getElementById("shell-nav");
   const account = doc.getElementById("shell-account");
   let grants = [];

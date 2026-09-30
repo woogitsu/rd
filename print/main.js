@@ -2,11 +2,14 @@ import {
   MAX_FILE_BYTES,
   PAYMENT_ENTRY_LABELS,
   buildHouseholds,
+  canLoadAllClasses,
+  cardCountLabel,
   classNames,
   filterHouseholds,
   normalizeConfig,
   parseInputBytes,
   parseInputRows,
+  previewBlockedMessage,
   renderCardsHtml,
   schoolYearCardLabel,
 } from "./core.js";
@@ -15,6 +18,7 @@ import { api as apiRequest } from "../shared/api.js";
 import { fillYearSelect } from "../shared/school-year.js";
 import { mountShell } from "../shared/shell.js";
 import "../shared/shell.css";
+import { COUNCIL_SHORT_NAME, SCHOOL_NAME } from "../shared/school.js";
 
 mountShell();
 
@@ -31,6 +35,9 @@ const state = {
 };
 const byId = (id) => document.getElementById(id);
 const configForm = byId("config-form");
+// Domyślne nazwy z jednego źródła (shared/school.js); użytkownik może je zmienić.
+configForm.elements.councilName.value = COUNCIL_SHORT_NAME;
+configForm.elements.schoolName.value = SCHOOL_NAME;
 const configError = byId("config-error");
 const fileInput = byId("file-input");
 const fileEncoding = byId("file-encoding");
@@ -54,7 +61,7 @@ const printButton = byId("print-button");
 const API_ERRORS = {
   unauthenticated: "Brak aktywnej sesji. Zaloguj się w panelu i spróbuj ponownie.",
   forbidden: "Brak uprawnień do tej klasy lub roku szkolnego.",
-  class_required: "Podaj identyfikator swojej klasy.",
+  class_required: "Wybierz swoją klasę z listy „Klasa”.",
   class_not_found: "Nie znaleziono klasy w tym roku szkolnym.",
   school_year_not_found: "Nie znaleziono roku szkolnego.",
   invalid_request: "Niepoprawny identyfikator roku szkolnego lub klasy.",
@@ -93,10 +100,17 @@ function syncCardYear() {
   if (label) configForm.elements.schoolYear.value = label;
 }
 
+// Przydziały konta z /api/access (tylko do ułożenia listy klas; serwer i tak autoryzuje).
+let accessGrants = [];
+
 async function loadClassOptions() {
   const schoolYearId = api.yearInput.value;
   const select = api.classInput;
-  select.replaceChildren(new Option("Wszystkie klasy (zarząd)", ""));
+  // Przegląd demo 3: przedstawiciel klasy widział „Wszystkie klasy (zarząd)” jako wybór
+  // domyślny, a „Wczytaj z serwera” kończyło się 400 class_required. Pozycja całego roku
+  // tylko dla roli finansowej bez ograniczenia do klasy (jak printScope na serwerze).
+  const allClasses = canLoadAllClasses(accessGrants, schoolYearId);
+  select.replaceChildren(...(allClasses ? [new Option("Wszystkie klasy (zarząd)", "")] : []));
   if (!schoolYearId) return;
   try {
     const params = new URLSearchParams({ schoolYearId });
@@ -115,6 +129,7 @@ async function initApiControls() {
   try {
     const access = await apiRequest("/api/access", { cache: "no-store", messages: API_ERRORS });
     grants = Array.isArray(access?.grants) ? access.grants : [];
+    accessGrants = grants;
   } catch {
     // Bez przydziałów lista zawiera rok z daty; serwer i tak autoryzuje żądanie.
   }
@@ -232,7 +247,7 @@ function renderPreview() {
   }
   if (errors.length) {
     preview.replaceChildren();
-    setText(previewMessage, "Uzupełnij treść kartki, aby zobaczyć podgląd.");
+    setText(previewMessage, previewBlockedMessage(errors));
     confirmBox.disabled = true;
     return;
   }
@@ -248,7 +263,7 @@ function renderPreview() {
     preview.innerHTML = result.html;
     preview.dataset.layout = result.layout;
     document.body.dataset.layout = result.layout;
-    setText(previewMessage, `Podgląd: ${result.count} kartek.`);
+    setText(previewMessage, `Podgląd: ${cardCountLabel(result.count)}.`);
     confirmBox.disabled = false;
   } catch (error) {
     preview.replaceChildren();
