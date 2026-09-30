@@ -388,6 +388,11 @@ test('przeksięgowanie po zatwierdzonym uzgodnieniu: przechodzi, ostrzega, rapor
     const rec = (await db.query('SELECT status FROM bank_reconciliations WHERE id = $1', [reconciliationId])).rows[0];
     assert.equal(rec.status, 'confirmed');
     assert.equal((await db.query('SELECT count(*)::int AS n FROM bank_reconciliation_matches WHERE ledger_entry_id = $1 AND revoked_at IS NULL', [entryId])).rows[0].n, 1);
+    // #144: lista księgi pokazuje łańcuch w obu kierunkach także po zatwierdzonym uzgodnieniu.
+    const list = await readJson(await ctx.fetch(req(`/api/ledger?schoolYearId=${YEAR}`, { cookie: ctx.cookies.treasurer })));
+    assert.equal(list.status, 200);
+    assert.equal(list.body.entries.find((e) => e.id === entryId).replacedByEntryId, res.body.entry.id);
+    assert.equal(list.body.entries.find((e) => e.id === res.body.entry.id).replacesEntryId, entryId);
 
     const report = await readJson(await ctx.fetch(req(`/api/reports/audit?schoolYearId=${YEAR}&format=json`, { cookie: ctx.cookies.audit })));
     assert.equal(report.status, 200, JSON.stringify(report.body));

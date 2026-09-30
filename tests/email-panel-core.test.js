@@ -9,6 +9,8 @@ import {
   campaignActionUrl,
   campaignStatusLabel,
   describeProviderPause,
+  describeWorkerStatus,
+  WORKER_ALARM_LABELS,
   PROVIDER_PAUSE_REASONS,
   campaignUrl,
   canOfferApproval,
@@ -214,4 +216,35 @@ test('#209 panel: przycisk potwierdzenia naprawy tylko dla zarządu, trasa zgodn
     assert.ok(main.includes(path), path);
     assert.ok(server.includes(`'${path}'`), path);
   }
+});
+
+test('#130 alarm zadania wysyłki: bez alarmu sekcja ukryta; kody → opisy, czas w Brukseli, bez danych rodzin', () => {
+  assert.equal(describeWorkerStatus(null), null);
+  assert.equal(describeWorkerStatus({ alarms: [] }), null);
+  const view = describeWorkerStatus({
+    alarms: ['worker_dry_run_only'],
+    lastRun: { mode: 'dry_run', finishedAt: '2026-10-25T00:30:00.000Z', stoppedReason: null },
+    campaigns: { due: 2, scheduled: 0, paused: 0 },
+    alarmAfterHours: 2,
+  });
+  assert.deepEqual(view.lines, [WORKER_ALARM_LABELS.worker_dry_run_only]);
+  // 25.10.2026 00:30 UTC = 02:30 czasu letniego w Brukseli (przed zmianą o 03:00).
+  assert.match(view.details, /25\.10\.2026.*02:30.*tryb próbny/);
+  assert.match(view.details, /czekające na wysyłkę w tym roku: 2/);
+  assert.match(view.details, /Próg alarmu: 2 h/);
+  const never = describeWorkerStatus({ alarms: ['worker_never_ran', 'nowy_kod'], lastRun: null, campaigns: { due: 1 } });
+  assert.deepEqual(never.lines, [WORKER_ALARM_LABELS.worker_never_ran, 'Alarm zadania wysyłki (kod nowy_kod).']);
+  assert.match(never.details, /Ostatni przebieg: brak/);
+  const stale = describeWorkerStatus({ alarms: ['worker_stale'], lastRun: { mode: 'live', finishedAt: '2026-10-26T08:00:00.000Z', stoppedReason: 'outside_send_window' }, campaigns: { due: 1 }, alarmAfterHours: 2 });
+  assert.match(stale.details, /26\.10\.2026.*09:00.*wysyłka, zatrzymanie: outside_send_window/);
+});
+
+test('#130 panel: alarm zadania wysyłki z trasy zgodnej z serwerem', () => {
+  const main = readFileSync(new URL('../email/main.js', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../email/index.html', import.meta.url), 'utf8');
+  const server = readFileSync(new URL('../src/pg/routes/email.js', import.meta.url), 'utf8');
+  assert.ok(main.includes('/api/email/worker-status?schoolYearId='));
+  assert.ok(server.includes("'/api/email/worker-status'"));
+  for (const code of Object.keys(WORKER_ALARM_LABELS)) assert.ok(server.includes(`'${code}'`), code);
+  assert.match(html, /id="worker-status"[^>]*hidden/);
 });
