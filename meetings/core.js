@@ -279,6 +279,28 @@ export function canDraftNoticeCampaign(notice, meeting) {
   return notice.kind === "cancellation" ? meeting?.status === "cancelled" : meeting?.status === "scheduled";
 }
 
+// Plik kalendarza (.ics): serwer wydaje go tylko dla NAJNOWSZEGO zatwierdzonego zawiadomienia.
+export function isLatestApprovedNotice(notice, notices) {
+  if (!notice || notice.status !== "approved" || !Array.isArray(notices)) return false;
+  return !notices.some((other) => other.status === "approved" && other.version > notice.version);
+}
+
+// Nowa kolejność niewycofanych punktów po przesunięciu jednego o jedno miejsce
+// ("up" / "down"); null, gdy punktu nie ma, jest wycofany albo stoi na skraju.
+// Serwer (POST …/agenda-order) przyjmuje wyłącznie pełną listę niewycofanych punktów.
+export function moveAgendaItem(agenda, itemId, direction) {
+  if (direction !== "up" && direction !== "down") return null;
+  const ids = (Array.isArray(agenda) ? agenda : [])
+    .filter((item) => !item.withdrawnAt)
+    .sort((a, b) => a.position - b.position)
+    .map((item) => item.id);
+  const index = ids.indexOf(itemId);
+  const to = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || to < 0 || to >= ids.length) return null;
+  [ids[index], ids[to]] = [ids[to], ids[index]];
+  return ids;
+}
+
 export function canChangeSchedule(meeting) {
   return meeting?.status === "draft" || meeting?.status === "scheduled";
 }
