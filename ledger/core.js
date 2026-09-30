@@ -174,6 +174,28 @@ export function buildOverviewUrl(resource, schoolYearId, direction = "") {
   return `/api/ledger/${resource}?${params}`;
 }
 
+// #82: liczba dowodów zastąpionych i unieważnionych oraz czy któryś zastąpiony
+// dowód nie ma już aktualnej wersji (łańcuch kończy się unieważnieniem).
+export function attachmentStatusSummary(attachments) {
+  const summary = { superseded: 0, voided: 0, withoutCurrent: 0 };
+  if (!Array.isArray(attachments)) return summary;
+  for (const item of attachments) {
+    if (item?.status === "superseded") summary.superseded += 1;
+    else if (item?.status === "voided") summary.voided += 1;
+    if (item?.status === "superseded" && !item?.currentDocumentId) summary.withoutCurrent += 1;
+  }
+  return summary;
+}
+
+// #82: dopisek do „Dowody: N” — bez „usunięty”: plik zostaje w archiwum dokumentów.
+export function attachmentStatusLabel(summary) {
+  const parts = [];
+  if (summary?.superseded) parts.push(`zastąpione nowszą wersją: ${summary.superseded}`);
+  if (summary?.voided) parts.push(`unieważnione: ${summary.voided}`);
+  if (summary?.withoutCurrent) parts.push(`bez aktualnej wersji: ${summary.withoutCurrent}`);
+  return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
 export function normalizeEntry(entry) {
   const amountCents = Number(entry?.amountCents);
   const correctedCents = Number(entry?.correctedCents ?? 0);
@@ -191,6 +213,8 @@ export function normalizeEntry(entry) {
     replacedByEntryId: isValidId(entry?.replacedByEntryId) ? entry.replacedByEntryId : "",
     // #87: liczba dowodów (dokument główny + dołączone); null, gdy API jej nie podaje.
     attachmentCount: Array.isArray(entry?.attachmentIds) ? entry.attachmentIds.length : null,
+    // #82: stan dowodów — plik zostaje przy wpisie także po zastąpieniu lub unieważnieniu.
+    attachmentStatus: attachmentStatusSummary(entry?.attachments),
     amountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
     correctedCents: Number.isSafeInteger(correctedCents) ? correctedCents : 0,
     netCents: Number.isSafeInteger(Number(entry?.netAmountCents))

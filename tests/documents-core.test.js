@@ -328,7 +328,11 @@ test("statusConfirmation: mówi, że plik zostaje w archiwum", () => {
     assert.ok(c.destructive);
     assert.ok(c.effects.some((e) => e.includes("zostają w archiwum")));
     assert.ok(!/usun(i|ię)ęt|zostanie usunięty/.test(c.effects.join(" ")));
+    // #82: okno mówi też, że unieważnienie nie odbiera dostępu do pliku.
+    assert.ok(c.effects.some((e) => e.includes("nadal mogą otworzyć plik")));
   }
+  assert.ok(statusConfirmation("supersede", "A", "B", "financial").effects.some((e) => e.includes("księga pokaże nową wersję")));
+  assert.ok(!statusConfirmation("supersede", "A", "B", "board").effects.some((e) => e.includes("księg")));
 });
 
 // --- Przegląd demo 4: odmiana liczby dokumentów i skrócone identyfikatory ----------

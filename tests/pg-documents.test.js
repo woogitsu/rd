@@ -864,6 +864,144 @@ test('cross-origin status change request is refused before touching the database
   const count = await db.query('SELECT count(*)::int AS n FROM document_status_events');
   assert.equal(count.rows[0].n, 0);
 }));
+// --- #82: brakujące przypadki z listy „Testy do dodania” ---------------------------
+
+async function statusEventCount(db, id) {
+  return (await db.query('SELECT count(*)::int AS n FROM document_status_events WHERE document_id = $1', [id])).rows[0].n;
+}
+
+test('#82 wyścig: dwa równoległe zastąpienia tego samego dokumentu RÓŻNYMI wersjami — jedno 201, drugie 409 (nie powtórka)', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const original = await upload(env, { cookie });
+  const first = await upload(env, { cookie });
+  const second = await upload(env, { cookie });
+  const results = await Promise.all([first, second].map((replacement) => changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede',
+    body: { replacementDocumentId: replacement.data.document.id, reason: 'Równoległa poprawka' },
+  })));
+  assert.deepEqual(results.map((r) => r.response.status).sort(), [201, 409]);
+  const lost = results.find((r) => r.response.status === 409);
+  assert.equal(lost.data.error, 'document_status_conflict');
+  assert.equal(lost.data.statusEvent, undefined, 'przegrany nie dostaje cudzego zdarzenia jako sukcesu');
+  assert.equal(await statusEventCount(db, original.data.document.id), 1);
+  assert.equal((await auditRows(db, 'document.superseded')).length, 1);
+
+  // Już po fakcie (sekwencyjnie, nowy klucz): zastąpienie inną wersją nadal 409,
+  // tą samą — bezpieczna powtórka.
+  const won = results.find((r) => r.response.status === 201).data.statusEvent.replacementDocumentId;
+  const loserId = won === first.data.document.id ? second.data.document.id : first.data.document.id;
+  const later = await changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede', body: { replacementDocumentId: loserId, reason: 'Późniejsza próba' },
+  });
+  assert.deepEqual([later.response.status, later.data.error], [409, 'document_status_conflict']);
+  const same = await changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede', body: { replacementDocumentId: won, reason: 'Powtórka po błędzie sieci' },
+  });
+  assert.deepEqual([same.response.status, same.data.replayed], [200, true]);
+  assert.equal(await statusEventCount(db, original.data.document.id), 1);
+}));
+
+test('#82 podwójne kliknięcie „Unieważnij” (ten sam klucz, równolegle): jedno zdarzenie i jeden wpis audytu', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const results = await Promise.all([0, 1].map(() => changeStatus(env, { cookie, id: data.document.id, action: 'void', key: 'void-double-click-82' })));
+  assert.deepEqual(results.map((r) => r.response.status).sort(), [200, 201]);
+  assert.equal(results[0].data.statusEvent.id, results[1].data.statusEvent.id);
+  assert.equal(await statusEventCount(db, data.document.id), 1);
+  assert.equal((await auditRows(db, 'document.voided')).length, 1);
+}));
+
+test('#82 granice ról: przedstawiciel unieważnia dokument własnej klasy, a dokument innej klasy, zarządu i finansowy daje 404 bez zapisu', async () => withEnv(async (db, env) => {
+  const board = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const own = await upload(env, { cookie: board, kind: 'class', classId: 'c-1a' });
+  const otherClass = await upload(env, { cookie: board, kind: 'class', classId: 'c-1b' });
+  const boardDoc = await upload(env, { cookie: board, kind: 'board' });
+  const financial = await upload(env, { cookie: await treasurer(db) });
+  const repACookie = await repA(db);
+
+  for (const doc of [otherClass, boardDoc, financial]) {
+    const id = doc.data.document.id;
+    const voided = await changeStatus(env, { cookie: repACookie, id, action: 'void' });
+    assert.deepEqual([voided.response.status, voided.data.error], [404, 'not_found']);
+    const superseded = await changeStatus(env, {
+      cookie: repACookie, id, action: 'supersede', body: { replacementDocumentId: own.data.document.id, reason: 'Próba spoza klasy' },
+    });
+    assert.deepEqual([superseded.response.status, superseded.data.error], [404, 'not_found']);
+    assert.equal(await statusEventCount(db, id), 0);
+  }
+  // Zastąpienie własnego dokumentu wersją z innej klasy nie ujawnia jej istnienia inaczej niż zwykłe 400.
+  const crossReplacement = await changeStatus(env, {
+    cookie: repACookie, id: own.data.document.id, action: 'supersede',
+    body: { replacementDocumentId: otherClass.data.document.id, reason: 'Wersja z innej klasy' },
+  });
+  assert.deepEqual([crossReplacement.response.status, crossReplacement.data.error], [400, 'invalid_replacement_document']);
+
+  const ownVoid = await changeStatus(env, { cookie: repACookie, id: own.data.document.id, action: 'void' });
+  assert.equal(ownVoid.response.status, 201);
+  assert.equal((await auditRows(db, 'document.voided'))[0].actor_id, 'u-rep-a');
+}));
+
+test('#82 zastąpienie dokumentem z innego roku szkolnego — 400 invalid_replacement_document', async () => withEnv(async (db, env) => {
+  await seedSchoolYear(db, 'y-2025', { startsOn: '2025-09-01', endsOn: '2026-08-31' });
+  const cookie = await treasurer(db, { roles: [{ role: 'treasurer', schoolYearId: YEAR }, { role: 'treasurer', schoolYearId: 'y-2025' }] });
+  const original = await upload(env, { cookie });
+  const otherYearId = '00000000-0000-4000-8000-0000000082a1';
+  await db.query(
+    `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+     VALUES ($1, 'docs/' || $1, 'application/pdf', 10, 'financial', 'u-treasurer', 'y-2025', repeat('c', 64), 'doc-82-other-year')`,
+    [otherYearId],
+  );
+  const attempt = await changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede', body: { replacementDocumentId: otherYearId, reason: 'Wersja z zeszłego roku' },
+  });
+  assert.deepEqual([attempt.response.status, attempt.data.error], [400, 'invalid_replacement_document']);
+  assert.equal(await statusEventCount(db, original.data.document.id), 0);
+}));
+
+test('#82 zamknięty rok: nowej wersji nie da się przesłać ani wskazać (409 school_year_closed); unieważnienie pozostaje możliwe', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const original = await upload(env, { cookie });
+  // Wersja zastępująca przesłana jeszcze przed zamknięciem roku.
+  const replacement = await upload(env, { cookie });
+  const mistaken = await upload(env, { cookie });
+  // Zastąpienie zapisane przed zamknięciem — jego ponowienie po zamknięciu to powtórka.
+  const earlier = await upload(env, { cookie });
+  const earlierReplacement = await upload(env, { cookie });
+  const earlierBody = { replacementDocumentId: earlierReplacement.data.document.id, reason: 'Przed zamknięciem' };
+  const beforeClose = await changeStatus(env, { cookie, id: earlier.data.document.id, action: 'supersede', key: 'supersede-before-close', body: earlierBody });
+  assert.equal(beforeClose.response.status, 201);
+
+  await seedSchoolYear(db, 'y-2027-next', { startsOn: '2027-09-01', endsOn: '2028-08-31' });
+  await db.exec(`
+    SET session_replication_role = replica;
+    INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
+      closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
+      carried_opening_balance_id, expired_grant_count)
+    VALUES ('clo-doc-status', '${YEAR}', 'y-2027-next', 'closed', 'u-a', 'u-b', now(), 0, 0, 0, 0, 'ob-next', 0);
+    SET session_replication_role = origin;
+  `);
+
+  const lateUpload = await upload(env, { cookie });
+  assert.deepEqual([lateUpload.response.status, lateUpload.data.error], [409, 'school_year_closed']);
+
+  const supersede = await changeStatus(env, {
+    cookie, id: original.data.document.id, action: 'supersede',
+    body: { replacementDocumentId: replacement.data.document.id, reason: 'Korekta po zamknięciu roku' },
+  });
+  assert.deepEqual([supersede.response.status, supersede.data.error], [409, 'school_year_closed']);
+  assert.equal(await statusEventCount(db, original.data.document.id), 0);
+  assert.equal((await auditRows(db, 'document.superseded')).length, 1, 'tylko zastąpienie sprzed zamknięcia');
+
+  const retry = await changeStatus(env, { cookie, id: earlier.data.document.id, action: 'supersede', key: 'supersede-before-close', body: earlierBody });
+  assert.deepEqual([retry.response.status, retry.data.replayed], [200, true]);
+
+  // Wariant zachowawczy (D-04/D-07): omyłkowo wgrany plik można ukryć z domyślnej listy
+  // także w zamkniętym roku; plik i wpis documents zostają.
+  const voided = await changeStatus(env, { cookie, id: mistaken.data.document.id, action: 'void', body: { reason: 'Plik wgrany omyłkowo' } });
+  assert.equal(voided.response.status, 201);
+  assert.equal((await get(env, `/api/documents/${mistaken.data.document.id}/content`, cookie)).status, 200);
+}));
+
 // --- Tytuł, kategoria i wyszukiwanie (issue #76) ------------------------------------
 
 function describeRequest({ cookie, id, key, body, origin, headers = {} }) {

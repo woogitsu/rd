@@ -24,6 +24,7 @@ import {
   ledgerQuery,
   makeIdempotencyKey,
   needsResolution,
+  attachmentStatusLabel,
   normalizeEntry,
   parseEuroAmount,
   resolutionLimitInfo,
@@ -102,7 +103,7 @@ function entryRow(raw) {
   // Data w zapisie polskim dd.mm.rrrr — ekran i wydruk (#151, decyzja 30.09 z #563).
   row.append(textCell(formatPrintDate(entry.occurredOn), "date"));
   const description = textCell(entry.description || "Bez opisu", "entry-description");
-  const evidence = entry.attachmentCount === null ? "" : `Dowody: ${entry.attachmentCount}`;
+  const evidence = entry.attachmentCount === null ? "" : `Dowody: ${entry.attachmentCount}${attachmentStatusLabel(entry.attachmentStatus)}`;
   if (entry.source || entry.resolutionReference || evidence) {
     const details = document.createElement("small");
     details.textContent = [entry.source && `Źródło: ${entry.source}`, entry.resolutionReference && `Uchwała: ${entry.resolutionReference}`, evidence].filter(Boolean).join(" · ");
