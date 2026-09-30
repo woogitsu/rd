@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildGrantsUrl, confirmationText, dateToExpiresAt, describeAuditEvent, errorMessage, grantPayload,
+  buildGrantsUrl, confirmationDialog, confirmationText, dateToExpiresAt, describeAuditEvent, errorMessage, grantPayload,
   indexClasses, invitationLink, invitationPayload, isOwnLastAdminGrant, mfaResetConfirmation, passwordResetLink,
   ACTION_LABELS, PENDING_DECISION_ROLES, ROLE_LABELS, roleNeedsPendingDecisionWarning, scopeLabel,
 } from '../admin/core.js';
@@ -173,4 +173,46 @@ test('#207: formularze nowego roku i klas — walidacja jak po stronie serwera',
   assert.throws(() => classNamesPayload('1A, 1a'), /powtarza/);
   assert.throws(() => classNamesPayload(' , '), /Podaj nazwy/);
   assert.throws(() => classNamesPayload('x'.repeat(61)), /60 znaków/);
+});
+
+test('confirmationDialog (#136): tytuł-czasownik, nazwa akcji na przycisku i skutki z liczbami', () => {
+  const disable = confirmationDialog('disable', { account: 'osoba@example.invalid', activeSessions: 3, activeGrants: 2 });
+  assert.equal(disable.title, 'Wyłączyć konto?');
+  assert.equal(disable.confirmLabel, 'Wyłącz konto');
+  assert.equal(disable.destructive, true);
+  assert.ok(disable.effects.includes('Konto: osoba@example.invalid'));
+  assert.ok(disable.effects.includes('Aktywne sesje do zakończenia: 3'));
+  assert.ok(disable.effects.some((line) => /Aktywne przydziały ról: 2/.test(line)));
+
+  const sessions = confirmationDialog('revoke-sessions', { account: 'a@example.invalid', activeSessions: 0 });
+  assert.equal(sessions.confirmLabel, 'Wyloguj wszędzie');
+  assert.ok(sessions.effects.includes('Aktywne sesje do zakończenia: 0'));
+
+  const grant = confirmationDialog('revoke-grant', { account: 'rep@example.invalid', role: 'Przedstawiciel klasy', scope: 'klasa 1A, rok 2026/27' });
+  assert.equal(grant.title, 'Wycofać przydział?');
+  assert.equal(grant.confirmLabel, 'Wycofaj przydział');
+  assert.ok(grant.effects.includes('Rola: Przedstawiciel klasy'));
+  assert.ok(grant.effects.includes('Zakres: klasa 1A, rok 2026/27'));
+
+  const invitation = confirmationDialog('revoke-invitation', { account: 'nowa@example.invalid', role: 'Skarbnik', scope: 'cała Rada' });
+  assert.equal(invitation.confirmLabel, 'Wycofaj zaproszenie');
+  assert.ok(invitation.effects.includes('Zakres: cała Rada'));
+  assert.equal(confirmationDialog('reissue-invitation', { account: 'nowa@example.invalid' }).confirmLabel, 'Wydaj nowy link');
+  assert.equal(confirmationDialog('password-reset', { account: 'x@example.invalid' }).confirmLabel, 'Wydaj kod resetu');
+  assert.equal(confirmationDialog('enable', { account: 'x@example.invalid', activeGrants: 1 }).confirmLabel, 'Włącz konto');
+  // Każda akcja zmienia dostęp: fokus na „Anuluj”, żaden przycisk nie brzmi „OK”.
+  for (const action of ['disable', 'enable', 'revoke-sessions', 'password-reset', 'revoke-grant', 'revoke-invitation', 'reissue-invitation']) {
+    const options = confirmationDialog(action, { account: 'x@example.invalid' });
+    assert.equal(options.destructive, true, action);
+    assert.match(options.title, /\?$/, action);
+    assert.notEqual(options.confirmLabel, 'OK', action);
+  }
+});
+
+test('confirmationDialog: brak liczby sesji nie wstawia pustej linii ani „NaN”', () => {
+  const options = confirmationDialog('disable', { account: 'x@example.invalid' });
+  const lines = options.effects.filter(Boolean);
+  assert.ok(lines.length >= 3);
+  assert.deepEqual(lines.filter((line) => /NaN|undefined/.test(line)), []);
+  assert.ok(!lines.some((line) => /sesje do zakończenia/.test(line)));
 });

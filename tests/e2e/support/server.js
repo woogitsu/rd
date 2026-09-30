@@ -134,6 +134,8 @@ async function seedFamilies(db) {
 
 // Wydarzenie opublikowane (widoczne publicznie) i szkic, który NIGDY nie jest
 // zgłoszony — pilnuje, że site/ nie pokazuje danych niezatwierdzonych.
+const APPROVED_EVENT_TITLE = 'Zebranie otwarte do publikacji (syntetyczne)';
+
 async function seedEvents(db) {
   // Zasada czterech oczu (four_eyes_required): kto zgłasza, nie może sam zatwierdzać —
   // stąd dwa osobne konta board do submit i do approve/publish.
@@ -158,6 +160,23 @@ async function seedEvents(db) {
   await submit(db, board, { eventId: published.id, revision: 1 });
   await approve(db, boardReviewer, { eventId: published.id, revision: 1 });
   await publish(db, boardReviewer, { eventId: published.id, revision: 1 });
+
+  // #136: wydarzenie zatwierdzone, ale nieopublikowane — test okna „Opublikować
+  // wydarzenie?” na prawdziwej stronie events/ (confirm-dialog-pages.spec.js).
+  // Publikuje je dopiero ten test (w bazie w pamięci), więc do tego czasu nie ma go
+  // na stronie publicznej.
+  const { event: approved } = await createDraft(db, board, {
+    schoolYearId: 'e2e-y-2026',
+    title: APPROVED_EVENT_TITLE,
+    startsAt: '2026-12-10T17:00',
+    endsAt: '2026-12-10T18:30',
+    location: 'Sala gimnastyczna',
+    organizer: 'Rada Rodziców',
+    audience: 'public',
+    idempotencyKey: 'e2e-event-approved-0001',
+  });
+  await submit(db, board, { eventId: approved.id, revision: 1 });
+  await approve(db, boardReviewer, { eventId: approved.id, revision: 1 });
 
   // Szkic pozostaje w statusie 'draft' (brak submit/approve/publish) — musi
   // NIGDY nie pojawić się na stronie publicznej ani w /api/public/events.
@@ -365,6 +384,7 @@ async function main() {
     adminReset: { userId: 'e2e-admin-reset', totpSecret: adminTotpSecret, staleCookie: adminStaleCookie, staleCookie2: adminStaleCookie2, freshCookie: adminFreshCookie, targets: resetTargets },
     publishedEventTitle: 'Piknik szkolny (syntetyczny)',
     draftEventTitle: 'Szkic niezatwierdzony SEKRET E2E',
+    approvedEventTitle: APPROVED_EVENT_TITLE,
     boardDocs: { userId: 'e2e-board-docs', cookie: boardDocsCookie },
     printMeeting: { id: printMeetingId, title: PRINT_MEETING_TITLE },
     documents: E2E_DOCUMENTS,

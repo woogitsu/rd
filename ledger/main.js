@@ -31,9 +31,9 @@ import {
   replacementChainLabels,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
-import { confirmAction } from "../shared/confirm-dialog.js";
+import { confirmAction, netAfterCorrection, outcomeText } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
-import { panelYearState, yearOptionsHtml } from "../shared/school-year.js";
+import { formatSchoolYear, panelYearState, yearOptionsHtml } from "../shared/school-year.js";
 import { shownSummary } from "../shared/household-picker.js";
 import { mountShell, sessionDisplayName } from "../shared/shell.js";
 import "../shared/shell.css";
@@ -465,32 +465,42 @@ function configureDialog(id, prefix, submit, successText, describeConfirm) {
   const dialog = byId(id);
   const form = dialog.querySelector("form");
   const errorBox = form.querySelector(".form-error");
+  // Jedno żądanie naraz (#136): podwójne kliknięcie lub Enter w trakcie zapisu nie
+  // wysyła drugiego żądania.
+  let busy = false;
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (event.submitter?.value === "cancel") { dialog.close(); return; }
-    if (!form.reportValidity()) return;
-    // Podsumowanie skutków przed zapisem (issue #136) — zapis jest trwały.
-    if (describeConfirm) {
-      const confirmed = await confirmAction(describeConfirm(new FormData(form)));
-      if (!confirmed) return;
-    }
-    const button = event.submitter;
-    button.disabled = true;
-    errorBox.textContent = "";
-    state.requestKey ||= makeIdempotencyKey(prefix);
+    if (busy || !form.reportValidity()) return;
+    busy = true;
+    const button = event.submitter ?? form.querySelector('button[value="submit"]');
     try {
-      await submit(new FormData(form), state.requestKey);
+      // Klucz idempotencji powstaje przy otwarciu podsumowania (issue #136, p. 4) i zostaje
+      // do zamknięcia formularza — ponowienie po błędzie sieci używa tego samego klucza.
+      state.requestKey ||= makeIdempotencyKey(prefix);
+      // Podsumowanie skutków przed zapisem (issue #136) — zapis jest trwały.
+      // „Anuluj” wraca do formularza z wpisanymi danymi.
+      if (describeConfirm) {
+        const confirmed = await confirmAction(describeConfirm(new FormData(form)));
+        if (!confirmed) return;
+      }
+      if (button) button.disabled = true;
+      errorBox.textContent = "";
+      const outcome = await submit(new FormData(form), state.requestKey);
       state.requestKey = null;
       dialog.close();
       form.reset();
       await loadOverview({ reload: true });
-      if (!message.classList.contains("error")) message.textContent = successText;
+      if (!message.classList.contains("error")) message.textContent = outcomeText(successText, outcome?.replayed);
       restoreFocus();
     } catch (error) {
       errorBox.textContent = error.code === "idempotency_conflict"
         ? `${error.message} Jeśli zmieniasz dane, anuluj formularz i otwórz go ponownie.`
         : error.message;
-    } finally { button.disabled = false; }
+    } finally {
+      busy = false;
+      if (button) button.disabled = false;
+    }
   });
   dialog.addEventListener("close", () => { errorBox.textContent = ""; state.requestKey = null; });
   return { dialog, form };
@@ -509,9 +519,10 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
   const evidenceFile = data.get("evidenceFile");
   const hasFile = evidenceFile && typeof evidenceFile === "object" && evidenceFile.size > 0;
   const schoolYearId = String(data.get("schoolYearId"));
-  const created = await api("/api/ledger", {
+  const { data: created, replayed } = await api("/api/ledger", {
     method: "POST",
     headers: { "Idempotency-Key": key },
+    withMeta: true,
     body: JSON.stringify({
       schoolYearId, direction, amountCents,
       categoryId, description: String(data.get("description")),
@@ -534,6 +545,7 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
       throw error;
     }
   }
+  return { replayed };
 }, "Zapisano wpis w księdze.", (data) => {
   const direction = String(data.get("direction"));
   const category = state.categories.find((c) => c.id === data.get("categoryId"));
@@ -550,6 +562,7 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
     title: "Zapisać wpis w księdze?",
     effects: [
       `Kwota: ${amountText} (${DIRECTION_LABELS[direction] ?? direction})`,
+      `Rok szkolny: ${formatSchoolYear(data.get("schoolYearId"))}`,
       `Data: ${data.get("occurredOn")}`,
       `Kategoria: ${category ? category.name : data.get("categoryId")}`,
       "Zapis jest trwały; pomyłkę poprawisz korektą widoczną w historii.",
@@ -561,21 +574,28 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
 
 const correctionDialog = configureDialog("correction-dialog", "ledger-correction", async (data, key) => {
   const entryId = String(data.get("entryId"));
-  await api(`/api/ledger/${encodeURIComponent(entryId)}/corrections`, {
-    method: "POST", headers: { "Idempotency-Key": key },
+  return api(`/api/ledger/${encodeURIComponent(entryId)}/corrections`, {
+    method: "POST", headers: { "Idempotency-Key": key }, withMeta: true,
     body: JSON.stringify({ amountCents: parseEuroAmount(data.get("amount")), reason: String(data.get("reason")) }),
   });
 }, "Dodano korektę.", (data) => {
   let amountText = String(data.get("amount") || "");
+  let cents = null;
   try {
-    amountText = formatCents(parseEuroAmount(data.get("amount")));
+    cents = parseEuroAmount(data.get("amount"));
+    amountText = formatCents(cents);
   } catch {
     // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
   }
+  // Kwota netto wpisu przed i po korekcie (wpis mógł mieć już wcześniejsze korekty).
+  const raw = state.entries.find((item) => item?.id === String(data.get("entryId")));
+  const net = netAfterCorrection(raw ? normalizeEntry(raw).netCents : undefined, cents);
   return {
     title: "Dodać korektę?",
+    warning: net?.exceeds ? "Korekta jest większa niż kwota netto wpisu. Sprawdź kwotę, zanim zapiszesz." : "",
     effects: [
       `Kwota pomniejszenia: ${amountText}`,
+      net ? `Netto wpisu: ${formatCents(net.beforeCents)} → po korekcie ${formatCents(net.afterCents)}` : null,
       `Powód: ${String(data.get("reason") || "").trim() || "—"}`,
       "Korekta nie usuwa pierwotnego wpisu — saldo netto zostanie przeliczone, historia zostaje widoczna.",
     ],
@@ -718,7 +738,7 @@ const adoptionDialog = configureDialog("adoption-dialog", "ledger-budget-adoptio
   }));
 }, "Zapisano przyjęcie preliminarza.", (data) => ({
   title: "Zapisać przyjęcie preliminarza?",
-  effects: [`Data przyjęcia: ${data.get("adoptedOn")}`, `Liczba linii: ${state.history.currentLines.length}`, "Zapis jest trwały; późniejsze zmiany planu tworzą nowe wersje i nie zmieniają przyjętego zestawu."],
+  effects: [`Rok szkolny: ${formatSchoolYear(data.get("schoolYearId"))}`, `Data przyjęcia: ${data.get("adoptedOn")}`, `Liczba linii: ${state.history.currentLines.length}`, "Zapis jest trwały; późniejsze zmiany planu tworzą nowe wersje i nie zmieniają przyjętego zestawu."],
   confirmLabel: "Zapisz przyjęcie",
 }));
 
@@ -749,7 +769,7 @@ const openingDialog = configureDialog("opening-dialog", "ledger-opening", async 
   }
   return {
     title: "Zapisać bilans otwarcia?",
-    effects: [...amounts, "Zapis jest trwały; pomyłkę poprawia wpis poprawki, pierwotna kwota zostaje w historii."],
+    effects: [`Rok szkolny: ${formatSchoolYear(data.get("schoolYearId"))}`, ...amounts, "Zapis jest trwały; pomyłkę poprawia wpis poprawki, pierwotna kwota zostaje w historii."],
     confirmLabel: "Zapisz bilans",
   };
 });

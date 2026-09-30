@@ -230,6 +230,17 @@ Wspólny arkusz `shared/print.css` i blok metadanych `shared/print-meta.js` (rok
 - Daty w tabelach `panel/` i `ledger/` oraz w metadanych wydruku w zapisie polskim dd.mm.rrrr (`shared/zoned-time.js#formatDateOrTimestamp`, decyzja 30.09 z #563); kwoty `1 234,56 €` (`formatEur`).
 - **Nie sprawdzono:** Firefox i Safari (brak przeglądarek w środowisku). Firefox nie obsługuje pól marginesu `@page` — zostaje blok metadanych na pierwszej stronie i nagłówek tabeli na każdej. Do sprawdzenia ręcznie przed pracą na danych rodzin.
 
+## Wspólne okno potwierdzenia (#136, 30.09.2026)
+
+`shared/confirm-dialog.js` — natywny `<dialog>` z `aria-labelledby` (tytuł-pytanie, np. „Wyłączyć konto?”) i `aria-describedby` (lista skutków). Przycisk akcji nazywa operację („Zapisz wpłatę”, „Opublikuj”, „Wyłącz konto”, „Wycofaj przydział”); akcja zmieniająca dostęp jest wyróżniona tekstem, nie tylko kolorem. Style w `shared/shell.css` (selektor `#shared-confirm-dialog`, niezależny od reguł `dialog` paneli).
+
+- Klawiatura: Esc = „Anuluj”, fokus zamknięty w oknie modalnym, po zamknięciu wraca do przycisku wywołującego; przy akcjach destrukcyjnych (konta, przydziały, zaproszenia, eksport) fokus startuje na „Anuluj”.
+- 320 px: okno mieści się w ekranie (16 px marginesu), przyciski pod sobą na całą szerokość, cele ≥ 44 px, długie adresy i nazwy się łamią. Zrzut z demo (dane syntetyczne): `docs/a11y/confirm-dialog-panel-320.png`.
+- Podsumowania: wpłata — kwota w EUR, rok szkolny, data, metoda, rodzina, miękkie ostrzeżenie powyżej 1000 EUR (założenie UI, nie reguła finansowa); korekta — kwota netto przed i po korekcie; wpis księgi — kwota, rok, data, kategoria; konto — liczba aktywnych sesji do zakończenia i przydziałów; przydział — rola i zakres (klasa, rok); publikacja wydarzenia — tytuł, termin, miejsce, odbiorcy.
+- Ponowienie po błędzie sieci w `panel/` i `ledger/` wysyła ten sam klucz idempotencji; gdy serwer odpowie powtórką (`Idempotency-Replayed: true`), komunikat mówi „operacja była już wykonana — nie utworzono drugiego zapisu”.
+- CI: `tests/e2e/confirm-dialog.spec.js` (samo okno) i `tests/e2e/confirm-dialog-pages.spec.js` (prawdziwe strony `panel/` i `events/`: „Anuluj” bez żądania i bez utraty danych formularza, podwójne kliknięcie = jedno żądanie, ponowienie z tym samym kluczem, 320 px); treści: `tests/confirm-dialog-core.test.js`, `tests/admin-core.test.js`; brak `window.confirm`: `tests/no-window-confirm.test.js`.
+- Przegląd w demo (Chromium, 1280 i 320 px, konta skarbnika, zarządu i administratora): okna tylko otwierane i anulowane, bez żadnego zapisu. Nie sprawdzono z czytnikiem ekranu (NVDA/VoiceOver) ani w Firefox/Safari.
+
 ## Poza zakresem przeglądu
 
 - Ekran logowania (`login/`) — sprawdzany statycznie zarówno w `tests/login-core.test.js`, jak i (od #112) w `tests/a11y-static.test.js`. Przegląd z czytnikiem ekranu i przy 320 px — do wykonania.

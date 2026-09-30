@@ -17,6 +17,22 @@ export function buildEffectsHtml(effects) {
   return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
+// Komunikat po zapisie z kluczem idempotencji (#136): gdy serwer odpowiedział powtórką
+// (ponowienie po błędzie sieci, a pierwsze żądanie jednak doszło), użytkownik widzi,
+// że nic nie zapisano drugi raz. Czysta funkcja tekstowa.
+export function outcomeText(label, replayed) {
+  return replayed ? `${label} (operacja była już wykonana — nie utworzono drugiego zapisu)` : label;
+}
+
+// Podsumowanie korekty (#136): kwota netto przed i po korekcie (w centach). Zwraca null,
+// gdy którejś wartości nie da się policzyć (np. niepoprawna kwota w formularzu) —
+// wtedy okno pokazuje samą kwotę korekty, a błąd zgłosi walidacja przy zapisie.
+export function netAfterCorrection(netCents, correctionCents) {
+  if (!Number.isSafeInteger(netCents) || !Number.isSafeInteger(correctionCents) || correctionCents <= 0) return null;
+  const afterCents = netCents - correctionCents;
+  return { beforeCents: netCents, afterCents, exceeds: afterCents < 0 };
+}
+
 let dialogEl = null;
 
 function ensureDialog() {
