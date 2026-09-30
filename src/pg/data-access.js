@@ -17,10 +17,13 @@ const WINDOW_MS = 5 * 60 * 1000;
 //   * trasy eksportu (strict): zapis w TEJ SAMEJ transakcji co eksport
 //     (executor = tx), a awaria zapisu wycofuje cały eksport — plik nie
 //     powstaje bez wpisu.
+//   * `dedupe: false` (eksport danych rodziny dla żądania osoby, #100): każdy
+//     przebieg to osobny wiersz — bez scalania z wcześniejszym odczytem karty
+//     tego samego gospodarstwa w oknie 5 minut.
 // Zwraca true, gdy wpis (lub odświeżenie licznika) zapisano.
 export async function recordDataAccess(env, {
   actorId, accessKind, schoolYearId = null, classId = null, householdId = null, outcome, rowCount = 0,
-}, { strict = false } = {}) {
+}, { strict = false, dedupe = true } = {}) {
   if (!actorId || !accessKind || !outcome) {
     if (strict) throw new Error('data_access_log_invalid_entry');
     return false;
@@ -31,7 +34,7 @@ export async function recordDataAccess(env, {
   }
   try {
     const since = new Date(Date.now() - WINDOW_MS).toISOString();
-    const { rows } = await env.db.query(
+    const { rows } = !dedupe ? { rows: [] } : await env.db.query(
       `UPDATE data_access_log
           SET last_seen_at = now(), hit_count = hit_count + 1, row_count = GREATEST(row_count, $6)
         WHERE actor_id = $1 AND access_kind = $2
@@ -72,6 +75,11 @@ export const DATA_ACCESS_ROUTES = Object.freeze([
   { id: 'payments.exportXlsx', method: 'GET', path: '/api/payments/export.xlsx', file: 'src/pg/routes/payments.js', accessKind: 'payment_export' },
   { id: 'exports.classRoster', method: 'GET', path: '/api/exports/class-roster', file: 'src/pg/routes/exports.js', accessKind: 'class_roster_export', strict: true },
   { id: 'exports.yearly', method: 'POST', path: '/api/exports', file: 'src/pg/routes/exports.js', accessKind: 'yearly_export', strict: true },
+  // #100: eksport danych jednej rodziny dla żądania osoby — wpis `household_card`
+  // na każde gospodarstwo zakresu (osobny rodzaj wymaga migracji CHECK — patrz
+  // docs/DATA_REQUESTS.md); rozróżnienie od odczytu karty: zdarzenie audytu
+  // data_subject_request.exported w tej samej transakcji.
+  { id: 'admin.dataRequestExport', method: 'POST', path: '/api/admin/data-requests/:requestId/export', file: 'src/pg/routes/admin.js', accessKind: 'household_card', strict: true },
 ]);
 
 export const DATA_ACCESS_KINDS = Object.freeze([
