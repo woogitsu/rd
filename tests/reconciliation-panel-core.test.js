@@ -220,3 +220,138 @@ test('lineSourceLabel: etykiety źródeł pozycji wyciągu zamiast surowych kod�
   const codes = sql.match(/CHECK \(source IN \(([^)]*)\)\)/)[1].match(/'([a-z0-9]+)'/g).map((code) => code.slice(1, -1));
   assert.deepEqual(codes.filter((code) => lineSourceLabel(code) === code), []);
 });
+
+// --- #115: wpłata z pozycji, komunikacja strukturalna, zatwierdzanie wsadowe ---
+import {
+  MAX_BATCH_MATCHES,
+  batchCandidates,
+  buildBatchBody,
+  buildLinePaymentBody,
+  canCreatePaymentFromLine,
+  describeBatchFailures,
+  linePaymentUrl,
+  lineStatusLabel,
+  structuredHouseholdFor,
+  summarizeBatchSelection,
+} from '../reconciliation/core.js';
+import { findForbiddenWording } from '../print/core.js';
+
+test('#115 candidateLabel: propozycja nowej wpłaty dla rodziny i oznaczenie komunikacji strukturalnej', () => {
+  const household = candidateLabel({
+    type: 'household', id: 'h-1', householdId: 'h-1', amountCents: 2500, dayDistance: null, structuredReferenceMatch: true,
+  });
+  assert.match(household, /Nowa wpłata z tej pozycji/);
+  assert.match(household, /rodzina h-1/);
+  assert.match(household, /25,00/);
+  assert.match(household, /komunikacja strukturalna zgodna/);
+  const payment = candidateLabel({
+    type: 'payment_entry', id: 'p1', date: '2026-09-14', amountCents: 2500, dayDistance: 0, structuredReferenceMatch: true,
+  });
+  assert.match(payment, /komunikacja strukturalna tej rodziny/);
+  const plain = candidateLabel({ type: 'payment_entry', id: 'p2', date: '2026-09-14', amountCents: 2500, dayDistance: 0 });
+  assert.doesNotMatch(plain, /komunikacja/);
+});
+
+test('#115 lineStatusLabel: pozycja bez powiązania jest „do wyjaśnienia”, nie „brak wpłaty”', () => {
+  assert.equal(lineStatusLabel({ match: null, groupMatch: null }), 'Do wyjaśnienia');
+  assert.equal(lineStatusLabel({ match: { id: 'm1' } }), 'Dopasowana');
+  assert.equal(lineStatusLabel({ groupMatch: { id: 'g1', itemCount: 3 } }), 'Dopasowana zbiorczo (3 poz.)');
+});
+
+test('#115 canCreatePaymentFromLine: tylko wpływ bez powiązania, w szkicu, z prawem zapisu', () => {
+  const open = { id: 'l1', amountCents: 2500, match: null, groupMatch: null };
+  assert.equal(canCreatePaymentFromLine(open, { draft: true, canWrite: true }), true);
+  assert.equal(canCreatePaymentFromLine(open, { draft: false, canWrite: true }), false);
+  assert.equal(canCreatePaymentFromLine(open, { draft: true, canWrite: false }), false);
+  assert.equal(canCreatePaymentFromLine({ ...open, amountCents: -2500 }, { draft: true, canWrite: true }), false);
+  assert.equal(canCreatePaymentFromLine({ ...open, amountCents: 0 }, { draft: true, canWrite: true }), false);
+  assert.equal(canCreatePaymentFromLine({ ...open, match: { id: 'm' } }, { draft: true, canWrite: true }), false);
+  assert.equal(canCreatePaymentFromLine({ ...open, groupMatch: { id: 'g' } }, { draft: true, canWrite: true }), false);
+});
+
+test('#115 buildLinePaymentBody i linePaymentUrl: tylko rodzina, kwota i data nie są wysyłane', () => {
+  assert.deepEqual(buildLinePaymentBody(''), { householdId: null });
+  assert.deepEqual(buildLinePaymentBody('   '), { householdId: null });
+  assert.deepEqual(buildLinePaymentBody(' h-1 '), { householdId: 'h-1' });
+  assert.throws(() => buildLinePaymentBody('zła wartość'), /identyfikator rodziny/);
+  assert.equal(linePaymentUrl('rec-1', 'line-1'), '/api/reconciliations/rec-1/lines/line-1/payment');
+  assert.throws(() => linePaymentUrl('rec-1', '../x'), /pozycji/);
+});
+
+test('#115 structuredHouseholdFor: rodzina tylko z kandydata „household” danej pozycji', () => {
+  const suggestions = [
+    { statementLineId: 'l1', candidates: [{ type: 'payment_entry', id: 'p1', structuredReferenceMatch: true },
+      { type: 'household', id: 'h-1', householdId: 'h-1', structuredReferenceMatch: true }] },
+    { statementLineId: 'l2', candidates: [{ type: 'payment_entry', id: 'p2', structuredReferenceMatch: false }] },
+  ];
+  assert.equal(structuredHouseholdFor(suggestions, 'l1'), 'h-1');
+  assert.equal(structuredHouseholdFor(suggestions, 'l2'), null);
+  assert.equal(structuredHouseholdFor(suggestions, 'l3'), null);
+  assert.equal(structuredHouseholdFor(undefined, 'l1'), null);
+});
+
+test('#115 batchCandidates: tylko pierwsza propozycja-wpłata z komunikacją lub tytułem, niejednoznaczne pominięte', () => {
+  const suggestions = [
+    { statementLineId: 'l1', bookedOn: '2026-09-14', amountCents: 2500,
+      candidates: [{ type: 'payment_entry', id: 'p1', date: '2026-09-13', structuredReferenceMatch: true }] },
+    { statementLineId: 'l2', bookedOn: '2026-09-15', amountCents: 1000,
+      candidates: [{ type: 'payment_entry', id: 'p2', date: '2026-09-15', referenceMatch: true }] },
+    // Bez żadnej zgodności — tylko kwota i data: nie trafia do wsadu.
+    { statementLineId: 'l3', bookedOn: '2026-09-15', amountCents: 2000,
+      candidates: [{ type: 'payment_entry', id: 'p3', date: '2026-09-15' }] },
+    // Wpis księgi i propozycja nowej wpłaty zatwierdza się pojedynczo.
+    { statementLineId: 'l4', bookedOn: '2026-09-16', amountCents: 2000,
+      candidates: [{ type: 'ledger_entry', id: 'le1', date: '2026-09-16', referenceMatch: true }] },
+    { statementLineId: 'l5', bookedOn: '2026-09-16', amountCents: 2000,
+      candidates: [{ type: 'household', id: 'h-1', householdId: 'h-1', structuredReferenceMatch: true }] },
+    // Ta sama wpłata jako pierwsza propozycja dwóch pozycji — obie pominięte.
+    { statementLineId: 'l6', bookedOn: '2026-09-17', amountCents: 1500,
+      candidates: [{ type: 'payment_entry', id: 'p6', date: '2026-09-17', referenceMatch: true }] },
+    { statementLineId: 'l7', bookedOn: '2026-09-17', amountCents: 1500,
+      candidates: [{ type: 'payment_entry', id: 'p6', date: '2026-09-17', referenceMatch: true }] },
+    { statementLineId: 'l8', bookedOn: '2026-09-18', amountCents: 1500, candidates: [] },
+  ];
+  const rows = batchCandidates(suggestions);
+  assert.deepEqual(rows.map((row) => [row.statementLineId, row.paymentEntryId, row.reason]), [
+    ['l1', 'p1', 'komunikacja strukturalna tej rodziny'],
+    ['l2', 'p2', 'tytuł zgodny'],
+  ]);
+  assert.deepEqual(batchCandidates(null), []);
+});
+
+test('#115 buildBatchBody: wyłącznie jawnie zaznaczone pary, 1…MAX_BATCH_MATCHES', () => {
+  assert.deepEqual(buildBatchBody([{ statementLineId: 'l1', paymentEntryId: 'p1', amountCents: 2500, reason: 'x' }]),
+    { matches: [{ statementLineId: 'l1', paymentEntryId: 'p1' }] });
+  assert.throws(() => buildBatchBody([]), /co najmniej jedną/);
+  const many = Array.from({ length: MAX_BATCH_MATCHES + 1 }, (_, i) => ({ statementLineId: `l${i}`, paymentEntryId: `p${i}` }));
+  assert.throws(() => buildBatchBody(many), /najwyżej 50/);
+  const source = readFileSync(new URL('../src/pg/routes/reconciliation.js', import.meta.url), 'utf8');
+  assert.equal(Number(source.match(/const MAX_BATCH_MATCHES = (\d+);/)[1]), MAX_BATCH_MATCHES);
+});
+
+test('#115 summarizeBatchSelection i describeBatchFailures: suma w EUR i opis per pozycja', () => {
+  const rows = [
+    { statementLineId: 'l1', paymentEntryId: 'p1', bookedOn: '2026-09-14', amountCents: 2500 },
+    { statementLineId: 'l2', paymentEntryId: 'p2', bookedOn: '2026-09-15', amountCents: 1001 },
+  ];
+  const summary = summarizeBatchSelection(rows);
+  assert.match(summary, /2 par/);
+  assert.match(summary, /35,01/);
+  assert.match(summarizeBatchSelection(rows.slice(0, 1)), /1 parę/);
+  const [failure, unknown] = describeBatchFailures(
+    [{ statementLineId: 'l2', paymentEntryId: 'p2', error: 'match_amount_mismatch' },
+      { statementLineId: 'lx', paymentEntryId: 'px', error: 'already_matched' }],
+    rows, { match_amount_mismatch: 'Kwoty się różnią.' },
+  );
+  assert.equal(failure, `Pozycja 2026-09-15, ${formatCents(1001)}: Kwoty się różnią.`);
+  assert.match(unknown, /^Pozycja lx: already_matched$/);
+  assert.deepEqual(describeBatchFailures(undefined), []);
+});
+
+test('#115 panel uzgodnień nie używa sformułowań o zadłużeniu i nie mówi o „braku wpłaty”', () => {
+  for (const file of ['../reconciliation/index.html', '../reconciliation/main.js', '../reconciliation/core.js']) {
+    const text = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.equal(findForbiddenWording(text), null, file);
+    assert.doesNotMatch(text, /brak wpłaty|nie zapłacił|niezapłacon/i, file);
+  }
+});

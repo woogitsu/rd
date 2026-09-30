@@ -64,6 +64,8 @@ export async function recordDataAccess(env, {
 export const DATA_ACCESS_ROUTES = Object.freeze([
   { id: 'families.classStudents', method: 'GET', path: '/api/classes/:classId/students', file: 'src/pg/routes/families.js', accessKind: 'class_students' },
   { id: 'families.household', method: 'GET', path: '/api/households/:householdId', file: 'src/pg/routes/families.js', accessKind: 'household_card' },
+  // #142: imiona i nazwiska opiekunów klasy wydarzenia do formularza zapisu wolontariuszy.
+  { id: 'events.taskCandidates', method: 'GET', path: '/api/events/:eventId/tasks/candidates', file: 'src/pg/events.js', accessKind: 'class_students' },
   { id: 'print.cards', method: 'GET', path: '/api/print/cards', file: 'src/pg/routes/print.js', accessKind: 'print_cards' },
   { id: 'payments.list', method: 'GET', path: '/api/payments', file: 'src/pg/routes/payments.js', accessKind: 'payment_list' },
   { id: 'payments.exportCsv', method: 'GET', path: '/api/payments/export.csv', file: 'src/pg/routes/payments.js', accessKind: 'payment_export' },

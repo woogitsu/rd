@@ -116,6 +116,9 @@ h2 { margin-bottom: 1rem; font-size: 1.35rem; }
 .news-archive-list a[aria-current="page"] { font-weight: 700; text-decoration: none; }
 .news-permalink-row { margin: .5rem 0 0; font-size: .9rem; }
 /* #124: samodzielne linki (nie w zdaniu) — cel ≥ 24 px wysokości (WCAG 2.5.8). */
+.event-help { margin: .6rem 0 0; }
+.event-help-title { margin: 0 0 .2rem; color: var(--muted); font-size: .9rem; }
+.event-help-list { margin: 0; padding-left: 1.2rem; }
 .news-permalink, .event-calendar a { display: inline-block; padding: .3rem 0; }
 .news-linked { margin-bottom: 1rem; padding: .75rem 1rem; border-left: 3px solid var(--red); background: var(--soft); }
 .news-linked[hidden], .news-archive[hidden] { display: none; }

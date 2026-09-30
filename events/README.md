@@ -17,6 +17,7 @@ npm start             # serwer Node.js + PostgreSQL: API oraz panel pod /events/
 - nowy szkic i edycja (tytuł, początek, koniec, miejsce, organizator, odbiorcy, opis; klasa tylko przy tworzeniu, bo API nie zmienia zakresu istniejącego wydarzenia),
 - kroki: zgłoś, zatwierdź, opublikuj, odwołaj (z powodem 3–500 znaków),
 - historia wersji z oznaczeniem wersji zgłoszonej, zatwierdzonej i opublikowanej oraz listą zmienionych pól.
+- zadania i zapisy wolontariuszy (#142, Etap 1): tabela zadań z liczbą „zapisani / potrzebni”, lista zapisanych opiekunów, nowe zadanie, zapis opiekuna wybranego z listy klasy wydarzenia, wycofanie zapisu i odwołanie zadania; ostrzeżenie, gdy po zmianie czasu wydarzenia zadanie wykracza poza nowy czas (szczegóły: [docs/EVENTS.md](../docs/EVENTS.md)).
 
 ## Zasady
 

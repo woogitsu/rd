@@ -456,3 +456,75 @@ test('#208: udane logowania z jednego adresu zwalniają rezerwację limitu IP (m
     assert.equal(ip.locked_until, null);
   });
 });
+
+// ---------------------------------------------------------------- zapisy wolontariuszy (#142)
+
+// Klasa z trzema opiekunami (trzy rodziny, po jednym dziecku w klasie), przedstawiciel
+// klasy i szkic wydarzenia z zadaniem o podanym limicie miejsc. Dane syntetyczne.
+async function volunteerSetup(db, slotsNeeded) {
+  await seedClass(db, { id: 'cls-v1', schoolYearId: YEAR, name: '1A' });
+  for (const n of [1, 2, 3]) {
+    await db.query('INSERT INTO households (id) VALUES ($1)', [`hv${n}`]);
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Uczeń', 'Syntetyczny')", [`sv${n}`, `hv${n}`]);
+    await db.query("INSERT INTO guardians (id, household_id, first_name, last_name) VALUES ($1, $2, 'Opiekun', $3)", [`gv${n}`, `hv${n}`, `Syntetyczny ${n}`]);
+    await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed) VALUES ($1, $2, true)', [`sv${n}`, `gv${n}`]);
+    await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)', [`ev${n}`, `sv${n}`, 'cls-v1', YEAR]);
+  }
+  const cookie = await seedUserSession(db, { userId: 'u-rep-v', roles: [{ role: 'representative', classId: 'cls-v1', schoolYearId: YEAR }] });
+  const call = api({ db });
+  const event = await call('POST', '/api/events', cookie, {
+    schoolYearId: YEAR, classId: 'cls-v1', title: 'Piknik syntetyczny', startsAt: '2026-11-12T10:00', endsAt: '2026-11-12T14:00', audience: 'internal',
+  }, key('ev'));
+  assert.equal(event.status, 201, JSON.stringify(event.body));
+  const task = await call('POST', `/api/events/${event.body.event.id}/tasks`, cookie, { title: 'Stoisko z ciastami', slotsNeeded }, key('task'));
+  assert.equal(task.status, 201, JSON.stringify(task.body));
+  return { cookie, eventId: event.body.event.id, taskId: task.body.task.id };
+}
+const signupPath = ({ eventId, taskId }) => `/api/events/${eventId}/tasks/${taskId}/signups`;
+
+test('#142: trzy równoległe zapisy różnych opiekunów przy 2 miejscach — dokładnie jeden 409 task_full', { skip }, async () => {
+  await withReal(async (db) => {
+    const setup = await volunteerSetup(db, 2);
+    const call = api({ db });
+    const results = await Promise.all(['gv1', 'gv2', 'gv3'].map((guardianId) =>
+      call('POST', signupPath(setup), setup.cookie, { guardianId }, key('su'))));
+    assert.deepEqual(results.map((r) => r.status).sort(), [201, 201, 409], JSON.stringify(results.map((r) => r.body)));
+    assert.equal(results.find((r) => r.status === 409).body.error, 'task_full');
+    assert.equal(await count(db, 'event_task_signups', "status = 'confirmed'"), 2);
+    assert.equal(await count(db, 'audit_events', "action = 'event.task_signup_created'"), 2);
+  });
+});
+
+test('#142 (bariera): drugi zapis czeka na blokadę, aż pierwszy zajmie ostatnie miejsce, i dostaje 409 task_full', { skip }, async () => {
+  await withReal(async (db) => {
+    const setup = await volunteerSetup(db, 1);
+    const gated = gatedEnv(db, /INSERT INTO event_task_signups/);
+    const first = api(gated.env)('POST', signupPath(setup), setup.cookie, { guardianId: 'gv1' }, key('su'));
+    await gated.reached;
+    let settled = false;
+    const second = api({ db })('POST', signupPath(setup), setup.cookie, { guardianId: 'gv2' }, key('su'))
+      .then((r) => { settled = true; return r; });
+    try {
+      assert.equal(await waitForLockWaiter(db), true, 'drugi zapis czeka na blokadę wydarzenia/zadania');
+      assert.equal(settled, false);
+    } finally { gated.release(); }
+    assert.equal((await first).status, 201);
+    const result = await second;
+    assert.deepEqual([result.status, result.body.error], [409, 'task_full']);
+    assert.equal(await count(db, 'event_task_signups'), 1);
+  });
+});
+
+test('#142: podwójne kliknięcie „Zapisz” (ten sam opiekun, ten sam klucz) równolegle — jeden zapis, drugie żądanie to powtórka', { skip }, async () => {
+  await withReal(async (db) => {
+    const setup = await volunteerSetup(db, 3);
+    const call = api({ db });
+    const idem = key('dbl');
+    const results = await Promise.all([1, 2].map(() => call('POST', signupPath(setup), setup.cookie, { guardianId: 'gv1' }, idem)));
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 201]);
+    assert.equal(results[0].body.signup.id, results[1].body.signup.id);
+    assert.deepEqual(results.map((r) => r.body.replayed).sort(), [false, true]);
+    assert.equal(await count(db, 'event_task_signups'), 1);
+    assert.equal(await count(db, 'audit_events', "action = 'event.task_signup_created'"), 1);
+  });
+});

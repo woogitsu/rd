@@ -81,6 +81,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/events/:eventId/publish` | zarząd — rok 1 | tak (#150) | 403 / 404 | jak przy zatwierdzeniu |
 | `POST /api/events/:eventId/cancel` | szkic: admin, zarząd — rok 1; przedstawiciel — własna klasa; opublikowane: tylko zarząd | nie | 404 | macierz testuje szkic; opublikowane wydarzenie własnej klasy: przedstawiciel dostaje 403 |
 | `GET /api/events/:eventId/tasks` | jak `PATCH /api/events/:eventId` (ten sam canEdit) | nie | 404 | zadania i zapisy wolontariuszy wydarzenia (#142); wydarzenie spoza zakresu nieodróżnialne od braku (SR-07); lista z opiekunami (imię i nazwisko) zapisuje ślad odczytu `event.task_signups_viewed` (liczba, bez nazwisk, #133) |
+| `GET /api/events/:eventId/tasks/candidates` | jak wyżej | nie | 404 | opiekunowie (tylko imię i nazwisko) z bieżącą relacją do dziecka bieżąco przypisanego do klasy wydarzenia, do formularza zapisu (#142); wydarzenie ogólnoszkolne wymaga `?classId=` klasy z roku wydarzenia (`400 class_required`, `404 class_not_found`); każdy odczyt zapisuje wpis `class_students` w `data_access_log` (#133) |
 | `POST /api/events/:eventId/tasks` | jak wyżej | nie | 404 | nowe zadanie wolontariatu |
 | `POST /api/events/:eventId/tasks/:taskId/cancel` | jak wyżej | nie | 404 | odwołanie zadania |
 | `POST /api/events/:eventId/tasks/:taskId/signups` | jak wyżej | nie | 404 | zapis opiekuna/konta na zadanie |
