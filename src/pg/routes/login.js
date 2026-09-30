@@ -17,6 +17,7 @@ import {
   acceptInvitationWithPassword, authState, changePassword, LoginError, passwordLogin, previewInvitation, resetPasswordWithToken,
 } from '../login.js';
 import { MAX_PASSWORD_INPUT_BYTES, withQueueClient } from '../password.js';
+import { createJsonReader } from '../input.js';
 
 export const name = 'login';
 
@@ -24,16 +25,10 @@ const MAX_BODY_BYTES = 4 * 1024;
 const POST_ROUTES = new Set(['/api/login', '/api/invitations/accept', '/api/invitations/preview', '/api/password/change', '/api/password/reset']);
 export const CLIENT_IP_HEADER = 'x-rd-client-ip';
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new LoginError('invalid_content_type', 415);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new LoginError('request_too_large', 413);
-  let data;
-  try { data = JSON.parse(text); } catch { throw new LoginError('invalid_json', 400); }
-  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new LoginError('invalid_json', 400);
-  return data;
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  error: (code, status) => new LoginError(code, status),
+});
 
 function passwordField(data, key) {
   const value = data[key];

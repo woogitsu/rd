@@ -30,6 +30,7 @@ import { declaredType, detectType, readLimited, tryAcquireUploadSlot, validateSt
 import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
 import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
+import { createJsonReader, isUniqueError } from './input.js';
 
 export const NEWS_POLICY = Object.freeze({
   draftSchoolWide: Object.freeze(['admin', 'board']),
@@ -380,10 +381,6 @@ async function audit(tx, actorId, action, entityType, entityId, metadata) {
   await insertAuditEvent(tx, { actorId, action, entityType, entityId, metadata });
 }
 
-function isUniqueViolation(error) {
-  return error?.code === '23505' || /duplicate key value/.test(String(error?.message ?? ''));
-}
-
 const DB_ERRORS = [
   ['news_post_four_eyes_required', 'four_eyes_required', 409],
   ['news_photo_four_eyes_required', 'four_eyes_required', 409],
@@ -488,7 +485,7 @@ export async function createDraft(db, actor, input) {
       return { post: internalPost(rows[0]), replayed: false };
     });
   } catch (error) {
-    if (isUniqueViolation(error)) {
+    if (isUniqueError(error)) {
       const replayed = await replay();
       if (replayed) return replayed;
     }
@@ -755,7 +752,7 @@ export async function registerPhoto(db, actor, input) {
       return { photo: internalPhoto(rows[0]), replayed: false };
     });
   } catch (error) {
-    if (isUniqueViolation(error)) {
+    if (isUniqueError(error)) {
       const replayed = await replay();
       if (replayed) return replayed;
     }
@@ -987,7 +984,7 @@ export async function uploadPhotoFile(db, storage, actor, input) {
       // Podwójne kliknięcie równoległe: druga transakcja przegrała wyścig o
       // (photo_id, variant) — nasze obiekty w buckecie są zbędne, sprzątamy
       // best effort i zwracamy istniejący wynik jak przy zwykłym ponowieniu.
-      if (isUniqueViolation(error)) {
+      if (isUniqueError(error)) {
         const { rows: again } = await db.query(
           'SELECT variant, mime_type, width, height, byte_size, sha256, source_sha256 FROM news_photo_files WHERE photo_id = $1 ORDER BY variant',
           [input.photoId],
@@ -1057,21 +1054,11 @@ export async function listPhotos(db, actor, input = {}) {
 
 // ---------- HTTP ----------
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new NewsError('invalid_content_type', 415);
-  const declared = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new NewsError('request_too_large', 413);
-  const body = await request.text();
-  if (new TextEncoder().encode(body).byteLength > MAX_BODY_BYTES) throw new NewsError('request_too_large', 413);
-  try {
-    const data = JSON.parse(body);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new NewsError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  error: (code, status) => new NewsError(code, status),
+});
 
 function decodeId(value, code) {
   try {

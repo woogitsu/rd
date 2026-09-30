@@ -30,6 +30,7 @@ import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.j
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { recordDataAccess } from '../data-access.js';
+import { createJsonReader } from '../input.js';
 
 export const name = 'families';
 
@@ -79,21 +80,11 @@ function toSafeInteger(value) {
   return number;
 }
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const declaredLength = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  try {
-    const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  error: (code, status) => new RequestError(code, status),
+});
 
 function readReason(value) {
   if (typeof value !== 'string') throw new RequestError('invalid_reason');

@@ -16,6 +16,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { createJsonReader } from '../input.js';
 
 export const name = 'privacy-notice';
 
@@ -36,19 +37,10 @@ function noticeHash({ schoolYearId, bodyText }) {
   return createHash('sha256').update(JSON.stringify(['rd-privacy-notice-v1', schoolYearId ?? null, bodyText])).digest('hex');
 }
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  try {
-    const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  error: (code, status) => new RequestError(code, status),
+});
 
 function noticeView(row) {
   return {

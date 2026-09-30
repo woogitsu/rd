@@ -43,6 +43,7 @@ import {
 } from '../../email/content.js';
 import { estimateSchedule } from '../../email/schedule.js';
 import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
+import { createJsonReader, readBodyText } from '../input.js';
 
 export const name = 'email';
 
@@ -106,26 +107,12 @@ function validId(value) {
   return typeof value === 'string' && ID_PATTERN.test(value);
 }
 
-async function readBody(request, limit) {
-  const declared = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declared) && declared > limit) throw new RequestError('request_too_large', 413);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > limit) throw new RequestError('request_too_large', 413);
-  return text;
-}
-
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const text = await readBody(request, MAX_BODY_BYTES);
-  try {
-    const data = JSON.parse(text || '{}');
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  emptyBody: 'exact',
+  error: (code, status) => new RequestError(code, status),
+});
 
 // Kampanie dotyczą całej szkoły (odbiorcy z wszystkich klas), więc przydział
 // z class_id nie daje dostępu — isAuthorizedScoped bez classId go pomija.
@@ -1233,7 +1220,7 @@ async function webhook(request, env, json) {
   }
   const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
   if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const text = await readBody(request, MAX_WEBHOOK_BYTES);
+  const text = await readBodyText(request, MAX_WEBHOOK_BYTES, (code, status) => new RequestError(code, status));
   let payload;
   try { payload = JSON.parse(text); } catch { throw new RequestError('invalid_json'); }
   const events = Array.isArray(payload) ? payload : [payload];

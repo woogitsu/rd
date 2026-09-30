@@ -37,6 +37,7 @@ import { readSnapshot } from '../db-snapshot.js';
 import { StatementFileError, normalizeIban } from '../bank/common.js';
 import { parseCoda } from '../bank/coda.js';
 import { parseCamt053 } from '../bank/camt053.js';
+import { createIdempotencyKeyReader, createJsonReader, isUniqueError } from '../input.js';
 
 export const name = 'reconciliation';
 
@@ -45,7 +46,6 @@ const REPORT_ROLES = ['audit', 'board', 'treasurer'];
 // Raport zamkniętego roku (#195, tylko odczyt): zarząd/skarbnik roku następnego i admin.
 const ARCHIVE_REPORT_ROLES = ['board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_IMPORT_BYTES = 256 * 1024;
 const MAX_LINES = 500;
@@ -106,31 +106,13 @@ function optionalText(value, min, max, code = 'invalid_request') {
   return text;
 }
 
-async function readJson(request, maxBytes = MAX_BODY_BYTES) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  const declared = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declared) && declared > maxBytes) throw new RequestError('request_too_large', 413);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > maxBytes) throw new RequestError('request_too_large', 413);
-  try {
-    const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  error: (code, status) => new RequestError(code, status),
+});
 
-function readIdempotencyKey(request) {
-  const key = request.headers.get('Idempotency-Key')?.trim();
-  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
-  return key;
-}
-
-function isUniqueError(error) {
-  return error?.code === '23505';
-}
+const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) => new RequestError(code, status) });
 
 async function sha256Hex(text) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));

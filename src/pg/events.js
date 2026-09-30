@@ -16,6 +16,7 @@ import { isAuthorized } from '../authorization.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
 import { insertAuditEvent } from './audit.js';
 import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
+import { createJsonReader, isUniqueError } from './input.js';
 
 export const EVENT_TIMEZONE = 'Europe/Brussels';
 export const EVENT_POLICY = Object.freeze({
@@ -298,10 +299,6 @@ async function lockEvent(tx, eventId) {
   return rows[0];
 }
 
-function isUniqueViolation(error) {
-  return error?.code === '23505' || /duplicate key value/.test(String(error?.message ?? ''));
-}
-
 function mapDatabaseError(error) {
   const message = String(error?.message ?? error);
   if (message.includes('event_four_eyes_required')) throw new EventError('four_eyes_required', 409);
@@ -383,7 +380,7 @@ export async function createDraft(db, actor, input) {
       return { event: internalEvent(rows[0]), replayed: false };
     });
   } catch (error) {
-    if (isUniqueViolation(error)) {
+    if (isUniqueError(error)) {
       const replayed = await replay();
       if (replayed) return replayed;
     }
@@ -781,7 +778,7 @@ export async function createSignup(db, actor, input) {
       // Wyścig: dwa równoległe pierwsze zapisy tej samej osoby do tego
       // samego zadania (FOR UPDATE wyżej nie blokuje wiersza, który jeszcze
       // nie istnieje) — drugi przegrywa unikalny indeks, nie limit miejsc.
-      if (isUniqueViolation(error)) {
+      if (isUniqueError(error)) {
         const again = (await tx.query(
           'SELECT * FROM event_task_signups WHERE task_id = $1 AND (user_id = $2 OR guardian_id = $3)',
           [taskId, userId, guardianId],
@@ -919,21 +916,11 @@ async function getPublicForIcs(db, eventId) {
 
 // ---------- HTTP ----------
 
-async function readJson(request) {
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new EventError('invalid_content_type', 415);
-  const declared = Number(request.headers.get('Content-Length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new EventError('request_too_large', 413);
-  const body = await request.text();
-  if (new TextEncoder().encode(body).byteLength > MAX_BODY_BYTES) throw new EventError('request_too_large', 413);
-  try {
-    const data = JSON.parse(body);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new EventError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  declaredLength: true,
+  error: (code, status) => new EventError(code, status),
+});
 
 function decodeId(value) {
   try {

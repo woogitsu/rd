@@ -27,6 +27,7 @@ import { gateFreeText, PersonalDataError, piiAuditMetadata } from '../pii-gate.j
 import {
   approveSnapshot, createSnapshot, listSnapshots, loadSnapshotYear, readSnapshotById, ReportError,
 } from '../report-snapshots.js';
+import { createJsonReader } from '../input.js';
 
 export const name = 'financial-reports';
 
@@ -51,20 +52,12 @@ async function requireReportAccess(request, env, schoolYearId, { roles = REPORT_
   return context;
 }
 
-async function readJson(request) {
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new RequestError('request_too_large', 413);
-  if (!text.trim()) return {};
-  const type = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-  if (type !== 'application/json') throw new RequestError('invalid_content_type', 415);
-  try {
-    const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error();
-    return data;
-  } catch {
-    throw new RequestError('invalid_json');
-  }
-}
+const readJson = createJsonReader({
+  maxBytes: MAX_BODY_BYTES,
+  emptyBody: 'blank',
+  typeAfterEmpty: true,
+  error: (code, status) => new RequestError(code, status),
+});
 
 function htmlResponse(html, csp) {
   return new Response(html, {
