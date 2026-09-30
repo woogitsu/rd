@@ -1,5 +1,7 @@
 import {
   ACTION_LABELS,
+  AUDIT_DOMAIN_OPTIONS,
+  auditListPath,
   accountName,
   entityTypeLabel,
   GRANT_STATUS_LABELS,
@@ -32,7 +34,7 @@ import "../shared/shell.css";
 mountShell();
 
 const state = {
-  me: null, users: [], grants: [], invitations: [], auditEvents: [],
+  me: null, users: [], grants: [], invitations: [], auditEvents: [], auditDomain: "",
   usersCursor: null, grantsCursor: null, invitationsCursor: null, auditCursor: null,
   years: [], classes: new Map(), yearMap: new Map() };
 const byId = (id) => document.getElementById(id);
@@ -644,7 +646,7 @@ byId("term-form").addEventListener("submit", async (event) => {
 // --- Dziennik -------------------------------------------------------------------
 
 async function loadAudit({ append = false } = {}) {
-  const result = await api(withCursor("/api/admin/audit?limit=100", append ? state.auditCursor : null));
+  const result = await api(withCursor(auditListPath(state.auditDomain), append ? state.auditCursor : null));
   state.auditEvents = append ? [...state.auditEvents, ...result.events] : result.events;
   state.auditCursor = result.nextCursor ?? null;
   toggleMore("audit-more", state.auditCursor);
@@ -668,6 +670,15 @@ for (const [id, load] of [["users-more", loadUsers], ["grants-more", loadGrants]
   byId(id).addEventListener("click", () => load({ append: true }).catch((error) => showMessage(error.message, true)));
 }
 byId("reload-audit").addEventListener("click", () => loadAudit().catch((error) => showMessage(error.message, true)));
+// #181: filtr domeny dziennika; serwer sprawdza prawo odczytu każdej domeny.
+{
+  const select = byId("audit-domain");
+  select.replaceChildren(...AUDIT_DOMAIN_OPTIONS.map(({ value, label }) => new Option(label, value)));
+  select.addEventListener("change", () => {
+    state.auditDomain = select.value;
+    loadAudit().catch((error) => showMessage(error.message, true));
+  });
+}
 
 // --- Start ----------------------------------------------------------------------
 
