@@ -1,6 +1,6 @@
 # Stan prototypu — zestawienie dla zarządu Rady
 
-Stan na 30.09.2026, gałąź `main` repozytorium `woogitsu/rd` po scaleniu #552 (przegląd #175). Dokument opisuje wyłącznie to, co potwierdza kod, scalone PR-y i dokumentacja w `docs/`. Nie zawiera prognoz ani deklaracji gotowości. Wszystkie PR, które poprzednia wersja (28.09) oznaczała jako „w przygotowaniu (niescalony)”, są już scalone — sprawdzone przez API GitHuba i w kodzie (`tests/helpers/route-matrix.js`, `src/pg/app.js`). W chwili tego przeglądu otwarty jest jeden PR (#553, testy odmów MFA w macierzy tras, bez nowej funkcji).
+Stan na 30.09.2026, gałąź `main` repozytorium `woogitsu/rd` po scaleniu #553 (przegląd #175). Dokument opisuje wyłącznie to, co potwierdza kod, scalone PR-y i dokumentacja w `docs/`. Nie zawiera prognoz ani deklaracji gotowości. Wszystkie PR, które poprzednia wersja (28.09) oznaczała jako „w przygotowaniu (niescalony)”, są już scalone — sprawdzone przez API GitHuba i w kodzie (`tests/helpers/route-matrix.js`, `src/pg/app.js`). W chwili tego przeglądu nie ma otwartych PR z nową funkcją.
 
 ## Zastrzeżenia (dotyczą całości poniższego zestawienia)
 
@@ -16,7 +16,7 @@ Stan na 30.09.2026, gałąź `main` repozytorium `woogitsu/rd` po scaleniu #552 
 
 | Moduł | Stan na main | Otwarte PR | Czeka na zarząd |
 |---|---|---|---|
-| Konta / logowanie / MFA | działa (PostgreSQL) + panel `admin/` i ekran `login/` | #553 (tylko testy) | D‑08, D‑09, D‑10 |
+| Konta / logowanie / MFA | działa (PostgreSQL) + panel `admin/` i ekran `login/` | — | D‑08, D‑09, D‑10 |
 | Rodziny i uczniowie | działa (PostgreSQL) + panel `families/` | — | D‑01–D‑04, D‑11 |
 | Import CSV/XLSX | działa, bez zapisu produkcyjnych danych | — | D‑01–D‑03, D‑06 |
 | Wpłaty | działa (ewidencja, korekty, zwroty, podział, OGM‑VCS, dane do wpłaty, eksport CSV) + panel `panel/` | — | D‑11–D‑14 |
@@ -40,7 +40,9 @@ Stan na 30.09.2026, gałąź `main` repozytorium `woogitsu/rd` po scaleniu #552 
 
 **Scalone 28–30.09 (dawniej „w przygotowaniu”):** limit bezczynności sesji, absolutny limit rotacji, MFA na trasach zarządzania, krok w górę dla eksportu (#369, #150, SR‑10); krok w górę (świeże MFA) na zamknięcie roku, zatwierdzenie kampanii e‑mail, nadanie roli i resety hasła/MFA (#384, część 2 #150) — bez przyjęcia uchwały >3000 EUR, które czeka na D‑15; cookie `__Host-rd_session` (#416); blokada logowania na parę e‑mail+IP i ogólny limiter żądań (#423, #533); reset hasła i MFA kont chronionych wymaga drugiej osoby (#435); podgląd zaproszenia (#486); widok „Stan systemu” w `admin/` (#508); polityka haseł z rdzeniami Rady i miesięcy (#550).
 
-**W przygotowaniu (niescalone):** #553 — wyłącznie testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (#161), bez nowej funkcji.
+Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (#553, #161) — same testy, bez nowej funkcji.
+
+**W przygotowaniu (niescalone):** brak.
 
 **Czeka na zarząd:** D‑08 (macierz ról), D‑09 (dostęp dyrekcji i Komisji Rewizyjnej), D‑10 (formalne potwierdzenie metody logowania i towarzyszących parametrów: polityka haseł, limity prób, ważność tokenu resetu, procedura odzyskania dostępu, progi bezczynności/kroku w górę z #369/#384).
 
