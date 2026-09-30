@@ -510,3 +510,137 @@ export function formValuesFromEvent(event) {
     audience: event?.audience ?? "internal",
   };
 }
+
+// ---------- zadania i zapisy wolontariuszy (#142, Etap 1) ----------
+// Serwer (src/pg/events.js) sprawdza rolę, klasę, limit miejsc i rok — tu tylko
+// budowa żądań i widok. Zapis wskazuje istniejącego opiekuna z listy klasy;
+// panel nie zbiera nowych danych osobowych.
+
+const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;
+
+function requireKey(idempotencyKey) {
+  if (typeof idempotencyKey !== "string" || !KEY_PATTERN.test(idempotencyKey)) {
+    throw new Error(ERROR_MESSAGES.invalid_idempotency_key);
+  }
+  return idempotencyKey;
+}
+
+function requireId(value, message = ERROR_MESSAGES.invalid_request) {
+  if (!isValidId(value)) throw new Error(message);
+  return encodeURIComponent(value);
+}
+
+export function buildTasksUrl(eventId) {
+  return `${buildEventUrl(eventId)}/tasks`;
+}
+
+// Wydarzenie ogólnoszkolne: lista opiekunów wymaga wskazania klasy.
+export function buildCandidatesUrl(eventId, classId = "") {
+  const base = `${buildTasksUrl(eventId)}/candidates`;
+  if (!classId) return base;
+  if (!isValidId(classId)) throw new Error(ERROR_MESSAGES.invalid_class);
+  return `${base}?${new URLSearchParams({ classId })}`;
+}
+
+// Formularz zadania: tytuł 3–200, liczba miejsc 1–200, czas opcjonalny
+// (w obrębie wydarzenia sprawdza serwer — task_time_outside_event).
+export function validateTaskForm(values) {
+  const errors = {};
+  const title = String(values?.title ?? "").trim();
+  if (title.length < 3 || title.length > 200) errors.title = ERROR_MESSAGES.invalid_title;
+  const slotsText = String(values?.slotsNeeded ?? "").trim();
+  const slotsNeeded = /^\d{1,3}$/.test(slotsText) ? Number(slotsText) : NaN;
+  if (!Number.isSafeInteger(slotsNeeded) || slotsNeeded < 1 || slotsNeeded > 200) {
+    errors.slotsNeeded = "Liczba potrzebnych miejsc musi być od 1 do 200.";
+  }
+  const content = { title, slotsNeeded, isPublic: Boolean(values?.isPublic) };
+  for (const [name, offsetName] of [["startsAt", "startsOffset"], ["endsAt", "endsOffset"]]) {
+    const value = String(values?.[name] ?? "").trim();
+    if (!value) continue;
+    const info = classifyBrusselsLocal(value);
+    if (info.kind === "invalid") errors[name] = ERROR_MESSAGES.invalid_datetime;
+    else if (info.kind === "nonexistent") errors[name] = ERROR_MESSAGES.nonexistent_local_time;
+    // Formularz zadania nie ma wyboru przesunięcia (rzadki przypadek jednej
+    // godziny w roku) — prosimy o inną godzinę zamiast zgadywać.
+    else if (info.kind === "ambiguous" && !info.offsets.includes(values?.[offsetName])) {
+      errors[name] = "Ta godzina występuje tego dnia dwa razy (zmiana czasu). Wybierz inną godzinę albo zostaw pole puste.";
+    }
+    else content[name] = toApiLocal(value, values?.[offsetName]);
+  }
+  if (!errors.startsAt && !errors.endsAt && content.startsAt && content.endsAt) {
+    const start = localToInstant(values.startsAt, values.startsOffset);
+    const end = localToInstant(values.endsAt, values.endsOffset);
+    if (start && end && end < start) errors.endsAt = ERROR_MESSAGES.ends_before_start;
+  }
+  return { errors, content };
+}
+
+export function buildTaskCreateRequest(eventId, content, idempotencyKey) {
+  return {
+    url: buildTasksUrl(eventId),
+    method: "POST",
+    headers: { ...JSON_HEADERS, "Idempotency-Key": requireKey(idempotencyKey) },
+    body: JSON.stringify(content),
+  };
+}
+
+export function buildTaskCancelRequest(eventId, taskId, reason) {
+  const checked = validateReason(reason);
+  if (checked.error) throw new Error(checked.error);
+  return {
+    url: `${buildTasksUrl(eventId)}/${requireId(taskId)}/cancel`,
+    method: "POST",
+    headers: { ...JSON_HEADERS },
+    body: JSON.stringify({ reason: checked.reason }),
+  };
+}
+
+export function buildSignupRequest(eventId, taskId, guardianId, idempotencyKey) {
+  if (!isValidId(guardianId)) throw new Error("Wybierz opiekuna z listy.");
+  return {
+    url: `${buildTasksUrl(eventId)}/${requireId(taskId)}/signups`,
+    method: "POST",
+    headers: { ...JSON_HEADERS, "Idempotency-Key": requireKey(idempotencyKey) },
+    body: JSON.stringify({ guardianId }),
+  };
+}
+
+export function buildWithdrawRequest(eventId, taskId, signupId) {
+  return {
+    url: `${buildTasksUrl(eventId)}/${requireId(taskId)}/signups/${requireId(signupId)}/withdraw`,
+    method: "POST",
+    headers: { ...JSON_HEADERS },
+    body: "{}",
+  };
+}
+
+// Stan zadania w tabeli panelu.
+export function taskState(task, event) {
+  if (task?.cancelledAt) return "odwołane";
+  if (event?.status === "cancelled") return "zamrożone (wydarzenie odwołane)";
+  const confirmed = Number(task?.confirmedCount) || 0;
+  if (confirmed >= task?.slotsNeeded) return "komplet";
+  return `potrzebni jeszcze: ${task.slotsNeeded - confirmed}`;
+}
+
+// Czy można jeszcze zapisywać (serwer i tak odrzuci: task_full / event_cancelled).
+export function canSignUp(task, event) {
+  return Boolean(task) && !task.cancelledAt && event?.status !== "cancelled"
+    && (Number(task.confirmedCount) || 0) < task.slotsNeeded;
+}
+
+// Opiekunowie już zapisani (aktywnie) do zadania nie są pokazywani w wyborze.
+export function availableCandidates(candidates, task) {
+  const taken = new Set((task?.signups ?? []).filter((s) => s.status === "confirmed" && s.guardianId).map((s) => s.guardianId));
+  return (Array.isArray(candidates) ? candidates : []).filter((c) => c && isValidId(c.id) && !taken.has(c.id));
+}
+
+// Etykiety w wyborze: przy powtórzonym imieniu i nazwisku dopisek z fragmentem
+// identyfikatora, żeby przedstawiciel nie pomylił dwóch osób.
+export function candidateLabels(candidates) {
+  const counts = new Map();
+  for (const c of candidates) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
+  return candidates.map((c) => ({ id: c.id, label: counts.get(c.name) > 1 ? `${c.name} (${c.id.slice(0, 8)})` : c.name }));
+}
+
+export const SIGNUP_STATUS_LABELS = Object.freeze({ confirmed: "zapisany", withdrawn: "wycofany" });

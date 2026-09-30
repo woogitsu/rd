@@ -19,6 +19,7 @@ import {
   publicNotices,
   schoolYearFromSearch,
   upcomingEvents,
+  volunteerTaskLabel,
 } from "./core.js";
 import { applySchoolName } from "../shared/school.js";
 
@@ -100,6 +101,14 @@ function renderEvents(events) {
       detailRow(details, "Organizator", event.organizer);
       if (details.childElementCount) item.append(details);
       if (event.description) item.append(el("p", event.description, "event-description"));
+      if (event.volunteerTasks.length) {
+        const help = el("div", null, "event-help");
+        help.append(el("p", "Potrzebna pomoc przy wydarzeniu:", "event-help-title"));
+        const tasks = el("ul", null, "event-help-list");
+        for (const task of event.volunteerTasks) tasks.append(el("li", `${task.title} — ${volunteerTaskLabel(task)}`));
+        help.append(tasks);
+        item.append(help);
+      }
       const icsUrl = event.cancelled ? null : eventIcsUrl(event.id);
       if (icsUrl) {
         const link = el("a", "Dodaj do kalendarza (.ics)");

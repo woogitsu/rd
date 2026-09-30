@@ -29,6 +29,18 @@ import {
   revisionMarks,
   validateEventForm,
   validateReason,
+  SIGNUP_STATUS_LABELS,
+  availableCandidates,
+  buildCandidatesUrl,
+  buildSignupRequest,
+  buildTaskCancelRequest,
+  buildTaskCreateRequest,
+  buildTasksUrl,
+  buildWithdrawRequest,
+  canSignUp,
+  candidateLabels,
+  taskState,
+  validateTaskForm,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
@@ -49,8 +61,13 @@ const state = {
   userId: null,
   editing: null, // event being edited, null = create
   busy: false,
+  tasks: [], // zadania bieżącego wydarzenia (GET /api/events/:id/tasks)
+  candidates: { classId: null, guardians: [] },
+  taskTarget: null, // zadanie w oknie zapisu / odwołania
 };
 const createKey = createKeyHolder("event");
+const taskKey = createKeyHolder("task");
+const signupKey = createKeyHolder("signup");
 
 const app = byId("app");
 const loginRequired = byId("login-required");
@@ -79,6 +96,26 @@ const cancelDialog = byId("cancel-dialog");
 const cancelForm = byId("cancel-form");
 const cancelFormError = byId("cancel-form-error");
 const cancelSubmit = byId("cancel-submit");
+const tasksSummary = byId("tasks-summary");
+const tasksMessage = byId("tasks-message");
+const tasksWrap = byId("tasks-wrap");
+const tasksBody = byId("tasks-body");
+const signupsWrap = byId("signups-wrap");
+const signupsBody = byId("signups-body");
+const openTask = byId("open-task");
+const taskDialog = byId("task-dialog");
+const taskForm = byId("task-form");
+const taskFormError = byId("task-form-error");
+const taskSubmit = byId("task-submit");
+const signupDialog = byId("signup-dialog");
+const signupForm = byId("signup-form");
+const signupFormError = byId("signup-form-error");
+const signupSubmit = byId("signup-submit");
+const taskCancelDialog = byId("task-cancel-dialog");
+const taskCancelForm = byId("task-cancel-form");
+const taskCancelFormError = byId("task-cancel-form-error");
+const taskCancelSubmit = byId("task-cancel-submit");
+const ALL_DIALOGS = [eventDialog, cancelDialog, taskDialog, signupDialog, taskCancelDialog];
 
 // ---------- HTTP ----------
 
@@ -99,7 +136,7 @@ function showLoginRequired() {
   app.hidden = true;
   openCreate.hidden = true;
   loginRequired.hidden = false;
-  for (const dialog of [eventDialog, cancelDialog]) if (dialog.open) dialog.close();
+  for (const dialog of ALL_DIALOGS) if (dialog.open) dialog.close();
   loginRequired.focus();
 }
 
@@ -303,10 +340,13 @@ async function openDetail(eventId, { focus = true } = {}) {
   detail.hidden = false;
   try {
     const result = await api({ url: buildEventUrl(eventId) });
+    const changedEvent = state.detail?.event.id !== result.event.id;
     state.detail = { event: result.event, revisions: Array.isArray(result.revisions) ? result.revisions : [] };
+    if (changedEvent) state.candidates = { classId: null, guardians: [] };
     renderDetail();
     setMessage(detailMessage, "");
     if (focus) detailTitle.focus();
+    await loadTasks();
   } catch (error) {
     state.detail = null;
     detail.hidden = true;
@@ -563,6 +603,10 @@ eventForm.addEventListener("submit", async (submitEvent) => {
     replaceInList(saved.event);
     await openDetail(saved.event.id, { focus: false });
     setMessage(detailMessage, editing ? (saved.replayed ? "Brak zmian do zapisania." : `Zapisano wersję ${saved.event.revision}.`) : "Utworzono szkic.", "success");
+    const outside = Array.isArray(saved.tasksOutsideEventTime) ? saved.tasksOutsideEventTime : [];
+    if (editing && outside.length) {
+      setMessage(tasksMessage, `Czas wydarzenia zmienił się: ${outside.length === 1 ? "1 zadanie wykracza" : `${outside.length} zadania wykraczają`} poza nowy czas (${outside.map((t) => t.title).join(", ")}). Zapisy zostały zachowane — sprawdź zadania i w razie potrzeby odwołaj je.`, "error");
+    }
     detailTitle.focus();
   } catch (error) {
     if (isConflict(error)) {
@@ -626,14 +670,344 @@ cancelForm.addEventListener("submit", async (submitEvent) => {
   }
 });
 
+// ---------- zadania i zapisy wolontariuszy (#142) ----------
+
+function smallButton(label, dataset, className = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  if (className) button.className = className;
+  Object.assign(button.dataset, dataset);
+  return button;
+}
+
+function renderTasks() {
+  const event = state.detail?.event;
+  if (!event) return;
+  const tasks = state.tasks;
+  const frozen = event.status === "cancelled";
+  openTask.hidden = frozen;
+  const active = tasks.filter((t) => !t.cancelledAt);
+  const needed = active.reduce((sum, t) => sum + Math.max(0, t.slotsNeeded - (t.confirmedCount || 0)), 0);
+  tasksSummary.textContent = tasks.length
+    ? `Zadań: ${tasks.length} (aktywnych: ${active.length}) · brakuje osób: ${needed}${frozen ? " · wydarzenie odwołane — zapisy zamrożone" : ""}`
+    : "Brak zadań. Dodaj zadanie, jeśli potrzebni są pomocnicy (np. stoisko, dyżur, sprzątanie).";
+  tasksBody.replaceChildren(...tasks.map((task) => {
+    const row = document.createElement("tr");
+    row.append(cell(task.title));
+    const when = cell(task.startsAtUtc || task.endsAtUtc ? formatRange(task.startsAtUtc ?? event.startsAtUtc, task.endsAtUtc) : "cały czas wydarzenia", "when");
+    if (task.outsideEventTime) {
+      when.append(document.createElement("br"), Object.assign(document.createElement("span"), {
+        className: "warning", textContent: "poza obecnym czasem wydarzenia",
+      }));
+    }
+    row.append(when);
+    row.append(cell(`${task.confirmedCount ?? 0} / ${task.slotsNeeded}`, "number"));
+    row.append(cell(task.isPublic ? "tak (liczba brakujących)" : "nie"));
+    row.append(cell(taskState(task, event)));
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    if (canSignUp(task, event)) actions.append(smallButton("Zapisz opiekuna", { taskAction: "signup", taskId: task.id }));
+    if (!task.cancelledAt && !frozen) actions.append(smallButton("Odwołaj zadanie", { taskAction: "cancel", taskId: task.id }, "danger"));
+    row.append(cell(actions.childElementCount ? actions : "—"));
+    return row;
+  }));
+  labelCells(tasksBody);
+  tasksWrap.hidden = tasks.length === 0;
+
+  const signups = tasks.flatMap((task) => (task.signups ?? []).map((signup) => ({ task, signup })));
+  signupsBody.replaceChildren(...signups.map(({ task, signup }) => {
+    const row = document.createElement("tr");
+    row.append(cell(task.title));
+    row.append(cell(signup.personName || shortId(signup.guardianId || signup.userId)));
+    row.append(cell(SIGNUP_STATUS_LABELS[signup.status] ?? signup.status));
+    row.append(cell(formatStamp(signup.updatedAt || signup.createdAt)));
+    const canWithdraw = signup.status === "confirmed" && !task.cancelledAt && !frozen;
+    row.append(cell(canWithdraw
+      ? smallButton("Wycofaj", { taskAction: "withdraw", taskId: task.id, signupId: signup.id })
+      : "—"));
+    return row;
+  }));
+  labelCells(signupsBody);
+  signupsWrap.hidden = signups.length === 0;
+}
+
+async function loadTasks({ keepMessage = false } = {}) {
+  const event = state.detail?.event;
+  if (!event) return;
+  if (!keepMessage) setMessage(tasksMessage, "Wczytywanie zadań…");
+  try {
+    const result = await api({ url: buildTasksUrl(event.id) });
+    if (state.detail?.event.id !== event.id) return; // w międzyczasie otwarto inne wydarzenie
+    state.tasks = Array.isArray(result.tasks) ? result.tasks : [];
+    renderTasks();
+    if (!keepMessage) setMessage(tasksMessage, "");
+  } catch (error) {
+    state.tasks = [];
+    renderTasks();
+    setMessage(tasksMessage, error.message, "error");
+  }
+}
+
+function findTask(taskId) {
+  return state.tasks.find((task) => task.id === taskId) ?? null;
+}
+
+// Blokada wszystkich przycisków zadań na czas żądania (podwójne kliknięcie).
+async function withTaskBusy(fn) {
+  if (state.busy) return;
+  state.busy = true;
+  const buttons = [...byId("tasks-block").querySelectorAll("button")];
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    await fn();
+  } finally {
+    state.busy = false;
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
+openTask.addEventListener("click", () => {
+  const event = state.detail?.event;
+  if (!event) return;
+  taskKey.reset();
+  taskForm.reset();
+  clearFieldErrors(taskForm);
+  taskFormError.textContent = "";
+  byId("task-context").textContent = `${event.title} · ${formatRange(event.startsAtUtc, event.endsAtUtc)}`;
+  taskForm.elements.isPublic.disabled = event.audience !== "public";
+  byId("hint-task-public").textContent = event.audience === "public"
+    ? "Strona pokazuje tylko tytuł zadania i „potrzebni jeszcze: N”, bez danych osób, i tylko dla opublikowanego wydarzenia."
+    : "Wydarzenie wewnętrzne nie trafia na stronę publiczną, więc zadanie też nie.";
+  taskDialog.showModal();
+  taskForm.elements.title.focus();
+});
+
+taskForm.addEventListener("submit", async (submitEvent) => {
+  submitEvent.preventDefault();
+  if (state.busy || !state.detail) return;
+  clearFieldErrors(taskForm);
+  const { errors, content } = validateTaskForm({
+    title: taskForm.elements.title.value,
+    slotsNeeded: taskForm.elements.slotsNeeded.value,
+    startsAt: taskForm.elements.startsAt.value,
+    endsAt: taskForm.elements.endsAt.value,
+    isPublic: taskForm.elements.isPublic.checked && !taskForm.elements.isPublic.disabled,
+  });
+  if (Object.keys(errors).length) {
+    let first = null;
+    for (const [field, message] of Object.entries(errors)) {
+      byId(`err-task-${field}`).textContent = message;
+      const input = taskForm.elements.namedItem(field);
+      input.setAttribute("aria-invalid", "true");
+      first ||= input;
+    }
+    taskFormError.textContent = "Popraw zaznaczone pola.";
+    first?.focus();
+    return;
+  }
+  state.busy = true;
+  taskSubmit.disabled = true;
+  taskFormError.textContent = "Zapisywanie…";
+  try {
+    // Ten sam klucz przy ponowieniu po błędzie sieci lub podwójnym kliknięciu.
+    const result = await api(buildTaskCreateRequest(state.detail.event.id, content, taskKey.get()));
+    taskKey.reset();
+    taskDialog.close();
+    await loadTasks({ keepMessage: true });
+    setMessage(tasksMessage, result.replayed ? "Zadanie było już dodane." : "Dodano zadanie.", "success");
+  } catch (error) {
+    if (error.code === "task_time_outside_event") byId("err-task-startsAt").textContent = error.message;
+    taskFormError.textContent = error.message;
+  } finally {
+    state.busy = false;
+    taskSubmit.disabled = false;
+  }
+});
+
+const signupFields = (name) => signupForm.elements.namedItem(name);
+
+function fillGuardianSelect(task) {
+  const select = signupFields("guardianId");
+  const available = candidateLabels(availableCandidates(state.candidates.guardians, task));
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = available.length ? "Wybierz opiekuna" : "Brak opiekunów do wyboru";
+  select.replaceChildren(placeholder, ...available.map(({ id, label }) => {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = label;
+    return option;
+  }));
+  select.disabled = available.length === 0;
+}
+
+async function loadCandidates(classId = "") {
+  const event = state.detail.event;
+  const select = signupFields("guardianId");
+  select.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Wczytywanie…" }));
+  select.disabled = true;
+  if (!event.classId && !classId) {
+    state.candidates = { classId: null, guardians: [] };
+    select.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Najpierw wybierz klasę" }));
+    return;
+  }
+  try {
+    const result = await api({ url: buildCandidatesUrl(event.id, event.classId ? "" : classId) });
+    state.candidates = { classId: result.classId, guardians: Array.isArray(result.guardians) ? result.guardians : [] };
+    fillGuardianSelect(state.taskTarget);
+  } catch (error) {
+    state.candidates = { classId: null, guardians: [] };
+    select.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: "Nie udało się pobrać listy" }));
+    signupFormError.textContent = error.message;
+  }
+}
+
+async function openSignup(task) {
+  const event = state.detail.event;
+  state.taskTarget = task;
+  signupKey.reset();
+  signupForm.reset();
+  clearFieldErrors(signupForm);
+  signupFormError.textContent = "";
+  byId("signup-context").textContent = `${task.title} · zapisani ${task.confirmedCount ?? 0} z ${task.slotsNeeded}`;
+  const classField = byId("signup-class-field");
+  classField.hidden = Boolean(event.classId);
+  signupDialog.showModal();
+  if (!event.classId) {
+    await fillClassSelect(signupFields("classId"), (url) => api({ url }), event.schoolYearId, {
+      optional: true, emptyLabel: "Wybierz klasę", selected: state.candidates.classId || "",
+    });
+    signupFields("classId").focus();
+    await loadCandidates(signupFields("classId").value);
+  } else {
+    if (state.candidates.classId === event.classId) fillGuardianSelect(task);
+    else await loadCandidates();
+    signupFields("guardianId").focus();
+  }
+}
+
+signupForm.elements.namedItem("classId").addEventListener("change", () => {
+  signupFormError.textContent = "";
+  loadCandidates(signupFields("classId").value);
+});
+
+signupForm.addEventListener("submit", async (submitEvent) => {
+  submitEvent.preventDefault();
+  if (state.busy || !state.detail || !state.taskTarget) return;
+  clearFieldErrors(signupForm);
+  const guardianId = signupFields("guardianId").value;
+  if (!guardianId) {
+    byId("err-signup-guardianId").textContent = "Wybierz opiekuna z listy.";
+    signupFields("guardianId").setAttribute("aria-invalid", "true");
+    signupFields("guardianId").focus();
+    return;
+  }
+  state.busy = true;
+  signupSubmit.disabled = true;
+  signupFormError.textContent = "Zapisywanie…";
+  try {
+    // Ten sam klucz przy ponowieniu; serwer i tak traktuje ponowny zapis tej
+    // samej osoby jako bezpieczną powtórkę (replayed), bez drugiego wiersza.
+    const result = await api(buildSignupRequest(state.detail.event.id, state.taskTarget.id, guardianId, signupKey.get()));
+    signupKey.reset();
+    signupDialog.close();
+    await loadTasks({ keepMessage: true });
+    setMessage(tasksMessage, result.replayed ? "Ta osoba była już zapisana." : "Zapisano.", "success");
+  } catch (error) {
+    signupFormError.textContent = error.message;
+    if (error.code === "task_full") await loadTasks({ keepMessage: true });
+  } finally {
+    state.busy = false;
+    signupSubmit.disabled = false;
+  }
+});
+
+function openTaskCancel(task) {
+  state.taskTarget = task;
+  taskCancelForm.reset();
+  clearFieldErrors(taskCancelForm);
+  taskCancelFormError.textContent = "";
+  byId("task-cancel-context").textContent = `${task.title} · zapisani ${task.confirmedCount ?? 0} z ${task.slotsNeeded}`;
+  taskCancelDialog.showModal();
+  taskCancelForm.elements.reason.focus();
+}
+
+taskCancelForm.addEventListener("submit", async (submitEvent) => {
+  submitEvent.preventDefault();
+  if (state.busy || !state.detail || !state.taskTarget) return;
+  clearFieldErrors(taskCancelForm);
+  const checked = validateReason(taskCancelForm.elements.reason.value);
+  if (checked.error) {
+    byId("err-task-reason").textContent = checked.error;
+    taskCancelForm.elements.reason.setAttribute("aria-invalid", "true");
+    taskCancelForm.elements.reason.focus();
+    return;
+  }
+  state.busy = true;
+  taskCancelSubmit.disabled = true;
+  taskCancelFormError.textContent = "Wysyłanie…";
+  try {
+    const result = await api(buildTaskCancelRequest(state.detail.event.id, state.taskTarget.id, checked.reason));
+    taskCancelDialog.close();
+    await loadTasks({ keepMessage: true });
+    setMessage(tasksMessage, result.replayed ? "Zadanie było już odwołane." : "Odwołano zadanie. Zapisy zostały w historii.", "success");
+  } catch (error) {
+    taskCancelFormError.textContent = error.message;
+  } finally {
+    state.busy = false;
+    taskCancelSubmit.disabled = false;
+  }
+});
+
+byId("tasks-block").addEventListener("click", async (clickEvent) => {
+  const button = clickEvent.target.closest("button[data-task-action]");
+  if (!button || state.busy || !state.detail) return;
+  const task = findTask(button.dataset.taskId);
+  if (!task) return;
+  const action = button.dataset.taskAction;
+  if (action === "signup") return openSignup(task);
+  if (action === "cancel") return openTaskCancel(task);
+  if (action === "withdraw") {
+    const signup = (task.signups ?? []).find((s) => s.id === button.dataset.signupId);
+    const confirmed = await confirmAction({
+      title: "Wycofać zapis?",
+      effects: [`${signup?.personName ?? "Osoba"} — ${task.title}`, "Zapis zostaje w historii jako wycofany; miejsce się zwalnia."],
+      confirmLabel: "Wycofaj",
+    });
+    if (!confirmed) return;
+    await withTaskBusy(async () => {
+      setMessage(tasksMessage, "Wysyłanie…");
+      try {
+        const result = await api(buildWithdrawRequest(state.detail.event.id, task.id, button.dataset.signupId));
+        await loadTasks({ keepMessage: true });
+        setMessage(tasksMessage, result.replayed ? "Zapis był już wycofany." : "Wycofano zapis.", "success");
+      } catch (error) {
+        setMessage(tasksMessage, error.message, "error");
+      }
+    });
+  }
+});
+
 // ---------- okna dialogowe ----------
 
-for (const dialog of [eventDialog, cancelDialog]) {
+for (const dialog of ALL_DIALOGS) {
   dialog.addEventListener("click", (event) => {
     if (event.target.closest("[data-close]") && !state.busy) dialog.close();
   });
   dialog.addEventListener("cancel", (event) => {
     if (state.busy) event.preventDefault();
+  });
+}
+for (const dialog of [taskDialog, signupDialog, taskCancelDialog]) {
+  dialog.addEventListener("close", () => {
+    const taskId = state.taskTarget?.id;
+    state.taskTarget = null;
+    if (dialog === taskDialog) taskKey.reset();
+    if (dialog === signupDialog) signupKey.reset();
+    const target = dialog === taskDialog ? openTask
+      : tasksBody.querySelector(`button[data-task-id="${CSS.escape(taskId ?? "")}"]`) ?? openTask;
+    if (!detail.contains(document.activeElement) || document.activeElement === document.body) target?.focus();
   });
 }
 eventDialog.addEventListener("close", () => {

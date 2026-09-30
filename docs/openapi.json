@@ -6694,6 +6694,83 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/events/{eventId}/tasks/candidates": {
+      "get": {
+        "operationId": "events_taskCandidates",
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "events.taskCandidates",
+        "tags": [
+          "events"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "repA": [
+            "A"
+          ],
+          "repB": [
+            "B"
+          ]
+        },
+        "x-rd-deny-status": [
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "events.taskCandidates"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "representative"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/events/{eventId}/tasks/{taskId}/cancel": {
       "post": {
         "operationId": "events_taskCancel",
