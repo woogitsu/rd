@@ -81,6 +81,9 @@ test('labels, scope and audit descriptions are Polish and contain identifiers on
   const yearMap = new Map(years.map((year) => [year.id, year]));
   assert.equal(scopeLabel({ classId: 'c-1a', schoolYearId: 'y-2026' }, classes, yearMap), 'klasa 1A, rok 2026/27');
   assert.equal(scopeLabel({}, classes, yearMap), 'cała Rada');
+  // przegląd demo 4: nazwa klasy z serwera zaczyna się od „Klasa” — bez „klasa Klasa”
+  const named = indexClasses([{ id: 'y-2026', label: '2026/27', classes: [{ id: 'c-0a', name: 'Klasa 0-A (dane przykładowe)' }] }]);
+  assert.equal(scopeLabel({ classId: 'c-0a', schoolYearId: 'y-2026' }, named, yearMap), 'Klasa 0-A (dane przykładowe), rok 2026/27');
   assert.equal(errorMessage('last_admin_grant'), 'Nie można odebrać sobie ostatniego aktywnego przydziału administratora.');
   assert.match(errorMessage('cannot_grant_self'), /Nie można nadać roli własnemu kontu/);
   assert.match(errorMessage(undefined, 503), /niedostępna/);

@@ -53,7 +53,7 @@ export const WARNING_LABELS = Object.freeze({
   reconciliation_before_year_end: 'Ostatnie zatwierdzone uzgodnienie ma datę wyciągu przed końcem roku',
   reconciliation_difference: 'Ostatnie zatwierdzone uzgodnienie ma różnicę salda (kwota = różnica)',
   reconciliation_drafts: 'Szkice uzgodnień (niezatwierdzone)',
-  unmatched_statement_lines: 'Pozycje wyciągu bez dopasowania (suma modułów kwot)',
+  unmatched_statement_lines: 'Pozycje wyciągu bez dopasowania (wpływy i obciążenia razem, bez znaku)',
   open_email_campaigns: 'Kampanie e-mail otwarte (szkic, zatwierdzona lub w wysyłce)',
 });
 

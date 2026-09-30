@@ -5,6 +5,7 @@ import {
   buildReconciliationsUrl,
   buildStatementFileBody,
   candidateLabel,
+  lineSourceLabel,
   canOfferConfirm,
   decodeStatementBytes,
   describeApiError,
@@ -139,7 +140,7 @@ function lineRow(line) {
     textCell(line.bookedOn),
     textCell(lineDirectionLabel(line.amountCents)),
     textCell(formatCents(Math.abs(line.amountCents)), "amount"),
-    textCell(line.source),
+    textCell(lineSourceLabel(line.source)),
   );
   const status = document.createElement("td");
   const actions = document.createElement("td");
