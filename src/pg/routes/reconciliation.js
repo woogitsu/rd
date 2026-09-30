@@ -2181,6 +2181,10 @@ export async function buildAuditReport(executor, schoolYearId) {
 
   return {
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },
+    // #213: asOf = chwila migawki, z której pochodzą WSZYSTKIE liczby raportu
+    // (now() transakcji REPEATABLE READ). generatedAt zostaje dla zgodności
+    // wstecznej (panel audit/, archiwalne odczyty) i ma tę samą wartość.
+    asOf: isoTimestamp(asOf),
     generatedAt: isoTimestamp(asOf),
     balance,
     categories,
@@ -2421,7 +2425,7 @@ async function auditReport(request, env, url, json) {
   if (!report) throw new RequestError('school_year_not_found', 404);
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'report.audit.generated', entityType: 'school_year',
-    entityId: schoolYearId, metadata: { schoolYearId, format, asOf: report.generatedAt },
+    entityId: schoolYearId, metadata: { schoolYearId, format, asOf: report.asOf },
   });
   if (format === 'json') return json({ report });
   return new Response(renderAuditReportHtml(report), {

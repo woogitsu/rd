@@ -158,6 +158,8 @@ Raport nie pisze już „Sumy kategorii są zgodne z bilansem roku” — tamta 
 
 Wersja HTML jest przeznaczona do druku (A4, `@page`); PDF powstaje przez „Drukuj → Zapisz jako PDF” w przeglądarce. Strona nie zawiera skryptów, a wszystkie teksty z bazy są escapowane. Odpowiedź ma `Content-Security-Policy: default-src 'none'` z wyjątkiem wbudowanego arkusza stylów dopuszczonego skrótem SHA-256, `Cache-Control: no-store`, `X-Frame-Options: DENY`. Każde wygenerowanie raportu zapisuje zdarzenie `report.audit.generated` (bez treści raportu).
 
+**Migawka i `asOf` (#213).** Cały raport jest liczony w jednej transakcji `REPEATABLE READ, READ ONLY` (`readSnapshot`, `src/pg/db-snapshot.js`), więc bilans, kategorie, korekty, uzgodnienia i kontrole krzyżowe pochodzą z tej samej chwili, nawet gdy skarbnik w tej samej sekundzie zapisuje wpis albo korektę. Pole `report.asOf` (JSON) i nagłówek „Stan na: …” (HTML) to czas tej migawki (`now()` transakcji), nie zegar serwera aplikacji; ta sama wartość trafia do `metadata.asOf` zdarzenia `report.audit.generated`. Pole `generatedAt` zostaje dla zgodności wstecznej i ma tę samą wartość. Ponowienie żądania bez zapisów w międzyczasie daje identyczną treść i nowe zdarzenie z innym `asOf`. Test przeplotu na prawdziwym PostgreSQL: `tests/pg-audit-report-snapshot-real.test.js` (`npm run test:pg-real`).
+
 Raport nie jest zatwierdzonym sprawozdaniem finansowym. Zakres i forma sprawozdania Komisji Rewizyjnej wymagają decyzji Rady (#15, D-09).
 
 ## Testy
