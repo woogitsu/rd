@@ -19,6 +19,7 @@ import {
   formatDateTime,
   isRetryable,
   linkLabel,
+  documentCountLabel,
   makeIdempotencyKey,
   metadataRows,
   metadataUrl,
@@ -137,6 +138,8 @@ function documentRow(raw) {
     cell("Rozmiar", doc.byteSize === null ? "—" : formatBytes(doc.byteSize), "num"),
     cell("Powiązanie", linkLabel(doc)),
   );
+  // Pełny identyfikator powiązania w podpowiedzi; komórka pokazuje skrót (shortId).
+  if (doc.linkedEntityId) row.lastElementChild.title = doc.linkedEntityId;
   const actions = document.createElement("td");
   actions.className = "row-actions";
   const show = document.createElement("button");
@@ -160,7 +163,7 @@ function documentRow(raw) {
 function renderList() {
   listBody.replaceChildren(...state.documents.map(documentRow));
   const count = state.documents.length;
-  listSummary.textContent = count === 1 ? "1 dokument" : `Dokumenty: ${count}`;
+  listSummary.textContent = documentCountLabel(count);
   tableWrap.hidden = count === 0;
   if (count === 0) setMessage(listMessage, "Brak dostępnych dokumentów dla wybranych filtrów.");
 }

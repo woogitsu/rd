@@ -14,8 +14,17 @@
 //   (`appEnvWarning`). Ustawienie APP_ENV=development|test|staging odblokowuje
 //   lokalną pracę bez `--allow-production`.
 //
+// - lokalne (dev na http://localhost) są wyłącznie: brak zmiennej, development,
+//   test (`isLocalAppEnv`) — tylko tam cookie sesji bez prefiksu `__Host-`
+//   i serwer bez obowiązkowej konfiguracji (#114);
+// - serwer HTTP nie startuje z nieznaną wartością ani bez APP_ENV na Railway
+//   (`appEnvStartupProblem`, wywoływane przez src/config.js).
+//
+// To JEDYNE miejsce, które porównuje wartość APP_ENV. Pozostały kod woła
+// funkcje z tego modułu; tests/app-env-single-source.test.js odrzuca bezpośrednie
+// porównania `APP_ENV === …`, `.toLowerCase()` na APP_ENV itp. poza tym plikiem.
+//
 // Funkcje nie czytają process.env — wywołujący przekazuje wartość.
-// Walidacja startowa serwera (#114) może użyć `resolveAppEnv` / `appEnvWarning`.
 
 export const KNOWN_APP_ENVS = Object.freeze(['development', 'test', 'staging', 'production']);
 const ALIASES = Object.freeze({ prod: 'production' });
@@ -40,6 +49,43 @@ export function isProductionEnv(value) {
 export function isProductionLikeEnv(value) {
   const env = resolveAppEnv(value);
   return env.production || !env.known;
+}
+
+// Środowisko lokalne: brak APP_ENV, development albo test. Każda inna wartość
+// (staging, production, prod, literówka) jest traktowana zachowawczo jak
+// środowisko wystawione do sieci.
+export function isLocalAppEnv(value) {
+  const env = resolveAppEnv(value);
+  return env.unset || env.name === 'development' || env.name === 'test';
+}
+
+// Jawne APP_ENV=test (dowolna wielkość liter). Atrapa transportu e-mail.
+export function isTestEnv(value) {
+  return resolveAppEnv(value).name === 'test';
+}
+
+// Etykieta do logów i rejestrów (np. backup_runs.environment): znana nazwa
+// albo 'unknown' — nigdy surowa wartość zmiennej (literówka, długi tekst).
+export function appEnvLabel(value) {
+  const env = resolveAppEnv(value);
+  return env.known ? env.name : 'unknown';
+}
+
+// Zmienne, które Railway ustawia sam w każdej usłudze. Ich obecność przy braku
+// APP_ENV oznacza zapomnianą zmienną w usłudze, a nie lokalny dev.
+const RAILWAY_MARKERS = Object.freeze(['RAILWAY_ENVIRONMENT_ID', 'RAILWAY_ENVIRONMENT_NAME', 'RAILWAY_ENVIRONMENT', 'RAILWAY_PROJECT_ID', 'RAILWAY_SERVICE_ID']);
+
+// Problem startowy serwera ({ variable: 'APP_ENV', reason }) albo null.
+// Nieznana wartość zawsze; brak wartości tylko wtedy, gdy proces działa na
+// Railway (lokalnie brak APP_ENV nadal oznacza development).
+export function appEnvStartupProblem(processEnv = {}) {
+  const env = resolveAppEnv(processEnv.APP_ENV);
+  if (env.known) return null;
+  if (!env.unset) return { variable: 'APP_ENV', reason: `nieznana wartość; dozwolone: ${KNOWN_APP_ENVS.join(', ')}` };
+  if (RAILWAY_MARKERS.some((name) => String(processEnv[name] ?? '').trim() !== '')) {
+    return { variable: 'APP_ENV', reason: 'wymagane w usłudze Railway (staging albo production)' };
+  }
+  return null;
 }
 
 // Ostrzeżenie (tekst bez wartości sekretów) dla brakującego/nieznanego APP_ENV; null gdy znane.

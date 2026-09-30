@@ -12,6 +12,7 @@ import {
   buildYearlyExport, canonicalJson, EXPORT_BATCH_ROWS, verifyBundle,
 } from '../src/pg/export.js';
 import { handlePgRequest } from '../src/pg/app.js';
+import { createExportSpool } from '../src/pg/export-spool.js';
 import {
   createTestDb, request, seedSchoolYear, seedUserSession,
 } from './helpers/pg.js';
@@ -95,16 +96,39 @@ test('wolumen: rok z dużą liczbą zdarzeń audytu mieści się w niskim limici
   const db = await createTestDb();
   try {
     await seed(db, volume);
-    let peak = 0;
-    const timer = setInterval(() => { peak = Math.max(peak, process.memoryUsage().heapUsed); }, 5);
-    const built = await db.transaction(async (tx) => {
+    // Rozgrzewka: pierwszy przebieg powiększa pamięć WASM PGlite (liczona w
+    // arrayBuffers), co nie jest kosztem eksportu; mierzony jest drugi przebieg.
+    await db.transaction(async (tx) => {
       await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-      return buildYearlyExport(tx, YEAR, { stream: true });
+      return buildYearlyExport(tx, YEAR, { sink: () => {} });
     });
-    clearInterval(timer);
-    // Sterta ma być wielokrotnie mniejsza od paczki (dawniej ok. 5-9x jej rozmiaru).
-    assert.ok(peak < built.bodyBytes / 2 + 64 * 1048576,
-      `szczyt sterty ${Math.round(peak / 1048576)} MB przy paczce ${Math.round(built.bodyBytes / 1048576)} MB`);
+    // Jak trasa: fragmenty paczki do bufora na dysku (src/pg/export-spool.js).
+    const spool = await createExportSpool();
+    const base = process.memoryUsage();
+    let peakHeap = 0;
+    let peakBuffers = 0;
+    const timer = setInterval(() => {
+      const usage = process.memoryUsage();
+      peakHeap = Math.max(peakHeap, usage.heapUsed);
+      peakBuffers = Math.max(peakBuffers, usage.arrayBuffers);
+    }, 5);
+    let built;
+    try {
+      built = await db.transaction(async (tx) => {
+        await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        return buildYearlyExport(tx, YEAR, { sink: (chunk) => spool.write(chunk) });
+      });
+    } finally {
+      clearInterval(timer);
+      await spool.discard();
+    }
+    // Kryterium #216: szczyt sterty rośnie o mniej niż 64 MB niezależnie od liczby wierszy
+    // (bufory paczki też nie rosną z rozmiarem — paczka jest na dysku).
+    const MB = 1048576;
+    assert.ok(peakHeap - base.heapUsed < 64 * MB,
+      `wzrost sterty ${Math.round((peakHeap - base.heapUsed) / MB)} MB przy paczce ${Math.round(built.bodyBytes / MB)} MB`);
+    assert.ok(peakBuffers - base.arrayBuffers < 64 * MB,
+      `wzrost buforów ${Math.round((peakBuffers - base.arrayBuffers) / MB)} MB przy paczce ${Math.round(built.bodyBytes / MB)} MB`);
     assert.equal(built.rowCounts.audit_events, volume);
   } finally {
     await db.close();

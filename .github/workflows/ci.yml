@@ -128,7 +128,7 @@ jobs:
   # serwera zamiast uruchamiać własny (docs/TESTING.md).
   test-pg-real:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         # postgres:16 (multi-arch index) przypięty do digestu.
@@ -153,6 +153,10 @@ jobs:
           node-version: '22'
       - run: npm ci --ignore-scripts
       - run: npm run test:pg-real
+      # Kontrola mutacyjna blokad (#208): usunięcie każdej blokady z listy w
+      # scripts/check-lock-mutations.js (FOR UPDATE / pg_advisory_xact_lock)
+      # musi dać czerwony test. Kod repozytorium nie jest zmieniany (kopia).
+      - run: npm run test:pg-mutations
 
   # Integralność i kolejność migracji PostgreSQL (issue #79): manifest sum
   # kontrolnych aktualny, a PR ani nie zmienia scalonego pliku migracji, ani

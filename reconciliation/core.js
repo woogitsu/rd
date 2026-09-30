@@ -95,6 +95,15 @@ export function formatDifference(cents) {
   return `Różnica: ${formatCents(cents)}.`;
 }
 
+// Przegląd demo 4: kolumna „Źródło” pokazywała surowy kod („csv”). Kody jak
+// w CHECK bank_statement_imports.source (0089); nieznany kod zostaje bez zmian.
+export const LINE_SOURCE_LABELS = Object.freeze({ manual: 'Ręcznie', csv: 'CSV', coda: 'CODA', camt053: 'CAMT.053' });
+
+export function lineSourceLabel(source) {
+  if (source === null || source === undefined || source === '') return '—';
+  return Object.hasOwn(LINE_SOURCE_LABELS, source) ? LINE_SOURCE_LABELS[source] : String(source);
+}
+
 // Etykieta pozycji CSV/ręcznej — kwota dodatnia to wpływ, ujemna to obciążenie.
 export function lineDirectionLabel(amountCents) {
   return Number(amountCents) >= 0 ? 'Wpływ' : 'Obciążenie';

@@ -305,7 +305,12 @@ export function normalizeEmail(email) {
   return value;
 }
 
-export async function createInvitation(env, { actorId, email, role, classId = null, schoolYearId = null, ttlSeconds = INVITATION_DEFAULT_TTL_SECONDS, replacesInvitationId = null }) {
+// `rejectPending` (#208): odrzuca drugie oczekujące zaproszenie o tym samym
+// adresie i zakresie W TRANSAKCJI, pod blokadą doradczą adresu. Sprawdzenie
+// przed transakcją nie wystarczało: dwa równoległe „Zaproś” (podwójne
+// kliknięcie, dwóch administratorów) oba je przechodziły i powstawały dwa
+// ważne tokeny (tests/pg-real-double-click.test.js, kontrola pozytywna).
+export async function createInvitation(env, { actorId, email, role, classId = null, schoolYearId = null, ttlSeconds = INVITATION_DEFAULT_TTL_SECONDS, replacesInvitationId = null, rejectPending = false }) {
   if (!actorId) throw new Error('actor_required');
   if (!ROLES.includes(role)) throw new Error('invalid_role');
   if (role === 'representative' && !classId) throw new Error('class_required');
@@ -317,6 +322,18 @@ export async function createInvitation(env, { actorId, email, role, classId = nu
     if (classId && schoolYearId) {
       const { rows } = await tx.query('SELECT 1 FROM classes WHERE id = $1 AND school_year_id = $2', [classId, schoolYearId]);
       if (!rows[0]) throw new Error('class_not_in_school_year');
+    }
+    if (rejectPending) {
+      await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:invitation:${normalized}`]);
+      const { rows: pending } = await tx.query(
+        `SELECT 1 FROM invitations
+          WHERE lower(email) = $1 AND role = $2
+            AND class_id IS NOT DISTINCT FROM $3 AND school_year_id IS NOT DISTINCT FROM $4
+            AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+          LIMIT 1`,
+        [normalized, role, classId, schoolYearId],
+      );
+      if (pending[0]) throw new Error('invitation_pending');
     }
     const { rows } = await tx.query(
       `INSERT INTO invitations (id, email, token_hash, role, class_id, school_year_id, created_by, expires_at)

@@ -10,7 +10,7 @@
 // Raport (liczby, bez nazw plików i adresów) trafia na stdout i, jeśli
 // tabela istnieje (patrz #90), do backup_runs.
 
-import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
+import { appEnvLabel, appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
 import { createPgDatabase } from '../src/db.js';
 import { createS3Storage, storageFromEnv } from '../src/storage.js';
 import { recordStorageBackupRun, runStorageBackup } from '../src/pg/storage-backup.js';
@@ -68,7 +68,7 @@ async function main() {
     console.log(JSON.stringify(report));
     const result = report.hashMismatches > 0 || report.missingInSource > 0 ? 'failure' : 'success';
     await recordStorageBackupRun(db, {
-      environment: env.APP_ENV || 'unknown', result, report, startedAt, finishedAt: new Date(),
+      environment: appEnvLabel(env.APP_ENV), result, report, startedAt, finishedAt: new Date(),
       errorCode: result === 'failure' ? 'storage_backup_report_has_issues' : null,
     });
     if (result === 'failure') process.exitCode = 1;
@@ -76,7 +76,7 @@ async function main() {
     const code = typeof error?.code === 'string' && /^[a-z0-9_]{1,60}$/.test(error.code) ? error.code : 'storage_backup_failed';
     console.error(`Storage backup failed: ${code}`);
     await recordStorageBackupRun(db, {
-      environment: env.APP_ENV || 'unknown', result: 'failure', errorCode: code, startedAt, finishedAt: new Date(),
+      environment: appEnvLabel(env.APP_ENV), result: 'failure', errorCode: code, startedAt, finishedAt: new Date(),
     }).catch(() => {});
     process.exitCode = 1;
   } finally {
