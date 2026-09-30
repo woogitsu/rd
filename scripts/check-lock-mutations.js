@@ -39,6 +39,7 @@ export const MUTANTS = [
   { id: 'email-campaign-lock', file: 'src/pg/routes/email.js', fn: 'loadCampaign', kind: 'for-update', test: DOUBLE_CLICK },
   { id: 'admin-last', file: 'src/pg/routes/admin.js', fn: 'lockGrantChanges', kind: 'advisory', test: DOUBLE_CLICK },
   { id: 'invitation-pending', file: 'src/pg/auth.js', fn: 'insertInvitation', kind: 'advisory', test: DOUBLE_CLICK },
+  { id: 'invitation-reissue', file: 'src/pg/auth.js', fn: 'reissueInvitation', kind: 'advisory', test: DOUBLE_CLICK },
   { id: 'import-commit', file: 'src/pg/routes/import.js', fn: 'commit', kind: 'advisory', test: DOUBLE_CLICK },
   { id: 'email-cancel', file: 'src/pg/routes/email.js', fn: 'loadCampaign', kind: 'for-update', test: CONCURRENCY },
   { id: 'year-close', file: 'src/pg/routes/year-close.js', fn: 'closeYear', kind: 'advisory', test: YEAR_CLOSE },

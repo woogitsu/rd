@@ -229,6 +229,14 @@ przed transakcją, więc dwa równoległe żądania tworzyły dwa ważne tokeny.
 sprawdzenie jest w transakcji zapisu pod blokadą doradczą adresu
 (`createInvitation(..., { rejectPending: true })` w `src/pg/auth.js`).
 
+„Wyślij ponownie” (#293, follow-up #576/#557) wycofywał stare zaproszenie i tworzył
+nowe w dwóch osobnych transakcjach bez blokady adresu, więc równoległe „Zaproś” albo
+drugie „Wyślij ponownie” mogło zostawić dwa ważne tokeny. Teraz `reissueInvitation`
+(`src/pg/auth.js`) robi oba kroki w jednej transakcji pod `rd:invitation:<email>`;
+testy z barierą: drugie ponowienie i „Zaproś” czekają na blokadę doradczą, zostaje
+jeden ważny token. Kontrola pozytywna: bez blokady adresu drugie ponowienie czeka
+dopiero na wiersz (warunkowy `UPDATE`) — mutant `invitation-reissue`.
+
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
 `scripts/check-lock-mutations.js` usuwa po kolei każdą blokadę z listy `MUTANTS`
@@ -239,7 +247,7 @@ jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`
 `tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
 Obecnie lista obejmuje: korektę i przypisanie wpłaty, korektę wpisu księgi i ujęcie
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
-`rd:role_grants`, blokadę adresu zaproszenia, `rd_import_commit` i `rd_year_close`.
+`rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit` i `rd_year_close`.
 Poza listą (brak testu z barierą, #208): `FOR UPDATE` w `families.js`, `events.js`,
 `news.js`, `meetings.js`, `documents.js`, pozostałe w `payments.js`/`ledger.js`
 (zwroty, przeksięgowania, części wpłat, autoryzacje) oraz blokady w triggerach migracji.
