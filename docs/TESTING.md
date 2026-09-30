@@ -139,9 +139,9 @@ Każda reguła ma kontrolę pozytywną (kod, który reguła musi wykryć):
 - Obejście triggerów (`ALTER TABLE … DISABLE TRIGGER`, `SET
   session_replication_role = replica`) jest dozwolone tylko w plikach z
   `TRIGGER_BYPASS_ALLOWED`, każdy z uzasadnieniem. Do cofania czasu służy
-  wstrzykiwany zegar (`now`), nie wyłączony strażnik. Dwa wpisy
-  (`pg-bootstrap-admin`, `pg-guardian-updates`) czekają na taki zegar w kodzie
-  aplikacji.
+  wstrzykiwany zegar (`now`), nie wyłączony strażnik. Wpis `pg-bootstrap-admin`
+  czeka na taki zegar w kodzie aplikacji; `pg-guardian-updates` używa już
+  `env.now` przy wygasaniu linków opiekunów (#140).
 - Negatywna asercja na krótkim podciągu cyfr (`!meta.includes('470')`) jest
   zakazana. Taki podciąg losowo trafia w UUID lub skrót w metadanych (#548).
   Szukaj całej wartości (`SYNTHETIC_PHONE_IN_TEXT`) albo liczby jako osobnego
