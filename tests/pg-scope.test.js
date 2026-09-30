@@ -352,3 +352,38 @@ test('documents.js#canAccessDocument (na scope.js) = dawna implementacja z ręcz
     assert.equal(canAccessDocument(context, doc), legacy(context, doc), `próbka ${sample}: ${JSON.stringify({ context, doc })}`);
   }
 });
+
+// Aktorzy z komentarza do #155 (audyt #200/#201): przypadki mieszane, których
+// macierz tras z jednym przydziałem nie obejmuje.
+test('aktorzy mieszani (#200/#201): repNoYear, repTwoYears, boardY2+repA, boardNoYear', async () => {
+  const { familiesScope } = await import('../src/pg/routes/families.js');
+  const READ = ['admin', 'board', 'treasurer', 'representative'];
+
+  const repNoYear = familiesScope(ctx([{ role: 'representative', classId: 'c-1a', schoolYearId: null }]), READ);
+  assert.equal(repNoYear.schoolWide, false);
+  assert.deepEqual(scopeClassIds(repNoYear, 'y-2025'), ['c-1a']);
+  assert.deepEqual(scopeClassIds(repNoYear, 'y-2026'), ['c-1a']);
+
+  const repTwoYears = familiesScope(ctx([
+    { role: 'representative', classId: 'c-1a', schoolYearId: 'y-2025' },
+    { role: 'representative', classId: 'c-2a', schoolYearId: 'y-2026' },
+  ]), READ);
+  assert.deepEqual(scopeClassIds(repTwoYears, 'y-2025'), ['c-1a']);
+  assert.deepEqual(scopeClassIds(repTwoYears, 'y-2026'), ['c-2a']);
+
+  // Szeroka rola tylko na rok 2 + przedstawiciel 1A w roku 1: zakres szkolny
+  // obejmuje wyłącznie rok 2; w roku 1 zostaje sama klasa 1A.
+  const mixedGrants = [
+    { role: 'board', classId: null, schoolYearId: 'y-2026' },
+    { role: 'representative', classId: 'c-1a', schoolYearId: 'y-2025' },
+  ];
+  const boardY2RepA = familiesScope(ctx(mixedGrants), READ);
+  assert.equal(scopeCoversYear(boardY2RepA, 'y-2026'), true);
+  assert.equal(scopeCoversYear(boardY2RepA, 'y-2025'), false);
+  assert.deepEqual(scopeClassIds(boardY2RepA, 'y-2025'), ['c-1a']);
+  assert.equal(isAuthorizedScoped(ctx(mixedGrants), { roles: ['board'], schoolYearId: 'y-2025' }), false, 'zarząd roku 2 nie otwiera danych szkolnych roku 1');
+
+  const boardNoYear = familiesScope(ctx([{ role: 'board', classId: null, schoolYearId: null }]), READ);
+  assert.equal(boardNoYear.years, 'all');
+  assert.deepEqual(scopeSqlParams(boardNoYear), [true, [], [], []]);
+});
