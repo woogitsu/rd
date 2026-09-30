@@ -5746,6 +5746,72 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/email/worker-status": {
+      "get": {
+        "operationId": "email_workerStatus_get",
+        "parameters": [
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "email.workerStatus.get",
+        "tags": [
+          "email"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "email.workerStatus.get"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/events": {
       "get": {
         "operationId": "events_list",

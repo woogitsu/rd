@@ -186,6 +186,9 @@ export function normalizeEntry(entry) {
     method: Object.hasOwn(METHOD_LABELS, entry?.method) ? entry.method : "other",
     source: entry?.source ? String(entry.source) : "",
     resolutionReference: entry?.resolutionReference ? String(entry.resolutionReference) : "",
+    // #144: łańcuch przeksięgowań (storno + wpis zastępczy) w obu kierunkach.
+    replacesEntryId: isValidId(entry?.replacesEntryId) ? entry.replacesEntryId : "",
+    replacedByEntryId: isValidId(entry?.replacedByEntryId) ? entry.replacedByEntryId : "",
     // #87: liczba dowodów (dokument główny + dołączone); null, gdy API jej nie podaje.
     attachmentCount: Array.isArray(entry?.attachmentIds) ? entry.attachmentIds.length : null,
     amountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
@@ -194,6 +197,23 @@ export function normalizeEntry(entry) {
       ? Number(entry.netAmountCents)
       : (Number.isSafeInteger(amountCents) ? amountCents : 0) - (Number.isSafeInteger(correctedCents) ? correctedCents : 0),
   };
+}
+
+// #144: opis łańcucha przeksięgowań dla wiersza księgi. Wpis sąsiedni z bieżącej
+// strony listy opisujemy datą i kategorią; spoza strony — identyfikatorem (lista
+// jest stronicowana, więc drugi koniec łańcucha może nie być wczytany).
+export function replacementChainLabels(entry, loadedEntries = []) {
+  const byId = new Map(loadedEntries.map((item) => [String(item?.id ?? ""), item]));
+  const describe = (id) => {
+    const other = byId.get(id);
+    if (!other) return `wpis ${id}`;
+    const normalized = normalizeEntry(other);
+    return `wpis z ${normalized.occurredOn} (${normalized.categoryName})`;
+  };
+  const labels = [];
+  if (entry?.replacesEntryId) labels.push(`Zastępuje ${describe(entry.replacesEntryId)}`);
+  if (entry?.replacedByEntryId) labels.push(`Zastąpiony przez ${describe(entry.replacedByEntryId)}`);
+  return labels;
 }
 
 export function makeIdempotencyKey(prefix, randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto)) {
