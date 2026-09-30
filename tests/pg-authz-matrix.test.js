@@ -596,9 +596,24 @@ async function makeAdminTarget(ctx, stage) {
     );
     return { requestId };
   }
+  if (stage === 'grantRequest') {
+    // #146: otwarty wniosek o nadanie roli zarządu, złożony przez INNE konto niż aktor macierzy.
+    await seedUser(ctx.db, { userId });
+    const requesterId = nextKey('fx-wnioskodawca');
+    await seedUser(ctx.db, { userId: requesterId });
+    const requestId = randomUUID();
+    await ctx.db.query(
+      `INSERT INTO role_grant_requests (id, kind, role, target_user_id, school_year_id, requested_by, expires_at)
+       VALUES ($1, 'grant', 'board', $2, $3, $4, now() + interval '1 day')`,
+      [requestId, userId, YEAR_1, requesterId],
+    );
+    return { requestId };
+  }
   if (stage === 'invitation') {
+    // #146: rola niechroniona (Komisja Rewizyjna) — zaproszenie z tokenem od razu;
+    // rola zarządu przy drugim administratorze byłaby tylko wnioskiem (202).
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations',
-      { email: `${userId}@example.invalid`, role: 'board', schoolYearId: YEAR_1 });
+      { email: `${userId}@example.invalid`, role: 'audit', schoolYearId: YEAR_1 });
     return { invitationId: json.invitation.id };
   }
   if (stage === 'emptySchoolYear') {
@@ -668,7 +683,8 @@ async function makeLoginAccount(ctx) {
 // Świeże zaproszenie (token zwracany raz przez administratora) dla nowego adresu.
 async function makeInvitationToken(ctx) {
   const email = `${nextKey('fx-zapr').toLowerCase()}@example.invalid`;
-  const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations', { email, role: 'board', schoolYearId: YEAR_1 });
+  // #146: rola niechroniona — token od razu (zarząd przy drugim administratorze = wniosek 202).
+  const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/invitations', { email, role: 'audit', schoolYearId: YEAR_1 });
   return { token: json.token, password: syntheticPassword() };
 }
 
@@ -1324,7 +1340,8 @@ test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
   assert.equal(new Set(signatures).size, signatures.length, 'para metoda + ścieżka (+ variant) musi być unikalna');
   for (const route of ROUTE_MATRIX) {
     assert.ok(route.targets.length > 0 && route.targets.every((key) => key in TARGETS), route.id);
-    assert.ok([200, 201, 204].includes(route.ok), `${route.id}: ok`);
+    // 202: przyjęty wniosek do zatwierdzenia przez drugą osobę (#146).
+    assert.ok([200, 201, 202, 204].includes(route.ok), `${route.id}: ok`);
     if (typeof route.allow === 'object') {
       const denies = typeof route.deny === 'function'
         ? ACTORS.flatMap((actor) => route.targets.flatMap((key) => [false, true].map((mfa) => route.deny(actor, key, mfa))))

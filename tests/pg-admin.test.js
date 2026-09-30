@@ -577,7 +577,8 @@ test('password reset, MFA reset and role grant require FRESH MFA (step-up)', asy
     assert.equal(staleInvite.data.error, 'mfa_stale');
     assert.equal((await db.query("SELECT count(*)::int AS n FROM invitations WHERE email = 'stale-invite@example.invalid'")).rows[0].n, 0);
     await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-admin-stale'");
-    const freshInvite = await post(env, '/api/admin/invitations', stale, { email: 'stale-invite@example.invalid', role: 'board' });
+    // #146: rola niechroniona — zaproszenie od razu (rola chroniona to wniosek 202).
+    const freshInvite = await post(env, '/api/admin/invitations', stale, { email: 'stale-invite@example.invalid', role: 'audit' });
     assert.equal(freshInvite.status, 201);
     await db.query("UPDATE sessions SET mfa_verified_at = now() - interval '20 minutes' WHERE user_id = 'u-admin-stale'");
     const staleReissue = await post(env, `/api/admin/invitations/${freshInvite.data.invitation.id}/reissue`, stale, {});
@@ -601,7 +602,9 @@ test('password reset, MFA reset and role grant require FRESH MFA (step-up)', asy
     // Po ponownym potwierdzeniu kodu (mfa_verified_at znów świeże) żądanie przechodzi.
     await db.query("UPDATE sessions SET mfa_verified_at = now() WHERE user_id = 'u-admin-stale'");
     assert.equal((await post(env, '/api/admin/users/u-target/password-reset', stale, {})).status, 201);
-    assert.equal((await post(env, '/api/admin/grants', stale, { userId: 'u-target', role: 'board' })).status, 201);
+    // #146: krok w górę przechodzi; rola zarządu przy drugim administratorze = wniosek (202).
+    assert.equal((await post(env, '/api/admin/grants', stale, { userId: 'u-target', role: 'board' })).status, 202);
+    assert.equal((await post(env, '/api/admin/grants', stale, { userId: 'u-target', role: 'audit' })).status, 201);
   } finally {
     await db.close();
   }

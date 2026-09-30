@@ -1202,3 +1202,22 @@ z zarządu ich nie zatwierdzi (wariant zachowawczy); same rozstrzygnięcia nie s
 zmieniane. Wycofanie na bazie bez uzupełnień i zatwierdzeń: usunięcie
 triggerów, funkcji, tabeli, klucza unikalnego i kolumn oraz przywrócenie CHECK
 powodów wykluczeń z 0057; na bazie z danymi tylko po kopii zapasowej.
+
+`0157_role_grant_requests.sql` (#146) dodaje zasadę czterech oczu dla nadania
+roli chronionej (`admin`, `board`, `treasurer`). Nowa tabela
+`role_grant_requests` (rodzaj `grant` — przydział istniejącemu kontu, albo
+`invitation` — zaproszenie z adresem, także ponowne wydanie z
+`replaces_invitation_id`) przyjmuje wniosek administratora; przydział lub
+zaproszenie powstaje przy zatwierdzeniu przez innego administratora.
+CHECK `role_grant_requests_four_eyes` wymaga zatwierdzającego innego niż
+wnioskodawca i adresat, drugi CHECK wyklucza wniosek dla samego siebie, a
+indeks unikalny częściowy dopuszcza jeden otwarty wniosek na zakres (rodzaj,
+adresat, rola, rok). Strażnik `role_grant_request_guard()` pozwala zmienić
+wyłącznie stan wniosku oczekującego; DELETE i TRUNCATE są zabronione; nowy
+wniosek do zamkniętego roku odrzuca `a0_year_freeze`.
+Skutki dla danych: nowa, pusta tabela; istniejące przydziały, zaproszenia i
+zdarzenia bez zmian i nadal ważne. Wniosek o zaproszenie przechowuje adres
+e-mail adresata (jak `invitations.email`), bez tokenu. Wycofanie na pustej
+tabeli: usunięcie triggerów, funkcji i tabeli; z wnioskami tylko po kopii
+zapasowej (znika historia wniosków; zdarzenia `role_grant_request.*` zostają w
+`audit_events`).

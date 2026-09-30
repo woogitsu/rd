@@ -641,6 +641,182 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/admin/grant-requests": {
+      "get": {
+        "operationId": "admin_grantRequests",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.grantRequests",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.grantRequests"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/grant-requests/{requestId}/approve": {
+      "post": {
+        "operationId": "admin_grantRequestApprove",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.grantRequestApprove",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.grantRequestApprove"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/grant-requests/{requestId}/reject": {
+      "post": {
+        "operationId": "admin_grantRequestReject",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.grantRequestReject",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.grantRequestReject"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/admin/grants": {
       "get": {
         "operationId": "admin_grants",
@@ -695,8 +871,8 @@
       "post": {
         "operationId": "admin_grantCreate",
         "responses": {
-          "201": {
-            "description": "Utworzono."
+          "202": {
+            "description": "Sukces."
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -735,7 +911,7 @@
         ],
         "x-rd-mfa": true,
         "x-rd-ok-status": [
-          201
+          202
         ],
         "x-rd-roles": [
           "admin"
@@ -1207,8 +1383,8 @@
       "post": {
         "operationId": "admin_invitationCreate",
         "responses": {
-          "201": {
-            "description": "Utworzono."
+          "202": {
+            "description": "Sukces."
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -1247,7 +1423,7 @@
         ],
         "x-rd-mfa": true,
         "x-rd-ok-status": [
-          201
+          202
         ],
         "x-rd-roles": [
           "admin"
@@ -16905,7 +17081,11 @@
           "followup_source_not_eligible",
           "forbidden",
           "four_eyes_required",
+          "grant_four_eyes_required",
           "grant_not_found",
+          "grant_request_closed",
+          "grant_request_expired",
+          "grant_request_not_found",
           "group_match_direction_mismatch",
           "group_match_sum_mismatch",
           "guardian_not_found",
@@ -17701,8 +17881,28 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "grant_four_eyes_required",
+        "meaning": "Nadanie roli zarządu, skarbnika albo administratora zatwierdza inny administrator niż wnioskodawca i osoba, która ma otrzymać rolę.",
+        "retry": "Nie — zatwierdza inny administrator."
+      },
+      {
         "code": "grant_not_found",
         "meaning": "Nie znaleziono przydziału.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "grant_request_closed",
+        "meaning": "Ten wniosek o nadanie roli został już zatwierdzony, odrzucony lub wygasł.",
+        "retry": "Nie — odśwież listę wniosków."
+      },
+      {
+        "code": "grant_request_expired",
+        "meaning": "Wniosek o nadanie roli wygasł. Złóż nowy wniosek.",
+        "retry": "Nie — złóż nowy wniosek."
+      },
+      {
+        "code": "grant_request_not_found",
+        "meaning": "Nie znaleziono wniosku o nadanie roli.",
         "retry": "Nie — popraw dane żądania."
       },
       {

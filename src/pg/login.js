@@ -332,7 +332,7 @@ export async function accountsUnderPressure(db, { env = {}, now = () => new Date
 
 async function findAccountByEmail(executor, normalizedEmail) {
   const { rows } = await executor.query(
-    `SELECT u.id, u.disabled_at, p.hash, p.must_change
+    `SELECT u.id, u.disabled_at, p.hash, p.must_change, p.set_reason
        FROM users u LEFT JOIN user_passwords p ON p.user_id = u.id
       WHERE lower(u.email) = $1
       ORDER BY u.created_at, u.id
@@ -387,6 +387,22 @@ export async function revokePasswordResetTokens(tx, { userId, actorId, reason })
 
 // --- Logowanie ----------------------------------------------------------------
 
+// #146: konto, którego bieżące hasło ustawiono tokenem wydanym przez KOGOŚ
+// INNEGO (reset administracyjny), jest oznaczone w dzienniku każdego logowania
+// aż do najbliższej zmiany hasła przez właściciela (set_reason przestaje być
+// 'reset'). Pozwala odróżnić działania po resecie administracyjnym od zwykłych —
+// actorId zostaje właścicielem konta. Tylko identyfikatory.
+async function adminResetMarker(tx, account) {
+  if (account.set_reason !== 'reset') return {};
+  const { rows } = await tx.query(
+    `SELECT id, created_by FROM password_reset_tokens
+      WHERE user_id = $1 AND used_at IS NOT NULL ORDER BY used_at DESC, id LIMIT 1`,
+    [account.id],
+  );
+  if (!rows[0] || rows[0].created_by === account.id) return {};
+  return { afterAdminReset: true, resetIssuedBy: rows[0].created_by, resetId: rows[0].id };
+}
+
 export async function passwordLogin(env, { email, password, clientIp }) {
   const normalized = normalizeLoginEmail(email);
   const scopes = loginScopes({ email: normalized, ip: clientIp });
@@ -409,9 +425,10 @@ export async function passwordLogin(env, { email, password, clientIp }) {
     await revokePasswordResetTokens(tx, { userId: account.id, actorId: account.id, reason: 'login_succeeded' });
     const session = await createSession(tx, { userId: account.id, mfaVerified: false });
     const status = await mfaStatus(tx, account.id, env);
+    const adminReset = await adminResetMarker(tx, account);
     await insertAuditEvent(tx, {
       actorId: account.id, action: 'auth.login_succeeded', entityType: 'session', entityId: session.sessionId,
-      metadata: { method: 'password', mfaEnrolled: status.enrolled, mfaRequired: status.mfaRequired },
+      metadata: { method: 'password', mfaEnrolled: status.enrolled, mfaRequired: status.mfaRequired, ...adminReset },
     });
     return sessionPayload(session, status, { mustChangePassword: Boolean(account.must_change) });
   });

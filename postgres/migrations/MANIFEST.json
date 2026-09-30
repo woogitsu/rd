@@ -350,5 +350,9 @@
   {
     "name": "0156_email_followup_four_eyes.sql",
     "sha256": "ce9146c156f8f3044fe38da4120d7efdf9a0e48ca0ede022da82a9fabad044aa"
+  },
+  {
+    "name": "0157_role_grant_requests.sql",
+    "sha256": "a91305492bc38e52f9eb6a6eed72bf2388fe0354420c50dae309b4ee6a602eed"
   }
 ]

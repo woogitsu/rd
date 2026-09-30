@@ -386,7 +386,9 @@ async function adminSetup(db) {
   const grants = Object.fromEntries((await db.query("SELECT user_id, id FROM role_grants WHERE role = 'admin'")).rows.map((r) => [r.user_id, r.id]));
   return { cookies, grants };
 }
-const invitation = { email: 'nowa.osoba@example.invalid', role: 'board', schoolYearId: YEAR };
+// #146: rola niechroniona (Komisja Rewizyjna) — przy dwóch administratorach
+// zaproszenie do roli zarządu byłoby tylko wnioskiem (202), bez tokenu.
+const invitation = { email: 'nowa.osoba@example.invalid', role: 'audit', schoolYearId: YEAR };
 const INVITATION_LOCK = (sql, params) => typeof params?.[0] === 'string' && params[0].startsWith('rd:invitation:');
 
 test('#208 (bariera): podwójne kliknięcie „Zaproś” — drugie czeka na blokadę adresu i dostaje 409 invitation_pending; jeden token', { skip }, async () => {
@@ -452,6 +454,30 @@ test('#208 kontrola pozytywna: bez blokady doradczej dwaj administratorzy odbier
     assert.deepEqual(early, ['settled']);
     assert.deepEqual([a.status, b.status], [200, 200]);
     assert.equal(await count(db, "SELECT count(*)::int AS n FROM role_grants WHERE role = 'admin' AND revoked_at IS NULL"), 0);
+  });
+});
+
+test('#146 (bariera): podwójne kliknięcie „Zatwierdź” wniosku o nadanie roli — drugie czeka na blokadę i dostaje 409; jeden przydział, jedno zdarzenie', { skip }, async () => {
+  await withReal(async (db) => {
+    const { cookies } = await adminSetup(db);
+    const adminC = await seedUserSession(db, { userId: 'u-admin-c', mfa: true, roles: [{ role: 'admin' }] });
+    await seedUser(db, { userId: 'u-nowy-skarbnik' });
+    const plain = barrierEnv(db, {}).env;
+    const requested = await callApi(plain, 'POST', '/api/admin/grants', cookies.adminA, { userId: 'u-nowy-skarbnik', role: 'treasurer' });
+    assert.equal(requested.status, 202, JSON.stringify(requested.body));
+    const approvePath = `/api/admin/grant-requests/${requested.body.request.id}/approve`;
+    const { results: [a, b], waits, errors } = await race(db, {
+      pauseAfter: /UPDATE role_grant_requests SET status = 'approved'/,
+      first: (env) => callApi(env, 'POST', approvePath, cookies.adminB),
+      others: [(env) => callApi(env, 'POST', approvePath, adminC)],
+    });
+    assert.deepEqual(waits, ['advisory'], 'drugie zatwierdzenie czeka na blokadę rd:role_grants (przed blokadą wiersza wniosku)');
+    assert.equal(a.status, 200, JSON.stringify(a.body));
+    assert.deepEqual([b.status, b.body.error], [409, 'grant_request_closed']);
+    assert.deepEqual(errors, []);
+    assert.equal(await count(db, "SELECT count(*)::int AS n FROM role_grants WHERE user_id = 'u-nowy-skarbnik' AND role = 'treasurer'"), 1);
+    assert.equal(await auditCount(db, 'role_grant_request.approved'), 1);
+    assert.equal(await auditCount(db, 'role_grant.created'), 1);
   });
 });
 
