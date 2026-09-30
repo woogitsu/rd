@@ -647,6 +647,13 @@ function validReason(value) {
   return typeof value === 'string' && value.trim().length >= REASON_PATTERN_MIN && value.trim().length <= REASON_PATTERN_MAX;
 }
 
+// Czy zapisane zdarzenie stanu to dokładnie ta sama zmiana (akcja i dokument
+// zastępujący) — tylko wtedy odpowiadamy powtórką (replayed: true).
+function sameStatusChange(existing, action, replacementDocumentId) {
+  return existing.action === action
+    && (existing.replacement_document_id ?? null) === (replacementDocumentId ?? null);
+}
+
 // Wspólny rdzeń zastąpienia i unieważnienia (issue #82). documents jest
 // niezmienne — zapisujemy tylko zdarzenie stanu, plik i wpis metadanych
 // zostają. Powtórzone unieważnienie/zastąpienie już unieważnionego lub
@@ -682,6 +689,14 @@ async function changeStatus(request, env, id, json, action) {
       }
 
       if (action === 'superseded') {
+        // Zastąpienie zmienia, która wersja dowodu obowiązuje — to korekta roku,
+        // a korekta po zamknięciu roku nie ma ścieżki w aplikacji (docs/YEAR_CLOSE.md;
+        // opis dokumentu z zamkniętego roku jest zamrożony od 0106). Blokada
+        // wiersza zamknięcia (FOR SHARE w school_year_assert_open) jak w
+        // triggerach zamrożenia. Unieważnienia NIE blokujemy (wariant zachowawczy,
+        // D-04/D-07): omyłkowo wgrany plik z danymi osobowymi musi dać się ukryć
+        // z domyślnej listy także po zamknięciu roku.
+        await tx.query('SELECT school_year_assert_open($1)', [doc.school_year_id]);
         const replacement = (await tx.query(
           'SELECT id, kind, school_year_id, class_id FROM documents WHERE id = $1', [replacementDocumentId],
         )).rows[0];
@@ -712,7 +727,12 @@ async function changeStatus(request, env, id, json, action) {
       if (existingForDocument) {
         // Ta sama akcja co już zapisana: bezpieczna powtórka (np. dwa kliknięcia
         // „Unieważnij” z różnymi kluczami po błędzie sieci) — bez nowego wiersza.
-        if (existingForDocument.action === action) return { replayed: toStatusEvent(existingForDocument) };
+        // Zastąpienie INNYM dokumentem niż zapisany to konflikt, nie powtórka:
+        // odpowiedź nie może udawać sukcesu, wskazując cudzą wersję (#82, wyścig
+        // dwóch równoległych zastąpień — tylko jedno się udaje, drugie 409).
+        if (sameStatusChange(existingForDocument, action, replacementDocumentId)) {
+          return { replayed: toStatusEvent(existingForDocument) };
+        }
         return { conflict: true };
       }
 
@@ -757,12 +777,17 @@ async function changeStatus(request, env, id, json, action) {
            FROM document_status_events WHERE document_id = $1`, [id],
       )).rows[0];
       if (existing) {
-        if (existing.action === action) return json({ statusEvent: toStatusEvent(existing), replayed: true }, 200);
+        if (sameStatusChange(existing, action, replacementDocumentId)) {
+          return json({ statusEvent: toStatusEvent(existing), replayed: true }, 200);
+        }
         return json({ error: 'document_status_conflict' }, 409);
       }
     }
     if (String(error?.message ?? '').includes('document_status_replacement_not_active')) {
       return json({ error: 'document_status_replacement_not_active' }, 409);
+    }
+    if (String(error?.message ?? '').includes('school_year_closed')) {
+      return json({ error: 'school_year_closed' }, 409);
     }
     throw error;
   }

@@ -256,6 +256,51 @@ function attachmentIds(row) {
   return [...new Set(ids)];
 }
 
+// #82: stan każdego dowodu wpisu i jego aktualna wersja. Powiązanie z wpisem
+// (source_document_id, documents.linked_entity_*) zostaje przy pierwotnym
+// dokumencie — to historia; aktualną wersję wyznacza łańcuch zastąpień
+// (document_status_events.replacement_document_id) aż do dokumentu bez
+// zdarzenia (aktualny) albo unieważnionego (brak aktualnej wersji → null).
+// Zastępca ma zawsze ten sam rodzaj, rok i klasę (documents.js), więc łańcuch
+// nie wychodzi poza rok, do którego sprawdzono uprawnienia. Łańcuch jest
+// acykliczny (guard 0066: zastępca musi być aktywny); limit głębokości to
+// tylko bezpiecznik. Jedno zapytanie na stronę listy.
+const ATTACHMENT_CHAIN_LIMIT = 50;
+async function attachmentStatuses(db, ids) {
+  const unique = [...new Set(ids)];
+  const result = new Map();
+  if (!unique.length) return result;
+  const { rows } = await db.query(
+    `WITH RECURSIVE chain(start_id, doc_id, depth) AS (
+       SELECT id, id, 0 FROM unnest($1::text[]) AS id
+       UNION ALL
+       SELECT chain.start_id, event.replacement_document_id, chain.depth + 1
+         FROM chain
+         JOIN document_status_events event
+           ON event.document_id = chain.doc_id AND event.action = 'superseded'
+        WHERE chain.depth < $2
+     )
+     SELECT DISTINCT ON (chain.start_id)
+            chain.start_id,
+            chain.doc_id AS last_id,
+            COALESCE(last_event.action, 'active') AS last_status,
+            COALESCE(start_event.action, 'active') AS start_status
+       FROM chain
+       LEFT JOIN document_status_events last_event ON last_event.document_id = chain.doc_id
+       LEFT JOIN document_status_events start_event ON start_event.document_id = chain.start_id
+      ORDER BY chain.start_id, chain.depth DESC`,
+    [unique, ATTACHMENT_CHAIN_LIMIT],
+  );
+  for (const row of rows) {
+    result.set(row.start_id, {
+      documentId: row.start_id,
+      status: row.start_status,
+      currentDocumentId: row.last_status === 'active' ? row.last_id : null,
+    });
+  }
+  return result;
+}
+
 // #144: wpis zastępczy danego wpisu (odwrotność replaces_entry_id). Oba wpisy
 // są w tym samym roku (ledger_replacement_mismatch), więc podzapytanie nie
 // ujawnia danych spoza roku, do którego sprawdzono uprawnienia.
@@ -482,7 +527,15 @@ async function listEntries(request, env, url, json) {
   const nextCursor = rows.length > limit && visibleRows.length
     ? encodeDateIdCursor(visibleRows[visibleRows.length - 1].occurred_on, visibleRows[visibleRows.length - 1].id, cursorScope)
     : null;
-  return json({ entries: visibleRows.map(entryFromRow), nextCursor });
+  const statuses = await attachmentStatuses(env.db, visibleRows.flatMap(attachmentIds));
+  return json({
+    entries: visibleRows.map((row) => {
+      const entry = entryFromRow(row);
+      entry.attachments = entry.attachmentIds.map((id) => statuses.get(id) ?? { documentId: id, status: 'active', currentDocumentId: id });
+      return entry;
+    }),
+    nextCursor,
+  });
 }
 
 function readOverviewFilters(url, { allowDirection = false } = {}) {

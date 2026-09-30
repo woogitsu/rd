@@ -151,6 +151,52 @@ test('entry lists all evidence: primary document and documents attached later; a
   assert.equal(Number((await db.query("SELECT count(*) AS n FROM documents WHERE linked_entity_id = $1", [entry.id])).rows[0].n), 1);
 }));
 
+// #82: powiązanie z wpisem zostaje przy pierwotnym dokumencie (historia), a lista
+// wskazuje stan każdego dowodu i jego aktualną wersję po łańcuchu zastąpień.
+const pdfVariant = (label) => new TextEncoder().encode(`%PDF-1.4\n% syntetyczny dowod ${label}\n%%EOF\n`);
+async function changeDocumentStatus(env, cookie, id, action, body = {}) {
+  return call(env, `/api/documents/${id}/${action}`, {
+    cookie, body: { reason: 'Syntetyczny powod zmiany', ...body }, idempotencyKey: key(`status-${action}`),
+  });
+}
+
+test('#82: entry evidence shows status and the current version; old links stay in attachmentIds', async () => withEnv(async ({ env, cookies }) => {
+  const primary = (await uploadDocument(env, cookies.treasurer, { bytes: pdfVariant('A') })).body.document;
+  const entry = (await createEntry(env, cookies.treasurer, { sourceDocumentId: primary.id })).body.entry;
+  const linked = (await uploadDocument(env, cookies.treasurer, { link: entry.id, bytes: pdfVariant('L') })).body.document;
+
+  let [listed] = await listEntries(env, cookies.treasurer);
+  assert.deepEqual(listed.attachments, [
+    { documentId: primary.id, status: 'active', currentDocumentId: primary.id },
+    { documentId: linked.id, status: 'active', currentDocumentId: linked.id },
+  ]);
+
+  // Faktura korygująca B zastępuje A, potem C zastępuje B — aktualna wersja dowodu A to C.
+  const b = (await uploadDocument(env, cookies.treasurer, { bytes: pdfVariant('B') })).body.document;
+  const c = (await uploadDocument(env, cookies.treasurer, { bytes: pdfVariant('C') })).body.document;
+  assert.equal((await changeDocumentStatus(env, cookies.treasurer, primary.id, 'supersede', { replacementDocumentId: b.id })).status, 201);
+  assert.equal((await changeDocumentStatus(env, cookies.treasurer, b.id, 'supersede', { replacementDocumentId: c.id })).status, 201);
+  assert.equal((await changeDocumentStatus(env, cookies.treasurer, linked.id, 'void')).status, 201);
+
+  [listed] = await listEntries(env, cookies.treasurer);
+  assert.deepEqual(listed.attachmentIds, [primary.id, linked.id], 'powiązania pierwotne zostają (historia)');
+  assert.equal(listed.sourceDocumentId, primary.id);
+  assert.deepEqual(listed.attachments, [
+    { documentId: primary.id, status: 'superseded', currentDocumentId: c.id },
+    { documentId: linked.id, status: 'voided', currentDocumentId: null },
+  ]);
+
+  // Ostatnia wersja unieważniona: zastąpiony dowód nie ma już aktualnej wersji.
+  assert.equal((await changeDocumentStatus(env, cookies.treasurer, c.id, 'void')).status, 201);
+  [listed] = await listEntries(env, cookies.treasurer);
+  assert.deepEqual(listed.attachments[0], { documentId: primary.id, status: 'superseded', currentDocumentId: null });
+
+  // Wpis bez dowodów: pusta lista, bez dodatkowego zapytania o stan.
+  await createEntry(env, cookies.treasurer, { occurredOn: '2026-10-01' });
+  const entries = await listEntries(env, cookies.treasurer);
+  assert.deepEqual(entries.find((item) => item.id !== entry.id).attachments, []);
+}));
+
 test('storage failure while attaching leaves no orphaned link; retry with the same key attaches once', async () => withEnv(async ({ db, env, cookies }) => {
   const entry = (await createEntry(env, cookies.treasurer, {})).body.entry;
   const originalPut = env.storage.putObject;
