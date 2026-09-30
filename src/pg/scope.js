@@ -1,8 +1,10 @@
 // Jeden resolver zakresu przydziałów (issue #155): rok, klasa, MFA — zamiast
-// dziewięciu lokalnych implementacji (families.js#scopeFromGrants,
-// events.js/news.js, meetings.js#contextFor, print.js#printScope,
-// documents.js, import.js, year-close.js, export.js#guardianScope/
-// householdScope).
+// lokalnych implementacji, które były w families.js#scopeFromGrants (także
+// board.js, guardian-updates.js), events.js/news.js, meetings.js#contextFor,
+// print.js#printScope, documents.js, import.js, year-close.js,
+// representative.js i exports.js. (export.js#guardianScope/householdScope z
+// opisu issue to zakres DANYCH roku w paczce eksportu, nie przydziałów — bez
+// zmian.)
 //
 // `resolveScope` odpowiada na to samo pytanie, które dziś każdy moduł liczy
 // po swojemu: „dla ról R (i roku Y, jeśli podany) — czy wywołujący ma zakres

@@ -61,3 +61,65 @@ test('src/pg/** i src/email/** nie powtarzają warunku aktualności student_guar
   walk(fileURLToPath(new URL('../src/email', import.meta.url)));
   assert.deepEqual(offenders, []);
 });
+
+// #155: jeden resolver zakresu przydziałów (src/pg/scope.js). Żaden moduł
+// src/pg/** poza scope.js nie filtruje `context.grants`/`actor.grants` sam
+// i nie woła surowego `isAuthorized` (które traktuje przydział klasowy jak
+// szkolny, gdy wymóg nie podaje classId — SR-01). Nowy moduł ma korzystać z
+// resolveScope / isAuthorizedScoped / authorizedClassIds / requireAccess.
+const SCOPE_RULES = [
+  { name: 'metoda tablicy na przydziałach', pattern: /\bgrants\s*\??\.\s*(filter|some|every|find|findIndex|map|flatMap|forEach|reduce)\s*\(/g },
+  { name: 'pętla po przydziałach', pattern: /\bof\s+[\w.?]*\bgrants\b/g },
+  { name: 'pole zakresu przydziału', pattern: /\b(grant|g)\s*\??\.\s*(classId|schoolYearId)\b/g },
+  { name: 'surowe isAuthorized', pattern: /\bisAuthorized\s*\(/g },
+  { name: 'import surowego isAuthorized', pattern: /import\s*\{[^}]*\bisAuthorized\b[^}]*\}\s*from\s*['"][^'"]*authorization\.js['"]/g },
+];
+// Jedyny wyjątek: hasActiveRole sprawdza status roli (ROLE_STATUS), nie zakres.
+const SCOPE_ALLOWED = new Set([
+  "src/pg/authorization.js: grants.some(",
+]);
+
+function scopeOffenders(relativePath, text) {
+  const found = [];
+  for (const rule of SCOPE_RULES) {
+    for (const match of text.matchAll(rule.pattern)) {
+      const entry = `${relativePath}: ${match[0].replace(/\s+/g, '')}`;
+      if (!SCOPE_ALLOWED.has(entry)) found.push(`${entry} (${rule.name})`);
+    }
+  }
+  return found;
+}
+
+test('#155: src/pg/** nie liczy zakresu przydziałów lokalnie — tylko src/pg/scope.js', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith('.js')) {
+        const relativePath = path.slice(root.length).replace(/^\/+/, '');
+        if (relativePath === 'src/pg/scope.js') continue;
+        offenders.push(...scopeOffenders(relativePath, readFileSync(path, 'utf8')));
+      }
+    }
+  };
+  walk(fileURLToPath(new URL('../src/pg', import.meta.url)));
+  assert.deepEqual(offenders, []);
+});
+
+test('#155: detektor lokalnego zakresu łapie typowe wzorce (samokontrola testu)', () => {
+  const samples = [
+    'const x = context.grants.filter((grant) => !grant.classId);',
+    'actor.grants\n    .some((g) => g.role === "board")',
+    'for (const grant of context.grants) {}',
+    'if (grant.schoolYearId === id) {}',
+    "import { isAuthorized } from '../authorization.js';",
+    'return isAuthorized(context, requirement);',
+  ];
+  for (const sample of samples) {
+    assert.notDeepEqual(scopeOffenders('src/pg/example.js', sample), [], sample);
+  }
+  assert.deepEqual(scopeOffenders('src/pg/example.js',
+    "import { isAuthorizedScoped } from './scope.js';\nisAuthorizedScoped(context, { roles });"), []);
+});

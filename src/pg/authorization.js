@@ -1,13 +1,13 @@
 // Autoryzacja na PostgreSQL. Reguła decyzji (isAuthorized) jest wspólna
 // ze starym modułem src/authorization.js; tu zmienia się tylko źródło danych.
+// Zakres (rok, klasa, MFA) liczy wyłącznie src/pg/scope.js (#155) — surowe
+// `isAuthorized` nie jest już stąd eksportowane, bo bez `classId` traktuje
+// przydział klasowy jak szkolny (SR-01).
 
-import { isAuthorized } from '../authorization.js';
 import { isoTimestamp, loadSession, ROLE_STATUS } from './auth.js';
 import { insertAuditEvent } from './audit.js';
 import { mfaStatus } from './mfa-policy.js';
 import { isAuthorizedScoped, schoolWideContext } from './scope.js';
-
-export { isAuthorized };
 
 // #176: konto może mieć rolę bez żadnej trasy chronionej dziś (np. `principal`,
 // ROLE_STATUS 'pending_decision'). Serwer — nie front-end — rozstrzyga, czy
