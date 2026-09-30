@@ -1049,6 +1049,110 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/admin/invitation-batches/apply": {
+      "post": {
+        "operationId": "admin_invitationBatchApply",
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.invitationBatchApply",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.invitationBatchApply"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/invitation-batches/preview": {
+      "post": {
+        "operationId": "admin_invitationBatchPreview",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.invitationBatchPreview",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.invitationBatchPreview"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/admin/invitations": {
       "get": {
         "operationId": "admin_invitations",
@@ -16646,6 +16750,7 @@
           "document_too_large",
           "duplicate_name",
           "duplicate_photo",
+          "duplicate_row",
           "empty_document",
           "empty_photo_file",
           "ends_before_start",
@@ -16734,6 +16839,7 @@
           "invalid_identifier",
           "invalid_import",
           "invalid_invitation",
+          "invalid_invitation_batch_text",
           "invalid_json",
           "invalid_kind",
           "invalid_label",
@@ -16780,6 +16886,7 @@
           "invalid_revision",
           "invalid_rights_note",
           "invalid_role",
+          "invalid_row_format",
           "invalid_row_numbers",
           "invalid_rows",
           "invalid_school_year",
@@ -16805,6 +16912,9 @@
           "invalid_year_end_confirmation",
           "invalid_year_order",
           "invitation_already_accepted",
+          "invitation_batch_empty",
+          "invitation_batch_invalid",
+          "invitation_batch_stale",
           "invitation_not_found",
           "invitation_not_pending",
           "invitation_pending",
@@ -16929,6 +17039,7 @@
           "report_snapshot_not_found",
           "report_snapshot_superseded",
           "report_snapshot_supersedes_required",
+          "representative_already_assigned",
           "request_already_consumed",
           "request_not_found",
           "request_too_large",
@@ -17350,6 +17461,11 @@
       {
         "code": "duplicate_photo",
         "meaning": "To zdjęcie jest już dodane.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "duplicate_row",
+        "meaning": "Ten sam adres i klasa powtarzają się w partii.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -17793,6 +17909,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_invitation_batch_text",
+        "meaning": "Wklej wiersze w formacie „klasa; e-mail” (najwyżej 24 KB tekstu).",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_json",
         "meaning": "Serwer nie odczytał danych formularza.",
         "retry": "Nie — popraw dane żądania."
@@ -18023,6 +18144,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_row_format",
+        "meaning": "Wiersz musi mieć dwie kolumny: klasa i e-mail.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_row_numbers",
         "meaning": "Niepoprawne numery wierszy.",
         "retry": "Nie — popraw dane żądania."
@@ -18146,6 +18272,21 @@
         "code": "invitation_already_accepted",
         "meaning": "Zaproszenie zostało już przyjęte.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "invitation_batch_empty",
+        "meaning": "Brak wierszy do zaproszenia. Wklej co najmniej jeden wiersz „klasa; e-mail”.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invitation_batch_invalid",
+        "meaning": "Partia ma błędne wiersze. Popraw je w podglądzie i zatwierdź ponownie.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invitation_batch_stale",
+        "meaning": "Dane zmieniły się od podglądu zaproszeń. Wygeneruj podgląd ponownie.",
+        "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
       },
       {
         "code": "invitation_not_found",
@@ -18765,6 +18906,11 @@
       {
         "code": "report_snapshot_supersedes_required",
         "meaning": "Rok ma już migawkę sprawozdania. Wskaż bieżącą migawkę i powód korekty.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "representative_already_assigned",
+        "meaning": "Ta osoba jest już przedstawicielem tej klasy w tym roku.",
         "retry": "Nie — popraw dane żądania."
       },
       {

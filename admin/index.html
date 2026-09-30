@@ -163,6 +163,65 @@
         <p><button type="button" id="invitations-more" hidden>Pokaż więcej</button></p>
       </section>
 
+      <section class="card" aria-labelledby="coverage-title">
+        <div class="section-heading">
+          <div><h2 id="coverage-title">Obsada klas</h2><p id="coverage-summary">Wybierz rok szkolny.</p></div>
+          <button type="button" id="reload-coverage">Odśwież</button>
+        </div>
+        <p class="hint">Dla każdej klasy roku: aktywni przedstawiciele, oczekujące zaproszenia (bez kodów) i data ostatniego logowania przedstawiciela. Bez adresów e-mail. Brak przedstawiciela nie jest oceną klasy — lista może być nieaktualna.</p>
+        <p><label>Rok szkolny <select id="coverage-year" data-years="pick"></select></label></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Obsada klas</caption>
+            <thead><tr><th scope="col">Klasa</th><th scope="col">Stan</th><th scope="col" class="num">Przedstawiciele</th><th scope="col" class="num">Zaproszenia oczekujące</th><th scope="col">Najbliższe wygaśnięcie zaproszenia</th><th scope="col">Ostatnie logowanie</th></tr></thead>
+            <tbody id="coverage-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="batch-title">
+        <div class="section-heading">
+          <div><h2 id="batch-title">Zaproszenia zbiorcze przedstawicieli</h2><p>Jeden wiersz na osobę: <code>klasa; e-mail</code>. Podgląd pokazuje błędy z numerem wiersza; zatwierdzenie tworzy osobne zaproszenia naraz. Panel nie wysyła e-maili.</p></div>
+        </div>
+        <form id="batch-form" class="grid-form">
+          <label>Rok szkolny <select name="schoolYearId" data-years="pick" required></select></label>
+          <label>Ważność (godziny) <input name="ttlHours" inputmode="numeric" placeholder="72" /></label>
+          <label class="wide">Wiersze (klasa; e-mail)
+            <textarea name="text" rows="8" autocomplete="off" spellcheck="false" required aria-describedby="batch-hint" placeholder="1A; osoba@example.invalid"></textarea>
+          </label>
+          <p class="hint" id="batch-hint">Klasa: nazwa lub identyfikator klasy wybranego roku. Separator: średnik, przecinek lub tabulator (kopiowanie z arkusza). Najwyżej 100 wierszy. Jedna osoba w dwóch klasach — dwa wiersze; przyjmie oba zaproszenia tym samym kontem.</p>
+          <button type="submit">Pokaż podgląd</button>
+          <p class="form-error" id="batch-error" role="alert"></p>
+        </form>
+        <div id="batch-preview" hidden>
+          <p id="batch-preview-summary" role="status"></p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Podgląd zaproszeń zbiorczych</caption>
+              <thead><tr><th scope="col" class="num">Wiersz</th><th scope="col">Klasa</th><th scope="col">E-mail</th><th scope="col">Konto</th><th scope="col">Uwagi</th></tr></thead>
+              <tbody id="batch-preview-body"></tbody>
+            </table>
+          </div>
+          <p><button type="button" class="primary" id="batch-apply" disabled>Zatwierdź i utwórz zaproszenia</button></p>
+        </div>
+        <div class="token-box" id="batch-result" hidden>
+          <p class="token-warning"><strong>Linki są widoczne tylko teraz.</strong> Przekaż każdy osobie zapraszanej osobnym, zaufanym kanałem albo wydrukuj kartki. Nie wklejaj listy do zgłoszeń ani czatów grupowych. Po zamknięciu tej ramki linków nie da się odzyskać — w razie utraty użyj „Wyślij ponownie” przy zaproszeniu.</p>
+          <p class="hint" id="batch-result-summary"></p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Utworzone zaproszenia</caption>
+              <thead><tr><th scope="col" class="num">Wiersz</th><th scope="col">Klasa</th><th scope="col">E-mail</th><th scope="col">Link</th><th scope="col">Ważne do</th></tr></thead>
+              <tbody id="batch-result-body"></tbody>
+            </table>
+          </div>
+          <p class="row-actions start">
+            <button type="button" id="batch-copy">Kopiuj listę</button>
+            <button type="button" id="batch-print">Drukuj kartki</button>
+            <button type="button" id="batch-hide">Zamknij</button>
+          </p>
+        </div>
+      </section>
+
       <section class="card" aria-labelledby="years-title">
         <div class="section-heading">
           <div><h2 id="years-title">Lata szkolne i klasy</h2><p id="years-summary">Wczytywanie…</p></div>
@@ -240,6 +299,9 @@
         </div>
       </section>
     </main>
+
+    <!-- Kartki do wydruku (#108): wypełniane tylko na czas drukowania i czyszczone po nim. -->
+    <div id="print-sheets" class="print-sheets" aria-hidden="true"></div>
 
     <script type="module" src="/main.js"></script>
     <script type="module" src="/ops-status.js"></script>

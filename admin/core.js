@@ -86,6 +86,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   guardian_update_request: "Prośba o aktualizację danych opiekuna",
   import_batch: "Import uczniów",
   invitation: "Zaproszenie",
+  invitation_batch: "Partia zaproszeń",
   ledger_budget_adoption: "Przyjęcie preliminarza",
   ledger_budget_line: "Pozycja preliminarza",
   ledger_category: "Kategoria księgi",
