@@ -13,6 +13,7 @@ import {
 } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
 import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const PREV = 'y-2025';
 const YEAR = 'y-2026';
@@ -258,7 +259,7 @@ test('#93: resolutionId przyjmuje tylko bieżącą, przyjętą uchwałę zebrani
     const ids = listed.body.resolutions.map((item) => item.id);
     assert.ok(ids.includes(adopted.id) && ids.includes(previousYear.id));
     assert.ok(!ids.includes(nextYear.id) && !ids.includes(rejected.id) && !ids.includes(classResolution.id) && !ids.includes(toCorrect.id));
-    assert.ok(listed.body.resolutions.every((item) => !('body' in item)));
+    assertEvery(listed.body.resolutions, (item) => !('body' in item));
     assert.equal((await call('GET', `/api/ledger/resolutions?schoolYearId=${YEAR}`, cookies.rep)).status, 403);
   } finally { await db.close(); }
 });

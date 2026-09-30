@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   EXEMPT_FIELDS, FORBIDDEN_CATEGORIES, GATED_FIELDS, PersonalDataError, gateFreeText, piiAuditMetadata,
 } from '../src/pg/pii-gate.js';
+import { SYNTHETIC_PHONE_IN_TEXT } from './helpers/assertions.js';
 
 const FIELD = 'payment_corrections.reason';
 
@@ -52,7 +53,7 @@ test('telefon i znane imię: 422 possible_personal_data, po potwierdzeniu zapis 
   assert.equal(gate.piiConfirmed, true);
   assert.deepEqual(new Set(gate.piiCategories), new Set(['phone', 'known_name']));
   const metadata = piiAuditMetadata(gate);
-  assert.ok(!JSON.stringify(metadata).includes('Anna') && !JSON.stringify(metadata).includes('470'));
+  assert.ok(!JSON.stringify(metadata).includes('Anna') && !SYNTHETIC_PHONE_IN_TEXT.test(JSON.stringify(metadata)));
 });
 
 test('kategoria jednoznaczna wygrywa z potwierdzeniem, gdy w tekście jest też telefon', () => {

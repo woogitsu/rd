@@ -26,3 +26,9 @@ export function assertEvery(items, predicate, message, options = {}) {
   const offending = list.findIndex((item, index) => !predicate(item, index));
   assert.equal(offending, -1, `${message ?? 'assertEvery'}: element #${offending} nie spełnia warunku: ${JSON.stringify(list[offending])}`);
 }
+
+// Syntetyczny numer telefonu używany w testach bramki danych osobowych
+// (+32 470 12 34 56) w dowolnym zapisie. Asercja „metadane nie zawierają
+// telefonu” musi szukać CAŁEGO numeru: krótki podciąg (np. '470') trafia też
+// w losowy UUID lub skrót w metadanych i daje niestabilny wynik (#214, #548).
+export const SYNTHETIC_PHONE_IN_TEXT = /(?:\+?32[\s./-]?)?470[\s./-]?12[\s./-]?34[\s./-]?56/;

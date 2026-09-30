@@ -13,6 +13,7 @@ import {
   isValidId,
   reportUrl,
 } from '../audit/core.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const NBSP = ' ';
 
@@ -83,7 +84,7 @@ test('buildSections: sekcje z raportu, kwoty w EUR, bez identyfikatorów autoró
 
 test('buildSections: raport z archiwum bez sekcji opcjonalnych, pusty raport bez wyjątku', () => {
   const minimal = buildSections({ balance: {}, checks: {}, categories: [] });
-  assert.ok(minimal.every((s) => Array.isArray(s.rows)));
+  assertEvery(minimal, (s) => Array.isArray(s.rows));
   assert.ok(!minimal.some((s) => s.id === 'evidence' || s.id === 'reviews' || s.id === 'resolution-execution'));
   assert.deepEqual(buildSections(null), []);
   const withOptional = buildSections({ ...REPORT, evidence: { expensesWithoutEvidence: { count: 1, netCents: 500, items: [{ occurredOn: '2026-11-02', category: 'X', description: 'Y', netAmountCents: 500, id: 'e2' }] }, possibleDuplicateEvidence: [] }, expenseReviews: { unverified: { count: 1, netCents: 5 }, questioned: { count: 0, netCents: 0 }, verified: { count: 2, netCents: 9 }, splitWindowDays: 30, possibleSplits: [] }, resolutionExecution: [{ number: 'U/1', title: 'T', status: 'adopted', authorizedAmountCents: null, spentNetCents: 1, remainingCents: null, entryCount: 1 }] });

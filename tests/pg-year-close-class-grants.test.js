@@ -8,6 +8,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const OLD = 'y-2024';
 const NEW = 'y-2025';
@@ -169,7 +170,7 @@ describe('zamknięcie roku a przydziały klasy bez roku', () => {
       "SELECT actor_id, metadata_json FROM audit_events WHERE action = 'role_grant.school_year_backfilled'",
     );
     assert.equal(audit.length, 5);
-    assert.ok(audit.every((row) => row.actor_id === null && row.metadata_json.previousSchoolYearId === null));
+    assertEvery(audit, (row) => row.actor_id === null && row.metadata_json.previousSchoolYearId === null);
     assert.equal(JSON.stringify(audit).includes('@'), false, 'audyt bez danych osobowych');
 
     // Po migracji: przydział klasy dostaje rok klasy, niezgodny rok jest odrzucany.

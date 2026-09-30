@@ -11,6 +11,7 @@ import {
 import { createMemoryStorage, createS3Storage, sha256Hex, signRequest, storageFromEnv } from '../src/storage.js';
 import { resolveRuntime } from '../src/server.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-2026';
 const HOUR = 60 * 60 * 1000;
@@ -248,7 +249,7 @@ test('a fifth concurrent upload gets 503 upload_busy with Retry-After, before th
   const cookie = await treasurer(db);
   resetUploadSlotsForTests();
   const releases = Array.from({ length: DEFAULT_MAX_CONCURRENT_UPLOADS }, () => tryAcquireUploadSlot());
-  assert.ok(releases.every((release) => typeof release === 'function'));
+  assertEvery(releases, (release) => typeof release === 'function');
   try {
     const busy = await upload(env, { cookie });
     assert.equal(busy.response.status, 503);
@@ -1110,7 +1111,7 @@ test('inline preview of PDF, PNG and JPEG: safe headers, byte-identical body, au
   }
   const viewed = await auditRows(db, 'document.viewed');
   assert.equal(viewed.length, 3);
-  assert.ok(viewed.every((event) => event.actor_id === 'u-treasurer'));
+  assertEvery(viewed, (event) => event.actor_id === 'u-treasurer');
   viewed.forEach((event) => assertNoPii(event.metadata_json));
   assert.equal((await auditRows(db, 'document.downloaded')).length, 0);
   // Pobranie nadal jest załącznikiem, bez zgody na ramkę i osobnym zdarzeniem.
@@ -1315,5 +1316,5 @@ test('pagination: 120 documents, 70 inaccessible to the representative — full 
   }
   assert.deepEqual(sizes, [20, 20, 10]);
   assert.equal(new Set(seen).size, 50);
-  assert.ok(seen.every((id) => id.startsWith('own-')));
+  assertEvery(seen, (id) => id.startsWith('own-'));
 }));

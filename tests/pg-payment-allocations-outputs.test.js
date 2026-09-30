@@ -119,7 +119,8 @@ test('kartki: kwoty z części tylko dla roli finansowej z MFA; przedstawiciel i
       if (res.status === 200) {
         assert.ok(res.body.rows.length > 0);
         for (const row of res.body.rows) assert.ok(!('recordedNetCents' in row), JSON.stringify(row));
-        assert.ok(!res.text.includes('2500') && !res.text.includes('5000'), res.text);
+        // #214: kwota jako osobna liczba, nie podciąg losowego identyfikatora.
+        assert.ok(!/(?<![\w-])(?:2500|5000)(?![\w-])/.test(res.text), res.text);
       } else {
         assert.equal(res.status, 403);
       }

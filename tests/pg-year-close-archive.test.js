@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
 import { createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const OLD = 'y-2026';
 const NEW = 'y-2027';
@@ -130,7 +131,7 @@ describe('po zamknięciu roku: odczyt archiwum przez nową Radę', () => {
     // Zdarzenia audytu: kto, rok, trasa — bez danych osobowych.
     const reads = (await archiveReads(db)).slice(before);
     assert.equal(reads.filter((row) => row.actor_id === 'u-board-new').length, 3);
-    assert.ok(reads.every((row) => row.entity_id === OLD));
+    assertEvery(reads, (row) => row.entity_id === OLD);
     const routes = new Set(reads.map((row) => (typeof row.metadata_json === 'string' ? JSON.parse(row.metadata_json) : row.metadata_json).route));
     assert.deepEqual([...routes].sort(), ['reports.audit', 'year_close.handover']);
     assert.equal(JSON.stringify(reads).includes('@'), false);

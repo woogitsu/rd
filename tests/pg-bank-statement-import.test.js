@@ -12,6 +12,7 @@ import { parseCamt053 } from '../src/pg/bank/camt053.js';
 import { StatementFileError, normalizeIban } from '../src/pg/bank/common.js';
 import { request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 import { OTHER_IBAN, RADA_IBAN, camtFile, codaFile } from './helpers/bank-statements.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-test';
 const CODA_FIXTURE = readFileSync(new URL('./fixtures/coda-synthetic.cod', import.meta.url), 'utf8');
@@ -171,7 +172,7 @@ test('CODA import: two equal payments on one day stay two lines; no reference, a
   const { rows: lines } = await db.query(
     'SELECT amount_cents, bank_transaction_hash, reference_hash FROM bank_statement_lines ORDER BY line_no');
   assert.equal(lines.length, 3);
-  assert.ok(lines.every((line) => /^[0-9a-f]{64}$/.test(line.bank_transaction_hash)));
+  assertEvery(lines, (line) => /^[0-9a-f]{64}$/.test(line.bank_transaction_hash));
   assert.equal(new Set(lines.map((line) => line.bank_transaction_hash)).size, 3);
   // Dump tabel uzgodnienia i dziennika: brak rachunków, nazw i tytułów.
   const dump = JSON.stringify([

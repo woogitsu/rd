@@ -119,7 +119,8 @@ test('rodzeństwo w dwóch gospodarstwach: przelew 50 EUR dzielony 25/25; każde
     assert.equal(metadata.schoolYearId, YEAR);
     assert.equal(metadata.paymentEntryId, paymentId);
     const text = JSON.stringify(metadata);
-    assert.ok(!text.includes('h-a') && !text.includes('h-b') && !text.includes('2500'), text);
+    // #214: kwota jako osobna liczba, nie podciąg — '2500' może wystąpić w losowym UUID.
+    assert.ok(!text.includes('h-a') && !text.includes('h-b') && !/(?<![\w-])2500(?![\w-])/.test(text), text);
   }
 
   // Przelew zbiorczy: wpłata zostaje jedną wpłatą o pełnej kwocie, więc pozycja wyciągu 50 EUR łączy się 1:1.

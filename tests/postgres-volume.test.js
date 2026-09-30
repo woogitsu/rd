@@ -10,6 +10,7 @@ import { pgliteClient } from '../scripts/smoke-postgres.js';
 import {
   buildSyntheticData as buildData, CLASS_COUNT, GUARDIANS, insertSyntheticData, STUDENTS, USERS, YEAR,
 } from '../scripts/lib/synthetic-seed.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
@@ -52,7 +53,7 @@ test('PostgreSQL schema handles 1000 students, 2000 contacts and 50 users within
          FROM classes c LEFT JOIN enrollments e ON e.class_id = c.id AND e.school_year_id = c.school_year_id
         WHERE c.school_year_id = $1 GROUP BY c.name ORDER BY c.name`, [YEAR]));
     assert.equal(byClass.rows.length, CLASS_COUNT);
-    assert.ok(byClass.rows.every((row) => row.students === STUDENTS / CLASS_COUNT));
+    assertEvery(byClass.rows, (row) => row.students === STUDENTS / CLASS_COUNT);
 
     const contacts = await timed('contactable guardians for one class', () => db.query(
       `SELECT DISTINCT g.id
@@ -69,7 +70,7 @@ test('PostgreSQL schema handles 1000 students, 2000 contacts and 50 users within
             WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > now())
             ORDER BY role, class_id, school_year_id`, [userId]);
         assert.ok(rows.length >= 1);
-        if (rows[0].role === 'representative') assert.ok(rows.every((row) => row.class_id));
+        if (rows[0].role === 'representative') assertEvery(rows, (row) => row.class_id);
       }
     });
 

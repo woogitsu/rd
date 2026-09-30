@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { newsItems, normalizePhotos } from '../site/core.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const [html, css, main] = await Promise.all([read('site/index.html'), read('site/styles.css'), read('site/main.js')]);
@@ -86,7 +87,7 @@ test('site/: galeria — alt wyłącznie z zatwierdzonych danych, dekoracyjne z 
   assert.deepEqual(photos.map((p) => [p.id, p.alt]), [['a', 'Stoły na dziedzińcu'], ['b', '']]);
   assert.equal(photos[1].decorative, true);
   // Alt to dokładnie tekst z bazy (bez dopisków), a nazwa pliku ani adres nie trafiają do alt.
-  assert.ok(photos.every((p) => !p.alt.includes('/api/') && !/\.(jpe?g|png|webp)/i.test(p.alt)));
+  assertEvery(photos, (p) => !p.alt.includes('/api/') && !/\.(jpe?g|png|webp)/i.test(p.alt));
 });
 
 test('site/: 20 wpisów z długimi tytułami — komplet, od najnowszego, tytuł ograniczony i tylko jako tekst', () => {
@@ -102,8 +103,8 @@ test('site/: 20 wpisów z długimi tytułami — komplet, od najnowszego, tytuł
   assert.equal(items.length, 20);
   assert.equal(items[0].id, 'p19');
   assert.equal(items.at(-1).title, '<img src=x onerror=alert(1)>'); // zostaje zwykłym tekstem (renderowany przez textContent)
-  assert.ok(items.every((n) => n.title.length <= 300));
-  assert.ok(items.slice(0, -1).every((n) => n.title.endsWith('…')));
+  assertEvery(items, (n) => n.title.length <= 300);
+  assertEvery(items.slice(0, -1), (n) => n.title.endsWith('…'));
 });
 
 test('site/: komunikaty stanu — błąd wczytywania jest role="alert", stan pusty role="status"', () => {

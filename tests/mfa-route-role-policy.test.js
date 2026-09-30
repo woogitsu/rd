@@ -13,6 +13,7 @@ import { readFile } from 'node:fs/promises';
 import { ROLES } from '../src/pg/auth.js';
 import { DEFAULT_MFA_REQUIRED_ROLES, mfaRequiredRoles } from '../src/pg/mfa-policy.js';
 import { ACTORS, ROUTE_MATRIX, mfaOnlyDenial, requiresMfa, voluntaryMfaRoutePairs } from './helpers/route-matrix.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const liveRoles = (actor) => actor.grants.filter((grant) => !grant.revoked && !grant.expiresAt).map((grant) => grant.role);
 
@@ -23,7 +24,7 @@ test('macierz obejmuje każdą rolę z ROLES aktywnym przydziałem (inaczej regu
 
 test('domyślna lista ról z wymogiem MFA to ta sama lista, z której korzysta macierz (bez kopii)', () => {
   assert.deepEqual(mfaRequiredRoles({ MFA_REQUIRED_ROLES: undefined }), [...DEFAULT_MFA_REQUIRED_ROLES]);
-  assert.ok(DEFAULT_MFA_REQUIRED_ROLES.every((role) => ROLES.includes(role)));
+  assertEvery(DEFAULT_MFA_REQUIRED_ROLES, (role) => ROLES.includes(role));
   // Aktor zarządu bez MFA jest zatrzymany przez bramkę na trasie wymagającej MFA — dowód, że helper czyta listę.
   const board = ACTORS.find((actor) => actor.key === 'board');
   const route = ROUTE_MATRIX.find((item) => item.id === 'payments.list');
@@ -60,7 +61,7 @@ test('pary „rola spoza listy MFA × trasa z MFA” są opisane w docs/AUTHORIZ
   // Dziś (#161): lista klasy dla przedstawiciela i raport Komisji Rewizyjnej. Nowa para dopisuje się sama
   // (test niżej wymaga opisu w dokumentacji), a zniknięcie tych dwóch oznacza zmianę polityki do opisania.
   assert.ok(ids.includes('exports.classRoster') && ids.includes('reconciliation.auditReport'), ids.join(', '));
-  assert.ok(pairs.every(({ actor }) => !liveRoles(actor).some((role) => DEFAULT_MFA_REQUIRED_ROLES.includes(role))));
+  assertEvery(pairs, ({ actor }) => !liveRoles(actor).some((role) => DEFAULT_MFA_REQUIRED_ROLES.includes(role)));
   const doc = await readFile(new URL('../docs/AUTHORIZATION.md', import.meta.url), 'utf8');
   const rows = doc.split('\n').filter((line) => line.startsWith('| `'));
   const missing = [];

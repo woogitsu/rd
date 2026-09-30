@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
 import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const OLD = 'y-2026';
 const NEW = 'y-2027';
@@ -157,14 +158,14 @@ describe('po zamknięciu roku przez drugą osobę z zarządu', () => {
     const { rows: oldGrants } = await db.query(
       'SELECT id, expires_at, revoked_at FROM role_grants WHERE school_year_id = $1', [OLD]);
     assert.equal(oldGrants.length, 7);
-    assert.ok(oldGrants.every((grant) => grant.expires_at && !grant.revoked_at));
+    assertEvery(oldGrants, (grant) => grant.expires_at && !grant.revoked_at);
     assert.equal(closed.expiredGrantCount, 7);
     assert.equal(await auditCount(db, 'role_grant.expired'), 7);
 
     const { rows: newGrants } = await db.query(
       'SELECT expires_at FROM role_grants WHERE school_year_id = $1 OR school_year_id IS NULL', [NEW]);
     assert.ok(newGrants.length >= 3);
-    assert.ok(newGrants.every((grant) => grant.expires_at === null));
+    assertEvery(newGrants, (grant) => grant.expires_at === null);
 
     // Stara kadencja traci dostęp, nowa zachowuje.
     assert.equal((await get(env, `/api/year-close/${OLD}`, cookies.boardA)).status, 403);

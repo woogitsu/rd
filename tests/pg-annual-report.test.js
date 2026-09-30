@@ -7,6 +7,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-test';
 const TRAP = 'pulapka.rodzic@example.invalid';
@@ -113,7 +114,7 @@ test('no entry descriptions, person identifiers or family data in JSON or HTML; 
   assert.ok(!cash.includes(TRAP) && !cash.includes('u-treasurer'));
   const { rows } = await db.query("SELECT action, metadata_json FROM audit_events WHERE action LIKE 'report.%' ORDER BY occurred_at");
   assert.deepEqual(rows.map((r) => r.action), ['report.annual.generated', 'report.annual.generated', 'report.cash_flow.generated']);
-  assert.ok(rows.every((r) => !JSON.stringify(r.metadata_json).includes('Cents')));
+  assertEvery(rows, (r) => !JSON.stringify(r.metadata_json).includes('Cents'));
 });
 
 test('cash flow: months of the school year, cash and bank on one day separated, running balance ends at closing', async () => {
@@ -148,7 +149,7 @@ test('year without entries and without budget: valid report with empty sections'
   const html = await (await call(`/api/reports/annual?schoolYearId=${YEAR}&format=html`, { cookie: cookies.treasurer })).text();
   assert.match(html, /Brak przychodów w tym roku/);
   const flow = (await (await call(`/api/reports/cash-flow?schoolYearId=${YEAR}`, { cookie: cookies.treasurer })).json()).report;
-  assert.ok(flow.months.every((m) => m.incomeCents === 0 && m.runningBalanceCents === 0));
+  assertEvery(flow.months, (m) => m.incomeCents === 0 && m.runningBalanceCents === 0);
   const missing = await call('/api/reports/annual?schoolYearId=y-missing', { cookie: cookies.treasurer });
   assert.equal(missing.status, 403, 'rok bez przydziału — brak wyroczni istnienia');
 });

@@ -9,6 +9,7 @@ import {
   representedClassIds, selectablePhotos, validateDraft, validateReason,
   formatDateTime,
 } from '../news/core.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const source = readFileSync(new URL('../src/pg/news.js', import.meta.url), 'utf8');
 const policy = source.match(/export const NEWS_POLICY = Object\.freeze\(\{([\s\S]*?)\}\);/)[1];
@@ -82,8 +83,8 @@ test('availableActions: przedstawiciel — tylko własna klasa; wpis opublikowan
 
 test('availableActions: wycofany i brak wpisu — żadnych akcji', () => {
   const none = availableActions(post({ status: 'withdrawn' }), { grants: BOARD, actorId: 'u' });
-  assert.ok(Object.values(none).every((v) => v === false));
-  assert.ok(Object.values(availableActions(null, { grants: BOARD })).every((v) => v === false));
+  assertEvery(Object.values(none), (v) => v === false);
+  assertEvery(Object.values(availableActions(null, { grants: BOARD })), (v) => v === false);
 });
 
 test('selectablePhotos: tylko zweryfikowane prawa; podsumowania nie zawierają danych osobowych', () => {

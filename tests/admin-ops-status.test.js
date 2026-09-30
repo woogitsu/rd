@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { STATE_LABELS, ageText, buildOpsRows, overallState } from '../admin/ops-status-core.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const NOW = new Date('2026-09-29T12:00:00Z');
 const byKey = (rows) => Object.fromEntries(rows.map((r) => [r.key, r]));
@@ -25,7 +26,7 @@ test('pusta odpowiedź lub brak pól nie rzuca i daje „brak danych”', () => 
   for (const input of [undefined, null, {}, 'x']) {
     const rows = buildOpsRows(input, NOW);
     assert.equal(rows.length, 9);
-    assert.ok(rows.every((r) => r.label && r.stateLabel));
+    assertEvery(rows, (r) => r.label && r.stateLabel);
   }
 });
 
