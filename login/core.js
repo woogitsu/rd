@@ -2,7 +2,7 @@
 // Bez DOM i bez sieci — main.js odpowiada za widoki i wywołania API.
 
 import qrcode from "qrcode-generator";
-import { safeNextPath } from "../shared/api.js";
+import { MESSAGES as SHARED_MESSAGES, safeNextPath } from "../shared/api.js";
 import { formatSchoolYear } from "../shared/school-year.js";
 import { visiblePanels } from "../shared/shell.js";
 
@@ -45,7 +45,10 @@ export function startPanels(grants) {
   return [...panels, PUBLIC_PANEL];
 }
 
-const MESSAGES = {
+// Teksty ekranu logowania; mają pierwszeństwo przed wspólnym słownikiem shared/messages.js
+// (klient shared/api.js dostaje je jako `messages`). Kody spoza tej listy (np. login_busy,
+// rate_limited) biorą tekst ze wspólnego słownika.
+export const LOGIN_MESSAGES = Object.freeze({
   invalid_credentials: "Nieprawidłowy adres e-mail lub hasło.",
   too_many_attempts: "Zbyt wiele nieudanych prób. Spróbuj ponownie później.",
   invalid_origin: "Żądanie odrzucone. Otwórz stronę logowania bezpośrednio i spróbuj ponownie.",
@@ -69,10 +72,12 @@ const MESSAGES = {
   unauthenticated: "Sesja wygasła. Zaloguj się ponownie.",
   conflict: "Dane zmieniły się w międzyczasie. Spróbuj ponownie.",
   service_unavailable: "Usługa jest chwilowo niedostępna. Spróbuj ponownie za chwilę.",
-};
+});
+const MESSAGES = LOGIN_MESSAGES;
 
 export function errorMessage(code, status) {
-  if (code && MESSAGES[code]) return MESSAGES[code];
+  if (code && Object.hasOwn(MESSAGES, code)) return MESSAGES[code];
+  if (code && Object.hasOwn(SHARED_MESSAGES, code)) return SHARED_MESSAGES[code];
   if (status === 429) return MESSAGES.too_many_attempts;
   if (status >= 500) return MESSAGES.service_unavailable;
   return "Nie udało się wykonać operacji. Spróbuj ponownie.";
@@ -327,13 +332,14 @@ export function logoutOutcome(status) {
   };
 }
 
-// Błąd POST /api/mfa/confirm w trakcie konfiguracji.
-export function enrollmentConfirmError(code, status) {
+// Błąd POST /api/mfa/confirm w trakcie konfiguracji. `fallback` — gotowy komunikat klienta
+// API (np. brak połączenia albo czas z Retry-After) dla pozostałych kodów.
+export function enrollmentConfirmError(code, status, fallback) {
   if (code === "mfa_enrollment_not_found") {
     return { restart: true, message: "Konfiguracja wygasła albo została rozpoczęta ponownie w innej karcie. Rozpocznij ją ponownie przyciskiem poniżej." };
   }
   if (code === "invalid_code") {
     return { restart: false, message: `${MESSAGES.invalid_code} Jeśli konfigurację rozpoczęto w innej karcie, użyj najnowszego kodu QR.` };
   }
-  return { restart: false, message: errorMessage(code, status) };
+  return { restart: false, message: fallback || errorMessage(code, status) };
 }

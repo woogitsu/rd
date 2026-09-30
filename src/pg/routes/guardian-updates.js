@@ -31,6 +31,7 @@ import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { scopeFromGrants } from './families.js';
 import { createJsonReader } from '../input.js';
+import { emailHash, normalizeEmail } from '../../email/content.js';
 
 export const name = 'guardian-updates';
 
@@ -53,6 +54,18 @@ class RequestError extends Error {
 
 // #152: błąd 422 bramki pól wolnego tekstu (src/pg/pii-gate.js).
 const piiFail = (code, categories) => new RequestError(code, 422, { categories });
+
+// Zegar ważności linku (follow-up #214): testy podają env.now (funkcja
+// zwracająca Date) — ten sam kontrakt co effectiveDay w src/pg/today.js —
+// zamiast przestawiać niezmienny expires_at z wyłączonym strażnikiem.
+// Produkcja nie ustawia env.now, więc liczy się zegar procesu.
+function clock(env) {
+  return typeof env?.now === 'function' ? env.now() : new Date();
+}
+
+function linkExpired(env, link) {
+  return new Date(link.expires_at) <= clock(env);
+}
 
 function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
@@ -106,12 +119,15 @@ async function issueLink(request, env, json) {
 
   const token = randomBytes(32).toString('hex');
   const linkId = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + LINK_TTL_MS).toISOString();
+  // created_at i expires_at z tego samego zegara: CHECK (expires_at > created_at)
+  // w migracji 0087 pozostaje spełniony także przy zegarze testowym.
+  const issuedAt = clock(env);
+  const expiresAt = new Date(issuedAt.getTime() + LINK_TTL_MS).toISOString();
   await env.db.transaction(async (tx) => {
     await tx.query(
-      `INSERT INTO guardian_update_links (id, guardian_id, token_hash, created_by, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [linkId, data.guardianId, hashToken(token), actorId, expiresAt],
+      `INSERT INTO guardian_update_links (id, guardian_id, token_hash, created_by, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [linkId, data.guardianId, hashToken(token), actorId, issuedAt.toISOString(), expiresAt],
     );
     await insertAuditEvent(tx, {
       actorId, action: 'guardian_update_link.created', entityType: 'guardian_update_link', entityId: linkId,
@@ -135,7 +151,7 @@ async function previewLink(request, env, url, json) {
   );
   const link = rows[0];
   // Ten sam komunikat dla złego i wygasłego/zużytego tokenu (bez wyroczni istnienia).
-  if (!link || link.used_at || new Date(link.expires_at) <= new Date()) {
+  if (!link || link.used_at || linkExpired(env, link)) {
     return json({ error: 'invalid_or_expired_link' }, 404);
   }
   const preview = await guardianPreview(env, link.guardian_id);
@@ -151,7 +167,12 @@ function parseUpdateFields(data) {
     if (data.email === null || data.email === '') input.email = null;
     else if (typeof data.email === 'string') {
       const email = data.email.trim().toLowerCase();
-      if (email.length > 254 || !EMAIL_PATTERN.test(email)) throw new RequestError('invalid_email');
+      // Poza wzorcem z parseContactInput (families.js) adres musi przejść
+      // normalizeEmail kolejki wysyłek — inaczej zatwierdzony adres i tak byłby
+      // pominięty przez worker, a rodzic nie dowiedziałby się o literówce.
+      if (email.length > 254 || !EMAIL_PATTERN.test(email) || normalizeEmail(email) !== email) {
+        throw new RequestError('invalid_email');
+      }
       input.email = email;
     } else throw new RequestError('invalid_email');
   }
@@ -181,7 +202,7 @@ async function submitUpdate(request, env, json) {
       [tokenHash],
     );
     const link = rows[0];
-    if (!link || new Date(link.expires_at) <= new Date()) throw new RequestError('invalid_or_expired_link', 404);
+    if (!link || linkExpired(env, link)) throw new RequestError('invalid_or_expired_link', 404);
     // Jednorazowość: ponowne wysłanie tym samym tokenem — 409, bez drugiego
     // wniosku (AC #140). Odróżnione od "zły/wygasły token" celowo: to
     // odpowiedź na WŁASNE, wcześniej ważne żądanie, nie na zgadywanie.
@@ -213,6 +234,27 @@ async function submitUpdate(request, env, json) {
 
 // ---------- GET /api/admin/guardian-update-requests ----------
 
+// #94: ostrzeżenie dla zatwierdzającego, gdy proponowany adres jest na
+// liście wyłączeń (odbicie, skarga, wypisanie). Lista trzyma wyłącznie skrót
+// adresu, więc porównujemy skróty; w odpowiedzi tylko powód blokady, bez
+// skrótu. Zatwierdzenie NIE zdejmuje blokady (to osobna procedura dwóch osób,
+// email.js) — wysyłka na taki adres pozostaje wstrzymana.
+async function suppressionsByEmail(env, emails) {
+  const byHash = new Map();
+  for (const email of emails) {
+    const normalized = normalizeEmail(email);
+    if (normalized) byHash.set(emailHash(normalized), email);
+  }
+  const result = new Map();
+  if (!byHash.size) return result;
+  const { rows } = await env.db.query(
+    'SELECT email_hash, reason FROM email_active_suppressions WHERE email_hash = ANY($1::text[])',
+    [[...byHash.keys()]],
+  );
+  for (const row of rows) result.set(byHash.get(row.email_hash), row.reason);
+  return result;
+}
+
 async function listRequests(request, env, url, json) {
   await requireBoardContext(request, env);
   const status = url.searchParams.get('status') ?? 'pending';
@@ -226,6 +268,9 @@ async function listRequests(request, env, url, json) {
       LIMIT 200`,
     [status],
   );
+  const suppressed = await suppressionsByEmail(env, rows
+    .filter((row) => row.proposed_email_set && row.proposed_email)
+    .map((row) => row.proposed_email));
   const requests = [];
   for (const row of rows) {
     const preview = await guardianPreview(env, row.guardian_id);
@@ -235,6 +280,10 @@ async function listRequests(request, env, url, json) {
       classNames: preview?.classNames ?? [],
       proposedEmail: row.proposed_email_set ? row.proposed_email : undefined,
       proposedContactAllowed: row.proposed_contact_allowed_set ? row.proposed_contact_allowed : undefined,
+      // Powód aktywnej blokady proponowanego adresu (#94) albo null.
+      proposedEmailSuppression: row.proposed_email_set && row.proposed_email
+        ? suppressed.get(row.proposed_email) ?? null
+        : null,
       note: row.note,
       createdAt: row.created_at,
     });

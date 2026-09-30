@@ -385,6 +385,12 @@ function mapDatabaseError(error) {
   }
   if (message.includes('bank_reconciliation_date_outside_year')) throw new RequestError('statement_date_outside_school_year');
   if (message.includes('bank_statement_line_after_statement_date')) throw new RequestError('statement_line_after_statement_date');
+  // #169: wpłata tworzona z pozycji wyciągu dostaje datę księgowania pozycji.
+  // Pozycja sprzed starts_on (np. 31.08 na pierwszym wyciągu roku) jest
+  // dopuszczalna w wyciągu, ale wpłata z tą datą — nie (trigger 0027, ta sama
+  // reguła i ten sam kod co POST /api/payments). Bez tej linii odmowa
+  // spadała do app.js jako ogólne 409 business_rule_violation.
+  if (message.includes('date_outside_school_year')) throw new RequestError('date_outside_school_year', 422);
   if (message.includes('bank_match_amount_mismatch')) throw new RequestError('match_amount_mismatch', 409);
   // Wpłata i wpis księgi, który ją ujmuje, to te same pieniądze (#162, 0024).
   if (message.includes('bank_match_already_matched_via_ledger')) throw new RequestError('already_matched_via_ledger', 409);

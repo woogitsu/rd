@@ -1,30 +1,52 @@
-// Przegląd #16 (rozszerzony w #112): renderuje strony przy 320, 640 (≈ zoom 200%) i 1280 px,
+// Przegląd #16 (rozszerzony w #112 i #124): renderuje strony przy 320, 640 (≈ zoom 200%) i 1280 px,
 // sprawdza poziome przewijanie strony, rozmiar celów (< 24 px), obrys fokusu po klawiszu Tab
 // i obsługę okna dialogowego klawiaturą. Dane wyłącznie syntetyczne.
 //
-// Tryb 1 (domyślny, bez sesji): zbudowane strony z dist/ przez serwer statyczny, /api/* zwraca 401.
+// Tryb 1 (domyślny, bez sesji): zbudowane strony z dist/ przez serwer statyczny; /api/* zwraca 401,
+// poza publicznymi trasami strony site/ (#124): 20 syntetycznych aktualności z długimi
+// tytułami i puste listy wydarzeń, zawiadomień i protokołów. Panele wymagające sesji
+// przekierowują wtedy na /login/ — skrypt oznacza to polem `redirectedTo` i nie robi zrzutu.
 //   npm run build
 //   printf 'ID rodziny;Imię ucznia;Nazwisko ucznia;Klasa;Wpłaty netto EUR\nH-1;Ala;Testowa;3a;\n' > /tmp/rodziny.csv
-//   node docs/a11y/audit.mjs "$PWD/dist" "$PWD/docs/a11y" /tmp [import,panel,ledger,print]
+//   node docs/a11y/audit.mjs "$PWD/dist" "$PWD/docs/a11y" /tmp [import,panel,ledger,print,site]
 // Tryb 2 (#112): działający serwer demo (docs/DEMO.md, `npm run demo:seed` + `npm run demo:start`)
 // i zapisana sesja Playwright (storageState JSON, np. po zalogowaniu kontem
 // przedstawiciel@example.invalid). Wtedy panele z danymi (families/, documents/, events/…)
 // renderują się jak u użytkownika:
 //   AUDIT_BASE_URL=http://127.0.0.1:3000 AUDIT_STORAGE_STATE=/tmp/sesja.json \
-//     node docs/a11y/audit.mjs "$PWD/dist" "$PWD/docs/a11y" /tmp families,families:gospodarstwo,documents,events
+//     node docs/a11y/audit.mjs "$PWD/dist" "$PWD/docs/a11y" /tmp families:klasa,families:gospodarstwo,documents,events
 // Bez listy aplikacji audytowane są wszystkie z STATIC_PREFIXES (src/node-app.js).
-// Playwright pochodzi z devDependencies (@playwright/test); PLAYWRIGHT_MODULE wskazuje inny moduł,
-// AUDIT_CHROMIUM — plik wykonywalny Chromium (np. /opt/pw-browsers/chromium).
-// To samo sprawdzenie dla families/, documents/, events/ w CI: tests/e2e/a11y-layout.spec.js.
+// Playwright pochodzi z devDependencies (@playwright/test); PLAYWRIGHT_MODULE wskazuje inny moduł.
+// Zrzuty site-*.png nie są dodawane do repozytorium (tylko do przeglądu lokalnego).
+// W CI: tests/e2e/a11y-layout.spec.js (families/, documents/, events/ przy 320 i 1280 px),
+// tests/e2e/documents-news-a11y.spec.js i tests/e2e/public-site-a11y.spec.js (#124).
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 import http from 'node:http'; import { readFile } from 'node:fs/promises'; import { extname, join } from 'node:path';
 import { STATIC_PREFIXES } from '../../src/node-app.js';
 const ROOT = process.argv[2], OUT = process.argv[3], SP = process.argv[4];
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript', '.css':'text/css', '.csv':'text/csv' };
+// #124: syntetyczne odpowiedzi publicznych tras site/ — bez imion, bez zdjęć.
+const LONG_WORD = 'Sprawozdanie'.repeat(12);
+const SYNTHETIC_NEWS = { posts: Array.from({ length: 20 }, (_, i) => ({
+  id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+  title: i === 0 ? LONG_WORD : `Aktualność syntetyczna nr ${i + 1}: podsumowanie spotkania Rady z bardzo długim tytułem na wąski ekran`,
+  body: 'Treść syntetyczna bez danych osobowych. '.repeat(5),
+  publishedAt: new Date(Date.UTC(2026, 8, 30 - i, 10)).toISOString(),
+  photos: [],
+})) };
+function publicFixture(p) {
+  if (p === '/api/public/news') return SYNTHETIC_NEWS;
+  if (p === '/api/public/events') return { events: [] };
+  if (p === '/api/meetings/public-minutes') return { minutes: [] };
+  if (p === '/api/meetings/public-notices') return { notices: [] };
+  return null;
+}
 let server = null, base = process.env.AUDIT_BASE_URL?.replace(/\/$/, '');
 if (!base) {
   server = http.createServer(async (req, res) => {
     let p = decodeURIComponent(req.url.split('?')[0]); if (p.endsWith('/')) p += 'index.html';
+    const fixture = publicFixture(p);
+    if (fixture) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(fixture)); }
     if (p.startsWith('/api/')) { res.writeHead(401, {'content-type':'application/json'}); return res.end('{"error":{"message":"Brak sesji (serwer testowy)."}}'); }
     try { const b = await readFile(join(ROOT, p)); res.writeHead(200, { 'content-type': types[extname(p)] || 'application/octet-stream' }); res.end(b); }
     catch { res.writeHead(404); res.end(); }
@@ -32,10 +54,12 @@ if (!base) {
   base = `http://127.0.0.1:${server.address().port}`;
 }
 const storageState = process.env.AUDIT_STORAGE_STATE || undefined;
-const browser = await chromium.launch({ executablePath: process.env.AUDIT_CHROMIUM || undefined, args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-gpu', '--disable-software-rasterizer'] });
+// CHROMIUM_EXECUTABLE: jawna ścieżka przeglądarki, gdy rewizja Playwrighta nie zgadza się z pobraną (np. /opt/pw-browsers).
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-gpu', '--disable-software-rasterizer'] });
 const report = [];
 
 async function prepare(page, app, view) {
+  if (app === 'site') await page.waitForSelector('#news-list li.news');
   // families/: widoki klasy i karty gospodarstwa są pod tym samym adresem (routing po #).
   if (app === 'families' && view) {
     await page.locator('#years a').first().click(); await page.waitForSelector('#class-view:not([hidden]) table a');

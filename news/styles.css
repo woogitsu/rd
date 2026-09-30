@@ -20,3 +20,19 @@
   .badge { border: 1px solid CanvasText; }
   nav a.active { text-decoration: underline; border-bottom: 2px solid CanvasText; }
 }
+
+/* #124: długi tytuł (np. jedno słowo) łamie się w nagłówku i treści zamiast poszerzać stronę. */
+.section-heading>div{min-width:0}h1,h2,h3,dd{overflow-wrap:anywhere}td{overflow-wrap:break-word}
+
+/* #124: przy wąskim ekranie tabele jako lista wierszy „Nagłówek: wartość” (jak documents/),
+   zamiast przewijania w poziomie z przyciskiem akcji poza ekranem. */
+@media (max-width: 520px) {
+  .table-wrap table, .table-wrap thead, .table-wrap tbody, .table-wrap tr, .table-wrap th, .table-wrap td { display: block; }
+  .table-wrap thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .table-wrap tr { padding: 8px 0; border-bottom: 1px solid #e9e6e2; }
+  .table-wrap td { padding: 3px 0; border: 0; overflow-wrap: anywhere; }
+  .table-wrap td.amount { text-align: left; }
+  .table-wrap td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-weight: 700; }
+  .table-wrap .row-actions { padding-top: 6px; }
+  .table-wrap .row-actions button { min-height: 44px; }
+}

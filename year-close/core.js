@@ -57,6 +57,65 @@ export const WARNING_LABELS = Object.freeze({
   open_email_campaigns: 'Kampanie e-mail otwarte (szkic, zatwierdzona lub w wysyłce)',
 });
 
+// #169: powody potwierdzenia rozbieżności salda końca roku — kody i kolejność
+// z YEAR_END_DISCREPANCY_REASONS w src/pg/routes/year-close.js (test parzystości
+// w tests/year-close-panel-core.test.js). Kody, nie wolny tekst: serwer zapisuje
+// kod w dzienniku zdarzeń bez danych osobowych.
+export const YEAR_END_DISCREPANCY_REASONS = Object.freeze([
+  'entry_dated_after_year_end',
+  'explained_by_resolution',
+  'explained_outside_system',
+]);
+
+export const YEAR_END_DISCREPANCY_REASON_LABELS = Object.freeze({
+  entry_dated_after_year_end: 'Wpis z datą po końcu roku — do poprawy korektą w roku następnym',
+  explained_by_resolution: 'Rozbieżność wyjaśniona uchwałą lub protokołem zarządu',
+  explained_outside_system: 'Rozbieżność wyjaśniona poza systemem (dokumentacja u skarbnika)',
+});
+
+const toCents = (value) => (Number.isSafeInteger(value) ? value : null);
+
+// Kontrola salda końca roku z GET /api/year-close/{rok} (pole yearEndCheck):
+// bilans zamknięcia (wszystkie wpisy roku) vs saldo księgi na ostatni dzień roku
+// (tylko wpisy datowane do końca roku, jak w uzgodnieniu). Brak pola (starsze
+// API) = null — ekran nie udaje wtedy zgodności.
+export function yearEndCheckRows(status) {
+  const check = status?.yearEndCheck;
+  if (!check || typeof check !== 'object') return null;
+  return {
+    ok: check.ok === true,
+    rows: [
+      { label: 'Razem', closingCents: toCents(check.closingBalanceCents), atYearEndCents: toCents(check.balanceAtYearEndCents), differenceCents: toCents(check.balanceDifferenceCents) },
+      { label: 'Kasa', closingCents: toCents(check.closingCashCents), atYearEndCents: toCents(check.cashAtYearEndCents), differenceCents: toCents(check.cashDifferenceCents) },
+      { label: 'Rachunek', closingCents: toCents(check.closingBankCents), atYearEndCents: toCents(check.bankAtYearEndCents), differenceCents: toCents(check.bankDifferenceCents) },
+    ],
+  };
+}
+
+// Czy zamknięcie wymaga jawnego potwierdzenia rozbieżności (serwer: 409
+// year_end_balance_mismatch bez potwierdzenia). Przybliżenie z ostatniego
+// odczytu — serwer liczy to ponownie pod blokadą księgi.
+export function needsYearEndConfirmation(status) {
+  const check = status?.yearEndCheck;
+  return Boolean(check && typeof check === 'object' && check.ok === false);
+}
+
+// Ciało POST …/close. Przy rozbieżności powtarza różnice WIDZIANE na ekranie
+// (serwer odrzuci je jako year_end_confirmation_mismatch, jeśli od odczytu się
+// zmieniły) i kod powodu wybrany przez osobę zamykającą. Brak powodu albo
+// nieznany kod — wyjątek z komunikatem dla formularza (nic nie jest wysyłane).
+export function closeRequestBody(status, reason) {
+  if (!needsYearEndConfirmation(status)) return {};
+  if (!YEAR_END_DISCREPANCY_REASONS.includes(reason)) {
+    throw new Error('Wybierz powód potwierdzenia rozbieżności salda końca roku.');
+  }
+  const { balanceDifferenceCents, cashDifferenceCents } = status.yearEndCheck;
+  if (!Number.isSafeInteger(balanceDifferenceCents) || !Number.isSafeInteger(cashDifferenceCents)) {
+    throw new Error('Brak kwot rozbieżności — odśwież stan zamknięcia.');
+  }
+  return { confirmYearEndDiscrepancy: { reason, balanceDifferenceCents, cashDifferenceCents } };
+}
+
 export const ACCESS_KIND_LABELS = Object.freeze({
   class_students: 'Lista klasy',
   household_card: 'Karta gospodarstwa',
@@ -193,7 +252,7 @@ export function describeApiError(status, code) {
   if (code === 'mfa_required') return 'Potwierdź logowanie drugim składnikiem (MFA), aby zamknąć rok szkolny.';
   if (code === 'four_eyes_required') return 'Zamknąć musi inna osoba niż ta, która rozpoczęła zamknięcie roku.';
   if (code === 'checklist_incomplete') return 'Uzupełnij wszystkie punkty listy kontrolnej przed zamknięciem.';
-  if (code === 'year_end_balance_mismatch') return 'Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Wyjaśnij rozbieżność (wpisy datowane po końcu roku); potwierdzenie z powodem jest możliwe przez API.';
+  if (code === 'year_end_balance_mismatch') return 'Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Wyjaśnij rozbieżność (wpisy datowane po końcu roku) i wybierz powód potwierdzenia w oknie zamknięcia.';
   if (code === 'year_end_confirmation_mismatch') return 'Rozbieżność salda końca roku zmieniła się od ostatniego podglądu. Odśwież stan i sprawdź kwoty.';
   if (code === 'school_year_closed') return 'Ten rok szkolny jest już zamknięty.';
   if (code === 'year_close_not_started') return 'Zamknięcie roku nie zostało jeszcze rozpoczęte.';
