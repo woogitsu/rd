@@ -217,7 +217,7 @@ export function buildUploadRequest(meta, mime, idempotencyKey) {
   };
 }
 
-export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", includeInactive = false, limit = LIST_LIMIT, offset = 0, cursor = "" }) {
+export function buildListUrl({ schoolYearId, kind = "", classId = "", category = "", q = "", includeInactive = false, validationOutdated = false, limit = LIST_LIMIT, offset = 0, cursor = "" }) {
   const year = String(schoolYearId ?? "").trim();
   if (!isSafeId(year)) throw new Error("Podaj poprawny identyfikator roku szkolnego.");
   if (kind && !Object.hasOwn(KIND_LABELS, kind)) throw new Error("Nieznany rodzaj dokumentu.");
@@ -235,6 +235,8 @@ export function buildListUrl({ schoolYearId, kind = "", classId = "", category =
   if (query) params.set("q", query);
   // Domyślnie serwer zwraca tylko dokumenty aktualne; `status=all` dodaje zastąpione i unieważnione.
   if (includeInactive) params.set("status", "all");
+  // #89 (0161): tylko pliki sprawdzone starszą wersją reguł kontroli struktury albo bez wersji.
+  if (validationOutdated) params.set("validation", "outdated");
   params.set("limit", String(limit));
   // #159: kursor keyset zastępuje offset (offset zostaje tylko dla zgodności).
   if (cursor) params.set("cursor", String(cursor));
@@ -328,7 +330,17 @@ export function normalizeDocument(doc) {
     // Stan i „zastąpiony przez” (issue #82); brak pola = dokument aktualny.
     status: Object.hasOwn(STATUS_LABELS, doc?.status) ? doc.status : "active",
     replacementDocumentId: isDocumentId(doc?.replacementDocumentId) ? doc.replacementDocumentId : null,
+    // Wersja reguł kontroli struktury przy przesłaniu (#89, 0161); null = nieznana.
+    validationVersion: Number.isSafeInteger(doc?.validationVersion) && doc.validationVersion >= 1 ? doc.validationVersion : null,
+    validationCurrent: doc?.validationCurrent === true,
   };
+}
+
+// #89 (0161): opis, którą wersją reguł serwer sprawdził plik przy przesłaniu.
+export function validationLabel(doc) {
+  if (doc.validationCurrent) return `bieżące reguły (wersja ${doc.validationVersion ?? "—"})`;
+  if (doc.validationVersion === null) return "wersja nieznana (plik sprzed zapisu wersji reguł)";
+  return `starsze reguły (wersja ${doc.validationVersion})`;
 }
 
 export function statusLabel(doc) {
@@ -377,6 +389,7 @@ export function metadataRows(rawDoc) {
     ["Data dokumentu", doc.documentDate ?? "—"],
     ["Dodał(a)", doc.createdBy ? `konto ${shortId(doc.createdBy)}` : "—"],
     ["Dodano", formatDateTime(doc.createdAt)],
+    ["Kontrola struktury", validationLabel(doc)],
   ];
 }
 

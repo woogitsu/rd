@@ -31,6 +31,7 @@ import {
   titleLabel,
   validateDescriptionInput,
   validateUploadMeta,
+  validationLabel,
 } from "../documents/core.js";
 import { ALLOWED_TYPES, DEFAULT_MAX_UPLOAD_BYTES } from "../src/documents.js";
 import { DOCUMENT_CATEGORIES } from "../src/pg/routes/documents.js";
@@ -353,4 +354,26 @@ test("linkLabel i Dodał(a) pokazują skrót UUID zamiast pełnego identyfikator
   const rows = Object.fromEntries(metadataRows(doc));
   assert.equal(rows["Dodał(a)"], "konto fd1c44a1…");
   assert.ok(!Object.values(rows).some((value) => String(value).includes(uuid)), "pełny UUID nie trafia do metadanych");
+});
+
+// --- Wersja reguł kontroli struktury (issue #89, 0161) ------------------------------
+
+test("buildListUrl: filtr validationOutdated dodaje validation=outdated", () => {
+  assert.equal(buildListUrl({ schoolYearId: "2026-2027", validationOutdated: true }), "/api/documents?schoolYearId=2026-2027&validation=outdated&limit=50");
+  assert.doesNotMatch(buildListUrl({ schoolYearId: "2026-2027" }), /validation=/);
+});
+
+test("normalizeDocument i metadataRows: wersja reguł kontroli struktury", () => {
+  const base = { id: DOC_ID, kind: "financial", schoolYearId: "2026-2027", mimeType: "application/pdf" };
+  const current = normalizeDocument({ ...base, validationVersion: 1, validationCurrent: true });
+  assert.equal(Object.fromEntries(metadataRows(current))["Kontrola struktury"], "bieżące reguły (wersja 1)");
+  const unknown = normalizeDocument(base);
+  assert.equal(unknown.validationVersion, null);
+  assert.equal(unknown.validationCurrent, false);
+  assert.equal(validationLabel(unknown), "wersja nieznana (plik sprzed zapisu wersji reguł)");
+  assert.equal(validationLabel(normalizeDocument({ ...base, validationVersion: 1, validationCurrent: false })), "starsze reguły (wersja 1)");
+  // Wartości spoza zakresu i nie-liczby traktujemy jak brak wersji; „true” jako tekst nie oznacza bieżących reguł.
+  assert.equal(normalizeDocument({ ...base, validationVersion: "1", validationCurrent: "true" }).validationVersion, null);
+  assert.equal(normalizeDocument({ ...base, validationVersion: 0 }).validationVersion, null);
+  assert.equal(normalizeDocument({ ...base, validationCurrent: "true" }).validationCurrent, false);
 });
