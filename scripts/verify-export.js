@@ -5,12 +5,15 @@
 //   DATABASE_URL=… APP_ENV=staging node scripts/verify-export.js <paczka.json> --restore-database
 //                                                                  odtworzenie do PUSTEJ bazy po migracjach
 //
+// Paczka jest czytana strumieniowo (#216): w pamięci jest fragment pliku i
+// jedna linia JSONL, nie cała paczka; odtworzenie czyta plik drugi raz i wstawia
+// wiersze partiami.
+//
 // Raport zawiera tylko liczności, sumy w centach i skróty — bez danych osobowych.
 // Odtworzenie odmawia bazy niepustej oraz APP_ENV=production bez --allow-production.
 
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { assertRestoreAllowed, restoreBundle, verifyBundle } from '../src/pg/export.js';
+import { assertRestoreAllowed, restoreBundleFile, verifyBundleFile } from '../src/pg/export.js';
 import { loadMigrations } from '../src/postgres-migrations.js';
 
 const args = process.argv.slice(2);
@@ -27,14 +30,8 @@ async function main() {
     if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required with --restore-database');
   }
 
-  let bundle;
-  try {
-    bundle = JSON.parse(await readFile(bundlePath, 'utf8'));
-  } catch (error) {
-    // Komunikat JSON.parse może cytować fragment pliku — nie wypisujemy go.
-    throw Object.assign(new Error('invalid_bundle_json'), { code: error?.code === 'ENOENT' ? 'bundle_not_found' : 'invalid_bundle_json' });
-  }
-  const report = verifyBundle(bundle);
+  // Błędy parsera to same kody (bez cytowania treści pliku).
+  const report = await verifyBundleFile(bundlePath);
   if (report.warnings?.includes('bundle_incomplete')) {
     // Paczka wersji 1 (sprzed #202): brak gospodarstw, uzgodnień i zamknięcia roku.
     console.error(`Warning: bundle_incomplete (formatVersion ${report.formatVersion}); missing tables: ${report.missingTables.join(', ')}`);
@@ -56,7 +53,7 @@ async function main() {
   }
   try {
     const started = Date.now();
-    const restored = await restoreBundle(db, bundle);
+    const restored = await restoreBundleFile(db, bundlePath);
     console.log(JSON.stringify({ verified: true, ...restored, restoreMs: Date.now() - started }));
   } finally {
     await db.close().catch(() => {});

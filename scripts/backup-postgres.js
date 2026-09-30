@@ -18,6 +18,7 @@
 import { createPgDatabase } from '../src/db.js';
 import { createS3Storage } from '../src/storage.js';
 import { runBackup } from '../src/pg/backup.js';
+import { appEnvLabel } from '../src/app-env.js';
 import { dumpWithReport } from './lib/pg-tools.js';
 
 const REQUIRED_ENV = ['DATABASE_URL', 'BACKUP_ENCRYPTION_PUBLIC_KEY',
@@ -52,7 +53,7 @@ async function main() {
       db,
       storage,
       encryptPublicKeyPem: env.BACKUP_ENCRYPTION_PUBLIC_KEY,
-      environment: env.APP_ENV || 'unknown',
+      environment: appEnvLabel(env.APP_ENV),
       force: process.argv.includes('--force'),
       // Zrzut + raport (liczności, sumy, skróty) z jednej migawki; plik
       // tymczasowy usuwa dumpWithReport także przy błędzie.
