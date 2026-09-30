@@ -54,10 +54,13 @@ function setMessage(text, isError = false) {
   message.className = isError ? "message error" : "message";
 }
 
-function cell(text, className = "") {
+// #124: data-label = nagłówek kolumny; przy wąskim ekranie (≤ 520 px) wiersz
+// tabeli jest pokazywany jako lista „Nagłówek: wartość” bez przewijania w poziomie.
+function cell(text, className = "", label = "") {
   const td = document.createElement("td");
   td.textContent = text;
   if (className) td.className = className;
+  if (label) td.dataset.label = label;
   return td;
 }
 
@@ -80,15 +83,19 @@ function renderList() {
   byId("posts-body").replaceChildren(...state.posts.map((post) => {
     const row = document.createElement("tr");
     const status = document.createElement("td");
+    status.dataset.label = "Stan";
     status.append(badge(STATUS_LABELS[post.status] ?? post.status, post.status));
     const actions = document.createElement("td");
     actions.className = "row-actions";
     const open = document.createElement("button");
     open.type = "button";
     open.textContent = "Otwórz";
+    // Nazwa dostępna odróżnia przyciski w liście przycisków czytnika ekranu (#124).
+    open.setAttribute("aria-label", `Otwórz wpis: ${post.title}`);
     open.addEventListener("click", () => openDetail(post.id));
     actions.append(open);
-    row.append(cell(post.title), cell(scopeLabel(post)), status, cell(String(post.revision), "amount"), cell(formatDateTime(post.updatedAt)), actions);
+    row.append(cell(post.title, "", "Tytuł"), cell(scopeLabel(post), "", "Zakres"), status,
+      cell(String(post.revision), "amount", "Wersja"), cell(formatDateTime(post.updatedAt), "", "Zmieniono"), actions);
     return row;
   }));
   const count = state.posts.length;
@@ -137,6 +144,7 @@ async function loadClasses() {
 function photoRow(photo, { withConsents }) {
   const row = document.createElement("tr");
   const rights = document.createElement("td");
+  rights.dataset.label = "Prawa";
   rights.append(badge(RIGHTS_LABELS[photo.rightsStatus] ?? photo.rightsStatus, photo.rightsStatus));
   const actions = document.createElement("td");
   actions.className = "row-actions";
@@ -144,10 +152,11 @@ function photoRow(photo, { withConsents }) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Zgody";
+    button.setAttribute("aria-label", `Zgody: ${photoSummary(photo)}`);
     button.addEventListener("click", () => showConsents(photo.id));
     actions.append(button);
   }
-  row.append(cell(photoSummary(photo)), rights, cell(peopleSummary(photo)), actions);
+  row.append(cell(photoSummary(photo), "", "Zdjęcie"), rights, cell(peopleSummary(photo), "", "Osoby"), actions);
   return row;
 }
 
@@ -204,7 +213,9 @@ async function openDetail(postId) {
     state.selected = await api(postUrl(postId));
     renderDetail();
     byId("detail").hidden = false;
-    byId("detail").scrollIntoView?.({ block: "start" });
+    // #124: fokus na otwarty wpis (sekcja z tabindex="-1"), żeby klawiatura
+    // i czytnik ekranu nie zostawały na liście pod przeczytanym przyciskiem.
+    byId("detail").focus();
   } catch (error) {
     setMessage(`Nie udało się otworzyć wpisu: ${describeApiError(error.status, error.code) ?? error.message}`, true);
   }
@@ -239,7 +250,7 @@ function renderDetail() {
 
   byId("revisions-body").replaceChildren(...revisions.map((rev) => {
     const row = document.createElement("tr");
-    row.append(cell(String(rev.revision), "amount"), cell(rev.title), cell(formatDateTime(rev.createdAt)));
+    row.append(cell(String(rev.revision), "amount", "Wersja"), cell(rev.title, "", "Tytuł"), cell(formatDateTime(rev.createdAt), "", "Zapisano"));
     return row;
   }));
 
