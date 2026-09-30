@@ -29,6 +29,7 @@ await db.query(
 
 let peakHeap = 0;
 let peakRss = 0;
+let peakBuffers = 0;
 let maxLag = 0;
 let last = performance.now();
 const timer = setInterval(() => {
@@ -38,9 +39,12 @@ const timer = setInterval(() => {
   const usage = process.memoryUsage();
   peakHeap = Math.max(peakHeap, usage.heapUsed);
   peakRss = Math.max(peakRss, usage.rss);
+  peakBuffers = Math.max(peakBuffers, usage.arrayBuffers);
 }, 5);
 
 const baseHeap = process.memoryUsage().heapUsed;
+// Bufory (poza stertą) i pamięć WASM PGlite — dawniej tu leżała cała paczka przed wysyłką.
+const baseBuffers = process.memoryUsage().arrayBuffers;
 const started = performance.now();
 const response = await handlePgRequest(request('/api/exports', { cookie: admin, method: 'POST', body: { schoolYearId: YEAR } }), { db });
 let bytes = 0;
@@ -57,6 +61,6 @@ clearInterval(timer);
 const mb = (n) => Math.round((n / 1048576) * 10) / 10;
 console.log(JSON.stringify({
   events: EVENTS, status: response.status, bundleMb: mb(bytes), routeMs: elapsedMs,
-  heapBaseMb: mb(baseHeap), heapPeakMb: mb(peakHeap), rssPeakMb: mb(peakRss), maxEventLoopLagMs: Math.round(maxLag),
+  heapBaseMb: mb(baseHeap), heapPeakMb: mb(peakHeap), rssPeakMb: mb(peakRss), arrayBuffersBaseMb: mb(baseBuffers), arrayBuffersPeakMb: mb(peakBuffers), maxEventLoopLagMs: Math.round(maxLag),
 }));
 await db.close();

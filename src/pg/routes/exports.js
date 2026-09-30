@@ -24,6 +24,7 @@ import {
   buildClassRoster, buildClassRosterCsv, buildClassRosterXlsx, buildYearlyExport, EXPORT_FORMAT_VERSION, ExportError, ROSTER_FORMAT_VERSION,
 } from '../export.js';
 import { createJsonReader } from '../input.js';
+import { createExportSpool } from '../export-spool.js';
 
 export const name = 'exports';
 
@@ -53,22 +54,6 @@ const readJson = createJsonReader({
 
 function safeFilePart(value) {
   return value.replace(/[^A-Za-z0-9_.-]/g, '_');
-}
-
-// Ciało odpowiedzi z listy buforów (#216): każdy bufor jest zwalniany zaraz po
-// przekazaniu, więc pamięć paczki maleje w trakcie pobierania.
-function chunksBody(chunks) {
-  let index = 0;
-  return new ReadableStream({
-    pull(controller) {
-      if (index >= chunks.length) { controller.close(); return; }
-      const chunk = chunks[index];
-      chunks[index] = null;
-      index += 1;
-      controller.enqueue(chunk);
-    },
-    cancel() { chunks.fill(null); },
-  });
 }
 
 function attachment(body, filename, headers = {}, contentType = 'application/json; charset=utf-8') {
@@ -138,6 +123,9 @@ async function createYearlyExport(request, env, json) {
   const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
   if (staleCode) return json({ error: staleCode }, 403);
 
+  // #216: paczka trafia fragmentami do anonimowego pliku tymczasowego
+  // (src/pg/export-spool.js), a nie do pamięci; wysyłka zaczyna się po COMMIT.
+  const spool = await createExportSpool();
   let result;
   try {
     result = await env.db.transaction(async (tx) => {
@@ -146,9 +134,7 @@ async function createYearlyExport(request, env, json) {
       // symultaniczne przebiegi (pamięć i czas rosły dwukrotnie, dwa wiersze
       // export_runs). Blokada doradcza na (rok) — zwalnia się sama na
       // COMMIT/ROLLBACK tej transakcji — pozwala tylko jednemu przebiegowi
-      // na raz; drugi dostaje 409 zamiast czekać (klient sam decyduje, czy
-      // ponowić), zamiast pełnego strumieniowania z issue #216 (poza
-      // zakresem tego PR, patrz opis PR).
+      // na raz; drugi dostaje 409 zamiast czekać (klient sam decyduje, czy ponowić).
       const lock = await tx.query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked', [`rd_export:${schoolYearId}`]);
       if (!lock.rows[0].locked) throw new RequestError('export_in_progress', 409);
       // #216: budowa paczki idzie partiami przez kursor i oddaje pętlę zdarzeń;
@@ -156,7 +142,9 @@ async function createYearlyExport(request, env, json) {
       // (15 s w puli) podnosimy lokalnie dla tej jednej transakcji, żeby wolny
       // współdzielony vCPU nie zrywał eksportu w trakcie.
       await tx.query("SET LOCAL idle_in_transaction_session_timeout = '60s'");
-      const built = await buildYearlyExport(tx, schoolYearId, { stream: true });
+      // Ponowienie transakcji (40001/40P01) zaczyna paczkę od zera.
+      await spool.reset();
+      const built = await buildYearlyExport(tx, schoolYearId, { sink: (chunk) => spool.write(chunk) });
       const runId = await recordRun(tx, {
         kind: 'yearly', schoolYearId, formatVersion: EXPORT_FORMAT_VERSION, actorId,
         sha256: built.manifestSha256, rowCounts: built.rowCounts,
@@ -172,11 +160,16 @@ async function createYearlyExport(request, env, json) {
       return { ...built, runId };
     });
   } catch (error) {
+    await spool.discard();
     if (error instanceof ExportError && error.code === 'school_year_not_found') throw new RequestError('school_year_not_found', 404);
     throw error;
   }
+  if (spool.size !== result.bodyBytes) {
+    await spool.discard();
+    throw new Error('export_spool_size_mismatch');
+  }
 
-  return attachment(chunksBody(result.bodyChunks), `rd-eksport-${safeFilePart(schoolYearId)}-v${EXPORT_FORMAT_VERSION}.json`, {
+  return attachment(spool.body(), `rd-eksport-${safeFilePart(schoolYearId)}-v${EXPORT_FORMAT_VERSION}.json`, {
     'X-Export-Run-Id': result.runId,
     'X-Export-Manifest-Sha256': result.manifestSha256,
     // Znany rozmiar: adapter Node przesyła odpowiedź strumieniowo, bez kopii w pamięci.
