@@ -329,3 +329,26 @@ test('print.js#printScope (na scope.js) = dawna lokalna implementacja z yearMatc
     assert.deepEqual(printScope(context, input), legacy(context, input), `próbka ${sample}: ${JSON.stringify({ context, input })}`);
   }
 });
+
+test('documents.js#canAccessDocument (na scope.js) = dawna implementacja z ręcznym filtrem przydziałów', async () => {
+  const { canAccessDocument, DOCUMENT_POLICIES } = await import('../src/pg/routes/documents.js');
+  const legacy = (context, doc) => {
+    const policy = DOCUMENT_POLICIES[doc?.kind];
+    if (!policy || !doc.schoolYearId) return false;
+    if (policy.classScoped !== Boolean(doc.classId)) return false;
+    const requirement = { roles: policy.roles, requireMfa: policy.requireMfa, schoolYearId: doc.schoolYearId };
+    if (policy.classScoped) return isAuthorized(context, { ...requirement, classId: doc.classId });
+    return isAuthorized({ ...context, grants: context.grants.filter((grant) => !grant.classId) }, requirement);
+  };
+  const kinds = [...Object.keys(DOCUMENT_POLICIES), 'unknown'];
+  const rng = mulberry32(1556);
+  for (let sample = 0; sample < 600; sample += 1) {
+    const context = ctx(randomRequirementGrants(rng), { mfaVerified: rng() < 0.5 });
+    const doc = {
+      kind: kinds[Math.floor(rng() * kinds.length)],
+      schoolYearId: rng() < 0.9 ? YEAR_IDS[Math.floor(rng() * YEAR_IDS.length)] : null,
+      classId: rng() < 0.5 ? CLASS_IDS[Math.floor(rng() * CLASS_IDS.length)] : null,
+    };
+    assert.equal(canAccessDocument(context, doc), legacy(context, doc), `próbka ${sample}: ${JSON.stringify({ context, doc })}`);
+  }
+});
