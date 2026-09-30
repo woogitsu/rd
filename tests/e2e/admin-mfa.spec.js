@@ -9,7 +9,15 @@ import { readRuntime } from './support/runtime.js';
 const runtime = readRuntime();
 
 test('admin: logowanie hasłem, konfiguracja MFA w przeglądarce i otwarcie panelu admin/', async ({ page }) => {
+  // #99 (przegląd demo 4): wejście na /login/ bez sesji nie może dawać 401 z /api/auth/state
+  // (czerwony wpis w konsoli przy każdym logowaniu) — ekran bez wskazówki sesji nie pyta.
+  const failedApi = [];
+  page.on('response', (response) => {
+    if (response.url().includes('/api/') && response.status() >= 400) failedApi.push(`${response.status()} ${new URL(response.url()).pathname}`);
+  });
   await page.goto('/login/');
+  await expect(page.locator('#view-login')).toBeVisible();
+  expect(failedApi).toEqual([]);
 
   await page.locator('#login-email').fill(runtime.admin.email);
   await page.locator('#login-password').fill(runtime.admin.password);
@@ -37,6 +45,8 @@ test('admin: logowanie hasłem, konfiguracja MFA w przeglądarce i otwarcie pane
   await page.locator('#codes-saved').check();
   await page.locator('#codes-done').click();
 
+  expect(failedApi).toEqual([]);
+
   // Panel startowy z linkami do paneli, w tym admin/.
   await expect(page.locator('#view-start')).toBeVisible();
   const adminLink = page.locator('#panel-list a[href="/admin/"]');
@@ -57,4 +67,10 @@ test('admin: logowanie hasłem, konfiguracja MFA w przeglądarce i otwarcie pane
   expect(session.status).toBe(200);
   expect(session.body.mfaVerified).toBe(true);
   expect(session.body.user.id).toBe(runtime.admin.userId);
+
+  // Ponowne wejście na /login/ z działającą sesją (wskazówka zapisana po zalogowaniu):
+  // ekran pyta o stan i pokazuje listę paneli, nie formularz logowania.
+  await page.goto('/login/');
+  await expect(page.locator('#view-start')).toBeVisible();
+  expect(failedApi).toEqual([]);
 });
