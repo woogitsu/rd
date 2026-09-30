@@ -46,6 +46,7 @@ import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipien
 import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
   AUDIENCES, MEETING_AUDIENCES, parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
+  SAMPLE_STRUCTURED_REFERENCE, usesStructuredReference,
 } from '../../email/content.js';
 import { estimateSchedule } from '../../email/schedule.js';
 import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
@@ -442,6 +443,8 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     );
     for (const row of rows) paid.add(row.household_id);
   }
+  // #83: treść z {komunikat} — tylko rodziny z aktywną referencją roku kampanii.
+  const withReference = usesStructuredReference(campaign) ? await activeReferenceHouseholds(executor, campaign.school_year_id) : null;
   const households = new Map();
   for (const row of candidates) {
     if (!households.has(row.household_id)) households.set(row.household_id, []);
@@ -478,6 +481,7 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
   for (const householdId of ids) {
     if (followup?.covered.has(householdId)) { exclusions.push({ householdId, reason: 'followup_already_covered' }); continue; }
     if (paid.has(householdId)) { exclusions.push({ householdId, reason: 'payment_recorded' }); continue; }
+    if (withReference && !withReference.has(householdId)) { exclusions.push({ householdId, reason: 'no_payment_reference' }); continue; }
     const consenting = households.get(householdId).filter((row) => row.guardian_allowed && row.relation_allowed);
     if (!consenting.length) { exclusions.push({ householdId, reason: 'no_consent' }); continue; }
     const valid = consenting.filter((row) => row.normalized);
@@ -493,6 +497,24 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     recipients.push({ householdId, guardianId: chosen.guardian_id, email: chosen.normalized, emailHash: chosen.hash });
   }
   return { recipients, exclusions, hash: recipientsHash(recipients) };
+}
+
+// Rodziny z aktywną (nieunieważnioną) komunikacją strukturalną w roku (#83).
+async function activeReferenceHouseholds(executor, schoolYearId) {
+  const { rows } = await executor.query(
+    'SELECT household_id FROM payment_references WHERE school_year_id = $1 AND revoked_at IS NULL', [schoolYearId],
+  );
+  return new Set(rows.map((row) => row.household_id));
+}
+
+// Aktywna referencja jednej rodziny w roku albo null (podgląd kampanii).
+export async function activeStructuredReference(executor, householdId, schoolYearId) {
+  const { rows } = await executor.query(
+    `SELECT structured_reference FROM payment_references
+      WHERE household_id = $1 AND school_year_id = $2 AND revoked_at IS NULL`,
+    [householdId, schoolYearId],
+  );
+  return rows[0]?.structured_reference ?? null;
 }
 
 // #139: rodziny kampanii źródłowej z zatwierdzonym „nie wyszła” (eligible) oraz
@@ -639,7 +661,15 @@ async function preview(request, env, id, json) {
   const sampleHousehold = recipients[0]?.household_id ?? 'PRZYKLAD';
   const sampleEmailHash = recipients[0]?.email_hash ?? emailHash('podglad@example.invalid');
   const sampleUnsubscribeUrl = unsubscribeUrlFor(config, { campaignId: campaign.id, category: campaign.category, emailHash: sampleEmailHash });
-  const sample = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: sampleHousehold, unsubscribeUrl: sampleUnsubscribeUrl });
+  // #83: w podglądzie referencja pierwszej rodziny z migawki; bez migawki
+  // (albo gdyby jej referencję właśnie unieważniono) — przykładowa, niczyja.
+  const sampleReference = usesStructuredReference(campaign)
+    ? (recipients[0] ? await activeStructuredReference(env.db, sampleHousehold, campaign.school_year_id) : null) ?? SAMPLE_STRUCTURED_REFERENCE
+    : null;
+  const sample = renderMessage(campaign, {
+    schoolYearLabel: campaign.school_year_label, householdId: sampleHousehold, structuredReference: sampleReference,
+    unsubscribeUrl: sampleUnsubscribeUrl,
+  });
   const count = recipients.length;
   const dailyCap = campaign.daily_cap ?? campaignDailyCap(count, config);
   return json({
@@ -970,7 +1000,9 @@ async function testSend(request, env, id, json) {
   const unsubscribeUrl = unsubscribeUrlFor(config, {
     campaignId: campaign.id, category: campaign.category, emailHash: emailHash('podglad@example.invalid'),
   });
-  const rendered = renderMessage(campaign, { schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD', unsubscribeUrl });
+  const rendered = renderMessage(campaign, {
+    schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD', structuredReference: SAMPLE_STRUCTURED_REFERENCE, unsubscribeUrl,
+  });
   const transport = transportFor(env, config);
   let providerMessageId = null;
   let transportError = null;

@@ -3,8 +3,9 @@
 // To jest OSOBNY seed od `scripts/lib/synthetic-seed.js` (ten pozostaje bez zmian,
 // bo służy testom wolumenu/wydajności). Ten skrypt buduje mały, czytelny zestaw do
 // pokazu: kilka klas, ok. 20 rodzin (z rodzeństwem i dwojgiem opiekunów), wpłaty
-// częściowe i pełne, wpisy księgi, zapowiedzi wydarzeń, jedno zebranie z protokołem
-// zatwierdzonym do publikacji, dwa syntetyczne PDF-y (faktura jako dowód jednego wydatku i protokół)
+// częściowe i pełne, wpisy księgi, zapowiedzi wydarzeń (w tym wydarzenie klasowe z zadaniami
+// wolontariuszy i jednym zapisem opiekuna), jedno zebranie z protokołem zatwierdzonym do
+// publikacji, zaplanowane zebranie ogólne z zatwierdzonym zawiadomieniem (bez kampanii), dwa syntetyczne PDF-y (faktura jako dowód jednego wydatku i protokół)
 // w lokalnym katalogu zamiast magazynu Railway, jeden SZKIC kampanii e-mail (nigdy nie wysyłany) oraz
 // konta ról demo z hasłami wypisywanymi tylko na konsoli.
 //
@@ -41,7 +42,7 @@ import { pad } from './lib/synthetic-seed.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createDirectoryStorage } from '../src/storage-dir.js';
 import { buildDemoPdf, demoInvoicePdf, demoMinutesPdf } from './lib/demo-pdf.js';
-import { demoTimeline, parseDemoNow } from './lib/demo-dates.js';
+import { brusselsLocalIso, demoTimeline, parseDemoNow } from './lib/demo-dates.js';
 import { SCHOOL_NAME } from '../shared/school.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -355,6 +356,14 @@ const PAYMENT_PLAN = [
   [12, 'cash', 5000, 41],
 ];
 
+// Zapowiedzi (dni PO dniu uruchomienia; scripts/lib/demo-dates.js#upcoming omija
+// belgijskie święta ustawowe i nie wychodzi poza rok szkolny).
+const DAYS_AHEAD = Object.freeze({
+  generalMeeting: 14, // zapowiedź zebrania ogólnego i zebranie ogólne z zatwierdzonym zawiadomieniem
+  classEvent: 21, // wydarzenie klasowe 0-A z zadaniami wolontariuszy
+  fair: 42, // kiermasz szkolny
+});
+
 // Pozostałe punkty osi czasu (dni przed dniem wyciągu w pełnym planie).
 const DAYS_BEFORE = Object.freeze({
   materials: 30, // wydatek na materiały (przelew) i faktura demo
@@ -532,14 +541,14 @@ async function seedEvents(env, authorCookie, approverCookie, t) {
       title: 'Zebranie ogólne rodziców (zapowiedź) — dane przykładowe',
       description: `Zapowiedź organizacyjna: termin i miejsce zebrania ogólnego Rady Rodziców na rok ${t.schoolYearLabel}. To dane przykładowe do pokazu, nie zapis rzeczywistego wydarzenia.`,
       location: `Sala gimnastyczna, ${SCHOOL_NAME}`,
-      startsAt: `${t.upcoming(14)}T18:00`,
+      startsAt: `${t.upcoming(DAYS_AHEAD.generalMeeting)}T18:00`,
       organizer: 'Rada Rodziców (dane przykładowe)',
     },
     {
       title: 'Kiermasz szkolny (zapowiedź) — dane przykładowe',
       description: 'Zapowiedź organizacyjna kiermaszu szkolnego — termin i miejsce. Dane przykładowe do pokazu.',
       location: 'Hol główny szkoły',
-      startsAt: `${t.upcoming(42)}T16:00`,
+      startsAt: `${t.upcoming(DAYS_AHEAD.fair)}T16:00`,
       organizer: 'Rada Rodziców (dane przykładowe)',
     },
   ];
@@ -557,6 +566,53 @@ async function seedEvents(env, authorCookie, approverCookie, t) {
     published += 1;
   }
   return published;
+}
+
+// --- Wydarzenie klasowe z zadaniami wolontariuszy (#142/#579) --------------------
+// Przedstawiciel klasy 0-A zakłada zapowiedź wydarzenia WŁASNEJ klasy i dwa zadania
+// (jedno z liczbą miejsc na stronie publicznej, jedno wewnętrzne), zarząd zatwierdza
+// i publikuje (cztery oczy). Jeden zapis: pierwszy opiekun z listy kandydatów klasy
+// (GET .../tasks/candidates — ta sama trasa co formularz panelu, wpis w data_access_log),
+// czyli syntetyczny „Opiekun A/B Przykładowy NN”. Na /site/ zadanie publiczne pokazuje
+// „potrzebni jeszcze: 1” (2 miejsca, 1 zapis). To zapowiedź, nie relacja z wydarzenia.
+async function seedClassEvent(env, representativeCookie, approverCookie, classId, t) {
+  const day = t.upcoming(DAYS_AHEAD.classEvent);
+  const created = await apiCall(env, {
+    method: 'POST', path: '/api/events', cookie: representativeCookie, idempotencyKey: idKey('demo-class-event'),
+    body: {
+      schoolYearId: t.schoolYearId, classId, audience: 'public',
+      title: 'Popołudnie klasy 0-A na boisku (zapowiedź) — dane przykładowe',
+      description: 'Zapowiedź organizacyjna spotkania rodzin klasy 0-A: termin, miejsce i zadania dla chętnych opiekunów. Dane przykładowe do pokazu.',
+      location: 'Boisko szkolne',
+      startsAt: `${day}T15:00`,
+      endsAt: `${day}T17:00`,
+      organizer: 'Przedstawiciel klasy 0-A (dane przykładowe)',
+    },
+  });
+  const eventId = created.data.event.id;
+  const revision = created.data.event.revision;
+  await apiCall(env, { method: 'POST', path: `/api/events/${eventId}/submit`, cookie: representativeCookie, body: { revision } });
+  await apiCall(env, { method: 'POST', path: `/api/events/${eventId}/approve`, cookie: approverCookie, body: { revision } });
+  await apiCall(env, { method: 'POST', path: `/api/events/${eventId}/publish`, cookie: approverCookie, body: { revision } });
+  const publicTask = await apiCall(env, {
+    method: 'POST', path: `/api/events/${eventId}/tasks`, cookie: representativeCookie, idempotencyKey: idKey('demo-task'),
+    body: { title: 'Pomoc przy rozstawieniu stołów', slotsNeeded: 2, isPublic: true, startsAt: `${day}T15:00`, endsAt: `${day}T15:30` },
+  });
+  await apiCall(env, {
+    method: 'POST', path: `/api/events/${eventId}/tasks`, cookie: representativeCookie, idempotencyKey: idKey('demo-task'),
+    body: { title: 'Przygotowanie listy potrzebnych rzeczy', slotsNeeded: 1, isPublic: false },
+  });
+  const candidates = await apiCall(env, {
+    path: `/api/events/${eventId}/tasks/candidates`, cookie: representativeCookie,
+  });
+  const guardian = candidates.data.guardians[0];
+  if (!guardian) throw new Error('Seed demo: klasa wydarzenia nie ma opiekunów do zapisu.');
+  const taskId = publicTask.data.task.id;
+  await apiCall(env, {
+    method: 'POST', path: `/api/events/${eventId}/tasks/${taskId}/signups`, cookie: representativeCookie,
+    idempotencyKey: idKey('demo-signup'), body: { guardianId: guardian.id },
+  });
+  return { eventId, publicTaskId: taskId, guardianId: guardian.id, date: day };
 }
 
 // --- Zebranie z protokołem zatwierdzonym do publikacji --------------------------
@@ -619,6 +675,47 @@ async function seedMeeting(env, hostCookie, hostUserId, approverCookie, otherVot
   return { meetingId, minutesId, meetingDate };
 }
 
+// --- Zebranie ogólne z zatwierdzonym zawiadomieniem (#113/#584) -----------------
+// Zaplanowane zebranie ogólne (ten sam termin i miejsce co zapowiedź „Zebranie ogólne
+// rodziców”), porządek obrad z trzech punktów, zawiadomienie sporządzone przez jedno
+// konto zarządu i zatwierdzone przez drugie (cztery oczy). Po zatwierdzeniu panel
+// Zebrania podaje link „Plik kalendarza (.ics)”, a /site/ pokazuje zawiadomienie.
+// NIE tworzymy szkicu kampanii z zawiadomienia (POST .../campaign-draft) — żadnej
+// wiadomości do wysyłki; jedyną kampanią demo pozostaje szkic z seedEmailDraft.
+// Reguła terminu zawiadomienia (notice_min_days) celowo nieustawiona — wynika z
+// regulaminu Rady (D-21), którego seed nie zna.
+async function seedGeneralMeetingNotice(env, authorCookie, approverCookie, t) {
+  const day = t.upcoming(DAYS_AHEAD.generalMeeting);
+  const created = await apiCall(env, {
+    method: 'POST', path: '/api/meetings', cookie: authorCookie, idempotencyKey: idKey('demo-general-meeting'),
+    body: {
+      schoolYearId: t.schoolYearId, kind: 'plenary', title: 'Zebranie ogólne rodziców — dane przykładowe',
+      scheduledAt: brusselsLocalIso(day, '18:00'), location: `Sala gimnastyczna, ${SCHOOL_NAME}`, status: 'scheduled',
+    },
+  });
+  const meetingId = created.data.meeting.id;
+  const agenda = [
+    'Otwarcie zebrania i przyjęcie porządku obrad',
+    `Informacja o dobrowolnej składce na rok ${t.schoolYearLabel}`,
+    'Wolne wnioski',
+  ];
+  for (const [index, title] of agenda.entries()) {
+    await apiCall(env, {
+      method: 'POST', path: `/api/meetings/${meetingId}/agenda-items`, cookie: authorCookie, idempotencyKey: idKey('demo-agenda'),
+      body: { title, position: index + 1 },
+    });
+  }
+  const notice = await apiCall(env, {
+    method: 'POST', path: `/api/meetings/${meetingId}/notices`, cookie: authorCookie, idempotencyKey: idKey('demo-notice'), body: {},
+  });
+  const noticeId = notice.data.notice.id;
+  await apiCall(env, {
+    method: 'POST', path: `/api/meetings/${meetingId}/notices/${noticeId}/approval`, cookie: approverCookie,
+    idempotencyKey: idKey('demo-notice-approval'), body: {},
+  });
+  return { meetingId, noticeId, date: day };
+}
+
 // --- Kampania e-mail: TYLKO szkic, nigdy nie zatwierdzana ani kolejkowana -------
 async function seedEmailDraft(env, cookie, t) {
   const created = await apiCall(env, {
@@ -626,7 +723,20 @@ async function seedEmailDraft(env, cookie, t) {
     body: {
       schoolYearId: t.schoolYearId, title: 'Przypomnienie o składce — SZKIC demo', audience: 'all_households',
       subject: '[DANE PRZYKŁADOWE] Przypomnienie o dobrowolnej składce',
-      bodyText: 'To jest wyłącznie SZKIC do pokazu (dane przykładowe). Wiadomość nie została i nie zostanie wysłana z tego demo — brak klucza Brevo, worker e-mail nie jest uruchamiany.',
+      // Treść bez uwag bramki treści (src/email/content.js#contentWarnings): zdanie
+      // „…prosimy pominąć…” dla rodzin, które już wpłaciły, i znacznik {rodzina}
+      // (tytuł przelewu). Zostają: uwaga #83 o {rodzina} zamiast komunikacji strukturalnej
+      // (demo nie ma rejestru payment_references — {komunikat} wykluczyłby wszystkie rodziny)
+      // i stała uwaga o decyzji zarządu (D-16).
+      bodyText: [
+        '[DANE PRZYKŁADOWE] Szanowni Państwo,',
+        '',
+        'przypominamy o dobrowolnej składce Rady Rodziców na rok szkolny {rok}. Składka nie jest obowiązkowa.',
+        'Jeśli wpłata została już przekazana, prosimy pominąć tę wiadomość.',
+        'Tytuł przelewu: {rodzina}',
+        '',
+        'To jest wyłącznie SZKIC do pokazu. Wiadomość nie została i nie zostanie wysłana z tego demo — brak klucza Brevo, worker e-mail nie jest uruchamiany.',
+      ].join('\n'),
     },
   });
   return created.data.campaign.id;
@@ -725,8 +835,10 @@ export async function runDemoSeed({
     const reconciliation = await seedReconciliation(env, treasurer.cookie, payments, t);
     log(`Uzgodnienie wyciągu: ${reconciliation.reconciliationId}, ${reconciliation.lineCount} pozycji zaimportowanych (SZKIC, nie zatwierdzony).`);
 
-    const eventsPublished = await seedEvents(env, admin.cookie, board1.cookie, t);
-    log(`Wydarzenia: ${eventsPublished} zapowiedzi opublikowanych.`);
+    const announcementsPublished = await seedEvents(env, admin.cookie, board1.cookie, t);
+    const classEvent = await seedClassEvent(env, representative.cookie, board1.cookie, roster.classes[0][0], t);
+    const eventsPublished = announcementsPublished + 1;
+    log(`Wydarzenia: ${eventsPublished} zapowiedzi opublikowanych (w tym 1 klasowa z 2 zadaniami wolontariuszy i 1 zapisem opiekuna).`);
 
     const meeting = await seedMeeting(env, board1.cookie, board1.userId, board2.cookie, [board2.userId, treasurer.userId], t);
     log(`Zebranie: ${meeting.meetingId}, protokół ${meeting.minutesId} zatwierdzony i udostępniony publicznie.`);
@@ -745,6 +857,9 @@ export async function runDemoSeed({
       );
     }
 
+    const generalMeeting = await seedGeneralMeetingNotice(env, board1.cookie, board2.cookie, t);
+    log(`Zebranie ogólne ${generalMeeting.date}: zawiadomienie ${generalMeeting.noticeId} zatwierdzone (bez kampanii e-mail).`);
+
     const campaignId = await seedEmailDraft(env, board1.cookie, t);
     log(`Kampania e-mail: szkic ${campaignId} (NIE zatwierdzony, NIE zakolejkowany, nic nie zostało wysłane).`);
 
@@ -753,7 +868,7 @@ export async function runDemoSeed({
 
     return {
       schoolYearId: t.schoolYearId, timeline: t,
-      mode, accounts, roster, meeting, documents, campaignId, newsId, reconciliation, unassignedPaymentId,
+      mode, accounts, roster, meeting, generalMeeting, classEvent, documents, campaignId, newsId, reconciliation, unassignedPaymentId,
       counts: { payments: paymentsCreated, ledger: ledgerCreated, events: eventsPublished },
       // Tylko gdy keepOpen: true (testy) — env.db zostaje otwarty, wywołujący
       // odpowiada za close(). W zwykłym użyciu (CLI, demo:seed) undefined.

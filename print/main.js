@@ -12,6 +12,7 @@ import {
   previewBlockedMessage,
   renderCardsHtml,
   schoolYearCardLabel,
+  structuredReferenceNotice,
 } from "./core.js";
 import { describeSource } from "../import/csv.js";
 import { api as apiRequest } from "../shared/api.js";
@@ -264,7 +265,8 @@ function renderPreview() {
     preview.innerHTML = result.html;
     preview.dataset.layout = result.layout;
     document.body.dataset.layout = result.layout;
-    setText(previewMessage, `Podgląd: ${cardCountLabel(result.count)}.`);
+    const notice = structuredReferenceNotice(state.households, state.selected, normalizeConfig(readConfig()).config);
+    setText(previewMessage, `Podgląd: ${cardCountLabel(result.count)}.${notice ? ` ${notice}` : ""}`);
     confirmBox.disabled = false;
   } catch (error) {
     preview.replaceChildren();

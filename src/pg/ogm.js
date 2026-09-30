@@ -71,14 +71,31 @@ export function formatStructuredReference(value) {
 // ciąg TYLKO jeśli suma kontrolna się zgadza — literówka w cyfrze nigdy nie
 // daje fałszywego dopasowania. Brak dopasowania -> null (pozycja do ręcznego
 // przypisania), nic nie jest tu zatwierdzane automatycznie.
-const STRUCTURED_PATTERN = /(?:\+{3}|\*{3})\s*(\d{3})\s*\/\s*(\d{4})\s*\/\s*(\d{5})\s*(?:\+{3}|\*{3})/;
-const BARE_PATTERN = /(?<!\d)(\d{3})[\s./-]?(\d{4})[\s./-]?(\d{5})(?!\d)/;
+//
+// Jednoznaczność (#83, import wyciągu): zapis z +++/*** ma pierwszeństwo przed
+// samymi cyframi. Jeśli w tytule są DWIE różne poprawne referencje tego samego
+// rodzaju (np. przelew za dwie rodziny), wynik to null — nie zgadujemy, którą
+// rodzinę wskazać. Ta sama referencja powtórzona w tytule jest jedną referencją.
+const STRUCTURED_PATTERN = /(?:\+{3}|\*{3})\s*(\d{3})\s*\/\s*(\d{4})\s*\/\s*(\d{5})\s*(?:\+{3}|\*{3})/g;
+const BARE_PATTERN = /(?<!\d)(\d{3})[\s./-]?(\d{4})[\s./-]?(\d{5})(?!\d)/g;
+// Górna granica długości przeszukiwanego tekstu (tytuł z wyciągu ma do kilkuset znaków).
+const MAX_EXTRACT_LENGTH = 2000;
+
+function validCandidates(pattern, input) {
+  const found = new Set();
+  for (const match of input.matchAll(pattern)) {
+    const candidate = `${match[1]}${match[2]}${match[3]}`;
+    if (isValidStructuredReference(candidate)) found.add(candidate);
+  }
+  return found;
+}
 
 export function extractStructuredReference(text) {
-  const input = String(text ?? '');
-  const structured = STRUCTURED_PATTERN.exec(input);
-  const bare = structured ?? BARE_PATTERN.exec(input);
-  if (!bare) return null;
-  const candidate = `${bare[1]}${bare[2]}${bare[3]}`;
-  return isValidStructuredReference(candidate) ? candidate : null;
+  const input = String(text ?? '').slice(0, MAX_EXTRACT_LENGTH);
+  for (const pattern of [STRUCTURED_PATTERN, BARE_PATTERN]) {
+    const found = validCandidates(pattern, input);
+    if (found.size === 1) return [...found][0];
+    if (found.size > 1) return null;
+  }
+  return null;
 }

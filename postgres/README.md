@@ -1222,6 +1222,28 @@ tabeli: usunięcie triggerów, funkcji i tabeli; z wnioskami tylko po kopii
 zapasowej (znika historia wniosków; zdarzenia `role_grant_request.*` zostają w
 `audit_events`).
 
+`0158_structured_reference_usage.sql` (#83, follow-up #580) dodaje
+kolumnę `bank_statement_lines.structured_ref_hash`: solony skrót
+(`sha256("<sól uzgodnienia>:ogm:<12 cyfr>")`) komunikacji strukturalnej OGM-VCS
+wyodrębnionej przy imporcie z dowolnego miejsca tytułu
+(`extractStructuredReference`, tylko poprawna suma mod 97 i jedna jednoznaczna
+referencja). Dzięki temu propozycje dopasowania rozpoznają referencję rodziny
+także w tytule „Składka +++…+++ Jan”. CHECK wymaga formatu 64 znaków hex i
+skrótu tytułu przy każdym skrócie referencji. Tytuł i referencja nadal nie są
+zapisywane jawnie; kolumna nie trafia do paczki eksportu rocznego (jak
+`payment_references`, D-04).
+Skutki dla danych: kolumna jest NULL we wszystkich istniejących pozycjach;
+żaden wiersz nie jest zmieniany. Przeliczenia wstecz nie ma i nie da się go
+wykonać (serwer nie zna tytułów, tylko skróty) — stare pozycje są rozpoznawane
+jak dotąd tylko wtedy, gdy cały tytuł to referencja; pozostałe wymagają
+ręcznego dopasowania. Ta sama migracja rozszerza CHECK
+`email_campaign_exclusions_reason_check` o powód `no_payment_reference`:
+kampania z `{komunikat}` w treści nie obejmuje rodziny bez aktywnej referencji
+w roku (istniejące wykluczenia i kampanie bez zmian). Wycofanie: usunięcie CHECK
+`bank_statement_line_structured_ref_requires_title` i kolumny (znikają tylko
+skróty referencji) oraz — bez wierszy `no_payment_reference` — przywrócenie
+CHECK powodów z 0156.
+
 `0159_role_grant_request_reject_reason.sql` (#146, follow-up PR #587) dodaje
 opcjonalny powód odrzucenia (albo wycofania) wniosku o nadanie roli:
 kolumna `role_grant_requests.reject_reason` (tekst 3–500 znaków bez spacji na

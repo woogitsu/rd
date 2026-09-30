@@ -1161,6 +1161,17 @@
       "free_text": false,
       "exportable": true,
       "data_type": "text"
+    },
+    "structured_ref_hash": {
+      "personal": "pseudonymous",
+      "subject": "guardian",
+      "category": "identyfikacja",
+      "purpose": "solony skrót komunikacji strukturalnej OGM-VCS wyodrębnionej z tytułu przelewu — propozycja gospodarstwa w uzgodnieniu (#83)",
+      "retention_category": "payment_reference",
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
     }
   },
   "classes": {
