@@ -16,8 +16,8 @@ Pole puste bez powodu i bez odwołania nie jest dozwolone.
 Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei, więc
 „równoległe” scenariusze sprawdzają niezmiennik wyniku, a nie realny wyścig
 (realne wyścigi na PostgreSQL: `tests/pg-reconciliation-race.test.js`,
-`tests/pg-export-race.test.js`, `tests/pg-real-concurrency.test.js`, uruchamiane
-z `RD_TEST_PG_URL`; #208, sekcja „Testy na prawdziwym PostgreSQL” niżej).
+`tests/pg-export-race.test.js`, `tests/pg-real-concurrency.test.js`,
+`tests/pg-year-close-race.test.js`, uruchamiane z `RD_TEST_PG_URL`; #208, sekcja „Testy na prawdziwym PostgreSQL” niżej).
 
 ## Macierz
 
@@ -180,6 +180,20 @@ bariery anulowania. Wpłaty mają kilka warstw blokad (API i triggery 0002/0038/
 0104): po zdjęciu `FOR UPDATE` z API korekty i z triggerów 0002 test bariery korekt
 nadal przechodzi, bo pozostałe warstwy trzymają blokadę.
 Automatycznej kontroli mutacyjnej w CI jeszcze nie ma (#208, punkt 4).
+
+`tests/pg-year-close-race.test.js` (#212, pomijany bez `RD_TEST_PG_URL`): równoległe
+„Zamknij rok” — dwie osoby z zarządu, podwójne kliknięcie tej samej osoby (i ponowienie
+po zamknięciu), rozpoczynający (`four_eyes_required`) i inna osoba, dwa różne lata naraz;
+zapis księgi, korekta księgi, korekta wpłaty (wpłata częściowa) i bilans otwarcia
+(`LOCK … SHARE ROW EXCLUSIVE` w `ledger-cash`) w chwili zamknięcia; korekta wpłaty
+niezatwierdzona przed zamknięciem. Pierwsze zamknięcie jest wstrzymywane w transakcji
+zaraz po `LOCK TABLE … IN SHARE MODE` albo przed COMMIT, a kolejne żądania muszą
+czekać na blokadę (`wait_event = 'advisory'` dla drugiego zamknięcia). Transakcje
+biegną z `retries: 0`, bo ponowienie 40P01 w `src/db.js` ukryłoby zakleszczenie.
+Kontrola pozytywna w tym samym pliku: po pominięciu `pg_advisory_xact_lock('rd_year_close')`
+te same przeploty (ten sam rok i dwa różne lata) kończą się `40P01` i `503`.
+Kontrola mutacyjna wykonana ręcznie: usunięcie tej blokady z `src/pg/routes/year-close.js`
+czerwieni cztery testy równoległych zamknięć (dwie osoby, podwójne kliknięcie, cztery oczy, dwa lata).
 
 `tests/pg-db-contract.test.js` (działa w CI bez PostgreSQL): `src/` nie czyta
 `rowCount`/`affectedRows` — kontrakt `src/db.js` zwraca tylko `{ rows }`, a PGlite
