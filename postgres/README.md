@@ -1221,3 +1221,17 @@ e-mail adresata (jak `invitations.email`), bez tokenu. Wycofanie na pustej
 tabeli: usunięcie triggerów, funkcji i tabeli; z wnioskami tylko po kopii
 zapasowej (znika historia wniosków; zdarzenia `role_grant_request.*` zostają w
 `audit_events`).
+
+`0159_role_grant_request_reject_reason.sql` (#146, follow-up PR #587) dodaje
+opcjonalny powód odrzucenia (albo wycofania) wniosku o nadanie roli:
+kolumna `role_grant_requests.reject_reason` (tekst 3–500 znaków bez spacji na
+brzegach). CHECK `role_grant_requests_reject_reason_check` dopuszcza powód
+wyłącznie przy statusie `rejected`, a strażnik `role_grant_request_guard()`
+(redefinicja od wersji z 0157) pozwala go ustawić tylko w tej samej operacji
+zamknięcia `pending → rejected`; po zamknięciu wiersz jest niezmienny jak
+dotąd. Przed zapisem powód przechodzi przez bramkę danych osobowych #152
+(`src/pg/pii-gate.js`); dziennik zdarzeń dostaje tylko flagę `reasonGiven`.
+Skutki dla danych: nowa kolumna z NULL; istniejące wiersze (także już
+odrzucone) zostają bez powodu, nic nie jest uzupełniane wstecznie. Tabela
+nadal poza eksportem rocznym. Wycofanie: przywrócenie strażnika z 0157,
+usunięcie CHECK i kolumny (zapisane powody znikną — tylko po kopii zapasowej).

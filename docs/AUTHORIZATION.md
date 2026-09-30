@@ -226,7 +226,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/admin/account-requests/:requestId/reject` | wyłącznie admin | tak | 403 | odrzucenie lub wycofanie wniosku; zamknięty → 409 |
 | `GET /api/admin/grant-requests` | wyłącznie admin | tak | 403 | wnioski o nadanie roli admin/board/treasurer (#146); bez tokenów; `?status=` |
 | `POST /api/admin/grant-requests/:requestId/approve` | wyłącznie admin, nie wnioskodawca i nie adresat (także nie konto o adresie z zaproszenia) | tak, krok w górę: ≤15 min (#150) | 403 | zasada czterech oczu (`403 grant_four_eyes_required`, także `CHECK` w bazie); wykonuje nadanie albo wystawia zaproszenie — token zwracany raz zatwierdzającemu; zamknięty → `409 grant_request_closed`, wygasły (72 h) → `409 grant_request_expired` |
-| `POST /api/admin/grant-requests/:requestId/reject` | wyłącznie admin | tak | 403 | odrzucenie lub wycofanie wniosku; zamknięty → 409 |
+| `POST /api/admin/grant-requests/:requestId/reject` | wyłącznie admin | tak | 403 | odrzucenie lub wycofanie wniosku; opcjonalny powód przez bramkę danych osobowych (422 bez zapisu, 0159); zamknięty → 409 |
 | `GET /api/admin/grants` | wyłącznie admin | tak | 403 | |
 | `POST /api/admin/grants` | wyłącznie admin | tak, krok w górę: ≤15 min (#150) | 403 | nadanie roli; MFA starsze niż 15 min → `403 mfa_stale`; własne konto → `409 cannot_grant_self`; rola admin/board/treasurer przy innym aktywnym administratorze → `202` i wniosek zamiast przydziału (#146); bez innego administratora — bezpośrednio z `role_grant.four_eyes_waived` |
 | `POST /api/admin/grants/:grantId/revoke` | wyłącznie admin | tak | 403 | |

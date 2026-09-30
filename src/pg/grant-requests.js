@@ -25,11 +25,15 @@ import crypto from 'node:crypto';
 import { insertAuditEvent } from './audit.js';
 import { isoTimestamp } from './auth.js';
 import { PROTECTED_ACCOUNT_ROLES } from './account-recovery.js';
+import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
 
 export const GRANT_REQUEST_KINDS = Object.freeze(['grant', 'invitation']);
 export const GRANT_REQUEST_TTL_HOURS = 72;
 const STATUSES = new Set(['pending', 'approved', 'rejected', 'expired', 'all']);
 const MAX_LIST = 200;
+// Powód odrzucenia (0159): opcjonalny, 3–500 znaków po obcięciu spacji.
+export const REJECT_REASON_MIN = 3;
+export const REJECT_REASON_MAX = 500;
 
 export class GrantRequestError extends Error {
   constructor(code, status = 400) {
@@ -76,7 +80,7 @@ export async function recordFourEyesWaiver(tx, { actorId, entityType, entityId, 
 
 const COLUMNS = `id, kind, role, target_user_id, target_email, school_year_id, grant_expires_at,
   invitation_ttl_seconds, replaces_invitation_id, requested_by, status, created_at, expires_at,
-  decided_by, decided_at, result_id`;
+  decided_by, decided_at, result_id, reject_reason`;
 
 export function presentGrantRequest(row) {
   return {
@@ -90,6 +94,7 @@ export function presentGrantRequest(row) {
     createdAt: isoTimestamp(row.created_at), expiresAt: isoTimestamp(row.expires_at),
     decidedBy: row.decided_by ?? null, decidedAt: row.decided_at ? isoTimestamp(row.decided_at) : null,
     resultId: row.result_id ?? null,
+    rejectReason: row.reject_reason ?? null,
   };
 }
 
@@ -217,20 +222,42 @@ export async function approveGrantRequest(env, { actorId, requestId, execute, lo
   return result;
 }
 
+// Powód odrzucenia z żądania: brak, null albo sam biały znak → brak powodu
+// (odrzucenie bez powodu działa jak przed 0159). Inny typ albo długość spoza
+// 3–500 → 400 invalid_reason.
+export function normalizeRejectReason(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw new GrantRequestError('invalid_reason');
+  const reason = value.trim();
+  if (!reason) return null;
+  if (reason.length < REJECT_REASON_MIN || reason.length > REJECT_REASON_MAX) throw new GrantRequestError('invalid_reason');
+  return reason;
+}
+
 // Odrzucić (albo wycofać jako wnioskodawca) może każdy administrator.
-export async function rejectGrantRequest(env, { actorId, requestId }) {
+// Opcjonalny powód (0159) przechodzi bramkę danych osobowych #152 PRZED
+// transakcją: e-mail/IBAN/numer rejestru → 422 personal_data_forbidden,
+// telefon bez `confirmPersonalData` → 422 possible_personal_data; w obu
+// przypadkach wniosek zostaje oczekujący. Dziennik zdarzeń dostaje tylko flagę
+// `reasonGiven` (i kategorie potwierdzonych danych), nigdy treść powodu.
+export async function rejectGrantRequest(env, { actorId, requestId, reason = null, confirmPersonalData = false }) {
   if (!actorId) throw new Error('actor_required');
+  const rejectReason = normalizeRejectReason(reason);
+  const gate = gateFreeText([['role_grant_requests.reject_reason', rejectReason]], {
+    confirm: confirmPersonalData === true,
+    fail: (code, categories) => Object.assign(new GrantRequestError(code, 422), { categories }),
+  });
   return env.db.transaction(async (tx) => {
     const row = await lockGrantRequest(tx, requestId);
     if (row.status !== 'pending') throw new GrantRequestError('grant_request_closed', 409);
     const { rows } = await tx.query(
-      `UPDATE role_grant_requests SET status = 'rejected', decided_by = $2, decided_at = now()
+      `UPDATE role_grant_requests SET status = 'rejected', decided_by = $2, decided_at = now(), reject_reason = $3
         WHERE id = $1 RETURNING ${COLUMNS}`,
-      [row.id, actorId],
+      [row.id, actorId, rejectReason],
     );
     await insertAuditEvent(tx, {
       actorId, action: 'role_grant_request.rejected', entityType: 'role_grant_request', entityId: row.id,
-      metadata: requestMetadata(row, { requestedBy: row.requested_by }),
+      metadata: requestMetadata(row, { requestedBy: row.requested_by, reasonGiven: rejectReason !== null, ...piiAuditMetadata(gate) }),
     });
     return { request: presentGrantRequest(rows[0]) };
   });

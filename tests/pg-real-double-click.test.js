@@ -546,6 +546,31 @@ test('#146 (bariera): podwójne kliknięcie „Zatwierdź” wniosku o nadanie r
   });
 });
 
+test('#146/0159 (bariera): podwójne kliknięcie „Odrzuć” z różnymi powodami — drugie czeka na blokadę wiersza i dostaje 409; zapisany pierwszy powód, jedno zdarzenie', { skip }, async () => {
+  await withReal(async (db) => {
+    const { cookies } = await adminSetup(db);
+    const adminC = await seedUserSession(db, { userId: 'u-admin-c', mfa: true, roles: [{ role: 'admin' }] });
+    await seedUser(db, { userId: 'u-odrzucany' });
+    const plain = barrierEnv(db, {}).env;
+    const requested = await callApi(plain, 'POST', '/api/admin/grants', cookies.adminA, { userId: 'u-odrzucany', role: 'board' });
+    assert.equal(requested.status, 202, JSON.stringify(requested.body));
+    const rejectPath = `/api/admin/grant-requests/${requested.body.request.id}/reject`;
+    const race1 = await race(db, {
+      pauseAfter: /UPDATE role_grant_requests SET status = 'rejected'/,
+      first: (env) => callApi(env, 'POST', rejectPath, cookies.adminB, { reason: 'Pierwszy powód odrzucenia' }),
+      others: [(env) => callApi(env, 'POST', rejectPath, adminC, { reason: 'Drugi powód odrzucenia' })],
+    });
+    const { results: [a, b], errors } = race1;
+    assertWaitsOn(race1, /FOR UPDATE/, 'drugie odrzucenie czeka na blokadę wiersza wniosku (FOR UPDATE)');
+    assert.equal(a.status, 200, JSON.stringify(a.body));
+    assert.deepEqual([b.status, b.body.error], [409, 'grant_request_closed']);
+    assert.deepEqual(errors, []);
+    const { rows } = await db.query('SELECT status, reject_reason, decided_by FROM role_grant_requests WHERE id = $1', [requested.body.request.id]);
+    assert.deepEqual(rows[0], { status: 'rejected', reject_reason: 'Pierwszy powód odrzucenia', decided_by: 'u-admin-b' });
+    assert.equal(await auditCount(db, 'role_grant_request.rejected'), 1);
+  });
+});
+
 // ---------------------------------------------------------------- import
 
 const HEADER = 'ID ucznia;Imię ucznia;Nazwisko ucznia;Klasa;ID rodziny;Opiekun 1;E-mail opiekuna 1;Opiekun 2;E-mail opiekuna 2';

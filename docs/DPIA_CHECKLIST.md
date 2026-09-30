@@ -116,6 +116,7 @@ odpowiedzialności osoby zapisującej.
 | `student_guardian_changes.reason` | uzasadnienie zmiany relacji opiekun–uczeń (#152) |
 | `news_photos.source_detail` | opis źródła zdjęcia, może zawierać dane osoby przekazującej (#152) |
 | `email_suppression_releases.confirmation_note` | uwaga do zwolnienia adresu z listy wykluczeń (#152) |
+| `role_grant_requests.reject_reason` | opcjonalny powód odrzucenia lub wycofania wniosku o nadanie roli chronionej (0159, #146) — może wspomnieć osobę adresata; w dzienniku zdarzeń tylko flaga `reasonGiven`, tabela poza eksportem rocznym |
 
 ## Środki już istniejące (do odwołania w DPIA)
 

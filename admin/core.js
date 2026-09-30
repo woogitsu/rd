@@ -536,6 +536,8 @@ export function grantRequestRow(request, { me = {}, users = [], classes = new Ma
     canReject: pending,
     rejectLabel: ownRequest ? "Wycofaj wniosek" : "Odrzuć",
     note: pending ? approveBlockedReason : null,
+    // 0159: powód odrzucenia (opcjonalny) — tylko przy wniosku odrzuconym.
+    rejectReason: request.status === "rejected" && request.rejectReason ? `Powód: ${request.rejectReason}` : null,
   };
 }
 
@@ -572,7 +574,14 @@ export function grantRequestDialog(action, request, row) {
       ...lines,
       "Rola nie zostanie nadana, a zaproszenie nie powstanie. Wniosek zostaje w historii jako odrzucony.",
       "Aby wrócić do sprawy, trzeba złożyć nowy wniosek.",
-      "Odrzucenie trafi do dziennika zdarzeń (kto, kiedy, który wniosek).",
+      "Powód jest opcjonalny; zobaczą go administratorzy na liście wniosków. Odrzucenie trafi do dziennika zdarzeń (kto, kiedy, który wniosek, czy podano powód — bez jego treści).",
     ],
   };
+}
+
+// Ciało POST …/reject (0159): pusty powód (albo same spacje) = brak powodu.
+// Serwer i tak normalizuje; długość 3–500 i bramkę danych osobowych sprawdza serwer.
+export function rejectRequestPayload(reason) {
+  const value = String(reason ?? "").trim();
+  return value ? { reason: value } : {};
 }
