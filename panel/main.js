@@ -21,9 +21,9 @@ import {
   paymentsQuery,
 } from "./core.js";
 import { api as apiRequest } from "../shared/api.js";
-import { confirmAction } from "../shared/confirm-dialog.js";
+import { confirmAction, netAfterCorrection, outcomeText } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
-import { panelYearState, yearOptionsHtml } from "../shared/school-year.js";
+import { formatSchoolYear, panelYearState, yearOptionsHtml } from "../shared/school-year.js";
 import {
   buildHouseholdLabels,
   classOptionsHtml,
@@ -346,6 +346,9 @@ function configureDialog(id, prefix, submit, successText, describeConfirm) {
   const dialog = byId(id);
   const form = dialog.querySelector("form");
   const errorBox = form.querySelector(".form-error");
+  // Jedno żądanie naraz (#136): podwójne kliknięcie albo Enter w trakcie zapisu nie
+  // wysyła drugiego żądania; serwer i tak odtworzyłby zapis po kluczu idempotencji.
+  let busy = false;
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -354,33 +357,38 @@ function configureDialog(id, prefix, submit, successText, describeConfirm) {
       state.requestKey = null;
       return;
     }
-    if (!form.reportValidity()) return;
-
-    // Podsumowanie skutków przed zapisem (issue #136) — zapis jest trwały,
-    // poprawka wymaga nowej korekty widocznej w historii.
-    if (describeConfirm) {
-      const confirmed = await confirmAction(describeConfirm(new FormData(form)));
-      if (!confirmed) return;
-    }
-
-    errorBox.textContent = "";
-    const submitButton = event.submitter;
-    submitButton.disabled = true;
-    state.requestKey ||= makeIdempotencyKey(prefix);
+    if (busy || !form.reportValidity()) return;
+    busy = true;
+    const submitButton = event.submitter ?? form.querySelector('button[value="submit"]');
     try {
-      await submit(new FormData(form), state.requestKey);
+      // Klucz idempotencji powstaje przy otwarciu podsumowania (issue #136, p. 4)
+      // i zostaje do zamknięcia formularza: ponowienie po błędzie sieci wysyła ten
+      // sam klucz, więc serwer nie utworzy drugiej wpłaty ani korekty.
+      state.requestKey ||= makeIdempotencyKey(prefix);
+      // Podsumowanie skutków przed zapisem (issue #136) — zapis jest trwały,
+      // poprawka wymaga nowej korekty widocznej w historii. „Anuluj” wraca do
+      // formularza z wpisanymi danymi.
+      if (describeConfirm) {
+        const confirmed = await confirmAction(describeConfirm(new FormData(form)));
+        if (!confirmed) return;
+      }
+
+      errorBox.textContent = "";
+      if (submitButton) submitButton.disabled = true;
+      const outcome = await submit(new FormData(form), state.requestKey);
       state.requestKey = null;
       dialog.close();
       form.reset();
       await loadPayments({ reload: true });
-      if (!message.classList.contains("error")) message.textContent = successText;
+      if (!message.classList.contains("error")) message.textContent = outcomeText(successText, outcome?.replayed);
       restoreFocus();
     } catch (error) {
       errorBox.textContent = error.code === "idempotency_conflict"
         ? `${error.message} Jeśli chcesz zmienić dane operacji, anuluj formularz i otwórz go ponownie.`
         : error.message;
     } finally {
-      submitButton.disabled = false;
+      busy = false;
+      if (submitButton) submitButton.disabled = false;
     }
   });
 
@@ -472,9 +480,10 @@ const assignmentPicker = wireHouseholdPicker(
 const paymentDialog = configureDialog("payment-dialog", "payment", async (data, requestKey) => {
   const householdId = String(data.get("householdId") || "").trim();
   if (householdId && !isValidId(householdId)) throw new Error("Niepoprawny identyfikator rodziny.");
-  await api("/api/payments", {
+  return api("/api/payments", {
     method: "POST",
     headers: { "Idempotency-Key": requestKey },
+    withMeta: true,
     body: JSON.stringify({
       schoolYearId: String(data.get("schoolYearId") || "").trim(),
       amountCents: parseEuroAmount(data.get("amount")),
@@ -499,6 +508,7 @@ const paymentDialog = configureDialog("payment-dialog", "payment", async (data, 
     title: "Zapisać wpłatę?",
     effects: [
       `Kwota: ${amountText}`,
+      `Rok szkolny: ${formatSchoolYear(data.get("schoolYearId"))}`,
       `Data wpływu: ${data.get("receivedOn")}`,
       `Metoda: ${METHOD_LABELS[data.get("method")] ?? data.get("method")}`,
       householdId ? householdLabel(state.householdLabels, householdId) : "Bez przypisania rodziny — wpłata trafi do „Do przypisania”.",
@@ -511,9 +521,10 @@ const paymentDialog = configureDialog("payment-dialog", "payment", async (data, 
 
 const correctionDialog = configureDialog("correction-dialog", "correction", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
-  await api(`/api/payments/${encodeURIComponent(paymentId)}/corrections`, {
+  return api(`/api/payments/${encodeURIComponent(paymentId)}/corrections`, {
     method: "POST",
     headers: { "Idempotency-Key": requestKey },
+    withMeta: true,
     body: JSON.stringify({
       amountCents: parseEuroAmount(data.get("amount")),
       reason: data.get("reason"),
@@ -521,18 +532,25 @@ const correctionDialog = configureDialog("correction-dialog", "correction", asyn
   });
 }, "Dodano korektę.", (data) => {
   let amountText = String(data.get("amount") || "");
+  let cents = null;
   try {
-    amountText = formatCents(parseEuroAmount(data.get("amount")));
+    cents = parseEuroAmount(data.get("amount"));
+    amountText = formatCents(cents);
   } catch {
     // Nieprawidłowa kwota — właściwy błąd pokaże walidacja przy właściwym zapisie.
   }
+  // Kwota netto przed i po korekcie (wpłata mogła mieć już wcześniejsze korekty).
+  const raw = state.payments.find((item) => item?.id === String(data.get("paymentId")));
+  const net = netAfterCorrection(raw ? normalizePayment(raw).netCents : undefined, cents);
   return {
     title: "Dodać korektę?",
     effects: [
       `Kwota pomniejszenia: ${amountText}`,
+      net ? `Netto wpłaty: ${formatCents(net.beforeCents)} → po korekcie ${formatCents(net.afterCents)}` : null,
       `Powód: ${String(data.get("reason") || "").trim() || "—"}`,
       "Korekta nie usuwa pierwotnego zapisu — kwota netto zostanie przeliczona, historia zostaje widoczna.",
     ],
+    warning: net?.exceeds ? "Korekta jest większa niż kwota netto wpłaty. Sprawdź kwotę, zanim zapiszesz." : "",
     confirmLabel: "Dodaj korektę",
   };
 });
@@ -541,9 +559,10 @@ const assignmentDialog = configureDialog("assignment-dialog", "assignment", asyn
   const paymentId = String(data.get("paymentId"));
   const householdId = String(data.get("householdId") || "").trim();
   if (!isValidId(householdId)) throw new Error("Niepoprawny identyfikator rodziny.");
-  await api(`/api/payments/${encodeURIComponent(paymentId)}/assignment`, {
+  return api(`/api/payments/${encodeURIComponent(paymentId)}/assignment`, {
     method: "POST",
     headers: { "Idempotency-Key": requestKey },
+    withMeta: true,
     body: JSON.stringify({ householdId }),
   });
 }, "Przypisano rodzinę.");

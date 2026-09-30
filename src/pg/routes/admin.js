@@ -80,7 +80,7 @@
 // operacje nie odebrały sobie nawzajem ostatniego dostępu administratora.
 
 import {
-  allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, revokeInvitation, revokeUserSessions,
+  allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, reissueInvitation, revokeInvitation, revokeUserSessions,
   revokeUserSessionsWith, ROLE_STATUS, ROLES,
 } from '../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
@@ -723,23 +723,24 @@ async function createClasses(env, actorId, schoolYearId, request, json) {
 // „Wyślij ponownie” (#108): wycofuje stare zaproszenie i tworzy nowe o tym
 // samym zakresie (token wraca raz, jak przy utworzeniu). Tylko dla zaproszeń
 // wciąż oczekujących — przyjęte, wygasłe lub już wycofane nie mają tu drogi
-// (nowe zaproszenie od zera przez POST /api/admin/invitations).
+// (nowe zaproszenie od zera przez POST /api/admin/invitations). Wycofanie i
+// nowe zaproszenie w jednej transakcji pod blokadą adresu (reissueInvitation
+// w src/pg/auth.js, #293/#576).
 async function reissueInvitationRoute(env, actorId, invitationId, json) {
-  const { rows } = await env.db.query(`SELECT ${INVITATION_COLUMNS} FROM invitations i WHERE i.id = $1`, [invitationId]);
-  const invitation = rows[0];
-  if (!invitation) throw new RequestError('invitation_not_found', 404);
-  if (invitation.status !== 'pending') throw new RequestError('invitation_not_pending', 409);
-  const revoked = await revokeInvitation(env, { invitationId, actorId });
-  if (!revoked) throw new RequestError('invitation_not_pending', 409);
-  const created = await createInvitation(env, {
-    actorId, email: invitation.email, role: invitation.role,
-    classId: invitation.class_id, schoolYearId: invitation.school_year_id,
-    replacesInvitationId: invitationId,
-  });
+  let created;
+  try {
+    created = await reissueInvitation(env, { actorId, invitationId });
+  } catch (error) {
+    // rejectPending w insertInvitation: inne oczekujące zaproszenie o tym samym zakresie.
+    if (error?.message === 'invitation_pending') throw new RequestError('invitation_pending', 409);
+    throw error;
+  }
+  if (created.error === 'invitation_not_found') throw new RequestError('invitation_not_found', 404);
+  if (created.error) throw new RequestError(created.error, 409);
   return json({
     invitation: {
-      id: created.invitationId, email: invitation.email, role: invitation.role,
-      classId: invitation.class_id, schoolYearId: invitation.school_year_id,
+      id: created.invitationId, email: created.email, role: created.role,
+      classId: created.classId, schoolYearId: created.schoolYearId,
       expiresAt: created.expiresAt, status: 'pending', replacesInvitationId: invitationId,
     },
     token: created.secret,
