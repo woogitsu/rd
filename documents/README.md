@@ -22,6 +22,7 @@ Po zbudowaniu serwer Node udostępnia panel pod `/documents/` z tego samego orig
 - widok metadanych (rodzaj, rok, klasa, typ, rozmiar, SHA-256, powiązanie, autor, czas),
 - pobranie przez link do `/api/documents/{id}/content` (załącznik z nazwą techniczną, zdarzenie w dzienniku),
 - wersje i stan (issue #82): stan dokumentu (aktualny, zastąpiony, unieważniony) w liście i szczegółach, historia wersji (łańcuch „zastępuje” / „zastąpiony przez” z odnośnikami), filtr „Pokaż też zastąpione i unieważnione” (`status=all`), akcje „Zastąp innym dokumentem…” i „Unieważnij…” z powodem (3–500 znaków, wewnętrzny) i oknem potwierdzenia z `shared/confirm-dialog.js`. Plik zostaje w archiwum — żadna z akcji go nie usuwa. Przyciski widzą tylko konta z rolą, którą API już dopuszcza do zapisu danego rodzaju (jak przy przesłaniu, D-08/D-09 bez rozszerzania); rozstrzyga serwer (404 poza zakresem, MFA dla dowodów finansowych),
+- wersja reguł kontroli pliku (issue #89, migracja 0161): wiersz „Kontrola struktury” w szczegółach (bieżące reguły / starsze reguły / wersja nieznana dla plików sprzed zapisu wersji) i filtr „Tylko sprawdzone starszymi regułami kontroli pliku” (`validation=outdated`) — tylko zawężenie listy w granicach uprawnień, bez nowych danych,
 - przesłanie pliku PDF, PNG lub JPEG z metadanymi: rodzaj, rok szkolny, klasa (tylko materiały klasy), powiązanie z wpisem księgi lub wpłatą (tylko dowody finansowe).
 
 ## Zasady

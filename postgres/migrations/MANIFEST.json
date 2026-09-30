@@ -366,5 +366,9 @@
   {
     "name": "0160_access_denial_windows.sql",
     "sha256": "82a25878569d2274f5d49e5a1bf6baa1e723245274f3da1045948f55df05d9d4"
+  },
+  {
+    "name": "0161_document_validation_version.sql",
+    "sha256": "6cfad1e1dfeffb54bd7fed7dbef5da4791dc75df643bacf3fe3701bc9ca1c536"
   }
 ]

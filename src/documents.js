@@ -48,6 +48,18 @@ export function downloadFilename(id, mime) {
   return `dokument-${id}.${ALLOWED_TYPES[mime]?.extension ?? 'bin'}`;
 }
 
+// Wersja reguł kontroli struktury (issue #89, migracja 0161). Zapisywana w
+// `documents.validation_version` przy przesłaniu. Podgląd pliku sprawdzonego
+// BIEŻĄCĄ wersją (i o zgodnym SHA-256) nie przeszukuje bajtów ponownie; plik
+// sprawdzony starszą wersją albo bez wersji (NULL) — tak, przy każdym podglądzie.
+//
+// KAŻDA zmiana reguł między znacznikami „reguły kontroli struktury” niżej
+// (lista kluczy, limity, heurystyki PDF/PNG/JPEG) wymaga podbicia tej stałej —
+// inaczej podgląd pominąłby nowe reguły dla plików przyjętych po staremu.
+// Pilnuje tego odcisk kodu reguł w tests/documents-validation-version.test.js.
+export const DOCUMENT_VALIDATION_VERSION = 1;
+
+// --- reguły kontroli struktury: początek (odcisk: tests/documents-validation-version.test.js) ---
 // Kontrola struktury pliku (issue #89): heurystyka, NIE zastępuje skanu
 // antywirusowego. Sprawdzamy surowe bajty pliku — strumienie PDF mogą być
 // skompresowane (FlateDecode), więc słowo kluczowe wewnątrz skompresowanego
@@ -267,6 +279,7 @@ export function validateStructure(bytes, mime) {
   if (mime === 'image/jpeg') return validateJpegStructure(bytes);
   return { ok: false, code: 'document_malformed' };
 }
+// --- reguły kontroli struktury: koniec ---
 
 // Limit ciała żądania dla serwera Node: wyższy tylko dla POST /api/documents.
 export function bodyLimitFor(uploadLimit = DEFAULT_MAX_UPLOAD_BYTES) {
