@@ -4,6 +4,7 @@
 // paneli, jest wiązana ręcznie; kontrolę dostępu i tak wykonuje wyłącznie serwer.
 
 import { api as apiRequest } from "./api.js";
+import { forgetSession } from "./session-hint.js";
 import { applySchoolName } from "./school.js";
 import { defaultYear, formatSchoolYear, yearsFromGrants } from "./school-year.js";
 
@@ -152,6 +153,8 @@ async function logout() {
   try {
     await logoutInFlight;
   } finally {
+    // Wskazówka dla /login/ (shared/session-hint.js): po wylogowaniu nie pytać o stan sesji.
+    forgetSession();
     window.location.href = "/login/";
   }
 }

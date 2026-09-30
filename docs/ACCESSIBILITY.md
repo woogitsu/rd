@@ -153,7 +153,7 @@ Zmiany w tym PR (#124):
 
 **Poza zakresem tego PR** (patrz #124, propozycja pkt. 3): `<figure>`/`<figcaption>` dla zdjęć z autorem i licencją nie jest jeszcze potrzebne — w chwili pisania `site/` nie renderowała zdjęć; obecnie `site/main.js` renderuje galerię jako `<figure>` z `<figcaption>` (#96), a model danych (`altText`/`decorative`) jest już używany. Pełna weryfikacja z czytnikiem ekranu nie została wykonana. Kontrast `site/styles.css` i `prefers-reduced-motion` — patrz PR dla #112 (ten sam plik, żeby uniknąć nakładania się zmian).
 
-**Stan po #96 i kolejnym PR dla #124** (`site/`, aktualności i galeria; `documents/` poza tym zakresem):
+**Stan po #96 i kolejnych PR dla #124** (`site/`, aktualności i galeria, `documents/`):
 
 | Kryterium | Stan | Weryfikacja |
 |---|---|---|
@@ -162,9 +162,26 @@ Zmiany w tym PR (#124):
 | Fokus widoczny (`:focus-visible`, 3 px), `prefers-reduced-motion`, `forced-colors` | spełnione | `tests/a11y-static.test.js` |
 | Błąd wczytywania ogłaszany (`role="alert"`), stan pusty grzeczny (`role="status"`), nawigacja bez zmian po wczytaniu | spełnione | `tests/site-a11y.test.js` |
 | Zdjęcia: `<figure>` + `<figcaption>` (autor · źródło · licencja), `alt` wyłącznie z pola `altText` zatwierdzonego wpisu, `alt=""` tylko dla `decorative`; zdjęcie bez opisu i bez `decorative` nie jest pokazywane; tekst nie jest nigdzie wymyślany | spełnione | `tests/site-a11y.test.js`, `tests/site-core.test.js` |
-| Długie tytuły i 20 wpisów przy 320 px: `overflow-wrap: anywhere`, `max-width: 100%` obrazów, brak sztywnych szerokości | sprawdzone statycznie (CSS + logika), **nie renderowane w przeglądarce** | `tests/site-a11y.test.js` |
-| Renderowanie 320/640/1280 px w Playwright (`docs/a11y/audit.mjs`) dla `site/` | **do wykonania ręcznie** (Playwright nie jest zależnością projektu; skrypt nadal obsługuje `import`, `panel`, `ledger`, `print`) | — |
+| Długie tytuły i 20 wpisów przy 320 px: `overflow-wrap: anywhere`, `max-width: 100%` obrazów, brak sztywnych szerokości | spełnione — renderowane w Chromium przy 320, 390 i 1280 px (20 opublikowanych wpisów, tytuł jednym słowem, szkic niewidoczny): brak poziomego przewijania, tytuł mieści się we wpisie | `tests/site-a11y.test.js`, `tests/e2e/public-site-a11y.spec.js` |
+| Tytuł z `<img onerror>` renderowany jako tekst (brak `<img>`, skrypt nie działa) | spełnione | `tests/site-core.test.js`, `tests/e2e/public-site-a11y.spec.js` |
+| Klawiatura przy 320 px: skip link pierwszy w kolejności Tab i przenosi fokus do `main`; 25 kolejnych Tab — każdy element z obrysem ≥ 2 px i na ekranie; kolejność nagłówków bez przeskoków | spełnione | `tests/e2e/public-site-a11y.spec.js` |
+| Samodzielne linki (nawigacja, archiwum, „Stały link do wpisu”, „Dodaj do kalendarza (.ics)”) ≥ 24 px wysokości (WCAG 2.5.8); linki w zdaniu są wyjątkiem | spełnione (w tym PR: `padding` dla stałego linku i linku `.ics`, wcześniej ok. 16–19 px) | `tests/e2e/public-site-a11y.spec.js` |
+| Renderowanie 320/640/1280 px w `docs/a11y/audit.mjs` dla `site/` | spełnione — skrypt obsługuje `site` (syntetyczne odpowiedzi tras publicznych: 20 wpisów, puste wydarzenia/protokoły/zawiadomienia); wynik lokalny: brak przewijania, małych celów i elementów bez obrysu przy 320/640/1280 px. Zrzuty `site-*.png` nie są dodawane do repozytorium | `node docs/a11y/audit.mjs … site` (ręcznie; `CHROMIUM_EXECUTABLE` gdy rewizja przeglądarki się nie zgadza) |
 | NVDA / VoiceOver dla strony publicznej i galerii | **niewykonane** | lista kontrolna powyżej |
+
+**Panel dokumentów (`documents/`) i ekran aktualności/galerii (`news/`) — #124.** Sprawdzone w Chromium (Playwright) na serwerze e2e z danymi syntetycznymi (`tests/e2e/support/server.js`: sesja członka zarządu z MFA, dwa dokumenty zarządu bez pliku w magazynie, 20 opublikowanych wpisów i jeden szkic, bez zdjęć) przy 320, 390 i 1280 px: język `pl`, jeden `h1`, nagłówki bez przeskoków, wszystkie pola z etykietą, brak tekstu o kontraście < 4,5:1 (obliczenie z wyrenderowanych kolorów), brak elementów bez obrysu fokusu w pierwszych 40 krokach Tab.
+
+| Kryterium | Stan | Weryfikacja |
+|---|---|---|
+| `documents/`: „Szczegóły” — Enter otwiera sekcję z fokusem, Esc i „Zamknij” zwracają fokus na ten sam przycisk | spełnione | `tests/e2e/documents-news-a11y.spec.js` |
+| `documents/`: powrót fokusu po odświeżeniu szczegółów (zapis opisu, zmiana stanu) i po przerysowaniu listy | poprawione w tym PR — wcześniej `showDetails(id)` bez przycisku gubił cel powrotu, a przycisk z przerysowanej listy był odłączony od strony (fokus trafiał na `body`); teraz odpowiednik w nowej liście albo nagłówek „Lista” | `tests/e2e/documents-news-a11y.spec.js` (przerysowanie listy) |
+| `documents/`: nazwa dostępna „Szczegóły dokumentu: <tytuł>, dodano <data>” (wcześniej tylko data) | poprawione w tym PR | `tests/e2e/documents-news-a11y.spec.js` |
+| `documents/` przy 320/390 px: lista jako wiersze bez przewijania; „Pobierz” ma cel 44 px wysokości (wcześniej ok. 17 px obok przycisku) | spełnione | `tests/e2e/documents-news-a11y.spec.js` |
+| `news/` przy 390 px: tabele jako lista „Nagłówek: wartość” (≤ 520 px) zamiast przewijania z przyciskiem „Otwórz” poza ekranem; długi tytuł łamie się także w nagłówku szczegółów (wcześniej strona poszerzała się o ok. 1500 px) | poprawione w tym PR | `tests/e2e/documents-news-a11y.spec.js` |
+| `news/`: „Otwórz wpis: <tytuł>” i „Zgody: <opis zdjęcia>” jako nazwy dostępne; po „Otwórz” fokus przechodzi do szczegółów wpisu (wcześniej zostawał na liście, a widok był tylko przewijany) | poprawione w tym PR | `tests/e2e/documents-news-a11y.spec.js` |
+| `news/` przy szerokim ekranie: przyciski w wierszach tabeli mają 32 px wysokości (≥ 24 px, WCAG 2.5.8 AA), jak w pozostałych panelach; przy ≤ 520 px 44 px | pozostawione (spójność z `admin/`, `families/`) | — |
+| Zdjęcia w `news/` i w szczegółach dokumentu (podgląd) | nie sprawdzone w przeglądarce — dane syntetyczne celowo bez zdjęć (zasady publikacji zdjęć: D-18) | `tests/site-a11y.test.js` (logika `alt`) |
+| NVDA / VoiceOver dla `documents/` i `news/` | **niewykonane** | lista kontrolna powyżej |
 
 Reguła opisu zdjęć (bez imion i nazwisk dzieci) jest zasadą redakcyjną, nie da się jej wymusić technicznie; jej treść czeka na D-18 (docs/DECISIONS.md) i nie jest tu rozstrzygana.
 

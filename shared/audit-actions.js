@@ -168,6 +168,7 @@ const CATALOG = {
   'email.provider.paused': ['email', 'Wstrzymanie wysyłki — błąd konta u dostawcy'],
   'email.provider.pause_lifted': ['email', 'Zdjęcie wstrzymania wysyłki po naprawie konta'],
   'email.attention_list.viewed': ['email', 'Odczyt listy nieudanych doręczeń kampanii'],
+  'email.report.exported': ['email', 'Pobranie raportu doręczeń kampanii (CSV)'],
   'email.webhook.previous_secret_used': ['email', 'Użycie poprzedniego sekretu powiadomień dostawcy'],
 
   // --- documents ---

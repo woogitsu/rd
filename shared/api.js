@@ -6,7 +6,8 @@
 // - brak połączenia → ApiError { network: true, status: 0 };
 // - 429/503 z nagłówkiem Retry-After → ApiError.retryAfter (sekundy) i czytelny komunikat;
 // - 401 przy niezapisanym formularzu: bez przekierowania (dane zostają na stronie), jedno
-//   ostrzeżenie role="alert" z linkiem „zaloguj się w nowej karcie”;
+//   ostrzeżenie role="alert" z linkiem „zaloguj się w nowej karcie” (także przy wielu
+//   równoległych żądaniach); pierwsza udana odpowiedź je usuwa;
 // - 403 mfa_stale (krok w górę) NIE przekierowuje: kod trafia do panelu (ApiError.code),
 //   który sam pokaże okno z kodem — panel admin może później przejść na ten moduł.
 // Nic nie jest zapisywane w localStorage ani sessionStorage. Kontrola dostępu jest
@@ -38,6 +39,8 @@ export function parseRetryAfter(value, now = Date.now()) {
   return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
 }
 
+const TRAILING_RETRY_SENTENCE = /\s*Spróbuj ponownie(?: za chwilę| później| za kilka sekund| za kilkanaście minut)?\.\s*$/;
+
 function waitText(seconds) {
   if (seconds < 60) return `${seconds} s`;
   return `${Math.ceil(seconds / 60)} min`;
@@ -47,7 +50,9 @@ export class ApiError extends Error {
   constructor({ status = 0, code = "", network = false, data = null, messages = null, retryAfter = null } = {}) {
     let text = errorMessage(network ? "" : code, network ? 0 : status, messages);
     const wait = !network && (status === 429 || status === 503) ? retryAfter : null;
-    if (wait) text += ` Spróbuj ponownie za ok. ${waitText(wait)}.`;
+    // Tekst ze słownika kończy się często ogólnym „Spróbuj ponownie za chwilę/później.” —
+    // przy znanym Retry-After zastępujemy to zdanie konkretnym czasem (bez powtórzenia).
+    if (wait) text = `${text.replace(TRAILING_RETRY_SENTENCE, "")} Spróbuj ponownie za ok. ${waitText(wait)}.`;
     super(text);
     this.retryAfter = wait || null;
     this.name = "ApiError";
@@ -149,6 +154,14 @@ function domSessionWarning(doc) {
   };
 }
 
+// Usunięcie ostrzeżenia po pierwszej udanej odpowiedzi (sesja znów działa, np. po
+// zalogowaniu w nowej karcie) — kolejne wygaśnięcie sesji pokaże je ponownie.
+function domClearSessionWarning(doc) {
+  return () => {
+    for (const box of doc?.querySelectorAll?.("[data-api-session-warning]") ?? []) box.remove();
+  };
+}
+
 // Klient z wstrzykiwanymi zależnościami (testy). W przeglądarce używaj `api`.
 export function createApiClient({
   fetchImpl = (...args) => globalThis.fetch(...args),
@@ -158,8 +171,12 @@ export function createApiClient({
   confirmPersonalData = null,
   hasUnsavedChanges = domUnsavedTracker(globalThis.document),
   warnUnsaved = domSessionWarning(globalThis.document),
+  clearWarning = domClearSessionWarning(globalThis.document),
 } = {}) {
   let redirecting = false;
+  // Ostrzeżenie zamiast przekierowania (niezapisany formularz): jedno na stronę, dopóki
+  // któreś żądanie nie zakończy się sukcesem.
+  let warned = false;
 
   // Przekierowanie na logowanie po 401 / 403 MFA. Najwyżej raz na stronę, więc
   // równoległe żądania nie powielają przejścia. Zwraca akcję albo null.
@@ -171,7 +188,7 @@ export function createApiClient({
     if (!redirecting && !(path === "/login" || path.startsWith("/login/"))) {
       redirecting = true;
       const url = loginUrl(currentPath(location), { reason: action === "enroll" ? "enroll" : undefined });
-      if (hasUnsavedChanges()) warnUnsaved(url, SESSION_EXPIRED_WARNING);
+      if (hasUnsavedChanges()) { warned = true; warnUnsaved(url, SESSION_EXPIRED_WARNING); }
       else navigate(url);
     }
     return action;
@@ -223,6 +240,11 @@ export function createApiClient({
       });
     } catch {
       throw new ApiError({ network: true, messages });
+    }
+    if (response.ok && warned) {
+      warned = false;
+      redirecting = false;
+      clearWarning();
     }
     // `binary: true` — pobranie pliku (eksport): sukces zwraca { blob, headers } bez
     // ponownego kodowania bajtów; błędy nadal są JSON-em i idą zwykłą ścieżką.

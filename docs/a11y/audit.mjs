@@ -1,25 +1,49 @@
 // Przegląd #16: renderuje zbudowane strony (dist/) przy 320, 640 (≈ zoom 200%) i 1280 px,
 // sprawdza poziome przewijanie strony, rozmiar celów (< 24 px), obrys fokusu po klawiszu Tab
-// i obsługę okna dialogowego klawiaturą. Dane wyłącznie syntetyczne; /api/* zwraca 401.
+// i obsługę okna dialogowego klawiaturą. Dane wyłącznie syntetyczne; /api/* zwraca 401,
+// poza publicznymi trasami strony site/ (#124): 20 syntetycznych aktualności z długimi
+// tytułami i puste listy wydarzeń, zawiadomień i protokołów. Panele z sesją (documents/,
+// news/) sprawdza tests/e2e/documents-news-a11y.spec.js na serwerze e2e z danymi syntetycznymi.
 // Użycie (Playwright nie jest zależnością projektu):
 //   npm run build
 //   printf 'ID rodziny;Imię ucznia;Nazwisko ucznia;Klasa;Wpłaty netto EUR\nH-1;Ala;Testowa;3a;\n' > /tmp/rodziny.csv
-//   PLAYWRIGHT_MODULE=/ścieżka/do/playwright/index.mjs node docs/a11y/audit.mjs "$PWD/dist" "$PWD/docs/a11y" /tmp [import,panel,ledger,print]
+//   PLAYWRIGHT_MODULE=/ścieżka/do/playwright/index.mjs node docs/a11y/audit.mjs "$PWD/dist" "$PWD/docs/a11y" /tmp [import,panel,ledger,print,site]
+// Zrzuty site-*.png nie są dodawane do repozytorium (tylko do przeglądu lokalnego).
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 import http from 'node:http'; import { readFile } from 'node:fs/promises'; import { extname, join } from 'node:path';
 const ROOT = process.argv[2], OUT = process.argv[3], SP = process.argv[4];
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript', '.css':'text/css', '.csv':'text/csv' };
+// #124: syntetyczne odpowiedzi publicznych tras site/ — bez imion, bez zdjęć.
+const LONG_WORD = 'Sprawozdanie'.repeat(12);
+const SYNTHETIC_NEWS = { posts: Array.from({ length: 20 }, (_, i) => ({
+  id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+  title: i === 0 ? LONG_WORD : `Aktualność syntetyczna nr ${i + 1}: podsumowanie spotkania Rady z bardzo długim tytułem na wąski ekran`,
+  body: 'Treść syntetyczna bez danych osobowych. '.repeat(5),
+  publishedAt: new Date(Date.UTC(2026, 8, 30 - i, 10)).toISOString(),
+  photos: [],
+})) };
+function publicFixture(p) {
+  if (p === '/api/public/news') return SYNTHETIC_NEWS;
+  if (p === '/api/public/events') return { events: [] };
+  if (p === '/api/meetings/public-minutes') return { minutes: [] };
+  if (p === '/api/meetings/public-notices') return { notices: [] };
+  return null;
+}
 const server = http.createServer(async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]); if (p.endsWith('/')) p += 'index.html';
+  const fixture = publicFixture(p);
+  if (fixture) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(fixture)); }
   if (p.startsWith('/api/')) { res.writeHead(401, {'content-type':'application/json'}); return res.end('{"error":{"message":"Brak sesji (serwer testowy)."}}'); }
   try { const b = await readFile(join(ROOT, p)); res.writeHead(200, { 'content-type': types[extname(p)] || 'application/octet-stream' }); res.end(b); }
   catch { res.writeHead(404); res.end(); }
 }).listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch({ args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-gpu', '--disable-software-rasterizer'] });
+// CHROMIUM_EXECUTABLE: jawna ścieżka przeglądarki, gdy rewizja Playwrighta nie zgadza się z pobraną (np. /opt/pw-browsers).
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-gpu', '--disable-software-rasterizer'] });
 const report = [];
 
 async function prepare(page, app) {
+  if (app === 'site') await page.waitForSelector('#news-list li.news');
   if (app === 'import') { await page.setInputFiles('#file', join(ROOT, 'import/template.csv')); await page.waitForSelector('#mapping-section:not([hidden])'); await page.$eval('#preview', (b) => b.click()); }
   if (app === 'print') {
     await page.fill('input[name=schoolYear]', '2026/2027'); await page.fill('input[name=contact]', 'rada@example.test');

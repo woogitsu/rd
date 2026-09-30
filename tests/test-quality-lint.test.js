@@ -49,7 +49,6 @@ export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
   'pg-ledger-cost-centers.test.js': `${CLOSED_YEAR_SHORTCUT}; odwołanie wydarzenia bez procedury, by sprawdzić sekcję „Wynik wydarzeń” raportu KR`,
   // Upływ czasu (follow-up: wstrzykiwany zegar).
   'pg-bootstrap-admin.test.js': CLOCK_FOLLOW_UP,
-  'pg-guardian-updates.test.js': CLOCK_FOLLOW_UP,
   // Zamknięty rok na skróty.
   ...Object.fromEntries([
     'security-scope-api.test.js', 'pg-ledger-budget.test.js', 'pg-ledger-categories-api.test.js', 'pg-events-ics.test.js',
