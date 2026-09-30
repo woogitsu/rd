@@ -36,9 +36,10 @@ test('hasReportAccess: audit bez klasy tak; przedstawiciel, admin i przydział k
   assert.equal(hasReportAccess(undefined), false);
 });
 
-test('reportUrl: tylko poprawny rok i format json/html', () => {
+test('reportUrl: tylko poprawny rok i format json/html/xlsx', () => {
   assert.equal(reportUrl('2026-2027'), '/api/reports/audit?schoolYearId=2026-2027&format=json');
   assert.equal(reportUrl(' 2026-2027 ', 'html'), '/api/reports/audit?schoolYearId=2026-2027&format=html');
+  assert.equal(reportUrl('2026-2027', 'xlsx'), '/api/reports/audit?schoolYearId=2026-2027&format=xlsx');
   assert.throws(() => reportUrl('../x'));
   assert.throws(() => reportUrl('y1', 'csv'));
   assert.equal(isValidId('a b'), false);

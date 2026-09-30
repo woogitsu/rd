@@ -69,6 +69,7 @@ export const DATA_ACCESS_ROUTES = Object.freeze([
   { id: 'print.cards', method: 'GET', path: '/api/print/cards', file: 'src/pg/routes/print.js', accessKind: 'print_cards' },
   { id: 'payments.list', method: 'GET', path: '/api/payments', file: 'src/pg/routes/payments.js', accessKind: 'payment_list' },
   { id: 'payments.exportCsv', method: 'GET', path: '/api/payments/export.csv', file: 'src/pg/routes/payments.js', accessKind: 'payment_export' },
+  { id: 'payments.exportXlsx', method: 'GET', path: '/api/payments/export.xlsx', file: 'src/pg/routes/payments.js', accessKind: 'payment_export' },
   { id: 'exports.classRoster', method: 'GET', path: '/api/exports/class-roster', file: 'src/pg/routes/exports.js', accessKind: 'class_roster_export', strict: true },
   { id: 'exports.yearly', method: 'POST', path: '/api/exports', file: 'src/pg/routes/exports.js', accessKind: 'yearly_export', strict: true },
 ]);
@@ -101,7 +102,7 @@ const EXEMPT_GROUPS = [
       'ledger.reviews', 'ledger.resolutions', 'ledgerBudget.history', 'ledgerBudget.execution',
       'ledgerCostCenters.report', 'ledgerCostCenters.allocations', 'ledgerCostCenters.eventFinance',
       'ledgerCash.transfers', 'ledgerCash.openingBalance', 'reconciliation.list', 'reconciliation.get',
-      'reconciliation.suggestions', 'reconciliation.auditReport', 'financialReports.annual', 'financialReports.cashFlow',
+      'reconciliation.suggestions', 'reconciliation.auditReport', 'reconciliation.auditReportXlsx', 'financialReports.annual', 'financialReports.cashFlow',
       'financialReports.snapshotList', 'financialReports.snapshotRead', 'payment-instructions.get', 'yearClose.handover'],
   },
   {

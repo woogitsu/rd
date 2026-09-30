@@ -13,6 +13,9 @@
 //   GET  /api/payments/{id}/allocations
 //   POST /api/payments/{id}/allocations                         (Idempotency-Key)
 //   POST /api/payments/{id}/allocations/{allocationId}/reversal (Idempotency-Key)
+// Eksport do arkusza (#141): wpisy i korekty, bez imion i bez statusu rodziny.
+//   GET  /api/payments/export.csv?schoolYearId=…&from=…&to=…&method=…
+//   GET  /api/payments/export.xlsx?schoolYearId=…&from=…&to=…&method=…
 //
 // Każdy zapis i jego zdarzenie audytu powstają w jednej transakcji. Korekta
 // i przypisanie blokują wiersz wpłaty (SELECT … FOR UPDATE), więc równoległe
@@ -24,6 +27,7 @@ import { isSameOrigin } from '../../auth.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { csvCell, csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
+import { toXlsxWorkbook, xlsxResponse } from '../xlsx.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from '../pii-gate.js';
 import { recordDataAccess } from '../data-access.js';
 import {
@@ -1071,7 +1075,7 @@ async function reverseAllocation(request, env, paymentEntryId, allocationId, jso
   return json(result, 201, CREATED);
 }
 
-// --- Eksport CSV (#141, część 1: wpisy wpłat — raport KR i księga w #141 dalej poza zakresem) ---
+// --- Eksport CSV i XLSX (#141: wpisy wpłat i korekty; raport KR XLSX w reconciliation.js) ---
 //
 // Jeden plik, dwa rodzaje wierszy (typ_wiersza): "wpis" (jeden na wpłatę) i
 // "korekta" (jedna na każdą korektę — historia widoczna, nic nie jest zacierane,
@@ -1124,7 +1128,37 @@ function readExportFilters(url) {
   return { schoolYearId, from: from || null, to: to || null, method: method || null };
 }
 
-async function exportCsv(request, env, url) {
+// XLSX (#141): te same wpisy i korekty co CSV, ale w dwóch arkuszach —
+// „Wpisy” (jeden wiersz na wpis wpłaty) i „Korekty” (każda korekta osobnym
+// wierszem z identyfikatorem wpisu, którego dotyczy). Nazwy kolumn jak w CSV,
+// bez `typ_wiersza` (rozróżnia go arkusz); data jako prawdziwa data arkusza
+// (format dd.mm.yyyy, src/pg/xlsx.js). Ostrzeżenie o dobrowolności składek
+// jest pierwszym wierszem obu arkuszy.
+export const PAYMENT_EXPORT_XLSX_ENTRY_COLUMNS = [
+  ['id', 'text'], ['data', 'date'], ['kwota_eur', 'amount'], ['metoda', 'text'], ['stan_przypisania', 'text'],
+  ['numer_rodziny', 'text'], ['suma_korekt_eur', 'amount'], ['suma_zwrotow_eur', 'amount'], ['netto_eur', 'amount'],
+].map(([header, type]) => ({ header, type }));
+
+export const PAYMENT_EXPORT_XLSX_CORRECTION_COLUMNS = [
+  ['id', 'text'], ['id_wpisu_wplaty', 'text'], ['data', 'date'], ['kwota_korekty_eur', 'amount'], ['numer_rodziny', 'text'],
+  ['powod_korekty', 'text'], ['rola_aktora', 'text'],
+].map(([header, type]) => ({ header, type }));
+
+export function buildPaymentExportXlsx(entryRows, correctionRows) {
+  const entries = entryRows.map((row) => {
+    const [, id, date, amount, method, assignment, household, corrected, refunded, net] = paymentExportEntryValues(row);
+    return [id, date, amount, method, assignment, household, corrected, refunded, net];
+  });
+  const corrections = correctionRows.map((row) => [
+    row.id, row.payment_entry_id, row.created_on, row.amount_cents, row.household_id ?? '', row.reason, row.actor_role ?? 'nieznana',
+  ]);
+  return toXlsxWorkbook([
+    { name: 'Wpisy', columns: PAYMENT_EXPORT_XLSX_ENTRY_COLUMNS, rows: entries, preamble: [EXPORT_DISCLAIMER] },
+    { name: 'Korekty', columns: PAYMENT_EXPORT_XLSX_CORRECTION_COLUMNS, rows: corrections, preamble: [EXPORT_DISCLAIMER] },
+  ]);
+}
+
+async function exportPayments(request, env, url, format) {
   const { schoolYearId, from, to, method } = readExportFilters(url);
   const context = await requireFinancialContext(request, env, schoolYearId);
   const actorId = context.session.user.id;
@@ -1156,7 +1190,7 @@ async function exportCsv(request, env, url) {
     );
     if (entries.rows.length > MAX_EXPORT_ROWS) throw new RequestError('export_too_large', 413);
     const corrections = await tx.query(
-      `SELECT c.id, to_char(c.created_at, 'YYYY-MM-DD') AS created_on, c.amount_cents, c.reason, p.household_id,
+      `SELECT c.id, c.payment_entry_id, to_char(c.created_at, 'YYYY-MM-DD') AS created_on, c.amount_cents, c.reason, p.household_id,
               COALESCE((
                 SELECT rg.role FROM role_grants rg
                  WHERE rg.user_id = c.created_by AND rg.revoked_at IS NULL
@@ -1175,7 +1209,7 @@ async function exportCsv(request, env, url) {
     await insertAuditEvent(tx, {
       actorId, action: 'payment.exported', entityType: 'school_year', entityId: schoolYearId,
       metadata: {
-        schoolYearId, format: 'csv', entryCount: entries.rows.length, correctionCount: corrections.rows.length,
+        schoolYearId, format, entryCount: entries.rows.length, correctionCount: corrections.rows.length,
       },
     });
     // #133: eksport z identyfikatorami gospodarstw — wpis w tej samej transakcji (strict).
@@ -1185,6 +1219,9 @@ async function exportCsv(request, env, url) {
     return { entryRows: entries.rows, correctionRows: corrections.rows };
   });
 
+  if (format === 'xlsx') {
+    return xlsxResponse(buildPaymentExportXlsx(entryRows, correctionRows), `wplaty-${safeFileSegment(schoolYearId)}.xlsx`);
+  }
   return csvResponse(toCsv(
     PAYMENT_EXPORT_COLUMNS,
     [...entryRows.map(paymentExportEntryValues), ...correctionRows.map(paymentExportCorrectionValues)],
@@ -1202,7 +1239,9 @@ export async function handle(request, env, url, json) {
   const isPaymentCreate = url.pathname === '/api/payments';
   const isPaymentList = request.method === 'GET' && url.pathname === '/api/payments';
   const isAllocationList = request.method === 'GET' && Boolean(allocationsMatch);
-  const isExport = request.method === 'GET' && url.pathname === '/api/payments/export.csv';
+  const exportFormat = request.method === 'GET'
+    ? ({ '/api/payments/export.csv': 'csv', '/api/payments/export.xlsx': 'xlsx' })[url.pathname] : undefined;
+  const isExport = Boolean(exportFormat);
   const isMutation = request.method === 'POST'
     && (isPaymentCreate || correctionMatch || assignmentMatch || refundMatch || reassignmentMatch
       || allocationsMatch || allocationReversalMatch);
@@ -1212,7 +1251,7 @@ export async function handle(request, env, url, json) {
 
   try {
     if (isPaymentList) return await listPayments(request, env, url, json);
-    if (isExport) return await exportCsv(request, env, url);
+    if (isExport) return await exportPayments(request, env, url, exportFormat);
     if (isAllocationList) return await listAllocations(request, env, decodeId(allocationsMatch[1]), json);
     if (allocationsMatch) return await createAllocation(request, env, decodeId(allocationsMatch[1]), json);
     if (allocationReversalMatch) {

@@ -3,7 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { unzipSync, strFromU8 } from 'fflate';
-import { centsToXlsxNumber, columnLetters, sheetNameOf, toXlsx, xlsxResponse, XLSX_CONTENT_TYPE } from '../src/pg/xlsx.js';
+import {
+  centsToXlsxNumber, columnLetters, dateToXlsxSerial, sheetNameOf, timestampToXlsxSerial, toXlsx, toXlsxWorkbook, xlsxResponse, XLSX_CONTENT_TYPE,
+} from '../src/pg/xlsx.js';
 
 const COLUMNS = [
   { header: 'opis', type: 'text' },
@@ -64,7 +66,7 @@ test('polskie znaki, cudzysłowy, nowa linia i znaki niedozwolone w XML', () => 
 
 test('błędy wejścia: długość wiersza i nieznany typ kolumny', () => {
   assert.throws(() => toXlsx(COLUMNS, [['a', 1]]), /xlsx_row_length_mismatch/);
-  assert.throws(() => toXlsx([{ header: 'x', type: 'date' }], [['2026-01-01']]), /invalid_xlsx_column_type/);
+  assert.throws(() => toXlsx([{ header: 'x', type: 'bogus' }], [['2026-01-01']]), /invalid_xlsx_column_type/);
 });
 
 test('litery kolumn i nazwa arkusza', () => {
@@ -100,4 +102,58 @@ test('preamble i trailer: jednokomórkowe wiersze, nagłówek kolumn zamrożony 
   assert.ok(sheet.includes('<dimension ref="A1:C6"/>'));
   assert.ok(sheet.includes('ySplit="3" topLeftCell="A4"'));
   assert.ok(!/<f[\s>/]/.test(sheet));
+});
+
+// #141: skoroszyt z wieloma arkuszami i typy integer/date/datetime.
+test('skoroszyt: kilka arkuszy, poprawne relacje i nazwy; duplikat nazwy odrzucony', () => {
+  const bytes = toXlsxWorkbook([
+    { name: 'Wpisy', columns: COLUMNS, rows: [['a', 100, null]] },
+    { name: 'Wydatki > 3000 EUR', columns: [{ header: 'n', type: 'integer' }], rows: [[3]], preamble: ['Tytuł'] },
+  ]);
+  const files = unzipSync(bytes);
+  assert.ok(files['xl/worksheets/sheet1.xml'] && files['xl/worksheets/sheet2.xml']);
+  const workbook = strFromU8(files['xl/workbook.xml']);
+  assert.ok(workbook.includes('<sheet name="Wpisy" sheetId="1" r:id="rId1"/><sheet name="Wydatki &gt; 3000 EUR" sheetId="2" r:id="rId2"/>'));
+  const rels = strFromU8(files['xl/_rels/workbook.xml.rels']);
+  assert.ok(rels.includes('Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"'));
+  assert.ok(rels.includes('Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"'));
+  assert.ok(strFromU8(files['[Content_Types].xml']).includes('/xl/worksheets/sheet2.xml'));
+  assert.ok(strFromU8(files['xl/worksheets/sheet2.xml']).includes('<c r="A3"><v>3</v></c>'));
+  assert.throws(() => toXlsxWorkbook([{ name: 'A', columns: COLUMNS, rows: [] }, { name: 'a', columns: COLUMNS, rows: [] }]), /xlsx_duplicate_sheet_name/);
+  assert.throws(() => toXlsxWorkbook([]), /xlsx_no_sheets/);
+});
+
+test('daty: numer seryjny arkusza, format dd.mm.yyyy; znacznik czasu w strefie Europe/Brussels', () => {
+  assert.equal(dateToXlsxSerial('1900-03-01'), '61');
+  assert.equal(dateToXlsxSerial('2026-10-20'), '46315');
+  assert.throws(() => dateToXlsxSerial('2026-02-30'), /invalid_xlsx_date/);
+  assert.throws(() => dateToXlsxSerial('=1+1'), /invalid_xlsx_date/);
+  // 20.10.2026 14:05 UTC = 16:05 czasu letniego w Brukseli; 0,5 doby = 12:00.
+  assert.equal(timestampToXlsxSerial('2026-10-20T14:05:00.000Z'), `46315.${(965 / 1440).toFixed(15).slice(2).replace(/0+$/, '')}`);
+  assert.equal(timestampToXlsxSerial('2026-01-10T11:00:00Z'), '46032.5');
+  // 23:00 UTC 9 stycznia to już północ 10 stycznia w Brukseli (UTC+1): dzień lokalny, nie UTC.
+  assert.equal(timestampToXlsxSerial('2026-01-09T23:00:00Z'), '46032');
+  assert.throws(() => timestampToXlsxSerial('nie-data'), /invalid_xlsx_datetime/);
+  const bytes = toXlsx([{ header: 'd', type: 'date' }, { header: 't', type: 'datetime' }, { header: 'n', type: 'integer' }],
+    [['2026-10-20', '2026-01-10T11:00:00Z', 7], [null, null, null]]);
+  const { files, sheet } = open(bytes);
+  assert.ok(sheet.includes('<c r="A2" s="3"><v>46315</v></c><c r="B2" s="4"><v>46032.5</v></c><c r="C2"><v>7</v></c>'));
+  assert.ok(sheet.includes('<row r="3"></row>'), 'puste wartości = puste komórki');
+  const styles = strFromU8(files['xl/styles.xml']);
+  assert.ok(styles.includes('formatCode="dd.mm.yyyy"') && styles.includes('formatCode="dd.mm.yyyy hh:mm"'));
+  assert.throws(() => toXlsx([{ header: 'n', type: 'integer' }], [['=1']]), /unsafe_integer/);
+});
+
+test('niezależny czytnik: arkusze po nazwie, data jako Date', async () => {
+  const { default: readXlsxFileNode } = await import('read-excel-file/node');
+  const bytes = toXlsxWorkbook([
+    { name: 'Pierwszy', columns: COLUMNS, rows: [['a', 100, null]] },
+    { name: 'Drugi', columns: [{ header: 'd', type: 'date' }, { header: 'n', type: 'integer' }], rows: [['2026-10-20', 2]] },
+  ]);
+  const sheets = await readXlsxFileNode(Buffer.from(bytes));
+  assert.deepEqual(sheets.map((s) => s.sheet), ['Pierwszy', 'Drugi']);
+  const [date, count] = sheets[1].data[1];
+  assert.ok(date instanceof Date, 'komórka daty czytana jako data');
+  assert.equal(date.toISOString().slice(0, 10), '2026-10-20');
+  assert.equal(count, 2);
 });

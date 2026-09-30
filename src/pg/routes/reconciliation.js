@@ -14,7 +14,7 @@
 //   POST /api/reconciliations/{id}/group-matches/{groupId}/revocation
 //   POST /api/reconciliations/{id}/confirm                    zasada czterech oczu
 //   POST /api/reconciliations/{id}/abandon                    porzucenie szkicu bez aktywnych powiązań (0107)
-//   GET  /api/reports/audit?schoolYearId=…&format=json|html
+//   GET  /api/reports/audit?schoolYearId=…&format=json|html|xlsx   (xlsx: #141, arkusz na sekcję)
 //
 // Uzgodnienia: admin, board, treasurer z MFA w zakresie roku. Raport: audit,
 // board, treasurer z MFA. Saldo księgi wylicza baza (0015_reconciliation.sql);
@@ -31,6 +31,9 @@ import { PROTECTED_ACCOUNT_ROLES } from '../account-recovery.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { detectDelimiter, parseCsvMatrix } from '../../../import/csv.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
+import { auditReportContentSha256, buildAuditReportXlsx } from '../audit-report-xlsx.js';
+import { xlsxResponse } from '../xlsx.js';
+import { safeFileSegment } from '../csv.js';
 import { archiveReadVia, recordArchiveRead } from '../archive-access.js';
 import { buildBudgetExecution } from './ledger-budget.js';
 import { costCenterReport } from './ledger-cost-centers.js';
@@ -2601,7 +2604,7 @@ async function buildExpenseReviews(executor, schoolYearId) {
 async function auditReport(request, env, url, json) {
   const schoolYearId = url.searchParams.get('schoolYearId');
   const format = url.searchParams.get('format') ?? 'json';
-  if (!validId(schoolYearId) || !['json', 'html'].includes(format)) throw new RequestError('invalid_request');
+  if (!validId(schoolYearId) || !['json', 'html', 'xlsx'].includes(format)) throw new RequestError('invalid_request');
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   if (!isAuthorizedScoped(context, { roles: REPORT_ROLES, schoolYearId, requireMfa: true })) {
@@ -2623,12 +2626,20 @@ async function auditReport(request, env, url, json) {
   // bilansem" mimo poprawnej księgi).
   const report = await readSnapshot(env.db, (tx) => buildAuditReport(tx, schoolYearId));
   if (!report) throw new RequestError('school_year_not_found', 404);
+  // #141: skrót treści (bez asOf/generatedAt) — ten sam dla JSON, HTML i XLSX
+  // z tych samych danych; w zdarzeniu jako dowód, którą wersję pobrano (bez kwot).
+  const contentSha256 = await auditReportContentSha256(report);
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'report.audit.generated', entityType: 'school_year',
-    entityId: schoolYearId, metadata: { schoolYearId, format, asOf: report.asOf },
+    entityId: schoolYearId, metadata: { schoolYearId, format, asOf: report.asOf, contentSha256 },
   });
   if (format === 'json') return json({ report });
-  return new Response(renderAuditReportHtml(report), {
+  if (format === 'xlsx') {
+    return xlsxResponse(buildAuditReportXlsx(report, { contentSha256 }), `raport-kr-${safeFileSegment(schoolYearId)}.xlsx`, {
+      'Referrer-Policy': 'no-referrer',
+    });
+  }
+  return new Response(renderAuditReportHtml(report, { contentSha256 }), {
     status: 200,
     headers: {
       'Cache-Control': 'no-store',

@@ -104,6 +104,7 @@ async function showYear(value) {
     byId("report-title").textContent = `Raport dla Komisji Rewizyjnej — ${formatSchoolYear(report?.schoolYear?.label ?? value)}`;
     byId("report-meta").textContent = (report?.asOf ?? report?.generatedAt) ? `Stan na ${formatDate(report.asOf ?? report.generatedAt)} (czas Europe/Brussels)` : "";
     byId("report-html-link").href = reportUrl(value, "html");
+    byId("report-xlsx-link").href = reportUrl(value, "xlsx");
     byId("report-sections").replaceChildren(...buildSections(report).map(sectionElement));
     reportSection.hidden = false;
   } catch (error) {
