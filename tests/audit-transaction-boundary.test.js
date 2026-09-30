@@ -18,9 +18,6 @@ const READ_ONLY_EXCEPTIONS = new Map([
   ['src/pg/routes/ledger-budget.js', ['ledger.budget_execution.exported']],
   // #181: odczyt dziennika audytu sam zapisuje zdarzenie (bez parametrów zapytania).
   ['src/pg/routes/admin.js', ['audit.viewed', 'access_log.viewed']],
-  // #184: odmowa 403 nie jest częścią transakcji zmiany (nie ma zmiany) — zapis
-  // nigdy nie blokuje ani nie zmienia odpowiedzi (patrz logAccessDenied).
-  ['src/pg/authorization.js', ['access.denied']],
   // #133: odczyt listy próśb opiekunów i zgłoszeń opiekunów do zadań — ślad odczytu.
   ['src/pg/routes/guardian-updates.js', ['guardian_update_request.list_viewed']],
   ['src/pg/events.js', ['event.task_signups_viewed']],

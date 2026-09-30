@@ -35,7 +35,9 @@ import { timingSafeEqual } from 'node:crypto';
 import { BlockList, isIP } from 'node:net';
 import { CLIENT_IP_HEADER } from './login.js';
 import { isSameOrigin } from '../../auth.js';
-import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
+import {
+  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, MFA_STEP_UP_MAX_AGE_SECONDS,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import {
@@ -128,7 +130,11 @@ const readJson = createJsonReader({
 async function requireContext(request, env, roles) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorizedScoped(context, { roles, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, requireMfa: true })) {
+    // #184: ślad odmowy (także zatwierdzenia/wysyłki kampanii przez rolę bez uprawnień).
+    await logAccessDenied(env, context, { roles }, request);
+    throw new RequestError('forbidden', 403);
+  }
   return context;
 }
 

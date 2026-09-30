@@ -1257,3 +1257,20 @@ Skutki dla danych: nowa kolumna z NULL; istniejące wiersze (także już
 odrzucone) zostają bez powodu, nic nie jest uzupełniane wstecznie. Tabela
 nadal poza eksportem rocznym. Wycofanie: przywrócenie strażnika z 0157,
 usunięcie CHECK i kolumny (zapisane powody znikną — tylko po kopii zapasowej).
+
+`0160_access_denial_windows.sql` (#184, kryterium 1) dodaje tabelę
+`access_denial_windows`: licznik odmów `403` w oknie 5 minut od pierwszej
+odmowy (aktor + metoda HTTP + ścieżka bez parametrów zapytania). Pierwsza
+odmowa w oknie zapisuje w tej samej transakcji jedno zdarzenie `access.denied`
+(`audit_event_id`, unikalne) i wiersz okna; kolejne odmowy w oknie zwiększają
+tylko `denial_count` i `last_denied_at`. Strażnik
+`access_denial_windows_guard()` pozwala zmienić wyłącznie te dwa pola (licznik
+tylko w górę, czas nie wstecz), odrzuca DELETE; TRUNCATE blokuje
+`deny_truncate()`, a `first_denied_at` stempluje zegar bazy
+(`stamp_created_now`, 0144). Bez danych osobowych poza identyfikatorem konta,
+bez treści żądania i adresu IP. Skutki dla danych: nowa, pusta tabela;
+zdarzenia `access.denied` sprzed migracji zostają bez licznika (widok
+dziennika nie pokazuje wtedy liczby), nic nie jest uzupełniane wstecznie.
+Tabela poza eksportem rocznym (samo zdarzenie jest w `audit_events`);
+retencja do decyzji D-04 — domyślnie nie usuwać. Wycofanie: DROP TABLE
+i funkcji strażnika (znikają tylko liczniki powtórzeń; zdarzenia zostają).

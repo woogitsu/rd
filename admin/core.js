@@ -444,6 +444,9 @@ export function describeAuditEvent(event, users = []) {
   if (meta.schoolYearId) details.push(`rok ${formatSchoolYear(meta.schoolYearId)}`);
   if (meta.reason) details.push(`powód: ${reasonLabel(meta.reason)}`);
   if (Number.isInteger(meta.count)) details.push(`liczba: ${meta.count}`);
+  // #184: odmowa dostępu — metoda HTTP i liczba odmów w oknie 5 minut (0160).
+  if (event.action === "access.denied" && typeof meta.method === "string") details.push(`metoda ${meta.method}`);
+  if (Number.isInteger(event.denialCount)) details.push(`odmów w ciągu 5 min: ${event.denialCount}`);
   // #181: serwer pomija w widoku wolny tekst i pola z danymi osobowymi — tylko liczba.
   const redacted = Array.isArray(event.redactedFields) ? event.redactedFields.length : 0;
   if (redacted) details.push(`ukryte pola opisowe: ${redacted}`);

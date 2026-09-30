@@ -993,11 +993,41 @@ const WRITE_TABLES = [
   'user_passwords', 'password_reset_tokens', 'login_rate_limits',
 ];
 
+// #184 (kryterium 1): odmowa 403 zalogowanego aktora zapisuje WYŁĄCZNIE ślad
+// `access.denied` (+ licznik okna access_denial_windows, 0160) — to nie jest
+// zmiana danych, więc odcisk pomija te dwa ślady. Każde inne nowe zdarzenie
+// albo wiersz tabeli biznesowej po odmowie nadal wywraca macierz; same ślady
+// odmowy sprawdza accessDeniedProblems (z aktorem, tylko przy 403, bez PII).
+const writeCount = (table) => (table === 'audit_events'
+  ? `(SELECT count(*) FROM audit_events WHERE action <> 'access.denied')::int AS ${table}`
+  : `(SELECT count(*) FROM ${table})::int AS ${table}`);
+
 async function writeFingerprint(db) {
-  const { rows } = await db.query(
-    `SELECT ${WRITE_TABLES.map((table) => `(SELECT count(*) FROM ${table})::int AS ${table}`).join(', ')}`,
-  );
+  const { rows } = await db.query(`SELECT ${WRITE_TABLES.map(writeCount).join(', ')}`);
   return rows[0];
+}
+
+async function accessDeniedIds(db) {
+  const { rows } = await db.query(`SELECT id FROM audit_events WHERE action = 'access.denied'`);
+  return rows.map((row) => row.id);
+}
+
+async function accessDeniedProblems(db, before, status) {
+  const { rows } = await db.query(
+    `SELECT a.actor_id, a.entity_type, a.metadata_json, w.denial_count
+       FROM audit_events a LEFT JOIN access_denial_windows w ON w.audit_event_id = a.id
+      WHERE a.action = 'access.denied' AND a.id <> ALL($1::text[])`,
+    [before],
+  );
+  const problems = [];
+  if (rows.length && status !== 403) problems.push(`access.denied przy statusie ${status} (tylko 403)`);
+  if (rows.length > 1) problems.push(`${rows.length} zdarzenia access.denied po jednej odmowie`);
+  for (const row of rows) {
+    if (!row.actor_id) problems.push('access.denied bez aktora');
+    if (row.entity_type !== 'route' || row.denial_count !== 1) problems.push('access.denied bez okna licznika');
+    try { assertNoPii(row.metadata_json ?? {}); } catch (error) { problems.push(`access.denied: ${error.message}`); }
+  }
+  return problems;
 }
 
 // Jedna baza PGlite na grupę tras. Grupa `yearClose` ma własną bazę, bo zamknięcie roku 1
@@ -1072,6 +1102,7 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
   // Odczyty (GET) sprawdzamy pod kątem wycieku; ślad zapisu — dla metod zmieniających stan.
   const tracksWrites = route.method !== 'GET';
   const before = tracksWrites ? await writeFingerprint(ctx.db) : null;
+  const deniedBefore = tracksWrites && !isSuccess(expected) ? await accessDeniedIds(ctx.db) : null;
   const auditBefore = tracksWrites && isSuccess(expected) ? await auditIds(ctx.db) : null;
   // #184 pkt 6: identyfikatory wierszy przed zapisem — każdy nowy wiersz musi mieć zdarzenie.
   const rowTables = auditBefore ? await rowCoverageTables(ctx.db) : null;
@@ -1129,6 +1160,7 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
     const after = await writeFingerprint(ctx.db);
     const changed = WRITE_TABLES.filter((table) => after[table] !== before[table]);
     if (changed.length) problems.push(`odmowa zmieniła tabele: ${changed.join(', ')}`);
+    problems.push(...await accessDeniedProblems(ctx.db, deniedBefore, response.status));
   }
 
   if (mfaReason && mfaCode !== null && mfaCode !== 'mfa_enrollment_required' && await grantsStillLive(ctx, cookie, actor)) {

@@ -61,7 +61,11 @@ const statusOf = (plan) => Object.fromEntries(plan.students.map((s) => [s.studen
 async function snapshot(db) {
   const tables = ['enrollments', 'enrollment_history', 'audit_events', 'promotion_runs', 'students', 'guardians', 'student_guardians', 'households', 'classes'];
   const out = {};
-  for (const t of tables) out[t] = (await db.query(`SELECT count(*)::int AS n FROM ${t}`)).rows[0].n;
+  // #184: odmowa 403 zostawia wyłącznie ślad access.denied — to nie jest zmiana danych.
+  for (const t of tables) {
+    const where = t === 'audit_events' ? " WHERE action <> 'access.denied'" : '';
+    out[t] = (await db.query(`SELECT count(*)::int AS n FROM ${t}${where}`)).rows[0].n;
+  }
   return out;
 }
 
@@ -79,6 +83,13 @@ describe('promocja (#78): granice ról', () => {
       }
     }
     assert.deepEqual(await snapshot(db), before);
+    // #184: każda odmowa roli (poza bramką MFA routera dla admina bez MFA) — jedno
+    // access.denied na aktora i trasę; anonim (401) bez zdarzenia.
+    const { rows } = await db.query(
+      "SELECT actor_id, entity_id FROM audit_events WHERE action = 'access.denied' ORDER BY actor_id, entity_id",
+    );
+    assert.equal(rows.length, 4 * routes.length);
+    assert.deepEqual([...new Set(rows.map((row) => row.actor_id))].sort(), ['u-audit', 'u-board', 'u-rep', 'u-treasurer']);
   });
 });
 

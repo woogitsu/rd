@@ -401,8 +401,10 @@ async function requireFinancialContext(request, env, schoolYearId) {
   return context;
 }
 
-// #184: bez śladu access.denied tutaj — wywoływana wyłącznie po POST (korekta);
-// logAccessDenied loguje tylko GET (patrz authorization.js).
+// #184: bez śladu access.denied tutaj — wywoływana WEWNĄTRZ transakcji zapisu,
+// więc zdarzenie wycofałoby się razem z nią. Odmowa roli lub MFA zostawia ślad
+// wcześniej, w requireFinancialContext; odmowa samego zakresu roku — dziś bez
+// śladu (follow-up w PR).
 function requireYear(context, schoolYearId) {
   if (!hasFinancialAccess(context, schoolYearId)) {
     throw new RequestError('forbidden', 403);

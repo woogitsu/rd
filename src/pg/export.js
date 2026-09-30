@@ -383,6 +383,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   documents: 'metadane plików; pliki w prywatnym Storage kopiuje się osobno (RAILWAY_OPERATIONS.md)',
   document_uploads: 'zamiary uploadu dokumentów (klucz obiektu, skrót) — dane techniczne jak documents (0032)',
   data_access_log: 'dziennik odczytu danych rodzin — rozliczalność dostępu, nie dane Rady do odtworzenia; retencja do decyzji D-04 (0067)',
+  access_denial_windows: 'liczniki powtórzeń odmów 403 w oknie 5 minut (0160, #184) — dane bezpieczeństwa, nie dane Rady do odtworzenia; samo zdarzenie access.denied jest w audit_events; retencja do decyzji D-04',
   data_subject_requests: 'rejestr żądań osób RODO (dostęp/sprostowanie/usunięcie/...) — rozliczalność wobec osób, nie dane Rady do odtworzenia; kto ma dostęp do rejestru i retencja do decyzji D-07/D-08/D-09 (0068, #100)',
   backup_runs: 'dziennik przebiegów kopii zapasowej i próby odtworzenia — dane operacyjne środowiska, nie danych Rady (0058)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',

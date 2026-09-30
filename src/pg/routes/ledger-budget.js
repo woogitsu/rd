@@ -36,7 +36,7 @@
 
 import { isSameOrigin } from '../../auth.js';
 import { isoTimestamp } from '../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
@@ -128,7 +128,11 @@ const readIdempotencyKey = createIdempotencyKeyReader({ error: (code, status) =>
 async function requireAccess(request, env, roles, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles }, request);
+    throw new RequestError('forbidden', 403);
+  }
   return context;
 }
 
