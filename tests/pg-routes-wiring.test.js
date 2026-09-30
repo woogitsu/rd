@@ -112,7 +112,7 @@ test('#155: detektor lokalnego zakresu łapie typowe wzorce (samokontrola testu)
   const samples = [
     'const x = context.grants.filter((grant) => !grant.classId);',
     'actor.grants\n    .some((g) => g.role === "board")',
-    'for (const grant of context.grants) {}',
+    'for (const grant of context.grants) count += grant ? 1 : 0;',
     'if (grant.schoolYearId === id) {}',
     "import { isAuthorized } from '../authorization.js';",
     'return isAuthorized(context, requirement);',
