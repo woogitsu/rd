@@ -346,5 +346,9 @@
   {
     "name": "0155_email_provider_pauses.sql",
     "sha256": "f89c73028676a7dab6655685fe4aebacbdb7bab617aa57e59d717fcac1d99add"
+  },
+  {
+    "name": "0156_email_followup_four_eyes.sql",
+    "sha256": "ce9146c156f8f3044fe38da4120d7efdf9a0e48ca0ede022da82a9fabad044aa"
   }
 ]

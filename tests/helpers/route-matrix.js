@@ -1127,6 +1127,20 @@ export const ROUTE_MATRIX = Object.freeze([
       body: { outboxId: obj.outboxId, resolution: 'confirmed_delivered', evidenceCode: 'brevo_log_delivered' },
     }),
   },
+  {
+    // Cztery oczy dla „nie wyszła” (#139, 0156): zgłasza stałe konto fxCookies.board
+    // (spoza aktorów macierzy), zatwierdza testowany aktor — wyłącznie zarząd z MFA.
+    // Ta sama osoba → 403 self_approval_forbidden (tests/pg-email-followup.test.js).
+    id: 'email.resolutionApprove', module: 'email', method: 'POST',
+    path: '/api/email/campaigns/:campaignId/resolutions/:resolutionId/approve',
+    targets: YEAR_TARGETS, allow: EMAIL_APPROVE, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
+    object: { kind: 'campaign', stage: 'notSentReported' },
+    build: ({ obj }) => ({
+      path: `/api/email/campaigns/${obj.campaignId}/resolutions/${obj.resolutionId}/approve`, body: {},
+    }),
+  },
+  // Szkic kampanii uzupełniającej (#139): tylko rodziny z zatwierdzonym „nie wyszła”.
+  emailRoute('email.followup', 'POST', '/followup', 'notSentApproved', { ok: 201, withKey: true }),
   emailRoute('email.approve', 'POST', '/approve', 'snapshot', {
     allow: EMAIL_APPROVE, body: (_target, obj) => ({ contentHash: obj.contentHash, recipientsHash: obj.recipientsHash }),
   }),

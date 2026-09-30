@@ -41,7 +41,7 @@ export const MESSAGES = Object.freeze({
   notice_up_to_date: "Zatwierdzone zawiadomienie odpowiada aktualnemu zebraniu — nowa wersja nie jest potrzebna.",
   reschedule_no_change: "Podany termin jest taki sam jak obecny.",
   use_reschedule_endpoint: "Po zatwierdzeniu zawiadomienia zmień termin przez „Zmień termin” — wymaga to powodu.",
-  campaign_audience_locked: "Odbiorcy tej kampanii wynikają z zebrania i nie można ich zmienić.",
+  campaign_audience_locked: "Odbiorcy tej kampanii wynikają z zebrania albo z kampanii źródłowej i nie można ich zmienić.",
   // --- Tryb tylko do odczytu (#143) ------------------------------------------------
   read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
   // --- Sesja, MFA, uprawnienia i żądanie -------------------------------------------
@@ -333,6 +333,12 @@ export const MESSAGES = Object.freeze({
   not_resolvable: "Tej wiadomości nie można jeszcze rozstrzygnąć.",
   invalid_provider_pause_id: "Niepoprawny identyfikator wstrzymania wysyłki.",
   provider_pause_not_found: "Nie znaleziono tego wstrzymania wysyłki. Odśwież widok.",
+  outbox_resolution_not_found: "Nie znaleziono tego rozstrzygnięcia w kampanii. Odśwież listę.",
+  resolution_not_approvable: "Zatwierdzenia drugiej osoby wymaga tylko potwierdzenie, że wiadomość nie wyszła.",
+  followup_source_not_eligible: "Kampanię uzupełniającą można utworzyć tylko dla kampanii, która trafiła do kolejki wysyłki.",
+  followup_no_households: "Brak rodzin do kampanii uzupełniającej: żadne potwierdzenie „wiadomość nie wyszła” nie jest jeszcze zatwierdzone przez drugą osobę z zarządu albo rodziny są już w innym uzupełnieniu.",
+  followup_household_already_covered: "Co najmniej jedna rodzina jest już w kolejce innej kampanii uzupełniającej. Utwórz ponownie migawkę odbiorców i zatwierdź listę.",
+  followup_household_not_eligible: "Co najmniej jedna rodzina nie ma zatwierdzonego potwierdzenia „wiadomość nie wyszła”. Utwórz ponownie migawkę odbiorców i zatwierdź listę.",
 
   // --- Import -----------------------------------------------------------------------------------
   import_disabled: "Import jest wyłączony na tym środowisku.",

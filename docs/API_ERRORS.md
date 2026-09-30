@@ -56,7 +56,7 @@ wpisów).
 | `budget_line_not_found` | Nie znaleziono linii preliminarza. | Nie — popraw dane żądania. |
 | `budget_line_superseded` | Ta wersja linii preliminarza została już zmieniona. Odśwież widok i zmień aktualną wersję. | Zależy od kontekstu (patrz moduł trasy). |
 | `business_rule_violation` | Operacja jest niezgodna z aktualnym stanem danych (np. wpis jest zablokowany lub zatwierdzony). Odśwież widok i sprawdź stan. | Nie automatycznie — najpierw odśwież widok i sprawdź stan (odmowa reguły biznesowej z triggera bazy). |
-| `campaign_audience_locked` | Odbiorcy tej kampanii wynikają z zebrania i nie można ich zmienić. | Nie — popraw dane żądania. |
+| `campaign_audience_locked` | Odbiorcy tej kampanii wynikają z zebrania albo z kampanii źródłowej i nie można ich zmienić. | Nie — popraw dane żądania. |
 | `campaign_locked` | Wysyłka jest zablokowana i nie można jej zmienić. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_draft` | Wysyłkę można zmieniać tylko jako szkic. | Zależy od kontekstu (patrz moduł trasy). |
 | `campaign_not_found` | Nie znaleziono wysyłki. | Nie — popraw dane żądania. |
@@ -112,6 +112,10 @@ wpisów).
 | `export_in_progress` | Eksport tego roku już trwa. Poczekaj na jego zakończenie i spróbuj ponownie. | Tak, po chwili (drugi równoczesny eksport tego samego roku). |
 | `export_too_large` | Eksport jest za duży. Zawęź zakres. | Zależy od kontekstu (patrz moduł trasy). |
 | `fingerprint_mismatch` | Dane różnią się od podglądu. Wyślij podgląd ponownie. | Nie — popraw dane żądania. |
+| `followup_household_already_covered` | Co najmniej jedna rodzina jest już w kolejce innej kampanii uzupełniającej. Utwórz ponownie migawkę odbiorców i zatwierdź listę. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `followup_household_not_eligible` | Co najmniej jedna rodzina nie ma zatwierdzonego potwierdzenia „wiadomość nie wyszła”. Utwórz ponownie migawkę odbiorców i zatwierdź listę. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `followup_no_households` | Brak rodzin do kampanii uzupełniającej: żadne potwierdzenie „wiadomość nie wyszła” nie jest jeszcze zatwierdzone przez drugą osobę z zarządu albo rodziny są już w innym uzupełnieniu. | Zależy od kontekstu (patrz moduł trasy). |
+| `followup_source_not_eligible` | Kampanię uzupełniającą można utworzyć tylko dla kampanii, która trafiła do kolejki wysyłki. | Nie — popraw dane żądania. |
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `four_eyes_required` | Tę operację musi zatwierdzić inna osoba niż autor. | Nie — popraw dane żądania. |
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
@@ -315,6 +319,7 @@ wpisów).
 | `opening_balance_exists` | Bilans otwarcia dla tego roku szkolnego już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `opening_balance_not_found` | Nie znaleziono bilansu otwarcia dla tego roku szkolnego. | Nie — popraw dane żądania. |
 | `outbox_not_found` | Nie znaleziono tej wiadomości w kolejce. | Nie — popraw dane żądania. |
+| `outbox_resolution_not_found` | Nie znaleziono tego rozstrzygnięcia w kampanii. Odśwież listę. | Nie — popraw dane żądania. |
 | `password_mismatch` | Hasła nie są takie same. | Nie — popraw dane żądania. |
 | `password_required` | Podaj hasło. | Nie — popraw dane żądania. |
 | `password_too_long` | Hasło jest za długie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -390,6 +395,7 @@ wpisów).
 | `resolution_expense_only` | Uchwałę jako upoważnienie można wskazać tylko przy wydatku. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_final_immutable` | Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_adopted` | Wskazana uchwała nie jest przyjęta. | Zależy od kontekstu (patrz moduł trasy). |
+| `resolution_not_approvable` | Zatwierdzenia drugiej osoby wymaga tylko potwierdzenie, że wiadomość nie wyszła. | Nie — popraw dane żądania. |
 | `resolution_not_current` | Wskazana uchwała ma nowszą wersję (poprawkę). Wybierz aktualną wersję. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_decided` | Stan wykonania można zapisać tylko dla podjętej uchwały. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_found` | Nie znaleziono uchwały. | Nie — popraw dane żądania. |

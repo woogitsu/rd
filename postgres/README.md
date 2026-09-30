@@ -1176,3 +1176,29 @@ konta przed tą migracją nie mają wiersza pauzy i zostaną wysłane przy
 najbliższym przebiegu, jak dotąd. Wycofanie na bazie bez pauz: usunięcie tabeli
 i funkcji; na bazie z pauzami tylko po kopii zapasowej (znika zapis, kto i kiedy
 potwierdził naprawę; zdarzenia `email.provider.*` zostają w `audit_events`).
+
+`0156_email_followup_four_eyes.sql` (#139) dodaje zasadę czterech oczu dla
+rozstrzygnięcia „wiadomość nie wyszła” i kampanię uzupełniającą. Nowa tabela
+`email_outbox_resolution_approvals` (tylko dopisywanie, bez TRUNCATE,
+`approved_at` z zegara bazy) przyjmuje jedno zatwierdzenie na rozstrzygnięcie
+`confirmed_not_sent` (UNIQUE `resolution_id`); CHECK
+`email_outbox_resolution_approval_four_eyes` wymaga innej osoby niż zgłaszająca,
+a klucz obcy złożony do `email_outbox_resolutions` (nowy klucz unikalny
+`email_outbox_resolutions_approval_target`) pilnuje zgodności skopiowanych
+kolumn. `email_campaigns` dostaje `kind` (`standard`/`followup`) i
+`source_campaign_id`; strażnik `email_campaign_followup_guard()` dopuszcza
+uzupełnienie tylko jako szkic kampanii z kolejką w tym samym roku, z odbiorcami
+wynikającymi ze źródła (`no_payment_record` albo `all_households`), i blokuje
+zmianę powiązania. Strażnik `email_outbox_followup_guard()` przyjmuje wiersz
+kolejki uzupełnienia wyłącznie dla rodziny z zatwierdzonym „nie wyszła”
+w kampanii źródłowej, której nie ma w (nieanulowanej) kolejce innego
+uzupełnienia tego źródła (blokada doradcza per źródło). Nowy powód wykluczenia
+z migawki: `followup_already_covered`.
+Skutki dla danych: istniejące kampanie dostają `kind = 'standard'` bez
+powiązania; treść, skróty i zatwierdzenia bez zmian. Istniejące rozstrzygnięcia
+`confirmed_not_sent` (zgłoszone przez jedną osobę przed tą migracją) nie mają
+zatwierdzenia, więc nie wpuszczają rodziny do uzupełnienia, dopóki inna osoba
+z zarządu ich nie zatwierdzi (wariant zachowawczy); same rozstrzygnięcia nie są
+zmieniane. Wycofanie na bazie bez uzupełnień i zatwierdzeń: usunięcie
+triggerów, funkcji, tabeli, klucza unikalnego i kolumn oraz przywrócenie CHECK
+powodów wykluczeń z 0057; na bazie z danymi tylko po kopii zapasowej.

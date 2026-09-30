@@ -4633,6 +4633,72 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/email/campaigns/{campaignId}/followup": {
+      "post": {
+        "operationId": "email_followup",
+        "parameters": [
+          {
+            "name": "campaignId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "email.followup",
+        "tags": [
+          "email"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "email.followup"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/email/campaigns/{campaignId}/pause": {
       "post": {
         "operationId": "email_pause",
@@ -5025,6 +5091,76 @@
         "x-rd-roles": [
           "board",
           "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/email/campaigns/{campaignId}/resolutions/{resolutionId}/approve": {
+      "post": {
+        "operationId": "email_resolutionApprove",
+        "parameters": [
+          {
+            "name": "campaignId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resolutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "email.resolutionApprove",
+        "tags": [
+          "email"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "email.resolutionApprove"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "board"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
@@ -16592,6 +16728,10 @@
           "export_in_progress",
           "export_too_large",
           "fingerprint_mismatch",
+          "followup_household_already_covered",
+          "followup_household_not_eligible",
+          "followup_no_households",
+          "followup_source_not_eligible",
           "forbidden",
           "four_eyes_required",
           "grant_not_found",
@@ -16795,6 +16935,7 @@
           "opening_balance_exists",
           "opening_balance_not_found",
           "outbox_not_found",
+          "outbox_resolution_not_found",
           "password_mismatch",
           "password_required",
           "password_too_long",
@@ -16870,6 +17011,7 @@
           "resolution_expense_only",
           "resolution_final_immutable",
           "resolution_not_adopted",
+          "resolution_not_approvable",
           "resolution_not_current",
           "resolution_not_decided",
           "resolution_not_found",
@@ -17068,7 +17210,7 @@
       },
       {
         "code": "campaign_audience_locked",
-        "meaning": "Odbiorcy tej kampanii wynikają z zebrania i nie można ich zmienić.",
+        "meaning": "Odbiorcy tej kampanii wynikają z zebrania albo z kampanii źródłowej i nie można ich zmienić.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -17344,6 +17486,26 @@
       {
         "code": "fingerprint_mismatch",
         "meaning": "Dane różnią się od podglądu. Wyślij podgląd ponownie.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "followup_household_already_covered",
+        "meaning": "Co najmniej jedna rodzina jest już w kolejce innej kampanii uzupełniającej. Utwórz ponownie migawkę odbiorców i zatwierdź listę.",
+        "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "followup_household_not_eligible",
+        "meaning": "Co najmniej jedna rodzina nie ma zatwierdzonego potwierdzenia „wiadomość nie wyszła”. Utwórz ponownie migawkę odbiorców i zatwierdź listę.",
+        "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "followup_no_households",
+        "meaning": "Brak rodzin do kampanii uzupełniającej: żadne potwierdzenie „wiadomość nie wyszła” nie jest jeszcze zatwierdzone przez drugą osobę z zarządu albo rodziny są już w innym uzupełnieniu.",
+        "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "followup_source_not_eligible",
+        "meaning": "Kampanię uzupełniającą można utworzyć tylko dla kampanii, która trafiła do kolejki wysyłki.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -18362,6 +18524,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "outbox_resolution_not_found",
+        "meaning": "Nie znaleziono tego rozstrzygnięcia w kampanii. Odśwież listę.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "password_mismatch",
         "meaning": "Hasła nie są takie same.",
         "retry": "Nie — popraw dane żądania."
@@ -18735,6 +18902,11 @@
         "code": "resolution_not_adopted",
         "meaning": "Wskazana uchwała nie jest przyjęta.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "resolution_not_approvable",
+        "meaning": "Zatwierdzenia drugiej osoby wymaga tylko potwierdzenie, że wiadomość nie wyszła.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "resolution_not_current",

@@ -8,18 +8,23 @@ import {
   RESOLUTION_LABELS,
   allowedResolutions,
   attentionUrl,
+  canApproveResolution,
   canResolve,
   describeAttention,
   describeResolution,
   describeResolutionError,
+  followupUrl,
+  hasApprovedNotSent,
   parseEvidenceCode,
+  resolutionApproveUrl,
   resolutionsUrl,
 } from "./resolutions-core.js";
+import { makeIdempotencyKey } from "./core.js";
 import { confirmAction } from "../shared/confirm-dialog.js";
 
 const byId = (id) => document.getElementById(id);
 
-export function mountResolutions({ api, isBoard, onResolved }) {
+export function mountResolutions({ api, isBoard, onResolved, onFollowupCreated }) {
   const box = byId("attention-box");
   const body = byId("attention-body");
   const dialog = byId("resolution-dialog");
@@ -61,6 +66,13 @@ export function mountResolutions({ api, isBoard, onResolved }) {
       button.addEventListener("click", () => openDialog(item));
       actions.append(button);
     }
+    if (canApproveResolution(item, isBoard())) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Zatwierdź jako druga osoba";
+      button.addEventListener("click", () => approveResolution(item, button));
+      actions.append(button);
+    }
     tr.append(actions);
     return tr;
   }
@@ -70,6 +82,67 @@ export function mountResolutions({ api, isBoard, onResolved }) {
     byId("attention-table").hidden = state.items.length === 0;
     byId("attention-empty").hidden = state.items.length !== 0;
     byId("attention-load-more").hidden = !state.nextCursor;
+    byId("followup-create").hidden = !hasApprovedNotSent(state.items);
+  }
+
+  // #139: cztery oczy — druga osoba z zarządu zatwierdza „wiadomość nie wyszła”.
+  async function approveResolution(item, button) {
+    if (state.busy) return;
+    const confirmed = await confirmAction({
+      title: "Zatwierdzić, że wiadomość nie wyszła?",
+      effects: [
+        `Wiersz kolejki ${item.outboxId}.`,
+        "Zatwierdzasz jako druga osoba z zarządu — po własnym sprawdzeniu logów dostawcy.",
+        "Po zatwierdzeniu rodzina może trafić do kampanii uzupełniającej. Ta kampania wymaga osobnego zatwierdzenia treści i listy odbiorców.",
+        "Zapis jest trwały. Nic nie jest wysyłane.",
+      ],
+      confirmLabel: "Zatwierdź",
+      cancelLabel: "Wróć",
+    });
+    if (!confirmed) return;
+    state.busy = true;
+    button.disabled = true;
+    try {
+      await api(resolutionApproveUrl(state.campaignId, item.resolutionId), { method: "POST" });
+      await load();
+      setMessage("Zatwierdzono. Nic nie zostało wysłane.");
+    } catch (error) {
+      setMessage(`Nie udało się zatwierdzić: ${messageFor(error)}`, true);
+    } finally {
+      state.busy = false;
+      button.disabled = false;
+    }
+  }
+
+  async function createFollowup() {
+    if (state.busy || !state.campaignId) return;
+    const confirmed = await confirmAction({
+      title: "Utworzyć kampanię uzupełniającą?",
+      effects: [
+        "Powstanie szkic z tematem i treścią tej kampanii. Możesz go poprawić.",
+        "Odbiorcy: wyłącznie rodziny, dla których druga osoba z zarządu zatwierdziła, że wiadomość nie wyszła.",
+        "Szkic wymaga migawki odbiorców i zatwierdzenia przez inną osobę z zarządu. Nic nie jest wysyłane teraz.",
+      ],
+      confirmLabel: "Utwórz szkic",
+      cancelLabel: "Wróć",
+    });
+    if (!confirmed) return;
+    state.busy = true;
+    const button = byId("followup-create");
+    button.disabled = true;
+    try {
+      const data = await api(followupUrl(state.campaignId), {
+        method: "POST",
+        headers: { "Idempotency-Key": makeIdempotencyKey("email-followup") },
+      });
+      setMessage(`Utworzono szkic kampanii uzupełniającej (rodzin: ${Number(data.eligibleHouseholds) || 0}). Nic nie zostało wysłane.`);
+      await onFollowupCreated?.(data.campaign);
+    } catch (error) {
+      setMessage(`Nie udało się utworzyć uzupełnienia: ${messageFor(error)}`, true);
+    } finally {
+      state.busy = false;
+      button.disabled = false;
+    }
   }
 
   // Zmiana kampanii chowa listę poprzedniej (inne wiersze, inny dziennik odczytu).
@@ -135,7 +208,8 @@ export function mountResolutions({ api, isBoard, onResolved }) {
           `Wiersz kolejki ${target.outboxId}.`,
           "Potwierdzaj wyłącznie po sprawdzeniu logów dostawcy (wyszukanie po identyfikatorze wiersza).",
           "Zapis jest trwały i nie zmienia historii wiersza. Nic nie jest wysyłane.",
-          "Ponowna wiadomość do tej rodziny jest możliwa wyłącznie w nowej kampanii, zatwierdzanej zwykłą ścieżką.",
+          "Rodzina trafi do kampanii uzupełniającej dopiero po zatwierdzeniu przez drugą osobę z zarządu.",
+          "Ponowna wiadomość do tej rodziny jest możliwa wyłącznie w kampanii uzupełniającej, zatwierdzanej zwykłą ścieżką.",
         ],
         confirmLabel: "Zapisz potwierdzenie",
         cancelLabel: "Wróć",
@@ -166,6 +240,7 @@ export function mountResolutions({ api, isBoard, onResolved }) {
   dialog.addEventListener("close", () => { errorBox.textContent = ""; });
   byId("attention-open").addEventListener("click", () => load());
   byId("attention-load-more").addEventListener("click", () => load({ append: true }));
+  byId("followup-create").addEventListener("click", () => createFollowup());
 
   return { reset, load };
 }

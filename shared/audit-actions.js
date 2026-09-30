@@ -133,6 +133,7 @@ const CATALOG = {
 
   // --- email ---
   'email.campaign.created': ['email', 'Utworzenie kampanii'],
+  'email.campaign.followup_created': ['email', 'Utworzenie kampanii uzupełniającej'],
   'email.campaign.updated': ['email', 'Zmiana kampanii'],
   'email.snapshot.built': ['email', 'Zamrożenie listy odbiorców'],
   'email.recipients.viewed': ['email', 'Odczyt listy odbiorców'],
@@ -159,6 +160,7 @@ const CATALOG = {
   'email.lease_expired_requeued': ['email', 'Powrót wiadomości do kolejki po wygaśnięciu blokady'],
   'email.requeued': ['email', 'Powrót niewysłanej wiadomości do kolejki'],
   'email.outbox.resolved': ['email', 'Rozstrzygnięcie doręczenia wiadomości'],
+  'email.outbox.resolution_approved': ['email', 'Zatwierdzenie przez drugą osobę: wiadomość nie wyszła'],
   'email.address_suppressed': ['email', 'Wstrzymanie adresu po zgłoszeniu dostawcy'],
   'email.preference.opt_out': ['email', 'Rezygnacja z kategorii wiadomości'],
   'email.suppressions.viewed': ['email', 'Odczyt listy wstrzymanych adresów'],

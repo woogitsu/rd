@@ -52,6 +52,10 @@ export const AUDIT_ROW_PARENTS = new Map([
     keys: (row) => [row.outbox_id],
     why: 'rozstrzygnięcie wiadomości o nieznanym stanie; email.outbox.resolved wskazuje wiadomość (email_outbox)',
   }],
+  ['email_outbox_resolution_approvals', {
+    keys: (row) => [row.outbox_id],
+    why: 'zatwierdzenie „nie wyszła” przez drugą osobę (#139, 0156); email.outbox.resolution_approved wskazuje wiadomość (email_outbox)',
+  }],
   ['email_preview_sends', {
     keys: (row) => [row.campaign_id],
     why: 'wysyłka testowa na adres techniczny Rady; email.preview.sent wskazuje kampanię',
