@@ -117,7 +117,7 @@ test('GET /api/year-close/{rok} (statusView): jedna migawka', async () => {
 });
 
 test('GET /api/reports/audit ponowione: dwa zdarzenia z różnym asOf, treść identyczna bez zapisów', async () => {
-  const strip = (report) => { const { generatedAt, ...rest } = report; return rest; };
+  const strip = (report) => { const { generatedAt, asOf, ...rest } = report; return rest; };
   const first = await (await get({ db }, `/api/reports/audit?schoolYearId=${YEAR}&format=json`, cookies.audit)).json();
   const second = await (await get({ db }, `/api/reports/audit?schoolYearId=${YEAR}&format=json`, cookies.audit)).json();
   assert.deepEqual(strip(second.report), strip(first.report));

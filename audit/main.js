@@ -96,7 +96,7 @@ async function showYear(value) {
     const data = await api(reportUrl(value, "json"));
     const report = data.report;
     byId("report-title").textContent = `Raport dla Komisji Rewizyjnej — ${formatSchoolYear(report?.schoolYear?.label ?? value)}`;
-    byId("report-meta").textContent = report?.generatedAt ? `Stan na ${formatDate(report.generatedAt)}` : "";
+    byId("report-meta").textContent = (report?.asOf ?? report?.generatedAt) ? `Stan na ${formatDate(report.asOf ?? report.generatedAt)}` : "";
     byId("report-html-link").href = reportUrl(value, "html");
     byId("report-sections").replaceChildren(...buildSections(report).map(sectionElement));
     reportSection.hidden = false;
