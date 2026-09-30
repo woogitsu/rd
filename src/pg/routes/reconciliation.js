@@ -27,6 +27,7 @@ import { isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode } f
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
+import { PROTECTED_ACCOUNT_ROLES } from '../account-recovery.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
 import { detectDelimiter, parseCsvMatrix } from '../../../import/csv.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
@@ -2331,6 +2332,7 @@ export async function buildAuditReport(executor, schoolYearId) {
   balance.openingBankCents = balance.openingBalanceCents - balance.openingCashCents;
   balance.closingBankCents = balance.closingBalanceCents - balance.closingCashCents;
   const checks = await buildCrossChecks(executor, year, balance, confirmed.at(-1) ?? null);
+  const accountOperations = await buildAccountOperations(executor, year);
 
   return {
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },
@@ -2369,6 +2371,54 @@ export async function buildAuditReport(executor, schoolYearId) {
       largeExpensesWithoutAdoptedResolution: largeExpenses.filter((item) => item.flagged).length,
     },
     evidence,
+    accountOperations,
+  };
+}
+
+// #146: „operacje administracyjne na kontach” w roku szkolnym (daty zdarzeń
+// w strefie Europe/Brussels między starts_on a ends_on) — WYŁĄCZNIE liczby.
+// Domeny dziennika access/security czyta dziś tylko administrator (D-08/D-09,
+// shared/audit-actions.js), więc raport dla Komisji Rewizyjnej nie pokazuje
+// identyfikatorów kont ani aktorów; szczegóły są w dzienniku zdarzeń admina.
+export async function buildAccountOperations(executor, year) {
+  const { rows } = await executor.query(
+    `SELECT
+       count(*) FILTER (WHERE action = 'role_grant.created' AND metadata_json->>'role' = ANY($3::text[])) AS protected_grants,
+       count(*) FILTER (WHERE action = 'role_grant.created' AND metadata_json->>'role' = ANY($3::text[])
+                          AND metadata_json ? 'requestId') AS protected_grants_approved,
+       count(*) FILTER (WHERE action = 'role_grant.four_eyes_waived') AS four_eyes_waived,
+       count(*) FILTER (WHERE action = 'role_grant.revoked') AS grants_revoked,
+       count(*) FILTER (WHERE action = 'role_grant_request.requested') AS grant_requests,
+       count(*) FILTER (WHERE action IN ('role_grant_request.rejected', 'role_grant_request.expired')) AS grant_requests_closed,
+       count(*) FILTER (WHERE action = 'auth.password_reset_issued'
+                          AND actor_id IS DISTINCT FROM metadata_json->>'userId') AS admin_password_resets,
+       count(*) FILTER (WHERE action = 'mfa.reset') AS mfa_resets,
+       count(*) FILTER (WHERE action = 'account_recovery.requested') AS recovery_requests,
+       count(*) FILTER (WHERE action IN ('account_recovery.rejected', 'account_recovery.expired')) AS recovery_requests_closed,
+       count(*) FILTER (WHERE action = 'auth.login_succeeded' AND metadata_json->>'afterAdminReset' = 'true') AS logins_after_admin_reset
+       FROM audit_events
+      WHERE action = ANY($4::text[])
+        AND (occurred_at AT TIME ZONE 'Europe/Brussels')::date BETWEEN $1::date AND $2::date`,
+    [year.starts_on, year.ends_on, PROTECTED_ACCOUNT_ROLES, [
+      'role_grant.created', 'role_grant.four_eyes_waived', 'role_grant.revoked', 'role_grant_request.requested',
+      'role_grant_request.rejected', 'role_grant_request.expired', 'auth.password_reset_issued', 'mfa.reset',
+      'account_recovery.requested', 'account_recovery.rejected', 'account_recovery.expired', 'auth.login_succeeded',
+    ]],
+  );
+  const row = rows[0] ?? {};
+  const n = (key) => toSafeInteger(row[key] ?? 0);
+  return {
+    protectedGrants: n('protected_grants'),
+    protectedGrantsApproved: n('protected_grants_approved'),
+    fourEyesWaived: n('four_eyes_waived'),
+    grantsRevoked: n('grants_revoked'),
+    grantRequests: n('grant_requests'),
+    grantRequestsClosed: n('grant_requests_closed'),
+    adminPasswordResets: n('admin_password_resets'),
+    mfaResets: n('mfa_resets'),
+    recoveryRequests: n('recovery_requests'),
+    recoveryRequestsClosed: n('recovery_requests_closed'),
+    loginsAfterAdminReset: n('logins_after_admin_reset'),
   };
 }
 

@@ -1405,9 +1405,18 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.accountRequestReject', 'POST', '/api/admin/account-requests/:requestId/reject', {
     object: 'recoveryRequest', build: ({ obj }) => ({ path: `/api/admin/account-requests/${obj.requestId}/reject`, body: {} }),
   }),
+  // #146: wnioski o nadanie roli chronionej — wyłącznie admin z MFA; zatwierdza nie wnioskodawca i nie adresat.
+  adminRoute('admin.grantRequests', 'GET', '/api/admin/grant-requests', {}),
+  adminRoute('admin.grantRequestApprove', 'POST', '/api/admin/grant-requests/:requestId/approve', {
+    object: 'grantRequest', build: ({ obj }) => ({ path: `/api/admin/grant-requests/${obj.requestId}/approve`, body: {} }),
+  }),
+  adminRoute('admin.grantRequestReject', 'POST', '/api/admin/grant-requests/:requestId/reject', {
+    object: 'grantRequest', build: ({ obj }) => ({ path: `/api/admin/grant-requests/${obj.requestId}/reject`, body: {} }),
+  }),
   adminRoute('admin.grants', 'GET', '/api/admin/grants', {}),
+  // #146: rola zarządu przy drugim administratorze (fikstury macierzy) — 202 i wniosek, bez przydziału.
   adminRoute('admin.grantCreate', 'POST', '/api/admin/grants', {
-    ok: 201, object: 'active',
+    ok: 202, object: 'active',
     build: ({ obj }) => ({ path: '/api/admin/grants', body: { userId: obj.userId, role: 'board', schoolYearId: YEAR_1 } }),
   }),
   adminRoute('admin.grantRevoke', 'POST', '/api/admin/grants/:grantId/revoke', {
@@ -1418,8 +1427,9 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: `/api/admin/school-years/${obj.schoolYearId}/expire-grants`, body: { confirm: obj.schoolYearId } }),
   }),
   adminRoute('admin.invitations', 'GET', '/api/admin/invitations', {}),
+  // #146: zaproszenie do roli zarządu przy drugim administratorze — 202 i wniosek, bez tokenu.
   adminRoute('admin.invitationCreate', 'POST', '/api/admin/invitations', {
-    ok: 201,
+    ok: 202,
     build: ({ key }) => ({ path: '/api/admin/invitations', body: { email: `zaproszenie-${safeKey(key).toLowerCase()}@example.invalid`, role: 'board', schoolYearId: YEAR_1 } }),
   }),
   adminRoute('admin.invitationRevoke', 'POST', '/api/admin/invitations/:invitationId/revoke', {

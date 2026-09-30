@@ -13,8 +13,15 @@
 //   GET  /api/admin/account-requests?status=     wnioski o reset hasła/MFA kont chronionych (#146)
 //   POST /api/admin/account-requests/{id}/approve  zatwierdza (nie wnioskodawca, nie właściciel konta) i wykonuje; krok w górę MFA
 //   POST /api/admin/account-requests/{id}/reject   odrzuca lub wycofuje wniosek
+//   GET  /api/admin/grant-requests?status=       wnioski o nadanie roli chronionej (#146)
+//   POST /api/admin/grant-requests/{id}/approve  zatwierdza INNY administrator (nie wnioskodawca, nie adresat)
+//        i wykonuje nadanie (przydział albo zaproszenie z tokenem, zwracanym raz); krok w górę MFA
+//   POST /api/admin/grant-requests/{id}/reject   odrzuca lub wycofuje wniosek
 //   GET  /api/admin/grants?userId=&role=&schoolYearId=&classId=&status=&limit=&cursor=
 //   POST /api/admin/grants                      { userId, role, classId?, schoolYearId?, expiresAt? } — krok w górę MFA (#150)
+//        #146: rola admin/board/treasurer przy drugim aktywnym administratorze — 202 i wniosek
+//        (src/pg/grant-requests.js); tak samo POST /invitations i …/reissue dla tych ról.
+//        Bez drugiego administratora (pierwsze uruchomienie) — bezpośrednio + role_grant.four_eyes_waived.
 //   POST /api/admin/grants/{id}/revoke
 //   POST /api/admin/school-years/{id}/expire-grants   { confirm: "<id roku>" } — wygaszenie kadencji
 //   GET  /api/admin/invitations?limit=&cursor=
@@ -80,7 +87,8 @@
 // operacje nie odebrały sobie nawzajem ostatniego dostępu administratora.
 
 import {
-  allowPendingRoles, CLASS_SCOPE_ROLES, createInvitation, isoTimestamp, reissueInvitation, revokeInvitation, revokeUserSessions,
+  allowPendingRoles, CLASS_SCOPE_ROLES, insertInvitation, isoTimestamp, normalizeEmail, reissueInvitation, revokeInvitation,
+  revokeUserSessions,
   revokeUserSessionsWith, ROLE_STATUS, ROLES,
 } from '../auth.js';
 import { freshMfaForbiddenCode, isAuthorizedScoped, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
@@ -90,6 +98,10 @@ import { auditYearByObjectSql } from '../export.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
 } from '../login.js';
+import {
+  approveGrantRequest, grantApprovalMode, GrantRequestError, insertGrantRequest, isProtectedRole, listGrantRequests,
+  recordFourEyesWaiver, rejectGrantRequest,
+} from '../grant-requests.js';
 import {
   approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, rejectRecoveryRequest, requiresRecoveryApproval,
 } from '../account-recovery.js';
@@ -439,43 +451,82 @@ async function createGrant(env, actorId, request, json) {
   const result = await env.db.transaction(async (tx) => {
     await lockGrantChanges(tx);
     const scope = await resolveScope(tx, { role, classId, schoolYearId: schoolYearIdInput });
-    const { rows: users } = await tx.query('SELECT id, disabled_at FROM users WHERE id = $1 FOR UPDATE', [data.userId]);
-    if (!users[0]) throw new Abort('user_not_found', 404);
-    if (users[0].disabled_at) throw new Abort('user_disabled', 409);
-
-    // Podwójne kliknięcie: identyczny aktywny przydział nie powstaje drugi raz.
-    const { rows: duplicate } = await tx.query(
-      `SELECT ${GRANT_COLUMNS} FROM role_grants g
-        WHERE g.user_id = $1 AND g.role = $2
-          AND g.class_id IS NOT DISTINCT FROM $3 AND g.school_year_id IS NOT DISTINCT FROM $4
-          AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now())
-        LIMIT 1`,
-      [data.userId, role, scope.classId, scope.schoolYearId],
-    );
-    if (duplicate[0]) return { grant: grantFromRow(duplicate[0]), created: false };
-
-    const grantId = crypto.randomUUID();
-    let rows;
-    try {
-      ({ rows } = await tx.query(
-        `INSERT INTO role_grants AS g (id, user_id, role, class_id, school_year_id, expires_at, granted_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING ${GRANT_COLUMNS}`,
-        [grantId, data.userId, role, scope.classId, scope.schoolYearId, expiresAt, actorId],
-      ));
-    } catch (error) {
-      // Trigger zamrożenia (0017/0022): rok zamknięty to konflikt, nie awaria.
-      if (error?.message === 'school_year_closed') throw new Abort('school_year_closed', 409);
-      if (error?.message === 'class_not_in_school_year') throw new Abort('class_not_in_school_year', 422);
-      throw error;
+    await lockGrantTarget(tx, data.userId);
+    // #146: rola chroniona (admin/board/treasurer) — tylko wniosek, przydział
+    // powstanie po zatwierdzeniu przez innego administratora. Decyzja zapada pod
+    // blokadą zmian przydziałów, więc równoległe nadanie nie zmienia jej w trakcie.
+    const mode = await grantApprovalMode(tx, { actorId, role, targetUserId: data.userId });
+    if (mode === 'request') {
+      const duplicate = await findActiveGrant(tx, { userId: data.userId, role, ...scope });
+      if (duplicate) return { grant: duplicate, created: false };
+      return { ...await insertGrantRequest(tx, {
+        actorId, kind: 'grant', role, targetUserId: data.userId, schoolYearId: scope.schoolYearId, grantExpiresAt: expiresAt,
+      }), pending: true };
     }
-    await insertAuditEvent(tx, {
-      actorId, action: 'role_grant.created', entityType: 'role_grant', entityId: grantId,
-      metadata: grantAuditMetadata(rows[0], { expiresAt }),
-    });
-    return { grant: grantFromRow(rows[0]), created: true };
+    const created = await insertGrantInTx(tx, actorId, { userId: data.userId, role, ...scope, expiresAt });
+    if (mode === 'waived' && created.created) {
+      await recordFourEyesWaiver(tx, {
+        actorId, entityType: 'role_grant', entityId: created.grant.id, role, userId: data.userId, schoolYearId: scope.schoolYearId,
+      });
+    }
+    return created;
+  }).catch((error) => {
+    if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
+    throw error;
   });
+  if (result.pending) {
+    const { pending, ...body } = result;
+    return json(body, 202);
+  }
   return json(result, result.created ? 201 : 200);
+}
+
+async function lockGrantTarget(tx, userId) {
+  const { rows: users } = await tx.query('SELECT id, disabled_at FROM users WHERE id = $1 FOR UPDATE', [userId]);
+  if (!users[0]) throw new Abort('user_not_found', 404);
+  if (users[0].disabled_at) throw new Abort('user_disabled', 409);
+}
+
+async function findActiveGrant(tx, { userId, role, classId, schoolYearId }) {
+  const { rows } = await tx.query(
+    `SELECT ${GRANT_COLUMNS} FROM role_grants g
+      WHERE g.user_id = $1 AND g.role = $2
+        AND g.class_id IS NOT DISTINCT FROM $3 AND g.school_year_id IS NOT DISTINCT FROM $4
+        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now())
+      LIMIT 1`,
+    [userId, role, classId ?? null, schoolYearId ?? null],
+  );
+  return rows[0] ? grantFromRow(rows[0]) : null;
+}
+
+// Zapis przydziału i zdarzenia `role_grant.created` w transakcji wywołującego
+// (po lockGrantChanges i lockGrantTarget). `auditExtra` — np. requestId,
+// requestedBy przy zatwierdzeniu wniosku (#146).
+async function insertGrantInTx(tx, actorId, { userId, role, classId = null, schoolYearId = null, expiresAt = null, auditExtra = {} }) {
+  // Podwójne kliknięcie: identyczny aktywny przydział nie powstaje drugi raz.
+  const duplicate = await findActiveGrant(tx, { userId, role, classId, schoolYearId });
+  if (duplicate) return { grant: duplicate, created: false };
+
+  const grantId = crypto.randomUUID();
+  let rows;
+  try {
+    ({ rows } = await tx.query(
+      `INSERT INTO role_grants AS g (id, user_id, role, class_id, school_year_id, expires_at, granted_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING ${GRANT_COLUMNS}`,
+      [grantId, userId, role, classId, schoolYearId, expiresAt, actorId],
+    ));
+  } catch (error) {
+    // Trigger zamrożenia (0017/0022): rok zamknięty to konflikt, nie awaria.
+    if (error?.message === 'school_year_closed') throw new Abort('school_year_closed', 409);
+    if (error?.message === 'class_not_in_school_year') throw new Abort('class_not_in_school_year', 422);
+    throw error;
+  }
+  await insertAuditEvent(tx, {
+    actorId, action: 'role_grant.created', entityType: 'role_grant', entityId: grantId,
+    metadata: grantAuditMetadata(rows[0], { expiresAt, ...auditExtra }),
+  });
+  return { grant: grantFromRow(rows[0]), created: true };
 }
 
 async function revokeGrant(env, actorId, grantId, json) {
@@ -611,14 +662,42 @@ async function createInvitationRoute(env, actorId, request, json) {
   // Sprawdzenie jest w transakcji zapisu, pod blokadą adresu (rejectPending, #208).
   let created;
   try {
-    created = await createInvitation(env, {
-      actorId, email, role: data.role, classId: scope.classId, schoolYearId: scope.schoolYearId, ttlSeconds, rejectPending: true,
+    const normalized = normalizeEmail(email);
+    // #146: zaproszenie do roli chronionej to też nadanie roli (w chwili
+    // przyjęcia) — przy drugim administratorze tylko wniosek, bez tokenu.
+    created = await env.db.transaction(async (tx) => {
+      // Blokada zmian przydziałów tylko dla roli chronionej (decyzja o wniosku);
+      // zaproszenie innej roli serializuje wyłącznie blokada adresu w insertInvitation.
+      if (isProtectedRole(data.role)) await lockGrantChanges(tx);
+      const mode = await grantApprovalMode(tx, { actorId, role: data.role, targetEmail: normalized });
+      if (mode === 'request') {
+        return { ...await insertGrantRequest(tx, {
+          actorId, kind: 'invitation', role: data.role, targetEmail: normalized, schoolYearId: scope.schoolYearId,
+          invitationTtlSeconds: ttlSeconds ?? null,
+        }), pending: true };
+      }
+      const inserted = await insertInvitation(tx, {
+        actorId, email: normalized, role: data.role, classId: scope.classId, schoolYearId: scope.schoolYearId,
+        ...(ttlSeconds ? { ttlSeconds } : {}), rejectPending: true,
+      });
+      if (mode === 'waived') {
+        await recordFourEyesWaiver(tx, {
+          actorId, entityType: 'invitation', entityId: inserted.invitationId, role: data.role, schoolYearId: scope.schoolYearId,
+        });
+      }
+      return inserted;
     });
   } catch (error) {
+    if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
     if (error?.message === 'invitation_pending') throw new RequestError('invitation_pending', 409);
     if (['invalid_email', 'invalid_role', 'class_required'].includes(error?.message)) throw new RequestError(error.message);
     if (error?.message === 'class_not_in_school_year') throw new RequestError(error.message, 422);
+    if (error?.message === 'school_year_closed') throw new RequestError('school_year_closed', 409);
     throw error;
+  }
+  if (created.pending) {
+    const { pending, ...body } = created;
+    return json(body, 202);
   }
   // Token zwracany jest wyłącznie tutaj, jeden raz. Baza ma tylko jego skrót.
   // Operator przekazuje go osobnym kanałem; moduł nie wysyła e-maili.
@@ -727,6 +806,27 @@ async function createClasses(env, actorId, schoolYearId, request, json) {
 // nowe zaproszenie w jednej transakcji pod blokadą adresu (reissueInvitation
 // w src/pg/auth.js, #293/#576).
 async function reissueInvitationRoute(env, actorId, invitationId, json) {
+  // #146: nowy token dla roli chronionej daje tę rolę temu, kto go użyje —
+  // przy drugim administratorze tylko wniosek; stare zaproszenie działa do
+  // zatwierdzenia (wtedy jest wycofywane w tej samej transakcji, pod blokadą adresu).
+  const { rows } = await env.db.query(`SELECT ${INVITATION_COLUMNS} FROM invitations i WHERE i.id = $1`, [invitationId]);
+  const invitation = rows[0];
+  if (!invitation) throw new RequestError('invitation_not_found', 404);
+  if (invitation.status === 'pending' && isProtectedRole(invitation.role)) {
+    const email = String(invitation.email).toLowerCase();
+    const pending = await env.db.transaction(async (tx) => {
+      await lockGrantChanges(tx);
+      if (await grantApprovalMode(tx, { actorId, role: invitation.role, targetEmail: email }) !== 'request') return null;
+      return insertGrantRequest(tx, {
+        actorId, kind: 'invitation', role: invitation.role, targetEmail: email,
+        schoolYearId: invitation.school_year_id ?? null, replacesInvitationId: invitationId,
+      });
+    }).catch((error) => {
+      if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
+      throw error;
+    });
+    if (pending) return json(pending, 202);
+  }
   let created;
   try {
     created = await reissueInvitation(env, { actorId, invitationId });
@@ -745,6 +845,87 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
     },
     token: created.secret,
   }, 201);
+}
+
+// --- Wnioski o nadanie roli chronionej (#146) ---------------------------------
+
+async function grantRequestsList(env, url, json) {
+  try {
+    return json({ requests: await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }) });
+  } catch (error) {
+    if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
+}
+
+// Wykonanie zatwierdzonego wniosku w transakcji zatwierdzenia (po blokadzie
+// zmian przydziałów i wiersza wniosku). Przydział/zaproszenie wystawia
+// zatwierdzający (granted_by/created_by); zdarzenia mają requestId i requestedBy.
+async function executeGrantRequest(tx, actorId, row) {
+  const auditExtra = { requestId: row.id, requestedBy: row.requested_by, approvedBy: actorId };
+  if (row.kind === 'grant') {
+    await lockGrantTarget(tx, row.target_user_id);
+    if (row.grant_expires_at && new Date(row.grant_expires_at).getTime() <= Date.now()) {
+      throw new Abort('invalid_expires_at', 409);
+    }
+    const created = await insertGrantInTx(tx, actorId, {
+      userId: row.target_user_id, role: row.role, schoolYearId: row.school_year_id ?? null,
+      expiresAt: row.grant_expires_at ? new Date(row.grant_expires_at).toISOString() : null, auditExtra,
+    });
+    return { resultId: created.grant.id, outcome: created };
+  }
+  if (row.replaces_invitation_id) {
+    // Ta sama blokada adresu co reissueInvitation (#293) i insertInvitation.
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:invitation:${row.target_email}`]);
+    const { rows: old } = await tx.query(
+      `UPDATE invitations SET revoked_at = now(), revoked_by = $2
+        WHERE id = $1 AND revoked_at IS NULL AND accepted_at IS NULL AND expires_at > now()
+        RETURNING id`,
+      [row.replaces_invitation_id, actorId],
+    );
+    if (!old[0]) throw new Abort('invitation_not_pending', 409);
+    await insertAuditEvent(tx, {
+      actorId, action: 'invitation.revoked', entityType: 'invitation', entityId: row.replaces_invitation_id,
+      metadata: { reason: 'reissued', requestId: row.id },
+    });
+  }
+  let created;
+  try {
+    created = await insertInvitation(tx, {
+      actorId, email: row.target_email, role: row.role, classId: null, schoolYearId: row.school_year_id ?? null,
+      ...(row.invitation_ttl_seconds ? { ttlSeconds: row.invitation_ttl_seconds } : {}),
+      replacesInvitationId: row.replaces_invitation_id ?? null, rejectPending: true,
+    });
+  } catch (error) {
+    if (error?.message === 'invitation_pending') throw new Abort('invitation_pending', 409);
+    if (error?.message === 'school_year_closed') throw new Abort('school_year_closed', 409);
+    throw error;
+  }
+  return {
+    resultId: created.invitationId,
+    outcome: {
+      invitation: {
+        id: created.invitationId, email: row.target_email, role: row.role, classId: null,
+        schoolYearId: row.school_year_id ?? null, expiresAt: created.expiresAt, status: 'pending',
+        ...(row.replaces_invitation_id ? { replacesInvitationId: row.replaces_invitation_id } : {}),
+      },
+      token: created.secret,
+    },
+  };
+}
+
+async function grantRequestDecision(env, actorId, requestId, decision, json) {
+  try {
+    if (decision === 'approve') {
+      return json(await approveGrantRequest(env, {
+        actorId, requestId, lockFirst: lockGrantChanges, execute: (tx, row) => executeGrantRequest(tx, actorId, row),
+      }));
+    }
+    return json(await rejectGrantRequest(env, { actorId, requestId }));
+  } catch (error) {
+    if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
 }
 
 // Tabela obsady klas roku (#108): przydziały przedstawiciela aktywne dziś,
@@ -818,6 +999,8 @@ export const AUDIT_ACTIONS = [
   'auth.password_reset_issued', 'auth.password_reset_revoked', 'auth.password_reset_completed', 'auth.password_set',
   'auth.password_changed', 'auth.account_under_pressure', 'mfa.reset',
   'account_recovery.requested', 'account_recovery.approved', 'account_recovery.rejected', 'account_recovery.expired',
+  'role_grant.four_eyes_waived', 'role_grant_request.requested', 'role_grant_request.approved',
+  'role_grant_request.rejected', 'role_grant_request.expired',
 ];
 
 // #181: domeny dziennika i etykiety akcji są w shared/audit-actions.js
@@ -1294,7 +1477,7 @@ function allowedMethodsFor(section, pathLength, action, path) {
     if (pathLength === 3 && ['disable', 'enable', 'revoke-sessions', 'password-reset', 'mfa-reset'].includes(action)) return ['POST'];
     return null;
   }
-  if (section === 'account-requests') {
+  if (section === 'account-requests' || section === 'grant-requests') {
     if (pathLength === 1) return ['GET'];
     if (pathLength === 3 && ['approve', 'reject'].includes(action)) return ['POST'];
     return null;
@@ -1374,6 +1557,16 @@ async function route(request, env, url, json, actorId, context) {
       return recoveryRequestDecision(env, actorId, decodeId(rawId), 'reject', json);
     }
   }
+  if (section === 'grant-requests') {
+    if (path.length === 1 && method === 'GET') return grantRequestsList(env, url, json);
+    if (path.length === 3 && action === 'approve' && method === 'POST') {
+      requireFreshMfa(context);
+      return grantRequestDecision(env, actorId, decodeId(rawId), 'approve', json);
+    }
+    if (path.length === 3 && action === 'reject' && method === 'POST') {
+      return grantRequestDecision(env, actorId, decodeId(rawId), 'reject', json);
+    }
+  }
   if (section === 'grants') {
     if (path.length === 1 && method === 'GET') return listGrants(env, url, json);
     if (path.length === 1 && method === 'POST') { requireFreshMfa(context); return createGrant(env, actorId, request, json); }
@@ -1425,7 +1618,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;

@@ -313,11 +313,38 @@ ${table([['Data'], ['Kategoria'], ['Opis'], ['Netto', 'num'], ['Wpis księgi']],
 ${table([['Dokument'], ['Wpisy księgi']], duplicateEvidenceRows, 'Brak powtórzonych dokumentów.')}
 <p class="meta">Liczone są wydatki z kwotą netto powyżej zera. Numer i wystawca faktury nie są jeszcze zapisywane, więc duplikat tej samej faktury w innym pliku nie zostanie wykryty.</p>
 
+${accountOperationsSection(report.accountOperations)}
 <h2>Uwagi Komisji Rewizyjnej</h2>
 <p class="empty">&nbsp;</p>
 <div class="signatures"><div>Data i podpis</div><div>Data i podpis</div><div>Data i podpis</div></div>
 </body>
 </html>
+`;
+}
+
+// #146: operacje administracyjne na kontach — same liczby (bez identyfikatorów
+// kont i aktorów: domeny access/security dziennika czyta dziś tylko admin,
+// D-08/D-09). Raporty sprzed tej zmiany (np. z archiwum) nie mają tej sekcji.
+export const ACCOUNT_OPERATION_ROWS = Object.freeze([
+  ['protectedGrants', 'Nadania ról administratora, zarządu i skarbnika'],
+  ['protectedGrantsApproved', 'w tym po zatwierdzeniu wniosku przez drugą osobę'],
+  ['fourEyesWaived', 'Nadania roli chronionej bez drugiej osoby (brak innego administratora)'],
+  ['grantsRevoked', 'Wycofania przydziałów ról'],
+  ['grantRequests', 'Wnioski o nadanie roli chronionej'],
+  ['grantRequestsClosed', 'Wnioski o nadanie roli odrzucone lub wygasłe'],
+  ['adminPasswordResets', 'Kody resetu hasła wydane przez administratora dla cudzego konta'],
+  ['mfaResets', 'Resety weryfikacji dwuetapowej (MFA)'],
+  ['recoveryRequests', 'Wnioski o reset hasła/MFA kont chronionych'],
+  ['recoveryRequestsClosed', 'Wnioski o reset odrzucone lub wygasłe'],
+  ['loginsAfterAdminReset', 'Logowania na hasło ustawione po resecie administracyjnym'],
+]);
+
+export function accountOperationsSection(ops) {
+  if (!ops) return '';
+  const rows = ACCOUNT_OPERATION_ROWS.map(([key, label]) => `<tr><th>${e(label)}</th><td class="num">${e(ops[key] ?? 0)}</td></tr>`);
+  return `<h2>7. Operacje administracyjne na kontach</h2>
+<table><tbody>${rows.join('')}</tbody></table>
+<p class="meta">Liczby zdarzeń z dziennika w granicach roku szkolnego (czas Europe/Brussels). Bez identyfikatorów kont — szczegóły (kto, komu, kiedy) są w dzienniku zdarzeń administratora; zakres wglądu Komisji Rewizyjnej wymaga decyzji zarządu (D-08/D-09).</p>
 `;
 }
 

@@ -194,6 +194,10 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`resolutions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`retention_policies`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia polityki z osobą (zasada czterech oczu)|nieustalona (D-04)|nie|nie|
 |`retention_policies`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`role_grant_requests`|`decided_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`role_grant_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`role_grant_requests`|`target_email`|Członek Rady|direct|kontakt|adres osoby zapraszanej do roli zarządu, skarbnika lub administratora — do zatwierdzenia przez drugą osobę (#146)|nieustalona (D-04)|nie|nie|
+|`role_grant_requests`|`target_user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`role_grants`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`school_year_closure_checklist`|`note`|Osoba trzecia|direct|wolny tekst|uwaga do punktu listy zamknięcia roku|audit_event|tak|tak|
@@ -214,7 +218,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **201**, w tym wolnego tekstu: **57** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **205**, w tym wolnego tekstu: **57** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -1741,6 +1745,27 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `id` | none | — | nie |
 | `retain_for` | none | — | nie |
 | `retain_until_rule` | none | — | nie |
+
+### `role_grant_requests`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `created_at` | none | — | nie |
+| `decided_at` | none | — | nie |
+| `decided_by` | pseudonymous | board_member | nie |
+| `expires_at` | none | — | nie |
+| `grant_expires_at` | none | — | nie |
+| `id` | none | — | nie |
+| `invitation_ttl_seconds` | none | — | nie |
+| `kind` | none | — | nie |
+| `replaces_invitation_id` | none | — | nie |
+| `requested_by` | pseudonymous | board_member | nie |
+| `result_id` | none | — | nie |
+| `role` | none | — | nie |
+| `school_year_id` | none | — | nie |
+| `status` | none | — | nie |
+| `target_email` | direct | board_member | nie |
+| `target_user_id` | pseudonymous | board_member | nie |
 
 ### `role_grants`
 

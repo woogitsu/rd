@@ -17,7 +17,7 @@
 import { formatSchoolYear } from '../../shared/school-year.js';
 import { toXlsxWorkbook } from './xlsx.js';
 import {
-  CHECK_LABEL, checkDetails, DIRECTION, EVENT_STATUS, formatDate, PLAIN_DETAILS, REPORT_TIME_ZONE, RESOLUTION_STATUS, STATUS,
+  ACCOUNT_OPERATION_ROWS, CHECK_LABEL, checkDetails, DIRECTION, EVENT_STATUS, formatDate, PLAIN_DETAILS, REPORT_TIME_ZONE, RESOLUTION_STATUS, STATUS,
 } from './audit-report.js';
 import { BUDGET_CSV_COLUMNS, budgetCsvValues } from './routes/ledger-budget.js';
 
@@ -25,6 +25,7 @@ import { BUDGET_CSV_COLUMNS, budgetCsvValues } from './routes/ledger-budget.js';
 export const AUDIT_REPORT_SHEETS = Object.freeze([
   'Informacje', 'Bilans', 'Kontrole', 'Kategorie', 'Preliminarz', 'Wydatki > 3000 EUR', 'Uchwały', 'Weryfikacja wydatków',
   'Możliwe podziały', 'Wydarzenia', 'Korekty', 'Przeksięgowania', 'Uzgodnienia', 'Dowody', 'Możliwe duplikaty dowodu',
+  'Operacje na kontach',
 ]);
 
 const cols = (list) => list.map(([header, type]) => ({ header, type }));
@@ -246,11 +247,25 @@ function evidenceSheets(report) {
   ];
 }
 
+// #146: operacje administracyjne na kontach — same liczby, jak sekcja 7 HTML.
+// Raporty sprzed tej zmiany (archiwum) nie mają arkusza.
+function accountOperationsSheets(report) {
+  const ops = report.accountOperations;
+  if (!ops) return [];
+  return [{
+    name: 'Operacje na kontach',
+    columns: cols([['Operacja', 'text'], ['Liczba', 'integer']]),
+    rows: ACCOUNT_OPERATION_ROWS.map(([key, label]) => [label, ops[key] ?? 0]),
+    trailer: ['', 'Liczby zdarzeń z dziennika w granicach roku szkolnego (czas Europe/Brussels). Bez identyfikatorów kont — zakres wglądu Komisji Rewizyjnej wymaga decyzji zarządu (D-08/D-09).'],
+  }];
+}
+
 export function buildAuditReportXlsx(report, { contentSha256 }) {
   const sheets = [
     infoSheet(report, contentSha256), balanceSheet(report), checksSheet(report), categoriesSheet(report), budgetSheet(report),
     largeExpensesSheet(report), resolutionsSheet(report), reviewsSheet(report), splitsSheet(report), eventsSheet(report),
     correctionsSheet(report), reclassificationsSheet(report), reconciliationsSheet(report), ...evidenceSheets(report),
+    ...accountOperationsSheets(report),
   ];
   return toXlsxWorkbook(sheets);
 }

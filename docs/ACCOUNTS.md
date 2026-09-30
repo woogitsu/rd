@@ -30,12 +30,15 @@ Wszystkie trasy `/api/admin/*` — także odczyt — wymagają aktywnego przydzi
 | `GET /api/admin/account-requests` | `?status=` (`pending` domyślnie, `approved`, `rejected`, `expired`, `all`): wnioski o reset hasła/MFA kont chronionych (#146); bez tokenów i e-maili | — |
 | `POST /api/admin/account-requests/{id}/approve` | zatwierdza INNY administrator niż wnioskodawca i właściciel konta (`403 recovery_four_eyes_required`); wykonuje reset w tej samej transakcji; token resetu hasła dostaje zatwierdzający, jeden raz; wniosek zamknięty: `409 recovery_request_closed`, wygasły (24 h): `409 recovery_request_expired`; krok w górę MFA | `account_recovery.approved` + zdarzenia resetu z `requestId`, `requestedBy`, `approvedBy` |
 | `POST /api/admin/account-requests/{id}/reject` | odrzucenie albo wycofanie wniosku przez dowolnego administratora | `account_recovery.rejected` |
+| `GET /api/admin/grant-requests` | `?status=` (`pending` domyślnie, `approved`, `rejected`, `expired`, `all`): wnioski o nadanie roli `admin`/`board`/`treasurer` (#146); wniosek o zaproszenie zawiera adres adresata; bez tokenów | — |
+| `POST /api/admin/grant-requests/{id}/approve` | zatwierdza INNY administrator niż wnioskodawca i adresat (`403 grant_four_eyes_required`); w tej samej transakcji tworzy przydział (`granted_by` = zatwierdzający) albo zaproszenie, którego token dostaje zatwierdzający, jeden raz; przy ponownym wydaniu wycofuje stary link; zamknięty: `409 grant_request_closed`, wygasły (72 h): `409 grant_request_expired`; krok w górę MFA | `role_grant_request.approved` + `role_grant.created` (z `requestId`, `requestedBy`, `approvedBy`) albo `invitation.created` |
+| `POST /api/admin/grant-requests/{id}/reject` | odrzucenie albo wycofanie wniosku przez dowolnego administratora | `role_grant_request.rejected` |
 | `GET /api/admin/grants` | filtry `userId`, `role`, `schoolYearId`, `classId`, `status` (`active` domyślnie, `expired`, `revoked`, `all`) | — |
-| `POST /api/admin/grants` | nadanie roli `{ userId, role, classId?, schoolYearId?, expiresAt? }` | `role_grant.created` |
+| `POST /api/admin/grants` | nadanie roli `{ userId, role, classId?, schoolYearId?, expiresAt? }`; rola `admin`/`board`/`treasurer` przy innym aktywnym administratorze — `202` i wniosek (#146) | `role_grant.created`; dla ról chronionych `role_grant_request.requested` albo `role_grant.four_eyes_waived` |
 | `POST /api/admin/grants/{id}/revoke` | wycofanie przydziału (wiersz zostaje) | `role_grant.revoked` |
 | `POST /api/admin/school-years/{id}/expire-grants` | wygaszenie kadencji, body `{ confirm: "<id>" }` | `role_grant.expired` × n, `school_year.grants_expired` |
 | `GET /api/admin/invitations` | zaproszenia ze statusem (`pending`, `accepted`, `revoked`, `expired`), bez tokenów | — |
-| `POST /api/admin/invitations` | `{ email, role, classId?, schoolYearId?, ttlHours? }`, zwraca token **jeden raz** | `invitation.created` |
+| `POST /api/admin/invitations` | `{ email, role, classId?, schoolYearId?, ttlHours? }`, zwraca token **jeden raz**; rola `admin`/`board`/`treasurer` przy innym aktywnym administratorze — `202` i wniosek bez tokenu (#146); tak samo `…/{id}/reissue` | `invitation.created`; dla ról chronionych `role_grant_request.requested` albo `role_grant.four_eyes_waived` |
 | `POST /api/admin/invitations/{id}/revoke` | wycofanie oczekującego zaproszenia | `invitation.revoked` |
 | `GET /api/admin/school-years` | lata szkolne (z flagą „zakończony”) i klasy do formularzy | — |
 | `GET /api/admin/audit?limit=` | ostatnie zdarzenia kont i ról (maks. 500) | — |
@@ -92,8 +95,47 @@ przekazuje go właścicielowi osobnym, zaufanym kanałem.
 resetu zawierają `requestedBy` i `approvedBy`. Reset hasła własnego konta oraz
 konta bez roli chronionej działają bezpośrednio jak dotąd.
 
+Każde logowanie hasłem ustawionym tokenem wydanym przez kogoś innego niż
+właściciel konta ma w `auth.login_succeeded` pola `afterAdminReset: true`,
+`resetIssuedBy` i `resetId` — aż do najbliższej zmiany hasła przez właściciela
+(`user_passwords.set_reason` przestaje być `reset`). Działania po resecie
+administracyjnym da się więc odróżnić od zwykłych, choć `actorId` zostaje
+właścicielem konta.
+
+### Nadanie roli chronionej (#146, migracja 0157)
+
+Nadanie roli `admin`, `board` lub `treasurer` — przydział (`POST /grants`),
+zaproszenie (`POST /invitations`) i ponowne wydanie zaproszenia (`…/reissue`,
+bo nowy token też daje rolę) — wymaga drugiej osoby, gdy istnieje inny aktywny,
+niewyłączony administrator niż wnioskodawca i adresat. Pierwszy administrator
+zapisuje wniosek (`202`, ważny 72 h, jeden otwarty wniosek na zakres — podwójne
+kliknięcie zwraca ten sam), a przydział albo zaproszenie powstaje dopiero przy
+zatwierdzeniu (`POST /grant-requests/{id}/approve`) w tej samej transakcji co
+zamknięcie wniosku; drugie kliknięcie „Zatwierdź” dostaje `409
+grant_request_closed`, więc powstaje jeden przydział i jedno zdarzenie.
+Zasadę pilnuje też baza (`CHECK role_grant_requests_four_eyes`, trigger
+niezmienności, bez DELETE/TRUNCATE). Samonadanie jest nadal odrzucane od razu
+(`409 cannot_grant_self`, bez wiersza i zdarzenia).
+
+Wyjątek (wariant zachowawczy do D-08, który nie blokuje pierwszego
+uruchomienia): gdy nie ma nikogo, kto mógłby zatwierdzić — np. jedyny
+administrator z `scripts/bootstrap-admin.js` nadaje rolę drugiemu — nadanie
+działa bezpośrednio, a w tej samej transakcji powstaje zdarzenie
+`role_grant.four_eyes_waived` (`reason: no_other_admin`). Adresat nie liczy się
+jako zatwierdzający. Wyłączony lub wygasły przydział admina też nie.
+Zatwierdzać może dziś wyłącznie administrator; czy także zarząd — D-08.
+Panel `admin/` pokazuje komunikat o wniosku; lista wniosków i przycisk
+„Zatwierdź” w panelu są zakresem otwartym (dziś przez API, jak wnioski o reset).
+
+Raport dla Komisji Rewizyjnej (`GET /api/reports/audit`, sekcja 7) zawiera
+„operacje administracyjne na kontach” w roku szkolnym — **same liczby**
+(nadania ról chronionych, w tym po zatwierdzeniu, wyjątki czterech oczu,
+wycofania, wnioski, resety hasła cudzych kont, resety MFA, logowania po resecie
+administracyjnym). Bez identyfikatorów kont: domeny `access`/`security`
+dziennika czyta dziś wyłącznie administrator (D-08/D-09).
+
 Poza zakresem (zależy od decyzji): powiadomienie właściciela konta (D-16/D-17 —
 brak zatwierdzonego szablonu i nadawcy, moduł nic nie wysyła), ścieżka awaryjna
-przy jednym administratorze (D-10), zakres ról zatwierdzających (D-08; dziś
-wyłącznie administrator), sekcja „operacje administracyjne na kontach” w
-raporcie audytu oraz odebranie roli `admin` z modułów finansowych (D-08).
+przy jednym administratorze dla resetu cudzego konta (D-10), zakres ról
+zatwierdzających (D-08; dziś wyłącznie administrator) oraz odebranie roli
+`admin` z modułów finansowych (D-08).

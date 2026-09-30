@@ -119,7 +119,7 @@ const EXEMPT_GROUPS = [
   },
   {
     reason: 'administracja kont Rady: dane członków Rady, nie dzieci i opiekunów',
-    routes: ['admin.users', 'admin.accountRequests', 'admin.grants', 'admin.invitations', 'admin.schoolYears', 'privacyNotice.list'],
+    routes: ['admin.users', 'admin.accountRequests', 'admin.grantRequests', 'admin.grants', 'admin.invitations', 'admin.schoolYears', 'privacyNotice.list'],
   },
   {
     reason: 'rejestr żądań osób (#100): wyłącznie identyfikatory, rodzaj i daty; tylko admin z MFA',

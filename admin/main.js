@@ -140,6 +140,8 @@ async function withStepUp(fn) {
   return fn();
 }
 
+// #146: rola chroniona (administrator, zarząd, skarbnik) przy drugim administratorze.
+const GRANT_REQUEST_MESSAGE = "Rola zarządu, skarbnika albo administratora: zapisano wniosek, nic jeszcze nie nadano. Nadanie (albo link zaproszenia) wymaga zatwierdzenia przez innego administratora.";
 const RECOVERY_REQUEST_MESSAGE = "Konto ma rolę chronioną: zapisano wniosek, nic jeszcze nie zmieniono. Kod resetu lub wyłączenie MFA wymaga zatwierdzenia przez innego administratora.";
 
 // Kontekst okna potwierdzenia (#136): liczby z listy kont w chwili otwarcia okna.
@@ -422,7 +424,8 @@ byId("grant-form").addEventListener("submit", async (event) => {
   submit.disabled = true;
   try {
     const result = await api("/api/admin/grants", { method: "POST", body: payload });
-    showMessage(result.created ? "Rola nadana." : "Identyczny aktywny przydział już istnieje.");
+    if (result.request) showMessage(GRANT_REQUEST_MESSAGE);
+    else showMessage(result.created ? "Rola nadana." : "Identyczny aktywny przydział już istnieje.");
     form.elements.expiresOn.value = "";
     await Promise.all([loadGrants(), loadUsers(), loadAudit()]);
   } catch (error) {
@@ -449,8 +452,12 @@ function renderInvitations() {
         button("Wyślij ponownie", (event) => runAction(event.currentTarget, confirmationDialog("reissue-invitation", invitationContext(invitation)), async () => {
           hideToken();
           const result = await api(`/api/admin/invitations/${encodeURIComponent(invitation.id)}/reissue`, { method: "POST", body: {} });
-          showToken(result);
-          showMessage("Wydano nowy link; poprzedni jest nieważny.");
+          if (result.request) {
+            showMessage(GRANT_REQUEST_MESSAGE);
+          } else {
+            showToken(result);
+            showMessage("Wydano nowy link; poprzedni jest nieważny.");
+          }
           await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
         })),
         button("Wycofaj", (event) => runAction(event.currentTarget, confirmationDialog("revoke-invitation", invitationContext(invitation)), async () => {
@@ -528,7 +535,8 @@ byId("invitation-form").addEventListener("submit", async (event) => {
   submit.disabled = true;
   try {
     const result = await api("/api/admin/invitations", { method: "POST", body: payload });
-    showToken(result);
+    if (result.request) showMessage(GRANT_REQUEST_MESSAGE);
+    else showToken(result);
     form.reset();
     await Promise.all([loadInvitations(), loadAudit(), loadCoverage()]);
   } catch (error) {

@@ -119,7 +119,11 @@ wpisów).
 | `followup_source_not_eligible` | Kampanię uzupełniającą można utworzyć tylko dla kampanii, która trafiła do kolejki wysyłki. | Nie — popraw dane żądania. |
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `four_eyes_required` | Tę operację musi zatwierdzić inna osoba niż autor. | Nie — popraw dane żądania. |
+| `grant_four_eyes_required` | Nadanie roli zarządu, skarbnika albo administratora zatwierdza inny administrator niż wnioskodawca i osoba, która ma otrzymać rolę. | Nie — zatwierdza inny administrator. |
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
+| `grant_request_closed` | Ten wniosek o nadanie roli został już zatwierdzony, odrzucony lub wygasł. | Nie — odśwież listę wniosków. |
+| `grant_request_expired` | Wniosek o nadanie roli wygasł. Złóż nowy wniosek. | Nie — złóż nowy wniosek. |
+| `grant_request_not_found` | Nie znaleziono wniosku o nadanie roli. | Nie — popraw dane żądania. |
 | `group_match_direction_mismatch` | Kierunek wpłaty lub wpisu nie pasuje do pozycji wyciągu (wpływ/wypływ). | Nie — popraw dane żądania. |
 | `group_match_sum_mismatch` | Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu. | Nie — popraw dane żądania. |
 | `guardian_not_found` | Nie znaleziono opiekuna. | Nie — popraw dane żądania. |
