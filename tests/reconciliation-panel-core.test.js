@@ -113,7 +113,8 @@ test('candidateLabel: typ, data, kwota i wskazówki dopasowania w jednym tekści
     type: 'payment_entry', id: 'p1', date: '2026-01-15', amountCents: 15000, dayDistance: 0, referenceMatch: true,
   });
   assert.match(label, /Wpłata/);
-  assert.match(label, /2026-01-15/);
+  assert.match(label, /15\.01\.2026/);
+  assert.doesNotMatch(label, /2026-01-15/);
   assert.match(label, /150,00/);
   assert.match(label, /tytuł zgodny/);
   assert.match(label, /ta sama data/);
@@ -229,6 +230,7 @@ import {
   buildLinePaymentBody,
   canCreatePaymentFromLine,
   describeBatchFailures,
+  formatDay,
   linePaymentUrl,
   lineStatusLabel,
   structuredHouseholdFor,
@@ -343,7 +345,7 @@ test('#115 summarizeBatchSelection i describeBatchFailures: suma w EUR i opis pe
       { statementLineId: 'lx', paymentEntryId: 'px', error: 'already_matched' }],
     rows, { match_amount_mismatch: 'Kwoty się różnią.' },
   );
-  assert.equal(failure, `Pozycja 2026-09-15, ${formatCents(1001)}: Kwoty się różnią.`);
+  assert.equal(failure, `Pozycja 15.09.2026, ${formatCents(1001)}: Kwoty się różnią.`);
   assert.match(unknown, /^Pozycja lx: already_matched$/);
   assert.deepEqual(describeBatchFailures(undefined), []);
 });
@@ -354,4 +356,20 @@ test('#115 panel uzgodnień nie używa sformułowań o zadłużeniu i nie mówi 
     assert.equal(findForbiddenWording(text), null, file);
     assert.doesNotMatch(text, /brak wpłaty|nie zapłacił|niezapłacon/i, file);
   }
+});
+
+// Przegląd demo 5: daty w Uzgodnieniach w tym samym zapisie co Wpłaty, Księga
+// i raport Komisji Rewizyjnej (dd.mm.rrrr), odmiana „1 dzień różnicy”.
+test('przegląd demo 5: formatDay i daty kandydatów w zapisie dd.mm.rrrr', () => {
+  assert.equal(formatDay('2026-09-29'), '29.09.2026');
+  assert.equal(formatDay(null), '—');
+  assert.equal(formatDay(''), '—');
+  const oneDay = candidateLabel({ type: 'ledger_entry', id: 'l1', date: '2026-09-28', amountCents: 1000, dayDistance: 1 });
+  assert.match(oneDay, /28\.09\.2026/);
+  assert.match(oneDay, /1 dzień różnicy/);
+  assert.doesNotMatch(oneDay, /1 dni/);
+  const panel = readFileSync(new URL('../reconciliation/main.js', import.meta.url), 'utf8');
+  // Żadna data z API nie trafia na ekran bez formatDay.
+  assert.doesNotMatch(panel, /textCell\((item|line)\.(statementDate|bookedOn|paymentDate)\)/);
+  assert.doesNotMatch(panel, /\$\{(line|item|entry|reconciliation)\.(bookedOn|occurredOn|statementDate)\}/);
 });

@@ -19,6 +19,7 @@ import {
   describeStatementImportError,
   detectStatementFormat,
   formatCents,
+  formatDay,
   formatDifference,
   hasWriteAccess,
   isLikelyOwnReconciliation,
@@ -77,7 +78,7 @@ function textCell(value, className = "") {
 function reconciliationRow(item) {
   const row = document.createElement("tr");
   row.append(
-    textCell(item.statementDate),
+    textCell(formatDay(item.statementDate)),
     (() => {
       const cell = document.createElement("td");
       const badge = document.createElement("span");
@@ -154,7 +155,7 @@ function actionButton(text, onClick) {
 function lineRow(line, { draft, canWrite }) {
   const row = document.createElement("tr");
   row.append(
-    textCell(line.bookedOn),
+    textCell(formatDay(line.bookedOn)),
     textCell(lineDirectionLabel(line.amountCents)),
     textCell(formatCents(Math.abs(line.amountCents)), "amount"),
     textCell(lineSourceLabel(line.source)),
@@ -180,7 +181,7 @@ function lineRow(line, { draft, canWrite }) {
 
 function renderDetail() {
   const { reconciliation, lines, summary, unmatchedLedgerEntries, unmatchedLedgerEntriesTruncated, inconsistentMatches } = state.detail;
-  byId("detail-title").textContent = `Uzgodnienie ${reconciliation.statementDate}`;
+  byId("detail-title").textContent = `Uzgodnienie ${formatDay(reconciliation.statementDate)}`;
   const statusBadge = byId("detail-status");
   statusBadge.textContent = STATUS_LABELS[reconciliation.status] ?? reconciliation.status;
   statusBadge.className = `badge status-${reconciliation.status}`;
@@ -202,7 +203,7 @@ function renderDetail() {
   const unmatchedList = byId("unmatched-ledger-entries");
   unmatchedList.replaceChildren(...unmatchedLedgerEntries.map((entry) => {
     const item = document.createElement("li");
-    item.textContent = `${entry.occurredOn} · ${entry.description || "Bez opisu"} · ${formatCents(entry.netAmountCents)}`;
+    item.textContent = `${formatDay(entry.occurredOn)} · ${entry.description || "Bez opisu"} · ${formatCents(entry.netAmountCents)}`;
     return item;
   }));
   byId("unmatched-ledger-box").hidden = unmatchedLedgerEntries.length === 0;
@@ -559,7 +560,7 @@ async function openLinePayment(line) {
   byId("line-payment-error").textContent = "";
   byId("line-payment-hint").textContent = "";
   byId("line-payment-summary").textContent =
-    `Pozycja z ${line.bookedOn}, ${formatCents(line.amountCents)}. Wpłata dostanie tę kwotę i datę z wyciągu (przelew).`;
+    `Pozycja z ${formatDay(line.bookedOn)}, ${formatCents(line.amountCents)}. Wpłata dostanie tę kwotę i datę z wyciągu (przelew).`;
   // Klucz idempotencji na całe otwarte okno: podwójne kliknięcie albo ponowienie
   // po błędzie sieci nie utworzy drugiej wpłaty.
   state.linePaymentKey = makeIdempotencyKey("reconciliation-line-payment");
@@ -642,11 +643,11 @@ function batchRow(item) {
   input.type = "checkbox";
   input.value = item.statementLineId;
   input.checked = false;
-  input.setAttribute("aria-label", `Zaznacz pozycję z ${item.bookedOn}, ${formatCents(item.amountCents)}`);
+  input.setAttribute("aria-label", `Zaznacz pozycję z ${formatDay(item.bookedOn)}, ${formatCents(item.amountCents)}`);
   input.addEventListener("change", () => { batch.key = null; refreshBatchSummary(); });
   choose.append(input);
-  row.append(choose, textCell(item.bookedOn), textCell(formatCents(item.amountCents), "amount"),
-    textCell(item.paymentDate), textCell(item.reason));
+  row.append(choose, textCell(formatDay(item.bookedOn)), textCell(formatCents(item.amountCents), "amount"),
+    textCell(formatDay(item.paymentDate)), textCell(item.reason));
   return row;
 }
 

@@ -32,7 +32,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brand { color: var(--text); font-weight: 700; text-decoration: none; }
 .brand small { display: block; color: var(--muted); font-weight: 400; }
 nav { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }
-nav a { padding: .35rem 0; color: var(--text); text-decoration: none; border-bottom: 2px solid transparent; }
+nav a { padding: .35rem .6rem; color: var(--text); text-decoration: none; border-bottom: 2px solid transparent; }
 nav a:hover { color: var(--red-dark); }
 nav a.active { color: var(--red); border-bottom-color: var(--red); }
 

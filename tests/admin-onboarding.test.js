@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, FIRST_LOGIN_RULES, FIRST_LOGIN_STEPS,
-  invitationLinkFor, invitationsCount, newBatchKey, plural, printCardModel, tokenListText,
+  invitationLinkFor, invitationsCount, newBatchKey, plural, printCardModel, schoolYearsCount, tokenListText,
 } from '../admin/onboarding.js';
 
 const fmt = (value) => `D(${value})`;
@@ -89,4 +89,14 @@ test('widok: sekcje obsady i partii, kartki poza <main>, tokeny czyszczone przy 
   assert.match(main, /addEventListener\("pagehide"[^\n]*hideBatchResult\(\)/);
   assert.match(main, /\/reissue`/, 'przycisk „Wyślij ponownie”');
   assert.doesNotMatch(main, /localStorage|sessionStorage/, 'tokeny wyłącznie w pamięci strony');
+});
+
+test('przegląd demo 5: liczba lat szkolnych z poprawną odmianą i data logowania w zapisie polskim', () => {
+  assert.equal(schoolYearsCount(1), '1 rok szkolny');
+  assert.equal(schoolYearsCount(2), '2 lata szkolne');
+  assert.equal(schoolYearsCount(5), '5 lat szkolnych');
+  assert.equal(schoolYearsCount(12), '12 lat szkolnych');
+  assert.equal(schoolYearsCount(22), '22 lata szkolne');
+  assert.doesNotMatch(main, /szkolnych w systemie/);
+  assert.match(main, /formatDateOrTimestamp\(row\.lastRepresentativeLoginOn/);
 });
