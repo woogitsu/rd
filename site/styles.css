@@ -124,3 +124,7 @@ h2 { margin-bottom: 1rem; font-size: 1.35rem; }
 .news-linked[hidden], .news-archive[hidden] { display: none; }
 .news-linked-title { margin: 0 0 .25rem; font-size: 1rem; }
 @media print { .news-archive, .news-permalink-row { display: none; } }
+/* #116: starsze wpisy (kursor archiwum), strona wydarzenia i powrót z podstron */
+.news-more, .event-page-link, .news-back { margin: .75rem 0 0; font-size: .9rem; }
+.news-more a, .event-page-link a, .news-back a { display: inline-block; padding: .3rem 0; }
+@media print { .news-more, .event-page-link, .news-back { display: none; } }

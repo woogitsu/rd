@@ -31,6 +31,7 @@ import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
 import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
 import { createJsonReader, isUniqueError } from './input.js';
+import { afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf } from './list-cursor.js';
 
 export const NEWS_POLICY = Object.freeze({
   draftSchoolWide: Object.freeze(['admin', 'board']),
@@ -651,24 +652,52 @@ export async function listInternal(db, actor, input) {
   return { posts: rows.map(internalPost) };
 }
 
+// #116: archiwum — kursor keyset (wspólny kontrakt list, src/pg/list-cursor.js):
+// kolejność (published_at DESC, id ASC), `nextCursor` prowadzi do kolejnej,
+// starszej strony aż do najstarszego opublikowanego wpisu. Kursor jest związany
+// z filtrem roku (inny rok -> invalid_cursor) i zawiera tylko znacznik czasu
+// publikacji oraz publiczny identyfikator wpisu.
 export async function listPublic(db, input = {}) {
   const params = [];
   const conditions = [];
-  if (input.schoolYearId !== undefined && input.schoolYearId !== null) {
-    if (!validId(input.schoolYearId)) throw new NewsError('invalid_school_year');
-    params.push(input.schoolYearId);
+  const schoolYearId = input.schoolYearId ?? null;
+  if (schoolYearId !== null) {
+    if (!validId(schoolYearId)) throw new NewsError('invalid_school_year');
+    params.push(schoolYearId);
     conditions.push(`school_year_id = $${params.length}`);
   }
   const limit = input.limit ?? 20;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new NewsError('invalid_limit');
-  params.push(limit);
+  const scope = `public-news:${schoolYearId ?? '*'}`;
+  const cursor = decodeListCursor(input.cursor, { kind: 'timestamp', scope }, (code) => { throw new NewsError(code); });
+  if (cursor) conditions.push(afterTimestampDescSql('published_at', 'id', cursor, params));
+  params.push(limit + 1);
   const { rows } = await db.query(
-    `SELECT id, title, body, published_at, photos FROM public_news
+    `SELECT id, title, body, published_at, photos, ${cursorTimestampSql('published_at')} AS published_key
+       FROM public_news
       ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
       ORDER BY published_at DESC, id LIMIT $${params.length}`,
     params,
   );
-  return { posts: rows.map(publicPost) };
+  const page = pageOf(rows, limit, (row) => ({ key: row.published_key, id: row.id }), scope);
+  return { posts: page.items.map(publicPost), nextCursor: page.nextCursor, truncated: page.truncated, limit };
+}
+
+// #116: publiczna lista lat szkolnych — wyłącznie lata, w których są treści
+// widoczne publicznie (opublikowane aktualności lub wydarzenia publiczne,
+// zatwierdzone zawiadomienia zebrań ogólnych, protokoły z widocznością
+// `public`). Tylko identyfikatory, bez nazw wewnętrznych, liczników i dat.
+export async function listPublicSchoolYears(db) {
+  const { rows } = await db.query(
+    `SELECT y.id FROM school_years y
+      WHERE EXISTS (SELECT 1 FROM public_news n WHERE n.school_year_id = y.id)
+         OR EXISTS (SELECT 1 FROM public_events e WHERE e.school_year_id = y.id)
+         OR EXISTS (SELECT 1 FROM public_meeting_notices m WHERE m.school_year_id = y.id)
+         OR EXISTS (SELECT 1 FROM meeting_effective_minutes em JOIN meetings mt ON mt.id = em.meeting_id
+                     WHERE mt.school_year_id = y.id AND em.visibility = 'public')
+      ORDER BY y.starts_on DESC, y.id`,
+  );
+  return { schoolYears: rows.map((row) => ({ id: row.id })) };
 }
 
 // #116: stały adres pojedynczego wpisu. Wyłącznie z widoku public_news
@@ -1095,16 +1124,17 @@ const PHOTO_FIELDS = ['documentId', 'author', 'source', 'sourceDetail', 'takenOn
   'explicitLicenseGranted', 'licenseDocumentRef', 'rightsNote', 'altText', 'decorative', 'depictsChildren',
   'identifiableChildren', 'identifiableAdults', 'consents', 'confirmPersonalData'];
 
-// Obsługuje /api/public/news, /api/news… i /api/news-photos…; inne ścieżki -> null.
+// Obsługuje /api/public/news, /api/public/school-years, /api/news… i /api/news-photos…; inne ścieżki -> null.
 export async function handle(request, env, url, json) {
   const path = url.pathname;
   const isPublic = path === '/api/public/news';
+  const isPublicYears = path === '/api/public/school-years';
   const publicItem = path.match(/^\/api\/public\/news\/([^/]+)$/);
   const publicPhotoFile = path.match(/^\/api\/public\/news-photos\/([^/]+)\/(web|thumb)$/);
   const isPosts = path === '/api/news' || path.startsWith('/api/news/');
   const isPhotos = path === '/api/news-photos' || path.startsWith('/api/news-photos/');
   const consentWithdraw = path.match(/^\/api\/news-photo-consents\/([^/]+)\/withdraw$/);
-  if (!isPublic && !publicItem && !publicPhotoFile && !isPosts && !isPhotos && !consentWithdraw) return null;
+  if (!isPublic && !isPublicYears && !publicItem && !publicPhotoFile && !isPosts && !isPhotos && !consentWithdraw) return null;
   try {
     if (!env?.db) throw new NewsError('service_unavailable', 503);
     if (consentWithdraw) {
@@ -1122,9 +1152,15 @@ export async function handle(request, env, url, json) {
       const result = await listPublic(env.db, {
         schoolYearId: url.searchParams.get('schoolYearId') ?? undefined,
         limit: limitText === null ? undefined : Number(limitText),
+        cursor: url.searchParams.get('cursor'),
       });
       // Krótkie buforowanie: wycofanie wpisu lub cofnięcie praw do zdjęcia
       // znika z widoku publicznego najpóźniej po PUBLIC_CACHE_SECONDS.
+      return json(result, 200, { 'Cache-Control': `public, max-age=${PUBLIC_CACHE_SECONDS}` });
+    }
+    if (isPublicYears) {
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+      const result = await listPublicSchoolYears(env.db);
       return json(result, 200, { 'Cache-Control': `public, max-age=${PUBLIC_CACHE_SECONDS}` });
     }
     if (publicItem) {

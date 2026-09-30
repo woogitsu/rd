@@ -17,11 +17,26 @@ npm run build:site    # dist/site, serwowane przez serwer Node pod /site/
 | Protokoły zebrań | `GET /api/meetings/public-minutes?schoolYearId=` | tylko zatwierdzone z widocznością `public` |
 | Zawiadomienia o zebraniach | `GET /api/meetings/public-notices?schoolYearId=` | tylko zatwierdzone zawiadomienia zebrań ogólnych (#113); odwołane oznaczone „odwołane”, bez powodu i opisów punktów |
 | Aktualności | `GET /api/public/news` | odpowiedź `{ posts: [...] }` (`listPublic`); przy 404 sekcja pozostaje ukryta |
-| Wpis pod stałym adresem | `GET /api/public/news/{id}` | adres `/site/#wpis-<id>`; wycofany, nieopublikowany i nieznany: 404 i komunikat bez treści |
-| Archiwum aktualności | `GET /api/public/news?schoolYearId=&limit=50` | `/site/?rok=RRRR-RRRR#aktualnosci`; lista lat: bieżący i 5 poprzednich (założenie do #78) |
+| Wpis pod stałym adresem | `GET /api/public/news/{id}` | adres `/site/aktualnosci/<id>` (strona serwera, #116); dawne `/site/#wpis-<id>` nadal działa; wycofany, nieopublikowany i nieznany: 404 i komunikat bez treści |
+| Archiwum aktualności | `GET /api/public/news?schoolYearId=&limit=50&cursor=` | `/site/?rok=RRRR-RRRR#aktualnosci` i „Starsze wpisy” (`?kursor=`, `nextCursor` z API) do najstarszego wpisu |
+| Lata w archiwum | `GET /api/public/school-years` | tylko lata z treściami publicznymi; gdy API nie odpowie — bieżący i 5 poprzednich (założenie awaryjne) |
 | Zdjęcia w aktualnościach | `GET /api/public/news-photos/{id}/{thumb\|web}` | adres budowany wyłącznie z `id` z `photos[]`; `alt` z bazy (dekoracyjne: `alt=""`), `loading="lazy"`, podpis: autor, źródło, licencja. Zdjęcie bez zgody/weryfikacji nie jest w `photos[]`, a plik daje 404 — figura znika bez komunikatu. |
 
 Strona nie ma własnego API i nie zmienia danych.
+
+## Renderowanie po stronie serwera (#116)
+
+W trybie PostgreSQL serwer Node (`src/pg/public-site.js`, wpięty w `src/server.js` jako `siteHandler`) wydaje:
+
+| Adres | Treść |
+|---|---|
+| `/site/` | zbudowany `dist/site/index.html` z wypełnionymi sekcjami (aktualności, wydarzenia, zawiadomienia, protokoły), `canonical` i Open Graph; znaczniki podmiany: `INDEX_MARKERS` (test w `tests/public-site.test.js`) |
+| `/site/aktualnosci/<id>` | strona wpisu: tytuł, treść, zdjęcia dopuszczone przez `public_news`, `canonical`, `meta description`, Open Graph bez `og:image` |
+| `/site/wydarzenia/<id>` | strona wydarzenia z mikrodanymi schema.org/Event |
+| `/site/feed.xml` | kanał Atom (20 wpisów, bez zdjęć) |
+| `/site/sitemap.xml` | mapa strony (tylko `/site/`) |
+
+Tekst z bazy przechodzi wyłącznie przez szablon `h` z automatycznym escapowaniem; bez wstawianych stylów i skryptów (CSP `script-src 'self'; style-src 'self'` jak dla plików statycznych). Brak szablonu, szablon niezgodny albo błąd bazy na stronie głównej: zwykły plik statyczny, a JavaScript wczytuje dane z API. Tryb Workera/D1 niczego tu nie zmienia (plik statyczny). Kanał Atom sprawdzono walidatorem W3C (`check.cgi`, dane syntetyczne): poprawny.
 
 ## Zasady
 
@@ -34,5 +49,6 @@ Strona nie ma własnego API i nie zmienia danych.
 
 ## Założenia
 
-- Identyfikator roku szkolnego ma postać `2026-2027`, a rok zaczyna się 1 września. Parametr `?rok=` pozwala wskazać inny rok. Do zastąpienia publiczną listą lat szkolnych, gdy API ją udostępni.
+- Identyfikator roku szkolnego ma postać `2026-2027`, a rok zaczyna się 1 września. Parametr `?rok=` pozwala wskazać inny rok. Domyślny rok protokołów i zawiadomień nadal wynika z daty (lista lat do archiwum aktualności pochodzi z `GET /api/public/school-years`).
+- Adresy bezwzględne (`canonical`, `og:url`, kanał, mapa) biorą origin z `PUBLIC_BASE_URL`; bez niej — z nagłówka `Host` (tylko lokalnie).
 - Brak danych kontaktowych i zdjęć do czasu decyzji o treści i zgodach (docs/DESIGN.md).

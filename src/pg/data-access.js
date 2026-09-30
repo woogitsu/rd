@@ -93,7 +93,7 @@ const EXEMPT_GROUPS = [
   },
   {
     reason: 'widok publiczny: wyłącznie zatwierdzone treści (zdjęcia po sprawdzeniu zgód), bez rejestru rodzin',
-    routes: ['events.public', 'news.public', 'news.publicItem', 'news.publicPhotoFileWeb', 'news.publicPhotoFileThumb',
+    routes: ['events.public', 'news.public', 'news.publicItem', 'news.publicSchoolYears', 'news.publicPhotoFileWeb', 'news.publicPhotoFileThumb',
       'meetings.publicMinutes', 'meetings.publicNotices', 'privacyNotice.public'],
   },
   {

@@ -43,12 +43,18 @@ test('macierz nagłówków: każda klasa odpowiedzi ma COOP, Permissions-Policy,
   const handler = createNodeHandler({
     distRoot: root, fetchHandler: fakeApi, readiness, publicBaseUrl: 'https://rd.example.invalid',
     jobsHealth: async () => ({ ok: true, failedThresholds: [] }), env: { HEALTH_JOBS_TOKEN: 't'.repeat(40) },
+    // #116: strona publiczna renderowana przez serwer (src/pg/public-site.js) — atrapa.
+    siteHandler: async (req) => (new URL(req.url).pathname === '/site/feed.xml'
+      ? new Response('<feed/>', { headers: { 'Content-Type': 'application/atom+xml; charset=utf-8' } })
+      : new Response('<p>strona</p>', { headers: { 'Content-Type': 'text/html; charset=utf-8' } })),
   });
   const { server, baseUrl } = await listen(handler);
   try {
     const get = (path, init) => fetch(`${baseUrl}${path}`, init);
     const classes = [
       { name: 'panel statyczny', response: await get('/panel/'), csp: /default-src 'self'.*frame-ancestors 'none'/, xfo: 'DENY' },
+      { name: 'strona publiczna renderowana przez serwer', response: await get('/site/aktualnosci/x'), csp: /default-src 'self'.*frame-ancestors 'none'.*script-src 'self'; style-src 'self'$/, xfo: 'DENY' },
+      { name: 'kanał Atom', response: await get('/site/feed.xml'), csp: /default-src 'self'.*frame-ancestors 'none'/, xfo: 'DENY' },
       { name: 'przekierowanie 308', response: await get('/panel', { redirect: 'manual' }), csp: null, xfo: 'DENY' },
       { name: '/api JSON', response: await get('/api/example'), csp: JSON_CSP, xfo: 'DENY' },
       { name: '/api/public JSON', response: await get('/api/public/news'), csp: JSON_CSP, xfo: 'DENY' },

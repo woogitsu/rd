@@ -227,10 +227,20 @@ import {
   newsPostFromPayload,
   newsPostUrl,
   newsYearFromSearch,
+  newsPagePath,
+  eventPagePath,
+  newsArchiveHref,
+  newsCursorFromSearch,
+  newsNextCursor,
+  schoolYearsFromPayload,
+  excerpt,
 } from "../site/core.js";
 
-test("stały link wpisu: fragment #wpis-<id> w obie strony, inne fragmenty ignorowane", () => {
-  assert.equal(newsPermalink("post-1"), "#wpis-post-1");
+test("stały link wpisu: strona /site/aktualnosci/<id>; dawny fragment #wpis-<id> nadal rozpoznawany", () => {
+  assert.equal(newsPermalink("post-1"), "/site/aktualnosci/post-1");
+  assert.equal(newsPagePath("a.b:c_d"), "/site/aktualnosci/a.b%3Ac_d");
+  assert.equal(eventPagePath("ev-1"), "/site/wydarzenia/ev-1");
+  assert.throws(() => eventPagePath("a/b"), /invalid_event_id/);
   assert.equal(newsAnchorId("a.b:c_d"), "wpis-a.b:c_d");
   assert.equal(newsIdFromHash("#wpis-post-1"), "post-1");
   for (const hash of ["", "#wydarzenia", "#wpis-", "#wpis-../x", "#wpis-a b", "#wpis-<script>", null, undefined])
@@ -259,6 +269,23 @@ test("archiwum: rok tylko z poprawnego ?rok=, adres listy z limitem, lata od bie
   assert.throws(() => newsListUrl("a&b"), /invalid_school_year/);
   assert.deepEqual(archiveYears(NOW, 3), ["2026-2027", "2025-2026", "2024-2025"]);
   assert.equal(archiveYears(NOW).length, 6);
+});
+
+test("archiwum (#116): kursor z ?kursor= i nextCursor tylko w bezpiecznej postaci; lata z API bez powtórzeń", () => {
+  assert.equal(newsCursorFromSearch("?kursor=abc_DEF-1"), "abc_DEF-1");
+  for (const bad of ["?kursor=a%26b", "?kursor=", "", `?kursor=${"x".repeat(1025)}`]) assert.equal(newsCursorFromSearch(bad), null, bad);
+  assert.equal(newsListUrl(null, "abc"), "/api/public/news?cursor=abc");
+  assert.equal(newsListUrl("2025-2026", "abc"), "/api/public/news?schoolYearId=2025-2026&limit=50&cursor=abc");
+  assert.throws(() => newsListUrl(null, "a b"), /invalid_cursor/);
+  assert.equal(newsArchiveHref(), "?#aktualnosci");
+  assert.equal(newsArchiveHref("2025-2026", "abc"), "?rok=2025-2026&kursor=abc#aktualnosci");
+  assert.equal(newsArchiveHref("../x", "a b"), "?#aktualnosci");
+  assert.equal(newsNextCursor({ nextCursor: "abc" }), "abc");
+  assert.equal(newsNextCursor({ nextCursor: "<script>" }), null);
+  assert.equal(newsNextCursor(null), null);
+  assert.deepEqual(schoolYearsFromPayload({ schoolYears: [{ id: "2026-2027" }, { id: "2026-2027" }, { id: "../x" }, null, { id: "2025-2026" }] }), ["2026-2027", "2025-2026"]);
+  assert.equal(schoolYearsFromPayload({}), null);
+  assert.equal(excerpt(null), "");
 });
 
 test("main.js: wpis wybrany po adresie i archiwum nie używają innerHTML", async () => {

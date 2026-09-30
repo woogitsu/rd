@@ -4,6 +4,7 @@ import {
   NEWS_URL,
   calendarFeedUrls,
   eventIcsUrl,
+  eventPagePath,
   eventsUrl,
   formatDate,
   formatDay,
@@ -118,6 +119,11 @@ function renderEvents(events) {
         p.append(link);
         item.append(p);
       }
+      const pageLink = el("a", "Szczegóły wydarzenia");
+      pageLink.href = eventPagePath(event.id);
+      const pageRow = el("p", null, "event-page-link");
+      pageRow.append(pageLink);
+      item.append(pageRow);
       list.append(item);
     }
     block.append(heading, list);
@@ -290,18 +296,27 @@ async function loadNotices() {
 // nie zniknięcie sekcji.
 async function loadNews() {
   const schoolYearId = newsYearFromSearch(window.location.search);
+  const cursor = newsCursorFromSearch(window.location.search);
   try {
-    const data = await getJson(newsListUrl(schoolYearId));
+    let data;
+    try {
+      data = await getJson(newsListUrl(schoolYearId, cursor));
+    } catch (error) {
+      // Nieaktualny kursor (400): pierwsza strona zamiast błędu — jak serwer.
+      if (!(cursor && error instanceof HttpError && error.status === 400)) throw error;
+      data = await getJson(newsListUrl(schoolYearId));
+    }
     const items = newsItems(data);
     renderNews(items);
     decorateNews(items);
+    renderOlderLink(schoolYearId, newsNextCursor(data));
   } catch (error) {
     if (error instanceof HttpError && (error.status === 404 || error.status === 405)) renderNews([]);
     else setStatus("news-status", "Nie udało się wczytać aktualności. Spróbuj ponownie później.", true);
   } finally {
     done("aktualnosci");
   }
-  renderNewsArchive(schoolYearId);
+  await renderNewsArchive(schoolYearId);
   await showLinkedPost();
 }
 
@@ -309,15 +324,31 @@ async function loadNews() {
 // Nowe funkcje czyste są w core.js; tu tylko DOM (wyłącznie textContent).
 import {
   NEWS_UNAVAILABLE_MESSAGE,
+  SCHOOL_YEARS_URL,
   archiveYears,
+  newsArchiveHref,
+  newsCursorFromSearch,
   newsIdFromHash,
   newsAnchorId,
   newsListUrl,
+  newsNextCursor,
   newsPermalink,
   newsPostFromPayload,
   newsPostUrl,
   newsYearFromSearch,
+  schoolYearsFromPayload,
 } from "./core.js";
+
+// Kursor keyset z API (nextCursor): link do kolejnej, starszej strony
+// archiwum — prowadzi aż do najstarszego opublikowanego wpisu.
+function renderOlderLink(schoolYearId, nextCursor) {
+  if (!nextCursor) return;
+  const link = el("a", "Starsze wpisy");
+  link.href = newsArchiveHref(schoolYearId, nextCursor);
+  const p = el("p", null, "news-more");
+  p.append(link);
+  byId("news-list").append(p);
+}
 
 // Wpisy z listy dostają kotwicę i stały link; kolejność i filtr jak w renderNews.
 function decorateNews(items) {
@@ -334,21 +365,32 @@ function decorateNews(items) {
   });
 }
 
-function renderNewsArchive(currentYear) {
+// Lata z opublikowanymi treściami (GET /api/public/school-years); gdy API
+// nie odpowie — założenie awaryjne archiveYears() (bieżący i 5 poprzednich).
+async function archiveYearList() {
+  try {
+    return schoolYearsFromPayload(await getJson(SCHOOL_YEARS_URL)) ?? archiveYears();
+  } catch {
+    return archiveYears();
+  }
+}
+
+async function renderNewsArchive(currentYear) {
   const nav = byId("news-archive");
   if (!nav) return;
+  const years = await archiveYearList();
   nav.replaceChildren();
   const list = el("ul", null, "news-archive-list");
   const all = el("li");
   const allLink = el("a", "Najnowsze");
-  allLink.href = "?#aktualnosci";
+  allLink.href = newsArchiveHref();
   if (!currentYear) allLink.setAttribute("aria-current", "page");
   all.append(allLink);
   list.append(all);
-  for (const id of archiveYears()) {
+  for (const id of years) {
     const item = el("li");
     const link = el("a", `Rok szkolny ${formatSchoolYear(id)}`);
-    link.href = `?${new URLSearchParams({ rok: id })}#aktualnosci`;
+    link.href = newsArchiveHref(id);
     if (id === currentYear) link.setAttribute("aria-current", "page");
     item.append(link);
     list.append(item);

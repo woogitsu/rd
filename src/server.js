@@ -4,6 +4,7 @@ import worker from './index.js';
 import { createNodeHandler, NEWS_PHOTO_FILE_PATH } from './node-app.js';
 import { createPgDatabase } from './db.js';
 import { handlePgRequest } from './pg/app.js';
+import { handlePublicSite } from './pg/public-site.js';
 import { bodyLimitFor, maxUploadBytes } from './documents.js';
 import { storageFromEnv } from './storage.js';
 import { checkReadiness } from './health.js';
@@ -130,9 +131,12 @@ export async function startServer({
   trustProxy = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
   requestTimeout = DEFAULT_REQUEST_TIMEOUT_MS,
   headersTimeout = DEFAULT_HEADERS_TIMEOUT_MS,
+  // #116: strona publiczna renderowana po stronie serwera — tylko z bazą
+  // PostgreSQL (env.db); w trybie Workera/D1 zostaje zwykły plik statyczny.
+  siteHandler = env?.db ? handlePublicSite : null,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');
-  const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit, logger, metrics, readiness, trustProxy });
+  const handler = createNodeHandler({ distRoot, env, publicBaseUrl, fetchHandler, bodyLimit, logger, metrics, readiness, trustProxy, siteHandler });
   const server = createServer(handler);
   // #185 pkt 4: patrz DEFAULT_REQUEST_TIMEOUT_MS wyżej.
   server.requestTimeout = requestTimeout;
