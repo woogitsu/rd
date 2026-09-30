@@ -1,6 +1,6 @@
 # Prywatne dokumenty w Railway Storage Bucket
 
-Status: prototyp (issue #39, część #8 i #31). **Niewdrożony i niezatwierdzony do pracy na dokumentach rodzin ani prawdziwych dowodach finansowych.** Zastępuje planowany wcześniej Cloudflare R2.
+Status: prototyp na danych syntetycznych (issue #39, część #8 i #31). **Niewdrożony i niezatwierdzony do pracy na dokumentach rodzin ani prawdziwych dowodach finansowych.** Zastępuje planowany wcześniej Cloudflare R2.
 
 ## Zasada
 

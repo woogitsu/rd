@@ -18,6 +18,10 @@ istniejącymi `GET /api/payments` i `GET /api/ledger`.
 | `GET /api/admin/audit` | `occurred_at` malejąco, `id` | 100 / 500 | `domain`, `actorId`, `schoolYearId`, `from`, `to` |
 | `GET /api/email/campaigns?schoolYearId=` | `created_at` malejąco, `id` | 100 / 100 | rok szkolny |
 | `GET /api/documents?schoolYearId=` | `created_at` malejąco, `id` | 50 / 100 | rok, `kind`, `classId`, `status`, `category`, `q` |
+| `GET /api/email/campaigns/{id}/recipients` (#543) | `household_id`, `id` | 200 / 200 | kampania |
+| `GET /api/email/campaigns/{id}/attention` (#543) | `outbox_id` | 200 / 200 | kampania |
+| `GET /api/email/suppressions?schoolYearId=` (#543) | `created_at` malejąco, `email_hash` | 500 / 500 | rok szkolny |
+| `GET /api/admin/data-requests` (#543) | `received_on`, `created_at`, `id` rosnąco | 500 / 500 | `status`, `kind` |
 
 Uprawnienia tras nie zmieniły się: kursor niczego nie odblokowuje, a każde
 żądanie przechodzi to samo sprawdzenie sesji, roli, MFA i zakresu po stronie
@@ -83,7 +87,8 @@ dokument), żeby planer mógł użyć indeksu.
 
 ## Poza zakresem (nadal ograniczone)
 
-Listy poza powyższą tabelą (`GET /api/email/suppressions` z `LIMIT 500`,
-lista „do sprawdzenia” kampanii z `LIMIT 200`, odbiorcy kampanii z `OFFSET`,
-rejestr żądań osób) nie mają jeszcze kursora; ich przejście na ten kontrakt to
-osobny zakres.
+Cztery listy wymienione tu wcześniej jako ograniczone (lista wyłączeń e-mail,
+lista „do sprawdzenia” kampanii, odbiorcy kampanii i rejestr żądań osób) mają od
+#543 kursor keyset — są w tabeli wyżej (testy
+`tests/pg-list-cursor-email-requests.test.js`). Lista, której tabela nie
+wymienia, nie jest objęta tym kontraktem — zakres sprawdzać w module trasy.

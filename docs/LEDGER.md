@@ -1,12 +1,14 @@
 # Księga przychodów, wydatków i preliminarz
 
-**Status: model w bazie (migracja `0007_ledger_schema.sql`), API na PostgreSQL (`src/pg/routes/ledger.js`, sekcja niżej) i panel (`ledger/`) — istnieją jako prototyp na danych syntetycznych, nie wdrożone na Railway ani zatwierdzone do pracy na danych rodzin.** Migracja `0007_ledger_schema.sql` rozwija początkową tabelę `ledger_entries` w niezmienną księgę opartą na centach EUR i definiuje model oraz reguły integralności.
+**Status (30.09.2026, #175): model w bazie (PostgreSQL: `postgres/migrations/0003_ledger.sql` i kolejne), API na PostgreSQL (`src/pg/routes/ledger.js`, sekcja niżej) i panel (`ledger/`) — istnieją jako prototyp na danych syntetycznych. Staging: nie wykonano; produkcja: nie (D-20). Nie są zatwierdzone do pracy na danych rodzin.**
+
+Pierwotny model D1: migracja `migrations/0007_ledger_schema.sql` rozwija początkową tabelę `ledger_entries` w niezmienną księgę opartą na centach EUR i definiuje model oraz reguły integralności.
 
 ## Zapisy księgi
 
 Nowy zapis ma kierunek `income` albo `expense`, aktywną kategorię właściwą dla tego samego roku i kierunku, dodatnią kwotę, opis, datę, metodę oraz unikalny klucz idempotencji. Opcjonalnie wskazuje źródło, prywatny dokument oraz powiązaną wpłatę.
 
-Powiązana wpłata musi mieć status `recorded`, należeć do tego samego roku i może zostać wskazana tylko w jednym wpisie przychodowym. Migracja `0008_ledger_payment_links.sql` chroni przed podwójnym ujęciem wpływu. Migracja `0038` (#138) dodaje kontrolę kwoty: wpis z `paymentEntryId` musi mieć kwotę równą bieżącemu netto wpłaty (kwota − korekty − zwroty) w chwili zapisu — inaczej `422 payment_amount_mismatch`. Zwrot i ponowne przypisanie wpłaty (`payment_refunds`, `payment_reassignments`) opisuje docs/PAYMENTS.md.
+Powiązana wpłata musi mieć status `recorded`, należeć do tego samego roku i może zostać wskazana tylko w jednym wpisie przychodowym. Migracja D1 `0008_ledger_payment_links.sql` chroni przed podwójnym ujęciem wpływu (w PostgreSQL tę regułę ma `0003_ledger.sql`). Migracja PostgreSQL `0038` (#138) dodaje kontrolę kwoty: wpis z `paymentEntryId` musi mieć kwotę równą bieżącemu netto wpłaty (kwota − korekty − zwroty) w chwili zapisu — inaczej `422 payment_amount_mismatch`. Zwrot i ponowne przypisanie wpłaty (`payment_refunds`, `payment_reassignments`) opisuje docs/PAYMENTS.md.
 
 Fakty finansowe nie mogą być edytowane ani usuwane. Pomyłkę zmniejszającą kwotę zapisuje się w `ledger_corrections`; suma korekt nie może przekroczyć wpisu. Widok `ledger_entry_net` pokazuje wartość pierwotną, korekty i wartość netto.
 
@@ -58,7 +60,7 @@ Uzgadnianie księgi z wyciągiem bankowym już istnieje — patrz [RECONCILIATIO
 Nie używać modelu na danych rzeczywistych przed zatwierdzeniem zasad księgowania, korekt, uchwał i dostępu przez Radę oraz szkołę.
 
 
-## PostgreSQL (Railway) — stan prototypu (issue #38)
+## PostgreSQL (docelowy stos Railway, niewdrożony) — stan prototypu (issue #38)
 
 `src/pg/routes/ledger.js` przenosi trasy księgi (`GET /api/ledger`, `GET /api/ledger/categories`, `GET /api/ledger/summary`, `GET /api/ledger/budget`, `POST /api/ledger`, `POST /api/ledger/{id}/corrections`) do routera PostgreSQL (`src/pg/app.js`). Kontrakt HTTP panelu z `ledger/` pozostaje bez zmian: te same walidacje, kształty JSON, kody statusu i błędów, nagłówek `Idempotency-Replayed` oraz kursor stronicowania. Test `tests/pg-ledger-api.test.js` wykonuje jeden scenariusz (ścieżki budowane funkcjami panelu z `ledger/core.js`) na starym Workerze/D1 i na PostgreSQL i porównuje odpowiedzi krok po kroku. Kursor `nextCursor` wiąże rok szkolny i filtr zapytania, które go wydało (#192): użycie go z innym `schoolYearId` lub innym filtrem (`direction`) daje `400 invalid_cursor`, zamiast doklejać wiersze innego zapytania. Panel dociąga kolejne strony wyłącznie z zapamiętanego zapytania, a zmienione, niezatwierdzone pola filtra blokują „Wczytaj następne”.
 

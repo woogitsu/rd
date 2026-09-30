@@ -1,5 +1,7 @@
 # Model rodzin i opiekunów
 
+Status (30.09.2026, #175): model w bazie (PostgreSQL: `postgres/migrations/0001_core.sql`, `0014_households.sql`, `0026_student_guardian_history.sql` i kolejne; „migracja 0003” niżej to pierwotny model D1 `migrations/0003_student_guardians.sql`), API na PostgreSQL (`src/pg/routes/families.js`) i panel (`families/`). Staging: nie wykonano; produkcja: nie (D-20). Prototyp na danych syntetycznych — **nie jest gotowy do pracy na danych rodzin** (import czeka na D-01–D-06).
+
 Migracja 0003 oddziela relację dziecko–opiekun od przynależności do jednego gospodarstwa. Dzięki tabeli student_guardians:
 
 - dziecko może mieć kilku opiekunów;
@@ -70,7 +72,7 @@ Zgoda używana przez kampanię (`computeSnapshot`, worker przed wysyłką) i prz
 - `PATCH /api/guardians/{guardianId}/students/{studentId}` `{ contactAllowed, reason }` — role jak przy zmianie kontaktu opiekuna (admin, zarząd). Zakres klasowy (zarząd z przydziałem klasy): tylko aktywna relacja (widok `student_guardians_current`, `[starts_on, ends_on]` — oba końce włącznie) z uczniem przypisanej klasy; inaczej `404` jak nieistniejąca. Relacja zakończona dla zakresu szerokiego: `409 relation_ended`. Ta sama wartość: `200` z `changed: false`, bez historii i audytu (podwójne kliknięcie, ponowienie). Odpowiedź podaje `guardianContactAllowed`, bo bez zgody opiekuna relacja nadal nie daje adresata.
 - `student_guardian_changes` — historia zmian `contact_allowed`, `is_primary_contact`, `starts_on`, `ends_on` relacji (poprzednia i nowa wartość, powód, aktor, czas, `source` `api`/`direct`). Tylko do dopisywania. Tabela zawiera identyfikatory i flagi, bez e-maili; retencja jak pozostała historia rodzin (D-04). Do `audit_events` trafia `student_guardian.contact.updated` z identyfikatorami ucznia i opiekuna oraz nową wartością, bez powodu i danych osobowych.
 - Relacji nie da się usunąć (także kaskadą — klucze obce bez `CASCADE`) ani przenieść na innego ucznia/opiekuna. Kończy się ją raz, ustawiając `ends_on`.
-- Zmiana `is_primary_contact` i dat relacji nie ma jeszcze trasy API (poza zakresem #190); bezpośredni SQL zostawia wpis `source = 'direct'`.
+- Zmiana `is_primary_contact` i `starts_on` relacji nie ma trasy API (poza zakresem #190); bezpośredni SQL zostawia wpis `source = 'direct'`. Zakończenie relacji (`ends_on`) ma od #86 trasę `POST /api/guardians/{guardianId}/students/{studentId}/end` (sekcja „Zmiana opieki w trakcie roku” niżej).
 
 ### Kolumny zgodności
 
@@ -118,7 +120,7 @@ Kampanie zatwierdzone przed zmianą: worker (`recheckRow` i `confirmSend`) spraw
 
 Nie zrobione (Część #86): zakończenie członkostwa opiekuna w gospodarstwie (`guardian_households`), przełącznik „pokaż zakończone” w panelu i ponowne przyjęcie ucznia w tym samym roku (UNIQUE `student_id, school_year_id`) — do rozstrzygnięcia przez zarząd/szkołę.
 
-Poza zakresem tej migracji (patrz PR — „Część #86”): zakończenie relacji opiekun–dziecko i zakończenie członkostwa w gospodarstwie przez API (schemat z 0014 to obsługuje; trasy nie istnieją jeszcze), a także ostrzeżenie przy wysyłce kampanii zatwierdzonej przed odejściem.
+Stan po 0136 (#86): zakończenie relacji opiekun–dziecko i członkostwa ucznia w gospodarstwie ma trasy API (wyżej), a worker i podgląd kampanii uwzględniają odejście ucznia (`student_withdrawn`, `staleRecipients`). Otwarte pozostają tylko punkty z akapitu „Nie zrobione” wyżej.
 
 ### Jednostka ewidencji składki (D-11)
 
