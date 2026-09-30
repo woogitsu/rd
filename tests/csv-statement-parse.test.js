@@ -61,3 +61,15 @@ test('FR/NL: é, è, ë w Windows-1252 — automat ostrzega, ręczny wybór odcz
   assert.equal(manual.text, 'data;kwota;tytul\n2026-01-15;10,00;Zoë Hélène Renée Michèle\n');
   assert.deepEqual(parseStatementCsv(manual.text)[0].reference, 'Zoë Hélène Renée Michèle');
 });
+
+test('wyciąg: ręcznie wybrany separator rozstrzyga remis; nieznany separator to invalid_request', () => {
+  const tie = 'data;kwota;tytuł,uwagi,x\n2026-09-14;7,00;Żółw, ślimak\n';
+  assert.equal(code(() => parseStatementCsv(tie)), 'ambiguous_csv_delimiter');
+  assert.deepEqual(parseStatementCsv(tie, { delimiter: ';' }), [{ bookedOn: '2026-09-14', amountCents: 700, reference: null }]);
+  assert.deepEqual(parseStatementCsv('data\tkwota\ttytuł\n2026-09-15\t1,00\t"a;b,c"\n', { delimiter: '\t' }), [
+    { bookedOn: '2026-09-15', amountCents: 100, reference: 'a;b,c' },
+  ]);
+  for (const delimiter of ['|', 'tab', '', 1, null]) {
+    assert.equal(code(() => parseStatementCsv('date,amount\n2026-09-01,1.00\n', { delimiter })), 'invalid_request');
+  }
+});

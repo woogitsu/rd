@@ -1,4 +1,4 @@
-import { decodeCsvBytes, describeSource, detectDelimiter, parseCsvMatrix } from "../import/csv.js";
+import { decodeCsvBytes, describeSource, parseCsvMatrix, resolveDelimiter } from "../import/csv.js";
 import {
   STATUS_LABELS,
   auditReportUrl,
@@ -319,11 +319,14 @@ byId("open-create").addEventListener("click", () => {
 // --- import linii wyciągu (CSV) -----------------------------------------------
 
 // #77: plik jest dekodowany w przeglądarce (UTF-8/BOM, UTF-16, Windows-1250/1252) i trafia do pola
-// tekstowego, więc serwer dostaje już poprawny tekst. Niejednoznaczne kodowanie/separator = ostrzeżenie
-// albo blokada, nie ciche zgadywanie.
+// tekstowego, więc serwer dostaje już poprawny tekst. Niejednoznaczne kodowanie = ostrzeżenie; remis
+// separatora = blokada z prośbą o wybór w polu „Separator” (wybór trafia do serwera polem `delimiter`).
 function describeCsvText(text) {
-  const delimiter = detectDelimiter(text);
-  return { delimiter, blocked: delimiter.tie ? "Nie można ustalić separatora kolumn (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem." : "" };
+  try {
+    return { delimiter: resolveDelimiter(text, byId("import-delimiter").value), blocked: "" };
+  } catch (error) {
+    return { delimiter: null, blocked: error.message };
+  }
 }
 
 async function readStatementFile() {
@@ -336,10 +339,14 @@ async function readStatementFile() {
   try {
     const decoded = decodeCsvBytes(await file.arrayBuffer(), { encoding: byId("import-encoding").value });
     const info = describeCsvText(decoded.text);
-    const rows = parseCsvMatrix(decoded.text, { delimiter: info.delimiter.delimiter }).length;
     byId("import-csv").value = decoded.text;
+    if (info.blocked) {
+      status.textContent = `Odczytano: ${describeSource(decoded)}.`;
+      errorBox.textContent = info.blocked;
+      return;
+    }
+    const rows = parseCsvMatrix(decoded.text, { delimiter: info.delimiter.delimiter }).length;
     status.textContent = `Odczytano: ${describeSource(decoded, info.delimiter)}, ${Math.max(rows - 1, 0)} wierszy.${decoded.warnings.length ? ` Uwaga: ${decoded.warnings.join(" ")}` : ""}`;
-    if (info.blocked) errorBox.textContent = info.blocked;
   } catch (error) {
     byId("import-csv").value = "";
     status.textContent = "";
@@ -348,6 +355,11 @@ async function readStatementFile() {
 }
 byId("import-file").addEventListener("change", readStatementFile);
 byId("import-encoding").addEventListener("change", readStatementFile);
+byId("import-delimiter").addEventListener("change", () => {
+  // Plik czytamy ponownie; tekst wklejony ręcznie sprawdzamy dopiero przy wysłaniu.
+  if (byId("import-file").files?.[0]) readStatementFile();
+  else byId("import-error").textContent = "";
+});
 
 byId("import-lines-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -355,8 +367,8 @@ byId("import-lines-form").addEventListener("submit", async (event) => {
   const errorBox = byId("import-error");
   errorBox.textContent = "";
   if (/[\uFFFD\u0000]/.test(csv)) { errorBox.textContent = "Tekst ma nieznane kodowanie (znaki zastępcze). Zapisz plik jako „CSV UTF-8” albo wybierz kodowanie i wczytaj plik ponownie."; return; }
-  const blocked = describeCsvText(csv).blocked;
-  if (blocked) { errorBox.textContent = blocked; return; }
+  const info = describeCsvText(csv);
+  if (info.blocked) { errorBox.textContent = info.blocked; return; }
   const button = event.submitter;
   button.disabled = true;
   try {
@@ -364,7 +376,7 @@ byId("import-lines-form").addEventListener("submit", async (event) => {
     const result = await api(reconciliationActionUrl(state.selectedId, "lines"), {
       method: "POST",
       headers: { "Idempotency-Key": key },
-      body: JSON.stringify({ csv }),
+      body: JSON.stringify(info.delimiter.manual ? { csv, delimiter: info.delimiter.delimiter } : { csv }),
     });
     byId("import-csv").value = "";
     byId("import-file").value = "";

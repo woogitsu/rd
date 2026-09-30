@@ -109,6 +109,25 @@ export function detectDelimiter(text) {
   return { delimiter: best, label: DELIMITERS[best], tie: ranked[1][1] === bestCount };
 }
 
+// Komunikat przy remisie separatora (#77): pytanie do użytkownika zamiast cichego wyboru.
+export const AMBIGUOUS_DELIMITER = 'Nie można ustalić separatora kolumn (średnik, przecinek lub tabulator występują w nagłówku tyle samo razy). Wybierz separator ręcznie w polu „Separator”.';
+
+// resolveDelimiter(text, choice) → { delimiter, label, tie: false, manual }
+// choice: 'auto' (domyślnie), klucz z DELIMITERS albo 'tab' (wartość pola wyboru w HTML) — ręczny
+// wybór użytkownika. W trybie
+// automatycznym remis kończy się błędem AMBIGUOUS_DELIMITER — interfejs prosi wtedy o wybór
+// separatora, a nie przyjmuje po cichu pierwszego z kolejności.
+export function resolveDelimiter(text, choice = 'auto') {
+  if (choice !== 'auto') {
+    const delimiter = choice === 'tab' ? '\t' : choice;
+    if (typeof delimiter !== 'string' || !Object.hasOwn(DELIMITERS, delimiter)) throw new Error('Nieznany separator kolumn.');
+    return { delimiter, label: DELIMITERS[delimiter], tie: false, manual: true };
+  }
+  const detected = detectDelimiter(text);
+  if (detected.tie) throw new Error(AMBIGUOUS_DELIMITER);
+  return { ...detected, manual: false };
+}
+
 // parseCsvMatrix(text, { delimiter, maxRows, limitMessage }) → string[][]
 // Parser RFC 4180 (cudzysłowy, "" jako cudzysłów, CRLF/LF/CR, separator w cudzysłowie) wspólny dla
 // importu rodzin, wydruku i wyciągu bankowego (także po stronie serwera). Separator: podany albo
@@ -149,6 +168,9 @@ export function parseCsvMatrix(text, options = {}) {
 export function describeSource({ label, bom } = {}, delimiter) {
   const parts = [];
   if (label) parts.push(bom ? `${label} z BOM` : label);
-  if (delimiter?.label) parts.push(delimiter.tie ? `${delimiter.label} (niejednoznaczny separator — sprawdź kolumny)` : delimiter.label);
+  if (delimiter?.label) {
+    const label = delimiter.manual ? `${delimiter.label} (wybrany ręcznie)` : delimiter.label;
+    parts.push(delimiter.tie ? `${label} (niejednoznaczny separator — sprawdź kolumny)` : label);
+  }
   return parts.join(', ');
 }

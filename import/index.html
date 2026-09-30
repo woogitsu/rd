@@ -30,6 +30,12 @@
         <option value="windows-1250">Windows-1250 (Excel PL)</option>
         <option value="windows-1252">Windows-1252 (Excel BE/FR)</option>
       </select></label>
+      <label>Separator<select id="delimiter" aria-describedby="file-status">
+        <option value="auto">Wykryj automatycznie</option>
+        <option value=";">Średnik (;)</option>
+        <option value=",">Przecinek (,)</option>
+        <option value="tab">Tabulator</option>
+      </select></label>
       <label id="sheet-field" hidden>Arkusz<select id="sheet" aria-describedby="file-status"></select></label>
     </div>
     <p class="status muted" id="file-status" role="status">Maksymalnie 5 MB i 5000 wierszy. Plik .ods (LibreOffice) nie jest obsługiwany — zapisz jako .xlsx albo .csv. <a href="./template.xlsx" download="szablon-uczniowie.xlsx">Pobierz szablon Excel (.xlsx)</a> (kolumny jako Tekst, arkusz „Instrukcja”) — <a href="./template.csv" download="szablon-uczniowie.csv">Pobierz przykładowy CSV</a> (UTF-8, separator „;”; w Excelu PL użyj Dane → Z tekstu/CSV, by nie zepsuć polskich znaków) — <a href="./template-instrukcja.txt" download="szablon-instrukcja.txt">instrukcja do szablonu</a>.</p>
