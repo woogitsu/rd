@@ -11,6 +11,7 @@ import {
 } from '../src/pg/news.js';
 import { newsItems } from '../site/core.js';
 import { createMemoryStorage } from '../src/storage.js';
+import { resetUploadSlotsForTests, tryAcquireUploadSlot } from '../src/documents.js';
 import { createTestDb, lifecycleActors, request, seedClass, seedDocument, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
@@ -648,6 +649,53 @@ test('plik zdjęcia: EXIF/GPS usunięte, orientacja uwzględniona, publiczny odc
     }), env);
     assert.equal(mismatch.status, 415);
   } finally { await db.close(); }
+});
+
+// #185: plik zdjęcia (do 10 MB) — uprawnienie, magazyn, typ i limit
+// równoczesnych uploadów sprawdzone PRZED odczytem ciała. Atrapa strumienia
+// liczy pobrane bajty (highWaterMark 0: nic nie jest pobierane z wyprzedzeniem).
+test('plik zdjęcia (#185): odmowa i upload_busy bez odczytu ani jednego bajtu ciała', async () => {
+  const db = await newsDb();
+  const env = { db, storage: createMemoryStorage() };
+  const counter = { pulled: 0 };
+  const photoRequest = (photoId, cookie, type = 'image/jpeg') => {
+    const base = request(`/api/news-photos/${photoId}/file`, {
+      method: 'POST', cookie, headers: { 'Content-Type': type, 'Idempotency-Key': key('file'), 'Content-Length': String(8 * 1024 * 1024) },
+    });
+    const body = new ReadableStream({
+      pull(controller) {
+        if (counter.pulled >= 8 * 1024 * 1024) { controller.close(); return; }
+        counter.pulled += 65536;
+        controller.enqueue(new Uint8Array(65536));
+      },
+    }, { highWaterMark: 0 });
+    return new Request(base.url, { method: 'POST', headers: base.headers, body, duplex: 'half' });
+  };
+  resetUploadSlotsForTests();
+  try {
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    const repCookie = await seedUserSession(db, { userId: 'u-rep-185', roles: [{ role: 'representative', classId: `${year}-1a`, schoolYearId: year }], mfa: true });
+    const boardCookie = await seedUserSession(db, { userId: 'u-board-185', roles: [{ role: 'board', schoolYearId: year }], mfa: true });
+
+    assert.equal((await handlePgRequest(photoRequest(photo.id, null), env)).status, 401);
+    assert.equal((await handlePgRequest(photoRequest(photo.id, repCookie), env)).status, 403);
+    assert.equal((await handlePgRequest(photoRequest(photo.id, boardCookie, 'application/pdf'), env)).status, 415);
+    assert.equal((await handlePgRequest(photoRequest(photo.id, boardCookie), { db })).status, 503);
+
+    const held = [tryAcquireUploadSlot(undefined, 'u-board-185'), tryAcquireUploadSlot(undefined, 'u-board-185')];
+    try {
+      const busy = await handlePgRequest(photoRequest(photo.id, boardCookie), env);
+      assert.equal(busy.status, 503);
+      assert.equal((await busy.json()).error, 'upload_busy');
+      assert.ok(busy.headers.get('retry-after'));
+    } finally {
+      for (const release of held) release();
+    }
+    assert.equal(counter.pulled, 0, 'żadna odmowa nie czytała ciała');
+  } finally {
+    resetUploadSlotsForTests();
+    await db.close();
+  }
 });
 
 // #106 (poprawka po scaleniu z main): 0084 napisała news_photo_is_public
