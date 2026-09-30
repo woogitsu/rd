@@ -12,7 +12,7 @@
 
 import { isSameOrigin } from '../../auth.js';
 import {
-  freshMfaForbiddenCode, isAuthorized, isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode,
+  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode,
   MFA_STEP_UP_MAX_AGE_SECONDS,
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
@@ -202,7 +202,7 @@ async function exportClassRoster(request, env, url, json) {
       throw error;
     }
     // Drugi krok: zakres roku szkolnego klasy.
-    if (!isAuthorized(access.context, { roles: [...ROSTER_ROLES], requireMfa: true, classId, schoolYearId: built.schoolYearId })) {
+    if (!isAuthorizedScoped(access.context, { roles: [...ROSTER_ROLES], requireMfa: true, classId, schoolYearId: built.schoolYearId })) {
       return { forbidden: true };
     }
     const runId = await recordRun(tx, {
