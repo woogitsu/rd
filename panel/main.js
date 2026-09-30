@@ -35,13 +35,13 @@ import {
   shownSummary,
   studentOptionsHtml,
 } from "../shared/household-picker.js";
-import { mountShell } from "../shared/shell.js";
+import { mountShell, sessionDisplayName } from "../shared/shell.js";
 import "../shared/shell.css";
-import { mountPrintMeta } from "../shared/print-meta.js";
+import { formatPrintDate, mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
 
 let printedBy = null;
-mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
+mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
 
 const FILTER_KEYS = ["schoolYearId", "status", "method", "householdId", "dateFrom", "dateTo", "q"];
 const state = { householdLabels: new Map(), labelsYear: null, payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
@@ -117,7 +117,8 @@ function actionButton(label, action, paymentId) {
 function paymentRow(rawPayment) {
   const payment = normalizePayment(rawPayment);
   const row = document.createElement("tr");
-  row.append(textCell(payment.receivedOn));
+  // Data w zapisie polskim dd.mm.rrrr — ekran i wydruk (#151, decyzja 30.09 z #563).
+  row.append(textCell(formatPrintDate(payment.receivedOn), "date"));
 
   const reference = textCell(payment.reference || "Bez opisu", "reference");
   const family = document.createElement("small");
@@ -183,8 +184,8 @@ function updatePrintMeta() {
     query?.status ? STATUS_LABELS[query.status] : null,
     query?.method ? METHOD_LABELS[query.method] : null,
     query?.householdId ? householdLabel(state.householdLabels, query.householdId) : null,
-    query?.dateFrom ? `od ${query.dateFrom}` : null,
-    query?.dateTo ? `do ${query.dateTo}` : null,
+    query?.dateFrom ? `od ${formatPrintDate(query.dateFrom)}` : null,
+    query?.dateTo ? `do ${formatPrintDate(query.dateTo)}` : null,
     query?.q ? `tytuł zawiera: ${query.q}` : null,
   ].filter(Boolean).join(", ") || null;
   mountPrintMeta(container, {
