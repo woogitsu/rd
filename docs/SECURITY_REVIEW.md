@@ -16,7 +16,7 @@ sprawdzony pod kątem bezpieczeństwa:
 - `src/pg/routes/admin.js` (role, konta, zaproszenia, wygaszenie kadencji),
 - `src/pg/mfa.js`, `src/pg/routes/mfa.js` (rejestracja i weryfikacja MFA, poza pojedynczą luką wymienioną przy SR-01b),
 - `src/pg/routes/documents.js` (pobieranie prywatnych plików ze Storage Bucket),
-- webhook Brevo (`src/pg/routes/email.js:621` i okolice — jedyna trasa bez kontroli `Origin`, z konieczności),
+- webhook Brevo (`POST /api/email/webhooks/brevo`, `WEBHOOK_PATH` i `allowsCrossOrigin` w `src/pg/routes/email.js` — jedyna trasa bez kontroli `Origin`, z konieczności),
 - `src/pg/routes/import.js` (import uczniów i rodzin z pliku),
 - `src/pg/routes/exports.js` (eksport roczny i archiwum),
 - `src/pg/routes/families.js` (katalog rodzin, uczniów i opiekunów),

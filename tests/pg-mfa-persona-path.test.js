@@ -11,15 +11,16 @@ import { randomBytes } from 'node:crypto';
 import { handlePgRequest } from '../src/pg/app.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 import { DEFAULT_MFA_REQUIRED_ROLES } from '../src/pg/mfa-policy.js';
+import { createInvitation } from '../src/pg/auth.js';
 import { ROSTER_ROLES } from '../src/pg/routes/exports.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 let db;
 let env;
 before(async () => {
   db = await createTestDb();
-  env = { db, MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64') };
+  env = { db, MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'), LOGIN_EMAIL_DELAY_MS: '0', SCRYPT_COST_LOG2: '15' };
   await seedSchoolYear(db, YEAR, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   for (const id of ['c-1a', 'c-1b', 'c-2b']) await seedClass(db, { id, schoolYearId: YEAR, name: id });
 });
@@ -96,3 +97,37 @@ test('KR z czynnikiem, ale sesją bez kodu: mfa_required; przydział KR na inny 
   assert.equal(denied.status, 403);
   assert.equal(await errorOf(denied), 'forbidden');
 });
+
+// Pełna ścieżka persony z issue: przyjęcie zaproszenia → logowanie hasłem (polityka NIE wymusza
+// MFA dla tych ról) → odmowa mfa_enrollment_required → zapis MFA → lista klasy / raport KR.
+for (const persona of [
+  { role: 'representative', extra: { classId: 'c-1a', schoolYearId: YEAR }, open: (cookie) => roster('c-1a', cookie), foreign: (cookie) => roster('c-2b', cookie) },
+  { role: 'audit', extra: { schoolYearId: YEAR }, open: report, foreign: (cookie) => roster('c-1a', cookie) },
+]) {
+  test(`${persona.role}: zaproszenie → logowanie → mfa_enrollment_required → zapis MFA → własny ekran; cudzy zakres forbidden`, async () => {
+    await seedUser(db, { userId: 'u-persona-inviter' });
+    const email = `persona-${persona.role}@example.invalid`;
+    const { secret } = await createInvitation(env, { actorId: 'u-persona-inviter', email, role: persona.role, ...persona.extra });
+    const password = `Syntetyczne haslo ${randomBytes(6).toString('hex')}`;
+    const accepted = await call('/api/invitations/accept', null, { method: 'POST', body: { token: secret, password, passwordRepeat: password } });
+    assert.equal(accepted.status, 201);
+    const acceptedBody = await accepted.json();
+    assert.equal(acceptedBody.mfaRequired, false, 'rola spoza MFA_REQUIRED_ROLES — przyjęcie nie wymusza zapisu MFA (D-10)');
+
+    const login = await call('/api/login', null, { method: 'POST', body: { email, password } });
+    assert.equal(login.status, 200);
+    const loginBody = await login.json();
+    assert.equal(loginBody.mfaRequired, false);
+    assert.equal(loginBody.mfaEnrolled, false);
+    const cookie = login.headers.get('Set-Cookie').split(';', 1)[0];
+
+    const before = await persona.open(cookie);
+    assert.equal(before.status, 403);
+    assert.equal(await errorOf(before), 'mfa_enrollment_required', 'odmowa prowadzi do zapisu MFA, nie ogólne forbidden');
+    const verified = await enrollViaApi(cookie);
+    assert.equal((await persona.open(verified)).status, 200);
+    const foreign = await persona.foreign(verified);
+    assert.equal(foreign.status, 403);
+    assert.equal(await errorOf(foreign), 'forbidden');
+  });
+}

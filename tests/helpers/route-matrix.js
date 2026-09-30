@@ -33,7 +33,7 @@
 // treści protokołów i opisów wpłat; odpowiedź odmowna nie może zawierać żadnego.
 
 import { createHash } from 'node:crypto';
-import { isMfaGateExempt } from '../../src/pg/mfa-policy.js';
+import { DEFAULT_MFA_REQUIRED_ROLES, isMfaGateExempt } from '../../src/pg/mfa-policy.js';
 import { emailHash as prefEmailHash, preferencesToken } from '../../src/email/content.js';
 
 export const YEAR_1 = 'y-1';
@@ -1911,7 +1911,9 @@ export function denyStatus(route, actor, targetKey, mfa) {
 // MFA_REQUIRED_ROLES (domyślnie admin, board, treasurer) bez potwierdzonego
 // czynnika i bez sesji z MFA dostaje 403 mfa_enrollment_required na każdej
 // trasie poza zwolnionymi. Aktorzy macierzy nie mają zapisanych czynników.
-const MFA_REQUIRED_ROLES = new Set(['admin', 'board', 'treasurer']);
+// Lista pochodzi wprost z polityki (#161) — bez stałej kopii, która mogłaby się rozjechać
+// z src/pg/mfa-policy.js (macierz uruchamia serwer bez MFA_REQUIRED_ROLES w env).
+const MFA_REQUIRED_ROLES = new Set(DEFAULT_MFA_REQUIRED_ROLES);
 // Czy bramka zatrzymałaby tę sesję na trasie chronionej (niezależnie od zwolnień trasy).
 export function mfaPending(actor, mfa) {
   if (mfa || actor.unauthenticated) return false;
@@ -1920,6 +1922,35 @@ export function mfaPending(actor, mfa) {
 export function mfaGateBlocks(route, actor, mfa) {
   if (isMfaGateExempt(route.path.split('?')[0])) return false;
   return mfaPending(actor, mfa);
+}
+
+// #161: powód odmowy wynikający WYŁĄCZNIE z MFA (rola i zakres pasują albo bramka routera
+// zatrzymuje sesję przed modułem trasy): 'gate' | 'route' | null. Taka odmowa musi nieść kod
+// prowadzący do zapisu MFA (`mfa_enrollment_required` — aktorzy macierzy nie mają czynnika),
+// a nie ogólne `forbidden`, inaczej rola spoza MFA_REQUIRED_ROLES trafia w ślepy zaułek.
+// Wyjątek: trasa z celową odmową 404 przy braku MFA (mfaDeny, dokumenty — bez wyroczni istnienia).
+export function mfaOnlyDenial(route, actor, mfa, targetKey) {
+  if (route.allow === 'public' || actor.unauthenticated || mfa) return null;
+  if (mfaGateBlocks(route, actor, mfa)) return 'gate';
+  if (route.allow === 'authenticated') return null;
+  if (!(route.allow[actor.key] ?? []).includes(targetKey)) return null;
+  return requiresMfa(route, actor) ? 'route' : null;
+}
+
+// Pary (trasa, aktor), w których trasa wymaga MFA od roli spoza MFA_REQUIRED_ROLES — tam
+// zapis MFA nie jest wymuszany przy logowaniu, więc jedyną drogą do zapisu jest kod odmowy
+// trasy (#161, D-10 — wariant zachowawczy: lista ról bez zmian).
+export function voluntaryMfaRoutePairs(routes = ROUTE_MATRIX, actors = ACTORS) {
+  const pairs = [];
+  for (const route of routes) {
+    if (route.allow === 'public' || route.allow === 'authenticated') continue;
+    for (const actor of actors) {
+      if (actor.unauthenticated || !(route.allow[actor.key] ?? []).length || !requiresMfa(route, actor)) continue;
+      if (actor.grants.some((grant) => MFA_REQUIRED_ROLES.has(grant.role))) continue;
+      pairs.push({ route, actor });
+    }
+  }
+  return pairs;
 }
 
 // Każde zwolnienie z bramki MFA (src/pg/mfa-policy.js) ma uzasadnienie; zasada (#189): trasa
