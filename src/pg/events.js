@@ -975,6 +975,19 @@ export async function listPublic(db, input = {}) {
   };
 }
 
+// #116: pojedyncze wydarzenie dla stałego adresu /site/wydarzenia/{id}
+// (renderowanie serwerowe, src/pg/public-site.js). Ten sam kształt co pozycja
+// listPublic; wyłącznie widok public_events. Nieznany identyfikator, szkic,
+// wydarzenie wewnętrzne i nieopublikowane dają ten sam błąd 404.
+export async function getPublic(db, input = {}) {
+  if (!validId(input.eventId)) throw new EventError('event_not_found', 404);
+  const { rows } = await db.query(`SELECT ${PUBLIC_ICS_COLUMNS} FROM public_events WHERE id = $1`, [input.eventId]);
+  const row = rows[0];
+  if (!row) throw new EventError('event_not_found', 404);
+  const tasks = row.public_status === 'cancelled' ? new Map() : await publicTasksFor(db, [row.id]);
+  return { timezone: EVENT_TIMEZONE, event: { ...publicEvent(row), volunteerTasks: tasks.get(row.id) ?? [] } };
+}
+
 // Wewnętrzne: to samo źródło co listPublic, do budowy kalendarza iCal
 // (src/ical.js). Nigdy nie ujawnia autorów, klas ani powodu odwołania.
 async function listPublicForIcs(db, input) {

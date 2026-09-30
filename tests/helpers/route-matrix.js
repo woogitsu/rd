@@ -1274,6 +1274,14 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: `/api/public/news/${obj.postId}` }),
     visible: () => [], contains: () => ['PUBLIC'],
   },
+  // #116: lata szkolne z treściami publicznymi (archiwum strony) — tylko identyfikatory lat,
+  // ta sama odpowiedź dla każdego aktora; bez znaczników zakresów.
+  {
+    id: 'news.publicSchoolYears', module: 'news', method: 'GET', path: '/api/public/school-years', targets: ['-'],
+    allow: 'public', mfa: false, ok: 200, deny: 200, fixture: null, needs: [['newsPost', 'published', ['W1']]],
+    build: () => ({ path: '/api/public/school-years' }),
+    visible: () => [],
+  },
   {
     id: 'news.list', module: 'news', method: 'GET', path: '/api/news?schoolYearId=:year', targets: YEAR_TARGETS,
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, repA: SCHOOL_Y1, repB: SCHOOL_Y1 }, mfa: false, ok: 200, deny: 403,

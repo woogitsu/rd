@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -21,8 +21,24 @@ const ROBOTS_NOINDEX = 'noindex, nofollow';
 // Blokuje wszystkie prefiksy paneli i całe /api/ poza /api/public/ — to samo
 // rozróżnienie co X-Robots-Tag powyżej, na wypadek czytników, które nie patrzą
 // na nagłówki odpowiedzi (#116).
-const ROBOTS_TXT_BODY = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close', 'audit', 'data-export', 'news']
+const ROBOTS_TXT_RULES = `User-agent: *\n${['import', 'panel', 'ledger', 'print', 'events', 'documents', 'meetings', 'admin', 'families', 'login', 'email', 'reconciliation', 'year-close', 'audit', 'data-export', 'news']
   .map((prefix) => `Disallow: /${prefix}/`).join('\n')}\nDisallow: /api/\nAllow: /api/public/\nAllow: /${PUBLIC_STATIC_PREFIX}/\n`;
+// Wiersz `Sitemap:` wymaga adresu bezwzględnego, więc pojawia się tylko przy
+// ustawionym PUBLIC_BASE_URL (http/https) i tylko gdy mapa strony istnieje
+// (renderowanie strony publicznej włączone — siteHandler, #116).
+export function robotsTxtBody(publicBaseUrl, withSitemap = false) {
+  let origin = null;
+  try {
+    const parsed = new URL(String(publicBaseUrl ?? '').trim());
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') origin = parsed.origin;
+  } catch { /* brak lub niepoprawny adres: bez wiersza Sitemap */ }
+  return withSitemap && origin ? `${ROBOTS_TXT_RULES}Sitemap: ${origin}/${PUBLIC_STATIC_PREFIX}/sitemap.xml\n` : ROBOTS_TXT_RULES;
+}
+// #116: ścieżki strony publicznej renderowane po stronie serwera
+// (src/pg/public-site.js — PUBLIC_SITE_PATH ma tę samą postać; test w
+// tests/public-site.test.js). Tylko GET/HEAD i tylko gdy serwer dostał
+// siteHandler (tryb PostgreSQL); w przeciwnym razie zwykły plik statyczny.
+export const PUBLIC_SITE_DYNAMIC_PATH = /^\/site\/(?:index\.html)?$|^\/site\/(?:feed|sitemap)\.xml$|^\/site\/(?:aktualnosci|wydarzenia)\/[^/]+$/;
 // Nagłówek z adresem klienta dla limitów logowania (src/pg/login.js). Zawsze
 // nadpisywany przez serwer — wartość wysłana przez klienta jest ignorowana.
 export const CLIENT_IP_HEADER = 'x-rd-client-ip';
@@ -286,6 +302,7 @@ async function serveJobsHealth(request, response, env, jobsHealth, baseline) {
 export function createNodeHandler({
   distRoot, env = {}, fetchHandler, publicBaseUrl, bodyLimit, logger = log, metrics = null, readiness = checkReadiness,
   jobsHealth = checkJobsHealth, trustProxy = false, rateLimiter = createRateLimiter({ env: globalThis.process?.env }),
+  siteHandler = null,
 } = {}) {
   if (!distRoot) throw new Error('distRoot is required');
   if (typeof fetchHandler !== 'function') throw new Error('fetchHandler is required');
@@ -294,6 +311,22 @@ export function createNodeHandler({
     return Number.isInteger(value) && value > 0 ? value : MAX_BODY_BYTES;
   };
   const baseline = baselineSecurityHeaders(publicBaseUrl);
+  // #116: strona publiczna renderowana przez serwer dostaje te same nagłówki
+  // co pliki statyczne (CSP `script-src 'self'; style-src 'self'`, DENY).
+  const siteBaseline = { ...baseline, ...STATIC_SECURITY_HEADERS };
+  const robotsTxt = robotsTxtBody(publicBaseUrl, typeof siteHandler === 'function');
+  // Szablon strony głównej (dist/site/index.html) — czytany raz; brak pliku
+  // (strony niezbudowane) = null i ponowna próba przy kolejnym żądaniu.
+  let siteTemplate = null;
+  const loadSiteTemplate = async () => {
+    if (siteTemplate !== null) return siteTemplate;
+    try {
+      siteTemplate = await readFile(resolve(distRoot, PUBLIC_STATIC_PREFIX, 'index.html'), 'utf8');
+    } catch {
+      return null;
+    }
+    return siteTemplate;
+  };
   return async (request, response) => {
     const started = process.hrtime.bigint();
     response.once('close', () => logRequest(logger, metrics, request, response, started));
@@ -319,7 +352,7 @@ export function createNodeHandler({
           'Content-Type': 'text/plain; charset=utf-8',
           'Cache-Control': 'public, max-age=3600',
         });
-        response.end(request.method === 'HEAD' ? undefined : ROBOTS_TXT_BODY);
+        response.end(request.method === 'HEAD' ? undefined : robotsTxt);
         return;
       }
       // Przegląd demo: przeglądarka pyta o /favicon.ico przy każdej stronie, a 404 kończył
@@ -329,8 +362,10 @@ export function createNodeHandler({
         response.end();
         return;
       }
-      if (await serveStatic(request, response, url, distRoot, baseline)) return;
       const method = request.method || 'GET';
+      const siteDynamic = typeof siteHandler === 'function' && ['GET', 'HEAD'].includes(method)
+        && PUBLIC_SITE_DYNAMIC_PATH.test(url.pathname);
+      if (!siteDynamic && await serveStatic(request, response, url, distRoot, baseline)) return;
       // #126 (SR-13): ogólny limiter PRZED odczytem ciała i zapytaniem do bazy.
       const slot = rateLimiter.acquire({
         pathname: url.pathname, cookieHeader: request.headers.cookie, address: clientAddress(request, trustProxy),
@@ -374,6 +409,16 @@ export function createNodeHandler({
       }
       headers.set(CLIENT_IP_HEADER, clientAddress(request, trustProxy));
       const webRequest = new Request(url, { method, headers, body, ...(streamBody ? { duplex: 'half' } : {}) });
+      if (siteDynamic) {
+        const siteResponse = await siteHandler(webRequest, env, { template: await loadSiteTemplate() });
+        if (siteResponse) {
+          await writeFetchResponse(response, siteResponse, false, siteBaseline, true, false);
+          return;
+        }
+        // Brak odpowiedzi (np. szablon niezgodny albo błąd bazy na stronie
+        // głównej): zwykły plik statyczny, a JavaScript wczyta dane z API.
+        if (await serveStatic(request, response, url, distRoot, baseline)) return;
+      }
       const webResponse = await fetchHandler(webRequest, env);
       const indexable = url.pathname.startsWith('/api/public/');
       await writeFetchResponse(response, webResponse, url.pathname.startsWith('/api/'), baseline, indexable, streamBody);

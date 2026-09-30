@@ -5,7 +5,8 @@
 //
 // Klasy (każda ma osobny próg na minutę, okno stałe 60 s):
 // - webhook: /api/email/webhooks/* — klucz: adres klienta,
-// - public: /api/public/*, /api/meetings/public-minutes i wszystkie żądania /api/*
+// - public: /api/public/*, /site/* (strona publiczna renderowana przez serwer, #116),
+//   /api/meetings/public-minutes i wszystkie żądania /api/*
 //   bez ciasteczka sesji — klucz: adres klienta,
 // - session: pozostałe /api/* z ciasteczkiem sesji (`__Host-rd_session` poza
 //   środowiskiem lokalnym albo `rd_session`, wartość w formacie tokenu) — klucz:
@@ -83,6 +84,10 @@ export function rateLimitConfig(env = {}) {
 }
 
 export function classifyRequest(pathname, cookieHeader) {
+  // #116: strona publiczna renderowana przez serwer (i nieistniejące pliki pod
+  // /site/) czyta bazę — ten sam próg co /api/public/. Pliki statyczne nie
+  // docierają do limitera (serwer Node wydaje je wcześniej).
+  if (pathname.startsWith('/site/')) return { cls: 'public', session: null };
   if (!pathname.startsWith('/api/')) return null;
   if (pathname.startsWith('/api/email/webhooks/')) return { cls: 'webhook', session: null };
   if (pathname.startsWith('/api/public/') || UNAUTHENTICATED_PATHS.has(pathname)) return { cls: 'public', session: null };

@@ -330,26 +330,49 @@ export const NEWS_URL = "/api/public/news";
 
 // ---------- #116: stały adres wpisu i archiwum aktualności ----------
 //
-// Stały adres to fragment `#wpis-<id>` strony /site/ (bez nowej trasy HTML):
-// działa po wklejeniu do wiadomości, a identyfikator jest tym samym `id`, które
-// zwraca publiczne API. W adresie nie ma identyfikatorów użytkowników, klas,
-// dokumentów ani zgód. Treść wpisu pobiera GET /api/public/news/{id}, który
-// czyta wyłącznie widok public_news; wycofany, nieopublikowany i nieistniejący
-// wpis dają tę samą odpowiedź 404 i ten sam komunikat (bez treści).
+// Stały adres wpisu to strona /site/aktualnosci/<id> renderowana przez serwer
+// (src/pg/public-site.js) — działa bez JavaScriptu i w podglądach linków
+// (WhatsApp, Messenger, e-mail). Dawne linki `#wpis-<id>` strony /site/ nadal
+// działają (kotwica wpisu na liście i blok „Wybrany wpis”). Identyfikator jest
+// tym samym `id`, które zwraca publiczne API; w adresie nie ma identyfikatorów
+// użytkowników, klas, dokumentów ani zgód. Treść pochodzi wyłącznie z widoku
+// public_news; wycofany, nieopublikowany i nieistniejący wpis dają tę samą
+// odpowiedź 404 i ten sam komunikat (bez treści).
 
 export const NEWS_UNAVAILABLE_MESSAGE =
   "Ten wpis nie jest dostępny. Mógł zostać wycofany albo adres jest nieprawidłowy.";
 
+export const EVENT_UNAVAILABLE_MESSAGE =
+  "To wydarzenie nie jest dostępne. Mogło nie zostać opublikowane albo adres jest nieprawidłowy.";
+
+export const SITE_PATH = "/site/";
+export const FEED_PATH = "/site/feed.xml";
+export const SITEMAP_PATH = "/site/sitemap.xml";
+export const SCHOOL_YEARS_URL = "/api/public/school-years";
+
 const POST_HASH_PATTERN = /^#wpis-([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/;
+const CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,1024}$/;
 
 export function newsAnchorId(id) {
   if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error("invalid_post_id");
   return `wpis-${id}`;
 }
 
-// Względny adres stałego linku (do atrybutu href): "#wpis-<id>".
+// Ścieżka strony wpisu (renderowanej po stronie serwera).
+export function newsPagePath(id) {
+  if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error("invalid_post_id");
+  return `/site/aktualnosci/${encodeURIComponent(id)}`;
+}
+
+// Ścieżka strony wydarzenia (renderowanej po stronie serwera).
+export function eventPagePath(id) {
+  if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error("invalid_event_id");
+  return `/site/wydarzenia/${encodeURIComponent(id)}`;
+}
+
+// Stały link (do atrybutu href) — strona wpisu.
 export function newsPermalink(id) {
-  return `#${newsAnchorId(id)}`;
+  return newsPagePath(id);
 }
 
 // location.hash -> identyfikator wpisu albo null (inny fragment, np. #wydarzenia).
@@ -369,19 +392,46 @@ export function newsPostFromPayload(payload) {
 }
 
 // Archiwum: rok wskazany jawnie w `?rok=`; bez niego strona pokazuje
-// najnowsze wpisy ze wszystkich lat (limit po stronie API).
+// najnowsze wpisy ze wszystkich lat. `?kursor=` to nieprzezroczysty kursor
+// kolejnej (starszej) strony z odpowiedzi API (`nextCursor`).
 export function newsYearFromSearch(search) {
   const value = new URLSearchParams(search).get("rok");
   return value && ID_PATTERN.test(value) ? value : null;
 }
 
-export function newsListUrl(schoolYearId = null) {
-  if (schoolYearId === null) return NEWS_URL;
-  if (!ID_PATTERN.test(schoolYearId)) throw new Error("invalid_school_year");
-  return `${NEWS_URL}?${new URLSearchParams({ schoolYearId, limit: "50" })}`;
+export function newsCursorFromSearch(search) {
+  const value = new URLSearchParams(search).get("kursor");
+  return value && CURSOR_PATTERN.test(value) ? value : null;
 }
 
-// ZAŁOŻENIE (do czasu publicznej listy lat szkolnych, #78): archiwum
+export function newsListUrl(schoolYearId = null, cursor = null) {
+  if (schoolYearId !== null && !ID_PATTERN.test(schoolYearId)) throw new Error("invalid_school_year");
+  if (cursor !== null && !CURSOR_PATTERN.test(cursor)) throw new Error("invalid_cursor");
+  const params = new URLSearchParams();
+  if (schoolYearId !== null) {
+    params.set("schoolYearId", schoolYearId);
+    params.set("limit", "50");
+  }
+  if (cursor !== null) params.set("cursor", cursor);
+  const query = params.toString();
+  return query ? `${NEWS_URL}?${query}` : NEWS_URL;
+}
+
+// Adres (względny, do href) strony archiwum: rok i/lub kursor starszych wpisów.
+export function newsArchiveHref(schoolYearId = null, cursor = null) {
+  const params = new URLSearchParams();
+  if (schoolYearId !== null && ID_PATTERN.test(schoolYearId)) params.set("rok", schoolYearId);
+  if (cursor !== null && CURSOR_PATTERN.test(cursor)) params.set("kursor", cursor);
+  return `?${params}#aktualnosci`;
+}
+
+// Kursor następnej strony z odpowiedzi listy (albo null).
+export function newsNextCursor(payload) {
+  const value = payload?.nextCursor;
+  return typeof value === "string" && CURSOR_PATTERN.test(value) ? value : null;
+}
+
+// ZAŁOŻENIE awaryjne (gdy GET /api/public/school-years nie odpowie): archiwum
 // proponuje bieżący rok szkolny i kilka poprzednich (RRRR-RRRR, rok od
 // 1 września). Rok bez wpisów pokazuje zwykły pusty stan.
 export function archiveYears(now = new Date(), count = 6) {
@@ -390,4 +440,27 @@ export function archiveYears(now = new Date(), count = 6) {
   if (!match) return [current];
   const start = Number(match[1]);
   return Array.from({ length: count }, (_, i) => `${start - i}-${start - i + 1}`);
+}
+
+// Odpowiedź GET /api/public/school-years -> lista identyfikatorów lat
+// (tylko lata z opublikowanymi treściami; kolejność od najnowszego).
+export function schoolYearsFromPayload(payload) {
+  if (!Array.isArray(payload?.schoolYears)) return null;
+  const seen = new Set();
+  return payload.schoolYears
+    .map((year) => (typeof year?.id === "string" && ID_PATTERN.test(year.id) ? year.id : null))
+    .filter((id) => id && !seen.has(id) && seen.add(id))
+    .slice(0, 50);
+}
+
+// Skrót treści do meta description / og:description: jedna linia, bez
+// podwójnych odstępów, do `max` znaków (z wielokropkiem).
+export function excerpt(text, max = 160) {
+  const clean = cleanText(text);
+  if (!clean) return "";
+  const line = clean.replace(/\s+/g, " ").trim();
+  if (line.length <= max) return line;
+  const cut = line.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }

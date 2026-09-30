@@ -14611,6 +14611,33 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/public/school-years": {
+      "get": {
+        "operationId": "news_publicSchoolYears",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          }
+        },
+        "security": [],
+        "summary": "news.publicSchoolYears",
+        "tags": [
+          "news"
+        ],
+        "x-rd-access": "public",
+        "x-rd-actor-scopes": {},
+        "x-rd-deny-status": [],
+        "x-rd-matrix-ids": [
+          "news.publicSchoolYears"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/reconciliations": {
       "get": {
         "operationId": "reconciliation_list",
