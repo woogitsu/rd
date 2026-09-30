@@ -75,6 +75,12 @@
               <option value="windows-1250">Windows-1250 (Excel PL)</option>
               <option value="windows-1252">Windows-1252 (Excel BE/FR)</option>
             </select></label>
+            <label>Separator<select id="import-delimiter" aria-describedby="import-file-status">
+              <option value="auto">Wykryj automatycznie</option>
+              <option value=";">Średnik (;)</option>
+              <option value=",">Przecinek (,)</option>
+              <option value="tab">Tabulator</option>
+            </select></label>
             <p class="context" id="import-file-status" role="status">Plik jest odczytywany w tej przeglądarce i trafia do pola poniżej — sprawdź tekst przed wgraniem. Separator: średnik, przecinek lub tabulator.</p>
             <label>Wklej CSV (kolumny: data, kwota, tytuł) <textarea id="import-csv" rows="5" required placeholder="data;kwota;tytul&#10;2026-01-15;150,00;skladka 1a"></textarea></label>
             <div class="form-error" id="import-error" role="alert"></div>

@@ -33,10 +33,11 @@ export function guessMapping(headers) {
   }
   return mapping;
 }
-export function parseCsv(text) {
+export function parseCsv(text, options = {}) {
   if (typeof text !== 'string' || !text.trim()) throw new Error('Plik CSV jest pusty.');
-  // Separator liczony w nagłówku poza cudzysłowami: ; , albo tabulator (import/csv.js).
-  return parseCsvMatrix(text, { maxRows: 5001, limitMessage: 'Limit wynosi 5000 wierszy danych.' });
+  // Separator liczony w nagłówku poza cudzysłowami: ; , albo tabulator (import/csv.js); interfejs
+  // podaje options.delimiter z resolveDelimiter (ręczny wybór albo wykrycie bez remisu).
+  return parseCsvMatrix(text, { delimiter: options.delimiter, maxRows: 5001, limitMessage: 'Limit wynosi 5000 wierszy danych.' });
 }
 export function validateRows(matrix, mapping, options = {}) {
   const { allowedClasses = [] } = options;

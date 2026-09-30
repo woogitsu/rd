@@ -1,7 +1,7 @@
 // Czyste funkcje modułu wydruku kartek o dobrowolnej składce (#11).
 // Brak dostępu do DOM i sieci — wszystko testowane w tests/print-core.test.js.
 import { parseCsv } from "../import/core.js";
-import { decodeCsvBytes, detectDelimiter } from "../import/csv.js";
+import { decodeCsvBytes, resolveDelimiter } from "../import/csv.js";
 import { formatCents, isValidId, parseEuroAmount } from "../panel/core.js";
 import { MoneyError, parseCentsCell } from "../panel/money.js";
 import { SCHOOL_YEAR_ID_PATTERN, formatSchoolYear } from "../shared/school-year.js";
@@ -141,7 +141,7 @@ export function parseInputRows(input) {
   return { rows: rows.filter((row) => !row.issues.length), errors };
 }
 
-export function parseInputText(text, fileName) {
+export function parseInputText(text, fileName, options = {}) {
   if (typeof text !== "string" || !text.trim()) throw new Error("Plik jest pusty.");
   if (/\.json$/i.test(fileName)) {
     let data;
@@ -152,20 +152,23 @@ export function parseInputText(text, fileName) {
     }
     return parseInputRows(data);
   }
-  if (/\.csv$/i.test(fileName)) return parseInputRows(parseCsv(text));
+  if (/\.csv$/i.test(fileName)) return parseInputRows(parseCsv(text, { delimiter: options.delimiter }));
   throw new Error("Wybierz plik .csv lub .json.");
 }
 
 // Odczyt bajtów pliku (#77): CSV z wykryciem kodowania (UTF-8/BOM, UTF-16 z BOM, Windows-1250)
 // albo z kodowaniem wybranym ręcznie; JSON wyłącznie w UTF-8. Nierozpoznane bajty = błąd, brak wierszy.
+// Separator: options.delimiter ('auto' albo ; , \t); remis w trybie automatycznym = błąd z prośbą
+// o ręczny wybór, bez kartek.
 // Zwraca wynik parseInputText oraz source: { encoding, label, bom, warnings, delimiter }.
 export function parseInputBytes(bytes, fileName, options = {}) {
   const isCsv = /\.csv$/i.test(fileName);
   if (!isCsv && !/\.json$/i.test(fileName)) throw new Error("Wybierz plik .csv lub .json.");
   const decoded = decodeCsvBytes(bytes, { encoding: isCsv ? options.encoding ?? "auto" : "utf-8" });
-  const parsed = parseInputText(decoded.text, fileName);
+  const delimiter = isCsv ? resolveDelimiter(decoded.text, options.delimiter ?? "auto") : null;
+  const parsed = parseInputText(decoded.text, fileName, { delimiter: delimiter?.delimiter });
   const { text, ...source } = decoded;
-  if (isCsv) source.delimiter = detectDelimiter(text);
+  if (isCsv) source.delimiter = delimiter;
   return { ...parsed, source };
 }
 

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
-import { parseStatementCsv } from '../src/pg/routes/reconciliation.js';
+import { hashReference, parseStatementCsv } from '../src/pg/routes/reconciliation.js';
 import { escapeHtml, formatEur, REPORT_CSS } from '../src/pg/audit-report.js';
 import { AUDIT_REPORT_SHEETS } from '../src/pg/audit-report-xlsx.js';
 import {
@@ -597,6 +597,57 @@ test('generic CSV statement import: separators, decimals, replay and conflicts',
     const { rows } = await db.query('SELECT count(*)::int AS n FROM bank_statement_lines');
     assert.equal(rows[0].n, 4);
     await assert.rejects(db.query('DELETE FROM bank_statement_lines'), /cannot_be_changed/);
+  } finally {
+    await db.close();
+  }
+});
+
+// #77: trasa POST …/lines z polem csv — tabulator, tytuł przelewu z „;” w cudzysłowie, polskie znaki,
+// remis separatorów (pytanie zamiast zgadywania) i ręczny wybór separatora polem `delimiter`.
+test('CSV statement route: tab separator, quoted semicolon in the title, tie needs an explicit delimiter', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    const send = (body) => call(`/api/reconciliations/${reconciliation.id}/lines`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('csv77') }, body,
+    });
+    const tsv = 'data\tkwota\ttytuł\r\n2026-09-11\t"1 234,50"\t"Składka; Źdźbło Łucja, 1a"\r\n12.09.2026\t-0,30\tOpłata bankowa\r\n';
+    const tab = await send({ csv: tsv });
+    assert.equal(tab.status, 201);
+    assert.equal((await tab.json()).import.lineCount, 2);
+    const { rows: [{ reference_salt: salt }] } = await db.query('SELECT reference_salt FROM bank_reconciliations WHERE id = $1', [reconciliation.id]);
+    const { rows: lines } = await db.query('SELECT booked_on::text AS booked_on, amount_cents::int AS amount_cents, reference_hash FROM bank_statement_lines ORDER BY line_no');
+    assert.deepEqual(lines, [
+      { booked_on: '2026-09-11', amount_cents: 123450, reference_hash: await hashReference(salt, 'Składka; Źdźbło Łucja, 1a') },
+      { booked_on: '2026-09-12', amount_cents: -30, reference_hash: await hashReference(salt, 'Opłata bankowa') },
+    ]);
+
+    // Nagłówek z dwoma średnikami i dwoma przecinkami (remis): serwer nie wybiera po cichu,
+    // a ten sam tekst z ręcznie wybranym średnikiem daje kolumny data, kwota, „tytuł,uwagi,x”.
+    const tie = 'data;kwota;tytuł,uwagi,x\n2026-09-14;7,00;Żółw, ślimak\n';
+    const ambiguous = await send({ csv: tie });
+    assert.equal(ambiguous.status, 400);
+    assert.deepEqual(await ambiguous.json(), { error: 'ambiguous_csv_delimiter' });
+    const manual = await send({ csv: tie, delimiter: ';' });
+    assert.equal(manual.status, 201);
+    assert.equal((await manual.json()).import.lineCount, 1);
+    const { rows: [{ amount_cents: manualCents }] } = await db.query(
+      "SELECT amount_cents::int AS amount_cents FROM bank_statement_lines WHERE booked_on = '2026-09-14'");
+    assert.equal(manualCents, 700);
+
+    // Nieznany separator albo separator przy liniach JSON / pliku CODA to błąd żądania.
+    for (const body of [
+      { csv: tsv, delimiter: '|' },
+      { csv: tsv, delimiter: 'tab' },
+      { csv: tsv, delimiter: 1 },
+      { lines: [{ bookedOn: '2026-09-15', amountCents: 100, reference: 'x' }], delimiter: ';' },
+    ]) {
+      const response = await send(body);
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), { error: 'invalid_request' });
+    }
+    const { rows: [{ n }] } = await db.query('SELECT count(*)::int AS n FROM bank_statement_lines');
+    assert.equal(n, 3);
   } finally {
     await db.close();
   }

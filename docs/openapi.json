@@ -17876,7 +17876,7 @@
       },
       {
         "code": "ambiguous_csv_delimiter",
-        "meaning": "Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem.",
+        "meaning": "Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Wybierz separator ręcznie w polu „Separator” albo zapisz plik z jednym separatorem.",
         "retry": "Nie — popraw dane żądania."
       },
       {
