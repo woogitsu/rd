@@ -9,11 +9,14 @@ import {
   READ_ROLES,
   WARNING_CODES,
   WARNING_LABELS,
+  YEAR_END_DISCREPANCY_REASONS,
+  YEAR_END_DISCREPANCY_REASON_LABELS,
   accessReviewSummary,
   canOfferClose,
   canOfferStart,
   checklistProgress,
   checklistUrl,
+  closeRequestBody,
   closeUrl,
   describeApiError,
   handoverUrl,
@@ -22,10 +25,12 @@ import {
   hasReadAccess,
   isLikelyOwnClosure,
   isValidId,
+  needsYearEndConfirmation,
   startConfirmation,
   startUrl,
   statusUrl,
   warningRows,
+  yearEndCheckRows,
 } from '../year-close/core.js';
 
 // Role muszą być identyczne z serwerem (src/pg/routes/year-close.js) — tak jak
@@ -181,4 +186,66 @@ test('accessReviewSummary: sumy odczytów, odczyty bez ważnego przydziału, bra
   assert.deepEqual(summary.byKind.map((row) => row.label), ['Lista klasy', 'other']);
   assert.equal(summary.withoutValidGrant, 2);
   assert.equal(summary.activeGrants, 4);
+});
+
+// #169: formularz potwierdzenia rozbieżności salda końca roku.
+const mismatchStatus = {
+  status: 'closing',
+  yearEndCheck: {
+    ok: false,
+    closingBalanceCents: -10345, balanceAtYearEndCents: 2000, balanceDifferenceCents: -12345,
+    closingCashCents: 0, cashAtYearEndCents: 0, cashDifferenceCents: 0,
+    closingBankCents: -10345, bankAtYearEndCents: 2000, bankDifferenceCents: -12345,
+  },
+};
+
+test('YEAR_END_DISCREPANCY_REASONS odpowiada serwerowi i każdy kod ma etykietę', () => {
+  const source = readFileSync(new URL('../src/pg/routes/year-close.js', import.meta.url), 'utf8');
+  const match = source.match(/export const YEAR_END_DISCREPANCY_REASONS = Object\.freeze\(\[([\s\S]*?)\]\)/)[1];
+  const parse = (text) => [...text.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  assert.deepEqual([...YEAR_END_DISCREPANCY_REASONS], parse(match));
+  for (const code of YEAR_END_DISCREPANCY_REASONS) assert.ok(YEAR_END_DISCREPANCY_REASON_LABELS[code], code);
+});
+
+test('yearEndCheckRows: trzy wiersze z kwotami, brak pola = null (bez udawania zgodności)', () => {
+  const view = yearEndCheckRows(mismatchStatus);
+  assert.equal(view.ok, false);
+  assert.deepEqual(view.rows.map((row) => row.label), ['Razem', 'Kasa', 'Rachunek']);
+  assert.deepEqual(view.rows[0], { label: 'Razem', closingCents: -10345, atYearEndCents: 2000, differenceCents: -12345 });
+  assert.equal(yearEndCheckRows({ status: 'closing' }), null);
+  assert.equal(yearEndCheckRows(null), null);
+  assert.equal(yearEndCheckRows({ yearEndCheck: { ok: true, closingBalanceCents: 'x' } }).rows[0].closingCents, null);
+});
+
+test('closeRequestBody: przy zgodnym saldzie puste ciało, przy rozbieżności powód i widziane różnice', () => {
+  const okStatus = { status: 'closing', yearEndCheck: { ok: true, balanceDifferenceCents: 0, cashDifferenceCents: 0 } };
+  assert.equal(needsYearEndConfirmation(okStatus), false);
+  assert.deepEqual(closeRequestBody(okStatus, ''), {});
+  // Starsze API bez pola: serwer sam zdecyduje (409 z liczbami), panel nie dosyła potwierdzenia.
+  assert.deepEqual(closeRequestBody({ status: 'closing' }, 'explained_by_resolution'), {});
+
+  assert.equal(needsYearEndConfirmation(mismatchStatus), true);
+  assert.throws(() => closeRequestBody(mismatchStatus, ''), /Wybierz powód/);
+  assert.throws(() => closeRequestBody(mismatchStatus, 'inny_powod'), /Wybierz powód/);
+  assert.deepEqual(closeRequestBody(mismatchStatus, 'entry_dated_after_year_end'), {
+    confirmYearEndDiscrepancy: { reason: 'entry_dated_after_year_end', balanceDifferenceCents: -12345, cashDifferenceCents: 0 },
+  });
+  const broken = { yearEndCheck: { ok: false, balanceDifferenceCents: null, cashDifferenceCents: 0 } };
+  assert.throws(() => closeRequestBody(broken, 'explained_by_resolution'), /odśwież/);
+});
+
+test('describeApiError: rozbieżność salda końca roku wskazuje formularz, nie samo API', () => {
+  assert.match(describeApiError(409, 'year_end_balance_mismatch'), /wybierz powód/);
+  assert.doesNotMatch(describeApiError(409, 'year_end_balance_mismatch'), /przez API/);
+  assert.match(describeApiError(409, 'year_end_confirmation_mismatch'), /Odśwież/);
+});
+
+test('panel: zamknięcie wysyła ciało z closeRequestBody i odświeża liczby po odmowie rozbieżności', () => {
+  const main = readFileSync(new URL('../year-close/main.js', import.meta.url), 'utf8');
+  assert.match(main, /closeRequestBody\(state\.status, reasonSelect\.value\)/);
+  assert.match(main, /api\(closeUrl\(state\.schoolYearId\), \{ method: "POST", body: JSON\.stringify\(body\) \}\)/);
+  assert.match(main, /year_end_confirmation_mismatch/);
+  const html = readFileSync(new URL('../year-close/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="close-dialog-reason"/);
+  assert.match(html, /id="year-end-body"/);
 });

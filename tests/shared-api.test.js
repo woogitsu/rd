@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import {
   ApiError, MESSAGES, authAction, createApiClient, errorMessage, isRetryable, loginUrl, parseRetryAfter, safeNextPath,
 } from '../shared/api.js';
-import { nextFromFragment } from '../login/core.js';
+import { LOGIN_MESSAGES, nextFromFragment } from '../login/core.js';
+import { errorMessage as meetingsErrorMessage } from '../meetings/core.js';
+import { errorMessage as documentsErrorMessage } from '../documents/core.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PANELS = ['panel', 'admin', 'audit', 'families', 'ledger', 'events', 'meetings', 'documents', 'print', 'import', 'email', 'reconciliation', 'year-close', 'data-export', 'news'];
@@ -288,8 +290,8 @@ test('panele nie wołają fetch bezpośrednio — wszystkie żądania przez shar
   assert.match(documents, /handleAuthFailure\(xhr\.status/);
 });
 
-// Panele = katalogi z main.js i index.html poza stroną publiczną (site) i logowaniem (login/ ma
-// własny klient, bo nie może przekierowywać na siebie). Nowy panel bez wpisu w PANELS ma wywalić
+// Panele = katalogi z main.js i index.html poza stroną publiczną (site) i logowaniem (login/
+// używa tego samego klienta, ale bez przekierowań i z własnym słownikiem — test niżej). Nowy panel bez wpisu w PANELS ma wywalić
 // test, a nie po cichu ominąć kontrolę.
 const NON_PANEL_DIRS = new Set(['login', 'site']);
 function panelDirs() {
@@ -471,4 +473,108 @@ test('domyślne wykrywanie niezapisanego formularza reaguje na input, reset i us
     await assert.rejects(api.request('/api/x'));
     assert.equal(navigations.length, 1);
   } finally { globalThis.document = previous; }
+});
+
+// --- Retry-After bez powtórzeń, równoległe 401, ponowienie po ponownym zalogowaniu (#99) --------
+
+test('login_busy i too_many_attempts z Retry-After: jedno zdanie „Spróbuj ponownie” z czasem', async () => {
+  const busy = clientWith(withHeaders(503, { error: 'login_busy' }, { 'Retry-After': '5' }));
+  await assert.rejects(busy.request('/api/login', { method: 'POST', body: {}, messages: LOGIN_MESSAGES, redirect: false }), (error) => {
+    assert.equal(error.code, 'login_busy');
+    assert.equal(error.retryAfter, 5);
+    assert.equal(error.message, 'Serwer jest chwilowo przeciążony logowaniami. Spróbuj ponownie za ok. 5 s.');
+    return true;
+  });
+  const locked = clientWith(withHeaders(429, { error: 'too_many_attempts' }, { 'Retry-After': '900' }));
+  await assert.rejects(locked.request('/api/login', { method: 'POST', body: {}, messages: LOGIN_MESSAGES, redirect: false }), (error) => {
+    assert.equal(error.message, 'Zbyt wiele nieudanych prób. Spróbuj ponownie za ok. 15 min.');
+    assert.equal(error.message.match(/Spróbuj ponownie/g).length, 1);
+    return true;
+  });
+  // Bez nagłówka zostaje tekst ze słownika (bez podanego czasu).
+  const noHeader = clientWith(jsonResponse(503, { error: 'login_busy' }));
+  await assert.rejects(noHeader.request('/api/login', { method: 'POST', body: {} }), (error) => error.message === MESSAGES.login_busy);
+  // Zdanie z dodatkową wskazówką nie jest ucinane.
+  const timeout = clientWith(withHeaders(503, { error: 'timeout' }, { 'Retry-After': '30' }));
+  await assert.rejects(timeout.request('/api/x'), (error) => error.message === `${MESSAGES.timeout} Spróbuj ponownie za ok. 30 s.`);
+  assert.deepEqual([busy.navigations, locked.navigations], [[], []]);
+});
+
+test('mfa_enrollment_required na ekranie logowania ma czytelny komunikat, nie kod', async () => {
+  const enroll = clientWith(jsonResponse(403, { error: 'mfa_enrollment_required' }), { getLocation: () => fakeLocation('/login/') });
+  await assert.rejects(enroll.request('/api/password/change', { method: 'POST', body: {}, messages: LOGIN_MESSAGES, redirect: false }), (error) => {
+    assert.equal(error.message, LOGIN_MESSAGES.mfa_enrollment_required);
+    assert.doesNotMatch(error.message, /mfa_enrollment_required|kod techniczny/);
+    return true;
+  });
+  assert.deepEqual(enroll.navigations, []);
+});
+
+test('równoległe 401 przy niezapisanym formularzu: jedno ostrzeżenie; sukces je usuwa; kolejne wygaśnięcie znów ostrzega', async () => {
+  let status = 401;
+  const cleared = [];
+  const api = clientWith(() => jsonResponse(status, status === 401 ? { error: 'unauthenticated' } : { ok: true }), {
+    hasUnsavedChanges: () => true,
+    clearWarning: () => cleared.push(true),
+  });
+  const results = await Promise.allSettled([1, 2, 3].map(() => api.request('/api/payments', { method: 'POST', body: { a: 1 }, idempotencyKey: 'pay-k1' })));
+  assert.deepEqual(results.map((r) => r.status), ['rejected', 'rejected', 'rejected']);
+  for (const r of results) assert.equal(r.reason.message, MESSAGES.unauthenticated);
+  assert.equal(api.warnings.length, 1);
+  assert.deepEqual(api.navigations, []);
+
+  status = 201;
+  await api.request('/api/payments', { method: 'POST', body: { a: 1 }, idempotencyKey: 'pay-k1' });
+  await api.request('/api/payments');
+  assert.equal(cleared.length, 1, 'ostrzeżenie usuwane raz, po pierwszej udanej odpowiedzi');
+
+  status = 401;
+  await assert.rejects(api.request('/api/payments', { method: 'POST', body: { a: 2 }, idempotencyKey: 'pay-k2' }));
+  assert.equal(api.warnings.length, 2);
+  assert.deepEqual(api.navigations, []);
+});
+
+test('ponowienie po 401 i zalogowaniu w nowej karcie wysyła ten sam Idempotency-Key i to samo ciało', async () => {
+  const seen = [];
+  let status = 401;
+  const api = createApiClient({
+    fetchImpl: async (url, init) => { seen.push(init); return jsonResponse(status, status === 401 ? { error: 'unauthenticated' } : { payment: { id: 'p-1' } }); },
+    getLocation: () => fakeLocation('/panel/'),
+    navigate: () => assert.fail('bez przekierowania przy niezapisanym formularzu'),
+    hasUnsavedChanges: () => true,
+    warnUnsaved: () => {},
+    clearWarning: () => {},
+  });
+  const body = { householdId: 'h1', amountCents: 2500 };
+  await assert.rejects(api.request('/api/payments', { method: 'POST', body, idempotencyKey: 'pay-relogin-1' }), (error) => {
+    // 401 nie jest „ponawialne” automatycznie — ponawia użytkownik po zalogowaniu, tym samym kluczem.
+    assert.equal(isRetryable(error), false);
+    return error.authAction === 'login';
+  });
+  status = 201;
+  assert.deepEqual(await api.request('/api/payments', { method: 'POST', body, idempotencyKey: 'pay-relogin-1' }), { payment: { id: 'p-1' } });
+  assert.deepEqual(seen.map((init) => init.headers['Idempotency-Key']), ['pay-relogin-1', 'pay-relogin-1']);
+  assert.equal(seen[0].body, seen[1].body);
+});
+
+test('login/main.js używa wspólnego klienta bez przekierowań i nie pyta o stan sesji bez wskazówki', () => {
+  const main = readFileSync(join(ROOT, 'login/main.js'), 'utf8');
+  assert.doesNotMatch(main, /\bfetch\s*\(/, 'login/main.js woła fetch bezpośrednio');
+  assert.match(main, /createApiClient\(/);
+  assert.match(main, /messages: LOGIN_MESSAGES, redirect: false/);
+  assert.match(main, /if \(initial && !mayHaveSession\(\)\) return \{ authenticated: false \};/);
+  assert.match(main, /refreshState\(\{ initial: true \}\)/);
+  const shell = readFileSync(join(ROOT, 'shared/shell.js'), 'utf8');
+  assert.match(shell, /forgetSession\(\);\s*window\.location\.href = "\/login\/"/);
+});
+
+test('lokalne słowniki zebrań i dokumentów: nieznany kod daje polski tekst bez numeru statusu', () => {
+  for (const status of [0, 400, 401, 403, 404, 413, 422, 429, 500, 503]) {
+    for (const text of [meetingsErrorMessage('nieznany_kod', status), documentsErrorMessage(status, { error: 'nieznany_kod' })]) {
+      assert.doesNotMatch(text, /\(\d{3}\)|Błąd serwera|nieznany_kod/, `${status}: ${text}`);
+      assert.ok(text.length > 10);
+    }
+  }
+  assert.equal(meetingsErrorMessage('nieznany_kod', 403), MESSAGES.forbidden);
+  assert.equal(meetingsErrorMessage('nieznany_kod', 401), MESSAGES.unauthenticated);
 });

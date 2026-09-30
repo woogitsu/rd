@@ -442,6 +442,31 @@ test('corrections sent via Promise.all (sequential on PGlite) never exceed the e
   await assert.rejects(backend.db.query('DELETE FROM ledger_entries'), /cannot_be_changed/);
 }));
 
+test('#99: after re-login the same Idempotency-Key does not duplicate a ledger entry (expired session, lost response)', async () => withPg({}, async (backend) => {
+  // 1) Sesja wygasła przed zapisem: 401 i nic nie powstaje. Po ponownym zalogowaniu (nowa sesja
+  //    tej samej osoby) formularz wysyła ten sam klucz — jeden zapis i jedno zdarzenie audytu.
+  const expired = await backend.as('u1', { mfa: true, expiresAt: new Date(Date.now() - 60 * 1000) });
+  const rejected = await createEntry(backend, {}, 'entry-relogin-0001', expired);
+  assert.deepEqual([rejected.status, rejected.body], [401, { error: 'unauthenticated' }]);
+  assert.equal(await backend.count('ledger_entries'), 0);
+  const fresh = await backend.as('u1', { mfa: true });
+  const created = await createEntry(backend, {}, 'entry-relogin-0001', fresh);
+  assert.equal(created.status, 201);
+  const again = await createEntry(backend, {}, 'entry-relogin-0001', fresh);
+  assert.deepEqual([again.status, again.replayed, again.body.entry.id], [200, 'true', created.body.entry.id]);
+
+  // 2) Zapis przeszedł, ale odpowiedź nie dotarła, a potem sesja wygasła (wylogowanie):
+  //    ponowienie tym samym kluczem z nowej sesji odtwarza zapis zamiast tworzyć drugi.
+  const first = await createEntry(backend, {}, 'entry-relogin-0002');
+  assert.equal(first.status, 201);
+  const relogged = await backend.as('u1', { mfa: true });
+  const replay = await createEntry(backend, {}, 'entry-relogin-0002', relogged);
+  assert.deepEqual([replay.status, replay.replayed, replay.body.entry.id], [200, 'true', first.body.entry.id]);
+
+  assert.equal(await backend.count('ledger_entries'), 2);
+  assert.equal(await backend.count('audit_events', "action = 'ledger.entry.created'"), 2);
+}));
+
 test('double click with the same Idempotency-Key creates one entry and one audit event', async () => withPg({}, async (backend) => {
   for (const [key, patch] of [['double-click-0001', {}], ['double-click-0002', incomeInput]]) {
     const [first, second] = await Promise.all([createEntry(backend, patch, key), createEntry(backend, patch, key)]);
