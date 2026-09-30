@@ -129,6 +129,7 @@ export const REASON_LABELS = Object.freeze({
   admin: "wycofanie przez administratora",
   change: "zmiana",
   duplicate_address: "powtórzony adres",
+  followup_already_covered: "rodzina już w innej kampanii uzupełniającej",
   idle: "bezczynność",
   invalid_password: "błędne hasło",
   invitation: "zaproszenie",
