@@ -462,6 +462,7 @@ statusForm.addEventListener("submit", async (event) => {
 });
 
 function clearPreview() {
+  pdfPreviewActive = false;
   previewImage.hidden = true;
   previewImage.removeAttribute("src");
   previewFrame.hidden = true;
@@ -472,8 +473,35 @@ function clearPreview() {
   previewMessage.textContent = "";
 }
 
-// Podgląd (#89): obraz przez <img>, PDF w <iframe sandbox=""> (bez skryptów, bez
-// dostępu do originu panelu). Adres to autoryzowany endpoint serwera, nie token.
+// Podgląd (#89): obraz przez <img>, PDF w <iframe> BEZ atrybutu sandbox — Chromium
+// odmawia wyświetlenia PDF w ramce z atrybutem sandbox (#539). Izolację dają nagłówki
+// odpowiedzi podglądu (CSP `sandbox; default-src 'none'`, nosniff, typ z bazy po
+// ponownej kontroli struktury) i CSP panelu (ramka tylko z własnego originu); model
+// zagrożeń: docs/DOCUMENTS.md, „Podgląd w panelu”. Adres to endpoint serwera, nie token.
+const PREVIEW_FAILED = "Nie udało się wczytać podglądu. Sesja mogła wygasnąć, brak dostępu albo plik nie przechodzi bieżącej kontroli struktury — spróbuj pobrać plik.";
+
+function previewFailed() {
+  previewMessage.className = "message error";
+  previewMessage.textContent = PREVIEW_FAILED;
+}
+
+// Link `/URI` w PDF kliknięty w ramce nawiguje CAŁĄ kartę panelu (tak działa czytnik
+// Chromium; sprawdzone Playwrightem). Dopóki podgląd PDF jest otwarty, opuszczenie
+// panelu nie przez jego własny link ani formularz wymaga potwierdzenia przeglądarki
+// („Opuścić stronę?”) — obca strona z pliku nie podmieni panelu po cichu.
+let pdfPreviewActive = false;
+let panelNavigationUntil = 0;
+const PANEL_NAVIGATION_GRACE_MS = 2000;
+document.addEventListener("click", (event) => {
+  if (event.target instanceof Element && event.target.closest("a[href]")) panelNavigationUntil = Date.now() + PANEL_NAVIGATION_GRACE_MS;
+}, true);
+document.addEventListener("submit", () => { panelNavigationUntil = Date.now() + PANEL_NAVIGATION_GRACE_MS; }, true);
+window.addEventListener("beforeunload", (event) => {
+  if (!pdfPreviewActive || Date.now() < panelNavigationUntil) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+
 detailsPreview.addEventListener("click", () => {
   const id = state.currentDocumentId;
   if (!id) return;
@@ -484,17 +512,27 @@ detailsPreview.addEventListener("click", () => {
   previewMessage.className = "message";
   previewMessage.textContent = "Wczytywanie podglądu…";
   const target = kind === "image" ? previewImage : previewFrame;
-  target.addEventListener("load", () => { previewMessage.textContent = ""; }, { once: true });
   if (kind === "image") {
+    previewImage.addEventListener("load", () => { previewMessage.textContent = ""; }, { once: true });
     previewImage.addEventListener("error", () => {
-      previewMessage.className = "message error";
-      previewMessage.textContent = "Nie udało się wczytać podglądu. Sesja mogła wygasnąć albo brak dostępu — spróbuj pobrać plik.";
+      previewFailed();
       previewImage.hidden = true;
+    }, { once: true });
+  } else {
+    // Odpowiedź błędu (401/404/409, JSON z `frame-ancestors 'none'`) przeglądarka
+    // zastępuje własną stroną błędu z innego originu — wtedy contentDocument jest
+    // niedostępny i pokazujemy komunikat zamiast pustej ramki.
+    previewFrame.addEventListener("load", () => {
+      let frameDocument = null;
+      try { frameDocument = previewFrame.contentDocument; } catch { frameDocument = null; }
+      if (frameDocument) previewMessage.textContent = "";
+      else previewFailed();
     }, { once: true });
   }
   target.src = previewUrl(id);
   target.hidden = false;
   if (kind === "pdf") {
+    pdfPreviewActive = true;
     previewOpenTab.setAttribute("href", previewUrl(id));
     previewOpenTab.hidden = false;
   }

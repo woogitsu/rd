@@ -1,4 +1,8 @@
 // Walidacja prywatnych dokumentów (issue #39). Czyste funkcje bez bazy.
+// Moduł jest ładowany wyłącznie przez serwer Node (src/server.js, src/node-app.js,
+// src/pg/**), nie przez Worker — stąd dozwolony node:zlib (strumienie obiektów PDF, #89).
+
+import { constants as zlibConstants, inflateSync } from 'node:zlib';
 //
 // Typ pliku ustalamy po sygnaturze (magic bytes), nie po nazwie ani samym
 // nagłówku Content-Type. Zadeklarowany typ musi zgadzać się z wykrytym.
@@ -69,7 +73,12 @@ function asciiBytes(text) {
 // Klucze PDF, których obecność (nawet nieskompresowana) traktujemy jako
 // potencjalnie aktywną treść albo szyfrowanie uniemożliwiające dalszą kontrolę.
 // Lista do przeglądu (issue #89) — heurystyka, nie parser PDF.
-const PDF_DANGEROUS_KEYS = ['/JavaScript', '/JS', '/Launch', '/EmbeddedFile', '/RichMedia', '/XFA', '/Encrypt'];
+// `/SubmitForm` i `/ImportData` (#89, druga część): akcje formularza wysyłające dane
+// z dokumentu pod dowolny adres albo wczytujące je z zewnątrz — w fakturach i wyciągach
+// niepotrzebne. Ryzyko fałszywego odrzucenia formularza z banku opisuje DOCUMENTS.md.
+const PDF_DANGEROUS_KEYS = [
+  '/JavaScript', '/JS', '/Launch', '/EmbeddedFile', '/RichMedia', '/XFA', '/Encrypt', '/SubmitForm', '/ImportData',
+];
 // Nazwy PDF mogą zawierać zapis szesnastkowy (`/J#61vaScript` = `/JavaScript`), więc
 // samo szukanie surowego napisu dawałoby trywialne obejście. Przed porównaniem
 // dekodujemy `#XX` wyłącznie wewnątrz nazw (token zaczynający się od `/`).
@@ -85,17 +94,144 @@ const PDF_TEXT_ENCODING = 'latin1';
 const PDF_EOF = asciiBytes('%%EOF');
 const PNG_SIGNATURE_LENGTH = 8;
 const PNG_IEND = asciiBytes('IEND');
+const PNG_IHDR = asciiBytes('IHDR');
+
+// Strumienie obiektów (`/Type /ObjStm`, PDF 1.5+) przechowują słowniki w postaci
+// skompresowanej — `/JavaScript` albo `/OpenAction << … >>` wewnątrz takiego strumienia
+// nie są widoczne w surowych bajtach, więc sama kontrola surowego tekstu dawała
+// trywialne obejście. Rozpakowujemy WYŁĄCZNIE strumienie obiektów (słowniki mogą leżeć
+// tylko w treści pliku albo w ObjStm); strumieni treści stron i obrazów nie
+// przeszukujemy, bo przypadkowe bajty skompresowanego obrazu dawałyby fałszywe
+// odrzucenia. Strumień obiektów, którego nie umiemy odczytać (inny filtr niż
+// FlateDecode, uszkodzone dane, przekroczony limit rozpakowania), traktujemy jak
+// uszkodzoną strukturę — nie możemy go sprawdzić, więc go nie przyjmujemy.
+// Słownik strumienia szukamy wstecz od słowa `stream` (liniowo, bez wyrażenia
+// regularnego z nawrotami — plik 25 MiB z tysiącami obiektów nie może zająć procesu).
+// Słownik dłuższy niż limit albo niedomknięty: nie umiemy go ocenić — plik odrzucamy.
+const PDF_STREAM_DICT_MAX_CHARS = 64 * 1024;
+// Limit rozpakowania (ochrona przed „bombą” zlib): na jeden strumień i na cały plik.
+export const PDF_OBJECT_STREAM_MAX_BYTES = 8 * 1024 * 1024;
+export const PDF_OBJECT_STREAMS_TOTAL_MAX_BYTES = 32 * 1024 * 1024;
+
+function decodePdfNames(text) {
+  return text.replace(PDF_NAME_WITH_ESCAPE, (name) => name.replace(/#([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))));
+}
+
+function hasPdfActiveContent(text) {
+  return PDF_DANGEROUS_KEYS.some((key) => text.includes(key)) || PDF_INLINE_OPEN_ACTION.test(text);
+}
+
+// Filtr słownika strumienia: `/Filter /FlateDecode` albo `/Filter [/FlateDecode]` -> 'flate';
+// brak filtra -> 'none'; cokolwiek innego (łańcuch filtrów, LZW, ASCIIHex…) -> 'other'.
+function pdfStreamFilter(dict) {
+  const match = /\/Filter\s*(\[[^\]]*\]|\/[A-Za-z0-9]+)/.exec(dict);
+  if (!match) return 'none';
+  const names = match[1].match(/\/[A-Za-z0-9]+/g) ?? [];
+  if (names.length === 1 && (names[0] === '/FlateDecode' || names[0] === '/Fl')) return 'flate';
+  return names.length === 0 ? 'none' : 'other';
+}
+
+function isPdfWhitespace(ch) {
+  return ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t' || ch === '\f' || ch === '\0';
+}
+
+// Początek słownika `<< … >>` kończącego się na pozycji `end` (drugi znak `>`),
+// z uwzględnieniem zagnieżdżeń; -1 = nie znaleziono w limicie.
+function pdfDictStart(text, end, budget) {
+  let depth = 0;
+  const limit = Math.max(0, end - PDF_STREAM_DICT_MAX_CHARS);
+  for (let k = end; k > limit; ) {
+    // Łączny budżet kroków na plik: nakładające się słowniki nie dają pracy kwadratowej.
+    budget.steps -= 1;
+    if (budget.steps < 0) return -1;
+    if (text[k] === '>' && text[k - 1] === '>') { depth += 1; k -= 2; continue; }
+    if (text[k] === '<' && text[k - 1] === '<') {
+      depth -= 1;
+      if (depth === 0) return k - 1;
+      k -= 2;
+      continue;
+    }
+    k -= 1;
+  }
+  return -1;
+}
+
+// Zwraca null, gdy strumienie obiektów są czyste, albo kod błędu.
+function inspectPdfObjectStreams(bytes, text) {
+  let total = 0;
+  const budget = { steps: 4 * text.length + PDF_STREAM_DICT_MAX_CHARS };
+  for (let at = text.indexOf('stream'); at !== -1; at = text.indexOf('stream', at + 6)) {
+    if (at >= 3 && text.startsWith('end', at - 3)) continue;
+    let start = at + 6;
+    if (text[start] === '\r' && text[start + 1] === '\n') start += 2;
+    else if (text[start] === '\n' || text[start] === '\r') start += 1;
+    else continue;
+    let dictEnd = at - 1;
+    while (dictEnd >= 0 && isPdfWhitespace(text[dictEnd])) dictEnd -= 1;
+    if (text[dictEnd] !== '>' || text[dictEnd - 1] !== '>') continue;
+    const dictStart = pdfDictStart(text, dictEnd, budget);
+    if (dictStart === -1) return 'document_malformed';
+    // Nazwy w słowniku też mogą być zapisane szesnastkowo (`/Obj#53tm`, `/Fl#61teDecode`).
+    const dict = decodePdfNames(text.slice(dictStart, dictEnd + 1));
+    // Strumień obiektów rozpoznajemy po `/Type /ObjStm` ALBO po kluczu `/First`
+    // (obowiązkowy w ObjStm; czytniki, np. pdf.js, nie wymagają `/Type`).
+    if (!/\/Type\s*\/ObjStm\b/.test(dict) && !/\/First\b/.test(dict)) continue;
+    // Predyktor (`/DecodeParms << /Predictor 12 … >>`) przeplata dane bajtami filtra
+    // wierszy i rozbiłby słowa kluczowe po rozpakowaniu — takiego strumienia nie sprawdzimy.
+    const predictor = /\/Predictor\s+(\d+)/.exec(dict);
+    if (predictor && Number(predictor[1]) > 1) return 'document_malformed';
+    const length = /\/Length\s+(\d+)(\s+\d+\s+R)?/.exec(dict);
+    let end = length && !length[2] ? start + Number(length[1]) : -1;
+    if (end < start || end > bytes.length) {
+      // Długość pośrednia (`n 0 R`) albo błędna: dane do słowa `endstream`.
+      end = text.indexOf('endstream', start);
+      if (end === -1) return 'document_malformed';
+    }
+    const filter = pdfStreamFilter(dict);
+    let inflated;
+    if (filter === 'none') {
+      inflated = bytes.subarray(start, end);
+    } else if (filter === 'flate') {
+      const remaining = PDF_OBJECT_STREAMS_TOTAL_MAX_BYTES - total;
+      try {
+        inflated = inflateSync(bytes.subarray(start, end), {
+          maxOutputLength: Math.max(1, Math.min(PDF_OBJECT_STREAM_MAX_BYTES, remaining)),
+          // Tolerancja na brak sumy Adler-32 na końcu (spotykane w generatorach PDF).
+          finishFlush: zlibConstants.Z_SYNC_FLUSH,
+        });
+      } catch {
+        return 'document_malformed';
+      }
+    } else {
+      return 'document_malformed';
+    }
+    total += inflated.length;
+    if (total > PDF_OBJECT_STREAMS_TOTAL_MAX_BYTES) return 'document_malformed';
+    if (hasPdfActiveContent(decodePdfNames(new TextDecoder(PDF_TEXT_ENCODING).decode(inflated)))) {
+      return 'document_active_content';
+    }
+  }
+  return null;
+}
 
 function validatePdfStructure(bytes) {
-  const text = new TextDecoder(PDF_TEXT_ENCODING).decode(bytes)
-    .replace(PDF_NAME_WITH_ESCAPE, (name) => name.replace(/#([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))));
-  if (PDF_DANGEROUS_KEYS.some((key) => text.includes(key)) || PDF_INLINE_OPEN_ACTION.test(text)) {
-    return { ok: false, code: 'document_active_content' };
-  }
+  const raw = new TextDecoder(PDF_TEXT_ENCODING).decode(bytes);
+  if (hasPdfActiveContent(decodePdfNames(raw))) return { ok: false, code: 'document_active_content' };
+  const objectStreams = inspectPdfObjectStreams(bytes, raw);
+  if (objectStreams) return { ok: false, code: objectStreams };
   // %%EOF musi wystąpić blisko końca pliku; jego brak (albo dane doklejone
   // dalej, np. poliglota PDF+ZIP) traktujemy jako uszkodzoną/podejrzaną strukturę.
   if (bytesIndexOf(bytes, PDF_EOF, 1024) === -1) return { ok: false, code: 'document_malformed' };
   return { ok: true };
+}
+
+// Typ chunku PNG to cztery litery ASCII (A-Z, a-z); pierwszy chunk musi być IHDR.
+function isPngChunkType(bytes, offset) {
+  for (let i = 0; i < 4; i += 1) {
+    const byte = bytes[offset + i];
+    if (!((byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a))) return false;
+  }
+  return true;
 }
 
 function validatePngStructure(bytes) {
@@ -104,6 +240,10 @@ function validatePngStructure(bytes) {
     if (offset + 8 > bytes.length) return { ok: false, code: 'document_malformed' };
     const length = (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0;
     const typeOffset = offset + 4;
+    if (!isPngChunkType(bytes, typeOffset)) return { ok: false, code: 'document_malformed' };
+    if (offset === PNG_SIGNATURE_LENGTH && !PNG_IHDR.every((byte, index) => bytes[typeOffset + index] === byte)) {
+      return { ok: false, code: 'document_malformed' };
+    }
     const isIend = PNG_IEND.every((byte, index) => bytes[typeOffset + index] === byte);
     const chunkEnd = typeOffset + 4 + length + 4; // typ + dane + CRC
     if (chunkEnd > bytes.length) return { ok: false, code: 'document_malformed' };

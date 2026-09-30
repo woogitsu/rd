@@ -94,6 +94,7 @@ wpisów).
 | `document_content_missing` | Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_integrity_mismatch` | Plik w magazynie nie zgadza się z zapisaną sumą kontrolną. Zgłoś to administratorowi. | Nie — popraw dane żądania. |
 | `document_malformed` | Plik odrzucony: jego struktura nie odpowiada zadeklarowanemu typowi (uszkodzony albo doklejone dodatkowe dane). | Zależy od kontekstu (patrz moduł trasy). |
+| `document_preview_blocked` | Ten plik nie przechodzi bieżącej kontroli struktury, więc nie otworzy się w panelu. Można go pobrać; zgłoś go administratorowi. | Nie — plik trzeba pobrać albo zastąpić poprawnym. |
 | `document_preview_unsupported` | Podglądu tego typu pliku nie ma. Pobierz plik. | Nie — popraw dane żądania. |
 | `document_status_conflict` | Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_status_replacement_not_active` | Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny. | Zależy od kontekstu (patrz moduł trasy). |

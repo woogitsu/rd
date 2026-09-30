@@ -6,7 +6,8 @@
 //        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`; kursor działa tylko przy sort=createdAt
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
-//   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed
+//   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed;
+//        plik, który nie przechodzi BIEŻĄCEJ kontroli struktury, dostaje 409 document_preview_blocked
 //   POST /api/documents/{id}/supersede  { replacementDocumentId, reason } — issue #82
 //   POST /api/documents/{id}/void       { reason } — issue #82
 //   POST /api/documents/{id}/description  tytuł, kategoria, data dokumentu (issue #76)
@@ -257,6 +258,24 @@ async function download(request, env, id, json, url) {
   }
   // Dziennik odczytu przed wydaniem treści; błąd zapisu = brak pobrania/podglądu.
   const auditMetadata = { kind: doc.kind, schoolYearId: doc.schoolYearId, classId: doc.classId, sessionId: context.session.sessionId };
+  // Podgląd w panelu (issue #89, część 2): przed wydaniem treści inline sprawdzamy
+  // bajty PONOWNIE bieżącymi regułami — sygnatura musi odpowiadać zapisanemu typowi,
+  // a struktura przejść validateStructure. Chroni to przed plikami przyjętymi przed
+  // wprowadzeniem kontroli struktury (#301) albo przed jej zaostrzeniem (strumienie
+  // obiektów PDF, /SubmitForm). Taki plik nie otworzy się w panelu; pobranie jako
+  // załącznik (z CSP sandbox) zostaje, bo to dowód w archiwum — nie usuwamy go.
+  if (inline) {
+    const structure = detectType(object.body) === doc.mimeType
+      ? validateStructure(object.body, doc.mimeType)
+      : { ok: false, code: 'unsupported_media_type' };
+    if (!structure.ok) {
+      await insertAuditEvent(env.db, {
+        actorId: context.session.user.id, action: 'document.preview_blocked', entityType: 'document', entityId: doc.id,
+        metadata: { ...auditMetadata, reason: structure.code },
+      });
+      return json({ error: 'document_preview_blocked' }, 409);
+    }
+  }
   if (inline) {
     await insertAuditEvent(env.db, {
       actorId: context.session.user.id, action: 'document.viewed', entityType: 'document', entityId: doc.id, metadata: auditMetadata,

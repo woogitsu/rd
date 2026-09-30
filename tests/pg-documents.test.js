@@ -1,6 +1,7 @@
 // Prywatne dokumenty (issue #39). Wyłącznie syntetyczne pliki i dane.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { deflateSync } from 'node:zlib';
 import { handlePgRequest } from '../src/pg/app.js';
 import { revokeRoleGrant } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
@@ -1225,6 +1226,32 @@ test('trigger a0_year_freeze na document_descriptions pomija dokument bez school
 
 // --- Podgląd inline (issue #89) -----------------------------------------------------
 
+const SVG = encoder.encode('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script></svg>');
+// PDF 1.5: akcja JavaScript schowana w skompresowanym strumieniu obiektów — niewidoczna
+// w surowych bajtach (kontrola sprzed #89 część 2 przepuszczała taki plik).
+function pdfWithHiddenScript() {
+  const payload = deflateSync(Buffer.from('5 0 << /S /JavaScript /JS (app.alert(1)) >>', 'latin1'));
+  return new Uint8Array(Buffer.concat([
+    Buffer.from(`%PDF-1.5\n1 0 obj << /Type /Catalog /OpenAction 5 0 R >> endobj\n9 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length ${payload.length} /Filter /FlateDecode >>\nstream\n`, 'latin1'),
+    payload,
+    Buffer.from('\nendstream\nendobj\ntrailer << /Root 1 0 R >>\n%%EOF\n', 'latin1'),
+  ]));
+}
+
+// Dokument „sprzed kontroli struktury” (#301) albo sprzed jej zaostrzenia: wiersz i obiekt
+// zapisane z pominięciem trasy (tak jak przywrócone/zmigrowane dane), z poprawnym skrótem.
+async function insertLegacyDocument(db, storage, { bytes, mimeType = 'application/pdf', createdBy = 'u-treasurer' }) {
+  const id = crypto.randomUUID();
+  const objectKey = `docs/${crypto.randomUUID()}`;
+  await storage.putObject(objectKey, bytes, mimeType);
+  await db.query(
+    `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
+     VALUES ($1, $2, $3, $4, 'financial', $5, $6, $7, $8)`,
+    [id, objectKey, mimeType, bytes.length, createdBy, YEAR, sha256Hex(bytes), `legacy-${id}`],
+  );
+  return id;
+}
+
 const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]);
 const preview = (env, id, cookie, extra = '') => get(env, `/api/documents/${id}/content?disposition=inline${extra}`, cookie);
 
@@ -1357,6 +1384,10 @@ test('malicious synthetic files are refused with 415 before putObject, also on r
     ['pdf+zip polyglot', polyglot, 'application/pdf', 'document_malformed'],
     ['png with data after IEND', pngTrailer, 'image/png', 'document_malformed'],
     ['jpeg with data after FFD9', jpegTrailer, 'image/jpeg', 'document_malformed'],
+    ['pdf /JavaScript hidden in a compressed object stream', pdfWithHiddenScript(), 'application/pdf', 'document_active_content'],
+    ['pdf /SubmitForm', pdfWith('/S /SubmitForm /F (https://example.invalid/x)'), 'application/pdf', 'document_active_content'],
+    ['svg declared as svg', SVG, 'image/svg+xml', 'unsupported_media_type'],
+    ['svg declared as png', SVG, 'image/png', 'unsupported_media_type'],
   ];
   for (const [label, bytes, type, code] of cases) {
     const key = `malicious-${label}`;
@@ -1371,6 +1402,43 @@ test('malicious synthetic files are refused with 415 before putObject, also on r
   assert.equal((await upload(env, { cookie, bytes: PDF, type: 'image/png' })).response.status, 415);
   assert.equal(storage.keys().length, 0);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 0);
+}));
+
+test('preview re-checks stored bytes with current rules: legacy file failing them is 409 document_preview_blocked, still downloadable (#89)', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const hidden = await insertLegacyDocument(db, storage, { bytes: pdfWithHiddenScript() });
+  const mismatched = await insertLegacyDocument(db, storage, { bytes: PNG, mimeType: 'application/pdf' });
+  const clean = await insertLegacyDocument(db, storage, { bytes: PDF });
+
+  for (const [id, reason] of [[hidden, 'document_active_content'], [mismatched, 'unsupported_media_type']]) {
+    const response = await preview(env, id, cookie);
+    assert.equal(response.status, 409, reason);
+    assert.equal((await response.json()).error, 'document_preview_blocked');
+    assert.equal(response.headers.get('Content-Disposition'), null, 'no file content in a blocked preview');
+    // Ponowienie daje to samo (stan pliku, nie awaria).
+    assert.equal((await preview(env, id, cookie)).status, 409);
+  }
+  const blocked = await auditRows(db, 'document.preview_blocked');
+  assert.equal(blocked.length, 4);
+  assertEvery(blocked, (event) => event.actor_id === 'u-treasurer');
+  assert.deepEqual([...new Set(blocked.map((event) => `${event.entity_id}:${event.metadata_json.reason}`))].sort(),
+    [`${hidden}:document_active_content`, `${mismatched}:unsupported_media_type`].sort());
+  blocked.forEach((event) => assertNoPii(event.metadata_json));
+  assert.equal((await auditRows(db, 'document.viewed')).length, 0);
+
+  // Pobranie (załącznik, CSP sandbox) zostaje — dowód w archiwum — z własnym śladem.
+  const download = await get(env, `/api/documents/${hidden}/content`, cookie);
+  assert.equal(download.status, 200);
+  assert.match(download.headers.get('Content-Disposition'), /^attachment;/);
+  assert.match(download.headers.get('Content-Security-Policy'), /^sandbox/);
+  assert.deepEqual((await auditRows(db, 'document.downloaded')).map((event) => event.entity_id), [hidden]);
+
+  // Plik zgodny z bieżącymi regułami otwiera się normalnie.
+  assert.equal((await preview(env, clean, cookie)).status, 200);
+  assert.deepEqual((await auditRows(db, 'document.viewed')).map((event) => event.entity_id), [clean]);
+  // Odmowa roli przed kontrolą treści: przedstawiciel klasy dostaje 404, bez preview_blocked.
+  assert.equal((await preview(env, hidden, await repA(db))).status, 404);
+  assert.equal((await auditRows(db, 'document.preview_blocked')).length, 4);
 }));
 
 test('from/to filter by document date in SQL; undated documents fail the filter; sort=documentDate puts undated last', async () => withEnv(async (db, env) => {

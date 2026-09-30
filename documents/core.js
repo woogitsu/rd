@@ -86,6 +86,7 @@ export const ERROR_MESSAGES = Object.freeze({
   method_not_allowed: "Operacja niedozwolona.",
   invalid_disposition: "Nieznany sposób otwarcia pliku. Użyj podglądu albo pobrania.",
   document_preview_unsupported: "Podglądu tego typu pliku nie ma. Pobierz plik.",
+  document_preview_blocked: "Ten plik nie przechodzi bieżącej kontroli struktury, więc nie otworzy się w panelu. Można go pobrać; zgłoś go administratorowi.",
 });
 
 const STATUS_FALLBACK = Object.freeze({

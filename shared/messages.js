@@ -402,6 +402,7 @@ export const MESSAGES = Object.freeze({
   document_content_missing: "Plik zniknął z magazynu. Zgłoś to administratorowi; metadane dokumentu pozostają w dzienniku.",
   invalid_disposition: "Nieznany sposób otwarcia pliku. Użyj podglądu albo pobrania.",
   document_preview_unsupported: "Podglądu tego typu pliku nie ma. Pobierz plik.",
+  document_preview_blocked: "Ten plik nie przechodzi bieżącej kontroli struktury, więc nie otworzy się w panelu. Można go pobrać; zgłoś go administratorowi.",
   invalid_replacement_document: "Dokument zastępujący musi istnieć i mieć ten sam rodzaj, rok szkolny i klasę.",
   document_status_replacement_not_active: "Dokument zastępujący jest już zastąpiony albo unieważniony. Wybierz inny.",
   document_status_conflict: "Dokument ma już inny zapisany stan (zastąpiony albo unieważniony). Odśwież widok.",
