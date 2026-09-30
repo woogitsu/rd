@@ -55,11 +55,11 @@ test('describeApiError: MFA, brak uprawnień, brak roku', () => {
 // Europe/Brussels (jak Zebrania/Wydarzenia/Konta), nigdy „UTC”; panel i HTML serwera
 // używają tej samej funkcji (shared/zoned-time.js#formatDateOrTimestamp).
 test('formatDate: data jak w panelach, znacznik czasu w strefie Europe/Brussels', () => {
-  assert.equal(formatDate('2026-10-20'), '2026-10-20');
-  assert.equal(formatDate('2026-10-20T14:05:00.000Z'), '2026-10-20 16:05', 'czas letni: UTC+2');
-  assert.equal(formatDate('2026-11-03T10:00:00.000Z'), '2026-11-03 11:00', 'czas zimowy: UTC+1');
-  assert.equal(formatDate('2026-10-25T00:30:00.000Z'), '2026-10-25 02:30', 'noc zmiany czasu');
-  assert.equal(formatDate('2026-08-31T22:30:00.000Z'), '2026-09-01 00:30', 'data lokalna, nie UTC');
+  assert.equal(formatDate('2026-10-20'), '20.10.2026');
+  assert.equal(formatDate('2026-10-20T14:05:00.000Z'), '20.10.2026 16:05', 'czas letni: UTC+2');
+  assert.equal(formatDate('2026-11-03T10:00:00.000Z'), '03.11.2026 11:00', 'czas zimowy: UTC+1');
+  assert.equal(formatDate('2026-10-25T00:30:00.000Z'), '25.10.2026 02:30', 'noc zmiany czasu');
+  assert.equal(formatDate('2026-08-31T22:30:00.000Z'), '01.09.2026 00:30', 'data lokalna, nie UTC');
   assert.equal(formatDate(null), '—');
   assert.equal(formatDate('bez daty'), 'bez daty');
   for (const value of ['2026-10-20', '2026-10-20T14:05:00.000Z', new Date('2026-10-20T14:05:00.000Z')]) {
@@ -125,7 +125,7 @@ test('idCell: skrót identyfikatora w treści, pełna wartość w podpowiedzi', 
     evidence: { expensesWithoutEvidence: { count: 1, netCents: 500, items: [{ occurredOn: '2026-11-02', category: 'X', description: 'Y', netAmountCents: 500, id }] }, possibleDuplicateEvidence: [] },
   });
   assert.deepEqual(sections.find((s) => s.id === 'corrections').rows[0][1], { text: 'd2721f76…', title: id });
-  assert.equal(sections.find((s) => s.id === 'corrections').rows[0][0], '2026-11-03 11:00');
+  assert.equal(sections.find((s) => s.id === 'corrections').rows[0][0], '03.11.2026 11:00');
   assert.deepEqual(sections.find((s) => s.id === 'evidence').rows[0][4], { text: 'd2721f76…', title: id });
   const main = readFileSync(new URL('../audit/main.js', import.meta.url), 'utf8');
   assert.match(main, /td\.title = value\.title/, 'main.js wstawia pełny identyfikator jako podpowiedź');
@@ -147,10 +147,10 @@ test('raport HTML KR: „Stan na” w czasie brukselskim, bez „UTC”, skróco
       possibleDuplicateEvidence: [{ documentIds: [doc], ledgerEntryIds: [entry] }],
     },
   });
-  assert.match(html, /Stan na: 2026-10-20 16:05 \(czas Europe\/Brussels;/);
+  assert.match(html, /Stan na: 20.10.2026 16:05 \(czas Europe\/Brussels;/);
   assert.doesNotMatch(html, /UTC/);
-  assert.match(html, /\(2026-09-01–2027-08-31\)/);
-  assert.match(html, /<td>2026-11-03 11:00<\/td>/, 'kolumna „Zapisano” w czasie brukselskim');
+  assert.match(html, /\(01.09.2026–31.08.2027\)/);
+  assert.match(html, /<td>03.11.2026 11:00<\/td>/, 'kolumna „Zapisano” w czasie brukselskim');
   // Pełne UUID wyłącznie w atrybucie title, w treści komórki skrót.
   const visible = html.replace(/ title="[^"]*"/g, '');
   for (const id of [entry, doc, user]) {

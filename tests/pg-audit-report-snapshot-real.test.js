@@ -18,7 +18,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { localLabel } from '../shared/zoned-time.js';
+import { formatDateOrTimestamp } from '../shared/zoned-time.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createRealTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
 
@@ -183,7 +183,7 @@ test('GET /api/reports/audit?format=html: nagłówek „Stan na” z chwili miga
     // Kontrakt JSON bez zmian: asOf w ISO UTC. HTML pokazuje tę samą chwilę w czasie
     // Europe/Brussels (przegląd demo 4), bez dopisku „UTC”.
     assert.match(event.asOf, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
-    const local = localLabel(new Date(event.asOf), 'Europe/Brussels');
+    const local = formatDateOrTimestamp(event.asOf, 'Europe/Brussels');
     assert.ok(response.text.includes(`Stan na: ${local} (czas Europe/Brussels;`), 'HTML pokazuje asOf migawki');
     assert.doesNotMatch(response.text, /UTC/);
   });

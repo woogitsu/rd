@@ -49,22 +49,28 @@ export function isoToLocalInput(iso, timeZone) {
 }
 
 // Data lub znacznik czasu do raportów i tabel (przegląd demo 4, raport Komisji
-// Rewizyjnej): sama data „2026-10-20” zostaje bez zmian — tak jak w kolumnach dat
-// paneli Księga, Wpłaty i Uzgodnienia; znacznik czasu (ISO UTC albo Date) →
-// „2026-10-20 16:05” w strefie `timeZone` (localLabel), nigdy w UTC.
+// Rewizyjnej, wydruki): polski zapis dd.mm.rrrr — sama data „2026-10-20” →
+// „20.10.2026”; znacznik czasu (ISO UTC albo Date) → „20.10.2026 16:05” w strefie
+// `timeZone`, nigdy w UTC (decyzja użytkownika 30.09: wydruki w zapisie polskim).
 // Pusta wartość → null (wywołujący wybiera „—” albo pusty tekst); tekst w innym
 // kształcie wraca bez zmian.
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
+const polishDate = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+const polishLabel = (instant, timeZone) => {
+  const label = localLabel(instant, timeZone);
+  return `${polishDate(label.slice(0, 10))}${label.slice(10)}`;
+};
+
 export function formatDateOrTimestamp(value, timeZone) {
   if (value === null || value === undefined || value === '') return null;
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : localLabel(value, timeZone);
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : polishLabel(value, timeZone);
   const text = String(value).trim();
-  if (ISO_DATE_ONLY.test(text)) return text;
+  if (ISO_DATE_ONLY.test(text)) return polishDate(text);
   if (ISO_TIMESTAMP.test(text)) {
     const instant = new Date(text);
-    if (!Number.isNaN(instant.getTime())) return localLabel(instant, timeZone);
+    if (!Number.isNaN(instant.getTime())) return polishLabel(instant, timeZone);
   }
   return text;
 }
