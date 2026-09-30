@@ -18,6 +18,7 @@
 //   POST /api/email/campaigns/{id}/test-send         wysyłka testowa na adres z EMAIL_PREVIEW_RECIPIENTS (#104)
 //   GET  /api/email/provider-pause?schoolYearId=…    aktywna pauza po odmowie konta przez dostawcę (#209)
 //   POST /api/email/provider-pause/lift              potwierdzenie naprawy konfiguracji: zarząd + świeże MFA (#209), idempotentne
+//   GET  /api/email/worker-status?schoolYearId=…     ostatni przebieg zadania i alarm „brak przebiegów” (#130; liczby i kody)
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
 //   GET  /api/email/preferences?t=…                  publiczna: podgląd wypisania (bez skutku, #110)
 //   POST /api/email/preferences?t=…                  publiczna: wypisanie jednym kliknięciem (bez Origin, #110)
@@ -1070,6 +1071,75 @@ async function providerPauseLift(request, env, json) {
   }
 }
 
+// Stan zadania wysyłki dla zarządu i skarbnika (#130): czy przebiegi w ogóle
+// się odbywają, gdy kampania roku jest w wysyłce. Wyłącznie liczby, znaczniki
+// czasu i kody — bez adresów, nazw rodzin i treści (jak ops-status admina, #149).
+// Przebiegi są wspólne dla konta (zadanie jest jedno), kampanie liczone tylko w
+// podanym roku (granica przydziału). Alarmy:
+//   worker_never_ran    — kampania czeka na wysyłkę, a nie zapisano żadnego przebiegu;
+//   worker_stale        — ostatni przebieg starszy niż EMAIL_WORKER_ALARM_HOURS (domyślnie 2 h);
+//   worker_dry_run_only — przebiegi są, ale w tym czasie żaden nie był wysyłką
+//                         (np. usługa z railway.email-worker.json w trybie próbnym).
+// Kampania „czeka na wysyłkę” = `sending` z nadejściem send_not_before (albo bez
+// niego); `paused` i start w przyszłości nie włączają alarmu. Odczyt nie zmienia
+// stanu, więc nie tworzy zdarzenia audytu (jak GET …/provider-pause).
+const DEFAULT_WORKER_ALARM_HOURS = 2;
+
+function workerAlarmHours(env) {
+  const hours = Number(env?.EMAIL_WORKER_ALARM_HOURS);
+  return Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_WORKER_ALARM_HOURS;
+}
+
+export async function computeWorkerStatus(db, { schoolYearId, alarmHours = DEFAULT_WORKER_ALARM_HOURS, now = new Date() }) {
+  const { rows: runs } = await db.query(
+    'SELECT mode, finished_at, stopped_reason FROM email_worker_runs ORDER BY finished_at DESC, id DESC LIMIT 1',
+  );
+  const { rows: live } = await db.query(
+    "SELECT finished_at, stopped_reason FROM email_worker_runs WHERE mode = 'live' ORDER BY finished_at DESC, id DESC LIMIT 1",
+  );
+  const { rows: counts } = await db.query(
+    `SELECT count(*) FILTER (WHERE status = 'sending' AND (send_not_before IS NULL OR send_not_before <= $2))::int AS due,
+            count(*) FILTER (WHERE status = 'sending' AND send_not_before > $2)::int AS scheduled,
+            count(*) FILTER (WHERE status = 'paused')::int AS paused
+       FROM email_campaigns WHERE school_year_id = $1`,
+    [schoolYearId, now.toISOString()],
+  );
+  const lastRun = runs[0]
+    ? { mode: runs[0].mode, finishedAt: iso(runs[0].finished_at), stoppedReason: runs[0].stopped_reason ?? null }
+    : null;
+  const lastLiveRun = live[0]
+    ? { finishedAt: iso(live[0].finished_at), stoppedReason: live[0].stopped_reason ?? null }
+    : null;
+  const { due, scheduled, paused } = counts[0];
+  const cutoff = now.getTime() - alarmHours * 60 * 60 * 1000;
+  const recent = (run) => Boolean(run) && new Date(run.finishedAt).getTime() >= cutoff;
+  const alarms = [];
+  if (due > 0) {
+    if (!lastRun) alarms.push('worker_never_ran');
+    else if (!recent(lastRun)) alarms.push('worker_stale');
+    else if (!recent(lastLiveRun)) alarms.push('worker_dry_run_only');
+  }
+  return {
+    lastRun,
+    lastLiveRun,
+    campaigns: { due, scheduled, paused },
+    alarmAfterHours: alarmHours,
+    alarms,
+    generatedAt: now.toISOString(),
+  };
+}
+
+async function workerStatus(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, schoolYearId);
+  const status = await computeWorkerStatus(env.db, { schoolYearId, alarmHours: workerAlarmHours(env) });
+  // Czy serwer zna okno wysyłki (EMAIL_SEND_WINDOW_ENABLED) — bez godzin; te są w podglądzie kampanii.
+  status.sendWindowEnabled = emailConfig(env).sendWindow.enabled;
+  return json({ workerStatus: status }, 200, { 'Cache-Control': 'no-store' });
+}
+
 const REPORT_CATEGORIES = Object.freeze(['queued', 'sending', 'sent', 'delivered', 'bounced', 'delivery_unknown', 'failed', 'suppressed', 'skipped', 'cancelled']);
 const RESOLUTIONS = Object.freeze(['confirmed_delivered', 'confirmed_not_sent']);
 const EVIDENCE_CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
@@ -1720,6 +1790,10 @@ export async function handle(request, env, url, json) {
     }
     if (url.pathname === '/api/email/provider-pause') {
       if (method === 'GET') return await providerPauseShow(request, env, url, json);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    }
+    if (url.pathname === '/api/email/worker-status') {
+      if (method === 'GET') return await workerStatus(request, env, url, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
     }
     if (url.pathname === '/api/email/provider-pause/lift') {
