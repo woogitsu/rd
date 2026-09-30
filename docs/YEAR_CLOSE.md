@@ -1,6 +1,6 @@
 # Zamknięcie roku i przekazanie dokumentacji nowej Radzie
 
-Zakres: issue #15. Migracja `postgres/migrations/0017_year_close.sql`, trasy `src/pg/routes/year-close.js`, testy `tests/pg-year-close.test.js`. Prototyp na PostgreSQL (Railway), testowany wyłącznie na danych syntetycznych. **Nie jest gotowy do pracy na danych rodzin** — wymaga decyzji wymienionych na końcu.
+Zakres: issue #15. Migracja `postgres/migrations/0017_year_close.sql`, trasy `src/pg/routes/year-close.js`, testy `tests/pg-year-close.test.js` (współbieżność na prawdziwym PostgreSQL: `tests/pg-year-close-race.test.js`). Prototyp na PostgreSQL (Railway), testowany wyłącznie na danych syntetycznych. **Nie jest gotowy do pracy na danych rodzin** — wymaga decyzji wymienionych na końcu.
 
 ## Stany roku
 
@@ -48,6 +48,14 @@ Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawien
 7. zapisuje zdarzenia `ledger_opening_balance.carried_forward` i `year_close.closed`.
 
 Zamknięcie jest odrzucane, gdy następny rok ma już bilans otwarcia (`next_year_opening_balance_exists`) — trzeba wyjaśnić rozbieżność, a nie nadpisywać. Ponowne zamknięcie zamkniętego roku (przed rozpoczęciem transakcji albo po niej — druga transakcja widzi już `closed` po zwolnieniu advisory locka przez pierwszą) zwraca stan z `replayed: true` bez nowych zapisów, `200`, bez zakleszczenia (#212).
+
+Inne trasy a blokady zamknięcia (#212, weryfikacja na prawdziwym PostgreSQL — `tests/pg-year-close-race.test.js`, `npm run test:pg-real`; PGlite wykonuje transakcje po kolei i zakleszczeń nie pokazuje):
+
+- zapis i korekta księgi (`ledger_entries`, `ledger_corrections`, …) czekają na `SHARE` z kroku 1; po zamknięciu w zamykanym roku dostają `409 school_year_closed`, w innym roku przechodzą po zwolnieniu blokady;
+- tabele wpłat (`payment_entries`, `payment_corrections`, …) nie są blokowane przez `LOCK TABLE`; trigger zamrożenia (`school_year_assert_open`, 0017) bierze `FOR SHARE` na wierszu zamknięcia. Korekta wpłaty w trakcie zamknięcia czeka na ten wiersz i dostaje `409 school_year_closed`; korekta niezatwierdzona przed zamknięciem wstrzymuje zamknięcie do swojego COMMIT (albo przed, albo `409`, nigdy w połowie);
+- ręczny bilans otwarcia (`POST /api/ledger/opening-balance`) bierze `LOCK ledger_opening_balances IN SHARE ROW EXCLUSIVE MODE` jako pierwszą blokadę — czeka na zamknięcie i widzi bilans przeniesiony (`409 opening_balance_exists`);
+- promocja uczniów (`src/pg/promotions.js`) ma własną blokadę doradczą `rd_promotion` i nie bierze blokad księgi ani `rd_year_close`, więc nie tworzy cyklu; zapis przydziału ucznia do zamykanego roku odrzuca trigger zamrożenia `enrollments` (0054);
+- ponowienie 40P01/40001 po stronie serwera (#156) robi `src/db.js` dla każdej transakcji, także tej — ale test wymusza `retries: 0`, żeby zakleszczenie nie było ukryte za ponowieniem.
 
 Krok 5 (wygaszenie przydziałów zawężonych do zamykanego roku) ma skutek uboczny przy dwóch równoległych `/close` (#212, dopisek): jeśli osoba B ma rolę `board` zawężoną WŁAŚNIE do zamykanego roku (jak osoba A, zwykle w tej samej kadencji), a osoba A zamknie rok jako pierwsza, przydział B do tego roku jest już wygaszony, zanim żądanie B dotrze do sprawdzenia roli (`authorize()` w `src/pg/routes/year-close.js` biegnie PRZED transakcją, więc kolejność wejścia do samej autoryzacji nie jest chroniona advisory lockiem). Zwykłe sprawdzenie roli zwróciłoby wtedy mylące `403 forbidden` osobie, która miała prawo zamknąć rok w chwili wysłania żądania. `wasAuthorizedAtOwnClosure` rozpoznaje ten dokładny przypadek — przydział wygasł w TEJ SAMEJ transakcji, która zamknęła TEN rok (`role_grants.expires_at = school_year_closures.closed_at`, oba `now()` tej samej transakcji SQL).
 
