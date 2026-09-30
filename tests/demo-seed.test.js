@@ -29,6 +29,17 @@ test('demo-seed: odmawia działania gdy APP_ENV=production (isProductionEnv)', (
   );
 });
 
+// #166: tryb demo nigdy poza środowiskiem lokalnym — także przy literówce i stagingu.
+test('demo-seed: odmawia przy każdej wartości APP_ENV poza brak/development/test', () => {
+  for (const APP_ENV of ['production', 'PRODUCTION', 'Prod', ' prod ', 'staging', 'Staging', 'prodution', 'live', 'load-test']) {
+    assert.throws(() => assertSafeEnvironment({ APP_ENV }),
+      (error) => error instanceof DemoSeedRefused && error.code === 'production_env', APP_ENV);
+  }
+  for (const APP_ENV of [undefined, '', 'development', 'Development', 'test', 'TEST']) {
+    assert.doesNotThrow(() => assertSafeEnvironment({ APP_ENV }), String(APP_ENV));
+  }
+});
+
 test('demo-seed: odmawia działania gdy BREVO_API_KEY jest ustawiony', () => {
   assert.throws(
     () => assertSafeEnvironment({ BREVO_API_KEY: 'xkeysib-fake' }),
@@ -217,20 +228,21 @@ test('demo-seed: nazwiska rodzin/uczniów są jawnie syntetyczne', () => {
 });
 
 // #166: demo bez ręcznego ustawiania zmiennych.
-test('demoAppEnv: brak APP_ENV daje development (import bez IMPORT_ENABLED), jawna wartość zostaje', async () => {
+test('demoAppEnv: brak APP_ENV daje development (import bez IMPORT_ENABLED), jawna wartość znormalizowana', async () => {
   const { demoAppEnv } = await import('../scripts/demo-seed.js');
   const { isProductionLikeEnv } = await import('../src/app-env.js');
   assert.equal(demoAppEnv({}), 'development');
   assert.equal(demoAppEnv({ APP_ENV: '' }), 'development');
   assert.equal(isProductionLikeEnv(demoAppEnv({})), false);
   assert.equal(demoAppEnv({ APP_ENV: 'staging' }), 'staging');
+  assert.equal(demoAppEnv({ APP_ENV: ' TEST ' }), 'test');
 });
 
 test('demo-start: z APP_ENV=production/prod odmawia przed otwarciem bazy', async () => {
   const { startDemoServer } = await import('../scripts/demo-start.js');
   const saved = process.env.APP_ENV;
   try {
-    for (const value of ['production', 'Prod']) {
+    for (const value of ['production', 'Prod', 'prodution', 'staging']) {
       process.env.APP_ENV = value;
       await assert.rejects(startDemoServer({ port: 0 }), (error) => error instanceof DemoSeedRefused && error.code === 'production_env');
     }

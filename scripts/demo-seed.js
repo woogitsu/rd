@@ -33,7 +33,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations, applyMigrations } from '../src/postgres-migrations.js';
 import { pgliteClient } from './smoke-postgres.js';
 import { createPgDatabase } from '../src/db.js';
-import { isProductionEnv } from '../src/app-env.js';
+import { isLocalAppEnv, resolveAppEnv } from '../src/app-env.js';
 import { bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
@@ -79,10 +79,11 @@ export class DemoSeedRefused extends Error {
 
 // #166: demo działa zawsze lokalnie na PGlite i danych syntetycznych, więc brak
 // APP_ENV oznacza 'development' (bez ręcznego ustawiania zmiennych; import w demie
-// nie wymaga IMPORT_ENABLED). Jawnie ustawiona produkcja jest odrzucana wcześniej
-// przez assertSafeEnvironment; nieznana wartość zostaje bez zmian (zachowawczo).
+// nie wymaga IMPORT_ENABLED). Wartość jest znormalizowana wspólną funkcją
+// (src/app-env.js). Wszystko poza brak/development/test (staging, produkcja,
+// literówka) odrzuca wcześniej assertSafeEnvironment.
 export function demoAppEnv(env = process.env) {
-  return env.APP_ENV || 'development';
+  return resolveAppEnv(env.APP_ENV).name || 'development';
 }
 
 // --- Bezpieczeństwo -----------------------------------------------------------
@@ -90,11 +91,14 @@ export function demoAppEnv(env = process.env) {
 // żadnej wiadomości. Sprawdzane PRZED otwarciem jakiejkolwiek bazy.
 export function assertSafeEnvironment(env = process.env) {
   const nodeEnv = String(env.NODE_ENV ?? '').trim().toLowerCase();
-  if (nodeEnv === 'production' || isProductionEnv(env.APP_ENV)) {
+  // #166: demo tylko w środowisku lokalnym (brak APP_ENV, development, test).
+  // Produkcja, staging i nieznana wartość (np. literówka „prodution”) = odmowa —
+  // tryb demo nigdy nie może włączyć się w środowisku wystawionym do sieci.
+  if (nodeEnv === 'production' || !isLocalAppEnv(env.APP_ENV)) {
     throw new DemoSeedRefused(
       'production_env',
-      'Seed demo odmówiony: NODE_ENV lub APP_ENV wskazuje na środowisko produkcyjne. '
-      + 'To demo jest wyłącznie lokalne — nic nie zostało zmienione.',
+      'Seed demo odmówiony: NODE_ENV lub APP_ENV wskazuje na środowisko inne niż lokalne '
+      + '(dozwolone: brak APP_ENV, development, test). To demo jest wyłącznie lokalne — nic nie zostało zmienione.',
     );
   }
   if (env.BREVO_API_KEY) {
