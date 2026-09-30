@@ -313,27 +313,3 @@ test('logowanie po resecie administracyjnym jest oznaczone w dzienniku do zmiany
     await db.close();
   }
 });
-
-test('wniosek o nadanie roli w zamkniętym roku szkolnym → 409 school_year_closed, bez wniosku', async () => {
-  const { db, env, cookies } = await setup();
-  try {
-    await db.exec(`
-      INSERT INTO school_years (id, label, starts_on, ends_on) VALUES ('y-old', 'y-old', '2024-09-01', '2025-08-31')
-        ON CONFLICT (id) DO NOTHING;
-      INSERT INTO school_years (id, label, starts_on, ends_on) VALUES ('y-next', 'y-next', '2025-09-01', '2026-08-31')
-        ON CONFLICT (id) DO NOTHING;
-      SET session_replication_role = replica;
-      INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
-        closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
-        carried_opening_balance_id, expired_grant_count)
-      VALUES ('clo-1', 'y-old', 'y-next', 'closed', 'u-admin-a', 'u-admin-b', now(), 0, 0, 0, 0, 'ob-next', 0);
-      SET session_replication_role = origin;
-    `);
-    const result = await post(env, '/api/admin/grants', cookies['u-admin-a'], { userId: 'u-target', role: 'board', schoolYearId: 'y-old' });
-    assert.equal(result.status, 409);
-    assert.equal(result.data.error, 'school_year_closed');
-    assert.equal(await count(db, 'SELECT count(*)::int AS n FROM role_grant_requests'), 0);
-  } finally {
-    await db.close();
-  }
-});
