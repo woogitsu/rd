@@ -12,7 +12,16 @@
    widoczna część, #151). */
 .print-only { display: none; }
 
-@page { size: A4; margin: 15mm; }
+@page {
+  size: A4;
+  margin: 15mm;
+  /* Numeracja stron (Chromium ≥ 131; inne przeglądarki pomijają pola marginesu).
+     Nagłówek strony (@top-left) i znacznik poufności (@bottom-left) dopisuje
+     shared/print-meta.js#runningPageCss — tekst zależy od widoku. */
+  @bottom-right { content: "Strona " counter(page) " z " counter(pages); font-size: 8pt; color: #000; }
+  @top-left { font-size: 8pt; color: #000; }
+  @bottom-left { font-size: 8pt; font-weight: 700; color: #000; }
+}
 
 @media print {
   .skip-link,
@@ -26,7 +35,10 @@
   .load-more,
   #load-more-hint,
   dialog,
-  button { display: none !important; }
+  button,
+  .print-hide,
+  #student-search-form,
+  #events-csv { display: none !important; }
 
   .print-meta { display: block; margin: 0 0 1.5rem; padding: 0 0 .6rem; border-bottom: 1px solid #000; color: #000; font-size: 9pt; }
   .print-meta p { margin: 0 0 .2rem; }
@@ -41,7 +53,14 @@
   thead { display: table-header-group; }
   tfoot { display: table-footer-group; }
   tr { break-inside: avoid; page-break-inside: avoid; }
-  th, td { border-bottom: 1px solid #999; }
+  th, td { border-bottom: 1px solid #999; padding: 1.2mm 1.6mm; font-size: 9pt; }
+  th { color: #000; }
+  /* Data i kwota nie łamią się w wąskiej kolumnie A4 („20.10.2026”, „1 234,56 €”). */
+  td.date, td.amount, th.num, td.num { white-space: nowrap; }
+  /* Plakietki statusu i kwoty w kafelkach: czarny tekst na białym (bez tła). */
+  .badge { background: none !important; color: #000 !important; border: 0 !important; padding: 0 !important; font-weight: 400; }
+  .summary-grid strong, .amount { color: #000 !important; }
+  .summary-grid > div { border-color: #999 !important; break-inside: avoid; }
 
   .card { border: 0; break-inside: avoid; page-break-inside: avoid; }
 
@@ -55,6 +74,7 @@
      wymaganych regulaminem rozstrzyga zarząd. */
   .print-signatures { display: flex; gap: 12mm; margin-top: 18mm; break-inside: avoid; page-break-inside: avoid; }
   .print-signatures > div { flex: 1; border-top: 1px solid #000; padding-top: 1.5mm; font-size: 9pt; }
-  #print-attendance-body td.signature { height: 10mm; min-width: 40mm; }
+  #print-attendance-body td.signature { height: 10mm; width: 40mm; }
+  #print-attendance-body td.name-blank { width: 55mm; }
   .print-draft-mark { padding: 1.5mm 3mm; border: 1px solid #000; font-weight: 700; letter-spacing: .06em; }
 }
