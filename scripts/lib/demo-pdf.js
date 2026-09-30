@@ -6,7 +6,6 @@
 // struktury (src/documents.js validateStructure) co plik z banku.
 // Tekst tylko ASCII (bez polskich znaków), bo czcionka standardowa nie ma ich
 // w kodowaniu WinAnsi; polskie tytuły trafiają do opisu dokumentu w panelu.
-import { SCHOOL_YEAR_LABEL } from './demo-constants.js';
 
 function pdfText(value) {
   return String(value).replace(/[^\x20-\x7e]/g, '?').replace(/([\\()])/g, '\\$1');
@@ -40,26 +39,32 @@ export function buildDemoPdf({ title, lines }) {
   return Uint8Array.from(out, (ch) => ch.charCodeAt(0));
 }
 
-export const DEMO_INVOICE_PDF = Object.freeze({
-  title: 'Faktura - przyklad demo',
-  lines: [
-    'Dokument syntetyczny wygenerowany w kodzie demo. To nie jest prawdziwa faktura.',
-    '',
-    'Wystawca: Przykladowy Sklep (fikcyjny)',
-    'Nabywca: Rada Rodzicow (dane przykladowe)',
-    'Data: 2026-11-05',
-    'Pozycja: Materialy plastyczne na zajecia dodatkowe',
-    'Kwota: 150,00 EUR',
-  ],
-});
+// Daty i rok na PDF-ach pochodzą z osi czasu seeda (scripts/lib/demo-dates.js) —
+// te same co data wpisu księgi (faktura) i termin zebrania (protokół).
+export function demoInvoicePdf({ date }) {
+  return Object.freeze({
+    title: 'Faktura - przyklad demo',
+    lines: [
+      'Dokument syntetyczny wygenerowany w kodzie demo. To nie jest prawdziwa faktura.',
+      '',
+      'Wystawca: Przykladowy Sklep (fikcyjny)',
+      'Nabywca: Rada Rodzicow (dane przykladowe)',
+      `Data: ${date}`,
+      'Pozycja: Materialy plastyczne na zajecia dodatkowe',
+      'Kwota: 150,00 EUR',
+    ],
+  });
+}
 
-export const DEMO_MINUTES_PDF = Object.freeze({
-  title: 'Protokol - przyklad demo',
-  lines: [
-    'Dokument syntetyczny wygenerowany w kodzie demo. To nie jest prawdziwy protokol.',
-    '',
-    'Zebranie zarzadu Rady (dane przykladowe), 2026-11-20',
-    `Omowiono biezace wplaty i plan wydatkow na rok szkolny ${SCHOOL_YEAR_LABEL}.`,
-    'Bez uchwal na tym zebraniu.',
-  ],
-});
+export function demoMinutesPdf({ date, schoolYearLabel }) {
+  return Object.freeze({
+    title: 'Protokol - przyklad demo',
+    lines: [
+      'Dokument syntetyczny wygenerowany w kodzie demo. To nie jest prawdziwy protokol.',
+      '',
+      `Zebranie zarzadu Rady (dane przykladowe), ${date}`,
+      `Omowiono biezace wplaty i plan wydatkow na rok szkolny ${schoolYearLabel}.`,
+      'Bez uchwal na tym zebraniu.',
+    ],
+  });
+}

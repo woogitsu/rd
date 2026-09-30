@@ -40,8 +40,8 @@ import { base32Decode, totp } from '../src/pg/mfa.js';
 import { pad } from './lib/synthetic-seed.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createDirectoryStorage } from '../src/storage-dir.js';
-import { buildDemoPdf, DEMO_INVOICE_PDF, DEMO_MINUTES_PDF } from './lib/demo-pdf.js';
-import { SCHOOL_YEAR_ID, SCHOOL_YEAR_LABEL } from './lib/demo-constants.js';
+import { buildDemoPdf, demoInvoicePdf, demoMinutesPdf } from './lib/demo-pdf.js';
+import { demoTimeline, parseDemoNow } from './lib/demo-dates.js';
 import { SCHOOL_NAME } from '../shared/school.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -57,14 +57,15 @@ export const DEMO_ORIGIN = 'http://localhost:3000';
 // UWAGA: /site/ (publiczna strona) nie ma API do wylistowania lat szkolnych —
 // site/core.js#defaultSchoolYearId ZAKŁADA, że identyfikator roku ma postać
 // „<rok>-<rok+1>” i liczy go z dzisiejszej daty (wrzesień = początek roku).
-// Jeśli SCHOOL_YEAR_ID tu nie pasuje do tego wzorca, /site/ pyta serwer o inny
+// Jeśli identyfikator roku demo nie pasuje do tego wzorca, /site/ pyta serwer o inny
 // rok niż ten, do którego seed wpisał zebranie/wydarzenia/protokół — publiczna
 // strona wygląda pusto („Brak opublikowanych protokołów”), mimo że dane
-// istnieją. Dlatego identyfikator jest w tym samym formacie (nie np. „y2026”);
-// zob. też druga asercja w tests/demo-seed.test.js (GET
-// /api/meetings/public-minutes zwraca ≥1 protokół) i wypisywany na konsoli
-// link z jawnym „?rok=”, gdyby demo działo się poza wrześniem bieżącego roku.
-export { SCHOOL_YEAR_ID, SCHOOL_YEAR_LABEL };
+// istnieją. Dlatego rok demo liczy TA SAMA funkcja (heuristicSchoolYearId w
+// scripts/lib/demo-dates.js) z dnia uruchomienia seeda: rok szkolny zawierający
+// dzisiejszą datę, w formacie „<rok>-<rok+1>”. Zob. też asercja w
+// tests/demo-seed.test.js (GET /api/meetings/public-minutes zwraca ≥1 protokół)
+// i wypisywany na konsoli link z jawnym „?rok=”, gdyby pokaz był już w innym roku
+// szkolnym niż uruchomienie seeda.
 export const HOUSEHOLD_COUNT = 20;
 export const CLASS_NAMES = ['0-A', 'I-A', 'II-A', 'III-A', 'IV-A'];
 
@@ -256,8 +257,8 @@ async function createDemoAccount(env, { email, displayName, role, classId, schoo
 // demo. Wstawiamy więc bezpośrednio przez SQL, tak jak testy (tests/helpers/pg.js)
 // i scripts/lib/synthetic-seed.js — ten sam kształt tabel, dane wyłącznie syntetyczne
 // (@example.invalid, nazwiska jawnie fikcyjne „Przykładowy/-a”).
-function buildDemoRoster() {
-  const classes = CLASS_NAMES.map((name, i) => [`c${pad(i + 1)}`, SCHOOL_YEAR_ID, `Klasa ${name} (dane przykładowe)`]);
+function buildDemoRoster(t) {
+  const classes = CLASS_NAMES.map((name, i) => [`c${pad(i + 1)}`, t.schoolYearId, `Klasa ${name} (dane przykładowe)`]);
   const households = [];
   const students = [];
   const enrollments = [];
@@ -273,7 +274,7 @@ function buildDemoRoster() {
       const sid = `s${pad(h)}${c}`;
       students.push([sid, hid, `Uczeń ${c}`, `Przykładowy ${pad(h)}`]);
       const classId = classes[(h + c - 1) % classes.length][0];
-      enrollments.push([`e${pad(h)}${c}`, sid, classId, SCHOOL_YEAR_ID]);
+      enrollments.push([`e${pad(h)}${c}`, sid, classId, t.schoolYearId]);
       studentIds.push(sid);
     }
     // Co czwarta rodzina ma jednego opiekuna wpisanego do systemu; reszta — dwoje
@@ -308,12 +309,12 @@ async function insertRows(db, table, columns, rows, chunkSize = 200) {
   }
 }
 
-async function seedRoster(db) {
+async function seedRoster(db, t) {
   await db.query(
     `INSERT INTO school_years (id, label, starts_on, ends_on) VALUES ($1,$2,$3,$4)`,
-    [SCHOOL_YEAR_ID, SCHOOL_YEAR_LABEL, '2026-09-01', '2027-08-31'],
+    [t.schoolYearId, t.schoolYearLabel, t.startsOn, t.endsOn],
   );
-  const roster = buildDemoRoster();
+  const roster = buildDemoRoster(t);
   await insertRows(db, 'classes', ['id', 'school_year_id', 'name'], roster.classes);
   await insertRows(db, 'households', ['id'], roster.households);
   await insertRows(db, 'students', ['id', 'household_id', 'first_name', 'last_name'], roster.students);
@@ -330,42 +331,57 @@ async function seedRoster(db) {
 // przypisana do rodziny dostaje w seedLedger powiązany wpis księgi o tej samej
 // kwocie i metodzie, a kwoty wpłat „bank” są parami różne, żeby propozycje
 // dopasowania w /reconciliation/ nie były niejednoznaczne.
+// Daty są liczone względem dnia uruchomienia (scripts/lib/demo-dates.js): ostatnia
+// kolumna to liczba dni PRZED dniem wyciągu (wczoraj) w pełnym planie; gdy od
+// 1 września minęło mniej niż 61 dni, odstępy są proporcjonalnie ściśnięte.
+// Kolejność i kwoty są stałe (docs/DEMO.md, test kwot w tests/demo-seed.test.js).
 const PAYMENT_PLAN = [
-  // [numer rodziny, metoda, kwota w centach, data wpłaty]
-  [1, 'bank', 3000, '2026-10-05'], [1, 'bank', 2000, '2026-12-01'], // rodzina z wpłatą w dwóch ratach
-  [2, 'cash', 5000, '2026-10-15'],
-  [3, 'bank', 5000, '2026-10-15'],
-  [4, 'bank', 2500, '2026-10-06'], [4, 'bank', 2700, '2026-12-02'],
-  [5, 'bank', 4000, '2026-10-16'],
-  [6, 'cash', 5000, '2026-10-20'],
-  [7, 'bank', 3500, '2026-10-07'], [7, 'bank', 1500, '2026-12-03'],
-  [8, 'cash', 3000, '2026-10-22'],
-  [9, 'bank', 6000, '2026-10-19'],
-  [10, 'bank', 4500, '2026-10-09'], [10, 'bank', 1000, '2026-12-04'],
-  [11, 'bank', 5500, '2026-10-21'],
-  [12, 'cash', 5000, '2026-10-25'],
+  // [numer rodziny, metoda, kwota w centach, dni przed dniem wyciągu]
+  [1, 'bank', 3000, 61], [1, 'bank', 2000, 4], // rodzina z wpłatą w dwóch ratach
+  [2, 'cash', 5000, 51],
+  [3, 'bank', 5000, 51],
+  [4, 'bank', 2500, 60], [4, 'bank', 2700, 3],
+  [5, 'bank', 4000, 50],
+  [6, 'cash', 5000, 46],
+  [7, 'bank', 3500, 59], [7, 'bank', 1500, 2],
+  [8, 'cash', 3000, 44],
+  [9, 'bank', 6000, 47],
+  [10, 'bank', 4500, 57], [10, 'bank', 1000, 1],
+  [11, 'bank', 5500, 45],
+  [12, 'cash', 5000, 41],
 ];
+
+// Pozostałe punkty osi czasu (dni przed dniem wyciągu w pełnym planie).
+const DAYS_BEFORE = Object.freeze({
+  materials: 30, // wydatek na materiały (przelew) i faktura demo
+  donation: 25, // darowizna (przelew)
+  meeting: 15, // zebranie zarządu „Odbyte” (protokół zatwierdzany przy seedzie — po zebraniu)
+  unassigned: 17, // wpłata bez przypisanej rodziny
+  refreshments: 10, // poczęstunek (gotówka) i opłata SWIFT na wyciągu
+  bankFee: 4, // opłata za prowadzenie rachunku
+});
 
 // CELOWY przykład do pokazu kontroli (docs/DEMO.md, „Celowe przykłady”): wpłata
 // przelewem bez przypisanej rodziny. Ma status „unmatched”, więc nie może zostać
 // ujęta w księdze, dopóki skarbnik nie przypisze jej do rodziny (osobne zdarzenie).
-const UNASSIGNED_PAYMENT = { method: 'bank', amountCents: 1550, receivedOn: '2026-11-18', reference: 'DEMO-NIEPRZYPISANA' };
+const UNASSIGNED_PAYMENT = { method: 'bank', amountCents: 1550, reference: 'DEMO-NIEPRZYPISANA' };
 
-async function seedPayments(env, cookie, roster) {
+async function seedPayments(env, cookie, roster, t) {
   if (roster.households.length < 12) throw new Error('Seed demo: plan wpłat wymaga co najmniej 12 rodzin.');
   const payments = [];
-  for (const [number, method, amountCents, receivedOn] of PAYMENT_PLAN) {
+  for (const [number, method, amountCents, daysBefore] of PAYMENT_PLAN) {
+    const receivedOn = t.beforeStatement(daysBefore);
     const householdId = roster.households[number - 1][0];
     const reference = `DEMO-${householdId}-${receivedOn}`;
     const response = await apiCall(env, {
       method: 'POST', path: '/api/payments', cookie, idempotencyKey: idKey('demo-payment'),
-      body: { schoolYearId: SCHOOL_YEAR_ID, householdId, amountCents, receivedOn, method, reference },
+      body: { schoolYearId: t.schoolYearId, householdId, amountCents, receivedOn, method, reference },
     });
     payments.push({ id: response.data.payment.id, householdId, method, amountCents, receivedOn });
   }
   const unassigned = await apiCall(env, {
     method: 'POST', path: '/api/payments', cookie, idempotencyKey: idKey('demo-payment'),
-    body: { schoolYearId: SCHOOL_YEAR_ID, ...UNASSIGNED_PAYMENT },
+    body: { schoolYearId: t.schoolYearId, ...UNASSIGNED_PAYMENT, receivedOn: t.beforeStatement(DAYS_BEFORE.unassigned) },
   });
   return { payments, unassignedPaymentId: unassigned.data.payment.id };
 }
@@ -377,7 +393,7 @@ async function seedPayments(env, cookie, roster) {
 // nagłówki PL/EN — patrz HEADER_ALIASES), tak jak w prawdziwym panelu
 // /reconciliation/. Notatki NIE zawierają numeru rachunku (IBAN): pola wolnego
 // tekstu odrzucają go zawsze (422 personal_data_forbidden), także testowy.
-// Wyciąg zawiera KAŻDY ruch na rachunku do 2026-12-05: wszystkie wpłaty „bank”
+// Wyciąg zawiera KAŻDY ruch na rachunku do dnia wyciągu (wczoraj): wszystkie wpłaty „bank”
 // z seedPayments (każda ma wpis księgi z seedLedger), darowiznę, przelew za
 // materiały i opłatę za rachunek — a poza tym dwie pozycje CELOWO bez wpisu
 // księgi (przykłady do pokazu, docs/DEMO.md, „Celowe przykłady”): wpłata
@@ -385,19 +401,19 @@ async function seedPayments(env, cookie, roster) {
 // „unmatched”) i opłata SWIFT (−3,75 EUR, jeszcze niezaksięgowana). Saldo wyciągu
 // = saldo rachunku w księdze + 15,50 − 3,75, czyli różnica uzgodnienia to
 // dokładnie 11,75 EUR, w całości opisana tymi dwiema pozycjami.
-// Saldo wyciągu na 2026-12-05 (zob. komentarz wyżej): rachunek w księdze 450,00 EUR
+// Saldo wyciągu na dzień wyciągu (zob. komentarz wyżej): rachunek w księdze 450,00 EUR
 // (wpłaty „bank” 412,00 + darowizna 200,00 − materiały 150,00 − opłata 12,00)
 // + wpłata nieprzypisana 15,50 − opłata SWIFT 3,75 = 461,75 EUR. Kasa jest
 // wyzerowana (gotówka 180,00 ze składek wydana na poczęstunek 180,00), więc
 // saldo księgi = saldo rachunku i różnica uzgodnienia to dokładnie 11,75 EUR.
 export const DEMO_STATEMENT_BALANCE_CENTS = 46175;
 export const DEMO_STATEMENT_DIFFERENCE_CENTS = 1175;
-async function seedReconciliation(env, treasurerCookie, payments) {
+async function seedReconciliation(env, treasurerCookie, payments, t) {
   const created = await apiCall(env, {
     method: 'POST', path: '/api/reconciliations', cookie: treasurerCookie, idempotencyKey: idKey('demo-reconciliation'),
     body: {
-      schoolYearId: SCHOOL_YEAR_ID,
-      statementDate: '2026-12-05',
+      schoolYearId: t.schoolYearId,
+      statementDate: t.statementDate,
       statementBalanceCents: DEMO_STATEMENT_BALANCE_CENTS,
       notes: 'Wyciąg testowy (dane syntetyczne — do pokazu importu i dopasowań). Szkic, nie zatwierdzony.',
     },
@@ -407,11 +423,11 @@ async function seedReconciliation(env, treasurerCookie, payments) {
   const bankPayments = payments.filter((payment) => payment.method === 'bank');
   const lines = [
     ...bankPayments.map((payment) => [payment.receivedOn, payment.amountCents, `DEMO wpłata ${payment.householdId} (dane przykładowe)`]),
-    ['2026-11-05', -15000, 'Materiały plastyczne na zajęcia dodatkowe (dane przykładowe)'],
-    ['2026-11-10', 20000, 'Darowizna na cele statutowe Rady (dane przykładowe)'],
-    ['2026-11-18', UNASSIGNED_PAYMENT.amountCents, 'Wpłata nieznanego nadawcy — do wyjaśnienia (dane przykładowe)'],
-    ['2026-11-25', -375, 'Opłata SWIFT — do wyjaśnienia (dane przykładowe)'],
-    ['2026-12-01', -1200, 'Opłata za prowadzenie rachunku Rady (dane przykładowe)'],
+    [t.beforeStatement(DAYS_BEFORE.materials), -15000, 'Materiały plastyczne na zajęcia dodatkowe (dane przykładowe)'],
+    [t.beforeStatement(DAYS_BEFORE.donation), 20000, 'Darowizna na cele statutowe Rady (dane przykładowe)'],
+    [t.beforeStatement(DAYS_BEFORE.unassigned), UNASSIGNED_PAYMENT.amountCents, 'Wpłata nieznanego nadawcy — do wyjaśnienia (dane przykładowe)'],
+    [t.beforeStatement(DAYS_BEFORE.refreshments), -375, 'Opłata SWIFT — do wyjaśnienia (dane przykładowe)'],
+    [t.beforeStatement(DAYS_BEFORE.bankFee), -1200, 'Opłata za prowadzenie rachunku Rady (dane przykładowe)'],
   ].sort((x, y) => x[0].localeCompare(y[0]));
   const statementSum = lines.reduce((sum, line) => sum + line[1], 0);
   if (statementSum !== DEMO_STATEMENT_BALANCE_CENTS) {
@@ -429,18 +445,18 @@ async function seedReconciliation(env, treasurerCookie, payments) {
 }
 
 // --- Księga (kategorie: SQL — brak API POST; wpisy: POST /api/ledger) ----------
-async function seedLedger(env, cookie, actorUserId, payments) {
+async function seedLedger(env, cookie, actorUserId, payments, t) {
   // SQL — brak API: GET /api/ledger/categories istnieje, ale nie ma odpowiednika
   // POST (docs/NODE_SERVER.md, src/pg/routes/ledger.js). Tak samo robią testy
   // (tests/pg-authz-matrix.test.js).
   // Identyfikatory kategorii muszą być ASCII (walidacja validId w src/pg/routes/ledger.js);
   // polskie nazwy są w kolumnie `name`, bez tego ograniczenia.
   const categories = [
-    ['cat-income-skladki', SCHOOL_YEAR_ID, 'income', 'Składki dobrowolne', actorUserId],
-    ['cat-income-darowizny', SCHOOL_YEAR_ID, 'income', 'Darowizny', actorUserId],
-    ['cat-expense-materialy', SCHOOL_YEAR_ID, 'expense', 'Materiały i pomoce', actorUserId],
-    ['cat-expense-wydarzenia', SCHOOL_YEAR_ID, 'expense', 'Wydarzenia szkolne', actorUserId],
-    ['cat-expense-oplaty', SCHOOL_YEAR_ID, 'expense', 'Opłaty bankowe', actorUserId],
+    ['cat-income-skladki', t.schoolYearId, 'income', 'Składki dobrowolne', actorUserId],
+    ['cat-income-darowizny', t.schoolYearId, 'income', 'Darowizny', actorUserId],
+    ['cat-expense-materialy', t.schoolYearId, 'expense', 'Materiały i pomoce', actorUserId],
+    ['cat-expense-wydarzenia', t.schoolYearId, 'expense', 'Wydarzenia szkolne', actorUserId],
+    ['cat-expense-oplaty', t.schoolYearId, 'expense', 'Opłaty bankowe', actorUserId],
   ];
   await insertRows(env.db, 'ledger_categories', ['id', 'school_year_id', 'direction', 'name', 'created_by'], categories);
 
@@ -457,16 +473,16 @@ async function seedLedger(env, cookie, actorUserId, payments) {
       description: 'Wpłata składki dobrowolnej (dane przykładowe)', occurredOn: payment.receivedOn,
       method: payment.method, paymentEntryId: payment.id,
     })),
-    { direction: 'income', categoryId: 'cat-income-darowizny', amountCents: 20000, description: 'Darowizna na cele statutowe Rady (dane przykładowe)', occurredOn: '2026-11-10', method: 'bank' },
-    { direction: 'expense', categoryId: 'cat-expense-materialy', amountCents: 15000, description: 'Materiały plastyczne na zajęcia dodatkowe (dane przykładowe)', occurredOn: '2026-11-05', method: 'bank' },
-    { direction: 'expense', categoryId: 'cat-expense-wydarzenia', amountCents: 18000, description: 'Poczęstunek na spotkanie andrzejkowe (dane przykładowe)', occurredOn: '2026-11-25', method: 'cash' },
-    { direction: 'expense', categoryId: 'cat-expense-oplaty', amountCents: 1200, description: 'Opłata za prowadzenie rachunku Rady (dane przykładowe)', occurredOn: '2026-12-01', method: 'bank' },
+    { direction: 'income', categoryId: 'cat-income-darowizny', amountCents: 20000, description: 'Darowizna na cele statutowe Rady (dane przykładowe)', occurredOn: t.beforeStatement(DAYS_BEFORE.donation), method: 'bank' },
+    { direction: 'expense', categoryId: 'cat-expense-materialy', amountCents: 15000, description: 'Materiały plastyczne na zajęcia dodatkowe (dane przykładowe)', occurredOn: t.beforeStatement(DAYS_BEFORE.materials), method: 'bank' },
+    { direction: 'expense', categoryId: 'cat-expense-wydarzenia', amountCents: 18000, description: 'Poczęstunek na spotkanie rodziców (dane przykładowe)', occurredOn: t.beforeStatement(DAYS_BEFORE.refreshments), method: 'cash' },
+    { direction: 'expense', categoryId: 'cat-expense-oplaty', amountCents: 1200, description: 'Opłata za prowadzenie rachunku Rady (dane przykładowe)', occurredOn: t.beforeStatement(DAYS_BEFORE.bankFee), method: 'bank' },
   ];
   const created = [];
   for (const entry of entries) {
     const response = await apiCall(env, {
       method: 'POST', path: '/api/ledger', cookie, idempotencyKey: idKey('demo-ledger'),
-      body: { schoolYearId: SCHOOL_YEAR_ID, ...entry },
+      body: { schoolYearId: t.schoolYearId, ...entry },
     });
     created.push({ ...entry, id: response.data.entry.id });
   }
@@ -490,36 +506,36 @@ async function uploadDemoDocument(env, cookie, { query, pdf, description }) {
   return id;
 }
 
-async function seedDocuments(env, { treasurerCookie, boardCookie, ledgerEntries }) {
+async function seedDocuments(env, { treasurerCookie, boardCookie, ledgerEntries, meetingDate }, t) {
   const expense = ledgerEntries.find((entry) => entry.categoryId === 'cat-expense-materialy');
   const invoiceId = await uploadDemoDocument(env, treasurerCookie, {
-    query: { kind: 'financial', schoolYearId: SCHOOL_YEAR_ID, linkedEntityType: 'ledger_entry', linkedEntityId: expense.id },
-    pdf: DEMO_INVOICE_PDF,
-    description: { title: 'Faktura — przykład demo', category: 'faktura', documentDate: '2026-11-05', description: 'Dokument syntetyczny, dowód wydatku na materiały plastyczne (dane przykładowe).' },
+    query: { kind: 'financial', schoolYearId: t.schoolYearId, linkedEntityType: 'ledger_entry', linkedEntityId: expense.id },
+    pdf: demoInvoicePdf({ date: expense.occurredOn }),
+    description: { title: 'Faktura — przykład demo', category: 'faktura', documentDate: expense.occurredOn, description: 'Dokument syntetyczny, dowód wydatku na materiały plastyczne (dane przykładowe).' },
   });
   const minutesId = await uploadDemoDocument(env, boardCookie, {
-    query: { kind: 'board', schoolYearId: SCHOOL_YEAR_ID },
-    pdf: DEMO_MINUTES_PDF,
-    description: { title: 'Protokół — przykład demo', category: 'protokol', documentDate: '2026-11-20', description: 'Dokument syntetyczny (dane przykładowe), nie jest prawdziwym protokołem.' },
+    query: { kind: 'board', schoolYearId: t.schoolYearId },
+    pdf: demoMinutesPdf({ date: meetingDate, schoolYearLabel: t.schoolYearLabel }),
+    description: { title: 'Protokół — przykład demo', category: 'protokol', documentDate: meetingDate, description: 'Dokument syntetyczny (dane przykładowe), nie jest prawdziwym protokołem.' },
   });
   return { invoiceId, minutesId };
 }
 
 // --- Wydarzenia: zapowiedzi z datą/miejscem/opisem organizacyjnym, NIE sprawozdania
-async function seedEvents(env, authorCookie, approverCookie) {
+async function seedEvents(env, authorCookie, approverCookie, t) {
   const drafts = [
     {
       title: 'Zebranie ogólne rodziców (zapowiedź) — dane przykładowe',
-      description: `Zapowiedź organizacyjna: termin i miejsce zebrania ogólnego Rady Rodziców na rok ${SCHOOL_YEAR_LABEL}. To dane przykładowe do pokazu, nie zapis rzeczywistego wydarzenia.`,
+      description: `Zapowiedź organizacyjna: termin i miejsce zebrania ogólnego Rady Rodziców na rok ${t.schoolYearLabel}. To dane przykładowe do pokazu, nie zapis rzeczywistego wydarzenia.`,
       location: `Sala gimnastyczna, ${SCHOOL_NAME}`,
-      startsAt: '2026-11-14T18:00',
+      startsAt: `${t.upcoming(14)}T18:00`,
       organizer: 'Rada Rodziców (dane przykładowe)',
     },
     {
-      title: 'Kiermasz świąteczny (zapowiedź) — dane przykładowe',
-      description: 'Zapowiedź organizacyjna kiermaszu przed przerwą świąteczną — termin i miejsce. Dane przykładowe do pokazu.',
+      title: 'Kiermasz szkolny (zapowiedź) — dane przykładowe',
+      description: 'Zapowiedź organizacyjna kiermaszu szkolnego — termin i miejsce. Dane przykładowe do pokazu.',
       location: 'Hol główny szkoły',
-      startsAt: '2026-12-12T16:00',
+      startsAt: `${t.upcoming(42)}T16:00`,
       organizer: 'Rada Rodziców (dane przykładowe)',
     },
   ];
@@ -527,7 +543,7 @@ async function seedEvents(env, authorCookie, approverCookie) {
   for (const draft of drafts) {
     const created = await apiCall(env, {
       method: 'POST', path: '/api/events', cookie: authorCookie, idempotencyKey: idKey('demo-event'),
-      body: { schoolYearId: SCHOOL_YEAR_ID, ...draft, audience: 'public' },
+      body: { schoolYearId: t.schoolYearId, ...draft, audience: 'public' },
     });
     const eventId = created.data.event.id;
     const revision = created.data.event.revision;
@@ -544,12 +560,15 @@ async function seedEvents(env, authorCookie, approverCookie) {
 // nieosiągnięte (1 z 3)” obok zatwierdzonego protokołu. Na liście są teraz trzy konta
 // zarządu z prawem głosu (prowadzący, drugi członek zarządu, skarbnik), więc reguła
 // „co najmniej 3” jest spełniona. Wyłącznie konta demo, bez opiekunów z katalogu.
-async function seedMeeting(env, hostCookie, hostUserId, approverCookie, otherVoterIds = []) {
+async function seedMeeting(env, hostCookie, hostUserId, approverCookie, otherVoterIds, t) {
+  // Zebranie odbyło się przed dniem wyciągu; protokół zatwierdza się przy seedzie
+  // (czas serwera), więc zatwierdzenie jest zawsze po zebraniu.
+  const meetingDate = t.beforeStatement(DAYS_BEFORE.meeting);
   const created = await apiCall(env, {
     method: 'POST', path: '/api/meetings', cookie: hostCookie, idempotencyKey: idKey('demo-meeting'),
     body: {
-      schoolYearId: SCHOOL_YEAR_ID, kind: 'board', title: 'Zebranie zarządu Rady — dane przykładowe',
-      scheduledAt: '2026-11-20T18:30:00Z', location: 'Sala nauczycielska (dane przykładowe)', status: 'draft',
+      schoolYearId: t.schoolYearId, kind: 'board', title: 'Zebranie zarządu Rady — dane przykładowe',
+      scheduledAt: `${meetingDate}T16:30:00Z`, location: 'Sala nauczycielska (dane przykładowe)', status: 'draft',
       quorumMode: 'minimum_count', quorumMinCount: 3, votingBodySize: 7,
       quorumRuleSource: 'Regulamin Rady Rodziców, §8 (dane przykładowe)',
     },
@@ -580,7 +599,7 @@ async function seedMeeting(env, hostCookie, hostUserId, approverCookie, otherVot
   });
   const minutes = await apiCall(env, {
     method: 'POST', path: `/api/meetings/${meetingId}/minutes`, cookie: hostCookie, idempotencyKey: idKey('demo-minutes'),
-    body: { body: `Protokół zebrania zarządu — dane przykładowe. Omówiono bieżące wpłaty i plan wydatków na rok szkolny ${SCHOOL_YEAR_LABEL}. Bez uchwał na tym zebraniu.` },
+    body: { body: `Protokół zebrania zarządu — dane przykładowe. Omówiono bieżące wpłaty i plan wydatków na rok szkolny ${t.schoolYearLabel}. Bez uchwał na tym zebraniu.` },
   });
   const minutesId = minutes.data.minutes.id;
   // Zasada czterech oczu: zatwierdzający musi różnić się od autora wersji —
@@ -593,15 +612,15 @@ async function seedMeeting(env, hostCookie, hostUserId, approverCookie, otherVot
     method: 'POST', path: `/api/meetings/${meetingId}/minutes/${minutesId}/visibility`, cookie: approverCookie,
     idempotencyKey: idKey('demo-visibility'), body: { visibility: 'public' },
   });
-  return { meetingId, minutesId };
+  return { meetingId, minutesId, meetingDate };
 }
 
 // --- Kampania e-mail: TYLKO szkic, nigdy nie zatwierdzana ani kolejkowana -------
-async function seedEmailDraft(env, cookie) {
+async function seedEmailDraft(env, cookie, t) {
   const created = await apiCall(env, {
     method: 'POST', path: '/api/email/campaigns', cookie, idempotencyKey: idKey('demo-campaign'),
     body: {
-      schoolYearId: SCHOOL_YEAR_ID, title: 'Przypomnienie o składce — SZKIC demo', audience: 'all_households',
+      schoolYearId: t.schoolYearId, title: 'Przypomnienie o składce — SZKIC demo', audience: 'all_households',
       subject: '[DANE PRZYKŁADOWE] Przypomnienie o dobrowolnej składce',
       bodyText: 'To jest wyłącznie SZKIC do pokazu (dane przykładowe). Wiadomość nie została i nie zostanie wysłana z tego demo — brak klucza Brevo, worker e-mail nie jest uruchamiany.',
     },
@@ -610,12 +629,12 @@ async function seedEmailDraft(env, cookie) {
 }
 
 // --- Aktualności: neutralne ogłoszenia, bez zdjęć, bez relacji z wydarzeń -------
-async function seedNews(env, authorCookie, approverCookie) {
+async function seedNews(env, authorCookie, approverCookie, t) {
   const created = await apiCall(env, {
     method: 'POST', path: '/api/news', cookie: authorCookie, idempotencyKey: idKey('demo-news'),
     body: {
-      schoolYearId: SCHOOL_YEAR_ID,
-      title: `[DANE PRZYKŁADOWE] Rada Rodziców rozpoczyna rok szkolny ${SCHOOL_YEAR_LABEL}`,
+      schoolYearId: t.schoolYearId,
+      title: `[DANE PRZYKŁADOWE] Rada Rodziców rozpoczyna rok szkolny ${t.schoolYearLabel}`,
       body: 'Neutralne ogłoszenie organizacyjne do pokazu (dane przykładowe): Rada Rodziców zaprasza na najbliższe zebranie ogólne — szczegóły w zakładce „Wydarzenia”.',
     },
   });
@@ -635,8 +654,13 @@ export async function runDemoSeed({
   // odpytać jeszcze GET /api/meetings/public-minutes na tej samej bazie — wtedy
   // WYWOŁUJĄCY odpowiada za zamknięcie zwróconego `env.db` (patrz `result.env`).
   keepOpen = false,
+  // Chwila „teraz”, od której liczone są daty danych demo (scripts/lib/demo-dates.js);
+  // CLI: `npm run demo:seed -- --teraz=RRRR-MM-DD`. Czasy zapisane przez serwer
+  // (dziennik zdarzeń, zatwierdzenie protokołu) zawsze pochodzą z zegara systemowego.
+  now = new Date(),
 } = {}) {
   assertSafeEnvironment(processEnv);
+  const t = demoTimeline(now);
   const { db, mode, close } = await openDemoDatabase({ databaseUrl: databaseUrl ?? processEnv.DATABASE_URL, inMemory });
   const mfaEncryptionKey = randomBytes(32).toString('hex');
   // Atrapa magazynu: pamięć (testy) albo katalog .demo-data/documents (czyszczony jak baza).
@@ -650,7 +674,8 @@ export async function runDemoSeed({
   };
   try {
     log(`Seed demo: baza w trybie „${mode}”.`);
-    const roster = await seedRoster(db);
+    const roster = await seedRoster(db, t);
+    log(`Rok szkolny ${t.schoolYearLabel} (${t.startsOn} – ${t.endsOn}); dzień wyciągu ${t.statementDate}, zebranie ${t.beforeStatement(DAYS_BEFORE.meeting)}.`);
     log(`Roster: ${roster.classes.length} klas, ${roster.households.length} rodzin, ${roster.students.length} uczniów, ${roster.guardians.length} opiekunów.`);
 
     const admin = await createDemoAccount(env, {
@@ -658,15 +683,15 @@ export async function runDemoSeed({
     });
     const board1 = await createDemoAccount(env, {
       email: 'zarzad1@example.invalid', displayName: 'Zarząd — prezes (demo)', role: 'board',
-      schoolYearId: SCHOOL_YEAR_ID, adminCookie: admin.cookie, enrollMfa: true,
+      schoolYearId: t.schoolYearId, adminCookie: admin.cookie, enrollMfa: true,
     });
     const board2 = await createDemoAccount(env, {
       email: 'zarzad2@example.invalid', displayName: 'Zarząd — sekretarz (demo)', role: 'board',
-      schoolYearId: SCHOOL_YEAR_ID, adminCookie: admin.cookie, enrollMfa: true,
+      schoolYearId: t.schoolYearId, adminCookie: admin.cookie, enrollMfa: true,
     });
     const treasurer = await createDemoAccount(env, {
       email: 'skarbnik@example.invalid', displayName: 'Skarbnik (demo)', role: 'treasurer',
-      schoolYearId: SCHOOL_YEAR_ID, adminCookie: admin.cookie, enrollMfa: true,
+      schoolYearId: t.schoolYearId, adminCookie: admin.cookie, enrollMfa: true,
     });
     const representative = await createDemoAccount(env, {
       email: 'przedstawiciel@example.invalid', displayName: 'Przedstawiciel klasy 0-A (demo)', role: 'representative',
@@ -674,54 +699,56 @@ export async function runDemoSeed({
     });
     const audit = await createDemoAccount(env, {
       email: 'komisja-rewizyjna@example.invalid', displayName: 'Komisja Rewizyjna (demo)', role: 'audit',
-      schoolYearId: SCHOOL_YEAR_ID, adminCookie: admin.cookie, enrollMfa: true,
+      schoolYearId: t.schoolYearId, adminCookie: admin.cookie, enrollMfa: true,
     });
     const accounts = [admin, board1, board2, treasurer, representative, audit];
     log(`Konta demo utworzone: ${accounts.map((a) => a.role).join(', ')}.`);
 
-    const { payments, unassignedPaymentId } = await seedPayments(env, treasurer.cookie, roster);
+    const { payments, unassignedPaymentId } = await seedPayments(env, treasurer.cookie, roster, t);
     const paymentsCreated = payments.length + 1;
     log(`Wpłaty: ${paymentsCreated} wpisów (częściowe i pełne, w tym 1 celowo nieprzypisana; bez statusu „dłużnik”).`);
 
-    const ledger = await seedLedger(env, treasurer.cookie, treasurer.userId, payments);
+    const ledger = await seedLedger(env, treasurer.cookie, treasurer.userId, payments, t);
     const ledgerCreated = ledger.count;
     log(`Księga: ${ledgerCreated} wpisów (wpłaty rodzin ujęte w księdze).`);
 
     const documents = await seedDocuments(env, {
       treasurerCookie: treasurer.cookie, boardCookie: board1.cookie, ledgerEntries: ledger.created,
-    });
+      meetingDate: t.beforeStatement(DAYS_BEFORE.meeting),
+    }, t);
     log(`Dokumenty: 2 syntetyczne PDF-y w lokalnym magazynie (${inMemory ? 'pamięć' : DEMO_DOCUMENTS_DIR}); faktura jest dowodem jednego wydatku.`);
 
-    const reconciliation = await seedReconciliation(env, treasurer.cookie, payments);
+    const reconciliation = await seedReconciliation(env, treasurer.cookie, payments, t);
     log(`Uzgodnienie wyciągu: ${reconciliation.reconciliationId}, ${reconciliation.lineCount} pozycji zaimportowanych (SZKIC, nie zatwierdzony).`);
 
-    const eventsPublished = await seedEvents(env, admin.cookie, board1.cookie);
+    const eventsPublished = await seedEvents(env, admin.cookie, board1.cookie, t);
     log(`Wydarzenia: ${eventsPublished} zapowiedzi opublikowanych.`);
 
-    const meeting = await seedMeeting(env, board1.cookie, board1.userId, board2.cookie, [board2.userId, treasurer.userId]);
+    const meeting = await seedMeeting(env, board1.cookie, board1.userId, board2.cookie, [board2.userId, treasurer.userId], t);
     log(`Zebranie: ${meeting.meetingId}, protokół ${meeting.minutesId} zatwierdzony i udostępniony publicznie.`);
 
     // Samokontrola: protokół zatwierdzony i „public” ma się rzeczywiście pojawić
     // na /site/ pod TYM identyfikatorem roku, nie tylko w wewnętrznym API — inaczej
     // seed „mówi” o publikacji, a publiczna strona pokazuje pusty stan (patrz
-    // komentarz przy SCHOOL_YEAR_ID: site/core.js zgaduje rok z dzisiejszej daty).
+    // komentarz „UWAGA: /site/” na początku pliku: site/core.js zgaduje rok z dzisiejszej daty).
     const publicMinutes = await apiCall(env, {
-      method: 'GET', path: `/api/meetings/public-minutes?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`,
+      method: 'GET', path: `/api/meetings/public-minutes?schoolYearId=${encodeURIComponent(t.schoolYearId)}`,
     });
     if (!Array.isArray(publicMinutes.data.minutes) || publicMinutes.data.minutes.length < 1) {
       throw new Error(
         'Seed demo: protokół zatwierdzony do publikacji nie pojawia się na GET /api/meetings/public-minutes '
-        + `dla schoolYearId=${SCHOOL_YEAR_ID} — /site/ pokazałby „Brak opublikowanych protokołów”.`,
+        + `dla schoolYearId=${t.schoolYearId} — /site/ pokazałby „Brak opublikowanych protokołów”.`,
       );
     }
 
-    const campaignId = await seedEmailDraft(env, board1.cookie);
+    const campaignId = await seedEmailDraft(env, board1.cookie, t);
     log(`Kampania e-mail: szkic ${campaignId} (NIE zatwierdzony, NIE zakolejkowany, nic nie zostało wysłane).`);
 
-    const newsId = await seedNews(env, admin.cookie, board1.cookie);
+    const newsId = await seedNews(env, admin.cookie, board1.cookie, t);
     log(`Aktualności: wpis ${newsId} opublikowany.`);
 
     return {
+      schoolYearId: t.schoolYearId, timeline: t,
       mode, accounts, roster, meeting, documents, campaignId, newsId, reconciliation, unassignedPaymentId,
       counts: { payments: paymentsCreated, ledger: ledgerCreated, events: eventsPublished },
       // Tylko gdy keepOpen: true (testy) — env.db zostaje otwarty, wywołujący
@@ -753,14 +780,15 @@ function printCredentials(accounts) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const result = await runDemoSeed();
+    const nowArg = process.argv.slice(2).find((arg) => arg.startsWith('--teraz='));
+    const result = await runDemoSeed({ now: parseDemoNow(nowArg?.slice('--teraz='.length)) });
     printCredentials(result.accounts);
     console.log(`Baza demo gotowa (${result.mode}). Uruchom „npm run demo:start”, żeby wystawić panel lokalnie.`);
-    // site/core.js#defaultSchoolYearId zgaduje rok z dzisiejszej daty — poza
-    // wrześniem–sierpniem roku ${SCHOOL_YEAR_ID} zgadnie inny rok niż ten,
-    // do którego seed wpisał dane, i /site/ pokaże puste sekcje mimo danych
-    // w bazie. „?rok=” wymusza właściwy rok niezależnie od dzisiejszej daty.
-    console.log(`Strona publiczna: http://localhost:3000/site/?rok=${SCHOOL_YEAR_ID} (bez „?rok=” zależy od dzisiejszej daty).`);
+    // site/core.js#defaultSchoolYearId zgaduje rok z dzisiejszej daty — gdy pokaz
+    // wypadnie w innym roku szkolnym niż uruchomienie seeda (albo z `--teraz=`),
+    // zgadnie inny rok i /site/ pokaże puste sekcje mimo danych w bazie.
+    // „?rok=” wymusza właściwy rok niezależnie od dzisiejszej daty.
+    console.log(`Strona publiczna: http://localhost:3000/site/?rok=${result.schoolYearId} (bez „?rok=” zależy od dzisiejszej daty).`);
   } catch (error) {
     if (error instanceof DemoSeedRefused) {
       console.error(error.message);
