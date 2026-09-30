@@ -29,13 +29,14 @@ import {
   scopeLabel,
 } from "./core.js";
 import {
-  batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, tokenListText,
+  batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, schoolYearsCount, tokenListText,
 } from "./onboarding.js";
 import { api as apiRequest } from "../shared/api.js";
 import { buildEffectsHtml, confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
 import { shortId } from "../shared/short-id.js";
 import { formatSchoolYear } from "../shared/school-year.js";
+import { formatDateOrTimestamp } from "../shared/zoned-time.js";
 import "../shared/shell.css";
 
 mountShell();
@@ -751,7 +752,7 @@ async function loadCoverage() {
     tr.append(cell(row.name), statusCell(key, label));
     tr.append(cell(String(row.activeRepresentativeCount), "num"), cell(String(row.pendingInvitationCount), "num"));
     tr.append(cell(row.nextInvitationExpiresAt ? formatDateTime(row.nextInvitationExpiresAt) : "—"));
-    tr.append(cell(row.lastRepresentativeLoginOn ?? "—"));
+    tr.append(cell(formatDateOrTimestamp(row.lastRepresentativeLoginOn, "Europe/Brussels") ?? "—"));
     return tr;
   }));
 }
@@ -948,7 +949,7 @@ async function loadYears() {
 
 function renderYears() {
   const tbody = byId("years-body");
-  byId("years-summary").textContent = `${state.years.length} ${state.years.length === 1 ? "rok" : "lat"} szkolnych w systemie.`;
+  byId("years-summary").textContent = `${schoolYearsCount(state.years.length)} w systemie.`;
   if (!state.years.length) return emptyRow(tbody, 5, "Brak lat szkolnych. Utwórz pierwszy rok poniżej.");
   tbody.replaceChildren(...state.years.map((year) => {
     const tr = document.createElement("tr");
