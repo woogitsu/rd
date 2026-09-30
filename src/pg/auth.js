@@ -369,6 +369,50 @@ export async function insertInvitation(tx, { actorId, email: normalized, role, c
   return { invitationId, secret, expiresAt: isoTimestamp(rows[0].expires_at) };
 }
 
+// „Wyślij ponownie” (#108, #293): wycofanie starego zaproszenia i wydanie nowego
+// w JEDNEJ transakcji, pod tą samą blokadą doradczą adresu
+// (`rd:invitation:<email>`) co „Zaproś” i partia zaproszeń (insertInvitation).
+// Wcześniej wycofanie i nowe zaproszenie były osobnymi transakcjami bez
+// blokady: między nimi „Zaproś” nie widział oczekującego zaproszenia i
+// powstawały dwa ważne tokeny (follow-up #576/#557). Drugie równoległe
+// „Wyślij ponownie” czeka na blokadę, potem widzi stare zaproszenie jako
+// wycofane i dostaje `invitation_not_pending` — zostaje jeden ważny token
+// (tests/pg-real-double-click.test.js). Zwraca { error } albo wynik
+// insertInvitation z danymi zakresu starego zaproszenia.
+export async function reissueInvitation(env, { actorId, invitationId }) {
+  if (!actorId) throw new Error('actor_required');
+  return database(env).transaction(async (tx) => {
+    const found = (await tx.query('SELECT email FROM invitations WHERE id = $1', [invitationId])).rows[0];
+    if (!found) return { error: 'invitation_not_found' };
+    const email = normalizeEmail(found.email);
+    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:invitation:${email}`]);
+    // Stan czytany dopiero pod blokadą: równoległa ponowna wysyłka mogła go zmienić.
+    const { rows } = await tx.query(
+      `SELECT role, class_id, school_year_id,
+              accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() AS pending
+         FROM invitations WHERE id = $1`,
+      [invitationId],
+    );
+    const old = rows[0];
+    if (!old?.pending) return { error: 'invitation_not_pending' };
+    // Warunek w UPDATE chroni też przed przyjęciem zaproszenia (lockInvitation
+    // nie bierze blokady adresu) między odczytem a wycofaniem.
+    const revoked = await tx.query(
+      `UPDATE invitations SET revoked_at = now(), revoked_by = $2
+        WHERE id = $1 AND revoked_at IS NULL AND accepted_at IS NULL
+        RETURNING id`,
+      [invitationId, actorId],
+    );
+    if (!revoked.rows[0]) return { error: 'invitation_not_pending' };
+    await insertAuditEvent(tx, { actorId, action: 'invitation.revoked', entityType: 'invitation', entityId: invitationId });
+    const created = await insertInvitation(tx, {
+      actorId, email, role: old.role, classId: old.class_id, schoolYearId: old.school_year_id,
+      replacesInvitationId: invitationId, rejectPending: true,
+    });
+    return { ...created, email, role: old.role, classId: old.class_id, schoolYearId: old.school_year_id };
+  });
+}
+
 // Blokuje wiersz zaproszenia (FOR UPDATE) i sprawdza jego stan. Zwraca
 // { invitation } albo { deny } z `reason` wyłącznie do użytku wewnętrznego.
 // `now` (Date, opcjonalnie) to wstrzykiwany zegar — testy przesuwają czas zamiast
