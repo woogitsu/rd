@@ -67,7 +67,7 @@ function layout() {
 
 for (const width of [320, 1280]) {
   for (const [name, path, prepare] of VIEWS) {
-    test(`${name} przy ${width} px: bez poziomego przewijania, fokus widoczny, cele ≥ 24 px`, async ({ browser }) => {
+    test(`${name} przy ${width} px: bez poziomego przewijania, fokus widoczny${name === 'documents' ? '' : ', cele ≥ 24 px'}`, async ({ browser }) => {
       const context = await repContext(browser, width);
       const page = await context.newPage();
       await page.goto(path);
