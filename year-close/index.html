@@ -61,6 +61,16 @@
           <div><span>W tym rachunek (zamknięcie)</span><strong id="bal-bank">—</strong></div>
         </div>
 
+        <h3>Saldo końca roku</h3>
+        <p class="context" id="year-end-summary">—</p>
+        <div class="table-wrap" role="region" aria-labelledby="year-end-title" tabindex="0" id="year-end-wrap" hidden>
+          <table>
+            <caption class="sr-only" id="year-end-title">Bilans zamknięcia a saldo księgi na ostatni dzień roku</caption>
+            <thead><tr><th scope="col">Część</th><th scope="col" class="amount">Bilans zamknięcia</th><th scope="col" class="amount">Saldo na koniec roku</th><th scope="col" class="amount">Różnica</th></tr></thead>
+            <tbody id="year-end-body"></tbody>
+          </table>
+        </div>
+
         <h3>Lista kontrolna (<span id="checklist-progress">0/6</span>)</h3>
         <div class="table-wrap" role="region" aria-labelledby="status-title" tabindex="0">
           <table>
@@ -124,6 +134,10 @@
       <p class="context">Zamknięcie jest ostateczne: nowe wpłaty, wpisy księgi, wydarzenia, zebrania i uchwały tego roku przestaną być możliwe do dodania, a bilans zamknięcia zostanie przeniesiony jako bilans otwarcia kolejnego roku. Tej operacji nie da się cofnąć z tego ekranu.</p>
       <p><strong>Rok szkolny:</strong> <span id="close-dialog-year"></span></p>
       <p><strong>Bilans zamknięcia (bieżący):</strong> <span id="close-dialog-balance"></span></p>
+      <div id="close-dialog-discrepancy" hidden>
+        <p class="message error">Bilans zamknięcia różni się od salda księgi na ostatni dzień roku: razem <strong id="close-dialog-diff-total"></strong>, w tym kasa <strong id="close-dialog-diff-cash"></strong>. Najczęstsza przyczyna to wpis datowany po końcu roku. Zamknięcie z rozbieżnością zapisuje w dzienniku zdarzeń Twoje konto, wybrany powód i kwoty różnicy.</p>
+        <label>Powód potwierdzenia rozbieżności <select id="close-dialog-reason" aria-describedby="close-error"><option value="">— wybierz —</option></select></label>
+      </div>
       <div class="form-error" id="close-error" role="alert"></div>
       <div class="dialog-actions"><button id="close-dialog-cancel-2" type="button">Anuluj</button><button class="primary" id="close-dialog-confirm" type="button">Tak, zamknij rok</button></div>
     </dialog>
