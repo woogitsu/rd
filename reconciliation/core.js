@@ -110,12 +110,104 @@ export function lineDirectionLabel(amountCents) {
 }
 
 export function candidateLabel(candidate) {
+  // #115: kandydat „household” to propozycja NOWEJ wpłaty z pozycji dla
+  // gospodarstwa wskazanego komunikacją strukturalną (rejestr referencji roku).
+  if (candidate.type === 'household') {
+    return ['Nowa wpłata z tej pozycji', `rodzina ${candidate.householdId}`, formatCents(candidate.amountCents),
+      'komunikacja strukturalna zgodna'].join(' · ');
+  }
   const type = candidate.type === 'ledger_entry' ? 'Wpis księgi' : 'Wpłata';
   const parts = [type, candidate.date, formatCents(candidate.amountCents)];
+  if (candidate.structuredReferenceMatch) parts.push('komunikacja strukturalna tej rodziny');
   if (candidate.referenceMatch) parts.push('tytuł zgodny');
   if (candidate.dayDistance === 0) parts.push('ta sama data');
   else parts.push(`${candidate.dayDistance} dni różnicy`);
   return parts.join(' · ');
+}
+
+// Stan pozycji w tabeli. Pozycja bez powiązania jest „do wyjaśnienia” — nie
+// oznacza braku wpłaty rodziny (składki są dobrowolne, AGENTS.md).
+export function lineStatusLabel(line) {
+  if (line?.groupMatch) return `Dopasowana zbiorczo (${line.groupMatch.itemCount} poz.)`;
+  if (line?.match) return 'Dopasowana';
+  return 'Do wyjaśnienia';
+}
+
+// Wpłatę z pozycji (POST …/lines/{lineId}/payment) można utworzyć tylko dla
+// wpływu (kwota > 0) bez powiązania, w szkicu. Serwer sprawdza to samo.
+export function canCreatePaymentFromLine(line, { draft, canWrite }) {
+  return Boolean(draft && canWrite && line && !line.match && !line.groupMatch && Number(line.amountCents) > 0);
+}
+
+// Gospodarstwo wskazane komunikacją strukturalną dla danej pozycji (albo null).
+export function structuredHouseholdFor(suggestions, lineId) {
+  const forLine = (Array.isArray(suggestions) ? suggestions : []).find((s) => s.statementLineId === lineId);
+  const candidate = forLine?.candidates?.find((c) => c.type === 'household' && c.structuredReferenceMatch);
+  return candidate ? candidate.householdId : null;
+}
+
+export function linePaymentUrl(reconciliationId, lineId) {
+  if (!isValidId(lineId)) throw new Error('Niepoprawny identyfikator pozycji wyciągu.');
+  return reconciliationActionUrl(reconciliationId, `lines/${encodeURIComponent(lineId)}/payment`);
+}
+
+// Treść POST …/lines/{lineId}/payment: wyłącznie gospodarstwo (albo null →
+// wpłata „nieprzypisana”). Kwotę i datę serwer bierze z pozycji wyciągu.
+export function buildLinePaymentBody(householdId) {
+  const value = String(householdId ?? '').trim();
+  if (!value) return { householdId: null };
+  if (!isValidId(value)) throw new Error('Podaj poprawny identyfikator rodziny albo zostaw pole puste.');
+  return { householdId: value };
+}
+
+export const MAX_BATCH_MATCHES = 50; // jak MAX_BATCH_MATCHES w src/pg/routes/reconciliation.js
+
+// Pary do zatwierdzenia wsadowego (#115 pkt 3): tylko pozycje, których
+// PIERWSZA propozycja to istniejąca wpłata ze zgodną komunikacją strukturalną
+// lub zgodnym tytułem. Wpłata będąca pierwszą propozycją dla dwóch pozycji jest
+// niejednoznaczna — pomijamy obie (zostają do pojedynczego dopasowania).
+// Nic nie jest zaznaczone domyślnie — wybór należy do skarbnika.
+export function batchCandidates(suggestions) {
+  const rows = [];
+  for (const suggestion of Array.isArray(suggestions) ? suggestions : []) {
+    const top = suggestion?.candidates?.[0];
+    if (!top || top.type !== 'payment_entry' || !(top.structuredReferenceMatch || top.referenceMatch)) continue;
+    rows.push({
+      statementLineId: suggestion.statementLineId, paymentEntryId: top.id, bookedOn: suggestion.bookedOn,
+      amountCents: suggestion.amountCents, paymentDate: top.date,
+      reason: top.structuredReferenceMatch ? 'komunikacja strukturalna tej rodziny' : 'tytuł zgodny',
+    });
+  }
+  const counts = new Map();
+  for (const row of rows) counts.set(row.paymentEntryId, (counts.get(row.paymentEntryId) ?? 0) + 1);
+  return rows.filter((row) => counts.get(row.paymentEntryId) === 1);
+}
+
+export function buildBatchBody(selected) {
+  const matches = (Array.isArray(selected) ? selected : [])
+    .map(({ statementLineId, paymentEntryId }) => ({ statementLineId, paymentEntryId }));
+  if (!matches.length) throw new Error('Zaznacz co najmniej jedną parę.');
+  if (matches.length > MAX_BATCH_MATCHES) throw new Error(`Zaznacz najwyżej ${MAX_BATCH_MATCHES} par naraz.`);
+  return { matches };
+}
+
+// Podsumowanie przed kliknięciem „Zatwierdź” (ryzyko błędów masowych, #115).
+export function summarizeBatchSelection(selected) {
+  const list = Array.isArray(selected) ? selected : [];
+  const total = list.reduce((sum, row) => sum + Number(row.amountCents || 0), 0);
+  const pairs = list.length === 1 ? '1 parę' : `${list.length} par`;
+  return `Zatwierdzasz ${pairs} pozycja–wpłata na łączną kwotę ${formatCents(total)}. Każde powiązanie można później cofnąć z podaniem powodu.`;
+}
+
+// 409 match_batch_rejected: nic nie zapisano; lista par z kodem błędu, opisana
+// datą i kwotą pozycji (bez wewnętrznych identyfikatorów, gdy para jest znana).
+export function describeBatchFailures(failures, rows = [], messages = {}) {
+  const byLine = new Map((Array.isArray(rows) ? rows : []).map((row) => [row.statementLineId, row]));
+  return (Array.isArray(failures) ? failures : []).map((failure) => {
+    const row = byLine.get(failure.statementLineId);
+    const where = row ? `Pozycja ${row.bookedOn}, ${formatCents(row.amountCents)}` : `Pozycja ${failure.statementLineId}`;
+    return `${where}: ${messages[failure.error] ?? failure.error}`;
+  });
 }
 
 export function summarizeInconsistencies(list) {
