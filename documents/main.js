@@ -146,7 +146,8 @@ function documentRow(raw) {
   show.type = "button";
   show.dataset.id = doc.id;
   show.textContent = "Szczegóły";
-  show.setAttribute("aria-label", `Szczegóły dokumentu z ${formatDateTime(doc.createdAt)}`);
+  // #124: nazwa z tytułem odróżnia przyciski w liście przycisków czytnika ekranu.
+  show.setAttribute("aria-label", `Szczegóły dokumentu: ${titleLabel(doc)}, dodano ${formatDateTime(doc.createdAt)}`);
   const download = document.createElement("a");
   download.textContent = "Pobierz";
   download.rel = "noopener";
@@ -253,7 +254,9 @@ async function showDetails(id, trigger) {
   status.setAttribute("role", "status");
   status.textContent = "Wczytywanie metadanych…";
   detailsList.replaceChildren(status);
-  details.returnFocus = trigger;
+  // #124: odświeżenie szczegółów bez przycisku (po zapisie opisu albo zmianie
+  // stanu) zachowuje dotychczasowy cel powrotu fokusu zamiast go gubić.
+  if (trigger) details.returnFocus = trigger;
   details.focus();
   try {
     const result = await getJson(metadataUrl(id));
@@ -497,10 +500,24 @@ detailsPreview.addEventListener("click", () => {
   }
 });
 
+// #124: fokus wraca do „Szczegóły” tego samego dokumentu. Lista mogła zostać
+// przerysowana (loadList po zmianie stanu), więc odłączony przycisk zastępuje
+// jego odpowiednik w nowej liście; gdy dokumentu na liście już nie ma
+// (np. unieważniony, a filtr pokazuje tylko aktualne) — nagłówek listy.
+function returnFocusTarget(previous) {
+  if (previous?.isConnected) return previous;
+  const id = previous?.dataset?.id;
+  const same = id ? [...listBody.querySelectorAll("button[data-id]")].find((button) => button.dataset.id === id) : null;
+  if (same) return same;
+  const heading = byId("list-title");
+  heading.tabIndex = -1;
+  return heading;
+}
+
 function closeDetails() {
   clearPreview();
   details.hidden = true;
-  details.returnFocus?.focus?.();
+  returnFocusTarget(details.returnFocus).focus();
 }
 
 descriptionForm.addEventListener("submit", async (event) => {

@@ -30,6 +30,8 @@ import "../shared/shell.css";
 import { confirmAction } from "../shared/confirm-dialog.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 import { mountSuppressions } from "./suppressions.js";
+import { mountResolutions } from "./resolutions.js";
+import { reportCsvUrl } from "./resolutions-core.js";
 
 mountShell();
 
@@ -53,6 +55,17 @@ const state = {
   loading: false,
   providerPause: null,
 };
+
+const resolutions = mountResolutions({
+  api,
+  isBoard: () => hasApproverAccess(state.grants, state.schoolYearId),
+  // Po zapisie wyniku odświeżamy wyłącznie raport (liczby), nie całą kartę.
+  onResolved: async () => {
+    if (!state.selectedId) return;
+    state.report = await api(campaignActionUrl(state.selectedId, "report")).catch(() => state.report);
+    renderDetail();
+  },
+});
 
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -265,6 +278,7 @@ function renderDetail() {
     const note = byId("detail-report-unknown");
     note.hidden = unresolved === 0;
     note.textContent = `Nierozstrzygnięte „nie wiadomo”: ${unresolved}.`;
+    byId("detail-report-csv").href = reportCsvUrl(campaign.id);
   }
 
   updateActionVisibility(campaign, preview);
@@ -302,6 +316,7 @@ async function openDetail(id) {
     ]);
     state.report = reportData;
     state.selectedId = id;
+    resolutions.reset(id);
     state.detail = statusData;
     state.preview = previewData;
     state.recipients = [];

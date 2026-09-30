@@ -9,7 +9,7 @@
 //   GET  /api/email/campaigns/{id}/recipients        lista odbiorców do weryfikacji (dziennik odczytu)
 //   POST /api/email/campaigns/{id}/approve           zarząd + MFA, inna osoba niż autor; dokładne skróty; krok w górę MFA (#150)
 //   POST /api/email/campaigns/{id}/queue             zakolejkowanie zatwierdzonej kampanii
-//   GET  /api/email/campaigns/{id}/report            raport doręczeń: same liczby i kody (#139)
+//   GET  /api/email/campaigns/{id}/report            raport doręczeń: same liczby i kody (#139; ?format=csv — plik)
 //   GET  /api/email/campaigns/{id}/attention         lista operacyjna „do sprawdzenia” (#139, dziennik odczytu)
 //   POST /api/email/campaigns/{id}/resolutions       rozstrzygnięcie delivery_unknown/error (#139, tylko dopisywanie)
 //   POST /api/email/campaigns/{id}/pause             wstrzymanie wysyłki (#130), idempotentne
@@ -46,6 +46,7 @@ import {
 import { estimateSchedule } from '../../email/schedule.js';
 import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
 import { createJsonReader, readBodyText } from '../input.js';
+import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
 
 export const name = 'email';
 
@@ -1075,8 +1076,10 @@ const EVIDENCE_CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
 
 // #139: raport tylko z liczb i kodów — bez adresów, imion ani identyfikatorów
 // rodzin. Ostatnie zdarzenie dostawcy per wiersz kolejki (brak zdarzenia = 'none').
-async function report(request, env, id, json) {
-  const { campaign } = await campaignFor(request, env, id, EDITOR_ROLES);
+async function report(request, env, id, url, json) {
+  const { context, campaign } = await campaignFor(request, env, id, EDITOR_ROLES);
+  const format = url.searchParams.get('format') ?? 'json';
+  if (format !== 'json' && format !== 'csv') throw new RequestError('invalid_format');
   const { rows } = await env.db.query(
     'SELECT state, COUNT(*)::int AS n FROM email_outbox WHERE campaign_id = $1 GROUP BY state ORDER BY state',
     [id],
@@ -1121,15 +1124,41 @@ async function report(request, env, id, json) {
     'SELECT reason, COUNT(*)::int AS n FROM email_campaign_exclusions WHERE campaign_id = $1 GROUP BY reason ORDER BY reason',
     [id],
   );
-  return json({
-    campaign: campaignView(campaign),
+  const data = {
     summary,
     deliveryUnknownUnresolved: (unknown?.n ?? 0) - (unknown?.resolved ?? 0),
     outbox: Object.fromEntries(rows.map((row) => [row.state, row.n])),
     lastProviderEvent: Object.fromEntries(lastEvent.map((row) => [row.event, row.n])),
     resolutions: Object.fromEntries(resolutions.map((row) => [row.resolution, row.n])),
     exclusions: Object.fromEntries(exclusions.map((row) => [row.reason, row.n])),
+  };
+  if (format === 'json') return json({ campaign: campaignView(campaign), ...data });
+  // Eksport CSV (#139): te same agregaty co JSON — sekcja, kod, liczba. Bez
+  // adresów, imion, identyfikatorów rodzin i bez tytułu/treści kampanii
+  // (wolny tekst). Pobranie pliku trafia do dziennika (plik opuszcza system).
+  await insertAuditEvent(env.db, {
+    actorId: context.session.user.id, action: 'email.report.exported', entityType: 'email_campaign', entityId: id,
+    metadata: { schoolYearId: campaign.school_year_id, format },
   });
+  return csvResponse(reportCsv(id, campaign.status, data), `raport-doreczen-${safeFileSegment(id)}.csv`);
+}
+
+const REPORT_CSV_COLUMNS = Object.freeze([
+  { header: 'Sekcja', type: 'text' }, { header: 'Kod', type: 'text' }, { header: 'Liczba', type: 'text' },
+]);
+
+export function reportCsv(campaignId, status, data) {
+  const lines = [];
+  for (const [key, n] of Object.entries(data.summary)) lines.push(['summary', key, n]);
+  lines.push(['summary', 'delivery_unknown_unresolved', data.deliveryUnknownUnresolved]);
+  for (const section of ['outbox', 'lastProviderEvent', 'resolutions', 'exclusions']) {
+    for (const [key, n] of Object.entries(data[section])) lines.push([section, key, n]);
+  }
+  const preamble = [
+    [csvCell('Raport doręczeń kampanii'), csvCell(campaignId)].join(';'),
+    [csvCell('Stan kampanii'), csvCell(status)].join(';'),
+  ];
+  return toCsv(REPORT_CSV_COLUMNS, lines.map(([section, key, n]) => [section, key, String(Number(n) || 0)]), { preamble });
 }
 
 // #139: lista operacyjna „do sprawdzenia” — wiersze failed (w tym
@@ -1144,9 +1173,10 @@ async function attention(request, env, id, url, json) {
   const values = [id];
   const after = cursor ? `AND ${afterTupleAscSql(['t.outbox_id', 't.outbox_id'], [cursor.key, cursor.id], values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT t.outbox_id, t.state, t.last_error, t.provider_message_id, t.email, t.soft_bounce_count FROM (
+    `SELECT t.outbox_id, t.state, t.last_error, t.provider_message_id, t.email, t.soft_bounce_count, t.resolution FROM (
        SELECT o.id AS outbox_id, o.state, o.last_error, o.provider_message_id, r.email,
-              (SELECT COUNT(*)::int FROM email_webhook_events w WHERE w.outbox_id = o.id AND w.event = 'soft_bounce') AS soft_bounce_count
+              (SELECT COUNT(*)::int FROM email_webhook_events w WHERE w.outbox_id = o.id AND w.event = 'soft_bounce') AS soft_bounce_count,
+              (SELECT res.resolution FROM email_outbox_resolutions res WHERE res.outbox_id = o.id ORDER BY res.created_at LIMIT 1) AS resolution
          FROM email_outbox o JOIN email_campaign_recipients r ON r.id = o.recipient_id
         WHERE o.campaign_id = $1
      ) t
@@ -1163,6 +1193,8 @@ async function attention(request, env, id, url, json) {
     rows: page.items.map((row) => ({
       outboxId: row.outbox_id, state: row.state, lastError: row.last_error,
       providerMessageId: row.provider_message_id, email: maskEmail(row.email), softBounceCount: row.soft_bounce_count,
+      // #139: pierwsze (jedyne) rozstrzygnięcie wiersza albo null — ekran rozstrzygania.
+      resolution: row.resolution ?? null,
     })),
     nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
   });
@@ -1710,7 +1742,7 @@ export async function handle(request, env, url, json) {
     if (!action && method === 'PUT') return await updateCampaign(request, env, id, json);
     if (action === 'preview' && method === 'GET') return await preview(request, env, id, json);
     if (action === 'recipients' && method === 'GET') return await listRecipients(request, env, id, url, json);
-    if (action === 'report' && method === 'GET') return await report(request, env, id, json);
+    if (action === 'report' && method === 'GET') return await report(request, env, id, url, json);
     if (action === 'attention' && method === 'GET') return await attention(request, env, id, url, json);
     if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
     if (action === 'snapshot') return await buildSnapshot(request, env, id, json);

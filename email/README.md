@@ -8,6 +8,8 @@ Pod listą kampanii jest sekcja „Lista wyłączeń adresów” (#94): zamaskow
 
 Nad listą kampanii pojawia się sekcja „Wysyłka wstrzymana — błąd konta u dostawcy e-mail” (#209), gdy Brevo odrzuciło konto (401/402/403: zły lub obrócony klucz, brak kredytów, nieuprawniony nadawca lub IP). Pokazuje przyczynę i czas; kampania w toku ma wtedy stan „Wstrzymana — błąd konta”. Przycisk „Potwierdź naprawę i wznów wysyłkę” widzi tylko zarząd (serwer wymaga roli zarządu i świeżego MFA); samo potwierdzenie niczego nie wysyła — wysyłkę wznawia najbliższy przebieg zadania.
 
+W szczegółach kampanii jest „Raport doręczeń” (#139): same liczby, link „Pobierz raport CSV” (pobranie zapisuje się w dzienniku) i przycisk „Pokaż listę do sprawdzenia” — wiadomości `delivery_unknown`, odrzucone i z powtarzającymi się odbiciami tymczasowymi, z zamaskowanym adresem i identyfikatorem wiersza do wyszukania w logach dostawcy. Wynik sprawdzenia zapisuje się jako nowy wpis (kod dowodu); „wiadomość nie wyszła” może potwierdzić tylko zarząd. Logika bez DOM: `resolutions-core.js`. Propozycje wyników bez zapisu: `npm run email:reconcile` (docs/EMAIL.md).
+
 **Żaden przycisk tego ekranu nie wysyła poczty.** Zatwierdzenie i zakolejkowanie tylko przygotowują wiersze w `email_outbox` — wysyła je wyłącznie osobne zadanie `scripts/email-worker.js`, uruchamiane niezależnie od panelu.
 
 Prototyp — nie używać na danych rzeczywistych przed decyzją zarządu o szablonie wiadomości (D-16) i nadawcy/adresatach (D-17); ekran pokazuje wtedy ostrzeżenie zamiast domyślnie „zatwierdzonej” treści.

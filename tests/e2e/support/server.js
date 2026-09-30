@@ -19,6 +19,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { createSessionSecret } from '../../../src/auth.js';
 import { hashPassword } from '../../../src/pg/password.js';
 import { createDraft, submit, approve, publish } from '../../../src/pg/events.js';
+import * as news from '../../../src/pg/news.js';
 import { handlePgRequest } from '../../../src/pg/app.js';
 import { loadMigrations, applyMigrations } from '../../../src/postgres-migrations.js';
 import { startServer } from '../../../src/server.js';
@@ -171,6 +172,61 @@ async function seedEvents(db) {
   });
 }
 
+// #124: 20 opublikowanych aktualności (lista publiczna ma limit 20) z długimi
+// tytułami — w tym jeden bez spacji i jeden z próbą wstrzyknięcia HTML — do
+// testu strony publicznej przy 320 px (public-site-a11y.spec.js). Plus jeden
+// szkic, który nie może się pojawić publicznie. Bez zdjęć (#96, D-18).
+const NEWS_LONG_WORD = 'Sprawozdanie'.repeat(12);
+const NEWS_INJECTION_TITLE = 'Wpis <img src=x onerror="window.__xss=1"> (syntetyczny)';
+async function seedNews(db) {
+  const author = { userId: 'e2e-board-events', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
+  const reviewer = { userId: 'e2e-board-reviewer', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
+  const titles = [];
+  for (let i = 1; i <= 20; i += 1) {
+    const title = i === 1 ? NEWS_LONG_WORD
+      : i === 2 ? NEWS_INJECTION_TITLE
+        : `Aktualność syntetyczna nr ${i}: podsumowanie spotkania Rady z bardzo długim tytułem, który musi się złamać na wąskim ekranie telefonu`;
+    const { post } = await news.createDraft(db, author, {
+      schoolYearId: 'e2e-y-2026',
+      title,
+      body: `Treść syntetyczna wpisu ${i}. ${'Długi akapit bez danych osobowych. '.repeat(4)}`,
+      idempotencyKey: `e2e-news-${String(i).padStart(4, '0')}`,
+    });
+    await news.submit(db, author, { postId: post.id, revision: 1 });
+    await news.approve(db, reviewer, { postId: post.id, revision: 1 });
+    await news.publish(db, reviewer, { postId: post.id, revision: 1 });
+    titles.push(title);
+  }
+  await news.createDraft(db, author, {
+    schoolYearId: 'e2e-y-2026',
+    title: 'Szkic aktualności SEKRET E2E',
+    body: 'Treść szkicu, która nie może trafić na stronę publiczną.',
+    idempotencyKey: 'e2e-news-draft-0001',
+  });
+  return titles;
+}
+
+// #124: dwa dokumenty zarządu w roku e2e (metadane w bazie, bez pliku w
+// magazynie) — test powrotu fokusu po zamknięciu „Szczegóły” w documents/.
+const E2E_DOCUMENTS = [
+  { id: '00000000-0000-4000-8000-00000000e124', title: 'Protokół zebrania zarządu (syntetyczny)', category: 'protokol' },
+  { id: '00000000-0000-4000-8000-00000000e125', title: 'Uchwała w sprawie budżetu (syntetyczna)', category: 'uchwala' },
+];
+async function seedDocuments(db) {
+  for (const [index, doc] of E2E_DOCUMENTS.entries()) {
+    await db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key, created_at)
+       VALUES ($1, $2, 'application/pdf', 1024, 'board', 'e2e-board-events', 'e2e-y-2026', repeat('b', 64), $3, now() - ($4::int * interval '1 minute'))`,
+      [doc.id, `docs/${doc.id}`, `e2e-document-${index + 1}`, index],
+    );
+    await db.query(
+      `INSERT INTO document_descriptions (document_id, revision_no, title, category, created_by)
+       VALUES ($1, 1, $2, $3, 'e2e-board-events')`,
+      [doc.id, doc.title, doc.category],
+    );
+  }
+}
+
 async function main() {
   const db = new PGlite();
   const client = pgliteClient(db);
@@ -185,6 +241,8 @@ async function main() {
   await seedClass(db, 'e2e-c-2b', 'e2e-y-2026', '2B');
   await seedFamilies(db);
   await seedEvents(db);
+  const newsTitles = await seedNews(db);
+  await seedDocuments(db);
 
   // 1. Admin: hasło + logowanie w przeglądarce, MFA zapisywane w teście (TOTP
   //    liczony w Playwright z sekretu odczytanego z ekranu #manual-key).
@@ -202,6 +260,11 @@ async function main() {
   // z przydziałów, które podają konkretny rok (shared/school-year.js#yearsFromGrants).
   await grantRole(db, 'e2e-treasurer', 'treasurer', { schoolYearId: 'e2e-y-2026' });
   const treasurerCookie = await seedCookieSession(db, { userId: 'e2e-treasurer', mfa: true });
+
+  // 3a. Członek zarządu z przydziałem na rok e2e (#124: panel dokumentów) — sesja przez cookie.
+  await seedUser(db, 'e2e-board-docs');
+  await grantRole(db, 'e2e-board-docs', 'board', { schoolYearId: 'e2e-y-2026' });
+  const boardDocsCookie = await seedCookieSession(db, { userId: 'e2e-board-docs', mfa: true });
 
   // 4. Panel „Konta i role” (#224): admin z czynnikiem TOTP i sesjami cookie —
   //    jedna ze starym MFA (krok w górę: mfa_stale), jedna ze świeżym; dwa konta
@@ -236,6 +299,12 @@ async function main() {
     adminReset: { userId: 'e2e-admin-reset', totpSecret: adminTotpSecret, staleCookie: adminStaleCookie, staleCookie2: adminStaleCookie2, freshCookie: adminFreshCookie, targets: resetTargets },
     publishedEventTitle: 'Piknik szkolny (syntetyczny)',
     draftEventTitle: 'Szkic niezatwierdzony SEKRET E2E',
+    boardDocs: { userId: 'e2e-board-docs', cookie: boardDocsCookie },
+    documents: E2E_DOCUMENTS,
+    newsTitles,
+    newsLongWord: NEWS_LONG_WORD,
+    newsInjectionTitle: NEWS_INJECTION_TITLE,
+    draftNewsTitle: 'Szkic aktualności SEKRET E2E',
   };
   await mkdir(HERE, { recursive: true });
   await writeFile(RUNTIME_FILE, JSON.stringify(runtime, null, 2));
