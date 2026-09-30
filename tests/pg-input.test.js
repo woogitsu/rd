@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ApiError, createJsonReader, decodeCursor, decodePathId, encodeCursor, isUniqueError, isValidDate, readBodyText, readIdempotencyKey, readJsonObject,
+  ApiError, createIdempotencyKeyReader, createJsonReader, decodeCursor, decodeDateIdCursor, encodeDateIdCursor, decodePathId, encodeCursor, isUniqueError, isValidDate, readBodyText, readIdempotencyKey, readJsonObject,
 } from '../src/pg/input.js';
 
 function jsonRequest(body, headers = {}) {
@@ -186,4 +186,34 @@ test('readBodyText i isUniqueError', async () => {
   assert.equal(isUniqueError({ code: '23505' }), true);
   assert.equal(isUniqueError({ code: '23503' }), false);
   assert.equal(isUniqueError(null), false);
+});
+
+test('createIdempotencyKeyReader: trim, wzorzec 8–128 znaków, błąd klasą trasy', () => {
+  const read = createIdempotencyKeyReader({ error: make });
+  const withKey = (key) => new Request('https://rd.test/x', { method: 'POST', headers: key === undefined ? {} : { 'Idempotency-Key': key } });
+  assert.equal(read(withKey('  klucz-0001  ')), 'klucz-0001');
+  assert.equal(read(withKey('a'.repeat(128))), 'a'.repeat(128));
+  for (const bad of [undefined, '', '   ', 'krotki', '-zaczyna-od-myslnika', 'a'.repeat(129), 'klucz ze spacja']) {
+    assert.throws(() => read(withKey(bad)), (e) => e instanceof TestError && e.code === 'invalid_idempotency_key' && e.status === 400, String(bad));
+  }
+});
+
+test('encodeDateIdCursor/decodeDateIdCursor: format bez zmian, związanie z rokiem i filtrem', () => {
+  const scope = { schoolYearId: 'sy-2026', filter: 'all' };
+  const cursor = encodeDateIdCursor('2026-09-15', 'pay-1', scope);
+  // Ten sam format co dotychczasowe kopie w payments.js/ledger.js (base64url bez dopełnienia).
+  assert.equal(cursor, btoa(JSON.stringify(['2026-09-15', 'pay-1', 'sy-2026', 'all'])).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''));
+  assert.deepEqual(decodeDateIdCursor(cursor, scope, make), { date: '2026-09-15', id: 'pay-1' });
+  assert.equal(decodeDateIdCursor(null, scope, make), null);
+  assert.equal(decodeDateIdCursor('', scope, make), null);
+  const invalid = (value, s = scope) => assert.throws(() => decodeDateIdCursor(value, s, make), (e) => e instanceof TestError && e.code === 'invalid_cursor' && e.status === 400);
+  invalid(cursor, { schoolYearId: 'sy-2025', filter: 'all' });
+  invalid(cursor, { schoolYearId: 'sy-2026', filter: 'inny' });
+  invalid('***');
+  invalid('a'.repeat(513));
+  invalid('bm90LWpzb24');
+  invalid(encodeDateIdCursor('2026-02-30', 'pay-1', scope));
+  invalid(encodeDateIdCursor('2026-09-15', '-zly', scope));
+  // Kursor listy z list-cursor.js (inny kształt) podany do tej listy.
+  invalid(Buffer.from(JSON.stringify(['2026-09-15T10:00:00.000000Z', 'x-1', 'scope']), 'utf8').toString('base64url'));
 });
