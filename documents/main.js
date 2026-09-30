@@ -426,7 +426,7 @@ statusForm.addEventListener("submit", async (event) => {
   }
   const replacement = replacementId ? state.documents.map(normalizeDocument).find((other) => other.id === replacementId) : null;
   // Okno potwierdzenia (wspólny komponent, #136): operacja jest trwała w panelu.
-  const confirmed = await confirmAction(statusConfirmation(action, titleLabel(doc), replacement ? titleLabel(replacement) : ""));
+  const confirmed = await confirmAction(statusConfirmation(action, titleLabel(doc), replacement ? titleLabel(replacement) : "", doc.kind));
   if (!confirmed) return;
 
   // Te same dane = ponowienie z tym samym kluczem idempotencji (podwójne kliknięcie, błąd sieci).

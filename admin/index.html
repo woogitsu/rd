@@ -337,6 +337,22 @@
       </section>
     </main>
 
+    <!-- #146 (0159): okno „Odrzuć”/„Wycofaj wniosek” z opcjonalnym powodem. Powód
+         trafia do niezmiennego wiersza wniosku — serwer sprawdza go bramką danych
+         osobowych (#152); dziennik zdarzeń dostaje tylko informację, że powód podano. -->
+    <dialog id="reject-request-dialog" aria-labelledby="reject-request-title" aria-describedby="reject-request-effects">
+      <form id="reject-request-form" method="dialog">
+        <h2 id="reject-request-title">Odrzucić wniosek?</h2>
+        <div id="reject-request-effects"></div>
+        <label>Powód (opcjonalnie, 3–500 znaków) <textarea name="reason" rows="3" minlength="3" maxlength="500"></textarea><small class="pii-hint">Wpis jest niezmienny — nie da się go potem poprawić ani usunąć. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków.</small></label>
+        <p class="form-error" id="reject-request-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" data-role="cancel">Anuluj</button>
+          <button type="submit" class="primary" data-role="confirm">Odrzuć wniosek</button>
+        </div>
+      </form>
+    </dialog>
+
     <!-- Kartki do wydruku (#108): wypełniane tylko na czas drukowania i czyszczone po nim. -->
     <div id="print-sheets" class="print-sheets" aria-hidden="true"></div>
 

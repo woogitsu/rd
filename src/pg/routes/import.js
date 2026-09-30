@@ -22,6 +22,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { FIELDS, validateRows } from '../../../import/core.js';
 import { insertAuditEvent } from '../audit.js';
 import { requireAccess } from '../authorization.js';
+import { resolveScope, scopeSqlParams } from '../scope.js';
 import { isProductionLikeEnv } from '../../app-env.js';
 import { createJsonReader } from '../input.js';
 
@@ -80,10 +81,10 @@ function importDisabled(env) {
   return isProductionLikeEnv(env?.APP_ENV) && env?.IMPORT_ENABLED !== 'true';
 }
 
-// Przydział musi obejmować wszystkie klasy; rok — wskazany albo wszystkie.
-function qualifyingGrants(context, schoolYearId) {
-  return context.grants.filter((grant) => IMPORT_ROLES.includes(grant.role) && !grant.classId
-    && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === schoolYearId));
+// Przydział musi obejmować wszystkie klasy (bez class_id, SR-01); rok — wskazany
+// albo wszystkie. Zakres liczy src/pg/scope.js (#155).
+function importScope(context, schoolYearId) {
+  return resolveScope(context, { roles: IMPORT_ROLES, schoolYearId: schoolYearId || undefined });
 }
 
 // Zachowanie importu zostaje bez zmian: typ sprawdzany wzorcem na całym
@@ -616,10 +617,9 @@ async function commit(env, actorId, payload, idempotencyKey) {
 }
 
 async function options(env, context, json) {
-  const grants = qualifyingGrants(context, null);
-  if (!grants.length) return json({ error: 'forbidden' }, 403);
-  const allYears = grants.some((grant) => !grant.schoolYearId);
-  const allowed = [...new Set(grants.map((grant) => grant.schoolYearId).filter(Boolean))];
+  const scope = importScope(context, null);
+  if (!scope.schoolWide) return json({ error: 'forbidden' }, 403);
+  const [allYears, allowed] = scopeSqlParams(scope);
   const { rows } = await env.db.query(
     `SELECT y.id, y.label, y.starts_on, COALESCE(array_agg(c.name ORDER BY c.name) FILTER (WHERE c.id IS NOT NULL), '{}') AS classes
        FROM school_years y LEFT JOIN classes c ON c.school_year_id = y.id
@@ -659,7 +659,7 @@ export async function handle(request, env, url, json) {
       throw new ImportError(400, 'idempotency_key_required');
     }
     const payload = parseImportPayload(await readJsonBody(request));
-    if (!qualifyingGrants(context, payload.schoolYearId).length) return json({ error: 'forbidden' }, 403);
+    if (!importScope(context, payload.schoolYearId).schoolWide) return json({ error: 'forbidden' }, 403);
 
     if (route === 'preview') {
       const { fingerprint, plan } = await prepare(env.db, payload);

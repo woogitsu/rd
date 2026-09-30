@@ -5,6 +5,7 @@ import { passwordLogin, resetPasswordWithToken } from '../src/pg/login.js';
 import { buildAccountOperations } from '../src/pg/routes/reconciliation.js';
 import { accountOperationsSection } from '../src/pg/audit-report.js';
 import { createTestDb, request, seedClass, seedUser, seedUserSession } from './helpers/pg.js';
+import { SYNTHETIC_PHONE_IN_TEXT } from './helpers/assertions.js';
 
 // #146: nadanie roli chronionej (admin, zarząd, skarbnik) — przydział,
 // zaproszenie i ponowne wydanie zaproszenia — wymaga drugiej osoby, gdy
@@ -149,6 +150,189 @@ test('odrzucenie i wycofanie: bez przydziału; nowy wniosek po odrzuceniu możli
     const next = await post(env, '/api/admin/grants', cookies['u-admin-a'], { userId: 'u-target', role: 'treasurer' });
     assert.equal(next.status, 202);
     assert.notEqual(next.data.request.id, requested.data.request.id);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---- 0159: opcjonalny powód odrzucenia (dane syntetyczne) ------------------------
+
+const rejectPath = (id) => `/api/admin/grant-requests/${id}/reject`;
+const statusOf = async (db, id) => (await db.query('SELECT status, reject_reason FROM role_grant_requests WHERE id = $1', [id])).rows[0];
+const metadataOf = (event) => (typeof event.metadata === 'string' ? JSON.parse(event.metadata) : event.metadata);
+
+async function pendingRequest(env, cookies, userId = 'u-target', role = 'treasurer') {
+  const requested = await post(env, '/api/admin/grants', cookies['u-admin-a'], { userId, role });
+  assert.equal(requested.status, 202);
+  return requested.data.request.id;
+}
+
+test('0159: odrzucenie z powodem — powód w wierszu i na liście, w dzienniku tylko flaga; podwójne kliknięcie → 409, powód bez zmian', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    const id = await pendingRequest(env, cookies);
+    const reason = 'Brak uchwały zarządu w tej sprawie';
+    const rejected = await post(env, rejectPath(id), cookies['u-admin-b'], { reason: `  ${reason}  ` });
+    assert.equal(rejected.status, 200);
+    assert.equal(rejected.data.request.status, 'rejected');
+    assert.equal(rejected.data.request.rejectReason, reason, 'spacje na brzegach obcięte');
+    assert.deepEqual(await statusOf(db, id), { status: 'rejected', reject_reason: reason });
+
+    // Drugie kliknięcie (inna treść) — 409, zapisany powód zostaje pierwszy, jedno zdarzenie.
+    const again = await post(env, rejectPath(id), cookies['u-admin-c'], { reason: 'Inny powód odrzucenia' });
+    assert.deepEqual([again.status, again.data.error], [409, 'grant_request_closed']);
+    assert.equal((await statusOf(db, id)).reject_reason, reason);
+    const logged = await events(db, 'role_grant_request.rejected');
+    assert.equal(logged.length, 1);
+    const metadata = metadataOf(logged[0]);
+    assert.equal(metadata.reasonGiven, true);
+    assert.doesNotMatch(JSON.stringify(logged[0]), /uchwały/, 'treść powodu nie trafia do dziennika zdarzeń');
+
+    const list = await call(env, '/api/admin/grant-requests?status=rejected', { cookie: cookies['u-admin-c'] });
+    assert.equal(list.status, 200);
+    assert.equal(list.data.requests.find((item) => item.id === id).rejectReason, reason);
+    const pendingList = await call(env, '/api/admin/grant-requests?status=pending', { cookie: cookies['u-admin-c'] });
+    assert.equal(pendingList.data.requests.length, 0);
+  } finally {
+    await db.close();
+  }
+});
+
+test('0159: pusty powód, same spacje, null i brak ciała żądania — odrzucenie bez powodu (reasonGiven: false)', async () => {
+  const { db, env, cookies } = await setup({ admins: ['u-admin-a', 'u-admin-b'] });
+  try {
+    const bodies = [{ reason: '' }, { reason: '   ' }, { reason: null }, {}];
+    for (const [index, body] of bodies.entries()) {
+      await seedUser(db, { userId: `u-bez-powodu-${index}` });
+      const id = await pendingRequest(env, cookies, `u-bez-powodu-${index}`);
+      const rejected = await post(env, rejectPath(id), cookies['u-admin-b'], body);
+      assert.equal(rejected.status, 200, JSON.stringify(body));
+      assert.equal(rejected.data.request.rejectReason, null, JSON.stringify(body));
+      assert.deepEqual(await statusOf(db, id), { status: 'rejected', reject_reason: null });
+    }
+    // Klient sprzed 0159: POST bez Content-Type i bez ciała.
+    await seedUser(db, { userId: 'u-bez-ciala' });
+    const id = await pendingRequest(env, cookies, 'u-bez-ciala');
+    const response = await handlePgRequest(request(rejectPath(id), { method: 'POST', cookie: cookies['u-admin-b'] }), env);
+    assert.equal(response.status, 200);
+    assert.equal((await statusOf(db, id)).status, 'rejected');
+    const logged = await events(db, 'role_grant_request.rejected');
+    assert.equal(logged.length, bodies.length + 1);
+    for (const event of logged) assert.equal(metadataOf(event).reasonGiven, false);
+  } finally {
+    await db.close();
+  }
+});
+
+test('0159: powód z e-mailem, IBAN lub numerem rejestru → 422 bez zapisu; telefon wymaga potwierdzenia', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    const id = await pendingRequest(env, cookies);
+    for (const reason of [
+      'Kontakt: adresat@example.invalid, proszę poczekać',
+      'Zwrot na konto BE68 5390 0754 7034 po decyzji',
+    ]) {
+      const blocked = await post(env, rejectPath(id), cookies['u-admin-b'], { reason, confirmPersonalData: true });
+      assert.equal(blocked.status, 422, reason);
+      assert.equal(blocked.data.error, 'personal_data_forbidden');
+      assert.ok(Array.isArray(blocked.data.categories) && blocked.data.categories.length > 0);
+      assert.doesNotMatch(JSON.stringify(blocked.data), /example\.invalid|BE68/, 'odpowiedź bez fragmentu tekstu');
+    }
+    assert.deepEqual(await statusOf(db, id), { status: 'pending', reject_reason: null });
+    assert.equal((await events(db, 'role_grant_request.rejected')).length, 0);
+
+    const phone = 'Proszę o kontakt pod +32 470 12 34 56 przed ponownym wnioskiem';
+    const unconfirmed = await post(env, rejectPath(id), cookies['u-admin-b'], { reason: phone });
+    assert.equal(unconfirmed.status, 422);
+    assert.equal(unconfirmed.data.error, 'possible_personal_data');
+    assert.deepEqual(unconfirmed.data.categories, ['phone']);
+    assert.equal((await statusOf(db, id)).status, 'pending');
+
+    const confirmed = await post(env, rejectPath(id), cookies['u-admin-b'], { reason: phone, confirmPersonalData: true });
+    assert.equal(confirmed.status, 200);
+    assert.equal(confirmed.data.request.rejectReason, phone);
+    const [event] = await events(db, 'role_grant_request.rejected');
+    const metadata = metadataOf(event);
+    assert.equal(metadata.reasonGiven, true);
+    assert.equal(metadata.piiConfirmed, true);
+    assert.deepEqual(metadata.piiCategories, ['phone']);
+    assert.doesNotMatch(JSON.stringify(event), SYNTHETIC_PHONE_IN_TEXT, 'numer nie trafia do dziennika');
+  } finally {
+    await db.close();
+  }
+});
+
+test('0159: powód za krótki, za długi albo nie-tekst → 400 invalid_reason bez zapisu', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    const id = await pendingRequest(env, cookies);
+    // '😀a' ma 3 jednostki UTF-16, ale 2 znaki — jak char_length w CHECK bazy.
+    for (const reason of ['ab', '😀a', 'x'.repeat(501), 42, ['lista'], { tekst: 'obiekt' }]) {
+      const response = await post(env, rejectPath(id), cookies['u-admin-b'], { reason });
+      assert.deepEqual([response.status, response.data.error], [400, 'invalid_reason'], JSON.stringify(reason));
+    }
+    assert.deepEqual(await statusOf(db, id), { status: 'pending', reject_reason: null });
+    const edge = await post(env, rejectPath(id), cookies['u-admin-b'], { reason: 'x'.repeat(500) });
+    assert.equal(edge.status, 200);
+  } finally {
+    await db.close();
+  }
+});
+
+test('0159: granice ról — odrzucić z powodem może tylko administrator (zarząd, skarbnik, anonim nie)', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    const id = await pendingRequest(env, cookies);
+    const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
+    const treasurer = await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer' }], mfa: true });
+    for (const cookie of [board, treasurer]) {
+      assert.equal((await post(env, rejectPath(id), cookie, { reason: 'Próba spoza roli administratora' })).status, 403);
+    }
+    assert.equal((await post(env, rejectPath(id), undefined, { reason: 'Próba bez sesji' })).status, 401);
+    // Bramka i walidacja działają dopiero po autoryzacji: bez roli nie ma 422 ani 400.
+    assert.equal((await post(env, rejectPath(id), board, { reason: 'adresat@example.invalid' })).status, 403);
+    assert.deepEqual(await statusOf(db, id), { status: 'pending', reject_reason: null });
+    // Wnioskodawca może wycofać własny wniosek z powodem.
+    const withdrawn = await post(env, rejectPath(id), cookies['u-admin-a'], { reason: 'Pomyłka w wyborze roli' });
+    assert.equal(withdrawn.status, 200);
+    assert.equal(withdrawn.data.request.decidedBy, 'u-admin-a');
+  } finally {
+    await db.close();
+  }
+});
+
+test('0159: baza — powód tylko przy odrzuceniu i tylko w operacji zamknięcia; po zamknięciu niezmienny', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    const id = await pendingRequest(env, cookies);
+    // Powód bez odrzucenia (wniosek oczekujący) — strażnik albo CHECK.
+    await assert.rejects(db.query("UPDATE role_grant_requests SET reject_reason = 'Powód bez zamknięcia' WHERE id = $1", [id]),
+      /role_grant_request_immutable|role_grant_requests_reject_reason_check/);
+    // Wygaśnięcie z powodem — CHECK.
+    await assert.rejects(db.query(
+      "UPDATE role_grant_requests SET status = 'expired', decided_at = now(), reject_reason = 'Powód wygaśnięcia' WHERE id = $1", [id],
+    ), /role_grant_request_immutable|role_grant_requests_reject_reason_check/);
+    // Powód z białymi znakami na brzegach albo za krótki — CHECK.
+    for (const bad of [' Powód ze spacją', 'ab']) {
+      await assert.rejects(db.query(
+        "UPDATE role_grant_requests SET status = 'rejected', decided_by = 'u-admin-b', decided_at = now(), reject_reason = $2 WHERE id = $1", [id, bad],
+      ), /role_grant_requests_reject_reason_check/);
+    }
+    assert.deepEqual(await statusOf(db, id), { status: 'pending', reject_reason: null });
+
+    // Zamknięcie bez powodu, potem próba dopisania powodu — niezmienny.
+    assert.equal((await post(env, rejectPath(id), cookies['u-admin-b'])).status, 200);
+    await assert.rejects(db.query("UPDATE role_grant_requests SET reject_reason = 'Dopisany po czasie' WHERE id = $1", [id]),
+      /role_grant_request_immutable/);
+    await assert.rejects(db.query('UPDATE role_grant_requests SET reject_reason = NULL WHERE id = $1', [id]), /role_grant_request_immutable/);
+    assert.equal((await statusOf(db, id)).reject_reason, null);
+
+    // Zatwierdzony wniosek nie może mieć powodu odrzucenia.
+    await seedUser(db, { userId: 'u-zatwierdzany' });
+    const approvedId = await pendingRequest(env, cookies, 'u-zatwierdzany');
+    assert.equal((await post(env, `/api/admin/grant-requests/${approvedId}/approve`, cookies['u-admin-b'])).status, 200);
+    await assert.rejects(db.query("UPDATE role_grant_requests SET reject_reason = 'Po zatwierdzeniu' WHERE id = $1", [approvedId]),
+      /role_grant_request_immutable/);
   } finally {
     await db.close();
   }

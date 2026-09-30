@@ -173,8 +173,8 @@ function normalizer() {
     if (Array.isArray(value)) return value.map((item) => visit(item));
     if (value && typeof value === 'object') {
       // #87: attachmentIds to rozszerzenie listy tylko w PostgreSQL (Worker go nie zna);
-      // sprawdzane osobnym testem niżej.
-      return Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'attachmentIds').map(([k, v]) => [k, visit(v, k)]));
+      // sprawdzane osobnym testem niżej. #82: attachments (stan dowodów) — tak samo.
+      return Object.fromEntries(Object.entries(value).filter(([k]) => k !== 'attachmentIds' && k !== 'attachments').map(([k, v]) => [k, visit(v, k)]));
     }
     return value;
   };
@@ -397,7 +397,8 @@ test('summary balances opening, adjustments, income, expenses and corrections in
   assert.equal(net('expense'), expenses);
   assert.deepEqual(Object.keys(list.body.entries[0]).sort(), [
     // #87: attachmentIds — wszystkie dowody wpisu (tylko lista w PostgreSQL).
-    'amountCents', 'attachmentIds', 'categoryId', 'categoryName', 'correctedCents', 'description', 'direction', 'id', 'method',
+    // #82: attachments — stan każdego dowodu i jego aktualna wersja (tylko lista).
+    'amountCents', 'attachmentIds', 'attachments', 'categoryId', 'categoryName', 'correctedCents', 'description', 'direction', 'id', 'method',
     'netAmountCents', 'occurredOn', 'paymentEntryId', 'resolutionReference', 'schoolYearId', 'source', 'sourceDocumentId',
   ]);
   const corrected = entries.find((e) => e.id === expense.id);

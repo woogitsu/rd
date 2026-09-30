@@ -25,7 +25,7 @@
 //   cofnięcie praw: zarząd.
 import sharp from 'sharp';
 import { isSameOrigin } from '../auth.js';
-import { isAuthorized } from '../authorization.js';
+import { actorContext, authorizedClassIds, isAuthorizedForOwnClass, isAuthorizedScoped } from './scope.js';
 import { declaredType, detectType, readLimited, tryAcquireUploadSlot, validateStructure } from '../documents.js';
 import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
@@ -89,19 +89,14 @@ const piiFail = (code, categories) => new NewsError(code, 422, { categories });
 
 // ---------- uprawnienia ----------
 
-function contextFor(actor, grants) {
-  return { session: { user: { id: actor.userId }, mfaVerified: Boolean(actor.mfaVerified) }, grants };
-}
-
+// Zakres z src/pg/scope.js (#155): szkolny — wyłącznie przydział bez klasy
+// (SR-01); klasowy — wyłącznie przydział tej klasy.
 function schoolWide(actor, roles, schoolYearId) {
-  const grants = (actor?.grants ?? []).filter((g) => !g.classId);
-  return isAuthorized(contextFor(actor, grants), { roles: [...roles], schoolYearId: schoolYearId ?? undefined });
+  return isAuthorizedScoped(actorContext(actor), { roles: [...roles], schoolYearId: schoolYearId ?? undefined });
 }
 
 function classScoped(actor, classId, schoolYearId) {
-  if (!classId) return false;
-  const grants = (actor?.grants ?? []).filter((g) => g.classId === classId);
-  return isAuthorized(contextFor(actor, grants), { roles: [...NEWS_POLICY.draftClass], classId, schoolYearId });
+  return isAuthorizedForOwnClass(actorContext(actor), { roles: [...NEWS_POLICY.draftClass], classId, schoolYearId });
 }
 
 function canEdit(actor, post) {
@@ -641,8 +636,7 @@ export async function listInternal(db, actor, input) {
     );
     return { posts: rows.map(internalPost) };
   }
-  const classIds = [...new Set(actor.grants
-    .filter((g) => g.classId && classScoped(actor, g.classId, schoolYearId)).map((g) => g.classId))];
+  const classIds = authorizedClassIds(actorContext(actor), { roles: [...NEWS_POLICY.draftClass], schoolYearId });
   if (!classIds.length) throw new NewsError('forbidden', 403);
   const { rows } = await db.query(
     `SELECT ${POST_COLUMNS} FROM news_posts WHERE school_year_id = $1 AND class_id = ANY($2::text[])

@@ -15,7 +15,7 @@
 // Zapis i jego zdarzenie audytu powstają w jednej transakcji. Powtórzenie
 // zakończonej operacji zwraca stan bez nowego zapisu (replayed: true).
 
-import { freshMfaForbiddenCode, isAuthorized, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
+import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
@@ -126,8 +126,8 @@ async function wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles) {
 async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = false, allowExpiredByOwnClosure = false } = {}) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  const yearWide = { ...context, grants: context.grants.filter((grant) => !grant.classId) };
-  if (!isAuthorized(yearWide, { roles, schoolYearId, requireMfa: true })) {
+  // Tylko przydział bez class_id (isAuthorizedScoped bez classId, src/pg/scope.js).
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) {
     const actorId = context.session.user.id;
     if (allowExpiredByOwnClosure && context.session.mfaVerified
       && (await wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles))) {
@@ -147,8 +147,7 @@ async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = 
 async function authorizeArchiveRead(request, env, schoolYearId, roles, route) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  const yearWide = { ...context, grants: context.grants.filter((grant) => !grant.classId) };
-  if (isAuthorized(yearWide, { roles, schoolYearId, requireMfa: true })) return;
+  if (isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) return;
   const via = await archiveReadVia(env.db, context, schoolYearId, roles);
   if (!via) throw new RequestError('forbidden', 403);
   await recordArchiveRead(env.db, { actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route });

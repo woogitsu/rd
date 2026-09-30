@@ -26,6 +26,7 @@
 // z listy klasy #95 i migawki kampanii. Follow-up po #294.
 
 import { loadAuthorizationContext } from '../authorization.js';
+import { authorizedClassIds, resolveScope } from '../scope.js';
 import { emailHash, normalizeEmail } from '../../email/content.js';
 
 export const name = 'representative';
@@ -45,20 +46,15 @@ export async function handle(request, env, url, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return json({ error: 'unauthenticated' }, 401);
 
-  const hasRepresentativeRole = context.grants.some((grant) => grant.role === 'representative');
+  const hasRepresentativeRole = resolveScope(context, { roles: ['representative'] }).any;
   if (!hasRepresentativeRole) return json({ error: 'forbidden' }, 403);
 
   const schoolYearId = url.searchParams.get('schoolYearId');
   if (!ID_PATTERN.test(schoolYearId ?? '')) return json({ error: 'invalid_request' }, 400);
 
   // Przydział bez school_year_id obowiązuje w każdym roku (jak w families.js);
-  // przydział innego roku nie otwiera klas tego roku.
-  const classIds = [...new Set(
-    context.grants
-      .filter((grant) => grant.role === 'representative' && grant.classId
-        && (grant.schoolYearId === null || grant.schoolYearId === schoolYearId))
-      .map((grant) => grant.classId),
-  )];
+  // przydział innego roku nie otwiera klas tego roku (src/pg/scope.js, #155).
+  const classIds = authorizedClassIds(context, { roles: ['representative'], schoolYearId });
   if (!classIds.length) return json({ schoolYearId, classes: [] });
 
   const { rows } = await env.db.query(

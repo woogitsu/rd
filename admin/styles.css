@@ -85,6 +85,16 @@ td.empty { color: var(--muted); text-align: center; padding: 1.4rem; }
 .token-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .token-row code { flex: 1 1 320px; padding: .6rem .7rem; background: #faf9f8; border: 1px solid #e2dedb; word-break: break-all; user-select: all; }
 
+/* #146: okno odrzucenia wniosku o nadanie roli (jak #shared-confirm-dialog). */
+#reject-request-dialog { width: min(34rem, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; color: #252323; background: #fff; border: 1px solid #d8d2cd; border-top: 4px solid var(--red); }
+#reject-request-dialog::backdrop { background: rgb(40 44 47 / 45%); }
+#reject-request-dialog form { display: grid; gap: 1rem; margin: 0; padding: 1.25rem; }
+#reject-request-dialog h2 { margin: 0; font-size: 1.25rem; line-height: 1.3; }
+#reject-request-dialog ul { margin: 0; padding-left: 1.2rem; color: #49433f; }
+#reject-request-dialog textarea { font-family: inherit; font-size: .9rem; }
+#reject-request-dialog .form-error { margin: 0; }
+#reject-request-dialog .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
+
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 640px) {

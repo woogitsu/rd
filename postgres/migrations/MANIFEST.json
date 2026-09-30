@@ -358,5 +358,9 @@
   {
     "name": "0158_structured_reference_usage.sql",
     "sha256": "9f59b608b2407cbe9ccc7e98d5c8e23c21704dbe42ca83df69986efccd439f6f"
+  },
+  {
+    "name": "0159_role_grant_request_reject_reason.sql",
+    "sha256": "79df7e5cb3cd5ecd41e5d12faf0d64b5007d11e0791a7c5cb35b80d7e8376adf"
   }
 ]

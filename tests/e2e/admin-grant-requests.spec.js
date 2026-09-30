@@ -3,7 +3,9 @@
 // e2e-admin-grants z własnym czynnikiem TOTP. Sprawdza: listę (kto, dla kogo,
 // rola, zakres, wiek), brak „Zatwierdź” przy własnym wniosku, okno potwierdzenia
 // nazywające akcję, krok w górę MFA, jednorazowy link zaproszenia, odrzucenie
-// i podwójne kliknięcie „Zatwierdź” = jeden przydział. Dane syntetyczne, bez e-maili.
+// z opcjonalnym powodem (0159: bramka danych osobowych w oknie, podwójne
+// kliknięcie = jedno żądanie) i podwójne kliknięcie „Zatwierdź” = jeden
+// przydział. Dane syntetyczne (.invalid), bez wysyłki e-maili.
 import { expect, test } from '@playwright/test';
 import { base32Decode, totp } from '../../src/pg/mfa.js';
 import { readRuntime } from './support/runtime.js';
@@ -103,16 +105,66 @@ test('odrzucenie wniosku i podwójne kliknięcie „Zatwierdź” — jeden przy
   const dialog = page.locator('#shared-confirm-dialog');
   const confirmButton = dialog.locator('[data-role=confirm]');
 
-  // Odrzucenie: okno nazywa akcję; wniosek znika z oczekujących, przydziału brak.
+  // Odrzucenie (0159): okno nazywa akcję, ma opcjonalne pole powodu z ostrzeżeniem
+  // o danych osobowych; fokus startuje na „Anuluj”.
+  const rejectDialog = page.locator('#reject-request-dialog');
+  const rejectConfirm = rejectDialog.locator('[data-role=confirm]');
+  const rejectReason = rejectDialog.locator('textarea[name=reason]');
+  const rejectError = page.locator('#reject-request-error');
   const rejectRow = requestRow(page, requests.reject);
+  const rejectPosts = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes(`/api/admin/grant-requests/${requests.reject}/reject`)) {
+      rejectPosts.push(request.postData());
+    }
+  });
+  const pendingStatus = async () => (await apiJson(page, '/api/admin/grant-requests?status=all'))
+    .requests.find((item) => item.id === requests.reject).status;
   await rejectRow.getByRole('button', { name: 'Odrzuć' }).click();
-  await expect(dialog.locator('#shared-confirm-title')).toHaveText('Odrzucić wniosek?');
-  await expect(confirmButton).toHaveText('Odrzuć wniosek');
-  await confirmButton.click();
+  await expect(rejectDialog).toBeVisible();
+  await expect(rejectDialog.locator('#reject-request-title')).toHaveText('Odrzucić wniosek?');
+  await expect(rejectConfirm).toHaveText('Odrzuć wniosek');
+  await expect(rejectDialog).toContainText('Konto: e2e-grant-reject');
+  await expect(rejectDialog.locator('.pii-hint')).toContainText('Nie wpisuj');
+  await expect(rejectDialog.locator('[data-role=cancel]')).toBeFocused();
+  // Anulowanie nic nie zmienia.
+  await rejectDialog.locator('[data-role=cancel]').click();
+  await expect(rejectDialog).toBeHidden();
+  await expect(rejectRow).toContainText('Oczekuje');
+
+  // Powód z adresem e-mail: 422 bez zapisu, okno zostaje otwarte z komunikatem.
+  await rejectRow.getByRole('button', { name: 'Odrzuć' }).click();
+  await rejectReason.fill('Proszę pisać na kontakt@example.invalid');
+  await rejectConfirm.click();
+  await expect(rejectError).toContainText('adres e-mail');
+  await expect(rejectDialog).toBeVisible();
+  expect(await pendingStatus()).toBe('pending');
+
+  // Powód z numerem telefonu: pytanie o potwierdzenie; „Wróć i popraw” — bez zapisu.
+  await rejectReason.fill('Kontakt pod numerem +32 470 12 34 56');
+  await rejectConfirm.click();
+  await expect(dialog.locator('#shared-confirm-title')).toHaveText('Tekst może zawierać dane osobowe');
+  await dialog.locator('[data-role=cancel]').click();
+  await expect(rejectError).not.toBeEmpty();
+  await expect(rejectDialog).toBeVisible();
+  expect(await pendingStatus()).toBe('pending');
+
+  // Poprawny powód, podwójne kliknięcie „Odrzuć wniosek”: jedno żądanie.
+  rejectPosts.length = 0;
+  await rejectReason.fill('Brak uchwały zarządu w tej sprawie');
+  await rejectConfirm.dblclick();
   await expect(page.locator('#global-message')).toContainText('Wniosek odrzucony');
+  await expect(rejectDialog).toBeHidden();
   await expect(rejectRow).toHaveCount(0);
+  expect(rejectPosts).toHaveLength(1);
+  expect(JSON.parse(rejectPosts[0])).toEqual({ reason: 'Brak uchwały zarządu w tej sprawie' });
   const rejectedGrants = await apiJson(page, '/api/admin/grants?userId=e2e-grant-reject&status=all');
   expect(rejectedGrants.grants).toHaveLength(0);
+  // Dziennik zdarzeń: odrzucenie jest, treści powodu brak.
+  const rejectAudit = await apiJson(page, '/api/admin/audit?limit=200');
+  const rejections = rejectAudit.events.filter((event) => event.action === 'role_grant_request.rejected' && event.entityId === requests.reject);
+  expect(rejections).toHaveLength(1);
+  expect(JSON.stringify(rejectAudit)).not.toContain('Brak uchwały');
 
   // Podwójne kliknięcie „Zatwierdź” w oknie: jedno żądanie, jeden przydział.
   const approveRequests = [];
@@ -147,19 +199,23 @@ test('odrzucenie wniosku i podwójne kliknięcie „Zatwierdź” — jeden przy
   const approvals = audit.events.filter((event) => event.action === 'role_grant_request.approved' && event.entityId === requests.approveGrant);
   expect(approvals).toHaveLength(1);
 
-  // Własny wniosek można wycofać (bez zatwierdzania).
+  // Własny wniosek można wycofać (bez zatwierdzania); powód jest opcjonalny — pusty.
   const ownRow = requestRow(page, requests.own);
   await ownRow.getByRole('button', { name: 'Wycofaj wniosek' }).click();
-  await expect(dialog.locator('#shared-confirm-title')).toHaveText('Wycofać wniosek?');
-  await confirmButton.click();
+  await expect(rejectDialog.locator('#reject-request-title')).toHaveText('Wycofać wniosek?');
+  await expect(rejectConfirm).toHaveText('Wycofaj wniosek');
+  await expect(rejectReason).toHaveValue('');
+  await rejectConfirm.click();
   await expect(page.locator('#global-message')).toContainText('Wniosek wycofany');
   await expect(ownRow).toHaveCount(0);
 
-  // Filtr „Odrzucone” pokazuje oba zamknięte wnioski bez akcji.
+  // Filtr „Odrzucone” pokazuje oba zamknięte wnioski bez akcji; powód tylko przy odrzuconym z powodem.
   await page.locator('#grant-request-filters select[name=status]').selectOption('rejected');
   await page.locator('#grant-request-filters button[type=submit]').click();
   await expect(requestRow(page, requests.reject)).toContainText('Odrzucony');
+  await expect(requestRow(page, requests.reject)).toContainText('Powód: Brak uchwały zarządu w tej sprawie');
   await expect(requestRow(page, requests.own)).toContainText('Odrzucony');
+  await expect(requestRow(page, requests.own)).not.toContainText('Powód:');
   await expect(page.locator('#grant-requests-body button')).toHaveCount(0);
   await context.close();
 });

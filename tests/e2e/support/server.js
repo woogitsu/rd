@@ -248,6 +248,31 @@ async function seedDocuments(db) {
   }
 }
 
+// #82: wersje i unieważnienie w documents/ — osobny rok i osobny członek zarządu,
+// żeby zastąpienie/unieważnienie nie zmieniało list widzianych przez inne testy
+// (documents-news-a11y.spec.js liczy wiersze roku e2e-y-2026). Tylko metadane
+// (bez pliku w magazynie): zmiana stanu nie czyta treści dokumentu.
+const DOCS82_YEAR_ID = 'e2e-y-docs82';
+const E2E_DOCS82 = [
+  { id: '00000000-0000-4000-8000-0000000e82a1', title: 'Regulamin Rady (wersja 1, syntetyczny)', category: 'regulamin' },
+  { id: '00000000-0000-4000-8000-0000000e82a2', title: 'Regulamin Rady (wersja 2, syntetyczny)', category: 'regulamin' },
+  { id: '00000000-0000-4000-8000-0000000e82a3', title: 'Plik wgrany omyłkowo (syntetyczny)', category: 'inne' },
+];
+async function seedDocs82(db, userId) {
+  for (const [index, doc] of E2E_DOCS82.entries()) {
+    await db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key, created_at)
+       VALUES ($1, $2, 'application/pdf', 1024, 'board', $3, $4, repeat('d', 64), $5, now() - ($6::int * interval '1 minute'))`,
+      [doc.id, `docs/${doc.id}`, userId, DOCS82_YEAR_ID, `e2e-docs82-${index + 1}`, 10 - index],
+    );
+    await db.query(
+      `INSERT INTO document_descriptions (document_id, revision_no, title, category, created_by)
+       VALUES ($1, 1, $2, $3, $4)`,
+      [doc.id, doc.title, doc.category, userId],
+    );
+  }
+}
+
 // Wydruk zestawień (#151): osobny rok i osobny skarbnik, żeby 300 wpłat i 300
 // wpisów księgi nie zmieniało list widzianych przez inne testy. Część wpłat ma
 // korektę częściową (kolumny „Korekty” i „Netto” na wydruku). Dane syntetyczne.
@@ -351,6 +376,13 @@ async function main() {
   const boardDocsCookie = await seedCookieSession(db, { userId: 'e2e-board-docs', mfa: true });
   const printMeetingId = await seedPrintMeeting(db, 'e2e-board-docs');
 
+  // 3a'. Członek zarządu wyłącznie w roku e2e-y-docs82 (#82: zastąpienie i unieważnienie).
+  await seedUser(db, 'e2e-board-docs82');
+  await seedSchoolYear(db, DOCS82_YEAR_ID, { startsOn: '2024-09-01', endsOn: '2025-08-31' });
+  await grantRole(db, 'e2e-board-docs82', 'board', { schoolYearId: DOCS82_YEAR_ID });
+  await seedDocs82(db, 'e2e-board-docs82');
+  const boardDocs82Cookie = await seedCookieSession(db, { userId: 'e2e-board-docs82', mfa: true });
+
   // 4. Panel „Konta i role” (#224): admin z czynnikiem TOTP i sesjami cookie —
   //    jedna ze starym MFA (krok w górę: mfa_stale), jedna ze świeżym; dwa konta
   //    docelowe (hasło + czynnik TOTP), na których test wykonuje resety.
@@ -414,6 +446,7 @@ async function main() {
     boardDocs: { userId: 'e2e-board-docs', cookie: boardDocsCookie },
     printMeeting: { id: printMeetingId, title: PRINT_MEETING_TITLE },
     documents: E2E_DOCUMENTS,
+    boardDocs82: { userId: 'e2e-board-docs82', cookie: boardDocs82Cookie, schoolYearId: DOCS82_YEAR_ID, documents: E2E_DOCS82 },
     newsTitles,
     newsLongWord: NEWS_LONG_WORD,
     newsInjectionTitle: NEWS_INJECTION_TITLE,

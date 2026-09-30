@@ -449,8 +449,10 @@ export function buildStatusRequest(action, id, { reason, replacementDocumentId }
 }
 
 // Skutki pokazywane w oknie potwierdzenia (shared/confirm-dialog.js). Bez „usuń”: plik zostaje.
-export function statusConfirmation(action, label, replacementLabel = "") {
+export function statusConfirmation(action, label, replacementLabel = "", kind = "") {
   const keep = "Plik i wpis zostają w archiwum i nie są usuwane; operacja trafia do dziennika zdarzeń.";
+  // #82: unieważnienie nie ogranicza dostępu — kto miał dostęp do rodzaju dokumentu, nadal go otworzy.
+  const access = "Osoby z dostępem do tego rodzaju dokumentów nadal mogą otworzyć plik.";
   if (action === "supersede") {
     return {
       title: "Zastąpić dokument?",
@@ -459,7 +461,12 @@ export function statusConfirmation(action, label, replacementLabel = "") {
       effects: [
         `Dokument „${label}” zostanie oznaczony jako zastąpiony przez „${replacementLabel}”.`,
         "Zastąpiony dokument znika z domyślnej listy; widać go po wybraniu „Pokaż też zastąpione i unieważnione”.",
+        // Dowody księgowe są wyłącznie dokumentami finansowymi.
+        ...(kind === "financial"
+          ? ["Jeśli dokument jest dowodem wpisu księgi, powiązanie zostaje przy nim; księga pokaże nową wersję jako aktualną."]
+          : []),
         keep,
+        access,
         "Tej operacji nie można cofnąć w panelu.",
       ],
     };
@@ -472,6 +479,7 @@ export function statusConfirmation(action, label, replacementLabel = "") {
       `Dokument „${label}” zostanie oznaczony jako unieważniony.`,
       "Unieważniony dokument znika z domyślnej listy; widać go po wybraniu „Pokaż też zastąpione i unieważnione”.",
       keep,
+      access,
       "Tej operacji nie można cofnąć w panelu.",
     ],
   };

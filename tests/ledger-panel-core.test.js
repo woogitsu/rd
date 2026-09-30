@@ -9,6 +9,8 @@ import {
   formatCents,
   makeIdempotencyKey,
   needsResolution,
+  attachmentStatusLabel,
+  attachmentStatusSummary,
   normalizeEntry,
   parseEuroAmount,
 } from "../ledger/core.js";
@@ -242,4 +244,24 @@ test("#144: wiersz opisuje, co wpis zastępuje i czym został zastąpiony", asyn
   assert.deepEqual(replacementChainLabels(normalizeEntry({ id: "e-plain" }), loaded), []);
   // Niepoprawny identyfikator z API nie trafia do opisu.
   assert.equal(normalizeEntry({ id: "x", replacesEntryId: "zły id" }).replacesEntryId, "");
+});
+
+test("#82: stan dowodów wpisu — dopisek do „Dowody: N”, bez słowa „usunięty”", () => {
+  const entry = normalizeEntry({
+    id: "e1", direction: "expense", amountCents: 1200, method: "bank",
+    attachmentIds: ["d1", "d2", "d3"],
+    attachments: [
+      { documentId: "d1", status: "superseded", currentDocumentId: "d9" },
+      { documentId: "d2", status: "voided", currentDocumentId: null },
+      { documentId: "d3", status: "superseded", currentDocumentId: null },
+    ],
+  });
+  assert.equal(entry.attachmentCount, 3);
+  assert.deepEqual(entry.attachmentStatus, { superseded: 2, voided: 1, withoutCurrent: 1 });
+  const label = attachmentStatusLabel(entry.attachmentStatus);
+  assert.equal(label, " (zastąpione nowszą wersją: 2, unieważnione: 1, bez aktualnej wersji: 1)");
+  assert.doesNotMatch(label, /usuni/i);
+  // Starsze API (bez pola attachments) i same aktualne dowody: bez dopisku.
+  assert.equal(attachmentStatusLabel(normalizeEntry({ id: "e2", attachmentIds: ["d1"] }).attachmentStatus), "");
+  assert.deepEqual(attachmentStatusSummary([{ status: "active", currentDocumentId: "d1" }]), { superseded: 0, voided: 0, withoutCurrent: 0 });
 });

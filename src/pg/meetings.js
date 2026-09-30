@@ -2,7 +2,8 @@
 //
 // Usługi mają postać `(db, actor, input)`, gdzie `db` udostępnia `query(sql, params)`
 // (pg.Pool, dedykowany pg.Client albo PGlite), a `actor = { userId, grants, mfaVerified }`.
-// Uprawnienia sprawdza czysta funkcja `isAuthorized` z src/authorization.js.
+// Uprawnienia sprawdza wspólny resolver zakresu src/pg/scope.js (#155), oparty
+// na czystej funkcji `isAuthorized` z src/authorization.js.
 //
 // Założenia (do zatwierdzenia w D-08/D-09, patrz docs/MEETINGS.md i docs/DECISIONS.md):
 // - zarządzanie zebraniami: role admin i board,
@@ -16,7 +17,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
-import { isAuthorized } from '../authorization.js';
+import { actorContext, authorizedClassIds, hasAnyMatchingGrant, isAuthorizedScoped } from './scope.js';
 import { detectPossiblePersonalData } from './pii-check.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { insertAuditEvent } from './audit.js';
@@ -248,18 +249,14 @@ function requireFinalVotes(status, votes, quorumCheckId) {
 
 // ---------- authorization ----------
 
-function contextFor(actor, classId) {
+// Kontekst aktora; bez userId — 401. Zakres (rok, klasa) liczy src/pg/scope.js
+// (#155): przydział klasowy nigdy nie dosięga zebrania ogólnego ani zarządu,
+// ani innej klasy (isAuthorizedScoped, SR-01).
+function meetingContext(actor) {
   if (!actor || typeof actor.userId !== 'string' || !actor.userId) {
     throw new MeetingError('unauthenticated', 401);
   }
-  const grants = Array.isArray(actor.grants) ? actor.grants : [];
-  // A class-scoped grant never reaches a plenary or board meeting, and never a
-  // different class; isAuthorized alone would let it through when classId is absent.
-  const scoped = grants.filter(grant => !grant.classId || (classId && grant.classId === classId));
-  return {
-    session: { user: { id: actor.userId }, mfaVerified: Boolean(actor.mfaVerified) },
-    grants: scoped,
-  };
+  return actorContext({ ...actor, grants: Array.isArray(actor.grants) ? actor.grants : [] });
 }
 
 // #150 (SR-10): zarządzanie zebraniami, protokołami i uchwałami (MANAGE_ROLES)
@@ -269,21 +266,15 @@ function contextFor(actor, classId) {
 // spoza klasy dostaje ten sam ogólny `forbidden`, niezależnie od stanu MFA —
 // `mfa_required` nie ujawnia nic osobie, która i tak nie ma dostępu.
 function authorize(actor, roles, { schoolYearId, classId = null, requireMfa = false } = {}) {
-  const context = contextFor(actor, classId);
+  const context = meetingContext(actor);
   const requirement = { roles: [...roles], schoolYearId };
   if (classId) requirement.classId = classId;
-  if (!isAuthorized(context, requirement)) throw new MeetingError('forbidden', 403);
+  if (!isAuthorizedScoped(context, requirement)) throw new MeetingError('forbidden', 403);
   if (requireMfa && !context.session.mfaVerified) throw new MeetingError('mfa_required', 403);
 }
 
 function actorClassIds(actor, schoolYearId) {
-  const grants = Array.isArray(actor?.grants) ? actor.grants : [];
-  return [...new Set(grants
-    .filter(grant => grant.role === 'representative' && grant.classId
-      && (!grant.schoolYearId || grant.schoolYearId === schoolYearId))
-    .map(grant => grant.classId))]
-    .filter(classId => isAuthorized(contextFor(actor, classId),
-      { roles: ['representative'], schoolYearId, classId }));
+  return authorizedClassIds(meetingContext(actor), { roles: ['representative'], schoolYearId });
 }
 
 // #171 (D-08, wariant najbardziej zachowawczy do czasu decyzji zarządu): flaga
@@ -301,7 +292,7 @@ function classHostEnabled(env) {
 
 function isClassHost(actor, env, { schoolYearId, classId, kind }) {
   if (!classHostEnabled(env) || kind !== 'class' || !classId) return false;
-  return isAuthorized(contextFor(actor, classId), { roles: ['representative'], schoolYearId, classId });
+  return isAuthorizedScoped(meetingContext(actor), { roles: ['representative'], schoolYearId, classId });
 }
 
 function hasManageRole(actor, { schoolYearId, classId }) {
@@ -648,10 +639,9 @@ async function loadResolution(db, resolutionId, meetingId) {
 
 export async function listMeetings(db, actor, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
-  const context = contextFor(actor, null);
-  context.grants = actor.grants ?? [];
+  const context = meetingContext(actor);
   // Any read grant for the year (also class-scoped) may list; rows are filtered below.
-  if (!isAuthorized(context, { roles: [...READ_ROLES], schoolYearId })) throw new MeetingError('forbidden', 403);
+  if (!hasAnyMatchingGrant(context, { roles: [...READ_ROLES], schoolYearId })) throw new MeetingError('forbidden', 403);
   const { rows } = await db.query(
     'SELECT * FROM meetings WHERE school_year_id = $1 ORDER BY scheduled_at DESC, id DESC LIMIT 500',
     [schoolYearId]);
@@ -1169,7 +1159,7 @@ function sharedFromRow(row) {
 // and board minutes plus minutes of their own classes only.
 export async function listSharedMinutes(db, actor, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
-  contextFor(actor, null);
+  meetingContext(actor);
   let allClasses = true;
   try {
     authorize(actor, READ_ROLES, { schoolYearId });
@@ -1487,9 +1477,8 @@ function registerRowToApi(row) {
 // jest traktowana jako obowiązująca, ale nie znika z historii.
 export async function listResolutionRegister(db, actor, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
-  const context = contextFor(actor, null);
-  context.grants = actor.grants ?? [];
-  if (!isAuthorized(context, { roles: [...READ_ROLES], schoolYearId })) throw new MeetingError('forbidden', 403);
+  const context = meetingContext(actor);
+  if (!hasAnyMatchingGrant(context, { roles: [...READ_ROLES], schoolYearId })) throw new MeetingError('forbidden', 403);
   const status = input.status ? (RESOLUTION_STATUSES.has(input.status) ? input.status
     : (() => { throw new MeetingError('invalid_request'); })()) : null;
   const executionStatus = input.executionStatus
