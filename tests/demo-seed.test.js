@@ -649,10 +649,12 @@ test('demo-seed: zebranie ogólne z zatwierdzonym zawiadomieniem — plik .ics d
   assert.deepEqual(campaigns, [{ id: seeded.campaignId, status: 'draft', meeting_notice_id: null }], 'jedyna kampania to szkic z seeda');
 });
 
-test('demo-seed: szkic kampanii bez uwag bramki treści (poza stałą uwagą D-16)', async () => {
+test('demo-seed: szkic kampanii tylko z uwagami o {rodzina} (#83) i stałą uwagą D-16', async () => {
   const board = seeded.accounts.find((a) => a.role === 'board');
   const preview = await apiCall(seeded.env, { path: `/api/email/campaigns/${seeded.campaignId}/preview`, cookie: board.cookie });
-  assert.deepEqual(preview.data.warnings, ['template_requires_board_decision_d16']);
+  // Demo nie ma rejestru komunikacji strukturalnej (payment_references), więc szkic zostaje przy {rodzina}
+  // — {komunikat} wykluczyłby wszystkie rodziny (no_payment_reference). #83 ostrzega o tym jawnie.
+  assert.deepEqual(preview.data.warnings, ['household_id_as_payment_reference', 'template_requires_board_decision_d16']);
 });
 
 // #146/#586: demo ma jednego administratora, więc nadanie ról chronionych (zarząd ×2,
