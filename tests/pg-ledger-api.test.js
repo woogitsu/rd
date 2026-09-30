@@ -410,7 +410,7 @@ test('summary balances opening, adjustments, income, expenses and corrections in
   assert.equal(await summary(backend, 'y-missing'), undefined);
 }));
 
-test('parallel corrections are serialized and never exceed the entry amount', async () => withPg({}, async (backend) => {
+test('corrections sent via Promise.all (sequential on PGlite) never exceed the entry amount; lock proof on PostgreSQL in pg-real-double-click', async () => withPg({}, async (backend) => {
   const entry = (await createEntry(backend, { amountCents: 10000 })).body.entry;
   const results = await Promise.all([1, 2, 3].map((n) => correct(backend, entry.id, {
     amountCents: 4000, reason: `Równoległa korekta ${n}`,
@@ -463,7 +463,7 @@ test('double click with the same Idempotency-Key creates one entry and one audit
   assert.equal(await backend.count('ledger_entries'), 2);
 }));
 
-test('a linked payment is never recorded twice, also in parallel with different keys', async () => withPg({}, async (backend) => {
+test('a linked payment is never recorded twice, also via Promise.all with different keys (sequential on PGlite)', async () => withPg({}, async (backend) => {
   const other = await backend.as('u2', { mfa: true, roles: [{ role: 'board', schoolYearId: 'y2026' }] });
   const results = await Promise.all([
     createEntry(backend, incomeInput, 'link-par-0001'),
