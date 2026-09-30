@@ -29,7 +29,7 @@ export function hasReportAccess(grants, schoolYearId = '') {
 
 export function reportUrl(schoolYearId, format = 'json') {
   if (!isValidId(schoolYearId)) throw new Error('Podaj poprawny identyfikator roku szkolnego.');
-  if (format !== 'json' && format !== 'html') throw new Error('Nieznany format raportu.');
+  if (!['json', 'html', 'xlsx'].includes(format)) throw new Error('Nieznany format raportu.');
   return `/api/reports/audit?schoolYearId=${encodeURIComponent(schoolYearId.trim())}&format=${format}`;
 }
 

@@ -7,6 +7,7 @@ import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { parseStatementCsv } from '../src/pg/routes/reconciliation.js';
 import { escapeHtml, formatEur, REPORT_CSS } from '../src/pg/audit-report.js';
+import { AUDIT_REPORT_SHEETS } from '../src/pg/audit-report-xlsx.js';
 import {
   createMeeting,
   createResolution,
@@ -424,6 +425,135 @@ test('printable HTML report escapes ledger text and is served with a strict CSP'
     const globalAudit = await seedUserSession(db, { userId: 'u-audit-global', roles: [{ role: 'audit' }], mfa: true });
     const missing = await call('/api/reports/audit?schoolYearId=y-missing', { cookie: globalAudit });
     assert.equal(missing.status, 404);
+  } finally {
+    await db.close();
+  }
+});
+
+// #141: raport KR w XLSX — arkusz na sekcję, sumy = JSON, bez formuł, skrót treści = HTML.
+async function readWorkbook(response) {
+  const { default: readXlsxFileNode } = await import('read-excel-file/node');
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const { unzipSync, strFromU8 } = await import('fflate');
+  const parts = unzipSync(bytes);
+  for (const [name, part] of Object.entries(parts)) assert.ok(!/<f[\s>/]/.test(strFromU8(part)), `${name} bez formuł`);
+  const sheets = await readXlsxFileNode(Buffer.from(bytes));
+  return { parts, sheets: Object.fromEntries(sheets.map((sheet) => [sheet.sheet, sheet.data])), names: sheets.map((sheet) => sheet.sheet) };
+}
+
+// Wiersze danych arkusza: po wierszu nagłówka (pierwsza komórka = nagłówek), do pierwszego pustego wiersza.
+function dataRows(rows, firstHeader) {
+  const start = rows.findIndex((row) => row[0] === firstHeader);
+  assert.ok(start >= 0, `brak nagłówka ${firstHeader}`);
+  const out = [];
+  for (const row of rows.slice(start + 1)) {
+    if (row.every((cell) => cell === null)) break;
+    out.push(row);
+  }
+  return { header: rows[start], rows: out };
+}
+
+const cents = (value) => Math.round(value * 100);
+
+test('audit report XLSX: one sheet per section, sums equal JSON, no formulas, same content hash as HTML', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await seedReportData(db);
+    await db.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description,
+      occurred_on, method, resolution_reference, created_by, idempotency_key)
+      VALUES ('le-link', $1, 'expense', 310000, 'cat-equipment', '=HYPERLINK("http://evil.example")', '2026-10-06', 'bank', 'UCH/2026/1', 'u-treasurer', 'le-key-le-link')`, [YEAR]);
+    const { reconciliation } = await (await createDraft(call, cookies.treasurer)).json();
+    await call(`/api/reconciliations/${reconciliation.id}/confirm`, {
+      method: 'POST', cookie: cookies.board, body: { confirmationNote: 'Różnica wyjaśniona' },
+    });
+    const { report } = await (await call(`/api/reports/audit?schoolYearId=${YEAR}&format=json`, { cookie: cookies.audit })).json();
+
+    for (const cookie of [cookies.audit, cookies.board]) {
+      const response = await call(`/api/reports/audit?schoolYearId=${YEAR}&format=xlsx`, { cookie });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('Content-Type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      assert.equal(response.headers.get('Cache-Control'), 'no-store');
+      assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+      assert.equal(response.headers.get('Content-Disposition'), `attachment; filename="raport-kr-${YEAR.replace(/[^A-Za-z0-9_-]/g, '_')}.xlsx"`);
+      const { sheets, names } = await readWorkbook(response);
+      assert.deepEqual(names, [...AUDIT_REPORT_SHEETS]);
+      assert.deepEqual(names.slice(0, 6), ['Informacje', 'Bilans', 'Kontrole', 'Kategorie', 'Preliminarz', 'Wydatki > 3000 EUR']);
+      // Brak słów „dłużnik”, „zaległość” w nazwach arkuszy i nagłówkach.
+      const headers = names.flatMap((name) => sheets[name].flat().filter((cell) => typeof cell === 'string'));
+      assert.ok(![...names, ...headers].some((text) => /d[lł]u[zż]n|zaleg/i.test(text)));
+
+      // Bilans i kategorie = JSON.
+      const balance = Object.fromEntries(dataRows(sheets.Bilans, 'Pozycja').rows.map(([label, value]) => [label, cents(value)]));
+      assert.equal(balance['Bilans otwarcia (z korektami)'], report.balance.openingBalanceCents);
+      assert.equal(balance['Przychody netto'], report.balance.incomeCents);
+      assert.equal(balance['Wydatki netto'], report.balance.expenseCents);
+      assert.equal(balance['Bilans zamknięcia'], report.balance.closingBalanceCents);
+      const categories = dataRows(sheets.Kategorie, 'Rodzaj').rows;
+      assert.equal(categories.length, report.categories.length);
+      const sum = (rows, index, filter = () => true) => rows.filter(filter).reduce((total, row) => total + cents(row[index]), 0);
+      assert.equal(sum(categories, 5, (row) => row[0] === 'przychód'), report.balance.incomeCents);
+      assert.equal(sum(categories, 5, (row) => row[0] === 'wydatek'), report.balance.expenseCents);
+      assert.equal(sum(categories, 3), report.categories.reduce((total, item) => total + item.grossCents, 0));
+      assert.equal(sum(categories, 4), report.categories.reduce((total, item) => total + item.correctedCents, 0));
+      assert.equal(categories.reduce((total, row) => total + row[2], 0), report.categories.reduce((total, item) => total + item.entryCount, 0));
+
+      // Wydatki > 3000 EUR: dokładnie 3000,00 EUR nie jest na liście; opis-formuła zostaje tekstem.
+      const large = dataRows(sheets['Wydatki > 3000 EUR'], 'Data').rows;
+      assert.deepEqual(large.map((row) => row.at(-1)), report.largeExpenses.map((item) => item.id));
+      assert.ok(!large.some((row) => row.at(-1) === 'le-exact'));
+      assert.equal(sum(large, 4), report.largeExpenses.reduce((total, item) => total + item.netAmountCents, 0));
+      const link = large.find((row) => row.at(-1) === 'le-link');
+      assert.equal(link[2], '=HYPERLINK("http://evil.example")');
+      assert.equal(typeof link[2], 'string');
+      assert.ok(link[0] instanceof Date, 'data wydatku jako prawdziwa data arkusza');
+      assert.equal(link[0].toISOString().slice(0, 10), '2026-10-06');
+      assert.equal(large.find((row) => row.at(-1) === 'le-unapproved')[7], 'brak zgodnej przyjętej uchwały');
+
+      // Korekty: każda korekta osobnym wierszem (wpis księgi + bilans otwarcia).
+      const corrections = dataRows(sheets.Korekty, 'Zapisano').rows;
+      assert.deepEqual(corrections.map((row) => row.at(-1)).sort(), [...report.corrections, ...report.openingAdjustments].map((item) => item.id).sort());
+      assert.equal(sum(corrections, 5), [...report.corrections, ...report.openingAdjustments].reduce((total, item) => total + item.amountCents, 0));
+
+      // Uzgodnienia: saldo, różnica.
+      const reconciliations = dataRows(sheets.Uzgodnienia, 'Data wyciągu').rows;
+      assert.equal(reconciliations.length, report.reconciliations.items.length);
+      assert.equal(cents(reconciliations[0][4]), report.reconciliations.items[0].differenceCents);
+      assert.equal(reconciliations[0][1], 'zatwierdzone');
+
+      // Informacje: rok, stan na, skrót treści (SHA-256 JSON bez asOf/generatedAt).
+      const info = Object.fromEntries(dataRows(sheets.Informacje, 'Pole').rows.map(([k, v]) => [k, v]));
+      const { asOf: _a, generatedAt: _g, ...content } = report;
+      const expectedHash = createHash('sha256').update(JSON.stringify(content)).digest('hex');
+      assert.equal(info['Skrót treści (SHA-256)'], expectedHash);
+      assert.equal(info['Identyfikator roku'], YEAR);
+      assert.match(info['Stan na'], /^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2} \(czas Europe\/Brussels\)$/);
+      assert.match(info['Stan na (UTC, jak w JSON)'], /^\d{4}-\d{2}-\d{2}T/);
+
+      const html = await (await call(`/api/reports/audit?schoolYearId=${YEAR}&format=html`, { cookie })).text();
+      assert.ok(html.includes(`Skrót treści (SHA-256): ${expectedHash}`), 'HTML pokazuje ten sam skrót');
+    }
+
+    const events = (await db.query(
+      "SELECT actor_id, metadata_json FROM audit_events WHERE action = 'report.audit.generated' ORDER BY occurred_at, id",
+    )).rows;
+    const xlsxEvents = events.filter((event) => event.metadata_json.format === 'xlsx');
+    assert.deepEqual(xlsxEvents.map((event) => event.actor_id), ['u-audit', 'u-board']);
+    for (const event of events) {
+      assert.deepEqual(Object.keys(event.metadata_json).sort(), ['asOf', 'contentSha256', 'format', 'schoolYearId']);
+      assert.match(event.metadata_json.contentSha256, /^[0-9a-f]{64}$/);
+    }
+
+    for (const cookie of [cookies.rep, cookies.admin]) {
+      const denied = await call(`/api/reports/audit?schoolYearId=${YEAR}&format=xlsx`, { cookie });
+      assert.equal(denied.status, 403);
+    }
+    const noMfa = await call(`/api/reports/audit?schoolYearId=${YEAR}&format=xlsx`, { cookie: cookies.auditNoMfa });
+    assert.deepEqual([noMfa.status, await noMfa.json()], [403, { error: 'mfa_enrollment_required' }]);
+    const unknown = await call(`/api/reports/audit?schoolYearId=${YEAR}&format=xls`, { cookie: cookies.audit });
+    assert.deepEqual([unknown.status, await unknown.json()], [400, { error: 'invalid_request' }]);
+    const before = events.length;
+    const after = (await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'report.audit.generated'")).rows[0].n;
+    assert.equal(after, before, 'odmowa i zły format nie zapisują zdarzenia');
   } finally {
     await db.close();
   }
