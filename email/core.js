@@ -147,13 +147,19 @@ export function sendNotBeforeToInput(iso, timeZone = DEFAULT_SCHEDULE_TIMEZONE) 
   return isoToLocalInput(iso, timeZone);
 }
 
+// „2026-03-27 09:00” → „27.03.2026 09:00” (przegląd demo 5: ten sam zapis dat co
+// Wpłaty, Księga i raport Komisji Rewizyjnej, #563). Inny kształt wraca bez zmian.
+function polishLocalLabel(label) {
+  return String(label).replace(/^(\d{4})-(\d{2})-(\d{2})/, '$3.$2.$1');
+}
+
 // Opis harmonogramu do wyświetlenia. To szacunek serwera (bez pauz i odmów dostawcy).
 export function formatSchedule(schedule) {
   if (!schedule) return '';
   const zone = scheduleTimezone(schedule);
   const lines = [];
   lines.push(schedule.sendNotBefore
-    ? `Start nie wcześniej niż: ${sendNotBeforeToInput(schedule.sendNotBefore, zone).replace('T', ' ')} (${zone}).`
+    ? `Start nie wcześniej niż: ${polishLocalLabel(sendNotBeforeToInput(schedule.sendNotBefore, zone).replace('T', ' '))} (${zone}).`
     : 'Start: jak najszybciej po zakolejkowaniu.');
   if (schedule.window?.enabled) {
     const two = (n) => String(n).padStart(2, '0');
@@ -162,8 +168,8 @@ export function formatSchedule(schedule) {
   } else {
     lines.push('Okno godzin wysyłki wyłączone (zarząd nie ustalił godzin, D-16).');
   }
-  if (schedule.startsAtLocal) lines.push(`Szacowany pierwszy przebieg: ${schedule.startsAtLocal} (${zone}).`);
-  if (schedule.endsAtLocal) lines.push(`Szacowane zakończenie: do ${schedule.endsAtLocal} (${zone}).`);
+  if (schedule.startsAtLocal) lines.push(`Szacowany pierwszy przebieg: ${polishLocalLabel(schedule.startsAtLocal)} (${zone}).`);
+  if (schedule.endsAtLocal) lines.push(`Szacowane zakończenie: do ${polishLocalLabel(schedule.endsAtLocal)} (${zone}).`);
   return lines.join(' ');
 }
 

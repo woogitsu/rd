@@ -29,7 +29,7 @@ import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
 import { PROTECTED_ACCOUNT_ROLES } from '../account-recovery.js';
 import { MoneyError, parseStatementAmount } from '../../../panel/money.js';
-import { detectDelimiter, parseCsvMatrix } from '../../../import/csv.js';
+import { DELIMITERS, detectDelimiter, parseCsvMatrix } from '../../../import/csv.js';
 import { reportContentSecurityPolicy, renderAuditReportHtml } from '../audit-report.js';
 import { auditReportContentSha256, buildAuditReportXlsx } from '../audit-report-xlsx.js';
 import { xlsxResponse } from '../xlsx.js';
@@ -163,13 +163,18 @@ const HEADER_ALIASES = new Map([
 ]);
 
 // #77: wspólny parser RFC 4180 (import/csv.js) — separator ; , albo tabulator liczony poza
-// cudzysłowami w pierwszej linii. Remis nie jest zgadywany po cichu: błąd zamiast domyślnego przecinka.
-function parseCsvRows(text) {
+// cudzysłowami w pierwszej linii. Remis nie jest zgadywany po cichu: błąd zamiast domyślnego przecinka;
+// panel prosi wtedy o ręczny wybór i wysyła go polem `delimiter` (; , albo tabulator).
+function parseCsvRows(text, chosenDelimiter) {
   if (text.includes('\uFFFD') || text.includes('\u0000')) throw new RequestError('invalid_csv_encoding');
-  const detected = detectDelimiter(text);
-  if (detected.tie) throw new RequestError('ambiguous_csv_delimiter');
+  let delimiter = chosenDelimiter;
+  if (delimiter === undefined) {
+    const detected = detectDelimiter(text);
+    if (detected.tie) throw new RequestError('ambiguous_csv_delimiter');
+    delimiter = detected.delimiter;
+  }
   try {
-    return parseCsvMatrix(text, { delimiter: detected.delimiter });
+    return parseCsvMatrix(text, { delimiter });
   } catch {
     // Komunikat parsera zawiera tylko pozycję znaku, ale kod błędu API pozostaje ogólny.
     throw new RequestError('invalid_csv');
@@ -202,9 +207,13 @@ function parseCsvAmount(value) {
   }
 }
 
-export function parseStatementCsv(text) {
+export function parseStatementCsv(text, options = {}) {
   if (typeof text !== 'string' || !text.trim()) throw new RequestError('invalid_csv');
-  const rows = parseCsvRows(text);
+  const { delimiter } = options;
+  if (delimiter !== undefined && (typeof delimiter !== 'string' || !Object.hasOwn(DELIMITERS, delimiter))) {
+    throw new RequestError('invalid_request');
+  }
+  const rows = parseCsvRows(text, delimiter);
   const header = (rows.shift() ?? []).map((cell) => HEADER_ALIASES.get(cell.trim().toLowerCase()) ?? null);
   const column = (key) => header.indexOf(key);
   if (column('date') < 0 || column('amount') < 0) throw new RequestError('invalid_csv_header');
@@ -225,11 +234,13 @@ function parseStatementLines(data) {
   const kinds = ['lines', 'csv', 'coda', 'camt053'].filter((kind) => data[kind] !== undefined);
   if (kinds.length !== 1) throw new RequestError('invalid_request');
   const [kind] = kinds;
+  // #77: ręcznie wybrany separator dotyczy wyłącznie ogólnego CSV.
+  if (data.delimiter !== undefined && kind !== 'csv') throw new RequestError('invalid_request');
   if (FILE_PARSERS[kind]) return parseStatementFile(kind, data[kind]);
   const source = kind === 'csv' ? 'csv' : 'manual';
   let lines;
   if (kind === 'csv') {
-    lines = parseStatementCsv(data.csv);
+    lines = parseStatementCsv(data.csv, { delimiter: data.delimiter });
   } else {
     if (!Array.isArray(data.lines)) throw new RequestError('invalid_request');
     lines = data.lines;

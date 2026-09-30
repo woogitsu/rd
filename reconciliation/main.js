@@ -1,4 +1,4 @@
-import { decodeCsvBytes, describeSource, detectDelimiter, parseCsvMatrix } from "../import/csv.js";
+import { decodeCsvBytes, describeSource, parseCsvMatrix, resolveDelimiter } from "../import/csv.js";
 import {
   STATUS_LABELS,
   auditReportUrl,
@@ -19,6 +19,7 @@ import {
   describeStatementImportError,
   detectStatementFormat,
   formatCents,
+  formatDay,
   formatDifference,
   hasWriteAccess,
   isLikelyOwnReconciliation,
@@ -77,7 +78,7 @@ function textCell(value, className = "") {
 function reconciliationRow(item) {
   const row = document.createElement("tr");
   row.append(
-    textCell(item.statementDate),
+    textCell(formatDay(item.statementDate)),
     (() => {
       const cell = document.createElement("td");
       const badge = document.createElement("span");
@@ -154,7 +155,7 @@ function actionButton(text, onClick) {
 function lineRow(line, { draft, canWrite }) {
   const row = document.createElement("tr");
   row.append(
-    textCell(line.bookedOn),
+    textCell(formatDay(line.bookedOn)),
     textCell(lineDirectionLabel(line.amountCents)),
     textCell(formatCents(Math.abs(line.amountCents)), "amount"),
     textCell(lineSourceLabel(line.source)),
@@ -180,7 +181,7 @@ function lineRow(line, { draft, canWrite }) {
 
 function renderDetail() {
   const { reconciliation, lines, summary, unmatchedLedgerEntries, unmatchedLedgerEntriesTruncated, inconsistentMatches } = state.detail;
-  byId("detail-title").textContent = `Uzgodnienie ${reconciliation.statementDate}`;
+  byId("detail-title").textContent = `Uzgodnienie ${formatDay(reconciliation.statementDate)}`;
   const statusBadge = byId("detail-status");
   statusBadge.textContent = STATUS_LABELS[reconciliation.status] ?? reconciliation.status;
   statusBadge.className = `badge status-${reconciliation.status}`;
@@ -202,7 +203,7 @@ function renderDetail() {
   const unmatchedList = byId("unmatched-ledger-entries");
   unmatchedList.replaceChildren(...unmatchedLedgerEntries.map((entry) => {
     const item = document.createElement("li");
-    item.textContent = `${entry.occurredOn} · ${entry.description || "Bez opisu"} · ${formatCents(entry.netAmountCents)}`;
+    item.textContent = `${formatDay(entry.occurredOn)} · ${entry.description || "Bez opisu"} · ${formatCents(entry.netAmountCents)}`;
     return item;
   }));
   byId("unmatched-ledger-box").hidden = unmatchedLedgerEntries.length === 0;
@@ -319,11 +320,14 @@ byId("open-create").addEventListener("click", () => {
 // --- import linii wyciągu (CSV) -----------------------------------------------
 
 // #77: plik jest dekodowany w przeglądarce (UTF-8/BOM, UTF-16, Windows-1250/1252) i trafia do pola
-// tekstowego, więc serwer dostaje już poprawny tekst. Niejednoznaczne kodowanie/separator = ostrzeżenie
-// albo blokada, nie ciche zgadywanie.
+// tekstowego, więc serwer dostaje już poprawny tekst. Niejednoznaczne kodowanie = ostrzeżenie; remis
+// separatora = blokada z prośbą o wybór w polu „Separator” (wybór trafia do serwera polem `delimiter`).
 function describeCsvText(text) {
-  const delimiter = detectDelimiter(text);
-  return { delimiter, blocked: delimiter.tie ? "Nie można ustalić separatora kolumn (średnik, przecinek lub tabulator występują tyle samo razy). Zapisz plik z jednym separatorem." : "" };
+  try {
+    return { delimiter: resolveDelimiter(text, byId("import-delimiter").value), blocked: "" };
+  } catch (error) {
+    return { delimiter: null, blocked: error.message };
+  }
 }
 
 async function readStatementFile() {
@@ -336,10 +340,14 @@ async function readStatementFile() {
   try {
     const decoded = decodeCsvBytes(await file.arrayBuffer(), { encoding: byId("import-encoding").value });
     const info = describeCsvText(decoded.text);
-    const rows = parseCsvMatrix(decoded.text, { delimiter: info.delimiter.delimiter }).length;
     byId("import-csv").value = decoded.text;
+    if (info.blocked) {
+      status.textContent = `Odczytano: ${describeSource(decoded)}.`;
+      errorBox.textContent = info.blocked;
+      return;
+    }
+    const rows = parseCsvMatrix(decoded.text, { delimiter: info.delimiter.delimiter }).length;
     status.textContent = `Odczytano: ${describeSource(decoded, info.delimiter)}, ${Math.max(rows - 1, 0)} wierszy.${decoded.warnings.length ? ` Uwaga: ${decoded.warnings.join(" ")}` : ""}`;
-    if (info.blocked) errorBox.textContent = info.blocked;
   } catch (error) {
     byId("import-csv").value = "";
     status.textContent = "";
@@ -348,6 +356,11 @@ async function readStatementFile() {
 }
 byId("import-file").addEventListener("change", readStatementFile);
 byId("import-encoding").addEventListener("change", readStatementFile);
+byId("import-delimiter").addEventListener("change", () => {
+  // Plik czytamy ponownie; tekst wklejony ręcznie sprawdzamy dopiero przy wysłaniu.
+  if (byId("import-file").files?.[0]) readStatementFile();
+  else byId("import-error").textContent = "";
+});
 
 byId("import-lines-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -355,8 +368,8 @@ byId("import-lines-form").addEventListener("submit", async (event) => {
   const errorBox = byId("import-error");
   errorBox.textContent = "";
   if (/[\uFFFD\u0000]/.test(csv)) { errorBox.textContent = "Tekst ma nieznane kodowanie (znaki zastępcze). Zapisz plik jako „CSV UTF-8” albo wybierz kodowanie i wczytaj plik ponownie."; return; }
-  const blocked = describeCsvText(csv).blocked;
-  if (blocked) { errorBox.textContent = blocked; return; }
+  const info = describeCsvText(csv);
+  if (info.blocked) { errorBox.textContent = info.blocked; return; }
   const button = event.submitter;
   button.disabled = true;
   try {
@@ -364,7 +377,7 @@ byId("import-lines-form").addEventListener("submit", async (event) => {
     const result = await api(reconciliationActionUrl(state.selectedId, "lines"), {
       method: "POST",
       headers: { "Idempotency-Key": key },
-      body: JSON.stringify({ csv }),
+      body: JSON.stringify(info.delimiter.manual ? { csv, delimiter: info.delimiter.delimiter } : { csv }),
     });
     byId("import-csv").value = "";
     byId("import-file").value = "";
@@ -559,7 +572,7 @@ async function openLinePayment(line) {
   byId("line-payment-error").textContent = "";
   byId("line-payment-hint").textContent = "";
   byId("line-payment-summary").textContent =
-    `Pozycja z ${line.bookedOn}, ${formatCents(line.amountCents)}. Wpłata dostanie tę kwotę i datę z wyciągu (przelew).`;
+    `Pozycja z ${formatDay(line.bookedOn)}, ${formatCents(line.amountCents)}. Wpłata dostanie tę kwotę i datę z wyciągu (przelew).`;
   // Klucz idempotencji na całe otwarte okno: podwójne kliknięcie albo ponowienie
   // po błędzie sieci nie utworzy drugiej wpłaty.
   state.linePaymentKey = makeIdempotencyKey("reconciliation-line-payment");
@@ -642,11 +655,11 @@ function batchRow(item) {
   input.type = "checkbox";
   input.value = item.statementLineId;
   input.checked = false;
-  input.setAttribute("aria-label", `Zaznacz pozycję z ${item.bookedOn}, ${formatCents(item.amountCents)}`);
+  input.setAttribute("aria-label", `Zaznacz pozycję z ${formatDay(item.bookedOn)}, ${formatCents(item.amountCents)}`);
   input.addEventListener("change", () => { batch.key = null; refreshBatchSummary(); });
   choose.append(input);
-  row.append(choose, textCell(item.bookedOn), textCell(formatCents(item.amountCents), "amount"),
-    textCell(item.paymentDate), textCell(item.reason));
+  row.append(choose, textCell(formatDay(item.bookedOn)), textCell(formatCents(item.amountCents), "amount"),
+    textCell(formatDay(item.paymentDate)), textCell(item.reason));
   return row;
 }
 

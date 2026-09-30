@@ -25,7 +25,7 @@ Obsługiwane CSV (kodowanie i separator wykrywane w `import/csv.js`, patrz niże
 - Kodowanie: BOM UTF-8 lub UTF-16 LE/BE → odpowiedni dekoder; bez BOM próba UTF-8 w trybie ścisłym, a przy niepoprawnych bajtach Windows-1250 (eksport „CSV (rozdzielany średnikami)” z polskiego Excela). Pole „Kodowanie CSV” pozwala wymusić UTF-8, Windows-1250 lub Windows-1252 (Excel BE/FR).
 - Status pliku podaje użyte kodowanie i separator, np. „Windows-1250 (Excel PL), średnik”. Znaki typowe dla ISO-8859-2 lub Windows-1252 odczytanych jako Windows-1250 dają ostrzeżenie — sprawdź nazwiska i w razie potrzeby wybierz kodowanie ręcznie.
 - Znak zastępczy `�`, NUL (UTF-16 bez BOM) lub bajt nieopisany przez kodowanie → błąd „Plik ma nieznane kodowanie…”; plik nie przechodzi do mapowania.
-- Separator `;`, `,` albo tabulator liczony w pierwszej niepustej linii poza cudzysłowami; remis jest sygnalizowany w statusie.
+- Separator `;`, `,` albo tabulator liczony w pierwszej niepustej linii poza cudzysłowami. Remis (np. tyle samo średników co przecinków w nagłówku) zatrzymuje odczyt z prośbą o wybór w polu „Separator” — plik nie przechodzi do mapowania, dopóki separator nie zostanie wybrany ręcznie. Ręczny wybór jest widoczny w statusie („średnik (wybrany ręcznie)”).
 
 Kroki 1–3 (plik, mapowanie, sprawdzenie) nadal działają wyłącznie lokalnie i niczego nie wysyłają.
 

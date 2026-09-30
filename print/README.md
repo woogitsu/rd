@@ -17,7 +17,7 @@ Serwer Node (`src/node-app.js`) serwuje zbudowany moduł spod `/print/`; tylko w
 
 Plik jest czytany wyłącznie w przeglądarce jako bajty (`File.arrayBuffer()`); nic nie jest wysyłane ani zapisywane. Limit: 2 MB, 5000 wierszy.
 
-Kodowanie CSV wykrywa wspólny moduł `import/csv.js` (#77): UTF-8 z BOM lub bez, UTF-16 z BOM, a przy niepoprawnym UTF-8 Windows-1250 (Excel PL). Można je wybrać ręcznie (UTF-8, Windows-1250, Windows-1252). Komunikat po wczytaniu podaje użyte kodowanie i separator. Plik z nierozpoznanymi bajtami (`�`) jest odrzucany i nie powstaje żadna kartka. JSON musi być w UTF-8.
+Kodowanie CSV wykrywa wspólny moduł `import/csv.js` (#77): UTF-8 z BOM lub bez, UTF-16 z BOM, a przy niepoprawnym UTF-8 Windows-1250 (Excel PL). Można je wybrać ręcznie (UTF-8, Windows-1250, Windows-1252). Komunikat po wczytaniu podaje użyte kodowanie i separator. Separator jest wykrywany w nagłówku poza cudzysłowami albo wybierany ręcznie w polu „Separator”; przy remisie (tyle samo np. średników i przecinków) plik jest odrzucany z prośbą o ręczny wybór — nie powstaje żadna kartka. Plik z nierozpoznanymi bajtami (`�`) jest odrzucany i nie powstaje żadna kartka. JSON musi być w UTF-8.
 
 CSV (separator `;`, `,` lub tabulator), jeden wiersz na ucznia:
 

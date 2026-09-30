@@ -89,6 +89,14 @@
             <option value="windows-1252">Windows-1252 (Excel BE/FR)</option>
           </select>
         </label>
+        <label>Separator
+          <select id="file-delimiter" aria-describedby="file-message">
+            <option value="auto">Wykryj automatycznie</option>
+            <option value=";">Średnik (;)</option>
+            <option value=",">Przecinek (,)</option>
+            <option value="tab">Tabulator</option>
+          </select>
+        </label>
         <div class="message" id="file-message" role="status"></div>
         <ul class="errors" id="file-errors" hidden></ul>
       </section>

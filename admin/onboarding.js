@@ -36,6 +36,8 @@ export function plural(count, one, few, many) {
   return `${count} ${units >= 2 && units <= 4 && !(tens >= 12 && tens <= 14) ? few : many}`;
 }
 export const invitationsCount = (count) => plural(count, "zaproszenie", "zaproszenia", "zaproszeń");
+// Przegląd demo 5: „1 rok szkolnych w systemie” → poprawna odmiana.
+export const schoolYearsCount = (count) => plural(count, "rok szkolny", "lata szkolne", "lat szkolnych");
 
 // Numer wiersza + tekst błędu przy wierszu podglądu (kody z src/pg/invitation-batch.js).
 export function batchRowError(row) {
