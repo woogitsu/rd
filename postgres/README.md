@@ -1154,3 +1154,25 @@ istniejących powiązań. Powiązania wpłat mające zwroty, raportowane dotąd 
 w nagłówku migracji). Dopasowania zbiorcze (0105) i cele „wpis księgi” bez
 zmian. Wycofanie na bazie bez powiązań zwrotów: przywrócenie funkcji i widoku
 z 0024, CHECK z 0015, usunięcie indeksu i kolumny.
+
+`0155_email_provider_pauses.sql` (#209) dodaje tabelę `email_provider_pauses`:
+trwałą pauzę wysyłki e-mail po odmowie konta przez dostawcę (401/402/403 z
+Brevo — zły lub obrócony klucz, brak kredytów, nieuprawniony nadawca lub IP).
+Worker zapisuje wiersz (powód `account_rejected`, kod błędu, kampania,
+identyfikator przebiegu) w tej samej transakcji, w której zwraca wiadomość do
+kolejki; dopóki pauza nie jest zdjęta, każdy przebieg kończy się
+`stopped_reason = 'provider_account_paused'` bez połączenia z dostawcą.
+Najwyżej jedna aktywna pauza (unikalny indeks częściowy `email_provider_pauses_active_idx`).
+Zdjęcie (`POST /api/email/provider-pause/lift`, zarząd ze świeżym MFA) to
+jednorazowe ustawienie `lifted_by`/`lifted_at`; poza tym wiersze są niezmienne
+(strażnik `email_provider_pause_guard()`, kod `email_provider_pause_immutable`),
+bez DELETE i TRUNCATE (`deny_truncate()`), a `created_at`/`lifted_at` pochodzą
+z zegara bazy (`stamp_created_now`/`stamp_transition_now` z 0144). Bez adresów,
+imion i treści wiadomości. Tabela nie jest eksportowana (stan operacyjny, jak
+`email_worker_runs`).
+Skutki dla danych: wyłącznie nowa tabela — kampanie, `email_outbox`, dziennik
+limitu i przebiegi nie są zmieniane. Wiadomości zwrócone do kolejki po odmowie
+konta przed tą migracją nie mają wiersza pauzy i zostaną wysłane przy
+najbliższym przebiegu, jak dotąd. Wycofanie na bazie bez pauz: usunięcie tabeli
+i funkcji; na bazie z pauzami tylko po kopii zapasowej (znika zapis, kto i kiedy
+potwierdził naprawę; zdarzenia `email.provider.*` zostają w `audit_events`).

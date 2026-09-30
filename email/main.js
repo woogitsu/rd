@@ -2,6 +2,8 @@ import {
   AUDIENCE_LABELS,
   STATUS_LABELS,
   buildCampaignsUrl,
+  campaignStatusLabel,
+  describeProviderPause,
   campaignActionUrl,
   campaignUrl,
   canOfferApproval,
@@ -49,6 +51,7 @@ const state = {
   grants: [],
   requestKey: null,
   loading: false,
+  providerPause: null,
 };
 
 const filtersForm = byId("filters-form");
@@ -118,6 +121,54 @@ function setBusy(busy) {
   filtersForm.querySelector("button").disabled = busy;
 }
 
+// --- pauza konta dostawcy (#209) ---------------------------------------------
+
+function renderProviderPause() {
+  const pause = state.providerPause;
+  byId("provider-pause").hidden = !pause;
+  if (!pause) return;
+  byId("provider-pause-text").textContent = describeProviderPause(pause);
+  const approver = hasApproverAccess(state.grants, state.schoolYearId);
+  byId("provider-pause-lift").hidden = !approver;
+  byId("provider-pause-board-only").hidden = approver;
+}
+
+async function loadProviderPause() {
+  const data = await api(`/api/email/provider-pause?schoolYearId=${encodeURIComponent(state.schoolYearId)}`);
+  state.providerPause = data?.pause ?? null;
+  renderProviderPause();
+}
+
+byId("provider-pause-lift").addEventListener("click", async () => {
+  const pause = state.providerPause;
+  if (!pause) return;
+  const confirmed = await confirmAction({
+    title: "Potwierdzić naprawę konta dostawcy?",
+    effects: [
+      "Najbliższy przebieg zadania wznowi wysyłkę wszystkich kampanii w toku.",
+      "Jeśli klucz lub nadawca nadal są błędne, wysyłka zatrzyma się ponownie po pierwszej próbie.",
+    ],
+    confirmLabel: "Potwierdź naprawę",
+    cancelLabel: "Wróć",
+  });
+  if (!confirmed) return;
+  const button = byId("provider-pause-lift");
+  button.disabled = true;
+  try {
+    await api("/api/email/provider-pause/lift", {
+      method: "POST",
+      body: JSON.stringify({ schoolYearId: state.schoolYearId, pauseId: pause.id }),
+    });
+    await loadProviderPause();
+    if (state.selectedId) await openDetail(state.selectedId);
+    setMessage("Naprawa potwierdzona. Wysyłka zostanie wznowiona przy najbliższym przebiegu zadania.");
+  } catch (error) {
+    setMessage(`Nie udało się potwierdzić naprawy: ${error.message}`, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // Wczytuje listę dla podanego roku; używane zarówno przy ręcznym „Pokaż”, jak i
 // przy wypełnieniu domyślnym rokiem po wejściu na panel (puste ekrany bez akcji).
 // Wczytuje wyłącznie listę już zaplanowanych/wysłanych kampanii — nic tu nie
@@ -133,6 +184,7 @@ async function showYear(value) {
     detailSection.hidden = true;
     state.selectedId = null;
     await suppressions.load(value);
+    await loadProviderPause().catch(() => { state.providerPause = null; renderProviderPause(); });
   } catch (error) {
     setMessage(`Nie udało się pobrać listy kampanii: ${error.message}`, true);
   } finally {
@@ -163,7 +215,7 @@ function renderDetail() {
   if (!detail) return;
   const campaign = detail.campaign;
   byId("detail-title").textContent = campaign.title;
-  byId("detail-status").textContent = STATUS_LABELS[campaign.status] ?? campaign.status;
+  byId("detail-status").textContent = campaignStatusLabel(campaign, detail.providerPause);
   byId("detail-status").className = `badge status-${campaign.status}`;
   byId("detail-audience").textContent = AUDIENCE_LABELS[campaign.audience] ?? campaign.audience;
   byId("detail-subject").textContent = campaign.subject;

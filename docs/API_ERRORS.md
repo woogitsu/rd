@@ -219,6 +219,7 @@ wpisów).
 | `invalid_photos` | Niepoprawna lista zdjęć. | Nie — popraw dane żądania. |
 | `invalid_plan_digest` | Brak poprawnego skrótu planu (planDigest) z podglądu. | Nie — popraw dane żądania. |
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
+| `invalid_provider_pause_id` | Niepoprawny identyfikator wstrzymania wysyłki. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
 | `invalid_received_on` | Podaj poprawną datę wpłynięcia żądania. | Nie — popraw dane żądania. |
@@ -359,6 +360,7 @@ wpisów).
 | `privacy_notice_not_found` | Nie znaleziono tej wersji informacji. | Nie — popraw dane żądania. |
 | `production_requires_flag` | Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `production_restore_requires_allow_production` | Odtworzenie na produkcji wymaga osobnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
+| `provider_pause_not_found` | Nie znaleziono tego wstrzymania wysyłki. Odśwież widok. | Nie — popraw dane żądania. |
 | `public_copy_requires_license` | Publiczna kopia wymaga zapisanej licencji lub zgody. | Zależy od kontekstu (patrz moduł trasy). |
 | `quorum_rule_source_required` | Podaj źródło reguły quorum (np. regulamin). | Nie — popraw dane żądania. |
 | `rate_limited` | Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę. | Zależy od kontekstu (patrz moduł trasy). |

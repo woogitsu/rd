@@ -56,7 +56,7 @@ if (writeMode === undefined) {
     const { mode, day, remainingQuota, planned, sent, retried, failed, skipped, suppressed, requeued, stoppedReason } = run;
     console.log(`[email-worker] ${JSON.stringify({ mode, day, remainingQuota, planned, sent, retried, failed, skipped, suppressed, requeued, stoppedReason })}`);
     logUnrecorded(run);
-    if (live && stoppedReason && ['sending_disabled', 'sender_not_configured', 'transport_missing', 'provider_account_rejected'].includes(stoppedReason)) {
+    if (live && stoppedReason && ['sending_disabled', 'sender_not_configured', 'transport_missing', 'provider_account_rejected', 'provider_account_paused'].includes(stoppedReason)) {
       process.exitCode = 2;
     }
   } catch (error) {

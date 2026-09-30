@@ -395,6 +395,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   email_suppression_releases: 'zdjęcia blokady adresu e-mail (kto zgłosił/zatwierdził) — D-04',
   email_webhook_events: 'zdarzenia dostawcy e-mail — D-04',
   email_worker_runs: 'przebiegi zadania wysyłki — dane techniczne',
+  email_provider_pauses: 'pauzy wysyłki po odmowie konta przez dostawcę (0155, #209) — stan operacyjny kolejki e-mail jak email_worker_runs; kto zdjął pauzę także w audit_events',
   email_preferences_events: 'zdarzenia preferencji kontaktu wg kategorii (wypisanie jednym kliknięciem) — adres tylko jako skrót, D-04 (#110)',
   email_preview_sends: 'dziennik wysyłek testowych kampanii na adresy techniczne Rady — dane operacyjne, nie danych roku (#104, D-04)',
   news_posts: 'aktualności są publiczne i nie należą do roku; archiwum osobno (zgody, D-04)',

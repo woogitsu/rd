@@ -1180,6 +1180,24 @@ export const ROUTE_MATRIX = Object.freeze([
     }),
   },
   {
+    // Pauza konta dostawcy po odmowie 401/402/403 (#209): odczyt jak lista wyłączeń.
+    id: 'email.providerPause.get', module: 'email', method: 'GET', path: '/api/email/provider-pause?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/provider-pause?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    // Zdjęcie pauzy wznawia wysyłkę do rodzin: wyłącznie zarząd z (świeżym) MFA,
+    // jak zatwierdzenie kampanii. Fixture 'fresh' zwraca aktywną pauzę albo ją
+    // tworzy (najwyżej jedna aktywna); skarbnik, admin i przedstawiciel: 403.
+    id: 'email.providerPause.lift', module: 'email', method: 'POST', path: '/api/email/provider-pause/lift',
+    targets: YEAR_TARGETS, allow: EMAIL_APPROVE, mfa: true, ok: 200, deny: 403, fixture: 'fresh',
+    object: { kind: 'providerPause', stage: 'active' },
+    build: ({ obj, target }) => ({
+      path: '/api/email/provider-pause/lift',
+      body: { schoolYearId: target.schoolYearId, pauseId: obj.pauseId },
+    }),
+  },
+  {
     // Wypisanie jednym kliknięciem (#110): publiczna, bez Origin, bez sesji —
     // token ważny (podpisany fx.unsubscribeSecret) daje ten sam wynik (200)
     // niezależnie od tożsamości wywołującego (jak webhook).

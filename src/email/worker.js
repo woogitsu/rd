@@ -36,6 +36,10 @@
 //      z dostawcą zatrzymują przebieg bez zużycia próby i limitu; seria
 //      EMAIL_BREAKER_UNCERTAIN kolejnych wyników niepewnych (5xx, timeout)
 //      zatrzymuje partię, reszta zostaje w kolejce.
+//   6. odmowa konta zapisuje trwałą pauzę (email_provider_pauses, #209): do jej
+//      jawnego zdjęcia przez zarząd (POST /api/email/provider-pause/lift) każdy
+//      przebieg kończy się od razu z stopped_reason = 'provider_account_paused',
+//      bez przejmowania kolejki i bez połączenia z dostawcą.
 // Każda zmiana stanu kolejki lub kampanii i jej zdarzenie audytu powstają w tej
 // samej transakcji (#178). Niezgodność treści z zatwierdzonym skrótem daje
 // jedno zdarzenie email.campaign.integrity_mismatch na kampanię i stan skrótów.
@@ -203,6 +207,34 @@ async function recordRun(db, run) {
     [crypto.randomUUID(), run.mode, run.day, run.startedAt.toISOString(), run.remainingQuota, run.planned,
       run.sent, run.retried, run.failed, run.skipped, run.suppressed, run.stoppedReason ?? null],
   );
+}
+
+// Aktywna pauza po odmowie konta przez dostawcę (#209) albo null. Pauza dotyczy
+// całego konta (wszystkich kampanii), nie jednej kampanii.
+export async function activeProviderPause(executor) {
+  const { rows } = await executor.query(
+    `SELECT id, reason, error_code, campaign_id, created_at FROM email_provider_pauses
+      WHERE lifted_at IS NULL ORDER BY created_at, id LIMIT 1`,
+  );
+  return rows[0] ?? null;
+}
+
+// Zapis pauzy w transakcji zwrotu wiadomości do kolejki. Równoległy przebieg
+// mógł ją już utworzyć (unikalny indeks aktywnej pauzy) — wtedy bez nowego
+// wiersza i bez drugiego zdarzenia.
+async function recordProviderPause(tx, item, { code, runToken }) {
+  const { rows } = await tx.query(
+    `INSERT INTO email_provider_pauses (id, reason, error_code, campaign_id, run_id)
+     VALUES ($1, 'account_rejected', $2, $3, $4)
+     ON CONFLICT (reason) WHERE lifted_at IS NULL DO NOTHING
+     RETURNING id`,
+    [crypto.randomUUID(), code, item.campaignId, runToken],
+  );
+  if (!rows[0]) return;
+  await insertAuditEvent(tx, {
+    action: 'email.provider.paused', entityType: 'email_provider_pause', entityId: rows[0].id,
+    metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, reason: 'account_rejected', errorCode: code, runId: runToken },
+  });
 }
 
 // Jeśli dla wiersza „sent” zapisano wcześniej zdarzenie bounce, ustawia
@@ -534,6 +566,7 @@ async function requeueNotSent(db, item, { code, now, runToken, stage, delaySecon
         action: 'email.campaign.provider_rejected', entityType: 'email_campaign', entityId: item.campaignId,
         metadata: { schoolYearId: item.campaign.school_year_id, reason: code, runId: runToken },
       });
+      await recordProviderPause(tx, item, { code, runToken });
     }
     return 'requeued';
   });
@@ -718,6 +751,15 @@ export async function runEmailBatch(env, {
       return run;
     }
     await recoverStale(db, now);
+  }
+  // Trwała pauza po odmowie konta (#209): bez przejmowania kolejki i bez
+  // wywołania dostawcy, dopóki zarząd jawnie nie potwierdzi naprawy. Dotyczy
+  // też dry-run, żeby podgląd przebiegu zgadzał się z rzeczywistym.
+  if (await activeProviderPause(db)) {
+    run.stoppedReason = 'provider_account_paused';
+    run.remainingQuota = await remainingQuota(db, now, config);
+    await recordRun(db, run);
+    return run;
   }
   // Token własności dzierżawy: tylko ten przebieg może wysłać przejęte wiersze.
   const runToken = crypto.randomUUID();

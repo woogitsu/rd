@@ -39,6 +39,14 @@
 
       <div class="message" id="message" role="status"></div>
 
+      <section class="card" id="provider-pause" aria-labelledby="provider-pause-title" hidden>
+        <h2 id="provider-pause-title">Wysyłka wstrzymana — błąd konta u dostawcy e-mail</h2>
+        <p class="message error" id="provider-pause-text" role="status"></p>
+        <p class="context">Wiadomości wróciły do kolejki i nie zostały oznaczone jako nieudane. Dopóki wstrzymanie trwa, zadanie wysyłki nie łączy się z dostawcą. Najpierw popraw klucz API, adres nadawcy lub stan konta w konfiguracji serwera, potem potwierdź naprawę. Po potwierdzeniu każda rodzina dostanie najwyżej jedną wiadomość z każdej kampanii.</p>
+        <p class="empty" id="provider-pause-board-only" hidden>Naprawę potwierdza członek zarządu (z MFA).</p>
+        <p><button type="button" class="primary" id="provider-pause-lift" hidden>Potwierdź naprawę i wznów wysyłkę</button></p>
+      </section>
+
       <section class="card" aria-labelledby="campaigns-title">
         <div class="section-heading"><div><p class="eyebrow">Rok szkolny</p><h2 id="campaigns-title">Kampanie</h2></div><span id="campaigns-count" aria-live="polite"></span></div>
         <div class="table-wrap" id="campaigns-table" role="region" aria-labelledby="campaigns-title" tabindex="0">

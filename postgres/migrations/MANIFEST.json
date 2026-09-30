@@ -342,5 +342,9 @@
   {
     "name": "0152_reconciliation_refund_match.sql",
     "sha256": "347bb4723e8875cb5266ccac2070e3cbde47885be08500f9bcb99280a0e42017"
+  },
+  {
+    "name": "0155_email_provider_pauses.sql",
+    "sha256": "f89c73028676a7dab6655685fe4aebacbdb7bab617aa57e59d717fcac1d99add"
   }
 ]
