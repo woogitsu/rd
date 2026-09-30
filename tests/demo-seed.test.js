@@ -7,9 +7,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handlePgRequest } from '../src/pg/app.js';
-import { buildDemoPdf, DEMO_INVOICE_PDF, DEMO_MINUTES_PDF } from '../scripts/lib/demo-pdf.js';
+import { buildDemoPdf, demoInvoicePdf, demoMinutesPdf } from '../scripts/lib/demo-pdf.js';
+import { addDays, demoTimeline, parseDemoNow } from '../scripts/lib/demo-dates.js';
+import { heuristicSchoolYearId } from '../shared/school-year.js';
 import {
-  apiCall, assertSafeEnvironment, DEMO_ORIGIN, DEMO_STATEMENT_DIFFERENCE_CENTS, DemoSeedRefused, runDemoSeed, SCHOOL_YEAR_ID,
+  apiCall, assertSafeEnvironment, DEMO_ORIGIN, DEMO_STATEMENT_DIFFERENCE_CENTS, DemoSeedRefused, runDemoSeed,
 } from '../scripts/demo-seed.js';
 import { base32Decode, totp } from '../src/pg/mfa.js';
 
@@ -83,7 +85,7 @@ test.after(async () => {
 // przeglądarka na /site/ (GET /api/meetings/public-minutes, bez sesji).
 test('demo-seed: publiczny endpoint /api/meetings/public-minutes zwraca zatwierdzony protokół', async () => {
   const response = await apiCall(seeded.env, {
-    method: 'GET', path: `/api/meetings/public-minutes?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`,
+    method: 'GET', path: `/api/meetings/public-minutes?schoolYearId=${encodeURIComponent(seeded.schoolYearId)}`,
   });
   assert.ok(Array.isArray(response.data.minutes), 'odpowiedź zawiera listę protokołów');
   assert.ok(response.data.minutes.length >= 1, '/site/ ma pokazać co najmniej jeden zatwierdzony, publiczny protokół');
@@ -91,13 +93,14 @@ test('demo-seed: publiczny endpoint /api/meetings/public-minutes zwraca zatwierd
   assert.ok(published, 'protokół z zebrania zasiedzonego przez seed jest wśród publicznie widocznych');
 });
 
-test('demo-seed: SCHOOL_YEAR_ID jest w formacie zgodnym z site/core.js#defaultSchoolYearId', () => {
+test('demo-seed: rok szkolny demo to rok z dnia uruchomienia, zgodny z site/core.js#defaultSchoolYearId', () => {
   // ID_PATTERN w site/core.js akceptuje szerszy zakres znaków, ale
-  // defaultSchoolYearId ZAWSZE generuje postać „<rok>-<rok+1>” — dopasowanie
-  // gwarantuje, że domyślne (bez „?rok=”) wejście na /site/ pokaże ten rok.
-  assert.match(SCHOOL_YEAR_ID, /^\d{4}-\d{4}$/);
-  const [start, end] = SCHOOL_YEAR_ID.split('-').map(Number);
+  // defaultSchoolYearId ZAWSZE generuje postać „<rok>-<rok+1>” z dzisiejszej daty —
+  // ten sam rok gwarantuje, że domyślne (bez „?rok=”) wejście na /site/ go pokaże.
+  assert.match(seeded.schoolYearId, /^\d{4}-\d{4}$/);
+  const [start, end] = seeded.schoolYearId.split('-').map(Number);
   assert.equal(end, start + 1);
+  assert.equal(seeded.schoolYearId, heuristicSchoolYearId(seeded.timeline.now));
 });
 
 test('demo-seed: konta demo — jedna z każdej wymaganej roli', () => {
@@ -130,7 +133,7 @@ test('demo-seed: przedstawiciel klasy i Komisja Rewizyjna logują się hasłem +
       method: 'POST', path: '/api/login', body: { email: account.email, password: account.password },
     });
     await assert.rejects(
-      apiCall(seeded.env, { path: `/api/reports/audit?schoolYearId=${SCHOOL_YEAR_ID}`, cookie: login.cookie }),
+      apiCall(seeded.env, { path: `/api/reports/audit?schoolYearId=${seeded.schoolYearId}`, cookie: login.cookie }),
       /mfa_required/,
     );
     // Kod z następnego kroku czasowego — kod bieżącego kroku zużył zapis czynnika w seedzie.
@@ -203,7 +206,7 @@ test('demo-seed: uzgodnienie wyciągu — szkic z zaimportowanym wyciągiem, NIE
     method: 'GET', path: `/api/reconciliations/${reconciliation.reconciliationId}`, cookie: treasurer.cookie,
   });
   assert.equal(detail.data.reconciliation.status, 'draft', 'seed NIE zatwierdza uzgodnienia (POST .../confirm nie jest wołane)');
-  assert.equal(detail.data.reconciliation.schoolYearId, SCHOOL_YEAR_ID);
+  assert.equal(detail.data.reconciliation.schoolYearId, seeded.schoolYearId);
   assert.equal(detail.data.lines.length, reconciliation.lineCount);
 
   // Przynajmniej jedna pozycja celowo nie odpowiada żadnej wpłacie/wpisowi księgi —
@@ -256,7 +259,7 @@ test('demo-start: z APP_ENV=production/prod odmawia przed otwarciem bazy', async
 async function auditReport() {
   const audit = seeded.accounts.find((a) => a.role === 'audit');
   const response = await apiCall(seeded.env, {
-    path: `/api/reports/audit?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: audit.cookie,
+    path: `/api/reports/audit?schoolYearId=${encodeURIComponent(seeded.schoolYearId)}`, cookie: audit.cookie,
   });
   return response.data.report;
 }
@@ -277,7 +280,7 @@ test('demo-seed: raport Komisji Rewizyjnej — żadna kontrola nie jest „niezg
 test('demo-seed: raport roczny — bilans z wpłatami w księdze, saldo kasy i rachunku nie jest ujemne', async () => {
   const board = seeded.accounts.find((a) => a.role === 'board');
   const response = await apiCall(seeded.env, {
-    path: `/api/reports/annual?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: board.cookie,
+    path: `/api/reports/annual?schoolYearId=${encodeURIComponent(seeded.schoolYearId)}`, cookie: board.cookie,
   });
   const { balance } = response.data.report;
   assert.ok(balance.incomeCents > 0 && balance.expenseCents > 0);
@@ -338,7 +341,7 @@ test('demo-seed: kwoty i liczby w docs/DEMO.md zgadzają się z danymi seeda', a
   const eur = (cents) => (cents / 100).toFixed(2).replace('.', ',');
   const board = seeded.accounts.find((a) => a.role === 'board');
   const annual = await apiCall(seeded.env, {
-    path: `/api/reports/annual?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: board.cookie,
+    path: `/api/reports/annual?schoolYearId=${encodeURIComponent(seeded.schoolYearId)}`, cookie: board.cookie,
   });
   const { balance } = annual.data.report;
   const report = await auditReport();
@@ -353,7 +356,7 @@ test('demo-seed: kwoty i liczby w docs/DEMO.md zgadzają się z danymi seeda', a
     `${detail.data.lines.length} pozycji zaimportowanych z wyciągu (saldo wyciągu ${eur(draft.statementBalanceCents)} EUR, „Saldo księgi (rachunek)” ${eur(draft.ledgerBalanceCents)} EUR, „Różnica: ${eur(draft.differenceCents)} €”)`,
     `(otwarcia ${eur(balance.openingBalanceCents)}, przychody ${eur(balance.incomeCents)}, wydatki ${eur(balance.expenseCents)}, zamknięcia ${eur(balance.closingBalanceCents)} EUR, w tym rachunek ${eur(balance.closingBankCents)} i kasa ${eur(balance.closingCashCents)})`,
     `| Bilans otwarcia / zamknięcia | ${eur(balance.openingBalanceCents)} / ${eur(balance.closingBalanceCents)} EUR |`,
-    `| Saldo wyciągu 2026-12-05 | ${eur(draft.statementBalanceCents)} EUR |`,
+    `| Saldo wyciągu na dzień wyciągu | ${eur(draft.statementBalanceCents)} EUR |`,
     `| Różnica uzgodnienia (szkic) | ${eur(draft.differenceCents)} EUR |`,
     `| ${eur(skladki.netCents)} EUR |`,
     `| Wydatki | ${eur(balance.expenseCents)} EUR |`,
@@ -365,7 +368,7 @@ test('demo-seed: kwoty i liczby w docs/DEMO.md zgadzają się z danymi seeda', a
 test('demo-seed: celowa wpłata bez przypisanej rodziny nie jest ujęta w księdze i nie jest „niezgodna”', async () => {
   const treasurer = seeded.accounts.find((a) => a.role === 'treasurer');
   const list = await apiCall(seeded.env, {
-    path: `/api/payments?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}&limit=100`, cookie: treasurer.cookie,
+    path: `/api/payments?schoolYearId=${encodeURIComponent(seeded.schoolYearId)}&limit=100`, cookie: treasurer.cookie,
   });
   const unassigned = list.data.payments.filter((payment) => !payment.householdId);
   assert.equal(unassigned.length, 1, 'dokładnie jeden opisany przykład');
@@ -388,10 +391,10 @@ test('demo-seed: panel Dokumenty — 2 syntetyczne PDF-y, podgląd, zastąpienie
   const treasurer = seeded.accounts.find((a) => a.role === 'treasurer');
   const audit = seeded.accounts.find((a) => a.role === 'audit');
   const list = await apiCall(seeded.env, {
-    path: `/api/documents?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: treasurer.cookie,
+    path: `/api/documents?schoolYearId=${encodeURIComponent(seeded.schoolYearId)}`, cookie: treasurer.cookie,
   });
   const boardList = await apiCall(seeded.env, {
-    path: `/api/documents?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: board.cookie,
+    path: `/api/documents?schoolYearId=${encodeURIComponent(seeded.schoolYearId)}`, cookie: board.cookie,
   });
   assert.equal(boardList.data.documents.length, 2, 'zarząd (z MFA) widzi oba dokumenty');
   assert.equal(list.data.documents.length, 1, 'skarbnik widzi tylko dowód finansowy');
@@ -426,8 +429,8 @@ test('demo-seed: panel Dokumenty — 2 syntetyczne PDF-y, podgląd, zastąpienie
   // Zastąp/Unieważnij (#477) działają na dokumentach z tego samego magazynu. Dokumenty
   // demo zostają nietknięte — akcje wykonujemy na dwóch dodatkowych plikach testowych.
   const upload = (key) => apiCall(seeded.env, {
-    method: 'POST', path: `/api/documents?kind=board&schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, cookie: board.cookie,
-    idempotencyKey: key, rawBody: buildDemoPdf(DEMO_MINUTES_PDF), contentType: 'application/pdf',
+    method: 'POST', path: `/api/documents?kind=board&schoolYearId=${encodeURIComponent(seeded.schoolYearId)}`, cookie: board.cookie,
+    idempotencyKey: key, rawBody: buildDemoPdf(demoMinutesPdf({ date: seeded.meeting.meetingDate, schoolYearLabel: seeded.timeline.schoolYearLabel })), contentType: 'application/pdf',
   });
   const first = (await upload('demo-test-first')).data.document;
   const second = (await upload('demo-test-second')).data.document;
@@ -442,7 +445,7 @@ test('demo-seed: panel Dokumenty — 2 syntetyczne PDF-y, podgląd, zastąpienie
   });
   assert.equal(voided.status, 201);
   const active = await apiCall(seeded.env, {
-    path: `/api/documents?schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}&kind=board`, cookie: board.cookie,
+    path: `/api/documents?schoolYearId=${encodeURIComponent(seeded.schoolYearId)}&kind=board`, cookie: board.cookie,
   });
   assert.deepEqual(active.data.documents.map((d) => d.id), [minutes.id], 'aktywny zostaje tylko protokół demo');
 });
@@ -450,7 +453,7 @@ test('demo-seed: panel Dokumenty — 2 syntetyczne PDF-y, podgląd, zastąpienie
 test('demo-seed: PDF-y demo odrzuca ta sama walidacja co w produkcji (typ, sygnatura)', async () => {
   const board = seeded.accounts.find((a) => a.role === 'board');
   const response = await handlePgRequest(new Request(
-    new URL(`/api/documents?kind=board&schoolYearId=${encodeURIComponent(SCHOOL_YEAR_ID)}`, DEMO_ORIGIN),
+    new URL(`/api/documents?kind=board&schoolYearId=${encodeURIComponent(seeded.schoolYearId)}`, DEMO_ORIGIN),
     {
       method: 'POST', body: new TextEncoder().encode('to nie jest PDF'),
       headers: { Cookie: board.cookie, Origin: DEMO_ORIGIN, 'Content-Type': 'application/pdf', 'Idempotency-Key': 'demo-test-not-pdf' },
@@ -461,7 +464,7 @@ test('demo-seed: PDF-y demo odrzuca ta sama walidacja co w produkcji (typ, sygna
 
 test('demo-pdf: PDF ma poprawną tabelę xref, brak aktywnej treści i przechodzi walidację struktury', async () => {
   const { validateStructure, detectType } = await import('../src/documents.js');
-  for (const pdf of [DEMO_MINUTES_PDF, DEMO_INVOICE_PDF]) {
+  for (const pdf of [demoMinutesPdf({ date: '2026-10-01', schoolYearLabel: '2026/2027' }), demoInvoicePdf({ date: '2026-09-15' })]) {
     const bytes = buildDemoPdf(pdf);
     assert.equal(detectType(bytes), 'application/pdf');
     assert.deepEqual(validateStructure(bytes, 'application/pdf'), { ok: true });
@@ -475,5 +478,92 @@ test('demo-pdf: PDF ma poprawną tabelę xref, brak aktywnej treści i przechodz
     const stream = /stream\n([\s\S]*)\nendstream/.exec(text)[1];
     assert.equal(stream.length, length);
     assert.doesNotMatch(text, /[^\x00-\x7f]/);
+  }
+});
+
+// Przegląd demo 4: stałe daty z X–XII 2026 dawały przy pokazie w październiku dane
+// „z przyszłości” (protokół zatwierdzony przed zebraniem „Odbyte”). Oś czasu jest
+// teraz liczona względem dnia uruchomienia — deterministycznie dla podanej chwili.
+test('demo-dates: połowa października — rok 2026-2027, wyciąg wczoraj, plan ściśnięty do 1 września', () => {
+  const t = demoTimeline(new Date('2026-10-15T10:00:00Z'));
+  assert.equal(t.schoolYearId, '2026-2027');
+  assert.equal(t.schoolYearLabel, '2026/2027');
+  assert.equal(t.startsOn, '2026-09-01');
+  assert.equal(t.endsOn, '2027-08-31');
+  assert.equal(t.today, '2026-10-15');
+  assert.equal(t.statementDate, '2026-10-14');
+  assert.equal(t.beforeStatement(61), '2026-09-01', 'najstarsza wpłata dokładnie na początku roku');
+  assert.equal(t.beforeStatement(0), '2026-10-14');
+  assert.ok(t.beforeStatement(15) < t.today, 'zebranie odbyło się przed dniem pokazu');
+  assert.equal(t.upcoming(14), '2026-10-29');
+  // Ta sama chwila daje te same daty.
+  const again = demoTimeline(new Date('2026-10-15T10:00:00Z'));
+  assert.deepEqual([61, 51, 30, 15, 4, 1].map(again.beforeStatement), [61, 51, 30, 15, 4, 1].map(t.beforeStatement));
+});
+
+test('demo-dates: po ponad 61 dniach roku odstępy planu są pełne (bez ściskania)', () => {
+  const t = demoTimeline(parseDemoNow('2027-01-20'));
+  assert.equal(t.schoolYearId, '2026-2027');
+  assert.equal(t.scale, 1);
+  assert.equal(t.statementDate, '2027-01-19');
+  assert.equal(t.beforeStatement(61), addDays('2027-01-19', -61));
+  assert.equal(t.beforeStatement(15), '2027-01-04');
+});
+
+test('demo-dates: 1 września wszystko mieści się w roku; strefa Bruksela i koniec roku', () => {
+  const first = demoTimeline(parseDemoNow('2026-09-01'));
+  assert.equal(first.statementDate, '2026-09-01');
+  assert.equal(first.beforeStatement(61), '2026-09-01', 'żadna data przed 1 września (trigger 0027)');
+  // 31 sierpnia 22:30 UTC to już 1 września w Brukseli — nowy rok szkolny.
+  assert.equal(demoTimeline(new Date('2027-08-31T22:30:00Z')).schoolYearId, '2027-2028');
+  assert.equal(demoTimeline(new Date('2027-08-31T21:30:00Z')).schoolYearId, '2026-2027');
+  // Zapowiedzi nie wychodzą poza rok szkolny.
+  assert.equal(demoTimeline(parseDemoNow('2027-08-20')).upcoming(42), '2027-08-31');
+  assert.throws(() => parseDemoNow('nie-data'), /RRRR-MM-DD/);
+});
+
+test('demo-seed: daty danych demo nie są z przyszłości, zapowiedzi są, protokół zatwierdzony po zebraniu', async () => {
+  const t = seeded.timeline;
+  const { db } = seeded.env;
+  const { rows: payments } = await db.query(
+    `SELECT to_char(received_on, 'YYYY-MM-DD') AS d FROM payment_entries WHERE school_year_id = $1`, [t.schoolYearId],
+  );
+  const { rows: entries } = await db.query(
+    `SELECT to_char(occurred_on, 'YYYY-MM-DD') AS d FROM ledger_entries WHERE school_year_id = $1`, [t.schoolYearId],
+  );
+  const { rows: lines } = await db.query(
+    `SELECT to_char(l.booked_on, 'YYYY-MM-DD') AS d FROM bank_statement_lines l
+       JOIN bank_reconciliations r ON r.id = l.reconciliation_id WHERE r.school_year_id = $1`, [t.schoolYearId],
+  );
+  assert.equal(payments.length, 17);
+  assert.equal(entries.length, 20);
+  assert.equal(lines.length, 17);
+  for (const { d } of [...payments, ...entries, ...lines]) {
+    assert.ok(d >= t.startsOn && d <= t.statementDate, `data ${d} w [${t.startsOn}, ${t.statementDate}]`);
+    assert.ok(d <= t.today, `data ${d} nie jest z przyszłości (dziś ${t.today})`);
+  }
+  const { rows: [reconciliation] } = await db.query(
+    `SELECT to_char(statement_date, 'YYYY-MM-DD') AS d FROM bank_reconciliations WHERE id = $1`,
+    [seeded.reconciliation.reconciliationId],
+  );
+  assert.equal(reconciliation.d, t.statementDate);
+  const { rows: [meeting] } = await db.query(
+    `SELECT m.scheduled_at, mm.approved_at FROM meetings m JOIN meeting_minutes mm ON mm.meeting_id = m.id
+      WHERE m.id = $1 AND mm.id = $2`,
+    [seeded.meeting.meetingId, seeded.meeting.minutesId],
+  );
+  assert.equal(seeded.meeting.meetingDate, t.beforeStatement(15));
+  // 1 września (pierwszy dzień roku) zebranie może wypaść tego samego dnia co seed —
+  // wtedy kolejność godzin zależy od pory uruchomienia; w każdym innym dniu zebranie jest wcześniej.
+  if (t.elapsedDays >= 1) {
+    assert.ok(new Date(meeting.scheduled_at) < new Date(meeting.approved_at), 'protokół zatwierdzony po zebraniu');
+  }
+  const { rows: events } = await db.query(
+    'SELECT begins_at FROM events WHERE school_year_id = $1',
+    [t.schoolYearId],
+  );
+  assert.ok(events.length >= 2);
+  for (const { begins_at: beginsAt } of events) {
+    assert.ok(new Date(beginsAt) > t.now || t.upcoming(14) === t.endsOn, 'zapowiedź dotyczy przyszłego terminu');
   }
 });
