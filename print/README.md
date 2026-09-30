@@ -28,7 +28,7 @@ CSV (separator `;`, `,` lub tabulator), jeden wiersz na ucznia:
 | `Klasa` | tak | |
 | `Wpłaty netto EUR` | nie | wyłącznie informacja dla operatora |
 
-JSON: tablica obiektów albo `{ "rows": [...] }` z polami `householdId`, `firstName` + `lastName` lub `studentName`, `className`, opcjonalnie `recordedNetCents`.
+JSON: tablica obiektów albo `{ "rows": [...] }` z polami `householdId`, `firstName` + `lastName` lub `studentName`, `className`, opcjonalnie `recordedNetCents` i `structuredReference` (komunikacja strukturalna OGM-VCS: 12 cyfr albo `+++ddd/dddd/ddddd+++`; w CSV kolumna „Komunikacja strukturalna”). Zła suma kontrolna mod 97 jest błędem wiersza, a różne referencje w wierszach jednej rodziny — błędem danych.
 
 Uczeń przypisany do dwóch rodzin (np. rodzice mieszkający osobno) pojawi się na dwóch osobnych kartkach; każda kartka zawiera tylko uczniów z wierszy swojej rodziny. Plik z błędami (brak ID, klasy, niespójne kwoty w jednej rodzinie) nie jest wczytywany.
 
@@ -36,7 +36,7 @@ Uczeń przypisany do dwóch rodzin (np. rodzice mieszkający osobno) pojawi się
 
 Przycisk „Wczytaj z serwera” pobiera `GET /api/print/cards?schoolYearId=…&classId=…` (to samo pochodzenie, `credentials: "include"`) i przekazuje wynik do tego samego podglądu i wyboru co plik. Tryb pliku lokalnego pozostaje bez zmian. Trasa: `src/pg/routes/print.js` (router PostgreSQL, prototyp — niewdrożony).
 
-Odpowiedź (`Cache-Control: no-store`) ma kształt wejścia JSON: `{ schoolYearId, classId, paymentInfoIncluded, rows: [{ householdId, firstName, lastName, className, recordedNetCents? }] }` — jeden wiersz na ucznia zapisanego w danym roku, bez rodzin zarchiwizowanych. Nie zawiera żadnych danych opiekunów (e-maili, imion, zgód).
+Odpowiedź (`Cache-Control: no-store`) ma kształt wejścia JSON: `{ schoolYearId, classId, paymentInfoIncluded, rows: [{ householdId, firstName, lastName, className, structuredReference, recordedNetCents? }] }` — jeden wiersz na ucznia zapisanego w danym roku, bez rodzin zarchiwizowanych. `structuredReference` (#83) to aktywna komunikacja strukturalna rodziny w tym roku z rejestru `payment_references` albo `null`; unieważniona i z innego roku nie jest zwracana. Przedstawiciel dostaje ją tylko dla rodzin uczniów swojej klasy (ten sam zakres co wiersze); dziennik `print.cards_requested` zapisuje wyłącznie liczbę rodzin z referencją. Nie zawiera żadnych danych opiekunów (e-maili, imion, zgód).
 
 | Rola | Zakres | Kwota netto wpisów wpłat |
 | --- | --- | --- |
@@ -68,7 +68,7 @@ Wygenerowany PDF zawiera dane osobowe: nie zapisywać go w repozytorium ani w pu
 - nazwa Rady, szkoła, rok szkolny, tytuł „Informacja o dobrowolnej składce”,
 - „Dla rodziców i opiekunów:” i lista uczniów tej rodziny z klasą,
 - zdanie o dobrowolnym charakterze składki,
-- opcjonalnie kwota sugerowana (D-14) i dane do przelewu (D-13, szablon tytułu z `{rodzina}` i `{rok}`),
+- opcjonalnie kwota sugerowana (D-14) i dane do przelewu (D-13, szablon tytułu z `{rodzina}` i `{rok}`); rodzina z komunikacją strukturalną dostaje zamiast tytułu wiersz „Komunikacja strukturalna” `+++ddd/dddd/ddddd+++`, a kod QR EPC niesie ją w polu referencji strukturalnej (bez tytułu wolnego). Podgląd informuje, ile wybranych rodzin nie ma referencji i ostrzega, że identyfikator z `{rodzina}` łatwo przepisać z błędem (#83),
 - „Jeśli wpłata została już wykonana, prosimy pominąć tę informację.”,
 - kontakt i drobny numer rodziny ułatwiający rozdanie kartek.
 

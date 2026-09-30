@@ -4,7 +4,13 @@
 // Odpowiedź ma kształt wejścia JSON modułu print/core.js (parseInputRows) plus
 // zatwierdzoną konfigurację danych do wpłaty (#92, payment_instructions):
 //   { schoolYearId, classId, paymentInfoIncluded, paymentInstructions, rows: [
-//       { householdId, firstName, lastName, className, recordedNetCents? } ] }
+//       { householdId, firstName, lastName, className, structuredReference, recordedNetCents? } ] }
+// structuredReference (#83): 12 cyfr aktywnej komunikacji strukturalnej OGM-VCS
+// rodziny w tym roku (payment_references) albo null. Widzi ją każda rola
+// uprawniona do druku, ale wyłącznie dla rodzin z wierszy w jej zakresie —
+// przedstawiciel tylko dla uczniów przypisanej klasy (printScope). Kartka
+// pokazuje ją zamiast tytułu z identyfikatorem rodziny. Unieważniona referencja
+// i referencja innego roku nie są zwracane.
 // paymentInstructions: { iban, bic, payeeName, approvedAt } albo null, gdy rok
 // nie ma jeszcze zatwierdzonej wersji (kartka jest wtedy szkicem, bez kodu QR —
 // zob. print/core.js buildCard). Dostępne dla każdej roli uprawnionej do druku
@@ -93,12 +99,15 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
     ? 'LEFT JOIN household_payment_totals t ON t.household_id = p.household_id AND t.school_year_id = $1'
     : '';
   const { rows } = await db.query(
-    `SELECT p.household_id, s.first_name, s.last_name, c.name AS class_name${paymentColumn}
+    `SELECT p.household_id, s.first_name, s.last_name, c.name AS class_name,
+            pr.structured_reference${paymentColumn}
        FROM enrollments_current e
        JOIN students s ON s.id = e.student_id
        JOIN ${primary} p ON p.student_id = e.student_id
        JOIN households h ON h.id = p.household_id
        JOIN classes c ON c.id = e.class_id
+       LEFT JOIN payment_references pr
+         ON pr.household_id = p.household_id AND pr.school_year_id = $1 AND pr.revoked_at IS NULL
        ${paymentJoin}
       WHERE ${conditions.join(' AND ')}
       ORDER BY c.name, p.household_id, s.last_name, s.first_name, s.id
@@ -136,6 +145,7 @@ function rowOut(row, paymentInfo) {
     firstName: row.first_name,
     lastName: row.last_name,
     className: row.class_name,
+    structuredReference: row.structured_reference ?? null,
   };
   if (paymentInfo) out.recordedNetCents = Math.max(0, toSafeInteger(row.net_amount_cents));
   return out;
@@ -189,6 +199,8 @@ export async function handle(request, env, url, json) {
       studentCount: rows.length,
       paymentInfoIncluded: scope.paymentInfo,
       paymentInstructionsApproved: Boolean(paymentInstructions),
+      // Liczba rodzin z komunikacją strukturalną — nigdy same referencje (#83).
+      structuredReferenceCount: new Set(rows.filter((row) => row.structured_reference).map((row) => row.household_id)).size,
     },
   });
   await recordDataAccess(env, {

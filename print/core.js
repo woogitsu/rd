@@ -6,6 +6,7 @@ import { formatCents, isValidId, parseEuroAmount } from "../panel/core.js";
 import { MoneyError, parseCentsCell } from "../panel/money.js";
 import { SCHOOL_YEAR_ID_PATTERN, formatSchoolYear } from "../shared/school-year.js";
 import { buildEpcPayload } from "./epc.js";
+import { formatStructuredReference, isValidStructuredReference } from "../src/pg/ogm.js";
 import { qrSvgMarkup } from "./qr.js";
 
 export const MAX_ROWS = 5000;
@@ -58,7 +59,21 @@ const HEADER_ALIASES = {
   className: ["klasa", "oddział", "oddzial", "class", "class_name", "classname"],
   recordedNet: ["wpłaty netto eur", "wplaty netto eur", "wpłaty netto", "recorded_net_eur"],
   recordedNetCents: ["recorded_net_cents", "recordednetcents"],
+  structuredReference: ["komunikacja strukturalna", "komunikat", "structured_reference", "structuredreference"],
 };
+
+// Komunikacja strukturalna OGM-VCS rodziny (#83): 12 cyfr albo zapis
+// +++ddd/dddd/ddddd+++ (także ***…***). Pusta wartość = brak referencji.
+// Zła suma kontrolna mod 97 jest błędem wiersza — kartka z literówką
+// skierowałaby wpłatę donikąd.
+export function parseStructuredReferenceCell(raw) {
+  const value = clean(raw);
+  if (!value) return { reference: null };
+  const match = /^(?:(?:\+{3}|\*{3})\s*)?(\d{3})\s*\/?\s*(\d{4})\s*\/?\s*(\d{5})(?:\s*(?:\+{3}|\*{3}))?$/.exec(value);
+  const digits = match ? `${match[1]}${match[2]}${match[3]}` : "";
+  if (!isValidStructuredReference(digits)) return { error: "Niepoprawna komunikacja strukturalna (12 cyfr, suma kontrolna mod 97)." };
+  return { reference: digits };
+}
 
 function parseRecordedNet(raw, unit) {
   const value = clean(raw);
@@ -102,7 +117,14 @@ function rowFromValues(get, number) {
     if (parsed.error) issues.push(parsed.error); else recordedNetCents = parsed.cents;
   }
 
-  return { row: number, householdId, name, className, recordedNetCents, issues };
+  let structuredReference = null;
+  const referenceRaw = get("structuredReference");
+  if (referenceRaw !== undefined) {
+    const parsed = parseStructuredReferenceCell(referenceRaw);
+    if (parsed.error) issues.push(parsed.error); else structuredReference = parsed.reference;
+  }
+
+  return { row: number, householdId, name, className, recordedNetCents, structuredReference, issues };
 }
 
 // Wejście: macierz CSV (pierwszy wiersz to nagłówek) albo tablica obiektów z JSON.
@@ -177,8 +199,18 @@ export function buildHouseholds(rows) {
   for (const row of rows) {
     let household = map.get(row.householdId);
     if (!household) {
-      household = { householdId: row.householdId, students: [], recordedNetCents: undefined, _keys: new Set() };
+      household = {
+        householdId: row.householdId, students: [], recordedNetCents: undefined, structuredReference: null,
+        _referenceSeen: false, _keys: new Set(),
+      };
       map.set(row.householdId, household);
+    }
+    // Rodzeństwo = jedna rodzina = jedna referencja; różne wartości w wierszach to błąd danych.
+    if (!household._referenceSeen) {
+      household._referenceSeen = true;
+      household.structuredReference = row.structuredReference ?? null;
+    } else if (household.structuredReference !== (row.structuredReference ?? null)) {
+      errors.push({ row: row.row, message: `Rodzina ${row.householdId} ma różną komunikację strukturalną w kolejnych wierszach.` });
     }
     const key = `${row.name.toLocaleLowerCase("pl-PL")}|${row.className.toLocaleLowerCase("pl-PL")}`;
     if (!household._keys.has(key)) {
@@ -192,7 +224,7 @@ export function buildHouseholds(rows) {
       }
     }
   }
-  const households = [...map.values()].map(({ _keys, ...household }) => ({
+  const households = [...map.values()].map(({ _keys, _referenceSeen, ...household }) => ({
     ...household,
     students: household.students.sort((a, b) => a.className.localeCompare(b.className, "pl") || a.name.localeCompare(b.name, "pl")),
     paymentEntry: paymentEntryStatus(household.recordedNetCents),
@@ -323,6 +355,23 @@ export function paymentReference(config, household) {
     .replaceAll("{rok}", config.schoolYear);
 }
 
+// Informacja pod podglądem (#83): ile wybranych kartek ma komunikację
+// strukturalną z rejestru, a ile dostanie tytuł z szablonu. Szablon z {rodzina}
+// wstawia wewnętrzny identyfikator (UUID, 36 znaków, bez sumy kontrolnej) —
+// rodzic łatwo pomyli znak, a wpłata trafi do „Do wyjaśnienia”.
+export function structuredReferenceNotice(households, selectedIds, config = {}) {
+  const selected = selectHouseholds(households, selectedIds);
+  if (!selected.length || !clean(config.bankAccount)) return "";
+  const withReference = selected.filter((household) => household.structuredReference).length;
+  const without = selected.length - withReference;
+  if (!without) return "Każda wybrana kartka ma komunikację strukturalną (+++…+++) zamiast tytułu z szablonu.";
+  const usesHouseholdId = clean(config.referenceTemplate).includes("{rodzina}");
+  const base = `${without} z ${selected.length} wybranych rodzin nie ma aktywnej komunikacji strukturalnej`;
+  return usesHouseholdId
+    ? `${base} — ich kartki pokażą tytuł z identyfikatorem rodziny, który łatwo przepisać z błędem. Referencje nadaje rejestr komunikacji strukturalnej (skarbnik).`
+    : `${base} — ich kartki pokażą tytuł z szablonu.`;
+}
+
 // Model kartki: wyłącznie dane jednej rodziny i zatwierdzone parametry konfiguracji.
 // `paymentInstructions` (opcjonalnie): { iban, bic, payeeName } — zatwierdzona
 // na rok konfiguracja z GET /api/print/cards (#92). Gdy podana, ZASTĘPUJE ręcznie
@@ -348,8 +397,13 @@ export function buildCard(household, config, paymentInstructions = null) {
   const payment = [];
   if (bankAccount) payment.push(["Rachunek", bankAccount]);
   if (bankAccount && bankRecipient) payment.push(["Odbiorca", bankRecipient]);
-  const reference = bankAccount ? paymentReference(config, household) : "";
-  if (reference) payment.push(["Tytuł przelewu", reference]);
+  // #83: komunikacja strukturalna z rejestru (payment_references) zastępuje tytuł
+  // z szablonu — w belgijskiej aplikacji bankowej to osobne pole z kontrolą sumy,
+  // a identyfikator rodziny (UUID) nie nadaje się do przepisywania.
+  const structured = bankAccount && household.structuredReference ? household.structuredReference : "";
+  const reference = bankAccount && !structured ? paymentReference(config, household) : "";
+  if (structured) payment.push(["Komunikacja strukturalna", formatStructuredReference(structured)]);
+  else if (reference) payment.push(["Tytuł przelewu", reference]);
   const closing = "Jeśli wpłata została już wykonana, prosimy pominąć tę informację. Dziękujemy.";
 
   // Kod QR wyłącznie z zatwierdzonych danych. Błąd generatora (np. zbyt długi
@@ -358,7 +412,8 @@ export function buildCard(household, config, paymentInstructions = null) {
   if (approved) {
     try {
       const payload = buildEpcPayload({
-        iban: approved.iban, bic: approved.bic, name: approved.payeeName, unstructuredText: reference,
+        iban: approved.iban, bic: approved.bic, name: approved.payeeName,
+        structuredReference: structured, unstructuredText: structured ? "" : reference,
       });
       epcSvg = qrSvgMarkup(payload, { title: "Kod QR do przelewu (EPC)" });
     } catch {

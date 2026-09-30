@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildHouseholds, parseInputRows, renderCardsHtml } from '../print/core.js';
+import { formatStructuredReference, generateStructuredReference } from '../src/pg/ogm.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
@@ -99,8 +100,8 @@ test('przedstawiciel widzi tylko swoją klasę i bez informacji o wpłatach (tak
     assert.equal(result.body.paymentInfoIncluded, false);
     assert.equal(result.body.paymentInstructions, null);
     assert.deepEqual(result.body.rows, [
-      { householdId: 'H-1', firstName: 'Ala', lastName: 'Testowa', className: '1A' },
-      { householdId: 'H-2', firstName: 'Ewa', lastName: 'Przykładowa', className: '1A' },
+      { householdId: 'H-1', firstName: 'Ala', lastName: 'Testowa', className: '1A', structuredReference: null },
+      { householdId: 'H-2', firstName: 'Ewa', lastName: 'Przykładowa', className: '1A', structuredReference: null },
     ]);
     assertEvery(result.body.rows, (row) => !Object.hasOwn(row, 'recordedNetCents'));
     assert.doesNotMatch(result.text, /Olek|2B|Archiwalny|recordedNet/);
@@ -155,7 +156,7 @@ test('odpowiedź nie zawiera danych opiekunów ani adresów e-mail', async () =>
       assert.equal(result.status, 200);
       assert.doesNotMatch(result.text, /@|Opiekun|Syntetyczny|guardian|email/i);
       for (const row of result.body.rows) {
-        assert.deepEqual(Object.keys(row).filter((key) => !['householdId', 'firstName', 'lastName', 'className', 'recordedNetCents'].includes(key)), []);
+        assert.deepEqual(Object.keys(row).filter((key) => !['householdId', 'firstName', 'lastName', 'className', 'structuredReference', 'recordedNetCents'].includes(key)), []);
       }
     }
   } finally {
@@ -175,8 +176,8 @@ test('audyt print.cards_requested zawiera tylko liczby i zakres, bez danych osob
     const byActor = Object.fromEntries(rows.map((row) => [row.actor_id, row]));
     assert.equal(byActor['u-rep'].entity_type, 'school_year');
     assert.equal(byActor['u-rep'].entity_id, YEAR);
-    assert.deepEqual(byActor['u-rep'].metadata_json, { classId: 'c-1a', householdCount: 2, studentCount: 2, paymentInfoIncluded: false, paymentInstructionsApproved: false });
-    assert.deepEqual(byActor['u-tr'].metadata_json, { classId: null, householdCount: 3, studentCount: 4, paymentInfoIncluded: true, paymentInstructionsApproved: false });
+    assert.deepEqual(byActor['u-rep'].metadata_json, { classId: 'c-1a', householdCount: 2, studentCount: 2, paymentInfoIncluded: false, paymentInstructionsApproved: false, structuredReferenceCount: 0 });
+    assert.deepEqual(byActor['u-tr'].metadata_json, { classId: null, householdCount: 3, studentCount: 4, paymentInfoIncluded: true, paymentInstructionsApproved: false, structuredReferenceCount: 0 });
     const text = JSON.stringify(rows);
     assert.doesNotMatch(text, /Ala|Ewa|Olek|Testow|Przykład|H-1|H-2|@|4000/);
   } finally {
@@ -242,6 +243,79 @@ test('zatwierdzone dane do wpłaty trafiają do kartek każdej roli uprawnionej 
     assert.equal(post.status, 405);
     const { rows } = await db.query('SELECT count(*)::int AS n FROM payment_instructions');
     assert.equal(rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});
+
+// #83: aktywna komunikacja strukturalna rodziny na kartce zamiast identyfikatora.
+async function seedReference(db, id, householdId, schoolYearId = YEAR) {
+  const reference = generateStructuredReference();
+  await db.query(
+    `INSERT INTO payment_references (id, school_year_id, household_id, structured_reference, created_by, idempotency_key)
+     VALUES ($1, $2, $3, $4, 'u-seed', $5)`,
+    [id, schoolYearId, householdId, reference, `print-test-${id}`],
+  );
+  return reference;
+}
+
+test('komunikacja strukturalna: aktywna referencja roku na kartce rodzeństwa, bez unieważnionej i innego roku', async () => {
+  const { db, sessions, get } = await setup();
+  try {
+    const h1 = await seedReference(db, 'pr-h1', 'H-1');
+    const revoked = await seedReference(db, 'pr-h2', 'H-2');
+    await db.query(
+      `INSERT INTO payment_reference_revocations (id, payment_reference_id, reason, created_by, idempotency_key)
+       VALUES ('prr-h2', 'pr-h2', 'Unieważnienie syntetyczne', 'u-seed', 'print-test-prr-h2')`,
+    );
+    const otherYear = await seedReference(db, 'pr-h3-old', 'H-3', 'y-old');
+    await db.query(
+      `INSERT INTO payment_instructions (id, school_year_id, iban, bic, payee_name, approved_by, idempotency_key)
+       VALUES ('pi-83', $1, 'BE68539007547034', 'GKCCBEBB', 'Rada Rodziców — Szkoła Testowa', 'u-board', 'print-test-pi-83')`,
+      [YEAR],
+    );
+    const all = await get(`schoolYearId=${YEAR}`, sessions.board);
+    assert.equal(all.status, 200);
+    const refs = Object.fromEntries(all.body.rows.map((row) => [`${row.householdId}:${row.firstName}`, row.structuredReference]));
+    // Rodzeństwo (Ala i Olek, dwie klasy) ma tę samą, jedną referencję rodziny.
+    assert.deepEqual(refs, { 'H-1:Ala': h1, 'H-1:Olek': h1, 'H-2:Ewa': null, 'H-3:Jan': null });
+    assert.doesNotMatch(all.text, new RegExp(`${revoked}|${otherYear}`));
+
+    const grouped = buildHouseholds(parseInputRows(all.body).rows);
+    assert.deepEqual(grouped.errors, []);
+    const config = { ...CONFIG, bankAccount: 'BE68 5390 0754 7034', referenceTemplate: 'Składka {rok} {rodzina}' };
+    const cards = renderCardsHtml(grouped.households, new Set(['H-1', 'H-2']), config, all.body.paymentInstructions);
+    assert.equal(cards.count, 2, 'jedna kartka na rodzinę, także dla rodzeństwa');
+    assert.match(cards.html, new RegExp(formatStructuredReference(h1).replaceAll('+', '\\+')));
+    // H-1 ma komunikację zamiast tytułu z identyfikatorem; H-2 (unieważniona) — tytuł z szablonu.
+    assert.doesNotMatch(cards.html, /Składka 2026\/2027 H-1/);
+    assert.match(cards.html, /Składka 2026\/2027 H-2/);
+
+    const { rows } = await db.query(
+      "SELECT metadata_json FROM audit_events WHERE action = 'print.cards_requested' ORDER BY occurred_at DESC, id DESC LIMIT 1",
+    );
+    assert.equal(rows[0].metadata_json.structuredReferenceCount, 1);
+    assert.doesNotMatch(JSON.stringify(rows), new RegExp(h1));
+  } finally {
+    await db.close();
+  }
+});
+
+test('komunikacja strukturalna: przedstawiciel widzi referencję tylko rodzin swojej klasy; inna klasa 403', async () => {
+  const { db, sessions, get } = await setup();
+  try {
+    const h1 = await seedReference(db, 'pr-h1', 'H-1');
+    const h3 = await seedReference(db, 'pr-h3', 'H-3');
+    const own = await get(`schoolYearId=${YEAR}&classId=c-1a`, sessions.rep1a);
+    assert.equal(own.status, 200);
+    assert.deepEqual(own.body.rows.map((row) => [row.householdId, row.structuredReference]), [['H-1', h1], ['H-2', null]]);
+    assert.doesNotMatch(own.text, new RegExp(h3), 'referencja rodziny spoza klasy nie wychodzi');
+    const other = await get(`schoolYearId=${YEAR}&classId=c-2b`, sessions.rep1a);
+    assert.equal(other.status, 403);
+    assert.doesNotMatch(other.text, new RegExp(`${h1}|${h3}`));
+    // Trasy rejestru referencji pozostają zamknięte dla przedstawiciela.
+    const registry = await handlePgRequest(request(`/api/payment-references?schoolYearId=${YEAR}&householdId=H-1`, { cookie: sessions.rep1a }), { db });
+    assert.equal(registry.status, 403);
   } finally {
     await db.close();
   }
