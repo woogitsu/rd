@@ -232,6 +232,21 @@ async function withAttempt(env, scopes, fn) {
   }
 }
 
+// #203: hash NOWEGO hasła (aktywacja zaproszenia, zmiana, reset) jest liczony poza
+// withAttempt, bo nie jest zgadywaniem hasła. Przy pełnej kolejce scrypt odpowiedź ma
+// być taka sama jak przy logowaniu (503 login_busy + Retry-After), a nie ogólne 503
+// service_unavailable zapisane jako błąd programu. Odrzucenie następuje przed
+// jakimkolwiek zapisem: token zaproszenia/resetu nie jest zużyty, hasło bez zmian,
+// sesje nie są wycofane, więc klient może bezpiecznie ponowić to samo żądanie.
+async function hashNewPassword(password, env) {
+  try {
+    return await hashPassword(password, { env });
+  } catch (error) {
+    if (error instanceof ScryptQueueBusyError) throw new LoginError('login_busy', 503, { retryAfter: 5 });
+    throw error;
+  }
+}
+
 // Zakłada blokadę zakresów, których licznik (z rezerwacją) osiągnął próg; trwającej
 // blokady nie zmienia. Zwraca true, gdy któryś zakres jest zablokowany.
 async function lockExhaustedScopes(tx, scopes) {
@@ -520,7 +535,7 @@ export async function acceptInvitationWithPassword(env, { token, password, passw
     if (typeof passwordRepeat !== 'string' || passwordRepeat !== password) throw new LoginError('password_mismatch', 400);
     const policyError = checkPasswordPolicy(password, { email });
     if (policyError) throw new LoginError(policyError, 400);
-    newHash = await hashPassword(password, { env });
+    newHash = await hashNewPassword(password, env);
   }
   const name = cleanDisplayName(displayName, email);
 
@@ -599,7 +614,7 @@ export async function changePassword(env, session, { currentPassword, newPasswor
   const policyError = checkPasswordPolicy(newPassword, { email: session.user.email });
   if (policyError) throw new LoginError(policyError, 400);
   if (currentPassword.normalize('NFKC') === newPassword.normalize('NFKC')) throw new LoginError('password_unchanged', 400);
-  const newHash = await hashPassword(newPassword, { env });
+  const newHash = await hashNewPassword(newPassword, env);
 
   return database(env).transaction(async (tx) => {
     const updated = await tx.query(
@@ -643,7 +658,7 @@ export async function resetPasswordWithToken(env, { token, newPassword, clientIp
   });
   const policyError = checkPasswordPolicy(newPassword, { email: rows[0].email });
   if (policyError) throw new LoginError(policyError, 400);
-  const newHash = await hashPassword(newPassword, { env });
+  const newHash = await hashNewPassword(newPassword, env);
 
   return database(env).transaction(async (tx) => {
     const locked = (await tx.query(`${lookup} FOR UPDATE OF t`, [tokenHash])).rows[0];

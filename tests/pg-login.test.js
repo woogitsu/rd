@@ -1212,3 +1212,135 @@ test('#203: zalew logowań z jednego IP nie zajmuje kolejki innym adresom (limit
     await Promise.all(occupied);
   }
 });
+
+// #203: hash NOWEGO hasła (aktywacja zaproszenia, reset, zmiana) też przechodzi przez
+// kolejkę scrypt. Przy pełnej kolejce odpowiedź to 503 login_busy + Retry-After (jak
+// przy logowaniu), a nie ogólne 503 service_unavailable; nic nie zostaje zapisane,
+// więc ponowienie tego samego żądania po zwolnieniu kolejki się udaje.
+async function withFullQueue(fn) {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const occupied = Array.from({ length: MAX_CONCURRENT + MAX_WAITING }, () => withSlot(() => held).catch(() => {}));
+  try {
+    await waitFor(() => scryptQueueDepth().running === MAX_CONCURRENT && scryptQueueDepth().waiting === MAX_WAITING, 'pełna kolejka');
+    return await fn();
+  } finally {
+    release();
+    await Promise.all(occupied);
+  }
+}
+
+async function assertLoginBusy(response) {
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: 'login_busy' });
+  assert.equal(response.headers.get('Retry-After'), '5');
+}
+
+test('#203: aktywacja zaproszenia przy pełnej kolejce scrypt — 503 login_busy, token nie zużyty, ponowienie tworzy konto', async () => {
+  const email = 'kolejka.zaproszenie@example.invalid';
+  const { secret } = await invite(email);
+  const password = newPassword();
+  const body = { token: secret, password, passwordRepeat: password };
+  const ip = nextIp();
+  await withFullQueue(async () => {
+    await assertLoginBusy(await post('/api/invitations/accept', body, { ip }));
+  });
+  assert.equal((await db.query('SELECT 1 FROM users WHERE lower(email) = $1', [email])).rows.length, 0, 'konto nie powstało');
+  const { rows: invitation } = await db.query('SELECT accepted_at FROM invitations WHERE lower(email) = $1', [email]);
+  assert.equal(invitation[0].accepted_at, null, 'zaproszenie nadal ważne');
+  const counts = (await db.query("SELECT failure_count FROM login_rate_limits WHERE scope_type = 'ip' AND scope_hash = $1", [scopeHash('ip', ip)])).rows;
+  assert.ok(counts.every((row) => row.failure_count === 0), 'login_busy nie liczy się jako próba');
+  const retried = await post('/api/invitations/accept', body, { ip });
+  assert.equal(retried.status, 201);
+  assert.equal((await retried.json()).created, true);
+});
+
+test('#203: reset hasła przy pełnej kolejce scrypt — 503 login_busy, token nie zużyty, hasło bez zmian', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-203reset' });
+  const { secret, tokenHash } = await createSessionSecret();
+  await seedUser(db, { userId: 'u-login-203resetadm' });
+  await db.query(
+    `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_by, expires_at)
+     VALUES ($1, $2, $3, 'u-login-203resetadm', now() + interval '1 hour')`,
+    [crypto.randomUUID(), account.userId, tokenHash],
+  );
+  const fresh = newPassword();
+  await withFullQueue(async () => {
+    await assertLoginBusy(await post('/api/password/reset', { token: secret, newPassword: fresh }, { ip: nextIp() }));
+  });
+  const { rows } = await db.query('SELECT used_at, revoked_at FROM password_reset_tokens WHERE token_hash = $1', [tokenHash]);
+  assert.deepEqual(rows, [{ used_at: null, revoked_at: null }], 'token nadal ważny');
+  const { rows: stored } = await db.query('SELECT set_reason FROM user_passwords WHERE user_id = $1', [account.userId]);
+  assert.deepEqual(stored, [{ set_reason: 'invitation' }], 'hasło bez zmian');
+  // (Udane logowanie wycofuje tokeny resetu — dlatego stare hasło sprawdzamy dopiero niżej.)
+  assert.equal((await post('/api/password/reset', { token: secret, newPassword: fresh }, { ip: nextIp() })).status, 200);
+  assert.equal((await login(account)).status, 401);
+  assert.equal((await login(account, { password: fresh })).status, 200);
+});
+
+test('#203: zmiana hasła, gdy kolejka zapełnia się po sprawdzeniu obecnego hasła — 503 login_busy, hasło i sesje bez zmian', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-203change' });
+  const cookie = cookieFrom(await login(account));
+  const otherCookie = cookieFrom(await login(account));
+  const ip = nextIp();
+  // Jedno trwające miejsce wolne dla sprawdzenia obecnego hasła; kiedy ono się zacznie,
+  // dopełniamy kolejkę oczekujących. Atrapy oczekujące po starcie od razu stawiają
+  // w kolejce następną atrapę, więc zwolnione przez sprawdzenie miejsce nie zostaje
+  // wolne — hash nowego hasła trafia na pełną kolejkę deterministycznie (bez zegara).
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  let stopped = false;
+  const occupants = [];
+  const refilling = () => {
+    const pending = withSlot(async () => {
+      if (!stopped) occupants.push(refilling());
+      await held;
+    }).catch(() => {});
+    return pending;
+  };
+  for (let i = 0; i < MAX_CONCURRENT - 1; i += 1) occupants.push(withSlot(() => held).catch(() => {}));
+  try {
+    await waitFor(() => scryptQueueDepth().running === MAX_CONCURRENT - 1, 'jedno wolne miejsce');
+    const changing = post('/api/password/change', { currentPassword: account.password, newPassword: newPassword() }, { cookie, ip });
+    await waitFor(() => scryptQueueDepth().running === MAX_CONCURRENT, 'sprawdzenie obecnego hasła trwa');
+    for (let i = 0; i < MAX_WAITING; i += 1) occupants.push(refilling());
+    assert.equal(scryptQueueDepth().waiting, MAX_WAITING);
+    await assertLoginBusy(await changing);
+  } finally {
+    stopped = true;
+    release();
+    while (occupants.length) await occupants.shift();
+  }
+  assert.equal((await auditRows('auth.password_changed')).filter((row) => row.entity_id === account.userId).length, 0);
+  assert.equal((await get('/api/session', otherCookie)).status, 200, 'inne sesje nie zostały wycofane');
+  assert.equal((await login(account)).status, 200, 'obecne hasło nadal działa');
+});
+
+test('#203: podwójne kliknięcie „Zaloguj” przy prawie pełnym limicie adresu — jedno 503 z Retry-After, jedna sesja', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-203double' });
+  const ip = nextIp();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  // Trwające miejsca zajęte globalnie; adres ma w kolejce MAX_PER_CLIENT - 1 pozycji,
+  // więc zostaje dokładnie jedno miejsce na jedno z dwóch kliknięć.
+  const occupied = [
+    ...Array.from({ length: MAX_CONCURRENT }, () => withSlot(() => held).catch(() => {})),
+    ...Array.from({ length: MAX_PER_CLIENT - 1 }, () => withQueueClient(ip, () => withSlot(() => held)).catch(() => {})),
+  ];
+  let responses;
+  try {
+    const done = [];
+    const clicks = [login(account, { ip }), login(account, { ip })].map((pending) => pending.then((response) => { done.push(response); return response; }));
+    // Jedno kliknięcie czeka w kolejce, drugie dostaje odpowiedź, zanim kolejka się zwolni.
+    await waitFor(() => done.length === 1 && loginQueueMetrics().login_queue_depth === MAX_PER_CLIENT, 'jedno kliknięcie odrzucone, drugie w kolejce');
+    await assertLoginBusy(done[0]);
+    release();
+    responses = await Promise.all(clicks);
+  } finally {
+    release();
+    await Promise.all(occupied);
+  }
+  assert.deepEqual(responses.map((r) => r.status).sort(), [200, 503]);
+  const { rows } = await db.query('SELECT count(*)::int AS n FROM sessions WHERE user_id = $1', [account.userId]);
+  assert.equal(rows[0].n, 1, 'jedna sesja');
+});
