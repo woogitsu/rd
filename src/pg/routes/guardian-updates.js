@@ -256,7 +256,7 @@ async function suppressionsByEmail(env, emails) {
 }
 
 async function listRequests(request, env, url, json) {
-  await requireBoardContext(request, env);
+  const context = await requireBoardContext(request, env);
   const status = url.searchParams.get('status') ?? 'pending';
   if (!['pending', 'approved', 'rejected'].includes(status)) throw new RequestError('invalid_request');
   const { rows } = await env.db.query(
@@ -288,6 +288,12 @@ async function listRequests(request, env, url, json) {
       createdAt: row.created_at,
     });
   }
+  // #133: lista pokazuje imię opiekuna i proponowany adres — odczyt zostawia ślad
+  // (bez danych osobowych i identyfikatorów opiekunów; tylko stan filtra i liczba).
+  await insertAuditEvent(env.db, {
+    actorId: context.session.user.id, action: 'guardian_update_request.list_viewed',
+    entityType: 'guardian_update_request', entityId: status, metadata: { status, count: requests.length },
+  });
   return json({ requests });
 }
 

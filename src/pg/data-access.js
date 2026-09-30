@@ -74,3 +74,82 @@ export const DATA_ACCESS_ROUTES = Object.freeze([
 export const DATA_ACCESS_KINDS = Object.freeze([
   'class_students', 'household_card', 'print_cards', 'payment_list', 'class_roster_export', 'yearly_export', 'payment_export',
 ]);
+
+// Jawna lista wyjątków (#133): trasy GET, które NIE zapisują wpisu w
+// data_access_log, każda z uzasadnieniem. Meta-test
+// tests/pg-data-access-coverage.test.js wymaga, by KAŻDA trasa GET z macierzy
+// uprawnień (tests/helpers/route-matrix.js, a przez nią z ROUTES w app.js) była
+// w DATA_ACCESS_ROUTES albo tutaj — nowa trasa GET bez klasyfikacji wywraca test.
+// `audit` = odczyt ma osobny ślad w audit_events (akcja ze słownika, zapisywana
+// w źródle; ślady dodane w #133 sprawdzane też wywołaniem); `followUp` = luka
+// świadomie odłożona (opis w docs/SECURITY.md).
+const EXEMPT_GROUPS = [
+  {
+    reason: 'sesja, logowanie i własne konto: dane zalogowanego członka Rady, nie rodzin',
+    routes: ['session.get', 'session.access', 'sessions.list', 'login.state'],
+  },
+  {
+    reason: 'widok publiczny: wyłącznie zatwierdzone treści (zdjęcia po sprawdzeniu zgód), bez rejestru rodzin',
+    routes: ['events.public', 'news.public', 'news.publicItem', 'news.publicPhotoFileWeb', 'news.publicPhotoFileThumb',
+      'meetings.publicMinutes', 'meetings.publicNotices', 'privacyNotice.public'],
+  },
+  {
+    reason: 'finanse Rady (księga, budżet, uzgodnienia, sprawozdania): kwoty i opisy operacji, tytuły wyciągu tylko jako skrót, bez imion i e-maili rodzin',
+    routes: ['ledger.list', 'ledger.categories', 'ledger.summary', 'ledger.budget', 'ledger.exportCsv', 'ledger.exportXlsx',
+      'ledger.reviews', 'ledger.resolutions', 'ledgerBudget.history', 'ledgerBudget.execution',
+      'ledgerCostCenters.report', 'ledgerCostCenters.allocations', 'ledgerCostCenters.eventFinance',
+      'ledgerCash.transfers', 'ledgerCash.openingBalance', 'reconciliation.list', 'reconciliation.get',
+      'reconciliation.suggestions', 'reconciliation.auditReport', 'financialReports.annual', 'financialReports.cashFlow',
+      'financialReports.snapshotList', 'financialReports.snapshotRead', 'payment-instructions.get', 'yearClose.handover'],
+  },
+  {
+    reason: 'zebrania, uchwały, wydarzenia, aktualności i metadane dokumentów Rady (zgody na wizerunek jako numery i referencje, bez imion)',
+    routes: ['meetings.list', 'meetings.sharedMinutes', 'meetings.resolutionLookup', 'meetings.get', 'meetings.approvalChecklist',
+      'meetings.resolutionRegister', 'events.list', 'events.get', 'news.list', 'news.get', 'news.photos', 'news.photoGet',
+      'documents.list', 'documents.getFinancial', 'documents.getBoard', 'documents.getClass'],
+  },
+  {
+    reason: 'agregaty i liczniki (bez imion, e-maili i identyfikatorów rodzin) albo konfiguracja',
+    routes: ['families.classes', 'board.overview', 'board.overviewExportCsv', 'board.overviewExportXlsx', 'representative.overview',
+      'admin.classCoverage', 'admin.retentionPreview', 'admin.opsStatus', 'yearClose.status', 'import.options',
+      'email.list', 'email.status', 'email.report', 'email.providerPause.get'],
+  },
+  {
+    reason: 'administracja kont Rady: dane członków Rady, nie dzieci i opiekunów',
+    routes: ['admin.users', 'admin.accountRequests', 'admin.grants', 'admin.invitations', 'admin.schoolYears', 'privacyNotice.list'],
+  },
+  {
+    reason: 'rejestr żądań osób (#100): wyłącznie identyfikatory, rodzaj i daty; tylko admin z MFA',
+    routes: ['admin.dataRequests'],
+  },
+  {
+    reason: 'właściciel jednorazowego tokenu widzi wyłącznie własne dane (bez sesji Rady)',
+    routes: ['guardianUpdates.previewPublic', 'email.preferences.get'],
+  },
+  {
+    reason: 'podgląd kampanii: jedna próbka (identyfikator gospodarstwa i zamaskowany adres); pełna lista tylko przez email.recipients ze śladem audytu',
+    routes: ['email.preview'],
+  },
+  { reason: 'treść dokumentu: osobny ślad audytu każdego pobrania', audit: 'document.downloaded', routes: ['documents.contentFinancial', 'documents.contentBoard', 'documents.contentClass'] },
+  { reason: 'odbiorcy kampanii (adresy opiekunów): osobny ślad audytu', audit: 'email.recipients.viewed', routes: ['email.recipients'] },
+  { reason: 'wstrzymane adresy (zamaskowane) z gospodarstwem: osobny ślad audytu', audit: 'email.suppressions.viewed', routes: ['email.suppressions.list'] },
+  { reason: 'nieudane doręczenia (adresy zamaskowane): osobny ślad audytu', audit: 'email.attention_list.viewed', routes: ['email.attention'] },
+  { reason: 'przegląd dziennika zdarzeń (admin + MFA): sam zapisuje ślad', audit: 'audit.viewed', routes: ['admin.audit'] },
+  { reason: 'przegląd dziennika odczytu (admin + MFA): sam zapisuje ślad', audit: 'access_log.viewed', routes: ['admin.accessLog'] },
+  {
+    reason: 'prośby opiekunów o aktualizację (imię opiekuna, proponowany adres): ślad audytu odczytu; rodzaj w data_access_log wymaga migracji CHECK',
+    audit: 'guardian_update_request.list_viewed', routes: ['guardianUpdates.list'], followUp: true,
+  },
+  {
+    reason: 'zgłoszenia do zadań wydarzenia (imię i nazwisko opiekuna): ślad audytu odczytu, gdy lista zawiera opiekunów; rodzaj w data_access_log wymaga migracji CHECK',
+    audit: 'event.task_signups_viewed', routes: ['events.tasksList'], followUp: true,
+  },
+  {
+    reason: 'identyfikatory gospodarstw i kwoty jednej wpłaty / referencje OGM jednego gospodarstwa (rola finansowa, bez imion i e-maili); objęcie data_access_log wymaga nowego rodzaju w CHECK (migracja)',
+    routes: ['payments.allocations.list', 'payment-references.list'], followUp: true,
+  },
+];
+
+export const DATA_ACCESS_EXEMPT_ROUTES = Object.freeze(Object.fromEntries(EXEMPT_GROUPS.flatMap((group) => group.routes.map(
+  (id) => [id, Object.freeze({ reason: group.reason, audit: group.audit ?? null, followUp: Boolean(group.followUp) })],
+))));
