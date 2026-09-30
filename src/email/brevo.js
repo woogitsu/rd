@@ -343,7 +343,7 @@ export function createBrevoTransport({
 export async function checkBrevoAccount({
   apiKey, appEnv, fetchImpl = globalThis.fetch, endpoint = BREVO_ACCOUNT_ENDPOINT, processEnv = process.env,
 } = {}) {
-  if (appEnv === 'test' || underTestRunner(processEnv)) return { status: 'warning', code: 'account_check_disabled_in_test' };
+  if (isTestEnv(appEnv) || underTestRunner(processEnv)) return { status: 'warning', code: 'account_check_disabled_in_test' };
   if (!apiKey) return { status: 'missing', code: 'api_key_missing' };
   let response;
   try {
