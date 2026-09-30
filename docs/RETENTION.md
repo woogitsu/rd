@@ -32,7 +32,7 @@
 | `payment_reference` | `payment_entries.reference` niepuste (rok szkolny) |
 | `document_financial` | `documents` (rok utworzenia) |
 | `audit_event` | `audit_events` (rok zdarzenia) |
-| `export_package` | `export_runs` (rok szkolny) |
+| `export_package` | `export_runs` (rok szkolny) — metadane przebiegów; serwer nie przechowuje samych paczek (bufor tymczasowy eksportu rocznego znika po wysyłce, [`docs/EXPORT.md`](EXPORT.md)) |
 | `import_file` | `import_batches` (rok szkolny) |
 
 ## Jak wpisać decyzję D-04
