@@ -234,6 +234,10 @@ function entryFromRow(row) {
   // przeksięgowania) ma dokładnie ten sam kształt odpowiedzi co przed #144
   // (kontrakt ze starym Workerem, tests/pg-ledger-api.test.js, bez zmian).
   if (row.replaces_entry_id) entry.replacesEntryId = row.replaces_entry_id;
+  // #144: odwrotny kierunek łańcucha („zastąpiony przez”) — tylko na liście,
+  // tylko dla wpisu już przeksięgowanego (unikalny ledger_entries_replaces_idx
+  // gwarantuje co najwyżej jeden wpis zastępczy).
+  if (row.replaced_by_entry_id) entry.replacedByEntryId = row.replaced_by_entry_id;
   // #93: jak replacesEntryId — tylko dla wpisu z jawnie wskazaną uchwałą.
   if (row.resolution_id) entry.resolutionId = row.resolution_id;
   // #87: wszystkie dowody wpisu (dokument główny source_document_id oraz
@@ -251,6 +255,13 @@ function attachmentIds(row) {
   const ids = [row.source_document_id, ...(row.linked_document_ids ?? [])].filter(Boolean);
   return [...new Set(ids)];
 }
+
+// #144: wpis zastępczy danego wpisu (odwrotność replaces_entry_id). Oba wpisy
+// są w tym samym roku (ledger_replacement_mismatch), więc podzapytanie nie
+// ujawnia danych spoza roku, do którego sprawdzono uprawnienia.
+const REPLACED_BY_SQL = `(SELECT successor.id FROM ledger_entries successor
+              WHERE successor.replaces_entry_id = entry.id
+                AND successor.school_year_id = entry.school_year_id) AS replaced_by_entry_id`;
 
 // Podzapytanie: dokumenty powiązane z wpisem przez documents.linked_entity_*.
 const LINKED_DOCUMENTS_SQL = `ARRAY(SELECT d.id FROM documents d
@@ -459,7 +470,7 @@ async function listEntries(request, env, url, json) {
             to_char(entry.occurred_on, 'YYYY-MM-DD') AS occurred_on,
             entry.payment_entry_id, entry.source_document_id, entry.method, entry.source,
             entry.resolution_reference, entry.replaces_entry_id, entry.corrected_cents, entry.net_amount_cents,
-            ${LINKED_DOCUMENTS_SQL}
+            ${REPLACED_BY_SQL}, ${LINKED_DOCUMENTS_SQL}
        FROM ledger_entry_net entry
        JOIN ledger_categories category ON category.id = entry.category_id
       WHERE ${conditions.join(' AND ')}
@@ -1543,6 +1554,9 @@ export const LEDGER_CSV_COLUMNS = [
   ['netto_eur', 'amount'],
   // #87: liczba i identyfikatory wszystkich dowodów (dokument główny + dołączone).
   ['liczba_dowodow', 'text'], ['id_dowodow', 'text'],
+  // #144: odwrotny kierunek łańcucha przeksięgowań (zastepuje_wpis ↔ zastapiony_przez).
+  // Na końcu, by nie przesuwać kolumn istniejących arkuszy (kwoty w L–N).
+  ['zastapiony_przez', 'text'],
 ].map(([header, type]) => ({ header, type }));
 
 export { csvCell, formatEuro };
@@ -1552,7 +1566,7 @@ export function ledgerCsvValues(row) {
     row.id, row.occurred_on, DIRECTION_LABELS[row.direction], row.category_name, row.description,
     METHOD_LABELS[row.method], row.source, row.resolution_reference, row.payment_entry_id,
     row.source_document_id, row.replaces_entry_id, row.amount_cents, row.corrected_cents, row.net_amount_cents,
-    String(attachmentIds(row).length), attachmentIds(row).join(' '),
+    String(attachmentIds(row).length), attachmentIds(row).join(' '), row.replaced_by_entry_id,
   ];
 }
 export function ledgerCsvLine(row) { return csvRow(LEDGER_CSV_COLUMNS, ledgerCsvValues(row)); }
@@ -1574,7 +1588,7 @@ async function exportLedger(request, env, url, format) {
               category.name AS category_name, entry.description, entry.method, entry.source,
               entry.resolution_reference, entry.payment_entry_id, entry.source_document_id,
               entry.replaces_entry_id, entry.amount_cents, entry.corrected_cents, entry.net_amount_cents,
-              ${LINKED_DOCUMENTS_SQL}
+              ${REPLACED_BY_SQL}, ${LINKED_DOCUMENTS_SQL}
          FROM ledger_entry_net entry
          JOIN ledger_categories category ON category.id = entry.category_id
         WHERE entry.school_year_id = $1
