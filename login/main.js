@@ -1,16 +1,18 @@
 import { applySchoolName } from "../shared/school.js";
+import { createApiClient } from "../shared/api.js";
+import { forgetSession, mayHaveSession, rememberSession, sessionExpiryFrom } from "../shared/session-hint.js";
 import {
   canOfferVoluntaryMfaEnrollment,
   clearSensitiveViews,
   enrollIntroText,
   enrollReasonFromFragment,
   enrollmentConfirmError,
-  errorMessage,
   formatSecret,
   inviteFormMode,
   inviteSummaryRows,
   isRecoveryFormat,
   isTotpFormat,
+  LOGIN_MESSAGES,
   logoutOutcome,
   nextFromFragment,
   nextView,
@@ -45,26 +47,22 @@ let lastState = null;
 let returnTo = nextFromFragment(window.location.hash);
 let enrollReason = enrollReasonFromFragment(window.location.hash);
 
-class ApiError extends Error {
-  constructor(code, status) { super(errorMessage(code, status)); this.code = code; this.status = status; }
-}
+// Wspólny klient API (#99): polskie komunikaty (słownik logowania ma pierwszeństwo),
+// brak połączenia i Retry-After (np. 503 login_busy, 429) po polsku. Bez przekierowań:
+// to jest ekran logowania. Odpowiedź logowania, MFA lub stanu sesji odświeża wskazówkę sesji,
+// każde 401 ją usuwa (shared/session-hint.js).
+const client = createApiClient({ hasUnsavedChanges: () => false, warnUnsaved: () => {}, clearWarning: () => {} });
 
 async function api(url, { method = "GET", body } = {}) {
-  let response;
   try {
-    response = await fetch(url, {
-      method,
-      credentials: "same-origin",
-      headers: body === undefined ? {} : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    throw new ApiError("service_unavailable", 503);
+    const data = await client.request(url, { method, body, messages: LOGIN_MESSAGES, redirect: false });
+    const expiresAt = sessionExpiryFrom(url, data);
+    if (expiresAt) rememberSession(expiresAt);
+    return data;
+  } catch (error) {
+    if (error.status === 401) forgetSession();
+    throw error;
   }
-  if (response.status === 204) return {};
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ApiError(data.error, response.status);
-  return data;
 }
 
 function say(text) {
@@ -130,7 +128,10 @@ function renderEnrollIntro(forced, options) {
   byId("enroll-back").hidden = forced;
 }
 
-async function refreshState() {
+// `initial`: wejście na stronę. Bez wskazówki sesji w tej przeglądarce nie pytamy serwera —
+// odpowiedź byłaby 401 (czerwony wpis w konsoli przy każdym logowaniu, przegląd demo 4).
+async function refreshState({ initial = false } = {}) {
+  if (initial && !mayHaveSession()) return { authenticated: false };
   try {
     return await api("/api/auth/state");
   } catch (error) {
@@ -299,7 +300,7 @@ byId("enroll-confirm-form").addEventListener("submit", (event) => {
       byId("codes-title").focus();
     } catch (error) {
       input.value = "";
-      const outcome = enrollmentConfirmError(error.code, error.status);
+      const outcome = enrollmentConfirmError(error.code, error.status, error.network || error.retryAfter ? error.message : null);
       if (outcome.restart) {
         // Wygasła lub zastąpiona konfiguracja: stary QR znika, wracamy do „Rozpocznij” (#197).
         formError(form, "enroll-error", "");
@@ -538,6 +539,7 @@ for (const button of document.querySelectorAll(".logout")) {
     const outcome = logoutOutcome(status);
     say(outcome.message);
     if (outcome.loggedOut) {
+      forgetSession();
       lastState = null;
       returnTo = null;
       resetEnrollment();
@@ -558,6 +560,8 @@ byId("logout-all").addEventListener("click", async () => {
     say(outcome.loggedOut ? outcome.message : error.message);
     if (!outcome.loggedOut) return;
   }
+  // Serwer wycofał bieżącą sesję (także przy scope "current") i wyczyścił cookie.
+  forgetSession();
   lastState = null;
   returnTo = null;
   showView("login");
@@ -578,7 +582,7 @@ async function route() {
     return;
   }
   try {
-    const state = await refreshState();
+    const state = await refreshState({ initial: true });
     if (fragment.view === "change" && state.authenticated !== false && nextView(state) === "start") {
       lastState = state;
       showView("change");
