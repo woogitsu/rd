@@ -45,3 +45,29 @@ test('shell.css: rok szkolny w bloku konta nie łamie się na wiele linii (przeg
   assert.ok(rule);
   assert.match(rule.body, /white-space:\s*nowrap/);
 });
+
+// Tryb wysokiego kontrastu (forced-colors): box-shadow aktywnej pozycji znika, a kolor
+// czerwony zastępuje kolor systemowy. Reguła zastępcza musi mieć co najmniej tę samą
+// szczegółowość co `header.shell-header #shell-nav a` (border: 0, text-decoration: none),
+// inaczej — jak reguły `nav a.active` w styles.css paneli — nie działa w nagłówku.
+test('shell.css: aktywny link #shell-nav odróżnialny w forced-colors (obramowanie i podkreślenie kolorami systemowymi)', async () => {
+  const css = (await readFile(new URL('../shared/shell.css', import.meta.url), 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '');
+  const start = css.indexOf('@media (forced-colors: active)');
+  assert.ok(start > 0, 'brak @media (forced-colors: active) w shared/shell.css');
+  const inner = css.slice(css.indexOf('{', start) + 1);
+  const end = inner.search(/\}\s*\}/);
+  const rules = blocks(inner.slice(0, end + 1));
+  const active = rules.find((rule) => rule.selector.split(',').map((s) => s.trim()).includes('header.shell-header #shell-nav a.active'));
+  assert.ok(active, 'reguła header.shell-header #shell-nav a.active w bloku forced-colors');
+  assert.match(active.body, /border-bottom:\s*\d+px solid (Highlight|LinkText|CanvasText)/);
+  assert.match(active.body, /text-decoration:\s*underline/);
+  assert.match(active.body, /box-shadow:\s*none/);
+  // Bez polegania na tle: reguła nie ustawia tła ani kolorów spoza palety systemowej.
+  assert.doesNotMatch(active.body, /background/);
+  assert.doesNotMatch(active.body, /#[0-9a-f]{3,6}\b/i);
+  // Reguła bazowa nadal oznacza aktywną pozycję (poza forced-colors) — reguła zastępcza
+  // dotyczy tego samego selektora.
+  const base = blocks(css.slice(0, start)).find((rule) => rule.selector === 'header.shell-header #shell-nav a.active');
+  assert.ok(base, 'bazowa reguła aktywnej pozycji');
+  assert.match(base.body, /box-shadow:/);
+});
