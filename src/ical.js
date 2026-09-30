@@ -1,7 +1,7 @@
 // Moduł iCalendar (RFC 5545): czyste funkcje formatujące, bez dostępu do bazy
 // i bez DOM. Używany przez /api/public/events.ics oraz /api/public/events/:id.ics
-// (src/pg/events.js). Docelowo posłuży też załącznikowi zawiadomienia o zebraniu
-// (osobne issue #113).
+// (src/pg/events.js) oraz przez plik kalendarza zatwierdzonego zawiadomienia
+// o zebraniu (GET /api/meetings/:id/notices/:noticeId/calendar, #113).
 //
 // Czasy DTSTART/DTEND/DTSTAMP są emitowane w UTC (przyrostek Z). Wydarzenia są
 // w bazie timestamptz (chwila w czasie), więc UTC jest jednoznaczne także dla
@@ -70,9 +70,10 @@ function utcStamp(date) {
 
 // event: { id, title, description, location, organizer, startsAtUtc, endsAtUtc,
 //          status: 'scheduled'|'cancelled', sequence (int >= 0), dtstamp (Date|string) }
-export function buildEventComponent(event, { uidDomain = 'rd.example.invalid' } = {}) {
+// uidPrefix odróżnia przestrzenie UID (wydarzenia: 'event', zebrania: 'meeting').
+export function buildEventComponent(event, { uidDomain = 'rd.example.invalid', uidPrefix = 'event' } = {}) {
   const lines = ['BEGIN:VEVENT'];
-  lines.push(line('UID', `event-${event.id}@${uidDomain}`));
+  lines.push(line('UID', `${uidPrefix}-${event.id}@${uidDomain}`));
   lines.push(line('DTSTAMP', utcStamp(event.dtstamp ?? event.startsAtUtc)));
   lines.push(line('DTSTART', utcStamp(event.startsAtUtc)));
   if (event.endsAtUtc) lines.push(line('DTEND', utcStamp(event.endsAtUtc)));
@@ -89,7 +90,7 @@ export function buildEventComponent(event, { uidDomain = 'rd.example.invalid' } 
   return lines;
 }
 
-export function buildCalendar(events, { calName = 'Kalendarz Rady Rodziców', uidDomain = 'rd.example.invalid', method = 'PUBLISH' } = {}) {
+export function buildCalendar(events, { calName = 'Kalendarz Rady Rodziców', uidDomain = 'rd.example.invalid', method = 'PUBLISH', uidPrefix = 'event' } = {}) {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -99,7 +100,7 @@ export function buildCalendar(events, { calName = 'Kalendarz Rady Rodziców', ui
     line('X-WR-CALNAME', escapeText(calName)),
     line('X-WR-TIMEZONE', ICAL_TIMEZONE),
   ];
-  for (const event of events) lines.push(...buildEventComponent(event, { uidDomain }));
+  for (const event of events) lines.push(...buildEventComponent(event, { uidDomain, uidPrefix }));
   lines.push('END:VCALENDAR');
   return lines.join(CRLF) + CRLF;
 }

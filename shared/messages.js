@@ -41,6 +41,8 @@ export const MESSAGES = Object.freeze({
   notice_up_to_date: "Zatwierdzone zawiadomienie odpowiada aktualnemu zebraniu — nowa wersja nie jest potrzebna.",
   reschedule_no_change: "Podany termin jest taki sam jak obecny.",
   use_reschedule_endpoint: "Po zatwierdzeniu zawiadomienia zmień termin przez „Zmień termin” — wymaga to powodu.",
+  invalid_agenda_order: "Nowa kolejność musi zawierać dokładnie wszystkie niewycofane punkty porządku obrad, każdy raz. Odśwież widok i spróbuj ponownie.",
+  notice_calendar_unavailable: "Plik kalendarza jest dostępny tylko dla najnowszego zatwierdzonego zawiadomienia.",
   campaign_audience_locked: "Odbiorcy tej kampanii wynikają z zebrania albo z kampanii źródłowej i nie można ich zmienić.",
   // --- Tryb tylko do odczytu (#143) ------------------------------------------------
   read_only: "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",

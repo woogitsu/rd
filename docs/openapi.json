@@ -10722,6 +10722,80 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/meetings/{meetingId}/agenda-order": {
+      "post": {
+        "operationId": "meetings_agendaOrder",
+        "parameters": [
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.agendaOrder",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.agendaOrder"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/meetings/{meetingId}/approval-checklist": {
       "get": {
         "operationId": "meetings_approvalChecklist",
@@ -11338,6 +11412,94 @@
         ],
         "x-rd-roles": [
           "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/meetings/{meetingId}/notices/{noticeId}/calendar": {
+      "get": {
+        "operationId": "meetings_noticeCalendar",
+        "parameters": [
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "noticeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "meetings.noticeCalendar",
+        "tags": [
+          "meetings"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "audit": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "board": [
+            "A",
+            "B",
+            "W1"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "meetings.noticeCalendar"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "audit",
           "board",
           "board:class"
         ],
@@ -17097,6 +17259,7 @@
           "import_has_conflicts",
           "inconsistent_matches",
           "invalid_access_kind",
+          "invalid_agenda_order",
           "invalid_allocation",
           "invalid_alt_text",
           "invalid_amount",
@@ -17277,6 +17440,7 @@
           "not_found",
           "not_resolvable",
           "nothing_to_promote",
+          "notice_calendar_unavailable",
           "notice_campaign_audience_unsupported",
           "notice_four_eyes_required",
           "notice_not_approved",
@@ -17947,6 +18111,11 @@
         "code": "invalid_access_kind",
         "meaning": "Wybierz rodzaj odczytu z listy.",
         "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_agenda_order",
+        "meaning": "Nowa kolejność musi zawierać dokładnie wszystkie niewycofane punkty porządku obrad, każdy raz. Odśwież widok i spróbuj ponownie.",
+        "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
       },
       {
         "code": "invalid_allocation",
@@ -18846,6 +19015,11 @@
       {
         "code": "nothing_to_promote",
         "meaning": "Plan nie zawiera żadnego ucznia do przeniesienia.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "notice_calendar_unavailable",
+        "meaning": "Plik kalendarza jest dostępny tylko dla najnowszego zatwierdzonego zawiadomienia.",
         "retry": "Nie — popraw dane żądania."
       },
       {

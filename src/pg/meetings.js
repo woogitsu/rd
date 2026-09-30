@@ -22,6 +22,7 @@ import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { insertAuditEvent } from './audit.js';
 import { ContentError, contentHash as emailContentHash, parseCampaignContent } from '../email/content.js';
 import { createJsonReader } from './input.js';
+import { buildCalendar, icalUidDomain } from '../ical.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
 export const READ_ROLES = Object.freeze(['admin', 'board', 'audit']);
@@ -666,6 +667,27 @@ export async function listMeetings(db, actor, input = {}) {
   return { meetings: visible.map(meetingFromRow) };
 }
 
+// Odczyt zebrania: role wewnętrzne (READ_ROLES) albo przedstawiciel-gospodarz
+// zebrania klasowego własnej klasy (#171, internalView = false).
+async function meetingForRead(db, actor, meetingId, env) {
+  const meeting = await loadMeeting(db, meetingId);
+  // #113: powody odwołania/zmiany terminu i powiązane kampanie widzą role
+  // wewnętrzne (READ_ROLES); przedstawiciel-gospodarz klasy (#171) — nie.
+  let internalView = true;
+  try {
+    authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
+  } catch (error) {
+    if (!(error instanceof MeetingError) || error.status !== 403
+        || !isClassHost(actor, env, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, kind: meeting.kind })) {
+      // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
+      if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
+      throw error;
+    }
+    internalView = false;
+  }
+  return { meeting, internalView };
+}
+
 export async function getMeeting(db, actor, input = {}, env) {
   // #158: zebranie i jego listy czytane z JEDNEJ migawki REPEATABLE READ, READ
   // ONLY, kolejno na jednym połączeniu (jak readSnapshot w db-snapshot.js, ale
@@ -673,21 +695,7 @@ export async function getMeeting(db, actor, input = {}, env) {
   // równoległe zapytania na puli dawały kilka migawek.
   return inTransaction(db, async (tx) => {
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
-    const meeting = await loadMeeting(tx, input.meetingId);
-    // #113: powody odwołania/zmiany terminu i powiązane kampanie widzą role
-    // wewnętrzne (READ_ROLES); przedstawiciel-gospodarz klasy (#171) — nie.
-    let internalView = true;
-    try {
-      authorize(actor, READ_ROLES, { schoolYearId: meeting.school_year_id, classId: meeting.class_id });
-    } catch (error) {
-      if (!(error instanceof MeetingError) || error.status !== 403
-          || !isClassHost(actor, env, { schoolYearId: meeting.school_year_id, classId: meeting.class_id, kind: meeting.kind })) {
-        // Ta sama odpowiedź dla brakującego i niedostępnego zebrania (SR-07).
-        if (error instanceof MeetingError && error.status === 403) throw new MeetingError('meeting_not_found', 404);
-        throw error;
-      }
-      internalView = false;
-    }
+    const { meeting, internalView } = await meetingForRead(tx, actor, input.meetingId, env);
     const agenda = await tx.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]);
     const attendees = await tx.query('SELECT * FROM meeting_attendees WHERE meeting_id = $1 ORDER BY recorded_at, id', [meeting.id]);
     const checks = await tx.query(`${QUORUM_CHECK_SELECT} WHERE c.meeting_id = $1 ORDER BY c.seq`, [meeting.id]);
@@ -1775,6 +1783,73 @@ export async function withdrawAgendaItem(db, actor, input = {}, env) {
   return { agendaItem: agendaItemFromRow(row.item), replayed: row.replayed };
 }
 
+// #113: zmiana kolejności punktów porządku obrad. `itemIds` to DOKŁADNIE wszystkie
+// niewycofane punkty w nowej kolejności. Punkty zajmują te same numery pozycji co
+// dotąd (rosnąco), tylko w nowej kolejności; punkty wycofane zachowują swoje numery.
+// Zatwierdzone zawiadomienie przestaje odpowiadać porządkowi (skrót migawki), więc
+// potrzebna jest nowa wersja zawiadomienia — nic nie jest wysyłane ani zatwierdzane.
+// Ta sama kolejność co obecna (np. podwójne kliknięcie) to powtórka bez zdarzenia.
+export async function reorderAgendaItems(db, actor, input = {}, env) {
+  const { meeting } = await meetingForManageOrClassHost(db, actor, input.meetingId, env);
+  const itemIds = input.itemIds;
+  if (!Array.isArray(itemIds) || itemIds.length < 1 || itemIds.length > 200) {
+    throw new MeetingError('invalid_agenda_order');
+  }
+  for (const id of itemIds) requireId(id, 'invalid_agenda_order');
+  if (new Set(itemIds).size !== itemIds.length) throw new MeetingError('invalid_agenda_order');
+  const result = await mutate(db, async tx => {
+    const locked = await lockMeeting(tx, meeting.id);
+    if (locked.status === 'cancelled') throw new MeetingError('meeting_cancelled', 409);
+    const { rows } = await tx.query(
+      'SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position FOR UPDATE', [meeting.id]);
+    const active = rows.filter(row => !row.withdrawn_at);
+    const activeIds = new Set(active.map(row => row.id));
+    if (itemIds.length !== active.length || itemIds.some(id => !activeIds.has(id))) {
+      throw new MeetingError('invalid_agenda_order');
+    }
+    const target = new Map(itemIds.map((id, index) => [id, active[index].position]));
+    if (active.every(row => target.get(row.id) === row.position)) return { replayed: true };
+    // UNIQUE (meeting_id, position) jest sprawdzane przy każdym wierszu, więc punkt
+    // przechodzi na pozycję docelową dopiero, gdy ta jest wolna; cykl (np. zamiana
+    // dwóch punktów) przerywa przeniesienie jednego punktu na wolną pozycję.
+    const current = new Map(rows.map(row => [row.id, row.position]));
+    const occupied = new Set(rows.map(row => row.position));
+    const move = async (id, position) => {
+      await tx.query('UPDATE meeting_agenda_items SET position = $2 WHERE id = $1', [id, position]);
+      occupied.delete(current.get(id));
+      occupied.add(position);
+      current.set(id, position);
+    };
+    let pending = itemIds.filter(id => current.get(id) !== target.get(id));
+    while (pending.length) {
+      let progressed = false;
+      for (const id of pending) {
+        if (!occupied.has(target.get(id))) {
+          await move(id, target.get(id));
+          progressed = true;
+        }
+      }
+      pending = pending.filter(id => current.get(id) !== target.get(id));
+      if (pending.length && !progressed) {
+        let free = null;
+        for (let position = 200; position >= 1 && free === null; position -= 1) {
+          if (!occupied.has(position)) free = position;
+        }
+        if (free === null) throw new MeetingError('agenda_position_taken', 409);
+        await move(pending[0], free);
+      }
+    }
+    await audit(tx, actor, 'meeting.agenda.reordered', 'meeting', meeting.id, {
+      schoolYearId: meeting.school_year_id,
+      previousItemIds: active.map(row => row.id),
+      itemIds,
+    });
+    return { replayed: false };
+  });
+  const { rows } = await db.query('SELECT * FROM meeting_agenda_items WHERE meeting_id = $1 ORDER BY position', [meeting.id]);
+  return { agenda: rows.map(agendaItemFromRow), replayed: result.replayed };
+}
+
 // Szkic zawiadomienia (nowa wersja porządku obrad + treść). Bez zatwierdzenia nie jest
 // widoczne poza panelem zarządzania i nie tworzy kampanii.
 export async function createMeetingNotice(db, actor, input = {}) {
@@ -1948,6 +2023,43 @@ export async function createNoticeCampaignDraft(db, actor, input = {}) {
   };
 }
 
+// #113: plik kalendarza (RFC 5545) NAJNOWSZEGO zatwierdzonego zawiadomienia. Tylko
+// odczyt, bez zdarzenia w dzienniku; dostęp jak GET zebrania (brak dostępu = 404).
+// Treść wyłącznie z migawki zawiadomienia: tytuł, termin, miejsce i tytuły punktów
+// porządku (bez opisów, powodów odwołania i danych osób). METHOD:PUBLISH, a nie
+// REQUEST/CANCEL: iTIP (RFC 5546) wymaga pola ORGANIZER z adresem nadawcy, a adres
+// nadawcy to decyzja D-17 — do tego czasu plik nie udaje zaproszenia. Odwołanie to
+// STATUS:CANCELLED; UID jest stały dla zebrania, a SEQUENCE = wersja zawiadomienia,
+// więc import nowszego pliku aktualizuje wpis w kalendarzu zamiast go dublować.
+// Nic nie jest wysyłane; dołączenie pliku do wiadomości e-mail to osobny krok.
+export async function getMeetingNoticeCalendar(db, actor, input = {}, env) {
+  const { meeting } = await meetingForRead(db, actor, input.meetingId, env);
+  const notice = await loadNotice(db, meeting.id, input.noticeId);
+  const newerApproved = await one(db,
+    "SELECT 1 FROM meeting_notices WHERE meeting_id = $1 AND status = 'approved' AND version > $2 LIMIT 1",
+    [meeting.id, notice.version]);
+  if (notice.status !== 'approved' || newerApproved) throw new MeetingError('notice_calendar_unavailable', 409);
+  const agendaVersion = notice.agenda_version_id
+    ? await one(db, 'SELECT snapshot FROM meeting_agenda_versions WHERE id = $1', [notice.agenda_version_id]) : null;
+  const cancelled = notice.kind === 'cancellation';
+  const description = [NOTICE_KIND_LABELS[notice.kind]];
+  if (!cancelled) {
+    const agenda = agendaVersion?.snapshot ?? [];
+    if (agenda.length) description.push('', 'Porządek obrad:', ...agenda.map(item => `${item.position}. ${item.title}`));
+  }
+  const content = buildCalendar([{
+    id: meeting.id,
+    title: notice.title,
+    description: description.join('\n'),
+    location: notice.location,
+    startsAtUtc: notice.scheduled_at,
+    status: cancelled ? 'cancelled' : 'scheduled',
+    sequence: notice.version,
+    dtstamp: notice.approved_at,
+  }], { calName: notice.title, uidDomain: icalUidDomain(env), uidPrefix: 'meeting' });
+  return { content, filename: `zebranie-${meeting.id}-v${notice.version}.ics` };
+}
+
 // Publiczne: wyłącznie zatwierdzone zawiadomienia zebrań ogólnych (widok public_meeting_notices).
 export async function listPublicMeetingNotices(db, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
@@ -2070,6 +2182,12 @@ function route(method, pathname) {
   if (n === 4 && b === 'notices' && d === 'approval') {
     return post ? { name: 'noticeApprove', meetingId, noticeId: c } : { name: 'method', allowed: ['POST'] };
   }
+  if (n === 4 && b === 'notices' && d === 'calendar') {
+    return method === 'GET' ? { name: 'noticeCalendar', meetingId, noticeId: c } : { name: 'method', allowed: ['GET'] };
+  }
+  if (n === 2 && b === 'agenda-order') {
+    return post ? { name: 'agendaReorder', meetingId } : { name: 'method', allowed: ['POST'] };
+  }
   if (n === 4 && b === 'notices' && d === 'campaign-draft') {
     return post ? { name: 'noticeCampaign', meetingId, noticeId: c, created: true }
       : { name: 'method', allowed: ['POST'] };
@@ -2127,6 +2245,18 @@ export async function handle(request, env, url, json) {
       if (target.name === 'approvalChecklist') {
         return json(await getApprovalChecklist(db, actor, { meetingId: target.meetingId }));
       }
+      if (target.name === 'noticeCalendar') {
+        const { content, filename } = await getMeetingNoticeCalendar(db, actor,
+          { meetingId: target.meetingId, noticeId: target.noticeId }, env);
+        return new Response(content, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/calendar; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Cache-Control': 'private, no-store',
+          },
+        });
+      }
       return json(await getMeeting(db, actor, { meetingId: target.meetingId }, env));
     }
 
@@ -2151,6 +2281,7 @@ export async function handle(request, env, url, json) {
       cancel: () => cancelMeeting(db, actor, input),
       reschedule: () => rescheduleMeeting(db, actor, input),
       agendaWithdraw: () => withdrawAgendaItem(db, actor, input, env),
+      agendaReorder: () => reorderAgendaItems(db, actor, input, env),
       noticeCreate: () => createMeetingNotice(db, actor, input),
       noticeApprove: () => approveMeetingNotice(db, actor, input),
       noticeCampaign: () => createNoticeCampaignDraft(db, actor, input),

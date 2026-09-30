@@ -22,6 +22,8 @@ import {
   canApproveNotice,
   canChangeSchedule,
   canDraftNoticeCampaign,
+  isLatestApprovedNotice,
+  moveAgendaItem,
   currentResolutions,
   describeApprovalChecklist,
   describeQuorumCheck,
@@ -470,6 +472,10 @@ function renderNotices() {
       canDraftNoticeCampaign(notice, meeting)
         ? el("button", { type: "button", dataset: { noticeCampaign: notice.id }, "aria-label": `Utwórz szkic wiadomości do rodziców, wersja ${notice.version}` }, "Szkic wiadomości")
         : null,
+      // #113: plik do zapisania w kalendarzu; nic nie jest wysyłane.
+      isLatestApprovedNotice(notice, notices)
+        ? el("a", { href: meetingUrl(meeting.id, "notices", notice.id, "calendar"), download: "", "aria-label": `Pobierz plik kalendarza, wersja ${notice.version}` }, "Plik kalendarza (.ics)")
+        : null,
     ),
   )) : [el("tr", {}, el("td", { colspan: "6", className: "muted" }, "Brak zawiadomienia."))]));
   byId("create-notice").disabled = cancelled || !canChangeSchedule(meeting);
@@ -522,9 +528,17 @@ function renderDetail({ refill = false } = {}) {
     el("td", {}, item.withdrawnAt ? el("s", {}, item.title) : item.title,
       item.withdrawnAt ? el("small", {}, ` wycofany ${formatBrussels(item.withdrawnAt)}`) : null),
     el("td", {}, item.description ?? ""),
-    el("td", { className: "row-actions" }, locked || item.withdrawnAt ? null : el("button", {
-      type: "button", dataset: { withdrawItem: item.id }, "aria-label": `Wycofaj punkt: ${item.title}`,
-    }, "Wycofaj")),
+    el("td", { className: "row-actions" }, ...(locked || item.withdrawnAt ? [] : [
+      moveAgendaItem(agenda, item.id, "up") ? el("button", {
+        type: "button", dataset: { moveItem: item.id, direction: "up" }, "aria-label": `Przesuń w górę: ${item.title}`,
+      }, "W górę") : null,
+      moveAgendaItem(agenda, item.id, "down") ? el("button", {
+        type: "button", dataset: { moveItem: item.id, direction: "down" }, "aria-label": `Przesuń w dół: ${item.title}`,
+      }, "W dół") : null,
+      el("button", {
+        type: "button", dataset: { withdrawItem: item.id }, "aria-label": `Wycofaj punkt: ${item.title}`,
+      }, "Wycofaj"),
+    ])),
   )) : [el("tr", {}, el("td", { colspan: "4", className: "muted" }, "Brak punktów."))]));
   setDisabled(agendaForm, locked);
 
@@ -795,6 +809,16 @@ byId("notice-body").addEventListener("click", async (event) => {
 });
 
 byId("agenda-body").addEventListener("click", async (event) => {
+  const move = event.target.closest("button[data-move-item]");
+  if (move) {
+    const itemIds = moveAgendaItem(state.detail.agenda, move.dataset.moveItem, move.dataset.direction);
+    if (!itemIds) return;
+    const hadApproved = (state.detail.notices ?? []).some((notice) => notice.status === "approved");
+    noticeAction(move,
+      () => api(meetingUrl(state.detail.meeting.id, "agenda-order"), { method: "POST", body: { itemIds } }),
+      hadApproved ? "Kolejność zmieniona. Zatwierdzone zawiadomienie wymaga nowej wersji." : "Kolejność zmieniona.");
+    return;
+  }
   const button = event.target.closest("button[data-withdraw-item]");
   if (!button) return;
   const confirmed = await confirmAction({

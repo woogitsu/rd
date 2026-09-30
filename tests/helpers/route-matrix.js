@@ -782,6 +782,17 @@ export const ROUTE_MATRIX = Object.freeze([
     (obj) => `/notices/${obj.noticeId}/approval`, { stage: 'draftNotice', body: () => ({}) }),
   meetingRoute('meetings.noticeCampaignDraft', 'POST', '/api/meetings/:meetingId/notices/:noticeId/campaign-draft',
     (obj) => `/notices/${obj.noticeId}/campaign-draft`, { ok: 201, stage: 'approvedNotice', body: () => ({}) }),
+  meetingRoute('meetings.agendaOrder', 'POST', '/api/meetings/:meetingId/agenda-order', () => '/agenda-order', {
+    stage: 'agendaItems', body: (_target, obj) => ({ itemIds: [obj.secondAgendaItemId, obj.agendaItemId] }),
+  }),
+  {
+    // #113: plik kalendarza zatwierdzonego zawiadomienia; odczyt jak GET zebrania (404 = SR-07).
+    id: 'meetings.noticeCalendar', module: 'meetings', method: 'GET',
+    path: '/api/meetings/:meetingId/notices/:noticeId/calendar', targets: CLASS_TARGETS,
+    allow: MEETING_READ, mfa: false, ok: 200, deny: 404, fixture: 'fresh', object: { kind: 'meeting', stage: 'approvedNotice' },
+    build: ({ obj }) => ({ path: `/api/meetings/${obj.meetingId}/notices/${obj.noticeId}/calendar` }),
+    contains: (_actor, target) => [target.key],
+  },
   meetingRoute('meetings.attendance', 'POST', '/api/meetings/:meetingId/attendance', () => '/attendance', {
     body: () => ({ userId: 'u-fx-board', capacity: 'board_member', votingEligible: true, present: true }),
   }),
