@@ -725,7 +725,9 @@ async function seedEmailDraft(env, cookie, t) {
       subject: '[DANE PRZYKŁADOWE] Przypomnienie o dobrowolnej składce',
       // Treść bez uwag bramki treści (src/email/content.js#contentWarnings): zdanie
       // „…prosimy pominąć…” dla rodzin, które już wpłaciły, i znacznik {rodzina}
-      // (tytuł przelewu). Zostaje wyłącznie stała uwaga o decyzji zarządu (D-16).
+      // (tytuł przelewu). Zostają: uwaga #83 o {rodzina} zamiast komunikacji strukturalnej
+      // (demo nie ma rejestru payment_references — {komunikat} wykluczyłby wszystkie rodziny)
+      // i stała uwaga o decyzji zarządu (D-16).
       bodyText: [
         '[DANE PRZYKŁADOWE] Szanowni Państwo,',
         '',

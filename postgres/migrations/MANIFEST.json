@@ -354,5 +354,9 @@
   {
     "name": "0157_role_grant_requests.sql",
     "sha256": "a91305492bc38e52f9eb6a6eed72bf2388fe0354420c50dae309b4ee6a602eed"
+  },
+  {
+    "name": "0158_structured_reference_usage.sql",
+    "sha256": "9f59b608b2407cbe9ccc7e98d5c8e23c21704dbe42ca83df69986efccd439f6f"
   }
 ]

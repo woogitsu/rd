@@ -11,8 +11,11 @@ import {
   parseInputRows,
   parseInputText,
   renderCardsHtml,
+  parseStructuredReferenceCell,
   selectHouseholds,
+  structuredReferenceNotice,
 } from "../print/core.js";
+import { formatStructuredReference, generateStructuredReference, isValidStructuredReference } from "../src/pg/ogm.js";
 
 // Wyłącznie sztuczne dane testowe.
 const CSV = [
@@ -241,4 +244,90 @@ test("podpis przy kodzie QR nie sugeruje zadłużenia", () => {
   const result = renderCardsHtml(list, ["H-1"], CONFIG, PAYMENT_INSTRUCTIONS);
   const caption = result.html.match(/<p class="card-qr-caption">([^<]*)<\/p>/)[1];
   assert.equal(findForbiddenWording(caption), null);
+});
+
+// --- #83: komunikacja strukturalna OGM-VCS zamiast identyfikatora rodziny ---
+
+function brokenChecksum(reference) {
+  const check = Number(reference.slice(10));
+  return reference.slice(0, 10) + String((check % 97) + 1).padStart(2, "0");
+}
+
+test("komunikacja strukturalna w wierszu: 12 cyfr albo +++…+++; zła suma mod 97 to błąd wiersza", () => {
+  const reference = generateStructuredReference();
+  const formatted = formatStructuredReference(reference);
+  assert.deepEqual(parseStructuredReferenceCell(reference), { reference });
+  assert.deepEqual(parseStructuredReferenceCell(` ${formatted} `), { reference });
+  assert.deepEqual(parseStructuredReferenceCell(formatted.replaceAll("+++", "***")), { reference });
+  assert.deepEqual(parseStructuredReferenceCell(""), { reference: null });
+  const broken = brokenChecksum(reference);
+  assert.equal(isValidStructuredReference(broken), false);
+  assert.match(parseStructuredReferenceCell(broken).error, /mod 97/);
+  assert.match(parseStructuredReferenceCell(`Składka ${formatted}`).error, /komunikacja/);
+
+  const parsed = parseInputRows({ rows: [
+    { householdId: "H-1", firstName: "Ala", lastName: "Testowa", className: "3a", structuredReference: reference },
+    { householdId: "H-2", firstName: "Ewa", lastName: "Przykładowa", className: "3a", structuredReference: broken },
+    { householdId: "H-3", firstName: "Jan", lastName: "Fikcyjny", className: "1c", structuredReference: null },
+  ] });
+  assert.deepEqual(parsed.rows.map((row) => [row.householdId, row.structuredReference]), [["H-1", reference], ["H-3", null]]);
+  assert.deepEqual(parsed.errors.map((error) => error.row), [2]);
+});
+
+test("rodzeństwo ma jedną referencję; różne referencje jednej rodziny to błąd danych", () => {
+  const reference = generateStructuredReference();
+  let other = generateStructuredReference();
+  while (other === reference) other = generateStructuredReference();
+  const rows = (second) => parseInputRows({ rows: [
+    { householdId: "H-1", firstName: "Ala", lastName: "Testowa", className: "3a", structuredReference: reference },
+    { householdId: "H-1", firstName: "Olek", lastName: "Testowy", className: "5b", structuredReference: second },
+  ] }).rows;
+  const same = buildHouseholds(rows(reference));
+  assert.deepEqual(same.errors, []);
+  assert.equal(same.households.length, 1);
+  assert.equal(same.households[0].structuredReference, reference);
+  const conflict = buildHouseholds(rows(other));
+  assert.equal(conflict.errors.length, 1);
+  assert.match(conflict.errors[0].message, /różną komunikację strukturalną/);
+  const missing = buildHouseholds(rows(null));
+  assert.equal(missing.errors.length, 1);
+});
+
+test("kartka z referencją: komunikacja +++…+++ zamiast tytułu z identyfikatorem, kod QR z polem strukturalnym", () => {
+  const reference = generateStructuredReference();
+  const formatted = formatStructuredReference(reference);
+  const list = [
+    { householdId: "H-1", students: [{ name: "Ala Testowa", className: "3a" }, { name: "Olek Testowy", className: "5b" }], structuredReference: reference, paymentEntry: "unknown" },
+    { householdId: "H-2", students: [{ name: "Ewa Przykładowa", className: "3a" }], structuredReference: null, paymentEntry: "unknown" },
+  ];
+  const config = normalizeConfig({ ...CONFIG, bankAccount: "BE68 5390 0754 7034", referenceTemplate: "Składka {rok} {rodzina}" }).config;
+  const withRef = buildCard(list[0], config, PAYMENT_INSTRUCTIONS);
+  assert.deepEqual(withRef.payment.find(([label]) => label === "Komunikacja strukturalna"), ["Komunikacja strukturalna", formatted]);
+  assert.equal(withRef.payment.some(([label]) => label === "Tytuł przelewu"), false);
+  assert.ok(withRef.epcSvg, "kod QR powstaje (referencja w polu strukturalnym, bez tytułu wolnego)");
+  const withoutRef = buildCard(list[1], config, PAYMENT_INSTRUCTIONS);
+  assert.deepEqual(withoutRef.payment.find(([label]) => label === "Tytuł przelewu"), ["Tytuł przelewu", "Składka 2026/2027 H-2"]);
+  // Bez rachunku kartka nie ma danych do wpłaty — ani tytułu, ani komunikacji.
+  const noAccount = buildCard(list[0], normalizeConfig(CONFIG).config, null);
+  assert.deepEqual(noAccount.payment, []);
+
+  const html = renderCardsHtml(list, ["H-1", "H-2"], { ...CONFIG, bankAccount: "BE68 5390 0754 7034", referenceTemplate: "Składka {rok} {rodzina}" }, PAYMENT_INSTRUCTIONS);
+  assert.equal(html.count, 2, "jedna kartka na rodzinę");
+  assert.ok(html.html.includes(formatted));
+  assert.doesNotMatch(html.html, DEBT_WORDS);
+});
+
+test("informacja pod podglądem: ile kartek ma komunikację, ostrzeżenie przy {rodzina}", () => {
+  const reference = generateStructuredReference();
+  const list = [
+    { householdId: "H-1", students: [], structuredReference: reference },
+    { householdId: "H-2", students: [], structuredReference: null },
+  ];
+  const config = { bankAccount: "BE68 5390 0754 7034", referenceTemplate: "Składka {rok} {rodzina}" };
+  assert.match(structuredReferenceNotice(list, ["H-1"], config), /Każda wybrana kartka/);
+  assert.match(structuredReferenceNotice(list, ["H-1", "H-2"], config), /^1 z 2 .*łatwo przepisać z błędem/);
+  assert.match(structuredReferenceNotice(list, ["H-2"], { ...config, referenceTemplate: "Składka {rok}" }), /tytuł z szablonu\.$/);
+  assert.equal(structuredReferenceNotice(list, ["H-1"], { bankAccount: "" }), "");
+  assert.equal(structuredReferenceNotice(list, [], config), "");
+  assert.doesNotMatch(structuredReferenceNotice(list, ["H-1", "H-2"], config), DEBT_WORDS);
 });

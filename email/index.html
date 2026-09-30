@@ -167,7 +167,7 @@
       <label>Tytuł wewnętrzny (nie trafia do rodziców) <input name="title" minlength="3" maxlength="200" required autofocus /></label>
       <label>Odbiorcy <select name="audience"><option value="all_households">Wszystkie rodziny roku</option><option value="no_payment_record">Rodziny bez odnotowanej wpłaty</option></select></label>
       <label>Temat wiadomości <input name="subject" minlength="3" maxlength="200" required placeholder="Może zawierać {rok}" /></label>
-      <label>Treść wiadomości <textarea name="bodyText" rows="8" minlength="20" maxlength="10000" required placeholder="Może zawierać {rok} i {rodzina}. Wspomnij, że wpłacający mogą pominąć wiadomość."></textarea></label>
+      <label>Treść wiadomości <textarea name="bodyText" rows="8" minlength="20" maxlength="10000" required placeholder="Może zawierać {rok}, {komunikat} (komunikacja strukturalna rodziny) i {rodzina}. Wspomnij, że wpłacający mogą pominąć wiadomość."></textarea></label>
       <div class="form-error" id="create-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="create-error">Zapisz szkic</button></div>
     </form></dialog>

@@ -268,7 +268,11 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'bank_reconciliations', where: () => 'school_year_id = $1' },
   { table: 'bank_statement_imports', requires: ['bank_reconciliations'],
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
+  // Bez structured_ref_hash (0158, #83): skrót referencji OGM-VCS rodziny — jak
+  // rejestr payment_references poza paczką do decyzji D-04 (wariant zachowawczy).
   { table: 'bank_statement_lines', requires: ['bank_reconciliations'],
+    columns: ['id', 'reconciliation_id', 'import_id', 'line_no', 'booked_on', 'amount_cents', 'reference_hash',
+      'bank_transaction_hash', 'created_by', 'created_at'],
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
   { table: 'bank_reconciliation_matches', requires: ['bank_reconciliations'],
     where: () => `reconciliation_id IN (${YEAR_RECONCILIATIONS})` },
