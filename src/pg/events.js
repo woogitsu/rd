@@ -12,7 +12,7 @@
 //   (four eyes, enforced again by the database trigger).
 import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
-import { isAuthorized } from '../authorization.js';
+import { actorContext, authorizedClassIds, isAuthorizedForOwnClass, isAuthorizedScoped } from './scope.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
 import { insertAuditEvent } from './audit.js';
 import { recordDataAccess } from './data-access.js';
@@ -125,24 +125,14 @@ function iso(value) {
 
 // ---------- permissions ----------
 
-function contextFor(actor, grants) {
-  if (!actor?.userId || !Array.isArray(actor.grants)) return null;
-  return {
-    session: { user: { id: actor.userId }, mfaVerified: Boolean(actor.mfaVerified) },
-    grants,
-  };
-}
-
+// Zakres z src/pg/scope.js (#155): szkolny — wyłącznie przydział bez klasy
+// (SR-01); klasowy — wyłącznie przydział tej klasy.
 function schoolWide(actor, roles, schoolYearId) {
-  // Only grants without class_id give school-wide scope.
-  const context = contextFor(actor, (actor?.grants ?? []).filter((g) => !g.classId));
-  return isAuthorized(context, { roles: [...roles], schoolYearId });
+  return isAuthorizedScoped(actorContext(actor), { roles: [...roles], schoolYearId });
 }
 
 function classScoped(actor, classId, schoolYearId) {
-  if (!classId) return false;
-  const context = contextFor(actor, (actor?.grants ?? []).filter((g) => g.classId === classId));
-  return isAuthorized(context, { roles: [...EVENT_POLICY.draftClass], classId, schoolYearId });
+  return isAuthorizedForOwnClass(actorContext(actor), { roles: [...EVENT_POLICY.draftClass], classId, schoolYearId });
 }
 
 function canEdit(actor, event) {
@@ -555,9 +545,7 @@ export async function listInternal(db, actor, input) {
     );
     return { events: rows.map(internalEvent) };
   }
-  const classIds = [...new Set(actor.grants
-    .filter((g) => g.classId && classScoped(actor, g.classId, schoolYearId))
-    .map((g) => g.classId))];
+  const classIds = authorizedClassIds(actorContext(actor), { roles: [...EVENT_POLICY.draftClass], schoolYearId });
   if (!classIds.length) throw new EventError('forbidden', 403);
   const { rows } = await db.query(
     `SELECT ${EVENT_COLUMNS} FROM events

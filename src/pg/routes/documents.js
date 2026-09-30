@@ -18,7 +18,8 @@
 // Macierz poniżej to założenie techniczne do zatwierdzenia (D-08, D-09):
 // dyrekcja (`principal`) i Komisja Rewizyjna (`audit`) nie mają dostępu.
 
-import { isAuthorized, loadAuthorizationContext } from '../authorization.js';
+import { loadAuthorizationContext } from '../authorization.js';
+import { authorizedClassIds, isAuthorizedScoped } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { PersonalDataError, gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
@@ -98,8 +99,8 @@ export function canAccessDocument(context, doc) {
   if (!policy || !doc.schoolYearId) return false;
   if (policy.classScoped !== Boolean(doc.classId)) return false;
   const requirement = { roles: policy.roles, requireMfa: policy.requireMfa, schoolYearId: doc.schoolYearId };
-  if (policy.classScoped) return isAuthorized(context, { ...requirement, classId: doc.classId });
-  return isAuthorized({ ...context, grants: context.grants.filter((grant) => !grant.classId) }, requirement);
+  // src/pg/scope.js (#155): z classId — przydział szkolny albo tej klasy; bez — tylko bez klasy.
+  return isAuthorizedScoped(context, policy.classScoped ? { ...requirement, classId: doc.classId } : requirement);
 }
 
 function toDocument(row) {
@@ -330,18 +331,10 @@ async function list(request, env, url, json) {
     .filter(([kind]) => canAccessDocument(context, { kind, schoolYearId, classId: null }))
     .map(([kind]) => kind);
   const classPolicy = DOCUMENT_POLICIES.class;
-  const allClasses = isAuthorized(
-    { ...context, grants: context.grants.filter((grant) => !grant.classId) },
-    { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId },
-  );
+  const allClasses = isAuthorizedScoped(context, { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId });
   // DOC-01: przydział klasowy liczy się tylko w swoim roku (i z MFA, jeśli rodzaj go wymaga) —
   // przydział z innego roku nie może zamienić odmowy (403) w pustą listę.
-  const ownClasses = [...new Set(context.grants
-    .filter((grant) => grant.classId && isAuthorized(
-      { ...context, grants: [grant] },
-      { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId, classId: grant.classId },
-    ))
-    .map((grant) => grant.classId))];
+  const ownClasses = authorizedClassIds(context, { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId });
   if (!unscopedKinds.length && !allClasses && !ownClasses.length) return json({ error: 'forbidden' }, 403);
 
   // Wyszukiwanie i filtr kategorii zawężają zapytanie w SQL, PRZED LIMIT

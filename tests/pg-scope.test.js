@@ -2,7 +2,10 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isClassOnlyScope, resolveScope, scopeSql } from '../src/pg/scope.js';
+import {
+  actorContext, authorizedClassIds, hasAnyMatchingGrant, isAuthorizedForOwnClass, isAuthorizedScoped, isClassOnlyScope,
+  resolveScope, scopeClassIds, scopeCoversYear, scopeSql, scopeSqlParams,
+} from '../src/pg/scope.js';
 import { isAuthorized } from '../src/authorization.js';
 
 function ctx(grants, { mfaVerified = false } = {}) {
@@ -171,4 +174,216 @@ test('scopeSql: zakres szkolny na wszystkie lata -> pierwszy parametr true, resz
   const scope = resolveScope(ctx([{ role: 'admin' }]), { roles: ['admin'] });
   const { params } = scopeSql(scope, { classAlias: 'c' });
   assert.deepEqual(params, [true, [], [], []]);
+});
+
+// --- #155 część 2: funkcje pochodne resolveScope vs dawne lokalne wzorce ----
+// Każda „dawna” formuła poniżej to dosłowna kopia kodu, który moduły miały
+// przed przepięciem na src/pg/scope.js — test własności pilnuje, że refaktor
+// nie zmienił zachowania (rola × klasa/brak × rok/brak × MFA, także role
+// spoza domyślnych tras: audit, principal).
+
+const ALL_ROLES = ['admin', 'board', 'treasurer', 'representative', 'audit', 'principal'];
+
+function randomRequirementGrants(rng) {
+  const count = Math.floor(rng() * 5);
+  const grants = [];
+  for (let i = 0; i < count; i += 1) {
+    grants.push({
+      role: ALL_ROLES[Math.floor(rng() * ALL_ROLES.length)],
+      classId: rng() < 0.5 ? CLASS_IDS[Math.floor(rng() * CLASS_IDS.length)] : null,
+      schoolYearId: rng() < 0.6 ? YEAR_IDS[Math.floor(rng() * YEAR_IDS.length)] : null,
+    });
+  }
+  return grants;
+}
+
+function randomRoles(rng) {
+  const roles = ALL_ROLES.filter(() => rng() < 0.4);
+  return roles.length ? roles : [ALL_ROLES[Math.floor(rng() * ALL_ROLES.length)]];
+}
+
+const legacySchoolWide = (context) => ({ ...context, grants: context.grants.filter((grant) => !grant.classId) });
+const legacyScoped = (context, requirement) => isAuthorized(requirement?.classId ? context : legacySchoolWide(context), requirement);
+
+test('isAuthorizedScoped (z resolveScope) = dawne isAuthorized(schoolWideContext) dla losowych przydziałów i wymogów', () => {
+  const rng = mulberry32(1552);
+  for (let sample = 0; sample < 600; sample += 1) {
+    const grants = randomRequirementGrants(rng);
+    const context = ctx(grants, { mfaVerified: rng() < 0.5 });
+    const requirement = { roles: randomRoles(rng) };
+    if (rng() < 0.6) requirement.schoolYearId = YEAR_IDS[Math.floor(rng() * YEAR_IDS.length)];
+    if (rng() < 0.5) requirement.classId = CLASS_IDS[Math.floor(rng() * CLASS_IDS.length)];
+    if (rng() < 0.4) requirement.requireMfa = rng() < 0.5 ? true : { maxAgeSeconds: 900 };
+    assert.equal(isAuthorizedScoped(context, requirement), legacyScoped(context, requirement),
+      `próbka ${sample}: ${JSON.stringify({ grants, requirement, mfa: context.session.mfaVerified })}`);
+  }
+});
+
+test('authorizedClassIds / isAuthorizedForOwnClass = dawne wzorce events/news/documents/meetings', () => {
+  const rng = mulberry32(1553);
+  for (let sample = 0; sample < 600; sample += 1) {
+    const grants = randomRequirementGrants(rng);
+    const context = ctx(grants, { mfaVerified: rng() < 0.5 });
+    const roles = randomRoles(rng);
+    const schoolYearId = YEAR_IDS[Math.floor(rng() * YEAR_IDS.length)];
+    const requireMfa = rng() < 0.4;
+    const label = `próbka ${sample}: ${JSON.stringify({ grants, roles, schoolYearId, requireMfa })}`;
+    // documents.js (DOC-01): przydział klasowy sprawdzany osobno, z MFA.
+    const legacyOwn = [...new Set(grants
+      .filter((grant) => grant.classId && isAuthorized({ ...context, grants: [grant] }, { roles, requireMfa, schoolYearId, classId: grant.classId }))
+      .map((grant) => grant.classId))];
+    assert.deepEqual(authorizedClassIds(context, { roles, requireMfa, schoolYearId }), legacyOwn, label);
+    // events.js/news.js classScoped: tylko przydziały tej klasy.
+    for (const classId of CLASS_IDS) {
+      const legacyClass = isAuthorized({ ...context, grants: grants.filter((grant) => grant.classId === classId) },
+        { roles, classId, schoolYearId });
+      assert.equal(isAuthorizedForOwnClass(context, { roles, classId, schoolYearId }), legacyClass, `${label} ${classId}`);
+    }
+    // representative.js / meetings.js#actorClassIds: rola, klasa, rok albo bez roku.
+    const legacyRep = [...new Set(grants.filter((grant) => roles.includes(grant.role) && grant.classId
+      && (grant.schoolYearId === null || grant.schoolYearId === schoolYearId)).map((grant) => grant.classId))];
+    assert.deepEqual(authorizedClassIds(context, { roles, schoolYearId }), legacyRep, label);
+  }
+});
+
+test('resolveScope z schoolWideRoles = dawne families.scopeFromGrants (WIDE_ROLES)', () => {
+  const WIDE = ['admin', 'board', 'treasurer'];
+  const legacy = (grants, roles) => {
+    const scope = { any: false, allYears: false, years: [], classIds: [], classYears: [] };
+    for (const grant of grants) {
+      if (!roles.includes(grant.role)) continue;
+      if (grant.classId) {
+        scope.classIds.push(grant.classId);
+        scope.classYears.push(grant.schoolYearId ?? null);
+      } else if (WIDE.includes(grant.role)) {
+        if (grant.schoolYearId) scope.years.push(grant.schoolYearId);
+        else scope.allYears = true;
+      } else {
+        continue;
+      }
+      scope.any = true;
+    }
+    return scope;
+  };
+  const rng = mulberry32(1554);
+  for (let sample = 0; sample < 600; sample += 1) {
+    const grants = randomRequirementGrants(rng);
+    const roles = randomRoles(rng);
+    const old = legacy(grants, roles);
+    const scope = resolveScope(ctx(grants), { roles, schoolWideRoles: WIDE });
+    const label = `próbka ${sample}: ${JSON.stringify({ grants, roles })}`;
+    assert.equal(scope.any, old.any, label);
+    assert.equal(!scope.schoolWide, !(old.allYears || old.years.length > 0), label);
+    const [allYears, years, classIds, classYears] = scopeSqlParams(scope);
+    assert.equal(allYears, old.allYears, label);
+    if (!old.allYears) assert.deepEqual(years, [...new Set(old.years)], label);
+    assert.deepEqual(classIds, old.classIds, label);
+    assert.deepEqual(classYears, old.classYears, label);
+    for (const year of YEAR_IDS) {
+      assert.equal(scopeCoversYear(scope, year), old.allYears || old.years.includes(year), `${label} ${year}`);
+      assert.deepEqual(scopeClassIds(scope, year),
+        [...new Set(old.classIds.filter((_, i) => old.classYears[i] === null || old.classYears[i] === year))], `${label} ${year}`);
+    }
+  }
+});
+
+test('actorContext: bez userId lub tablicy przydziałów -> null (każda bramka odmawia)', () => {
+  assert.equal(actorContext(null), null);
+  assert.equal(actorContext({ userId: 'u-1' }), null);
+  assert.equal(actorContext({ grants: [] }), null);
+  const context = actorContext({ userId: 'u-1', grants: [{ role: 'board' }], mfaVerified: 1 });
+  assert.deepEqual(context, { session: { user: { id: 'u-1' }, mfaVerified: true }, grants: [{ role: 'board' }] });
+  assert.equal(isAuthorizedScoped(null, { roles: ['board'] }), false);
+  assert.equal(hasAnyMatchingGrant(null, { roles: ['board'] }), false);
+});
+
+test('hasAnyMatchingGrant świadomie liczy przydział klasowy bez classId w wymogu (bramka listy filtrowanej dalej)', () => {
+  const context = ctx([{ role: 'board', classId: 'c-1a', schoolYearId: 'y-2026' }]);
+  assert.equal(hasAnyMatchingGrant(context, { roles: ['board'], schoolYearId: 'y-2026' }), true);
+  assert.equal(isAuthorizedScoped(context, { roles: ['board'], schoolYearId: 'y-2026' }), false, 'SR-01');
+});
+
+test('print.js#printScope (na scope.js) = dawna lokalna implementacja z yearMatches', async () => {
+  const { printScope } = await import('../src/pg/routes/print.js');
+  const FIN = ['admin', 'board', 'treasurer'];
+  const PRINT = [...FIN, 'representative'];
+  const yearMatches = (grant, schoolYearId) => !grant.schoolYearId || grant.schoolYearId === schoolYearId;
+  const legacy = (context, { schoolYearId, classId }) => {
+    const grants = context.grants.filter((grant) => PRINT.includes(grant.role) && yearMatches(grant, schoolYearId));
+    const full = grants.some((grant) => FIN.includes(grant.role) && !grant.classId);
+    const classIds = new Set(grants.filter((grant) => grant.classId).map((grant) => grant.classId));
+    if (!full && !classIds.size) return { error: 'forbidden', status: 403 };
+    if (!full && !classId) return { error: 'class_required', status: 400 };
+    if (!full && !classIds.has(classId)) return { error: 'forbidden', status: 403 };
+    const paymentInfo = Boolean(context.session.mfaVerified) && grants.some((grant) => FIN.includes(grant.role)
+      && (!grant.classId || grant.classId === classId));
+    return { full, paymentInfo };
+  };
+  const rng = mulberry32(1555);
+  for (let sample = 0; sample < 600; sample += 1) {
+    const context = ctx(randomRequirementGrants(rng), { mfaVerified: rng() < 0.5 });
+    const input = {
+      schoolYearId: YEAR_IDS[Math.floor(rng() * YEAR_IDS.length)],
+      classId: rng() < 0.3 ? null : CLASS_IDS[Math.floor(rng() * CLASS_IDS.length)],
+    };
+    assert.deepEqual(printScope(context, input), legacy(context, input), `próbka ${sample}: ${JSON.stringify({ context, input })}`);
+  }
+});
+
+test('documents.js#canAccessDocument (na scope.js) = dawna implementacja z ręcznym filtrem przydziałów', async () => {
+  const { canAccessDocument, DOCUMENT_POLICIES } = await import('../src/pg/routes/documents.js');
+  const legacy = (context, doc) => {
+    const policy = DOCUMENT_POLICIES[doc?.kind];
+    if (!policy || !doc.schoolYearId) return false;
+    if (policy.classScoped !== Boolean(doc.classId)) return false;
+    const requirement = { roles: policy.roles, requireMfa: policy.requireMfa, schoolYearId: doc.schoolYearId };
+    if (policy.classScoped) return isAuthorized(context, { ...requirement, classId: doc.classId });
+    return isAuthorized({ ...context, grants: context.grants.filter((grant) => !grant.classId) }, requirement);
+  };
+  const kinds = [...Object.keys(DOCUMENT_POLICIES), 'unknown'];
+  const rng = mulberry32(1556);
+  for (let sample = 0; sample < 600; sample += 1) {
+    const context = ctx(randomRequirementGrants(rng), { mfaVerified: rng() < 0.5 });
+    const doc = {
+      kind: kinds[Math.floor(rng() * kinds.length)],
+      schoolYearId: rng() < 0.9 ? YEAR_IDS[Math.floor(rng() * YEAR_IDS.length)] : null,
+      classId: rng() < 0.5 ? CLASS_IDS[Math.floor(rng() * CLASS_IDS.length)] : null,
+    };
+    assert.equal(canAccessDocument(context, doc), legacy(context, doc), `próbka ${sample}: ${JSON.stringify({ context, doc })}`);
+  }
+});
+
+// Aktorzy z komentarza do #155 (audyt #200/#201): przypadki mieszane, których
+// macierz tras z jednym przydziałem nie obejmuje.
+test('aktorzy mieszani (#200/#201): repNoYear, repTwoYears, boardY2+repA, boardNoYear', async () => {
+  const { familiesScope } = await import('../src/pg/routes/families.js');
+  const READ = ['admin', 'board', 'treasurer', 'representative'];
+
+  const repNoYear = familiesScope(ctx([{ role: 'representative', classId: 'c-1a', schoolYearId: null }]), READ);
+  assert.equal(repNoYear.schoolWide, false);
+  assert.deepEqual(scopeClassIds(repNoYear, 'y-2025'), ['c-1a']);
+  assert.deepEqual(scopeClassIds(repNoYear, 'y-2026'), ['c-1a']);
+
+  const repTwoYears = familiesScope(ctx([
+    { role: 'representative', classId: 'c-1a', schoolYearId: 'y-2025' },
+    { role: 'representative', classId: 'c-2a', schoolYearId: 'y-2026' },
+  ]), READ);
+  assert.deepEqual(scopeClassIds(repTwoYears, 'y-2025'), ['c-1a']);
+  assert.deepEqual(scopeClassIds(repTwoYears, 'y-2026'), ['c-2a']);
+
+  // Szeroka rola tylko na rok 2 + przedstawiciel 1A w roku 1: zakres szkolny
+  // obejmuje wyłącznie rok 2; w roku 1 zostaje sama klasa 1A.
+  const mixedGrants = [
+    { role: 'board', classId: null, schoolYearId: 'y-2026' },
+    { role: 'representative', classId: 'c-1a', schoolYearId: 'y-2025' },
+  ];
+  const boardY2RepA = familiesScope(ctx(mixedGrants), READ);
+  assert.equal(scopeCoversYear(boardY2RepA, 'y-2026'), true);
+  assert.equal(scopeCoversYear(boardY2RepA, 'y-2025'), false);
+  assert.deepEqual(scopeClassIds(boardY2RepA, 'y-2025'), ['c-1a']);
+  assert.equal(isAuthorizedScoped(ctx(mixedGrants), { roles: ['board'], schoolYearId: 'y-2025' }), false, 'zarząd roku 2 nie otwiera danych szkolnych roku 1');
+
+  const boardNoYear = familiesScope(ctx([{ role: 'board', classId: null, schoolYearId: null }]), READ);
+  assert.equal(boardNoYear.years, 'all');
+  assert.deepEqual(scopeSqlParams(boardNoYear), [true, [], [], []]);
 });

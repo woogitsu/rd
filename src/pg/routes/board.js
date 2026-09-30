@@ -42,7 +42,8 @@ import { readSnapshot } from '../db-snapshot.js';
 import { insertAuditEvent } from '../audit.js';
 import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
 import { toXlsx, xlsxResponse } from '../xlsx.js';
-import { scopeFromGrants } from './families.js';
+import { familiesScope } from './families.js';
+import { scopeClassIds, scopeCoversYear } from '../scope.js';
 
 export const name = 'board';
 
@@ -121,7 +122,7 @@ async function authorize(request, env, url, json) {
 
   // Przydział szeroki (admin/zarząd całej szkoły lub roku) albo klasowy
   // (zarząd klasy): klasowy zawęża wyniki do przypisanych klas.
-  const scope = scopeFromGrants(context.grants, BASE_ROLES);
+  const scope = familiesScope(context, BASE_ROLES);
   if (!scope.any) return { response: json({ error: 'forbidden' }, 403) };
 
   const schoolYearId = url.searchParams.get('schoolYearId');
@@ -184,8 +185,8 @@ async function buildOverview(db, { schoolYearId, scope, financial }) {
 
   // Klasy w zakresie: wszystkie klasy roku (zakres szeroki dla tego roku) plus
   // klasy z przydziałów klasowych (przydział bez roku obowiązuje w każdym).
-  const wideForYear = scope.allYears || scope.years.includes(schoolYearId);
-  const grantedClasses = scope.classIds.filter((_, index) => scope.classYears[index] === null || scope.classYears[index] === schoolYearId);
+  const wideForYear = scopeCoversYear(scope, schoolYearId);
+  const grantedClasses = scopeClassIds(scope, schoolYearId);
   const visible = await db.query(
     `SELECT id FROM classes WHERE school_year_id = $1 AND ($2::boolean OR id = ANY($3::text[])) ORDER BY id`,
     [schoolYearId, wideForYear, grantedClasses],
