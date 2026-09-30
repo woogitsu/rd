@@ -220,6 +220,16 @@ Wynik na danych demo (`npm run demo:seed`, `docs/DEMO.md`), Chromium, konta `prz
 
 Kontrast policzono skryptem w przeglądarce (kolor tekstu wobec pierwszego nieprzezroczystego tła przodka) — to nie jest axe-core ani pomiar tła z obrazów; `axe-core` nie jest zależnością projektu. Nadal do wykonania: przegląd z NVDA/VoiceOver (tabela przydziałów ról w `admin/`, karta gospodarstwa z dwojgiem opiekunów i rodzeństwem, lista kontrolna wyżej) i tryb `forced-colors` w prawdziwym trybie wysokiego kontrastu Windows. To przegląd prototypu, nie deklaracja zgodności.
 
+## Podgląd wydruku paneli (#151, 30.09.2026)
+
+Wspólny arkusz `shared/print.css` i blok metadanych `shared/print-meta.js` (rok, filtry, „Wydrukowano: dd.mm.rrrr gg:mm przez <nazwa wyświetlana>” w strefie Europe/Brussels, „Wydruk niepełny — pokazano N wpisów.”, „Dane poufne Rady Rodziców”, „PROJEKT”). Pola marginesu `@page` dopisują nagłówek każdej strony (widok, rok; w księdze także bilans otwarcia i zamknięcia), „Strona N z M” i znacznik poufności na dole — nagłówek ustawiany przez `document.adoptedStyleSheets`, bo CSP `style-src 'self'` blokuje `<style>` wstawiane skryptem.
+
+- Zrzuty pierwszej strony A4 pionowo (obszar treści 680 × 1009 px CSS, emulacja mediów „print”, Chromium, dane syntetyczne serwera testowego): `docs/a11y/print-preview-{meetings,ledger,panel,families}.png`, skrypt `docs/a11y/print-preview.mjs` (instrukcja w nagłówku; `--pdf` zapisuje też PDF, pliki PDF nie są w repozytorium). Zrzut nie pokazuje pól marginesu `@page` — widać je w PDF.
+- CI: `tests/e2e/print-panels.spec.js` — w podglądzie wydruku brak nawigacji, przycisków, filtrów, okien i poziomego przepełnienia na szerokości A4; `thead` powtarzany, wiersze niedzielone; „Drukuj zestawienie” w `panel/` i `ledger/` pobiera wszystkie 300 syntetycznych wpisów raz, także przy podwójnym kliknięciu (każdy kursor strony pobrany jeden raz, `window.print()` wywołane raz); wpłata z korektą częściową ma te same „Wpłata / Korekty / Netto” na ekranie i wydruku; protokół niezatwierdzony ma „PROJEKT”, listę obecności z pustą kolumną „Imię i nazwisko” i „Podpis”; przedstawiciel 1A drukuje wyłącznie swoją klasę, bez e-maili opiekunów.
+- Wynik PDF (Chromium 141, A4): lista 300 wpłat — 14 stron, 300 wpisów księgi — 18 stron, protokół — 1 strona, lista klasy — 1 strona; bez uciętych kolumn.
+- Daty w tabelach `panel/` i `ledger/` oraz w metadanych wydruku w zapisie polskim dd.mm.rrrr (`shared/zoned-time.js#formatDateOrTimestamp`, decyzja 30.09 z #563); kwoty `1 234,56 €` (`formatEur`).
+- **Nie sprawdzono:** Firefox i Safari (brak przeglądarek w środowisku). Firefox nie obsługuje pól marginesu `@page` — zostaje blok metadanych na pierwszej stronie i nagłówek tabeli na każdej. Do sprawdzenia ręcznie przed pracą na danych rodzin.
+
 ## Poza zakresem przeglądu
 
 - Ekran logowania (`login/`) — sprawdzany statycznie zarówno w `tests/login-core.test.js`, jak i (od #112) w `tests/a11y-static.test.js`. Przegląd z czytnikiem ekranu i przy 320 px — do wykonania.

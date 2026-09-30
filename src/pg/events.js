@@ -15,6 +15,7 @@ import { isSameOrigin } from '../auth.js';
 import { isAuthorized } from '../authorization.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
 import { insertAuditEvent } from './audit.js';
+import { recordDataAccess } from './data-access.js';
 import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
 import { createJsonReader, isUniqueError } from './input.js';
 
@@ -412,12 +413,16 @@ export async function updateDraft(db, actor, input) {
         try { repeated = parseContent(input, base); } catch (error) {
           if (!(error instanceof EventError)) throw error;
         }
-        if (repeated && sameContent(row, repeated)) return { event: internalEvent(row), replayed: true };
+        if (repeated && sameContent(row, repeated)) {
+          return { event: internalEvent(row), replayed: true, tasksOutsideEventTime: await tasksOutsideEventTime(tx, row) };
+        }
       }
       throw new EventError('revision_conflict', 409);
     }
     const content = parseContent(input, base);
-    if (sameContent(row, content)) return { event: internalEvent(row), replayed: true };
+    if (sameContent(row, content)) {
+      return { event: internalEvent(row), replayed: true, tasksOutsideEventTime: await tasksOutsideEventTime(tx, row) };
+    }
     const { rows } = await tx.query(
       `UPDATE events SET title = $2, description = $3, begins_at = $4, ends_at = $5,
          location = $6, organizer = $7, audience = $8, updated_by = $9
@@ -427,7 +432,9 @@ export async function updateDraft(db, actor, input) {
     );
     await audit(tx, actor.userId, 'event.revised', row.id,
       { schoolYearId: row.school_year_id, revision: rows[0].revision_no, status: 'draft' });
-    return { event: internalEvent(rows[0]), replayed: false };
+    // #142: zmiana czasu wydarzenia nie odwołuje zadań ani zapisów — wykazujemy
+    // w odpowiedzi zadania, których okno wykracza poza nowy czas wydarzenia.
+    return { event: internalEvent(rows[0]), replayed: false, tasksOutsideEventTime: await tasksOutsideEventTime(tx, rows[0]) };
   });
 }
 
@@ -602,6 +609,26 @@ function toSignup(row) {
   };
 }
 
+// Okno zadania poza czasem wydarzenia (początek zadania przed początkiem
+// wydarzenia albo koniec zadania po końcu wydarzenia, gdy wydarzenie ma koniec).
+// Przy tworzeniu zadania odrzucane (task_time_outside_event); po późniejszej
+// zmianie czasu wydarzenia tylko wykazywane — zadanie i zapisy zostają.
+function isOutsideEventTime(task, event) {
+  const begins = new Date(event.begins_at).getTime();
+  const ends = event.ends_at ? new Date(event.ends_at).getTime() : null;
+  if (task.starts_at && new Date(task.starts_at).getTime() < begins) return true;
+  if (task.ends_at && ends !== null && new Date(task.ends_at).getTime() > ends) return true;
+  return false;
+}
+
+async function tasksOutsideEventTime(executor, event) {
+  const { rows } = await executor.query(
+    'SELECT id, title, starts_at, ends_at FROM event_tasks WHERE event_id = $1 AND cancelled_at IS NULL ORDER BY created_at, id',
+    [event.id],
+  );
+  return rows.filter((task) => isOutsideEventTime(task, event)).map((task) => ({ id: task.id, title: task.title }));
+}
+
 function parseTaskInput(input, event) {
   const title = text(input?.title, { ...TASK_TITLE_LIMIT, required: true });
   const slotsNeeded = input?.slotsNeeded;
@@ -615,10 +642,9 @@ function parseTaskInput(input, event) {
   if (startsAt && endsAt && endsAt < startsAt) throw new EventError('ends_before_start');
   // "W obrębie wydarzenia" (issue #142 propozycja punkt 1): zadanie nie może
   // zaczynać się przed wydarzeniem ani kończyć po nim (gdy wydarzenie ma
-  // koniec). Zmiana czasu wydarzenia PO utworzeniu zadania nie jest tu
-  // sprawdzana wstecznie — poza zakresem tego PR (patrz "Ryzyka").
-  if (startsAt && startsAt < event.begins_at) throw new EventError('task_time_outside_event');
-  if (endsAt && event.ends_at && endsAt > event.ends_at) throw new EventError('task_time_outside_event');
+  // koniec). Zmiana czasu wydarzenia PO utworzeniu zadania jest wykazywana
+  // (outsideEventTime w liście, tasksOutsideEventTime w odpowiedzi PATCH).
+  if (isOutsideEventTime({ starts_at: startsAt, ends_at: endsAt }, event)) throw new EventError('task_time_outside_event');
   return { title, slotsNeeded, isPublic, startsAt, endsAt };
 }
 
@@ -713,6 +739,7 @@ export async function listTasks(db, actor, input) {
   return {
     tasks: taskRows.map((row) => ({
       ...toTask(row),
+      outsideEventTime: !row.cancelled_at && isOutsideEventTime(row, event),
       signups: byTask.get(row.id) ?? [],
       confirmedCount: (byTask.get(row.id) ?? []).filter((s) => s.status === 'confirmed').length,
     })),
@@ -723,15 +750,67 @@ export async function listTasks(db, actor, input) {
 // w bieżącym roku (issue #142, kryteria akceptacji) — sprawdzone po stronie
 // serwera niezależnie od tego, co pokazuje formularz. Zarząd/administrator
 // (przydział bez klasy) nie ma tego ograniczenia.
+// Tylko BIEŻĄCE relacje i przypisania (widoki student_guardians_current i
+// enrollments_current, #157/#86): opiekun po zakończeniu relacji albo dziecko,
+// które odeszło z klasy, nie może być już zapisane przez przedstawiciela.
 async function assertGuardianInClass(tx, guardianId, event) {
   if (!event.class_id) return; // wydarzenie ogólnoszkolne: brak ograniczenia klasy
   const { rows } = await tx.query(
-    `SELECT 1 FROM student_guardians sg
-       JOIN enrollments en ON en.student_id = sg.student_id
+    `SELECT 1 FROM student_guardians_current sg
+       JOIN enrollments_current en ON en.student_id = sg.student_id
       WHERE sg.guardian_id = $1 AND en.class_id = $2 AND en.school_year_id = $3 LIMIT 1`,
     [guardianId, event.class_id, event.school_year_id],
   );
   if (!rows[0]) throw new EventError('guardian_outside_class', 400);
+}
+
+// Lista opiekunów do wyboru w formularzu zapisu (panel events/): wyłącznie
+// imię i nazwisko opiekunów z bieżącą relacją do dziecka bieżąco przypisanego
+// do klasy wydarzenia — bez e-maili, dzieci i gospodarstw. Wydarzenie
+// ogólnoszkolne (tylko zarząd/admin): klasa wskazana parametrem, z roku
+// wydarzenia. Odczyt imion opiekunów klasy = wpis w data_access_log
+// (class_students, #133), także przy odmowie.
+export async function listTaskCandidates(db, actor, input) {
+  requireActor(actor);
+  const eventId = decodeId(input?.eventId);
+  if (!validId(eventId)) throw new EventError('invalid_event_id');
+  const { rows } = await db.query(`SELECT ${EVENT_COLUMNS} FROM events WHERE id = $1`, [eventId]);
+  const event = rows[0];
+  if (!event || !canEdit(actor, event)) throw new EventError('event_not_found', 404);
+  let classId = event.class_id;
+  if (!classId) {
+    classId = input?.classId ?? null;
+    if (!classId) throw new EventError('class_required');
+    if (!validId(classId)) throw new EventError('invalid_class');
+  } else if (input?.classId && input.classId !== classId) {
+    throw new EventError('invalid_class');
+  }
+  const { rows: classRows } = await db.query(
+    'SELECT id FROM classes WHERE id = $1 AND school_year_id = $2', [classId, event.school_year_id],
+  );
+  if (!classRows[0]) {
+    await recordDataAccess({ db }, {
+      actorId: actor.userId, accessKind: 'class_students', schoolYearId: event.school_year_id, outcome: 'not_found',
+    });
+    throw new EventError('class_not_found', 404);
+  }
+  const { rows: guardians } = await db.query(
+    `SELECT DISTINCT g.id, g.first_name, g.last_name
+       FROM enrollments_current en
+       JOIN student_guardians_current sg ON sg.student_id = en.student_id
+       JOIN guardians g ON g.id = sg.guardian_id
+      WHERE en.class_id = $1 AND en.school_year_id = $2
+      ORDER BY g.last_name, g.first_name, g.id`,
+    [classId, event.school_year_id],
+  );
+  await recordDataAccess({ db }, {
+    actorId: actor.userId, accessKind: 'class_students', schoolYearId: event.school_year_id, classId,
+    outcome: 'ok', rowCount: guardians.length,
+  });
+  return {
+    classId,
+    guardians: guardians.map((row) => ({ id: row.id, name: `${row.first_name} ${row.last_name}`.trim() })),
+  };
 }
 
 export async function createSignup(db, actor, input) {
@@ -831,21 +910,29 @@ export async function listPublicTasks(db, input) {
   const eventId = decodeId(input?.eventId);
   const { rows: published } = await db.query('SELECT id FROM public_events WHERE id = $1', [eventId]);
   if (!published[0]) throw new EventError('event_not_found', 404);
+  return { tasks: (await publicTasksFor(db, [eventId])).get(eventId) ?? [] };
+}
+
+// Wspólne źródło dla GET /api/public/events (pole volunteerTasks) i
+// GET /api/public/events/:id/tasks: jedno zapytanie dla wielu wydarzeń,
+// wyłącznie { id, title, stillNeeded } zadań publicznych i nieodwołanych.
+async function publicTasksFor(db, eventIds) {
+  const byEvent = new Map();
+  if (!eventIds.length) return byEvent;
   const { rows } = await db.query(
-    `SELECT t.id, t.title, t.slots_needed,
+    `SELECT t.id, t.event_id, t.title, t.slots_needed,
             (SELECT count(*) FROM event_task_signups s WHERE s.task_id = t.id AND s.status = 'confirmed') AS confirmed_count
        FROM event_tasks t
-      WHERE t.event_id = $1 AND t.is_public AND t.cancelled_at IS NULL
+      WHERE t.event_id = ANY($1::text[]) AND t.is_public AND t.cancelled_at IS NULL
       ORDER BY t.created_at, t.id`,
-    [eventId],
+    [eventIds],
   );
-  return {
-    tasks: rows.map((row) => ({
-      id: row.id,
-      title: row.title,
-      stillNeeded: Math.max(0, row.slots_needed - Number(row.confirmed_count)),
-    })),
-  };
+  for (const row of rows) {
+    const list = byEvent.get(row.event_id) ?? [];
+    list.push({ id: row.id, title: row.title, stillNeeded: Math.max(0, row.slots_needed - Number(row.confirmed_count)) });
+    byEvent.set(row.event_id, list);
+  }
+  return byEvent;
 }
 
 const PUBLIC_ICS_COLUMNS = `id, title, description, begins_at, ends_at, location, organizer, timezone,
@@ -881,7 +968,11 @@ async function publicEventRows(db, input = {}) {
 
 export async function listPublic(db, input = {}) {
   const rows = await publicEventRows(db, input);
-  return { timezone: EVENT_TIMEZONE, events: rows.map(publicEvent) };
+  const tasks = await publicTasksFor(db, rows.filter((row) => row.public_status !== 'cancelled').map((row) => row.id));
+  return {
+    timezone: EVENT_TIMEZONE,
+    events: rows.map((row) => ({ ...publicEvent(row), volunteerTasks: tasks.get(row.id) ?? [] })),
+  };
 }
 
 // Wewnętrzne: to samo źródło co listPublic, do budowy kalendarza iCal
@@ -1030,6 +1121,7 @@ export async function handle(request, env, url, json) {
     const itemMatch = path.match(/^\/api\/events\/([^/]+)$/);
     const actionMatch = path.match(/^\/api\/events\/([^/]+)\/(submit|approve|publish|cancel)$/);
     const tasksMatch = path.match(/^\/api\/events\/([^/]+)\/tasks$/);
+    const candidatesMatch = path.match(/^\/api\/events\/([^/]+)\/tasks\/candidates$/);
     const taskCancelMatch = path.match(/^\/api\/events\/([^/]+)\/tasks\/([^/]+)\/cancel$/);
     const signupsMatch = path.match(/^\/api\/events\/([^/]+)\/tasks\/([^/]+)\/signups$/);
     const withdrawMatch = path.match(/^\/api\/events\/([^/]+)\/tasks\/([^/]+)\/signups\/([^/]+)\/withdraw$/);
@@ -1039,12 +1131,13 @@ export async function handle(request, env, url, json) {
     const isUpdate = itemMatch && request.method === 'PATCH';
     const isAction = actionMatch && request.method === 'POST';
     const isTasksList = tasksMatch && request.method === 'GET';
+    const isCandidates = candidatesMatch && request.method === 'GET';
     const isTaskCreate = tasksMatch && request.method === 'POST';
     const isTaskCancel = taskCancelMatch && request.method === 'POST';
     const isSignupCreate = signupsMatch && request.method === 'POST';
     const isSignupWithdraw = withdrawMatch && request.method === 'POST';
     if (!isList && !isCreate && !isGet && !isUpdate && !isAction
-        && !isTasksList && !isTaskCreate && !isTaskCancel && !isSignupCreate && !isSignupWithdraw) {
+        && !isTasksList && !isCandidates && !isTaskCreate && !isTaskCancel && !isSignupCreate && !isSignupWithdraw) {
       return json({ error: 'not_found' }, 404);
     }
     if ((isCreate || isUpdate || isAction || isTaskCreate || isTaskCancel || isSignupCreate || isSignupWithdraw)
@@ -1057,6 +1150,11 @@ export async function handle(request, env, url, json) {
     if (isList) return json(await listInternal(env.db, actor, { schoolYearId: url.searchParams.get('schoolYearId') }), 200, noStore);
     if (isGet) return json(await getInternal(env.db, actor, { eventId: decodeId(itemMatch[1]) }), 200, noStore);
     if (isTasksList) return json(await listTasks(env.db, actor, { eventId: decodeId(tasksMatch[1]) }), 200, noStore);
+    if (isCandidates) {
+      return json(await listTaskCandidates(env.db, actor, {
+        eventId: decodeId(candidatesMatch[1]), classId: url.searchParams.get('classId') || undefined,
+      }), 200, noStore);
+    }
 
     if (isTaskCreate || isSignupCreate) {
       const idempotencyKey = request.headers.get('Idempotency-Key')?.trim();
@@ -1104,7 +1202,9 @@ export async function handle(request, env, url, json) {
       const result = await updateDraft(env.db, actor, {
         ...pick(data, ['revision', ...CONTENT_FIELDS]), eventId: decodeId(itemMatch[1]),
       });
-      return json({ event: result.event, replayed: result.replayed }, 200, noStore);
+      return json({
+        event: result.event, replayed: result.replayed, tasksOutsideEventTime: result.tasksOutsideEventTime ?? [],
+      }, 200, noStore);
     }
     const operations = { submit, approve, publish, cancel };
     const result = await operations[actionMatch[2]](env.db, actor, {

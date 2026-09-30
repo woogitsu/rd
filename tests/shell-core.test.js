@@ -3,7 +3,7 @@
 // wiązany ręcznie; kontrolę dostępu i tak wykonuje wyłącznie serwer (docs/AUTHORIZATION.md).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { READ_ONLY_BANNER_TEXT, isReadOnlySession, PANELS, activeYearLabel, isActivePanel, mountShell, navItemsHtml, roleLabel, scopeSummary, visiblePanels } from '../shared/shell.js';
+import { READ_ONLY_BANNER_TEXT, isReadOnlySession, PANELS, activeYearLabel, isActivePanel, mountShell, navItemsHtml, roleLabel, scopeSummary, sessionDisplayName, visiblePanels } from '../shared/shell.js';
 
 const PANEL_IDS = PANELS.map((p) => p.id);
 
@@ -229,4 +229,24 @@ test('mountShell: brak banera w trybie normalnym i bez sesji', async () => {
     '/api/session': { status: 500, body: {} },
   }, () => mountShell({ document: doc, location: loc }));
   assert.equal(inserted.length, 0);
+});
+
+// #151: GET /api/session zwraca { user: { displayName, email } } — nagłówek powłoki
+// i stopka wydruku („Wydrukowano … przez …”) czytały płaskie session.displayName.
+test('sessionDisplayName: kształt API { user: { displayName } }, płaski i zapasowy e-mail', () => {
+  assert.equal(sessionDisplayName({ user: { id: 'u1', displayName: 'Skarbnik testowy', email: 's@example.invalid' } }), 'Skarbnik testowy');
+  assert.equal(sessionDisplayName({ user: { id: 'u1', displayName: '  ', email: 's@example.invalid' } }), 's@example.invalid');
+  assert.equal(sessionDisplayName({ displayName: 'Płaski' }), 'Płaski');
+  for (const empty of [null, undefined, {}, { user: null }, 'tekst']) assert.equal(sessionDisplayName(empty), null);
+});
+
+test('mountShell: nazwa konta z odpowiedzi { user: { displayName } } (kształt GET /api/session), zakodowana', async () => {
+  const doc = fakeDoc();
+  const result = await withFetch({
+    '/api/access': { status: 200, body: { grants: [{ role: 'treasurer', classId: null, schoolYearId: '2026-2027' }] } },
+    '/api/session': { status: 200, body: { sessionId: 's1', mfaVerified: true, user: { id: 'u1', email: 'skarbnik@example.invalid', displayName: 'Skarbnik <i>X</i>' }, writeMode: 'normal' } },
+  }, () => mountShell({ document: doc, location: loc }));
+  const acc = doc.els['shell-account'].innerHTML;
+  assert.ok(acc.includes('<span class="shell-account-name">Skarbnik &lt;i&gt;X&lt;/i&gt;</span>'), acc);
+  assert.equal(sessionDisplayName(result.session), 'Skarbnik <i>X</i>');
 });

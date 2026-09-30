@@ -280,3 +280,20 @@ test("#122: adresy iCal wydarzenia i kanału są budowane tylko z bezpiecznych w
   assert.equal(calendarFeedUrls("evil.example/\"><x"), null);
   assert.equal(calendarFeedUrls(""), null);
 });
+
+// #142: zadania wolontariuszy na stronie publicznej — tylko tytuł i liczba brakujących osób.
+test("volunteer tasks: only title and stillNeeded, nothing for cancelled events, garbage dropped", async () => {
+  const { volunteerTasks, volunteerTaskLabel } = await import("../site/core.js");
+  const raw = { id: "e1", title: "Piknik", startsAtUtc: "2026-11-12T09:00:00Z", status: "scheduled", volunteerTasks: [
+    { id: "t1", title: "Stoisko", stillNeeded: 2, guardianId: "g1" },
+    { id: "t2", title: "Dyżur", stillNeeded: 0 },
+    { id: "t3", title: "", stillNeeded: 1 },
+    { id: "t4", title: "Zły", stillNeeded: -1 },
+    null,
+  ] };
+  const event = normalizeEvent(raw);
+  assert.deepEqual(event.volunteerTasks, [{ title: "Stoisko", stillNeeded: 2 }, { title: "Dyżur", stillNeeded: 0 }]);
+  assert.deepEqual(event.volunteerTasks.map(volunteerTaskLabel), ["potrzebni jeszcze: 2", "komplet chętnych"]);
+  assert.deepEqual(normalizeEvent({ ...raw, status: "cancelled" }).volunteerTasks, []);
+  assert.deepEqual(volunteerTasks(undefined), []);
+});

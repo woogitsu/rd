@@ -53,21 +53,28 @@ Bez kont rodziców (D-10): zapisy prowadzi przedstawiciel klasy dla wydarzeń **
 - `event_tasks`: zadanie w obrębie wydarzenia (tytuł, opcjonalny czas w obrębie czasu wydarzenia, liczba potrzebnych miejsc 1–200, `isPublic`). Treść jest niezmienna po utworzeniu; jedyna dozwolona zmiana to odwołanie (`cancel`), stan końcowy.
 - `event_task_signups`: zapis opiekuna albo konta. Status (`confirmed`/`withdrawn`) może się zmieniać (wycofanie i ponowny zapis tej samej osoby to przejście stanu **tego samego wiersza**, z historią w `audit_events` — nie nowy wiersz, nie nadpisanie: tożsamość zapisu, wraz z `recorded_by`/`created_at`, jest niezmienna, zmienia się wyłącznie `status`). Dwoje opiekunów tego samego dziecka to dwa osobne wiersze (różne `guardian_id`).
 - Limit miejsc: trigger blokuje wiersz zadania i odrzuca zapis, gdy liczba aktywnych (`confirmed`) zapisów osiągnęła `slots_needed` — `409 task_full`. Ten sam trigger zamraża zapisy odwołanego zadania i odwołanego wydarzenia — `409 event_cancelled`; wcześniejsze zapisy zostają (historia, nie usuwanie).
-- Przedstawiciel może wskazać wyłącznie opiekuna dziecka zapisanego (aktualna `enrollments`) do przypisanej klasy w bieżącym roku szkolnym — `400 guardian_outside_class` w przeciwnym razie. Zarząd/admin (przydział bez klasy) nie mają tego ograniczenia.
+- Przedstawiciel może wskazać wyłącznie opiekuna z **bieżącą** relacją (`student_guardians_current`) do dziecka **bieżąco** przypisanego (`enrollments_current`) do klasy wydarzenia w jego roku szkolnym — `400 guardian_outside_class` w przeciwnym razie (także po zakończeniu relacji albo odejściu dziecka z klasy). Zarząd/admin (przydział bez klasy) nie mają tego ograniczenia.
 - Rok zamknięty: `409 school_year_closed` (rozszerza wspólny trigger zamrożenia — patrz `postgres/README.md`).
 
 ### API
 
 - `GET /api/events/:id/tasks` — lista zadań z zapisanymi osobami (imię i nazwisko opiekuna albo nazwa konta) — tylko dla ról z dostępem do wydarzenia (ta sama reguła co reszta modułu: `404 event_not_found` dla nieznanego i niedostępnego wydarzenia).
+- `GET /api/events/:id/tasks/candidates[?classId=]` — opiekunowie do wyboru w formularzu zapisu: tylko `{ id, name }` (imię i nazwisko) opiekunów z bieżącą relacją do dziecka bieżąco przypisanego do klasy wydarzenia; bez e-maili, dzieci i gospodarstw. Wydarzenie ogólnoszkolne (zarząd/admin) wymaga `classId` klasy z roku wydarzenia (`400 class_required`, `404 class_not_found`); przedstawiciel nie może wskazać innej klasy niż klasa wydarzenia (`400 invalid_class`). Każdy odczyt zapisuje wpis `class_students` w `data_access_log` (#133).
 - `POST /api/events/:id/tasks` — `{ title, slotsNeeded, startsAt?, endsAt?, isPublic? }`, wymaga `Idempotency-Key`.
 - `POST /api/events/:id/tasks/:taskId/cancel` — `{ reason }`; ponowienie zwraca `replayed: true` bez nowego stanu.
 - `POST /api/events/:id/tasks/:taskId/signups` — `{ guardianId }` albo `{ userId }` (dokładnie jedno), wymaga `Idempotency-Key`. Podwójny zapis tej samej osoby jest bezpieczną powtórką (`replayed: true`), niezależnie od klucza.
 - `POST /api/events/:id/tasks/:taskId/signups/:signupId/withdraw` — wycofanie; ponowne wycofanie już wycofanego zapisu jest bezpieczną powtórką.
+- `GET /api/events/:id/tasks` zwraca przy każdym zadaniu `outsideEventTime` (okno zadania wykracza poza **obecny** czas wydarzenia), a `PATCH /api/events/:id` — listę `tasksOutsideEventTime: [{ id, title }]` nieodwołanych zadań poza nowym czasem. Zmiana czasu wydarzenia nie odwołuje zadań ani zapisów; decyzję (np. odwołanie zadania) podejmuje osoba prowadząca zapisy.
+- `GET /api/public/events` — przy każdym nieodwołanym wydarzeniu pole `volunteerTasks: [{ id, title, stillNeeded }]` (to samo źródło co niżej, jedno zapytanie dla całej listy); strona `site/` pokazuje „potrzebni jeszcze: N” albo „komplet chętnych”.
 - `GET /api/public/events/:id/tasks` — bez logowania, tylko dla wydarzenia **opublikowanego**: `{ id, title, stillNeeded }` dla zadań jawnie oznaczonych `isPublic` i nieodwołanych. Bez `guardianId`/`userId`, bez liczby zapisów zadań niepublicznych, bez zadań odwołanych.
 
 Dziennik: `event.task_created`, `event.task_cancelled`, `event.task_signup_created`, `event.task_signup_withdrawn` — identyfikatory i numer wersji, **bez** imienia/nazwiska, powodu ani identyfikatora opiekuna/konta w metadanych.
 
-**Poza zakresem tej wersji (Etap 1):** panel (`events/`) nie ma jeszcze widoku zadań/zapisów — na razie tylko API i testy; wybór opiekuna z listy klasy zamiast wpisania identyfikatora; wsteczna kontrola, gdy czas WYDARZENIA zmienia się po utworzeniu zadania poza jego oknem (dziś sprawdzane tylko przy tworzeniu zadania); retencja zapisów po zakończeniu roku (D-04); Etap 2 (samodzielny zapis i wycofanie przez rodzica, przypomnienie przez kampanię — wyłącznie po jawnym zatwierdzeniu treści i listy, nigdy automatycznie).
+### Panel (`events/`)
+
+W szczegółach wydarzenia sekcja „Zadania i zapisy wolontariuszy”: tabela zadań (czas, „zapisani / potrzebni”, czy liczba trafia na stronę publiczną, stan, działania), lista zapisanych z imieniem i nazwiskiem opiekuna (widoczna tylko dla ról z dostępem do wydarzenia — ta sama reguła co cały panel) oraz formularze: nowe zadanie (klucz idempotencji utrzymywany do sukcesu — ponowienie po błędzie sieci nie tworzy drugiego zadania), zapis opiekuna wybranego z listy klasy (`/tasks/candidates`; przy wydarzeniu ogólnoszkolnym najpierw wybór klasy), wycofanie zapisu (z potwierdzeniem) i odwołanie zadania (powód przez bramkę danych osobowych #152). Przyciski są blokowane na czas żądania (podwójne kliknięcie); o limicie miejsc i tak rozstrzyga serwer (`409 task_full` odświeża tabelę). Wydarzenie odwołane: zapisy zamrożone, historia widoczna. Po zmianie czasu wydarzenia panel pokazuje ostrzeżenie o zadaniach poza nowym czasem.
+
+**Poza zakresem tej wersji (Etap 1):** retencja zapisów po zakończeniu roku (D-04); Etap 2 (samodzielny zapis i wycofanie przez rodzica, przypomnienie przez kampanię — wyłącznie po jawnym zatwierdzeniu treści i listy, nigdy automatycznie).
 
 ## Do decyzji
 

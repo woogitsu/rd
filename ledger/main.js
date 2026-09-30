@@ -35,13 +35,13 @@ import { confirmAction } from "../shared/confirm-dialog.js";
 import { filtersFromQuery, filtersToQuery } from "../shared/query-filters.js";
 import { panelYearState, yearOptionsHtml } from "../shared/school-year.js";
 import { shownSummary } from "../shared/household-picker.js";
-import { mountShell } from "../shared/shell.js";
+import { mountShell, sessionDisplayName } from "../shared/shell.js";
 import "../shared/shell.css";
-import { mountPrintMeta } from "../shared/print-meta.js";
+import { formatPrintDate, mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
 
 let printedBy = null;
-mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
+mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
 
 const FILTER_KEYS = ["schoolYearId", "direction", "category", "dateFrom", "dateTo"];
 const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", grants: [], history: { rows: [], adoptionRows: [], currentLines: [] }, opening: null, nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
@@ -99,7 +99,8 @@ function textCell(value, className = "") {
 function entryRow(raw) {
   const entry = normalizeEntry(raw);
   const row = document.createElement("tr");
-  row.append(textCell(entry.occurredOn));
+  // Data w zapisie polskim dd.mm.rrrr — ekran i wydruk (#151, decyzja 30.09 z #563).
+  row.append(textCell(formatPrintDate(entry.occurredOn), "date"));
   const description = textCell(entry.description || "Bez opisu", "entry-description");
   const evidence = entry.attachmentCount === null ? "" : `Dowody: ${entry.attachmentCount}`;
   if (entry.source || entry.resolutionReference || evidence) {
@@ -144,6 +145,13 @@ function renderEntries() {
   updatePrintMeta();
 }
 
+function ledgerBalanceSummary() {
+  const opening = byId("opening-balance")?.textContent?.trim();
+  const closing = byId("closing-balance")?.textContent?.trim();
+  if (!opening || !closing || opening === "—" || closing === "—") return null;
+  return `Bilans otwarcia ${opening} · Bilans zamknięcia ${closing}`;
+}
+
 // Blok metadanych wydruku (#151) — niewidoczny na ekranie, wypełniany przed
 // każdym renderowaniem, żeby wydruk zawsze pokazywał rok, filtry i kompletność.
 function updatePrintMeta() {
@@ -155,8 +163,8 @@ function updatePrintMeta() {
   const filters = [
     state.query?.direction ? DIRECTION_LABELS[state.query.direction] : null,
     categoryName ? `kategoria: ${categoryName}` : null,
-    state.query?.dateFrom ? `od ${state.query.dateFrom}` : null,
-    state.query?.dateTo ? `do ${state.query.dateTo}` : null,
+    state.query?.dateFrom ? `od ${formatPrintDate(state.query.dateFrom)}` : null,
+    state.query?.dateTo ? `do ${formatPrintDate(state.query.dateTo)}` : null,
   ].filter(Boolean).join(", ") || null;
   mountPrintMeta(container, {
     view: "Księga przychodów i wydatków",
@@ -164,6 +172,8 @@ function updatePrintMeta() {
     filters,
     printedBy,
     incompleteCount: state.nextCursor ? state.entries.length : null,
+    // Bilans powtarzany w nagłówku każdej strony wydruku (#151); z tych samych pól co kafelki.
+    summary: ledgerBalanceSummary(),
   });
 }
 
@@ -243,6 +253,7 @@ function renderSummary(summary) {
   byId("income-total").textContent = formatCents(summary.incomeCents);
   byId("expense-total").textContent = formatCents(summary.expenseCents);
   byId("closing-balance").textContent = formatCents(summary.closingBalanceCents);
+  updatePrintMeta();
 }
 
 function filterChanged() {

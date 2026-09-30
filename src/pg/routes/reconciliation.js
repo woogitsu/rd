@@ -1001,119 +1001,263 @@ async function importStatementFile(tx, { context, actorId, row, input, hashed, f
   }, 201, CREATED);
 }
 
+// Kandydaci propozycji (#115, wydajność #217): wpisy księgi i wpłaty, które
+// mogą zostać powiązane, wyliczane są RAZ na żądanie (CTE MATERIALIZED), a
+// ranking — raz na parę (data, kwota) otwartych pozycji, nie osobno dla każdej
+// pary pozycja × wpłata. Pozycje o tej samej dacie i kwocie mają identyczną
+// listę kandydatów (kolejność zależy wyłącznie od odległości dni i
+// identyfikatora), więc wynik jest taki sam jak przy rankingu per pozycja.
+// `extra` to dodatkowy warunek WHERE (zakres dat, gospodarstwo).
+function eligibleLedgerSql(extra) {
+  return `SELECT e.id, e.occurred_on AS candidate_on, e.net_amount_cents, e.method, pe.household_id,
+            NULL::text AS reference,
+            CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END AS match_cents
+       FROM ledger_entry_net e
+       LEFT JOIN payment_entries pe ON pe.id = e.payment_entry_id
+      WHERE e.school_year_id = $2
+        -- Wyciąg dotyczy rachunku: wpis gotówkowy (kasa) nie jest kandydatem, tak jak
+        -- saldo księgi (rachunek) i lista „wpisy bez pozycji wyciągu” liczą tylko method = 'bank'.
+        AND e.method = 'bank'
+        AND ${extra.replaceAll('{date}', 'e.occurred_on').replaceAll('{household}', 'pe.household_id')}
+        -- #105: wpis powiązany w dowolnym uzgodnieniu roku nie jest już kandydatem.
+        AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                          JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+                         WHERE r.school_year_id = $2 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM bank_group_match_items_current gi
+                         WHERE gi.school_year_id = $2 AND gi.ledger_entry_id = e.id)`;
+}
+
+// Wpłaty nieujęte jeszcze w księdze (wpłata ujęta w księdze jest proponowana jako wpis księgi).
+// Dopasowanie po kwocie „wpłata − korekty” (zwroty jej nie zmniejszają, #138).
+function eligiblePaymentsSql(extra) {
+  return `SELECT p.id, p.received_on AS candidate_on, p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
+            p.method, p.household_id, p.reference, p.amount_cents - COALESCE(c.corrected, 0) AS match_cents
+       FROM payment_entries p
+       LEFT JOIN (SELECT payment_entry_id, sum(amount_cents) AS corrected
+                    FROM payment_corrections GROUP BY payment_entry_id) c ON c.payment_entry_id = p.id
+      WHERE p.school_year_id = $2 AND p.status IN ('recorded', 'unmatched')
+        AND p.method = 'bank'
+        AND ${extra.replaceAll('{date}', 'p.received_on').replaceAll('{household}', 'p.household_id')}
+        AND NOT EXISTS (SELECT 1 FROM ledger_entries le WHERE le.payment_entry_id = p.id)
+        AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
+                          JOIN bank_reconciliations r ON r.id = m.reconciliation_id
+                         WHERE r.school_year_id = $2 AND m.payment_entry_id = p.id AND m.revoked_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM bank_group_match_items_current gi
+                         WHERE gi.school_year_id = $2 AND gi.payment_entry_id = p.id)`;
+}
+
+// Warunek „pozycja otwarta” (bez aktywnego powiązania 1:1 i zbiorczego); $1 = uzgodnienie.
+const OPEN_LINE_SQL = `l.reconciliation_id = $1 AND NOT EXISTS (
+      SELECT 1 FROM bank_reconciliation_matches m WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_group_matches_current g WHERE g.statement_line_id = l.id)`;
+
+// Ranking kandydatów per (data, kwota) otwartych pozycji; $3 okno dni, $4 limit.
+function rankedCandidatesSql(eligible, lineFilter = '') {
+  return `
+    WITH open_keys AS MATERIALIZED (
+      SELECT DISTINCT l.booked_on, l.amount_cents FROM bank_statement_lines l WHERE ${OPEN_LINE_SQL} ${lineFilter}
+    ), eligible AS MATERIALIZED (
+      ${eligible(`{date} BETWEEN (SELECT min(booked_on) - $3::int FROM open_keys)
+                             AND (SELECT max(booked_on) + $3::int FROM open_keys)`)}
+    )
+    SELECT key_on, amount_key, id, candidate_on, reference, method, household_id, net_amount_cents, day_distance FROM (
+      SELECT to_char(k.booked_on, 'YYYY-MM-DD') AS key_on, k.amount_cents::text AS amount_key, e.id,
+             to_char(e.candidate_on, 'YYYY-MM-DD') AS candidate_on, e.reference, e.method, e.household_id,
+             e.net_amount_cents, abs(e.candidate_on - k.booked_on) AS day_distance,
+             row_number() OVER (PARTITION BY k.booked_on, k.amount_cents
+                                ORDER BY abs(e.candidate_on - k.booked_on), e.id) AS rn
+        FROM open_keys k
+        JOIN eligible e ON e.match_cents = k.amount_cents
+         AND e.candidate_on BETWEEN k.booked_on - $3::int AND k.booked_on + $3::int
+    ) ranked WHERE rn <= $4`;
+}
+
+// Kandydaci gospodarstwa wskazanego komunikacją strukturalną: pary (pozycja,
+// gospodarstwo) w $5/$6, bez zapasu candidateLimit — przy typowych kwotach
+// składek wpłata tego gospodarstwa mogłaby się w nim nie zmieścić.
+function householdCandidatesSql(eligible) {
+  return `
+    WITH pairs AS (SELECT * FROM unnest($5::text[], $6::text[]) AS x(line_id, household_id)),
+         eligible AS MATERIALIZED (${eligible('{household} = ANY($6::text[])')})
+    SELECT line_id, id, candidate_on, reference, method, household_id, net_amount_cents, day_distance FROM (
+      SELECT x.line_id, e.id, to_char(e.candidate_on, 'YYYY-MM-DD') AS candidate_on, e.reference, e.method,
+             e.household_id, e.net_amount_cents, abs(e.candidate_on - l.booked_on) AS day_distance,
+             row_number() OVER (PARTITION BY x.line_id ORDER BY abs(e.candidate_on - l.booked_on), e.id) AS rn
+        FROM pairs x
+        JOIN bank_statement_lines l ON l.id = x.line_id AND l.reconciliation_id = $1
+        JOIN eligible e ON e.household_id = x.household_id AND e.match_cents = l.amount_cents
+         AND e.candidate_on BETWEEN l.booked_on - $3::int AND l.booked_on + $3::int
+    ) ranked WHERE rn <= $4`;
+}
+
+// Warianty zapisu komunikacji strukturalnej OGM-VCS (#83), które — po
+// normalizacji tytułu (normalizeReference) — mogą stanowić CAŁY tytuł pozycji:
+// CODA typ 101 daje „+++ddd/dddd/ddddd+++”, CAMT (Strd/CdtrRefInf/Ref) zwykle
+// 12 cyfr albo ten sam zapis z plusami. Serwer nie przechowuje tytułu, tylko
+// solony skrót (sól uzgodnienia w $3), więc porównujemy skróty wariantów
+// aktywnych referencji roku ze skrótem pozycji. Tytuł, w którym referencja jest
+// otoczona innym tekstem, nie jest rozpoznawany — świadome ograniczenie
+// (docs/RECONCILIATION.md).
+const STRUCTURED_REFERENCE_LINES_SQL = `
+  WITH variants AS MATERIALIZED (
+    SELECT pr.household_id, v.variant
+      FROM payment_references pr
+      CROSS JOIN LATERAL (SELECT substr(pr.structured_reference, 1, 3) || '/' || substr(pr.structured_reference, 4, 4)
+                                 || '/' || substr(pr.structured_reference, 8, 5) AS slashed) f
+      CROSS JOIN LATERAL (VALUES (pr.structured_reference), ('+++' || f.slashed || '+++'),
+                                 ('***' || f.slashed || '***'), (f.slashed)) AS v(variant)
+     WHERE pr.school_year_id = $2 AND pr.revoked_at IS NULL
+  ), hashed AS MATERIALIZED (
+    SELECT household_id, encode(sha256(convert_to($3 || ':' || variant, 'UTF8')), 'hex') AS reference_hash
+      FROM variants
+  )
+  SELECT DISTINCT l.id AS line_id, h.household_id
+    FROM bank_statement_lines l
+    JOIN hashed h ON h.reference_hash = l.reference_hash
+   WHERE ${OPEN_LINE_SQL} AND l.amount_cents > 0 AND l.reference_hash IS NOT NULL
+   ORDER BY l.id, h.household_id`;
+
+function toCandidate(type, entry, extra = {}) {
+  return {
+    type, id: entry.id, date: entry.candidate_on, method: entry.method,
+    amountCents: toSafeInteger(entry.net_amount_cents), dayDistance: toSafeInteger(entry.day_distance),
+    referenceMatch: false, structuredReferenceMatch: false, ...extra,
+  };
+}
+
+// Kolejność: najpierw istniejąca wpłata/wpis gospodarstwa wskazanego komunikacją
+// strukturalną (żeby nie tworzyć drugiej wpłaty), potem propozycja nowej wpłaty
+// dla tego gospodarstwa, dalej jak dotąd: zgodny tytuł, odległość dni, typ, id.
+function candidateRank(candidate) {
+  if (candidate.type === 'household') return 1;
+  return candidate.structuredReferenceMatch ? 0 : 2;
+}
+
+function compareCandidates(a, b) {
+  return candidateRank(a) - candidateRank(b)
+    || Number(b.referenceMatch) - Number(a.referenceMatch)
+    || (a.dayDistance ?? 0) - (b.dayDistance ?? 0)
+    || (a.type === b.type ? a.id.localeCompare(b.id) : a.type === 'ledger_entry' ? -1 : 1);
+}
+
 async function suggestMatches(request, env, id, url, json) {
   const windowText = url.searchParams.get('windowDays') ?? '7';
   if (!/^\d{1,2}$/.test(windowText) || Number(windowText) > 31) throw new RequestError('invalid_window');
   const windowDays = Number(windowText);
   const { row } = await loadAuthorizedReconciliation(request, env, id);
 
-  const openLine = `l.reconciliation_id = $1 AND NOT EXISTS (
-      SELECT 1 FROM bank_reconciliation_matches m WHERE m.statement_line_id = l.id AND m.revoked_at IS NULL)
-    AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_group_matches_current g WHERE g.statement_line_id = l.id)`;
   // Zapas ponad limit odpowiedzi (#158): dopasowanie po tytule (referenceMatch)
   // liczone jest dopiero w JS, więc SQL musi przepuścić więcej niż MAX_CANDIDATES,
   // żeby kandydat z trafionym tytułem, ale dalszą datą, mógł wypchnąć bliższego
   // dniowo, ale bez zgodności tytułu, kandydata na pierwsze miejsce.
   const candidateLimit = MAX_CANDIDATES * 4;
+  const empty = { rows: [] };
   // Jedna migawka (REPEATABLE READ, READ ONLY) na jednym połączeniu: równoległe
   // potwierdzenie dopasowania (POST …/matches) na innym połączeniu nie może
-  // sprawić, że ta sama pozycja/kandydat wygląda inaczej w trzech zapytaniach.
-  const [lines, ledger, payments] = await env.db.transaction(async (tx) => {
+  // sprawić, że ta sama pozycja/kandydat wygląda inaczej w kolejnych zapytaniach.
+  const found = await env.db.transaction(async (tx) => {
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
-    const linesResult = await tx.query(
-      `SELECT l.id, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on, l.amount_cents, l.reference_hash
-         FROM bank_statement_lines l WHERE ${openLine} ORDER BY l.booked_on, l.id`,
+    const lines = await tx.query(
+      `SELECT l.id, to_char(l.booked_on, 'YYYY-MM-DD') AS booked_on, l.amount_cents,
+              l.amount_cents::text AS amount_key, l.reference_hash
+         FROM bank_statement_lines l WHERE ${OPEN_LINE_SQL} ORDER BY l.booked_on, l.id`,
       [id],
     );
-    const ledgerResult = await tx.query(
-      `SELECT line_id, id, occurred_on, net_amount_cents, method, day_distance FROM (
-         SELECT l.id AS line_id, e.id, to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.net_amount_cents,
-                e.method, abs(e.occurred_on - l.booked_on) AS day_distance,
-                row_number() OVER (PARTITION BY l.id ORDER BY abs(e.occurred_on - l.booked_on), e.id) AS rn
-           FROM bank_statement_lines l
-           JOIN ledger_entry_net e ON e.school_year_id = $2
-            AND (CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END) = l.amount_cents
-            AND e.occurred_on BETWEEN l.booked_on - $3::int AND l.booked_on + $3::int
-            -- Wyciąg dotyczy rachunku: wpis gotówkowy (kasa) nie jest kandydatem, tak jak
-            -- saldo księgi (rachunek) i lista „wpisy bez pozycji wyciągu” liczą tylko method = 'bank'.
-            AND e.method = 'bank'
-          WHERE ${openLine}
-            -- #105: wpis powiązany w dowolnym uzgodnieniu roku nie jest już kandydatem.
-            AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
-                              JOIN bank_reconciliations r ON r.id = m.reconciliation_id
-                             WHERE r.school_year_id = $2 AND m.ledger_entry_id = e.id AND m.revoked_at IS NULL)
-            AND NOT EXISTS (SELECT 1 FROM bank_group_match_items_current gi
-                             WHERE gi.school_year_id = $2 AND gi.ledger_entry_id = e.id)
-         ) ranked WHERE rn <= $4
-        ORDER BY line_id, day_distance, id`,
-      [id, row.school_year_id, windowDays, candidateLimit],
-    );
-    // Wpłaty nieujęte jeszcze w księdze (wpłata ujęta w księdze jest proponowana jako wpis księgi).
-    const paymentsResult = await tx.query(
-      `SELECT line_id, id, received_on, reference, method, net_amount_cents, day_distance FROM (
-         SELECT l.id AS line_id, p.id, to_char(p.received_on, 'YYYY-MM-DD') AS received_on, p.reference,
-                p.method, p.amount_cents - COALESCE(c.corrected, 0) AS net_amount_cents,
-                abs(p.received_on - l.booked_on) AS day_distance,
-                row_number() OVER (PARTITION BY l.id ORDER BY abs(p.received_on - l.booked_on), p.id) AS rn
-           FROM bank_statement_lines l
-           JOIN payment_entries p ON p.school_year_id = $2 AND p.status IN ('recorded', 'unmatched')
-            AND p.method = 'bank'
-            AND p.received_on BETWEEN l.booked_on - $3::int AND l.booked_on + $3::int
-           LEFT JOIN (SELECT payment_entry_id, sum(amount_cents) AS corrected
-                        FROM payment_corrections GROUP BY payment_entry_id) c ON c.payment_entry_id = p.id
-          WHERE ${openLine} AND l.amount_cents > 0
-            AND p.amount_cents - COALESCE(c.corrected, 0) = l.amount_cents
-            AND NOT EXISTS (SELECT 1 FROM ledger_entries le WHERE le.payment_entry_id = p.id)
-            AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches m
-                              JOIN bank_reconciliations r ON r.id = m.reconciliation_id
-                             WHERE r.school_year_id = $2 AND m.payment_entry_id = p.id AND m.revoked_at IS NULL)
-            AND NOT EXISTS (SELECT 1 FROM bank_group_match_items_current gi
-                             WHERE gi.school_year_id = $2 AND gi.payment_entry_id = p.id)
-         ) ranked WHERE rn <= $4
-        ORDER BY line_id, day_distance, id`,
-      [id, row.school_year_id, windowDays, candidateLimit],
-    );
-    return [linesResult, ledgerResult, paymentsResult];
+    if (!lines.rows.length) return { lines, ledger: empty, payments: empty, structured: empty, householdLedger: empty, householdPayments: empty };
+    const ranked = [id, row.school_year_id, windowDays, candidateLimit];
+    const ledger = await tx.query(rankedCandidatesSql(eligibleLedgerSql), ranked);
+    const payments = await tx.query(rankedCandidatesSql(eligiblePaymentsSql, 'AND l.amount_cents > 0'), ranked);
+    // #115 pkt 2: pozycja, której tytuł to aktywna komunikacja strukturalna
+    // gospodarstwa z rejestru roku (payment_references, #83). Tylko wpływy.
+    const structured = lines.rows.some((line) => line.reference_hash && toSafeInteger(line.amount_cents) > 0)
+      ? await tx.query(STRUCTURED_REFERENCE_LINES_SQL, [id, row.school_year_id, row.reference_salt])
+      : empty;
+    if (!structured.rows.length) return { lines, ledger, payments, structured, householdLedger: empty, householdPayments: empty };
+    const paired = [id, row.school_year_id, windowDays, MAX_CANDIDATES,
+      structured.rows.map((r) => r.line_id), structured.rows.map((r) => r.household_id)];
+    const householdLedger = await tx.query(householdCandidatesSql(eligibleLedgerSql), paired);
+    const householdPayments = await tx.query(householdCandidatesSql(eligiblePaymentsSql), paired);
+    return { lines, ledger, payments, structured, householdLedger, householdPayments };
   });
 
-  const byLine = new Map(lines.rows.map((line) => [line.id, { line, candidates: [] }]));
-  for (const entry of ledger.rows) {
-    byLine.get(entry.line_id)?.candidates.push({
-      type: 'ledger_entry', id: entry.id, date: entry.occurred_on, method: entry.method,
-      amountCents: toSafeInteger(entry.net_amount_cents), dayDistance: toSafeInteger(entry.day_distance),
-      referenceMatch: false,
-    });
+  const byKey = (rows) => {
+    const map = new Map();
+    for (const entry of rows) {
+      const k = `${entry.key_on}|${entry.amount_key}`;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(entry);
+    }
+    return map;
+  };
+  const byLineId = (rows) => {
+    const map = new Map();
+    for (const entry of rows) {
+      if (!map.has(entry.line_id)) map.set(entry.line_id, []);
+      map.get(entry.line_id).push(entry);
+    }
+    return map;
+  };
+  const ledgerByKey = byKey(found.ledger.rows);
+  const paymentsByKey = byKey(found.payments.rows);
+  const householdLedger = byLineId(found.householdLedger.rows);
+  const householdPayments = byLineId(found.householdPayments.rows);
+  // Jedno gospodarstwo na pozycję: referencja jest unikalna w roku, a skrót
+  // całego tytułu nie może odpowiadać dwóm różnym referencjom. Gdyby jednak
+  // wskazywał więcej niż jedno (np. ręczny import), nie wskazujemy żadnego.
+  const structuredHousehold = new Map();
+  for (const [lineId, rows] of byLineId(found.structured.rows)) {
+    if (rows.length === 1) structuredHousehold.set(lineId, rows[0].household_id);
   }
+
   // Skrót tytułu liczony co najwyżej raz na wpłatę-kandydata w całym żądaniu
   // (#158), nawet gdy ta sama wpłata jest kandydatem dla wielu pozycji.
   const hashCache = new Map();
-  const cachedHashReference = (salt, value) => {
-    if (!hashCache.has(value)) hashCache.set(value, hashReference(salt, value));
+  const cachedHashReference = (value) => {
+    if (!hashCache.has(value)) hashCache.set(value, hashReference(row.reference_salt, value));
     return hashCache.get(value);
   };
-  for (const payment of payments.rows) {
-    const slot = byLine.get(payment.line_id);
-    if (!slot) continue;
-    let referenceMatch = false;
-    if (slot.line.reference_hash && payment.reference) {
-      referenceMatch = (await cachedHashReference(row.reference_salt, payment.reference)) === slot.line.reference_hash;
+
+  const suggestions = [];
+  for (const line of found.lines.rows) {
+    const lineKey = `${line.booked_on}|${line.amount_key}`;
+    const householdId = structuredHousehold.get(line.id) ?? null;
+    const seen = new Set();
+    const candidates = [];
+    const add = (type, entry) => {
+      const dedupe = `${type}:${entry.id}`;
+      if (seen.has(dedupe)) return null;
+      seen.add(dedupe);
+      const candidate = toCandidate(type, entry, {
+        structuredReferenceMatch: Boolean(householdId) && entry.household_id === householdId,
+      });
+      candidates.push(candidate);
+      return candidate;
+    };
+    for (const entry of [...(householdLedger.get(line.id) ?? []), ...(ledgerByKey.get(lineKey) ?? [])]) add('ledger_entry', entry);
+    for (const entry of [...(householdPayments.get(line.id) ?? []), ...(paymentsByKey.get(lineKey) ?? [])]) {
+      const candidate = add('payment_entry', entry);
+      if (candidate && line.reference_hash && entry.reference) {
+        candidate.referenceMatch = (await cachedHashReference(entry.reference)) === line.reference_hash;
+      }
     }
-    slot.candidates.push({
-      type: 'payment_entry', id: payment.id, date: payment.received_on, method: payment.method,
-      amountCents: toSafeInteger(payment.net_amount_cents), dayDistance: toSafeInteger(payment.day_distance),
-      referenceMatch,
+    if (householdId) {
+      // Propozycja nowej wpłaty z pozycji (POST …/lines/{lineId}/payment) dla
+      // gospodarstwa z rejestru referencji — wymaga kliknięcia skarbnika.
+      candidates.push({
+        type: 'household', id: householdId, householdId, date: null, method: 'bank',
+        amountCents: toSafeInteger(line.amount_cents), dayDistance: null,
+        referenceMatch: false, structuredReferenceMatch: true,
+      });
+    }
+    suggestions.push({
+      statementLineId: line.id,
+      bookedOn: line.booked_on,
+      amountCents: toSafeInteger(line.amount_cents),
+      candidates: candidates.sort(compareCandidates).slice(0, MAX_CANDIDATES),
     });
   }
-  const suggestions = [...byLine.values()].map(({ line, candidates }) => ({
-    statementLineId: line.id,
-    bookedOn: line.booked_on,
-    amountCents: toSafeInteger(line.amount_cents),
-    candidates: candidates
-      .sort((a, b) => Number(b.referenceMatch) - Number(a.referenceMatch) || a.dayDistance - b.dayDistance
-        || (a.type === b.type ? a.id.localeCompare(b.id) : a.type === 'ledger_entry' ? -1 : 1))
-      .slice(0, MAX_CANDIDATES),
-  }));
-  // Wyłącznie propozycje: zatwierdzenie wymaga osobnego POST …/matches.
+  // Wyłącznie propozycje: zatwierdzenie wymaga osobnego POST …/matches
+  // (albo …/lines/{lineId}/payment dla kandydata „household”).
   return json({ reconciliationId: id, windowDays, suggestions });
 }
 
