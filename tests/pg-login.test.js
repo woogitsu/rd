@@ -819,6 +819,52 @@ test('zmiana hasła wymaga obecnego hasła, wycofuje inne sesje i rotuje bieżą
   assert.equal((await auditRows('auth.password_changed')).filter((row) => row.actor_id === 'u-login-change').length, 1);
 });
 
+// #196: ponowienie zmiany/resetu hasła odrzuconym (polskim) hasłem — za każdym
+// razem 400, bez zapisu hasha, bez wycofania sesji i bez zużycia tokenu resetu.
+test('#196: ponowiona zmiana hasła odrzuconym hasłem z diakrytykami → 400 bez zapisu i bez wycofania sesji', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-weak196' });
+  const cookieA = cookieFrom(await login(account));
+  const cookieB = cookieFrom(await login(account));
+  const hashBefore = (await db.query("SELECT hash, set_at FROM user_passwords WHERE user_id = 'u-login-weak196'")).rows[0];
+  for (const weakPassword of ['Hasło123456789', 'Hasło123456789', 'Rada Rodziców 2026']) {
+    const weak = await post('/api/password/change', { currentPassword: account.password, newPassword: weakPassword }, { cookie: cookieA });
+    assert.equal(weak.status, 400, weakPassword);
+    assert.deepEqual(await weak.json(), { error: 'password_common' });
+    assert.equal(weak.headers.get('Set-Cookie'), null, 'bez rotacji sesji');
+  }
+  const hashAfter = (await db.query("SELECT hash, set_at FROM user_passwords WHERE user_id = 'u-login-weak196'")).rows[0];
+  assert.deepEqual(hashAfter, hashBefore, 'hash i set_at bez zmian');
+  assert.equal((await get('/api/session', cookieA)).status, 200, 'bieżąca sesja działa');
+  assert.equal((await get('/api/session', cookieB)).status, 200, 'inna sesja nie wycofana');
+  const revoked = await db.query("SELECT count(*)::int AS n FROM sessions WHERE user_id = 'u-login-weak196' AND revoked_at IS NOT NULL");
+  assert.equal(revoked.rows[0].n, 0);
+  assert.equal((await auditRows('auth.password_changed')).filter((row) => row.actor_id === 'u-login-weak196').length, 0);
+  assert.equal((await login(account)).status, 200, 'dotychczasowe hasło nadal działa');
+});
+
+test('#196: ponowiony reset hasła odrzuconym hasłem z diakrytykami nie zużywa tokenu', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-weakreset196' });
+  const userCookie = cookieFrom(await login(account));
+  const admin = await seedUserSession(db, { userId: 'u-login-admin196', roles: [{ role: 'admin' }], mfa: true });
+  const issued = await post(`/api/admin/users/${account.userId}/password-reset`, {}, { cookie: admin });
+  assert.equal(issued.status, 201);
+  const { token } = await issued.json();
+  for (const weakPassword of ['Wrzesień2026!', 'Wrzesień2026!']) {
+    const weak = await post('/api/password/reset', { token, newPassword: weakPassword });
+    assert.equal(weak.status, 400);
+    assert.deepEqual(await weak.json(), { error: 'password_common' });
+  }
+  const tokens = await db.query("SELECT used_at, revoked_at FROM password_reset_tokens WHERE user_id = 'u-login-weakreset196'");
+  assert.equal(tokens.rows.length, 1);
+  assert.equal(tokens.rows[0].used_at, null, 'token nie zużyty');
+  assert.equal(tokens.rows[0].revoked_at, null);
+  assert.equal((await get('/api/session', userCookie)).status, 200, 'sesje bez zmian');
+  // (Bez logowania w tym miejscu: udane logowanie celowo wycofuje tokeny resetu.)
+  const fresh = newPassword();
+  const done = await post('/api/password/reset', { token, newPassword: fresh });
+  assert.equal(done.status, 200, `ten sam token działa z dobrym hasłem: ${await done.clone().text()}`);
+});
+
 // #150 (krok w górę): rotacja przy zmianie hasła przenosi MOMENT potwierdzenia
 // MFA, nie ustawia now() — inaczej przejęta sesja ze starym MFA + znane hasło
 // dawały „świeże” MFA bez kodu (np. dla eksportu rocznego, nadania roli).

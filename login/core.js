@@ -54,7 +54,7 @@ const MESSAGES = {
   invalid_current_password: "Obecne hasło jest nieprawidłowe.",
   password_too_short: `Hasło musi mieć co najmniej ${PASSWORD_MIN} znaków.`,
   password_too_long: `Hasło może mieć najwyżej ${PASSWORD_MAX} znaków.`,
-  password_common: "To hasło jest zbyt popularne lub przewidywalne. Wybierz inne, np. kilka niezwiązanych słów.",
+  password_common: "To hasło jest zbyt łatwe do odgadnięcia (także w wersji z polskimi znakami). Wybierz inne, np. kilka niezwiązanych słów.",
   password_contains_email: "Hasło nie może zawierać adresu e-mail.",
   password_unchanged: "Nowe hasło musi być inne niż obecne.",
   password_mismatch: "Hasła nie są takie same.",
