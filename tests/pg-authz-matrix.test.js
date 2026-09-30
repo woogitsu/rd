@@ -58,6 +58,7 @@ import {
   campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaOnlyDenial, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
   pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const PAST = '2020-01-01T00:00:00Z';
 const fxAdmin = { userId: 'u-fx-admin', grants: [{ role: 'admin', classId: null, schoolYearId: null }], mfaVerified: true };
@@ -1311,15 +1312,17 @@ test('meta: wpisy macierzy są spójne (id, aktorzy, zakresy, statusy)', () => {
       const denies = typeof route.deny === 'function'
         ? ACTORS.flatMap((actor) => route.targets.flatMap((key) => [false, true].map((mfa) => route.deny(actor, key, mfa))))
         : [route.deny];
-      assert.ok(denies.every((status) => [400, 403, 404].includes(status)), `${route.id}: deny`);
+      assertEvery(denies, (status) => [400, 403, 404].includes(status), `${route.id}: deny`);
       if (route.mfaDeny !== undefined) assert.ok([403, 404].includes(route.mfaDeny), `${route.id}: mfaDeny`);
       for (const [actorKey, scopes] of Object.entries(route.allow)) {
         assert.ok(ACTOR_KEYS.includes(actorKey), `${route.id}: nieznany aktor ${actorKey}`);
-        assert.ok(scopes.every((scope) => route.targets.includes(scope)), `${route.id}: zakres spoza targets`);
+        // Pusta lista zakresów jest poprawna (aktor bez dostępu do żadnego celu).
+        assert.ok(Array.isArray(scopes), `${route.id}: zakresy ${actorKey} nie są listą`);
+        for (const scope of scopes) assert.ok(route.targets.includes(scope), `${route.id}: zakres spoza targets (${scope})`);
       }
       // Każda trasa chroniona musi mieć co najmniej jeden przypadek odmowy dla innego roku.
       if (route.targets.includes('Y2')) {
-        assert.ok(Object.values(route.allow).every((scopes) => !scopes.includes('Y2')), `${route.id}: Y2`);
+        assertEvery(Object.values(route.allow), (scopes) => !scopes.includes('Y2'), `${route.id}: Y2`);
       }
     } else {
       assert.ok(['authenticated', 'public'].includes(route.allow), route.id);

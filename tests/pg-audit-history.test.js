@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 import { AUDIT_ACTION_CATALOG, AUDIT_DOMAINS, auditActionDomain } from '../shared/audit-actions.js';
+import { assertEvery } from './helpers/assertions.js';
 
 async function call(env, path, { cookie, method = 'GET', body, key } = {}) {
   const headers = key ? { 'Idempotency-Key': key } : undefined;
@@ -75,12 +76,16 @@ test('nie-admin nie ma dostępu do historii obiektu ani filtra domenowego', asyn
 });
 
 test('filtr domenowy zwraca tylko akcje domeny i odrzuca nieznaną domenę', async () => {
-  const { env, admin, treasurer } = await setup();
+  const { db, env, admin, treasurer } = await setup();
   await recordPayment(env, treasurer, 'key-payment-history-0003');
+  // #214: zdarzenie z listy domyślnej (AUDIT_ACTIONS) — bez niego asercja o braku
+  // akcji payment.* w liście domyślnej przechodziła na pustej liście.
+  await db.query(`INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
+    VALUES ('ae-default-1', 'u-admin', 'user.created', 'user', 'u-treasurer', '{}'::jsonb)`);
   const finance = await call(env, '/api/admin/audit?domain=finance', { cookie: admin });
   assert.equal(finance.status, 200);
   assert.ok(finance.data.events.length > 0);
-  assert.ok(finance.data.events.every((e) => e.domain === 'finance' && auditActionDomain(e.action) === 'finance'));
+  assertEvery(finance.data.events, (e) => e.domain === 'finance' && auditActionDomain(e.action) === 'finance');
 
   const bad = await call(env, '/api/admin/audit?domain=nope', { cookie: admin });
   assert.equal(bad.status, 400);
@@ -88,7 +93,9 @@ test('filtr domenowy zwraca tylko akcje domeny i odrzuca nieznaną domenę', asy
 
   // Domyślnie (bez domain) — zachowanie sprzed #181: tylko akcje AUDIT_ACTIONS.
   const defaultList = await call(env, '/api/admin/audit', { cookie: admin });
-  assert.ok(defaultList.data.events.every((e) => !e.action.startsWith('payment.')));
+  assert.equal(defaultList.status, 200);
+  assert.ok(defaultList.data.events.some((e) => e.action === 'user.created'), 'lista domyślna zawiera akcje AUDIT_ACTIONS');
+  assertEvery(defaultList.data.events, (e) => !e.action.startsWith('payment.'));
 });
 
 test('odczyt listy z filtrem sam zapisuje audit.viewed z domeną jako entityId, bez parametrów zapytania', async () => {
@@ -107,7 +114,7 @@ test('filtr actorId i schoolYearId zawężają wynik', async () => {
   await recordPayment(env, treasurer, 'key-payment-history-0004');
   const byActor = await call(env, '/api/admin/audit?domain=finance&actorId=u-treasurer', { cookie: admin });
   assert.equal(byActor.status, 200);
-  assert.ok(byActor.data.events.every((e) => e.actorId === 'u-treasurer'));
+  assertEvery(byActor.data.events, (e) => e.actorId === 'u-treasurer');
   await call(env, '/api/admin/grants', {
     method: 'POST', cookie: admin, body: { userId: 'u-treasurer', role: 'board', schoolYearId: 'y-1' },
   });

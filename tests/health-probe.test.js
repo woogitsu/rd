@@ -13,6 +13,7 @@ import pg from 'pg';
 import { createPgDatabase } from '../src/db.js';
 import { checkReadiness } from '../src/health.js';
 import { createLogger } from '../src/log.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const logger = createLogger({ level: 'error', sink: () => {} });
 const noMigrations = { migrations: async () => [] };
@@ -166,7 +167,7 @@ test('PostgreSQL: wolne zapytanie sondy znika z pg_stat_activity po budżecie, p
     const started = Date.now();
     const results = await Promise.all(Array.from({ length: 50 }, () => db.probe(async (q) => { await q.query('SELECT pg_sleep(10)'); }, { timeoutMs: 300 }).then(() => 'ok', (error) => error.code)));
     assert.ok(Date.now() - started < 2000);
-    assert.ok(results.every((code) => ['timeout', 'probe_busy'].includes(code)), JSON.stringify(results));
+    assertEvery(results, (code) => ['timeout', 'probe_busy'].includes(code), JSON.stringify(results));
     await sleep(300); // czas na anulowanie przez serwer
     const active = await watcher.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name = 'rd_probe_test' AND state <> 'idle' AND query LIKE '%pg_sleep%'");
     assert.equal(active.rows[0].n, 0);

@@ -18,6 +18,7 @@
     "dev:panel": "vite panel",
     "build:panel": "vite build panel --outDir ../dist/panel --base ./ --emptyOutDir",
     "test": "node --test --test-concurrency=1 --import ./tests/setup.js tests/*.test.js",
+    "test:reverse": "node --test --test-concurrency=1 --import ./tests/setup.js --import ./tests/helpers/reverse-order.js",
     "smoke": "node scripts/smoke-postgres.js",
     "smoke:remote": "node scripts/smoke-remote.js",
     "load:test": "node scripts/load-test.js",

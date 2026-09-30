@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { acceptInvitation } from '../src/pg/auth.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 // Wyłącznie dane syntetyczne (domeny .invalid).
 
@@ -280,7 +281,7 @@ test('disabling a user revokes all their sessions; enable restores login ability
     assert.equal(disabled.data.revokedSessions, 2);
     for (const cookie of [first, second]) assert.equal((await call(env, '/api/session', { cookie })).status, 401);
     const sessions = (await db.query("SELECT revoked_at, revoked_reason FROM sessions WHERE user_id = 'u-victim'")).rows;
-    assert.ok(sessions.every((row) => row.revoked_at && row.revoked_reason === 'user_disabled'));
+    assertEvery(sessions, (row) => row.revoked_at && row.revoked_reason === 'user_disabled');
 
     const repeat = await post(env, '/api/admin/users/u-victim/disable', admin);
     assert.equal(repeat.data.changed, false);

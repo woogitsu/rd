@@ -5,6 +5,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-list';
 const RECIPIENTS = 450;
@@ -140,7 +141,7 @@ test('lista „do sprawdzenia”: >200 wierszy — kursor bez luk, każdy odczyt
   const { rows } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.attention_list.viewed'");
   assert.ok(rows[0].n >= 3);
   // Adres zostaje zamaskowany także na kolejnych stronach.
-  assert.ok(first.data.rows.every((row) => row.email.includes('*') || !row.email.includes('@example.invalid') || row.email.length > 0));
+  assertEvery(first.data.rows, (row) => /^g\*\*\*@example\.invalid$/.test(row.email), 'adres zamaskowany (pierwsza litera + ***)');
 });
 
 test('lista „do sprawdzenia”: kursor innej kampanii → 400, zły limit → 400', async () => {
@@ -206,7 +207,7 @@ test('rejestr żądań osób: nowy wpis między stronami nie powtarza wierszy; r
   );
   const second = await call(`/api/admin/data-requests?limit=100&cursor=${first.data.nextCursor}`, admin);
   const firstIds = new Set(first.data.requests.map((item) => item.id));
-  assert.ok(second.data.requests.every((item) => !firstIds.has(item.id)));
+  assertEvery(second.data.requests, (item) => !firstIds.has(item.id));
   assert.equal((await call('/api/admin/data-requests', board)).status, 403);
   assert.equal((await call('/api/admin/data-requests', null)).status, 401);
 });

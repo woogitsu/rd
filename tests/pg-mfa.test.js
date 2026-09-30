@@ -7,6 +7,7 @@ import {
   MFA_POLICY, totp, totpMethod,
 } from '../src/pg/mfa.js';
 import { createTestDb, request, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const KEY = randomBytes(32).toString('base64');
 
@@ -352,10 +353,10 @@ test('revoke-all revokes only the caller\'s sessions, with audit', async () => w
   for (const cookie of [a1, a2, a3]) assert.equal((await sessionState(env, cookie)).status, 401);
   assert.equal((await sessionState(env, b1)).mfaVerified, false);
   const { rows } = await db.query("SELECT revoked_reason FROM sessions WHERE user_id = 'u-ra'");
-  assert.ok(rows.every((r) => r.revoked_reason === 'user_revoke_all'));
+  assertEvery(rows, (r) => r.revoked_reason === 'user_revoke_all');
   const events = await auditActions(db, 'session.revoked', 'u-ra');
   assert.equal(events.length, 3);
-  assert.ok(events.every((e) => e.metadata_json.reason === 'user_revoke_all'));
+  assertEvery(events, (e) => e.metadata_json.reason === 'user_revoke_all');
 
   // Ponowienie starą sesją: 401, bez nowych zdarzeń.
   assert.equal((await handlePgRequest(post('/api/sessions/revoke-all', a1), env)).status, 401);

@@ -13,6 +13,7 @@ import { newsItems } from '../site/core.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { resetUploadSlotsForTests, tryAcquireUploadSlot } from '../src/documents.js';
 import { createTestDb, lifecycleActors, request, seedClass, seedDocument, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
 const board1 = { userId: 'board1', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
@@ -585,7 +586,7 @@ test('plik zdjęcia: EXIF/GPS usunięte, orientacja uwzględniona, publiczny odc
     // Osobny prefiks od dokumentów (docs/) — nie miesza bucketu galerii z
     // bucketem dokumentów finansowych/zarządu/klas.
     const { rows: fileRows } = await db.query('SELECT object_key FROM news_photo_files WHERE photo_id = $1', [photo.id]);
-    assert.ok(fileRows.every((r) => r.object_key.startsWith('photos/')));
+    assertEvery(fileRows, (r) => r.object_key.startsWith('photos/'));
 
     // Podwójne kliknięcie: ten sam klucz idempotencji i te same bajty -> powtórka.
     const replay = await handlePgRequest(request(`/api/news-photos/${photo.id}/file`, {
@@ -884,7 +885,7 @@ test('plik zdjęcia (#96): publikowane warianty nie mają segmentów APP1/EXIF/X
     // W magazynie są wyłącznie obiekty wariantów pod photos/; oryginał nie jest zapisany.
     const keys = storage.keys();
     assert.equal(keys.length, 2);
-    assert.ok(keys.every((k) => k.startsWith('photos/')));
+    assertEvery(keys, (k) => k.startsWith('photos/'));
     for (const k of keys) {
       const stored = await storage.getObject(k);
       assert.ok(!Buffer.from(stored.body ?? stored.bytes ?? stored).includes('GPS-SYNTETYCZNY'));

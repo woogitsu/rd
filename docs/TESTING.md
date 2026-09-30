@@ -128,6 +128,31 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | druk | Korekty | tests/pg-print.test.js | kwoty netto tylko dla roli finansowej z MFA |
 | eksport | Ponowienie | tests/pg-export-audit-year.test.js | ponowny eksport daje ten sam wynik |
 
+## Jakość asercji i izolacji (#214)
+
+`tests/test-quality-lint.test.js` przegląda wszystkie pliki `tests/*.test.js`.
+Każda reguła ma kontrolę pozytywną (kod, który reguła musi wykryć):
+
+- `assert.ok(x.every(...))` jest zakazane w każdym pliku, bo przechodzi na
+  pustej kolekcji. Używaj `assertEvery` z `tests/helpers/assertions.js`
+  (wymaga niepustej kolekcji) albo kontroli długości w tej samej asercji.
+- Obejście triggerów (`ALTER TABLE … DISABLE TRIGGER`, `SET
+  session_replication_role = replica`) jest dozwolone tylko w plikach z
+  `TRIGGER_BYPASS_ALLOWED`, każdy z uzasadnieniem. Do cofania czasu służy
+  wstrzykiwany zegar (`now`), nie wyłączony strażnik. Dwa wpisy
+  (`pg-bootstrap-admin`, `pg-guardian-updates`) czekają na taki zegar w kodzie
+  aplikacji.
+- Negatywna asercja na krótkim podciągu cyfr (`!meta.includes('470')`) jest
+  zakazana. Taki podciąg losowo trafia w UUID lub skrót w metadanych (#548).
+  Szukaj całej wartości (`SYNTHETIC_PHONE_IN_TEXT`) albo liczby jako osobnego
+  tokenu (`/(?<![\w-])2500(?![\w-])/`).
+
+Node 22 nie ma `--test-shuffle`. Niezależność testów od kolejności sprawdza
+ręczna permutacja: `npm run test:reverse -- tests/<plik>.test.js` uruchamia
+plik z odwróconą kolejnością testów i zestawów na każdym poziomie
+(`tests/helpers/reverse-order.js`). `tests/pg-families.test.js` przechodzi w
+obu kolejnościach.
+
 ## Testy na prawdziwym PostgreSQL (#208)
 
 PGlite ma jedno połączenie i wykonuje transakcje po kolei, więc **nie nadaje się do

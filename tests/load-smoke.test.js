@@ -9,6 +9,7 @@ import {
   checkThresholds, DEFAULT_THRESHOLDS, loadTest, parseArgs, percentile, remoteActorsFromEnv, UsageError,
   validateRemoteTarget,
 } from '../scripts/load-test.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const script = fileURLToPath(new URL('../scripts/load-test.js', import.meta.url));
 const stagingEnv = { LOAD_TEST_ALLOWED_HOSTS: 'rd-staging.example.test, other.example.test', APP_ENV: 'staging' };
@@ -90,5 +91,5 @@ test('smoke load: 5 virtual users for 3 s on PGlite with 1000/2000/50 synthetic 
   assert.ok(report.byOperation['GET /api/session']?.requests > 0);
   assert.ok(report.byOperation['GET /api/public/events']?.requests > 0);
   // Żadna odpowiedź 5xx ani błąd sieci.
-  assert.ok(Object.keys(report.statusCounts).every((status) => /^[234]\d\d$/.test(status)), JSON.stringify(report.statusCounts));
+  assertEvery(Object.keys(report.statusCounts), (status) => /^[234]\d\d$/.test(status), JSON.stringify(report.statusCounts));
 });

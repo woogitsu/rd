@@ -8,6 +8,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { computeSnapshot } from '../src/pg/routes/email.js';
 import { runEmailBatch } from '../src/email/worker.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { SYNTHETIC_PHONE_IN_TEXT } from './helpers/assertions.js';
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error('network_forbidden_in_tests'); };
@@ -260,7 +261,7 @@ test('#152 członkostwo w gospodarstwie: powód z e-mailem odrzucony, z telefone
     assert.equal((await t.db.query('SELECT ends_on FROM student_households WHERE id = $1', [primary])).rows[0].ends_on, null);
     assert.equal((await endCall({ endsOn: '2020-01-01', reason: 'Zmiana gospodarstwa (syntetyczna)' })).status, 200);
     const audit = JSON.stringify((await t.db.query(`SELECT metadata_json FROM audit_events WHERE action IN ('student_household.added','student_household.ended')`)).rows);
-    assert.ok(audit.includes('piiConfirmed') && !audit.includes('470') && !audit.includes('example.invalid'));
+    assert.ok(audit.includes('piiConfirmed') && !SYNTHETIC_PHONE_IN_TEXT.test(audit) && !audit.includes('example.invalid'));
   } finally { await t.db.close(); }
 });
 
@@ -284,7 +285,7 @@ test('#152 zakończenie relacji opiekun–dziecko: powód z e-mailem/IBAN odrzuc
     const ok = await call({ reason: 'Kontakt +32 470 12 34 56', confirmPersonalData: true });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
     const audit = JSON.stringify((await t.db.query(`SELECT metadata_json FROM audit_events WHERE action = 'student_guardian.ended'`)).rows);
-    assert.ok(audit.includes('piiConfirmed') && !audit.includes('470'));
+    assert.ok(audit.includes('piiConfirmed') && !SYNTHETIC_PHONE_IN_TEXT.test(audit));
   } finally { await t.db.close(); }
 });
 

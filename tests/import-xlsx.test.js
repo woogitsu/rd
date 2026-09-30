@@ -9,6 +9,7 @@ import { unzipSync, zipSync, strToU8 } from 'fflate';
 import readXlsxFileNode, { readSheet } from 'read-excel-file/node';
 import { selectSheet, validateRows, guessMapping } from '../import/core.js';
 import { readXlsxRows, readXlsxSheets, repackXlsxStored, XlsxReadError } from '../import/xlsx.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const WORKER_THRESHOLD = 524288; // fflate: su < 524288 → inflateSync, inaczej worker
 const HEADER = ['Uczeń', 'Klasa', 'Opiekun 1', 'E-mail 1', 'Opiekun 2', 'E-mail 2', 'ID rodziny', 'Uwagi'];
@@ -107,7 +108,7 @@ for (const [count, sharedStrings] of [[500, false], [1500, false], [3000, true],
     const original = buildXlsx(rows, { sharedStrings });
     const stored = repackXlsxStored(original);
     const storedEntries = zipEntries(stored);
-    assert.ok(storedEntries.every((entry) => entry.method === 0), 'wszystkie pozycje bez kompresji');
+    assertEvery(storedEntries, (entry) => entry.method === 0, 'wszystkie pozycje bez kompresji');
     assert.ok(!storedEntries.some(wouldStartWorker));
     assert.ok(!storedEntries.some((entry) => entry.name.endsWith('.png')), 'pomija pliki spoza XML');
     if (count >= 1500) {
@@ -131,7 +132,7 @@ test('sharedStrings.xml powyżej progu przy małym sheet1.xml', async () => {
   const sheet = entries.find((entry) => entry.name === 'xl/worksheets/sheet1.xml');
   const strings = entries.find((entry) => entry.name === 'xl/sharedStrings.xml');
   assert.ok(sheet.size < WORKER_THRESHOLD && strings.size >= WORKER_THRESHOLD);
-  assert.ok(zipEntries(repackXlsxStored(original)).every((entry) => entry.method === 0));
+  assertEvery(zipEntries(repackXlsxStored(original)), (entry) => entry.method === 0);
   const matrix = await readXlsxRows(original);
   assert.equal(matrix.length, 41);
   assert.match(matrix[1][7], /^uwaga 0 x+$/);

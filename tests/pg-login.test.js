@@ -14,6 +14,7 @@ import {
 import { emailDelayMs, LOGIN_POLICY, maskEmail, scopeHash } from '../src/pg/login.js';
 import { freshMfaForbiddenCode, loadAuthorizationContext } from '../src/pg/authorization.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const KEY = randomBytes(32).toString('base64');
 // Najniższy dozwolony koszt scrypt (N = 2^15) — szybsze testy; domyślnie 2^17.
@@ -225,7 +226,7 @@ test('limit prób: 5 błędów pary (e-mail, IP) i 20 na IP → 429 z Retry-Afte
     ipStatuses.push((await post('/api/login', { email: `ip-${attempt}@example.invalid`, password: 'y'.repeat(12) }, { ip })).status);
   }
   assert.equal(ipStatuses.at(-1), 429);
-  assert.ok(ipStatuses.slice(0, -1).every((status) => status === 401));
+  assertEvery(ipStatuses.slice(0, -1), (status) => status === 401);
   const fromIp = await login(account, { ip });
   assert.equal(fromIp.status, 429);
   assert.equal((await login(account, { ip: nextIp() })).status, 200, 'inny adres IP nie jest blokowany');
@@ -234,7 +235,7 @@ test('limit prób: 5 błędów pary (e-mail, IP) i 20 na IP → 429 z Retry-Afte
   const all = await db.query('SELECT scope_type, scope_hash FROM login_rate_limits');
   const dump = JSON.stringify(all.rows);
   assert.ok(!dump.includes('@') && !dump.includes(ip));
-  assert.ok(all.rows.every((row) => /^[0-9a-f]{64}$/.test(row.scope_hash)));
+  assertEvery(all.rows, (row) => /^[0-9a-f]{64}$/.test(row.scope_hash));
 });
 
 // --- #126: blokada nie zależy od samej znajomości adresu e-mail ---------------------------
@@ -245,7 +246,7 @@ test('#126: 5 błędów z IP A nie blokuje właściciela z IP B (dalej mfa_requi
   const statuses = [];
   for (let i = 0; i < 12; i += 1) statuses.push((await login(account, { ip: attacker, password: `atak ${i} zle haslo` })).status);
   assert.deepEqual(statuses.slice(0, 5), [401, 401, 401, 401, 429]);
-  assert.ok(statuses.slice(4).every((status) => status === 429));
+  assertEvery(statuses.slice(4), (status) => status === 429);
   const owner = await login(account, { ip: nextIp() });
   assert.equal(owner.status, 200, 'właściciel z innego IP loguje się mimo ataku na jego adres');
   const data = await owner.json();
@@ -293,7 +294,7 @@ test('#126: opóźnienie samego e-maila zaczyna się od progu i jest konfigurowa
   } finally {
     globalThis.setTimeout = realSetTimeout;
   }
-  assert.ok(early.every((entry) => entry.status === 401 && entry.delays.length === 0), JSON.stringify(early));
+  assertEvery(early, (entry) => entry.status === 401 && entry.delays.length === 0, JSON.stringify(early));
   assert.equal(late.status, 401, 'opóźnienie nie zamienia się w blokadę');
   assert.deepEqual(late.delays, [MARK], `próba nr ${LOGIN_POLICY.emailDelayAfter} czeka dokładnie LOGIN_EMAIL_DELAY_MS`);
   assert.equal(emailDelayMs(LOGIN_POLICY.emailDelayAfter - 1, {}), 0);
@@ -317,7 +318,7 @@ test('#126: w bazie limitów tylko skróty, także dla pary', async () => {
   await login(account, { ip, password: 'skrot zle haslo' });
   const { rows } = await db.query("SELECT scope_type, scope_hash FROM login_rate_limits WHERE scope_type = 'pair'");
   assert.ok(rows.length >= 1);
-  assert.ok(rows.every((row) => /^[0-9a-f]{64}$/.test(row.scope_hash)));
+  assertEvery(rows, (row) => /^[0-9a-f]{64}$/.test(row.scope_hash));
   assert.ok(!JSON.stringify(rows).includes(ip));
 });
 
@@ -342,7 +343,7 @@ test('#186: 30 równoległych błędnych haseł — najwyżej 5 sprawdzeń, resz
   const ip = nextIp();
   const responses = await Promise.all(Array.from({ length: 30 }, (_, i) => login(account, { ip, password: `zle haslo rownolegle ${i}` })));
   const statuses = responses.map((response) => response.status);
-  assert.ok(statuses.every((status) => status === 401 || status === 429), statuses.join(','));
+  assertEvery(statuses, (status) => status === 401 || status === 429, statuses.join(','));
   assert.ok(await failedFor('auth.login_failed', account.userId) <= LOGIN_POLICY.pairMaxFailures,
     `sprawdzono ${await failedFor('auth.login_failed', account.userId)} haseł przy limicie ${LOGIN_POLICY.pairMaxFailures}`);
   assert.equal(statuses.filter((status) => status === 401).length <= LOGIN_POLICY.pairMaxFailures - 1, true);
@@ -424,7 +425,7 @@ test('#186: limit IP przy równoległych błędnych tokenach resetu i zaproszeni
   const tokens = Array.from({ length: 30 }, () => randomBytes(32).toString('base64url'));
   const statuses = (await Promise.all(tokens.map((token) => post('/api/password/reset', { token, newPassword: newPassword() }, { ip }))))
     .map((response) => response.status);
-  assert.ok(statuses.every((status) => status === 400 || status === 429), statuses.join(','));
+  assertEvery(statuses, (status) => status === 400 || status === 429, statuses.join(','));
   assert.ok((await auditRows('auth.password_reset_failed')).length - before <= LOGIN_POLICY.ipMaxFailures);
   assert.equal((await limitRow('ip', ip)).locked, true);
   const accept = await post('/api/invitations/accept', { token: tokens[0], password: newPassword() }, { ip });
@@ -438,7 +439,7 @@ test('#186: równoległe błędne hasła przy zmianie hasła i przyjęciu zapros
   const change = (await Promise.all(Array.from({ length: 12 }, (_, i) => post('/api/password/change',
     { currentPassword: `zle obecne haslo ${i}`, newPassword: newPassword() }, { cookie, ip: changeIp }))))
     .map((response) => response.status);
-  assert.ok(change.every((status) => status === 400 || status === 429), change.join(','));
+  assertEvery(change, (status) => status === 400 || status === 429, change.join(','));
   assert.ok(await failedFor('auth.password_change_failed', account.userId) <= LOGIN_POLICY.pairMaxFailures);
 
   const invited = await seedPasswordUser({ userId: 'u-login-parinv' });
@@ -447,7 +448,7 @@ test('#186: równoległe błędne hasła przy zmianie hasła i przyjęciu zapros
   const accept = (await Promise.all(Array.from({ length: 12 }, (_, i) => post('/api/invitations/accept',
     { token: secret, password: `zle haslo zaproszenia ${i}` }, { ip: acceptIp }))))
     .map((response) => response.status);
-  assert.ok(accept.every((status) => status === 401 || status === 429), accept.join(','));
+  assertEvery(accept, (status) => status === 401 || status === 429, accept.join(','));
   assert.ok(await failedFor('auth.invitation_accept_failed', invited.userId) <= LOGIN_POLICY.pairMaxFailures);
 });
 
@@ -473,7 +474,7 @@ test('#186: sprawdzenie limitu i rezerwacja próby w jednej transakcji z FOR UPD
   const firstUser = log.findIndex((entry) => /FROM users u LEFT JOIN user_passwords/.test(entry.sql));
   assert.ok(log.indexOf(increment) < firstUser, 'rezerwacja przed wyszukaniem konta i scrypt');
   // Żadne zapytanie nie zeruje trwającej blokady.
-  assert.ok(limitQueries.every((entry) => !/locked_until = NULL/.test(entry.sql) || /locked_until\s*<=\s*now\(\)|locked_until > now\(\) THEN/.test(entry.sql)));
+  assertEvery(limitQueries, (entry) => !/locked_until = NULL/.test(entry.sql) || /locked_until\s*<=\s*now\(\)|locked_until > now\(\) THEN/.test(entry.sql));
 });
 
 test('konto wyłączone i konto bez hasła: ten sam błąd invalid_credentials', async () => {
@@ -740,7 +741,7 @@ test('#164: podgląd — każda odmowa to ten sam 400 invalid_invitation, audyt 
   }
   const rows = (await auditRows('auth.invitation_preview_failed')).slice(before);
   assert.equal(rows.length, cases.length, 'każda odmowa zapisana w audycie');
-  assert.ok(rows.every((row) => row.actor_id === null && !JSON.stringify(row.metadata_json).includes('@')), 'bez aktora, adresu i tokenu');
+  assertEvery(rows, (row) => row.actor_id === null && !JSON.stringify(row.metadata_json).includes('@'), 'bez aktora, adresu i tokenu');
   // Ten sam zakres IP co przy accept: po serii błędów podgląd i accept zwracają 429.
   const flood = [];
   for (let i = 0; i < LOGIN_POLICY.ipMaxFailures + 2; i += 1) {
@@ -1205,7 +1206,7 @@ test('#203: pełna kolejka scrypt daje 503 login_busy z Retry-After, bez wpływu
       "SELECT scope_type, failure_count FROM login_rate_limits WHERE scope_hash = ANY($1::text[])",
       [[scopeHash('pair', `${account.email}|${ip}`), scopeHash('email', account.email)]],
     )).rows;
-    assert.ok(pairAndEmail.every((r) => r.failure_count === 0), JSON.stringify(pairAndEmail));
+    assertEvery(pairAndEmail, (r) => r.failure_count === 0, JSON.stringify(pairAndEmail));
     assert.equal((await auditRows('auth.login_failed')).filter((row) => JSON.stringify(row).includes(ip)).length, 0);
   } finally {
     release();
@@ -1251,7 +1252,7 @@ test('#203: zalew logowań z jednego IP nie zajmuje kolejki innym adresom (limit
     assert.equal(response.status, 200);
     // Odrzucone żądania nie zostawiły śladu w liczniku prób ani w audycie.
     const counts = (await db.query("SELECT failure_count FROM login_rate_limits WHERE scope_type = 'ip' AND scope_hash = $1", [scopeHash('ip', floodIp)])).rows;
-    assert.ok(counts.every((row) => row.failure_count === 0));
+    assertEvery(counts, (row) => row.failure_count === 0);
     assert.equal((await auditRows('auth.login_failed')).filter((row) => JSON.stringify(row).includes(floodIp)).length, 0);
   } finally {
     release();
@@ -1295,7 +1296,7 @@ test('#203: aktywacja zaproszenia przy pełnej kolejce scrypt — 503 login_busy
   const { rows: invitation } = await db.query('SELECT accepted_at FROM invitations WHERE lower(email) = $1', [email]);
   assert.equal(invitation[0].accepted_at, null, 'zaproszenie nadal ważne');
   const counts = (await db.query("SELECT failure_count FROM login_rate_limits WHERE scope_type = 'ip' AND scope_hash = $1", [scopeHash('ip', ip)])).rows;
-  assert.ok(counts.every((row) => row.failure_count === 0), 'login_busy nie liczy się jako próba');
+  assertEvery(counts, (row) => row.failure_count === 0, 'login_busy nie liczy się jako próba');
   const retried = await post('/api/invitations/accept', body, { ip });
   assert.equal(retried.status, 201);
   assert.equal((await retried.json()).created, true);

@@ -8,6 +8,7 @@ import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { cancelTask, createDraft, createTask } from '../src/pg/events.js';
 import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { SYNTHETIC_PHONE_IN_TEXT } from './helpers/assertions.js';
 
 const BASE = 'https://rd.example';
 const EMAIL_TEXT = 'Zwrot dla rodzic@example.invalid za wycieczkę';
@@ -65,7 +66,7 @@ test('#152 payments: tytuł wpłaty z IBAN jest odrzucany bez obejścia, z telef
     assert.equal(iban.status, 422);
     assert.equal(iban.body.error, 'personal_data_forbidden');
     assert.deepEqual(iban.body.categories, ['iban']);
-    assert.ok(!JSON.stringify(iban.body).includes('5390'), 'odpowiedź nie zawiera fragmentu tekstu');
+    assert.ok(!/5390\s?0754\s?7034/.test(JSON.stringify(iban.body)), 'odpowiedź nie zawiera fragmentu tekstu');
     assert.equal(await backend.count('payment_entries'), 2);
 
     const blocked = await post(backend, backend.treasurer, '/api/payments', payment(PHONE_TEXT), 'pii-pay-0002');
@@ -83,7 +84,7 @@ test('#152 payments: tytuł wpłaty z IBAN jest odrzucany bez obejścia, z telef
     const metadata = await backend.auditMetadata('payment.created');
     assert.equal(metadata.piiConfirmed, true);
     assert.deepEqual(metadata.piiCategories, ['phone']);
-    assert.ok(!JSON.stringify(metadata).includes('470'));
+    assert.ok(!SYNTHETIC_PHONE_IN_TEXT.test(JSON.stringify(metadata)));
   } finally { await backend.close(); }
 });
 

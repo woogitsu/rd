@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createTestDb, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession, TEST_ORIGIN } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-144l';
 
@@ -224,7 +225,7 @@ test('wpłata ujęta dokładnie raz: ponowne powiązanie i bezpośredni INSERT s
         post(second, `/api/ledger/${plainEntry}/corrections`, { amountCents: 3000, reason: 'Korekta równoległa' }),
         post(second, `/api/ledger/${plainEntry}/replacement`, replBody({ amountCents: 8000, categoryId: 'cat-in-b' })),
       ]);
-      assert.ok(race.every((r) => [201, 409].includes(r.status)), JSON.stringify(race.map((r) => r.body)));
+      assertEvery(race, (r) => [201, 409].includes(r.status), JSON.stringify(race.map((r) => r.body)));
       const sum = Number((await second.db.query(
         'SELECT COALESCE(sum(amount_cents), 0) AS s FROM ledger_corrections WHERE ledger_entry_id = $1', [plainEntry])).rows[0].s);
       assert.ok(sum <= 8000, `suma korekt ${sum} przekracza kwotę wpisu`);

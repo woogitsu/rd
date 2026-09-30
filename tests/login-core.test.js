@@ -13,6 +13,7 @@ import {
   validateEmail, validateNewPassword,
 } from '../login/core.js';
 import { generateRecoveryCodes, totpMethod } from '../src/pg/mfa.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const html = read('login/index.html');
@@ -95,7 +96,7 @@ test('kod QR: URI otpauth z serwera, macierz zgodna z normą, ścieżka SVG z ma
   const size = matrix.length;
   assert.equal((size - 17) % 4, 0, 'rozmiar = 4 × wersja + 17');
   assert.ok(size >= 41, `URI (${uri.length} znaków) wymaga co najmniej wersji 6`);
-  assert.ok(matrix.every((row) => row.length === size));
+  assertEvery(matrix, (row) => row.length === size);
   // Wzorce wyszukiwania w trzech narożnikach: ciemna ramka 7×7 i ciemny środek 3×3.
   for (const [top, left] of [[0, 0], [0, size - 7], [size - 7, 0]]) {
     for (let i = 0; i < 7; i += 1) {
@@ -122,7 +123,7 @@ test('komunikaty błędów po polsku, bez rozróżnienia nieznanego konta i złe
   assert.match(errorMessage(undefined, 429), /Zbyt wiele/);
   assert.match(errorMessage('mfa_enrollment_required', 403), /aplikację uwierzytelniającą/);
   assert.match(errorMessage('nieznany_kod', 503), /niedostępna/);
-  assert.ok(startPanels([{ role: 'admin' }]).every((panel) => panel.href.startsWith('/') && panel.href.endsWith('/')));
+  assertEvery(startPanels([{ role: 'admin' }]), (panel) => panel.href.startsWith('/') && panel.href.endsWith('/'));
   assert.equal(PUBLIC_PANEL.href, '/site/');
 });
 
@@ -339,7 +340,7 @@ test('ekran startowy: lista paneli z visiblePanels (przydziały), nie stała lis
 
 test('ekran startowy: wszystkie panele z shared/shell.js mają opis, a suma ról pokrywa każdy panel', () => {
   assert.deepEqual(Object.keys(PANEL_HINTS).sort(), shellPanels.map((panel) => panel.id).sort());
-  assert.ok(shellPanels.every((panel) => PANEL_HINTS[panel.id]));
+  assertEvery(shellPanels, (panel) => PANEL_HINTS[panel.id]);
   const everyRole = [...new Set(shellPanels.flatMap((panel) => panel.roles))].map((role) => ({ role }));
   const hrefs = startPanels(everyRole).map((panel) => panel.href);
   for (const panel of shellPanels) assert.ok(hrefs.includes(panel.href), panel.href);

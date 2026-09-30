@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildHouseholds, parseInputRows, renderCardsHtml } from '../print/core.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-test';
 const CONFIG = { councilName: 'Rada Rodziców', schoolYear: '2026/2027', contact: 'kontakt w sekretariacie' };
@@ -101,7 +102,7 @@ test('przedstawiciel widzi tylko swoją klasę i bez informacji o wpłatach (tak
       { householdId: 'H-1', firstName: 'Ala', lastName: 'Testowa', className: '1A' },
       { householdId: 'H-2', firstName: 'Ewa', lastName: 'Przykładowa', className: '1A' },
     ]);
-    assert.ok(result.body.rows.every((row) => !Object.hasOwn(row, 'recordedNetCents')));
+    assertEvery(result.body.rows, (row) => !Object.hasOwn(row, 'recordedNetCents'));
     assert.doesNotMatch(result.text, /Olek|2B|Archiwalny|recordedNet/);
   } finally {
     await db.close();
@@ -205,7 +206,7 @@ test('odpowiedź jest zgodna z wejściem print/core.js (parseInputRows → build
     // Bez informacji o wpłatach status jest „nie podano”, a nie „brak wpisu”.
     const rep = await get(`schoolYearId=${YEAR}&classId=c-1a`, sessions.rep1a);
     const repHouseholds = buildHouseholds(parseInputRows(rep.body).rows).households;
-    assert.ok(repHouseholds.every((h) => h.paymentEntry === 'unknown'));
+    assertEvery(repHouseholds, (h) => h.paymentEntry === 'unknown');
   } finally {
     await db.close();
   }

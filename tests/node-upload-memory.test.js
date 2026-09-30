@@ -11,6 +11,7 @@ import { createNodeHandler, isStreamedUploadRoute } from '../src/node-app.js';
 import {
   activeUploadSlots, bodyLimitFor, readLimited, resetUploadSlotsForTests, tryAcquireUploadSlot,
 } from '../src/documents.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const MB = 1024 * 1024;
 const QUIET = { info() {}, warn() {}, debug() {}, error() {} };
@@ -104,7 +105,7 @@ test('#185: 20 równoczesnych anonimowych POST po 10 MB — 401 bez odczytu cia�
     const results = await Promise.all(paths.map((path) => post(port, path)));
     const peak = stop();
     assert.deepEqual(results.map((r) => r.status), Array(20).fill(401));
-    assert.ok(results.every((r) => r.connection === 'close'), 'nieprzeczytane ciało -> zamknięte połączenie');
+    assertEvery(results, (r) => r.connection === 'close', 'nieprzeczytane ciało -> zamknięte połączenie');
     assert.equal(invoked, 20, 'trasa wywołana dla każdego żądania, zanim nadeszło całe ciało');
     const read = bytesRead();
     assert.ok(read < 20 * MB, `serwer odebrał ${(read / MB).toFixed(1)} MB z deklarowanych 200 MB`);

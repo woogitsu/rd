@@ -10,6 +10,7 @@ import { buildTemplateXlsx, TEMPLATE_HEADERS } from '../import/template-xlsx.js'
 import { readXlsxSheets } from '../import/xlsx.js';
 import { buildErrorReportCsv } from '../import/report.js';
 import { applyRememberedMapping, clearRememberedMapping, loadRememberedMapping, MAPPING_STORAGE_KEY, saveRememberedMapping } from '../import/mapping-memory.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const url = (name) => new URL(`../import/public/${name}`, import.meta.url);
 const toArrayBuffer = (bytes) => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -54,7 +55,7 @@ test('szablon CSV: parseCsv daje pełne mapowanie aliasów, tylko adresy @exampl
   const rows = parseCsv(text);
   assert.deepEqual(rows[0], TEMPLATE_HEADERS);
   assert.equal(Object.keys(guessMapping(rows[0])).length, 9);
-  assert.ok((text.match(/@[\w.-]+/g) ?? []).every((d) => d === '@example.invalid'));
+  assertEvery((text.match(/@[\w.-]+/g) ?? []), (d) => d === '@example.invalid');
 });
 
 test('raport z 500 błędami zawiera każdy wiersz, bez imion i e-maili, z neutralizacją formuł', () => {

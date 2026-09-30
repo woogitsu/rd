@@ -99,7 +99,7 @@ test('buildHistoricalData: rotation between years, siblings in different classes
   assert.ok(data.ledgerEntries.some((entry) => entry[10] !== null));
   // Gospodarstwo spoza klasy przedstawiciela nie ma dziecka w tej klasie.
   const otherIds = data.householdStudents.get(data.latestOtherHouseholdId);
-  assert.ok(otherIds.every((id) => data.enrollments.every((e) => e[1] !== id || e[3] !== data.latestYear || e[2] !== data.latestClassId)));
+  assert.ok(otherIds.length > 0 && otherIds.every((id) => data.enrollments.every((e) => e[1] !== id || e[3] !== data.latestYear || e[2] !== data.latestClassId)));
 });
 
 test('instrumentDb: counts queries, keeps the slowest SQL text without parameters, measures JS gaps in a transaction', async () => {

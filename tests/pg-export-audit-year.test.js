@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { auditScope, buildYearlyExport, EXPORT_TABLES, restoreBundle, verifyBundle } from '../src/pg/export.js';
 import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const OLD = 'y-old';
 const NEW = 'y-new';
@@ -138,7 +139,7 @@ test('meta-test: każde zdarzenie payment./ledger./reconciliation. niesie school
     assert.equal(ev.year, p.school_year_id);
   }
   const rec = rows.filter((row) => row.action.startsWith('reconciliation.'));
-  assert.ok(rec.every((row) => row.year === OLD));
+  assertEvery(rec, (row) => row.year === OLD);
 });
 
 test('zdarzenia historyczne bez schoolYearId: rok obiektu, nie data zapisu; brak roku — wg daty i bez utraty', async () => {

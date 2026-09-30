@@ -10,6 +10,7 @@ import {
 } from '../src/pg/mfa.js';
 import { rotateMfaKeys } from '../src/pg/mfa-key-rotation.js';
 import { createTestDb, request, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const KEY_V1 = randomBytes(32).toString('base64');
 const KEY_V2 = randomBytes(32).toString('base64');
@@ -188,8 +189,8 @@ test('#134: rotacja 1->2->3 zachowuje nieużyty kod odzyskiwania (200), użyty p
     'SELECT factor_id, rotated_to_factor_id, used_at FROM mfa_recovery_codes WHERE user_id = $1', ['u-rot-chain'],
   )).rows;
   assert.equal(codes.length, account.recoveryCodes.length);
-  assert.ok(codes.every((c) => c.factor_id === account.factorId), 'factor_id (historia) niezmienione');
-  assert.ok(codes.filter((c) => !c.used_at).every((c) => c.rotated_to_factor_id === active.id), 'nieużyte kody wskazują bieżący czynnik v3');
+  assertEvery(codes, (c) => c.factor_id === account.factorId, 'factor_id (historia) niezmienione');
+  assertEvery(codes.filter((c) => !c.used_at), (c) => c.rotated_to_factor_id === active.id, 'nieużyte kody wskazują bieżący czynnik v3');
 
   const unused = await postWith('/api/mfa/recovery', cookie, { code: account.recoveryCodes[1] }, envRing3());
   assert.equal(unused.status, 200, 'nieużyty kod działa po rotacji 1->2->3');

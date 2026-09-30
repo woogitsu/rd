@@ -10,6 +10,7 @@ import { strToU8, zipSync } from 'fflate';
 import readXlsxFileNode from 'read-excel-file/node';
 import { readXlsxSheets } from '../import/xlsx.js';
 import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-2026';
 const HEADER = 'ID ucznia;Imię ucznia;Nazwisko ucznia;Klasa;ID rodziny;Opiekun 1;E-mail opiekuna 1;Opiekun 2;E-mail opiekuna 2';
@@ -189,7 +190,7 @@ test('same surname in different classes is not merged; rows without household ID
   const strict = await preview(env, admin, payloadFromCsv(csv));
   assert.equal(strict.body.counts.rowsConflict, 2);
   assert.equal(strict.body.commitAllowed, false);
-  assert.ok(strict.body.rows.every((row) => row.messages[0] === MESSAGES.missingHouseholdId));
+  assertEvery(strict.body.rows, (row) => row.messages[0] === MESSAGES.missingHouseholdId);
   const refused = await commit(env, admin, payloadFromCsv(csv), strict.body, 'key-strict-01');
   assert.equal(refused.status, 422);
   assert.equal(refused.body.error, 'import_has_conflicts');

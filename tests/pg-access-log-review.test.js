@@ -5,6 +5,7 @@ import test, { after, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const Y1 = 'y-2026';
 const PII = ['Ola', 'Testowa', 'Jan', 'opiekun1@example.invalid', 'opiekun2@example.invalid', 'Anna'];
@@ -154,7 +155,7 @@ describe('przegląd dziennika odczytu danych rodzin (#133)', () => {
 
     const audit = await db.query(`SELECT metadata_json, entity_id FROM audit_events WHERE action = 'access_log.viewed' AND actor_id = 'u-admin'`);
     assert.ok(audit.rows.length >= 1);
-    assert.ok(audit.rows.every((r) => JSON.stringify(r.metadata_json ?? {}) === '{}'));
+    assertEvery(audit.rows, (r) => JSON.stringify(r.metadata_json ?? {}) === '{}');
   });
 
   test('błędne parametry: 400 z kodem', async () => {
