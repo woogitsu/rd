@@ -1,15 +1,14 @@
+import { isLocalAppEnv } from './app-env.js';
+
 // Nazwa historyczna. Lokalny dev na http://localhost (APP_ENV nieustawione,
 // development lub test) używa jej nadal: `__Host-` wymaga atrybutu Secure, a
 // nie każda przeglądarka przyjmuje Secure na http://localhost (#114).
 export const LEGACY_SESSION_COOKIE = 'rd_session';
 export const HOST_SESSION_COOKIE = '__Host-rd_session';
-// Wartości APP_ENV uznawane za lokalne. Każda inna (także literówka) jest
-// traktowana zachowawczo jak środowisko wystawione do sieci (#114, spójnie z #166).
-const LOCAL_APP_ENVS = new Set(['', 'development', 'test']);
-
-export function isLocalAppEnv(appEnv) {
-  return LOCAL_APP_ENVS.has(String(appEnv ?? '').trim().toLowerCase());
-}
+// Wartości APP_ENV uznawane za lokalne (brak, development, test) rozpoznaje
+// wspólna funkcja z src/app-env.js (#166). Każda inna (także literówka) jest
+// traktowana zachowawczo jak środowisko wystawione do sieci (#114).
+export { isLocalAppEnv };
 
 function processAppEnv() {
   return typeof process !== 'undefined' ? process.env?.APP_ENV : undefined;
