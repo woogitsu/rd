@@ -334,6 +334,78 @@ export function confirmationText(action, subject) {
   }
 }
 
+// #136: treść wspólnego okna potwierdzenia dla akcji na kontach, przydziałach
+// i zaproszeniach — tytuł-czasownik, przycisk z nazwą akcji i lista skutków:
+// kogo dotyczy, jaki zakres (klasa/rok) i ile aktywnych sesji zostanie zakończonych
+// (liczby z listy kont w chwili otwarcia okna). Wszystkie te akcje zmieniają dostęp,
+// więc fokus startuje na „Anuluj” (destructive). Czysta funkcja — test w admin-core.
+export function confirmationDialog(action, context = {}) {
+  const account = context.account ?? "—";
+  const sessions = Number.isSafeInteger(context.activeSessions) ? context.activeSessions : null;
+  const grants = Number.isSafeInteger(context.activeGrants) ? context.activeGrants : null;
+  const sessionsLine = sessions === null ? null : `Aktywne sesje do zakończenia: ${sessions}`;
+  const history = "Operacja trafi do dziennika zdarzeń (kto, kiedy, jakie konto).";
+  const base = { destructive: true };
+  switch (action) {
+    case "disable":
+      return { ...base, title: "Wyłączyć konto?", confirmLabel: "Wyłącz konto", effects: [
+        `Konto: ${account}`,
+        "Osoba traci dostęp do wszystkich paneli do czasu ponownego włączenia konta.",
+        sessionsLine,
+        "Nieużyty kod resetu hasła przestanie działać.",
+        grants === null ? null : `Aktywne przydziały ról: ${grants} — zostają zapisane i wrócą po włączeniu konta.`,
+        history,
+      ] };
+    case "enable":
+      return { ...base, title: "Włączyć konto?", confirmLabel: "Włącz konto", effects: [
+        `Konto: ${account}`,
+        grants === null ? "Przydziały ról pozostają bez zmian." : `Osoba odzyska dostęp wynikający z aktywnych przydziałów ról: ${grants}.`,
+        history,
+      ] };
+    case "revoke-sessions":
+      return { ...base, title: "Wylogować ze wszystkich urządzeń?", confirmLabel: "Wyloguj wszędzie", effects: [
+        `Konto: ${account}`,
+        sessionsLine,
+        "Konto i przydziały ról zostają; osoba zaloguje się ponownie.",
+        history,
+      ] };
+    case "password-reset":
+      return { ...base, title: "Wydać kod resetu hasła?", confirmLabel: "Wydaj kod resetu", effects: [
+        `Konto: ${account}`,
+        "Po wydaniu nowego kodu poprzedni nieużyty kod przestanie działać.",
+        "Konto z rolą chronioną: powstanie tylko wniosek do zatwierdzenia przez innego administratora.",
+        "Kod przekaż osobie bezpiecznym kanałem; panel niczego nie wysyła e-mailem.",
+        history,
+      ] };
+    case "revoke-grant":
+      return { ...base, title: "Wycofać przydział?", confirmLabel: "Wycofaj przydział", effects: [
+        `Konto: ${account}`,
+        `Rola: ${context.role ?? "—"}`,
+        `Zakres: ${context.scope ?? "—"}`,
+        "Osoba traci uprawnienia wynikające z tego przydziału; inne przydziały i konto zostają.",
+        "Wpis przydziału zostaje w historii jako wycofany.",
+      ] };
+    case "revoke-invitation":
+      return { ...base, title: "Wycofać zaproszenie?", confirmLabel: "Wycofaj zaproszenie", effects: [
+        `Adres: ${account}`,
+        context.role ? `Rola: ${context.role}` : null,
+        context.scope ? `Zakres: ${context.scope}` : null,
+        "Link z zaproszenia przestanie działać; konto nie powstanie.",
+        history,
+      ] };
+    case "reissue-invitation":
+      return { ...base, title: "Wydać nowy link zaproszenia?", confirmLabel: "Wydaj nowy link", effects: [
+        `Adres: ${account}`,
+        context.role ? `Rola: ${context.role}` : null,
+        context.scope ? `Zakres: ${context.scope}` : null,
+        "Poprzedni link przestanie działać; powstanie nowy link do przekazania (bez wysyłki e-mailem).",
+        history,
+      ] };
+    default:
+      return { ...base, title: "Potwierdzić operację?", confirmLabel: "Potwierdź", effects: [confirmationText(action, account)] };
+  }
+}
+
 // #224: reset MFA wyłącza czynnik i kody odzyskiwania konta — wymaga wpisania
 // identyfikatora konta (kontrakt POST /api/admin/users/{id}/mfa-reset), żeby
 // nie wykasować cudzego dostępu jednym kliknięciem. `typed` to surowa wartość

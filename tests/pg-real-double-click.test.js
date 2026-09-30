@@ -419,6 +419,71 @@ test('#208 kontrola pozytywna: bez blokady adresu dwa równoległe zaproszenia t
   });
 });
 
+// „Wyślij ponownie” (#293, follow-up #576/#557): wycofanie i nowe zaproszenie
+// w jednej transakcji pod blokadą adresu. Wcześniej były to dwie osobne
+// transakcje bez blokady i równoległe „Zaproś” (albo drugie „Wyślij ponownie”)
+// mogło zostawić dwa ważne tokeny.
+const reissuePath = (id) => `/api/admin/invitations/${encodeURIComponent(id)}/reissue`;
+const pendingInvitationIds = async (db) => (await db.query(
+  'SELECT id FROM invitations WHERE accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY id',
+)).rows.map((row) => row.id);
+
+async function pendingInvitationSetup(db) {
+  const { cookies } = await adminSetup(db);
+  const created = await callApi({ db }, 'POST', '/api/admin/invitations', cookies.adminA, invitation);
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  return { cookies, oldId: created.body.invitation.id };
+}
+
+test('#293 (bariera): dwa równoczesne „Wyślij ponownie” — drugie czeka na blokadę adresu i dostaje 409 invitation_not_pending; jeden ważny token', { skip }, async () => {
+  await withReal(async (db) => {
+    const { cookies, oldId } = await pendingInvitationSetup(db);
+    const { results: [a, b], waits } = await race(db, {
+      pauseAfter: /INSERT INTO invitations/,
+      first: (env) => callApi(env, 'POST', reissuePath(oldId), cookies.adminA, {}),
+      others: [(env) => callApi(env, 'POST', reissuePath(oldId), cookies.adminB, {})],
+    });
+    assert.deepEqual(waits, ['advisory'], 'drugie ponowienie czeka na blokadę doradczą adresu, nie dopiero na wiersz');
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    assert.equal(a.body.invitation.replacesInvitationId, oldId);
+    assert.deepEqual([b.status, b.body.error, 'token' in b.body], [409, 'invitation_not_pending', false]);
+    assert.deepEqual(await pendingInvitationIds(db), [a.body.invitation.id], 'jeden ważny token — nowy');
+    assert.equal(await count(db, 'SELECT count(*)::int AS n FROM invitations'), 2);
+    assert.equal(await auditCount(db, 'invitation.reissued'), 1);
+    assert.equal(await auditCount(db, 'invitation.revoked'), 1);
+  });
+});
+
+test('#293 (bariera): „Wyślij ponownie” równolegle z „Zaproś” na ten sam adres — „Zaproś” czeka na blokadę i dostaje 409 invitation_pending; jeden ważny token', { skip }, async () => {
+  await withReal(async (db) => {
+    const { cookies, oldId } = await pendingInvitationSetup(db);
+    const { results: [a, b], waits } = await race(db, {
+      pauseAfter: /INSERT INTO invitations/,
+      first: (env) => callApi(env, 'POST', reissuePath(oldId), cookies.adminA, {}),
+      others: [(env) => callApi(env, 'POST', '/api/admin/invitations', cookies.adminB, invitation)],
+    });
+    assert.deepEqual(waits, ['advisory']);
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    assert.deepEqual([b.status, b.body.error, 'token' in b.body], [409, 'invitation_pending', false]);
+    assert.deepEqual(await pendingInvitationIds(db), [a.body.invitation.id]);
+    assert.equal(await auditCount(db, 'invitation.created'), 2, 'pierwotne i ponowione — bez trzeciego');
+  });
+});
+
+test('#293 kontrola pozytywna: bez blokady adresu drugie „Wyślij ponownie” czeka dopiero na wiersz (warunkowy UPDATE) — tę warstwę wykrywa mutant invitation-reissue', { skip }, async () => {
+  await withReal(async (db) => {
+    const { cookies, oldId } = await pendingInvitationSetup(db);
+    const { results: [a, b], waits } = await race(db, {
+      pauseAfter: /INSERT INTO invitations/, rewrite: dropAdvisoryLock(INVITATION_LOCK),
+      first: (env) => callApi(env, 'POST', reissuePath(oldId), cookies.adminA, {}),
+      others: [(env) => callApi(env, 'POST', reissuePath(oldId), cookies.adminB, {})],
+    });
+    assert.deepEqual(waits, ['transactionid'], 'bez blokady adresu zostaje tylko blokada wiersza w UPDATE');
+    assert.deepEqual([a.status, b.status, b.body.error], [201, 409, 'invitation_not_pending']);
+    assert.deepEqual(await pendingInvitationIds(db), [a.body.invitation.id]);
+  });
+});
+
 const revokePath = (grantId) => `/api/admin/grants/${grantId}/revoke`;
 // Pauza po sprawdzeniu „wykonujący nadal jest adminem” (assertActorStillAdmin),
 // przed COMMIT — najgorszy przeplot: A już sprawdził, B sprawdza przed COMMIT A.
