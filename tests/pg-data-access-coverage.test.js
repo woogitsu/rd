@@ -256,7 +256,7 @@ describe('pokrycie dziennika odczytu danych rodzin (#133)', () => {
     const concretePath = (route) => {
       const path = route.path.replace(':classId', 'c-1a').replace(':householdId', 'h-1').replace(':eventId', eventId);
       if (route.id === 'print.cards') return `${path}?schoolYearId=${Y1}`;
-      if (route.id === 'payments.list' || route.id === 'payments.exportCsv') return `${path}?schoolYearId=${Y1}`;
+      if (['payments.list', 'payments.exportCsv', 'payments.exportXlsx'].includes(route.id)) return `${path}?schoolYearId=${Y1}`;
       if (route.id === 'exports.classRoster') return `${path}?classId=c-1a`;
       return path;
     };

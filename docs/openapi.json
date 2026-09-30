@@ -13685,6 +13685,76 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/payments/export.xlsx": {
+      "get": {
+        "operationId": "payments_exportXlsx",
+        "parameters": [
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "payments.exportXlsx",
+        "tags": [
+          "payments"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "W1"
+          ],
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "payments.exportXlsx"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/payments/{paymentId}/allocations": {
       "get": {
         "operationId": "payments_allocations_list",
@@ -15795,6 +15865,7 @@
     },
     "/api/reports/audit": {
       "get": {
+        "description": "Ta ścieżka i metoda ma kilka wpisów macierzy (rodzaj obiektu wybiera treść żądania); x-rd-roles to suma, szczegóły w x-rd-variants.",
         "operationId": "reconciliation_auditReport",
         "parameters": [
           {
@@ -15842,22 +15913,12 @@
           "reconciliation"
         ],
         "x-rd-access": "role",
-        "x-rd-actor-scopes": {
-          "audit": [
-            "W1"
-          ],
-          "board": [
-            "W1"
-          ],
-          "treasurer": [
-            "W1"
-          ]
-        },
         "x-rd-deny-status": [
           403
         ],
         "x-rd-matrix-ids": [
-          "reconciliation.auditReport"
+          "reconciliation.auditReport",
+          "reconciliation.auditReportXlsx"
         ],
         "x-rd-mfa": true,
         "x-rd-ok-status": [
@@ -15868,7 +15929,47 @@
           "board",
           "treasurer"
         ],
-        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia",
+        "x-rd-variants": [
+          {
+            "id": "reconciliation.auditReport",
+            "roles": [
+              "audit",
+              "board",
+              "treasurer"
+            ],
+            "actorScopes": {
+              "audit": [
+                "W1"
+              ],
+              "board": [
+                "W1"
+              ],
+              "treasurer": [
+                "W1"
+              ]
+            }
+          },
+          {
+            "id": "reconciliation.auditReportXlsx",
+            "roles": [
+              "audit",
+              "board",
+              "treasurer"
+            ],
+            "actorScopes": {
+              "audit": [
+                "W1"
+              ],
+              "board": [
+                "W1"
+              ],
+              "treasurer": [
+                "W1"
+              ]
+            }
+          }
+        ]
       }
     },
     "/api/reports/cash-flow": {

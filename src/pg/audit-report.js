@@ -13,7 +13,7 @@ import { formatDateOrTimestamp } from '../../shared/zoned-time.js';
 // Strefa czasu raportu — ta sama co w panelach (Zebrania, Wydarzenia, Konta).
 export const REPORT_TIME_ZONE = 'Europe/Brussels';
 
-const CHECK_LABEL = {
+export const CHECK_LABEL = {
   year_end_balance: 'Saldo księgi na ostatni dzień roku (wpisy do tej daty) a bilans zamknięcia',
   dates_within_school_year: 'Daty wpisów i wpłat w granicach roku szkolnego',
   payments_in_ledger: 'Wpłaty (netto) a wpłaty ujęte w księdze (netto)',
@@ -21,22 +21,33 @@ const CHECK_LABEL = {
   latest_confirmed_reconciliation: 'Ostatnie zatwierdzone uzgodnienie rachunku',
 };
 
-function checkDetails(check) {
-  const m = (cents) => escapeHtml(formatEur(cents));
+// Opis wartości kontroli krzyżowej. `fmt` decyduje o zapisie: HTML (escapowanie,
+// skrócone identyfikatory, <br>) albo zwykły tekst do arkusza XLSX (#141: pełne
+// identyfikatory, średnik zamiast <br>). Jedno źródło treści dla obu formatów.
+const HTML_DETAILS = {
+  money: (cents) => escapeHtml(formatEur(cents)), text: (value) => escapeHtml(value), id: (value) => idHtml(value), br: '<br>',
+};
+export const PLAIN_DETAILS = {
+  money: (cents) => formatEur(cents), text: (value) => String(value ?? ''), id: (value) => String(value ?? '—'), br: '; ',
+};
+
+export function checkDetails(check, fmt = HTML_DETAILS) {
+  const m = fmt.money;
+  const t = fmt.text;
   switch (check.id) {
     case 'year_end_balance':
       return `bilans zamknięcia ${m(check.closingBalanceCents)}; saldo na koniec roku ${m(check.balanceAtYearEndCents)}; różnica ${m(check.differenceCents)}`;
     case 'dates_within_school_year': {
-      const listed = (check.items ?? []).map((item) => `${escapeHtml(item.kind === 'payment_entry' ? 'wpłata' : 'wpis')} ${idHtml(item.id)} (${escapeHtml(formatDate(item.date))})`);
-      return `wpisy księgi poza rokiem: ${escapeHtml(check.ledgerEntryCount)}; wpłaty poza rokiem: ${escapeHtml(check.paymentCount)}${listed.length ? `<br>${listed.join('<br>')}` : ''}`;
+      const listed = (check.items ?? []).map((item) => `${t(item.kind === 'payment_entry' ? 'wpłata' : 'wpis')} ${fmt.id(item.id)} (${t(formatDate(item.date))})`);
+      return `wpisy księgi poza rokiem: ${t(check.ledgerEntryCount)}; wpłaty poza rokiem: ${t(check.paymentCount)}${listed.length ? `${fmt.br}${listed.join(fmt.br)}` : ''}`;
     }
     case 'payments_in_ledger':
-      return `wpłaty ${m(check.paymentsNetCents)}; ujęte w księdze ${m(check.ledgerLinkedNetCents)}; różnica ${m(check.differenceCents)}; wpłaty bez wpisu księgi: ${escapeHtml(check.paymentsWithoutLedgerEntry)}`;
+      return `wpłaty ${m(check.paymentsNetCents)}; ujęte w księdze ${m(check.ledgerLinkedNetCents)}; różnica ${m(check.differenceCents)}; wpłaty bez wpisu księgi: ${t(check.paymentsWithoutLedgerEntry)}`;
     case 'reconciliation_matches':
-      return `niezgodne kwotowo: ${escapeHtml(check.amountMismatchCount)}; podwójne ujęcie: ${escapeHtml(check.doubleCountedCount)}; w tym w zatwierdzonych uzgodnieniach (do wyjaśnienia, bez ścieżki poprawy): ${escapeHtml(check.amountMismatchConfirmedCount)}; dopasowania zbiorcze niezgodne: ${escapeHtml(check.groupAmountMismatchCount ?? 0)} (w zatwierdzonych: ${escapeHtml(check.groupAmountMismatchConfirmedCount ?? 0)})`;
+      return `niezgodne kwotowo: ${t(check.amountMismatchCount)}; podwójne ujęcie: ${t(check.doubleCountedCount)}; w tym w zatwierdzonych uzgodnieniach (do wyjaśnienia, bez ścieżki poprawy): ${t(check.amountMismatchConfirmedCount)}; dopasowania zbiorcze niezgodne: ${t(check.groupAmountMismatchCount ?? 0)} (w zatwierdzonych: ${t(check.groupAmountMismatchConfirmedCount ?? 0)})`;
     case 'latest_confirmed_reconciliation':
       return check.statementDate
-        ? `wyciąg z ${escapeHtml(formatDate(check.statementDate))}; różnica ${m(check.differenceCents)}; przelewy w księdze po dacie wyciągu: ${escapeHtml(check.bankEntriesAfterStatement)}`
+        ? `wyciąg z ${t(formatDate(check.statementDate))}; różnica ${m(check.differenceCents)}; przelewy w księdze po dacie wyciągu: ${t(check.bankEntriesAfterStatement)}`
         : 'brak zatwierdzonego uzgodnienia w tym roku';
     default:
       return '';
@@ -113,10 +124,10 @@ export function idHtml(value) {
 const e = escapeHtml;
 const money = (cents) => e(formatEur(cents));
 
-const DIRECTION = { income: 'przychód', expense: 'wydatek' };
-const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone', abandoned: 'porzucone' };
-const EVENT_STATUS = { draft: 'szkic', submitted: 'zgłoszone', approved: 'zatwierdzone', published: 'opublikowane', cancelled: 'odwołane' };
-const RESOLUTION_STATUS = { adopted: 'przyjęta', rejected: 'odrzucona', draft: 'projekt', withdrawn: 'wycofana' };
+export const DIRECTION = { income: 'przychód', expense: 'wydatek' };
+export const STATUS = { draft: 'szkic', confirmed: 'zatwierdzone', abandoned: 'porzucone' };
+export const EVENT_STATUS = { draft: 'szkic', submitted: 'zgłoszone', approved: 'zatwierdzone', published: 'opublikowane', cancelled: 'odwołane' };
+export const RESOLUTION_STATUS = { adopted: 'przyjęta', rejected: 'odrzucona', draft: 'projekt', withdrawn: 'wycofana' };
 
 function table(headers, rows, emptyText) {
   if (!rows.length) return `<p class="empty">${e(emptyText)}</p>`;
@@ -128,7 +139,7 @@ function row(cells) {
   return `<tr>${cells.map(([html, cls]) => `<td${cls ? ` class="${cls}"` : ''}>${html}</td>`).join('')}</tr>`;
 }
 
-export function renderAuditReportHtml(report) {
+export function renderAuditReportHtml(report, { contentSha256 = null } = {}) {
   const { schoolYear, balance, categories, largeExpenses, corrections, openingAdjustments, reconciliations } = report;
 
   const categoryRows = categories.map((item) => row([
@@ -232,6 +243,7 @@ export function renderAuditReportHtml(report) {
 <h1>Raport dla Komisji Rewizyjnej</h1>
 <p>Rada Rodziców — rok szkolny ${e(formatSchoolYear(schoolYear.label))} (${e(formatDate(schoolYear.startsOn))}–${e(formatDate(schoolYear.endsOn))})</p>
 <p class="meta">Stan na: ${e(formatDate(report.asOf ?? report.generatedAt))} (czas Europe/Brussels; jedna migawka bazy danych — wszystkie liczby z tej samej chwili). Kwoty w EUR. Identyfikatory wpisów, dokumentów i kont są skrócone do 8 znaków (jak w panelach); pełne są w wersji JSON raportu. Aby zapisać PDF, użyj drukowania w przeglądarce.</p>
+${contentSha256 ? `<p class="meta">Skrót treści (SHA-256): ${e(contentSha256)} — ten sam co w arkuszu „Informacje” wersji XLSX z tych samych danych.</p>` : ''}
 <p class="notice">Zestawienie z księgi w systemie. Nie jest zatwierdzonym sprawozdaniem finansowym; wymaga sprawdzenia z dokumentami źródłowymi.</p>
 </header>
 

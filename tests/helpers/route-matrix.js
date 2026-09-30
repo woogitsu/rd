@@ -548,6 +548,12 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
     build: ({ target }) => ({ path: `/api/payments/export.csv?schoolYearId=${target.schoolYearId}` }),
   },
+  {
+    // #141: ten sam eksport jako XLSX (arkusze „Wpisy” i „Korekty”); te same role, MFA i ślad odczytu.
+    id: 'payments.exportXlsx', module: 'payments', method: 'GET', path: '/api/payments/export.xlsx?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: FINANCIAL, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/payments/export.xlsx?schoolYearId=${target.schoolYearId}` }),
+  },
 
   // ---------- payment-references (#83) ----------
   {
@@ -1526,6 +1532,13 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=json` }),
+  },
+  {
+    // #141: raport KR w XLSX (arkusz na sekcję) — te same role co JSON/HTML (D-09: wariant zachowawczy).
+    id: 'reconciliation.auditReportXlsx', module: 'reconciliation', method: 'GET', path: '/api/reports/audit?schoolYearId=:year&format=xlsx',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
+    build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=xlsx` }),
   },
 
   // ---------- sprawozdanie roczne i przepływy (#125) ----------
