@@ -2443,7 +2443,7 @@ async function auditReport(request, env, url, json) {
   if (!report) throw new RequestError('school_year_not_found', 404);
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'report.audit.generated', entityType: 'school_year',
-    entityId: schoolYearId, metadata: { format, asOf: report.asOf },
+    entityId: schoolYearId, metadata: { schoolYearId, format, asOf: report.asOf },
   });
   if (format === 'json') return json({ report });
   return new Response(renderAuditReportHtml(report), {

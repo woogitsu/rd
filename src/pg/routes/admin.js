@@ -77,6 +77,7 @@ import {
 } from '../auth.js';
 import { freshMfaForbiddenCode, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { auditYearByObjectSql } from '../export.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
 } from '../login.js';
@@ -871,7 +872,14 @@ async function listAudit(env, url, json, actorId) {
   if (filters.to) { values.push(filters.to); conditions.push(`occurred_at <= $${values.length}`); }
   if (filters.schoolYearId) {
     values.push(filters.schoolYearId);
-    conditions.push(`metadata_json ->> 'schoolYearId' = $${values.length}`);
+    // #174: rok z metadanych; zdarzenia zapisane przed dopisaniem roku do
+    // metadanych (dziennik trwały — nie poprawiamy ich) przypisujemy przy
+    // odczycie do roku OBIEKTU (entity_type/entity_id), jak eksport roczny.
+    // Zdarzenia bez obiektu roku (sesje, MFA, konta) nie należą do żadnego
+    // roku — nie przypisujemy ich wg daty (zawężanie filtrem from/to).
+    const param = `$${values.length}`;
+    conditions.push(`(metadata_json ->> 'schoolYearId' = ${param}
+      OR (metadata_json ->> 'schoolYearId' IS NULL AND ${auditYearByObjectSql(param)}))`);
   }
   if (cursor) conditions.push(afterTimestampDescSql('occurred_at', 'id', cursor, values));
   values.push(limit + 1);

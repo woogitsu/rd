@@ -9,6 +9,8 @@ import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUser,
 
 const OLD = 'y-old';
 const NEW = 'y-new';
+// Rok następny (zaczyna się za 336 dni): kampanię dla niego przygotowuje się w bieżącym roku.
+const NEXT = 'y-next';
 const DAY = 24 * 3600 * 1000;
 const isoDate = (offsetDays) => new Date(Date.now() + offsetDays * DAY).toISOString().slice(0, 10);
 
@@ -38,10 +40,12 @@ before(async () => {
   // Rok poprzedni skończył się 30 dni temu; nowy trwa (dziś należy do nowego roku wg daty zapisu).
   await seedSchoolYear(db, OLD, { startsOn: isoDate(-400), endsOn: isoDate(-30) });
   await seedSchoolYear(db, NEW, { startsOn: isoDate(-29), endsOn: isoDate(335) });
+  await seedSchoolYear(db, NEXT, { startsOn: isoDate(336), endsOn: isoDate(700) });
   await seedUser(db, { userId: 'u-seed' });
   await seedEnrolledHousehold(db, 'h-1', [OLD, NEW]);
   cookie = await seedUserSession(db, {
-    userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: OLD }, { role: 'treasurer', schoolYearId: NEW }], mfa: true,
+    userId: 'u-treasurer', mfa: true,
+    roles: [{ role: 'treasurer', schoolYearId: OLD }, { role: 'treasurer', schoolYearId: NEW }, { role: 'treasurer', schoolYearId: NEXT }],
   });
   await db.query(`INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
     VALUES ('cat-old', '${OLD}', 'income', 'Dobrowolne wpłaty', 'u-seed')`);
@@ -96,6 +100,24 @@ test('zapis dziś (nowy rok wg daty) — zdarzenia roku poprzedniego są w jego 
   assert.ok(actions(oldFinancial).includes('reconciliation.match.confirmed'));
   assert.deepEqual(actions(fresh.filter((row) => /^(payment|reconciliation)\./.test(row.action))), ['payment.created']);
   assert.equal(fresh.find((row) => row.action === 'payment.created').entity_id, ids.freshPayment);
+});
+
+test('kampania przygotowana w bieżącym roku dla roku następnego: zdarzenie w eksporcie roku następnego', async () => {
+  // Odpowiednik „kampania przygotowana w sierpniu dla nowego roku” (#174): data zapisu należy
+  // do roku NEW, obiekt (kampania) do NEXT. Podwójne kliknięcie — jedno zdarzenie.
+  const campaignKey = key('camp');
+  const body = {
+    schoolYearId: NEXT, title: 'Przypomnienie jesienne', audience: 'all_households', subject: 'Dobrowolna składka {rok}',
+    bodyText: 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok {rok}. Tytuł przelewu: {rodzina}. Jeśli wpłata została już wykonana, prosimy pominąć wiadomość.',
+  };
+  const first = await call('POST', '/api/email/campaigns', body, campaignKey);
+  const second = await call('POST', '/api/email/campaigns', body, campaignKey);
+  assert.deepEqual([first.status, second.status], [201, 200], JSON.stringify(first.body));
+  const id = first.body.campaign.id;
+  const created = (rows) => rows.filter((row) => row.action === 'email.campaign.created' && row.entity_id === id);
+  assert.equal(created(await auditOf(NEXT)).length, 1);
+  assert.equal(created(await auditOf(NEW)).length, 0);
+  assert.equal(created(await auditOf(OLD)).length, 0);
 });
 
 test('podwójne kliknięcie: jedno zdarzenie w roku obiektu', async () => {

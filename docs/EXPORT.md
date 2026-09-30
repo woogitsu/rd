@@ -139,8 +139,14 @@ daty zapisu (#174) — inaczej wpłata dopisana we wrześniu za poprzedni rok
 trafiłaby do eksportu złego roku. `insertAuditEvent` (`src/pg/audit.js`)
 odrzuca (`audit_event_missing_school_year`) zdarzenie z przedrostkiem
 `payment.`/`ledger.`/`reconciliation.` (część 1) albo `email.`/`meeting.`/
-`resolution.`/`event.`/`news_post.` (część 2) bez `schoolYearId` — błąd
-programisty wychodzi w testach, nie po cichu zniekształca eksport. Wyjątki
+`resolution.`/`event.`/`news_post.` (część 2) albo `year_close.`/`report.` i
+każdą rodziną finansową z podkreśleniem — `payment_*.`/`ledger_*.`/
+`reconciliation_*.`, np. `ledger_opening_balance.*` (bilans otwarcia),
+`ledger_category.*`, `payment_reference.*`, `payment_instructions.*` (część 3)
+— bez `schoolYearId`; błąd programisty wychodzi w testach, nie po cichu
+zniekształca eksport. Test statyczny `tests/audit-school-year-static.test.js`
+sprawdza każdą nazwę akcji z tych rodzin w `src/pg`, więc nowa trasa (także
+nieobjęta testem scenariusza) nie ominie wymogu. Wyjątki
 świadomie bez tego wymogu: `news_photo.*` (biblioteka zdjęć nie ma kolumny
 `school_year_id` — nie jest przypisana do jednego roku),
 `email.address_suppressed` (dotyczy adresu w `email_suppressions`, bez
@@ -166,6 +172,12 @@ wg daty do żadnego innego roku. Skutek: eksport lat już wyeksportowanych może
 mieć inną zawartość `audit_events` i nowy SHA-256 manifestu (stare paczki
 zachowują własny manifest i nadal przechodzą weryfikację). Kolumna
 `audit_events.school_year_id` — nie wprowadzono (bez migracji).
+
+Ta sama reguła (1)–(2) działa w filtrze roku dziennika
+(`GET /api/admin/audit?schoolYearId=`): stare zdarzenia bez roku w metadanych
+są przypisywane przy odczycie do roku obiektu; zapisanych zdarzeń nie
+zmieniamy. Reguły (3) (wg dat) filtr nie stosuje — sesje, MFA czy konta nie
+należą do żadnego roku; do zawężenia po czasie służą `from`/`to`.
 
 Tabele z modułów, których migracji nie ma w bazie, są pomijane (wykrywanie
 przez `information_schema`); tabele rdzenia są wymagane.

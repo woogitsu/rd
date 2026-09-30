@@ -163,10 +163,22 @@ const AUDIT_ENTITY_YEAR = Object.freeze([
 const AUDIT_YEAR_TIME = `occurred_at >= (SELECT (starts_on::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)
       AND occurred_at < (SELECT ((ends_on + 1)::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)`;
 
-export function auditScope(has = new Set(AUDIT_ENTITY_YEAR.flatMap(([, tables]) => tables))) {
+const ALL_AUDIT_YEAR_TABLES = new Set(AUDIT_ENTITY_YEAR.flatMap(([, tables]) => tables));
+
+// Warunki „zdarzenie dotyczy obiektu roku $1” wg entity_type/entity_id (dla
+// zdarzeń bez metadata.schoolYearId). Wspólne dla eksportu i filtra roku
+// w dzienniku (GET /api/admin/audit?schoolYearId=, #174): `placeholder` to
+// numer parametru z rokiem w zapytaniu wywołującego.
+export function auditYearByObjectSql(placeholder = '$1', has = ALL_AUDIT_YEAR_TABLES) {
+  if (!/^\$[1-9][0-9]*$/.test(placeholder)) throw new ExportError('invalid_identifier');
   const usable = AUDIT_ENTITY_YEAR.filter(([, tables]) => tables.every((table) => has.has(table)));
   const byObject = usable.map(([type, , query]) => `(entity_type = '${type}' AND entity_id IN (${query}))`);
   byObject.push("(entity_type = 'school_year' AND entity_id = $1)");
+  return `(${byObject.join('\n    OR ').replaceAll('$1', placeholder)})`;
+}
+
+export function auditScope(has = ALL_AUDIT_YEAR_TABLES) {
+  const usable = AUDIT_ENTITY_YEAR.filter(([, tables]) => tables.every((table) => has.has(table)));
   // Typ „roczny”, ale obiekt nieosiągalny w żadnym roku (np. brak wiersza): też wg daty, żeby nie zginął.
   const unreachable = usable.map(([type, , query]) => `(entity_type = '${type}'
       AND entity_id NOT IN (${query.replaceAll('school_year_id = $1', 'school_year_id IS NOT NULL')}))`);
@@ -174,7 +186,7 @@ export function auditScope(has = new Set(AUDIT_ENTITY_YEAR.flatMap(([, tables]) 
   return `action NOT LIKE 'export.%' AND (
   metadata_json->>'schoolYearId' = $1
   OR (metadata_json->>'schoolYearId' IS NULL AND (
-    ${byObject.join('\n    OR ')}
+    ${auditYearByObjectSql('$1', has)}
     OR ((entity_type NOT IN (${resolvable})${unreachable.map((u) => `\n        OR ${u}`).join('')}) AND ${AUDIT_YEAR_TIME})
   ))
 )`;
