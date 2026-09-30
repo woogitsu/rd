@@ -15,3 +15,6 @@
 }
 .budget-actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 10px}h3{margin:22px 0 0;font-size:1rem}
 @media print{.budget-actions{display:none}}
+/* #207: bilans otwarcia pierwszego roku — wyłącznie zarząd, tylko gdy rok nie ma bilansu. */
+.opening-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:0 0 18px;padding:14px 16px;background:#fff;border:1px solid #e2e2e0}.opening-actions .hint{margin:0;max-width:760px;color:var(--muted);font-size:.87rem}
+@media print{.opening-actions{display:none}}

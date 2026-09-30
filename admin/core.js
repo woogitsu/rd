@@ -367,3 +367,34 @@ export function describeAuditEvent(event, users = []) {
   if (Number.isInteger(meta.count)) details.push(`liczba: ${meta.count}`);
   return { label, details: details.join(", ") };
 }
+
+// --- #207: nowy rok szkolny i klasy z panelu (trasy #78, wyłącznie admin) ------
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// Treść POST /api/admin/school-years; serwer powtarza walidację (400/409).
+export function schoolYearPayload({ id, label, startsOn, endsOn }) {
+  const yearId = String(id ?? "").trim();
+  if (!isValidId(yearId)) throw new Error("Podaj identyfikator roku (litery, cyfry, „-”, „_”, „.”; np. 2027-2028).");
+  const name = String(label ?? "").trim();
+  if (!name || name.length > 200) throw new Error("Podaj nazwę roku szkolnego (maksymalnie 200 znaków).");
+  if (!DATE_PATTERN.test(String(startsOn ?? "")) || !DATE_PATTERN.test(String(endsOn ?? ""))) throw new Error("Podaj daty początku i końca roku.");
+  if (endsOn < startsOn) throw new Error("Data końca nie może być wcześniejsza niż data początku.");
+  return { id: yearId, label: name, startsOn, endsOn };
+}
+
+// Nazwy klas z pola tekstowego: przecinek, średnik lub nowa linia. Powtórzenia
+// (bez względu na wielkość liter) to błąd — jak po stronie serwera (duplicate_name).
+export function classNamesPayload(text) {
+  const names = String(text ?? "").split(/[,;\n]/).map((name) => name.trim()).filter(Boolean);
+  if (!names.length || names.length > 100 || names.some((name) => name.length > 60)) {
+    throw new Error("Podaj nazwy klas (każda do 60 znaków), oddzielone przecinkami.");
+  }
+  const seen = new Set();
+  for (const name of names) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) throw new Error(`Nazwa klasy „${name}” powtarza się na liście.`);
+    seen.add(key);
+  }
+  return { names };
+}

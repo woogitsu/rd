@@ -1,4 +1,5 @@
 import { describeApiError, hasFinancialAccess } from "./core.js";
+import { canRecordOpeningBalance, categoryCopyConfirm, categoryCopyRequestBody, openEntryState, openingBalanceRequestBody } from "./core.js";
 import {
   DIRECTION_LABELS,
   METHOD_LABELS,
@@ -42,7 +43,7 @@ let printedBy = null;
 mountShell().then((result) => { printedBy = result?.session?.displayName || result?.session?.email || null; });
 
 const FILTER_KEYS = ["schoolYearId", "direction", "category", "dateFrom", "dateTo"];
-const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", grants: [], history: { rows: [], adoptionRows: [], currentLines: [] }, nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
+const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", grants: [], history: { rows: [], adoptionRows: [], currentLines: [] }, opening: null, nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -235,9 +236,6 @@ function renderSummary(summary) {
   byId("closing-balance").textContent = formatCents(summary.closingBalanceCents);
 }
 
-const OPEN_ENTRY_HINT = "Dostępne po wczytaniu roku szkolnego.";
-const FILTER_CHANGED_HINT = "Zmieniono filtr. Kliknij „Pokaż”, aby wczytać księgę dla nowego filtra.";
-
 function filterChanged() {
   return ledgerFilterChanged(state.query, currentFilters());
 }
@@ -247,8 +245,10 @@ function updateControls() {
   const changed = filterChanged();
   const openEntry = byId("open-entry");
   const hint = byId("open-entry-hint");
-  openEntry.disabled = state.loading || !state.query || changed;
-  hint.textContent = changed ? FILTER_CHANGED_HINT : OPEN_ENTRY_HINT;
+  // #207: rok bez kategorii — przycisk wyłączony z wyjaśnieniem zamiast błędu invalid_category po zapisie.
+  const entryState = openEntryState({ loading: state.loading, query: state.query, changed, categoryCount: state.categories.length });
+  openEntry.disabled = entryState.disabled;
+  hint.textContent = entryState.hint;
   hint.hidden = !openEntry.disabled || state.loading;
   loadMore.disabled = state.loading || changed;
   byId("load-more-hint").hidden = !changed || !state.nextCursor;
@@ -262,6 +262,7 @@ function updateBudgetActions() {
   byId("budget-actions").hidden = !financial;
   byId("open-adoption").hidden = !canAdoptBudget(state.grants, year);
   byId("open-line").disabled = state.history.rows.length === 0 && state.categories.length === 0;
+  byId("opening-actions").hidden = !canRecordOpeningBalance(state.grants, year, state.opening);
 }
 
 function setBusy(busy) {
@@ -297,10 +298,12 @@ async function loadOverview({ reload = false } = {}) {
   message.className = "message";
   overview.hidden = true;
   state.query = null;
+  state.categories = [];
+  state.opening = null;
   setBusy(true);
   try {
     const year = query.schoolYearId;
-    const [summaryData, budgetData, categoriesData, costCentersData, resolutionsData, historyData] = await Promise.all([
+    const [summaryData, budgetData, categoriesData, costCentersData, resolutionsData, historyData, openingData] = await Promise.all([
       api(buildOverviewUrl("summary", year)),
       api(buildOverviewUrl("budget/execution", year)),
       api(buildOverviewUrl("categories", year)),
@@ -310,10 +313,13 @@ async function loadOverview({ reload = false } = {}) {
       api(buildResolutionsUrl(year)).catch((error) => ({ error })),
       // Historia preliminarza jest pomocnicza: jej błąd nie blokuje podglądu księgi.
       api(buildBudgetHistoryUrl(year)).catch((error) => ({ error })),
+      // #207: bilans otwarcia (podział rachunek/kasa) — pomocniczy; błąd ukrywa tylko formularz.
+      api(`/api/ledger/opening-balance?${new URLSearchParams({ schoolYearId: year })}`).catch(() => null),
       loadEntries({ query }),
     ]);
     state.query = query;
     state.categories = Array.isArray(categoriesData.categories) ? categoriesData.categories : [];
+    state.opening = openingData && typeof openingData === "object" ? openingData : null;
     setCategoryOptions(state.categories, query.category);
     state.resolutions = Array.isArray(resolutionsData?.resolutions) ? resolutionsData.resolutions : [];
     state.resolutionsError = resolutionsData?.error ? resolutionsData.error.message : "";
@@ -478,6 +484,8 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
   if (resolutionId && !isValidId(resolutionId)) throw new Error("Niepoprawny identyfikator uchwały.");
   const sourceDocumentId = String(data.get("sourceDocumentId") || "").trim();
   if (sourceDocumentId && !isValidId(sourceDocumentId)) throw new Error("Niepoprawny identyfikator dokumentu.");
+  const categoryId = String(data.get("categoryId") || "");
+  if (!isValidId(categoryId)) throw new Error("Brak kategorii tego rodzaju w tym roku. Dodaj albo skopiuj kategorie w sekcji „Historia preliminarza”.");
   const evidenceFile = data.get("evidenceFile");
   const hasFile = evidenceFile && typeof evidenceFile === "object" && evidenceFile.size > 0;
   const schoolYearId = String(data.get("schoolYearId"));
@@ -486,7 +494,7 @@ const entryDialog = configureDialog("entry-dialog", "ledger", async (data, key) 
     headers: { "Idempotency-Key": key },
     body: JSON.stringify({
       schoolYearId, direction, amountCents,
-      categoryId: String(data.get("categoryId")), description: String(data.get("description")),
+      categoryId, description: String(data.get("description")),
       occurredOn: String(data.get("occurredOn")), method: String(data.get("method")),
       source: String(data.get("source") || "") || null,
       sourceDocumentId: sourceDocumentId || null,
@@ -558,11 +566,9 @@ const correctionDialog = configureDialog("correction-dialog", "ledger-correction
 function updateCategories() {
   const direction = entryDialog.form.elements.direction.value;
   const select = entryDialog.form.elements.categoryId;
-  const options = state.categories.filter((item) => item.direction === direction).map((item) => {
-    const option = document.createElement("option"); option.value = item.id; option.textContent = item.name; return option;
-  });
-  select.replaceChildren(...options);
-  select.disabled = options.length === 0;
+  // #207: pusty rodzaj opisany wprost (zamiast pustej listy i błędu invalid_category po zapisie).
+  fillSelect(select, state.categories.filter((item) => item.direction === direction).map((item) => ({ value: item.id, label: item.name })),
+    `Brak kategorii: ${direction === "expense" ? "wydatki" : "przychody"} w tym roku`);
 }
 
 function updateResolutionField() {
@@ -696,6 +702,38 @@ const adoptionDialog = configureDialog("adoption-dialog", "ledger-budget-adoptio
   confirmLabel: "Zapisz przyjęcie",
 }));
 
+// #207: kopiowanie kategorii z innego roku — najpierw podgląd (dryRun), potem
+// potwierdzenie z listą skutków, dopiero wtedy zapis. Serwer nie duplikuje
+// kategorii przy ponowieniu (ON CONFLICT DO NOTHING), więc podwójne kliknięcie
+// nie tworzy drugiego zestawu.
+const copyDialog = configureDialog("copy-dialog", "ledger-category-copy", async (data) => {
+  const body = categoryCopyRequestBody({ fromSchoolYearId: data.get("fromSchoolYearId"), toSchoolYearId: data.get("schoolYearId") });
+  const copy = (dryRun) => api("/api/ledger/categories/copy", { method: "POST", body: JSON.stringify({ ...body, dryRun }) });
+  const confirmed = await confirmAction(categoryCopyConfirm(await copy(true), body));
+  if (!confirmed) throw new Error("Anulowano kopiowanie. Nic nie zapisano.");
+  await copy(false);
+}, "Skopiowano kategorie.");
+
+const openingDialog = configureDialog("opening-dialog", "ledger-opening", async (data, key) => {
+  await post("/api/ledger/opening-balance", key, openingBalanceRequestBody({
+    schoolYearId: data.get("schoolYearId"), bank: data.get("bank"), cash: data.get("cash"),
+    note: data.get("note"), sourceDocumentId: data.get("sourceDocumentId"),
+  }));
+}, "Zapisano bilans otwarcia.", (data) => {
+  let amounts = [];
+  try {
+    const body = openingBalanceRequestBody({ schoolYearId: data.get("schoolYearId"), bank: data.get("bank"), cash: data.get("cash"), note: data.get("note") });
+    amounts = [`Rachunek: ${formatCents(body.bankCents)}`, `Kasa: ${formatCents(body.cashCents)}`, `Razem: ${formatCents(body.bankCents + body.cashCents)}`];
+  } catch (error) {
+    amounts = [error.message];
+  }
+  return {
+    title: "Zapisać bilans otwarcia?",
+    effects: [...amounts, "Zapis jest trwały; pomyłkę poprawia wpis poprawki, pierwotna kwota zostaje w historii."],
+    confirmLabel: "Zapisz bilans",
+  };
+});
+
 function openBudgetDialog(dialogRef, prepare) {
   if (!state.query || filterChanged()) return;
   const form = dialogRef.form;
@@ -705,6 +743,14 @@ function openBudgetDialog(dialogRef, prepare) {
 }
 
 byId("open-category").addEventListener("click", () => openBudgetDialog(categoryDialog, () => {}));
+byId("open-copy").addEventListener("click", () => openBudgetDialog(copyDialog, () => {
+  const current = state.query?.schoolYearId ?? "";
+  const options = panelYearState(state.grants).years.filter((year) => year !== current).map((year) => {
+    const option = document.createElement("option"); option.value = year; return option;
+  });
+  byId("copy-year-options").replaceChildren(...options);
+}));
+byId("open-opening").addEventListener("click", () => openBudgetDialog(openingDialog, (form) => { form.elements.cash.value = "0,00"; }));
 byId("open-deactivate").addEventListener("click", () => openBudgetDialog(deactivateDialog, (form) => {
   fillSelect(form.elements.categoryId, state.categories.filter((c) => c.active !== false).map((c) => ({ value: c.id, label: `${c.name} (${DIRECTION_LABELS[c.direction] ?? "—"})` })), "Brak aktywnych kategorii");
 }));

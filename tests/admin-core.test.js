@@ -156,3 +156,18 @@ test('dziennik kont: autor jako nazwa konta z listy kont albo skrócony identyfi
   assert.equal(shortId('abc'), 'abc');
   assert.equal(shortId(undefined), '—');
 });
+
+test('#207: formularze nowego roku i klas — walidacja jak po stronie serwera', async () => {
+  const { schoolYearPayload, classNamesPayload } = await import('../admin/core.js');
+  assert.deepEqual(
+    schoolYearPayload({ id: ' 2027-2028 ', label: ' Rok 2027/2028 ', startsOn: '2027-09-01', endsOn: '2028-08-31' }),
+    { id: '2027-2028', label: 'Rok 2027/2028', startsOn: '2027-09-01', endsOn: '2028-08-31' },
+  );
+  assert.throws(() => schoolYearPayload({ id: '2027 2028', label: 'x', startsOn: '2027-09-01', endsOn: '2028-08-31' }), /identyfikator/);
+  assert.throws(() => schoolYearPayload({ id: 'y', label: '', startsOn: '2027-09-01', endsOn: '2028-08-31' }), /nazwę/);
+  assert.throws(() => schoolYearPayload({ id: 'y', label: 'x', startsOn: '2028-09-01', endsOn: '2028-08-31' }), /wcześniejsza/);
+  assert.deepEqual(classNamesPayload('1A, 1B;\n2A'), { names: ['1A', '1B', '2A'] });
+  assert.throws(() => classNamesPayload('1A, 1a'), /powtarza/);
+  assert.throws(() => classNamesPayload(' , '), /Podaj nazwy/);
+  assert.throws(() => classNamesPayload('x'.repeat(61)), /60 znaków/);
+});
