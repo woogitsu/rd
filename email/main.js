@@ -36,7 +36,7 @@ import { mountQuota } from "./quota.js";
 import { reportCsvUrl } from "./resolutions-core.js";
 import { mountEntityHistory } from "../shared/entity-history-dom.js";
 
-mountShell();
+const shellReady = mountShell();
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
@@ -83,7 +83,7 @@ const message = byId("message");
 const listBody = byId("campaigns-body");
 const detailSection = byId("detail");
 // #181: zwijana „Historia” kampanii; tylko gdy serwer zwróci 200 (UX, nie kontrola dostępu).
-const campaignHistory = mountEntityHistory(detailSection, { api, idPrefix: "campaign-history" });
+const campaignHistory = mountEntityHistory(detailSection, { api, grants: async () => (await shellReady)?.grants, idPrefix: "campaign-history" });
 
 function setMessage(text, isError = false) {
   message.textContent = text;
