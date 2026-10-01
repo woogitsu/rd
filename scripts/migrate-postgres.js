@@ -1,10 +1,11 @@
+import { migrationDatabaseUrl } from '../src/migration-url.js';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
 import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
 import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
 
-if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL is required. No migration was run.');
+if (!migrationDatabaseUrl()) {
+  console.error('DATABASE_MIGRATION_URL or DATABASE_URL is required. No migration was run.');
   process.exitCode = 1;
 } else if (guardDangerousOperation(process.env.APP_ENV, { allowProduction: process.argv.includes('--allow-production') }).refused) {
   const warning = appEnvWarning(process.env.APP_ENV);
@@ -13,7 +14,7 @@ if (!process.env.DATABASE_URL) {
   process.exitCode = 1;
 } else {
   const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  const client = new Client({ connectionString: migrationDatabaseUrl() });
   try {
     await client.connect();
     const allowOutOfOrder = process.argv.includes('--allow-out-of-order');

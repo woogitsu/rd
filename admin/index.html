@@ -263,7 +263,7 @@
         <div class="section-heading">
           <div><h2 id="years-title">Lata szkolne i klasy</h2><p id="years-summary">Wczytywanie…</p></div>
         </div>
-        <p class="hint">Nowy rok i jego klasy tworzy administrator; klas nie można usuwać ani zmieniać nazwy. Przeniesienie klas i uczniów z poprzedniego roku odbywa się przez promocję z podglądem (#78). Kategorie księgi i bilans otwarcia ustawia się w panelu Księga.</p>
+        <p class="hint">Nowy rok i jego klasy tworzy administrator; klas nie można usuwać ani zmieniać nazwy. Przeniesienie uczniów z poprzedniego roku odbywa się w sekcji „Nowy rok: promocja uczniów” poniżej. Kategorie księgi i bilans otwarcia ustawia się w panelu Księga.</p>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Lata szkolne i klasy</caption>
@@ -288,6 +288,49 @@
           <p class="hint" id="classes-hint">Oddziel nazwy przecinkami. Klasa o istniejącej nazwie nie zostanie utworzona drugi raz.</p>
           <p class="form-error" id="classes-error" role="alert"></p>
         </form>
+      </section>
+
+      <section class="card" aria-labelledby="promo-title">
+        <div class="section-heading">
+          <div><h2 id="promo-title">Nowy rok: promocja uczniów</h2><p id="promo-summary">Wybierz rok źródłowy i docelowy.</p></div>
+        </div>
+        <p class="hint">Najpierw utwórz rok docelowy i jego klasy (formularze wyżej). Promocja tworzy wyłącznie nowe przypisania uczniów do klas w roku docelowym; nie zmienia historii roku źródłowego, gospodarstw ani opiekunów. Podgląd niczego nie zapisuje i nie zawiera imion — tylko liczby i identyfikatory uczniów. Klasa bez wyboru nie jest przenoszona. Wykaz uczniów ze szkoły ma pierwszeństwo przed tą pomocą techniczną.</p>
+        <form id="promo-form" class="grid-form">
+          <label>Rok źródłowy <select name="fromSchoolYearId" id="promo-from" required></select></label>
+          <label>Rok docelowy <select name="toSchoolYearId" id="promo-to" required></select></label>
+          <div class="table-wrap">
+            <table>
+              <caption>Mapa klas</caption>
+              <thead><tr><th scope="col">Klasa w roku źródłowym</th><th scope="col">Klasa w roku docelowym</th></tr></thead>
+              <tbody id="promo-map-body"></tbody>
+            </table>
+          </div>
+          <label>Wykluczeni uczniowie (powtarzają rok lub odchodzą) <textarea name="exclusions" id="promo-exclusions" rows="3" autocomplete="off" aria-describedby="promo-exclusions-hint"></textarea></label>
+          <p class="hint" id="promo-exclusions-hint">Identyfikatory uczniów z panelu Rodziny, po jednym w wierszu. Uczeń wykluczony nie dostaje przypisania w roku docelowym.</p>
+          <button class="primary" type="submit">Pokaż podgląd</button>
+          <p class="form-error" id="promo-error" role="alert"></p>
+        </form>
+        <div id="promo-preview" hidden>
+          <p id="promo-preview-summary" role="status"></p>
+          <div class="table-wrap">
+            <table>
+              <caption>Podgląd promocji według klas</caption>
+              <thead><tr><th scope="col">Klasa źródłowa</th><th scope="col">Klasa docelowa</th><th scope="col" class="num">Uczniów</th><th scope="col" class="num">Przeniesienie</th><th scope="col" class="num">Klasa końcowa</th><th scope="col" class="num">Poza mapą</th><th scope="col" class="num">Wykluczeni</th><th scope="col" class="num">Konflikt</th><th scope="col" class="num">Odeszli</th></tr></thead>
+              <tbody id="promo-preview-body"></tbody>
+            </table>
+          </div>
+          <div class="table-wrap" id="promo-attention" hidden>
+            <table>
+              <caption>Uczniowie, którzy nie zostaną przeniesieni (konflikt lub odejście)</caption>
+              <thead><tr><th scope="col">Identyfikator ucznia</th><th scope="col">Klasa źródłowa</th><th scope="col">Powód</th></tr></thead>
+              <tbody id="promo-attention-body"></tbody>
+            </table>
+          </div>
+          <p class="hint" id="promo-representatives"></p>
+          <p class="row-actions start">
+            <button class="primary" type="button" id="promo-apply" disabled>Zastosuj promocję</button>
+          </p>
+        </div>
       </section>
 
       <section class="card" aria-labelledby="term-title">

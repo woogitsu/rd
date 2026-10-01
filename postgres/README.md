@@ -632,10 +632,8 @@ danych: nowa, pusta tabela; brak zmian w istniejących tabelach. Brak wiersza
 dla kategorii oznacza „nie usuwaj” (ta sama semantyka co `documents.retain_until`
 sprzed tej migracji). Raport kandydatów `GET /api/admin/retention/preview`
 (`src/pg/routes/admin.js`) liczy wyłącznie wiersze per kategoria i rok/rok
-szkolny — nie usuwa ani nie anonimizuje żadnych danych. **Mechanizm wykonania
-retencji (usuwanie/anonimizacja) świadomie nie jest częścią tej migracji ani
-tego PR** — wymaga osobnej decyzji o kształcie funkcji anonimizującej,
-testów rodzeństwa/opieki dzielonej i przeglądu bezpieczeństwa (patrz #91).
+szkolny — nie usuwa ani nie anonimizuje żadnych danych. Mechanizm wykonania
+retencji (anonimizacja) nie jest częścią tej migracji — dodaje go 0174 (niżej).
 Wycofanie na pustej bazie: `DROP TABLE retention_policies` i funkcji guard.
 
 `0075_privacy_notices.sql` (issue #145, D-06) dodaje `privacy_notices` —
@@ -1313,33 +1311,6 @@ COLUMN bez DEFAULT nie przepisuje tabeli. Kampanie pozostają poza eksportem
 rocznym. Wycofanie: DROP TRIGGER, DROP FUNCTION, DROP COLUMN (wraca wiązanie
 przez metadane zdarzeń z kodu sprzed migracji).
 
-<<<<<<< HEAD
-`0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
-przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
-(bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
-przesyłają admin i zarząd z przydziałem bez klasy, a czytają także
-przedstawiciele z przydziałem klasowym w roku dokumentu (`readRoles` w
-`DOCUMENT_POLICIES`); przydział z innego roku daje 404. Skutki dla danych:
-zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie są
-zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
-przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
-odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
->>>>>>> origin/main
-
-`0169_email_quota_other_sends.sql` (#84, część: ręczna ewidencja wiadomości
-spoza kolejki) luzuje CHECK `email_send_ledger.message_count` do −10000..10000
-bez zera (wiersz kampanii nadal ma dokładnie 1) i dodaje kolumny opcjonalne
-`actor_id`, `reason_code` (`manual_brevo_panel`, `invitation`, `audit_committee`,
-`other`, `correction`), `idempotency_key` (UNIQUE) i `corrects_id` (FK do
-wpisu korygowanego) oraz CHECK `email_ledger_other_manual`: wpis ręczny ma
-aktora, kod i klucz, a korekta to wyłącznie liczba ujemna z kodem `correction`
-i wskazaniem korygowanego wpisu. Dziennik nadal jest tylko do dopisywania
-(trigger z 0007) — pomyłkę poprawia nowy wpis ujemny, nic nie jest edytowane.
-Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSends`)
-pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
-SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
-Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.
-=======
 `0163_guardian_household_end_reason.sql` (#86, #535) dodaje do
 `guardian_households` kolumnę tekstową `ended_reason` (powód zakończenia
 członkostwa opiekuna w gospodarstwie; zapisuje ją trasa
@@ -1353,3 +1324,93 @@ jak dla `student_households.ended_reason`); trafia do eksportu rocznego razem
 z całym wierszem `guardian_households`, jak powody członkostwa ucznia.
 Wycofanie: na pustej bazie DROP CONSTRAINT i DROP COLUMN; na bazie z danymi
 tylko po kopii.
+<<<<<<< HEAD
+=======
+
+`0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
+przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
+(bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
+przesyłają admin i zarząd z przydziałem bez klasy, a czytają także
+przedstawiciele z przydziałem klasowym w roku dokumentu (`readRoles` w
+`DOCUMENT_POLICIES`); przydział z innego roku daje 404. Skutki dla danych:
+zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie są
+zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
+przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
+odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
+
+`0170_rd_app_role.sql` (#101, SR-05) tworzy — warunkowo i idempotentnie —
+rolę `rd_app` (NOLOGIN, bez hasła, bez SUPERUSER/CREATEROLE/CREATEDB/
+BYPASSRLS) i nadaje jej uprawnienia aplikacji: USAGE na schemacie `public`
+(bez CREATE, zabrane także PUBLIC), SELECT/INSERT/UPDATE na istniejących
+tabelach, USAGE/SELECT na sekwencjach, EXECUTE na funkcjach, a DELETE
+wyłącznie na `login_rate_limits`, `mfa_rate_limits`,
+`email_campaign_recipients`, `email_campaign_exclusions`. Brak TRUNCATE,
+REFERENCES i TRIGGER; `schema_migrations` tylko do odczytu. `ALTER DEFAULT
+PRIVILEGES` nadaje to samo przyszłym obiektom roli uruchamiającej migracje
+(bez DELETE). Rola jest tworzona tylko wtedy, gdy nie istnieje, a
+użytkownik migracji ma SUPERUSER lub CREATEROLE; inaczej krok jest pomijany z
+`NOTICE` (operator tworzy rolę ręcznie i powtarza GRANT-y). PGlite obsługuje
+role, więc migracja przechodzi w testach bez zmian. Skutki dla danych: żaden
+wiersz nie jest zmieniany ani usuwany; zmieniają się tylko uprawnienia.
+Dotychczasowy użytkownik działa bez zmian, dopóki operator nie przełączy
+`DATABASE_URL` aplikacji na `rd_app` (osobny `DATABASE_MIGRATION_URL` dla
+migratora i odtworzenia: `docs/RAILWAY_OPERATIONS.md`, sekcja „Role bazy”).
+UPDATE jest nadane szeroko celowo (`SELECT … FOR UPDATE` i `LOCK TABLE` go
+wymagają), a niezmienność historii nadal pilnują triggery. Rola nie ogranicza
+trybu odtworzenia `SET LOCAL rd.restore` (zwykły parametr sesji).
+Dowód: `tests/pg-real-app-role.test.js` (`npm run test:pg-real`). Wycofanie:
+REVOKE ALL na tabelach/sekwencjach/funkcjach schematu i `ALTER DEFAULT
+PRIVILEGES … REVOKE`, REVOKE USAGE na schemacie, `DROP ROLE rd_app`.
+
+`0174_anonymization_runs.sql` (issue #91, D-04/D-07) dodaje mechanizm
+anonimizacji gospodarstwa z zachowaniem księgi (opis: `docs/RETENTION.md`).
+Tabela `anonymization_runs` (tylko dopisywanie; `UPDATE`/`DELETE`/`TRUNCATE`
+odrzucane) trzyma: gospodarstwo, powód jako kod (`retention_policy` |
+`data_subject_request`), odwołania do polityk/żądania, `plan_sha256`, liczniki,
+aktora i czas — bez danych osobowych. Furtką w strażnikach niezmienności jest
+`rd_anonymization_update_allowed(tabela, stary, nowy)`: `UPDATE` przechodzi
+tylko w transakcji z `set_config('rd.anonymization_run', <uuid>, true)`, dla
+tabel i kolumn z listy w migracji i tylko na `NULL`/`[zanonimizowano]`/
+`zanonimizowano@anonim.invalid`; kwoty, daty, status, gospodarstwo, rok i klucze
+idempotencji pozostają chronione. Funkcje zmienione (wczesne wyjście na
+początku, reszta gałęzi bez zmian): `family_history_immutable`,
+`immutable_financial_record`, `immutable_payment_event`, `email_snapshot_guard`,
+`payment_entry_guard`, `guardian_update_request_guard`, `enrollment_guard`,
+`year_freeze_direct`, `guardian_household_check`, `student_household_check`,
+`guardian_contact_history` (pomija wiersz historii w kontekście przebiegu).
+**Skutki dla danych:** sama migracja nie zmienia żadnego wiersza (nowa pusta
+tabela i funkcje). Dane zmieniają dopiero przebiegi administratora
+(`POST /api/admin/anonymizations`) — zmiana jest nieodwracalna w bazie
+(odtworzenie z kopii sprzed przebiegu przywraca dane osobowe; procedura w
+RETENTION.md). Numer 0174 jest kolejnością nakładania (kolejne wolne numery
+rezerwują równoległe gałęzie); redefinicje funkcji zachowują wszystkie gałęzie
+(`npm run migrations:check-functions`). Wycofanie: przywrócić poprzednie
+definicje funkcji z migracji 0003, 0007, 0014, 0017, 0023, 0038, 0055, 0087,
+0136, `DROP FUNCTION rd_anonymization_update_allowed, rd_anonymization_active`,
+`DROP TABLE anonymization_runs` (na bazie z danymi tylko po kopii zapasowej).
+
+`0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
+przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
+(bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
+przesyłają admin i zarząd z przydziałem bez klasy, a czytają także
+przedstawiciele z przydziałem klasowym w roku dokumentu (`readRoles` w
+`DOCUMENT_POLICIES`); przydział z innego roku daje 404. Skutki dla danych:
+zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie są
+zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
+przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
+odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
+>>>>>>> origin/main
+
+`0177_email_quota_other_sends.sql` (#84, część: ręczna ewidencja wiadomości
+spoza kolejki) luzuje CHECK `email_send_ledger.message_count` do −10000..10000
+bez zera (wiersz kampanii nadal ma dokładnie 1) i dodaje kolumny opcjonalne
+`actor_id`, `reason_code` (`manual_brevo_panel`, `invitation`, `audit_committee`,
+`other`, `correction`), `idempotency_key` (UNIQUE) i `corrects_id` (FK do
+wpisu korygowanego) oraz CHECK `email_ledger_other_manual`: wpis ręczny ma
+aktora, kod i klucz, a korekta to wyłącznie liczba ujemna z kodem `correction`
+i wskazaniem korygowanego wpisu. Dziennik nadal jest tylko do dopisywania
+(trigger z 0007) — pomyłkę poprawia nowy wpis ujemny, nic nie jest edytowane.
+Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSends`)
+pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
+SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
+Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.

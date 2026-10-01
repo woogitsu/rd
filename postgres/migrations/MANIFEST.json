@@ -384,7 +384,15 @@
     "sha256": "9b4fbdd386560c71873daa22c0be4320b7193f9cf928900a382b049cf4ab97f3"
   },
   {
-    "name": "0169_email_quota_other_sends.sql",
+    "name": "0170_rd_app_role.sql",
+    "sha256": "333cbaaa6f38dbac666905991c020518ed914da030676cabb6a618bbb6545fe7"
+  },
+  {
+    "name": "0174_anonymization_runs.sql",
+    "sha256": "dd3e9fce885ad195359622375fa4cd840ec9bd747550ec8e9e352868551266d0"
+  },
+  {
+    "name": "0177_email_quota_other_sends.sql",
     "sha256": "5d152a8ff4f58d92bfa562eff7698a247baa9c3b1a23adca1e6fd0bac0addb19"
   }
 ]

@@ -46,6 +46,8 @@ wpisów).
 | `alt_text_required` | Podaj opis zdjęcia (tekst alternatywny) albo zaznacz, że jest czysto dekoracyjne. | Zależy od kontekstu (patrz moduł trasy). |
 | `ambiguous_csv_delimiter` | Nie można ustalić separatora kolumn w pliku CSV (średnik, przecinek lub tabulator występują tyle samo razy). Wybierz separator ręcznie w polu „Separator” albo zapisz plik z jednym separatorem. | Nie — popraw dane żądania. |
 | `ambiguous_local_time` | Ta godzina występuje dwa razy (zmiana czasu z letniego na zimowy). Wybierz, o które wystąpienie chodzi. | Zależy od kontekstu (patrz moduł trasy). |
+| `anonymization_plan_changed` | Dane gospodarstwa zmieniły się od podglądu. Zrób podgląd jeszcze raz i zatwierdź nowy plan. | Tak, po ponownym podglądzie (dane zmieniły się w międzyczasie). |
+| `anonymization_row_mismatch` | Liczba zmienionych wierszy nie zgadza się z planem — operację wycofano, nic nie zostało zanonimizowane. | Tak, po ponownym podglądzie (dane zmieniły się w międzyczasie). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `authorization_superseded` | Kwota upoważnienia zmieniła się w międzyczasie. Odśwież widok i spróbuj ponownie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -89,6 +91,7 @@ wpisów).
 | `data_request_closed` | Żądanie jest już zamknięte (udzielono odpowiedzi albo odrzucono). | Nie — popraw dane żądania. |
 | `data_request_export_in_progress` | Eksport dla tego żądania już trwa. Poczekaj na jego zakończenie. | Tak, po chwili (drugi równoczesny eksport tego samego żądania). |
 | `data_request_identity_not_verified` | Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy. | Nie — najpierw zmień stan żądania. |
+| `data_request_kind_not_erasable` | Anonimizacja na żądanie jest możliwa tylko przy żądaniu usunięcia danych. | Nie — popraw dane żądania. |
 | `data_request_kind_not_exportable` | Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych. | Nie — popraw dane żądania. |
 | `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
 | `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
@@ -173,6 +176,7 @@ wpisów).
 | `invalid_csv_encoding` | Plik CSV ma nieznane kodowanie (w tekście są znaki zastępcze). Zapisz go jako „CSV UTF-8” albo wybierz kodowanie i wgraj ponownie. | Nie — popraw dane żądania. |
 | `invalid_current_password` | Obecne hasło jest nieprawidłowe. | Nie — popraw dane żądania. |
 | `invalid_cursor` | Nie udało się wczytać kolejnej strony wyników. Odśwież listę. | Nie — popraw dane żądania. |
+| `invalid_data_request_id` | Podaj identyfikator żądania osoby (tylko przy powodzie data_subject_request). | Nie — popraw dane żądania. |
 | `invalid_date_range` | Data końca nie może być wcześniejsza niż data początku. | Nie — popraw dane żądania. |
 | `invalid_date` | Niepoprawna data. | Nie — popraw dane żądania. |
 | `invalid_datetime` | Niepoprawna data lub godzina. | Nie — popraw dane żądania. |
@@ -186,6 +190,7 @@ wpisów).
 | `invalid_document_date` | Niepoprawna data dokumentu. | Nie — popraw dane żądania. |
 | `invalid_document_id` | Niepoprawny identyfikator dokumentu. | Nie — popraw dane żądania. |
 | `invalid_domain` | Wybierz obszar dziennika z listy. | Nie — popraw dane. |
+| `invalid_dry_run` | Pole dryRun musi być wartością logiczną. | Nie — popraw dane żądania. |
 | `invalid_due_on` | Podaj poprawną datę terminu odpowiedzi. | Nie — popraw dane żądania. |
 | `invalid_effective_on` | Podaj poprawną datę. | Nie — popraw dane żądania. |
 | `invalid_email` | Podaj poprawny adres e-mail. | Nie — popraw dane żądania. |
@@ -198,6 +203,7 @@ wpisów).
 | `invalid_explicit_license` | Niepoprawna licencja zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_format` | Wybierz format eksportu z listy (CSV albo JSON). | Nie — popraw dane żądania. |
 | `invalid_from` | Podaj poprawną datę początkową (RRRR-MM-DD). | Nie — popraw dane. |
+| `invalid_household_id` | Niepoprawny identyfikator gospodarstwa. | Nie — popraw dane żądania. |
 | `invalid_iban` | Numer rachunku (IBAN) jest niepoprawny — sprawdź sumę kontrolną. | Nie — popraw dane żądania. |
 | `invalid_id` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
 | `invalid_idempotency_key` | Niepoprawny identyfikator operacji. Zamknij formularz i otwórz go ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -235,6 +241,7 @@ wpisów).
 | `invalid_photo_id` | Niepoprawny identyfikator zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_photos` | Niepoprawna lista zdjęć. | Nie — popraw dane żądania. |
 | `invalid_plan_digest` | Brak poprawnego skrótu planu (planDigest) z podglądu. | Nie — popraw dane żądania. |
+| `invalid_plan_sha256` | Podaj skrót planu (planSha256) z podglądu. | Nie — popraw dane żądania. |
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_provider_pause_id` | Niepoprawny identyfikator wstrzymania wysyłki. | Nie — popraw dane żądania. |
 | `invalid_quota_count` | Niepoprawna liczba wiadomości: od 1 do 10000; korekta jest liczbą ujemną. | Nie — popraw dane żądania. |
@@ -242,6 +249,7 @@ wpisów).
 | `invalid_quota_reason` | Niepoprawny kod powodu wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
+| `invalid_reason_code` | Podaj powód przebiegu: retention_policy albo data_subject_request. | Nie — popraw dane żądania. |
 | `invalid_received_on` | Podaj poprawną datę wpłynięcia żądania. | Nie — popraw dane żądania. |
 | `invalid_reference_text` | Opis wpłaty jest za długi albo zawiera niedozwolone znaki. | Nie — popraw dane żądania. |
 | `invalid_reference` | Wskazany rok szkolny, klasa lub powiązany wpis nie istnieje albo jest poza Twoim zakresem. | Nie — popraw dane żądania. |
@@ -431,6 +439,10 @@ wpisów).
 | `resolution_required` | Ten wydatek wymaga wskazania uchwały. | Nie — popraw dane żądania. |
 | `restore_drill_failed` | Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
 | `restore_report_bad_identifier` | Raport zgodności odrzucił nieprawidłową nazwę tabeli. Sprawdź schemat bazy. | Zależy od kontekstu (patrz moduł trasy). |
+| `retention_period_not_elapsed` | Okres przechowywania danych tego gospodarstwa jeszcze nie upłynął — nic nie zostało zanonimizowane. | Nie — poczekaj do upływu okresu z polityki retencji. |
+| `retention_policy_missing` | Brak zatwierdzonej polityki retencji (D-04) dla wszystkich kategorii danych — nic nie zostało zanonimizowane. | Nie — najpierw administrator danych wpisuje politykę retencji. |
+| `retention_policy_not_approved` | Polityka retencji nie ma zatwierdzenia drugiej osoby — nic nie zostało zanonimizowane. | Nie — najpierw zatwierdź politykę retencji. |
+| `retention_rule_not_evaluable` | Polityka retencji ma tylko opis reguły, bez okresu — system nie potrafi wyliczyć terminu, nic nie zostało zanonimizowane. | Nie — popraw politykę retencji (okres retain_for). |
 | `retry_later` | Baza danych jest chwilowo przeciążona. Spróbuj ponownie za chwilę. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `review_expense_only` | Weryfikacja drugiej osoby dotyczy wyłącznie wydatków. | Zależy od kontekstu (patrz moduł trasy). |
 | `revision_conflict` | Ktoś zmienił dane w międzyczasie. Odśwież widok i dopiero wtedy powtórz operację. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
