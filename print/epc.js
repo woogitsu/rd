@@ -9,6 +9,7 @@
 // Limit całości: 331 bajtów UTF-8 (specyfikacja EPC069-12).
 
 import { isValidIban, normalizeIban } from "./iban.js";
+import { isValidStructuredReference } from "../src/pg/ogm.js";
 
 export const MAX_EPC_BYTES = 331;
 export const MAX_NAME_LENGTH = 70;
@@ -38,6 +39,12 @@ function formatEpcAmount(amountCents) {
   return `EUR${euros}.${cents}`;
 }
 
+// Znaki sterujące (w tym \n, \r, \t) w polu tekstowym rozbiłyby 12-liniowy
+// ładunek i podmieniły kolejne pola (np. IBAN) — odrzucamy je, nie czyścimy.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
+// BIC (ISO 9362): 4 litery banku, 2 litery kraju, 2 znaki lokalizacji, opcjonalnie 3 znaki oddziału.
+const BIC_PATTERN = /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/;
+
 function byteLength(text) {
   return new TextEncoder().encode(text).byteLength;
 }
@@ -59,14 +66,21 @@ export function buildEpcPayload({
   const normalizedIban = normalizeIban(iban);
   assert(isValidIban(normalizedIban), "invalid_iban");
   const trimmedName = String(name ?? "").trim();
-  assert(trimmedName.length > 0 && trimmedName.length <= MAX_NAME_LENGTH, "invalid_name");
-  assert(String(info ?? "").length <= MAX_INFO_LENGTH, "invalid_info");
+  assert(trimmedName.length > 0 && [...trimmedName].length <= MAX_NAME_LENGTH, "invalid_name");
+  assert(!CONTROL_CHARS.test(trimmedName), "invalid_name");
+  const trimmedInfo = String(info ?? "").trim();
+  assert([...trimmedInfo].length <= MAX_INFO_LENGTH, "invalid_info");
+  assert(!CONTROL_CHARS.test(trimmedInfo), "invalid_info");
+  const trimmedBic = String(bic ?? "").trim().toUpperCase();
+  if (trimmedBic) assert(BIC_PATTERN.test(trimmedBic), "invalid_bic");
 
   const structured = String(structuredReference ?? "").trim();
   const unstructured = String(unstructuredText ?? "").trim();
   assert(!(structured && unstructured), "invalid_remittance_both");
-  if (structured) assert(/^\d{12}$/.test(structured), "invalid_structured_reference");
-  assert(unstructured.length <= MAX_UNSTRUCTURED_LENGTH, "invalid_unstructured_text");
+  // OGM-VCS: 12 cyfr z poprawną sumą kontrolną mod 97 (#83).
+  if (structured) assert(isValidStructuredReference(structured), "invalid_structured_reference");
+  assert([...unstructured].length <= MAX_UNSTRUCTURED_LENGTH, "invalid_unstructured_text");
+  assert(!CONTROL_CHARS.test(unstructured), "invalid_unstructured_text");
 
   const amount = formatEpcAmount(amountCents);
 
@@ -75,14 +89,14 @@ export function buildEpcPayload({
     "002",
     "1",
     "SCT",
-    String(bic ?? "").trim(),
+    trimmedBic,
     trimmedName,
     normalizedIban,
     amount,
     "",
     structured,
     unstructured,
-    String(info ?? "").trim(),
+    trimmedInfo,
   ];
   const payload = lines.join("\n");
   assert(byteLength(payload) <= MAX_EPC_BYTES, "epc_payload_too_large");

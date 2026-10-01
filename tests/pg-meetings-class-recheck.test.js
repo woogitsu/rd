@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedPublishedPrivacyNotice, seedUserSession } from './helpers/pg.js';
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error('network_forbidden_in_tests'); };
@@ -31,6 +31,7 @@ async function family(db, id, classes) {
 
 async function setup() {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db); // #145: zatwierdzenie kampanii wymaga opublikowanej informacji
   await seedClass(db, { id: 'ca', schoolYearId: YEAR, name: '1A' });
   await seedClass(db, { id: 'cb', schoolYearId: YEAR, name: '2B' });
   const cookies = {

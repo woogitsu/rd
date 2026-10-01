@@ -57,7 +57,7 @@ export function downloadFilename(id, mime) {
 // (lista kluczy, limity, heurystyki PDF/PNG/JPEG) wymaga podbicia tej stałej —
 // inaczej podgląd pominąłby nowe reguły dla plików przyjętych po staremu.
 // Pilnuje tego odcisk kodu reguł w tests/documents-validation-version.test.js.
-export const DOCUMENT_VALIDATION_VERSION = 1;
+export const DOCUMENT_VALIDATION_VERSION = 2;
 
 // --- reguły kontroli struktury: początek (odcisk: tests/documents-validation-version.test.js) ---
 // Kontrola struktury pliku (issue #89): heurystyka, NIE zastępuje skanu
@@ -246,22 +246,76 @@ function isPngChunkType(bytes, offset) {
   return true;
 }
 
+// Zgodność struktury obrazu z jego nagłówkiem (#89, wersja reguł 2): wymiary w IHDR/SOF
+// muszą być dodatnie i rozsądne (limit liczby pikseli chroni przed „bombą dekompresyjną”
+// w czytniku przeglądarki), PNG ma poprawne sumy CRC chunków i dane obrazu (IDAT),
+// JPEG ma nagłówek ramki (SOF) przed danymi skanu. To nadal heurystyka — obrazu nie dekodujemy.
+const IMAGE_MAX_DIMENSION = 30000;
+const IMAGE_MAX_PIXELS = 100_000_000;
+const PNG_IHDR_DATA_LENGTH = 13;
+const PNG_IDAT = asciiBytes('IDAT');
+// Dozwolone głębie bitowe dla typu koloru PNG (0 skala szarości, 2 RGB, 3 paleta, 4 szarość+alfa, 6 RGBA).
+const PNG_BIT_DEPTHS = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes, from, to) {
+  let crc = 0xffffffff;
+  for (let i = from; i < to; i += 1) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function readUint32(bytes, offset) {
+  return (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0;
+}
+
+function imageSizeOk(width, height) {
+  return width >= 1 && height >= 1 && width <= IMAGE_MAX_DIMENSION && height <= IMAGE_MAX_DIMENSION
+    && width * height <= IMAGE_MAX_PIXELS;
+}
+
 function validatePngStructure(bytes) {
   let offset = PNG_SIGNATURE_LENGTH;
+  let sawIdat = false;
   for (;;) {
     if (offset + 8 > bytes.length) return { ok: false, code: 'document_malformed' };
-    const length = (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0;
+    const length = readUint32(bytes, offset);
     const typeOffset = offset + 4;
     if (!isPngChunkType(bytes, typeOffset)) return { ok: false, code: 'document_malformed' };
-    if (offset === PNG_SIGNATURE_LENGTH && !PNG_IHDR.every((byte, index) => bytes[typeOffset + index] === byte)) {
+    const first = offset === PNG_SIGNATURE_LENGTH;
+    if (first && !PNG_IHDR.every((byte, index) => bytes[typeOffset + index] === byte)) {
       return { ok: false, code: 'document_malformed' };
     }
     const isIend = PNG_IEND.every((byte, index) => bytes[typeOffset + index] === byte);
     const chunkEnd = typeOffset + 4 + length + 4; // typ + dane + CRC
     if (chunkEnd > bytes.length) return { ok: false, code: 'document_malformed' };
-    if (isIend) return chunkEnd === bytes.length ? { ok: true } : { ok: false, code: 'document_malformed' };
+    if (crc32(bytes, typeOffset, chunkEnd - 4) !== readUint32(bytes, chunkEnd - 4)) {
+      return { ok: false, code: 'document_malformed' };
+    }
+    if (first) {
+      const data = typeOffset + 4;
+      const depths = PNG_BIT_DEPTHS[bytes[data + 9]];
+      if (length !== PNG_IHDR_DATA_LENGTH || !imageSizeOk(readUint32(bytes, data), readUint32(bytes, data + 4))
+        || !depths || !depths.includes(bytes[data + 8])) {
+        return { ok: false, code: 'document_malformed' };
+      }
+    }
+    if (PNG_IDAT.every((byte, index) => bytes[typeOffset + index] === byte)) sawIdat = true;
+    if (isIend) return chunkEnd === bytes.length && sawIdat ? { ok: true } : { ok: false, code: 'document_malformed' };
     offset = chunkEnd;
   }
+}
+
+// Znaczniki ramki JPEG (SOF0–SOF15 poza DHT 0xC4, JPG 0xC8 i DAC 0xCC).
+function isJpegFrameMarker(marker) {
+  return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
 }
 
 function validateJpegStructure(bytes) {
@@ -269,7 +323,30 @@ function validateJpegStructure(bytes) {
   let end = bytes.length;
   while (end > 0 && bytes[end - 1] === 0x00) end -= 1;
   if (end < 2 || bytes[end - 2] !== 0xff || bytes[end - 1] !== 0xd9) return { ok: false, code: 'document_malformed' };
-  return { ok: true };
+  // Segmenty nagłówkowe od SOI do SOS: każdy musi się mieścić w pliku, a przed SOS
+  // musi wystąpić nagłówek ramki z dodatnimi wymiarami.
+  let offset = 2;
+  let sawFrame = false;
+  for (;;) {
+    if (offset + 2 > end || bytes[offset] !== 0xff) return { ok: false, code: 'document_malformed' };
+    const marker = bytes[offset + 1];
+    if (marker === 0xff) { offset += 1; continue; } // bajty dopełnienia FF
+    if (marker === 0xda) return sawFrame ? { ok: true } : { ok: false, code: 'document_malformed' };
+    if (marker === 0xd9 || marker === 0xd8) return { ok: false, code: 'document_malformed' };
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { offset += 2; continue; } // bez długości
+    if (offset + 4 > end) return { ok: false, code: 'document_malformed' };
+    const length = bytes[offset + 2] << 8 | bytes[offset + 3];
+    if (length < 2 || offset + 2 + length > end) return { ok: false, code: 'document_malformed' };
+    if (isJpegFrameMarker(marker)) {
+      if (length < 8 || sawFrame) return { ok: false, code: 'document_malformed' };
+      const height = bytes[offset + 5] << 8 | bytes[offset + 6];
+      const width = bytes[offset + 7] << 8 | bytes[offset + 8];
+      const precision = bytes[offset + 4];
+      if (!imageSizeOk(width, height) || precision < 2 || precision > 16 || bytes[offset + 9] === 0) return { ok: false, code: 'document_malformed' };
+      sawFrame = true;
+    }
+    offset += 2 + length;
+  }
 }
 
 export function validateStructure(bytes, mime) {

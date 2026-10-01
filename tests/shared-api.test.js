@@ -711,7 +711,7 @@ test('mountShell sprawdza sesję przed pierwszym await, zanim zapyta o /api/acce
   // Każdy panel montuje powłokę przed własnymi żądaniami (żądania czekają na bramkę).
   for (const panel of PANELS) {
     const main = readFileSync(join(ROOT, panel, 'main.js'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
-    const mount = main.search(/^mountShell\(/m);
+    const mount = main.search(/^(?:const \w+ = )?mountShell\(/m);
     assert.ok(mount > 0, `${panel}: mountShell() na najwyższym poziomie`);
     const firstApi = main.search(/\b(api|apiRequest|getJson)\(\s*(\{\s*url:\s*)?["'`]\/api\//);
     if (firstApi >= 0) assert.ok(mount < firstApi, `${panel}: mountShell() przed pierwszym żądaniem API`);
