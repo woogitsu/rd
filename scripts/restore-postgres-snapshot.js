@@ -1,3 +1,4 @@
+import { migrationDatabaseUrl } from '../src/migration-url.js';
 import { readFile } from 'node:fs/promises';
 import { Client } from 'pg';
 import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
@@ -23,14 +24,14 @@ if (!snapshotPath) {
     const sourceCount = SNAPSHOT_TABLES.reduce((sum, table) => sum + snapshot.tables[table].length, 0);
     if (!apply) {
       console.log(`Snapshot verified (${sourceCount} rows). Dry run only; database was not contacted. Event times: ${JSON.stringify(timeSummary)}`);
-    } else if (!process.env.DATABASE_URL) {
-      throw new Error('DATABASE_URL is required with --apply');
+    } else if (!migrationDatabaseUrl()) {
+      throw new Error('DATABASE_MIGRATION_URL or DATABASE_URL is required with --apply');
     } else if (guardDangerousOperation(process.env.APP_ENV, { allowProduction: args.includes('--allow-production') }).refused) {
       const warning = appEnvWarning(process.env.APP_ENV);
       if (warning) console.error(warning);
       throw new Error('Production (or unrecognised APP_ENV) restore requires explicit --allow-production');
     } else {
-      const client = new Client({ connectionString: process.env.DATABASE_URL });
+      const client = new Client({ connectionString: migrationDatabaseUrl() });
       try {
         await client.connect();
         const report = await restoreSnapshot(client, snapshot, { eventTimeZone });
