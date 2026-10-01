@@ -19,6 +19,7 @@
 // - hasło nigdy nie trafia do logów, audytu ani odpowiedzi.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { readFileSync } from 'node:fs';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 
 export const PASSWORD_POLICY = Object.freeze({ minLength: 12, maxLength: 128 });
@@ -238,6 +239,14 @@ export async function verifyPasswordOrDummy(password, hash, env) {
 // (`foldLatin`), więc np. „hasło” i „haslo” trafiają do tego samego wpisu.
 // Usunięty martwy wpis `asdfghjkl;'` (11 znaków — krótszy niż minLength=12,
 // nigdy nie mógł zostać dopasowany; patrz test kontraktu listy).
+// #196 punkt 4: mała lista haseł z publicznych wycieków w repozytorium
+// (src/pg/data/weak-passwords.txt), ładowana raz na proces, bez zapytań sieciowych.
+// Komentarze (#) i puste wiersze są pomijane; wpisy są już w postaci porównawczej.
+function loadLeakedPasswords() {
+  const text = readFileSync(new URL('./data/weak-passwords.txt', import.meta.url), 'utf8');
+  return text.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+}
+
 const COMMON_PASSWORDS = new Set([
   '123456789012', '1234567890123', '12345678901234', '123456789012345', '1234567890qwerty',
   '1q2w3e4r5t6y', '1q2w3e4r5t6y7u', '1qaz2wsx3edc', '1qaz2wsx3edc4rfv', 'zaq12wsxcde3', 'zaq1zaq1zaq1',
@@ -252,6 +261,7 @@ const COMMON_PASSWORDS = new Set([
   'zaq12wsxzaq1', 'polska123456', 'polska1234567', 'bruksela1234', 'bruxelles123', 'brussels1234',
   'radarodzicow', 'radarodzicow1', 'radarodzicow12', 'radarodzicow123', 'radarodzicow2026',
   'szkolapolska', 'szkolapolska1', 'szkolapolska123', 'kochamcie123', 'kochamcie1234',
+  ...loadLeakedPasswords(),
 ]);
 // Rdzenie dopasowywane po zdjęciu diakrytyków i cyfr/znaków — patrz `checkPasswordPolicy`.
 // `zaqwsxcde` łapie rozszerzony marsz klawiaturowy (np. „Zaq1@wsxcde3”, gdzie

@@ -3,6 +3,7 @@
 // ich zachowywało. Testy odtwarzają tabelę z audytu (dane wyłącznie syntetyczne).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { checkPasswordPolicy, contextStems, passwordPolicyLists, PASSWORD_POLICY } from '../src/pg/password.js';
 
 // Dostęp do listy przez zachowanie funkcji (nie eksportujemy wewnętrznego Set),
@@ -114,4 +115,19 @@ test('podwójna próba zmiany hasła odrzuconym hasłem: druga próba wciąż 40
   const password = 'Hasło123456789';
   assert.equal(checkPasswordPolicy(password), 'password_common');
   assert.equal(checkPasswordPolicy(password), 'password_common');
+});
+
+test('lista z wycieków (#196): plik w repo, wpisy w postaci porównawczej, warianty polskie i wielkość liter odrzucane', () => {
+  const text = readFileSync(new URL('../src/pg/data/weak-passwords.txt', import.meta.url), 'utf8');
+  const entries = text.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+  assert.ok(entries.length >= 100, `lista z wycieków za krótka: ${entries.length}`);
+  const { commonPasswords } = passwordPolicyLists();
+  for (const entry of entries) {
+    assert.equal(entry, compact(entry), `wpis nie jest w postaci porównawczej: ${entry}`);
+    assert.ok(commonPasswords.includes(entry), `wpis nie został załadowany: ${entry}`);
+  }
+  assert.equal(checkPasswordPolicy('Kocham Cię Bardzo'), 'password_common');
+  assert.equal(checkPasswordPolicy('MojeHasło12345'), 'password_common');
+  assert.equal(checkPasswordPolicy('Tajne-Hasło-1234'), 'password_common');
+  assert.equal(checkPasswordPolicy('Syntetyczne hasło z polskimi znakami żółć'), null);
 });
