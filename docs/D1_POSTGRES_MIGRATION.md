@@ -121,6 +121,24 @@ triggery D1 blokują ich poprawkę w miejscu. Dlatego:
   dowolnej tabeli wycofuje import; błąd wskazuje tabelę i identyfikatory
   wierszy (do 5), bez treści. Nadal brakuje niezależnego raportu źródłowego
   liczonego zapytaniami do D1 oraz sum per rok (#182, część otwarta).
+- Ślad importu (#191). `restoreSnapshot` w tej samej transakcji, po uzgodnieniu
+  liczności i odcisków, dopisuje dokładnie jedno zdarzenie `migration.d1_import`
+  (typ obiektu `d1_snapshot`, identyfikator = suma SHA-256 snapshotu). Metadane
+  bez danych osobowych: format, suma i data snapshotu, liczności i sumy z
+  uzgodnienia, reguła czasu wydarzeń, odcisk odcisków wierszy, liczba i ostatnia
+  nazwa zastosowanych migracji oraz `sessionsAndInvitationsImported: false`.
+  Nieudany import wycofuje także zdarzenie; udanego nie da się powtórzyć na tej
+  samej bazie (`ensureEmpty` widzi niepusty dziennik). Liczności w metadanych
+  dotyczą stanu sprzed dopisania zdarzenia, więc `audit_events` w bazie ma
+  po imporcie o jeden wiersz więcej niż w snapshocie. Skrypt z `--apply`
+  wymaga `--actor=<userId>`: konto musi istnieć w snapshocie, nie być wyłączone
+  i mieć aktywny przydział `admin` bez zakresu; przedstawiciel klasy, skarbnik,
+  konto wyłączone lub nieznane przerywa import przed zapisem. Zdarzenie jest
+  w domenie „Dokumenty, eksporty i wydruki” dziennika, widoczne tylko dla `admin`.
+  Nie zrealizowano (poza zakresem tej zmiany): zamrożenie zapisów D1, punkt
+  odniesienia D1, deterministyczna historia pochodna (triggery 0014),
+  `--expect-database` i okno wycofania. Wobec #227 (Worker nigdy nie był
+  wdrożony) część dotycząca przeniesienia danych z D1 ma niski priorytet.
 - Zgodność z migracjami 0004, 0008 i 0009 oraz wyniki porównania API opisuje
   [EQUIVALENCE.md](EQUIVALENCE.md).
 - Metadane dokumentów mogą zostać przeniesione dopiero razem z uzgodnionym

@@ -196,6 +196,7 @@ const CATALOG = {
   'document.preview_blocked': ['documents', 'Zablokowany podgląd dokumentu (bieżąca kontrola struktury)'],
   'export.created': ['documents', 'Utworzenie eksportu rocznego'],
   'export.restored': ['documents', 'Odtworzenie danych z paczki eksportu'],
+  'migration.d1_import': ['documents', 'Import danych ze snapshotu D1 do PostgreSQL'],
   'print.cards_requested': ['documents', 'Przygotowanie kartek klasowych'],
 
   // --- families ---
