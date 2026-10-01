@@ -13,6 +13,7 @@
 // Odtworzenie odmawia bazy niepustej oraz APP_ENV=production bez --allow-production.
 
 import { fileURLToPath } from 'node:url';
+import { migrationDatabaseUrl } from '../src/migration-url.js';
 import { assertRestoreAllowed, restoreBundleFile, verifyBundleFile } from '../src/pg/export.js';
 import { loadMigrations } from '../src/postgres-migrations.js';
 
@@ -27,7 +28,7 @@ async function main() {
   }
   if (restoreDatabase) {
     assertRestoreAllowed({ appEnv: process.env.APP_ENV, allowProduction: args.includes('--allow-production') });
-    if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required with --restore-database');
+    if (!migrationDatabaseUrl()) throw new Error('DATABASE_MIGRATION_URL or DATABASE_URL is required with --restore-database');
   }
 
   // Błędy parsera to same kody (bez cytowania treści pliku).
@@ -49,7 +50,7 @@ async function main() {
     for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
   } else {
     const { createPgDatabase } = await import('../src/db.js');
-    db = createPgDatabase({ connectionString: process.env.DATABASE_URL });
+    db = createPgDatabase({ connectionString: migrationDatabaseUrl() });
   }
   try {
     const started = Date.now();
