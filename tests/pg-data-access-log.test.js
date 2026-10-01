@@ -3,7 +3,7 @@
 import test, { after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
 
@@ -28,6 +28,7 @@ let shared;
 async function setup() {
   if (shared) return shared;
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
   await seedFamilies(db);
   const env = { db };
   const call = async (path, options = {}) => {

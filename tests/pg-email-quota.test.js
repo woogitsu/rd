@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { emailConfig } from '../src/email/brevo.js';
 import { addDays, quotaOverview, remainingQuota, runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const NOW = new Date('2026-10-05T10:00:00Z');
@@ -16,6 +16,7 @@ const BODY = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok
 
 async function setup(extraEnv = {}, now = NOW) {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const users = {
     treasurer: await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] }),

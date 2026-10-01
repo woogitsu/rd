@@ -4,7 +4,7 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-list';
@@ -44,6 +44,7 @@ async function walk(path, key, { limit, cookie, idOf }) {
 
 before(async () => {
   db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   env = { db };
   await seedSchoolYear(db, YEAR);
   admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });

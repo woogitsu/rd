@@ -29,6 +29,8 @@
 // obejmującej żądany zakres; w innym przypadku pole jest całkowicie pominięte.
 // Kwota netto to suma wpisów wpłat pomniejszona o korekty — nie jest należnością
 // ani statusem rodziny; brak wpisu może być nieaktualny.
+// privacyNotice (#145, D-06): { id, version, url } opublikowanej informacji o
+// przetwarzaniu danych; brak opublikowanej wersji => 409 privacy_notice_missing.
 // Odpowiedź nigdy nie zawiera danych opiekunów (e-maili, imion, zgód).
 
 import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
@@ -37,6 +39,7 @@ import { insertAuditEvent } from '../audit.js';
 import { recordDataAccess } from '../data-access.js';
 import { toSafeInteger } from './payments.js';
 import { loadCurrentPaymentInstructions } from './payment-instructions.js';
+import { loadPublishedNotice, noticeReference } from './privacy-notice.js';
 import { brusselsDay, effectiveDay } from '../today.js';
 
 export const name = 'print';
@@ -184,6 +187,11 @@ export async function handle(request, env, url, json) {
     return json({ error: 'school_year_not_found' }, 404);
   }
 
+  // #145 (D-06): kartka trafia do rodziców, więc wymaga opublikowanej informacji o
+  // przetwarzaniu danych (po autoryzacji i walidacji zakresu, przed odczytem
+  // rodzin). Jej numer wersji i odnośnik wchodzą do odpowiedzi i na kartkę.
+  const privacyNotice = await loadPublishedNotice(env.db);
+  if (!privacyNotice) return json({ error: 'privacy_notice_missing' }, 409);
   const on = cardDay(years[0], effectiveDay(env) ?? brusselsDay());
   const rows = await loadRows(env.db, { schoolYearId, classId, ...scope, on });
   if (rows.length > MAX_PRINT_ROWS) return json({ error: 'too_many_rows' }, 413);
@@ -202,6 +210,8 @@ export async function handle(request, env, url, json) {
       studentCount: rows.length,
       paymentInfoIncluded: scope.paymentInfo,
       paymentInstructionsApproved: Boolean(paymentInstructions),
+      privacyNoticeId: privacyNotice.id,
+      privacyNoticeVersion: privacyNotice.version,
       // Liczba rodzin z komunikacją strukturalną — nigdy same referencje (#83).
       structuredReferenceCount: new Set(rows.filter((row) => row.structured_reference).map((row) => row.household_id)).size,
     },
@@ -215,6 +225,7 @@ export async function handle(request, env, url, json) {
     classId,
     paymentInfoIncluded: scope.paymentInfo,
     paymentInstructions,
+    privacyNotice: noticeReference(privacyNotice, env.PUBLIC_BASE_URL),
     rows: rows.map((row) => rowOut(row, scope.paymentInfo)),
   });
 }

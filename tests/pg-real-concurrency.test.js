@@ -19,7 +19,7 @@ import { createMeeting, createResolution, determineQuorum, recordAttendance } fr
 import { runEmailBatch } from '../src/email/worker.js';
 import { hashPassword } from '../src/pg/password.js';
 import { LOGIN_POLICY } from '../src/pg/login.js';
-import { createRealTestDb, request, seedClass, seedEnrolledHousehold, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createRealTestDb, request, seedClass, seedEnrolledHousehold, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 import { updateMeeting } from './helpers/with-revision.js';
 
 const skip = process.env.RD_TEST_PG_URL ? false : 'brak RD_TEST_PG_URL (wymaga prawdziwego PostgreSQL)';
@@ -300,6 +300,7 @@ const BODY = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok
 const DAY1 = new Date('2026-10-05T08:00:00Z');
 
 async function emailSetup(db, families) {
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const cookies = {
     treasurer: await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] }),

@@ -55,6 +55,7 @@ import {
   SAMPLE_STRUCTURED_REFERENCE, usesPaymentInstructions, usesStructuredReference,
 } from '../../email/content.js';
 import { campaignPaymentInstructions, loadCurrentPaymentInstructions } from './payment-instructions.js';
+import { campaignPrivacyNotice, loadPublishedNotice } from './privacy-notice.js';
 import { estimateSchedule } from '../../email/schedule.js';
 import {
   accountDay, BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, QUOTA_LOCK_ID, quotaOverview, unsubscribeUrlFor, utcDay,
@@ -157,7 +158,7 @@ const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.categor
   c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key, c.send_not_before,
   c.paused_by, c.paused_at, c.resumed_by, c.resumed_at, c.revision_no,
   c.meeting_id, c.meeting_notice_id, c.class_id, c.kind, c.source_campaign_id,
-  c.approved_payment_instructions_id`;
+  c.approved_payment_instructions_id, c.privacy_notice_id`;
 
 async function loadCampaign(executor, id, { lock = false } = {}) {
   const { rows } = await executor.query(
@@ -209,6 +210,8 @@ function campaignView(row) {
     sourceCampaignId: row.source_campaign_id ?? null,
     // #92: wersja danych do wpłaty zatwierdzona razem z kampanią (bez IBAN).
     approvedPaymentInstructionsId: row.approved_payment_instructions_id ?? null,
+    // #145 (D-06): wersja informacji o przetwarzaniu danych zapamiętana przy zatwierdzeniu.
+    privacyNoticeId: row.privacy_notice_id ?? null,
   };
 }
 
@@ -392,7 +395,7 @@ async function updateCampaign(request, env, id, json) {
         `UPDATE email_campaigns SET title = $2, audience = $3, category = $4, subject = $5, body_text = $6, content_hash = $7,
                 updated_by = $8, updated_at = now(), status = 'draft', send_not_before = $9,
                 approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL,
-                approved_payment_instructions_id = NULL
+                approved_payment_instructions_id = NULL, privacy_notice_id = NULL
           WHERE id = $1
           RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
         [id, input.title, input.audience, input.category, input.subject, input.bodyText, hash, actorId, sendNotBefore],
@@ -622,7 +625,7 @@ async function buildSnapshot(request, env, id, json) {
       const wasApproved = campaign.status === 'approved';
       await tx.query(
         `UPDATE email_campaigns SET status = 'draft', approved_by = NULL, approved_at = NULL,
-                approved_content_hash = NULL, approved_recipients_hash = NULL, approved_payment_instructions_id = NULL,
+                approved_content_hash = NULL, approved_recipients_hash = NULL, approved_payment_instructions_id = NULL, privacy_notice_id = NULL,
                 recipients_hash = NULL, recipients_count = NULL, snapshot_built_by = NULL, snapshot_built_at = NULL
           WHERE id = $1`,
         [id],
@@ -716,9 +719,10 @@ async function preview(request, env, id, json) {
   const paymentWarnings = !usesPaymentInstructions(campaign) ? []
     : payment.changed ? ['payment_instructions_changed']
       : !paymentInstructions ? ['payment_instructions_missing'] : [];
+  const privacyNotice = await campaignPrivacyNotice(env.db, campaign, config.publicBaseUrl);
   const sample = renderMessage(campaign, {
     schoolYearLabel: campaign.school_year_label, householdId: sampleHousehold, structuredReference: sampleReference,
-    paymentInstructions, unsubscribeUrl: sampleUnsubscribeUrl,
+    paymentInstructions, unsubscribeUrl: sampleUnsubscribeUrl, privacyNotice,
     missingPaymentText: PREVIEW_MISSING_PAYMENT_TEXT,
   });
   const count = recipients.length;
@@ -746,7 +750,10 @@ async function preview(request, env, id, json) {
       },
       ...estimateSchedule({ now: new Date(), sendNotBefore: campaign.send_not_before, days: planDays(count, dailyCap, config), sendWindow: config.sendWindow }),
     },
-    warnings: [...contentWarnings({ bodyText: campaign.body_text }), ...paymentWarnings],
+    warnings: [...contentWarnings({ bodyText: campaign.body_text }), ...paymentWarnings,
+      ...(privacyNotice ? [] : ['privacy_notice_missing'])],
+    // #145: wersja informacji w stopce podglądu (bez treści informacji).
+    privacyNotice: privacyNotice ? { id: privacyNotice.id, version: privacyNotice.version } : null,
     // #92: wersja danych do wpłaty użyta w podglądzie (bez IBAN — ten jest w sample.text).
     paymentInstructions: paymentInstructions
       ? { id: paymentInstructions.id, approvedAt: paymentInstructions.approvedAt }
@@ -812,6 +819,13 @@ async function assertPaymentInstructionsCurrent(executor, campaign) {
   if (changed) throw new RequestError('payment_instructions_changed', 409);
 }
 
+// #145 (D-06): kampania wychodzi tylko z wersją informacji o przetwarzaniu
+// danych zapamiętaną przy zatwierdzeniu (privacy_notice_id, 0179). Zatwierdzona
+// przed 0179 (NULL) wymaga ponownego zatwierdzenia.
+function assertPrivacyNoticeRecorded(campaign) {
+  if (!campaign.privacy_notice_id) throw new RequestError('privacy_notice_missing', 409);
+}
+
 async function approve(request, env, id, json) {
   const data = await readJson(request);
   if (!HASH_PATTERN.test(data.contentHash ?? '') || !HASH_PATTERN.test(data.recipientsHash ?? '')) {
@@ -861,6 +875,10 @@ async function approve(request, env, id, json) {
         if (!paymentInstructions) throw new RequestError('payment_instructions_missing', 409);
         if (paymentInstructions.id !== seenPaymentInstructionsId) throw new RequestError('payment_instructions_changed', 409);
       }
+      // #145 (D-06): zatwierdzenie wymaga opublikowanej informacji o przetwarzaniu
+      // danych; jej wersja trafia do kampanii (privacy_notice_id, 0179) i do stopki.
+      const privacyNotice = await loadPublishedNotice(tx);
+      if (!privacyNotice) throw new RequestError('privacy_notice_missing', 409);
       // D-16 (domyślnie wyłączone, wariant zachowawczy): jeśli flaga jest
       // włączona, zatwierdzenie wymaga co najmniej jednej wysyłki testowej
       // dla dokładnie bieżącej treści (#104). Liczy się tylko test przyjęty
@@ -876,10 +894,10 @@ async function approve(request, env, id, json) {
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'approved', approved_by = $2, approved_at = now(),
                 approved_content_hash = content_hash, approved_recipients_hash = recipients_hash,
-                approved_payment_instructions_id = $5
+                approved_payment_instructions_id = $5, privacy_notice_id = $6
           WHERE id = $1 AND content_hash = $3 AND recipients_hash = $4
           RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
-        [id, actorId, data.contentHash, data.recipientsHash, paymentInstructions?.id ?? null],
+        [id, actorId, data.contentHash, data.recipientsHash, paymentInstructions?.id ?? null, privacyNotice.id],
       );
       if (!rows[0]) throw new RequestError('approval_stale', 409);
       await insertAuditEvent(tx, {
@@ -888,6 +906,7 @@ async function approve(request, env, id, json) {
           schoolYearId: campaign.school_year_id,
           contentHash: data.contentHash, recipientsHash: data.recipientsHash, recipients: recipients.length,
           ...(paymentInstructions ? { paymentInstructionsId: paymentInstructions.id } : {}),
+          privacyNoticeId: privacyNotice.id, privacyNoticeVersion: privacyNotice.version,
         },
       });
       return json({ campaign: campaignView(rows[0]) });
@@ -911,6 +930,7 @@ async function queue(request, env, id, json) {
         throw new RequestError('approval_required', 409);
       }
       await assertPaymentInstructionsCurrent(tx, campaign);
+      assertPrivacyNoticeRecorded(campaign);
       const dailyCap = campaignDailyCap(recipients.length, config);
       const { rows: inserted } = await tx.query(
         `INSERT INTO email_outbox (id, campaign_id, household_id, recipient_id, idempotency_key)
@@ -979,6 +999,7 @@ async function resume(request, env, id, json) {
       // ponownego zatwierdzenia. Wyjątek (#92): korekta rachunku po zatwierdzeniu
       // kampanii z {rachunek}/{odbiorca} — wznowienie odmawia, worker i tak by ją pominął.
       await assertPaymentInstructionsCurrent(tx, campaign);
+      assertPrivacyNoticeRecorded(campaign);
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'sending', resumed_by = $2, resumed_at = now()
           WHERE id = $1 RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
@@ -1108,9 +1129,11 @@ async function testSend(request, env, id, json) {
     if (!payment.instructions) throw new RequestError('payment_instructions_missing', 409);
     paymentInstructions = payment.instructions;
   }
+  const privacyNotice = await campaignPrivacyNotice(env.db, campaign, config.publicBaseUrl);
+  if (!privacyNotice) throw new RequestError('privacy_notice_missing', 409);
   const rendered = renderMessage(campaign, {
     schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD', structuredReference: SAMPLE_STRUCTURED_REFERENCE,
-    paymentInstructions, unsubscribeUrl,
+    paymentInstructions, unsubscribeUrl, privacyNotice,
   });
   const transport = transportFor(env, config);
   let providerMessageId = null;
