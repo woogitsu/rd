@@ -72,10 +72,13 @@ describe('ostrzeżenia year-close (#80) i przegląd odczytów (#133)', () => {
     const body = await warningsOf(env, cookies.boardA);
     const w = byCode(body);
     assert.deepEqual(body.warnings.map((x) => x.code), [
-      'unallocated_payments', 'expenses_without_evidence', 'large_expenses_without_resolution',
+      'unallocated_payments', 'payments_not_in_ledger', 'expenses_without_evidence', 'large_expenses_without_resolution',
       'reconciliation_missing', 'reconciliation_drafts', 'unmatched_statement_lines', 'open_email_campaigns',
     ]);
     assert.deepEqual(w.unallocated_payments, { code: 'unallocated_payments', count: 1, amountCents: 1500 });
+    // #138: wpłata zapisana bez ujęcia w księdze (unmatched nie liczy się — nie ma jeszcze gospodarstwa).
+    assert.deepEqual(w.payments_not_in_ledger, { code: 'payments_not_in_ledger', count: 1, amountCents: 2000 });
+    assert.equal(w.payment_ledger_amount_mismatch, undefined);
     assert.deepEqual([w.expenses_without_evidence.count, w.expenses_without_evidence.amountCents], [2, 380000]);
     assert.deepEqual([w.large_expenses_without_resolution.count, w.large_expenses_without_resolution.amountCents], [1, 350000]);
     assert.deepEqual([w.reconciliation_drafts.count, w.unmatched_statement_lines.count, w.unmatched_statement_lines.amountCents], [1, 2, 5000]);
@@ -95,6 +98,70 @@ describe('ostrzeżenia year-close (#80) i przegląd odczytów (#133)', () => {
       VALUES ('pa-2', 'p-un', $1, 'h-2', 1000, 'u-treasurer', 'pa-2-key-00001')`, [OLD]);
     w = byCode(await warningsOf(env, cookies.boardA));
     assert.equal(w.unallocated_payments, undefined);
+  });
+
+  test('#138: wpłata ↔ księga: nieujęte i różnica netto są wskaźnikami; korekta i zwrot z korektą księgi zostają spójne', async () => {
+    const ledgerRow = (id, paymentId, cents, key) => db.query(
+      `INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description, occurred_on, method, created_by, idempotency_key, payment_entry_id)
+       VALUES ($1, $2, 'income', $3, 'cat-in', 'Wpłata', '2026-10-05', 'bank', 'u-treasurer', $4, $5)`,
+      [id, OLD, cents, key, paymentId],
+    );
+    const flags = async () => byCode(await warningsOf(env, cookies.boardA));
+    // Ujęcie wpłaty p-ok (2000) w księdze usuwa wskaźnik „nieujęte”.
+    await ledgerRow('le-lk-ok', 'p-ok', 2000, 'le-lk-ok-key-1');
+    let w = await flags();
+    assert.equal(w.payments_not_in_ledger, undefined);
+    assert.equal(w.payment_ledger_amount_mismatch, undefined);
+
+    // Dwie wpłaty tej samej rodziny (dwoje opiekunów): obie poprawne, brak ostrzeżenia „duplikat”.
+    await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+      VALUES ('p-twin-a', 'h-1', $1, 5000, '2026-10-06', 'bank', 'recorded', 'u-treasurer', 'p-twin-a-key-1'),
+             ('p-twin-b', 'h-1', $1, 5000, '2026-10-06', 'bank', 'recorded', 'u-treasurer', 'p-twin-b-key-1')`, [OLD]);
+    w = await flags();
+    assert.deepEqual([w.payments_not_in_ledger.count, w.payments_not_in_ledger.amountCents], [2, 10000]);
+    assert.deepEqual(Object.keys(w).filter((code) => /dup/i.test(code)), []);
+    await ledgerRow('le-twin-a', 'p-twin-a', 5000, 'le-twin-a-key-1');
+    await ledgerRow('le-twin-b', 'p-twin-b', 5000, 'le-twin-b-key-1');
+    assert.equal((await flags()).payments_not_in_ledger, undefined);
+
+    // Korekta częściowa i zwrot: najpierw korekta księgi, potem wpłaty — sumy zgodne, brak wskaźników.
+    const correction = async (ledgerId, paymentId, table, cents, key) => {
+      await db.query(`INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
+        VALUES ($1, $2, $3, 'Korekta testowa', 'u-treasurer', $4)`, [`lc-${key}`, ledgerId, cents, `lc-${key}-key`]);
+      await db.query(table === 'refund'
+        ? `INSERT INTO payment_refunds (id, payment_entry_id, amount_cents, refunded_on, method, reason, created_by, idempotency_key)
+           VALUES ($1, $2, $3, '2026-10-20', 'bank', 'Zwrot testowy', 'u-treasurer', $4)`
+        : `INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
+           VALUES ($1, $2, $3, 'Korekta testowa', 'u-treasurer', $4)`,
+      [`pc-${key}`, paymentId, cents, `pc-${key}-key`]);
+    };
+    await correction('le-twin-a', 'p-twin-a', 'correction', 1000, 'twin-a-1');
+    await correction('le-twin-a', 'p-twin-a', 'refund', 500, 'twin-a-2');
+    w = await flags();
+    assert.equal(w.payment_ledger_amount_mismatch, undefined);
+    assert.equal(w.payments_not_in_ledger, undefined);
+
+    // Zwrot całości netto: wpłata zeruje się i nie liczy jako „nieujęta”.
+    await correction('le-twin-b', 'p-twin-b', 'refund', 5000, 'twin-b-1');
+    assert.equal((await flags()).payments_not_in_ledger, undefined);
+
+    // Różnica powstaje tylko w trybie odtworzenia (import historyczny); API jej nie tworzy.
+    await db.query(`INSERT INTO households (id) VALUES ('h-3') ON CONFLICT DO NOTHING`);
+    await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+      VALUES ('p-mm', 'h-3', $1, 2500, '2026-10-07', 'bank', 'recorded', 'u-treasurer', 'p-mm-key-0001')`, [OLD]);
+    await db.transaction(async (tx) => {
+      await tx.query(`SELECT set_config('rd.restore', 'on', true)`);
+      await tx.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description, occurred_on, method, created_by, idempotency_key, payment_entry_id)
+        VALUES ('le-mm', $1, 'income', 25000, 'cat-in', 'Wpłata', '2026-10-07', 'bank', 'u-treasurer', 'le-mm-key-0001', 'p-mm')`, [OLD]);
+    });
+    const body = await warningsOf(env, cookies.boardA);
+    w = byCode(body);
+    assert.deepEqual(w.payment_ledger_amount_mismatch, { code: 'payment_ledger_amount_mismatch', count: 1, amountCents: 22500 });
+    assert.equal(w.payments_not_in_ledger, undefined);
+    for (const warning of body.warnings) assert.ok(CLOSE_WARNING_CODES.includes(warning.code));
+    assert.doesNotMatch(JSON.stringify(body.warnings), /p-mm|h-3|h-1|twin/);
+    // Raport niczego nie poprawia z urzędu.
+    assert.equal(Number((await db.query(`SELECT amount_cents FROM ledger_entries WHERE id = 'le-mm'`)).rows[0].amount_cents), 25000);
   });
 
   test('zatwierdzone uzgodnienie z datą przed końcem roku i różnicą: dwa ostrzeżenia zamiast „brak”', async () => {
