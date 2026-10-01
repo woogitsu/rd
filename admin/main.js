@@ -41,6 +41,10 @@ import {
   promotionConfirmation, promotionResultMessage, promotionRows, promotionSummary,
 } from "./promotion.js";
 import {
+  applyFailureAction, canApplyRepresentatives, representativesApplyBody, representativesBody, representativesConfirmation,
+  representativesErrorMessage, representativesResultMessage, representativesRows, representativesSummary, withoutRepresentativeNote,
+} from "./representatives-core.js";
+import {
   FILTER_KIND_OPTIONS, FILTER_STATUS_OPTIONS, KIND_LABELS, STATUS_LABELS as DR_STATUS_LABELS, SUBJECT_LABELS,
   canExport, createBody as dataRequestBody, dataRequestsPath, dueState, exportBlocker, exportConfirmation, exportFileName,
   listSummary as dataRequestsSummary, newRequestKey, nextStatuses, omittedNote, statusBody as dataRequestStatusBody,
@@ -1107,7 +1111,12 @@ byId("classes-form").addEventListener("submit", async (event) => {
 // Podgląd i klucz zatwierdzenia żyją tylko w pamięci; zmiana formularza unieważnia podgląd.
 const promo = { preview: null, body: null, key: null };
 
+// Podgląd żyje tylko w pamięci; zmiana lat lub mapy klas go unieważnia.
+// API nie używa Idempotency-Key: powtórzenie zatwierdzenia jest idempotentne po stronie serwera.
+const rep = { preview: null, body: null, busy: false };
+
 function resetPromoPreview() {
+  resetRepPreview();
   promo.preview = null;
   promo.body = null;
   promo.key = null;
@@ -1231,6 +1240,107 @@ byId("promo-apply").addEventListener("click", async (event) => {
     // Błąd sieci: ten sam podgląd i klucz można ponowić. Inny błąd (np. plan_stale): nowy podgląd.
     if (error?.network) element.disabled = !canApplyPromotion(promo.preview);
     else resetPromoPreview();
+  }
+});
+
+// --- Nowy rok: przedłużenie przydziałów przedstawicieli (#78; representatives/*) ---
+
+function resetRepPreview() {
+  rep.preview = null;
+  rep.body = null;
+  byId("rep-preview").hidden = true;
+  byId("rep-preview-body").replaceChildren();
+  byId("rep-apply").disabled = true;
+}
+
+function repClassNames() {
+  const names = new Map();
+  for (const year of state.yearMap.values()) for (const klass of year.classes ?? []) names.set(klass.id, klass.name);
+  return names;
+}
+
+function renderRepPreview(plan, body) {
+  byId("rep-preview-summary").textContent = representativesSummary(plan);
+  byId("rep-preview-body").replaceChildren(...representativesRows(plan, body, repClassNames()).map((row) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(row.toName), cell(row.fromNames), cell(String(row.propose), "num"), cell(String(row.alreadyGranted), "num"),
+      cell(String(row.disabled), "num"), cell(row.withoutRepresentative ? "brak" : "jest"));
+    return tr;
+  }));
+  byId("rep-without").textContent = withoutRepresentativeNote(plan);
+  byId("rep-apply").disabled = rep.busy || !canApplyRepresentatives(plan);
+  byId("rep-preview").hidden = false;
+}
+
+// Podgląd z bieżącej mapy promocji; `body` z poprzedniego podglądu przy odświeżeniu po plan_stale.
+async function loadRepPreview(body) {
+  const plan = await withStepUp(() => api("/api/admin/promotions/representatives/preview", { method: "POST", body }));
+  rep.preview = plan;
+  rep.body = body;
+  renderRepPreview(plan, body);
+}
+
+byId("rep-preview-button").addEventListener("click", async (event) => {
+  const element = event.currentTarget;
+  const errorBox = byId("rep-error");
+  errorBox.textContent = "";
+  resetRepPreview();
+  let body;
+  try {
+    const mapping = {};
+    for (const select of byId("promo-map-body").querySelectorAll("select[data-from-class]")) mapping[select.dataset.fromClass] = select.value;
+    body = representativesBody({ fromSchoolYearId: byId("promo-from").value, toSchoolYearId: byId("promo-to").value, mapping });
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  element.disabled = true;
+  try {
+    await loadRepPreview(body);
+  } catch (error) {
+    errorBox.textContent = representativesErrorMessage(error);
+  } finally {
+    element.disabled = false;
+  }
+});
+
+byId("rep-apply").addEventListener("click", async (event) => {
+  const element = event.currentTarget;
+  if (rep.busy || !canApplyRepresentatives(rep.preview)) return;
+  const { preview, body } = rep;
+  const labels = { from: yearLabel(body.fromSchoolYearId), to: yearLabel(body.toSchoolYearId) };
+  rep.busy = true; // blokada od otwarcia okna: podwójne kliknięcie nie otwiera drugiego
+  element.disabled = true;
+  const errorBox = byId("rep-error");
+  errorBox.textContent = "";
+  try {
+    const confirmed = await confirmAction(representativesConfirmation(preview, labels));
+    if (!confirmed) {
+      element.disabled = !canApplyRepresentatives(rep.preview);
+      return;
+    }
+    const result = await withStepUp(() => api("/api/admin/promotions/representatives/apply", {
+      method: "POST", body: representativesApplyBody(body, preview),
+    }));
+    showMessage(representativesResultMessage(result));
+    resetRepPreview();
+    await loadAudit();
+  } catch (error) {
+    errorBox.textContent = representativesErrorMessage(error);
+    const action = applyFailureAction(error);
+    if (action === "retry") element.disabled = !canApplyRepresentatives(rep.preview);
+    else if (action === "refresh") {
+      // 409 plan_stale: nic nie zapisano; pokaż aktualne liczby i poproś o ponowne zatwierdzenie.
+      resetRepPreview();
+      rep.busy = false;
+      try {
+        await loadRepPreview(body);
+      } catch (refreshError) {
+        errorBox.textContent = `${errorBox.textContent} ${representativesErrorMessage(refreshError)}`;
+      }
+    } else resetRepPreview(); // np. 422 nothing_to_extend
+  } finally {
+    rep.busy = false;
   }
 });
 

@@ -344,6 +344,31 @@
         </div>
       </section>
 
+      <section class="card" aria-labelledby="rep-title">
+        <div class="section-heading">
+          <div><h2 id="rep-title">Nowy rok: przedłużenie przydziałów przedstawicieli</h2><p id="rep-summary">Osobny krok po promocji uczniów.</p></div>
+        </div>
+        <p class="hint">Używa lat i mapy klas z sekcji „promocja uczniów” powyżej (klasa końcowa i „nie przenoś” są pomijane). Podgląd niczego nie zapisuje i nie zawiera imion ani adresów e-mail — tylko liczby. Zatwierdzenie tworzy nowe przydziały roli przedstawiciela w klasach roku docelowego; przydziały roku źródłowego zostają bez zmian. Konta wyłączone są pomijane. Operacja wymaga świeżego kodu MFA.</p>
+        <p class="row-actions start">
+          <button class="primary" type="button" id="rep-preview-button">Pokaż podgląd przedstawicieli</button>
+        </p>
+        <p class="form-error" id="rep-error" role="alert"></p>
+        <div id="rep-preview" hidden>
+          <p id="rep-preview-summary" role="status"></p>
+          <div class="table-wrap">
+            <table>
+              <caption>Podgląd przedłużenia według klas docelowych</caption>
+              <thead><tr><th scope="col">Klasa docelowa</th><th scope="col">Z klasy</th><th scope="col" class="num">Propozycje</th><th scope="col" class="num">Już przydzieleni</th><th scope="col" class="num">Konta wyłączone</th><th scope="col">Przedstawiciel po zatwierdzeniu</th></tr></thead>
+              <tbody id="rep-preview-body"></tbody>
+            </table>
+          </div>
+          <p class="hint" id="rep-without"></p>
+          <p class="row-actions start">
+            <button class="primary" type="button" id="rep-apply" disabled>Przedłuż przydziały</button>
+          </p>
+        </div>
+      </section>
+
       <section class="card" aria-labelledby="term-title">
         <h2 id="term-title">Wygaszenie kadencji</h2>
         <p class="hint">Wszystkie aktywne przydziały zakończonego roku szkolnego (w tym przydziały jego klas) otrzymają datę wygaśnięcia „teraz”. Historia zostaje. Aby potwierdzić, wpisz identyfikator roku.</p>
