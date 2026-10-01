@@ -42,8 +42,7 @@ import { readSnapshot } from '../db-snapshot.js';
 import { insertAuditEvent } from '../audit.js';
 import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
 import { toXlsx, xlsxResponse } from '../xlsx.js';
-import { familiesScope } from './families.js';
-import { scopeClassIds, scopeCoversYear } from '../scope.js';
+import { householdScope, scopeClassIds, scopeCoversYear } from '../scope.js';
 
 export const name = 'board';
 
@@ -122,7 +121,7 @@ async function authorize(request, env, url, json) {
 
   // Przydział szeroki (admin/zarząd całej szkoły lub roku) albo klasowy
   // (zarząd klasy): klasowy zawęża wyniki do przypisanych klas.
-  const scope = familiesScope(context, BASE_ROLES);
+  const scope = householdScope(context, BASE_ROLES);
   if (!scope.any) {
     // #184: ślad odmowy 403 (przed transakcją żądania).
     await logAccessDenied(env, context, { roles: BASE_ROLES }, request);

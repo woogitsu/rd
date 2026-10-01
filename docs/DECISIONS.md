@@ -138,7 +138,7 @@ Stan na 27.09.2026 (uzupełnione 29.09.2026 o pytania zebrane 28–29.09): żadn
 
   | Moduł | Role (stałe w kodzie) | Plik | Test |
   |---|---|---|---|
-  | Rodziny | odczyt: `admin, board, treasurer, representative` (representative — własna klasa); edycja: `admin, board`; finanse/e-mail rodziny: `admin, board, treasurer` (e-mail widoczny bez względu na zgodę dla ostatniej trójki) | `src/pg/routes/families.js` (`READ_ROLES`, `WIDE_ROLES`, `EDIT_ROLES`, `FINANCIAL_ROLES`) | `tests/pg-families.test.js` |
+  | Rodziny | odczyt: `admin, board, treasurer, representative` (representative — własna klasa); edycja: `admin, board`; finanse/e-mail rodziny: `admin, board, treasurer` (e-mail widoczny bez względu na zgodę dla ostatniej trójki) | `src/pg/routes/families.js` (`READ_ROLES`, `EDIT_ROLES`, `FINANCIAL_ROLES`) i `src/pg/scope.js` (`HOUSEHOLD_WIDE_ROLES`) | `tests/pg-families.test.js` |
   | Wpłaty | `admin, board, treasurer` | `src/pg/routes/payments.js` (`FINANCIAL_ROLES`) | `tests/pg-payments-api.test.js` |
   | Księga | `admin, board, treasurer` | `src/pg/routes/ledger.js` (`FINANCIAL_ROLES`) | `tests/pg-ledger-api.test.js` |
   | Kasa (przelewy, bilans otwarcia) | transfer/odczyt: `admin, board, treasurer`; otwarcie: `board` | `src/pg/routes/ledger-cash.js` (`TRANSFER_ROLES`, `READ_ROLES`, `OPENING_ROLES`) | `tests/pg-ledger-cash.test.js` |

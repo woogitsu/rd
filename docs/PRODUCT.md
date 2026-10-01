@@ -22,7 +22,7 @@ Szczegóły zakresu (`class_id`/`school_year_id`, MFA) i pełna macierz tras:
 
 | Rola | Moduł | Propozycja (do D-08/D-09) | Stan prototypu w kodzie |
 |---|---|---|---|
-| Admin techniczny | Rodziny | tylko pomoc na upoważnienie | pełny odczyt wszystkich klas oraz edycja kontaktów opiekunów i przypisań uczniów do klas (`families.js`, `admin` w `READ_ROLES`, `WIDE_ROLES` i `EDIT_ROLES`) oraz dane finansowe rodziny (`FINANCIAL_ROLES`) z MFA — szerszy zakres niż „tylko pomoc na upoważnienie”; zakres admina to decyzja D-08/D-09 (#146) |
+| Admin techniczny | Rodziny | tylko pomoc na upoważnienie | pełny odczyt wszystkich klas oraz edycja kontaktów opiekunów i przypisań uczniów do klas (`families.js`, `admin` w `READ_ROLES` i `EDIT_ROLES`, `HOUSEHOLD_WIDE_ROLES` w `scope.js`) oraz dane finansowe rodziny (`FINANCIAL_ROLES`) z MFA — szerszy zakres niż „tylko pomoc na upoważnienie”; zakres admina to decyzja D-08/D-09 (#146) |
 | Zarząd | Rodziny | uzgodniony zakres | pełny odczyt i edycja wszystkich klas/uczniów/opiekunów (`families.js`, `READ_ROLES`/`EDIT_ROLES` zawiera `board`) |
 | Skarbnik | Rodziny | „kontakt potrzebny do rozliczeń” | pełny odczyt wszystkich klas (`families.js`, `READ_ROLES`), e-mail opiekuna widoczny **bez względu na zgodę kontaktową** (`families.js`, gałąź bez `classScoped` w odpowiedzi karty gospodarstwa) — szerszy zakres niż opisany; bez edycji |
 | Przedstawiciel klasy | Rodziny | tylko własna klasa, minimum danych | odczyt wyłącznie własnej klasy (`families.js`, zakres z `class_id` przydziału); bez edycji |
@@ -46,7 +46,7 @@ Szczegóły zakresu (`class_id`/`school_year_id`, MFA) i pełna macierz tras:
 | Zarząd, Skarbnik, Komisja rewizyjna | Uzgodnienia bankowe | (brak w macierzy do #163) | zapis `admin`+`board`+`treasurer` (`reconciliation.js`), raport `audit`+`board`+`treasurer` (`reconciliation.js`), raport archiwum wyłącznie `board`+`treasurer` (`reconciliation.js`) |
 
 Admin techniczny w kodzie (#163, #146): rola `admin` jest dziś w stałych
-`READ_ROLES`, `WIDE_ROLES`, `EDIT_ROLES` i `FINANCIAL_ROLES` modułu rodzin
+`READ_ROLES`, `EDIT_ROLES` i `FINANCIAL_ROLES` modułu rodzin, a także w `HOUSEHOLD_WIDE_ROLES` (`scope.js`)
 oraz w `FINANCIAL_ROLES` wpłat, księgi, kartek i innych modułów finansowych
 (`payments.js`, `ledger.js`, `ledger-budget.js`, `ledger-cost-centers.js`,
 `payment-references.js`, `print.js`, `board.js`), a w uzgodnieniach bankowych
