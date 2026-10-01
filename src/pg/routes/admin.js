@@ -1088,7 +1088,7 @@ export async function requireAuditDomains(env, request, context, domains) {
   throw new RequestError('forbidden', 403);
 }
 
-function auditEventForView(row, { withEntity = true } = {}) {
+export function auditEventForView(row, { withEntity = true } = {}) {
   const { metadata, redactedFields } = auditMetadataForView(row.metadata_json ?? {});
   const event = {
     id: row.id, actorId: row.actor_id ?? null, action: row.action, domain: auditActionDomain(row.action),
@@ -1640,14 +1640,14 @@ async function anonymizationRoute(env, actorId, request, json) {
 // spoza /api/admin z ich autoryzacją. Etykieta roli aktora w chwili zdarzenia
 // (z issue) nie jest tu liczona — wymagałaby złączenia z historią przydziałów
 // ról po czasie; odłożone jako osobne rozszerzenie.
-const ENTITY_TABLES = {
+export const ENTITY_TABLES = {
   payment_entry: 'payment_entries',
   ledger_entry: 'ledger_entries',
   reconciliation: 'bank_reconciliations',
   email_campaign: 'email_campaigns',
 };
 // Domena, której odczyt jest wymagany do historii obiektu danego typu.
-const ENTITY_DOMAIN = {
+export const ENTITY_DOMAIN = {
   payment_entry: 'finance', ledger_entry: 'finance', reconciliation: 'finance', email_campaign: 'email',
 };
 // Zdarzenia uzgodnienia zapisują entity_type 'bank_reconciliation' (routes/
@@ -1665,19 +1665,26 @@ const RELATED_METADATA_KEY = {
   email_campaign: 'campaignId',
 };
 
-async function entityAudit(request, env, entityType, entityId, json, actorId, context) {
-  const table = ENTITY_TABLES[entityType];
-  if (!table) throw new RequestError('invalid_entity_type');
-  await requireAuditDomains(env, request, context, [ENTITY_DOMAIN[entityType]]);
-  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
-  if (!exists.length) throw new RequestError('not_found', 404);
-  const { rows } = await env.db.query(
+// Surowe zdarzenia obiektu (samego i powiązane przez metadane), od najstarszego.
+// Wspólne dla trasy admina i GET /api/audit/entity/... (routes/audit-history.js).
+export async function readEntityAuditRows(db, entityType, entityId) {
+  const { rows } = await db.query(
     `SELECT id, actor_id, action, occurred_at, metadata_json
        FROM audit_events
       WHERE (entity_type = ANY($1::text[]) AND entity_id = $2) OR metadata_json ->> $3 = $2
       ORDER BY occurred_at, id`,
     [[entityType, ENTITY_AUDIT_TYPE[entityType] ?? entityType], entityId, RELATED_METADATA_KEY[entityType]],
   );
+  return rows;
+}
+
+async function entityAudit(request, env, entityType, entityId, json, actorId, context) {
+  const table = ENTITY_TABLES[entityType];
+  if (!table) throw new RequestError('invalid_entity_type');
+  await requireAuditDomains(env, request, context, [ENTITY_DOMAIN[entityType]]);
+  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
+  if (!exists.length) throw new RequestError('not_found', 404);
+  const rows = await readEntityAuditRows(env.db, entityType, entityId);
   // Historia obiektu obejmuje zdarzenia różnych domen (np. `audit.viewed` z
   // domeny privacy) — pokazujemy tylko te, których domenę aktor może czytać.
   const visible = rows.filter((row) => canReadAuditDomain(context, auditActionDomain(row.action)));
