@@ -73,7 +73,7 @@ async function requireYear(env, schoolYearId) {
   if (!rows.length) throw new RequestError('school_year_not_found', 404);
 }
 
-function readBody(data, { optional = false } = {}) {
+function parseNoteBody(data, { optional = false } = {}) {
   const raw = data.body;
   if (optional && (raw === undefined || raw === null || raw === '')) return null;
   const text = typeof raw === 'string' ? raw.trim() : '';
@@ -108,7 +108,7 @@ async function addNote(request, env, schoolYearId, json) {
   if (typeof targetId !== 'string' || !ID_PATTERN.test(targetId)) throw new RequestError('invalid_request');
   if (targetType === 'year' && targetId !== schoolYearId) throw new RequestError('audit_review_target_not_found', 404);
   const idempotencyKey = readKey(request);
-  const body = readBody(data);
+  const body = parseNoteBody(data);
   await requireYear(env, schoolYearId);
   const pii = await gate(env, schoolYearId, data, body);
   return respond(json, await appendNote(env.db, {
@@ -121,7 +121,7 @@ async function reply(request, env, schoolYearId, noteId, action, json) {
   const context = await requireAccess(request, env, schoolYearId, roles);
   const data = await readJson(request);
   const idempotencyKey = readKey(request);
-  const body = readBody(data, { optional: action === 'closure' });
+  const body = parseNoteBody(data, { optional: action === 'closure' });
   const parent = await loadNote(env.db, schoolYearId, noteId);
   if (!parent || !['question', 'finding'].includes(parent.kind)) throw new RequestError('audit_review_not_found', 404);
   const pii = await gate(env, schoolYearId, data, body);
@@ -136,7 +136,7 @@ async function conclusion(request, env, schoolYearId, json) {
   const context = await requireAccess(request, env, schoolYearId, REVIEWER_ROLES);
   const data = await readJson(request);
   const idempotencyKey = readKey(request);
-  const body = readBody(data);
+  const body = parseNoteBody(data);
   await requireYear(env, schoolYearId);
   const pii = await gate(env, schoolYearId, data, body);
   return respond(json, await appendNote(env.db, {
