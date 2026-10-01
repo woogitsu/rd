@@ -269,12 +269,13 @@ kliknięcie” na PGlite oznacza ponowienie po kolei (odtworzenie zapisu), a nie
 po zamknięciu), rozpoczynający (`four_eyes_required`) i inna osoba, dwa różne lata naraz;
 zapis księgi, korekta księgi, korekta wpłaty (wpłata częściowa) i bilans otwarcia
 (`LOCK … SHARE ROW EXCLUSIVE` w `ledger-cash`) w chwili zamknięcia; korekta wpłaty
-niezatwierdzona przed zamknięciem. Pierwsze zamknięcie jest wstrzymywane w transakcji
+niezatwierdzona przed zamknięciem; (#80) dopasowanie, nowe uzgodnienie i import wyciągu w chwili zamknięcia (`409 school_year_closed`), dopasowanie niezatwierdzone przed zamknięciem oraz cofnięcie i zatwierdzenie po zamknięciu. Pierwsze zamknięcie jest wstrzymywane w transakcji
 zaraz po `LOCK TABLE … IN SHARE MODE` albo przed COMMIT, a kolejne żądania muszą
 czekać na blokadę (`wait_event = 'advisory'` dla drugiego zamknięcia). Transakcje
 biegną z `retries: 0`, bo ponowienie 40P01 w `src/db.js` ukryłoby zakleszczenie.
 Kontrola pozytywna w tym samym pliku: po pominięciu `pg_advisory_xact_lock('rd_year_close')`
 te same przeploty (ten sam rok i dwa różne lata) kończą się `40P01` i `503`.
+Kampania e-mail rozpoczęta przed zamknięciem roku: `tests/pg-email-year-close-resume.test.js` (PGlite, #80) — worker dokańcza wysyłkę, każda rodzina raz, ponowienie nic nie dubluje.
 Kontrola mutacyjna wykonana ręcznie: usunięcie tej blokady z `src/pg/routes/year-close.js`
 czerwieni cztery testy równoległych zamknięć (dwie osoby, podwójne kliknięcie, cztery oczy, dwa lata).
 
