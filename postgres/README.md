@@ -1312,3 +1312,17 @@ i ponownego zatwierdzenia (albo anulowania), zanim cokolwiek wyjdzie. ADD
 COLUMN bez DEFAULT nie przepisuje tabeli. Kampanie pozostają poza eksportem
 rocznym. Wycofanie: DROP TRIGGER, DROP FUNCTION, DROP COLUMN (wraca wiązanie
 przez metadane zdarzeń z kodu sprzed migracji).
+
+`0169_email_quota_other_sends.sql` (#84, część: ręczna ewidencja wiadomości
+spoza kolejki) luzuje CHECK `email_send_ledger.message_count` do −10000..10000
+bez zera (wiersz kampanii nadal ma dokładnie 1) i dodaje kolumny opcjonalne
+`actor_id`, `reason_code` (`manual_brevo_panel`, `invitation`, `audit_committee`,
+`other`, `correction`), `idempotency_key` (UNIQUE) i `corrects_id` (FK do
+wpisu korygowanego) oraz CHECK `email_ledger_other_manual`: wpis ręczny ma
+aktora, kod i klucz, a korekta to wyłącznie liczba ujemna z kodem `correction`
+i wskazaniem korygowanego wpisu. Dziennik nadal jest tylko do dopisywania
+(trigger z 0007) — pomyłkę poprawia nowy wpis ujemny, nic nie jest edytowane.
+Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSends`)
+pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
+SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
+Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.
