@@ -3,7 +3,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
 const Y2 = 'y-2027';
@@ -54,6 +54,18 @@ async function setup() {
   return { db, env, cookies, call };
 }
 
+// Rok oznaczony jako zamknięty bez przebiegu zamknięcia (to testuje tests/pg-year-close*.test.js).
+async function markYearClosed(db, { id, yearId, nextYearId, carriedId }) {
+  await db.exec(`
+    SET session_replication_role = replica;
+    INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
+      closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
+      carried_opening_balance_id, expired_grant_count)
+    VALUES ('${id}', '${yearId}', '${nextYearId}', 'closed', 'u-a', 'u-b', now(), 0, 0, 0, 0, '${carriedId}', 0);
+    SET session_replication_role = origin;
+  `);
+}
+
 const MAP = { 'c-1a': 'd-2a', 'c-2b': 'd-3b', 'c-6f': null };
 const body = (extra = {}) => ({ fromSchoolYearId: Y1, toSchoolYearId: Y2, classMap: MAP, ...extra });
 const statusOf = (plan) => Object.fromEntries(plan.students.map((s) => [s.studentId, s.status]));
@@ -74,7 +86,8 @@ describe('promocja (#78): granice ról', () => {
     const { db, call, cookies } = await setup();
     const before = await snapshot(db);
     const routes = ['/api/admin/promotions/preview', '/api/admin/promotions/apply',
-      '/api/admin/promotions/classes/preview', '/api/admin/promotions/classes/apply'];
+      '/api/admin/promotions/classes/preview', '/api/admin/promotions/classes/apply',
+      '/api/admin/promotions/representatives/preview', '/api/admin/promotions/representatives/apply'];
     for (const path of routes) {
       assert.equal((await call(path, { body: body(), key: KEY })).status, 401, path);
       for (const who of ['board', 'treasurer', 'audit', 'rep', 'adminNoMfa']) {
@@ -277,14 +290,7 @@ describe('promocja (#78): zatwierdzenie', () => {
   test('zamknięty rok docelowy: 409 school_year_closed; zamknięty rok źródłowy: promocja działa', async () => {
     const ctx = await setup();
     const plan = (await ctx.call('/api/admin/promotions/preview', { cookie: ctx.cookies.admin, body: body() })).data;
-    await ctx.db.exec(`
-      SET session_replication_role = replica;
-      INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
-        closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
-        carried_opening_balance_id, expired_grant_count)
-      VALUES ('clo-2027', '${Y2}', 'y-2028', 'closed', 'u-a', 'u-b', now(), 0, 0, 0, 0, 'ob-x', 0);
-      SET session_replication_role = origin;
-    `);
+    await markYearClosed(ctx.db, { id: 'clo-2027', yearId: Y2, nextYearId: 'y-2028', carriedId: 'ob-x' });
     const before = await snapshot(ctx.db);
     const closed = await ctx.call('/api/admin/promotions/apply', {
       cookie: ctx.cookies.admin, body: body({ planDigest: plan.planDigest }), key: KEY,
@@ -294,14 +300,7 @@ describe('promocja (#78): zatwierdzenie', () => {
     assert.deepEqual(await snapshot(ctx.db), before);
 
     const source = await setup();
-    await source.db.exec(`
-      SET session_replication_role = replica;
-      INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
-        closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
-        carried_opening_balance_id, expired_grant_count)
-      VALUES ('clo-2026', '${Y1}', '${Y2}', 'closed', 'u-a', 'u-b', now(), 0, 0, 0, 0, 'ob-y', 0);
-      SET session_replication_role = origin;
-    `);
+    await markYearClosed(source.db, { id: 'clo-2026', yearId: Y1, nextYearId: `${Y2}`, carriedId: 'ob-y' });
     const { applied } = await planAndApply(source);
     assert.equal(applied.status, 201, JSON.stringify(applied.data));
     // Zmiana klasy w zamkniętym roku źródłowym pozostaje zablokowana (0054).
@@ -317,6 +316,125 @@ describe('promocja (#78): zatwierdzenie', () => {
     });
     assert.equal(result.status, 422);
     assert.equal(result.data.error, 'nothing_to_promote');
+  });
+});
+
+describe('przedłużenie przedstawicieli klas (#78)', () => {
+  const REPS = '/api/admin/promotions/representatives';
+  const repBody = (extra = {}) => ({ fromSchoolYearId: Y1, toSchoolYearId: Y2, classMap: MAP, ...extra });
+
+  // Klasa 1A ma dwóch przedstawicieli (dwie osoby opiekujące się jedną klasą), 2B jednego
+  // wyłączonego konta, 6F (klasa końcowa) jednego — bez następnika.
+  async function repSetup() {
+    const ctx = await setup();
+    await seedRoleGrant(ctx.db, { userId: 'u-rep2', role: 'representative', classId: 'c-1a', schoolYearId: Y1 });
+    await seedUser(ctx.db, { userId: 'u-rep-off', disabled: true });
+    await ctx.db.query("INSERT INTO role_grants (id, user_id, role, class_id, school_year_id) VALUES ('rg-off', 'u-rep-off', 'representative', 'c-2b', $1)", [Y1]);
+    await seedRoleGrant(ctx.db, { userId: 'u-rep-final', role: 'representative', classId: 'c-6f', schoolYearId: Y1 });
+    return ctx;
+  }
+  const preview = (ctx, extra) => ctx.call(`${REPS}/preview`, { cookie: ctx.cookies.admin, body: repBody(extra) });
+  const apply = (ctx, digest, extra = {}) => ctx.call(`${REPS}/apply`, {
+    cookie: ctx.cookies.admin, body: repBody({ planDigest: digest, confirm: Y2, ...extra }),
+  });
+  const grantsOn = async (db, classId) => (await db.query(
+    "SELECT user_id FROM role_grants WHERE role = 'representative' AND class_id = $1 AND revoked_at IS NULL ORDER BY user_id", [classId],
+  )).rows.map((row) => row.user_id);
+
+  test('podgląd nic nie zapisuje: propozycje, konto wyłączone, klasa końcowa bez następnika', async () => {
+    const ctx = await repSetup();
+    const before = await snapshot(ctx.db);
+    const grantsBefore = (await ctx.db.query('SELECT count(*)::int AS n FROM role_grants')).rows[0].n;
+    const { status, data } = await preview(ctx);
+    assert.equal(status, 200);
+    assert.deepEqual(data.proposals.map((p) => [p.userId, p.fromClassId, p.toClassId, p.status]), [
+      ['u-rep', 'c-1a', 'd-2a', 'propose'],
+      ['u-rep2', 'c-1a', 'd-2a', 'propose'],
+      ['u-rep-off', 'c-2b', 'd-3b', 'user_disabled'],
+    ]);
+    assert.deepEqual(data.counts, { propose: 2, already_granted: 0, user_disabled: 1 });
+    assert.deepEqual(data.withoutRepresentative.map((c) => c.classId), ['d-3b']);
+    assert.match(data.planDigest, /^[0-9a-f]{64}$/);
+    assert.doesNotMatch(JSON.stringify(data), /Testowa|Nowak|example\.invalid/);
+    assert.deepEqual(await snapshot(ctx.db), before);
+    assert.equal((await ctx.db.query('SELECT count(*)::int AS n FROM role_grants')).rows[0].n, grantsBefore);
+  });
+
+  test('zapis: nowe przydziały klasy docelowej, stare nietknięte, audyt bez danych osobowych', async () => {
+    const ctx = await repSetup();
+    const plan = (await preview(ctx)).data;
+    const oldBefore = (await ctx.db.query("SELECT id, expires_at, revoked_at FROM role_grants WHERE class_id = 'c-1a' ORDER BY id")).rows;
+    const result = await apply(ctx, plan.planDigest);
+    assert.equal(result.status, 201, JSON.stringify(result.data));
+    assert.deepEqual({ created: result.data.created, alreadyGranted: result.data.alreadyGranted, skipped: result.data.skipped, replayed: result.data.replayed },
+      { created: 2, alreadyGranted: 0, skipped: 1, replayed: false });
+    assert.deepEqual(await grantsOn(ctx.db, 'd-2a'), ['u-rep', 'u-rep2']);
+    assert.deepEqual(await grantsOn(ctx.db, 'd-3b'), []);
+    assert.deepEqual((await ctx.db.query("SELECT id, expires_at, revoked_at FROM role_grants WHERE class_id = 'c-1a' ORDER BY id")).rows, oldBefore);
+    const created = (await ctx.db.query("SELECT school_year_id, granted_by, expires_at FROM role_grants WHERE class_id = 'd-2a'")).rows;
+    assert.equal(created.length > 0 && created.every((row) => row.school_year_id === Y2 && row.granted_by === 'u-admin' && row.expires_at === null), true);
+    const audit = (await ctx.db.query(
+      "SELECT action, metadata_json AS metadata FROM audit_events WHERE action IN ('role_grant.created', 'promotion.representatives_extended') ORDER BY action",
+    )).rows;
+    assert.deepEqual(audit.map((row) => row.action), ['promotion.representatives_extended', 'role_grant.created', 'role_grant.created']);
+    assert.deepEqual(audit[0].metadata, { schoolYearId: Y2, fromSchoolYearId: Y1, created: 2, alreadyGranted: 0, skipped: 1 });
+    assert.equal(audit.filter((row) => row.metadata.source === 'promotion').length, 2);
+    assert.doesNotMatch(JSON.stringify(audit), /example\.invalid|Test u-/);
+  });
+
+  test('podwójne kliknięcie i ponowienie po kolei (PGlite): jeden zestaw przydziałów, drugi zapis created 0', async () => {
+    const ctx = await repSetup();
+    const plan = (await preview(ctx)).data;
+    const first = await apply(ctx, plan.planDigest);
+    const second = await apply(ctx, plan.planDigest);
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 200);
+    assert.deepEqual({ created: second.data.created, alreadyGranted: second.data.alreadyGranted, replayed: second.data.replayed },
+      { created: 0, alreadyGranted: 2, replayed: true });
+    assert.deepEqual(await grantsOn(ctx.db, 'd-2a'), ['u-rep', 'u-rep2']);
+    assert.equal((await ctx.db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'promotion.representatives_extended'")).rows[0].n, 1);
+    // Nowy podgląd widzi już przydziały jako istniejące; skrót zamiaru się nie zmienia.
+    const after = (await preview(ctx)).data;
+    assert.deepEqual(after.counts, { propose: 0, already_granted: 2, user_disabled: 1 });
+    assert.equal(after.planDigest, plan.planDigest);
+  });
+
+  test('wymaga confirm i poprawnego planDigest; cofnięcie przydziału po podglądzie: 409 plan_stale', async () => {
+    const ctx = await repSetup();
+    const plan = (await preview(ctx)).data;
+    const noConfirm = await ctx.call(`${REPS}/apply`, { cookie: ctx.cookies.admin, body: repBody({ planDigest: plan.planDigest }) });
+    assert.deepEqual([noConfirm.status, noConfirm.data.error], [400, 'confirmation_required']);
+    const wrongConfirm = await apply(ctx, plan.planDigest, { confirm: Y1 });
+    assert.equal(wrongConfirm.data.error, 'confirmation_required');
+    assert.equal((await apply(ctx, 'xyz')).data.error, 'invalid_plan_digest');
+    assert.equal((await apply(ctx, 'a'.repeat(64))).data.error, 'plan_stale');
+    await ctx.db.query("UPDATE role_grants SET revoked_at = now(), revoked_by = 'u-admin' WHERE user_id = 'u-rep2' AND class_id = 'c-1a'");
+    const stale = await apply(ctx, plan.planDigest);
+    assert.deepEqual([stale.status, stale.data.error], [409, 'plan_stale']);
+    assert.deepEqual(await grantsOn(ctx.db, 'd-2a'), []);
+  });
+
+  test('walidacja: bez mapy 422, nieznana klasa docelowa, nic do przedłużenia, zamknięty rok docelowy', async () => {
+    const ctx = await repSetup();
+    assert.equal((await ctx.call(`${REPS}/preview`, { cookie: ctx.cookies.admin, body: repBody({ classMap: {} }) })).data.error, 'class_map_required');
+    assert.equal((await preview(ctx, { classMap: { 'c-1a': 'd-nie-ma' } })).data.error, 'unknown_target_class');
+    const none = await preview(ctx, { classMap: { 'c-6f': null } });
+    assert.deepEqual(none.data.proposals, []);
+    const empty = await apply(ctx, none.data.planDigest, { classMap: { 'c-6f': null } });
+    assert.deepEqual([empty.status, empty.data.error], [422, 'nothing_to_extend']);
+    const plan = (await preview(ctx)).data;
+    await markYearClosed(ctx.db, { id: 'clo-2027', yearId: Y2, nextYearId: 'y-2028', carriedId: 'ob-x' });
+    const closed = await apply(ctx, plan.planDigest);
+    assert.deepEqual([closed.status, closed.data.error], [409, 'school_year_closed']);
+    assert.deepEqual(await grantsOn(ctx.db, 'd-2a'), []);
+  });
+
+  test('przydział wygasły przy zamknięciu roku źródłowego jest nadal podstawą propozycji; cofnięty nie', async () => {
+    const ctx = await repSetup();
+    await ctx.db.query("UPDATE role_grants SET expires_at = now() - interval '1 day' WHERE user_id = 'u-rep' AND class_id = 'c-1a'");
+    await ctx.db.query("UPDATE role_grants SET revoked_at = now(), revoked_by = 'u-admin' WHERE user_id = 'u-rep2' AND class_id = 'c-1a'");
+    const { data } = await preview(ctx);
+    assert.deepEqual(data.proposals.filter((p) => p.status === 'propose').map((p) => p.userId), ['u-rep']);
   });
 });
 
@@ -356,14 +474,7 @@ describe('kopiowanie klas roku (#78)', () => {
     assert.equal((await copy(ctx, 'apply', {})).data.error, 'class_map_required');
     assert.equal((await copy(ctx, 'apply', { 'c-1a': '5A', 'c-2b': '5a' })).data.error, 'duplicate_name');
     assert.equal((await copy(ctx, 'apply', { 'c-nie-ma': '5A' })).data.error, 'unknown_source_class');
-    await ctx.db.exec(`
-      SET session_replication_role = replica;
-      INSERT INTO school_year_closures (id, school_year_id, next_school_year_id, status, initiated_by,
-        closed_by, closed_at, income_cents, expense_cents, opening_balance_cents, closing_balance_cents,
-        carried_opening_balance_id, expired_grant_count)
-      VALUES ('clo-2027', '${Y2}', 'y-2028', 'closed', 'u-a', 'u-b', now(), 0, 0, 0, 0, 'ob-x', 0);
-      SET session_replication_role = origin;
-    `);
+    await markYearClosed(ctx.db, { id: 'clo-2027', yearId: Y2, nextYearId: 'y-2028', carriedId: 'ob-x' });
     const closed = await copy(ctx, 'apply', { 'c-2b': '5A' });
     assert.equal(closed.status, 409);
     assert.equal(closed.data.error, 'school_year_closed');

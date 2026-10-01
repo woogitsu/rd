@@ -150,7 +150,7 @@ Każda reguła ma kontrolę pozytywną (kod, który reguła musi wykryć):
   `TRIGGER_BYPASS_ALLOWED`, każdy z uzasadnieniem. Do cofania czasu służy
   wstrzykiwany zegar (`now`), nie wyłączony strażnik.
   Lista ma sufit `TRIGGER_BYPASS_LIMITS` (liczba plików i linii z obejściem,
-  dziś 34 i 49): meta-test wymaga równości, więc nowe obejście oblewa test, a
+  dziś 34 i 47): meta-test wymaga równości, więc nowe obejście oblewa test, a
   usunięcie jednego wymaga obniżenia limitu — lista może tylko maleć (#214). `pg-bootstrap-admin` używa
   opcji `now` funkcji `bootstrapAdmin` (zegar kontroli ważnego admina i
   zaproszenia; domyślnie `now()` bazy); `pg-guardian-updates` używa

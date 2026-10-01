@@ -341,6 +341,7 @@ wpisów).
 | `not_found` | Nie znaleziono zasobu albo nie masz do niego dostępu. | Zależy od kontekstu (patrz moduł trasy). |
 | `not_resolvable` | Tej wiadomości nie można jeszcze rozstrzygnąć. | Nie — popraw dane żądania. |
 | `nothing_to_promote` | Plan nie zawiera żadnego ucznia do przeniesienia. | Nie — popraw dane żądania. |
+| `nothing_to_extend` | Plan nie zawiera żadnego przedstawiciela do przedłużenia. | Nie — popraw dane żądania. |
 | `notice_calendar_unavailable` | Plik kalendarza jest dostępny tylko dla najnowszego zatwierdzonego zawiadomienia. | Nie — popraw dane żądania. |
 | `notice_campaign_audience_unsupported` | Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana. | Nie — popraw dane żądania. |
 | `notice_four_eyes_required` | Zawiadomienie zatwierdza inna osoba niż jego autor. | Nie — popraw dane żądania. |

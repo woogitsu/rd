@@ -5,6 +5,8 @@
 //   POST /api/admin/promotions/classes/apply    to samo; tworzy brakujące klasy roku docelowego
 //   POST /api/admin/promotions/preview          { fromSchoolYearId, toSchoolYearId, classMap, exclusions?, overrides? }
 //   POST /api/admin/promotions/apply            to samo + { planDigest }; nagłówek Idempotency-Key
+//   POST /api/admin/promotions/representatives/preview  { fromSchoolYearId, toSchoolYearId, classMap }
+//   POST /api/admin/promotions/representatives/apply    to samo + { planDigest, confirm: "<id roku docelowego>" }
 //
 // Wariant zachowawczy (decyzje zarządu/szkoły: D-03, D-08, D-21):
 // * Bez jawnej mapy klas (`classMap`) nie powstaje żadna promocja ani kopia klas —
@@ -24,8 +26,18 @@
 // * `planDigest` obejmuje cały plan; zmiana danych między podglądem a zapisem
 //   daje 409 plan_stale. Ten sam Idempotency-Key + ten sam plan zwraca zapisany
 //   wynik (replayed: true) bez nowych wierszy.
-// * Przydziały `representative` nie są przedłużane — podgląd tylko wskazuje klasy
-//   docelowe bez aktywnego przedstawiciela (missingRepresentative).
+// * Przydziały `representative` nie są przedłużane przy promocji uczniów — podgląd
+//   tylko wskazuje klasy docelowe bez aktywnego przedstawiciela (missingRepresentative).
+// * Przedłużenie kadencji przedstawicieli to OSOBNY krok (trasy `representatives/*`):
+//   podgląd proponuje dla każdej mapowanej klasy źródłowej (nie `null`) tych
+//   przedstawicieli, których przydział do niej nie został cofnięty (wygasły przy
+//   zamknięciu roku też się liczy), jako nowe przydziały do klasy docelowej.
+//   Zapis wymaga świeżego MFA, `planDigest` z podglądu i `confirm` = id roku
+//   docelowego; to nowe wiersze `role_grants` (bez zmiany starych), bez daty
+//   wygaśnięcia (wygasną z rokiem docelowym). Konto wyłączone nie jest
+//   proponowane (`user_disabled`), istniejący aktywny przydział to `already_granted`.
+//   Powtórzenie zapisu nie tworzy nowych wierszy (`created: 0`). Audyt: `role_grant.created`
+//   (z `source: 'promotion'`) i jedno `promotion.representatives_extended` — same identyfikatory.
 
 import { createHash } from 'node:crypto';
 import { insertAuditEvent } from './audit.js';
@@ -330,21 +342,127 @@ async function applyRoute(env, actorId, request, json) {
   return json(result.body, result.status);
 }
 
+// --- Przedłużenie przydziałów przedstawicieli ---------------------------------
+
+const MAX_PROPOSALS = 2000;
+
+// Statusy `propose` i `already_granted` są w skrócie planu tym samym zamiarem
+// (`eligible`): po własnym zapisie plan nie staje się przez to nieaktualny.
+async function buildRepresentativePlan(q, input) {
+  await loadYears(q, input);
+  const fromClasses = await loadClasses(q, input.fromSchoolYearId);
+  const toClasses = await loadClasses(q, input.toSchoolYearId);
+  checkMapSources(input.classMap, fromClasses);
+  const toIds = new Set(toClasses.map((row) => row.id));
+  const mapped = Object.entries(input.classMap).filter(([, target]) => target !== null);
+  for (const [, target] of mapped) if (!toIds.has(target)) throw new ApiError('unknown_target_class', 422);
+  const sources = mapped.map(([source]) => source);
+  const targets = [...new Set(mapped.map(([, target]) => target))];
+
+  const found = sources.length ? await q.query(
+    `SELECT DISTINCT g.user_id, g.class_id, (u.disabled_at IS NOT NULL) AS disabled
+       FROM role_grants g JOIN users u ON u.id = g.user_id
+      WHERE g.role = 'representative' AND g.class_id = ANY($1::text[]) AND g.revoked_at IS NULL
+      ORDER BY g.class_id, g.user_id`,
+    [sources],
+  ) : { rows: [] };
+  if (found.rows.length > MAX_PROPOSALS) throw new ApiError('plan_too_large', 422);
+  const active = targets.length ? await q.query(
+    `SELECT user_id, class_id FROM role_grants
+      WHERE role = 'representative' AND class_id = ANY($1::text[]) AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > now())`,
+    [targets],
+  ) : { rows: [] };
+  const activeKeys = new Set(active.rows.map((row) => `${row.user_id}\u0000${row.class_id}`));
+
+  const proposals = found.rows.map((row) => {
+    const toClassId = input.classMap[row.class_id];
+    let status = 'propose';
+    if (row.disabled) status = 'user_disabled';
+    else if (activeKeys.has(`${row.user_id}\u0000${toClassId}`)) status = 'already_granted';
+    return { userId: row.user_id, fromClassId: row.class_id, toClassId, status };
+  });
+  const counts = { propose: 0, already_granted: 0, user_disabled: 0 };
+  for (const item of proposals) counts[item.status] += 1;
+  const covered = new Set([...active.rows.map((row) => row.class_id), ...proposals.filter((item) => item.status === 'propose').map((item) => item.toClassId)]);
+  const nameById = new Map(toClasses.map((row) => [row.id, row.name]));
+  const uncovered = targets.filter((id) => !covered.has(id)).map((id) => ({ classId: id, name: nameById.get(id) }));
+
+  const planDigest = sha256(JSON.stringify({
+    kind: 'representatives', from: input.fromSchoolYearId, to: input.toSchoolYearId,
+    items: proposals.map((item) => [item.userId, item.fromClassId, item.toClassId, item.status === 'user_disabled' ? 'user_disabled' : 'eligible']),
+  }));
+  return {
+    fromSchoolYearId: input.fromSchoolYearId, toSchoolYearId: input.toSchoolYearId,
+    counts, proposals, withoutRepresentative: uncovered, planDigest,
+  };
+}
+
+async function representativesPreviewRoute(env, request, json) {
+  const input = readCommon(await readJsonObject(request, { maxBytes: MAX_BODY_BYTES }));
+  return json(await buildRepresentativePlan(env.db, input));
+}
+
+async function representativesApplyRoute(env, actorId, request, json, grants) {
+  const data = await readJsonObject(request, { maxBytes: MAX_BODY_BYTES });
+  const input = readCommon(data);
+  if (typeof data.planDigest !== 'string' || !HEX64.test(data.planDigest)) throw new ApiError('invalid_plan_digest');
+  if (data.confirm !== input.toSchoolYearId) throw new ApiError('confirmation_required');
+
+  const result = await env.db.transaction(async (tx) => {
+    // Ta sama blokada co przydziały w panelu: równoległe nadanie/cofnięcie czeka.
+    await grants.lockChanges(tx);
+    const { to } = await loadYears(tx, input);
+    if (to.status === 'closed') throw new ApiError('school_year_closed', 409);
+    const plan = await buildRepresentativePlan(tx, input);
+    if (plan.planDigest !== data.planDigest) throw new ApiError('plan_stale', 409);
+    if (!plan.counts.propose && !plan.counts.already_granted) throw new ApiError('nothing_to_extend', 422);
+    let created = 0;
+    for (const item of plan.proposals) {
+      if (item.status === 'user_disabled') continue;
+      await grants.lockTarget(tx, item.userId);
+      const result = await grants.insert(tx, actorId, {
+        userId: item.userId, role: 'representative', classId: item.toClassId, schoolYearId: input.toSchoolYearId,
+        auditExtra: { source: 'promotion', fromClassId: item.fromClassId },
+      });
+      if (result.created) created += 1;
+    }
+    const alreadyGranted = plan.proposals.filter((item) => item.status !== 'user_disabled').length - created;
+    const skipped = plan.counts.user_disabled;
+    if (created) {
+      await insertAuditEvent(tx, {
+        actorId, action: 'promotion.representatives_extended', entityType: 'school_year', entityId: input.toSchoolYearId,
+        metadata: { schoolYearId: input.toSchoolYearId, fromSchoolYearId: input.fromSchoolYearId, created, alreadyGranted, skipped },
+      });
+    }
+    return {
+      status: created ? 201 : 200,
+      body: {
+        fromSchoolYearId: input.fromSchoolYearId, toSchoolYearId: input.toSchoolYearId, planDigest: plan.planDigest,
+        created, alreadyGranted, skipped, replayed: created === 0,
+      },
+    };
+  });
+  return json(result.body, result.status);
+}
+
 // segments: ścieżka po /api/admin/, np. ['promotions', 'preview'].
 // Zwraca undefined dla nieznanej ścieżki (router admina odpowie 404/405).
-export function routePromotions(env, actorId, request, segments, json) {
+export function routePromotions(env, actorId, request, segments, json, grants) {
   const method = request.method;
   const [, first, second] = segments;
   if (segments.length === 2 && first === 'preview' && method === 'POST') return previewRoute(env, request, json);
   if (segments.length === 2 && first === 'apply' && method === 'POST') return applyRoute(env, actorId, request, json);
   if (segments.length === 3 && first === 'classes' && second === 'preview' && method === 'POST') return copyClassesPreview(env, request, json);
   if (segments.length === 3 && first === 'classes' && second === 'apply' && method === 'POST') return copyClassesApply(env, actorId, request, json);
+  if (segments.length === 3 && first === 'representatives' && second === 'preview' && method === 'POST') return representativesPreviewRoute(env, request, json);
+  if (segments.length === 3 && first === 'representatives' && second === 'apply' && method === 'POST') return representativesApplyRoute(env, actorId, request, json, grants);
   return undefined;
 }
 
 export function promotionAllowedMethods(segments) {
   const [, first, second] = segments;
   if (segments.length === 2 && (first === 'preview' || first === 'apply')) return ['POST'];
-  if (segments.length === 3 && first === 'classes' && (second === 'preview' || second === 'apply')) return ['POST'];
+  if (segments.length === 3 && (first === 'classes' || first === 'representatives') && (second === 'preview' || second === 'apply')) return ['POST'];
   return null;
 }
