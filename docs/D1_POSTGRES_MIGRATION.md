@@ -34,7 +34,9 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
    ```
 
    Drugie polecenie jest wyłącznie kontrolą formatu i sumy; nie łączy się z
-   bazą.
+   bazą. Jeśli snapshot zawiera wydarzenia z `begins_at` bez strefy, trzeba
+   dodać `--event-local-time-zone=Europe/Brussels` albo `--event-time-zone=UTC`
+   (zob. „Reguły mapowania”) — także w próbie i przy `--apply`.
 
 4. Utworzyć pustą bazę PostgreSQL, uruchomić `npm run db:migrate:postgres`, a
    następnie jawnie zatwierdzić import:
@@ -60,9 +62,19 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
   Brak odpowiadającej kategorii, niewłaściwy rok/kierunek, uszkodzony łańcuch
   preliminarza lub niespójne przypisanie przerywa całą transakcję. Narzędzie
   nie zgaduje kategorii ani gospodarstwa.
-- Czas zapisany w D1 bez strefy (`YYYY-MM-DD HH:MM:SS`, `CURRENT_TIMESTAMP`)
-  jest odczytywany jako UTC niezależnie od strefy sesji serwera
-  (`SET LOCAL TIME ZONE 'UTC'` w transakcji importu).
+- Dwie reguły czasu (#183). (1) Znaczniki techniczne bez strefy
+  (`created_at`, `occurred_at`, `disabled_at`, `expires_at`, `published_at`;
+  `CURRENT_TIMESTAMP`) są odczytywane jako UTC niezależnie od strefy sesji
+  serwera (`SET LOCAL TIME ZONE 'UTC'` w transakcji importu). (2) `events.begins_at`
+  to godzina wpisana przez człowieka (stary Worker nie miał tras wydarzeń), więc
+  strefy nie zgadujemy: wartość bez strefy wymaga jawnej decyzji osoby, która
+  prowadziła D1 — `--event-local-time-zone=Europe/Brussels` (przeliczenie tą samą
+  funkcją `parseBrusselsLocal` co API; godzina z przejścia czasu, nieistniejąca
+  lub niejednoznaczna, przerywa import z identyfikatorem wydarzenia) albo
+  `--event-time-zone=UTC`. Bez opcji import (także próba bez `--apply`) jest
+  odrzucany przed transakcją. Wartości z `Z` lub `±hh:mm` przechodzą bez zmian.
+  Raport importu zawiera `eventTimes` (liczba wydarzeń z czasem bez strefy
+  i zastosowana reguła).
 - Wydarzenie `published` staje się opublikowaną rewizją 1 ze źródłem
   `legacy_d1` (migracja 0008). Nieopublikowane wydarzenie z ustawionym
   `published_at` przerywa import — narzędzie nie zgaduje, czy było publiczne.
