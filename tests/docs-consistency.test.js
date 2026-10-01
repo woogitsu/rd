@@ -284,3 +284,18 @@ test('docs/DEMO.md: listy paneli zarządu i przedstawiciela zgadzają się z sha
   const rep = labels('representative').join(', ');
   assert.ok(demo.includes(`(${rep} i „Strona publiczna”)`), `DEMO.md krok 5 powinien wymieniać: ${rep}`);
 });
+
+// Pozostałości nierozwiązanego konfliktu scalania w dokumentacji (README
+// migracji trafił tak na main). Linia „=======” bez znaczników też się liczy.
+test('dokumentacja nie zawiera znaczników konfliktu scalania', () => {
+  const files = ['README.md', 'AGENTS.md', 'postgres/README.md',
+    ...readdirSync(join(ROOT, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`)];
+  assert.ok(files.length > 3, 'lista plików nie może być pusta');
+  const hits = [];
+  for (const f of files) {
+    readFileSync(join(ROOT, f), 'utf8').split('\n').forEach((line, i) => {
+      if (/^(<{7}|>{7})( |$)/.test(line) || line === '=======') hits.push(`${f}:${i + 1}`);
+    });
+  }
+  assert.deepEqual(hits, []);
+});
